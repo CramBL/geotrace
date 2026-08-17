@@ -10,7 +10,6 @@
 //! [`transport::REQUEST_INTERVAL`] apart.
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::fmt;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
@@ -28,6 +27,7 @@ use gt_ui_types::{GeomagneticPoint, GeomagneticSeries};
 use strum::IntoEnumIterator as _;
 
 use super::backfill::{BackfillProgress, PendingBackfill};
+use super::day_failures::DayFailure;
 use super::geomagnetic_index_ui::GeomagneticIndexFetchStatus;
 
 /// What one day's fetch produced.
@@ -50,19 +50,6 @@ impl IndexDayMessage {
         match *self {
             Self::Stored { day, .. } | Self::Failed { day, .. } => day,
         }
-    }
-}
-
-/// A day that could not be added to the archive, for the settings section.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DayFailure {
-    pub day: NaiveDate,
-    pub detail: String,
-}
-
-impl fmt::Display for DayFailure {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} - {}", self.day, self.detail)
     }
 }
 

@@ -72,3 +72,6 @@ base_url = "https://gpsjam.org"
 
 [geomagnetic_indices]
 base_url = "https://kp.gfz.de"
+
+[tec]
+base_url = "https://sideshow.jpl.nasa.gov/pub/iono_daily"

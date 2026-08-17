@@ -1,19 +1,12 @@
-//! The fetch status and failure list of the settings dialog's "Geomagnetic
-//! indices" section.
+//! The fetch status rows of the settings dialog's "Geomagnetic indices"
+//! section.
 //!
 //! Renders without reaching the archive or the host: the scheduler fills
 //! [`GeomagneticIndexFetchStatus`].
 
 use chrono::NaiveDate;
-use egui::{Label, RichText, Ui};
-use egui_phosphor::regular::WARNING as ICON_WARNING;
+use egui::Ui;
 use gt_ui_theme::EM_DASH;
-
-use super::solar::DayFailure;
-
-/// The failure list stops after this many entries, newest first: a host that
-/// refuses every request cannot fill the dialog.
-const MAX_LISTED_FAILURES: usize = 5;
 
 const QUEUE_HOVER: &str = "Index days waiting to be downloaded. One day is requested at a time, \
                            and one day costs one request per index.";
@@ -76,46 +69,14 @@ pub fn show_fetch_rows(ui: &mut Ui, status: GeomagneticIndexFetchStatus) {
     ui.end_row();
 }
 
-/// The days that could not be archived, newest first.
-pub fn show_failures(ui: &mut Ui, failures: &[DayFailure]) {
-    if failures.is_empty() {
-        return;
-    }
-    let amber = gt_ui_theme::warning_amber(ui.visuals().dark_mode);
-    ui.label(
-        RichText::new(format!(
-            "{ICON_WARNING} {} {} could not be downloaded",
-            failures.len(),
-            gt_fmt::pluralize(failures.len(), "day", "days")
-        ))
-        .color(amber),
-    );
-    ui.indent("geomagnetic_index_failures", |ui| {
-        for failure in failures.iter().rev().take(MAX_LISTED_FAILURES) {
-            let line = failure.to_string();
-            ui.add(Label::new(RichText::new(&line).weak()).truncate())
-                .on_hover_text(&line);
-        }
-    });
-}
-
 #[cfg(test)]
 mod tests {
-    use egui_kittest::Harness;
-    use egui_kittest::kittest::Queryable as _;
     use rstest::rstest;
 
     use super::*;
 
     fn day(year: i32, month: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
-    }
-
-    fn failure(day_of_july: u32) -> DayFailure {
-        DayFailure {
-            day: day(2026, 7, day_of_july),
-            detail: "Kp: HTTP 500 Internal Server Error".to_owned(),
-        }
     }
 
     #[rstest]
@@ -154,46 +115,5 @@ mod tests {
             ..GeomagneticIndexFetchStatus::default()
         };
         assert_eq!(status.coverage_line(), expected);
-    }
-
-    #[test]
-    fn a_failed_day_is_listed_with_its_cause() {
-        let failures = [failure(21)];
-        let mut harness = Harness::new_ui(|ui| show_failures(ui, &failures));
-        harness.run();
-        assert!(harness.query_by_label_contains("1 day could not").is_some());
-        assert!(
-            harness
-                .query_by_label_contains("2026-07-21 - Kp: HTTP 500 Internal Server Error")
-                .is_some()
-        );
-    }
-
-    /// A host refusing everything states the count and lists the newest few.
-    #[test]
-    fn a_long_failure_list_is_capped_under_its_count() {
-        let failures: Vec<DayFailure> = (1..=20).map(failure).collect();
-        let mut harness = Harness::new_ui(|ui| show_failures(ui, &failures));
-        harness.run();
-        assert!(
-            harness
-                .query_by_label_contains("20 days could not")
-                .is_some()
-        );
-        assert!(
-            harness.query_by_label_contains("2026-07-20 -").is_some(),
-            "the newest failure is listed"
-        );
-        assert!(
-            harness.query_by_label_contains("2026-07-15 -").is_none(),
-            "the sixth-newest failure is past the cap"
-        );
-    }
-
-    #[test]
-    fn nothing_is_drawn_without_a_failure() {
-        let mut harness = Harness::new_ui(|ui| show_failures(ui, &[]));
-        harness.run();
-        assert!(harness.query_by_label_contains("could not").is_none());
     }
 }

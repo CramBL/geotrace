@@ -15,7 +15,10 @@ pub struct TecMap {
 }
 
 impl TecMap {
-    pub(crate) const fn new(
+    /// The map's values at `epoch`, one band per latitude of the grid it
+    /// belongs to and one value per longitude within a band. A band shorter
+    /// than the grid reads as gaps past its end.
+    pub const fn new(
         epoch: DateTime<Utc>,
         latitude_bands: Vec<Vec<Option<TotalElectronContent>>>,
     ) -> Self {
@@ -74,8 +77,7 @@ struct TimeBracket<'a> {
     fraction_from_earlier: f64,
 }
 
-/// One IONEX file: the grid it declares and its maps in epoch order, which
-/// only [`crate::parse`] builds.
+/// One IONEX file: the grid it declares and its maps in epoch order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GlobalIonosphereMaps {
     grid: MapGrid,
@@ -84,7 +86,10 @@ pub struct GlobalIonosphereMaps {
 }
 
 impl GlobalIonosphereMaps {
-    pub(crate) const fn new(grid: MapGrid, interval: TimeDelta, maps: Vec<TecMap>) -> Self {
+    /// Built by [`crate::parse`] from a file, and by an archive from what it
+    /// stored of one. `maps` must be in epoch order, which is what
+    /// [`Self::total_electron_content_at`] searches.
+    pub const fn new(grid: MapGrid, interval: TimeDelta, maps: Vec<TecMap>) -> Self {
         Self {
             grid,
             interval,

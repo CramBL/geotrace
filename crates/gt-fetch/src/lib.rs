@@ -54,15 +54,21 @@ impl HttpRequest {
 }
 
 /// One HTTP response: what classification needs from it.
+///
+/// The body is text by default. [`BytesResponse`] is the same response with an
+/// undecoded body, which is what a host serving a compressed file answers
+/// with.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HttpResponse {
+pub struct HttpResponse<B = String> {
     pub status: u16,
-    /// A transport that does not decode returns compressed bytes here (hosts
-    /// may compress regardless of `Accept-Encoding`).
-    pub body: String,
+    pub body: B,
 }
 
-impl HttpResponse {
+/// A response whose body was never decoded as text, for hosts serving files
+/// in a binary format.
+pub type BytesResponse = HttpResponse<Vec<u8>>;
+
+impl<B> HttpResponse<B> {
     /// Whether the status is inside the range HTTP defines. Classifiers
     /// treat anything else as a deterministic failure.
     pub fn status_is_valid(&self) -> bool {
@@ -99,21 +105,22 @@ pub struct TransportError {
     pub detail: String,
 }
 
-/// Implemented by [`HttpTransport`] and [`OfflineTransport`].
-pub trait Transport {
+/// Implemented by [`HttpTransport`] and [`OfflineTransport`], for responses
+/// whose body is `B`. See [`HttpResponse`] for what the two bodies are.
+pub trait Transport<B = String> {
     /// Send one request and return the raw response.
     ///
     /// Implementations may apply pacing (rate limits) internally: a call may
     /// block until the host can be contacted again.
-    fn send(&self, request: &HttpRequest) -> Result<HttpResponse, TransportError>;
+    fn send(&self, request: &HttpRequest) -> Result<HttpResponse<B>, TransportError>;
 }
 
 /// Fails every request with [`gt_types::env::OFFLINE_DETAIL`].
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OfflineTransport;
 
-impl Transport for OfflineTransport {
-    fn send(&self, _request: &HttpRequest) -> Result<HttpResponse, TransportError> {
+impl<B> Transport<B> for OfflineTransport {
+    fn send(&self, _request: &HttpRequest) -> Result<HttpResponse<B>, TransportError> {
         Err(TransportError {
             detail: gt_types::env::OFFLINE_DETAIL.to_owned(),
         })
@@ -126,11 +133,15 @@ pub enum Connection {
     Offline(OfflineTransport),
 }
 
-impl Transport for Connection {
-    fn send(&self, request: &HttpRequest) -> Result<HttpResponse, TransportError> {
+impl<B> Transport<B> for Connection
+where
+    HttpTransport: Transport<B>,
+    OfflineTransport: Transport<B>,
+{
+    fn send(&self, request: &HttpRequest) -> Result<HttpResponse<B>, TransportError> {
         match self {
-            Self::Http(transport) => transport.send(request),
-            Self::Offline(transport) => transport.send(request),
+            Self::Http(transport) => Transport::send(transport, request),
+            Self::Offline(transport) => Transport::send(transport, request),
         }
     }
 }
@@ -202,8 +213,13 @@ impl HttpTransport {
     }
 }
 
-impl Transport for HttpTransport {
-    fn send(&self, request: &HttpRequest) -> Result<HttpResponse, TransportError> {
+impl HttpTransport {
+    /// Pace, send, and hand back the answered response for the caller to read
+    /// the body from.
+    fn send_paced(
+        &self,
+        request: &HttpRequest,
+    ) -> Result<reqwest::blocking::Response, TransportError> {
         self.pace();
 
         let (header_name, header_value) = CLIENT_ID_HEADER;
@@ -215,17 +231,37 @@ impl Transport for HttpTransport {
                 .header(reqwest::header::CONTENT_TYPE, "application/json")
                 .body(body.clone()),
         };
-        let response = builder
+        builder
             .header(header_name, header_value)
             .send()
             .map_err(|err| TransportError {
                 detail: format!("{err:#}"),
-            })?;
+            })
+    }
+}
+
+impl Transport<String> for HttpTransport {
+    fn send(&self, request: &HttpRequest) -> Result<HttpResponse, TransportError> {
+        let response = self.send_paced(request)?;
         let status = response.status().as_u16();
         let body = response.text().map_err(|err| TransportError {
             detail: format!("{err:#}"),
         })?;
         Ok(HttpResponse { status, body })
+    }
+}
+
+impl Transport<Vec<u8>> for HttpTransport {
+    fn send(&self, request: &HttpRequest) -> Result<BytesResponse, TransportError> {
+        let response = self.send_paced(request)?;
+        let status = response.status().as_u16();
+        let body = response.bytes().map_err(|err| TransportError {
+            detail: format!("{err:#}"),
+        })?;
+        Ok(BytesResponse {
+            status,
+            body: body.to_vec(),
+        })
     }
 }
 
@@ -240,10 +276,10 @@ pub enum Classified<T> {
 /// or a response `classify` calls [`Classified::Transient`]. When the first
 /// attempt fails deterministically or the retry also fails, the last failure's
 /// detail goes to `failure`.
-pub fn send_classified<T>(
-    transport: &impl Transport,
+pub fn send_classified<B, T>(
+    transport: &impl Transport<B>,
     request: &HttpRequest,
-    classify: impl Fn(HttpResponse) -> Classified<T>,
+    classify: impl Fn(HttpResponse<B>) -> Classified<T>,
     failure: impl FnOnce(String) -> T,
 ) -> T {
     let mut last_failure = String::new();
@@ -426,9 +462,78 @@ mod tests {
         let transport = TransportSource::Offline
             .connect(None)
             .expect("the offline source connects");
-        let err = transport
-            .send(&HttpRequest::get("https://example.invalid/dataset"))
-            .expect_err("offline transport refuses");
+        let err = Transport::<String>::send(
+            &transport,
+            &HttpRequest::get("https://example.invalid/dataset"),
+        )
+        .expect_err("offline transport refuses");
         assert!(err.detail.contains(gt_types::env::OFFLINE_DETAIL));
+    }
+
+    #[test]
+    fn the_offline_source_refuses_a_bytes_request_too() {
+        let transport = TransportSource::Offline
+            .connect(None)
+            .expect("the offline source connects");
+        let err = Transport::<Vec<u8>>::send(
+            &transport,
+            &HttpRequest::get("https://example.invalid/file.gz"),
+        )
+        .expect_err("offline transport refuses");
+        assert!(err.detail.contains(gt_types::env::OFFLINE_DETAIL));
+    }
+
+    /// Replays one scripted bytes response.
+    struct CannedBytesTransport {
+        script: RefCell<Vec<Result<BytesResponse, TransportError>>>,
+        sends: RefCell<usize>,
+    }
+
+    impl Transport<Vec<u8>> for CannedBytesTransport {
+        fn send(&self, _request: &HttpRequest) -> Result<BytesResponse, TransportError> {
+            *self.sends.borrow_mut() += 1;
+            let mut script = self.script.borrow_mut();
+            if script.is_empty() {
+                return Err(TransportError {
+                    detail: "the test under-declared its requests".to_owned(),
+                });
+            }
+            script.remove(0)
+        }
+    }
+
+    /// A body no UTF-8 decode survives reaches the classifier unchanged, which
+    /// is the whole reason the bytes path exists.
+    #[test]
+    fn a_bytes_body_reaches_the_classifier_undecoded() {
+        let gzip_magic = vec![0x1f, 0x8b, 0x08, 0x00];
+        let transport = CannedBytesTransport {
+            script: RefCell::new(vec![
+                Ok(BytesResponse {
+                    status: 503,
+                    body: Vec::new(),
+                }),
+                Ok(BytesResponse {
+                    status: 200,
+                    body: gzip_magic.clone(),
+                }),
+            ]),
+            sends: RefCell::new(0),
+        };
+
+        let outcome = send_classified(
+            &transport,
+            &HttpRequest::get("https://example.invalid/file.gz"),
+            |response| {
+                if response.is_server_error() {
+                    return Classified::Transient(response.status_line());
+                }
+                Classified::Outcome(Ok(response.body))
+            },
+            Err,
+        );
+
+        assert_eq!(outcome, Ok(gzip_magic));
+        assert_eq!(*transport.sends.borrow(), 2, "the 503 was retried once");
     }
 }

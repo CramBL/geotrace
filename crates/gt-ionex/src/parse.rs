@@ -11,6 +11,7 @@
 
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 
+use crate::IONOSPHERE_MAPS_TYPE;
 use crate::grid::{
     AxisDeclaration, AxisError, DEGREES_TOLERANCE, GridAxis, LatitudeAxis, LongitudeAxis, MapGrid,
 };
@@ -48,9 +49,6 @@ const VERSION_FIELD: FieldSpan = FieldSpan { start: 0, width: 8 };
 
 /// Column the version record writes its file type in.
 const FILE_TYPE_COLUMN: usize = 20;
-
-/// The file type letter of ionosphere maps.
-const IONOSPHERE_MAPS_TYPE: char = 'I';
 
 /// Fields of a grid record, `2X,5F6.1`.
 const GRID_FIELD_OFFSET: usize = 2;

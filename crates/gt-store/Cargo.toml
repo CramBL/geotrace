@@ -13,13 +13,14 @@ doctest = false
 [features]
 default = ["backend-sys"]
 # Forwarded to gt-history, which is where the two HDF5 backends live. The
-# interference and geomagnetic archives are sys-only.
+# interference, geomagnetic and TEC archives are sys-only.
 backend-pure = ["gt-history/backend-pure"]
 backend-sys = ["gt-history/backend-sys"]
 
 [dependencies]
 dirs.workspace = true
 gt-history = { path = "../gt-history", default-features = false }
+gt-ionex-store = { path = "../gt-ionex-store" }
 gt-jam-store = { path = "../gt-jam-store" }
 gt-solar-store = { path = "../gt-solar-store" }
 parking_lot.workspace = true

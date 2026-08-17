@@ -295,9 +295,8 @@ fn the_offline_source_refuses_every_request() {
         .expect("the offline source connects");
     let request = HttpRequest::post_json(DEFAULT_SERVER_URL, "{}");
 
-    let err = transport
-        .send(&request)
-        .expect_err("offline transport refuses");
+    let err =
+        Transport::<String>::send(&transport, &request).expect_err("offline transport refuses");
     assert!(err.detail.contains(gt_types::env::OFFLINE_DETAIL));
 }
 

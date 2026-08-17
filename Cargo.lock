@@ -2157,11 +2157,13 @@ dependencies = [
  "egui_kittest",
  "egui_tiles",
  "env_logger",
+ "flate2",
  "geotrace-sdk",
  "geotrace-sdk-units",
  "gt-fetch",
  "gt-filter",
  "gt-fmt",
+ "gt-ionex",
  "gt-jam",
  "gt-loaded-files",
  "gt-loader",
@@ -2585,11 +2587,29 @@ version = "0.12.0"
 dependencies = [
  "chrono",
  "flate2",
+ "gt-fetch",
  "gt-types",
  "proptest",
  "reqwest 0.13.4",
  "rstest",
  "serde_json",
+ "strum",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "gt-ionex-store"
+version = "0.12.0"
+dependencies = [
+ "chrono",
+ "gt-hdf5-archive",
+ "gt-ionex",
+ "gt-types",
+ "hdf5-metno",
+ "log",
+ "parking_lot",
+ "rstest",
+ "tempfile",
  "thiserror 2.0.20",
 ]
 
@@ -2880,6 +2900,7 @@ version = "0.12.0"
 dependencies = [
  "dirs",
  "gt-history",
+ "gt-ionex-store",
  "gt-jam-store",
  "gt-solar-store",
  "parking_lot",

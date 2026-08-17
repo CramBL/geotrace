@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use egui::Context;
-use gt_store::{DbError, HistoryDatabase as _, JamStore, Recordings, SolarStore, Store};
+use gt_store::{
+    DbError, HistoryDatabase as _, IonexStore, JamStore, Recordings, SolarStore, Store,
+};
 
 use super::history_db::HistoryWorker;
 
@@ -56,6 +58,8 @@ pub struct OpenStorage {
     pub archive: Option<Arc<JamStore>>,
     /// [`None`] disables geomagnetic index fetching and nothing else.
     pub geomagnetic_indices: Option<Arc<SolarStore>>,
+    /// [`None`] disables TEC map fetching and nothing else.
+    pub tec_maps: Option<Arc<IonexStore>>,
 }
 
 impl OpenStorage {
@@ -66,6 +70,7 @@ impl OpenStorage {
             history_failure: None,
             archive: None,
             geomagnetic_indices: None,
+            tec_maps: None,
         }
     }
 }
@@ -151,11 +156,22 @@ fn open_in(store: &Store, ctx: &Context) -> OpenStorage {
         })
         .ok();
 
+    let tec_maps = store
+        .open_tec_maps()
+        .inspect_err(|err| {
+            log::error!(
+                "TEC map archive at {} is unusable: {err}",
+                store.tec_maps_path().display()
+            );
+        })
+        .ok();
+
     OpenStorage {
         history,
         history_failure,
         archive,
         geomagnetic_indices,
+        tec_maps,
     }
 }
 
@@ -187,6 +203,7 @@ mod tests {
         assert!(opened.history_failure.is_none());
         assert!(opened.archive.is_none());
         assert!(opened.geomagnetic_indices.is_none());
+        assert!(opened.tec_maps.is_none());
     }
 
     #[test]
@@ -197,6 +214,7 @@ mod tests {
         assert!(opened.history.path().is_some(), "the worker has a database");
         assert!(opened.archive.is_some());
         assert!(opened.geomagnetic_indices.is_some());
+        assert!(opened.tec_maps.is_some());
         assert!(opened.history_failure.is_none());
     }
 
@@ -238,5 +256,6 @@ mod tests {
         assert!(opened.history.path().is_none());
         assert!(opened.archive.is_some(), "the archives are unaffected");
         assert!(opened.geomagnetic_indices.is_some());
+        assert!(opened.tec_maps.is_some());
     }
 }
