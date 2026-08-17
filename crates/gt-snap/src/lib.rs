@@ -8,9 +8,9 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+pub mod merge;
 pub mod request_plan;
 pub mod snapped_track;
-pub mod stitch;
 pub mod transport;
 pub mod wire;
 

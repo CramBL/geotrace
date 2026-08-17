@@ -15,8 +15,8 @@ mod support;
 use support::base_time;
 
 use gt_fetch::HttpTransport;
+use gt_snap::merge::{self, ChunkOutcome, SnapWarningReporter};
 use gt_snap::request_plan::{self, SnapParams};
-use gt_snap::stitch::{self, ChunkOutcome, SnapWarningReporter};
 use gt_snap::wire::Costing;
 use gt_snap::{DEFAULT_SERVER_URL, REQUEST_INTERVAL, transport};
 use gt_types::nav_point::NavPoint;
@@ -44,7 +44,7 @@ fn boulevard_points() -> Vec<NavPoint> {
         .collect()
 }
 
-/// Full pipeline against the live server: plan, send, stitch. Structural
+/// Full pipeline against the live server: plan, send, merge. Structural
 /// assertions only.
 ///
 /// Ignored so that plain `cargo test` skips it as well as nextest: this is
@@ -72,7 +72,7 @@ fn full_pipeline_against_live_server() {
     );
 
     let reporter = SnapWarningReporter::default();
-    let result = stitch::stitch(&plan, SnapParams::new(Costing::Auto), &outcomes, &reporter);
+    let result = merge::merge(&plan, SnapParams::new(Costing::Auto), &outcomes, &reporter);
 
     // Structural invariants, not values.
     assert_eq!(result.points.len(), plan.sent_point_count());

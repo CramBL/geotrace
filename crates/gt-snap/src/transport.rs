@@ -18,8 +18,8 @@
 use gt_fetch::{Classified, HttpRequest, HttpResponse, Transport};
 
 use crate::TRACE_ATTRIBUTES_PATH;
+use crate::merge::ChunkOutcome;
 use crate::request_plan::{RequestPlan, SnapParams};
-use crate::stitch::ChunkOutcome;
 use crate::wire::{ErrorCode, ErrorResponse, TraceAttributesRequest, TraceAttributesResponse};
 
 /// Send every chunk of a plan, in order, to `server_url` (e.g.
@@ -27,7 +27,7 @@ use crate::wire::{ErrorCode, ErrorResponse, TraceAttributesRequest, TraceAttribu
 /// `progress` is called after each chunk completes with (completed, total).
 ///
 /// Never fails as a whole: per-chunk failures become
-/// [`ChunkOutcome::Failed`] and stitching handles the gaps.
+/// [`ChunkOutcome::Failed`] and merging handles the gaps.
 pub fn send_plan(
     transport: &impl Transport,
     server_url: &str,

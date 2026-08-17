@@ -8,9 +8,9 @@
 use serde_json::json;
 use strum::EnumCount;
 
+use gt_snap::merge::{SnapKindCounts, SnapPoint, SnapResult, SnapWarning};
 use gt_snap::request_plan::SnapParams;
 use gt_snap::snapped_track::{Position, SnappedEdgeSpan, SnappedTrackSegment};
-use gt_snap::stitch::{SnapKindCounts, SnapPoint, SnapResult, SnapWarning};
 use gt_snap::wire::{Costing, Edge, RoadClass, SnapPointKind, SpeedLimit, Surface};
 
 use gt_types::PointIdx;

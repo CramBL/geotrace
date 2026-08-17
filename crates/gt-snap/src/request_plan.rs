@@ -159,7 +159,7 @@ pub struct Chunk {
     /// The points this chunk sends, in track order. Includes overlap.
     pub sent: Vec<SentPoint>,
     /// The sub-range of [`sent`](Self::sent) this chunk is authoritative
-    /// for. Overlap points outside this range are context only. Stitching
+    /// for. Overlap points outside this range are context only. Merging
     /// takes their match results from the neighboring chunk, where they are
     /// more interior.
     pub owned: Range<usize>,
@@ -297,7 +297,7 @@ fn chunk_stretch(sent: &[SentPoint]) -> Vec<Chunk> {
         let is_last = end == sent.len();
         // The overlap between two chunks is split at its middle. Each point
         // belongs to the chunk where it lies further from the chunk edge
-        // (the design's "prefer interior" stitching rule).
+        // (the design's "prefer interior" merging rule).
         let own_from = if is_first {
             0
         } else {

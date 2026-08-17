@@ -12,8 +12,8 @@ use std::fs;
 use support::points;
 
 use gt_fetch::{HttpRequest, HttpResponse, Transport, TransportError, TransportSource};
+use gt_snap::merge::{ChunkOutcome, SnapWarningReporter};
 use gt_snap::request_plan::{self, CHUNK_POINTS, SnapParams};
-use gt_snap::stitch::{ChunkOutcome, SnapWarningReporter};
 use gt_snap::wire::Costing;
 use gt_snap::{DEFAULT_SERVER_URL, fixtures_dir, transport};
 
@@ -81,7 +81,7 @@ fn connection_reset() -> Result<HttpResponse, TransportError> {
 }
 
 #[test]
-fn fixture_success_body_classifies_and_stitches_end_to_end() {
+fn fixture_success_body_classifies_and_merges_end_to_end() {
     // The captured partially_snappable response has 20 matched points, so a
     // 20-point plan is one chunk.
     let plan = request_plan::plan(&points(20));
@@ -106,17 +106,17 @@ fn fixture_success_body_classifies_and_stitches_end_to_end() {
 
     // The full offline pipeline: plan -> outcomes -> result.
     let reporter = SnapWarningReporter::default();
-    let result = stitch_all(&plan, &outcomes, &reporter);
+    let result = merge_all(&plan, &outcomes, &reporter);
     assert_eq!(result.kind_counts.total(), 20);
     assert!(!result.partial);
 }
 
-fn stitch_all(
+fn merge_all(
     plan: &gt_snap::request_plan::RequestPlan,
     outcomes: &[ChunkOutcome],
     reporter: &SnapWarningReporter,
-) -> gt_snap::stitch::SnapResult {
-    gt_snap::stitch::stitch(plan, auto_params(), outcomes, reporter)
+) -> gt_snap::merge::SnapResult {
+    gt_snap::merge::merge(plan, auto_params(), outcomes, reporter)
 }
 
 #[test]

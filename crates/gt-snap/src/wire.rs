@@ -472,7 +472,7 @@ pub enum ErrorCode {
     /// options are rejected, never clamped.
     TraceOptionOutOfBounds,
     /// 444: the matcher found no path - every point is off the road network.
-    /// Not a failure for stitching: it maps to all-unsnapped points.
+    /// Not a failure for merging: it maps to all-unsnapped points.
     OffNetwork,
     /// A code this client does not know yet, kept verbatim.
     Other(u32),

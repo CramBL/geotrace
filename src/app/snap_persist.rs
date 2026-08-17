@@ -15,7 +15,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use gt_snap::stitch::{SnapResult, SnapWarning};
+use gt_snap::merge::{SnapResult, SnapWarning};
 use gt_types::LoadedTrack;
 
 use super::snap::{SnapRun, TrackContentKey};
@@ -112,8 +112,8 @@ pub fn decode(blob: &[u8]) -> Option<Vec<StoredTrackRun>> {
 
 #[cfg(test)]
 mod tests {
+    use gt_snap::merge::{self, SnapWarningReporter};
     use gt_snap::request_plan::SnapParams;
-    use gt_snap::stitch::{self, SnapWarningReporter};
     use gt_snap::wire::Costing;
     use gt_snap::{DEFAULT_SERVER_URL, request_plan, server_host};
     use gt_test_utils::fixtures;
@@ -130,7 +130,7 @@ mod tests {
 
     fn run(costing: Costing) -> SnapRun {
         SnapRun::new(
-            stitch::stitch(
+            merge::merge(
                 &request_plan::plan(&[]),
                 SnapParams::new(costing),
                 &[],

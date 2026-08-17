@@ -1,5 +1,5 @@
 ---
-source: crates/gt-snap/tests/stitch.rs
+source: crates/gt-snap/tests/merge.rs
 expression: "(result.kind_counts, result.points.len(), result.segments.len(),\nresult.confidence_score, result.osm_changeset,)"
 ---
 (

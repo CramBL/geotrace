@@ -29,7 +29,7 @@ pub const SHAPE_POLYLINE_PRECISION: u32 = 6;
 /// speaks x/y.
 ///
 /// Serde derives exist for persisting cached snap results (see
-/// [`crate::stitch::SnapResult`]).
+/// [`crate::merge::SnapResult`]).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Position {
     pub lat: f64,
@@ -50,8 +50,8 @@ pub struct SnappedTrackSegment {
 }
 
 /// A run of segment vertices (`start..end`, exclusive) matched to the edge
-/// at `edge` (an index into the response's - after stitching, the
-/// [`crate::stitch::SnapResult`]'s - edge list).
+/// at `edge` (an index into the response's - after merging, the
+/// [`crate::merge::SnapResult`]'s - edge list).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnappedEdgeSpan {
     pub start: usize,
@@ -95,7 +95,7 @@ pub fn snapped_track_segments(
 /// Like [`snapped_track_segments`], but considering only the points in
 /// `points` (a range of indices into the response's snapped points).
 ///
-/// Stitching uses this to build each chunk's geometry from its owned points
+/// Merging uses this to build each chunk's geometry from its owned points
 /// only, so overlap regions are not drawn twice.
 pub fn snapped_track_segments_in(
     response: &TraceAttributesResponse,

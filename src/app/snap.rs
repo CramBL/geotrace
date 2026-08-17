@@ -34,8 +34,8 @@ use std::thread;
 use egui::Context;
 
 use gt_fetch::{Connection, TransportSource};
+use gt_snap::merge::{self, SnapResult, SnapWarning, SnapWarningReporter};
 use gt_snap::request_plan::{self, RequestPlan, SnapParams};
-use gt_snap::stitch::{self, SnapResult, SnapWarning, SnapWarningReporter};
 use gt_snap::wire::{Costing, SpeedLimit};
 use gt_snap::{DEFAULT_SERVER_URL, REQUEST_INTERVAL, server_host, transport};
 use gt_types::mercator::{self};
@@ -124,7 +124,7 @@ impl SnapCacheKey {
     }
 }
 
-/// A completed snap run: the stitched result, the run's warnings, the host
+/// A completed snap run: the merged result, the run's warnings, the host
 /// it ran against, and the map-ready projection of the snapped-track
 /// segments.
 #[derive(Debug)]
@@ -802,7 +802,7 @@ fn spawn_run(
                 },
             );
             let reporter = SnapWarningReporter::default();
-            let result = stitch::stitch(&plan, params, &outcomes, &reporter);
+            let result = merge::merge(&plan, params, &outcomes, &reporter);
             let message = if result.points.is_empty() && result.partial {
                 // Nothing usable came back: every chunk failed.
                 SnapMessage::Failed {
@@ -863,7 +863,7 @@ mod tests {
 
     fn empty_run(params: SnapParams) -> SnapRun {
         SnapRun::new(
-            stitch::stitch(
+            merge::merge(
                 &request_plan::plan(&[]),
                 params,
                 &[],
@@ -1321,12 +1321,12 @@ mod tests {
     /// entirely) contribute none - and normalizes the position.
     #[test]
     fn snap_run_builds_whiskers_from_snapped_points_only() {
+        use gt_snap::merge::SnapPoint;
         use gt_snap::snapped_track::Position;
-        use gt_snap::stitch::SnapPoint;
         use gt_snap::wire::SnapPointKind;
         use gt_types::PointIdx;
 
-        let mut result = stitch::stitch(
+        let mut result = merge::merge(
             &request_plan::plan(&[]),
             SnapParams::new(Costing::Auto),
             &[],
