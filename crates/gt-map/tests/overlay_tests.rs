@@ -1,6 +1,7 @@
 use egui::ComboBox;
 use egui::accesskit;
-use egui_kittest::{Harness, kittest::Queryable as _};
+use egui_kittest::kittest::Queryable as _;
+use gt_test_utils::TestHarness;
 use gt_types::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
 
@@ -75,10 +76,10 @@ fn suppress_hover_labels_defaults_false() {
 /// confirming the egui baseline the guard relies on.
 #[test]
 fn egui_any_popup_open_false_by_default() {
-    let mut harness = Harness::new_ui(|_ui| {});
+    let mut harness = TestHarness::builder().ui(|_ui| {});
     harness.run();
     assert!(
-        !harness.ctx.any_popup_open(),
+        !harness.inner.ctx.any_popup_open(),
         "no popup should be open in an idle UI"
     );
 }
@@ -91,9 +92,9 @@ fn egui_any_popup_open_false_by_default() {
 fn egui_any_popup_open_true_when_combobox_expanded() {
     let items = ["A", "B", "C"];
 
-    let mut harness = Harness::builder()
-        .with_size(egui::Vec2::new(300.0, 200.0))
-        .build_ui_state(
+    let mut harness = TestHarness::builder()
+        .size(egui::Vec2::new(300.0, 200.0))
+        .ui_state(
             |ui, selected: &mut usize| {
                 ComboBox::from_label("Pick")
                     .selected_text(items[*selected])
@@ -110,12 +111,13 @@ fn egui_any_popup_open_true_when_combobox_expanded() {
 
     // Click the combo box to open its popup.
     harness
+        .inner
         .get_by_role_and_label(accesskit::Role::ComboBox, "Pick")
         .click();
     harness.run();
 
     assert!(
-        harness.ctx.any_popup_open(),
+        harness.inner.ctx.any_popup_open(),
         "any_popup_open() should be true while the combo box dropdown is open"
     );
 }

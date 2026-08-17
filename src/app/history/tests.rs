@@ -1,6 +1,6 @@
 use egui_kittest::kittest::Queryable as _;
 use gt_store::HistoryDatabase as _;
-use gt_test_utils::TestHarness;
+use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
 
 use crate::app::history_db::Response;
 
@@ -109,25 +109,6 @@ fn pump_history(ui: &mut egui::Ui, s: &mut HistoryHarness) {
     show_history(ui, s);
 }
 
-/// Run frames (yielding to the worker thread) until `pred` holds or the
-/// budget is exhausted. Returns whether it held.
-fn run_until(
-    h: &mut TestHarness<HistoryHarness>,
-    pred: impl Fn(&mut TestHarness<HistoryHarness>) -> bool,
-) -> bool {
-    for _ in 0..100 {
-        // Single-frame `step` (not `run`): the History window paints a spinner
-        // while a list request is in flight, so it never reaches a quiescent
-        // state for `run` to converge on.
-        h.step();
-        if pred(h) {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(3));
-    }
-    false
-}
-
 #[test]
 fn rename_workflow_updates_the_listed_identity_end_to_end() {
     // Full workflow against a real worker + database: the row lists, the user
@@ -140,10 +121,8 @@ fn rename_workflow_updates_the_listed_identity_end_to_end() {
 
     // The recording lists under its stripped identity.
     assert!(
-        run_until(&mut h, |h| h
-            .inner
-            .query_by_label_contains("ride.gtd")
-            .is_some()),
+        h.inner
+            .step_until(|h| h.query_by_label_contains("ride.gtd").is_some()),
         "recording should appear in the History list"
     );
 
@@ -168,10 +147,8 @@ fn rename_workflow_updates_the_listed_identity_end_to_end() {
 
     // After the worker renames and the window re-lists, the new identity shows.
     assert!(
-        run_until(&mut h, |h| h
-            .inner
-            .query_by_label_contains("ride.gtd v2")
-            .is_some()),
+        h.inner
+            .step_until(|h| h.query_by_label_contains("ride.gtd v2").is_some()),
         "the renamed identity should appear in the refreshed list"
     );
 }
@@ -446,13 +423,10 @@ fn history_window_width(identity: &str) -> f32 {
     let mut h = TestHarness::builder()
         .size(egui::vec2(1600.0, 500.0))
         .ui_state(show_history, harness);
-    for _ in 0..6 {
-        h.run();
-    }
-    let window = h
-        .inner
-        .get_by_role_and_label(egui::accesskit::Role::Window, "History");
-    window.rect().width()
+    h.inner
+        .settled_window_size("History", 6)
+        .expect("the History window is shown")
+        .x
 }
 
 /// A long recording identity truncates in the History window rather than
@@ -503,8 +477,7 @@ fn filter_field_does_not_overlap_the_toolbar_controls() {
     }
     // Shrink toward the window's minimum, where the overlap used to appear.
     let w = window_rect(&h);
-    drag(
-        &mut h,
+    h.inner.press_drag_release(
         egui::pos2(w.right() - 1.0, w.bottom() - 1.0),
         egui::vec2(-500.0, 0.0),
         10,
@@ -574,8 +547,7 @@ fn identity_fills_the_window_at_every_size() {
 
     // Grow the window from its bottom-right corner.
     let before = window_rect(&h);
-    drag(
-        &mut h,
+    h.inner.press_drag_release(
         egui::pos2(before.right() - 1.0, before.bottom() - 1.0),
         egui::vec2(300.0, 0.0),
         8,
@@ -598,8 +570,7 @@ fn identity_fills_the_window_at_every_size() {
     // width (measured by a sizing pass when the drag starts), so stay well
     // above that floor: the identity-fill invariant is what matters here.
     let grown = window_rect(&h);
-    drag(
-        &mut h,
+    h.inner.press_drag_release(
         egui::pos2(grown.right() - 1.0, grown.bottom() - 1.0),
         egui::vec2(-80.0, 0.0),
         8,
@@ -621,34 +592,8 @@ fn identity_fills_the_window_at_every_size() {
 
 fn window_rect(h: &TestHarness<HistoryHarness>) -> egui::Rect {
     h.inner
-        .get_by_role_and_label(egui::accesskit::Role::Window, "History")
-        .rect()
-}
-
-/// Press-drag-release the pointer from `from` by `delta` over `steps` frames.
-fn drag(h: &mut TestHarness<HistoryHarness>, from: egui::Pos2, delta: egui::Vec2, steps: u32) {
-    h.inner.event(egui::Event::PointerMoved(from));
-    h.step();
-    h.inner.event(egui::Event::PointerButton {
-        pos: from,
-        button: egui::PointerButton::Primary,
-        pressed: true,
-        modifiers: egui::Modifiers::NONE,
-    });
-    h.step();
-    for i in 1..=steps {
-        h.inner.event(egui::Event::PointerMoved(
-            from + delta * (i as f32 / steps as f32),
-        ));
-        h.step();
-    }
-    h.inner.event(egui::Event::PointerButton {
-        pos: from + delta,
-        button: egui::PointerButton::Primary,
-        pressed: false,
-        modifiers: egui::Modifiers::NONE,
-    });
-    h.step();
+        .window_rect("History")
+        .expect("the History window is shown")
 }
 
 /// The window can be dragged narrower than its settled width. Identity
@@ -661,7 +606,8 @@ fn the_window_can_be_shrunk_narrower() {
     let before = window_rect(&h);
     // Drag the bottom-right resize corner inward.
     let corner = egui::pos2(before.right() - 1.0, before.bottom() - 1.0);
-    drag(&mut h, corner, egui::vec2(-200.0, 0.0), 8);
+    h.inner
+        .press_drag_release(corner, egui::vec2(-200.0, 0.0), 8);
     for _ in 0..3 {
         h.step();
     }
@@ -700,10 +646,7 @@ fn click_header(h: &TestHarness<HistoryHarness>, title: &str) {
 /// Takes the lowest matching node: the toolbar and filter row carry labels
 /// with the same words ("Identity", "Points") and sit above the table.
 fn header_node<'t>(h: &'t TestHarness<HistoryHarness>, title: &'t str) -> egui_kittest::Node<'t> {
-    h.inner
-        .get_all_by_label(title)
-        .max_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
-        .expect("column header")
+    h.inner.bottommost_matching(By::new().label(title))
 }
 
 /// Clicking a column header reorders the rendered table, and clicking the
@@ -800,29 +743,9 @@ fn entry_with_channels() -> RecordingEntry {
 
 /// Park the pointer on the widget labelled `label` and hold it there until
 /// the hover turns into a tooltip.
-///
-/// egui only shows a tooltip once the pointer has been *still* on the
-/// widget for `tooltip_delay`, and every `PointerMoved` restarts that
-/// timer - so the position is sent once and the following frames are run
-/// without further events. Re-sending it each frame keeps the pointer
-/// permanently "moving" and no tooltip ever appears.
-///
-/// Matches the topmost node, which is the table row rather than the footer
-/// summary when both carry the same text (a size, say).
 fn hover_widget(h: &mut TestHarness<HistoryHarness>, label: &str) {
     let target = topmost_labelled(h, label);
-    hover_pos(h, target);
-}
-
-/// Hold the pointer at `target` until the hover settles.
-///
-/// One frame registers the move, then the rest run without events so
-/// egui's "pointer has been still" timer can actually accumulate.
-fn hover_pos(h: &mut TestHarness<HistoryHarness>, target: egui::Pos2) {
-    h.inner.event(egui::Event::PointerMoved(target));
-    for _ in 0..4 {
-        h.step();
-    }
+    h.inner.hover_at_and_settle(target, 4);
 }
 
 /// Point at the widget labelled `label` and stop before its tooltip opens.
@@ -833,24 +756,20 @@ fn hover_pos(h: &mut TestHarness<HistoryHarness>, target: egui::Pos2) {
 /// the widget is still the thing being pointed at.
 fn point_at_widget(h: &mut TestHarness<HistoryHarness>, label: &str) {
     let target = topmost_labelled(h, label);
-    h.inner.event(egui::Event::PointerMoved(target));
-    h.step();
+    h.inner.hover_at_and_settle(target, 1);
 }
 
 /// Like [`point_at_widget`] for a table header (see [`header_node`]).
 fn point_at_header(h: &mut TestHarness<HistoryHarness>, title: &str) {
     let target = header_node(h, title).rect().center();
-    h.inner.event(egui::Event::PointerMoved(target));
-    h.step();
+    h.inner.hover_at_and_settle(target, 1);
 }
 
 /// Centre of the topmost widget whose label contains `label` - the table
 /// row rather than the footer summary when both carry the same text.
 fn topmost_labelled(h: &TestHarness<HistoryHarness>, label: &str) -> egui::Pos2 {
     h.inner
-        .get_all_by_label_contains(label)
-        .min_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
-        .expect("hover target")
+        .topmost_matching(By::new().label_contains(label))
         .rect()
         .center()
 }
@@ -988,8 +907,7 @@ fn the_filter_field_still_shows_a_text_cursor() {
         .next()
         .expect("identity filter field");
 
-    h.inner.event(egui::Event::PointerMoved(field.center()));
-    h.step();
+    h.inner.hover_at_and_settle(field.center(), 1);
 
     assert_eq!(cursor_icon(&h), egui::CursorIcon::Text);
 }

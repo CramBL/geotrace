@@ -90,8 +90,9 @@ pub fn show_mirror_list(ui: &mut Ui, mirrors: &mut MirrorList) -> bool {
 #[cfg(test)]
 mod tests {
     use egui::accesskit::Role;
+    use egui_kittest::Node;
     use egui_kittest::kittest::{NodeT as _, Queryable as _};
-    use egui_kittest::{Harness, Node};
+    use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
     use rstest::rstest;
 
     use super::*;
@@ -117,8 +118,8 @@ mod tests {
             .collect()
     }
 
-    fn editor(mirrors: MirrorList) -> Harness<'static, EditorState> {
-        let mut harness = Harness::new_ui_state(
+    fn editor(mirrors: MirrorList) -> TestHarness<'static, EditorState> {
+        let mut harness = TestHarness::builder().ui_state(
             |ui, state: &mut EditorState| {
                 state.changed |= show_mirror_list(ui, &mut state.mirrors);
             },
@@ -136,9 +137,8 @@ mod tests {
     fn after_clicking(mirrors: MirrorList, label: &str, position: usize) -> Vec<String> {
         let mut harness = editor(mirrors);
         harness
-            .get_all_by_label(label)
-            .nth(position)
-            .expect("the button")
+            .inner
+            .nth_matching(By::new().label(label), position)
             .click();
         harness.run();
         assert!(harness.state().changed, "the click changed the list");
@@ -146,8 +146,8 @@ mod tests {
     }
 
     /// The row of `url`, which is the field holding it.
-    fn row<'tree>(harness: &'tree Harness<'_, EditorState>, url: &'tree str) -> Node<'tree> {
-        harness.get_by(move |node| {
+    fn row<'tree>(harness: &'tree TestHarness<'_, EditorState>, url: &'tree str) -> Node<'tree> {
+        harness.inner.get_by(move |node| {
             node.role() == Role::TextInput && node.value().is_some_and(|value| value == url)
         })
     }
@@ -161,6 +161,7 @@ mod tests {
 
         assert_eq!(
             harness
+                .inner
                 .get_all_by(|node| node.role() == Role::TextInput)
                 .filter_map(|node| node.accesskit_node().value())
                 .collect::<Vec<_>>(),
@@ -213,7 +214,7 @@ mod tests {
     fn the_only_mirror_cannot_be_removed() {
         let mut harness = editor(mirrors(&["https://first.example"]));
 
-        let remove = harness.get_by_label(ICON_TRASH);
+        let remove = harness.inner.get_by_label(ICON_TRASH);
         assert!(remove.accesskit_node().is_disabled());
         remove.click();
         harness.run();

@@ -1,4 +1,5 @@
 use egui_kittest::kittest::Queryable as _;
+use gt_test_utils::{By, HarnessInteraction as _};
 use rstest::rstest;
 
 use super::*;
@@ -440,8 +441,7 @@ fn hovering_a_table_sets_the_sky_highlight(#[case] label: &str, #[case] expected
             let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
         });
     harness.run();
-    harness.inner.get_by_label(label).hover();
-    harness.inner.run_steps(2);
+    harness.inner.hover_and_settle(By::new().label(label), 2);
 
     let id = id_cell.get().expect("sticky content rendered");
     let highlight: Option<SkyHighlight> = harness.inner.ctx.data(|d| d.get_temp(id)).flatten();
@@ -461,8 +461,7 @@ fn hovering_a_prn_row_shows_the_affordance_band() {
             let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
         });
     harness.run();
-    harness.inner.get_by_label("G01").hover();
-    harness.inner.run_steps(2);
+    harness.inner.hover_and_settle(By::new().label("G01"), 2);
     harness.snapshot("sticky_prn_row_hovered");
 }
 

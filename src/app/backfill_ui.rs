@@ -364,8 +364,8 @@ impl<D: BackfillDataset> BackfillUi<D> {
 mod tests {
     use std::cell::RefCell;
 
-    use egui_kittest::Harness;
     use egui_kittest::kittest::{NodeT as _, Queryable as _};
+    use gt_test_utils::TestHarness;
     use rstest::rstest;
 
     use super::*;
@@ -476,7 +476,7 @@ mod tests {
     fn rendering_the_control_starts_nothing() {
         let mut state = TestBackfillUi::default();
         let actions = RefCell::new(Vec::new());
-        let mut harness = Harness::new_ui(|ui| {
+        let mut harness = TestHarness::builder().ui(|ui| {
             actions
                 .borrow_mut()
                 .extend(state.ui(ui, None, BackfillReadiness::Ready));
@@ -490,12 +490,15 @@ mod tests {
         let mut state = TestBackfillUi::default();
         let expected = state.range().expect("the default range is usable");
         let action = RefCell::new(None);
-        let mut harness = Harness::new_ui(|ui| {
+        let mut harness = TestHarness::builder().ui(|ui| {
             if let Some(emitted) = state.ui(ui, None, BackfillReadiness::Ready) {
                 *action.borrow_mut() = Some(emitted);
             }
         });
-        harness.get_by_label_contains("Download history").click();
+        harness
+            .inner
+            .get_by_label_contains("Download history")
+            .click();
         harness.run();
         assert_eq!(
             *action.borrow(),
@@ -509,12 +512,13 @@ mod tests {
     #[test]
     fn a_backwards_range_disables_the_button() {
         let mut state = state(date(2026, 7, 26), date(2026, 7, 20));
-        let mut harness = Harness::new_ui(|ui| {
+        let mut harness = TestHarness::builder().ui(|ui| {
             state.ui(ui, None, BackfillReadiness::Ready);
         });
         harness.run();
         assert!(
             harness
+                .inner
                 .get_by_label_contains("Download history")
                 .accesskit_node()
                 .is_disabled()
@@ -528,12 +532,13 @@ mod tests {
     #[case::offline(BackfillReadiness::Offline)]
     fn a_blocked_download_leaves_the_button_disabled(#[case] readiness: BackfillReadiness) {
         let mut state = TestBackfillUi::default();
-        let mut harness = Harness::new_ui(|ui| {
+        let mut harness = TestHarness::builder().ui(|ui| {
             state.ui(ui, None, readiness);
         });
         harness.run();
         assert!(
             harness
+                .inner
                 .get_by_label_contains("Download history")
                 .accesskit_node()
                 .is_disabled()
@@ -566,7 +571,7 @@ mod tests {
         let mut state = TestBackfillUi::default();
         let action = RefCell::new(None);
         let progress = BackfillProgress { done: 3, total: 10 };
-        let mut harness = Harness::new_ui(|ui| {
+        let mut harness = TestHarness::builder().ui(|ui| {
             if let Some(emitted) = state.ui(ui, Some(progress), BackfillReadiness::Ready) {
                 *action.borrow_mut() = Some(emitted);
             }
@@ -574,10 +579,11 @@ mod tests {
         harness.run();
         assert!(
             harness
+                .inner
                 .query_by_label_contains("Download history")
                 .is_none()
         );
-        harness.get_by_label_contains("Cancel").click();
+        harness.inner.get_by_label_contains("Cancel").click();
         harness.run();
         assert_eq!(*action.borrow(), Some(BackfillAction::Cancel));
     }
