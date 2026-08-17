@@ -44,6 +44,7 @@ use loader::{CompletedLoad, FinishedJob, LoadJobs, LoadOutcome};
 use panes::MainPane;
 use recording_name_template::TemplatePreviewRecording;
 use settings_autosave::{AppSnapshot, SettingsAutosaver};
+use settings_ui::SettingsPage;
 use snap_state::{PendingSnapRequest, SnapErrorDerived, SnapReplacePrompt, SnapScopePrompt};
 use strum::IntoEnumIterator;
 
@@ -232,6 +233,9 @@ pub struct App {
     config_path: Option<PathBuf>,
 
     settings_open: bool,
+    /// Category the settings window shows. Session state: the window opens on
+    /// [`SettingsPage::Processing`] every run.
+    settings_page: SettingsPage,
     about_open: bool,
     /// The running crate version. Fixed to a placeholder in tests so
     /// version-bearing UI snapshots stay stable across release bumps.
@@ -474,6 +478,7 @@ impl App {
             config: SettingsAutosaver::new(AppSnapshot::default()),
             config_path,
             settings_open: false,
+            settings_page: SettingsPage::default(),
             about_open: false,
             app_version,
             processing_config: SegmentationConfig::default(),

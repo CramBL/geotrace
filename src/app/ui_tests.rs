@@ -17,8 +17,10 @@ use gt_test_utils::{
     synthetic_gtd_bytes,
 };
 use gt_types::{FileIdx, LoadWarning, TrackIdx, TrackRef};
+use strum::IntoEnumIterator as _;
 
 use super::App;
+use super::settings_ui::{self, SettingsPage};
 
 /// In-memory [`egui::DroppedFile`] for drag-drop tests. `bytes` drops carry a
 /// relative path holding the display name, matching how web drops expose only
@@ -74,7 +76,6 @@ fn build_app(cc: &eframe::CreationContext<'_>, config_path: &std::path::Path, fa
 
 /// Fixes both download controls' date ranges, or a snapshot of the settings
 /// window would redate every day.
-#[cfg(feature = "self-update")]
 fn pin_backfill_ranges(app: &mut App) {
     let today = chrono::NaiveDate::from_ymd_opt(2026, 8, 2).unwrap_or_default();
     app.interference_backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(today);
@@ -2381,23 +2382,105 @@ fn snapshot_app_three_overlapping_files() {
     harness.snapshot_loose("app_three_overlapping_files");
 }
 
-// The settings window renders a `self-update`-only row ("Check for updates on
-// startup"), so its appearance depends on that feature. Gating the snapshot on
-// the feature means the reference image can only ever be generated and compared
-// in the same configuration CI uses (`just test` / `just test-snapshots` both
-// enable it). Without this, regenerating snapshots in a build that lacks the
-// feature would silently drop that row and break macOS CI. Any future
-// feature-dependent snapshot must be gated the same way.
-#[cfg(feature = "self-update")]
-#[test]
-fn snapshot_settings_window() {
-    let (mut harness, _config_path) = TestHarness::builder()
-        .size(egui::vec2(600.0, 400.0))
+impl SettingsPage {
+    /// The control this page renders last, which is the first to fall out of
+    /// the window when the page grows.
+    fn last_control_label(self) -> &'static str {
+        match self {
+            Self::Processing => "Restore defaults",
+            Self::Analysis => "Mark masked-out used satellites",
+            Self::AircraftInterference | Self::GeomagneticIndices => "Download history",
+            Self::IonosphericTec => "Add mirror",
+            Self::SnapToRoad => "GPS accuracy",
+            Self::Interface => "Recording name",
+            #[cfg(feature = "self-update")]
+            Self::Application => "Check for updates on startup",
+        }
+    }
+
+    #[cfg(feature = "self-update")]
+    fn snapshot_file_stem(self) -> &'static str {
+        match self {
+            Self::Processing => "settings_window_processing",
+            Self::Analysis => "settings_window_analysis",
+            Self::AircraftInterference => "settings_window_aircraft_interference",
+            Self::GeomagneticIndices => "settings_window_geomagnetic_indices",
+            Self::IonosphericTec => "settings_window_ionospheric_tec",
+            Self::SnapToRoad => "settings_window_snap_to_road",
+            Self::Interface => "settings_window_interface",
+            Self::Application => "settings_window_application",
+        }
+    }
+}
+
+/// Opens the settings window so every page renders the same way on every run:
+/// both download ranges are pinned and one snap option is set.
+fn harness_with_settings_window_open<'a>() -> (TestHarness<'a, App>, PathBuf) {
+    let (mut harness, config_path) = TestHarness::builder()
+        .size(egui::vec2(940.0, 720.0))
         .eframe(build_app);
     harness.inner.step();
+    // Search radius set (its drag value active), the other two unset (grayed,
+    // never hidden): the snap page shows both states of its optional rows.
+    harness.inner.state_mut().snap_settings.search_radius_m = Some(25.0);
     harness.inner.state_mut().settings_open = true;
-    harness.run();
-    harness.snapshot("settings_window");
+    pin_backfill_ranges(harness.inner.state_mut());
+    (harness, config_path)
+}
+
+// The settings window renders a `self-update`-only page ("Application"), so its
+// appearance depends on that feature. Gating the snapshot on the feature means
+// the reference image can only ever be generated and compared in the same
+// configuration CI uses (`just test` / `just test-snapshots` both enable it).
+// Without this, regenerating snapshots in a build that lacks the feature would
+// silently drop that page and break macOS CI. Any future feature-dependent
+// snapshot must be gated the same way.
+#[cfg(feature = "self-update")]
+#[test]
+fn snapshot_settings_pages() {
+    let (mut harness, _config_path) = harness_with_settings_window_open();
+    for page in SettingsPage::iter() {
+        harness.inner.state_mut().settings_page = page;
+        harness.run();
+        harness.snapshot(page.snapshot_file_stem());
+    }
+}
+
+/// The window opens at one size that holds every page at default content, and
+/// keeps that size as the page changes.
+#[test]
+fn settings_window_keeps_one_size_across_pages() {
+    let (mut harness, _config_path) = harness_with_settings_window_open();
+    let mut opened_size = None;
+    for page in SettingsPage::iter() {
+        harness.inner.state_mut().settings_page = page;
+        harness.run();
+
+        let window_rect = harness
+            .inner
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::new(settings_ui::WINDOW_ID)))
+            .expect("the settings window is open");
+        let last_control = harness
+            .inner
+            .get_by_label_contains(page.last_control_label())
+            .rect();
+        assert!(
+            last_control.max.y <= window_rect.max.y,
+            "{:?} overflows the window: {} ends at {}, the window at {}",
+            page,
+            page.last_control_label(),
+            last_control.max.y,
+            window_rect.max.y
+        );
+
+        let opened_size = *opened_size.get_or_insert(window_rect.size());
+        assert_eq!(
+            window_rect.size(),
+            opened_size,
+            "{page:?} resized the window"
+        );
+    }
 }
 
 /// Load one recording and give it the metadata the name template draws on.
@@ -2447,7 +2530,7 @@ fn stored_recording_entry(identity: &str, title: &str) -> gt_store::RecordingEnt
 fn name_template_guide_previews_the_loaded_recording() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .with_size(egui::vec2(760.0, 1100.0))
+        .with_size(egui::vec2(820.0, 620.0))
         .build_eframe(transient_app);
     harness.step();
     load_recording_with_metadata(&mut harness);
@@ -2459,6 +2542,7 @@ fn name_template_guide_previews_the_loaded_recording() {
             "Stored ride",
         )]);
     harness.state_mut().settings_open = true;
+    harness.state_mut().settings_page = SettingsPage::Interface;
     harness.run_steps(3);
     assert!(
         harness.query_by_label("title - device").is_none(),
@@ -2478,7 +2562,7 @@ fn name_template_guide_previews_the_loaded_recording() {
 fn name_template_guide_previews_a_history_recording() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .with_size(egui::vec2(760.0, 1100.0))
+        .with_size(egui::vec2(820.0, 620.0))
         .build_eframe(transient_app);
     harness.step();
     {
@@ -2494,6 +2578,7 @@ fn name_template_guide_previews_a_history_recording() {
             "{title} - {identity} - {filename}".to_owned();
     }
     harness.state_mut().settings_open = true;
+    harness.state_mut().settings_page = SettingsPage::Interface;
     harness.run_steps(3);
 
     harness.get_by_label_contains("Recording name").focus();
@@ -2507,11 +2592,12 @@ fn name_template_guide_previews_a_history_recording() {
 fn name_template_guide_previews_follow_the_typed_template() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .with_size(egui::vec2(760.0, 1100.0))
+        .with_size(egui::vec2(820.0, 620.0))
         .build_eframe(transient_app);
     harness.step();
     load_recording_with_metadata(&mut harness);
     harness.state_mut().settings_open = true;
+    harness.state_mut().settings_page = SettingsPage::Interface;
     harness.run_steps(3);
 
     let field = harness.get_by_label_contains("Recording name");
@@ -2533,10 +2619,11 @@ fn name_template_guide_previews_follow_the_typed_template() {
 fn name_template_guide_explains_a_missing_recording() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .with_size(egui::vec2(760.0, 1100.0))
+        .with_size(egui::vec2(820.0, 620.0))
         .build_eframe(transient_app);
     harness.step();
     harness.state_mut().settings_open = true;
+    harness.state_mut().settings_page = SettingsPage::Interface;
     harness.run_steps(3);
 
     harness.get_by_label_contains("Recording name").focus();
@@ -2554,7 +2641,7 @@ fn name_template_guide_explains_a_missing_recording() {
 #[test]
 fn snapshot_recording_name_template_guide() {
     let (mut harness, _config_path) = TestHarness::builder()
-        .size(egui::vec2(760.0, 1100.0))
+        .size(egui::vec2(820.0, 620.0))
         .eframe(build_app);
     harness.inner.step();
     harness
@@ -2572,7 +2659,7 @@ fn snapshot_recording_name_template_guide() {
         .borrow_mut()
         .recording_name_template = "{title} - {device}".to_owned();
     harness.inner.state_mut().settings_open = true;
-    pin_backfill_ranges(harness.inner.state_mut());
+    harness.inner.state_mut().settings_page = SettingsPage::Interface;
     harness.inner.run_steps(3);
     harness
         .inner
@@ -2731,27 +2818,6 @@ fn snapshot_load_warnings_dialog() {
     ));
     harness.run();
     harness.snapshot("load_warnings_dialog");
-}
-
-/// The standard settings-window snapshot is 400 px tall and clips after the
-/// Analysis section. This taller one captures the Display and Snap to road
-/// sections below it. Feature-gated like `snapshot_settings_window`: the
-/// update checkbox renders within this window height, so the baseline must be
-/// generated under the same feature set CI tests with.
-#[cfg(feature = "self-update")]
-#[test]
-fn snapshot_settings_window_snap_section() {
-    let (mut harness, _config_path) = TestHarness::builder()
-        .size(egui::vec2(700.0, 1100.0))
-        .eframe(build_app);
-    harness.inner.step();
-    // Search radius set (its drag value active), the other two unset
-    // (grayed, never hidden) - both states of the optional rows visible.
-    harness.inner.state_mut().snap_settings.search_radius_m = Some(25.0);
-    harness.inner.state_mut().settings_open = true;
-    pin_backfill_ranges(harness.inner.state_mut());
-    harness.run();
-    harness.snapshot("settings_window_snap_section");
 }
 
 #[test]

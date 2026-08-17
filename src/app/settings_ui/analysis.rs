@@ -3,21 +3,15 @@
 use egui::{DragValue, Grid};
 use egui_phosphor::regular::CLOCK as ICON_CLOCK;
 use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
-use egui_phosphor::regular::GAUGE as ICON_GAUGE;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use egui_phosphor::regular::WAVE_SINE as ICON_WAVE_SINE;
 
 use crate::app::App;
+use crate::app::settings_ui::SettingsPage;
 
 impl App {
     pub(super) fn show_analysis_page(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(12.0);
-        ui.separator();
-        ui.horizontal(|ui| {
-            ui.label(ICON_GAUGE);
-            ui.strong("Analysis");
-        });
-        ui.separator();
+        SettingsPage::Analysis.show_header(ui);
         Grid::new("analysis_grid")
             .num_columns(2)
             .spacing([8.0, 6.0])
