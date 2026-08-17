@@ -297,7 +297,7 @@ fn the_offline_source_refuses_every_request() {
 
     let err =
         Transport::<String>::send(&transport, &request).expect_err("offline transport refuses");
-    assert!(err.detail.contains(gt_types::env::OFFLINE_DETAIL));
+    assert!(err.detail.contains(gt_fetch::OFFLINE_DETAIL));
 }
 
 /// Every chunk of an offline run fails. No request is sent, so nothing is

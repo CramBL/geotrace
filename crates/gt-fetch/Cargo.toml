@@ -10,7 +10,6 @@ authors.workspace = true
 doctest = false
 
 [dependencies]
-gt-types = { path = "../gt-types" }
 parking_lot.workspace = true
 reqwest.workspace = true
 thiserror.workspace = true

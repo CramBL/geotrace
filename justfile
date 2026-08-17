@@ -48,18 +48,18 @@ clippy:
 
 [group("native")]
 test *ARGS:
-    GEOTRACE_OFFLINE=1 cargo nextest run --workspace --features geotrace/self-update {{ ARGS }}
+    cargo nextest run --workspace --features geotrace/self-update {{ ARGS }}
 
 [group("native")]
 test-all-backends:
     @echo "Running tests for pure backend"
-    GEOTRACE_OFFLINE=1 cargo nextest run -p gt-history --test integration --no-default-features --features backend-pure
+    cargo nextest run -p gt-history --test integration --no-default-features --features backend-pure
     @echo "Running tests for sys backend"
-    GEOTRACE_OFFLINE=1 cargo nextest run -p gt-history --test integration --no-default-features --features backend-sys
+    cargo nextest run -p gt-history --test integration --no-default-features --features backend-sys
 
 [group("native")]
 test-snapshots *ARGS:
-    GEOTRACE_OFFLINE=1 cargo nextest run --workspace --features geotrace/self-update -E "test(snapshot)" {{ ARGS }}
+    cargo nextest run --workspace --features geotrace/self-update -E "test(snapshot)" {{ ARGS }}
 
 [group("native")]
 examples:

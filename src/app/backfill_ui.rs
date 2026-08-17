@@ -161,7 +161,7 @@ pub enum BackfillReadiness {
     Ready,
     /// There is nowhere to download to: the archive could not be opened.
     WithoutArchive,
-    /// No request may leave the machine: `GEOTRACE_OFFLINE` is set.
+    /// No request may leave the machine: GeoTrace runs offline.
     Offline,
 }
 
@@ -353,9 +353,7 @@ impl<D: BackfillDataset> BackfillUi<D> {
                 "There is nowhere to download to: the {} could not be opened",
                 D::ARCHIVE_NAME
             ),
-            BackfillReadiness::Offline => {
-                "Downloading is disabled while GEOTRACE_OFFLINE is set".to_owned()
-            }
+            BackfillReadiness::Offline => "Downloading is disabled in offline mode".to_owned(),
         }
     }
 }
@@ -554,10 +552,7 @@ mod tests {
         BackfillReadiness::WithoutArchive,
         "There is nowhere to download to: the interference archive could not be opened"
     )]
-    #[case::offline(
-        BackfillReadiness::Offline,
-        "Downloading is disabled while GEOTRACE_OFFLINE is set"
-    )]
+    #[case::offline(BackfillReadiness::Offline, "Downloading is disabled in offline mode")]
     fn the_disabled_hover_names_what_blocks_the_download(
         #[case] readiness: BackfillReadiness,
         #[case] expected: &str,

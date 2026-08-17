@@ -18,6 +18,7 @@
 - Loading a recording downloads JPL's global ionosphere maps for the days it spans into a local archive, so the ionospheric delay it was recorded under is on hand. The host serving them is in Settings under "Ionospheric TEC", and nothing is downloaded in offline mode.
 - Settings' "Ionospheric TEC" section takes an ordered list of mirrors instead of a single host, tried in turn until one has the day's map file.
   A day no mirror could serve names each of them and the status it returned.
+- The `--offline` flag runs GeoTrace without network access: no map tiles, downloads, snapping, or update check. It replaces the undocumented `GEOTRACE_OFFLINE` environment variable, which is no longer read.
 
 ### Fixed
 

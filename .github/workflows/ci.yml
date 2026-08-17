@@ -144,8 +144,6 @@ jobs:
 
       - name: Tests
         run: cargo nextest run --workspace --features geotrace/self-update --profile ci
-        env:
-          GEOTRACE_OFFLINE: 1
 
       # Linux and macOS both compare snapshots (Windows CI skips comparison,
       # see gt-test-utils::snapshot_harness), so upload diffs from both.
@@ -193,15 +191,11 @@ jobs:
       - name: Tests (pure backend)
         shell: bash
         run: cargo nextest run -p gt-history --test integration --no-default-features --features backend-pure --profile ci
-        env:
-          GEOTRACE_OFFLINE: 1
 
       - name: Tests (sys backend)
         if: ${{ !cancelled() }}
         shell: bash
         run: cargo nextest run -p gt-history --test integration --no-default-features --features backend-sys --profile ci
-        env:
-          GEOTRACE_OFFLINE: 1
 
   examples:
     name: examples / ${{ matrix.os }}

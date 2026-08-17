@@ -12,6 +12,10 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// default: the surface/depth textures must cover 4k+ displays.
 const MIN_TEXTURE_DIMENSION_2D: u32 = 8192;
 
+/// Under this flag GeoTrace sends no request: no map tiles, no downloads, no
+/// snapping, no update check.
+const OFFLINE_FLAG: &str = "--offline";
+
 /// Extra `--help` line for the `--update` flag, present only in dist builds
 /// that carry the updater. Empty otherwise so the flag is never advertised by a
 /// build that cannot honor it.
@@ -34,7 +38,11 @@ enum CliAction {
     /// without the updater can report it clearly. Only dist builds honor it.
     SelfUpdate,
     /// Launch the GUI, opening the given files on startup.
-    Launch(Vec<PathBuf>),
+    Launch {
+        paths: Vec<PathBuf>,
+        /// [`OFFLINE_FLAG`] was given.
+        offline: bool,
+    },
 }
 
 impl CliAction {
@@ -47,7 +55,14 @@ impl CliAction {
         } else if has(&["--update"]) {
             Self::SelfUpdate
         } else {
-            Self::Launch(args.iter().map(PathBuf::from).collect())
+            Self::Launch {
+                paths: args
+                    .iter()
+                    .filter(|arg| arg.as_str() != OFFLINE_FLAG)
+                    .map(PathBuf::from)
+                    .collect(),
+                offline: has(&[OFFLINE_FLAG]),
+            }
         }
     }
 }
@@ -83,7 +98,7 @@ fn main() -> ExitCode {
     // binary launches without the GUI. On Windows the release build has no
     // attached console, so the clean exit code is the cross-platform signal and
     // the printed version is checked on Unix.
-    let initial_paths: Vec<PathBuf> = match CliAction::parse(&raw_args) {
+    let (initial_paths, offline) = match CliAction::parse(&raw_args) {
         CliAction::Version => {
             println!("geotrace {}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;
@@ -91,19 +106,21 @@ fn main() -> ExitCode {
         CliAction::Help => {
             println!(
                 "GeoTrace {} - GNSS navigation data visualizer\n\n\
-                 Usage: geotrace [FILES]...\n\n\
+                 Usage: geotrace [OPTIONS] [FILES]...\n\n\
                  Arguments:\n  \
                  [FILES]...  .gtd recordings or .log files to open on startup\n\n\
                  Options:\n  \
                  -V, --version  Print version and exit\n  \
-                 -h, --help     Print help and exit{}",
+                 -h, --help     Print help and exit\n      \
+                 --offline  Run without network access: no map tiles, downloads, \
+                 snapping, or update check{}",
                 env!("CARGO_PKG_VERSION"),
                 SELF_UPDATE_HELP,
             );
             return ExitCode::SUCCESS;
         }
         CliAction::SelfUpdate => return run_self_update_cli(),
-        CliAction::Launch(paths) => paths,
+        CliAction::Launch { paths, offline } => (paths, offline),
     };
 
     // Dependencies whose debug logging floods the output with per-frame or
@@ -187,7 +204,7 @@ fn main() -> ExitCode {
                 &initial_paths,
                 app::StartupOptions {
                     fading_enabled: true,
-                    offline: gt_types::env::offline(),
+                    offline,
                     storage: app::Storage::DataDirectory,
                     app_version: env!("CARGO_PKG_VERSION"),
                 },
@@ -233,7 +250,13 @@ mod tests {
 
     #[test]
     fn no_args_launches_with_no_files() {
-        assert_eq!(CliAction::parse(&[]), CliAction::Launch(vec![]));
+        assert_eq!(
+            CliAction::parse(&[]),
+            CliAction::Launch {
+                paths: vec![],
+                offline: false
+            }
+        );
     }
 
     #[test]
@@ -241,7 +264,22 @@ mod tests {
         let args = vec!["a.gtd".to_owned(), "b.log".to_owned()];
         assert_eq!(
             CliAction::parse(&args),
-            CliAction::Launch(vec![PathBuf::from("a.gtd"), PathBuf::from("b.log")])
+            CliAction::Launch {
+                paths: vec![PathBuf::from("a.gtd"), PathBuf::from("b.log")],
+                offline: false
+            }
+        );
+    }
+
+    #[test]
+    fn the_offline_flag_launches_offline_without_becoming_a_file() {
+        let args = vec!["--offline".to_owned(), "a.gtd".to_owned()];
+        assert_eq!(
+            CliAction::parse(&args),
+            CliAction::Launch {
+                paths: vec![PathBuf::from("a.gtd")],
+                offline: true
+            }
         );
     }
 

@@ -45,7 +45,7 @@ pub struct RecordingDetails {
 /// settings into plain data, the panel only renders it.
 #[derive(Clone, Copy)]
 pub struct SnapPanelView<'a> {
-    /// `GEOTRACE_OFFLINE` is set: every snap trigger is grayed out.
+    /// GeoTrace runs offline: every snap trigger is grayed out.
     pub offline: bool,
     /// Upload consent has not been acknowledged for the configured server, so
     /// the trigger carries the `…` suffix - a click opens the consent dialog.
@@ -686,8 +686,8 @@ const HIDDEN_GLYPH_ALPHA: f32 = 0.5;
 /// track's, or a scope of a recording's.
 const SNAP_AGAIN_AS_LABEL: &str = "Snap again as";
 
-/// Hover text of every snap control grayed out by `GEOTRACE_OFFLINE`.
-const OFFLINE_HOVER: &str = "Snapping is disabled while GEOTRACE_OFFLINE is set";
+/// Hover text of every snap control grayed out by offline mode.
+const OFFLINE_HOVER: &str = "Snapping is disabled in offline mode";
 
 /// Hover text of the snap control of a track with no fix worth sending.
 const NOTHING_TO_SEND_HOVER: &str =
@@ -1878,8 +1878,8 @@ mod snap_action_tests {
     #[rstest]
     #[case(unsnappable(), "Boat")]
     #[case(SnapRowView::NothingToSend, "no run of real fixes")]
-    #[case(SnapRowView::Idle, "GEOTRACE_OFFLINE")]
-    #[case(failed(), "GEOTRACE_OFFLINE")]
+    #[case(SnapRowView::Idle, "offline mode")]
+    #[case(failed(), "offline mode")]
     fn offline_hover_names_the_blocking_condition(
         #[case] row: SnapRowView,
         #[case] expected_substring: &str,

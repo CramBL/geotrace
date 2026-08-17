@@ -114,14 +114,17 @@ pub trait Transport<B = String> {
     fn send(&self, request: &HttpRequest) -> Result<HttpResponse<B>, TransportError>;
 }
 
-/// Fails every request with [`gt_types::env::OFFLINE_DETAIL`].
+/// Why a request failed while offline, in logs and in the UI.
+pub const OFFLINE_DETAIL: &str = "GeoTrace is running offline";
+
+/// Fails every request with [`OFFLINE_DETAIL`].
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OfflineTransport;
 
 impl<B> Transport<B> for OfflineTransport {
     fn send(&self, _request: &HttpRequest) -> Result<HttpResponse<B>, TransportError> {
         Err(TransportError {
-            detail: gt_types::env::OFFLINE_DETAIL.to_owned(),
+            detail: OFFLINE_DETAIL.to_owned(),
         })
     }
 }
@@ -466,7 +469,7 @@ mod tests {
             &HttpRequest::get("https://example.invalid/dataset"),
         )
         .expect_err("offline transport refuses");
-        assert!(err.detail.contains(gt_types::env::OFFLINE_DETAIL));
+        assert!(err.detail.contains(OFFLINE_DETAIL));
     }
 
     #[test]
@@ -479,7 +482,7 @@ mod tests {
             &HttpRequest::get("https://example.invalid/file.gz"),
         )
         .expect_err("offline transport refuses");
-        assert!(err.detail.contains(gt_types::env::OFFLINE_DETAIL));
+        assert!(err.detail.contains(OFFLINE_DETAIL));
     }
 
     /// Replays one scripted bytes response.

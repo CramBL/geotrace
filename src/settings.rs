@@ -252,8 +252,8 @@ impl Default for AnalysisSettings {
 #[serde(default)]
 pub struct UpdateSettings {
     /// When `true`, GeoTrace checks for a newer release on startup and prompts
-    /// the user. The check is also skipped in debug builds and when
-    /// `GEOTRACE_OFFLINE` is set.
+    /// the user. The check is also skipped in debug builds and when GeoTrace
+    /// runs offline.
     pub check_on_startup: bool,
     /// A specific version the user chose to skip. The prompt stays hidden for
     /// exactly this version. Cleared automatically once a newer version appears.

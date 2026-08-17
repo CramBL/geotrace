@@ -2977,8 +2977,8 @@ fn auto_without_consent_prompts_before_anything_is_sent() {
     );
 }
 
-/// `GEOTRACE_OFFLINE` (set by `just test`) pauses auto mode: the sweep
-/// enqueues nothing even with auto active and an unsnapped track loaded.
+/// Offline pauses auto mode: the sweep enqueues nothing even with auto
+/// active and an unsnapped track loaded.
 #[test]
 fn auto_sweep_is_paused_offline() {
     let mut harness = Harness::builder()
@@ -3129,8 +3129,8 @@ fn snap_row_views_marks_declared_roadless_modes_unsnappable() {
 
 /// The full consent round trip for a snap trigger: the request parks on
 /// `pending_snap` and raises the dialog, agreeing takes it (the run is
-/// queued - a no-op under the test suite's GEOTRACE_OFFLINE, so only the
-/// take is observable), declining drops it.
+/// queued - a no-op in the offline test app, so only the take is
+/// observable), declining drops it.
 #[test]
 fn snap_request_parks_on_consent_and_agree_takes_it() {
     let mut harness = Harness::builder()
