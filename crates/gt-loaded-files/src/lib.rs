@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::ops::{Deref, Index, IndexMut};
 
 use gt_history_types::{DatabaseRef, RecordingMeta};
-use gt_types::{FileIdx, LoadedFile};
+use gt_types::{FileIdx, LoadedFile, LoadedTrack, NavPoint};
 
 mod recording_names;
 
@@ -24,6 +24,16 @@ pub fn display_identity(identity: &str) -> (&str, bool) {
         None => (identity, false),
     }
 }
+
+/// Session-unique identity of a loaded file.
+///
+/// Unlike [`FileIdx`], which is a position and shifts when an earlier file is
+/// removed, an id names the same file for as long as it stays loaded and is
+/// never handed out twice. State that must not silently follow a shifted index
+/// onto a different recording - a log's association target above all - keys off
+/// this instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct LoadedFileId(u64);
 
 /// App/session-side history metadata for one loaded file.
 ///
@@ -110,6 +120,7 @@ pub struct LoadedFilesView<'a> {
 /// One loaded file paired with its app/session sidecar metadata.
 #[derive(Debug, Clone, Copy)]
 pub struct LoadedFileEntry<'a> {
+    id: LoadedFileId,
     file: &'a LoadedFile,
     history: &'a FileHistory,
 }
@@ -128,21 +139,28 @@ impl<'a> LoadedFilesView<'a> {
     }
 
     pub fn get(&self, index: usize) -> Option<LoadedFileEntry<'a>> {
+        let id = *self.loaded_files.ids.get(index)?;
         let file = self.loaded_files.files.get(index)?;
         let history = self.loaded_files.history.get(index)?;
-        Some(LoadedFileEntry { file, history })
+        Some(LoadedFileEntry { id, file, history })
     }
 
     pub fn entry_for(&self, file: FileIdx) -> Option<LoadedFileEntry<'a>> {
         self.get(file.as_usize())
     }
 
+    /// The file `id` names, or `None` once it has been unloaded.
+    pub fn entry_for_id(&self, id: LoadedFileId) -> Option<LoadedFileEntry<'a>> {
+        self.entries().find(|entry| entry.id() == id)
+    }
+
     pub fn entries(&self) -> impl ExactSizeIterator<Item = LoadedFileEntry<'a>> + 'a {
         self.loaded_files
-            .files
+            .ids
             .iter()
+            .zip(&self.loaded_files.files)
             .zip(&self.loaded_files.history)
-            .map(|(file, history)| LoadedFileEntry { file, history })
+            .map(|((&id, file), history)| LoadedFileEntry { id, file, history })
     }
 
     pub fn file_stored_in_history(&self, file: FileIdx) -> bool {
@@ -158,6 +176,10 @@ impl<'a> LoadedFilesView<'a> {
 }
 
 impl<'a> LoadedFileEntry<'a> {
+    pub fn id(&self) -> LoadedFileId {
+        self.id
+    }
+
     pub fn file(&self) -> &'a LoadedFile {
         self.file
     }
@@ -178,6 +200,41 @@ impl<'a> LoadedFileEntry<'a> {
     pub fn is_stored_in_history(&self) -> bool {
         self.history.is_stored()
     }
+
+    /// Every fix of the file, its tracks concatenated in track order and
+    /// borrowed whenever the file holds a single track.
+    ///
+    /// Segmentation cuts one time-ordered stream of fixes into tracks, so the
+    /// concatenation is time-ordered too - which is what lets callers binary
+    /// search it.
+    pub fn nav_points(&self) -> Cow<'a, [NavPoint]> {
+        debug_assert!(
+            tracks_are_time_ordered(&self.file.tracks),
+            "the tracks of {:?} are not in ascending time order",
+            self.file.metadata.filename
+        );
+        match self.file.tracks.as_slice() {
+            [] => Cow::Borrowed(&[]),
+            [only] => Cow::Borrowed(&only.points),
+            tracks => Cow::Owned(
+                tracks
+                    .iter()
+                    .flat_map(|track| track.points.iter().cloned())
+                    .collect(),
+            ),
+        }
+    }
+}
+
+/// Whether no track of `tracks` starts before the one before it ended.
+fn tracks_are_time_ordered(tracks: &[LoadedTrack]) -> bool {
+    tracks.windows(2).all(|pair| match pair {
+        [before, after] => match (before.points.last(), after.points.first()) {
+            (Some(before), Some(after)) => before.tpv.time() <= after.tpv.time(),
+            (None, _) | (_, None) => true,
+        },
+        _ => true,
+    })
 }
 
 /// Loaded files plus app/session metadata that must remain index-aligned.
@@ -189,6 +246,8 @@ impl<'a> LoadedFileEntry<'a> {
 pub struct LoadedFiles {
     files: Vec<LoadedFile>,
     history: Vec<FileHistory>,
+    ids: Vec<LoadedFileId>,
+    next_id: u64,
 }
 
 impl LoadedFiles {
@@ -210,6 +269,7 @@ impl LoadedFiles {
 
     pub fn view(&self) -> LoadedFilesView<'_> {
         debug_assert_eq!(self.files.len(), self.history.len());
+        debug_assert_eq!(self.files.len(), self.ids.len());
         LoadedFilesView { loaded_files: self }
     }
 
@@ -236,7 +296,10 @@ impl LoadedFiles {
     pub fn push(&mut self, file: LoadedFile, history: FileHistory) {
         self.files.push(file);
         self.history.push(history);
+        self.ids.push(LoadedFileId(self.next_id));
+        self.next_id = self.next_id.saturating_add(1);
         debug_assert_eq!(self.files.len(), self.history.len());
+        debug_assert_eq!(self.files.len(), self.ids.len());
     }
 
     /// Re-point loaded recordings after their history identity was renamed from
@@ -264,7 +327,9 @@ impl LoadedFiles {
         }
         let file = self.files.remove(index);
         let history = self.history.remove(index);
+        self.ids.remove(index);
         debug_assert_eq!(self.files.len(), self.history.len());
+        debug_assert_eq!(self.files.len(), self.ids.len());
         Some((file, history))
     }
 }
@@ -319,6 +384,8 @@ impl<'a> IntoIterator for &'a mut LoadedFiles {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::{DatabaseRef, FileHistory, LoadedFiles, RecordingMeta, display_identity};
     use gt_types::LoadedFile;
 
@@ -359,6 +426,66 @@ mod tests {
             source: gt_types::FileSource::GtdPath(std::path::PathBuf::new()),
             load_warnings: Vec::new(),
         }
+    }
+
+    /// An id must name the same file for as long as it stays loaded, and must
+    /// never be handed out again once its file is unloaded: a log's association
+    /// target is keyed by it, while [`gt_types::FileIdx`] shifts on a removal.
+    #[test]
+    fn a_file_keeps_its_id_when_an_earlier_file_is_removed() {
+        let mut files = LoadedFiles::new();
+        files.push(empty_file(), FileHistory::None);
+        files.push(empty_file(), FileHistory::None);
+        let second = files.view().get(1).map(|entry| entry.id());
+
+        files.remove_file(0);
+        files.push(empty_file(), FileHistory::None);
+
+        assert_eq!(files.view().get(0).map(|entry| entry.id()), second);
+        assert_ne!(
+            files.view().get(1).map(|entry| entry.id()),
+            second,
+            "the id of a removed file is never handed out again"
+        );
+    }
+
+    /// A recording's fixes are read as one time-ordered slice, whatever number
+    /// of tracks segmentation cut them into.
+    #[rstest]
+    #[case::without_tracks(&[], &[])]
+    #[case::one_track(&[(0, 2)], &[0, 1])]
+    #[case::several_tracks(&[(0, 2), (10, 3)], &[0, 1, 10, 11, 12])]
+    fn nav_points_join_a_files_tracks_in_time_order(
+        #[case] tracks: &[(i64, usize)],
+        #[case] expected_seconds: &[i64],
+    ) {
+        let mut file = empty_file();
+        file.tracks = tracks
+            .iter()
+            .map(|(first_second, count)| {
+                gt_test_utils::loaded_track_with_points(gt_test_utils::nav_points_from(
+                    chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(*first_second),
+                    *count,
+                    1,
+                ))
+            })
+            .collect();
+        let mut files = LoadedFiles::new();
+        files.push(file, FileHistory::None);
+
+        let joined = files
+            .view()
+            .get(0)
+            .map(|entry| entry.nav_points().into_owned())
+            .expect("the fixture file is loaded");
+
+        assert_eq!(
+            joined
+                .iter()
+                .map(|point| point.tpv.time().utc().timestamp())
+                .collect::<Vec<_>>(),
+            expected_seconds
+        );
     }
 
     #[test]

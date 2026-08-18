@@ -1,17 +1,15 @@
 //! Detecting a log's format from its head, indexing every line against its
 //! text, and reading the structure the exporter wrote around those lines.
 
-use std::{
-    num::NonZeroUsize,
-    sync::{Arc, OnceLock},
-    thread,
-};
+use std::{num::NonZeroUsize, sync::Arc};
 
 use chrono::{DateTime, Utc};
-use rayon::{ThreadPool, ThreadPoolBuilder, prelude::*};
+use gt_types::TimeRange;
+use rayon::prelude::*;
 
 use crate::{
     format::{self, LogFormat},
+    pool,
     session::{self, BootSession, OrderAnomaly},
     structure::{StructuralExtent, StructuralLine, StructuralLineKind},
     summary::{self, EntryCountMismatch, SummaryBlock},
@@ -32,12 +30,6 @@ const CHUNK_TARGET_BYTES: NonZeroUsize = match NonZeroUsize::new(16 * 1024 * 102
     Some(bytes) => bytes,
     None => NonZeroUsize::MIN,
 };
-
-/// The share of the machine's cores the parse pool may occupy. Indexing a log
-/// is a background job behind a desktop the user is still working in, and a log
-/// is large enough to saturate every core for long enough to be felt: measured
-/// on an 80 MiB journal, half the cores index it as fast as all of them.
-const CORES_PER_PARSE_WORKER: usize = 2;
 
 /// A byte range of a [`ParsedLog`]'s text, read with [`TextSlice::in_text`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,6 +169,28 @@ impl ParsedLog {
 
     pub fn message(&self, entry: &LogEntry) -> &str {
         entry.message.in_text(&self.text)
+    }
+
+    /// The earliest to the latest entry timestamp, interpolated ones included.
+    /// `None` for a log without entries.
+    ///
+    /// A reboot steps the device clock, so the last entry in file order is not
+    /// always the latest one.
+    pub fn time_range(&self) -> Option<TimeRange> {
+        let mut timestamps = self.entries.iter().map(|entry| entry.timestamp);
+        let first = timestamps.next()?;
+        let (start, end) = timestamps.fold((first, first), |(start, end), timestamp| {
+            (start.min(timestamp), end.max(timestamp))
+        });
+        Some(TimeRange::new(start, end))
+    }
+
+    /// The timestamp of the first entry that carried one of its own.
+    pub fn first_anchored_timestamp(&self) -> Option<DateTime<Utc>> {
+        self.entries
+            .iter()
+            .find(|entry| entry.is_anchored())
+            .map(|entry| entry.timestamp)
     }
 }
 
@@ -440,35 +454,8 @@ impl LineIndex {
     }
 }
 
-/// The pool a log longer than [`CHUNK_TARGET_BYTES`] is indexed on, holding
-/// one worker per [`CORES_PER_PARSE_WORKER`] cores.
-///
-/// A pool dedicated to log parsing. gt-plot renders frames on rayon's global
-/// pool, and a parse sharing it would stall frame rendering.
-fn parse_pool() -> Option<&'static ThreadPool> {
-    static PARSE_POOL: OnceLock<Option<ThreadPool>> = OnceLock::new();
-
-    PARSE_POOL
-        .get_or_init(|| {
-            let cores = thread::available_parallelism().map_or(1, NonZeroUsize::get);
-            let workers = (cores / CORES_PER_PARSE_WORKER).max(1);
-            match ThreadPoolBuilder::new()
-                .num_threads(workers)
-                .thread_name(|index| format!("gt-logfile-parse-{index}"))
-                .build()
-            {
-                Ok(pool) => Some(pool),
-                Err(err) => {
-                    log::warn!("Indexing logs on the calling thread only: {err:#}");
-                    None
-                }
-            }
-        })
-        .as_ref()
-}
-
 /// Indexes every line of `text`, spreading a log longer than
-/// `chunk_target_bytes` over [`parse_pool`].
+/// `chunk_target_bytes` over [`pool::log_worker_pool`].
 ///
 /// The index comes out in file order and needs no sort to put it there: chunks
 /// concatenate in the order they appear in the log.
@@ -482,7 +469,7 @@ fn index_lines_in_file_order(
     match chunks.as_slice() {
         [] => LineIndex::default(),
         [only] => only.parse(format, now),
-        many => match parse_pool() {
+        many => match pool::log_worker_pool() {
             Some(pool) => pool.install(|| {
                 let per_chunk: Vec<LineIndex> = many
                     .par_iter()
@@ -635,6 +622,40 @@ mod tests {
 
     fn chunk_bytes(bytes: usize) -> NonZeroUsize {
         NonZeroUsize::new(bytes).expect("positive chunk size")
+    }
+
+    /// The clock steps back over the reboot, so the log's span ends at an
+    /// entry the file wrote before its last one.
+    #[test]
+    fn the_time_range_spans_the_earliest_and_latest_entry_across_a_reboot() {
+        let parsed = parse(&format!(
+            "2026-05-23 10:00:00 first\n2026-05-23 12:00:00 last\n{REBOOT}2026-05-23 11:00:00 after the reboot\n"
+        ));
+        assert_eq!(
+            parsed.time_range(),
+            Some(TimeRange::new(
+                utc(2026, 5, 23, 10, 0, 0),
+                utc(2026, 5, 23, 12, 0, 0)
+            ))
+        );
+    }
+
+    /// A run of untimestamped lines opening a log is timestamped from the
+    /// first anchor after it, which is the anchor a pasted log is named after.
+    #[test]
+    fn the_first_anchored_timestamp_skips_the_interpolated_entries_before_it() {
+        let parsed = parse("2026-05-23 10:00:00 first\nStack trace follows:\n");
+        assert_eq!(
+            parsed.first_anchored_timestamp(),
+            Some(utc(2026, 5, 23, 10, 0, 0))
+        );
+
+        let leading_run = parse("Stack trace follows:\n2026-05-23 10:00:00 first\n");
+        assert_eq!(
+            leading_run.first_anchored_timestamp(),
+            Some(utc(2026, 5, 23, 10, 0, 0)),
+            "the interpolated entry before the anchor carries its timestamp, but does not anchor it"
+        );
     }
 
     #[test]
@@ -1040,17 +1061,6 @@ mod tests {
             LogParseError::NoRecognisedFormat {
                 first_line: "kernel output".to_owned(),
             }
-        );
-    }
-
-    #[test]
-    fn the_parse_pool_leaves_at_least_half_the_cores_to_the_rest_of_the_machine() {
-        let cores = thread::available_parallelism().map_or(1, NonZeroUsize::get);
-        let pool = parse_pool().expect("the pool builds");
-        assert_eq!(
-            pool.current_num_threads(),
-            (cores / CORES_PER_PARSE_WORKER).max(1),
-            "on {cores} cores"
         );
     }
 

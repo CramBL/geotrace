@@ -46,6 +46,7 @@ members = [
     "crates/gt-jam-store",
     "crates/gt-loaded-files",
     "crates/gt-loader",
+    "crates/gt-log-view",
     "crates/gt-logfile",
     "crates/gt-map",
     "crates/gt-plot",
@@ -295,6 +296,7 @@ gt-ionex = { path = "crates/gt-ionex" }
 gt-jam = { path = "crates/gt-jam" }
 gt-loaded-files = { path = "crates/gt-loaded-files" }
 gt-loader = { path = "crates/gt-loader" }
+gt-log-view = { path = "crates/gt-log-view" }
 gt-logfile = { path = "crates/gt-logfile" }
 gt-map = { path = "crates/gt-map" }
 gt-plot = { path = "crates/gt-plot" }

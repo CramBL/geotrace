@@ -3,6 +3,13 @@
 
 use chrono::{DateTime, Duration, Utc};
 use gt_types::{Latitude, Longitude, NavPoint};
+use rayon::prelude::*;
+
+use crate::{parse::LogEntry, pool};
+
+/// Entries below which associating a whole log on the calling thread beats
+/// handing it to [`pool::log_worker_pool`].
+const PARALLEL_ASSOCIATION_MIN_ENTRIES: usize = 16 * 1024;
 
 /// The recorded position at `time`, or `None` when no fix of `nav_points` lies
 /// within `window` of it.
@@ -51,6 +58,25 @@ pub fn associate_position(
     }
 }
 
+/// The position of every entry of `entries` against `nav_points`, in entry
+/// order, `None` for an entry no fix lies within `window` of.
+///
+/// `nav_points` are those of the log's association target alone: a log is never
+/// associated against the fixes of several recordings at once.
+pub fn associate_entries(
+    entries: &[LogEntry],
+    nav_points: &[NavPoint],
+    window: Duration,
+) -> Vec<Option<(Latitude, Longitude)>> {
+    let position_of = |entry: &LogEntry| associate_position(entry.timestamp, nav_points, window);
+    match pool::log_worker_pool() {
+        Some(pool) if entries.len() >= PARALLEL_ASSOCIATION_MIN_ENTRIES => {
+            pool.install(|| entries.par_iter().map(position_of).collect())
+        }
+        Some(_) | None => entries.iter().map(position_of).collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::TimeZone as _;
@@ -58,6 +84,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    use crate::{TextSlice, TimestampKind};
 
     /// The window every test runs with, matching the app's default.
     fn window() -> Duration {
@@ -102,6 +129,36 @@ mod tests {
         assert_eq!(
             associate_position(time, &points, window()).is_some(),
             associates
+        );
+    }
+
+    /// The pool splits a log this long across workers: what it returns must be
+    /// what one thread walking the entries in order returns.
+    #[test]
+    fn a_log_long_enough_for_the_pool_associates_as_one_thread_does() {
+        let entry_count = PARALLEL_ASSOCIATION_MIN_ENTRIES + 1;
+        let points = nav_points_from(start(), 1 + entry_count / 1000, 1);
+        let entries: Vec<LogEntry> = (0..entry_count)
+            .map(|index| LogEntry {
+                timestamp: start() + Duration::milliseconds(index as i64),
+                timestamp_kind: TimestampKind::Anchored,
+                line_number: 1,
+                message: TextSlice { offset: 0, len: 0 },
+            })
+            .collect();
+
+        let associated = associate_entries(&entries, &points, window());
+
+        assert_eq!(
+            associated,
+            entries
+                .iter()
+                .map(|entry| associate_position(entry.timestamp, &points, window()))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            associated.iter().all(Option::is_some),
+            "every entry of the fixture falls inside the recording"
         );
     }
 

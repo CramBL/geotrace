@@ -315,42 +315,6 @@ pub fn execute_delete(
     removals
 }
 
-pub fn show_unassociated_popup(ui: &egui::Ui, lines: &mut Option<Vec<(DateTime<Utc>, String)>>) {
-    let Some(unassociated) = lines else {
-        return;
-    };
-    let count = unassociated.len();
-    let escape_pressed = ui
-        .ctx()
-        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-    let mut dismiss = escape_pressed;
-    Window::new(format!("{count} log entries could not be associated"))
-        .collapsible(false)
-        .resizable(true)
-        .min_width(480.0)
-        .show(ui.ctx(), |ui| {
-            ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
-                let ten_min = chrono::Duration::minutes(10);
-                let mut prev_ts: Option<DateTime<Utc>> = None;
-                for (ts, line) in unassociated.iter() {
-                    if let Some(prev) = prev_ts
-                        && ts.signed_duration_since(prev) > ten_min
-                    {
-                        ui.separator();
-                    }
-                    ui.monospace(format!("{}  {}", ts.format("%Y-%m-%d %H:%M:%S"), line));
-                    prev_ts = Some(*ts);
-                }
-            });
-            if ui.button("Dismiss").clicked() {
-                dismiss = true;
-            }
-        });
-    if dismiss {
-        *lines = None;
-    }
-}
-
 pub fn show_orphaned_event_markers_popup(
     ui: &egui::Ui,
     markers: &mut Option<Vec<(DateTime<Utc>, String)>>,

@@ -446,8 +446,11 @@ pub enum ThemeSetting {
 pub struct ProcessingSettings {
     /// Gap between consecutive GPS points that triggers a new track segment, in seconds.
     pub track_split_gap_seconds: u64,
-    /// Max seconds between a log entry timestamp and the nearest GPS fix for association.
-    pub log_marker_window_s: u64,
+    /// Association window a freshly loaded log starts with, in seconds: how far
+    /// an entry may be from the nearest fix of its association target and still
+    /// take a position from it.
+    #[serde(alias = "log_marker_window_s")]
+    pub log_association_window_s: u64,
     /// Whether to emit a marker when the GNSS fix drops.
     pub detect_gnss_fix_lost: bool,
     /// Whether to emit a marker when the GNSS fix returns.
@@ -471,7 +474,7 @@ impl Default for ProcessingSettings {
     fn default() -> Self {
         Self {
             track_split_gap_seconds: 300,
-            log_marker_window_s: 60,
+            log_association_window_s: 60,
             detect_gnss_fix_lost: true,
             detect_gnss_fix_regained: true,
             detect_clock_discontinuities: true,
@@ -784,6 +787,15 @@ mod snap_settings_tests {
             parsed.geomagnetic_indices.base_url,
             "https://mirror.example"
         );
+    }
+
+    /// A settings file written while the window was named after the log
+    /// markers it placed keeps the window the user set.
+    #[test]
+    fn a_stored_log_marker_window_loads_as_the_association_window() {
+        let stored = "[processing]\nlog_marker_window_s = 15\n";
+        let settings: Settings = toml::from_str(stored).expect("parse");
+        assert_eq!(settings.processing.log_association_window_s, 15);
     }
 
     /// The settings file a fresh install writes.

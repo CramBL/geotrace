@@ -42,7 +42,7 @@ impl App {
             },
         };
         self.assoc_config = AssociationConfig {
-            log_marker_window_s: s.processing.log_marker_window_s,
+            log_association_window_s: s.processing.log_association_window_s,
         };
         self.ctx
             .set_theme(super::theme_pref_from_setting(s.ui.theme));
@@ -168,7 +168,7 @@ impl App {
                     .track_split_gap
                     .to_std()
                     .map_or(300, |d| d.as_secs()),
-                log_marker_window_s: self.assoc_config.log_marker_window_s,
+                log_association_window_s: self.assoc_config.log_association_window_s,
                 detect_gnss_fix_lost: self
                     .processing_config
                     .generated_markers

@@ -38,13 +38,14 @@ use std::{cell::RefCell, env, path::PathBuf, rc::Rc};
 use egui_tiles::{Container, Linear, LinearDir, Tile, TileId, Tiles, Tree};
 use gt_fetch::TransportSource;
 use gt_filter::GlobalFilter;
-use gt_loaded_files::{FileHistory, LoadedFiles};
+use gt_loaded_files::LoadedFiles;
+use gt_log_view::{LoadedLog, LoadedLogs};
 use gt_map::NavMap;
 use gt_plot::PlotState;
 use gt_side_panel::{FilterPanelState, TreeState};
 use gt_snap::wire::Costing;
 use gt_track_builder::SegmentationConfig;
-use gt_types::{AssociationConfig, LoadWarning, NavPoint, TrackRef};
+use gt_types::{AssociationConfig, LoadWarning, TrackRef};
 use gt_ui_types::{DisplayMask, MapHighlight, SkyGlyphVariant};
 use loader::{CompletedLoad, FinishedJob, LoadJobs, LoadOutcome};
 use panes::MainPane;
@@ -183,7 +184,9 @@ pub struct App {
     map: NavMap,
     shared: Rc<RefCell<SharedAppState>>,
     load_error: Option<String>,
-    unassociated_log_lines: Option<Vec<(chrono::DateTime<chrono::Utc>, String)>>,
+    /// The logs loaded in this session. Logs are not recordings: they appear in
+    /// neither the file tree nor the plot.
+    logs: LoadedLogs,
     orphaned_event_markers: Option<Vec<(chrono::DateTime<chrono::Utc>, String)>>,
     /// The Mapbox token under edit, shared by the map's token dialog and the
     /// settings window's Interface page.
@@ -466,7 +469,7 @@ impl App {
                     .to_owned(),
             })),
             load_error: None,
-            unassociated_log_lines: None,
+            logs: LoadedLogs::default(),
             orphaned_event_markers: None,
             mapbox_token_field: mapbox_token::MapboxTokenField::default(),
             mapbox_token_test: mapbox_token_test::MapboxTokenTest::default(),
@@ -524,25 +527,11 @@ impl App {
                 app.loader
                     .spawn_gtd_path(path.clone(), app.processing_config);
             } else {
-                let nav_points = app.snapshot_nav_points();
-                app.loader
-                    .spawn_log_path(path.clone(), nav_points, app.assoc_config);
+                app.loader.spawn_log_path(path.clone());
             }
         }
 
         app
-    }
-
-    /// Collect a snapshot of all currently loaded GPS points - used by log-file
-    /// loaders so they can associate log timestamps with the existing GPS track.
-    fn snapshot_nav_points(&self) -> Vec<NavPoint> {
-        let s = self.shared.borrow();
-        s.loaded_files
-            .iter()
-            .flat_map(|f| f.tracks.iter())
-            .flat_map(|t| t.points.iter())
-            .cloned()
-            .collect()
     }
 
     fn spawn_load_path(&mut self, path: PathBuf) {
@@ -554,9 +543,7 @@ impl App {
         if ext == "gtd" {
             self.loader.spawn_gtd_path(path, self.processing_config);
         } else {
-            let nav_points = self.snapshot_nav_points();
-            self.loader
-                .spawn_log_path(path, nav_points, self.assoc_config);
+            self.loader.spawn_log_path(path);
         }
     }
 
@@ -650,7 +637,7 @@ impl App {
                 .track_split_gap
                 .to_std()
                 .map_or(300, |d| d.as_secs()),
-            log_marker_window_s: self.assoc_config.log_marker_window_s,
+            log_association_window_s: self.assoc_config.log_association_window_s,
             detect_gnss_fix_lost: self
                 .processing_config
                 .generated_markers
@@ -692,10 +679,10 @@ impl App {
         }
     }
 
-    /// Re-segment all loaded GPS files using the current `processing_config`.
+    /// Re-segment all loaded recordings using the current `processing_config`.
     ///
-    /// Log-only files (those with no nav points) are left unchanged since they
-    /// don't have track structure to re-segment.
+    /// A recording without nav points has no track structure to re-segment and
+    /// is left unchanged.
     fn apply_resegmentation(&mut self) {
         let config = self.processing_config;
         {
@@ -805,21 +792,31 @@ impl App {
                         .info("Applied current marker settings to loaded data");
                 }
             }
-            Ok(LoadOutcome::LogFile {
-                loaded,
-                series,
-                unassociated,
-            }) => {
-                if let (Some(loaded), Some(series)) = (loaded, series) {
-                    let mut s = self.shared.borrow_mut();
-                    let fi = s.loaded_files.len();
-                    s.loaded_files.push(loaded, FileHistory::None);
-                    s.sync_tree_from_loaded_files();
-                    s.plot_state.integrate_file(fi, series);
+            Ok(LoadOutcome::Log { filename, parsed }) => {
+                let window = chrono::Duration::seconds(
+                    i64::try_from(self.assoc_config.log_association_window_s).unwrap_or(i64::MAX),
+                );
+                let mut log = LoadedLog::new(filename, parsed, window);
+                {
+                    // Associating runs on the UI thread, as the spatial-index
+                    // rebuild after a recording load does: one binary search
+                    // per entry, spread over gt-logfile's workers.
+                    let shared = self.shared.borrow();
+                    let recordings = shared.loaded_files.view();
+                    // Anchoring without the user choosing is safe only where
+                    // there is nothing to choose between.
+                    let target = log
+                        .rank_association_candidates(&recordings)
+                        .unambiguous_target();
+                    log.associate_with(target, &recordings);
                 }
-                if !unassociated.is_empty() {
-                    self.unassociated_log_lines = Some(unassociated);
-                }
+                log::info!(
+                    "Loaded log {:?}: {} entries, {} of them associated",
+                    log.name(),
+                    log.parsed().entries().len(),
+                    log.associated_entry_count()
+                );
+                self.logs.push(log);
                 self.load_error = None;
                 self.loader.finishing_jobs.push(FinishedJob {
                     filename: completed.filename,
@@ -845,6 +842,7 @@ impl App {
         self.sky_trails_window.invalidate();
         let s = self.shared.borrow();
         self.map.rebuild_spatial_index(&s.loaded_files);
+        self.logs.reassociate_all(&s.loaded_files.view());
     }
 
     /// Hides the affected recordings, or deletes them when

@@ -15,7 +15,7 @@ use gt_map::MapLayer;
 use gt_query_run::RunInputs;
 use gt_side_panel::{PanelContext, SnapCostingTarget, SnapPanelView, show_side_panel};
 use gt_track_builder::SegmentationConfig;
-use gt_types::{AssociationConfig, DataCategory, FileIdx, LoadedFile, NavPoint, TrackRef};
+use gt_types::{DataCategory, FileIdx, LoadedFile, TrackRef};
 use gt_ui_types::{ContextLines, HighlightScope, MapHighlight};
 
 use super::context_line::ContextSpan;
@@ -27,7 +27,6 @@ use super::modals::{
     show_delete_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
     show_orphaned_event_markers_popup, show_recording_details_dialog, show_snap_auto_prompt,
     show_snap_consent_dialog, show_snap_replace_dialog, show_snap_scope_dialog,
-    show_unassociated_popup,
 };
 use super::panes::MainBehavior;
 use super::snap_state::PendingSnapRequest;
@@ -72,7 +71,6 @@ impl eframe::App for App {
         self.show_load_error_bar(ui);
         self.apply_pending_unload_and_removal(ui);
 
-        show_unassociated_popup(ui, &mut self.unassociated_log_lines);
         show_orphaned_event_markers_popup(ui, &mut self.orphaned_event_markers);
         show_load_warnings_dialog(ui, &mut self.shared.borrow_mut().warnings_popup);
         show_recording_details_dialog(ui, &mut self.shared.borrow_mut().metadata_popup);
@@ -859,15 +857,12 @@ impl App {
     }
 
     fn handle_dropped_bytes(&mut self, bytes: Arc<[u8]>, name: &str) {
-        let nav_points = self.snapshot_nav_points();
         handle_dropped_bytes_dispatch(
             &mut self.loader,
             &mut self.load_error,
-            nav_points,
             bytes,
             name,
             self.processing_config,
-            self.assoc_config,
         );
     }
 }
@@ -875,11 +870,9 @@ impl App {
 fn handle_dropped_bytes_dispatch(
     loader: &mut LoadJobs,
     load_error: &mut Option<String>,
-    nav_points: Vec<NavPoint>,
     bytes: Arc<[u8]>,
     name: &str,
     config: SegmentationConfig,
-    assoc_config: AssociationConfig,
 ) {
     const HDF5_MAGIC: &[u8] = b"\x89HDF\r\n\x1a\n";
     if bytes.starts_with(HDF5_MAGIC) {
@@ -890,13 +883,10 @@ fn handle_dropped_bytes_dispatch(
         };
         loader.spawn_gtd_bytes(bytes, filename, config);
     } else if let Ok(text) = str::from_utf8(&bytes) {
-        let filename = if name.is_empty() { "dropped.log" } else { name };
-        loader.spawn_log_text(
-            text.to_owned(),
-            filename.to_owned(),
-            nav_points,
-            assoc_config,
-        );
+        // The log takes its name from its first entry when the drop carries
+        // no file name, as pasted text does.
+        let filename = (!name.is_empty()).then(|| name.to_owned());
+        loader.spawn_log_text(text.to_owned(), filename);
     } else {
         *load_error = Some("Unrecognised file format".to_owned());
     }

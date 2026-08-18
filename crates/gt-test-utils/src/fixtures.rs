@@ -367,20 +367,38 @@ pub fn loaded_track_with_points(points: Vec<NavPoint>) -> gt_types::LoadedTrack 
 
 /// `count` GPS fixes starting at `start`, separated by `step_secs` each.
 ///
-/// Points move slightly north-east (0.001°/step) to avoid zero-distance
-/// degenerate tracks. No satellite reports.
+/// Points move slightly north-east (0.001°/step) from 55°N 12°E to avoid
+/// zero-distance degenerate tracks. No satellite reports.
 pub fn nav_points_from(
     start: chrono::DateTime<chrono::Utc>,
     count: usize,
     step_secs: i64,
+) -> Vec<NavPoint> {
+    nav_points_walking_from(
+        start,
+        count,
+        step_secs,
+        Latitude::new(55.0),
+        Longitude::new(12.0),
+    )
+}
+
+/// [`nav_points_from`] starting at a position of the caller's choosing, for
+/// tests that must tell two recordings apart by where their fixes are.
+pub fn nav_points_walking_from(
+    start: chrono::DateTime<chrono::Utc>,
+    count: usize,
+    step_secs: i64,
+    first_lat: Latitude,
+    first_lon: Longitude,
 ) -> Vec<NavPoint> {
     (0..count)
         .map(|i| {
             let time = start + Duration::seconds(i as i64 * step_secs);
             let tpv = TimePositionVelocity::builder()
                 .time(GpsTime::from_utc(time))
-                .lat(Latitude::new(55.0 + i as f64 * 0.001))
-                .lon(Longitude::new(12.0 + i as f64 * 0.001))
+                .lat(Latitude::new(first_lat.as_degrees() + i as f64 * 0.001))
+                .lon(Longitude::new(first_lon.as_degrees() + i as f64 * 0.001))
                 .heading(Angle::new::<degree>(45.0))
                 .velocity(Velocity::new::<kilometer_per_hour>(15.0))
                 .build();
