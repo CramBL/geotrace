@@ -32,6 +32,8 @@ use gt_types::{LoadedFile, TrackRef};
 use gt_ui_types::{JammingPoint, JammingSeries};
 
 use super::backfill::{BackfillProgress, PendingBackfill};
+use super::day_failures::DayFailure;
+use super::day_fetch_status::{DayFetchStatus, RecordingDayArchiveState, RecordingDayCoverage};
 
 /// What one day's fetch produced.
 enum JamMessage {
@@ -58,13 +60,6 @@ impl JamMessage {
     }
 }
 
-/// A day that could not be added to the archive, for the side panel.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DayFailure {
-    pub day: NaiveDate,
-    pub detail: String,
-}
-
 /// Queues interference days and ingests them into the archive.
 pub struct JammingScheduler {
     ctx: Context,
@@ -84,6 +79,9 @@ pub struct JammingScheduler {
     seen: HashSet<NaiveDate>,
     in_flight: Option<NaiveDate>,
     failures: Vec<DayFailure>,
+    /// Read by the settings page, which reports how far the archive covers
+    /// what is loaded.
+    recording_days: RecordingDayCoverage,
     /// Cells archived per day, read once at startup and updated on ingest,
     /// so the display toggle does not open the archive per frame. Assumes
     /// this process is the archive's only writer.
@@ -145,6 +143,7 @@ impl JammingScheduler {
             seen: HashSet::new(),
             in_flight: None,
             failures: Vec::new(),
+            recording_days: RecordingDayCoverage::default(),
             backfill: None,
             last_request: None,
         }
@@ -183,21 +182,27 @@ impl JammingScheduler {
             self.selection.adopt_default(*first);
         }
         for day in days {
-            if !self.seen.insert(day) {
-                continue;
-            }
             if calendar::day_outlook(day, today) != DayOutlook::Fetchable {
                 continue;
             }
-            match store.contains(day) {
-                Ok(true) => {}
-                Ok(false) => self.queue.push_back(day),
-                Err(err) => {
-                    let detail = format!("reading the archive: {err}");
-                    log::error!("Cannot determine whether {day} is archived: {detail}");
-                    self.failures.push(DayFailure { day, detail });
+            let state = match store.contains(day) {
+                Ok(true) => RecordingDayArchiveState::Archived,
+                Ok(false) => {
+                    if self.seen.insert(day) {
+                        self.queue.push_back(day);
+                    }
+                    RecordingDayArchiveState::Awaited
                 }
-            }
+                Err(err) => {
+                    if self.seen.insert(day) {
+                        let detail = format!("reading the archive: {err}");
+                        log::error!("Cannot determine whether {day} is archived: {detail}");
+                        self.failures.push(DayFailure { day, detail });
+                    }
+                    RecordingDayArchiveState::Awaited
+                }
+            };
+            self.recording_days.record(day, state);
         }
         self.start_next();
     }
@@ -269,6 +274,22 @@ impl JammingScheduler {
         self.backfill.as_ref().map(PendingBackfill::progress)
     }
 
+    /// What the settings page reports about the queue and the archive's
+    /// coverage of the loaded recordings.
+    pub fn fetch_status(&self) -> DayFetchStatus {
+        DayFetchStatus {
+            fetching: self.in_flight,
+            queued: self.queue.len(),
+            recording_days: self.recording_days.recording_days(),
+            archived_recording_days: self.recording_days.archived_recording_days(),
+        }
+    }
+
+    /// Days that could not be archived, in the order they were reported.
+    pub fn failures(&self) -> &[DayFailure] {
+        &self.failures
+    }
+
     /// Apply finished fetches and start the next queued day.
     pub fn poll(&mut self) {
         while let Ok(message) = self.rx.try_recv() {
@@ -284,6 +305,7 @@ impl JammingScheduler {
                     log::info!("Archived {cells} interference cells for {day}");
                     self.archived_cells
                         .insert(day, u32::try_from(cells).unwrap_or(u32::MAX));
+                    self.recording_days.mark_archived(day);
                 }
                 JamMessage::Missing { day, pending } => {
                     log::info!(
@@ -467,9 +489,10 @@ impl JammingScheduler {
 
     /// Point the scheduler at `base_url`.
     ///
-    /// A changed host drops the queue, `seen`, and `refused`: those requests
-    /// and refusals belong to the old host. `archived_cells` is kept - a day
-    /// already archived does not depend on which host served it.
+    /// A changed host drops the queue, `seen`, `refused`, and the failures:
+    /// those requests, refusals and failures belong to the old host.
+    /// `archived_cells` is kept - a day already archived does not depend on
+    /// which host served it.
     pub fn set_base_url(&mut self, base_url: &str) {
         if self.base_url == base_url {
             return;
@@ -479,15 +502,8 @@ impl JammingScheduler {
         self.queue.clear();
         self.seen.clear();
         self.refused.clear();
+        self.failures.clear();
         self.backfill = None;
-    }
-
-    /// Days that could not be archived, oldest first.
-    #[cfg(test)]
-    fn failures(&self) -> Vec<DayFailure> {
-        let mut failures = self.failures.clone();
-        failures.sort_by_key(|failure| failure.day);
-        failures
     }
 
     #[cfg(test)]
@@ -889,15 +905,96 @@ mod tests {
         );
     }
 
-    /// Changing the host abandons a backfill: its remaining days belong to
-    /// the old host.
+    /// Changing the host abandons a backfill and the failures the old host
+    /// produced.
     #[test]
-    fn changing_the_host_abandons_the_backfill() {
+    fn changing_the_host_abandons_the_backfill_and_its_failures() {
         let mut scheduler = scheduler();
         queued_backfill(&mut scheduler, &[day(2026, 7, 20)]);
+        scheduler.failures.push(DayFailure {
+            day: day(2026, 7, 20),
+            detail: "HTTP 500 Internal Server Error".to_owned(),
+        });
+
         scheduler.set_base_url("https://mirror.example");
+
         assert_eq!(scheduler.backfill_progress(), None);
         assert_eq!(scheduler.queued(), 0);
+        assert!(scheduler.failures().is_empty());
+    }
+
+    /// A failure reaches the settings page's list.
+    #[test]
+    fn a_failed_day_is_reported() {
+        let mut scheduler = scheduler();
+        scheduler
+            .tx
+            .send(JamMessage::Failed {
+                day: day(2026, 7, 20),
+                detail: "HTTP 500 Internal Server Error".to_owned(),
+            })
+            .expect("send");
+        scheduler.poll();
+
+        assert_eq!(
+            scheduler.failures(),
+            [DayFailure {
+                day: day(2026, 7, 20),
+                detail: "HTTP 500 Internal Server Error".to_owned(),
+            }]
+        );
+    }
+
+    /// The status reports the day in flight, the queue behind it, and how much
+    /// of what is loaded the archive holds.
+    #[test]
+    fn the_status_reports_the_queue_and_the_archived_recording_days() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        store
+            .insert_day(day(2026, 7, 20), "host", Utc::now(), &[])
+            .expect("insert");
+
+        scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 21, 17)));
+
+        assert_eq!(
+            scheduler.fetch_status(),
+            DayFetchStatus {
+                fetching: Some(day(2026, 7, 21)),
+                queued: 0,
+                recording_days: 2,
+                archived_recording_days: 1,
+            }
+        );
+    }
+
+    /// A recording made before the host's coverage begins leaves the count
+    /// empty, which the settings page shows as an absent value.
+    #[test]
+    fn a_day_outside_coverage_is_no_recording_day() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        scheduler.request_days_for(range(at(2020, 1, 1, 0), at(2020, 1, 1, 1)));
+
+        assert_eq!(scheduler.fetch_status().recording_days, 0);
+    }
+
+    /// An archived day moves the loaded recording's coverage up.
+    #[test]
+    fn archiving_a_day_covers_the_recording_day_it_belongs_to() {
+        let mut scheduler = scheduler();
+        scheduler
+            .recording_days
+            .record(day(2026, 7, 20), RecordingDayArchiveState::Awaited);
+
+        scheduler
+            .tx
+            .send(JamMessage::Stored {
+                day: day(2026, 7, 20),
+                cells: 1,
+            })
+            .expect("send");
+        scheduler.poll();
+
+        assert_eq!(scheduler.fetch_status().archived_recording_days, 1);
     }
 
     #[test]

@@ -1,9 +1,10 @@
-//! The wording the map overlay, the plot line, and the display toggle share.
+//! The wording the map overlay, the plot line, the display toggle, and the
+//! settings page share.
 //!
-//! All three show the same numbers and must describe them the same way:
-//! aircraft reports over a whole UTC day and a cell tens of kilometers
-//! across, not a measurement at the receiver. Shared here so they cannot
-//! drift into three levels of confidence.
+//! The surfaces showing values must describe them the same way: aircraft
+//! reports over a whole UTC day and a cell tens of kilometers across, not a
+//! measurement at the receiver. Shared here so they cannot drift into
+//! separate levels of confidence.
 //!
 //! A snapshot test pins the exact wording.
 
@@ -67,6 +68,18 @@ pub static PLOT_HOVER: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
+/// Hover text of the settings page's fetch queue row, stating what one
+/// request covers.
+pub const FETCH_QUEUE_HOVER: &str = "Interference days waiting to be downloaded. One day is \
+                                     requested at a time, and one day costs one request.";
+
+/// Hover text of the settings page's recording day row, stating that a
+/// backfilled day is outside the count.
+pub const RECORDING_DAY_COVERAGE_HOVER: &str = "UTC days the recordings loaded this session span, \
+                                                and how many of them the archive holds a dataset \
+                                                for. Days downloaded by a backfill are not \
+                                                counted here.";
+
 /// Where the data comes from, shown in the legend and the about dialog.
 pub const ATTRIBUTION: &str = "Interference data from gpsjam.org, derived from aircraft reports \
                                collected by adsbexchange.com.";
@@ -109,6 +122,8 @@ mod tests {
              source caveat: {SOURCE_CAVEAT}\n\
              resolution caveat: {RESOLUTION_CAVEAT}\n\
              low sample caveat: {LOW_SAMPLE_CAVEAT}\n\
+             fetch queue hover: {FETCH_QUEUE_HOVER}\n\
+             recording day coverage hover: {RECORDING_DAY_COVERAGE_HOVER}\n\
              plot hover: {}\n\
              query doc: {}\n\
              attribution: {ATTRIBUTION}\n\

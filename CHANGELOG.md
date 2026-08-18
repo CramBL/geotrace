@@ -19,6 +19,7 @@
 - Settings' "Ionospheric TEC" section takes an ordered list of mirrors instead of a single host, tried in turn until one has the day's map file.
   A day no mirror could serve names each of them and the status it returned.
 - The `--offline` flag runs GeoTrace without network access: no map tiles, downloads, snapping, or update check. It replaces the undocumented `GEOTRACE_OFFLINE` environment variable, which is no longer read.
+- Settings' "Aircraft interference" page shows what the interference download is doing, how many days of the loaded recordings are archived, and the days that failed with their cause.
 
 ### Changed
 

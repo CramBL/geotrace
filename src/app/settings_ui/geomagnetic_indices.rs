@@ -1,14 +1,23 @@
 //! Settings for the Kp and Hp30 geomagnetic index downloads.
 
+use crate::app::App;
 use crate::app::backfill_ui::BackfillAction;
+use crate::app::day_fetch_status::{self, FetchRowHoverText};
 use crate::app::settings_ui::SettingsPage;
 use crate::app::settings_ui::source_page::{self, SourcePageSlots};
-use crate::app::{App, geomagnetic_index_ui};
 
 const URL_HOVER: &str = "Base URL of the host serving the Kp and Hp30 geomagnetic indices. The \
                          default is GFZ Potsdam, which publishes them. Point it at a mirror or an \
                          offline copy to fetch from there instead. Requests carry a date range \
                          and nothing about your recordings.";
+
+const FETCH_ROW_HOVER: FetchRowHoverText = FetchRowHoverText {
+    queue: "Index days waiting to be downloaded. One day is requested at a time, and one day \
+            costs one request per index.",
+    coverage: "UTC days the recordings loaded this session span, and how many of them the archive \
+               holds every published index for. Days downloaded by a backfill are not counted \
+               here.",
+};
 
 impl App {
     pub(super) fn show_geomagnetic_index_page(&mut self, ui: &mut egui::Ui) {
@@ -27,7 +36,7 @@ impl App {
                     base_url_changed = source_page::show_base_url_row(ui, URL_HOVER, &mut base_url)
                 },
                 status: Some(|ui: &mut egui::Ui| {
-                    geomagnetic_index_ui::show_fetch_rows(ui, fetch_status);
+                    day_fetch_status::show_fetch_rows(ui, fetch_status, FETCH_ROW_HOVER);
                 }),
                 failures: self.geomagnetic_indices.failures(),
                 backfill: Some(|ui: &mut egui::Ui| {
