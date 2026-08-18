@@ -1,0 +1,8 @@
+---
+source: crates/gt-ionex/src/text.rs
+expression: wording
+---
+maps: global ionosphere maps
+archive: TEC map archive
+fetch queue hover: Map days waiting to be downloaded. One day is requested at a time, and a day costs one request per mirror tried until one serves the file.
+recording day coverage hover: UTC days the recordings loaded this session span, and how many of them the archive holds maps for. Days downloaded by a backfill are not counted here.

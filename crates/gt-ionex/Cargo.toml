@@ -20,6 +20,7 @@ strum.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+insta.workspace = true
 proptest.workspace = true
 # The fixture-capture example talks to the archive directly, not through
 # gt_fetch::Transport.

@@ -20,8 +20,8 @@ impl App {
     pub(super) fn show_interference_page(&mut self, ui: &mut egui::Ui) {
         let mut base_url = self.interference_settings.base_url.clone();
         let mut base_url_changed = false;
-        let fetch_status = self.jamming.fetch_status();
-        let progress = self.jamming.backfill_progress();
+        let fetch_status = self.jamming.fetch_queue().fetch_status();
+        let progress = self.jamming.fetch_queue().backfill_progress();
         let readiness = self.backfill_readiness(self.jamming.archive_available());
         let mut backfill_action = None;
 
@@ -32,13 +32,13 @@ impl App {
                 endpoint: |ui: &mut egui::Ui| {
                     base_url_changed = source_page::show_base_url_row(ui, URL_HOVER, &mut base_url)
                 },
-                status: Some(|ui: &mut egui::Ui| {
+                status: |ui: &mut egui::Ui| {
                     day_fetch_status::show_fetch_rows(ui, fetch_status, FETCH_ROW_HOVER);
-                }),
-                failures: self.jamming.failures(),
-                backfill: Some(|ui: &mut egui::Ui| {
+                },
+                failures: self.jamming.fetch_queue().failures(),
+                backfill: |ui: &mut egui::Ui| {
                     backfill_action = self.interference_backfill_ui.ui(ui, progress, readiness);
-                }),
+                },
             },
         );
 
@@ -52,7 +52,7 @@ impl App {
                     let queued = self.jamming.backfill(from, to);
                     self.interference_backfill_ui.report_started(queued);
                 }
-                BackfillAction::Cancel => self.jamming.cancel_backfill(),
+                BackfillAction::Cancel => self.jamming.fetch_queue_mut().cancel_backfill(),
             }
         }
     }

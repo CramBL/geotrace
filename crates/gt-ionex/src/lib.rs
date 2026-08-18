@@ -33,6 +33,7 @@ pub mod maps;
 pub mod mirrors;
 pub mod parse;
 pub mod tec;
+pub mod text;
 pub mod transport;
 
 pub use mirrors::{MirrorBaseUrl, MirrorList};

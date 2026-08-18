@@ -23,8 +23,8 @@ impl App {
     pub(super) fn show_geomagnetic_index_page(&mut self, ui: &mut egui::Ui) {
         let mut base_url = self.geomagnetic_index_settings.base_url.clone();
         let mut base_url_changed = false;
-        let fetch_status = self.geomagnetic_indices.fetch_status();
-        let progress = self.geomagnetic_indices.backfill_progress();
+        let fetch_status = self.geomagnetic_indices.fetch_queue().fetch_status();
+        let progress = self.geomagnetic_indices.fetch_queue().backfill_progress();
         let readiness = self.backfill_readiness(self.geomagnetic_indices.archive_available());
         let mut backfill_action = None;
 
@@ -35,15 +35,15 @@ impl App {
                 endpoint: |ui: &mut egui::Ui| {
                     base_url_changed = source_page::show_base_url_row(ui, URL_HOVER, &mut base_url)
                 },
-                status: Some(|ui: &mut egui::Ui| {
+                status: |ui: &mut egui::Ui| {
                     day_fetch_status::show_fetch_rows(ui, fetch_status, FETCH_ROW_HOVER);
-                }),
-                failures: self.geomagnetic_indices.failures(),
-                backfill: Some(|ui: &mut egui::Ui| {
+                },
+                failures: self.geomagnetic_indices.fetch_queue().failures(),
+                backfill: |ui: &mut egui::Ui| {
                     backfill_action = self
                         .geomagnetic_index_backfill_ui
                         .ui(ui, progress, readiness);
-                }),
+                },
             },
         );
 
@@ -57,7 +57,9 @@ impl App {
                     let queued = self.geomagnetic_indices.backfill(from, to);
                     self.geomagnetic_index_backfill_ui.report_started(queued);
                 }
-                BackfillAction::Cancel => self.geomagnetic_indices.cancel_backfill(),
+                BackfillAction::Cancel => {
+                    self.geomagnetic_indices.fetch_queue_mut().cancel_backfill();
+                }
             }
         }
     }

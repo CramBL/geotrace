@@ -2588,6 +2588,7 @@ dependencies = [
  "flate2",
  "gt-fetch",
  "gt-types",
+ "insta",
  "proptest",
  "reqwest 0.13.4",
  "rstest",

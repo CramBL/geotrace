@@ -8,7 +8,7 @@
 //! archive is never requested, so the queue shrinks to nothing as the
 //! archive fills. One request is in flight at a time.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
@@ -31,9 +31,7 @@ use gt_types::TimeRange;
 use gt_types::{LoadedFile, TrackRef};
 use gt_ui_types::{JammingPoint, JammingSeries};
 
-use super::backfill::{BackfillProgress, PendingBackfill};
-use super::day_failures::DayFailure;
-use super::day_fetch_status::{DayFetchStatus, RecordingDayArchiveState, RecordingDayCoverage};
+use super::day_fetch_queue::DayFetchQueue;
 
 /// What one day's fetch produced.
 enum JamMessage {
@@ -73,15 +71,7 @@ pub struct JammingScheduler {
     /// Where that transport comes from. Supplied by the application, so
     /// nothing here determines whether requests may leave the machine.
     transport_source: TransportSource,
-    queue: VecDeque<NaiveDate>,
-    /// Every day queued this session, so a day is requested at most once
-    /// even after it fails.
-    seen: HashSet<NaiveDate>,
-    in_flight: Option<NaiveDate>,
-    failures: Vec<DayFailure>,
-    /// Read by the settings page, which reports how far the archive covers
-    /// what is loaded.
-    recording_days: RecordingDayCoverage,
+    days: DayFetchQueue,
     /// Cells archived per day, read once at startup and updated on ingest,
     /// so the display toggle does not open the archive per frame. Assumes
     /// this process is the archive's only writer.
@@ -100,8 +90,6 @@ pub struct JammingScheduler {
     /// the `Arc` identity the plot caches on only changes when the archive
     /// gained a day the track needs.
     plot_points: HashMap<TrackRef, (Vec<NaiveDate>, Arc<Vec<JammingPoint>>)>,
-    /// Set while an explicit backfill is running.
-    backfill: Option<PendingBackfill>,
     /// When the last request was handed to a worker, so [`REQUEST_INTERVAL`]
     /// is honoured across days.
     last_request: Option<Instant>,
@@ -139,12 +127,7 @@ impl JammingScheduler {
             store,
             http: None,
             transport_source,
-            queue: VecDeque::new(),
-            seen: HashSet::new(),
-            in_flight: None,
-            failures: Vec::new(),
-            recording_days: RecordingDayCoverage::default(),
-            backfill: None,
+            days: DayFetchQueue::default(),
             last_request: None,
         }
     }
@@ -166,7 +149,7 @@ impl JammingScheduler {
     /// queued are dropped. A recording spanning more than
     /// [`calendar::MAX_DAYS_PER_TRACK`] queues nothing.
     pub fn request_days_for(&mut self, range: TimeRange) {
-        let Some(store) = self.store.as_ref() else {
+        let Some(store) = self.store.as_ref().map(Arc::clone) else {
             return;
         };
         let Some(days) = calendar::days_spanned(range.start, range.end) else {
@@ -185,62 +168,23 @@ impl JammingScheduler {
             if calendar::day_outlook(day, today) != DayOutlook::Fetchable {
                 continue;
             }
-            let state = match store.contains(day) {
-                Ok(true) => RecordingDayArchiveState::Archived,
-                Ok(false) => {
-                    if self.seen.insert(day) {
-                        self.queue.push_back(day);
-                    }
-                    RecordingDayArchiveState::Awaited
-                }
-                Err(err) => {
-                    if self.seen.insert(day) {
-                        let detail = format!("reading the archive: {err}");
-                        log::error!("Cannot determine whether {day} is archived: {detail}");
-                        self.failures.push(DayFailure { day, detail });
-                    }
-                    RecordingDayArchiveState::Awaited
-                }
-            };
-            self.recording_days.record(day, state);
+            let needs_fetch = store.contains(day).map(|archived| !archived);
+            self.days.request_recording_day(day, needs_fetch);
         }
         self.start_next();
     }
 
-    /// Queue every unarchived day in `from..=to`.
-    ///
-    /// Days outside the coverage window, already archived, or already
-    /// requested this session are skipped, so re-running a backfill over the
-    /// same range costs nothing. Replaces a backfill already running.
+    /// Queue every unarchived day in `from..=to`, as one backfill.
     ///
     /// Returns how many days were queued, or [`None`] when there is no
     /// archive to write them to.
     pub fn backfill(&mut self, from: NaiveDate, to: NaiveDate) -> Option<usize> {
-        let store = Arc::clone(self.store.as_ref()?);
-        self.cancel_backfill();
-        let mut pending = HashSet::new();
-        for day in calendar::fetchable_days(from, to, calendar::today_utc()) {
-            if !self.seen.insert(day) {
-                continue;
-            }
-            match store.contains(day) {
-                Ok(true) => {}
-                Ok(false) => {
-                    self.queue.push_back(day);
-                    pending.insert(day);
-                }
-                Err(err) => {
-                    let detail = format!("reading the archive: {err}");
-                    log::error!("Cannot determine whether {day} is archived: {detail}");
-                    self.failures.push(DayFailure { day, detail });
-                }
-            }
-        }
-        let total = pending.len();
+        let store = self.store.as_ref().map(Arc::clone)?;
+        let total = self.days.start_backfill(
+            calendar::fetchable_days(from, to, calendar::today_utc()),
+            |day| store.contains(day).map(|archived| !archived),
+        );
         log::info!("Backfilling interference for {total} days between {from} and {to}");
-        if total > 0 {
-            self.backfill = Some(PendingBackfill::new(pending));
-        }
         self.start_next();
         Some(total)
     }
@@ -251,61 +195,26 @@ impl JammingScheduler {
         self.store.is_some()
     }
 
-    /// Drop a running backfill's queued days.
-    ///
-    /// Cancelled days leave `seen`, so a later backfill over the same range
-    /// queues them again. The day in flight is not one of them: it stays in
-    /// `seen` until its own request reports back, or a second request would
-    /// go out for a day already being fetched.
-    pub fn cancel_backfill(&mut self) {
-        let Some(backfill) = self.backfill.take() else {
-            return;
-        };
-        self.queue.retain(|day| !backfill.queued(*day));
-        for day in backfill.into_pending_days() {
-            if Some(day) != self.in_flight {
-                self.seen.remove(&day);
-            }
-        }
+    /// The queued, in-flight and failed days, as the settings page reports
+    /// them and the download control drives them.
+    pub fn fetch_queue(&self) -> &DayFetchQueue {
+        &self.days
     }
 
-    /// Progress of the running backfill, or [`None`] when none is running.
-    pub fn backfill_progress(&self) -> Option<BackfillProgress> {
-        self.backfill.as_ref().map(PendingBackfill::progress)
-    }
-
-    /// What the settings page reports about the queue and the archive's
-    /// coverage of the loaded recordings.
-    pub fn fetch_status(&self) -> DayFetchStatus {
-        DayFetchStatus {
-            fetching: self.in_flight,
-            queued: self.queue.len(),
-            recording_days: self.recording_days.recording_days(),
-            archived_recording_days: self.recording_days.archived_recording_days(),
-        }
-    }
-
-    /// Days that could not be archived, in the order they were reported.
-    pub fn failures(&self) -> &[DayFailure] {
-        &self.failures
+    pub fn fetch_queue_mut(&mut self) -> &mut DayFetchQueue {
+        &mut self.days
     }
 
     /// Apply finished fetches and start the next queued day.
     pub fn poll(&mut self) {
         while let Ok(message) = self.rx.try_recv() {
-            self.in_flight = None;
-            if let Some(backfill) = self.backfill.as_mut() {
-                backfill.retire(message.day());
-                if backfill.is_finished() {
-                    self.backfill = None;
-                }
-            }
+            self.days.finish_day(message.day());
             match message {
                 JamMessage::Stored { day, cells } => {
                     log::info!("Archived {cells} interference cells for {day}");
                     self.archived_cells
                         .insert(day, u32::try_from(cells).unwrap_or(u32::MAX));
-                    self.recording_days.mark_archived(day);
+                    self.days.mark_archived(day);
                 }
                 JamMessage::Missing { day, pending } => {
                     log::info!(
@@ -316,7 +225,7 @@ impl JammingScheduler {
                 }
                 JamMessage::Failed { day, detail } => {
                     log::error!("No interference data archived for {day}: {detail}");
-                    self.failures.push(DayFailure { day, detail });
+                    self.days.report_failure(day, detail);
                 }
             }
         }
@@ -489,47 +398,29 @@ impl JammingScheduler {
 
     /// Point the scheduler at `base_url`.
     ///
-    /// A changed host drops the queue, `seen`, `refused`, and the failures:
-    /// those requests, refusals and failures belong to the old host.
-    /// `archived_cells` is kept - a day already archived does not depend on
-    /// which host served it.
+    /// A changed host drops the queue, the days requested of the old host,
+    /// its refusals, its failures and the running backfill. `archived_cells`
+    /// is kept - a day already archived does not depend on which host served
+    /// it.
     pub fn set_base_url(&mut self, base_url: &str) {
         if self.base_url == base_url {
             return;
         }
         base_url.clone_into(&mut self.base_url);
         self.http = None;
-        self.queue.clear();
-        self.seen.clear();
         self.refused.clear();
-        self.failures.clear();
-        self.backfill = None;
-    }
-
-    #[cfg(test)]
-    fn is_fetching(&self) -> bool {
-        self.in_flight.is_some()
-    }
-
-    #[cfg(test)]
-    fn queued(&self) -> usize {
-        self.queue.len()
+        self.days.forget_host();
     }
 
     fn start_next(&mut self) {
-        if self.in_flight.is_some() {
+        let Some(store) = self.store.as_ref().map(Arc::clone) else {
             return;
-        }
-        let (Some(store), Some(day)) = (
-            self.store.as_ref().map(Arc::clone),
-            self.queue.front().copied(),
-        ) else {
+        };
+        let Some(day) = self.days.take_next_day() else {
             return;
         };
         let transport = self.transport();
         let delay = dispatch_delay(self.last_request, Instant::now());
-        self.queue.pop_front();
-        self.in_flight = Some(day);
         self.last_request = Some(Instant::now() + delay);
         spawn_fetch(
             self.ctx.clone(),
@@ -660,6 +551,10 @@ mod tests {
     use gt_fetch::{HttpRequest, HttpResponse, TransportError};
     use gt_jam::DEFAULT_BASE_URL;
 
+    use crate::app::backfill::BackfillProgress;
+    use crate::app::day_failures::DayFailure;
+    use crate::app::day_fetch_status::DayFetchStatus;
+
     use super::*;
 
     fn range(start: DateTime<Utc>, end: DateTime<Utc>) -> TimeRange {
@@ -744,7 +639,7 @@ mod tests {
             scheduler.backfill(day(2026, 7, 20), day(2026, 7, 26)),
             Some(0)
         );
-        assert_eq!(scheduler.backfill_progress(), None);
+        assert_eq!(scheduler.days.backfill_progress(), None);
     }
 
     /// A range entirely outside the coverage window requests nothing.
@@ -755,7 +650,7 @@ mod tests {
             scheduler.backfill(day(2019, 1, 1), day(2020, 1, 1)),
             Some(0)
         );
-        assert_eq!(scheduler.backfill_progress(), None);
+        assert_eq!(scheduler.days.backfill_progress(), None);
     }
 
     /// No archive is distinct from an empty range: the control says so
@@ -765,17 +660,7 @@ mod tests {
         let mut scheduler = scheduler();
         assert!(!scheduler.archive_available());
         assert_eq!(scheduler.backfill(day(2026, 7, 20), day(2026, 7, 26)), None);
-        assert_eq!(scheduler.backfill_progress(), None);
-    }
-
-    /// Fill the queue and the backfill without dispatching, so the tests
-    /// below do not depend on whether a transport can be built.
-    fn queued_backfill(scheduler: &mut JammingScheduler, days: &[NaiveDate]) {
-        for day in days {
-            scheduler.seen.insert(*day);
-            scheduler.queue.push_back(*day);
-        }
-        scheduler.backfill = Some(PendingBackfill::new(days.iter().copied().collect()));
+        assert_eq!(scheduler.days.backfill_progress(), None);
     }
 
     /// Every outcome retires its day, so a range of missing or failing days
@@ -787,16 +672,16 @@ mod tests {
     fn progress_advances_on_every_outcome(#[case] message: JamMessage) {
         let mut scheduler = scheduler();
         let days = [day(2026, 7, 20), day(2026, 7, 21)];
-        queued_backfill(&mut scheduler, &days);
+        scheduler.days.queue_backfill_of(&days);
         assert_eq!(
-            scheduler.backfill_progress(),
+            scheduler.days.backfill_progress(),
             Some(BackfillProgress { done: 0, total: 2 })
         );
 
         scheduler.tx.send(message).expect("send");
         scheduler.poll();
         assert_eq!(
-            scheduler.backfill_progress(),
+            scheduler.days.backfill_progress(),
             Some(BackfillProgress { done: 1, total: 2 })
         );
     }
@@ -806,7 +691,7 @@ mod tests {
     fn the_last_day_ends_the_backfill() {
         let mut scheduler = scheduler();
         let days = [day(2026, 7, 20)];
-        queued_backfill(&mut scheduler, &days);
+        scheduler.days.queue_backfill_of(&days);
 
         scheduler
             .tx
@@ -816,7 +701,7 @@ mod tests {
             })
             .expect("send");
         scheduler.poll();
-        assert_eq!(scheduler.backfill_progress(), None);
+        assert_eq!(scheduler.days.backfill_progress(), None);
     }
 
     /// Cancelling drops the queued days and lets a later backfill request
@@ -825,12 +710,15 @@ mod tests {
     fn cancelling_releases_the_queued_days() {
         let mut scheduler = scheduler();
         let days = [day(2026, 7, 20), day(2026, 7, 21)];
-        queued_backfill(&mut scheduler, &days);
+        scheduler.days.queue_backfill_of(&days);
 
-        scheduler.cancel_backfill();
-        assert_eq!(scheduler.backfill_progress(), None);
-        assert_eq!(scheduler.queued(), 0);
-        assert!(scheduler.seen.is_empty(), "cancelled days can be re-queued");
+        scheduler.days.cancel_backfill();
+        assert_eq!(scheduler.days.backfill_progress(), None);
+        assert_eq!(scheduler.days.queued(), 0);
+        assert!(
+            scheduler.days.requested_days().is_empty(),
+            "cancelled days can be re-queued"
+        );
     }
 
     /// Cancelling must not release the day already being fetched: releasing
@@ -839,17 +727,16 @@ mod tests {
     fn cancelling_keeps_the_in_flight_day() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         let (in_flight, queued) = (day(2026, 7, 20), day(2026, 7, 21));
-        queued_backfill(&mut scheduler, &[in_flight, queued]);
-        scheduler.in_flight = Some(in_flight);
-        scheduler.queue.retain(|day| *day != in_flight);
+        scheduler.days.queue_backfill_of(&[in_flight, queued]);
+        assert_eq!(scheduler.days.take_next_day(), Some(in_flight));
 
-        scheduler.cancel_backfill();
+        scheduler.days.cancel_backfill();
         assert!(
-            scheduler.seen.contains(&in_flight),
+            scheduler.days.requested_days().contains(&in_flight),
             "the day being fetched stays claimed"
         );
         assert!(
-            !scheduler.seen.contains(&queued),
+            !scheduler.days.requested_days().contains(&queued),
             "a day that never went out can be requested again"
         );
     }
@@ -859,13 +746,12 @@ mod tests {
     fn cancelling_leaves_track_requested_days_alone() {
         let mut scheduler = scheduler();
         let track_day = day(2026, 7, 19);
-        scheduler.seen.insert(track_day);
-        scheduler.queue.push_back(track_day);
-        queued_backfill(&mut scheduler, &[day(2026, 7, 20)]);
+        scheduler.days.queue_track_day(track_day);
+        scheduler.days.queue_backfill_of(&[day(2026, 7, 20)]);
 
-        scheduler.cancel_backfill();
-        assert_eq!(scheduler.queued(), 1);
-        assert!(scheduler.seen.contains(&track_day));
+        scheduler.days.cancel_backfill();
+        assert_eq!(scheduler.days.queued(), 1);
+        assert!(scheduler.days.requested_days().contains(&track_day));
     }
 
     #[rstest]
@@ -895,12 +781,14 @@ mod tests {
     #[test]
     fn a_backfill_dispatches_its_first_day() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        queued_backfill(&mut scheduler, &[day(2026, 7, 20), day(2026, 7, 21)]);
+        scheduler
+            .days
+            .queue_backfill_of(&[day(2026, 7, 20), day(2026, 7, 21)]);
         scheduler.start_next();
 
-        assert!(scheduler.is_fetching());
+        assert!(scheduler.days.is_fetching());
         assert_eq!(
-            scheduler.backfill_progress(),
+            scheduler.days.backfill_progress(),
             Some(BackfillProgress { done: 0, total: 2 })
         );
     }
@@ -910,17 +798,17 @@ mod tests {
     #[test]
     fn changing_the_host_abandons_the_backfill_and_its_failures() {
         let mut scheduler = scheduler();
-        queued_backfill(&mut scheduler, &[day(2026, 7, 20)]);
-        scheduler.failures.push(DayFailure {
-            day: day(2026, 7, 20),
-            detail: "HTTP 500 Internal Server Error".to_owned(),
-        });
+        scheduler.days.queue_backfill_of(&[day(2026, 7, 20)]);
+        scheduler.days.report_failure(
+            day(2026, 7, 20),
+            "HTTP 500 Internal Server Error".to_owned(),
+        );
 
         scheduler.set_base_url("https://mirror.example");
 
-        assert_eq!(scheduler.backfill_progress(), None);
-        assert_eq!(scheduler.queued(), 0);
-        assert!(scheduler.failures().is_empty());
+        assert_eq!(scheduler.days.backfill_progress(), None);
+        assert_eq!(scheduler.days.queued(), 0);
+        assert!(scheduler.days.failures().is_empty());
     }
 
     /// A failure reaches the settings page's list.
@@ -937,7 +825,7 @@ mod tests {
         scheduler.poll();
 
         assert_eq!(
-            scheduler.failures(),
+            scheduler.days.failures(),
             [DayFailure {
                 day: day(2026, 7, 20),
                 detail: "HTTP 500 Internal Server Error".to_owned(),
@@ -957,7 +845,7 @@ mod tests {
         scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 21, 17)));
 
         assert_eq!(
-            scheduler.fetch_status(),
+            scheduler.days.fetch_status(),
             DayFetchStatus {
                 fetching: Some(day(2026, 7, 21)),
                 queued: 0,
@@ -974,16 +862,14 @@ mod tests {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.request_days_for(range(at(2020, 1, 1, 0), at(2020, 1, 1, 1)));
 
-        assert_eq!(scheduler.fetch_status().recording_days, 0);
+        assert_eq!(scheduler.days.fetch_status().recording_days, 0);
     }
 
     /// An archived day moves the loaded recording's coverage up.
     #[test]
     fn archiving_a_day_covers_the_recording_day_it_belongs_to() {
         let mut scheduler = scheduler();
-        scheduler
-            .recording_days
-            .record(day(2026, 7, 20), RecordingDayArchiveState::Awaited);
+        scheduler.days.await_recording_day(day(2026, 7, 20));
 
         scheduler
             .tx
@@ -994,16 +880,16 @@ mod tests {
             .expect("send");
         scheduler.poll();
 
-        assert_eq!(scheduler.fetch_status().archived_recording_days, 1);
+        assert_eq!(scheduler.days.fetch_status().archived_recording_days, 1);
     }
 
     #[test]
     fn a_scheduler_without_an_archive_queues_nothing() {
         let mut scheduler = scheduler();
         scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 20, 17)));
-        assert_eq!(scheduler.queued(), 0);
-        assert!(!scheduler.is_fetching());
-        assert!(scheduler.failures().is_empty());
+        assert_eq!(scheduler.days.queued(), 0);
+        assert!(!scheduler.days.is_fetching());
+        assert!(scheduler.days.failures().is_empty());
     }
 
     /// A store is needed to reach the queue at all, so this covers the
@@ -1014,12 +900,12 @@ mod tests {
 
         // Before coverage: refused by the calendar, never requested.
         scheduler.request_days_for(range(at(2020, 1, 1, 0), at(2020, 1, 1, 1)));
-        assert_eq!(scheduler.queued(), 0);
+        assert_eq!(scheduler.days.queued(), 0);
 
         // In the future: same.
         let ahead = Utc::now() + TimeDelta::days(3);
         scheduler.request_days_for(range(ahead, ahead));
-        assert_eq!(scheduler.queued(), 0);
+        assert_eq!(scheduler.days.queued(), 0);
 
         // Already archived: skipped.
         let archived = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
@@ -1027,7 +913,7 @@ mod tests {
             .insert_day(archived, "host", Utc::now(), &[])
             .expect("insert");
         scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 20, 17)));
-        assert_eq!(scheduler.queued(), 0);
+        assert_eq!(scheduler.days.queued(), 0);
     }
 
     /// A queued day is always dispatched, offline included: the transport
@@ -1037,8 +923,8 @@ mod tests {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 20, 17)));
 
-        assert_eq!(scheduler.queued(), 0);
-        assert!(scheduler.is_fetching());
+        assert_eq!(scheduler.days.queued(), 0);
+        assert!(scheduler.days.is_fetching());
     }
 
     /// A recording is requested once. Loading it again requests nothing.
@@ -1047,9 +933,9 @@ mod tests {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         let span = range(at(2026, 7, 20, 8), at(2026, 7, 20, 17));
         scheduler.request_days_for(span);
-        let after_first = scheduler.seen.len();
+        let after_first = scheduler.days.requested_days().len();
         scheduler.request_days_for(span);
-        assert_eq!(scheduler.seen.len(), after_first);
+        assert_eq!(scheduler.days.requested_days().len(), after_first);
     }
 
     /// A track spanning more than the cap queues nothing: bulk fetching is
@@ -1058,8 +944,8 @@ mod tests {
     fn an_overlong_recording_queues_nothing() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.request_days_for(range(at(2026, 6, 1, 0), at(2026, 7, 20, 0)));
-        assert_eq!(scheduler.queued(), 0);
-        assert!(scheduler.seen.is_empty());
+        assert_eq!(scheduler.days.queued(), 0);
+        assert!(scheduler.days.requested_days().is_empty());
     }
 
     /// The archive records the host, not the day's own URL: a per-day string
@@ -1256,9 +1142,12 @@ mod tests {
 
         scheduler.set_base_url("https://mirror.example");
 
-        assert!(scheduler.seen.is_empty(), "the old host's requests");
+        assert!(
+            scheduler.days.requested_days().is_empty(),
+            "the old host's requests"
+        );
         assert!(scheduler.refused.is_empty(), "the old host's refusals");
-        assert_eq!(scheduler.queued(), 0);
+        assert_eq!(scheduler.days.queued(), 0);
         assert_eq!(
             scheduler.archived_cells.get(&day),
             Some(&44_546),
@@ -1272,11 +1161,11 @@ mod tests {
         let day = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
         scheduler.refused.insert(day);
         scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 20, 17)));
-        let seen = scheduler.seen.len();
+        let seen = scheduler.days.requested_days().len();
 
         scheduler.set_base_url(DEFAULT_BASE_URL);
 
-        assert_eq!(scheduler.seen.len(), seen);
+        assert_eq!(scheduler.days.requested_days().len(), seen);
         assert!(scheduler.refused.contains(&day));
     }
 }

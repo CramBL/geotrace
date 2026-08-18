@@ -155,6 +155,46 @@ impl BackfillDataset for GeomagneticIndexBackfill {
     }
 }
 
+/// The daily global ionosphere maps from JPL.
+pub struct TecMapBackfill;
+
+impl BackfillDataset for TecMapBackfill {
+    const ID_PREFIX: &'static str = "tec_map_backfill";
+    const ARCHIVE_NAME: &'static str = gt_ionex::text::ARCHIVE_NAME;
+    const DAY_SUBJECT: &'static str = gt_ionex::text::MAP_NAMES;
+    /// The first mirror's settled file serves a past day, and a further
+    /// request only goes out where that mirror holds no file.
+    const REQUESTS_PER_DAY: u64 = 1;
+    const REQUEST_INTERVAL: Duration = gt_ionex::transport::REQUEST_INTERVAL;
+    /// Measured on an archive filled from JPL final files: a day of 13 maps on
+    /// the published 71 by 73 grid adds about 128,000 bytes.
+    const BYTES_PER_DAY: u64 = 125 * 1024;
+    /// No preset reaches the 2008 coverage start: downloading it whole costs
+    /// hours and about 800 MB.
+    const PRESETS: [BackfillPreset; 3] = [
+        BackfillPreset {
+            label: "30 days",
+            days_back: Some(30),
+        },
+        BackfillPreset {
+            label: "1 year",
+            days_back: Some(365),
+        },
+        BackfillPreset {
+            label: "5 years",
+            days_back: Some(5 * 365),
+        },
+    ];
+
+    fn coverage_start() -> NaiveDate {
+        gt_ionex::calendar::COVERAGE_START
+    }
+
+    fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> Vec<NaiveDate> {
+        gt_ionex::calendar::fetchable_days(from, to, today_utc)
+    }
+}
+
 /// Whether a download can start, and what stops it when it cannot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackfillReadiness {
@@ -431,20 +471,35 @@ mod tests {
         );
     }
 
-    /// The geomagnetic presets stop short of Kp's 1932 start, and the widest
-    /// of them still reaches back five years.
-    #[test]
-    fn the_geomagnetic_presets_stay_within_five_years() {
-        let today = Utc::now().date_naive();
-        let widest = GeomagneticIndexBackfill::PRESETS
+    /// The widest preset of a bounded dataset and where it starts today.
+    fn widest_preset<D: BackfillDataset>() -> (Option<u64>, NaiveDate) {
+        let days_back = D::PRESETS
             .into_iter()
             .filter_map(|preset| preset.days_back)
             .max();
-        assert_eq!(widest, Some(5 * 365));
-        assert!(
-            BackfillUi::<GeomagneticIndexBackfill>::preset_start(today, widest)
-                > gt_solar::calendar::COVERAGE_START
-        );
+        (
+            days_back,
+            BackfillUi::<D>::preset_start(Utc::now().date_naive(), days_back),
+        )
+    }
+
+    /// The geomagnetic and TEC presets reach back five years and stop there,
+    /// short of Kp's 1932 start and JPL's 2008 one.
+    #[test]
+    fn the_bounded_presets_stay_within_five_years() {
+        for ((widest, start), coverage_start) in [
+            (
+                widest_preset::<GeomagneticIndexBackfill>(),
+                gt_solar::calendar::COVERAGE_START,
+            ),
+            (
+                widest_preset::<TecMapBackfill>(),
+                gt_ionex::calendar::COVERAGE_START,
+            ),
+        ] {
+            assert_eq!(widest, Some(5 * 365));
+            assert!(start > coverage_start);
+        }
     }
 
     #[rstest]
@@ -467,6 +522,15 @@ mod tests {
         #[case] expected: &str,
     ) {
         assert_eq!(GeomagneticIndexBackfill::estimate(days), expected);
+    }
+
+    /// A map day costs one request, and its archived footprint dominates the
+    /// estimate.
+    #[rstest]
+    #[case::one_day(1, "1 day, about 2 s and 125.0 KB")]
+    #[case::five_years(1825, "1825 days, about 61 min and 222.8 MB")]
+    fn tec_estimates_count_one_request_per_day(#[case] days: usize, #[case] expected: &str) {
+        assert_eq!(TecMapBackfill::estimate(days), expected);
     }
 
     /// Nothing is requested until the button is pressed.

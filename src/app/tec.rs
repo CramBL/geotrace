@@ -9,7 +9,6 @@
 //! is in flight at a time, and the transport spaces requests
 //! [`transport::REQUEST_INTERVAL`] apart.
 
-use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
@@ -23,7 +22,7 @@ use gt_ionex::{IonexProduct, calendar, transport};
 use gt_store::{IonexStore, IonexStoreError};
 use gt_types::TimeRange;
 
-use super::day_failures::DayFailure;
+use super::day_fetch_queue::DayFetchQueue;
 
 /// What one day's fetch produced.
 enum MapDayMessage {
@@ -42,6 +41,14 @@ enum MapDayMessage {
     },
 }
 
+impl MapDayMessage {
+    fn day(&self) -> NaiveDate {
+        match *self {
+            Self::Stored { day, .. } | Self::Failed { day, .. } => day,
+        }
+    }
+}
+
 /// Queues TEC map days and ingests them into the archive.
 pub struct TecMapScheduler {
     ctx: Context,
@@ -57,12 +64,7 @@ pub struct TecMapScheduler {
     /// Where that transport comes from. Supplied by the application, so
     /// nothing here determines whether requests may leave the machine.
     transport_source: TransportSource,
-    queue: VecDeque<NaiveDate>,
-    /// Every day queued this session, so a day is requested at most once even
-    /// after it fails or comes back from the earlier product.
-    seen: HashSet<NaiveDate>,
-    in_flight: Option<NaiveDate>,
-    failures: Vec<DayFailure>,
+    days: DayFetchQueue,
 }
 
 impl TecMapScheduler {
@@ -81,10 +83,7 @@ impl TecMapScheduler {
             store,
             http: None,
             transport_source,
-            queue: VecDeque::new(),
-            seen: HashSet::new(),
-            in_flight: None,
-            failures: Vec::new(),
+            days: DayFetchQueue::default(),
         }
     }
 
@@ -94,9 +93,9 @@ impl TecMapScheduler {
     /// coverage, or already queued are dropped. A recording spanning more than
     /// [`calendar::MAX_DAYS_PER_TRACK`] queues nothing.
     pub fn request_days_for(&mut self, range: TimeRange) {
-        if self.store.is_none() {
+        let Some(store) = self.store.as_ref().map(Arc::clone) else {
             return;
-        }
+        };
         let Some(days) = range.utc_days(calendar::MAX_DAYS_PER_TRACK) else {
             log::info!(
                 "A recording spanning {} is past the {}-day limit; no TEC map days queued",
@@ -110,55 +109,50 @@ impl TecMapScheduler {
             if calendar::fetchable_products(day, today).is_empty() {
                 continue;
             }
-            match self.day_needs_fetch(day, today) {
-                Ok(false) => {}
-                Ok(true) => {
-                    if self.seen.insert(day) {
-                        self.queue.push_back(day);
-                    }
-                }
-                Err(err) => {
-                    if self.seen.insert(day) {
-                        let detail = format!("reading the archive: {err}");
-                        log::error!("Cannot determine whether {day} is archived: {detail}");
-                        self.failures.push(DayFailure { day, detail });
-                    }
-                }
-            }
+            self.days
+                .request_recording_day(day, day_needs_fetch(&store, day, today));
         }
         self.start_next();
     }
 
-    /// Days that could not be archived, in the order they were reported.
-    pub fn failures(&self) -> &[DayFailure] {
-        &self.failures
+    /// Queue every day in `from..=to` the archive does not already hold in the
+    /// settled product, as one backfill.
+    ///
+    /// Returns how many days were queued, or [`None`] when there is no archive
+    /// to write them to.
+    pub fn backfill(&mut self, from: NaiveDate, to: NaiveDate) -> Option<usize> {
+        let store = self.store.as_ref().map(Arc::clone)?;
+        let today = Utc::now().date_naive();
+        let total = self
+            .days
+            .start_backfill(calendar::fetchable_days(from, to, today), |day| {
+                day_needs_fetch(&store, day, today)
+            });
+        log::info!("Backfilling TEC maps for {total} days between {from} and {to}");
+        self.start_next();
+        Some(total)
     }
 
-    /// Whether `day` must be requested.
-    ///
-    /// Three conditions put a day on the queue: the archive holds no maps for
-    /// it, the maps it holds came from [`IonexProduct::Rapid`] which JPL
-    /// replaces with a final map about two days later, or the day is still
-    /// running and so has no settled maps yet. A past day archived from
-    /// [`IonexProduct::Final`] is never requested again.
-    fn day_needs_fetch(
-        &self,
-        day: NaiveDate,
-        today_utc: NaiveDate,
-    ) -> Result<bool, IonexStoreError> {
-        let Some(store) = self.store.as_deref() else {
-            return Ok(false);
-        };
-        let Some(product) = store.archived_product(day)? else {
-            return Ok(true);
-        };
-        Ok(product == IonexProduct::Rapid || day >= today_utc)
+    /// Whether there is an archive to download into. Grays the backfill
+    /// control when there is not.
+    pub fn archive_available(&self) -> bool {
+        self.store.is_some()
+    }
+
+    /// The queued, in-flight and failed days, as the settings page reports
+    /// them and the download control drives them.
+    pub fn fetch_queue(&self) -> &DayFetchQueue {
+        &self.days
+    }
+
+    pub fn fetch_queue_mut(&mut self) -> &mut DayFetchQueue {
+        &mut self.days
     }
 
     /// Apply finished fetches and start the next queued day.
     pub fn poll(&mut self) {
         while let Ok(message) = self.rx.try_recv() {
-            self.in_flight = None;
+            self.days.finish_day(message.day());
             match message {
                 MapDayMessage::Stored {
                     day,
@@ -181,11 +175,12 @@ impl TecMapScheduler {
                             ),
                         }
                     }
+                    self.days.mark_archived(day);
                     log::info!("Archived {map_count} {product} TEC maps for {day} from {mirror}");
                 }
                 MapDayMessage::Failed { day, detail } => {
                     log::error!("No TEC maps archived for {day}: {detail}");
-                    self.failures.push(DayFailure { day, detail });
+                    self.days.report_failure(day, detail);
                 }
             }
         }
@@ -194,43 +189,26 @@ impl TecMapScheduler {
 
     /// Point the scheduler at `mirrors`.
     ///
-    /// A changed list drops the queue, `seen` and the failures: they belong to
-    /// the old list. Archived days are kept - a day already archived does not
-    /// depend on which mirror served it.
+    /// A changed list drops the queue, the days requested of the old list, its
+    /// failures and the running backfill. Archived days are kept - a day
+    /// already archived does not depend on which mirror served it.
     pub fn set_mirrors(&mut self, mirrors: &MirrorList) {
         if self.mirrors == *mirrors {
             return;
         }
         self.mirrors = mirrors.clone();
         self.http = None;
-        self.queue.clear();
-        self.seen.clear();
-        self.failures.clear();
-    }
-
-    #[cfg(test)]
-    fn is_fetching(&self) -> bool {
-        self.in_flight.is_some()
-    }
-
-    #[cfg(test)]
-    fn queued(&self) -> usize {
-        self.queue.len()
+        self.days.forget_host();
     }
 
     fn start_next(&mut self) {
-        if self.in_flight.is_some() {
+        let Some(store) = self.store.as_ref().map(Arc::clone) else {
             return;
-        }
-        let (Some(store), Some(day)) = (
-            self.store.as_ref().map(Arc::clone),
-            self.queue.front().copied(),
-        ) else {
+        };
+        let Some(day) = self.days.take_next_day() else {
             return;
         };
         let transport = self.transport();
-        self.queue.pop_front();
-        self.in_flight = Some(day);
         spawn_fetch(
             self.ctx.clone(),
             self.tx.clone(),
@@ -267,6 +245,24 @@ impl TecMapScheduler {
             }
         }
     }
+}
+
+/// Whether `day` must be requested.
+///
+/// Three conditions put a day on the queue: the archive holds no maps for it,
+/// the maps it holds came from [`IonexProduct::Rapid`] which JPL replaces with
+/// a final map about two days later, or the day is still running and so has no
+/// settled maps yet. A past day archived from [`IonexProduct::Final`] is never
+/// requested again.
+fn day_needs_fetch(
+    store: &IonexStore,
+    day: NaiveDate,
+    today_utc: NaiveDate,
+) -> Result<bool, IonexStoreError> {
+    let Some(product) = store.archived_product(day)? else {
+        return Ok(true);
+    };
+    Ok(product == IonexProduct::Rapid || day >= today_utc)
 }
 
 #[expect(
@@ -350,6 +346,9 @@ mod tests {
     use rstest::rstest;
     use tempfile::TempDir;
 
+    use crate::app::backfill::BackfillProgress;
+    use crate::app::day_failures::DayFailure;
+    use crate::app::day_fetch_status::DayFetchStatus;
     use gt_fetch::{BytesResponse, HttpRequest, TransportError};
     use gt_ionex::DEFAULT_BASE_URL;
     use gt_store::Store;
@@ -511,9 +510,9 @@ mod tests {
     fn a_scheduler_without_an_archive_queues_nothing() {
         let mut scheduler = scheduler_without_archive();
         scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17)));
-        assert_eq!(scheduler.queued(), 0);
-        assert!(!scheduler.is_fetching());
-        assert!(scheduler.failures().is_empty());
+        assert_eq!(scheduler.days.queued(), 0);
+        assert!(!scheduler.days.is_fetching());
+        assert!(scheduler.days.failures().is_empty());
     }
 
     /// JPL published nothing before November 2008, so no request goes out for
@@ -522,8 +521,8 @@ mod tests {
     fn a_day_before_coverage_is_never_queued() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.request_days_for(TimeRange::new(at(1970, 1, 1, 0), at(1970, 1, 1, 1)));
-        assert_eq!(scheduler.queued(), 0);
-        assert!(!scheduler.is_fetching());
+        assert_eq!(scheduler.days.queued(), 0);
+        assert!(!scheduler.days.is_fetching());
     }
 
     #[test]
@@ -531,8 +530,8 @@ mod tests {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         let ahead = Utc::now() + TimeDelta::days(3);
         scheduler.request_days_for(TimeRange::new(ahead, ahead));
-        assert_eq!(scheduler.queued(), 0);
-        assert!(!scheduler.is_fetching());
+        assert_eq!(scheduler.days.queued(), 0);
+        assert!(!scheduler.days.is_fetching());
     }
 
     /// A past day archived from the settled product is settled, so nothing
@@ -543,8 +542,8 @@ mod tests {
         archive_day(&store, day(2024, 5, 10), IonexProduct::Final);
 
         scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17)));
-        assert_eq!(scheduler.queued(), 0);
-        assert!(!scheduler.is_fetching());
+        assert_eq!(scheduler.days.queued(), 0);
+        assert!(!scheduler.days.is_fetching());
     }
 
     /// A rapid map is replaced by a final one about two days later, so the day
@@ -555,7 +554,10 @@ mod tests {
         archive_day(&store, day(2024, 5, 10), IonexProduct::Rapid);
 
         scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17)));
-        assert!(scheduler.is_fetching(), "the archived day is dispatched");
+        assert!(
+            scheduler.days.is_fetching(),
+            "the archived day is dispatched"
+        );
     }
 
     /// The current day has no settled maps yet, so an archived copy of it is
@@ -567,7 +569,7 @@ mod tests {
         archive_day(&store, today, IonexProduct::Final);
 
         scheduler.request_days_for(TimeRange::new(Utc::now(), Utc::now()));
-        assert!(scheduler.is_fetching());
+        assert!(scheduler.days.is_fetching());
     }
 
     /// A recording is requested once. Loading it again requests nothing.
@@ -576,9 +578,9 @@ mod tests {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         let span = TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17));
         scheduler.request_days_for(span);
-        let after_first = scheduler.seen.len();
+        let after_first = scheduler.days.requested_days().len();
         scheduler.request_days_for(span);
-        assert_eq!(scheduler.seen.len(), after_first);
+        assert_eq!(scheduler.days.requested_days().len(), after_first);
     }
 
     /// A track spanning more than the cap queues nothing: bulk fetching is a
@@ -587,12 +589,12 @@ mod tests {
     fn an_overlong_recording_queues_nothing() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.request_days_for(TimeRange::new(at(2024, 4, 1, 0), at(2024, 5, 10, 0)));
-        assert_eq!(scheduler.queued(), 0);
-        assert!(scheduler.seen.is_empty());
+        assert_eq!(scheduler.days.queued(), 0);
+        assert!(scheduler.days.requested_days().is_empty());
     }
 
     /// A changed mirror list drops what belonged to the old one, whether a
-    /// host changed or the order did.
+    /// host changed or the order did, the running backfill included.
     #[rstest]
     #[case::another_host(&["https://mirror.example"])]
     #[case::the_same_hosts_in_another_order(&["https://mirror.example", DEFAULT_BASE_URL])]
@@ -600,27 +602,31 @@ mod tests {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.set_mirrors(&mirrors(&[DEFAULT_BASE_URL, "https://mirror.example"]));
         scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 11, 17)));
-        scheduler.failures.push(DayFailure {
-            day: day(2024, 5, 10),
-            detail: "HTTP 500 Internal Server Error".to_owned(),
-        });
+        scheduler.days.report_failure(
+            day(2024, 5, 10),
+            "HTTP 500 Internal Server Error".to_owned(),
+        );
 
         scheduler.set_mirrors(&mirrors(changed));
 
-        assert!(scheduler.seen.is_empty(), "the old list's requests");
-        assert_eq!(scheduler.queued(), 0);
-        assert!(scheduler.failures().is_empty());
+        assert!(
+            scheduler.days.requested_days().is_empty(),
+            "the old list's requests"
+        );
+        assert_eq!(scheduler.days.queued(), 0);
+        assert!(scheduler.days.failures().is_empty());
+        assert_eq!(scheduler.days.backfill_progress(), None);
     }
 
     #[test]
     fn setting_the_same_mirror_list_changes_nothing() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17)));
-        let seen = scheduler.seen.len();
+        let seen = scheduler.days.requested_days().len();
 
         scheduler.set_mirrors(&MirrorList::default());
 
-        assert_eq!(scheduler.seen.len(), seen);
+        assert_eq!(scheduler.days.requested_days().len(), seen);
     }
 
     /// A failure reaches the settings section's list.
@@ -637,7 +643,7 @@ mod tests {
         scheduler.poll();
 
         assert_eq!(
-            scheduler.failures(),
+            scheduler.days.failures(),
             [DayFailure {
                 day: day(2024, 5, 10),
                 detail: "final: HTTP 500 Internal Server Error".to_owned(),
@@ -801,6 +807,167 @@ mod tests {
         }
     }
 
+    /// A backfill puts every day the refresh rule wants on the queue: an
+    /// unarchived day, and one archived from the revisable product.
+    #[test]
+    fn a_backfill_queues_the_days_the_refresh_rule_wants() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        archive_day(&store, day(2024, 5, 10), IonexProduct::Final);
+        archive_day(&store, day(2024, 5, 11), IonexProduct::Rapid);
+
+        let queued = scheduler.backfill(day(2024, 5, 10), day(2024, 5, 12));
+
+        assert_eq!(queued, Some(2), "the rapid day and the unarchived one");
+        assert_eq!(
+            scheduler.days.fetch_status().fetching,
+            Some(day(2024, 5, 11)),
+            "the day archived from the settled product is never requested"
+        );
+    }
+
+    /// Re-running a backfill over a range already archived from the settled
+    /// product costs nothing.
+    #[test]
+    fn a_fully_archived_range_queues_nothing() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        for offset in 10..=12 {
+            archive_day(&store, day(2024, 5, offset), IonexProduct::Final);
+        }
+
+        assert_eq!(
+            scheduler.backfill(day(2024, 5, 10), day(2024, 5, 12)),
+            Some(0)
+        );
+        assert_eq!(scheduler.days.backfill_progress(), None);
+    }
+
+    /// A range before JPL's first published day requests nothing.
+    #[test]
+    fn a_backfill_before_coverage_queues_nothing() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        assert_eq!(
+            scheduler.backfill(day(1970, 1, 1), day(2008, 11, 18)),
+            Some(0)
+        );
+        assert_eq!(scheduler.days.backfill_progress(), None);
+    }
+
+    /// No archive is distinct from an empty range: the control says so instead
+    /// of claiming the range is already downloaded.
+    #[test]
+    fn a_backfill_without_an_archive_reports_no_archive() {
+        let mut scheduler = scheduler_without_archive();
+        assert!(!scheduler.archive_available());
+        assert_eq!(scheduler.backfill(day(2024, 5, 10), day(2024, 5, 12)), None);
+        assert_eq!(scheduler.days.backfill_progress(), None);
+    }
+
+    /// Every outcome retires its day, and the last one ends the backfill.
+    #[rstest]
+    #[case::stored(MapDayMessage::Stored {
+        day: day(2024, 5, 10),
+        mirror: MirrorBaseUrl::new(DEFAULT_BASE_URL),
+        product: IonexProduct::Final,
+        map_count: 13,
+        skipped: Vec::new(),
+    })]
+    #[case::failed(MapDayMessage::Failed {
+        day: day(2024, 5, 10),
+        detail: "final: HTTP 500 Internal Server Error".to_owned(),
+    })]
+    fn progress_advances_on_every_outcome(#[case] message: MapDayMessage) {
+        let mut scheduler = scheduler_without_archive();
+        scheduler
+            .days
+            .queue_backfill_of(&[day(2024, 5, 10), day(2024, 5, 11)]);
+        assert_eq!(
+            scheduler.days.backfill_progress(),
+            Some(BackfillProgress { done: 0, total: 2 })
+        );
+
+        scheduler.tx.send(message).expect("send");
+        scheduler.poll();
+
+        assert_eq!(
+            scheduler.days.backfill_progress(),
+            Some(BackfillProgress { done: 1, total: 2 })
+        );
+    }
+
+    /// Cancelling releases the queued days for a later backfill, and keeps the
+    /// day already being fetched claimed.
+    #[test]
+    fn cancelling_releases_every_queued_day_but_the_one_in_flight() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        let (in_flight, queued) = (day(2024, 5, 10), day(2024, 5, 11));
+        scheduler.days.queue_backfill_of(&[in_flight, queued]);
+        assert_eq!(scheduler.days.take_next_day(), Some(in_flight));
+
+        scheduler.days.cancel_backfill();
+
+        assert_eq!(scheduler.days.backfill_progress(), None);
+        assert_eq!(scheduler.days.queued(), 0);
+        assert!(
+            scheduler.days.requested_days().contains(&in_flight),
+            "the day being fetched stays claimed"
+        );
+        assert!(
+            !scheduler.days.requested_days().contains(&queued),
+            "a day that never went out can be requested again"
+        );
+    }
+
+    /// The status reports the day in flight, the queue behind it, and how much
+    /// of what is loaded the archive holds.
+    #[test]
+    fn the_status_reports_the_queue_and_the_archived_recording_days() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        archive_day(&store, day(2024, 5, 10), IonexProduct::Final);
+
+        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 11, 17)));
+
+        assert_eq!(
+            scheduler.days.fetch_status(),
+            DayFetchStatus {
+                fetching: Some(day(2024, 5, 11)),
+                queued: 0,
+                recording_days: 2,
+                archived_recording_days: 1,
+            }
+        );
+    }
+
+    /// A recording made before JPL's coverage begins leaves the count empty,
+    /// which the settings page shows as an absent value.
+    #[test]
+    fn a_day_outside_coverage_is_no_recording_day() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        scheduler.request_days_for(TimeRange::new(at(1970, 1, 1, 0), at(1970, 1, 1, 1)));
+
+        assert_eq!(scheduler.days.fetch_status().recording_days, 0);
+    }
+
+    /// An archived day moves the loaded recording's coverage up.
+    #[test]
+    fn archiving_a_day_covers_the_recording_day_it_belongs_to() {
+        let mut scheduler = scheduler_without_archive();
+        scheduler.days.await_recording_day(day(2024, 5, 10));
+
+        scheduler
+            .tx
+            .send(MapDayMessage::Stored {
+                day: day(2024, 5, 10),
+                mirror: MirrorBaseUrl::new(DEFAULT_BASE_URL),
+                product: IonexProduct::Final,
+                map_count: 13,
+                skipped: Vec::new(),
+            })
+            .expect("send");
+        scheduler.poll();
+
+        assert_eq!(scheduler.days.fetch_status().archived_recording_days, 1);
+    }
+
     /// Offline, a queued day is still dispatched: the transport declines the
     /// request rather than the day staying queued.
     #[test]
@@ -808,7 +975,7 @@ mod tests {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17)));
 
-        assert_eq!(scheduler.queued(), 0);
-        assert!(scheduler.is_fetching());
+        assert_eq!(scheduler.days.queued(), 0);
+        assert!(scheduler.days.is_fetching());
     }
 }
