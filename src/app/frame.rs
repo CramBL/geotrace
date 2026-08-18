@@ -61,7 +61,7 @@ impl eframe::App for App {
         }
 
         if self.map.layer() == MapLayer::Satellite && !self.map.has_mapbox_token() {
-            show_mapbox_token_dialog(ui, &mut self.map, &mut self.mapbox_token_input);
+            show_mapbox_token_dialog(ui, &mut self.map, &mut self.mapbox_token_field);
         }
 
         show_about_dialog(ui, &mut self.about_open, self.app_version);

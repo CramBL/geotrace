@@ -2922,7 +2922,9 @@ dependencies = [
  "geo",
  "geo-types",
  "geotrace-sdk",
+ "gt-fetch",
  "gt-types",
+ "parking_lot",
  "tempfile",
  "uom",
 ]

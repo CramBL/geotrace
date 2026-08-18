@@ -12,6 +12,9 @@ use gt_ui_theme::warning_amber;
 
 use gt_loaded_files::{LoadedFiles, LoadedFilesView, RecordingNames};
 
+use crate::app::mapbox_token;
+use crate::app::mapbox_token::{MapboxTokenCommit, MapboxTokenField};
+
 /// The tracks of one stored recording that a remove acts on.
 pub struct RecordingTrackRemoval {
     pub db_ref: DatabaseRef,
@@ -878,14 +881,17 @@ pub fn show_snap_auto_prompt(ui: &egui::Ui, server_url: &str) -> Option<SnapAuto
     choice
 }
 
-pub fn show_mapbox_token_dialog(ui: &egui::Ui, map: &mut NavMap, token_input: &mut String) {
+pub fn show_mapbox_token_dialog(
+    ui: &egui::Ui,
+    map: &mut NavMap,
+    token_field: &mut MapboxTokenField,
+) {
     // ESC dismisses the dialog - same effect as the cancel button.
     let esc_pressed = ui
         .ctx()
         .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
     if esc_pressed {
         map.set_layer(MapLayer::OpenStreetMap);
-        token_input.clear();
         return;
     }
 
@@ -900,24 +906,20 @@ pub fn show_mapbox_token_dialog(ui: &egui::Ui, map: &mut NavMap, token_input: &m
             ui.label("Get one free at mapbox.com");
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("Token");
-                let response = ui.text_edit_singleline(token_input);
-                let submitted =
-                    response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                if (submitted || ui.button("Apply").clicked()) && !token_input.is_empty() {
-                    map.set_mapbox_token(std::mem::take(token_input));
+                ui.label(mapbox_token::TOKEN_LABEL);
+                token_field.show(ui, map, MapboxTokenCommit::OnEnter);
+                if ui.button("Apply").clicked() {
+                    token_field.commit(map);
                 }
             });
             if ui.button("Cancel - use OpenStreetMap").clicked() {
                 map.set_layer(MapLayer::OpenStreetMap);
-                token_input.clear();
             }
         });
 
     // X button in the title bar was clicked - treat as cancel.
     if !open {
         map.set_layer(MapLayer::OpenStreetMap);
-        token_input.clear();
     }
 }
 
@@ -930,8 +932,78 @@ mod tests {
         FileIdx, FileSource, LoadedFile, LoadedTrack, TrackIdx, TrackLod, TrackMetadata,
     };
 
-    use super::{NodeKey, TrackRef, files_fully_removed, track_removals};
+    use egui_kittest::kittest::Queryable as _;
+    use gt_map::TileAccess;
+    use gt_test_utils::{HarnessInteraction as _, TestHarness};
+
+    use super::{
+        MapLayer, MapboxTokenField, NavMap, NodeKey, TrackRef, files_fully_removed,
+        show_mapbox_token_dialog, track_removals,
+    };
     use gt_loaded_files::{FileHistory, LoadedFiles};
+
+    struct TokenDialogState {
+        map: NavMap,
+        field: MapboxTokenField,
+    }
+
+    fn token_dialog() -> TestHarness<'static, TokenDialogState> {
+        let mut map = NavMap::new(egui::Context::default(), TileAccess::Offline);
+        map.set_layer(MapLayer::Satellite);
+        let mut harness = TestHarness::builder().ui_state(
+            |ui, state: &mut TokenDialogState| {
+                show_mapbox_token_dialog(ui, &mut state.map, &mut state.field);
+            },
+            TokenDialogState {
+                map,
+                field: MapboxTokenField::default(),
+            },
+        );
+        harness.run();
+        harness
+    }
+
+    /// Cancelling leaves the map on OpenStreetMap with no token: the typed text
+    /// was never applied.
+    #[test]
+    fn cancelling_the_token_dialog_keeps_the_typed_text_off_the_map() {
+        let mut harness = token_dialog();
+        harness.inner.type_into_text_input("typed");
+
+        harness
+            .inner
+            .get_by_label("Cancel - use OpenStreetMap")
+            .click();
+        harness.run();
+
+        assert!(!harness.state().map.has_mapbox_token());
+        assert_eq!(harness.state().map.layer(), MapLayer::OpenStreetMap);
+    }
+
+    /// Escape dismisses the dialog the way Cancel does, without applying what
+    /// was typed.
+    #[test]
+    fn escape_keeps_the_typed_text_off_the_map() {
+        let mut harness = token_dialog();
+        harness.inner.type_into_text_input("typed");
+
+        harness.inner.key_press(egui::Key::Escape);
+        harness.run();
+
+        assert!(!harness.state().map.has_mapbox_token());
+        assert_eq!(harness.state().map.layer(), MapLayer::OpenStreetMap);
+    }
+
+    #[test]
+    fn applying_the_token_dialog_hands_the_typed_text_to_the_map() {
+        let mut harness = token_dialog();
+        harness.inner.type_into_text_input("typed");
+
+        harness.inner.get_by_label("Apply").click();
+        harness.run();
+
+        assert_eq!(harness.state().map.mapbox_token(), "typed");
+    }
 
     fn make_file(track_count: usize) -> LoadedFile {
         LoadedFile {

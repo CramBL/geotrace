@@ -98,7 +98,7 @@ impl<B> HttpResponse<B> {
 }
 
 /// A failure below the HTTP layer (connection, timeout, TLS, ...).
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 #[error("request failed: {detail}")]
 pub struct TransportError {
     pub detail: String,

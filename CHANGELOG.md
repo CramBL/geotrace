@@ -22,6 +22,7 @@
 - Settings' "Aircraft interference" page shows what the interference download is doing, how many days of the loaded recordings are archived, and the days that failed with their cause.
 - Settings' "Ionospheric TEC" page downloads map history for a date range, skipping days already archived, with progress and a cancel button. It also shows what the map download is doing and how many days of the loaded recordings are archived.
 - Auto-storing recordings and auto-pruning are adjustable on Settings' "Application" page as well as in the History window.
+- Settings' "Interface" page holds the theme, the map layer and the Mapbox token, alongside the top bar and map controls that already set them. A "Test" button next to the token fetches one satellite tile with it and reports what the host answered.
 
 ### Changed
 
