@@ -11,12 +11,6 @@ use serde_json::Value;
 use gt_ionex::maps::GlobalIonosphereMaps;
 use gt_ionex::{CAPTURE_MANIFEST, FIXTURE_FILES, FixtureFile, fixtures_dir, parse};
 
-/// The May 2024 storm day.
-pub const STORM_CAPTURE: &str = "jpl-final-storm";
-
-/// The geomagnetically quiet day on the same grid.
-pub const QUIET_CAPTURE: &str = "jpl-final-quiet";
-
 pub fn declared_fixture(name: &str) -> Result<&'static FixtureFile, String> {
     FIXTURE_FILES
         .iter()

@@ -504,6 +504,16 @@ impl App {
                 let tiles_tree = &mut self.tiles_tree;
                 let jamming_empty = self.jamming.empty_reason();
                 let (jamming_dataset, jamming_day) = self.jamming.overlay_state();
+                // The heatmap follows the fix the pointer is on or the one
+                // clicked, and falls back to the plot cursor's own time, which
+                // the plot wrote when it last drew.
+                self.tec_maps
+                    .follow_instant(map_hover_time.or(s.plot_state.hovered_time));
+                let gt_map::TecLayer {
+                    snapshot: tec_snapshot,
+                    instant: tec_instant,
+                    empty_reason: tec_empty,
+                } = self.tec_maps.overlay_layer();
                 let mut behavior = MainBehavior {
                     map,
                     state: &mut s,
@@ -521,6 +531,9 @@ impl App {
                     jamming_dataset,
                     jamming_day,
                     jamming_empty,
+                    tec_snapshot,
+                    tec_instant,
+                    tec_empty,
                 };
                 tiles_tree.ui(&mut behavior, ui);
                 toggle_plot_request = behavior.toggle_plot_request;

@@ -30,6 +30,8 @@ pub struct SuppliedCounts<'a> {
     pub snapped_tracks: Option<&'a SnappedTracks>,
     /// Interference cells archived for the day the overlay shows.
     pub jamming_cells: usize,
+    /// Grid nodes archived for the day the heatmap shows.
+    pub tec_nodes: usize,
 }
 
 /// The in-scope element count of every [`DisplayCategory`].
@@ -50,6 +52,8 @@ pub struct DisplayCounts {
     sky_glyphs: usize,
     /// Interference cells available for the shown day, from the archive.
     jamming_hexes: usize,
+    /// TEC grid nodes available for the shown instant, from the archive.
+    tec_heatmap: usize,
 }
 
 impl DisplayCounts {
@@ -65,6 +69,7 @@ impl DisplayCounts {
             DisplayCategory::SnappedTracks => self.snapped_tracks,
             DisplayCategory::SkyGlyphs => self.sky_glyphs,
             DisplayCategory::JammingHexes => self.jamming_hexes,
+            DisplayCategory::TecHeatmap => self.tec_heatmap,
         }
     }
 
@@ -83,6 +88,7 @@ impl DisplayCounts {
             snapped_tracks: get(DisplayCategory::SnappedTracks),
             sky_glyphs: get(DisplayCategory::SkyGlyphs),
             jamming_hexes: get(DisplayCategory::JammingHexes),
+            tec_heatmap: get(DisplayCategory::TecHeatmap),
         }
     }
 
@@ -99,6 +105,7 @@ impl DisplayCounts {
         // and the per-track glyph toggle before the map sees it.
         let mut counts = Self {
             jamming_hexes: supplied.jamming_cells,
+            tec_heatmap: supplied.tec_nodes,
             snapped_tracks: supplied.snapped_tracks.map_or(0, |s| s.by_track.len()),
             ..Self::default()
         };
@@ -201,6 +208,7 @@ struct DisplayCountsKey {
     files_sig: u64,
     snapped_len: usize,
     jamming_cells: usize,
+    tec_nodes: usize,
     filter: GlobalFilter,
     visibility: TrackDataVisibility,
     event_marker_visibility: EventMarkerVisibility,
@@ -285,6 +293,7 @@ impl DisplayCountsCache {
             && key.files_sig == files_sig
             && key.snapped_len == snapped_len
             && key.jamming_cells == supplied.jamming_cells
+            && key.tec_nodes == supplied.tec_nodes
             && key.filter == *filter
             && key.visibility == *visibility
             && key.event_marker_visibility == *event_marker_visibility
@@ -309,6 +318,7 @@ impl DisplayCountsCache {
         self.cached = Some((
             DisplayCountsKey {
                 jamming_cells: supplied.jamming_cells,
+                tec_nodes: supplied.tec_nodes,
                 files_sig,
                 snapped_len,
                 filter: *filter,
@@ -416,7 +426,7 @@ mod tests {
     fn supplied(snapped_tracks: Option<&SnappedTracks>) -> SuppliedCounts<'_> {
         SuppliedCounts {
             snapped_tracks,
-            jamming_cells: 0,
+            ..SuppliedCounts::default()
         }
     }
 
@@ -462,6 +472,7 @@ mod tests {
             (DisplayCategory::SkyGlyphs, 1),
             // Archive-supplied, so a recording fixture contributes none.
             (DisplayCategory::JammingHexes, 0),
+            (DisplayCategory::TecHeatmap, 0),
         ];
         assert_eq!(expected.len(), DisplayCategory::iter().count());
         for (category, n) in expected {
@@ -489,7 +500,7 @@ mod tests {
             None,
             SuppliedCounts {
                 snapped_tracks: Some(&snapped),
-                jamming_cells: 0,
+                ..SuppliedCounts::default()
             },
         );
         assert_eq!(counts.get(DisplayCategory::SnappedTracks), 1);

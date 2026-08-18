@@ -381,6 +381,10 @@ pub struct MapSettings {
     /// `[gt_sky::TRAIL_OPACITY_PERCENT_MIN, gt_sky::TRAIL_OPACITY_PERCENT_MAX]`
     /// when applied.
     pub sky_trail_opacity_percent: f32,
+    /// Opacity of the ionospheric TEC heatmap, as a percentage. Clamped to
+    /// `[gt_ui_theme::TEC_OPACITY_PERCENT_MIN, gt_ui_theme::TEC_OPACITY_PERCENT_MAX]`
+    /// when applied.
+    pub tec_heatmap_opacity_percent: f32,
 }
 
 impl Default for MapSettings {
@@ -393,6 +397,7 @@ impl Default for MapSettings {
             sky_glyph_variant: gt_ui_types::SkyGlyphVariant::default(),
             point_window_folds: gt_ui_types::PointWindowFolds::default(),
             sky_trail_opacity_percent: gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT,
+            tec_heatmap_opacity_percent: gt_ui_theme::TEC_OPACITY_PERCENT_DEFAULT,
         }
     }
 }

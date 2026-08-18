@@ -15,5 +15,8 @@ gt-fmt = { path = "../gt-fmt" }
 gt-types = { path = "../gt-types" }
 strum.workspace = true
 
+[dev-dependencies]
+rstest.workspace = true
+
 [lints]
 workspace = true

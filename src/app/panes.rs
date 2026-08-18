@@ -36,6 +36,13 @@ pub(super) struct MainBehavior<'a> {
     pub(super) jamming_day: &'a mut gt_jam::day_selection::DaySelection,
     /// Why the overlay is drawing nothing, for the popup's legend line.
     pub(super) jamming_empty: Option<gt_jam::day_selection::EmptyReason>,
+    /// The archived TEC grid the heatmap draws, at the shown instant.
+    pub(super) tec_snapshot: Option<gt_map::TecHeatmapSnapshot<'a>>,
+    /// Which instant the heatmap shows, driven by the stepper in the eye popup
+    /// and by the hovered or selected fix.
+    pub(super) tec_instant: &'a mut gt_ionex::TecInstantSelection,
+    /// Why the heatmap is drawing nothing, for the popup's row.
+    pub(super) tec_empty: Option<gt_ionex::TecEmptyReason>,
     /// Snap error per track of completed snap runs, for the plot.
     pub(super) snap_error: &'a gt_ui_types::SnapErrorSeries,
     /// Interference per fix, resolved from the archive.
@@ -65,6 +72,11 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                         recording_names: &recording_names,
                         snapped_tracks: Some(self.snapped_tracks),
                         jamming_dataset: self.jamming_dataset,
+                        tec: gt_map::TecLayer {
+                            snapshot: self.tec_snapshot,
+                            instant: &mut *self.tec_instant,
+                            empty_reason: self.tec_empty,
+                        },
                         query_matches: self.query_matches,
                         empty_reason: self.jamming_empty,
                         filter: &s.filter,

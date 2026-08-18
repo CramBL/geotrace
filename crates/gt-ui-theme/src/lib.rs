@@ -223,6 +223,140 @@ pub fn interference_color(bad_fraction: f32) -> ThemedColor {
     ThemedColor::new(from.0.lerp_to_gamma(to.0, t), from.1.lerp_to_gamma(to.1, t))
 }
 
+/// Colour of a node holding no measurable content, and the bottom of the
+/// scale.
+const TEC_SCALE_BOTTOM: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(40, 50, 120),
+    Color32::from_rgb(30, 40, 100),
+);
+
+/// The colour stops of the TEC heatmap, as (TEC units, themed colour) pairs in
+/// ascending order.
+///
+/// The stops double, so the quiet range a mid-latitude recording sits in
+/// (under 20 TECU) takes as much of the ramp as the disturbed range above it.
+/// The top stop is roughly double the highest value ever measured, so a storm's
+/// 175 TECU takes a colour of its own.
+const TEC_SCALE: [(f64, ThemedColor); 8] = [
+    (0.0, TEC_SCALE_BOTTOM),
+    (
+        5.0,
+        ThemedColor::new(
+            Color32::from_rgb(30, 110, 200),
+            Color32::from_rgb(20, 80, 165),
+        ),
+    ),
+    (
+        10.0,
+        ThemedColor::new(
+            Color32::from_rgb(0, 170, 190),
+            Color32::from_rgb(0, 125, 145),
+        ),
+    ),
+    (
+        20.0,
+        ThemedColor::new(
+            Color32::from_rgb(40, 175, 90),
+            Color32::from_rgb(25, 130, 65),
+        ),
+    ),
+    (
+        40.0,
+        ThemedColor::new(
+            Color32::from_rgb(225, 200, 0),
+            Color32::from_rgb(160, 135, 0),
+        ),
+    ),
+    (
+        80.0,
+        ThemedColor::new(
+            Color32::from_rgb(240, 140, 20),
+            Color32::from_rgb(180, 95, 10),
+        ),
+    ),
+    (
+        160.0,
+        ThemedColor::new(
+            Color32::from_rgb(225, 55, 40),
+            Color32::from_rgb(175, 30, 20),
+        ),
+    ),
+    (
+        320.0,
+        ThemedColor::new(
+            Color32::from_rgb(215, 60, 190),
+            Color32::from_rgb(160, 35, 140),
+        ),
+    ),
+];
+
+/// Highest TEC value the heatmap's ramp distinguishes. Values above it take the
+/// last stop's colour.
+pub const TEC_SCALE_TOP_TECU: f64 = 320.0;
+
+/// The values the heatmap legend labels, each of them a colour stop of the
+/// scale.
+pub const TEC_LEGEND_TICKS_TECU: [f64; 4] = [0.0, 20.0, 80.0, TEC_SCALE_TOP_TECU];
+
+/// Opacity of the TEC heatmap, as the percentage the user sets. It scales the
+/// fill of every grid node.
+pub const TEC_OPACITY_PERCENT_MIN: f32 = 0.0;
+pub const TEC_OPACITY_PERCENT_MAX: f32 = 100.0;
+pub const TEC_OPACITY_PERCENT_DEFAULT: f32 = 40.0;
+
+/// The fill alpha for an opacity percentage, clamped to
+/// `TEC_OPACITY_PERCENT_MIN..=TEC_OPACITY_PERCENT_MAX` first.
+pub fn tec_fill_alpha(percent: f32) -> u8 {
+    unit_to_u8(percent.clamp(TEC_OPACITY_PERCENT_MIN, TEC_OPACITY_PERCENT_MAX) / 100.0)
+}
+
+/// Where `tecu` sits on the heatmap's ramp, from `0.0` at the first stop to
+/// `1.0` at [`TEC_SCALE_TOP_TECU`]. Each stop takes an equal share of the ramp.
+pub fn tec_scale_position(tecu: f64) -> f32 {
+    let segments = TEC_SCALE.len().saturating_sub(1);
+    for (index, stops) in TEC_SCALE.windows(2).enumerate() {
+        let (Some(&(lower, _)), Some(&(upper, _))) = (stops.first(), stops.get(1)) else {
+            continue;
+        };
+        if tecu < upper || index.saturating_add(1) >= segments {
+            let span = upper - lower;
+            let within = if span > 0.0 {
+                ((tecu - lower) / span).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let segment_count = if segments == 0 { 1.0 } else { segments as f64 };
+            return ((index as f64 + within) / segment_count) as f32;
+        }
+    }
+    0.0
+}
+
+/// The themed colour at `position` on the heatmap's ramp, as
+/// [`tec_scale_position`] measures it.
+pub fn tec_color_at_position(position: f32) -> ThemedColor {
+    let segments = TEC_SCALE.len().saturating_sub(1);
+    let scaled = f64::from(position.clamp(0.0, 1.0)) * segments as f64;
+    let index = usize::try_from(scaled.floor() as i64)
+        .unwrap_or(0)
+        .min(segments.saturating_sub(1));
+    let fraction = (scaled - index as f64) as f32;
+    let (Some(&(_, from)), Some(&(_, to))) =
+        (TEC_SCALE.get(index), TEC_SCALE.get(index.saturating_add(1)))
+    else {
+        return TEC_SCALE_BOTTOM;
+    };
+    ThemedColor::new(
+        from.dark().lerp_to_gamma(to.dark(), fraction),
+        from.light().lerp_to_gamma(to.light(), fraction),
+    )
+}
+
+/// The themed fill for a grid node holding `tecu` TEC units.
+pub fn tec_color(tecu: f64) -> ThemedColor {
+    tec_color_at_position(tec_scale_position(tecu))
+}
+
 /// The themed colour for a [`SignalQuality`](gt_types::SignalQuality) tier on a
 /// green → red scale.
 pub const fn snr_themed_color(quality: gt_types::SignalQuality) -> ThemedColor {
@@ -601,6 +735,78 @@ pub const LOG_COLORS: [Color32; 8] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every legend tick is a stop of the ramp, so a label always sits on a
+    /// colour the scale actually holds.
+    #[test]
+    fn every_legend_tick_is_a_colour_stop() {
+        for tick in TEC_LEGEND_TICKS_TECU {
+            assert!(
+                TEC_SCALE
+                    .iter()
+                    .any(|&(tecu, _)| (tecu - tick).abs() < f64::EPSILON),
+                "{tick} TECU is not a stop"
+            );
+        }
+    }
+
+    /// The ramp runs from the bottom stop to the top one, and a value past the
+    /// top takes the top colour.
+    #[rstest::rstest]
+    #[case::the_bottom(0.0, 0.0)]
+    #[case::the_second_stop(5.0, 1.0 / 7.0)]
+    #[case::halfway_through_a_segment(15.0, 2.5 / 7.0)]
+    #[case::the_top(320.0, 1.0)]
+    #[case::past_the_top(1_000.0, 1.0)]
+    #[case::below_the_bottom(-5.0, 0.0)]
+    fn a_value_sits_where_the_stops_put_it(#[case] tecu: f64, #[case] expected: f32) {
+        let position = tec_scale_position(tecu);
+        assert!(
+            (position - expected).abs() < 1e-6,
+            "{tecu} TECU sits at {position}, expected {expected}"
+        );
+    }
+
+    /// Storm values must stay apart from each other and from the quiet range,
+    /// which a scale saturating below them would not do.
+    #[test]
+    fn storm_values_keep_their_own_colours() {
+        let quiet = tec_color(15.0).dark();
+        let elevated = tec_color(100.0).dark();
+        let storm = tec_color(175.0).dark();
+        let extreme = tec_color(250.0).dark();
+        for (left, right) in [(quiet, elevated), (elevated, storm), (storm, extreme)] {
+            assert_ne!(left, right);
+        }
+    }
+
+    /// The ramp is continuous: neighbouring values cannot jump a whole stop.
+    #[test]
+    fn the_ramp_moves_smoothly_across_its_stops() {
+        let channel_distance = |left: Color32, right: Color32| {
+            i32::from(left.r()).abs_diff(i32::from(right.r()))
+                + i32::from(left.g()).abs_diff(i32::from(right.g()))
+                + i32::from(left.b()).abs_diff(i32::from(right.b()))
+        };
+        let mut previous = tec_color(0.0).dark();
+        for step in 1..=320 {
+            let color = tec_color(f64::from(step)).dark();
+            assert!(
+                channel_distance(previous, color) <= 120,
+                "{step} TECU jumps from {previous:?} to {color:?}"
+            );
+            previous = color;
+        }
+    }
+
+    #[rstest::rstest]
+    #[case::transparent(0.0, 0)]
+    #[case::the_default(TEC_OPACITY_PERCENT_DEFAULT, 102)]
+    #[case::opaque(100.0, 255)]
+    #[case::above_the_range(400.0, 255)]
+    fn the_fill_alpha_follows_the_opacity_percentage(#[case] percent: f32, #[case] expected: u8) {
+        assert_eq!(tec_fill_alpha(percent), expected);
+    }
 
     /// sRGB relative luminance per WCAG 2.x.
     fn relative_luminance(c: Color32) -> f64 {

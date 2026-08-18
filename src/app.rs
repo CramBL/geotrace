@@ -641,6 +641,7 @@ impl App {
             sky_glyph_variant: s.sky_glyph_variant,
             point_window_folds: s.point_window_folds,
             sky_trail_opacity_percent: self.sky_trails_window.trail_opacity_percent().into(),
+            tec_heatmap_opacity_percent: self.map.tec_heatmap_opacity_percent().into(),
             theme,
             recording_name_template: s.recording_name_template.clone(),
             track_split_gap_seconds: self

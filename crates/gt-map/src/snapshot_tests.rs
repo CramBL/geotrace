@@ -436,6 +436,89 @@ fn snapshot_jamming_overlay(
     harness.snapshot_loose(name);
 }
 
+/// Zoom at which the whole world fits the snapshot canvas: the world spans
+/// `256 * 2^zoom` pixels.
+const WORLD_ZOOM: f64 = 1.5;
+
+/// The captured storm day, whose TEC peaks far above a quiet day's.
+fn storm_day_maps() -> gt_ionex::maps::GlobalIonosphereMaps {
+    let fixture = gt_ionex::FIXTURE_FILES
+        .iter()
+        .find(|fixture| fixture.name == gt_ionex::STORM_CAPTURE)
+        .expect("the storm capture is declared");
+    let text = std::fs::read_to_string(gt_ionex::fixtures_dir().join(fixture.file_name))
+        .expect("the captured file");
+    gt_ionex::parse::global_ionosphere_maps(&text).expect("a parsable capture")
+}
+
+/// The TEC heatmap under the fixture track, at the 10 May 2024 storm's peak
+/// hours. The whole world is in view, so one snapshot covers the ramp from the
+/// quiet night side to the equatorial crests past 150 TECU. No map tiles
+/// render: the map is built with [`TileAccess::Offline`].
+#[rstest::rstest]
+#[case::dark("tec_heatmap_dark", true, None)]
+#[case::light("tec_heatmap_light", false, None)]
+#[case::hover("tec_heatmap_hover", true, Some(egui::pos2(300.0, 380.0)))]
+fn snapshot_tec_heatmap(
+    #[case] name: &str,
+    #[case] dark_mode: bool,
+    #[case] hover: Option<egui::Pos2>,
+) {
+    let files = vec![make_snapshot_file()];
+    let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
+    let maps = storm_day_maps();
+    let instant = chrono::NaiveDate::from_ymd_opt(2024, 5, 10)
+        .and_then(|day| day.and_hms_opt(20, 0, 0))
+        .map(|naive| naive.and_utc())
+        .expect("an epoch of the captured day");
+
+    let mut harness = crate::test_harness::builder()
+        .size(egui::vec2(800.0, 600.0))
+        .theme(dark_mode)
+        .ui_state(
+            move |ui, map: &mut Option<NavMap>| {
+                let map =
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                map.map_memory.set_zoom(WORLD_ZOOM).expect("a valid zoom");
+                let mut state = DrawState::default();
+                state
+                    .display_mask
+                    .set_visible(DisplayCategory::TecHeatmap, true);
+                let mut shown =
+                    gt_ionex::TecInstantSelection::new(Some(instant), instant.date_naive());
+                map.draw(
+                    ui,
+                    MapDrawContext {
+                        tec: crate::TecLayer {
+                            snapshot: Some(crate::TecHeatmapSnapshot {
+                                maps: &maps,
+                                instant,
+                            }),
+                            instant: &mut shown,
+                            empty_reason: None,
+                        },
+                        center_request: Some((0.0, 0.0)),
+                        ..state.context(&files, &visibility)
+                    },
+                );
+            },
+            None,
+        );
+
+    // The first frame zooms to fit the file. The rest settle animations.
+    for _ in 0..5 {
+        harness.run();
+    }
+    if let Some(pos) = hover {
+        harness.inner.hover_at(pos);
+        // Tooltips appear after egui's hover delay.
+        for _ in 0..60 {
+            harness.run();
+        }
+    }
+    harness.snapshot_loose(name);
+}
+
 /// Nudge north (smaller Mercator y) by roughly ten pixels at the
 /// snapped-track snapshot tests' zoom, so the snapped line reads beside
 /// the recorded one instead of on top of it.
