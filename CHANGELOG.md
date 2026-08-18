@@ -23,6 +23,7 @@
 - Settings' "Ionospheric TEC" page downloads map history for a date range, skipping days already archived, with progress and a cancel button. It also shows what the map download is doing and how many days of the loaded recordings are archived.
 - Auto-storing recordings and auto-pruning are adjustable on Settings' "Application" page as well as in the History window.
 - Settings' "Interface" page holds the theme, the map layer and the Mapbox token, alongside the top bar and map controls that already set them. A "Test" button next to the token fetches one satellite tile with it and reports what the host answered.
+- A search field above the settings rail filters it to the pages and rows matching the query, listing each match under its page. Escape clears the query, and closes the window once it is empty.
 
 ### Changed
 

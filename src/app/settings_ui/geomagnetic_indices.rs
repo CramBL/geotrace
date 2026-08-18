@@ -1,10 +1,17 @@
 //! Settings for the Kp and Hp30 geomagnetic index downloads.
 
 use crate::app::App;
-use crate::app::backfill_ui::BackfillAction;
+use crate::app::backfill_ui::{self, BackfillAction};
 use crate::app::day_fetch_status::{self, FetchRowHoverText};
 use crate::app::settings_ui::SettingsPage;
 use crate::app::settings_ui::source_page::{self, SourcePageSlots};
+
+pub(super) const SEARCHABLE_LABELS: &[&str] = &[
+    source_page::BASE_URL_LABEL,
+    day_fetch_status::FETCH_QUEUE_LABEL,
+    day_fetch_status::RECORDING_DAYS_LABEL,
+    backfill_ui::DOWNLOAD_HISTORY_LABEL,
+];
 
 const URL_HOVER: &str = "Base URL of the host serving the Kp and Hp30 geomagnetic indices. The \
                          default is GFZ Potsdam, which publishes them. Point it at a mirror or an \

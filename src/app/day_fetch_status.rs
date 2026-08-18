@@ -98,14 +98,17 @@ pub struct FetchRowHoverText {
     pub coverage: &'static str,
 }
 
+pub const FETCH_QUEUE_LABEL: &str = "Fetch queue";
+pub const RECORDING_DAYS_LABEL: &str = "Recording days";
+
 /// Two rows of a data source page's grid: what is being fetched, and what the
 /// archive holds for the loaded recordings.
 pub fn show_fetch_rows(ui: &mut Ui, status: DayFetchStatus, hover: FetchRowHoverText) {
-    ui.label("Fetch queue").on_hover_text(hover.queue);
+    ui.label(FETCH_QUEUE_LABEL).on_hover_text(hover.queue);
     ui.label(status.queue_line()).on_hover_text(hover.queue);
     ui.end_row();
 
-    ui.label("Recording days").on_hover_text(hover.coverage);
+    ui.label(RECORDING_DAYS_LABEL).on_hover_text(hover.coverage);
     ui.label(status.coverage_line())
         .on_hover_text(hover.coverage);
     ui.end_row();

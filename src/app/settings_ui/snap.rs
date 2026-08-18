@@ -7,6 +7,22 @@ use strum::IntoEnumIterator;
 use crate::app::App;
 use crate::app::settings_ui::SettingsPage;
 
+const SERVER_URL_LABEL: &str = "Server URL";
+const COSTING_LABEL: &str = "Costing";
+const AUTO_SNAP_LABEL: &str = "Auto snap";
+const SEARCH_RADIUS_LABEL: &str = "Search radius";
+const TURN_PENALTY_LABEL: &str = "Turn penalty";
+const GPS_ACCURACY_LABEL: &str = "GPS accuracy";
+
+pub(super) const SEARCHABLE_LABELS: &[&str] = &[
+    SERVER_URL_LABEL,
+    COSTING_LABEL,
+    AUTO_SNAP_LABEL,
+    SEARCH_RADIUS_LABEL,
+    TURN_PENALTY_LABEL,
+    GPS_ACCURACY_LABEL,
+];
+
 impl App {
     pub(super) fn show_snap_page(&mut self, ui: &mut egui::Ui) {
         SettingsPage::SnapToRoad.show_header(ui);
@@ -20,7 +36,7 @@ impl App {
                                 avoid its fair-use rate limit. Recorded positions are \
                                 only uploaded after a one-time acknowledgment per server.";
                 ui.label(format!(
-                    "{} Server URL",
+                    "{} {SERVER_URL_LABEL}",
                     egui_phosphor::regular::GLOBE_SIMPLE
                 ))
                 .on_hover_text(url_help);
@@ -39,7 +55,7 @@ impl App {
                                     recording does not declare a travel mode - auto is \
                                     Valhalla's name for the motor-vehicle network. A \
                                     declared travel mode always wins over this setting.";
-                ui.label(format!("{} Costing", egui_phosphor::regular::CAR))
+                ui.label(format!("{} {COSTING_LABEL}", egui_phosphor::regular::CAR))
                     .on_hover_text(costing_help);
                 egui::ComboBox::from_id_salt("snap_costing")
                     .selected_text(self.snap_settings.costing.display_name())
@@ -61,8 +77,11 @@ impl App {
                                  manual trigger always jumps the queue. Enabling \
                                  prompts for upload consent first when it has not \
                                  been given for the configured server.";
-                ui.label(format!("{} Auto snap", egui_phosphor::regular::LIGHTNING))
-                    .on_hover_text(auto_help);
+                ui.label(format!(
+                    "{} {AUTO_SNAP_LABEL}",
+                    egui_phosphor::regular::LIGHTNING
+                ))
+                .on_hover_text(auto_help);
                 let mut auto = self.snap_settings.auto_snap == Some(true);
                 if ui
                     .checkbox(&mut auto, "Snap to road automatically")
@@ -78,7 +97,10 @@ impl App {
                     ui,
                     &mut self.snap_settings.search_radius_m,
                     OptionalSnapSetting {
-                        label: format!("{} Search radius", egui_phosphor::regular::CIRCLE_DASHED),
+                        label: format!(
+                            "{} {SEARCH_RADIUS_LABEL}",
+                            egui_phosphor::regular::CIRCLE_DASHED
+                        ),
                         help: "Meters around each recorded point searched for \
                                candidate road edges. Unset leaves the server \
                                default; raising it helps very noisy receivers \
@@ -96,7 +118,10 @@ impl App {
                     ui,
                     &mut self.snap_settings.turn_penalty_factor,
                     OptionalSnapSetting {
-                        label: format!("{} Turn penalty", egui_phosphor::regular::ARROW_U_UP_LEFT),
+                        label: format!(
+                            "{} {TURN_PENALTY_LABEL}",
+                            egui_phosphor::regular::ARROW_U_UP_LEFT
+                        ),
                         help: "Cost multiplier penalizing route reversals. Unset \
                                leaves the server default; raising it (Valhalla \
                                suggests around 500) smooths matches that wander \
@@ -114,7 +139,10 @@ impl App {
                     ui,
                     &mut self.snap_settings.gps_accuracy_override_m,
                     OptionalSnapSetting {
-                        label: format!("{} GPS accuracy", egui_phosphor::regular::CROSSHAIR),
+                        label: format!(
+                            "{} {GPS_ACCURACY_LABEL}",
+                            egui_phosphor::regular::CROSSHAIR
+                        ),
                         help: "Expected GNSS accuracy sent to the matcher, \
                                replacing the value derived from the recording's \
                                eph. Unset keeps the derivation - the usual best \

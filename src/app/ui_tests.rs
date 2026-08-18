@@ -520,6 +520,16 @@ fn settings_window_stays_open_after_step() {
     );
 }
 
+fn press_escape<State>(harness: &mut Harness<'_, State>) {
+    harness.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+}
+
 #[test]
 fn settings_window_closes_on_esc() {
     let mut harness = Harness::builder()
@@ -528,13 +538,7 @@ fn settings_window_closes_on_esc() {
     harness.step();
     harness.state_mut().settings_open = true;
     harness.step(); // window open
-    harness.input_mut().events.push(egui::Event::Key {
-        key: egui::Key::Escape,
-        physical_key: None,
-        pressed: true,
-        repeat: false,
-        modifiers: egui::Modifiers::NONE,
-    });
+    press_escape(&mut harness);
     harness.step();
     assert!(
         !harness.state().settings_open,
@@ -2391,7 +2395,7 @@ impl SettingsPage {
             Self::Processing => "Restore defaults",
             Self::Analysis => "Mark masked-out used satellites",
             Self::AircraftInterference | Self::GeomagneticIndices | Self::IonosphericTec => {
-                "Download history"
+                crate::app::backfill_ui::DOWNLOAD_HISTORY_LABEL
             }
             Self::SnapToRoad => "GPS accuracy",
             Self::Interface => "Mapbox token",
@@ -2483,6 +2487,132 @@ fn settings_window_keeps_one_size_across_pages() {
             "{page:?} resized the window"
         );
     }
+}
+
+/// Types `query` into the settings window's search field. The field is focused
+/// by its own id: the app behind the window renders text fields of its own,
+/// which [`HarnessInteraction::type_into_text_input`] would match as well.
+fn type_into_settings_search(harness: &mut TestHarness<'_, App>, query: &str) {
+    harness.inner.ctx.memory_mut(|memory| {
+        memory.request_focus(egui::Id::new(settings_ui::search::QUERY_FIELD_ID));
+    });
+    harness.run();
+    harness
+        .inner
+        .input_mut()
+        .events
+        .push(egui::Event::Text(query.to_owned()));
+    harness.run();
+}
+
+/// A renamed row must not leave the search behind: every label a page declares
+/// searchable is one the page renders.
+#[test]
+fn every_settings_page_renders_the_labels_it_declares() {
+    let (mut harness, _config_path) = harness_with_settings_window_open();
+    for page in SettingsPage::iter() {
+        harness.inner.state_mut().settings_page = page;
+        harness.run();
+
+        let window_rect = harness
+            .inner
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::new(settings_ui::WINDOW_ID)))
+            .expect("the settings window is open");
+        for label in page.searchable_labels() {
+            assert!(
+                harness
+                    .inner
+                    .query_all_by_label_contains(label)
+                    .any(|node| window_rect.contains_rect(node.rect())),
+                "{page:?} declares {label:?} searchable but renders no such label"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_empty_query_lists_every_page_in_the_rail() {
+    let (mut harness, _config_path) = harness_with_settings_window_open();
+    harness.run();
+    for page in SettingsPage::iter() {
+        assert!(
+            harness
+                .inner
+                .query_all_by_label_contains(page.rail_label())
+                .next()
+                .is_some(),
+            "{page:?} is missing from the rail"
+        );
+    }
+}
+
+#[rstest::rstest]
+#[case::lowercase("elevation")]
+#[case::mixed_case("ElevAtion")]
+fn clicking_a_search_match_opens_its_page(#[case] query: &str) {
+    let (mut harness, _config_path) = harness_with_settings_window_open();
+    harness.run();
+    type_into_settings_search(&mut harness, query);
+
+    assert!(
+        harness
+            .inner
+            .query_all_by_label_contains(SettingsPage::SnapToRoad.rail_label())
+            .next()
+            .is_none(),
+        "a page the query does not reach stays out of the rail"
+    );
+    assert_eq!(
+        harness.inner.state().settings_page,
+        SettingsPage::Processing
+    );
+
+    harness
+        .inner
+        .get_by_label_contains("Elevation mask")
+        .click();
+    harness.run();
+    assert_eq!(harness.inner.state().settings_page, SettingsPage::Analysis);
+}
+
+/// One Escape press dismisses one level: the query first, the window second.
+#[test]
+fn escape_clears_the_query_before_it_closes_the_window() {
+    let (mut harness, _config_path) = harness_with_settings_window_open();
+    harness.run();
+    type_into_settings_search(&mut harness, "elevation");
+
+    press_escape(&mut harness.inner);
+    harness.run();
+    assert!(
+        harness.inner.state().settings_open,
+        "the first Escape clears the query and leaves the window open"
+    );
+    assert!(
+        harness
+            .inner
+            .query_all_by_label_contains(SettingsPage::SnapToRoad.rail_label())
+            .next()
+            .is_some(),
+        "the cleared query restores the whole rail"
+    );
+
+    press_escape(&mut harness.inner);
+    harness.run();
+    assert!(
+        !harness.inner.state().settings_open,
+        "the second Escape closes the window"
+    );
+}
+
+#[test]
+fn snapshot_settings_window_search_matches() {
+    let (mut harness, _config_path) = harness_with_settings_window_open();
+    harness.run();
+    type_into_settings_search(&mut harness, "clock");
+    harness.run();
+    harness.snapshot("settings_window_search_matches");
 }
 
 /// Load one recording and give it the metadata the name template draws on.

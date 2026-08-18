@@ -6,6 +6,8 @@ use egui::Ui;
 use crate::app::day_failures::{self, DayFailure};
 use crate::app::settings_ui::SettingsPage;
 
+pub(super) const BASE_URL_LABEL: &str = "Base URL";
+
 /// What one data source page puts in each part of the shared layout. The slots
 /// are closures because each one reaches a differently typed scheduler field on
 /// [`crate::app::App`].
@@ -43,8 +45,11 @@ pub(super) fn show_source_page<Endpoint, Status, Backfill>(
 /// The endpoint row of a source that fetches from a single host. Returns `true`
 /// in the frame the text changed.
 pub(super) fn show_base_url_row(ui: &mut Ui, hover_text: &str, base_url: &mut String) -> bool {
-    ui.label(format!("{} Base URL", egui_phosphor::regular::GLOBE_SIMPLE))
-        .on_hover_text(hover_text);
+    ui.label(format!(
+        "{} {BASE_URL_LABEL}",
+        egui_phosphor::regular::GLOBE_SIMPLE
+    ))
+    .on_hover_text(hover_text);
     let changed = ui
         .text_edit_singleline(base_url)
         .on_hover_text(hover_text)
