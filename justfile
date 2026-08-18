@@ -117,10 +117,10 @@ doc:
 ci: build-images ci-essentials ci-extras ci-sdks
 
 [group("ci")]
-ci-essentials: fmt-check clippy check test examples qa::qa-lint qa::test qa::check-all qa::check-versions qa::check-app doc check-unit-bindings
+ci-essentials: fmt-check clippy check test examples qa::qa-lint qa::test qa::check-all qa::check-versions qa::check-app doc check-unit-bindings osv-scanner sort-check shear typos
 
 [group("ci")]
-ci-extras: osv-scanner sort-check shear typos msrv sdk-msrv sdk-doc
+ci-extras: msrv sdk-msrv sdk-doc
 
 [group("ci")]
 ci-sdks: python-sdk build-c fmt-c lint-c test-c fmt-cpp lint-cpp test-cpp qa::generate-gold test-gold-all

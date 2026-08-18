@@ -1,14 +1,27 @@
 [group("container-rust")]
-typos: (_dev "typos")
+typos: (_native_or_dev "typos" "typos")
 
 [group("container-rust")]
 sort: (_dev "cargo" "sort" "--workspace")
 
 [group("container-rust")]
-sort-check: (_dev "cargo sort --workspace --check")
+sort-check: (_native_or_dev "cargo-sort" "cargo sort --workspace --check")
 
 [group("container-rust")]
-shear *ARGS: (_dev "cargo shear --check-test-targets --deny-warnings " + ARGS)
+shear *ARGS: (_native_or_dev "cargo-shear" "cargo shear --check-test-targets --deny-warnings " + ARGS)
+
+# Runs the command directly when its binary is installed, otherwise inside the
+# dev container. Keeps ci-essentials runnable without a container runtime.
+[no-exit-message]
+[private]
+_native_or_dev bin *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v {{ bin }} >/dev/null 2>&1; then
+        {{ args }}
+    else
+        just _dev "{{ args }}"
+    fi
 
 # msrv runs natively rather than via `_dev`: cargo-msrv pulls many toolchains,
 # kept out of the dev image to keep it slim. Install it natively (see CI).
