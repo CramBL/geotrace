@@ -9,7 +9,7 @@
 //! flight at a time, and the transport spaces requests
 //! [`transport::REQUEST_INTERVAL`] apart.
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
@@ -28,7 +28,7 @@ use strum::IntoEnumIterator as _;
 
 use super::backfill::{BackfillProgress, PendingBackfill};
 use super::day_failures::DayFailure;
-use super::geomagnetic_index_ui::GeomagneticIndexFetchStatus;
+use super::day_fetch_status::{DayFetchStatus, RecordingDayArchiveState, RecordingDayCoverage};
 
 /// What one day's fetch produced.
 enum IndexDayMessage {
@@ -53,15 +53,6 @@ impl IndexDayMessage {
     }
 }
 
-/// What the archive holds for one UTC day a loaded recording spans.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RecordingDayCoverage {
-    /// Every index published for the day is archived.
-    Archived,
-    /// At least one index is still to be fetched.
-    Awaited,
-}
-
 /// Queues geomagnetic index days and ingests them into the archive.
 pub struct GeomagneticIndexScheduler {
     ctx: Context,
@@ -81,10 +72,9 @@ pub struct GeomagneticIndexScheduler {
     seen: HashSet<NaiveDate>,
     in_flight: Option<NaiveDate>,
     failures: Vec<DayFailure>,
-    /// The UTC days the recordings loaded this session span, and what the
-    /// archive holds for each. Read by the settings section, which reports
-    /// how far the archive covers what is loaded.
-    recording_days: BTreeMap<NaiveDate, RecordingDayCoverage>,
+    /// Read by the settings page, which reports how far the archive covers
+    /// what is loaded.
+    recording_days: RecordingDayCoverage,
     /// Set while an explicit backfill is running.
     backfill: Option<PendingBackfill>,
     /// UTC days the archive holds samples for, read once at startup and
@@ -123,7 +113,7 @@ impl GeomagneticIndexScheduler {
             seen: HashSet::new(),
             in_flight: None,
             failures: Vec::new(),
-            recording_days: BTreeMap::new(),
+            recording_days: RecordingDayCoverage::default(),
             backfill: None,
         }
     }
@@ -150,13 +140,13 @@ impl GeomagneticIndexScheduler {
             if calendar::fetchable_indices(day, today).next().is_none() {
                 continue;
             }
-            let coverage = match self.day_needs_fetch(day, today) {
-                Ok(false) => RecordingDayCoverage::Archived,
+            let state = match self.day_needs_fetch(day, today) {
+                Ok(false) => RecordingDayArchiveState::Archived,
                 Ok(true) => {
                     if self.seen.insert(day) {
                         self.queue.push_back(day);
                     }
-                    RecordingDayCoverage::Awaited
+                    RecordingDayArchiveState::Awaited
                 }
                 Err(err) => {
                     if self.seen.insert(day) {
@@ -164,10 +154,10 @@ impl GeomagneticIndexScheduler {
                         log::error!("Cannot determine whether {day} is archived: {detail}");
                         self.failures.push(DayFailure { day, detail });
                     }
-                    RecordingDayCoverage::Awaited
+                    RecordingDayArchiveState::Awaited
                 }
             };
-            self.recording_days.insert(day, coverage);
+            self.recording_days.record(day, state);
         }
         self.start_next();
     }
@@ -241,18 +231,14 @@ impl GeomagneticIndexScheduler {
         self.store.is_some()
     }
 
-    /// What the settings section reports about the queue and the archive's
+    /// What the settings page reports about the queue and the archive's
     /// coverage of the loaded recordings.
-    pub fn fetch_status(&self) -> GeomagneticIndexFetchStatus {
-        GeomagneticIndexFetchStatus {
+    pub fn fetch_status(&self) -> DayFetchStatus {
+        DayFetchStatus {
             fetching: self.in_flight,
             queued: self.queue.len(),
-            recording_days: self.recording_days.len(),
-            archived_recording_days: self
-                .recording_days
-                .values()
-                .filter(|coverage| **coverage == RecordingDayCoverage::Archived)
-                .count(),
+            recording_days: self.recording_days.recording_days(),
+            archived_recording_days: self.recording_days.archived_recording_days(),
         }
     }
 
@@ -307,9 +293,7 @@ impl GeomagneticIndexScheduler {
                     hp30_samples,
                 } => {
                     self.archived_days.insert(day);
-                    if let Some(coverage) = self.recording_days.get_mut(&day) {
-                        *coverage = RecordingDayCoverage::Archived;
-                    }
+                    self.recording_days.mark_archived(day);
                     if kp_samples + hp30_samples == 0 {
                         log::info!("The service published no geomagnetic indices for {day}");
                     } else {
@@ -1141,7 +1125,7 @@ mod tests {
 
         assert_eq!(
             scheduler.fetch_status(),
-            GeomagneticIndexFetchStatus {
+            DayFetchStatus {
                 fetching: Some(day(2026, 7, 21)),
                 queued: 0,
                 recording_days: 2,
@@ -1156,7 +1140,7 @@ mod tests {
         let mut scheduler = scheduler_without_archive();
         scheduler
             .recording_days
-            .insert(day(2026, 7, 20), RecordingDayCoverage::Awaited);
+            .record(day(2026, 7, 20), RecordingDayArchiveState::Awaited);
 
         scheduler
             .tx
