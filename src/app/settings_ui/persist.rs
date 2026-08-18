@@ -56,6 +56,8 @@ impl App {
         self.loader.analysis_config = analysis;
         self.sky_trails_window
             .set_trail_opacity_percent(s.map.sky_trail_opacity_percent);
+        self.map
+            .set_tec_heatmap_opacity_percent(s.map.tec_heatmap_opacity_percent);
         {
             let mut shared = self.shared.borrow_mut();
             shared.plot_state.sync_to_map = s.map.sync_to_map;
@@ -153,6 +155,7 @@ impl App {
                 sky_glyph_variant: s.sky_glyph_variant,
                 point_window_folds: s.point_window_folds,
                 sky_trail_opacity_percent: self.sky_trails_window.trail_opacity_percent(),
+                tec_heatmap_opacity_percent: self.map.tec_heatmap_opacity_percent(),
             },
             ui: crate::settings::UiSettings {
                 theme,

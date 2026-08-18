@@ -3,11 +3,18 @@ source: crates/gt-ionex/src/text.rs
 expression: wording
 ---
 label: Ionospheric TEC
+layer summary: Colours the published grid by vertical total electron content at the instant shown, under the tracks.
 maps: global ionosphere maps
 archive: TEC map archive
 source caveat: Modelled from ground stations onto a global grid and published as vertical content on a 450 km shell, so a value describes the ionosphere over a region, not the slant path one receiver saw.
 scale caveat: One TEC unit is 10^16 electrons per square metre and adds about 0.16 m of range on L1. A quiet mid-latitude day stays under 20 TECU, and a storm reaches past 150.
 plot hover: Vertical total electron content across the span the plot shows, interpolated from the archived global ionosphere maps at the position of the fix nearest each map epoch in time. Modelled from ground stations onto a global grid and published as vertical content on a 450 km shell, so a value describes the ionosphere over a region, not the slant path one receiver saw. One TEC unit is 10^16 electrons per square metre and adds about 0.16 m of range on L1. A quiet mid-latitude day stays under 20 TECU, and a storm reaches past 150. The line breaks over days no maps are archived for.
 query doc: Vertical total electron content over the fix's own position and UTC time, in TEC units, interpolated from the archived global ionosphere maps. Modelled from ground stations onto a global grid and published as vertical content on a 450 km shell, so a value describes the ionosphere over a region, not the slant path one receiver saw. One TEC unit is 10^16 electrons per square metre and adds about 0.16 m of range on L1. A quiet mid-latitude day stays under 20 TECU, and a storm reaches past 150. Fixes whose day is not in the TEC map archive carry no value.
+legend unit: TECU
+instant hover: The map epoch the heatmap draws
+opacity hover: How strongly the heatmap is drawn over the base map
+following a fix: The heatmap follows the hovered or selected fix. Deselect it to step map epochs.
+hidden layer stepper: Show the TEC heatmap to step map epochs
+hidden layer opacity: Show the TEC heatmap to change its opacity
 fetch queue hover: Map days waiting to be downloaded. One day is requested at a time, and a day costs one request per mirror tried until one serves the file.
 recording day coverage hover: UTC days the recordings loaded this session span, and how many of them the archive holds maps for. Days downloaded by a backfill are not counted here.

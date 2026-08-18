@@ -27,6 +27,9 @@ use crate::recording_labels::RecordingLabels;
 pub(crate) struct PointerOwnership {
     pub(crate) recorded_element_hovered: bool,
     pub(crate) snapped_edge_tooltip_shown: bool,
+    /// Whether the interference layer is drawing, whose cells sit over the TEC
+    /// grid and take the hover in its place.
+    pub(crate) interference_layer_drawn: bool,
 }
 
 impl PointerOwnership {
@@ -37,10 +40,18 @@ impl PointerOwnership {
     pub(crate) fn jamming_cell_hover_enabled(self) -> bool {
         !self.recorded_element_hovered && !self.snapped_edge_tooltip_shown
     }
+
+    pub(crate) fn tec_node_hover_enabled(self) -> bool {
+        self.jamming_cell_hover_enabled() && !self.interference_layer_drawn
+    }
 }
 
 /// Spacing between an icon and the text following it in labels.
 const ICON_GAP: &str = "  ";
+
+/// Gap between the pointer and a tooltip anchored at it, matching egui's own
+/// tooltips.
+pub(crate) const TOOLTIP_POINTER_GAP_PX: f32 = 12.0;
 
 /// Alpha of the hover band drawn over a sky-plot highlight target, low enough
 /// to keep the text underneath legible.
@@ -300,6 +311,7 @@ mod tests {
     struct Expected {
         snapped_hover: bool,
         jamming_hover: bool,
+        tec_hover: bool,
     }
 
     #[rstest]
@@ -307,40 +319,60 @@ mod tests {
         PointerOwnership {
             recorded_element_hovered: false,
             snapped_edge_tooltip_shown: false,
+            interference_layer_drawn: false,
         },
         Expected {
             snapped_hover: true,
             jamming_hover: true,
+            tec_hover: true,
         }
     )]
     #[case::snapped_edge_hovered(
         PointerOwnership {
             recorded_element_hovered: false,
             snapped_edge_tooltip_shown: true,
+            interference_layer_drawn: false,
         },
         Expected {
             snapped_hover: true,
             jamming_hover: false,
+            tec_hover: false,
         }
     )]
     #[case::recorded_element_hovered(
         PointerOwnership {
             recorded_element_hovered: true,
             snapped_edge_tooltip_shown: false,
+            interference_layer_drawn: false,
         },
         Expected {
             snapped_hover: false,
             jamming_hover: false,
+            tec_hover: false,
         }
     )]
     #[case::recorded_element_over_a_snapped_edge(
         PointerOwnership {
             recorded_element_hovered: true,
             snapped_edge_tooltip_shown: true,
+            interference_layer_drawn: false,
         },
         Expected {
             snapped_hover: false,
             jamming_hover: false,
+            tec_hover: false,
+        }
+    )]
+    #[case::the_interference_layer_over_the_grid(
+        PointerOwnership {
+            recorded_element_hovered: false,
+            snapped_edge_tooltip_shown: false,
+            interference_layer_drawn: true,
+        },
+        Expected {
+            snapped_hover: true,
+            jamming_hover: true,
+            tec_hover: false,
         }
     )]
     fn overlay_hovers_yield_to_the_layers_above_them(
@@ -355,5 +387,6 @@ mod tests {
             ownership.jamming_cell_hover_enabled(),
             expected.jamming_hover
         );
+        assert_eq!(ownership.tec_node_hover_enabled(), expected.tec_hover);
     }
 }

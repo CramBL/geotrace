@@ -42,6 +42,8 @@ pub enum DisplayCategory {
     SkyGlyphs,
     /// The aircraft-interference cells drawn beneath the track ink.
     JammingHexes,
+    /// The ionospheric TEC grid drawn beneath the track ink.
+    TecHeatmap,
 }
 
 impl DisplayCategory {
@@ -74,9 +76,10 @@ const ALL_HIDDEN: u16 = u16::MAX >> (u16::BITS as usize - DisplayCategory::COUNT
 
 /// The categories hidden on a fresh install.
 ///
-/// [`DisplayCategory::JammingHexes`] is opt-in: it colours the whole map from
-/// data the user did not record.
-const DEFAULT_HIDDEN: [DisplayCategory; 1] = [DisplayCategory::JammingHexes];
+/// [`DisplayCategory::JammingHexes`] and [`DisplayCategory::TecHeatmap`] are
+/// opt-in: they colour the whole map from data the user did not record.
+const DEFAULT_HIDDEN: [DisplayCategory; 2] =
+    [DisplayCategory::JammingHexes, DisplayCategory::TecHeatmap];
 
 const _: () = assert!(
     DisplayCategory::COUNT <= u16::BITS as usize,
@@ -206,6 +209,7 @@ mod tests {
             (DisplayCategory::SnappedTracks, "snapped_tracks"),
             (DisplayCategory::SkyGlyphs, "sky_glyphs"),
             (DisplayCategory::JammingHexes, "jamming_hexes"),
+            (DisplayCategory::TecHeatmap, "tec_heatmap"),
         ];
         assert_eq!(expected.len(), DisplayCategory::COUNT);
         for (category, wire) in expected {

@@ -25,6 +25,7 @@ sync_to_map = true
 display_mask = []
 sky_glyph_variant = "ring"
 sky_trail_opacity_percent = 40.0
+tec_heatmap_opacity_percent = 40.0
 
 [map.point_window_folds]
 plot = false

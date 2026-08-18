@@ -1,0 +1,10 @@
+---
+source: crates/gt-ionex/src/instant_selection.rs
+expression: wording
+---
+[
+    "no_track: [no instant] Load a recording to choose an instant",
+    "before_coverage: [before coverage] No maps were published before 2008-11-19",
+    "in_future: [future instant] This instant has not happened yet",
+    "not_archived: [not downloaded] No maps downloaded for this day yet",
+]

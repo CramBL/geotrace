@@ -18,6 +18,7 @@ mod sat_labels;
 mod sky_glyph_renderer;
 mod sky_trails_window;
 mod snapped_track_renderer;
+mod tec_renderer;
 #[cfg(test)]
 mod test_harness;
 pub mod tpv_renderer;
@@ -27,6 +28,7 @@ mod transform;
 mod viewport;
 
 pub use sky_trails_window::SkyTrailsWindow;
+pub use tec_renderer::{TecHeatmapSnapshot, TecLayer};
 pub use viewport::GeoBounds;
 
 use std::cell::Cell;
@@ -257,6 +259,8 @@ pub struct MapDrawContext<'a> {
     pub recording_names: &'a RecordingNames,
     pub snapped_tracks: Option<&'a SnappedTracks>,
     pub jamming_dataset: Option<&'a JamDataset>,
+    /// The archived TEC grid, the instant it is shown at, and why it is empty.
+    pub tec: TecLayer<'a>,
     pub query_matches: Option<&'a QueryMatches>,
     pub empty_reason: Option<EmptyReason>,
     pub filter: &'a GlobalFilter,
@@ -384,6 +388,10 @@ pub struct NavMap {
     /// Whether the snapped-track renderer drew its edge tooltip, raised
     /// during the frame and read at the start of the next one.
     snapped_edge_tooltip_shown: Cell<bool>,
+    /// How strongly the TEC heatmap is drawn, as the opacity control's
+    /// percentage. A persisted preference, seeded from settings via
+    /// [`NavMap::set_tec_heatmap_opacity_percent`].
+    tec_heatmap_opacity_percent: f32,
 }
 
 impl NavMap {
@@ -423,7 +431,23 @@ impl NavMap {
             sat_label_scratch: sat_labels::LabelSelection::default(),
             sky_glyph_scratch: sky_glyph_renderer::GlyphSelection::default(),
             snapped_edge_tooltip_shown: Cell::new(false),
+            tec_heatmap_opacity_percent: gt_ui_theme::TEC_OPACITY_PERCENT_DEFAULT,
         }
+    }
+
+    /// The TEC heatmap's opacity percentage, for the app to persist to
+    /// settings.
+    pub const fn tec_heatmap_opacity_percent(&self) -> f32 {
+        self.tec_heatmap_opacity_percent
+    }
+
+    /// Seed the TEC heatmap's opacity percentage from persisted settings,
+    /// clamped to the valid range.
+    pub fn set_tec_heatmap_opacity_percent(&mut self, percent: f32) {
+        self.tec_heatmap_opacity_percent = percent.clamp(
+            gt_ui_theme::TEC_OPACITY_PERCENT_MIN,
+            gt_ui_theme::TEC_OPACITY_PERCENT_MAX,
+        );
     }
 
     /// Return the geographic bounds of the most recently rendered map viewport.
@@ -733,9 +757,20 @@ impl NavMap {
         let pointer_ownership = PointerOwnership {
             recorded_element_hovered: ctx.highlight.hover.is_some(),
             snapped_edge_tooltip_shown: self.snapped_edge_tooltip_shown.replace(false),
+            interference_layer_drawn: ctx.display_mask.is_visible(DisplayCategory::JammingHexes)
+                && ctx.jamming_dataset.is_some(),
         };
-        // The interference overlay goes on first so every track renderer
-        // draws over it.
+        // The overlays go on first so every track renderer draws over them,
+        // and the global TEC grid goes under the interference cells.
+        if ctx.display_mask.is_visible(DisplayCategory::TecHeatmap)
+            && let Some(snapshot) = ctx.tec.snapshot
+        {
+            map = map.with_plugin(tec_renderer::TecHeatmapRenderer::new(
+                snapshot,
+                self.tec_heatmap_opacity_percent,
+                pointer_ownership.tec_node_hover_enabled(),
+            ));
+        }
         if ctx.display_mask.is_visible(DisplayCategory::JammingHexes)
             && let Some(dataset) = ctx.jamming_dataset
         {
@@ -885,15 +920,27 @@ impl NavMap {
         // The counts closure only runs while the popup is open, and the cache
         // skips the full point walk when its inputs are unchanged frame to frame.
         let counts_cache = &mut self.display_counts_cache;
+        let tec_nodes = ctx
+            .tec
+            .snapshot
+            .as_ref()
+            .map_or(0, TecHeatmapSnapshot::node_count);
         display_toggle::show_display_toggle(
             ui,
             layer_toggle.response.rect,
             &mut self.display_toggle,
             ctx.display_mask,
             ctx.sky_glyph_variant,
-            display_toggle::InterferenceRow {
-                day: ctx.day_selection,
-                empty_reason: ctx.empty_reason,
+            display_toggle::LayerRows {
+                interference: display_toggle::InterferenceRow {
+                    day: ctx.day_selection,
+                    empty_reason: ctx.empty_reason,
+                },
+                tec: display_toggle::TecRow {
+                    instant: ctx.tec.instant,
+                    opacity_percent: &mut self.tec_heatmap_opacity_percent,
+                    empty_reason: ctx.tec.empty_reason,
+                },
             },
             || {
                 counts_cache.get(
@@ -906,6 +953,7 @@ impl NavMap {
                     display_counts::SuppliedCounts {
                         snapped_tracks: ctx.snapped_tracks,
                         jamming_cells: ctx.jamming_dataset.map_or(0, JamDataset::len),
+                        tec_nodes,
                     },
                 )
             },
@@ -1354,6 +1402,7 @@ struct DrawState {
     point_window_folds: PointWindowFolds,
     highlight: MapHighlight,
     day_selection: DaySelection,
+    tec_instant: gt_ionex::TecInstantSelection,
 }
 
 #[cfg(test)]
@@ -1369,6 +1418,7 @@ impl Default for DrawState {
             point_window_folds: PointWindowFolds::default(),
             highlight: MapHighlight::default(),
             day_selection: DaySelection::new(None, gt_jam::calendar::today_utc()),
+            tec_instant: gt_ionex::TecInstantSelection::new(None, chrono::Utc::now().date_naive()),
         }
     }
 }
@@ -1387,6 +1437,11 @@ impl DrawState {
             recording_names: &self.recording_names,
             snapped_tracks: None,
             jamming_dataset: None,
+            tec: TecLayer {
+                snapshot: None,
+                instant: &mut self.tec_instant,
+                empty_reason: None,
+            },
             query_matches: None,
             empty_reason: None,
             filter: &self.filter,

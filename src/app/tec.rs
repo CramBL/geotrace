@@ -14,14 +14,16 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
 
-use chrono::{NaiveDate, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use egui::Context;
 
 use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
+use gt_ionex::instant_selection::TecInstantSelection;
 use gt_ionex::maps::GlobalIonosphereMaps;
 use gt_ionex::mirrors::{MirrorAttempt, MirrorBaseUrl, MirrorList, MirrorOutcome};
 use gt_ionex::tec::TotalElectronContent;
 use gt_ionex::{IonexProduct, calendar, transport};
+use gt_map::{TecHeatmapSnapshot, TecLayer};
 use gt_store::{IonexStore, IonexStoreError};
 use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{ArcIdentity, TecContextSample, TecPoint, TecSeries};
@@ -83,6 +85,11 @@ pub struct TecMapScheduler {
     /// The line drawn across the plot's whole span, one sample per archived
     /// map epoch.
     context: ContextSampleCache<TecContextSample>,
+    /// Which instant the heatmap draws, and the stepper's bounds.
+    selection: TecInstantSelection,
+    /// The day the heatmap draws and its maps, read from the archive on demand
+    /// and kept until the shown day changes or that day is archived again.
+    shown: Option<(NaiveDate, GlobalIonosphereMaps)>,
 }
 
 impl TecMapScheduler {
@@ -109,6 +116,8 @@ impl TecMapScheduler {
             archived_days,
             plot_points: HashMap::new(),
             context: ContextSampleCache::default(),
+            selection: TecInstantSelection::new(None, Utc::now().date_naive()),
+            shown: None,
         }
     }
 
@@ -130,6 +139,7 @@ impl TecMapScheduler {
             return;
         };
         let today = Utc::now().date_naive();
+        self.selection.adopt_default(range.start);
         for day in days {
             if calendar::fetchable_products(day, today).is_empty() {
                 continue;
@@ -203,6 +213,9 @@ impl TecMapScheduler {
                     self.archived_days.insert(day);
                     self.days.mark_archived(day);
                     self.context.forget(day);
+                    if self.shown.as_ref().is_some_and(|(shown, _)| *shown == day) {
+                        self.shown = None;
+                    }
                     log::info!("Archived {map_count} {product} TEC maps for {day} from {mirror}");
                 }
                 MapDayMessage::Failed { day, detail } => {
@@ -226,6 +239,51 @@ impl TecMapScheduler {
         self.mirrors = mirrors.clone();
         self.http = None;
         self.days.forget_host();
+    }
+
+    /// Show the ionosphere at `instant` for as long as the fix at that time
+    /// stays hovered or selected. [`None`] hands the heatmap back to the
+    /// display toggle's stepper.
+    pub fn follow_instant(&mut self, instant: Option<DateTime<Utc>>) {
+        self.selection.follow(instant);
+    }
+
+    /// What the map heatmap draws this frame: the shown instant's maps, the
+    /// instant selection the stepper moves, and why there is nothing to draw.
+    ///
+    /// The archived day is read the first time it is shown and kept until the
+    /// shown day changes.
+    pub fn overlay_layer(&mut self) -> TecLayer<'_> {
+        let day = self.selection.instant().map(|instant| instant.date_naive());
+        if self
+            .shown
+            .as_ref()
+            .is_none_or(|(shown, _)| Some(*shown) != day)
+        {
+            self.shown = day
+                .filter(|day| self.archived_days.contains(day))
+                .and_then(|day| {
+                    read_archived_maps(self.store.as_deref(), day).map(|maps| (day, maps))
+                });
+        }
+        if let Some((_, maps)) = self.shown.as_ref() {
+            let interval = maps.interval();
+            self.selection.set_map_interval(interval);
+        }
+        let snapshot = self
+            .shown
+            .as_ref()
+            .filter(|(shown, _)| Some(*shown) == day)
+            .zip(self.selection.instant())
+            .map(|((_, maps), instant)| TecHeatmapSnapshot { maps, instant });
+        let empty_reason = self
+            .selection
+            .empty_reason(snapshot.as_ref().map_or(0, TecHeatmapSnapshot::node_count));
+        TecLayer {
+            snapshot,
+            instant: &mut self.selection,
+            empty_reason,
+        }
     }
 
     /// TEC values for the plot: one point per fix of every loaded track,
@@ -1221,6 +1279,196 @@ mod tests {
         assert_eq!(
             points.iter().map(|point| point.tecu).collect::<Vec<_>>(),
             [Some(10.0), Some(12.5), Some(15.0), Some(17.5)]
+        );
+    }
+
+    /// Loading a recording points the heatmap at its first fix's instant.
+    #[test]
+    fn the_earliest_loaded_recording_picks_the_instant() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        scheduler.request_days_for(TimeRange::new(at(2024, 5, 12, 8), at(2024, 5, 12, 9)));
+        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 9)));
+
+        assert_eq!(
+            scheduler.overlay_layer().instant.instant(),
+            Some(at(2024, 5, 10, 8))
+        );
+    }
+
+    /// The heatmap draws the archived day of the instant it shows, and reports
+    /// how many nodes that day's grid holds.
+    #[test]
+    fn the_heatmap_draws_the_archived_day_of_the_shown_instant() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived = day(2024, 5, 10);
+        archive_last_maps_of(&store, archived);
+        scheduler.archived_days.insert(archived);
+        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 22), at(2024, 5, 10, 23)));
+
+        let layer = scheduler.overlay_layer();
+        let snapshot = layer.snapshot.expect("the archived day draws");
+        assert_eq!(snapshot.instant, at(2024, 5, 10, 22));
+        assert_eq!(snapshot.node_count(), 3 * 2);
+        assert_eq!(layer.empty_reason, None);
+    }
+
+    /// A hovered or selected fix moves the heatmap to its own time, and
+    /// letting go hands it back to the stepper.
+    #[test]
+    fn the_heatmap_follows_the_hovered_fix() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived = day(2024, 5, 10);
+        archive_last_maps_of(&store, archived);
+        scheduler.archived_days.insert(archived);
+        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 22), at(2024, 5, 10, 23)));
+
+        scheduler.follow_instant(Some(at(2024, 5, 10, 23)));
+        assert_eq!(
+            scheduler
+                .overlay_layer()
+                .snapshot
+                .map(|snapshot| snapshot.instant),
+            Some(at(2024, 5, 10, 23))
+        );
+
+        scheduler.follow_instant(None);
+        assert_eq!(
+            scheduler
+                .overlay_layer()
+                .snapshot
+                .map(|snapshot| snapshot.instant),
+            Some(at(2024, 5, 10, 22))
+        );
+    }
+
+    /// A fix hovered on another day moves the heatmap to that day's own maps.
+    #[test]
+    fn following_a_fix_on_another_day_reads_that_days_maps() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        for (archived, tecu) in [(day(2024, 5, 10), 10.0), (day(2024, 5, 11), 40.0)] {
+            store
+                .insert_or_replace_day(
+                    archived,
+                    "host",
+                    Utc::now(),
+                    IonexProduct::Final,
+                    &uniform_maps(archived, &[(0, tecu), (24, tecu)]),
+                )
+                .expect("insert");
+            scheduler.archived_days.insert(archived);
+        }
+        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 12), at(2024, 5, 10, 13)));
+
+        scheduler.follow_instant(Some(at(2024, 5, 11, 12)));
+        let layer = scheduler.overlay_layer();
+        let snapshot = layer.snapshot.expect("the second day draws");
+        let value = snapshot
+            .maps
+            .total_electron_content_at(
+                gt_types::Latitude::new(55.0),
+                gt_types::Longitude::new(12.5),
+                at(2024, 5, 11, 12),
+            )
+            .map(TotalElectronContent::tecu);
+        assert_eq!(value, Some(40.0));
+    }
+
+    /// An instant whose day the archive does not hold draws nothing, and the
+    /// display toggle says why.
+    #[rstest]
+    #[case::not_archived(at(2024, 5, 10, 12), Some(gt_ionex::TecEmptyReason::NotArchived))]
+    #[case::before_coverage(at(2005, 1, 1, 12), Some(gt_ionex::TecEmptyReason::BeforeCoverage))]
+    fn an_instant_without_archived_maps_draws_nothing(
+        #[case] instant: DateTime<Utc>,
+        #[case] expected: Option<gt_ionex::TecEmptyReason>,
+    ) {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        scheduler.follow_instant(Some(instant));
+
+        let layer = scheduler.overlay_layer();
+        assert!(layer.snapshot.is_none());
+        assert_eq!(layer.empty_reason, expected);
+    }
+
+    /// With no recording loaded and nothing hovered, the toggle says there is
+    /// no instant to draw.
+    #[test]
+    fn no_loaded_recording_means_no_instant() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        let layer = scheduler.overlay_layer();
+        assert!(layer.snapshot.is_none());
+        assert_eq!(layer.instant.instant(), None);
+        assert_eq!(layer.empty_reason, Some(gt_ionex::TecEmptyReason::NoTrack));
+    }
+
+    /// A day archived again from the settled product replaces what the heatmap
+    /// draws.
+    #[test]
+    fn archiving_a_day_again_redraws_it() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived = day(2024, 5, 10);
+        store
+            .insert_or_replace_day(
+                archived,
+                "host",
+                Utc::now(),
+                IonexProduct::Rapid,
+                &uniform_maps(archived, &[(0, 10.0), (24, 10.0)]),
+            )
+            .expect("insert");
+        scheduler.archived_days.insert(archived);
+        scheduler.follow_instant(Some(at(2024, 5, 10, 12)));
+        assert!(scheduler.overlay_layer().snapshot.is_some());
+
+        store
+            .insert_or_replace_day(
+                archived,
+                "host",
+                Utc::now(),
+                IonexProduct::Final,
+                &uniform_maps(archived, &[(0, 55.0), (24, 55.0)]),
+            )
+            .expect("insert");
+        scheduler
+            .tx
+            .send(MapDayMessage::Stored {
+                day: archived,
+                mirror: MirrorBaseUrl::new("host"),
+                product: IonexProduct::Final,
+                map_count: 2,
+                skipped: Vec::new(),
+            })
+            .expect("send");
+        scheduler.poll();
+
+        let layer = scheduler.overlay_layer();
+        let value = layer
+            .snapshot
+            .expect("the replaced day draws")
+            .maps
+            .total_electron_content_at(
+                gt_types::Latitude::new(55.0),
+                gt_types::Longitude::new(12.5),
+                at(2024, 5, 10, 12),
+            )
+            .map(TotalElectronContent::tecu);
+        assert_eq!(value, Some(55.0));
+    }
+
+    /// The stepper moves by the interval the archived day declares.
+    #[test]
+    fn the_stepper_moves_by_the_archived_days_map_interval() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived = day(2024, 5, 10);
+        archive_last_maps_of(&store, archived);
+        scheduler.archived_days.insert(archived);
+        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 22), at(2024, 5, 10, 23)));
+
+        scheduler.overlay_layer().instant.step_back();
+        assert_eq!(
+            scheduler.overlay_layer().instant.instant(),
+            Some(at(2024, 5, 10, 20)),
+            "the archived day publishes a map every two hours"
         );
     }
 

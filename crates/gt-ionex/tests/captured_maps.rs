@@ -215,7 +215,7 @@ fn every_captured_node_holds_a_published_value() {
 /// exponent of -1 its header declares.
 #[test]
 fn the_stored_integers_read_back_as_the_tec_units_they_stand_for() {
-    let maps = support::captured_maps(support::STORM_CAPTURE).unwrap();
+    let maps = support::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
     let map = maps.maps().first().unwrap();
     assert_eq!(
         map.value_at(GridPoint {
@@ -237,8 +237,8 @@ fn the_stored_integers_read_back_as_the_tec_units_they_stand_for() {
 
 #[test]
 fn the_storm_day_reaches_far_higher_than_the_quiet_day() {
-    let storm = support::captured_maps(support::STORM_CAPTURE).unwrap();
-    let quiet = support::captured_maps(support::QUIET_CAPTURE).unwrap();
+    let storm = support::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
+    let quiet = support::captured_maps(gt_ionex::QUIET_CAPTURE).unwrap();
     assert_eq!(
         storm.peak_total_electron_content(),
         Some(TotalElectronContent::from_tecu(175.2))
@@ -253,7 +253,7 @@ fn the_storm_day_reaches_far_higher_than_the_quiet_day() {
 /// on a node and an epoch reads that node back.
 #[test]
 fn a_query_on_a_node_and_an_epoch_reads_the_stored_value() {
-    let maps = support::captured_maps(support::STORM_CAPTURE).unwrap();
+    let maps = support::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
     assert_eq!(
         value_at(&maps, 15.0, -105.0, TimeDelta::hours(22)),
         Some(TotalElectronContent::from_tecu(175.2))
@@ -272,7 +272,7 @@ fn a_query_on_a_node_and_an_epoch_reads_the_stored_value() {
 /// value at each.
 #[test]
 fn the_repeated_meridian_answers_the_same_from_both_ends() {
-    let maps = support::captured_maps(support::STORM_CAPTURE).unwrap();
+    let maps = support::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
     assert_eq!(
         value_at(&maps, 87.5, 180.0, TimeDelta::zero()),
         value_at(&maps, 87.5, -180.0, TimeDelta::zero())
@@ -286,7 +286,7 @@ fn the_repeated_meridian_answers_the_same_from_both_ends() {
 /// Halfway between two nodes, or two epochs, is the mean of them.
 #[test]
 fn a_query_between_nodes_and_epochs_interpolates_between_them() {
-    let maps = support::captured_maps(support::STORM_CAPTURE).unwrap();
+    let maps = support::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
     assert_tecu_near(
         value_at(&maps, 0.0, 2.5, TimeDelta::zero()),
         (39.5 + 41.5) / 2.0,
@@ -303,7 +303,7 @@ fn a_query_between_nodes_and_epochs_interpolates_between_them() {
 
 #[test]
 fn a_query_outside_the_captured_day_or_grid_has_no_value() {
-    let maps = support::captured_maps(support::STORM_CAPTURE).unwrap();
+    let maps = support::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
     assert_eq!(value_at(&maps, 0.0, 0.0, TimeDelta::seconds(-1)), None);
     assert_eq!(
         value_at(&maps, 0.0, 0.0, TimeDelta::days(1) + TimeDelta::seconds(1)),
@@ -324,7 +324,7 @@ fn a_query_outside_the_captured_day_or_grid_has_no_value() {
 /// One TEC unit is the delay every hover shows beside the value.
 #[test]
 fn the_storm_peak_delays_l1_by_the_published_relation() {
-    let maps = support::captured_maps(support::STORM_CAPTURE).unwrap();
+    let maps = support::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
     let peak = maps.peak_total_electron_content().unwrap();
     let delay = peak.l1_delay_meters();
     assert!(

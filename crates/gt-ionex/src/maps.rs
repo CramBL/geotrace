@@ -128,6 +128,26 @@ impl GlobalIonosphereMaps {
             .max_by(|left, right| left.tecu().total_cmp(&right.tecu()))
     }
 
+    /// The value at one grid node and time, interpolated between the two maps
+    /// bracketing the time.
+    ///
+    /// [`None`] where the time falls outside the file's epochs, the node is off
+    /// the grid, or either contributing map leaves it unpublished. This is what
+    /// the map heatmap draws: the node values as published, interpolated in
+    /// time alone.
+    pub fn node_value_at(
+        &self,
+        point: GridPoint,
+        time: DateTime<Utc>,
+    ) -> Option<TotalElectronContent> {
+        let bracket = self.bracketing_maps(time)?;
+        let earlier = bracket.earlier.value_at(point)?.tecu();
+        let later = bracket.later.value_at(point)?.tecu();
+        Some(TotalElectronContent::from_tecu(
+            earlier + (later - earlier) * bracket.fraction_from_earlier,
+        ))
+    }
+
     /// The value at a position and time: bilinear between the four
     /// surrounding grid nodes, linear between the two maps bracketing the
     /// time.
@@ -378,6 +398,47 @@ mod tests {
         assert_eq!(maps.epoch_of_first_map(), Some(epoch(0)));
         assert_eq!(maps.epoch_of_last_map(), Some(epoch(2)));
         assert_eq!(maps.interval(), TimeDelta::hours(2));
+    }
+
+    /// A node's own value runs between the two maps bracketing the time,
+    /// without the spatial interpolation the per-fix value applies.
+    #[rstest]
+    #[case::the_first_epoch(0, 0, Some(10.0))]
+    #[case::halfway_between_the_maps(1, 0, Some(15.0))]
+    #[case::the_last_epoch(2, 0, Some(20.0))]
+    #[case::a_node_off_the_grid(0, 9, None)]
+    fn a_node_interpolates_between_the_bracketing_maps(
+        #[case] hour: u32,
+        #[case] longitude_index: usize,
+        #[case] expected: Option<f64>,
+    ) {
+        let value = two_maps().node_value_at(
+            GridPoint {
+                latitude_index: 0,
+                longitude_index,
+            },
+            epoch(hour),
+        );
+        assert_eq!(value.map(TotalElectronContent::tecu), expected);
+    }
+
+    /// A node left unpublished by either map has no value, so a gap never
+    /// mixes with a published value.
+    #[rstest]
+    #[case::the_map_holding_the_gap(0)]
+    #[case::a_time_between_the_two_maps(1)]
+    fn a_node_a_map_leaves_unpublished_has_no_value(#[case] hour: u32) {
+        let maps = maps_from(first_map_bands_with_a_gap());
+        assert_eq!(
+            maps.node_value_at(
+                GridPoint {
+                    latitude_index: 0,
+                    longitude_index: 0
+                },
+                epoch(hour)
+            ),
+            None
+        );
     }
 
     #[test]

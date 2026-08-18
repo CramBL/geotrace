@@ -17,6 +17,7 @@ use h3o::CellIndex;
 
 use walkers::{MapMemory, Plugin, Projector};
 
+use crate::hover_labels::TOOLTIP_POINTER_GAP_PX;
 use crate::transform::MercTransform;
 
 /// Aircraft below which a cell's share carries no weight and the cell draws
@@ -29,9 +30,6 @@ const HATCH_SPACING_PX: f32 = 6.0;
 
 /// Width of a hatch line.
 const HATCH_STROKE_WIDTH: f32 = 1.0;
-
-/// Gap between the pointer and the hover, matching egui's own tooltips.
-const TOOLTIP_POINTER_GAP_PX: f32 = 12.0;
 
 /// A cell projected to screen space, ready to paint and to hit-test.
 pub(crate) struct CellShape {

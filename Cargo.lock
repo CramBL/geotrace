@@ -2705,6 +2705,7 @@ dependencies = [
  "gt-filter",
  "gt-fmt",
  "gt-icon-tessellate",
+ "gt-ionex",
  "gt-jam",
  "gt-loaded-files",
  "gt-sky",
@@ -2978,6 +2979,7 @@ dependencies = [
  "egui",
  "gt-fmt",
  "gt-types",
+ "rstest",
  "strum",
 ]
 

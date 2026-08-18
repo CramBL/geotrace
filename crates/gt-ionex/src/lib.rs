@@ -29,6 +29,7 @@ use chrono::{Datelike as _, NaiveDate};
 
 pub mod calendar;
 pub mod grid;
+pub mod instant_selection;
 pub mod maps;
 pub mod mirrors;
 pub mod parse;
@@ -36,6 +37,7 @@ pub mod tec;
 pub mod text;
 pub mod transport;
 
+pub use instant_selection::{ShownInstant, TecEmptyReason, TecInstantSelection};
 pub use mirrors::{MirrorBaseUrl, MirrorList};
 
 /// Suffix the archives serve their files under. The parser reads the
@@ -140,16 +142,23 @@ pub struct FixtureFile {
     pub purpose: &'static str,
 }
 
+/// Name of the capture taken on the May 2024 storm day.
+pub const STORM_CAPTURE: &str = "jpl-final-storm";
+
+/// Name of the capture taken on the geomagnetically quiet day on the same
+/// grid.
+pub const QUIET_CAPTURE: &str = "jpl-final-quiet";
+
 /// The captured files, in the order the manifest lists them.
 pub const FIXTURE_FILES: [FixtureFile; 2] = [
     FixtureFile {
-        name: "jpl-final-storm",
+        name: STORM_CAPTURE,
         url: "https://sideshow.jpl.nasa.gov/pub/iono_daily/IONEX_final/y2024/JPLG1310.24I.gz",
         file_name: "JPLG1310.24I",
         purpose: "10 May 2024, the day of the G5 storm, where TEC peaks far above a normal day",
     },
     FixtureFile {
-        name: "jpl-final-quiet",
+        name: QUIET_CAPTURE,
         url: "https://sideshow.jpl.nasa.gov/pub/iono_daily/IONEX_final/y2024/JPLG0920.24I.gz",
         file_name: "JPLG0920.24I",
         purpose: "1 April 2024, a geomagnetically quiet day on the same grid",
