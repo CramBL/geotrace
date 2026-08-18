@@ -522,16 +522,15 @@ fn ingest(
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-
     use chrono::{DateTime, TimeDelta};
     use rstest::rstest;
     use tempfile::TempDir;
 
-    use gt_fetch::{HttpRequest, HttpResponse, TransportError};
+    use gt_fetch::HttpResponse;
     use gt_solar::DEFAULT_BASE_URL;
     use gt_solar::series::{Hp30Sample, KpSample, KpStatus};
     use gt_store::Store;
+    use gt_test_utils::ScriptedTransport;
 
     use crate::app::backfill::BackfillProgress;
     use crate::app::day_failures::DayFailure;
@@ -587,39 +586,21 @@ mod tests {
         )
     }
 
-    /// Returns one canned response for every request, recording the URLs.
-    struct CannedTransport {
-        status: u16,
-        body: String,
-        urls: RefCell<Vec<String>>,
+    fn serving(body: &str) -> ScriptedTransport<String> {
+        ScriptedTransport::always(Ok(HttpResponse {
+            status: 200,
+            body: body.to_owned(),
+        }))
     }
 
-    impl CannedTransport {
-        fn serving(body: &str) -> Self {
-            Self {
-                status: 200,
-                body: body.to_owned(),
-                urls: RefCell::new(Vec::new()),
-            }
-        }
-
-        fn requested_indices(&self) -> Vec<String> {
-            self.urls
-                .borrow()
-                .iter()
-                .filter_map(|url| url.split("index=").nth(1).map(str::to_owned))
-                .collect()
-        }
-    }
-
-    impl Transport for CannedTransport {
-        fn send(&self, request: &HttpRequest) -> Result<HttpResponse, TransportError> {
-            self.urls.borrow_mut().push(request.url().to_owned());
-            Ok(HttpResponse {
-                status: self.status,
-                body: self.body.clone(),
-            })
-        }
+    /// The indices the requests fetched, in order, read off their query
+    /// strings.
+    fn requested_indices(transport: &ScriptedTransport<String>) -> Vec<String> {
+        transport
+            .requested_urls()
+            .iter()
+            .filter_map(|url| url.split("index=").nth(1).map(str::to_owned))
+            .collect()
     }
 
     fn kp_sample(period_start: DateTime<Utc>, value: f64) -> KpSample {
@@ -1053,7 +1034,7 @@ mod tests {
     fn an_ingested_day_archives_every_index_and_the_host() {
         let (_dir, store) = archive();
         let ingested = day(2026, 7, 20);
-        let transport = CannedTransport::serving(ONE_PERIOD_OF_BOTH_INDICES);
+        let transport = serving(ONE_PERIOD_OF_BOTH_INDICES);
 
         let message = ingest(&transport, &store, DEFAULT_BASE_URL, ingested);
 
@@ -1065,7 +1046,7 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(transport.requested_indices(), ["Kp", "Hp30"]);
+        assert_eq!(requested_indices(&transport), ["Kp", "Hp30"]);
         for index in [GeomagneticIndex::Kp, GeomagneticIndex::Hp30] {
             let archived = store.archived_days(index).expect("days");
             assert_eq!(
@@ -1082,9 +1063,8 @@ mod tests {
     fn a_day_before_hp30_begins_archives_kp_alone() {
         let (_dir, store) = archive();
         let ingested = day(1970, 1, 1);
-        let transport = CannedTransport::serving(
-            r#"{"Kp":[2.667],"datetime":["1970-01-01T00:00:00Z"],"status":["def"]}"#,
-        );
+        let transport =
+            serving(r#"{"Kp":[2.667],"datetime":["1970-01-01T00:00:00Z"],"status":["def"]}"#);
 
         let message = ingest(&transport, &store, DEFAULT_BASE_URL, ingested);
 
@@ -1096,7 +1076,7 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(transport.requested_indices(), ["Kp"]);
+        assert_eq!(requested_indices(&transport), ["Kp"]);
         assert!(
             store
                 .archived_days(GeomagneticIndex::Hp30)
@@ -1111,7 +1091,7 @@ mod tests {
     fn a_day_without_published_values_is_archived_empty() {
         let (_dir, store) = archive();
         let ingested = day(2026, 7, 20);
-        let transport = CannedTransport::serving(NO_VALUES);
+        let transport = serving(NO_VALUES);
 
         let message = ingest(&transport, &store, DEFAULT_BASE_URL, ingested);
 
@@ -1138,7 +1118,7 @@ mod tests {
     fn ingesting_a_day_twice_replaces_what_was_archived() {
         let (_dir, store) = archive();
         let ingested = day(2026, 7, 20);
-        let transport = CannedTransport::serving(ONE_PERIOD_OF_BOTH_INDICES);
+        let transport = serving(ONE_PERIOD_OF_BOTH_INDICES);
 
         ingest(&transport, &store, DEFAULT_BASE_URL, ingested);
         ingest(&transport, &store, DEFAULT_BASE_URL, ingested);
@@ -1158,11 +1138,10 @@ mod tests {
     #[case::a_refused_request(403, "")]
     fn a_day_that_cannot_be_read_archives_nothing(#[case] status: u16, #[case] body: &str) {
         let (_dir, store) = archive();
-        let transport = CannedTransport {
+        let transport = ScriptedTransport::always(Ok(HttpResponse {
             status,
             body: body.to_owned(),
-            urls: RefCell::new(Vec::new()),
-        };
+        }));
 
         let message = ingest(&transport, &store, DEFAULT_BASE_URL, day(2026, 7, 20));
 
@@ -1352,9 +1331,8 @@ mod tests {
     #[test]
     fn a_day_whose_second_index_fails_archives_neither() {
         let (_dir, store) = archive();
-        let transport = CannedTransport::serving(
-            r#"{"Kp":[2.667],"datetime":["2026-07-20T00:00:00Z"],"status":["def"]}"#,
-        );
+        let transport =
+            serving(r#"{"Kp":[2.667],"datetime":["2026-07-20T00:00:00Z"],"status":["def"]}"#);
 
         let message = ingest(&transport, &store, DEFAULT_BASE_URL, day(2026, 7, 20));
 

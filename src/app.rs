@@ -10,6 +10,8 @@ mod history_db;
 mod history_open;
 mod jamming;
 mod loader;
+mod mapbox_token;
+mod mapbox_token_test;
 mod modals;
 mod panes;
 mod query;
@@ -180,7 +182,10 @@ pub struct App {
     load_error: Option<String>,
     unassociated_log_lines: Option<Vec<(chrono::DateTime<chrono::Utc>, String)>>,
     orphaned_event_markers: Option<Vec<(chrono::DateTime<chrono::Utc>, String)>>,
-    mapbox_token_input: String,
+    /// The Mapbox token under edit, shared by the map's token dialog and the
+    /// settings window's Interface page.
+    mapbox_token_field: mapbox_token::MapboxTokenField,
+    mapbox_token_test: mapbox_token_test::MapboxTokenTest,
 
     /// Egui context - cloned into background threads for `request_repaint`.
     ctx: egui::Context,
@@ -455,7 +460,8 @@ impl App {
             load_error: None,
             unassociated_log_lines: None,
             orphaned_event_markers: None,
-            mapbox_token_input: String::new(),
+            mapbox_token_field: mapbox_token::MapboxTokenField::default(),
+            mapbox_token_test: mapbox_token_test::MapboxTokenTest::default(),
             ctx: cc.egui_ctx.clone(),
             loader,
             snap,

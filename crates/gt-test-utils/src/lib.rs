@@ -3,6 +3,7 @@ pub mod fixtures;
 pub mod interaction;
 #[cfg(feature = "snapshot")]
 pub mod snapshot_harness;
+pub mod transport;
 
 pub use fixtures::{
     SyntheticGtdSpec, empty_file_metadata, empty_track_metadata, latlon_at_meters,
@@ -14,6 +15,7 @@ pub use fixtures::{
 pub use interaction::HarnessInteraction;
 #[cfg(feature = "snapshot")]
 pub use snapshot_harness::{By, Queryable, TestHarness, TestHarnessBuilder};
+pub use transport::{ScriptedTransport, TransportAnswer, UrlPrefixAnswers};
 
 pub const GOLD_BYTES: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),

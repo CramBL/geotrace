@@ -13,7 +13,7 @@ use std::{
 use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
 use geotrace_sdk::{Channel, ChannelUnit, DateTime, Duration, Unit, Utc};
 use gt_test_utils::{
-    DEMO_BYTES, GOLD_BYTES, HarnessInteraction as _, SyntheticGtdSpec, TestHarness,
+    By, DEMO_BYTES, GOLD_BYTES, HarnessInteraction as _, SyntheticGtdSpec, TestHarness,
     synthetic_gtd_bytes,
 };
 use gt_types::{FileIdx, LoadWarning, TrackIdx, TrackRef};
@@ -2394,7 +2394,7 @@ impl SettingsPage {
                 "Download history"
             }
             Self::SnapToRoad => "GPS accuracy",
-            Self::Interface => "Recording name",
+            Self::Interface => "Mapbox token",
             #[cfg(feature = "self-update")]
             Self::Application => "Confirm before pruning",
         }
@@ -2632,6 +2632,60 @@ fn name_template_guide_explains_a_missing_recording() {
     harness.run_steps(3);
 
     harness.get_by_label("No recording loaded or in history");
+}
+
+/// The Interface page's token field drives the token the map fetches satellite
+/// tiles with. It is the page's last text field, below the name template.
+#[test]
+fn the_interface_page_edits_the_token_the_map_reads() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .with_size(egui::vec2(820.0, 620.0))
+        .build_eframe(transient_app);
+    harness.step();
+    harness.state_mut().settings_open = true;
+    harness.state_mut().settings_page = SettingsPage::Interface;
+    harness.run_steps(3);
+
+    let field = harness.bottommost_matching(By::new().role(egui::accesskit::Role::TextInput));
+    field.focus();
+    field.type_text("token-from-settings");
+    harness.run_steps(2);
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(2);
+
+    assert_eq!(harness.state().map.mapbox_token(), "token-from-settings");
+}
+
+/// The page grays the satellite layer until a token is set, per DESIGN.md. Its
+/// entry is the topmost "Satellite" match: the map's own ungated picker renders
+/// the same entry lower on screen.
+#[test]
+fn the_interface_page_gates_the_satellite_layer_on_a_token() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .with_size(egui::vec2(820.0, 620.0))
+        .build_eframe(transient_app);
+    harness.step();
+    harness.state_mut().settings_open = true;
+    harness.state_mut().settings_page = SettingsPage::Interface;
+    harness.run_steps(3);
+
+    assert!(
+        harness
+            .topmost_matching(By::new().label_contains("Satellite"))
+            .accesskit_node()
+            .is_disabled()
+    );
+
+    harness.state_mut().map.set_mapbox_token("tok".to_owned());
+    harness.run_steps(2);
+    harness
+        .topmost_matching(By::new().label_contains("Satellite"))
+        .click();
+    harness.run_steps(2);
+
+    assert_eq!(harness.state().map.layer(), gt_map::MapLayer::Satellite);
 }
 
 /// The guide as it shows while the user edits the template: the token list, an

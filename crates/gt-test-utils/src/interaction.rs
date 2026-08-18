@@ -1,6 +1,7 @@
 use std::thread::sleep;
 use std::time::Duration;
 
+use egui::accesskit::Role;
 use egui_kittest::kittest::{By, Queryable as _};
 use egui_kittest::{Harness, Node};
 
@@ -24,6 +25,10 @@ pub trait HarnessInteraction {
     /// returning the first value `read` yields.
     #[must_use]
     fn step_until_some<T>(&mut self, read: impl FnMut(&Self) -> Option<T>) -> Option<T>;
+
+    /// Focuses the one text input on screen and types `text` into it, then
+    /// runs the frames the edit needs to reach the state behind the field.
+    fn type_into_text_input(&mut self, text: &str);
 
     /// [`HarnessInteraction::hover_at_and_settle`] at the centre of the node
     /// matching `by`.
@@ -73,6 +78,13 @@ impl<State> HarnessInteraction for Harness<'_, State> {
             self.step();
         }
         read(self)
+    }
+
+    fn type_into_text_input(&mut self, text: &str) {
+        let field = self.get_by(|node| node.role() == Role::TextInput);
+        field.focus();
+        field.type_text(text);
+        self.run();
     }
 
     fn hover_and_settle(&mut self, by: By<'_>, settle_frames: usize) {

@@ -339,7 +339,6 @@ fn ingest(
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
     use std::io::Write as _;
 
     use chrono::{DateTime, TimeDelta};
@@ -349,9 +348,10 @@ mod tests {
     use crate::app::backfill::BackfillProgress;
     use crate::app::day_failures::DayFailure;
     use crate::app::day_fetch_status::DayFetchStatus;
-    use gt_fetch::{BytesResponse, HttpRequest, TransportError};
+    use gt_fetch::BytesResponse;
     use gt_ionex::DEFAULT_BASE_URL;
     use gt_store::Store;
+    use gt_test_utils::{ScriptedTransport, UrlPrefixAnswers};
 
     use super::*;
 
@@ -440,61 +440,6 @@ mod tests {
     fn mirrors(hosts: &[&str]) -> MirrorList {
         MirrorList::new(hosts.iter().copied().map(MirrorBaseUrl::new).collect())
             .expect("a named host")
-    }
-
-    /// Serves a file for one mirror's requests, and a 404 for every other
-    /// mirror.
-    struct MirrorAwareTransport {
-        serving: String,
-        body: Vec<u8>,
-        urls: RefCell<Vec<String>>,
-    }
-
-    impl Transport<Vec<u8>> for MirrorAwareTransport {
-        fn send(&self, request: &HttpRequest) -> Result<BytesResponse, TransportError> {
-            let url = request.url().to_owned();
-            let serving = url.starts_with(&self.serving);
-            self.urls.borrow_mut().push(url);
-            Ok(BytesResponse {
-                status: if serving { 200 } else { 404 },
-                body: if serving {
-                    self.body.clone()
-                } else {
-                    Vec::new()
-                },
-            })
-        }
-    }
-
-    /// Serves one canned response to every request, recording the URLs.
-    struct CannedTransport {
-        status: u16,
-        body: Vec<u8>,
-        urls: RefCell<Vec<String>>,
-    }
-
-    impl CannedTransport {
-        fn serving(body: Vec<u8>) -> Self {
-            Self {
-                status: 200,
-                body,
-                urls: RefCell::new(Vec::new()),
-            }
-        }
-
-        fn urls(&self) -> Vec<String> {
-            self.urls.borrow().clone()
-        }
-    }
-
-    impl Transport<Vec<u8>> for CannedTransport {
-        fn send(&self, request: &HttpRequest) -> Result<BytesResponse, TransportError> {
-            self.urls.borrow_mut().push(request.url().to_owned());
-            Ok(BytesResponse {
-                status: self.status,
-                body: self.body.clone(),
-            })
-        }
     }
 
     /// Archive `archived` as a whole day from `product`, the way a finished
@@ -657,7 +602,10 @@ mod tests {
     fn an_ingested_day_archives_its_maps_the_product_and_the_mirror() {
         let (_dir, store) = archive();
         let ingested = day(2024, 5, 10);
-        let transport = CannedTransport::serving(gzipped(&published_file()));
+        let transport = ScriptedTransport::always(Ok(BytesResponse {
+            status: 200,
+            body: gzipped(&published_file()),
+        }));
 
         let message = ingest(&transport, &store, &MirrorList::default(), ingested);
 
@@ -670,7 +618,7 @@ mod tests {
             }
         ));
         assert_eq!(
-            transport.urls(),
+            transport.requested_urls(),
             ["https://sideshow.jpl.nasa.gov/pub/iono_daily/IONEX_final/y2024/JPLG1310.24I.gz"]
         );
         let archived = store.archived_days().expect("days");
@@ -690,7 +638,10 @@ mod tests {
     fn an_ingested_day_reads_back_as_the_file_it_came_from() {
         let (_dir, store) = archive();
         let ingested = day(2024, 5, 10);
-        let transport = CannedTransport::serving(gzipped(&published_file()));
+        let transport = ScriptedTransport::always(Ok(BytesResponse {
+            status: 200,
+            body: gzipped(&published_file()),
+        }));
 
         ingest(&transport, &store, &MirrorList::default(), ingested);
 
@@ -715,7 +666,10 @@ mod tests {
     fn ingesting_a_day_twice_replaces_what_was_archived() {
         let (_dir, store) = archive();
         let ingested = day(2024, 5, 10);
-        let transport = CannedTransport::serving(gzipped(&published_file()));
+        let transport = ScriptedTransport::always(Ok(BytesResponse {
+            status: 200,
+            body: gzipped(&published_file()),
+        }));
 
         ingest(&transport, &store, &MirrorList::default(), ingested);
         ingest(&transport, &store, &MirrorList::default(), ingested);
@@ -730,11 +684,7 @@ mod tests {
     #[case::no_file_at_either_product(404, Vec::new())]
     fn a_day_that_cannot_be_read_archives_nothing(#[case] status: u16, #[case] body: Vec<u8>) {
         let (_dir, store) = archive();
-        let transport = CannedTransport {
-            status,
-            body,
-            urls: RefCell::new(Vec::new()),
-        };
+        let transport = ScriptedTransport::always(Ok(BytesResponse { status, body }));
 
         let message = ingest(&transport, &store, &MirrorList::default(), day(2024, 5, 10));
 
@@ -746,11 +696,17 @@ mod tests {
     fn a_day_the_second_mirror_served_is_archived_under_that_mirror() {
         let (_dir, store) = archive();
         let ingested = day(2024, 5, 10);
-        let transport = MirrorAwareTransport {
-            serving: "https://second.example".to_owned(),
-            body: gzipped(&published_file()),
-            urls: RefCell::new(Vec::new()),
-        };
+        let transport = ScriptedTransport::by_url_prefix(UrlPrefixAnswers {
+            prefix: "https://second.example".to_owned(),
+            matching: Ok(BytesResponse {
+                status: 200,
+                body: gzipped(&published_file()),
+            }),
+            other: Ok(BytesResponse {
+                status: 404,
+                body: Vec::new(),
+            }),
+        });
 
         let message = ingest(
             &transport,
@@ -782,11 +738,10 @@ mod tests {
     #[test]
     fn a_day_every_mirror_failed_on_reports_each_failure() {
         let (_dir, store) = archive();
-        let transport = CannedTransport {
+        let transport = ScriptedTransport::always(Ok(BytesResponse {
             status: 500,
             body: Vec::new(),
-            urls: RefCell::new(Vec::new()),
-        };
+        }));
 
         let message = ingest(
             &transport,

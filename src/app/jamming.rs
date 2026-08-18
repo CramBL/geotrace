@@ -548,8 +548,9 @@ mod tests {
     use rstest::rstest;
     use tempfile::TempDir;
 
-    use gt_fetch::{HttpRequest, HttpResponse, TransportError};
+    use gt_fetch::HttpResponse;
     use gt_jam::DEFAULT_BASE_URL;
+    use gt_test_utils::ScriptedTransport;
 
     use crate::app::backfill::BackfillProgress;
     use crate::app::day_failures::DayFailure;
@@ -594,21 +595,6 @@ mod tests {
             TransportSource::Offline,
         );
         (dir, store, scheduler)
-    }
-
-    /// Returns one canned response for every request.
-    struct CannedTransport {
-        status: u16,
-        body: String,
-    }
-
-    impl Transport for CannedTransport {
-        fn send(&self, _request: &HttpRequest) -> Result<HttpResponse, TransportError> {
-            Ok(HttpResponse {
-                status: self.status,
-                body: self.body.clone(),
-            })
-        }
     }
 
     /// Days the archive already holds are not queued.
@@ -954,10 +940,10 @@ mod tests {
     fn an_ingested_day_records_the_host_it_came_from() {
         let (_dir, store) = archive();
         let day = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
-        let transport = CannedTransport {
+        let transport = ScriptedTransport::always(Ok(HttpResponse {
             status: 200,
             body: "hex,count_good_aircraft,count_bad_aircraft\n84005c7ffffffff,412,3\n".to_owned(),
-        };
+        }));
 
         let message = ingest(&transport, &store, DEFAULT_BASE_URL, day);
         assert!(matches!(message, JamMessage::Stored { cells: 1, .. }));
@@ -973,10 +959,10 @@ mod tests {
     fn a_day_the_host_does_not_have_is_not_a_failure() {
         let (_dir, store) = archive();
         let day = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
-        let transport = CannedTransport {
+        let transport = ScriptedTransport::always(Ok(HttpResponse {
             status: 404,
             body: r#"{"message":"File not found"}"#.to_owned(),
-        };
+        }));
 
         let message = ingest(&transport, &store, DEFAULT_BASE_URL, day);
         assert!(matches!(message, JamMessage::Missing { .. }));
@@ -988,10 +974,10 @@ mod tests {
     fn an_unparsable_body_is_a_failure() {
         let (_dir, store) = archive();
         let day = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
-        let transport = CannedTransport {
+        let transport = ScriptedTransport::always(Ok(HttpResponse {
             status: 200,
             body: "<html>captive portal</html>".to_owned(),
-        };
+        }));
 
         let message = ingest(&transport, &store, DEFAULT_BASE_URL, day);
         assert!(matches!(message, JamMessage::Failed { .. }));

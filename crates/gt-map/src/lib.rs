@@ -1,4 +1,4 @@
-use egui::{Area, Frame, Grid, Label, RichText, Window};
+use egui::{Area, Button, Frame, Grid, Label, RichText, Window};
 use egui_phosphor::regular::GLOBE_HEMISPHERE_WEST as ICON_GLOBE_HEMISPHERE_WEST;
 use egui_phosphor::regular::MAP_TRIFOLD as ICON_MAP_TRIFOLD;
 mod collision_grid;
@@ -9,6 +9,7 @@ pub(crate) mod generated_marker_renderer;
 mod hover_labels;
 pub mod icon_mesh;
 mod jamming_renderer;
+pub mod mapbox_tiles;
 pub mod marker_renderer;
 mod polyline;
 mod query_match_renderer;
@@ -43,7 +44,7 @@ use gt_ui_types::{
     QueryMatches, SkyGlyphVariant, SkyTrailsRequest, SnappedTracks, TrackDataVisibility,
 };
 use rstar::PointDistance as _;
-use walkers::sources::{Mapbox, MapboxStyle, OpenStreetMap};
+use walkers::sources::OpenStreetMap;
 use walkers::{HttpTiles, Map, MapMemory};
 
 use crate::event_marker_renderer::EventMarkerRenderer;
@@ -61,12 +62,29 @@ use crate::viewport::{
     compute_viewport_bounds, compute_visible_bounding_box, is_spatial_point_visible, zoom_to_fit,
 };
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum MapLayer {
     #[default]
     OpenStreetMap,
     Satellite,
 }
+
+/// Whether the layer picker offers the satellite layer without a Mapbox token
+/// set.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SatelliteLayerAccess {
+    /// Selectable with no token: picking it opens the application's token
+    /// dialog.
+    WithoutToken,
+    /// Grayed until a token is set.
+    TokenRequired,
+}
+
+pub const SATELLITE_LAYER_NEEDS_TOKEN: &str = "Enter a Mapbox token to use the satellite layer";
+
+/// Lowest zoom the satellite layer draws Mapbox tiles at. See
+/// [`NavMap::use_mapbox_tiles`] for what happens below it.
+pub(crate) const MAPBOX_MIN_SAFE_ZOOM: u8 = 2;
 
 /// Action requested from a right-click context menu on a map element.
 ///
@@ -427,11 +445,7 @@ impl NavMap {
             self.mapbox_tiles = None;
         } else {
             self.mapbox_tiles = Some(HttpTiles::new(
-                Mapbox {
-                    style: MapboxStyle::Satellite,
-                    high_resolution: false,
-                    access_token: token.clone(),
-                },
+                mapbox_tiles::satellite_source(token.clone()),
                 self.egui_ctx.clone(),
             ));
             self.mapbox_token = token;
@@ -452,6 +466,29 @@ impl NavMap {
 
     pub fn set_layer(&mut self, layer: MapLayer) {
         self.layer = layer;
+    }
+
+    /// The tile layer picker, rendered by the map's floating control and by the
+    /// settings window's Interface page. Entries follow the caller's layout.
+    pub fn show_layer_selector(&mut self, ui: &mut egui::Ui, satellite: SatelliteLayerAccess) {
+        for (layer, icon, label) in [
+            (MapLayer::OpenStreetMap, ICON_MAP_TRIFOLD, "Map"),
+            (MapLayer::Satellite, ICON_GLOBE_HEMISPHERE_WEST, "Satellite"),
+        ] {
+            let selectable = layer != MapLayer::Satellite
+                || satellite == SatelliteLayerAccess::WithoutToken
+                || self.has_mapbox_token();
+            if ui
+                .add_enabled(
+                    selectable,
+                    Button::selectable(self.layer == layer, format!("{icon} {label}")),
+                )
+                .on_disabled_hover_text(SATELLITE_LAYER_NEEDS_TOKEN)
+                .clicked()
+            {
+                self.layer = layer;
+            }
+        }
     }
 
     /// Rebuild the global spatial index from the current file list.
@@ -662,10 +699,9 @@ impl NavMap {
     /// enough margin below that line that no single frame's zoom delta can
     /// cross it.
     fn use_mapbox_tiles(&self) -> bool {
-        const MAPBOX_MIN_SAFE_ZOOM: f64 = 2.0;
         self.layer == MapLayer::Satellite
             && self.mapbox_tiles.is_some()
-            && self.map_memory.zoom() >= MAPBOX_MIN_SAFE_ZOOM
+            && self.map_memory.zoom() >= f64::from(MAPBOX_MIN_SAFE_ZOOM)
     }
 
     /// Build the base tile layer plus every enabled overlay plugin, then hand
@@ -842,18 +878,7 @@ impl NavMap {
             .pivot(egui::Align2::RIGHT_BOTTOM)
             .show(ui.ctx(), |ui| {
                 Frame::popup(ui.style()).show(ui, |ui| {
-                    for (layer, icon, label) in [
-                        (MapLayer::OpenStreetMap, ICON_MAP_TRIFOLD, "Map"),
-                        (MapLayer::Satellite, ICON_GLOBE_HEMISPHERE_WEST, "Satellite"),
-                    ] {
-                        let selected = self.layer == layer;
-                        if ui
-                            .selectable_label(selected, format!("{icon} {label}"))
-                            .clicked()
-                        {
-                            self.layer = layer;
-                        }
-                    }
+                    self.show_layer_selector(ui, SatelliteLayerAccess::WithoutToken);
                 });
             });
 
