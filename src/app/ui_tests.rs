@@ -74,12 +74,13 @@ fn build_app(cc: &eframe::CreationContext<'_>, config_path: &std::path::Path, fa
     )
 }
 
-/// Fixes both download controls' date ranges, or a snapshot of the settings
+/// Fixes every download control's date range, or a snapshot of the settings
 /// window would redate every day.
 fn pin_backfill_ranges(app: &mut App) {
     let today = chrono::NaiveDate::from_ymd_opt(2026, 8, 2).unwrap_or_default();
     app.interference_backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(today);
     app.geomagnetic_index_backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(today);
+    app.tec_map_backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(today);
 }
 
 /// App constructor for the functional (non-snapshot) tests that don't touch a
@@ -2389,8 +2390,9 @@ impl SettingsPage {
         match self {
             Self::Processing => "Restore defaults",
             Self::Analysis => "Mark masked-out used satellites",
-            Self::AircraftInterference | Self::GeomagneticIndices => "Download history",
-            Self::IonosphericTec => "Add mirror",
+            Self::AircraftInterference | Self::GeomagneticIndices | Self::IonosphericTec => {
+                "Download history"
+            }
             Self::SnapToRoad => "GPS accuracy",
             Self::Interface => "Recording name",
             #[cfg(feature = "self-update")]

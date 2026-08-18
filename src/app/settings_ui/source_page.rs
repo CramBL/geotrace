@@ -6,18 +6,14 @@ use egui::Ui;
 use crate::app::day_failures::{self, DayFailure};
 use crate::app::settings_ui::SettingsPage;
 
-/// A slot the page leaves out. `Option<impl FnOnce>` needs a concrete closure
-/// type to infer from, which a function pointer supplies.
-pub(super) const NO_SLOT: Option<fn(&mut Ui)> = None;
-
 /// What one data source page puts in each part of the shared layout. The slots
 /// are closures because each one reaches a differently typed scheduler field on
 /// [`crate::app::App`].
 pub(super) struct SourcePageSlots<'a, Endpoint, Status, Backfill> {
     pub(super) endpoint: Endpoint,
-    pub(super) status: Option<Status>,
+    pub(super) status: Status,
     pub(super) failures: &'a [DayFailure],
-    pub(super) backfill: Option<Backfill>,
+    pub(super) backfill: Backfill,
 }
 
 pub(super) fn show_source_page<Endpoint, Status, Backfill>(
@@ -36,15 +32,11 @@ pub(super) fn show_source_page<Endpoint, Status, Backfill>(
             .spacing([8.0, 6.0])
             .show(ui, |ui| {
                 (slots.endpoint)(ui);
-                if let Some(status) = slots.status {
-                    status(ui);
-                }
+                (slots.status)(ui);
             });
         day_failures::show_failures(ui, "failures", slots.failures);
-        if let Some(backfill) = slots.backfill {
-            ui.add_space(8.0);
-            backfill(ui);
-        }
+        ui.add_space(8.0);
+        (slots.backfill)(ui);
     });
 }
 
@@ -84,14 +76,14 @@ mod tests {
                         ui.label("endpoint slot");
                         ui.end_row();
                     },
-                    status: Some(|ui: &mut Ui| {
+                    status: |ui: &mut Ui| {
                         ui.label("status slot");
                         ui.end_row();
-                    }),
+                    },
                     failures: &failures,
-                    backfill: Some(|ui: &mut Ui| {
+                    backfill: |ui: &mut Ui| {
                         ui.label("backfill slot");
-                    }),
+                    },
                 },
             );
         });

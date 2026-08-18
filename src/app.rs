@@ -2,6 +2,7 @@ mod auto_prune;
 mod backfill;
 mod backfill_ui;
 mod day_failures;
+mod day_fetch_queue;
 mod day_fetch_status;
 mod frame;
 mod history;
@@ -263,6 +264,7 @@ pub struct App {
     offline: bool,
     interference_backfill_ui: backfill_ui::BackfillUi<backfill_ui::InterferenceBackfill>,
     geomagnetic_index_backfill_ui: backfill_ui::BackfillUi<backfill_ui::GeomagneticIndexBackfill>,
+    tec_map_backfill_ui: backfill_ui::BackfillUi<backfill_ui::TecMapBackfill>,
     interference_settings: crate::settings::InterferenceSettings,
     /// Set when the recordings database could not be opened. Drives the
     /// prompt for whichever failure it was.
@@ -431,6 +433,7 @@ impl App {
             offline: options.offline,
             interference_backfill_ui: backfill_ui::BackfillUi::default(),
             geomagnetic_index_backfill_ui: backfill_ui::BackfillUi::default(),
+            tec_map_backfill_ui: backfill_ui::BackfillUi::default(),
             interference_settings: crate::settings::InterferenceSettings::default(),
             map,
             shared: Rc::new(RefCell::new(SharedAppState {
