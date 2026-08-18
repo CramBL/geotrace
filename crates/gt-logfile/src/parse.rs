@@ -238,9 +238,9 @@ mod tests {
         assert_eq!(parse_log(Arc::from(text), now()), Err(LogParseError::Empty));
     }
 
-    /// Unparseable lines anywhere in the log cost only themselves.
+    /// Unparsable lines anywhere in the log cost only themselves.
     #[test]
-    fn unparseable_lines_are_skipped_and_counted() {
+    fn unparsable_lines_are_skipped_and_counted() {
         let parsed =
             parse("2026-01-01 00:00:00 first\nBAD1\nBAD2\nBAD3\n2026-01-01 00:00:01 last\n");
         assert_eq!(messages(&parsed), ["first", "last"]);

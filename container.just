@@ -115,8 +115,15 @@ build-sdk-image: build-image (_build_if_needed SDK_IMAGE "_do-build-sdk-image")
 build-images: build-image build-sdk-image
 
 [group("utils")]
-osv-scanner: _require-runner
-    {{ RUNNER }} run --rm \
-        -v "{{ justfile_directory() }}:/src:ro" \
-        ghcr.io/google/osv-scanner:latest \
-        scan --lockfile /src/Cargo.lock --config /src/osv-scanner.toml
+osv-scanner:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v osv-scanner >/dev/null 2>&1; then
+        osv-scanner scan --lockfile Cargo.lock --config osv-scanner.toml
+    else
+        just _require-runner
+        {{ RUNNER }} run --rm \
+            -v "{{ justfile_directory() }}:/src:ro" \
+            ghcr.io/google/osv-scanner:latest \
+            scan --lockfile /src/Cargo.lock --config /src/osv-scanner.toml
+    fi
