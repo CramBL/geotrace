@@ -120,6 +120,7 @@ impl App {
         self.jamming.poll();
         self.geomagnetic_indices.poll();
         self.tec_maps.poll();
+        self.solar_flares.poll();
 
         // Apply finished snap runs and progress updates, persist completed
         // runs of history-stored files, and let the queue react to
@@ -475,6 +476,9 @@ impl App {
         // pan or zoom reaches the lines on the frame after it.
         let context_span = Self::context_span_of(&self.shared.borrow().plot_state);
         let context_lines = self.context_lines(context_span);
+        let solar_flares = context_span
+            .map(|span| self.solar_flares.markers(span))
+            .unwrap_or_default();
 
         CentralPanel::default().show(ui, |ui| {
             let panel_rect = ui.max_rect();
@@ -526,6 +530,7 @@ impl App {
                     geomagnetic_series: &geomagnetic_series,
                     tec_series: &tec_series,
                     context_lines: &context_lines,
+                    solar_flares: &solar_flares,
                     jamming_dataset,
                     jamming_day,
                     jamming_empty,

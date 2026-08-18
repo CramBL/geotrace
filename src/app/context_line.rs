@@ -138,16 +138,18 @@ impl<S: Clone> ContextSampleCache<S> {
         }
     }
 
-    /// The line `source` describes, assembled from the archive.
+    /// The samples `source` describes, assembled from the archive.
     ///
     /// `read_day` produces one day's samples, oldest first. `gap_at` builds
     /// the valueless sample that ends a stretch where the next day holds
-    /// nothing, so the line breaks over days the archive does not cover.
+    /// nothing, so a line breaks over days the archive does not cover. It
+    /// yields [`None`] for samples drawn one by one, which have no stretches
+    /// to break.
     pub fn resolve(
         &mut self,
         source: ContextSource,
         mut read_day: impl FnMut(NaiveDate) -> Vec<S>,
-        gap_at: impl Fn(NaiveDate) -> S,
+        gap_at: impl Fn(NaiveDate) -> Option<S>,
     ) -> Arc<Vec<S>> {
         if self
             .resolved_from
@@ -175,7 +177,7 @@ impl<S: Clone> ContextSampleCache<S> {
                 .and_then(|previous| previous.succ_opt())
                 .filter(|uncovered| *uncovered != day)
             {
-                samples.push(gap_at(uncovered));
+                samples.extend(gap_at(uncovered));
             }
             samples.extend_from_slice(read);
             previous = Some(day);
@@ -262,8 +264,8 @@ mod tests {
         }]
     }
 
-    fn gap(day: NaiveDate) -> Sample {
-        Sample { day, value: None }
+    fn gap(day: NaiveDate) -> Option<Sample> {
+        Some(Sample { day, value: None })
     }
 
     /// Days the archive does not cover break the line, and adjacent days run
@@ -286,7 +288,10 @@ mod tests {
                     day: day(2026, 7, 21),
                     value: Some(1)
                 },
-                gap(day(2026, 7, 22)),
+                Sample {
+                    day: day(2026, 7, 22),
+                    value: None
+                },
                 Sample {
                     day: day(2026, 7, 24),
                     value: Some(1)

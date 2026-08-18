@@ -81,6 +81,7 @@ fn pin_backfill_ranges(app: &mut App) {
     app.interference_backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(today);
     app.geomagnetic_index_backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(today);
     app.tec_map_backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(today);
+    app.solar_flare_backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(today);
 }
 
 /// App constructor for the functional (non-snapshot) tests that don't touch a
@@ -2394,9 +2395,10 @@ impl SettingsPage {
         match self {
             Self::Processing => "Restore defaults",
             Self::Analysis => "Mark masked-out used satellites",
-            Self::AircraftInterference | Self::GeomagneticIndices | Self::IonosphericTec => {
-                crate::app::backfill_ui::DOWNLOAD_HISTORY_LABEL
-            }
+            Self::AircraftInterference
+            | Self::GeomagneticIndices
+            | Self::IonosphericTec
+            | Self::SolarFlares => crate::app::backfill_ui::DOWNLOAD_HISTORY_LABEL,
             Self::SnapToRoad => "GPS accuracy",
             Self::Interface => "Mapbox token",
             #[cfg(feature = "self-update")]
@@ -2412,6 +2414,7 @@ impl SettingsPage {
             Self::AircraftInterference => "settings_window_aircraft_interference",
             Self::GeomagneticIndices => "settings_window_geomagnetic_indices",
             Self::IonosphericTec => "settings_window_ionospheric_tec",
+            Self::SolarFlares => "settings_window_solar_flares",
             Self::SnapToRoad => "settings_window_snap_to_road",
             Self::Interface => "settings_window_interface",
             Self::Application => "settings_window_application",
@@ -4359,6 +4362,123 @@ fn snapshot_app_plot_context_line_spans_the_archived_days() {
 
     let mut harness = gt_test_utils::TestHarness::from_harness(harness);
     harness.snapshot_loose("app_plot_context_line");
+}
+
+/// The flares of the May 2024 storm, as the fetch worker archives a day:
+/// classes spread across the scale so each marker colour is drawn.
+fn archive_flare_day(store: &gt_store::FlareStore, day: chrono::NaiveDate, peaks: &[(u32, &str)]) {
+    let flares: Vec<gt_flare::SolarFlare> = peaks
+        .iter()
+        .map(|&(hour, class_type)| {
+            let peak = day.and_hms_opt(hour, 13, 0).unwrap_or_default().and_utc();
+            gt_flare::SolarFlare {
+                id: format!("{peak}-FLR-001"),
+                begin: peak - chrono::TimeDelta::minutes(28),
+                peak,
+                end: Some(peak + chrono::TimeDelta::minutes(23)),
+                classification: class_type.parse().expect("a published class"),
+                source_location: Some("S20W25".to_owned()),
+                active_region: Some(13664),
+            }
+        })
+        .collect();
+    store
+        .insert_or_replace_day(day, "host", Utc::now(), &flares)
+        .expect("archive the day");
+}
+
+/// A harness with a recording loaded and an archive of flares behind it,
+/// returning the temp directory the archive lives in.
+fn harness_with_archived_flares<'a>(
+    archived: &[(i64, &[(u32, &str)])],
+) -> (Harness<'a, App>, tempfile::TempDir) {
+    let gtd_bytes = synthetic_gtd_bytes(SyntheticGtdSpec {
+        start: base_time(),
+        point_count: 61,
+        step_secs: 3600,
+        start_lat_deg: 51.5,
+        start_lon_deg: -0.1,
+        lat_step_deg: 0.0002,
+        lon_step_deg: -0.00015,
+        heading_deg: 270.0,
+        speed_kmh: 22.0,
+        eph_m: 2.4,
+        sats_seen: 10,
+        sats_in_fix: 8,
+    });
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(gtd_bytes.as_slice(), "ride.gtd"),
+    );
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path())
+        .open_solar_flares()
+        .expect("archive");
+    let recorded = base_time().date_naive();
+    for &(offset, peaks) in archived {
+        archive_flare_day(&store, recorded + chrono::TimeDelta::days(offset), peaks);
+    }
+    let ctx = harness.ctx.clone();
+    harness.state_mut().solar_flares = crate::app::flares::SolarFlareScheduler::new(
+        ctx,
+        Some(store),
+        gt_flare::DEFAULT_BASE_URL.to_owned(),
+        gt_flare::ApiKey::new("test-key"),
+        gt_fetch::TransportSource::Offline,
+    );
+    harness.run_steps(5);
+    (harness, dir)
+}
+
+/// The markers are drawn from the archive across the whole span the plot
+/// shows, so they reach past both ends of the recording, and each one takes
+/// the colour of its class.
+#[test]
+fn snapshot_app_plot_solar_flare_markers() {
+    // The plot shows the middle of the recording, so the day before it
+    // carries a flare that is archived and outside the view.
+    let (mut harness, _dir) = harness_with_archived_flares(&[
+        (-1, &[(6, "C4.5")]),
+        (0, &[(20, "C4.5")]),
+        (1, &[(6, "M9.0"), (14, "X2.2")]),
+        (2, &[(10, "X5.8")]),
+    ]);
+
+    {
+        let state = harness.state_mut();
+        let mut shared = state.shared.borrow_mut();
+        let vis = &mut shared.plot_state.metric_vis;
+        for kind in gt_types::MetricKind::iter() {
+            vis.set(kind, kind == gt_types::MetricKind::Eph);
+        }
+    }
+    harness.run_steps(5);
+
+    let mut harness = gt_test_utils::TestHarness::from_harness(harness);
+    harness.snapshot_loose("app_plot_solar_flare_markers");
+}
+
+/// With nothing archived the flare chip renders disabled - visible, not
+/// hidden - and an archived day enables it.
+#[test]
+fn solar_flare_chip_is_disabled_until_a_day_is_archived() {
+    let (harness, _empty) = harness_with_archived_flares(&[]);
+    let chip = harness.get_by_label(gt_flare::text::LAYER_LABEL);
+    assert!(
+        chip.accesskit_node().is_disabled(),
+        "the chip must render disabled while no flare is archived"
+    );
+
+    let (harness, _archived) = harness_with_archived_flares(&[(0, &[(9, "X2.2")])]);
+    let chip = harness.get_by_label(gt_flare::text::LAYER_LABEL);
+    assert!(
+        !chip.accesskit_node().is_disabled(),
+        "an archived flare enables the chip"
+    );
 }
 
 /// Without a completed run the snap error chip renders disabled - visible,

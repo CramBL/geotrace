@@ -326,11 +326,13 @@ impl JammingScheduler {
         self.context.resolve(
             source,
             |day| context_day(store.as_deref(), &positions, day),
-            |day| JammingContextSample {
-                start_secs: midnight_secs(day),
-                percent: None,
-                aircraft: 0,
-                bad: 0,
+            |day| {
+                Some(JammingContextSample {
+                    start_secs: midnight_secs(day),
+                    percent: None,
+                    aircraft: 0,
+                    bad: 0,
+                })
             },
         )
     }

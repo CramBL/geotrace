@@ -18,6 +18,7 @@ pub struct Settings {
     pub interference: InterferenceSettings,
     pub geomagnetic_indices: GeomagneticIndexSettings,
     pub tec: TecSettings,
+    pub solar_flares: SolarFlareSettings,
 }
 
 impl Default for Settings {
@@ -36,6 +37,7 @@ impl Default for Settings {
             interference: InterferenceSettings::default(),
             geomagnetic_indices: GeomagneticIndexSettings::default(),
             tec: TecSettings::default(),
+            solar_flares: SolarFlareSettings::default(),
         }
     }
 }
@@ -99,6 +101,33 @@ impl From<TecWireSettings> for TecSettings {
             .or_else(|| wire.base_url.map(gt_ionex::MirrorList::single))
             .unwrap_or_default();
         Self { mirrors }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct SolarFlareSettings {
+    /// Base URL of the flare catalog host. Defaults to api.nasa.gov, which
+    /// serves DONKI. A proxy or an offline copy goes here.
+    pub base_url: String,
+    /// The user's own api.nasa.gov key, empty until one is entered. Stored as
+    /// entered, like the Mapbox token. Without a key nothing is fetched.
+    pub api_key: String,
+}
+
+impl Default for SolarFlareSettings {
+    fn default() -> Self {
+        Self {
+            base_url: gt_flare::DEFAULT_BASE_URL.to_owned(),
+            api_key: String::new(),
+        }
+    }
+}
+
+impl SolarFlareSettings {
+    /// The key to fetch with, or [`None`] while the field is empty.
+    pub fn api_key(&self) -> Option<gt_flare::ApiKey> {
+        gt_flare::ApiKey::new(&self.api_key)
     }
 }
 
@@ -320,6 +349,8 @@ pub struct PlotSettings {
     /// Whether the ad-hoc channel chips are revealed. Off by default, like
     /// the advanced section.
     pub show_channels: bool,
+    /// Whether the solar flare markers are drawn.
+    pub show_solar_flares: bool,
     /// User-chosen channel component colors, keyed by channel name: a
     /// sparse list of recolored components (TOML cannot hold `None` array
     /// slots). Anything absent keeps the derived hue. Edited through the
@@ -346,6 +377,7 @@ impl Default for PlotSettings {
             channel: HashMap::new(),
             show_advanced_metrics: false,
             show_channels: false,
+            show_solar_flares: true,
             channel_colors: HashMap::new(),
         }
     }
@@ -761,6 +793,28 @@ mod snap_settings_tests {
         let parsed: Settings = toml::from_str(&text).expect("parse");
 
         assert_eq!(parsed.tec.mirrors, settings.tec.mirrors);
+    }
+
+    /// A settings file written before the solar flare section existed loads
+    /// with the publishing host and no key, which fetches nothing.
+    #[test]
+    fn a_settings_file_without_the_solar_flare_section_loads() {
+        let settings: Settings = toml::from_str("version = 1\n").expect("parse");
+        assert_eq!(settings.solar_flares.base_url, gt_flare::DEFAULT_BASE_URL);
+        assert!(settings.solar_flares.api_key().is_none());
+    }
+
+    /// A configured host and key round-trip.
+    #[test]
+    fn a_configured_solar_flare_host_and_key_round_trip() {
+        let mut settings = Settings::default();
+        settings.solar_flares.base_url = "https://proxy.example".to_owned();
+        settings.solar_flares.api_key = "entered-key".to_owned();
+
+        let text = toml::to_string_pretty(&settings).expect("serialize");
+        let parsed: Settings = toml::from_str(&text).expect("parse");
+        assert_eq!(parsed.solar_flares.base_url, "https://proxy.example");
+        assert_eq!(parsed.solar_flares.api_key, "entered-key");
     }
 
     /// A settings file written before the geomagnetic index section existed

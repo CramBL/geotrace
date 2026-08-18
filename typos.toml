@@ -18,3 +18,6 @@ ba = "ba"
 caf = "caf"
 # PN appears in "PNGs" (plural of PNG image format)
 PN = "PN"
+# Extreme Ultraviolet and X-ray Irradiance Sensors, the GOES instrument the
+# flare catalog names in every event
+EXIS = "EXIS"

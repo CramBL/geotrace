@@ -353,9 +353,11 @@ impl TecMapScheduler {
         self.context.resolve(
             source,
             |day| context_day(store.as_deref(), &positions, day),
-            |day| TecContextSample {
-                x_secs: midnight_secs(day),
-                tecu: None,
+            |day| {
+                Some(TecContextSample {
+                    x_secs: midnight_secs(day),
+                    tecu: None,
+                })
             },
         )
     }

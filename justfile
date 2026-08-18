@@ -70,6 +70,14 @@ examples:
 gen-fixture:
     cargo run -p geotrace-c --bin gen_fixture
 
+# Refresh the gt-flare event fixtures from the NASA DONKI catalog (network!).
+# Needs GEOTRACE_FLARE_API_KEY, an api.nasa.gov key.
+# Fixtures are frozen once committed - review the resulting diff like code.
+# Name windows to capture only those (additive); no args captures all.
+[group("native")]
+flare-fixtures *WINDOWS:
+    cargo run -p gt-flare --example fetch_flare_fixtures -- {{ WINDOWS }}
+
 # Refresh the gt-ionex map fixtures from the JPL archive (network!).
 # Fixtures are frozen once committed - review the resulting diff like code.
 # Name files to capture only those (additive); no args captures all.

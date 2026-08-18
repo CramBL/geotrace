@@ -29,9 +29,11 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  # The directories the capture recipes write into. gt-snap is absent: its
+  # The directories the capture recipes write into. Two are absent: gt-snap's
   # map-matching answers change with every OpenStreetMap edit, so its fixtures
-  # are frozen by design and checked on demand through `just snap-live-test`.
+  # are frozen by design and checked on demand through `just snap-live-test`,
+  # and gt-flare's endpoint needs a per-user api.nasa.gov key that this
+  # workflow has none of, so `just flare-fixtures` is run by hand.
   FIXTURE_DIRS: crates/gt-ionex/tests/fixtures crates/gt-jam/tests/fixtures crates/gt-solar/tests/fixtures
 
 jobs:

@@ -281,9 +281,11 @@ impl GeomagneticIndexScheduler {
             positions: None,
         };
         let store = self.store.as_ref().map(Arc::clone);
-        let gap_at = |day| IndexContextSample {
-            start_secs: midnight_secs(day),
-            value: None,
+        let gap_at = |day| {
+            Some(IndexContextSample {
+                start_secs: midnight_secs(day),
+                value: None,
+            })
         };
         GeomagneticContextLines {
             hp30: self.hp30_context.resolve(

@@ -20,7 +20,6 @@
 
 use gt_hdf5_archive::ColumnFormat;
 use gt_solar::GeomagneticIndex;
-use gt_solar::activity::GeomagneticActivity;
 use gt_solar::series::KpStatus;
 
 /// Group holding the Kp columns.
@@ -41,7 +40,7 @@ pub const SAMPLE_PERIOD_START: &str = "period_start";
 /// [`SAMPLE_ACTIVITY_PRESENCE`] says the service published one.
 pub const SAMPLE_ACTIVITY: &str = "activity";
 /// Whether the service published a value for the period, coded by
-/// [`StoredActivityPresence`].
+/// [`gt_hdf5_archive::StoredPresence`].
 pub const SAMPLE_ACTIVITY_PRESENCE: &str = "activity_presence";
 /// The status of a Kp value, coded by [`StoredKpStatus`].
 pub const SAMPLE_KP_STATUS: &str = "status";
@@ -167,43 +166,6 @@ impl From<StoredKpStatus> for KpStatus {
         match status {
             StoredKpStatus::Definitive => Self::Definitive,
             StoredKpStatus::Nowcast => Self::Nowcast,
-        }
-    }
-}
-
-/// Whether a sample's [`SAMPLE_ACTIVITY`] value is one the service published.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StoredActivityPresence {
-    /// The service published no value for the period, and the activity column
-    /// holds [`UNPUBLISHED_ACTIVITY_FILL`].
-    Unpublished,
-    Published,
-}
-
-impl StoredActivityPresence {
-    pub const fn code(self) -> u8 {
-        match self {
-            Self::Unpublished => 0,
-            Self::Published => 1,
-        }
-    }
-
-    /// What `code` stands for, or [`None`] for a code the schema does not
-    /// define.
-    pub const fn from_code(code: u8) -> Option<Self> {
-        match code {
-            0 => Some(Self::Unpublished),
-            1 => Some(Self::Published),
-            _ => None,
-        }
-    }
-}
-
-impl From<Option<GeomagneticActivity>> for StoredActivityPresence {
-    fn from(activity: Option<GeomagneticActivity>) -> Self {
-        match activity {
-            Some(_) => Self::Published,
-            None => Self::Unpublished,
         }
     }
 }

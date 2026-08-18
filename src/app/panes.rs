@@ -53,6 +53,8 @@ pub(super) struct MainBehavior<'a> {
     pub(super) tec_series: &'a gt_ui_types::TecSeries,
     /// The context metric lines, resolved over the span the plot last drew.
     pub(super) context_lines: &'a gt_ui_types::ContextLines,
+    /// The flares of the archived days in that span.
+    pub(super) solar_flares: &'a [gt_flare::SolarFlare],
 }
 
 impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
@@ -144,7 +146,10 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     self.jamming_series,
                     self.geomagnetic_series,
                     self.tec_series,
-                    self.context_lines,
+                    gt_plot::ArchiveOverlays {
+                        context_lines: self.context_lines,
+                        solar_flares: self.solar_flares,
+                    },
                     &mut s.plot_state,
                 );
             }
