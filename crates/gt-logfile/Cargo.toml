@@ -11,11 +11,14 @@ doctest = false
 
 [dependencies]
 chrono.workspace = true
+gt-fmt = { path = "../gt-fmt" }
 gt-types = { path = "../gt-types" }
-log.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 gt-test-utils = { path = "../gt-test-utils" }
+proptest.workspace = true
+rstest.workspace = true
 
 [lints]
 workspace = true

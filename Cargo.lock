@@ -2678,9 +2678,12 @@ name = "gt-logfile"
 version = "0.12.0"
 dependencies = [
  "chrono",
+ "gt-fmt",
  "gt-test-utils",
  "gt-types",
- "log",
+ "proptest",
+ "rstest",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

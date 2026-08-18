@@ -27,6 +27,7 @@
 ### Changed
 
 - The settings window shows one category at a time, picked from a rail on the left, instead of every section stacked in one column. The recording name template moved to the "Interface" page and the update check to "Application".
+- A log file loads even when lines in it carry no recognised timestamp: those lines are skipped and the rest are kept. The load fails only when no line at all parses, and then names the first line it could not read.
 
 ### Fixed
 

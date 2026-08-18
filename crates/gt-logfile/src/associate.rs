@@ -1,0 +1,112 @@
+//! Placing a log entry on a recorded track: it takes the position of the fix
+//! nearest in time, interpolated between the two fixes it falls between.
+
+use chrono::{DateTime, Duration, Utc};
+use gt_types::{Latitude, Longitude, NavPoint};
+
+/// The recorded position at `time`, or `None` when no fix of `nav_points` lies
+/// within `window` of it.
+///
+/// `nav_points` must be in ascending time order.
+pub fn associate_position(
+    time: DateTime<Utc>,
+    nav_points: &[NavPoint],
+    window: Duration,
+) -> Option<(Latitude, Longitude)> {
+    let index = nav_points.partition_point(|point| point.tpv.time().utc() <= time);
+    let before = index.checked_sub(1).and_then(|i| nav_points.get(i));
+    let after = nav_points.get(index);
+
+    match (before, after) {
+        (Some(before), Some(after)) => {
+            let gap_before = (time - before.tpv.time().utc()).abs();
+            let gap_after = (after.tpv.time().utc() - time).abs();
+            if gap_before.min(gap_after) > window {
+                return None;
+            }
+            let span = (after.tpv.time() - before.tpv.time())
+                .num_microseconds()
+                .unwrap_or(1);
+            let elapsed = (time - before.tpv.time().utc())
+                .num_microseconds()
+                .unwrap_or(0);
+            let fraction = if span == 0 {
+                0.0f64
+            } else {
+                elapsed as f64 / span as f64
+            };
+            let lat = before.tpv.lat().as_degrees() * (1.0 - fraction)
+                + after.tpv.lat().as_degrees() * fraction;
+            let lon = before.tpv.lon().as_degrees() * (1.0 - fraction)
+                + after.tpv.lon().as_degrees() * fraction;
+            Some((Latitude::new(lat), Longitude::new(lon)))
+        }
+        (Some(nearest), None) | (None, Some(nearest)) => {
+            if (time - nearest.tpv.time().utc()).abs() > window {
+                return None;
+            }
+            Some((nearest.tpv.lat(), nearest.tpv.lon()))
+        }
+        (None, None) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::TimeZone as _;
+    use gt_test_utils::nav_points_from;
+    use rstest::rstest;
+
+    use super::*;
+
+    /// The window every test runs with, matching the app's default.
+    fn window() -> Duration {
+        Duration::seconds(60)
+    }
+
+    fn start() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0)
+            .single()
+            .expect("valid")
+    }
+
+    #[test]
+    fn a_time_between_two_fixes_lands_between_their_positions() {
+        let points = nav_points_from(start(), 5, 1);
+        let time = start() + Duration::milliseconds(500);
+        let (lat, lon) = associate_position(time, &points, window()).expect("associates");
+        assert!((lat.as_degrees() - 55.0005).abs() < 1e-9);
+        assert!((lon.as_degrees() - 12.0005).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_time_on_a_fix_takes_that_fixs_position() {
+        let points = nav_points_from(start(), 5, 1);
+        let (lat, lon) = associate_position(start(), &points, window()).expect("associates");
+        assert!((lat.as_degrees() - 55.0).abs() < 1e-9);
+        assert!((lon.as_degrees() - 12.0).abs() < 1e-9);
+    }
+
+    /// The five fixes run from `start()` to `start() + 4 s`.
+    #[rstest]
+    #[case::just_after_the_last_fix(4 + 59, true)]
+    #[case::past_the_window_after_the_last_fix(4 + 61, false)]
+    #[case::just_before_the_first_fix(-30, true)]
+    #[case::past_the_window_before_the_first_fix(-61, false)]
+    fn a_time_outside_the_recording_associates_only_within_the_window(
+        #[case] offset_secs: i64,
+        #[case] associates: bool,
+    ) {
+        let points = nav_points_from(start(), 5, 1);
+        let time = start() + Duration::seconds(offset_secs);
+        assert_eq!(
+            associate_position(time, &points, window()).is_some(),
+            associates
+        );
+    }
+
+    #[test]
+    fn a_recording_without_fixes_associates_nothing() {
+        assert!(associate_position(start(), &[], window()).is_none());
+    }
+}
