@@ -6,11 +6,22 @@ use super::{App, ResegmentPrompt, auto_prune, history_db, loader, storage};
 
 impl App {
     pub(super) fn sync_db_path(&mut self) {
-        self.loader.db_path = if self.storage_enabled {
+        self.loader.db_path = if self.storage_settings.enabled {
             self.history.path().map(std::path::Path::to_owned)
         } else {
             None
         };
+    }
+
+    /// Follow an auto-store edit made by either place the storage controls
+    /// render, with `storage_before_edit` read before they rendered.
+    pub(super) fn sync_db_path_if_auto_store_changed(
+        &mut self,
+        storage_before_edit: crate::settings::StorageSettings,
+    ) {
+        if self.storage_settings.enabled != storage_before_edit.enabled {
+            self.sync_db_path();
+        }
     }
 
     /// Put a freshly opened database behind the history worker.
@@ -100,11 +111,13 @@ impl App {
     /// comes back as a [`history_db::Response::AutoPruned`]. Called after each
     /// successful GTD insert.
     pub(super) fn check_auto_prune(&self) {
-        if !self.auto_prune_enabled {
+        if !self.storage_settings.auto_prune_enabled {
             return;
         }
-        self.history
-            .auto_prune(self.auto_prune_max_bytes, self.auto_prune_confirm);
+        self.history.auto_prune(
+            self.storage_settings.auto_prune_max_bytes,
+            self.storage_settings.auto_prune_confirm,
+        );
     }
 
     /// Begin opening a recording from history. Reproduces the stored tracks,
@@ -259,7 +272,7 @@ impl App {
     }
 
     pub(super) fn show_history_window(&mut self, ui: &egui::Ui) {
-        let prev_storage = self.storage_enabled;
+        let storage_before_edit = self.storage_settings;
         let loaded_metas: Vec<gt_store::RecordingMeta> = {
             let s = self.shared.borrow();
             s.loaded_files.view().recording_metas()
@@ -268,14 +281,9 @@ impl App {
             ui.ctx(),
             &self.history,
             &loaded_metas,
-            &mut self.storage_enabled,
-            &mut self.auto_prune_enabled,
-            &mut self.auto_prune_max_bytes,
-            &mut self.auto_prune_confirm,
+            &mut self.storage_settings,
         );
-        if self.storage_enabled != prev_storage {
-            self.sync_db_path();
-        }
+        self.sync_db_path_if_auto_store_changed(storage_before_edit);
     }
 
     pub(super) fn show_history_failure_prompt(&mut self, ui: &egui::Ui) {
@@ -488,7 +496,7 @@ impl App {
     pub(super) fn show_auto_prune_prompt(&mut self, ui: &egui::Ui) {
         // Auto-prune confirmation dialog.
         if let Some(refs) = &self.pending_auto_prune {
-            let limit = gt_fmt::format_bytes(self.auto_prune_max_bytes);
+            let limit = gt_fmt::format_bytes(self.storage_settings.auto_prune_max_bytes);
             let n = refs.len();
             let mut do_prune = false;
             let mut cancel = ui

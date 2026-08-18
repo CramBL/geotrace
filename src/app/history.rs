@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
 use chrono::NaiveDate;
-use egui::{Button, Checkbox, DragValue, Label, RichText, ScrollArea, TextEdit, Window};
+use egui::{Button, DragValue, Label, RichText, ScrollArea, TextEdit, Window};
 use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_phosphor::regular::CARET_UP as ICON_CARET_UP;
 use egui_phosphor::regular::X as ICON_X;
@@ -11,6 +11,8 @@ use gt_ui_theme::warning_amber;
 use strum::{EnumCount, EnumIter};
 
 use crate::app::history_db::{DeleteReason, HistoryWorker};
+use crate::app::storage_controls;
+use crate::settings::StorageSettings;
 
 mod table;
 
@@ -504,19 +506,12 @@ impl HistoryWindow {
     ///
     /// `loaded_metas` are the content fingerprints of the files currently loaded
     /// in the app, used to disable re-opening a recording that is already open.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the window drives several independent pieces of persisted app state plus the loaded-file set; bundling them would obscure rather than clarify"
-    )]
     pub fn show(
         &mut self,
         ctx: &egui::Context,
         worker: &HistoryWorker,
         loaded_metas: &[RecordingMeta],
-        storage_enabled: &mut bool,
-        auto_prune_enabled: &mut bool,
-        auto_prune_max_bytes: &mut u64,
-        auto_prune_confirm: &mut bool,
+        storage: &mut StorageSettings,
     ) {
         if !self.open {
             return;
@@ -590,11 +585,7 @@ impl HistoryWindow {
                 // outer left-to-right layout instead lets it grow into the
                 // right-side controls and overlap them once the window narrows.
                 ui.horizontal(|ui| {
-                    crate::terms::term_label(
-                        ui,
-                        RichText::new("Identity"),
-                        crate::terms::IDENTITY,
-                    );
+                    crate::terms::term_label(ui, RichText::new("Identity"), crate::terms::IDENTITY);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let delete_hidden_label = if hidden_count > 0 {
                             format!("Delete hidden data ({hidden_count})…")
@@ -615,7 +606,7 @@ impl HistoryWindow {
                             self.prune.open = true;
                             self.prune.reset();
                         }
-                        ui.checkbox(storage_enabled, "Auto-store recordings");
+                        storage_controls::show_auto_store_checkbox(ui, storage);
                         ui.add(
                             TextEdit::singleline(&mut self.filter_text)
                                 .desired_width(ui.available_width()),
@@ -626,13 +617,9 @@ impl HistoryWindow {
                 // Advanced filter row: points + date range
                 ui.horizontal(|ui| {
                     ui.label("Points ≥");
-                    ui.add(
-                        TextEdit::singleline(&mut self.filter_min_points).desired_width(60.0),
-                    );
+                    ui.add(TextEdit::singleline(&mut self.filter_min_points).desired_width(60.0));
                     ui.label("≤");
-                    ui.add(
-                        TextEdit::singleline(&mut self.filter_max_points).desired_width(60.0),
-                    );
+                    ui.add(TextEdit::singleline(&mut self.filter_max_points).desired_width(60.0));
                     ui.separator();
                     ui.label("Date");
                     ui.add(
@@ -656,63 +643,12 @@ impl HistoryWindow {
                 });
 
                 // Auto-prune settings - separated because this is a persistent
-                // setting, not a filter or list entry.  Always rendered so the
-                // layout stays stable, controls are grayed out when inactive,
-                // with hover text explaining what to enable first.
+                // setting, not a filter or list entry.
                 ui.separator();
                 ui.horizontal(|ui| {
-                    let storage_on = *storage_enabled;
-                    let prune_on = *auto_prune_enabled && storage_on;
-
-                    ui.add_enabled(
-                        storage_on,
-                        Checkbox::new(auto_prune_enabled, "Auto-prune when over"),
-                    )
-                    .on_hover_text(if storage_on {
-                        "Automatically delete the oldest recordings when storage exceeds the threshold"
-                    } else {
-                        "Enable 'Auto-store recordings' to use auto-pruning"
-                    });
-
-                    let mut max_gb = *auto_prune_max_bytes as f64 / gt_fmt::BYTES_PER_GB as f64;
-                    ui.add_enabled(
-                        prune_on,
-                        DragValue::new(&mut max_gb)
-                            .range(0.1..=1_000.0)
-                            .speed(0.1),
-                    )
-                    .on_hover_text(if prune_on {
-                        "Storage limit - oldest recordings are pruned when this is exceeded"
-                    } else if storage_on {
-                        "Tick 'Auto-prune when over' to set a threshold"
-                    } else {
-                        "Enable 'Auto-store recordings' to use auto-pruning"
-                    });
-
-                    if prune_on {
-                        #[expect(
-                            clippy::cast_sign_loss,
-                            reason = "DragValue range is 0.1..=1000 so value is always positive"
-                        )]
-                        let bytes = (max_gb * gt_fmt::BYTES_PER_GB as f64).round() as u64;
-                        *auto_prune_max_bytes = bytes;
-                    }
-
-                    ui.label("GB");
-
+                    storage_controls::show_auto_prune_limit(ui, storage);
                     ui.separator();
-
-                    ui.add_enabled(
-                        prune_on,
-                        Checkbox::new(auto_prune_confirm, "Confirm before pruning"),
-                    )
-                    .on_hover_text(if prune_on {
-                        "Show a confirmation dialog before auto-pruning deletes recordings"
-                    } else if storage_on {
-                        "Tick 'Auto-prune when over' to configure this"
-                    } else {
-                        "Enable 'Auto-store recordings' to use auto-pruning"
-                    });
+                    storage_controls::show_auto_prune_confirm_checkbox(ui, storage);
                 });
                 ui.add_space(4.0);
 

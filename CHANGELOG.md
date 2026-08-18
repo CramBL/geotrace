@@ -21,6 +21,7 @@
 - The `--offline` flag runs GeoTrace without network access: no map tiles, downloads, snapping, or update check. It replaces the undocumented `GEOTRACE_OFFLINE` environment variable, which is no longer read.
 - Settings' "Aircraft interference" page shows what the interference download is doing, how many days of the loaded recordings are archived, and the days that failed with their cause.
 - Settings' "Ionospheric TEC" page downloads map history for a date range, skipping days already archived, with progress and a cancel button. It also shows what the map download is doing and how many days of the loaded recordings are archived.
+- Auto-storing recordings and auto-pruning are adjustable on Settings' "Application" page as well as in the History window.
 
 ### Changed
 

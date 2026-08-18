@@ -2396,7 +2396,7 @@ impl SettingsPage {
             Self::SnapToRoad => "GPS accuracy",
             Self::Interface => "Recording name",
             #[cfg(feature = "self-update")]
-            Self::Application => "Check for updates on startup",
+            Self::Application => "Confirm before pruning",
         }
     }
 
@@ -2699,6 +2699,86 @@ fn non_self_update_uses_badge_not_dialog() {
 
     let self_updatable = super::update::UpdateChecker::available_for_test("0.2.0", true);
     assert_eq!(self_updatable.badge_version(), None);
+}
+
+/// Settles the pointer on the widget labelled `label` and clicks it, then runs
+/// the frames the click's effect needs to reach the app state.
+#[cfg(feature = "self-update")]
+fn click_settled(harness: &mut Harness<'_, App>, label: &str) {
+    harness.get_by_label(label).hover();
+    harness.run_steps(2);
+    harness.get_by_label(label).click();
+    harness.run_steps(3);
+}
+
+/// The storage controls appear in the History window and on the settings
+/// window's Application page, both driving the one setting: what one window
+/// writes, the other reads.
+#[cfg(feature = "self-update")]
+#[test]
+fn storage_controls_drive_one_setting_from_both_windows() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .with_size(egui::vec2(1000.0, 700.0))
+        .build_eframe(transient_app);
+    harness.step();
+    let ctx = harness.ctx.clone();
+    harness
+        .state_mut()
+        .reopen_history_database(&dir.path().join("recordings.h5"), &ctx);
+
+    // The Application page turns auto-pruning on.
+    harness.state_mut().settings_open = true;
+    harness.state_mut().settings_page = SettingsPage::Application;
+    assert!(
+        harness.step_until(|h| h.query_by_label("Auto-prune when over").is_some()),
+        "the Application page shows the auto-prune controls"
+    );
+    click_settled(&mut harness, "Auto-prune when over");
+    assert!(
+        harness.state().storage_settings.auto_prune_enabled,
+        "the Application page's auto-prune switch writes the setting"
+    );
+
+    // Clicking the History window's confirmation toggle proves it reads the
+    // Application page's write and writes the same setting back: the toggle
+    // only takes a click while auto-pruning is on.
+    harness.state_mut().settings_open = false;
+    harness.state_mut().history_window.open = true;
+    assert!(
+        harness.step_until(|h| h.query_by_label("Confirm before pruning").is_some()),
+        "the History window shows the auto-prune controls"
+    );
+    click_settled(&mut harness, "Confirm before pruning");
+    assert!(
+        !harness.state().storage_settings.auto_prune_confirm,
+        "the History window's confirmation toggle writes the setting"
+    );
+
+    // Auto-storing off in the History window empties the loader's database
+    // path, the same live effect the Application page has.
+    click_settled(&mut harness, "Auto-store recordings");
+    assert!(
+        !harness.state().storage_settings.enabled,
+        "the History window's auto-store checkbox writes the setting"
+    );
+    assert_eq!(harness.state().loader.db_path, None);
+
+    // The Application page reads the History window's write: its auto-store
+    // checkbox turns storing back on, and the loader's path returns.
+    harness.state_mut().history_window.open = false;
+    harness.state_mut().settings_open = true;
+    assert!(
+        harness.step_until(|h| h.query_by_label("Auto-store recordings").is_some()),
+        "the Application page shows the auto-store checkbox"
+    );
+    click_settled(&mut harness, "Auto-store recordings");
+    assert!(
+        harness.state().storage_settings.enabled,
+        "the Application page's auto-store checkbox writes the setting"
+    );
+    assert!(harness.state().loader.db_path.is_some());
 }
 
 #[test]

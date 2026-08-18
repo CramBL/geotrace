@@ -21,6 +21,7 @@ mod snap_persist;
 mod snap_state;
 mod solar;
 mod storage;
+mod storage_controls;
 mod tec;
 mod tec_mirrors_ui;
 pub use storage::Storage;
@@ -277,15 +278,7 @@ pub struct App {
     /// prompt.
     pending_resegment: Option<ResegmentPrompt>,
 
-    /// When `false`, GTD files are not stored in the history database on load.
-    storage_enabled: bool,
-    /// When `true`, the oldest recordings are pruned after each import if the
-    /// total stored size exceeds `auto_prune_max_bytes`.
-    auto_prune_enabled: bool,
-    /// Maximum total stored size (bytes) before auto-pruning triggers.
-    auto_prune_max_bytes: u64,
-    /// When `true`, show a confirmation dialog before auto-pruning.
-    auto_prune_confirm: bool,
+    storage_settings: crate::settings::StorageSettings,
     /// Recordings selected for auto-pruning, waiting for the user to confirm.
     pending_auto_prune: Option<Vec<gt_store::DatabaseRef>>,
 
@@ -490,10 +483,7 @@ impl App {
             history_failure,
             keep_db_backup: true,
             pending_resegment: None,
-            storage_enabled: true,
-            auto_prune_enabled: false,
-            auto_prune_max_bytes: 10 * 1024 * 1024 * 1024,
-            auto_prune_confirm: true,
+            storage_settings: crate::settings::StorageSettings::default(),
             pending_auto_prune: None,
             history_window: history::HistoryWindow::new(),
             query_window: query::QueryWindow::new(),
@@ -672,10 +662,10 @@ impl App {
             snr_drop_db: s.plot_state.analysis.snr_drop_db.into(),
             slip_window_min: s.plot_state.analysis.slip_window_min.into(),
             clock_excursion_threshold_s: s.plot_state.analysis.clock_excursion_threshold_s.into(),
-            storage_enabled: self.storage_enabled,
-            auto_prune_enabled: self.auto_prune_enabled,
-            auto_prune_max_bytes: self.auto_prune_max_bytes,
-            auto_prune_confirm: self.auto_prune_confirm,
+            storage_enabled: self.storage_settings.enabled,
+            auto_prune_enabled: self.storage_settings.auto_prune_enabled,
+            auto_prune_max_bytes: self.storage_settings.auto_prune_max_bytes,
+            auto_prune_confirm: self.storage_settings.auto_prune_confirm,
             update_check_on_startup: self.update_check_on_startup,
             skipped_version: self.skipped_version.clone(),
             query_history_revision: self.query_window.history_revision(),

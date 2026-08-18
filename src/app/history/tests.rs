@@ -22,10 +22,7 @@ use strum::{EnumCount as _, IntoEnumIterator as _};
 struct HistoryHarness {
     window: HistoryWindow,
     worker: HistoryWorker,
-    storage_enabled: bool,
-    auto_prune_enabled: bool,
-    auto_prune_max_bytes: u64,
-    auto_prune_confirm: bool,
+    storage: crate::settings::StorageSettings,
     _dir: tempfile::TempDir,
 }
 
@@ -40,24 +37,16 @@ fn history_harness(entries: Vec<RecordingEntry>) -> HistoryHarness {
     HistoryHarness {
         window,
         worker,
-        storage_enabled: true,
-        auto_prune_enabled: false,
-        auto_prune_max_bytes: 0,
-        auto_prune_confirm: true,
+        storage: crate::settings::StorageSettings {
+            auto_prune_max_bytes: 0,
+            ..crate::settings::StorageSettings::default()
+        },
         _dir: dir,
     }
 }
 
 fn show_history(ui: &mut egui::Ui, s: &mut HistoryHarness) {
-    s.window.show(
-        ui.ctx(),
-        &s.worker,
-        &[],
-        &mut s.storage_enabled,
-        &mut s.auto_prune_enabled,
-        &mut s.auto_prune_max_bytes,
-        &mut s.auto_prune_confirm,
-    );
+    s.window.show(ui.ctx(), &s.worker, &[], &mut s.storage);
 }
 
 /// A harness backed by a real database holding one recording, with no
@@ -88,10 +77,10 @@ fn history_harness_with_recording(identity: &str) -> HistoryHarness {
     HistoryHarness {
         window,
         worker,
-        storage_enabled: true,
-        auto_prune_enabled: false,
-        auto_prune_max_bytes: 0,
-        auto_prune_confirm: true,
+        storage: crate::settings::StorageSettings {
+            auto_prune_max_bytes: 0,
+            ..crate::settings::StorageSettings::default()
+        },
         _dir: dir,
     }
 }
