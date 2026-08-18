@@ -9,7 +9,7 @@
 //! flight at a time, and the transport spaces requests
 //! [`transport::REQUEST_INTERVAL`] apart.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
@@ -19,13 +19,16 @@ use egui::Context;
 
 use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
 use gt_solar::activity::GeomagneticActivity;
-use gt_solar::series::{Hp30Series, KpSeries};
+use gt_solar::series::{Hp30Series, IndexSample, IndexSeries, KpSeries};
 use gt_solar::{GeomagneticIndex, TimeWindow, calendar, transport, wire};
 use gt_store::{SolarStore, SolarStoreError};
 use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
-use gt_ui_types::{GeomagneticPoint, GeomagneticSeries};
+use gt_ui_types::{
+    GeomagneticContextLines, GeomagneticPoint, GeomagneticSeries, IndexContextSample,
+};
 use strum::IntoEnumIterator as _;
 
+use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
 
 /// What one day's fetch produced.
@@ -67,12 +70,18 @@ pub struct GeomagneticIndexScheduler {
     days: DayFetchQueue,
     /// UTC days the archive holds samples for, read once at startup and
     /// extended on ingest, so resolving a fix's value never reads the day
-    /// index per frame. Assumes this process is the archive's only writer.
-    archived_days: HashSet<NaiveDate>,
+    /// index per frame. Ordered so the days a plot span holds are a range
+    /// query. Assumes this process is the archive's only writer.
+    archived_days: BTreeSet<NaiveDate>,
     /// Per-track plot points, keyed by the days they were resolved from, so
     /// the `Arc` identity the plot caches on only changes when the archive
     /// gained a day the track needs.
     plot_points: HashMap<TrackRef, (Vec<NaiveDate>, Arc<Vec<GeomagneticPoint>>)>,
+    /// The Hp30 line drawn across the plot's whole span, one sample per
+    /// archived period.
+    hp30_context: ContextSampleCache<IndexContextSample>,
+    /// The Kp line, sampled like [`Self::hp30_context`] at its own cadence.
+    kp_context: ContextSampleCache<IndexContextSample>,
 }
 
 impl GeomagneticIndexScheduler {
@@ -90,6 +99,8 @@ impl GeomagneticIndexScheduler {
         Self {
             archived_days,
             plot_points: HashMap::new(),
+            hp30_context: ContextSampleCache::default(),
+            kp_context: ContextSampleCache::default(),
             ctx,
             tx,
             rx,
@@ -175,6 +186,8 @@ impl GeomagneticIndexScheduler {
                 } => {
                     self.archived_days.insert(day);
                     self.days.mark_archived(day);
+                    self.hp30_context.forget(day);
+                    self.kp_context.forget(day);
                     if kp_samples + hp30_samples == 0 {
                         log::info!("The service published no geomagnetic indices for {day}");
                     } else {
@@ -253,6 +266,45 @@ impl GeomagneticIndexScheduler {
         }
         self.plot_points.retain(|track, _| live.contains(track));
         series
+    }
+
+    /// The index lines across `span`, each sampled at its own published
+    /// cadence: one sample per archived Kp period of three hours, and per
+    /// archived Hp30 period of half an hour.
+    ///
+    /// Both indices are planetary, so neither depends on where the receiver
+    /// was. Days the archive holds nothing for break the lines.
+    pub fn context_lines(&mut self, span: ContextSpan) -> GeomagneticContextLines {
+        let source = ContextSource {
+            span,
+            archived_days: self.archived_days.range(span.days()).copied().collect(),
+            positions: None,
+        };
+        let store = self.store.as_ref().map(Arc::clone);
+        let gap_at = |day| IndexContextSample {
+            start_secs: midnight_secs(day),
+            value: None,
+        };
+        GeomagneticContextLines {
+            hp30: self.hp30_context.resolve(
+                source.clone(),
+                |day| {
+                    context_periods(store.as_deref().and_then(|store| {
+                        read_archived_series(store.hp30_series(day), GeomagneticIndex::Hp30, day)
+                    }))
+                },
+                gap_at,
+            ),
+            kp: self.kp_context.resolve(
+                source,
+                |day| {
+                    context_periods(store.as_deref().and_then(|store| {
+                        read_archived_series(store.kp_series(day), GeomagneticIndex::Kp, day)
+                    }))
+                },
+                gap_at,
+            ),
+        }
     }
 
     /// The archived days the track's fixes fall in, as the cache key: a
@@ -390,6 +442,18 @@ impl ArchivedDay {
     }
 }
 
+/// One day's archived periods as context line samples, oldest first.
+fn context_periods<S: IndexSample>(series: Option<IndexSeries<S>>) -> Vec<IndexContextSample> {
+    series
+        .into_iter()
+        .flat_map(|series| series.samples)
+        .map(|sample| IndexContextSample {
+            start_secs: sample.period_start().timestamp() as f64,
+            value: sample.activity().map(GeomagneticActivity::value),
+        })
+        .collect()
+}
+
 /// The archived series, reporting a read that failed and treating it as an
 /// unarchived day.
 fn read_archived_series<S>(
@@ -403,7 +467,7 @@ fn read_archived_series<S>(
 }
 
 /// Every day the archive holds samples of any index for.
-fn archived_days_of(store: &SolarStore) -> HashSet<NaiveDate> {
+fn archived_days_of(store: &SolarStore) -> BTreeSet<NaiveDate> {
     GeomagneticIndex::iter()
         .filter_map(|index| {
             store
@@ -1324,6 +1388,115 @@ mod tests {
             .next()
             .expect("the archived day reached the track");
         assert!(points.iter().all(|point| point.hp30 == Some(4.667)));
+    }
+
+    /// The lines a context span holds, resolved from the archive.
+    fn context_lines_over(
+        scheduler: &mut GeomagneticIndexScheduler,
+        days: std::ops::RangeInclusive<NaiveDate>,
+    ) -> GeomagneticContextLines {
+        let midnight =
+            |day: NaiveDate| day.and_time(chrono::NaiveTime::MIN).and_utc().timestamp() as f64;
+        scheduler.context_lines(ContextSpan::covering(
+            midnight(*days.start())..=midnight(*days.end()),
+        ))
+    }
+
+    /// Each index draws every archived period of its own cadence, whether or
+    /// not a recording covers it.
+    #[test]
+    fn the_context_lines_carry_every_archived_period() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived = day(2026, 7, 20);
+        archive_first_periods_of(&store, archived);
+        scheduler.archived_days.insert(archived);
+
+        let lines = context_lines_over(&mut scheduler, archived..=archived);
+
+        let midnight = at(2026, 7, 20, 0).timestamp() as f64;
+        assert_eq!(
+            lines
+                .hp30
+                .iter()
+                .map(|sample| (sample.start_secs - midnight, sample.value))
+                .collect::<Vec<_>>(),
+            [(0.0, Some(4.667)), (1800.0, Some(6.333))]
+        );
+        assert_eq!(
+            lines
+                .kp
+                .iter()
+                .map(|sample| (sample.start_secs - midnight, sample.value))
+                .collect::<Vec<_>>(),
+            [(0.0, Some(5.0))]
+        );
+    }
+
+    /// A day the archive does not hold breaks both lines, so what is drawn is
+    /// what was downloaded.
+    #[test]
+    fn an_unarchived_day_between_two_archived_ones_breaks_the_lines() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        for archived in [day(2026, 7, 20), day(2026, 7, 22)] {
+            archive_first_periods_of(&store, archived);
+            scheduler.archived_days.insert(archived);
+        }
+
+        let lines = context_lines_over(&mut scheduler, day(2026, 7, 20)..=day(2026, 7, 22));
+
+        assert_eq!(
+            lines
+                .kp
+                .iter()
+                .map(|sample| sample.value)
+                .collect::<Vec<_>>(),
+            [Some(5.0), None, Some(5.0)]
+        );
+    }
+
+    /// A day the fetch worker revised reaches the line, so a definitive value
+    /// replaces the nowcast one it was drawn from.
+    #[test]
+    fn revising_an_archived_day_redraws_the_context_lines() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived = day(2026, 7, 20);
+        archive_first_periods_of(&store, archived);
+        scheduler.archived_days.insert(archived);
+        assert_eq!(
+            context_lines_over(&mut scheduler, archived..=archived)
+                .kp
+                .first()
+                .and_then(|sample| sample.value),
+            Some(5.0)
+        );
+
+        store
+            .insert_or_replace_kp_day(
+                archived,
+                "host",
+                Utc::now(),
+                &KpSeries {
+                    samples: vec![kp_sample(at(2026, 7, 20, 0), 7.667)],
+                },
+            )
+            .expect("insert kp");
+        scheduler
+            .tx
+            .send(IndexDayMessage::Stored {
+                day: archived,
+                kp_samples: 1,
+                hp30_samples: 2,
+            })
+            .expect("send");
+        scheduler.poll();
+
+        assert_eq!(
+            context_lines_over(&mut scheduler, archived..=archived)
+                .kp
+                .first()
+                .and_then(|sample| sample.value),
+            Some(7.667)
+        );
     }
 
     /// One index failing leaves the whole day unarchived, so the next session

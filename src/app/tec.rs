@@ -9,7 +9,7 @@
 //! is in flight at a time, and the transport spaces requests
 //! [`transport::REQUEST_INTERVAL`] apart.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
@@ -24,9 +24,11 @@ use gt_ionex::tec::TotalElectronContent;
 use gt_ionex::{IonexProduct, calendar, transport};
 use gt_store::{IonexStore, IonexStoreError};
 use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
-use gt_ui_types::{TecPoint, TecSeries};
+use gt_ui_types::{ArcIdentity, TecContextSample, TecPoint, TecSeries};
 
+use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
+use super::fix_positions::FixPositionTimeline;
 
 /// What one day's fetch produced.
 enum MapDayMessage {
@@ -71,12 +73,16 @@ pub struct TecMapScheduler {
     days: DayFetchQueue,
     /// UTC days the archive holds maps for, read once at startup and extended
     /// on ingest, so resolving a fix's value never reads the day index per
-    /// frame. Assumes this process is the archive's only writer.
-    archived_days: HashSet<NaiveDate>,
+    /// frame. Ordered so the days a plot span holds are a range query.
+    /// Assumes this process is the archive's only writer.
+    archived_days: BTreeSet<NaiveDate>,
     /// Per-track plot points, keyed by the days they were resolved from, so
     /// the `Arc` identity the plot caches on only changes when the archive
     /// gained a day the track needs.
     plot_points: HashMap<TrackRef, (Vec<NaiveDate>, Arc<Vec<TecPoint>>)>,
+    /// The line drawn across the plot's whole span, one sample per archived
+    /// map epoch.
+    context: ContextSampleCache<TecContextSample>,
 }
 
 impl TecMapScheduler {
@@ -102,6 +108,7 @@ impl TecMapScheduler {
             days: DayFetchQueue::default(),
             archived_days,
             plot_points: HashMap::new(),
+            context: ContextSampleCache::default(),
         }
     }
 
@@ -195,6 +202,7 @@ impl TecMapScheduler {
                     }
                     self.archived_days.insert(day);
                     self.days.mark_archived(day);
+                    self.context.forget(day);
                     log::info!("Archived {map_count} {product} TEC maps for {day} from {mirror}");
                 }
                 MapDayMessage::Failed { day, detail } => {
@@ -264,6 +272,34 @@ impl TecMapScheduler {
         }
         self.plot_points.retain(|track, _| live.contains(track));
         series
+    }
+
+    /// The TEC line across `span`: one sample per archived map epoch, read at
+    /// the position the receiver was in nearest that epoch in time.
+    ///
+    /// The epochs are the ones the producer published, two hours apart in a
+    /// final file and one in a rapid one. Days the archive holds no maps for
+    /// break the line.
+    pub fn context_line(
+        &mut self,
+        span: ContextSpan,
+        positions: &Arc<FixPositionTimeline>,
+    ) -> Arc<Vec<TecContextSample>> {
+        let source = ContextSource {
+            span,
+            archived_days: self.archived_days.range(span.days()).copied().collect(),
+            positions: Some(ArcIdentity::of(positions)),
+        };
+        let store = self.store.as_ref().map(Arc::clone);
+        let positions = Arc::clone(positions);
+        self.context.resolve(
+            source,
+            |day| context_day(store.as_deref(), &positions, day),
+            |day| TecContextSample {
+                x_secs: midnight_secs(day),
+                tecu: None,
+            },
+        )
     }
 
     /// The archived days the track's fixes fall in, as the cache key: a
@@ -372,6 +408,37 @@ fn day_needs_fetch(
     Ok(product == IonexProduct::Rapid || day >= today_utc)
 }
 
+/// One archived day's samples of the context line: the value over the
+/// receiver's nearest position in time, at each epoch the day was archived
+/// with.
+///
+/// A day with no recording to place its epochs at contributes nothing, and so
+/// breaks the line like a day the archive does not hold.
+fn context_day(
+    store: Option<&IonexStore>,
+    positions: &FixPositionTimeline,
+    day: NaiveDate,
+) -> Vec<TecContextSample> {
+    let Some(maps) = read_archived_maps(store, day) else {
+        return Vec::new();
+    };
+    maps.maps()
+        .iter()
+        .map(|map| {
+            let epoch = map.epoch();
+            TecContextSample {
+                x_secs: epoch.timestamp() as f64,
+                tecu: positions
+                    .nearest_position(epoch)
+                    .and_then(|(latitude, longitude)| {
+                        maps.total_electron_content_at(latitude, longitude, epoch)
+                    })
+                    .map(TotalElectronContent::tecu),
+            }
+        })
+        .collect()
+}
+
 /// The maps archived for `day`, reporting a read that failed and treating it
 /// as an unarchived day.
 fn read_archived_maps(store: Option<&IonexStore>, day: NaiveDate) -> Option<GlobalIonosphereMaps> {
@@ -383,7 +450,7 @@ fn read_archived_maps(store: Option<&IonexStore>, day: NaiveDate) -> Option<Glob
 }
 
 /// Every day the archive holds maps for.
-fn archived_days_of(store: &IonexStore) -> HashSet<NaiveDate> {
+fn archived_days_of(store: &IonexStore) -> BTreeSet<NaiveDate> {
     store
         .archived_days()
         .inspect_err(|err| log::error!("Reading the TEC map archive index: {err}"))
@@ -476,6 +543,7 @@ mod tests {
     use crate::app::backfill::BackfillProgress;
     use crate::app::day_failures::DayFailure;
     use crate::app::day_fetch_status::DayFetchStatus;
+    use crate::app::fix_positions::FixPositions;
     use gt_fetch::BytesResponse;
     use gt_ionex::DEFAULT_BASE_URL;
     use gt_store::Store;
@@ -1176,6 +1244,90 @@ mod tests {
         let files = loaded_files_of(track_over(at(2024, 5, 10, 22), 4, 1800));
 
         assert!(scheduler.plot_series(&files).is_empty());
+    }
+
+    /// The context line over the UTC days `from..=to`.
+    fn context_line_over(
+        scheduler: &mut TecMapScheduler,
+        positions: &Arc<FixPositionTimeline>,
+        days: std::ops::RangeInclusive<NaiveDate>,
+    ) -> Arc<Vec<TecContextSample>> {
+        let midnight =
+            |day: NaiveDate| day.and_time(chrono::NaiveTime::MIN).and_utc().timestamp() as f64;
+        scheduler.context_line(
+            ContextSpan::covering(midnight(*days.start())..=midnight(*days.end())),
+            positions,
+        )
+    }
+
+    fn timeline_of(track: gt_types::LoadedTrack) -> Arc<FixPositionTimeline> {
+        let mut positions = FixPositions::default();
+        Arc::clone(positions.timeline(&loaded_files_of(track)))
+    }
+
+    /// The line carries one sample per archived map epoch, valued at the
+    /// position of the fix nearest that epoch, including epochs hours away
+    /// from any recording.
+    #[test]
+    fn the_context_line_samples_every_archived_epoch() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived = day(2024, 5, 10);
+        store
+            .insert_or_replace_day(
+                archived,
+                "host",
+                Utc::now(),
+                IonexProduct::Final,
+                &uniform_maps(archived, &[(0, 5.0), (2, 10.0), (4, 20.0)]),
+            )
+            .expect("insert");
+        scheduler.archived_days.insert(archived);
+        let timeline = timeline_of(track_over(at(2024, 5, 10, 22), 4, 1800));
+
+        let line = context_line_over(&mut scheduler, &timeline, archived..=archived);
+
+        let midnight = at(2024, 5, 10, 0).timestamp() as f64;
+        assert_eq!(
+            line.iter()
+                .map(|sample| (sample.x_secs - midnight, sample.tecu))
+                .collect::<Vec<_>>(),
+            [
+                (0.0, Some(5.0)),
+                (7200.0, Some(10.0)),
+                (14400.0, Some(20.0)),
+            ]
+        );
+    }
+
+    /// A day the archive does not hold breaks the line between the days that
+    /// surround it.
+    #[test]
+    fn an_unarchived_day_breaks_the_context_line() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        for archived in [day(2024, 5, 10), day(2024, 5, 12)] {
+            store
+                .insert_or_replace_day(
+                    archived,
+                    "host",
+                    Utc::now(),
+                    IonexProduct::Final,
+                    &uniform_maps(archived, &[(0, 5.0)]),
+                )
+                .expect("insert");
+            scheduler.archived_days.insert(archived);
+        }
+        let timeline = timeline_of(track_over(at(2024, 5, 10, 22), 4, 1800));
+
+        let line = context_line_over(
+            &mut scheduler,
+            &timeline,
+            day(2024, 5, 10)..=day(2024, 5, 12),
+        );
+
+        assert_eq!(
+            line.iter().map(|sample| sample.tecu).collect::<Vec<_>>(),
+            [Some(5.0), None, Some(5.0)]
+        );
     }
 
     /// A day the fetch worker archives is resolved into the loaded track's

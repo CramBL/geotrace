@@ -1,4 +1,5 @@
 pub mod arc_identity;
+pub mod context_series;
 pub mod display_mask;
 pub mod event_marker_visibility;
 pub mod generated_marker_visibility;
@@ -17,6 +18,10 @@ pub mod tec_series;
 pub mod visibility;
 
 pub use arc_identity::ArcIdentity;
+pub use context_series::{
+    ContextLines, GeomagneticContextLines, IndexContextSample, JammingContextSample,
+    TecContextSample,
+};
 pub use display_mask::{DisplayCategory, DisplayMask};
 pub use event_marker_visibility::EventMarkerVisibility;
 pub use generated_marker_visibility::GeneratedMarkerVisibility;

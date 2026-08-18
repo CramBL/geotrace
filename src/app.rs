@@ -1,9 +1,11 @@
 mod auto_prune;
 mod backfill;
 mod backfill_ui;
+mod context_line;
 mod day_failures;
 mod day_fetch_queue;
 mod day_fetch_status;
+mod fix_positions;
 mod frame;
 mod history;
 mod history_db;
@@ -259,6 +261,9 @@ pub struct App {
     history: history_db::HistoryWorker,
     /// Queues and ingests interference days for loaded tracks.
     jamming: jamming::JammingScheduler,
+    /// Where the receiver was over time, for the context lines whose value
+    /// depends on position.
+    fix_positions: fix_positions::FixPositions,
     /// Queues and ingests geomagnetic index days for loaded tracks.
     geomagnetic_indices: solar::GeomagneticIndexScheduler,
     /// Persisted geomagnetic index configuration: the host serving Kp and
@@ -426,6 +431,7 @@ impl App {
 
         let mut app = Self {
             jamming,
+            fix_positions: fix_positions::FixPositions::default(),
             geomagnetic_indices,
             geomagnetic_index_settings: crate::settings::GeomagneticIndexSettings::default(),
             tec_maps,

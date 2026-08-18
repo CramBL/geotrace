@@ -62,8 +62,9 @@ pub static QUERY_DOC: LazyLock<String> = LazyLock::new(|| {
 /// cannot drift from what the map says.
 pub static PLOT_HOVER: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "Share of aircraft over each fix's cell that reported low navigation accuracy, for that \
-         fix's own UTC day. {SOURCE_CAVEAT} {RESOLUTION_CAVEAT} The line breaks where no day is \
+        "Share of aircraft that reported low navigation accuracy, one value per archived UTC day \
+         across the span the plot shows, over the cell the receiver was in nearest that day in \
+         time. {SOURCE_CAVEAT} {RESOLUTION_CAVEAT} The line breaks over days that are not \
          archived."
     )
 });

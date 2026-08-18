@@ -3,6 +3,7 @@
 
 mod chips;
 mod clock_excursion;
+mod context;
 mod geomagnetic;
 mod jamming;
 mod legend;
@@ -15,30 +16,32 @@ mod tec;
 pub use chips::{ChannelVisibility, MetricVisibility};
 pub use legend::{LEGEND_DOCK_OFFSET, legend_is_docked};
 
-use chips::{MetricAvailability, SectionGates, loaded_channels, metric_filter_row};
+use chips::{HoveredChip, MetricAvailability, SectionGates, loaded_channels, metric_filter_row};
 use clock_excursion::{ExcursionViewport, add_clock_excursions};
-use geomagnetic::{GeomagneticPlotCache, geomagnetic_availability, sync_geomagnetic_cache};
-use jamming::{JammingPlotCache, jamming_available, sync_jamming_cache};
+use context::{ContextLineGates, ContextPlotCaches, add_context_lines};
+use geomagnetic::geomagnetic_availability;
+use jamming::jamming_available;
 use legend::show_file_legend_overlay;
 use levels::{LineViewport, TrackLevelCache, budget_cap, compute_level_cache, single_target};
 use lines::{
-    NearestHoverLabel, PerFixCaches, add_series_lines, add_util_anomalies, show_nearest_hover_label,
+    LineStroke, NearestHoverLabel, add_series_lines, add_util_anomalies, show_nearest_hover_label,
 };
 use snap_error::{SnapErrorPlotCache, snap_error_available, sync_snap_error_cache};
-use tec::{TecPlotCache, sync_tec_cache, tec_available};
+use style::metric_line_color;
+use tec::tec_available;
 
 use crate::AnalysisConfig;
 use crate::series::{PlacedTrackSeries, build_all_series};
 use chrono::{DateTime, Utc};
 use egui::Color32;
 use egui::RichText;
-use egui_plot::{Span, VLine};
+use egui_plot::{LineStyle, Span, VLine};
 use gt_filter::GlobalFilter;
 use gt_loaded_files::RecordingNames;
 use gt_types::satellites::ConstellationSet;
 use gt_types::{FileIdx, LoadedFile, MetricKind, PointIdx, TrackIdx, TrackRef};
 use gt_ui_types::{
-    GeomagneticSeries, HighlightScope, JammingSeries, SnapErrorSeries, TecSeries,
+    ContextLines, GeomagneticSeries, HighlightScope, JammingSeries, SnapErrorSeries, TecSeries,
     TrackDataVisibility,
 };
 use rayon::prelude::*;
@@ -59,6 +62,13 @@ pub const PLOT_LINE_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 0.5..=5.0;
 /// Stroke width of the vertical seek lines (hovered match, map position). Above
 /// the data lines so the marker stays findable across a crowded plot.
 const SEEK_LINE_WIDTH: f32 = 1.5;
+
+/// Padding either side of the data when the view resets to fit it, as a
+/// fraction of the data's own span.
+const RESET_X_MARGIN_FRACTION: f64 = 0.05;
+/// Floor on that padding, so a recording of a single instant still resets to
+/// a view with width.
+const RESET_X_MARGIN_MIN_SECS: f64 = 1.0;
 
 /// Fallback label for a file index with no loaded recording behind it, so a
 /// stale index still shows something readable.
@@ -170,15 +180,12 @@ pub struct PlotState {
     /// Per-track snap error mipmaps and marker lists, rebuilt only when a
     /// track's series `Arc` changes (see [`sync_snap_error_cache`]).
     snap_error_cache: HashMap<TrackRef, SnapErrorPlotCache>,
-    /// Per-track interference line caches, rebuilt when a track's series
-    /// `Arc` changes (see [`sync_jamming_cache`]).
-    jamming_cache: HashMap<TrackRef, JammingPlotCache>,
-    /// Per-track geomagnetic index lines, rebuilt when the app's series
-    /// `Arc` changes (see [`sync_geomagnetic_cache`]).
-    geomagnetic_cache: HashMap<TrackRef, GeomagneticPlotCache>,
-    /// Per-track TEC lines, rebuilt when the app's series `Arc` changes (see
-    /// [`sync_tec_cache`]).
-    tec_cache: HashMap<TrackRef, TecPlotCache>,
+    /// The context metric lines, rebuilt when the app resolves new samples
+    /// for them (see [`ContextPlotCaches::sync`]).
+    context_caches: ContextPlotCaches,
+    /// The x range in Unix seconds the plot drew on the last frame, which the
+    /// app resolves the context lines over.
+    last_visible_x_range: Option<std::ops::RangeInclusive<f64>>,
     /// User-chosen component colors, keyed by channel name: one optional
     /// override per component, `None` = the derived hue. Edited through the
     /// chip's right-click menu; persisted with the plot settings.
@@ -216,9 +223,8 @@ impl Default for PlotState {
             last_computed_bounds: None,
             applied_map_x_range: None,
             snap_error_cache: HashMap::new(),
-            jamming_cache: HashMap::new(),
-            geomagnetic_cache: HashMap::new(),
-            tec_cache: HashMap::new(),
+            context_caches: ContextPlotCaches::default(),
+            last_visible_x_range: None,
             channel_component_colors: HashMap::new(),
             plot_cursor_snapped: false,
         }
@@ -274,6 +280,13 @@ impl PlotState {
         self.invalidate_level_cache();
     }
 
+    /// The x range in Unix seconds the plot drew on the last frame, which is
+    /// the span the context lines are resolved over. [`None`] until the plot
+    /// has drawn once.
+    pub fn visible_x_range(&self) -> Option<std::ops::RangeInclusive<f64>> {
+        self.last_visible_x_range.clone()
+    }
+
     fn invalidate_level_cache(&mut self) {
         self.last_computed_bounds = None;
         self.level_cache.clear();
@@ -323,6 +336,9 @@ pub fn show_track_plot(
     // TEC per fix, resolved by the app from the archive
     // (see `gt_ui_types::TecSeries`).
     tec: &TecSeries,
+    // The context metric lines, resolved by the app over the span the plot
+    // reported last frame (see `PlotState::visible_x_range`).
+    context: &ContextLines,
     state: &mut PlotState,
 ) {
     // Computed once, shared by visible_count, the full-x-range loop and the
@@ -413,6 +429,14 @@ pub fn show_track_plot(
         tec,
     );
 
+    let available = MetricAvailability {
+        snap_error: snap_error_available,
+        jamming: jamming_available,
+        hp30: geomagnetic_available.hp30,
+        kp: geomagnetic_available.kp,
+        tec: tec_available,
+    };
+
     // Draw the per-metric filter row before the plot so it consumes vertical
     // space first.  `ui.available_height()` below then gives the remainder.
     let hovered_chip = metric_filter_row(
@@ -427,13 +451,7 @@ pub fn show_track_plot(
         &mut state.sync_to_map,
         &mut state.show_advanced_metrics,
         &mut state.show_channels,
-        MetricAvailability {
-            snap_error: snap_error_available,
-            jamming: jamming_available,
-            hp30: geomagnetic_available.hp30,
-            kp: geomagnetic_available.kp,
-            tec: tec_available,
-        },
+        available,
     );
 
     let available_width = ui.available_width();
@@ -469,9 +487,7 @@ pub fn show_track_plot(
     let has_full_range = full_x_min.is_finite() && full_x_max.is_finite();
 
     sync_snap_error_cache(&mut state.snap_error_cache, snap_error);
-    sync_jamming_cache(&mut state.jamming_cache, jamming);
-    sync_geomagnetic_cache(&mut state.geomagnetic_cache, geomagnetic);
-    sync_tec_cache(&mut state.tec_cache, tec);
+    state.context_caches.sync(context);
 
     // Split borrows: extract immutable refs to the caches and metric visibility
     // before the closure so the borrow checker can see they are disjoint from
@@ -479,9 +495,7 @@ pub fn show_track_plot(
     // `last_computed_bounds`).
     let series_cache = &state.series_cache;
     let snap_error_cache = &state.snap_error_cache;
-    let jamming_cache = &state.jamming_cache;
-    let geomagnetic_cache = &state.geomagnetic_cache;
-    let tec_cache = &state.tec_cache;
+    let context_caches = &state.context_caches;
     let channel_component_colors = &state.channel_component_colors;
     let level_cache = &state.level_cache;
     let last_computed_bounds = state.last_computed_bounds;
@@ -509,6 +523,7 @@ pub fn show_track_plot(
     let mut new_computed_bounds: Option<(f64, f64, u32, usize)> = None;
     let mut new_level_cache: Option<Vec<TrackLevelCache>> = None;
     let mut new_applied_map_x_range: Option<Option<(u64, u64)>> = None;
+    let mut new_visible_x_range: Option<std::ops::RangeInclusive<f64>> = None;
     // The custom hover label to draw: the closest candidate offered by any
     // series of any recording inside the plot closure, turned into a tooltip
     // after it returns.
@@ -529,12 +544,34 @@ pub fn show_track_plot(
         .x_axis_formatter(x_fmt)
         .label_formatter(|pos| cursor_label(&custom_hover_label_shown, pos));
 
-    // Pass the full data extent to egui_plot so double-click reset zooms to fit.
+    // The x extent a double-click resets to, set as the plot's fixed x
+    // bounds so the context lines, which span whatever the plot shows,
+    // cannot feed their own extent back into the fit and widen the view
+    // further every frame.
     if has_full_range {
-        plot = plot.include_x(full_x_min).include_x(full_x_max);
+        let margin =
+            ((full_x_max - full_x_min) * RESET_X_MARGIN_FRACTION).max(RESET_X_MARGIN_MIN_SECS);
+        plot = plot.default_x_bounds(full_x_min - margin, full_x_max + margin);
     }
 
     let dark_mode = ui.visuals().dark_mode;
+    // A context line belongs to no recording, so its stroke follows the chip
+    // hover alone: full color while its own chip is hovered, dimmed while
+    // another one is.
+    let context_stroke = |kind: MetricKind| {
+        let base = metric_line_color(kind, 0, dark_mode);
+        let (color, highlighted) = match hovered_chip.as_ref() {
+            Some(HoveredChip::Metric(hovered)) if *hovered == kind => (base, true),
+            Some(_) => (base.gamma_multiply(0.2), false),
+            None => (base, false),
+        };
+        LineStroke {
+            color,
+            style: LineStyle::Solid,
+            width: line_width,
+            highlighted,
+        }
+    };
     // On a light theme, a faint-grey canvas keeps the deepened light-variant
     // series lines separated from the background. Restored after this plot.
     let saved_extreme_bg = ui.visuals().extreme_bg_color;
@@ -632,6 +669,26 @@ pub fn show_track_plot(
             }
         }
 
+        // Before the recordings' own lines, so a track's metrics stay on
+        // top of the archive's context.
+        add_context_lines(
+            plot_ui,
+            context_caches,
+            ContextLineGates {
+                metric_vis,
+                available,
+            },
+            context_stroke,
+            LineViewport {
+                x_min: eff_x_min,
+                x_max: eff_x_max,
+                width: available_width,
+                cap: sample_cap,
+            },
+            series_pointer,
+            &mut hovered_label,
+        );
+
         debug_assert_eq!(visible.len(), series_cache.len());
         for (si, (vis, series)) in visible.iter().zip(series_cache.iter()).enumerate() {
             if !vis {
@@ -660,12 +717,7 @@ pub fn show_track_plot(
                 },
                 line_width,
                 dark_mode,
-                PerFixCaches {
-                    snap_error: snap_error_cache.get(&series.track_ref()),
-                    jamming: jamming_cache.get(&series.track_ref()),
-                    geomagnetic: geomagnetic_cache.get(&series.track_ref()),
-                    tec: tec_cache.get(&series.track_ref()),
-                },
+                snap_error_cache.get(&series.track_ref()),
                 series_pointer,
                 LineViewport {
                     x_min: eff_x_min,
@@ -713,6 +765,7 @@ pub fn show_track_plot(
             );
         }
 
+        new_visible_x_range = Some(plot_x_min..=plot_x_max);
         custom_hover_label_shown.set(hovered_label.has_candidate());
         new_hovered_time = plot_ui
             .pointer_coordinate()
@@ -732,6 +785,7 @@ pub fn show_track_plot(
     if let Some(applied) = new_applied_map_x_range {
         state.applied_map_x_range = applied;
     }
+    state.last_visible_x_range = new_visible_x_range;
     // `hovered_plot_item` is set by egui_plot when the cursor is within its own
     // interact radius of a plotted item, the exact condition that causes
     // egui_plot to show a hover label.  Use it directly so the map overlay
