@@ -6,6 +6,7 @@ mod interface;
 mod interference;
 mod persist;
 mod processing;
+pub(super) mod search;
 mod snap;
 mod source_page;
 mod tec;
@@ -45,7 +46,7 @@ pub(super) enum SettingsPage {
 }
 
 impl SettingsPage {
-    fn rail_label(self) -> &'static str {
+    pub(super) fn rail_label(self) -> &'static str {
         match self {
             Self::Processing => "Processing",
             Self::Analysis => "Analysis",
@@ -73,6 +74,23 @@ impl SettingsPage {
         }
     }
 
+    /// The labels the query field matches, alongside the page name. Each one
+    /// must be a label the page renders, which
+    /// `every_settings_page_renders_the_labels_it_declares` checks.
+    pub(super) fn searchable_labels(self) -> &'static [&'static str] {
+        match self {
+            Self::Processing => processing::SEARCHABLE_LABELS,
+            Self::Analysis => analysis::SEARCHABLE_LABELS,
+            Self::AircraftInterference => interference::SEARCHABLE_LABELS,
+            Self::GeomagneticIndices => geomagnetic_indices::SEARCHABLE_LABELS,
+            Self::IonosphericTec => tec::SEARCHABLE_LABELS,
+            Self::SnapToRoad => snap::SEARCHABLE_LABELS,
+            Self::Interface => interface::SEARCHABLE_LABELS,
+            #[cfg(feature = "self-update")]
+            Self::Application => application::SEARCHABLE_LABELS,
+        }
+    }
+
     /// The header the page opens with: the same icon and label the rail entry
     /// shows.
     fn show_header(self, ui: &mut egui::Ui) {
@@ -97,6 +115,8 @@ const RAIL_WIDTH: f32 = 176.0;
 const DEFAULT_WINDOW_SIZE: egui::Vec2 = egui::vec2(700.0, 480.0);
 
 const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(520.0, 380.0);
+
+const NO_MATCHES_TEXT: &str = "No matching settings";
 
 impl App {
     /// What a download control may do right now. An archive that could not be
@@ -149,7 +169,11 @@ impl App {
             });
 
         if ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
-            open = false;
+            if self.settings_search.is_active() {
+                self.settings_search.clear();
+            } else {
+                open = false;
+            }
         }
 
         self.settings_open = open;
@@ -157,14 +181,51 @@ impl App {
     }
 
     fn show_category_rail(&mut self, ui: &mut egui::Ui) {
-        for page in SettingsPage::iter() {
-            let label = format!("{} {}", page.icon(), page.rail_label());
-            if ui
-                .selectable_label(self.settings_page == page, label)
-                .clicked()
-            {
-                self.settings_page = page;
-            }
+        self.settings_search.show_query_field(ui);
+        ui.add_space(4.0);
+        ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if self.settings_search.is_active() {
+                    self.show_search_matches(ui);
+                } else {
+                    for page in SettingsPage::iter() {
+                        self.show_rail_entry(ui, page);
+                    }
+                }
+            });
+    }
+
+    fn show_rail_entry(&mut self, ui: &mut egui::Ui, page: SettingsPage) {
+        let label = format!("{} {}", page.icon(), page.rail_label());
+        if ui
+            .selectable_label(self.settings_page == page, label)
+            .clicked()
+        {
+            self.settings_page = page;
+        }
+    }
+
+    /// The rail filtered to the matching pages, each followed by the labels
+    /// that matched on it. Clicking either opens the page.
+    fn show_search_matches(&mut self, ui: &mut egui::Ui) {
+        let matches = self.settings_search.page_matches();
+        if matches.is_empty() {
+            ui.weak(NO_MATCHES_TEXT);
+            return;
+        }
+        for page_match in matches {
+            self.show_rail_entry(ui, page_match.page);
+            ui.indent(page_match.page, |ui| {
+                for label in page_match.labels {
+                    if ui
+                        .selectable_label(false, egui::RichText::new(label).weak())
+                        .clicked()
+                    {
+                        self.settings_page = page_match.page;
+                    }
+                }
+            });
         }
     }
 

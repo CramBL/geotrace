@@ -16,6 +16,8 @@ use jiff::civil::Date;
 
 use super::backfill::BackfillProgress;
 
+pub const DOWNLOAD_HISTORY_LABEL: &str = "Download history";
+
 /// Estimates above this display in minutes.
 const MINUTES_CUTOFF_SECS: u64 = 90;
 
@@ -358,7 +360,7 @@ impl<D: BackfillDataset> BackfillUi<D> {
                 .filter(|_| readiness == BackfillReadiness::Ready);
             let button = ui.add_enabled(
                 range.is_some(),
-                Button::new(format!("{ICON_DOWNLOAD} Download history")),
+                Button::new(format!("{ICON_DOWNLOAD} {DOWNLOAD_HISTORY_LABEL}")),
             );
             let button = match range {
                 Some((from, to)) => button.on_hover_text(format!(

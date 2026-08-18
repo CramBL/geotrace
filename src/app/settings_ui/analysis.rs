@@ -9,6 +9,22 @@ use egui_phosphor::regular::WAVE_SINE as ICON_WAVE_SINE;
 use crate::app::App;
 use crate::app::settings_ui::SettingsPage;
 
+const ELEVATION_MASK_LABEL: &str = "Elevation mask";
+const SNR_DROP_THRESHOLD_LABEL: &str = "SNR drop threshold";
+const SLIP_WINDOW_LABEL: &str = "Slip window";
+/// The Processing page's generated-marker row for the same excursions carries
+/// this label too, and reads the threshold from this page.
+pub(super) const CLOCK_OFFSET_EXCURSION_LABEL: &str = "Clock offset excursion";
+const MARK_MASKED_SATELLITES_LABEL: &str = "Mark masked-out used satellites";
+
+pub(super) const SEARCHABLE_LABELS: &[&str] = &[
+    ELEVATION_MASK_LABEL,
+    SNR_DROP_THRESHOLD_LABEL,
+    SLIP_WINDOW_LABEL,
+    CLOCK_OFFSET_EXCURSION_LABEL,
+    MARK_MASKED_SATELLITES_LABEL,
+];
+
 impl App {
     pub(super) fn show_analysis_page(&mut self, ui: &mut egui::Ui) {
         SettingsPage::Analysis.show_header(ui);
@@ -30,7 +46,7 @@ impl App {
                      naturally rejects, which lowers the utilization rate and inflates the \
                      slip rate with routine horizon fades; a 30° mask considers only \
                      high, clean satellites.";
-                ui.label(format!("{ICON_FUNNEL} Elevation mask"))
+                ui.label(format!("{ICON_FUNNEL} {ELEVATION_MASK_LABEL}"))
                     .on_hover_text(mask_help);
                 ui.add(
                     DragValue::new(&mut analysis.elevation_mask_deg)
@@ -49,7 +65,7 @@ impl App {
                      For example, a low threshold like 3 dB-Hz flags ordinary signal \
                      fluctuation as slips and inflates the rate; a high threshold like \
                      25 dB-Hz reports only near-total dropouts and may miss real slips.";
-                ui.label(format!("{ICON_WAVE_SINE} SNR drop threshold"))
+                ui.label(format!("{ICON_WAVE_SINE} {SNR_DROP_THRESHOLD_LABEL}"))
                     .on_hover_text(snr_help);
                 ui.add(
                     DragValue::new(&mut analysis.snr_drop_db)
@@ -65,7 +81,7 @@ impl App {
                     "Trailing window over which the slip rate is averaged, in minutes. \
                      The plotted value is the slips counted in the window divided by its \
                      length, in slips per minute.";
-                ui.label(format!("{ICON_CLOCK} Slip window"))
+                ui.label(format!("{ICON_CLOCK} {SLIP_WINDOW_LABEL}"))
                     .on_hover_text(window_help);
                 ui.add(
                     DragValue::new(&mut analysis.slip_window_min)
@@ -86,7 +102,7 @@ impl App {
                      offset. A large but steady offset sits at the baseline and is never \
                      an excursion, and an offset that steps and stays is a clock \
                      discontinuity, not an excursion.";
-                ui.label(format!("{ICON_WARNING} Clock offset excursion"))
+                ui.label(format!("{ICON_WARNING} {CLOCK_OFFSET_EXCURSION_LABEL}"))
                     .on_hover_text(excursion_help);
                 ui.add(
                     DragValue::new(&mut analysis.clock_excursion_threshold_s)
@@ -124,7 +140,7 @@ impl App {
                      satellites and their elevation. Such satellites are excluded from the \
                      utilization rate, and the marker keeps that exclusion visible. Markers \
                      show with the 'Util all' plot.";
-                ui.label(format!("{} Mark masked-out used satellites", ICON_WARNING))
+                ui.label(format!("{ICON_WARNING} {MARK_MASKED_SATELLITES_LABEL}"))
                     .on_hover_text(mark_help);
                 let mut mark = self.shared.borrow().plot_state.mark_masked_fix;
                 if ui.checkbox(&mut mark, "").on_hover_text(mark_help).changed() {

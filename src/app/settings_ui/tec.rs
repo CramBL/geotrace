@@ -1,10 +1,19 @@
 //! Settings for the global ionosphere map downloads.
 
-use crate::app::backfill_ui::BackfillAction;
+use crate::app::backfill_ui::{self, BackfillAction};
 use crate::app::day_fetch_status::{self, FetchRowHoverText};
 use crate::app::settings_ui::SettingsPage;
 use crate::app::settings_ui::source_page::{self, SourcePageSlots};
 use crate::app::{App, tec_mirrors_ui};
+
+const MIRRORS_LABEL: &str = "Mirrors";
+
+pub(super) const SEARCHABLE_LABELS: &[&str] = &[
+    MIRRORS_LABEL,
+    day_fetch_status::FETCH_QUEUE_LABEL,
+    day_fetch_status::RECORDING_DAYS_LABEL,
+    backfill_ui::DOWNLOAD_HISTORY_LABEL,
+];
 
 const MIRRORS_HOVER: &str = "Hosts serving the global ionosphere maps, tried in order until one \
                              has the day's file. The default is JPL, which publishes them. Add a \
@@ -29,8 +38,11 @@ impl App {
             SettingsPage::IonosphericTec,
             SourcePageSlots {
                 endpoint: |ui: &mut egui::Ui| {
-                    ui.label(format!("{} Mirrors", egui_phosphor::regular::GLOBE_SIMPLE))
-                        .on_hover_text(MIRRORS_HOVER);
+                    ui.label(format!(
+                        "{} {MIRRORS_LABEL}",
+                        egui_phosphor::regular::GLOBE_SIMPLE
+                    ))
+                    .on_hover_text(MIRRORS_HOVER);
                     mirrors_changed =
                         tec_mirrors_ui::show_mirror_list(ui, &mut self.tec_settings.mirrors);
                     ui.end_row();

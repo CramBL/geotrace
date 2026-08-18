@@ -8,6 +8,8 @@ use gt_loaded_files::LoadedFileEntry;
 use gt_store::RecordingEntry;
 use strum::IntoEnumIterator as _;
 
+pub const RECORDING_NAME_LABEL: &str = "Recording name";
+
 /// Field values for the structure preview: every token resolves to its own name.
 const STRUCTURE_FIELDS: NameFields<'static> = NameFields {
     title: Some("title"),
@@ -106,7 +108,7 @@ pub fn recording_name_template_ui(
     preview: Option<&TemplatePreviewRecording>,
 ) -> bool {
     let label = ui
-        .label(format!("{ICON_TAG} Recording name"))
+        .label(format!("{ICON_TAG} {RECORDING_NAME_LABEL}"))
         .on_hover_text("Template for the name shown for each recording in the side panel");
     let response = ui.text_edit_singleline(template).labelled_by(label.id);
     show_template_guide(&response, template, preview);

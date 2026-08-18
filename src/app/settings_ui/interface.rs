@@ -10,6 +10,16 @@ use gt_map::SatelliteLayerAccess;
 use crate::app::settings_ui::SettingsPage;
 use crate::app::{self, App, mapbox_token, recording_name_template};
 
+const THEME_LABEL: &str = "Theme";
+const MAP_LAYER_LABEL: &str = "Map layer";
+
+pub(super) const SEARCHABLE_LABELS: &[&str] = &[
+    recording_name_template::RECORDING_NAME_LABEL,
+    THEME_LABEL,
+    MAP_LAYER_LABEL,
+    mapbox_token::TOKEN_LABEL,
+];
+
 impl App {
     pub(super) fn show_interface_page(&mut self, ui: &mut egui::Ui) {
         SettingsPage::Interface.show_header(ui);
@@ -28,11 +38,11 @@ impl App {
                 }
                 ui.end_row();
 
-                ui.label(format!("{ICON_PAINT_BRUSH} Theme"));
+                ui.label(format!("{ICON_PAINT_BRUSH} {THEME_LABEL}"));
                 egui::widgets::global_theme_preference_buttons(ui);
                 ui.end_row();
 
-                ui.label(format!("{ICON_MAP_TRIFOLD} Map layer"));
+                ui.label(format!("{ICON_MAP_TRIFOLD} {MAP_LAYER_LABEL}"));
                 ui.horizontal(|ui| {
                     self.map
                         .show_layer_selector(ui, SatelliteLayerAccess::TokenRequired);
