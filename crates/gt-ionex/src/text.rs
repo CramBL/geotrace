@@ -35,9 +35,9 @@ pub static SCALE_CAVEAT: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
-/// The lines describing one fix's value, leading with the value itself.
-/// `instant` is the formatted UTC time the value was interpolated at.
-pub fn fix_summary(content: TotalElectronContent, instant: &str) -> Vec<String> {
+/// The lines describing one value, leading with the value itself. `instant`
+/// is the formatted UTC time it was interpolated at.
+pub fn value_summary(content: TotalElectronContent, instant: &str) -> Vec<String> {
     vec![
         format!("TEC {:.1} TECU", content.tecu()),
         format!("L1 delay about {:.1} m", content.l1_delay_meters()),
@@ -49,8 +49,9 @@ pub fn fix_summary(content: TotalElectronContent, instant: &str) -> Vec<String> 
 /// drift from what the hover label says.
 pub static PLOT_HOVER: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "Vertical total electron content over each fix's own position and time, interpolated from \
-         the archived {MAP_NAMES}. {SOURCE_CAVEAT} {} The line breaks where no value is archived.",
+        "Vertical total electron content across the span the plot shows, interpolated from the \
+         archived {MAP_NAMES} at the position of the fix nearest each map epoch in time. \
+         {SOURCE_CAVEAT} {} The line breaks over days no maps are archived for.",
         *SCALE_CAVEAT
     )
 });
@@ -82,11 +83,11 @@ pub const RECORDING_DAY_COVERAGE_HOVER: &str = "UTC days the recordings loaded t
 mod tests {
     use super::*;
 
-    /// One fix's hover lines: the value, the range it delays L1 by, then the
-    /// instant it was interpolated at.
+    /// One value's hover lines: the value, the range it delays L1 by, then
+    /// the instant it was interpolated at.
     #[test]
-    fn fix_summary_leads_with_the_value() {
-        let lines = fix_summary(TotalElectronContent::from_tecu(42.3), "2024-05-10T18:30:00");
+    fn value_summary_leads_with_the_value() {
+        let lines = value_summary(TotalElectronContent::from_tecu(42.3), "2024-05-10T18:30:00");
         assert_eq!(
             lines,
             [

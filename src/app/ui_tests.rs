@@ -4268,6 +4268,99 @@ fn snapshot_app_plot_snap_error() {
     harness.snapshot_loose("app_plot_snap_error");
 }
 
+/// A Kp day archived as the fetch worker leaves one: eight three-hour
+/// periods climbing through the storm levels.
+fn archive_kp_day(store: &gt_store::SolarStore, day: chrono::NaiveDate) {
+    let midnight = day.and_time(chrono::NaiveTime::MIN).and_utc();
+    let samples = (0..8_u32)
+        .map(|period| gt_solar::series::KpSample {
+            period_start: midnight + chrono::TimeDelta::hours(i64::from(period) * 3),
+            activity: gt_solar::activity::GeomagneticActivity::from_published_value(
+                gt_solar::GeomagneticIndex::Kp,
+                2.0 + f64::from(period % 5),
+            ),
+            status: gt_solar::series::KpStatus::Definitive,
+        })
+        .collect();
+    store
+        .insert_or_replace_kp_day(
+            day,
+            "host",
+            Utc::now(),
+            &gt_solar::series::KpSeries { samples },
+        )
+        .expect("insert kp");
+    store
+        .insert_or_replace_hp30_day(
+            day,
+            "host",
+            Utc::now(),
+            &gt_solar::series::Hp30Series { samples: vec![] },
+        )
+        .expect("insert hp30");
+}
+
+/// The Kp line is drawn from the archive across the whole span the plot
+/// shows: it runs past both ends of the recording into the margins, and
+/// breaks over the day nothing is archived for while the recording runs
+/// straight through it.
+#[test]
+fn snapshot_app_plot_context_line_spans_the_archived_days() {
+    let gtd_bytes = synthetic_gtd_bytes(SyntheticGtdSpec {
+        start: base_time(),
+        point_count: 61,
+        step_secs: 3600,
+        start_lat_deg: 51.5,
+        start_lon_deg: -0.1,
+        lat_step_deg: 0.0002,
+        lon_step_deg: -0.00015,
+        heading_deg: 270.0,
+        speed_kmh: 22.0,
+        eph_m: 2.4,
+        sats_seen: 10,
+        sats_in_fix: 8,
+    });
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(gtd_bytes.as_slice(), "ride.gtd"),
+    );
+
+    // The recording spans 22nd to 26th May 2025. The 24th stays unarchived,
+    // and the days either side of the recording carry the margins.
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path())
+        .open_geomagnetic_indices()
+        .expect("archive");
+    let recorded = base_time().date_naive();
+    for offset in [-1_i64, 0, 2, 3, 4] {
+        let day = recorded + chrono::TimeDelta::days(offset);
+        archive_kp_day(&store, day);
+    }
+    let ctx = harness.ctx.clone();
+    harness.state_mut().geomagnetic_indices = crate::app::solar::GeomagneticIndexScheduler::new(
+        ctx,
+        Some(store),
+        gt_solar::DEFAULT_BASE_URL.to_owned(),
+        gt_fetch::TransportSource::Offline,
+    );
+
+    {
+        let state = harness.state_mut();
+        let mut shared = state.shared.borrow_mut();
+        let vis = &mut shared.plot_state.metric_vis;
+        for kind in gt_types::MetricKind::iter() {
+            vis.set(kind, kind == gt_types::MetricKind::Kp);
+        }
+    }
+    harness.run_steps(5);
+
+    let mut harness = gt_test_utils::TestHarness::from_harness(harness);
+    harness.snapshot_loose("app_plot_context_line");
+}
+
 /// Without a completed run the snap error chip renders disabled - visible,
 /// not hidden - and enabling runs changes nothing else about the chip row.
 #[test]

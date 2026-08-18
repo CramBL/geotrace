@@ -44,6 +44,8 @@ pub(super) struct MainBehavior<'a> {
     pub(super) geomagnetic_series: &'a gt_ui_types::GeomagneticSeries,
     /// TEC per fix, resolved from the archive.
     pub(super) tec_series: &'a gt_ui_types::TecSeries,
+    /// The context metric lines, resolved over the span the plot last drew.
+    pub(super) context_lines: &'a gt_ui_types::ContextLines,
 }
 
 impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
@@ -130,6 +132,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     self.jamming_series,
                     self.geomagnetic_series,
                     self.tec_series,
+                    self.context_lines,
                     &mut s.plot_state,
                 );
             }

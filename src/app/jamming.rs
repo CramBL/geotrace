@@ -8,13 +8,13 @@
 //! archive is never requested, so the queue shrinks to nothing as the
 //! archive fills. One request is in flight at a time.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use chrono::{NaiveDate, Utc};
+use chrono::{NaiveDate, NaiveTime, TimeDelta, Utc};
 use egui::Context;
 
 use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
@@ -29,9 +29,11 @@ use gt_store::JamStore;
 use gt_store::Store;
 use gt_types::TimeRange;
 use gt_types::{LoadedFile, TrackRef};
-use gt_ui_types::{JammingPoint, JammingSeries};
+use gt_ui_types::{ArcIdentity, JammingContextSample, JammingPoint, JammingSeries};
 
+use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
+use super::fix_positions::FixPositionTimeline;
 
 /// What one day's fetch produced.
 enum JamMessage {
@@ -73,9 +75,10 @@ pub struct JammingScheduler {
     transport_source: TransportSource,
     days: DayFetchQueue,
     /// Cells archived per day, read once at startup and updated on ingest,
-    /// so the display toggle does not open the archive per frame. Assumes
-    /// this process is the archive's only writer.
-    archived_cells: HashMap<NaiveDate, u32>,
+    /// so the display toggle does not open the archive per frame. Ordered so
+    /// the days a plot span holds are a range query. Assumes this process is
+    /// the archive's only writer.
+    archived_cells: BTreeMap<NaiveDate, u32>,
     /// The day the overlay draws, and its cells, loaded from the archive on
     /// demand and kept until the shown day changes. A day is never
     /// re-ingested - `insert_day` refuses one already stored - so a loaded
@@ -90,6 +93,9 @@ pub struct JammingScheduler {
     /// the `Arc` identity the plot caches on only changes when the archive
     /// gained a day the track needs.
     plot_points: HashMap<TrackRef, (Vec<NaiveDate>, Arc<Vec<JammingPoint>>)>,
+    /// The line drawn across the plot's whole span, one sample per archived
+    /// day.
+    context: ContextSampleCache<JammingContextSample>,
     /// When the last request was handed to a worker, so [`REQUEST_INTERVAL`]
     /// is honoured across days.
     last_request: Option<Instant>,
@@ -120,6 +126,7 @@ impl JammingScheduler {
             selection: DaySelection::new(None, calendar::today_utc()),
             refused: HashSet::new(),
             plot_points: HashMap::new(),
+            context: ContextSampleCache::default(),
             ctx,
             tx,
             rx,
@@ -215,6 +222,7 @@ impl JammingScheduler {
                     self.archived_cells
                         .insert(day, u32::try_from(cells).unwrap_or(u32::MAX));
                     self.days.mark_archived(day);
+                    self.context.forget(day);
                 }
                 JamMessage::Missing { day, pending } => {
                     log::info!(
@@ -295,6 +303,45 @@ impl JammingScheduler {
         }
         self.plot_points.retain(|track, _| live.contains(track));
         series
+    }
+
+    /// The interference line across `span`: one sample per archived UTC day,
+    /// read at the cell the receiver was in nearest that day's midpoint in
+    /// time.
+    ///
+    /// Days the archive holds nothing for break the line, so what it draws is
+    /// what has been downloaded.
+    pub fn context_line(
+        &mut self,
+        span: ContextSpan,
+        positions: &Arc<FixPositionTimeline>,
+    ) -> Arc<Vec<JammingContextSample>> {
+        let source = ContextSource {
+            span,
+            archived_days: self.archived_days_in(span),
+            positions: Some(ArcIdentity::of(positions)),
+        };
+        let store = self.store.as_ref().map(Arc::clone);
+        let positions = Arc::clone(positions);
+        self.context.resolve(
+            source,
+            |day| context_day(store.as_deref(), &positions, day),
+            |day| JammingContextSample {
+                start_secs: midnight_secs(day),
+                percent: None,
+                aircraft: 0,
+                bad: 0,
+            },
+        )
+    }
+
+    /// The days inside `span` the archive holds cells for, oldest first.
+    fn archived_days_in(&self, span: ContextSpan) -> Vec<NaiveDate> {
+        self.archived_cells
+            .range(span.days())
+            .filter(|&(_, &cells)| cells > 0)
+            .map(|(&day, _)| day)
+            .collect()
     }
 
     /// Dense per-fix interference percentages, for the query providers.
@@ -461,6 +508,40 @@ impl JammingScheduler {
     }
 }
 
+/// One archived day's sample of the context line: the share over the cell the
+/// receiver was in nearest the day's midpoint in time.
+///
+/// A day with no recording to place it at contributes nothing, and so breaks
+/// the line like a day the archive does not hold.
+fn context_day(
+    store: Option<&JamStore>,
+    positions: &FixPositionTimeline,
+    day: NaiveDate,
+) -> Vec<JammingContextSample> {
+    let start = day.and_time(NaiveTime::MIN).and_utc();
+    let Some((latitude, longitude)) = positions.nearest_position(start + TimeDelta::hours(12))
+    else {
+        return Vec::new();
+    };
+    let Some(dataset) = store.and_then(|store| {
+        store
+            .dataset(day)
+            .inspect_err(|err| log::error!("Reading interference cells for {day}: {err}"))
+            .ok()
+            .flatten()
+    }) else {
+        return Vec::new();
+    };
+    let observation = dataset.observation_at(latitude, longitude);
+    let rate = observation.and_then(gt_jam::wire::HexObservation::rate);
+    vec![JammingContextSample {
+        start_secs: start.timestamp() as f64,
+        percent: rate.map(gt_jam::wire::InterferenceRate::percent),
+        aircraft: rate.map_or(0, |rate| rate.aircraft),
+        bad: observation.map_or(0, |observation| observation.bad),
+    }]
+}
+
 /// Delay before dispatching the next request, keeping requests to the host
 /// [`REQUEST_INTERVAL`] apart.
 ///
@@ -555,6 +636,7 @@ mod tests {
     use crate::app::backfill::BackfillProgress;
     use crate::app::day_failures::DayFailure;
     use crate::app::day_fetch_status::DayFetchStatus;
+    use crate::app::fix_positions::FixPositions;
 
     use super::*;
 
@@ -1097,6 +1179,97 @@ mod tests {
         // The fixture track is about a kilometre across, well inside one
         // 22 km cell, so every fix takes that cell's value.
         assert_eq!(valued.len(), points.len());
+    }
+
+    /// The context line over the UTC days `from..=to`.
+    fn context_line_over(
+        scheduler: &mut JammingScheduler,
+        positions: &Arc<FixPositionTimeline>,
+        days: std::ops::RangeInclusive<NaiveDate>,
+    ) -> Arc<Vec<JammingContextSample>> {
+        let midnight = |day: NaiveDate| day.and_time(NaiveTime::MIN).and_utc().timestamp() as f64;
+        scheduler.context_line(
+            ContextSpan::covering(midnight(*days.start())..=midnight(*days.end())),
+            positions,
+        )
+    }
+
+    /// A day outside every recording is still drawn, read at the cell of the
+    /// fix nearest that day in time.
+    #[test]
+    fn the_context_line_values_a_day_no_recording_covers() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let track = track_with_time_range();
+        let first = track.points.first().expect("a fix");
+        let cell = gt_jam::dataset::cell_at(first.tpv.lat(), first.tpv.lon()).expect("cell");
+        let recorded = track.metadata.time_range.start.date_naive();
+        let later = recorded
+            .checked_add_days(chrono::Days::new(3))
+            .expect("a later day");
+        for archived in [recorded, later] {
+            store
+                .insert_day(
+                    archived,
+                    "host",
+                    Utc::now(),
+                    &[gt_jam::wire::HexObservation {
+                        cell,
+                        good: 90,
+                        bad: 10,
+                    }],
+                )
+                .expect("insert");
+            scheduler.archived_cells.insert(archived, 1);
+        }
+        let mut positions = FixPositions::default();
+        let files = vec![gt_types::LoadedFile {
+            metadata: gt_test_utils::empty_file_metadata(),
+            tracks: vec![track],
+            event_marker_styles: std::collections::HashMap::new(),
+            orphaned_event_markers: vec![],
+            load_warnings: vec![],
+            source: gt_types::FileSource::GtdBytes(std::sync::Arc::from(Vec::<u8>::new())),
+        }];
+        let timeline = Arc::clone(positions.timeline(&files));
+
+        let line = context_line_over(&mut scheduler, &timeline, recorded..=later);
+
+        let percents: Vec<Option<f64>> = line.iter().map(|sample| sample.percent).collect();
+        assert_eq!(percents.len(), 3, "two archived days and the gap between");
+        assert!(
+            percents
+                .first()
+                .copied()
+                .flatten()
+                .is_some_and(|percent| (percent - 10.0).abs() < 1e-6),
+            "{percents:?}"
+        );
+        assert_eq!(percents.get(1), Some(&None), "the days between are a break");
+        assert!(
+            percents
+                .get(2)
+                .copied()
+                .flatten()
+                .is_some_and(|percent| (percent - 10.0).abs() < 1e-6),
+            "the day after the recording reads the nearest fix's cell"
+        );
+    }
+
+    /// With no recording loaded there is no position to read a day at, so the
+    /// line stays empty.
+    #[test]
+    fn the_context_line_needs_a_recording_to_place_a_day_at() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived = day(2026, 7, 20);
+        store
+            .insert_day(archived, "host", Utc::now(), &[])
+            .expect("insert");
+        scheduler.archived_cells.insert(archived, 1);
+
+        let timeline = Arc::new(FixPositionTimeline::default());
+        let line = context_line_over(&mut scheduler, &timeline, archived..=archived);
+
+        assert!(line.is_empty());
     }
 
     /// With nothing archived, the track contributes no series at all.

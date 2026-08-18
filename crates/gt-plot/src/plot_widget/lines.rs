@@ -17,10 +17,8 @@ use super::chips::{
     metric_is_shown,
 };
 use super::clock_excursion::ClockExcursionHover;
-use super::geomagnetic::{
-    GeomagneticHover, GeomagneticPlotCache, GeomagneticTrack, add_geomagnetic_series,
-};
-use super::jamming::{JammingHover, JammingPlotCache, JammingTrack, add_jamming_series};
+use super::geomagnetic::GeomagneticHover;
+use super::jamming::JammingHover;
 use super::levels::{LineViewport, TrackLevelCache};
 use super::snap_error::{
     SnapErrorHover, SnapErrorPlotCache, SnapErrorStyle, add_snap_error_series,
@@ -28,7 +26,7 @@ use super::snap_error::{
 use super::style::{
     channel_line_color, effective_component_color, file_line_style, metric_line_color,
 };
-use super::tec::{TecHover, TecPlotCache, TecTrack, add_tec_series};
+use super::tec::TecHover;
 use crate::series::{PlacedTrackSeries, TrackSeries};
 
 /// The sub-slice of `items` - sorted ascending by `key` - whose key lies in
@@ -106,9 +104,10 @@ pub(super) fn add_series_lines<'a>(
     sections: SectionGates,
     line_width: f32,
     dark_mode: bool,
-    per_fix: PerFixCaches<'a>,
-    // Where the pointer is, for the per-fix lines that hit-test their own
-    // fixes: snap error, interference, the geomagnetic indices and TEC.
+    // Snap error is resolved outside the recording and draws from its own
+    // cache.
+    snap_error: Option<&'a SnapErrorPlotCache>,
+    // Where the pointer is, for the snap error line's own hit-testing.
     pointer: Option<egui::Pos2>,
     viewport: LineViewport,
     nearest: &mut NearestHoverLabel,
@@ -164,25 +163,26 @@ pub(super) fn add_series_lines<'a>(
         );
     }
 
-    add_per_fix_lines(
-        plot_ui,
-        PerFixContext {
-            prefix: &prefix,
+    if metric_vis.field(MetricKind::SnapError)
+        && let Some(cache) = snap_error
+    {
+        add_snap_error_series(
+            plot_ui,
+            &prefix,
             track_label,
-            pointer,
+            cache,
             viewport,
-            dark_mode,
-        },
-        per_fix,
-        metric_vis,
-        |kind| {
-            stroke_with_hover_treatment(
-                metric_line_color(kind, placed.fi, dark_mode),
-                hovered_chip == Some(&HoveredChip::Metric(kind)),
-            )
-        },
-        nearest,
-    );
+            pointer,
+            nearest,
+            SnapErrorStyle {
+                stroke: stroke_with_hover_treatment(
+                    metric_line_color(MetricKind::SnapError, placed.fi, dark_mode),
+                    hovered_chip == Some(&HoveredChip::Metric(MetricKind::SnapError)),
+                ),
+                dark_mode,
+            },
+        );
+    }
 
     // Channel lines, one per component, gated like the chips: the whole
     // section while collapsed, then the per-channel toggle.
@@ -224,109 +224,6 @@ pub(super) fn add_series_lines<'a>(
                 stroke,
             );
         }
-    }
-}
-
-/// The per-fix series of one track: values the app resolved outside the
-/// recording, each with its own cache.
-#[derive(Clone, Copy)]
-pub(super) struct PerFixCaches<'a> {
-    pub(super) snap_error: Option<&'a SnapErrorPlotCache>,
-    pub(super) jamming: Option<&'a JammingPlotCache>,
-    pub(super) geomagnetic: Option<&'a GeomagneticPlotCache>,
-    pub(super) tec: Option<&'a TecPlotCache>,
-}
-
-/// What every per-fix line of one track needs besides its own values.
-#[derive(Clone, Copy)]
-struct PerFixContext<'a> {
-    /// Line-name prefix naming the recording, empty while a single track is
-    /// visible.
-    prefix: &'a str,
-    track_label: Option<&'a str>,
-    pointer: Option<egui::Pos2>,
-    viewport: LineViewport,
-    dark_mode: bool,
-}
-
-/// Draw the lines whose values are resolved per fix outside the recording,
-/// each gated on its own chip and hit-testing its own fixes for the hover.
-fn add_per_fix_lines<'a>(
-    plot_ui: &mut egui_plot::PlotUi<'a>,
-    context: PerFixContext<'_>,
-    caches: PerFixCaches<'a>,
-    metric_vis: &MetricVisibility,
-    stroke_of: impl Fn(MetricKind) -> LineStroke,
-    nearest: &mut NearestHoverLabel,
-) {
-    if metric_vis.field(MetricKind::SnapError)
-        && let Some(cache) = caches.snap_error
-    {
-        add_snap_error_series(
-            plot_ui,
-            context.prefix,
-            context.track_label,
-            cache,
-            context.viewport,
-            context.pointer,
-            nearest,
-            SnapErrorStyle {
-                stroke: stroke_of(MetricKind::SnapError),
-                dark_mode: context.dark_mode,
-            },
-        );
-    }
-
-    if metric_vis.field(MetricKind::Jamming)
-        && let Some(cache) = caches.jamming
-    {
-        add_jamming_series(
-            plot_ui,
-            context.prefix,
-            JammingTrack {
-                track_label: context.track_label,
-                pointer: context.pointer,
-            },
-            cache,
-            context.viewport,
-            stroke_of(MetricKind::Jamming),
-            nearest,
-        );
-    }
-
-    for line in caches.geomagnetic.iter().flat_map(|cache| cache.lines()) {
-        if !metric_vis.field(line.metric_kind()) {
-            continue;
-        }
-        add_geomagnetic_series(
-            plot_ui,
-            context.prefix,
-            GeomagneticTrack {
-                track_label: context.track_label,
-                pointer: context.pointer,
-            },
-            line,
-            context.viewport,
-            stroke_of(line.metric_kind()),
-            nearest,
-        );
-    }
-
-    if metric_vis.field(MetricKind::Tec)
-        && let Some(cache) = caches.tec
-    {
-        add_tec_series(
-            plot_ui,
-            context.prefix,
-            TecTrack {
-                track_label: context.track_label,
-                pointer: context.pointer,
-            },
-            cache,
-            context.viewport,
-            stroke_of(MetricKind::Tec),
-            nearest,
-        );
     }
 }
 
@@ -464,28 +361,6 @@ pub(super) fn add_line<'a>(
             .width(stroke.width)
             .highlight(stroke.highlighted),
     );
-}
-
-/// Maximal stretches of consecutive valued points, in the order given. A
-/// point with no value breaks the line, and a run of one point draws nothing.
-pub(super) fn line_runs(points: impl Iterator<Item = Option<PlotPoint>>) -> Vec<Vec<PlotPoint>> {
-    let mut runs = Vec::new();
-    let mut run: Vec<PlotPoint> = Vec::new();
-    let mut flush = |run: &mut Vec<PlotPoint>| {
-        if run.len() >= 2 {
-            runs.push(std::mem::take(run));
-        } else {
-            run.clear();
-        }
-    };
-    for point in points {
-        match point {
-            Some(point) => run.push(point),
-            None => flush(&mut run),
-        }
-    }
-    flush(&mut run);
-    runs
 }
 
 /// Pre-formatted tooltip contents for one masked-satellite anomaly marker.

@@ -450,6 +450,12 @@ pub(super) struct MetricAvailability {
 }
 
 impl MetricAvailability {
+    /// Whether `kind` has data behind it, which is what enables its chip and
+    /// draws its line.
+    pub(super) fn has_data(self, kind: MetricKind) -> bool {
+        self.unavailable_hover(kind).is_none()
+    }
+
     /// Why `kind`'s chip is disabled, or [`None`] when it has data.
     fn unavailable_hover(self, kind: MetricKind) -> Option<&'static str> {
         match kind {

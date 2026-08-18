@@ -16,8 +16,9 @@ use gt_query_run::RunInputs;
 use gt_side_panel::{PanelContext, SnapCostingTarget, SnapPanelView, show_side_panel};
 use gt_track_builder::SegmentationConfig;
 use gt_types::{AssociationConfig, DataCategory, FileIdx, LoadedFile, NavPoint, TrackRef};
-use gt_ui_types::{HighlightScope, MapHighlight};
+use gt_ui_types::{ContextLines, HighlightScope, MapHighlight};
 
+use super::context_line::ContextSpan;
 use super::loader::{
     CompletedLoad, FINISHED_JOB_EXPIRE_SECS, FINISHED_JOB_FADE_START_SECS, LoadJobs,
 };
@@ -431,6 +432,28 @@ impl App {
         }
     }
 
+    /// The span the context metric lines are resolved over: the one the plot
+    /// drew last frame, or [`None`] before it has drawn at all.
+    fn context_span_of(plot_state: &gt_plot::PlotState) -> Option<ContextSpan> {
+        plot_state.visible_x_range().map(ContextSpan::covering)
+    }
+
+    /// The context metric lines over `span`, read from the archives.
+    fn context_lines(&mut self, span: Option<ContextSpan>) -> ContextLines {
+        let Some(span) = span else {
+            return ContextLines::default();
+        };
+        let positions = {
+            let shared = self.shared.borrow();
+            Arc::clone(self.fix_positions.timeline(&shared.loaded_files))
+        };
+        ContextLines {
+            jamming: self.jamming.context_line(span, &positions),
+            geomagnetic: self.geomagnetic_indices.context_lines(span),
+            tec: self.tec_maps.context_line(span, &positions),
+        }
+    }
+
     fn show_central_area(&mut self, ui: &mut egui::Ui) {
         // Assembled after the panel so a visibility toggle takes effect in
         // the same frame's map render.
@@ -450,6 +473,10 @@ impl App {
             let shared = self.shared.borrow();
             self.tec_maps.plot_series(&shared.loaded_files)
         };
+        // Resolved over the span the plot reported when it last drew, so a
+        // pan or zoom reaches the lines on the frame after it.
+        let context_span = Self::context_span_of(&self.shared.borrow().plot_state);
+        let context_lines = self.context_lines(context_span);
 
         CentralPanel::default().show(ui, |ui| {
             let panel_rect = ui.max_rect();
@@ -490,6 +517,7 @@ impl App {
                     jamming_series: &jamming_series,
                     geomagnetic_series: &geomagnetic_series,
                     tec_series: &tec_series,
+                    context_lines: &context_lines,
                     jamming_dataset,
                     jamming_day,
                     jamming_empty,
@@ -499,6 +527,11 @@ impl App {
             }
             if toggle_plot_request {
                 self.tiles_tree.tiles.toggle_visibility(self.plot_tile_id);
+            }
+            // The plot reports the span it drew only after it has drawn, so a
+            // view that moved out of the resolved span needs one more frame.
+            if Self::context_span_of(&s.plot_state) != context_span {
+                ui.ctx().request_repaint();
             }
 
             // Forward plot hover → map highlight (must happen after the tree renders

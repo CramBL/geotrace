@@ -75,8 +75,9 @@ impl GeomagneticIndex {
 
     fn build_plot_hover_text(self) -> String {
         format!(
-            "Planetary geomagnetic activity over the {period} {self} period each fix falls in. \
-             {SOURCE_CAVEAT} {SCALE_CAVEAT} The line breaks where no value is archived.",
+            "Planetary geomagnetic activity, one value per archived {period} {self} period \
+             across the span the plot shows. {SOURCE_CAVEAT} {SCALE_CAVEAT} The line breaks over \
+             periods no value is archived for.",
             period = self.period_length_adjective()
         )
     }
