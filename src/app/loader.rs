@@ -12,7 +12,7 @@ use egui::Context;
 use gt_plot::{AnalysisConfig, PreparedSeries};
 use gt_types::{
     AssociationConfig, Coord, CustomMarker, FileMetadata, FileSource, LoadedFile, LoadedTrack,
-    NavPoint, Rect, TimeRange, TrackMetadata, merc_bounds_for_rect,
+    MarkerIcon, NavPoint, Rect, TimeRange, TrackMetadata, merc_bounds_for_rect,
 };
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
@@ -477,7 +477,7 @@ impl LoadJobs {
                 finish_log_load(
                     id,
                     &filename,
-                    &content,
+                    Arc::from(content),
                     &nav_points,
                     &tx,
                     &ctx,
@@ -510,7 +510,8 @@ impl LoadJobs {
         });
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
-        let source = FileSource::LogText(Arc::from(text.as_str()));
+        let text: Arc<str> = Arc::from(text);
+        let source = FileSource::LogText(Arc::clone(&text));
         thread::Builder::new()
             .name(format!("load-log-{filename}"))
             .spawn(move || {
@@ -528,7 +529,7 @@ impl LoadJobs {
                 finish_log_load(
                     id,
                     &filename,
-                    &text,
+                    text,
                     &nav_points,
                     &tx,
                     &ctx,
@@ -731,7 +732,7 @@ pub(super) fn build_log_loaded_file(
 fn finish_log_load(
     id: u64,
     filename: &str,
-    content: &str,
+    content: Arc<str>,
     nav_points: &[NavPoint],
     tx: &mpsc::Sender<LoadMessage>,
     ctx: &Context,
@@ -740,20 +741,46 @@ fn finish_log_load(
     source: FileSource,
 ) {
     report(0.55, STAGE_PARSING);
-    let result = gt_logfile::load_log(content, nav_points, chrono::Utc::now(), &assoc_config);
-
-    if result.markers.is_empty() && result.unassociated.is_empty() {
-        tx.send(LoadMessage::Completed {
-            id,
-            outcome: Err("Unrecognised file format".to_owned()),
-        })
-        .ok();
-        ctx.request_repaint();
-        return;
+    let parsed = match gt_logfile::parse_log(content, Utc::now()) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            tx.send(LoadMessage::Completed {
+                id,
+                outcome: Err(err.to_string()),
+            })
+            .ok();
+            ctx.request_repaint();
+            return;
+        }
+    };
+    let skipped_line_count = parsed.skipped_line_count();
+    if skipped_line_count > 0 {
+        log::warn!(
+            "Skipped {skipped_line_count} line(s) of {filename:?} carrying no recognised timestamp"
+        );
     }
 
     report(0.90, STAGE_PROCESSING);
-    let loaded = build_log_loaded_file(filename, result.markers, source);
+    let window = chrono::Duration::seconds(
+        i64::try_from(assoc_config.log_marker_window_s).unwrap_or(i64::MAX),
+    );
+    let mut markers: Vec<CustomMarker> = Vec::new();
+    let mut unassociated: Vec<(DateTime<Utc>, String)> = Vec::new();
+    for entry in parsed.entries() {
+        let message = parsed.message(entry).to_owned();
+        match gt_logfile::associate_position(entry.timestamp, nav_points, window) {
+            Some((lat, lon)) => markers.push(CustomMarker::new(
+                entry.timestamp,
+                message,
+                MarkerIcon::Log,
+                lat,
+                lon,
+                None,
+            )),
+            None => unassociated.push((entry.timestamp, message)),
+        }
+    }
+    let loaded = build_log_loaded_file(filename, markers, source);
     report(0.95, STAGE_PLOTTING);
     // Log files carry no satellite reports, so the utilization series is empty
     // regardless of the elevation mask - the default analysis config suffices.
@@ -766,7 +793,7 @@ fn finish_log_load(
         outcome: Ok(LoadOutcome::LogFile {
             loaded,
             series,
-            unassociated: result.unassociated,
+            unassociated,
         }),
     })
     .ok();
