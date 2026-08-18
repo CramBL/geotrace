@@ -25,8 +25,10 @@ SCRUBBED_VALUE = "<scrubbed>"
 _NONDETERMINISTIC_FIELDS = frozenset({"captured_at"})
 
 # The manifests of the sources the fixture-freshness workflow re-captures.
-# gt-snap's manifest is absent: its map-matching answers change with every
-# OpenStreetMap edit, so it is checked on demand through `just snap-live-test`.
+# Two manifests are absent: gt-snap's map-matching answers change with every
+# OpenStreetMap edit, so it is checked on demand through `just snap-live-test`,
+# and gt-flare's endpoint needs a per-user api.nasa.gov key that CI has none
+# of, so it is re-captured by hand through `just flare-fixtures`.
 _MANIFESTS = (
     "crates/gt-ionex/tests/fixtures/capture.json",
     "crates/gt-jam/tests/fixtures/capture.json",

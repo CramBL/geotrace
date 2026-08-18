@@ -121,6 +121,8 @@ _APP_LOCK_CRATES: list[str] = [
     "gt-egui-mipmap",
     "gt-fetch",
     "gt-filter",
+    "gt-flare",
+    "gt-flare-store",
     "gt-fmt",
     "gt-geo-math",
     "gt-hdf5-archive",

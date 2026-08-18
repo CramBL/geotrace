@@ -44,6 +44,42 @@ impl From<hdf5::Error> for ArchiveError {
     }
 }
 
+/// Whether the value column beside it holds one the source published.
+///
+/// A column that can hold a gap is stored as a value column and this one.
+/// The value column holds the archive's fill wherever the source published
+/// nothing, and a fill is never read back as a value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredPresence {
+    Unpublished,
+    Published,
+}
+
+impl StoredPresence {
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Unpublished => 0,
+            Self::Published => 1,
+        }
+    }
+
+    /// What `code` stands for, or [`None`] for a code no schema defines.
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(Self::Unpublished),
+            1 => Some(Self::Published),
+            _ => None,
+        }
+    }
+
+    pub const fn of<T>(value: &Option<T>) -> Self {
+        match value {
+            Some(_) => Self::Published,
+            None => Self::Unpublished,
+        }
+    }
+}
+
 /// How a column is chunked and compressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ColumnFormat {

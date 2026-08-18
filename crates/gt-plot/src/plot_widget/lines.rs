@@ -17,6 +17,7 @@ use super::chips::{
     metric_is_shown,
 };
 use super::clock_excursion::ClockExcursionHover;
+use super::flares::SolarFlareHover;
 use super::geomagnetic::GeomagneticHover;
 use super::jamming::JammingHover;
 use super::levels::{LineViewport, TrackLevelCache};
@@ -236,6 +237,7 @@ pub(super) enum PlotHoverLabel {
     Geomagnetic(GeomagneticHover),
     Tec(TecHover),
     ClockExcursion(ClockExcursionHover),
+    SolarFlare(SolarFlareHover),
 }
 
 impl PlotHoverLabel {
@@ -247,6 +249,7 @@ impl PlotHoverLabel {
             Self::Geomagnetic(hover) => hover.show(ui),
             Self::Tec(hover) => hover.show(ui),
             Self::ClockExcursion(hover) => hover.show(ui),
+            Self::SolarFlare(hover) => hover.show(ui),
         }
     }
 }

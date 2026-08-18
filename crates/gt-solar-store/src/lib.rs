@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, Utc};
 use gt_hdf5_archive::day_index::{DayIndex, RowPlacement};
-use gt_hdf5_archive::{ArchiveError, ArchiveFile, Column, attributes, dates};
+use gt_hdf5_archive::{ArchiveError, ArchiveFile, Column, StoredPresence, attributes, dates};
 use gt_solar::GeomagneticIndex;
 use gt_solar::activity::GeomagneticActivity;
 use gt_solar::series::{Hp30Sample, Hp30Series, IndexSample, IndexSeries, KpSample, KpSeries};
@@ -19,7 +19,7 @@ use hdf5::Group;
 use parking_lot::Mutex;
 use strum::IntoEnumIterator as _;
 
-use crate::schema::{IndexArchiveLayout as _, StoredActivityPresence, StoredKpStatus};
+use crate::schema::{IndexArchiveLayout as _, StoredKpStatus};
 
 pub mod schema;
 
@@ -348,7 +348,7 @@ fn append_period_columns<S: IndexSample>(
         .collect();
     let presence: Vec<u8> = samples
         .iter()
-        .map(|sample| StoredActivityPresence::from(sample.activity()).code())
+        .map(|sample| StoredPresence::of(&sample.activity()).code())
         .collect();
 
     Column::new(group, schema::SAMPLE_PERIOD_START).append(&starts)?;
@@ -378,14 +378,14 @@ fn read_period_columns(
                     "{index} sample {position} has no value"
                 )));
             };
-            let presence = StoredActivityPresence::from_code(code).ok_or_else(|| {
+            let presence = StoredPresence::from_code(code).ok_or_else(|| {
                 SolarStoreError::Corrupt(format!(
                     "{index} sample {position} has activity presence code {code}"
                 ))
             })?;
             let activity = match presence {
-                StoredActivityPresence::Unpublished => None,
-                StoredActivityPresence::Published => Some(
+                StoredPresence::Unpublished => None,
+                StoredPresence::Published => Some(
                     GeomagneticActivity::from_published_value(index, value).ok_or_else(|| {
                         SolarStoreError::Corrupt(format!(
                             "{index} sample {position} is {value}, outside the range {index} is published in"

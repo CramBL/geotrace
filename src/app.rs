@@ -6,6 +6,7 @@ mod day_failures;
 mod day_fetch_queue;
 mod day_fetch_status;
 mod fix_positions;
+mod flares;
 mod frame;
 mod history;
 mod history_db;
@@ -276,11 +277,17 @@ pub struct App {
     tec_maps: tec::TecMapScheduler,
     /// Persisted TEC configuration: the host serving the ionosphere maps.
     tec_settings: crate::settings::TecSettings,
+    /// Queues and ingests solar flare days for loaded tracks.
+    solar_flares: flares::SolarFlareScheduler,
+    /// Persisted solar flare configuration: the host serving the catalog and
+    /// the user's key for it.
+    solar_flare_settings: crate::settings::SolarFlareSettings,
     /// No network access this run. Set once from [`StartupOptions`].
     offline: bool,
     interference_backfill_ui: backfill_ui::BackfillUi<backfill_ui::InterferenceBackfill>,
     geomagnetic_index_backfill_ui: backfill_ui::BackfillUi<backfill_ui::GeomagneticIndexBackfill>,
     tec_map_backfill_ui: backfill_ui::BackfillUi<backfill_ui::TecMapBackfill>,
+    solar_flare_backfill_ui: backfill_ui::BackfillUi<backfill_ui::SolarFlareBackfill>,
     interference_settings: crate::settings::InterferenceSettings,
     /// Set when the recordings database could not be opened. Drives the
     /// prompt for whichever failure it was.
@@ -410,6 +417,7 @@ impl App {
             archive,
             geomagnetic_indices,
             tec_maps,
+            solar_flares,
         } = options.storage.open(&cc.egui_ctx);
 
         let jamming = jamming::JammingScheduler::new(
@@ -430,6 +438,14 @@ impl App {
             gt_ionex::MirrorList::default(),
             transport_source(options.offline),
         );
+        let solar_flare_settings = crate::settings::SolarFlareSettings::default();
+        let solar_flares = flares::SolarFlareScheduler::new(
+            cc.egui_ctx.clone(),
+            solar_flares,
+            gt_flare::DEFAULT_BASE_URL.to_owned(),
+            solar_flare_settings.api_key(),
+            transport_source(options.offline),
+        );
         let app_version = options.app_version;
 
         let mut app = Self {
@@ -439,10 +455,13 @@ impl App {
             geomagnetic_index_settings: crate::settings::GeomagneticIndexSettings::default(),
             tec_maps,
             tec_settings: crate::settings::TecSettings::default(),
+            solar_flares,
+            solar_flare_settings,
             offline: options.offline,
             interference_backfill_ui: backfill_ui::BackfillUi::default(),
             geomagnetic_index_backfill_ui: backfill_ui::BackfillUi::default(),
             tec_map_backfill_ui: backfill_ui::BackfillUi::default(),
+            solar_flare_backfill_ui: backfill_ui::BackfillUi::default(),
             interference_settings: crate::settings::InterferenceSettings::default(),
             map,
             shared: Rc::new(RefCell::new(SharedAppState {
@@ -621,6 +640,7 @@ impl App {
             show_advanced_metrics: s.plot_state.show_advanced_metrics,
             channels: s.plot_state.channel_vis.entries(),
             show_channels: s.plot_state.show_channels,
+            show_solar_flares: s.plot_state.show_solar_flares,
             layer: settings_ui::map_layer_to_setting(self.map.layer()),
             mapbox_token: self.map.mapbox_token().to_owned(),
             sync_to_map: s.plot_state.sync_to_map,
@@ -676,6 +696,7 @@ impl App {
             geomagnetic_indices: self.geomagnetic_index_settings.clone(),
             interference: self.interference_settings.clone(),
             tec: self.tec_settings.clone(),
+            solar_flares: self.solar_flare_settings.clone(),
         }
     }
 
@@ -761,6 +782,8 @@ impl App {
                     self.geomagnetic_indices
                         .request_days_for(track.metadata.time_range);
                     self.tec_maps.request_days_for(track.metadata.time_range);
+                    self.solar_flares
+                        .request_days_for(track.metadata.time_range);
                 }
                 let orphans: Vec<(chrono::DateTime<chrono::Utc>, String)> = file
                     .orphaned_event_markers

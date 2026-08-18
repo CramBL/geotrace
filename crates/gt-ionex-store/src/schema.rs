@@ -68,7 +68,7 @@ pub const MAP_VALUE_COUNT: &str = "value_count";
 /// only where [`VALUE_PRESENCE`] says the producer published one.
 pub const VALUE_TECU: &str = "tecu";
 /// Whether the producer published a value for the node, coded by
-/// [`StoredValuePresence`].
+/// [`gt_hdf5_archive::StoredPresence`].
 pub const VALUE_PRESENCE: &str = "tecu_presence";
 
 /// Written in [`VALUE_TECU`] for a node the producer published no value for.
@@ -169,43 +169,6 @@ impl From<StoredProduct> for IonexProduct {
         match product {
             StoredProduct::Final => Self::Final,
             StoredProduct::Rapid => Self::Rapid,
-        }
-    }
-}
-
-/// Whether a node's [`VALUE_TECU`] is one the producer published.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StoredValuePresence {
-    /// The producer published no value for the node, and the value column
-    /// holds [`UNPUBLISHED_TECU_FILL`].
-    Unpublished,
-    Published,
-}
-
-impl StoredValuePresence {
-    pub const fn code(self) -> u8 {
-        match self {
-            Self::Unpublished => 0,
-            Self::Published => 1,
-        }
-    }
-
-    /// What `code` stands for, or [`None`] for a code the schema does not
-    /// define.
-    pub const fn from_code(code: u8) -> Option<Self> {
-        match code {
-            0 => Some(Self::Unpublished),
-            1 => Some(Self::Published),
-            _ => None,
-        }
-    }
-}
-
-impl From<Option<gt_ionex::tec::TotalElectronContent>> for StoredValuePresence {
-    fn from(value: Option<gt_ionex::tec::TotalElectronContent>) -> Self {
-        match value {
-            Some(_) => Self::Published,
-            None => Self::Unpublished,
         }
     }
 }

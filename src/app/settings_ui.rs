@@ -8,6 +8,7 @@ mod persist;
 mod processing;
 pub(super) mod search;
 mod snap;
+mod solar_flares;
 mod source_page;
 mod tec;
 
@@ -18,6 +19,7 @@ use egui_phosphor::regular::MAGNET as ICON_MAGNET;
 use egui_phosphor::regular::MONITOR as ICON_MONITOR;
 use egui_phosphor::regular::PATH as ICON_PATH;
 use egui_phosphor::regular::SLIDERS_HORIZONTAL as ICON_SLIDERS_HORIZONTAL;
+use egui_phosphor::regular::SUN as ICON_SUN;
 use egui_phosphor::regular::WAVES as ICON_WAVES;
 use gt_map::MapLayer;
 use strum::{EnumIter, IntoEnumIterator};
@@ -37,6 +39,7 @@ pub(super) enum SettingsPage {
     AircraftInterference,
     GeomagneticIndices,
     IonosphericTec,
+    SolarFlares,
     SnapToRoad,
     Interface,
     /// Gated on `self-update` because the update check is the page's only
@@ -53,6 +56,7 @@ impl SettingsPage {
             Self::AircraftInterference => gt_jam::text::LAYER_LABEL,
             Self::GeomagneticIndices => "Geomagnetic indices",
             Self::IonosphericTec => "Ionospheric TEC",
+            Self::SolarFlares => gt_flare::text::LAYER_LABEL,
             Self::SnapToRoad => "Snap to road",
             Self::Interface => "Interface",
             #[cfg(feature = "self-update")]
@@ -67,6 +71,7 @@ impl SettingsPage {
             Self::AircraftInterference => ICON_AIRPLANE_TILT,
             Self::GeomagneticIndices => ICON_MAGNET,
             Self::IonosphericTec => ICON_WAVES,
+            Self::SolarFlares => ICON_SUN,
             Self::SnapToRoad => ICON_PATH,
             Self::Interface => ICON_MONITOR,
             #[cfg(feature = "self-update")]
@@ -84,6 +89,7 @@ impl SettingsPage {
             Self::AircraftInterference => interference::SEARCHABLE_LABELS,
             Self::GeomagneticIndices => geomagnetic_indices::SEARCHABLE_LABELS,
             Self::IonosphericTec => tec::SEARCHABLE_LABELS,
+            Self::SolarFlares => solar_flares::SEARCHABLE_LABELS,
             Self::SnapToRoad => snap::SEARCHABLE_LABELS,
             Self::Interface => interface::SEARCHABLE_LABELS,
             #[cfg(feature = "self-update")]
@@ -129,6 +135,16 @@ impl App {
         } else {
             BackfillReadiness::Ready
         }
+    }
+
+    /// The flare download's readiness, which also depends on the key its
+    /// endpoint needs.
+    fn solar_flare_backfill_readiness(&self) -> BackfillReadiness {
+        let readiness = self.backfill_readiness(self.solar_flares.archive_available());
+        if readiness == BackfillReadiness::Ready && !self.solar_flares.has_api_key() {
+            return BackfillReadiness::WithoutApiKey;
+        }
+        readiness
     }
 
     /// Render the Settings window.
@@ -248,6 +264,10 @@ impl App {
             }
             SettingsPage::IonosphericTec => {
                 self.show_tec_page(ui);
+                false
+            }
+            SettingsPage::SolarFlares => {
+                self.show_solar_flare_page(ui);
                 false
             }
             SettingsPage::SnapToRoad => {

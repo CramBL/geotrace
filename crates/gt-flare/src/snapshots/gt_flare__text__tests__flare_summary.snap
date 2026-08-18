@@ -1,0 +1,11 @@
+---
+source: crates/gt-flare/src/text.rs
+expression: lines
+---
+[
+    "X2.2 solar flare",
+    "R3 strong radio blackout",
+    "Peaked at 09:13 (UTC)",
+    "Began 08:45, ended 09:36",
+    "Active region 13664 at S20W25",
+]

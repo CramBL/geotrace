@@ -51,6 +51,7 @@ pub(super) struct AppSnapshot {
     /// per-file names, so unlike `metrics` this cannot be a fixed array.
     pub channels: Vec<(String, bool)>,
     pub show_channels: bool,
+    pub show_solar_flares: bool,
     pub layer: crate::settings::MapLayerSetting,
     pub mapbox_token: String,
     pub sync_to_map: bool,
@@ -90,6 +91,7 @@ pub(super) struct AppSnapshot {
     pub snap: crate::settings::SnapSettings,
     /// Compared as the whole persisted struct, like [`Self::snap`].
     pub geomagnetic_indices: crate::settings::GeomagneticIndexSettings,
+    pub solar_flares: crate::settings::SolarFlareSettings,
     /// Compared as the whole persisted struct, like [`Self::snap`].
     pub interference: crate::settings::InterferenceSettings,
     /// Compared as the whole persisted struct, like [`Self::snap`].
@@ -112,6 +114,7 @@ impl Default for AppSnapshot {
             show_advanced_metrics: false,
             channels: Vec::new(),
             show_channels: false,
+            show_solar_flares: crate::settings::PlotSettings::default().show_solar_flares,
             layer: crate::settings::MapLayerSetting::Osm,
             mapbox_token: String::new(),
             sync_to_map: true,
@@ -144,6 +147,7 @@ impl Default for AppSnapshot {
             query_history_revision: 0,
             snap: crate::settings::SnapSettings::default(),
             geomagnetic_indices: crate::settings::GeomagneticIndexSettings::default(),
+            solar_flares: crate::settings::SolarFlareSettings::default(),
             interference: crate::settings::InterferenceSettings::default(),
             tec: crate::settings::TecSettings::default(),
         }

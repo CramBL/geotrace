@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use gt_hdf5_archive::day_index::{self, DayIndex, RowPlacement};
-use gt_hdf5_archive::{ArchiveError, ArchiveFile, Column, attributes, dates};
+use gt_hdf5_archive::{ArchiveError, ArchiveFile, Column, StoredPresence, attributes, dates};
 use gt_ionex::IonexProduct;
 use gt_ionex::grid::{AxisDeclaration, GridAxis, LatitudeAxis, LongitudeAxis, MapGrid};
 use gt_ionex::maps::{GlobalIonosphereMaps, TecMap};
@@ -24,7 +24,7 @@ use gt_ionex::tec::TotalElectronContent;
 use hdf5::Group;
 use parking_lot::Mutex;
 
-use crate::schema::{StoredProduct, StoredValuePresence};
+use crate::schema::StoredProduct;
 
 pub mod schema;
 
@@ -294,7 +294,7 @@ impl IonexStore {
                     tecu.push(
                         value.map_or(schema::UNPUBLISHED_TECU_FILL, TotalElectronContent::tecu),
                     );
-                    presence.push(StoredValuePresence::from(value).code());
+                    presence.push(StoredPresence::of(&value).code());
                 }
             }
             next_value_row += nodes_per_map;
@@ -505,14 +505,14 @@ fn read_latitude_bands(
                     "{day} map {position} node {at} is missing"
                 )));
             };
-            let presence = StoredValuePresence::from_code(code).ok_or_else(|| {
+            let presence = StoredPresence::from_code(code).ok_or_else(|| {
                 IonexStoreError::Corrupt(format!(
                     "{day} map {position} node {at} has presence code {code}"
                 ))
             })?;
             band.push(match presence {
-                StoredValuePresence::Unpublished => None,
-                StoredValuePresence::Published => Some(TotalElectronContent::from_tecu(value)),
+                StoredPresence::Unpublished => None,
+                StoredPresence::Published => Some(TotalElectronContent::from_tecu(value)),
             });
         }
         bands.push(band);

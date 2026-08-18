@@ -197,6 +197,44 @@ impl BackfillDataset for TecMapBackfill {
     }
 }
 
+/// The solar flare events from the NASA DONKI catalog.
+pub struct SolarFlareBackfill;
+
+impl BackfillDataset for SolarFlareBackfill {
+    const ID_PREFIX: &'static str = "solar_flare_backfill";
+    const ARCHIVE_NAME: &'static str = gt_flare::text::ARCHIVE_NAME;
+    const DAY_SUBJECT: &'static str = gt_flare::text::EVENT_NAMES;
+    const REQUESTS_PER_DAY: u64 = 1;
+    const REQUEST_INTERVAL: Duration = gt_flare::transport::REQUEST_INTERVAL;
+    /// Measured on an archive filled from the May 2024 storm, the busiest
+    /// flare days on record at about 20 events a day.
+    const BYTES_PER_DAY: u64 = 3 * 1024;
+    /// No preset reaches the 2010 coverage start: the catalog's whole span is
+    /// about 6000 days.
+    const PRESETS: [BackfillPreset; 3] = [
+        BackfillPreset {
+            label: "30 days",
+            days_back: Some(30),
+        },
+        BackfillPreset {
+            label: "1 year",
+            days_back: Some(365),
+        },
+        BackfillPreset {
+            label: "5 years",
+            days_back: Some(5 * 365),
+        },
+    ];
+
+    fn coverage_start() -> NaiveDate {
+        gt_flare::calendar::COVERAGE_START
+    }
+
+    fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> Vec<NaiveDate> {
+        gt_flare::calendar::fetchable_days(from, to, today_utc)
+    }
+}
+
 /// Whether a download can start, and what stops it when it cannot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackfillReadiness {
@@ -205,6 +243,8 @@ pub enum BackfillReadiness {
     WithoutArchive,
     /// No request may leave the machine: GeoTrace runs offline.
     Offline,
+    /// The host needs a key the user has not entered.
+    WithoutApiKey,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -396,6 +436,9 @@ impl<D: BackfillDataset> BackfillUi<D> {
                 D::ARCHIVE_NAME
             ),
             BackfillReadiness::Offline => "Downloading is disabled in offline mode".to_owned(),
+            BackfillReadiness::WithoutApiKey => {
+                format!("Enter an API key above to download {}", D::DAY_SUBJECT)
+            }
         }
     }
 }
@@ -594,6 +637,7 @@ mod tests {
     #[rstest]
     #[case::without_an_archive(BackfillReadiness::WithoutArchive)]
     #[case::offline(BackfillReadiness::Offline)]
+    #[case::without_an_api_key(BackfillReadiness::WithoutApiKey)]
     fn a_blocked_download_leaves_the_button_disabled(#[case] readiness: BackfillReadiness) {
         let mut state = TestBackfillUi::default();
         let mut harness = TestHarness::builder().ui(|ui| {
@@ -619,6 +663,10 @@ mod tests {
         "There is nowhere to download to: the interference archive could not be opened"
     )]
     #[case::offline(BackfillReadiness::Offline, "Downloading is disabled in offline mode")]
+    #[case::without_an_api_key(
+        BackfillReadiness::WithoutApiKey,
+        "Enter an API key above to download daily interference datasets"
+    )]
     fn the_disabled_hover_names_what_blocks_the_download(
         #[case] readiness: BackfillReadiness,
         #[case] expected: &str,
@@ -660,6 +708,15 @@ mod tests {
         let mut state = TestBackfillUi::default();
         state.report_started(queued);
         assert_eq!(state.outcome.as_deref(), Some(expected));
+    }
+
+    /// The key a source needs is named after the events it would download.
+    #[test]
+    fn the_solar_flare_control_asks_for_the_key_its_host_needs() {
+        assert_eq!(
+            BackfillUi::<SolarFlareBackfill>::blocked_hover(BackfillReadiness::WithoutApiKey),
+            "Enter an API key above to download solar flare events"
+        );
     }
 
     /// The outcome line and the disabled hover name the archive of the dataset

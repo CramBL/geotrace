@@ -223,6 +223,52 @@ pub fn interference_color(bad_fraction: f32) -> ThemedColor {
     ThemedColor::new(from.0.lerp_to_gamma(to.0, t), from.1.lerp_to_gamma(to.1, t))
 }
 
+/// Peak X-ray flux, in W/m², where each flare class begins. A flare marker
+/// takes the colour of the class its flux falls in.
+pub const FLARE_C_CLASS_FLUX: f64 = 1e-6;
+pub const FLARE_M_CLASS_FLUX: f64 = 1e-5;
+pub const FLARE_X_CLASS_FLUX: f64 = 1e-4;
+
+/// A flare below the C class, weaker than anything the ionosphere registers.
+pub const FLARE_BELOW_C_CLASS: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(205, 195, 130),
+    Color32::from_rgb(140, 125, 70),
+);
+
+/// A C-class flare.
+pub const FLARE_C_CLASS: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(240, 195, 65),
+    Color32::from_rgb(170, 120, 20),
+);
+
+/// An M-class flare, the first class NOAA counts a radio blackout from. Also
+/// the colour of the control offering the markers.
+pub const FLARE_M_CLASS: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(245, 140, 45),
+    Color32::from_rgb(185, 85, 15),
+);
+
+/// An X-class flare.
+pub const FLARE_X_CLASS: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(250, 80, 60),
+    Color32::from_rgb(190, 35, 25),
+);
+
+/// The themed stroke of a solar flare marker, by the class its peak flux
+/// falls in.
+pub const fn solar_flare_color(peak_flux_watts_per_square_meter: f64) -> ThemedColor {
+    let flux = peak_flux_watts_per_square_meter;
+    if flux >= FLARE_X_CLASS_FLUX {
+        FLARE_X_CLASS
+    } else if flux >= FLARE_M_CLASS_FLUX {
+        FLARE_M_CLASS
+    } else if flux >= FLARE_C_CLASS_FLUX {
+        FLARE_C_CLASS
+    } else {
+        FLARE_BELOW_C_CLASS
+    }
+}
+
 /// Colour of a node holding no measurable content, and the bottom of the
 /// scale.
 const TEC_SCALE_BOTTOM: ThemedColor = ThemedColor::new(
@@ -735,6 +781,25 @@ pub const LOG_COLORS: [Color32; 8] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A marker takes the colour of the class its flux falls in, so the
+    /// colour steps exactly at the class boundaries.
+    #[rstest::rstest]
+    #[case::an_a_class(1e-8, FLARE_BELOW_C_CLASS)]
+    #[case::just_below_c(9.9e-7, FLARE_BELOW_C_CLASS)]
+    #[case::the_c_floor(FLARE_C_CLASS_FLUX, FLARE_C_CLASS)]
+    #[case::the_m_floor(FLARE_M_CLASS_FLUX, FLARE_M_CLASS)]
+    #[case::the_x_floor(FLARE_X_CLASS_FLUX, FLARE_X_CLASS)]
+    #[case::an_x28(2.8e-3, FLARE_X_CLASS)]
+    fn a_flare_marker_takes_the_colour_of_its_class(
+        #[case] peak_flux_watts_per_square_meter: f64,
+        #[case] expected: ThemedColor,
+    ) {
+        assert_eq!(
+            solar_flare_color(peak_flux_watts_per_square_meter),
+            expected
+        );
+    }
 
     /// Every legend tick is a stop of the ramp, so a label always sits on a
     /// colour the scale actually holds.

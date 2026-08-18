@@ -4,6 +4,7 @@
 mod chips;
 mod clock_excursion;
 mod context;
+mod flares;
 mod geomagnetic;
 mod jamming;
 mod legend;
@@ -16,9 +17,13 @@ mod tec;
 pub use chips::{ChannelVisibility, MetricVisibility};
 pub use legend::{LEGEND_DOCK_OFFSET, legend_is_docked};
 
-use chips::{HoveredChip, MetricAvailability, SectionGates, loaded_channels, metric_filter_row};
+use chips::{
+    FlareChipState, HoveredChip, MetricAvailability, SectionGates, loaded_channels,
+    metric_filter_row,
+};
 use clock_excursion::{ExcursionViewport, add_clock_excursions};
 use context::{ContextLineGates, ContextPlotCaches, add_context_lines};
+use flares::{FlareViewport, add_flare_markers};
 use geomagnetic::geomagnetic_availability;
 use jamming::jamming_available;
 use legend::show_file_legend_overlay;
@@ -37,6 +42,7 @@ use egui::Color32;
 use egui::RichText;
 use egui_plot::{LineStyle, Span, VLine};
 use gt_filter::GlobalFilter;
+use gt_flare::SolarFlare;
 use gt_loaded_files::RecordingNames;
 use gt_types::satellites::ConstellationSet;
 use gt_types::{FileIdx, LoadedFile, MetricKind, PointIdx, TrackIdx, TrackRef};
@@ -119,6 +125,19 @@ fn track_label(name: &str, ti: usize, track_count: usize) -> String {
     }
 }
 
+/// What the plot draws from the archives over the span it shows, rather than
+/// from the loaded recordings: the context metric lines and the solar flare
+/// markers.
+#[derive(Clone, Copy)]
+pub struct ArchiveOverlays<'a> {
+    /// Resolved by the app over the span the plot reported last frame (see
+    /// [`PlotState::visible_x_range`]).
+    pub context_lines: &'a ContextLines,
+    /// The flares of the archived days in that span, in the order the archive
+    /// holds them.
+    pub solar_flares: &'a [SolarFlare],
+}
+
 /// Persistent state for the track plot panel.
 ///
 /// Plot panel visibility is managed externally (via the tiles tree in the app),
@@ -132,6 +151,9 @@ pub struct PlotState {
     pub metric_vis: MetricVisibility,
     /// Whether the plot grid lines are visible.
     pub show_grid: bool,
+    /// Whether the solar flare markers are drawn - toggled via their chip in
+    /// the row above the plot.
+    pub show_solar_flares: bool,
     /// Stroke width of the metric and channel lines, adjusted via the plot
     /// display popup (the gear button in the chip row).
     pub line_width: f32,
@@ -207,6 +229,7 @@ impl Default for PlotState {
             hovered_time: None,
             metric_vis: MetricVisibility::default(),
             show_grid: true,
+            show_solar_flares: true,
             line_width: DEFAULT_PLOT_LINE_WIDTH,
             sync_to_map: true,
             mark_masked_fix: true,
@@ -336,9 +359,8 @@ pub fn show_track_plot(
     // TEC per fix, resolved by the app from the archive
     // (see `gt_ui_types::TecSeries`).
     tec: &TecSeries,
-    // The context metric lines, resolved by the app over the span the plot
-    // reported last frame (see `PlotState::visible_x_range`).
-    context: &ContextLines,
+    // What the app resolved from the archives over the span the plot shows.
+    archive: ArchiveOverlays<'_>,
     state: &mut PlotState,
 ) {
     // Computed once, shared by visible_count, the full-x-range loop and the
@@ -452,6 +474,10 @@ pub fn show_track_plot(
         &mut state.show_advanced_metrics,
         &mut state.show_channels,
         available,
+        FlareChipState {
+            visible: &mut state.show_solar_flares,
+            available: !archive.solar_flares.is_empty(),
+        },
     );
 
     let available_width = ui.available_width();
@@ -487,7 +513,7 @@ pub fn show_track_plot(
     let has_full_range = full_x_min.is_finite() && full_x_max.is_finite();
 
     sync_snap_error_cache(&mut state.snap_error_cache, snap_error);
-    state.context_caches.sync(context);
+    state.context_caches.sync(archive.context_lines);
 
     // Split borrows: extract immutable refs to the caches and metric visibility
     // before the closure so the borrow checker can see they are disjoint from
@@ -502,6 +528,7 @@ pub fn show_track_plot(
     let metric_vis = &state.metric_vis;
     let channel_vis = &state.channel_vis;
     let show_channels = state.show_channels;
+    let show_solar_flares = state.show_solar_flares;
     let line_width = state.line_width;
     // Anomaly markers are drawn on the "Util all" line.
     let show_advanced = state.show_advanced_metrics;
@@ -688,6 +715,22 @@ pub fn show_track_plot(
             series_pointer,
             &mut hovered_label,
         );
+
+        // Full-height lines, drawn before the recordings' own so a track's
+        // metrics stay on top of them.
+        if show_solar_flares {
+            add_flare_markers(
+                plot_ui,
+                archive.solar_flares,
+                FlareViewport {
+                    x_min: eff_x_min,
+                    x_max: eff_x_max,
+                    dark_mode,
+                },
+                series_pointer,
+                &mut hovered_label,
+            );
+        }
 
         debug_assert_eq!(visible.len(), series_cache.len());
         for (si, (vis, series)) in visible.iter().zip(series_cache.iter()).enumerate() {

@@ -1,0 +1,10 @@
+---
+source: crates/gt-flare/src/text.rs
+expression: lines
+---
+[
+    "C5.0 solar flare",
+    "Below the radio blackout scale",
+    "Peaked at 13:22 (UTC)",
+    "Began 13:13, no end published",
+]

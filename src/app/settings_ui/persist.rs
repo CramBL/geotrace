@@ -72,6 +72,7 @@ impl App {
             );
             shared.plot_state.show_advanced_metrics = s.plot.show_advanced_metrics;
             shared.plot_state.show_channels = s.plot.show_channels;
+            shared.plot_state.show_solar_flares = s.plot.show_solar_flares;
             shared.plot_state.analysis = analysis;
             shared.plot_state.mark_masked_fix = s.analysis.mark_masked_fix;
             let vis = &mut shared.plot_state.metric_vis;
@@ -114,6 +115,9 @@ impl App {
             .set_base_url(&s.geomagnetic_indices.base_url);
         self.tec_settings = s.tec.clone();
         self.tec_maps.set_mirrors(&s.tec.mirrors);
+        self.solar_flare_settings = s.solar_flares.clone();
+        self.solar_flares.set_base_url(&s.solar_flares.base_url);
+        self.solar_flares.set_api_key(s.solar_flares.api_key());
         self.snap.set_server_url(&s.snap.server_url);
         self.sync_db_path();
     }
@@ -138,6 +142,7 @@ impl App {
                 channel: s.plot_state.channel_vis.entries().into_iter().collect(),
                 show_advanced_metrics: s.plot_state.show_advanced_metrics,
                 show_channels: s.plot_state.show_channels,
+                show_solar_flares: s.plot_state.show_solar_flares,
                 channel_colors: s
                     .plot_state
                     .channel_component_colors
@@ -210,6 +215,7 @@ impl App {
             interference: self.interference_settings.clone(),
             geomagnetic_indices: self.geomagnetic_index_settings.clone(),
             tec: self.tec_settings.clone(),
+            solar_flares: self.solar_flare_settings.clone(),
         }
     }
 

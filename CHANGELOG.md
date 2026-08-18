@@ -9,6 +9,7 @@
 - Tooltips and labels show which recording a map point belongs to when multiple files are loaded.
 - Editing the recording name template in Settings shows a preview as you type.
 - Support for Geomagnetic indices (Kp/Hp30) and global Ionosphere maps (TEC): Automatically downloaded for loaded recordings, viewable in the plot and as a map heatmap under the tracks, and queryable (e.g., `where hp30 > 5` or `where tec > 100`).
+- Solar flare markers in the plot, from NASA's DONKI catalog: a vertical line at each flare's peak, coloured by class, with its class, times and active region on hover. Set a free api.nasa.gov key on Settings' "Solar flares" page to download them.
 - Settings' "Geomagnetic indices" and "Ionospheric TEC" pages show cached history and allow downloading more.
 - The `--offline` flag runs the app without network access (replaces the `GEOTRACE_OFFLINE` environment variable).
 - A search field in Settings to easily filter pages and rows.

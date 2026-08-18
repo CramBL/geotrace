@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use egui::Context;
 use gt_store::{
-    DbError, HistoryDatabase as _, IonexStore, JamStore, Recordings, SolarStore, Store,
+    DbError, FlareStore, HistoryDatabase as _, IonexStore, JamStore, Recordings, SolarStore, Store,
 };
 
 use super::history_db::HistoryWorker;
@@ -60,6 +60,8 @@ pub struct OpenStorage {
     pub geomagnetic_indices: Option<Arc<SolarStore>>,
     /// [`None`] disables TEC map fetching and nothing else.
     pub tec_maps: Option<Arc<IonexStore>>,
+    /// [`None`] disables solar flare fetching and nothing else.
+    pub solar_flares: Option<Arc<FlareStore>>,
 }
 
 impl OpenStorage {
@@ -71,6 +73,7 @@ impl OpenStorage {
             archive: None,
             geomagnetic_indices: None,
             tec_maps: None,
+            solar_flares: None,
         }
     }
 }
@@ -166,12 +169,23 @@ fn open_in(store: &Store, ctx: &Context) -> OpenStorage {
         })
         .ok();
 
+    let solar_flares = store
+        .open_solar_flares()
+        .inspect_err(|err| {
+            log::error!(
+                "Solar flare archive at {} is unusable: {err}",
+                store.solar_flares_path().display()
+            );
+        })
+        .ok();
+
     OpenStorage {
         history,
         history_failure,
         archive,
         geomagnetic_indices,
         tec_maps,
+        solar_flares,
     }
 }
 
@@ -204,6 +218,7 @@ mod tests {
         assert!(opened.archive.is_none());
         assert!(opened.geomagnetic_indices.is_none());
         assert!(opened.tec_maps.is_none());
+        assert!(opened.solar_flares.is_none());
     }
 
     #[test]
@@ -215,6 +230,7 @@ mod tests {
         assert!(opened.archive.is_some());
         assert!(opened.geomagnetic_indices.is_some());
         assert!(opened.tec_maps.is_some());
+        assert!(opened.solar_flares.is_some());
         assert!(opened.history_failure.is_none());
     }
 
@@ -257,5 +273,6 @@ mod tests {
         assert!(opened.archive.is_some(), "the archives are unaffected");
         assert!(opened.geomagnetic_indices.is_some());
         assert!(opened.tec_maps.is_some());
+        assert!(opened.solar_flares.is_some());
     }
 }

@@ -2162,6 +2162,7 @@ dependencies = [
  "geotrace-sdk-units",
  "gt-fetch",
  "gt-filter",
+ "gt-flare",
  "gt-fmt",
  "gt-ionex",
  "gt-jam",
@@ -2482,6 +2483,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "gt-flare"
+version = "0.12.0"
+dependencies = [
+ "chrono",
+ "gt-fetch",
+ "gt-types",
+ "insta",
+ "proptest",
+ "reqwest 0.13.4",
+ "rstest",
+ "serde",
+ "serde_json",
+ "strum",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "gt-flare-store"
+version = "0.12.0"
+dependencies = [
+ "chrono",
+ "gt-flare",
+ "gt-hdf5-archive",
+ "hdf5-metno",
+ "parking_lot",
+ "rstest",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "gt-fmt"
 version = "0.12.0"
 dependencies = [
@@ -2758,6 +2790,7 @@ dependencies = [
  "gt-analysis",
  "gt-egui-mipmap",
  "gt-filter",
+ "gt-flare",
  "gt-fmt",
  "gt-ionex",
  "gt-jam",
@@ -2926,6 +2959,7 @@ name = "gt-store"
 version = "0.12.0"
 dependencies = [
  "dirs",
+ "gt-flare-store",
  "gt-history",
  "gt-ionex-store",
  "gt-jam-store",

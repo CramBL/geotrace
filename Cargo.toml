@@ -32,6 +32,8 @@ members = [
     "crates/gt-egui-mipmap",
     "crates/gt-fetch",
     "crates/gt-filter",
+    "crates/gt-flare",
+    "crates/gt-flare-store",
     "crates/gt-fmt",
     "crates/gt-geo-math",
     "crates/gt-hdf5-archive",
@@ -291,6 +293,7 @@ env_logger.workspace = true
 geotrace-sdk-units = { path = "sdk/rust/geotrace-sdk-units" }
 gt-fetch = { path = "crates/gt-fetch" }
 gt-filter = { path = "crates/gt-filter" }
+gt-flare = { path = "crates/gt-flare" }
 gt-fmt = { path = "crates/gt-fmt" }
 gt-ionex = { path = "crates/gt-ionex" }
 gt-jam = { path = "crates/gt-jam" }

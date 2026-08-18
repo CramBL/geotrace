@@ -1,11 +1,11 @@
 //! The interface to everything GeoTrace keeps on disk.
 //!
-//! Four databases live under one directory: the recording history
+//! Five databases live under one directory: the recording history
 //! ([`gt_history`]), the interference archive ([`gt_jam_store`]), the
-//! geomagnetic index archive ([`gt_solar_store`]) and the TEC map archive
-//! ([`gt_ionex_store`]). [`Store`] owns where they are and what they are
-//! called. The types for working with them are re-exported here so call sites
-//! have one import.
+//! geomagnetic index archive ([`gt_solar_store`]), the TEC map archive
+//! ([`gt_ionex_store`]) and the solar flare archive ([`gt_flare_store`]).
+//! [`Store`] owns where they are and what they are called. The types for
+//! working with them are re-exported here so call sites have one import.
 //!
 //! Settings are not part of this - they are a config file, not a database.
 //!
@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
+pub use gt_flare_store::{ArchivedFlareDay, FlareStore, FlareStoreError};
 pub use gt_history::{
     ChannelSummary, DatabaseRef, DbError, HistoryDatabase, PruneMode, RecordingEntry,
     RecordingMeta, StoredRecording, StoredSegmentation, TrackRange, extract_meta,
@@ -52,6 +53,7 @@ pub struct Store {
     interference: SharedArchive<JamStore>,
     geomagnetic_indices: SharedArchive<SolarStore>,
     tec_maps: SharedArchive<IonexStore>,
+    solar_flares: SharedArchive<FlareStore>,
 }
 
 impl Store {
@@ -70,6 +72,7 @@ impl Store {
             interference: SharedArchive::empty(),
             geomagnetic_indices: SharedArchive::empty(),
             tec_maps: SharedArchive::empty(),
+            solar_flares: SharedArchive::empty(),
         }
     }
 
@@ -95,6 +98,11 @@ impl Store {
     /// Path of the TEC map archive.
     pub fn tec_maps_path(&self) -> PathBuf {
         self.root.join(gt_ionex_store::FILE_NAME)
+    }
+
+    /// Path of the solar flare archive.
+    pub fn solar_flares_path(&self) -> PathBuf {
+        self.root.join(gt_flare_store::FILE_NAME)
     }
 
     /// Open the recording history, creating it if it does not exist.
@@ -128,6 +136,14 @@ impl Store {
     pub fn open_tec_maps(&self) -> Result<Arc<IonexStore>, IonexStoreError> {
         self.tec_maps
             .get_or_open(|| IonexStore::open_or_create(&self.tec_maps_path()))
+    }
+
+    /// The solar flare archive, creating it if it does not exist.
+    ///
+    /// Shared the same way as [`Self::open_interference`].
+    pub fn open_solar_flares(&self) -> Result<Arc<FlareStore>, FlareStoreError> {
+        self.solar_flares
+            .get_or_open(|| FlareStore::open_or_create(&self.solar_flares_path()))
     }
 }
 
@@ -173,6 +189,7 @@ mod tests {
             store.interference_path(),
             store.geomagnetic_indices_path(),
             store.tec_maps_path(),
+            store.solar_flares_path(),
         ];
         for path in &paths {
             assert_eq!(path.parent(), Some(dir.path()));
@@ -198,10 +215,12 @@ mod tests {
             .open_geomagnetic_indices()
             .expect("geomagnetic indices");
         store.open_tec_maps().expect("tec maps");
+        store.open_solar_flares().expect("solar flares");
         assert!(store.recordings_path().exists());
         assert!(store.interference_path().exists());
         assert!(store.geomagnetic_indices_path().exists());
         assert!(store.tec_maps_path().exists());
+        assert!(store.solar_flares_path().exists());
     }
 
     /// One instance per store: two callers share the archive, and so share
@@ -231,6 +250,12 @@ mod tests {
             &maps,
             &store.open_tec_maps().expect("tec maps again")
         ));
+
+        let flares = store.open_solar_flares().expect("solar flares");
+        assert!(Arc::ptr_eq(
+            &flares,
+            &store.open_solar_flares().expect("solar flares again")
+        ));
     }
 
     /// A failure that has since been repaired must not keep the archive shut
@@ -255,6 +280,7 @@ mod tests {
         assert!(!store.recordings_path().exists());
         assert!(!store.geomagnetic_indices_path().exists());
         assert!(!store.tec_maps_path().exists());
+        assert!(!store.solar_flares_path().exists());
     }
 
     #[test]
@@ -267,6 +293,7 @@ mod tests {
         assert!(!store.recordings_path().exists());
         assert!(!store.interference_path().exists());
         assert!(!store.tec_maps_path().exists());
+        assert!(!store.solar_flares_path().exists());
     }
 
     #[test]
@@ -277,6 +304,7 @@ mod tests {
         assert!(!store.recordings_path().exists());
         assert!(!store.interference_path().exists());
         assert!(!store.geomagnetic_indices_path().exists());
+        assert!(!store.solar_flares_path().exists());
     }
 
     #[test]
@@ -287,6 +315,7 @@ mod tests {
         assert!(!store.interference_path().exists());
         assert!(!store.geomagnetic_indices_path().exists());
         assert!(!store.tec_maps_path().exists());
+        assert!(!store.solar_flares_path().exists());
     }
 
     /// The database's own error reaches the caller undisguised, which is what
