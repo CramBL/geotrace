@@ -13,12 +13,20 @@ doctest = false
 chrono.workspace = true
 gt-fmt = { path = "../gt-fmt" }
 gt-types = { path = "../gt-types" }
+log.workspace = true
+memchr.workspace = true
+rayon.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 gt-test-utils = { path = "../gt-test-utils" }
 proptest.workspace = true
 rstest.workspace = true
+
+[[bench]]
+name = "parse_log"
+harness = false
 
 [lints]
 workspace = true

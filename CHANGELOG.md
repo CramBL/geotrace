@@ -30,6 +30,7 @@
 
 - The settings window shows one category at a time, picked from a rail on the left, instead of every section stacked in one column. The recording name template moved to the "Interface" page and the update check to "Application".
 - A log file loads even when lines in it carry no recognised timestamp: those lines are skipped and the rest are kept. The load fails only when no line at all parses, and then names the first line it could not read.
+- A large log file is read across several CPU cores: an 80 MiB journal export indexes in about 20 ms, where one core takes 46 ms. The parse takes at most half the machine's cores, leaving the rest to whatever else is running.
 
 ### Fixed
 
