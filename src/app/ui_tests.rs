@@ -2666,7 +2666,10 @@ fn snapshot_recording_name_template_guide() {
         .get_by_label_contains("Recording name")
         .focus();
     harness.inner.run_steps(3);
-    harness.snapshot("recording_name_template_guide");
+    // The GL and software renderers disagree by one antialiased pixel at the
+    // guide window's edge, in opposite directions, so no baseline passes both
+    // at the default threshold.
+    harness.snapshot_with_threshold("recording_name_template_guide", 1.5);
 }
 
 /// The update prompt as a user installed via the shell/PowerShell installer
