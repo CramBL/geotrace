@@ -135,6 +135,7 @@ _APP_LOCK_CRATES: list[str] = [
     "gt-jam-store",
     "gt-loaded-files",
     "gt-loader",
+    "gt-log-view",
     "gt-logfile",
     "gt-map",
     "gt-plot",

@@ -16,7 +16,7 @@ use crate::app::settings_ui::SettingsPage;
 use crate::app::settings_ui::analysis::CLOCK_OFFSET_EXCURSION_LABEL;
 
 const TRACK_SPLIT_GAP_LABEL: &str = "Track split gap";
-const LOG_MARKER_WINDOW_LABEL: &str = "Log marker window";
+const LOG_ASSOCIATION_WINDOW_LABEL: &str = "Log association window";
 const GENERATED_MARKERS_LABEL: &str = "Generated markers";
 const GNSS_FIX_LOST_LABEL: &str = "GNSS fix lost";
 const GNSS_FIX_REGAINED_LABEL: &str = "GNSS fix regained";
@@ -27,7 +27,7 @@ const RESTORE_DEFAULTS_LABEL: &str = "Restore defaults";
 
 pub(super) const SEARCHABLE_LABELS: &[&str] = &[
     TRACK_SPLIT_GAP_LABEL,
-    LOG_MARKER_WINDOW_LABEL,
+    LOG_ASSOCIATION_WINDOW_LABEL,
     GENERATED_MARKERS_LABEL,
     GNSS_FIX_LOST_LABEL,
     GNSS_FIX_REGAINED_LABEL,
@@ -66,19 +66,20 @@ impl App {
                 ui.end_row();
 
                 ui.label(format!(
-                    "{ICON_ARROWS_IN_LINE_HORIZONTAL} {LOG_MARKER_WINDOW_LABEL}"
+                    "{ICON_ARROWS_IN_LINE_HORIZONTAL} {LOG_ASSOCIATION_WINDOW_LABEL}"
                 ))
                 .on_hover_text(
                     "Maximum time between a log entry's timestamp and the nearest \
-                     GPS fix for the entry to be placed on the map. For example, \
-                     with a window of 60 s, a log line at 10:00:30 can associate \
-                     with a fix from 10:00:00 - but not one from 09:59:00.",
+                     fix of the recording the log is associated with for the entry \
+                     to take a position from it. For example, with a window of \
+                     60 s, a log line at 10:00:30 can associate with a fix from \
+                     10:00:00 - but not one from 09:59:00.",
                 );
-                let mut window_s = self.assoc_config.log_marker_window_s.clamp(1, 3600);
+                let mut window_s = self.assoc_config.log_association_window_s.clamp(1, 3600);
                 ui.horizontal(|ui| {
                     compound_duration_input(ui, &mut window_s, 1, 3600, false, false);
                 });
-                self.assoc_config.log_marker_window_s = window_s;
+                self.assoc_config.log_association_window_s = window_s;
                 ui.end_row();
             });
 
@@ -99,7 +100,7 @@ impl App {
                 let defaults = crate::settings::ProcessingSettings::default();
                 self.processing_config.track_layout.track_split_gap =
                     chrono::Duration::seconds(defaults.track_split_gap_seconds as i64);
-                self.assoc_config.log_marker_window_s = defaults.log_marker_window_s;
+                self.assoc_config.log_association_window_s = defaults.log_association_window_s;
                 self.processing_config
                     .generated_markers
                     .detect_gnss_fix_lost = defaults.detect_gnss_fix_lost;

@@ -9,11 +9,12 @@
 mod associate;
 mod format;
 mod parse;
+mod pool;
 mod session;
 mod structure;
 mod summary;
 
-pub use associate::associate_position;
+pub use associate::{associate_entries, associate_position};
 pub use format::{LogFormat, detect_format, infer_year};
 pub use parse::{LogEntry, LogParseError, ParsedLog, TextSlice, TimestampKind, parse_log};
 pub use session::{AnchoredBounds, BootSession, OrderAnomaly};

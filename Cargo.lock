@@ -2167,6 +2167,7 @@ dependencies = [
  "gt-jam",
  "gt-loaded-files",
  "gt-loader",
+ "gt-log-view",
  "gt-logfile",
  "gt-map",
  "gt-plot",
@@ -2651,10 +2652,12 @@ dependencies = [
 name = "gt-loaded-files"
 version = "0.12.0"
 dependencies = [
+ "chrono",
  "gt-fmt",
  "gt-history-types",
  "gt-test-utils",
  "gt-types",
+ "rstest",
 ]
 
 [[package]]
@@ -2671,6 +2674,19 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "uom",
+]
+
+[[package]]
+name = "gt-log-view"
+version = "0.12.0"
+dependencies = [
+ "chrono",
+ "gt-loaded-files",
+ "gt-logfile",
+ "gt-test-utils",
+ "gt-types",
+ "log",
+ "rstest",
 ]
 
 [[package]]

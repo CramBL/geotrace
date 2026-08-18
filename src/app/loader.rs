@@ -7,17 +7,12 @@ use std::{
 
 use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig};
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use egui::Context;
-use gt_plot::{AnalysisConfig, PreparedSeries};
-use gt_types::{
-    AssociationConfig, Coord, CustomMarker, FileMetadata, FileSource, LoadedFile, LoadedTrack,
-    MarkerIcon, NavPoint, Rect, TimeRange, TrackMetadata, merc_bounds_for_rect,
-};
-use uom::si::f64::Length;
-use uom::si::length::{kilometer, meter};
-
 use gt_loaded_files::FileHistory;
+use gt_logfile::ParsedLog;
+use gt_plot::{AnalysisConfig, PreparedSeries};
+use gt_types::LoadedFile;
 
 /// A finished load stays fully opaque in the status list this long before its
 /// entry starts fading.
@@ -29,7 +24,6 @@ pub(super) const FINISHED_JOB_EXPIRE_SECS: f32 = 3.0;
 pub(super) const STAGE_STARTING: &str = "Starting…";
 pub(super) const STAGE_READING: &str = "Reading…";
 pub(super) const STAGE_PARSING: &str = "Parsing…";
-pub(super) const STAGE_PROCESSING: &str = "Processing…";
 pub(super) const STAGE_PLOTTING: &str = "Building plot data…";
 
 /// State for a single in-flight background load job, shown in the progress UI.
@@ -59,6 +53,10 @@ pub struct FinishedJob {
 }
 
 /// Final result produced by a background load thread.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a loaded recording is carried whole; boxing would add an allocation on the infrequent completion path"
+)]
 pub enum LoadOutcome {
     /// A successfully parsed `.gtd` / HDF5 file with pre-built plot series.
     GtdFile {
@@ -73,13 +71,12 @@ pub enum LoadOutcome {
         /// app settings rather than the recording's stored/default marker settings.
         applied_current_marker_settings: bool,
     },
-    /// A successfully parsed log file. `loaded` is `None` when all entries were
-    /// unassociated with any GPS track.
-    LogFile {
-        loaded: Option<LoadedFile>,
-        /// Pre-built plot series for the loaded file, if any.
-        series: Option<PreparedSeries>,
-        unassociated: Vec<(DateTime<Utc>, String)>,
+    /// A successfully parsed log, not yet associated with a recording.
+    Log {
+        /// The name of the file the log was read from, `None` for text that
+        /// arrived without one.
+        filename: Option<String>,
+        parsed: ParsedLog,
     },
 }
 
@@ -425,12 +422,7 @@ impl LoadJobs {
         clippy::expect_used,
         reason = "thread spawn can only fail under extreme system resource exhaustion"
     )]
-    pub fn spawn_log_path(
-        &mut self,
-        path: PathBuf,
-        nav_points: Vec<NavPoint>,
-        assoc_config: AssociationConfig,
-    ) {
+    pub fn spawn_log_path(&mut self, path: PathBuf) {
         let id = self.alloc_id();
         let filename = path
             .file_name()
@@ -449,21 +441,10 @@ impl LoadJobs {
         thread::Builder::new()
             .name(format!("load-log-{filename}"))
             .spawn(move || {
-                let r_tx = tx.clone();
-                let r_ctx = ctx.clone();
-                let report = move |frac: f32, stage: &'static str| {
-                    r_tx.send(LoadMessage::Progress {
-                        id,
-                        fraction: frac,
-                        stage,
-                    })
-                    .ok();
-                    r_ctx.request_repaint();
-                };
-                let source = FileSource::LogPath(path.clone());
+                let report = progress_reporter(id, tx.clone(), ctx.clone());
                 report(0.20, STAGE_READING);
-                let content = match fs::read_to_string(&path) {
-                    Ok(s) => s,
+                let text = match fs::read_to_string(&path) {
+                    Ok(text) => text,
                     Err(e) => {
                         tx.send(LoadMessage::Completed {
                             id,
@@ -474,36 +455,23 @@ impl LoadJobs {
                         return;
                     }
                 };
-                finish_log_load(
-                    id,
-                    &filename,
-                    Arc::from(content),
-                    &nav_points,
-                    &tx,
-                    &ctx,
-                    report,
-                    assoc_config,
-                    source,
-                );
+                finish_log_load(id, Some(filename), Arc::from(text), &tx, &ctx, report);
             })
             .expect("failed to spawn log-path loader thread");
     }
 
+    /// Loads log text received as bytes from a drop or a paste. `filename` is
+    /// `None` when the text carried no name.
     #[expect(
         clippy::expect_used,
         reason = "thread spawn can only fail under extreme system resource exhaustion"
     )]
-    pub fn spawn_log_text(
-        &mut self,
-        text: String,
-        filename: String,
-        nav_points: Vec<NavPoint>,
-        assoc_config: AssociationConfig,
-    ) {
+    pub fn spawn_log_text(&mut self, text: String, filename: Option<String>) {
         let id = self.alloc_id();
+        let job_name = filename.clone().unwrap_or_else(|| "log text".to_owned());
         self.loading_jobs.push(LoadingJob {
             id,
-            filename: filename.clone(),
+            filename: job_name.clone(),
             progress: 0.0,
             stage: STAGE_STARTING,
             started_at: std::time::Instant::now(),
@@ -511,32 +479,11 @@ impl LoadJobs {
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
         let text: Arc<str> = Arc::from(text);
-        let source = FileSource::LogText(Arc::clone(&text));
         thread::Builder::new()
-            .name(format!("load-log-{filename}"))
+            .name(format!("load-log-{job_name}"))
             .spawn(move || {
-                let r_tx = tx.clone();
-                let r_ctx = ctx.clone();
-                let report = move |frac: f32, stage: &'static str| {
-                    r_tx.send(LoadMessage::Progress {
-                        id,
-                        fraction: frac,
-                        stage,
-                    })
-                    .ok();
-                    r_ctx.request_repaint();
-                };
-                finish_log_load(
-                    id,
-                    &filename,
-                    text,
-                    &nav_points,
-                    &tx,
-                    &ctx,
-                    report,
-                    assoc_config,
-                    source,
-                );
+                let report = progress_reporter(id, tx.clone(), ctx.clone());
+                finish_log_load(id, filename, text, &tx, &ctx, report);
             })
             .expect("failed to spawn log-text loader thread");
     }
@@ -626,180 +573,49 @@ impl LoadJobs {
     }
 }
 
-/// Build a `LoadedFile` from a list of custom markers produced by log parsing.
-///
-/// Returns `None` when `markers` is empty (nothing to display on the map).
-/// This is called from background load threads and uses no egui types.
-pub(super) fn build_log_loaded_file(
-    filename: &str,
-    markers: Vec<CustomMarker>,
-    source: FileSource,
-) -> Option<LoadedFile> {
-    let first = markers.first()?;
-
-    let min_lat = markers
-        .iter()
-        .map(|m| m.lat.as_degrees())
-        .fold(first.lat.as_degrees(), f64::min);
-    let max_lat = markers
-        .iter()
-        .map(|m| m.lat.as_degrees())
-        .fold(first.lat.as_degrees(), f64::max);
-    let min_lon = markers
-        .iter()
-        .map(|m| m.lon.as_degrees())
-        .fold(first.lon.as_degrees(), f64::min);
-    let max_lon = markers
-        .iter()
-        .map(|m| m.lon.as_degrees())
-        .fold(first.lon.as_degrees(), f64::max);
-    let min_time = markers.iter().map(|m| m.time).min().unwrap_or(first.time);
-    let max_time = markers.iter().map(|m| m.time).max().unwrap_or(first.time);
-
-    let count = markers.len();
-    let duration = max_time.signed_duration_since(min_time);
-    let filename = if filename.is_empty() {
-        "log".to_owned()
-    } else {
-        filename.to_owned()
-    };
-
-    let bounding_box = Rect::new(
-        Coord {
-            x: min_lon,
-            y: min_lat,
-        },
-        Coord {
-            x: max_lon,
-            y: max_lat,
-        },
-    );
-    let track = LoadedTrack {
-        // No nav points, so no LOD to build and nothing to anchor labels on.
-        lod: gt_types::TrackLod::default(),
-        sat_label_anchors: Vec::new(),
-        metadata: TrackMetadata {
-            index: 0,
-            distance_km: Length::new::<kilometer>(0.0),
-            duration,
-            time_range: TimeRange::new(min_time, max_time),
-            bounding_box,
-            merc_bounds: merc_bounds_for_rect(bounding_box),
-            point_set_diameter_m: Length::new::<meter>(0.0),
-            segment_length_range: None,
-            has_custom_markers: true,
-            tpv_count: 0,
-            satellite_report_count: 0,
-            custom_marker_count: count,
-            generated_marker_count: 0,
-            event_marker_count: 0,
-            fix_stats: None,
-        },
-        points: Vec::new(),
-        custom_markers: markers,
-        generated_markers: Vec::new(),
-        event_markers: Vec::new(),
-        channels: Vec::new(),
-    };
-
-    Some(LoadedFile {
-        metadata: FileMetadata {
-            filename,
-            total_distance_km: Length::new::<kilometer>(0.0),
-            total_duration: duration,
-            time_range: TimeRange::new(min_time, max_time),
-            fix_stats: None,
-            title: None,
-            device: None,
-            notes: None,
-            travel_mode: None,
-        },
-        tracks: vec![track],
-        event_marker_styles: std::collections::HashMap::new(),
-        orphaned_event_markers: Vec::new(),
-        source,
-        load_warnings: Vec::new(),
-    })
+/// Reports a load job's progress to the UI thread and wakes it to draw it.
+fn progress_reporter(
+    id: u64,
+    tx: mpsc::Sender<LoadMessage>,
+    ctx: Context,
+) -> impl Fn(f32, &'static str) {
+    move |fraction: f32, stage: &'static str| {
+        tx.send(LoadMessage::Progress {
+            id,
+            fraction,
+            stage,
+        })
+        .ok();
+        ctx.request_repaint();
+    }
 }
 
-/// Shared tail of log-file loading: parse `content`, build a `LoadedFile`, and
-/// send the `Completed` message. Called from both the path-based and text-based
-/// log loader threads after file content has been obtained.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "log loading inherently needs thread ID, file context, IPC channel, progress callback, association config, and source - grouping would obscure rather than clarify"
-)]
+/// Shared tail of log loading: parse `text` and send the `Completed` message.
+/// Called from both the path-based and the text-based log loader threads.
 fn finish_log_load(
     id: u64,
-    filename: &str,
-    content: Arc<str>,
-    nav_points: &[NavPoint],
+    filename: Option<String>,
+    text: Arc<str>,
     tx: &mpsc::Sender<LoadMessage>,
     ctx: &Context,
     report: impl Fn(f32, &'static str),
-    assoc_config: AssociationConfig,
-    source: FileSource,
 ) {
     report(0.55, STAGE_PARSING);
-    let parsed = match gt_logfile::parse_log(content, Utc::now()) {
-        Ok(parsed) => parsed,
-        Err(err) => {
-            tx.send(LoadMessage::Completed {
-                id,
-                outcome: Err(err.to_string()),
-            })
-            .ok();
-            ctx.request_repaint();
-            return;
+    let outcome = match gt_logfile::parse_log(text, Utc::now()) {
+        Ok(parsed) => {
+            let unindexable_line_count = parsed.unindexable_line_count();
+            if unindexable_line_count > 0 {
+                let noun = gt_fmt::pluralize(unindexable_line_count, "line", "lines");
+                let name = filename.as_deref().unwrap_or("log text");
+                log::warn!(
+                    "Dropped {unindexable_line_count} {noun} of {name:?} that the log index cannot address"
+                );
+            }
+            Ok(LoadOutcome::Log { filename, parsed })
         }
+        Err(err) => Err(err.to_string()),
     };
-    let unindexable_line_count = parsed.unindexable_line_count();
-    if unindexable_line_count > 0 {
-        let noun = gt_fmt::pluralize(unindexable_line_count, "line", "lines");
-        log::warn!(
-            "Dropped {unindexable_line_count} {noun} of {filename:?} that the log index cannot address"
-        );
-    }
-
-    report(0.90, STAGE_PROCESSING);
-    let window = chrono::Duration::seconds(
-        i64::try_from(assoc_config.log_marker_window_s).unwrap_or(i64::MAX),
-    );
-    let mut markers: Vec<CustomMarker> = Vec::new();
-    let mut unassociated: Vec<(DateTime<Utc>, String)> = Vec::new();
-    for entry in parsed.entries() {
-        let message = parsed.message(entry).to_owned();
-        match gt_logfile::associate_position(entry.timestamp, nav_points, window) {
-            Some((lat, lon)) => markers.push(CustomMarker::new(
-                entry.timestamp,
-                message,
-                MarkerIcon::Log,
-                lat,
-                lon,
-                None,
-            )),
-            None => unassociated.push((entry.timestamp, message)),
-        }
-    }
-    markers.sort_by_key(|marker| marker.time);
-    unassociated.sort_by_key(|(time, _)| *time);
-    let loaded = build_log_loaded_file(filename, markers, source);
-    report(0.95, STAGE_PLOTTING);
-    // Log files carry no satellite reports, so the utilization series is empty
-    // regardless of the elevation mask - the default analysis config suffices.
-    let series = loaded
-        .as_ref()
-        .map(|f| gt_plot::prepare_file_series(f, AnalysisConfig::default()));
-
-    tx.send(LoadMessage::Completed {
-        id,
-        outcome: Ok(LoadOutcome::LogFile {
-            loaded,
-            series,
-            unassociated,
-        }),
-    })
-    .ok();
+    tx.send(LoadMessage::Completed { id, outcome }).ok();
     ctx.request_repaint();
 }
 
@@ -1170,6 +986,60 @@ mod tests {
             assert!(Instant::now() < deadline, "load did not finish in time");
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    /// Dropped or pasted log text reaches the app as a parsed log, with no
+    /// name of its own for the log to be named after its first entry.
+    #[test]
+    fn loading_log_text_completes_as_a_parsed_log() {
+        let mut jobs = LoadJobs::new(egui::Context::default());
+        jobs.spawn_log_text(
+            "2026-01-01 14:02:11 navsyncd: uploaded 2 recordings\n".to_owned(),
+            None,
+        );
+
+        let completed = drain_until_complete(&mut jobs);
+        let LoadOutcome::Log { filename, parsed } = completed.outcome.expect("load should succeed")
+        else {
+            panic!("expected a Log outcome");
+        };
+        assert_eq!(filename, None);
+        assert_eq!(parsed.entries().len(), 1);
+    }
+
+    /// A log opened from a path is named after the file it was read from.
+    #[test]
+    fn loading_a_log_path_completes_as_a_parsed_log_named_after_the_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("navsyncd.log");
+        std::fs::write(&path, "2026-01-01 14:02:11 navsyncd: queue empty\n").expect("write log");
+
+        let mut jobs = LoadJobs::new(egui::Context::default());
+        jobs.spawn_log_path(path);
+
+        let completed = drain_until_complete(&mut jobs);
+        let LoadOutcome::Log { filename, parsed } = completed.outcome.expect("load should succeed")
+        else {
+            panic!("expected a Log outcome");
+        };
+        assert_eq!(filename.as_deref(), Some("navsyncd.log"));
+        assert_eq!(parsed.entries().len(), 1);
+    }
+
+    /// Log text with no recognised timestamp format fails the load.
+    #[test]
+    fn loading_log_text_without_a_recognised_timestamp_fails() {
+        let mut jobs = LoadJobs::new(egui::Context::default());
+        jobs.spawn_log_text("kernel: no timestamp here\n".to_owned(), None);
+
+        let completed = drain_until_complete(&mut jobs);
+        assert_eq!(
+            completed.outcome.err(),
+            Some(
+                "No recognised timestamp format (first line: \"kernel: no timestamp here\")"
+                    .to_owned()
+            )
+        );
     }
 
     /// Regression: opening a `.gtd` file with storage enabled must insert it into

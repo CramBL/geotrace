@@ -51,6 +51,14 @@ impl TimeRange {
         self.end - self.start
     }
 
+    /// The span `self` and `other` share, `None` when they are disjoint. Two
+    /// ranges meeting at one instant share a zero-length range.
+    pub fn intersection(self, other: Self) -> Option<Self> {
+        let start = self.start.max(other.start);
+        let end = self.end.min(other.end);
+        (start <= end).then(|| Self::new(start, end))
+    }
+
     /// Returns `true` when `self` overlaps the optional `[window_start, window_end]` window.
     ///
     /// An absent bound is treated as unbounded (−∞ or +∞ respectively), so a
@@ -467,39 +475,34 @@ pub struct FileMetadata {
     pub travel_mode: Option<TravelMode>,
 }
 
-/// Configuration for log-marker and satellite association.
+/// Configuration for associating log entries with recorded positions.
 ///
-/// Stored in `Settings` and persisted to the config file. Also carried on
-/// `LoadedFile` so that re-processing can read which window was last used.
+/// Stored in `Settings` and persisted to the config file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct AssociationConfig {
-    /// Max seconds between a log-file timestamp and the nearest GPS fix for the
-    /// entry to be associated (placed on the map). Entries further away are
-    /// listed as "unassociated." Default: 60 s.
-    pub log_marker_window_s: u64,
+    /// Association window a freshly loaded log starts with: the time an entry
+    /// may be away from the nearest fix of its association target and still
+    /// take a position from it. Adjustable per log afterwards.
+    pub log_association_window_s: u64,
 }
 
 impl Default for AssociationConfig {
     fn default() -> Self {
         Self {
-            log_marker_window_s: 60,
+            log_association_window_s: 60,
         }
     }
 }
 
-/// Where the file content came from. Stored on [`LoadedFile`] to enable
-/// re-processing when association settings change.
+/// Where a recording's content came from. Stored on [`LoadedFile`] so it can be
+/// re-processed under new settings.
 #[derive(Debug, Clone)]
 pub enum FileSource {
     /// Loaded from a path on disk (GTD file).
     GtdPath(PathBuf),
     /// Loaded from bytes delivered via drag-and-drop (GTD file).
     GtdBytes(Arc<[u8]>),
-    /// Loaded from a log file on disk.
-    LogPath(PathBuf),
-    /// Loaded from in-memory log text (e.g. dropped bytes decoded to UTF-8).
-    LogText(Arc<str>),
 }
 
 /// A structured data quality warning produced when loading a recording file.
@@ -588,6 +591,40 @@ mod time_range_tests {
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
+    }
+
+    #[rstest]
+    #[case::disjoint(at(2026, 7, 20, 0), at(2026, 7, 20, 6), None)]
+    #[case::meeting_at_one_instant(
+        at(2026, 7, 20, 0),
+        at(2026, 7, 20, 8),
+        Some((at(2026, 7, 20, 8), at(2026, 7, 20, 8)))
+    )]
+    #[case::partly_covered(
+        at(2026, 7, 20, 6),
+        at(2026, 7, 20, 12),
+        Some((at(2026, 7, 20, 8), at(2026, 7, 20, 12)))
+    )]
+    #[case::covering_the_other_whole(
+        at(2026, 7, 20, 0),
+        at(2026, 7, 21, 0),
+        Some((at(2026, 7, 20, 8), at(2026, 7, 20, 17)))
+    )]
+    fn intersection_is_the_shared_span(
+        #[case] start: chrono::DateTime<Utc>,
+        #[case] end: chrono::DateTime<Utc>,
+        #[case] expected: Option<(chrono::DateTime<Utc>, chrono::DateTime<Utc>)>,
+    ) {
+        let day = TimeRange::new(at(2026, 7, 20, 8), at(2026, 7, 20, 17));
+        let other = TimeRange::new(start, end);
+        let expected = expected.map(|(start, end)| TimeRange::new(start, end));
+
+        assert_eq!(day.intersection(other), expected);
+        assert_eq!(
+            other.intersection(day),
+            expected,
+            "the shared span does not depend on argument order"
+        );
     }
 
     #[rstest]
