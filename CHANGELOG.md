@@ -4,40 +4,25 @@
 
 ### Added
 
-- Picking a mode under "Snap again as" that the track already has snap to road data for now asks whether to replace it.
-  The snap status icon offers the same menu on right-click.
-- Right-clicking a recording offers "Snap again as" for its tracks at once, asking whether to snap the selected tracks or all of them.
-- With more than one file loaded, a fix point's hover tooltip, the stacked label shown when map points overlap and the clicked-point window each name the recording the point belongs to.
-- Editing the recording name template in Settings opens a guide below the field, listing the tokens and previewing the template as you type.
-- A recording name template token can cap its length, as `{title:12}` for at most the first 12 characters of the title.
-- Loading a recording downloads the Kp and Hp30 geomagnetic indices for the days it spans into a local archive, so it can be read against what the geomagnetic field was doing while it was made. The host serving them is in Settings under "Geomagnetic indices", and nothing is downloaded in offline mode.
-- Settings' "Geomagnetic indices" section shows what the index download is doing, how many days of the loaded recordings are archived, and the days that failed with their cause. It downloads index history for a date range too, skipping days already archived, with progress and a cancel button.
-- Both history downloads, interference and geomagnetic indices, are grayed out in offline mode with hover text saying so.
-- The plot draws the "Hp30 index" line, one value per fix from the archived period the fix falls in, with the three-hourly "Kp index" one chip away. Both chips stay grayed out until the days a recording spans are archived.
-- Hovering an index line names the value, its storm class on the G scale, and the period it covers. The indices are queryable as `hp30` and `kp` too, so `where hp30 > 5 and slip_all > 2 per min` selects the fixes that lost lock during a geomagnetic storm.
-- Loading a recording downloads JPL's global ionosphere maps for the days it spans into a local archive, so the ionospheric delay it was recorded under is on hand. The host serving them is in Settings under "Ionospheric TEC", and nothing is downloaded in offline mode.
-- Settings' "Ionospheric TEC" section takes an ordered list of mirrors instead of a single host, tried in turn until one has the day's map file.
-  A day no mirror could serve names each of them and the status it returned.
-- The `--offline` flag runs GeoTrace without network access: no map tiles, downloads, snapping, or update check. It replaces the undocumented `GEOTRACE_OFFLINE` environment variable, which is no longer read.
-- Settings' "Aircraft interference" page shows what the interference download is doing, how many days of the loaded recordings are archived, and the days that failed with their cause.
-- Settings' "Ionospheric TEC" page downloads map history for a date range, skipping days already archived, with progress and a cancel button. It also shows what the map download is doing and how many days of the loaded recordings are archived.
-- The plot draws the "TEC (TECU)" line, one value per fix interpolated from the archived maps over the fix's own position and time. Hovering it names the value and the range it delays L1 by. The metric is queryable as `tec`: `where tec > 100 and slip_all > 2 per min` selects the fixes that lost lock under an enhanced ionosphere. The chip starts switched off and stays grayed out until the days a recording spans are archived.
-- Auto-storing recordings and auto-pruning are adjustable on Settings' "Application" page as well as in the History window.
-- Settings' "Interface" page holds the theme, the map layer and the Mapbox token, alongside the top bar and map controls that already set them. A "Test" button next to the token fetches one satellite tile with it and reports what the host answered.
-- A search field above the settings rail filters it to the pages and rows matching the query, listing each match under its page. Escape clears the query, and closes the window once it is empty.
+- Pick a mode under "Snap again as" for a track that already has snap to road data: Asks whether to replace it.
+- Right-click a recording to snap all of its tracks at once.
+- Tooltips and labels show which recording a map point belongs to when multiple files are loaded.
+- Editing the recording name template in Settings shows a preview as you type.
+- Support for Geomagnetic indices (Kp/Hp30) and global Ionosphere maps (TEC): Automatically downloaded for loaded recordings, viewable in the plot, and queryable (e.g., `where hp30 > 5` or `where tec > 100`).
+- Settings' "Geomagnetic indices" and "Ionospheric TEC" pages show cached history and allow downloading more.
+- The `--offline` flag runs the app without network access (replaces the `GEOTRACE_OFFLINE` environment variable).
+- A search field in Settings to easily filter pages and rows.
 
 ### Changed
 
-- The settings window shows one category at a time, picked from a rail on the left, instead of every section stacked in one column. The recording name template moved to the "Interface" page and the update check to "Application".
-- A log file loads even when lines in it carry no recognised timestamp: those lines are skipped and the rest are kept. The load fails only when no line at all parses, and then names the first line it could not read.
-- A large log file is read across several CPU cores: an 80 MiB journal export indexes in about 20 ms, where one core takes 46 ms. The parse takes at most half the machine's cores, leaving the rest to whatever else is running.
+- The Settings window displays one category at a time using a left-side navigation rail.
+- Log files load even if some lines have unrecognised timestamps (unreadable lines are skipped).
 
 ### Fixed
 
-- Hover labels no longer stack on top of each other, in the plot and on the map's interference layer.
+- Hover labels no longer overlap in the plot and map interference layer.
 - The plot's file legend no longer covers the settings and query windows.
-- The snapped track no longer fans out across nearby roads where the receiver was dead reckoning, as in a parking garage.
-  Ghost fixes are never sent to the map-matching server, and the snapped track breaks at the gap instead of being routed through it.
+- Snapped tracks no longer improperly route through nearby roads during dead reckoning gaps (e.g., in parking garages).
 
 ## 0.12.0 - 2026-08-15
 
