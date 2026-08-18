@@ -100,10 +100,7 @@ impl App {
             .set_visible(self.plot_tile_id, s.plot.panel_visible);
         self.set_split_ratio(s.plot.split_ratio);
 
-        self.storage_enabled = s.storage.enabled;
-        self.auto_prune_enabled = s.storage.auto_prune_enabled;
-        self.auto_prune_max_bytes = s.storage.auto_prune_max_bytes;
-        self.auto_prune_confirm = s.storage.auto_prune_confirm;
+        self.storage_settings = s.storage;
         self.update_check_on_startup = s.update.check_on_startup;
         self.skipped_version = s.update.skipped_version.clone();
         self.query_window.set_history(s.query.history.clone());
@@ -198,12 +195,7 @@ impl App {
                 slip_window_min: s.plot_state.analysis.slip_window_min,
                 clock_excursion_threshold_s: s.plot_state.analysis.clock_excursion_threshold_s,
             },
-            storage: crate::settings::StorageSettings {
-                enabled: self.storage_enabled,
-                auto_prune_enabled: self.auto_prune_enabled,
-                auto_prune_max_bytes: self.auto_prune_max_bytes,
-                auto_prune_confirm: self.auto_prune_confirm,
-            },
+            storage: self.storage_settings,
             update: crate::settings::UpdateSettings {
                 check_on_startup: self.update_check_on_startup,
                 skipped_version: self.skipped_version.clone(),
