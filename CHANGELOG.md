@@ -17,7 +17,7 @@
 
 - The aircraft interference plot line spans every archived day in view instead of breaking outside recordings.
 - The Settings window displays one category at a time using a left-side navigation rail.
-- Log files load even if some lines have unrecognised timestamps (unreadable lines are skipped).
+- Log files load even if some lines have unrecognised timestamps (those lines are kept, timed from their neighbours).
 
 ### Fixed
 

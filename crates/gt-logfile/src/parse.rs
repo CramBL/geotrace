@@ -1,4 +1,5 @@
-//! Detecting a log's format from its head and indexing every line against its text.
+//! Detecting a log's format from its head, indexing every line against its
+//! text, and reading the structure the exporter wrote around those lines.
 
 use std::{
     num::NonZeroUsize,
@@ -9,7 +10,12 @@ use std::{
 use chrono::{DateTime, Utc};
 use rayon::{ThreadPool, ThreadPoolBuilder, prelude::*};
 
-use crate::format::{self, LogFormat};
+use crate::{
+    format::{self, LogFormat},
+    session::{self, BootSession, OrderAnomaly},
+    structure::{StructuralExtent, StructuralLine, StructuralLineKind},
+    summary::{self, EntryCountMismatch, SummaryBlock},
+};
 
 /// Non-empty lines the format detector reads before giving up on the log.
 const FORMAT_DETECTION_LINE_LIMIT: usize = 10;
@@ -33,22 +39,77 @@ const CHUNK_TARGET_BYTES: NonZeroUsize = match NonZeroUsize::new(16 * 1024 * 102
 /// on an 80 MiB journal, half the cores index it as fast as all of them.
 const CORES_PER_PARSE_WORKER: usize = 2;
 
-/// One parsed line: its timestamp and the byte range of its message inside the
-/// text of the [`ParsedLog`] it was indexed from, read with [`ParsedLog::message`].
+/// A byte range of a [`ParsedLog`]'s text, read with [`TextSlice::in_text`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextSlice {
+    pub offset: u64,
+    pub len: u32,
+}
+
+impl TextSlice {
+    /// `None` for a line longer than the index's length field can address.
+    fn new(offset: u64, len: usize) -> Option<Self> {
+        Some(Self {
+            offset,
+            len: u32::try_from(len).ok()?,
+        })
+    }
+
+    pub fn in_text(self, text: &str) -> &str {
+        let start = usize::try_from(self.offset).unwrap_or(usize::MAX);
+        let end = start.saturating_add(self.len as usize);
+        let slice = text.get(start..end);
+        debug_assert!(
+            slice.is_some(),
+            "{self:?} addresses text outside the log it was indexed from"
+        );
+        slice.unwrap_or_default()
+    }
+}
+
+/// Where an entry's timestamp came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimestampKind {
+    /// Parsed from the line itself.
+    Anchored,
+
+    /// Derived from the anchored entries around it, the line carrying none.
+    Interpolated,
+}
+
+/// One line of a log kept as an entry: its timestamp and the byte range of its
+/// message inside the text of the [`ParsedLog`] it was indexed from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LogEntry {
     pub timestamp: DateTime<Utc>,
-    pub message_offset: u64,
-    pub message_len: u32,
+    pub timestamp_kind: TimestampKind,
+
+    /// 1-based, counting every physical line of the log.
+    pub line_number: u32,
+
+    /// The text after the timestamp, or the whole line for an interpolated entry.
+    pub message: TextSlice,
 }
 
-/// A log read into the text it was parsed from and an index over its lines.
+impl LogEntry {
+    pub fn is_anchored(&self) -> bool {
+        self.timestamp_kind == TimestampKind::Anchored
+    }
+}
+
+/// A log read into the text it was parsed from, an index over its lines, and
+/// the structure recognized around them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedLog {
     text: Arc<str>,
     entries: Vec<LogEntry>,
+    boot_sessions: Vec<BootSession>,
+    structural_lines: Vec<StructuralLine>,
+    order_anomalies: Vec<OrderAnomaly>,
+    summary_block: Option<SummaryBlock>,
     format: LogFormat,
-    skipped_line_count: usize,
+    anchored_entry_count: usize,
+    unindexable_line_count: usize,
 }
 
 impl ParsedLog {
@@ -56,29 +117,66 @@ impl ParsedLog {
         &self.text
     }
 
-    /// Entries in ascending timestamp order, ties broken by original line order.
+    /// Every kept line, anchored and interpolated alike, in file order.
     pub fn entries(&self) -> &[LogEntry] {
         &self.entries
+    }
+
+    pub fn boot_sessions(&self) -> &[BootSession] {
+        &self.boot_sessions
+    }
+
+    pub fn session_entries(&self, session: &BootSession) -> &[LogEntry] {
+        self.entries
+            .get(session.entry_range.clone())
+            .unwrap_or_default()
+    }
+
+    /// The recognized non-entry lines, in file order.
+    pub fn structural_lines(&self) -> &[StructuralLine] {
+        &self.structural_lines
+    }
+
+    /// Backwards timestamp steps no logged clock adjustment explains, in file order.
+    pub fn order_anomalies(&self) -> &[OrderAnomaly] {
+        &self.order_anomalies
+    }
+
+    pub fn summary_block(&self) -> Option<&SummaryBlock> {
+        self.summary_block.as_ref()
+    }
+
+    /// Set when the exporter counted entries and arrived at another number
+    /// than this parse did.
+    pub fn exporter_entry_count_mismatch(&self) -> Option<EntryCountMismatch> {
+        let stated_by_exporter = self.summary_block.as_ref()?.entry_count?;
+        let anchored_by_parse = u64::try_from(self.anchored_entry_count).unwrap_or(u64::MAX);
+        (stated_by_exporter != anchored_by_parse).then_some(EntryCountMismatch {
+            stated_by_exporter,
+            anchored_by_parse,
+        })
     }
 
     pub fn format(&self) -> LogFormat {
         self.format
     }
 
-    /// Non-empty lines that did not carry a timestamp of [`ParsedLog::format`].
-    pub fn skipped_line_count(&self) -> usize {
-        self.skipped_line_count
+    pub fn anchored_entry_count(&self) -> usize {
+        self.anchored_entry_count
+    }
+
+    pub fn interpolated_entry_count(&self) -> usize {
+        self.entries.len().saturating_sub(self.anchored_entry_count)
+    }
+
+    /// Lines dropped because the index cannot address them: a line whose text
+    /// exceeds [`u32::MAX`] bytes. Normally zero.
+    pub fn unindexable_line_count(&self) -> usize {
+        self.unindexable_line_count
     }
 
     pub fn message(&self, entry: &LogEntry) -> &str {
-        let start = usize::try_from(entry.message_offset).unwrap_or(usize::MAX);
-        let end = start.saturating_add(entry.message_len as usize);
-        let message = self.text.get(start..end);
-        debug_assert!(
-            message.is_some(),
-            "entry {entry:?} addresses text outside its own log"
-        );
-        message.unwrap_or_default()
+        entry.message.in_text(&self.text)
     }
 }
 
@@ -94,9 +192,10 @@ pub enum LogParseError {
 /// Reads `text` into entries, taking the format from the head of the log and
 /// resolving the year of the year-less syslog formats against `now`.
 ///
-/// Lines that carry no timestamp of that format are skipped and counted: a
-/// stack trace in the middle of a journal costs those lines and nothing else.
-/// A line whose message exceeds [`u32::MAX`] bytes is skipped the same way.
+/// Every non-empty line is kept: one that carries no timestamp of that format
+/// is either a structural line of a recognized exporter idiom or an entry
+/// timestamped from its anchored neighbours. Only a line the index cannot
+/// address is dropped.
 pub fn parse_log(text: Arc<str>, now: DateTime<Utc>) -> Result<ParsedLog, LogParseError> {
     parse_log_in_chunks_of(text, now, CHUNK_TARGET_BYTES)
 }
@@ -107,17 +206,63 @@ fn parse_log_in_chunks_of(
     chunk_target_bytes: NonZeroUsize,
 ) -> Result<ParsedLog, LogParseError> {
     let format = detect_head_format(&text)?;
-    let LineIndex {
-        entries,
-        skipped_line_count,
-    } = index_lines_in_timestamp_order(&text, format, now, chunk_target_bytes);
+    let mut index = index_lines_in_file_order(&text, format, now, chunk_target_bytes);
+    let summary_block = index.take_trailing_summary_block(&text);
+
+    let mut anchored_entry_count = 0;
+    let mut first_anchor = None;
+    for entry in &index.entries {
+        if entry.is_anchored() {
+            anchored_entry_count += 1;
+            first_anchor.get_or_insert(entry.timestamp);
+        }
+    }
+    let Some(first_anchor) = first_anchor else {
+        return Err(index.no_anchored_entry_error(&text));
+    };
+
+    let boot_sessions =
+        session::segment_into_boot_sessions(&index.entries, &index.structural_lines);
+    let order_anomalies =
+        check_order_and_interpolate(&text, &mut index.entries, &boot_sessions, first_anchor);
 
     Ok(ParsedLog {
         text,
-        entries,
+        entries: index.entries,
+        boot_sessions,
+        structural_lines: index.structural_lines,
+        order_anomalies,
+        summary_block,
         format,
-        skipped_line_count,
+        anchored_entry_count,
+        unindexable_line_count: index.unindexable_line_count,
     })
+}
+
+/// Both per-session passes in one walk: the order check that records anomalies,
+/// and the interpolation that timestamps the lines carrying none.
+///
+/// A session no line of which anchored takes the last anchor before it,
+/// starting at `first_anchor`: interpolation never crosses a session boundary.
+fn check_order_and_interpolate(
+    text: &str,
+    entries: &mut [LogEntry],
+    boot_sessions: &[BootSession],
+    first_anchor: DateTime<Utc>,
+) -> Vec<OrderAnomaly> {
+    let mut order_anomalies = Vec::new();
+    let mut anchor_before_session = first_anchor;
+    for boot_session in boot_sessions {
+        let Some(session_entries) = entries.get_mut(boot_session.entry_range.clone()) else {
+            continue;
+        };
+        session::scan_for_order_anomalies(text, session_entries, &mut order_anomalies);
+        session::interpolate_timestamps(session_entries, anchor_before_session);
+        if let Some(anchored) = boot_session.anchored {
+            anchor_before_session = anchored.last;
+        }
+    }
+    order_anomalies
 }
 
 fn detect_head_format(text: &str) -> Result<LogFormat, LogParseError> {
@@ -143,22 +288,155 @@ fn detect_head_format(text: &str) -> Result<LogFormat, LogParseError> {
 #[derive(Default)]
 struct LineIndex {
     entries: Vec<LogEntry>,
-    skipped_line_count: usize,
+    structural_lines: Vec<StructuralLine>,
+    line_count: u32,
+    unindexable_line_count: usize,
 }
 
 impl LineIndex {
-    /// Joins per-chunk indices, given in the order their chunks appear in the log.
+    /// Joins per-chunk indices, given in the order their chunks appear in the
+    /// log, numbering their lines from the head of the whole log.
     fn concatenated(chunks: &[Self]) -> Self {
-        let mut entries = Vec::with_capacity(chunks.iter().map(|chunk| chunk.entries.len()).sum());
-        let mut skipped_line_count = 0;
+        let mut joined = Self {
+            entries: Vec::with_capacity(chunks.iter().map(|chunk| chunk.entries.len()).sum()),
+            ..Self::default()
+        };
         for chunk in chunks {
-            entries.extend_from_slice(&chunk.entries);
-            skipped_line_count += chunk.skipped_line_count;
+            let lines_before = joined.line_count;
+            joined
+                .entries
+                .extend(chunk.entries.iter().map(|entry| LogEntry {
+                    line_number: entry.line_number.saturating_add(lines_before),
+                    ..*entry
+                }));
+            joined
+                .structural_lines
+                .extend(chunk.structural_lines.iter().map(|line| StructuralLine {
+                    line_number: line.line_number.saturating_add(lines_before),
+                    ..*line
+                }));
+            joined.line_count = lines_before.saturating_add(chunk.line_count);
+            joined.unindexable_line_count += chunk.unindexable_line_count;
         }
-        Self {
-            entries,
-            skipped_line_count,
+        joined
+    }
+
+    /// The failure of a log whose one line matching a timestamp format turned
+    /// out to sit inside a structural block.
+    fn no_anchored_entry_error(&self, text: &str) -> LogParseError {
+        match self.entries.first() {
+            Some(entry) => LogParseError::NoRecognisedFormat {
+                first_line: gt_fmt::truncate_with_ellipsis(
+                    entry.message.in_text(text),
+                    ERROR_LINE_EXCERPT_CHARS,
+                )
+                .into_owned(),
+            },
+            None => LogParseError::Empty,
         }
+    }
+
+    fn push_classified_line(
+        &mut self,
+        line: PositionedLine<'_>,
+        format: LogFormat,
+        now: DateTime<Utc>,
+    ) {
+        if let Some((timestamp, message)) = format::parse_line(line.trimmed, format, now) {
+            self.push_anchored_entry(line, timestamp, message);
+            return;
+        }
+        let Some(text) = TextSlice::new(line.offset_of_trimmed, line.trimmed.len()) else {
+            self.unindexable_line_count += 1;
+            return;
+        };
+        match StructuralLineKind::matching_line(line.trimmed) {
+            Some(kind) => self.structural_lines.push(StructuralLine {
+                kind,
+                line_number: line.line_number,
+                text,
+            }),
+            None => self.entries.push(LogEntry {
+                // Replaced by the interpolation pass, which reaches every
+                // entry this branch pushes.
+                timestamp: DateTime::UNIX_EPOCH,
+                timestamp_kind: TimestampKind::Interpolated,
+                line_number: line.line_number,
+                message: text,
+            }),
+        }
+    }
+
+    fn push_anchored_entry(
+        &mut self,
+        line: PositionedLine<'_>,
+        timestamp: DateTime<Utc>,
+        message: &str,
+    ) {
+        // Every format returns the message as a trailing slice of the line.
+        let message_start = line.trimmed.len().checked_sub(message.len());
+        debug_assert_eq!(
+            message_start.and_then(|start| line.trimmed.get(start..)),
+            Some(message),
+            "the message is a trailing slice of the line it was read from"
+        );
+        let slice = message_start.and_then(|start| {
+            TextSlice::new(
+                line.offset_of_trimmed.saturating_add(start as u64),
+                message.len(),
+            )
+        });
+        match slice {
+            Some(message) => self.entries.push(LogEntry {
+                timestamp,
+                timestamp_kind: TimestampKind::Anchored,
+                line_number: line.line_number,
+                message,
+            }),
+            None => self.unindexable_line_count += 1,
+        }
+    }
+
+    /// Reclassifies the exporter's summary block - its header line and
+    /// everything after it - as structural, whatever the chunk parse read those
+    /// lines as, and reads what the block states.
+    fn take_trailing_summary_block(&mut self, text: &str) -> Option<SummaryBlock> {
+        let header = self
+            .structural_lines
+            .iter()
+            .copied()
+            .find(|line| line.kind.extent() == StructuralExtent::ToEndOfLog)?;
+
+        self.entries.truncate(
+            self.entries
+                .partition_point(|entry| entry.line_number < header.line_number),
+        );
+        self.structural_lines.truncate(
+            self.structural_lines
+                .partition_point(|line| line.line_number < header.line_number),
+        );
+
+        let block_start = usize::try_from(header.text.offset).unwrap_or(usize::MAX);
+        let block_text = text.get(block_start..).unwrap_or_default();
+        let mut block_lines: Vec<&str> = Vec::new();
+        for line in positioned_lines(block_text, header.text.offset, header.line_number) {
+            if line.trimmed.is_empty() {
+                continue;
+            }
+            match TextSlice::new(line.offset_of_trimmed, line.trimmed.len()) {
+                Some(text) => {
+                    self.structural_lines.push(StructuralLine {
+                        kind: header.kind,
+                        line_number: line.line_number,
+                        text,
+                    });
+                    block_lines.push(line.trimmed);
+                }
+                None => self.unindexable_line_count += 1,
+            }
+        }
+
+        Some(summary::parse_summary_block(block_lines))
     }
 }
 
@@ -192,30 +470,26 @@ fn parse_pool() -> Option<&'static ThreadPool> {
 /// Indexes every line of `text`, spreading a log longer than
 /// `chunk_target_bytes` over [`parse_pool`].
 ///
-/// Entries sharing a timestamp come out in line order: chunks concatenate in
-/// the order they appear in the log, and both sorts below are stable.
-fn index_lines_in_timestamp_order(
+/// The index comes out in file order and needs no sort to put it there: chunks
+/// concatenate in the order they appear in the log.
+fn index_lines_in_file_order(
     text: &str,
     format: LogFormat,
     now: DateTime<Utc>,
     chunk_target_bytes: NonZeroUsize,
 ) -> LineIndex {
     let chunks = newline_aligned_chunks(text, chunk_target_bytes);
-    let mut index = match chunks.as_slice() {
+    match chunks.as_slice() {
         [] => LineIndex::default(),
         [only] => only.parse(format, now),
         many => match parse_pool() {
-            Some(pool) => {
-                return pool.install(|| {
-                    let per_chunk: Vec<LineIndex> = many
-                        .par_iter()
-                        .map(|chunk| chunk.parse(format, now))
-                        .collect();
-                    let mut index = LineIndex::concatenated(&per_chunk);
-                    index.entries.par_sort_by_key(|entry| entry.timestamp);
-                    index
-                });
-            }
+            Some(pool) => pool.install(|| {
+                let per_chunk: Vec<LineIndex> = many
+                    .par_iter()
+                    .map(|chunk| chunk.parse(format, now))
+                    .collect();
+                LineIndex::concatenated(&per_chunk)
+            }),
             None => LineIndex::concatenated(
                 &many
                     .iter()
@@ -223,9 +497,7 @@ fn index_lines_in_timestamp_order(
                     .collect::<Vec<_>>(),
             ),
         },
-    };
-    index.entries.sort_by_key(|entry| entry.timestamp);
-    index
+    }
 }
 
 /// One newline-aligned slice of a log's text, and where it starts in that text.
@@ -265,63 +537,63 @@ fn newline_aligned_chunks(text: &str, chunk_target_bytes: NonZeroUsize) -> Vec<L
 }
 
 impl LogChunk<'_> {
-    /// Indexes every line of this chunk against the offsets of the whole log text.
+    /// Indexes every line of this chunk against the offsets of the whole log
+    /// text, numbering lines from the head of the chunk.
     fn parse(&self, format: LogFormat, now: DateTime<Utc>) -> LineIndex {
-        let mut entries = Vec::new();
-        let mut skipped_line_count = 0;
-
-        let mut line_offset: u64 = 0;
-
-        for line in self.text.split_inclusive('\n') {
-            let offset_of_line = line_offset;
-            line_offset += line.len() as u64;
-
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
+        let mut index = LineIndex::default();
+        for line in positioned_lines(self.text, self.offset_in_text, 1) {
+            index.line_count = line.line_number;
+            if line.trimmed.is_empty() {
                 continue;
             }
-            let Some((timestamp, message)) = format::parse_line(trimmed, format, now) else {
-                skipped_line_count += 1;
-                continue;
-            };
-            // Every format returns the message as a trailing slice of the line.
-            let message_start = trimmed.len().checked_sub(message.len());
-            debug_assert_eq!(
-                message_start.and_then(|start| trimmed.get(start..)),
-                Some(message),
-                "the message is a trailing slice of the line it was read from"
-            );
-            let (Some(message_start), Ok(message_len)) =
-                (message_start, u32::try_from(message.len()))
-            else {
-                skipped_line_count += 1;
-                continue;
-            };
-            let indent = line.len() - line.trim_start().len();
-            entries.push(LogEntry {
-                timestamp,
-                message_offset: self.offset_in_text
-                    + offset_of_line
-                    + (indent + message_start) as u64,
-                message_len,
-            });
+            index.push_classified_line(line, format, now);
         }
-
-        LineIndex {
-            entries,
-            skipped_line_count,
-        }
+        index
     }
+}
+
+/// One physical line of a log, trimmed of its indent and line ending.
+#[derive(Debug, Clone, Copy)]
+struct PositionedLine<'text> {
+    line_number: u32,
+    trimmed: &'text str,
+    offset_of_trimmed: u64,
+}
+
+/// Walks every physical line of `text`, empty ones included, numbering from
+/// `first_line_number` and offsetting from `first_offset`.
+fn positioned_lines(
+    text: &str,
+    first_offset: u64,
+    first_line_number: u32,
+) -> impl Iterator<Item = PositionedLine<'_>> {
+    let mut offset = first_offset;
+    let mut line_number = first_line_number;
+    text.split_inclusive('\n').map(move |line| {
+        let offset_of_line = offset;
+        offset = offset.saturating_add(line.len() as u64);
+        let this_line_number = line_number;
+        line_number = line_number.saturating_add(1);
+        let indent = line.len() - line.trim_start().len();
+        PositionedLine {
+            line_number: this_line_number,
+            trimmed: line.trim(),
+            offset_of_trimmed: offset_of_line.saturating_add(indent as u64),
+        }
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone as _;
+    use chrono::{Duration, TimeZone as _};
     use gt_test_utils::log_fixtures::{self, SyntheticLogSpec};
     use proptest::{prelude::*, prop_oneof, proptest};
     use rstest::rstest;
 
     use super::*;
+    use crate::summary::ServiceCount;
+
+    const REBOOT: &str = "--- Device reboot ---\n";
 
     fn utc(y: i32, mo: u32, d: u32, h: u32, m: u32, s: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(y, mo, d, h, m, s)
@@ -342,6 +614,22 @@ mod tests {
             .entries()
             .iter()
             .map(|entry| parsed.message(entry))
+            .collect()
+    }
+
+    fn timestamps(parsed: &ParsedLog) -> Vec<DateTime<Utc>> {
+        parsed
+            .entries()
+            .iter()
+            .map(|entry| entry.timestamp)
+            .collect()
+    }
+
+    fn timestamp_kinds(parsed: &ParsedLog) -> Vec<TimestampKind> {
+        parsed
+            .entries()
+            .iter()
+            .map(|entry| entry.timestamp_kind)
             .collect()
     }
 
@@ -382,30 +670,55 @@ mod tests {
         assert_eq!(parse_log(Arc::from(text), now()), Err(LogParseError::Empty));
     }
 
-    /// Unparsable lines anywhere in the log cost only themselves.
+    /// The three kinds a non-empty line can be read as, in one log.
     #[test]
-    fn unparsable_lines_are_skipped_and_counted() {
-        let parsed =
-            parse("2026-01-01 00:00:00 first\nBAD1\nBAD2\nBAD3\n2026-01-01 00:00:01 last\n");
-        assert_eq!(messages(&parsed), ["first", "last"]);
-        assert_eq!(parsed.skipped_line_count(), 3);
+    fn a_line_is_anchored_structural_or_interpolated() {
+        let parsed = parse("2026-01-01 00:00:00 anchored\n--- Device reboot ---\nno timestamp\n");
+
+        assert_eq!(messages(&parsed), ["anchored", "no timestamp"]);
+        assert_eq!(
+            timestamp_kinds(&parsed),
+            [TimestampKind::Anchored, TimestampKind::Interpolated]
+        );
+        assert_eq!(parsed.anchored_entry_count(), 1);
+        assert_eq!(parsed.interpolated_entry_count(), 1);
+        assert_eq!(
+            parsed
+                .structural_lines()
+                .iter()
+                .map(|line| (line.kind, line.line_number))
+                .collect::<Vec<_>>(),
+            [(StructuralLineKind::RebootSeparator, 2)]
+        );
+        assert_eq!(parsed.unindexable_line_count(), 0);
     }
 
     #[test]
-    fn blank_lines_are_neither_entries_nor_skips() {
+    fn blank_lines_are_neither_entries_nor_structure() {
         let parsed = parse("\n\n2026-01-01 00:00:00 only\n\n   \n");
         assert_eq!(messages(&parsed), ["only"]);
-        assert_eq!(parsed.skipped_line_count(), 0);
+        assert!(parsed.structural_lines().is_empty());
+        assert_eq!(parsed.unindexable_line_count(), 0);
     }
 
-    /// A log of one format ignores lines written in another: they are the
-    /// skipped lines, not a second format.
+    /// A separator idiom no registry pattern knows is not an error: it loads as
+    /// an entry like any other untimestamped line.
+    #[test]
+    fn an_unknown_separator_is_read_as_an_entry() {
+        let parsed = parse("2026-01-01 00:00:00 a\n=== Power cycle ===\n");
+        assert_eq!(messages(&parsed), ["a", "=== Power cycle ==="]);
+        assert!(parsed.structural_lines().is_empty());
+        assert_eq!(parsed.boot_sessions().len(), 1);
+    }
+
+    /// A log of one format keeps the lines written in another: they are entries
+    /// timestamped from their neighbours, not a second format.
     #[test]
     fn only_the_detected_format_is_parsed() {
         let parsed = parse("2026-01-01 00:00:00 iso\nMay 29 18:48:24 syslog\n");
         assert_eq!(parsed.format(), LogFormat::Iso8601Space);
-        assert_eq!(messages(&parsed), ["iso"]);
-        assert_eq!(parsed.skipped_line_count(), 1);
+        assert_eq!(messages(&parsed), ["iso", "May 29 18:48:24 syslog"]);
+        assert_eq!(parsed.interpolated_entry_count(), 1);
     }
 
     /// A banner longer than the detector's sample hides the format that follows.
@@ -414,8 +727,11 @@ mod tests {
         let mut within_head = "banner\n".repeat(FORMAT_DETECTION_LINE_LIMIT - 1);
         within_head.push_str("2026-01-01 00:00:00 body\n");
         let parsed = parse(&within_head);
-        assert_eq!(messages(&parsed), ["body"]);
-        assert_eq!(parsed.skipped_line_count(), FORMAT_DETECTION_LINE_LIMIT - 1);
+        assert_eq!(parsed.anchored_entry_count(), 1);
+        assert_eq!(
+            parsed.interpolated_entry_count(),
+            FORMAT_DETECTION_LINE_LIMIT - 1
+        );
 
         let past_head = "banner\n".repeat(FORMAT_DETECTION_LINE_LIMIT) + "2026-01-01 00:00:00 body";
         assert_eq!(
@@ -426,13 +742,23 @@ mod tests {
         );
     }
 
+    /// A file whose lines a later timestamp reordered stays in the order it was
+    /// written in.
     #[test]
-    fn entries_are_sorted_by_timestamp_keeping_line_order_within_a_second() {
+    fn entries_stay_in_the_order_the_file_wrote_them() {
         let parsed = parse(
             "2026-01-01 00:00:05 late\n2026-01-01 00:00:00 alpha\n\
              2026-01-01 00:00:00 beta\n2026-01-01 00:00:02 middle\n",
         );
-        assert_eq!(messages(&parsed), ["alpha", "beta", "middle", "late"]);
+        assert_eq!(messages(&parsed), ["late", "alpha", "beta", "middle"]);
+        assert_eq!(
+            parsed
+                .entries()
+                .iter()
+                .map(|entry| entry.line_number)
+                .collect::<Vec<_>>(),
+            [1, 2, 3, 4]
+        );
     }
 
     /// A message is a slice of the log text: indented and CRLF lines shift where
@@ -445,9 +771,7 @@ mod tests {
         assert_eq!(messages(&parsed), ["alpha", "beta gamma"]);
 
         let entry = parsed.entries().get(1).copied().expect("two entries");
-        let start = entry.message_offset as usize;
-        let end = start + entry.message_len as usize;
-        assert_eq!(text.get(start..end), Some("beta gamma"));
+        assert_eq!(entry.message.in_text(text), "beta gamma");
     }
 
     #[rstest]
@@ -458,13 +782,13 @@ mod tests {
     fn every_format_yields_its_timestamp_and_message(
         #[case] line: &str,
         #[case] expected_second: DateTime<Utc>,
-        #[case] expected_micros: u32,
+        #[case] expected_micros: i64,
     ) {
         let parsed = parse(line);
         let entry = parsed.entries().first().copied().expect("one entry");
         assert_eq!(
             entry.timestamp,
-            expected_second + chrono::Duration::microseconds(expected_micros.into())
+            expected_second + Duration::microseconds(expected_micros)
         );
         assert_eq!(parsed.message(&entry), "msg");
     }
@@ -483,6 +807,243 @@ mod tests {
     }
 
     #[test]
+    fn a_run_of_untimestamped_lines_is_spread_between_its_anchors() {
+        let parsed = parse(
+            "2026-01-01 00:00:00 first\nStack trace follows:\n  at 0x0\n  ... omitted ...\n\
+             2026-01-01 00:00:04 last\n",
+        );
+        assert_eq!(
+            timestamps(&parsed),
+            [
+                utc(2026, 1, 1, 0, 0, 0),
+                utc(2026, 1, 1, 0, 0, 1),
+                utc(2026, 1, 1, 0, 0, 2),
+                utc(2026, 1, 1, 0, 0, 3),
+                utc(2026, 1, 1, 0, 0, 4),
+            ]
+        );
+    }
+
+    /// One line between anchors a second apart lands half a second in.
+    #[test]
+    fn a_run_shorter_than_the_span_it_covers_keeps_sub_second_places() {
+        let parsed = parse("2026-01-01 00:00:00 a\nmid\n2026-01-01 00:00:01 b\n");
+        assert_eq!(
+            timestamps(&parsed).get(1),
+            Some(&(utc(2026, 1, 1, 0, 0, 0) + Duration::milliseconds(500)))
+        );
+    }
+
+    #[test]
+    fn a_run_at_the_edge_of_a_session_takes_the_one_anchor_it_has() {
+        let parsed = parse(
+            "before any anchor\n2026-01-01 00:00:10 first\n2026-01-01 00:00:20 last\n\
+             after the last anchor\n",
+        );
+        assert_eq!(
+            timestamps(&parsed),
+            [
+                utc(2026, 1, 1, 0, 0, 10),
+                utc(2026, 1, 1, 0, 0, 10),
+                utc(2026, 1, 1, 0, 0, 20),
+                utc(2026, 1, 1, 0, 0, 20),
+            ]
+        );
+    }
+
+    /// No run is ever spread across a reboot: the device clock restarts there.
+    #[test]
+    fn interpolation_never_crosses_a_boot_boundary() {
+        let parsed = parse(&format!(
+            "2026-01-01 00:00:00 before\nlast line of boot 1\n{REBOOT}\
+             first line of boot 2\n2026-01-01 00:10:00 after\n"
+        ));
+        assert_eq!(
+            timestamps(&parsed),
+            [
+                utc(2026, 1, 1, 0, 0, 0),
+                utc(2026, 1, 1, 0, 0, 0),
+                utc(2026, 1, 1, 0, 10, 0),
+                utc(2026, 1, 1, 0, 10, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_session_no_line_of_which_anchored_takes_the_anchor_before_it() {
+        let parsed = parse(&format!(
+            "2026-01-01 00:00:00 boot one\n{REBOOT}nothing timestamped here\n{REBOOT}\
+             2026-01-01 00:10:00 boot three\n"
+        ));
+        assert_eq!(
+            timestamps(&parsed),
+            [
+                utc(2026, 1, 1, 0, 0, 0),
+                utc(2026, 1, 1, 0, 0, 0),
+                utc(2026, 1, 1, 0, 10, 0),
+            ]
+        );
+        assert_eq!(
+            parsed
+                .boot_sessions()
+                .iter()
+                .map(|session| session.anchored.is_some())
+                .collect::<Vec<_>>(),
+            [true, false, true]
+        );
+    }
+
+    #[rstest]
+    #[case::no_separator("2026-01-01 00:00:00 a\n2026-01-01 00:00:01 b\n", &[2])]
+    #[case::one_separator("2026-01-01 00:00:00 a\n--- Device reboot ---\n2026-01-01 00:00:01 b\n", &[1, 1])]
+    #[case::three_separators(
+        "2026-01-01 00:00:00 a\n--- Device reboot ---\n2026-01-01 00:00:01 b\n\
+         --- Device reboot ---\n2026-01-01 00:00:02 c\n--- Device reboot ---\n\
+         2026-01-01 00:00:03 d\n",
+        &[1, 1, 1, 1]
+    )]
+    #[case::separator_before_the_first_entry("--- Device reboot ---\n2026-01-01 00:00:00 a\n", &[1])]
+    #[case::two_separators_in_a_row(
+        "2026-01-01 00:00:00 a\n--- Device reboot ---\n--- Device reboot ---\n2026-01-01 00:00:01 b\n",
+        &[1, 1]
+    )]
+    fn reboot_separators_cut_the_log_into_boot_sessions(
+        #[case] text: &str,
+        #[case] expected_entry_counts: &[usize],
+    ) {
+        let parsed = parse(text);
+        assert_eq!(
+            parsed
+                .boot_sessions()
+                .iter()
+                .map(|session| (session.boot_number, session.entry_count()))
+                .collect::<Vec<_>>(),
+            expected_entry_counts
+                .iter()
+                .enumerate()
+                .map(|(index, count)| (index as u32 + 1, *count))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_boot_session_spans_its_own_anchors() {
+        let parsed = parse(&format!(
+            "2026-01-01 00:00:00 a\n2026-01-01 02:30:00 b\n{REBOOT}2026-01-01 00:05:00 c\n"
+        ));
+        let uptimes: Vec<Option<Duration>> = parsed
+            .boot_sessions()
+            .iter()
+            .map(|session| session.anchored.map(|anchored| anchored.uptime()))
+            .collect();
+        assert_eq!(
+            uptimes,
+            [Some(Duration::minutes(150)), Some(Duration::zero())]
+        );
+    }
+
+    #[rstest]
+    #[case::unexplained("2026-01-01 00:00:10 a\n2026-01-01 00:00:05 b\n", 1)]
+    #[case::explained_by_the_stepping_line_itself(
+        "2026-01-01 00:00:10 a\n2026-01-01 00:00:05 systemd-timedated: Time has been changed\n",
+        0
+    )]
+    #[case::explained_by_a_later_line(
+        "2026-01-01 00:00:10 a\n2026-01-01 00:00:05 b\n2026-01-01 00:00:05 systemd-journald: Time jumped backwards, rotating.\n",
+        0
+    )]
+    #[case::explanation_too_far_away(
+        "2026-01-01 00:00:10 a\n2026-01-01 00:00:05 b\n2026-01-01 00:00:06 c\n\
+         2026-01-01 00:00:07 d\n2026-01-01 00:00:08 e\n\
+         2026-01-01 00:00:09 systemd-journald: Time jumped backwards, rotating.\n",
+        1
+    )]
+    #[case::across_a_reboot(
+        "2026-01-01 00:00:10 a\n--- Device reboot ---\n2026-01-01 00:00:05 b\n",
+        0
+    )]
+    fn a_backwards_step_is_an_anomaly_only_when_nothing_nearby_reports_a_clock_change(
+        #[case] text: &str,
+        #[case] expected_anomalies: usize,
+    ) {
+        assert_eq!(parse(text).order_anomalies().len(), expected_anomalies);
+    }
+
+    #[test]
+    fn an_order_anomaly_names_the_line_it_steps_back_on_and_how_far() {
+        let parsed = parse("2026-01-01 03:12:00 a\nfiller\n2026-01-01 00:00:00 b\n");
+        assert_eq!(
+            parsed.order_anomalies(),
+            [OrderAnomaly {
+                line_number: 3,
+                timestamp_step: -Duration::minutes(192),
+            }]
+        );
+    }
+
+    #[test]
+    fn the_summary_block_ends_the_entries_and_is_read_as_structure() {
+        let parsed = parse(
+            "2026-01-01 00:00:00 a\n2026-01-01 00:00:01 b\n\
+             ----------- Journal summary -----------\nDevice type: nav-devkit-mk2\n\
+             Log entries: 2\n--- Service error count ---\nhal-powerd   -> 7 Errors\n\
+             2026-01-01 00:00:02 not an entry any more\n",
+        );
+
+        assert_eq!(messages(&parsed), ["a", "b"]);
+        assert_eq!(parsed.structural_lines().len(), 6);
+        assert!(
+            parsed
+                .structural_lines()
+                .iter()
+                .all(|line| line.kind == StructuralLineKind::SummaryBlock)
+        );
+        let summary = parsed.summary_block().expect("the block is recognized");
+        assert_eq!(summary.device_type.as_deref(), Some("nav-devkit-mk2"));
+        assert_eq!(
+            summary.service_error_counts,
+            [ServiceCount {
+                service: "hal-powerd".to_owned(),
+                count: 7,
+            }]
+        );
+        assert_eq!(parsed.exporter_entry_count_mismatch(), None);
+    }
+
+    #[test]
+    fn an_exporter_count_the_parse_disagrees_with_is_reported() {
+        let parsed = parse(
+            "2026-01-01 00:00:00 a\n----------- Journal summary -----------\nLog entries: 9\n",
+        );
+        assert_eq!(
+            parsed.exporter_entry_count_mismatch(),
+            Some(EntryCountMismatch {
+                stated_by_exporter: 9,
+                anchored_by_parse: 1,
+            })
+        );
+    }
+
+    /// A summary block swallowing the one line that anchored leaves nothing to
+    /// interpolate from.
+    #[test]
+    fn a_log_whose_only_anchor_the_summary_block_swallowed_fails_to_load() {
+        let error = parse_log(
+            Arc::from(
+                "kernel output\n----------- Journal summary -----------\n2026-01-01 00:00:00 a\n",
+            ),
+            now(),
+        )
+        .expect_err("fails to parse");
+        assert_eq!(
+            error,
+            LogParseError::NoRecognisedFormat {
+                first_line: "kernel output".to_owned(),
+            }
+        );
+    }
+
+    #[test]
     fn the_parse_pool_leaves_at_least_half_the_cores_to_the_rest_of_the_machine() {
         let cores = thread::available_parallelism().map_or(1, NonZeroUsize::get);
         let pool = parse_pool().expect("the pool builds");
@@ -493,9 +1054,9 @@ mod tests {
         );
     }
 
-    /// Covers sort stability across a chunk bound: thousands of entries, many
-    /// of them sharing a second, enough for the parallel sort to split its
-    /// input.
+    /// Covers the structure passes across chunk bounds: thousands of entries,
+    /// reboots, untimestamped runs and a summary block, enough for the chunked
+    /// path to split all of them.
     #[test]
     fn a_chunked_parse_of_a_journald_sized_log_matches_the_one_chunk_parse() {
         let text = log_fixtures::synthetic_journald_log(SyntheticLogSpec {
@@ -516,18 +1077,39 @@ mod tests {
         let chunked = parse_log_in_chunks_of(Arc::from(text.as_str()), now(), chunk_target_bytes);
         assert_eq!(one_chunk, chunked);
 
+        assert!(
+            text.contains("Time jumped backwards"),
+            "the order scan has a step to explain: the fixture corrects its clock mid-session"
+        );
+
         let parsed = chunked.expect("the fixture parses");
-        assert!(parsed.skipped_line_count() > 0, "the fixture has bad lines");
         assert!(parsed.entries().len() > 1_000, "the fixture has entries");
+        assert!(
+            parsed.interpolated_entry_count() > 0,
+            "the fixture has lines without a timestamp"
+        );
+        assert!(
+            parsed.boot_sessions().len() > 1,
+            "the fixture reboots at least once"
+        );
+        assert!(parsed.summary_block().is_some(), "the fixture is exported");
+        assert_eq!(parsed.exporter_entry_count_mismatch(), None);
+        assert_eq!(
+            parsed.order_anomalies(),
+            [],
+            "every backwards step in the fixture is a logged clock change"
+        );
     }
 
     fn any_line() -> impl Strategy<Value = String> {
         prop_oneof![
-            r"\PC*",
-            (0u32..24, 0u32..60, r"\PC*").prop_map(|(hour, minute, rest)| format!(
+            6 => r"\PC*",
+            6 => (0u32..24, 0u32..60, r"\PC*").prop_map(|(hour, minute, rest)| format!(
                 "2026-01-01 {hour:02}:{minute:02}:00 {rest}"
             )),
-            (1u32..29, r"\PC*").prop_map(|(day, rest)| format!("Jan {day:2} 00:00:00 {rest}")),
+            6 => (1u32..29, r"\PC*").prop_map(|(day, rest)| format!("Jan {day:2} 00:00:00 {rest}")),
+            1 => Just("--- Device reboot ---".to_owned()),
+            1 => Just("----------- Journal summary -----------".to_owned()),
         ]
     }
 
@@ -544,18 +1126,45 @@ mod tests {
             };
 
             prop_assert_eq!(parsed.text().as_ref(), text.as_str());
-            let line_count = text.lines().filter(|line| !line.trim().is_empty()).count();
-            prop_assert_eq!(parsed.entries().len() + parsed.skipped_line_count(), line_count);
-            let sorted = parsed.entries().is_sorted_by_key(|entry| entry.timestamp);
-            prop_assert!(sorted, "entries are sorted by timestamp");
+            prop_assert!(parsed.entries().is_sorted_by_key(|entry| entry.line_number));
 
             for entry in parsed.entries() {
-                let start = entry.message_offset as usize;
-                let end = start + entry.message_len as usize;
                 let message = parsed.message(entry);
-                prop_assert_eq!(text.get(start..end), Some(message));
+                prop_assert_eq!(entry.message.in_text(&text), message);
                 prop_assert_eq!(message, message.trim());
             }
+        }
+
+        /// Every non-empty line ends up in exactly one of the parse's counts,
+        /// and every entry in exactly one boot session.
+        #[test]
+        fn every_non_empty_line_is_counted_exactly_once(
+            lines in prop::collection::vec(any_line(), 0..20),
+        ) {
+            let text = lines.join("\n");
+            let Ok(parsed) = parse_log(Arc::from(text.as_str()), now()) else {
+                return Ok(());
+            };
+
+            let non_empty_lines = text.lines().filter(|line| !line.trim().is_empty()).count();
+            prop_assert_eq!(
+                parsed.entries().len()
+                    + parsed.structural_lines().len()
+                    + parsed.unindexable_line_count(),
+                non_empty_lines
+            );
+            prop_assert_eq!(
+                parsed.anchored_entry_count() + parsed.interpolated_entry_count(),
+                parsed.entries().len()
+            );
+
+            let mut next_entry = 0;
+            for session in parsed.boot_sessions() {
+                prop_assert_eq!(session.entry_range.start, next_entry);
+                prop_assert!(session.entry_count() > 0);
+                next_entry = session.entry_range.end;
+            }
+            prop_assert_eq!(next_entry, parsed.entries().len());
         }
 
         /// However badly a log is formed and wherever the chunk bounds fall
@@ -608,7 +1217,7 @@ mod tests {
     fn a_line_without_a_message_yields_an_empty_one() {
         let parsed = parse("2026-01-01 00:00:00\n");
         let entry = parsed.entries().first().copied().expect("one entry");
-        assert_eq!(entry.message_len, 0);
+        assert_eq!(entry.message.len, 0);
         assert_eq!(parsed.message(&entry), "");
     }
 }

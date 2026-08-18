@@ -1,9 +1,9 @@
 //! Journald-shaped log text, generated deterministically for log-parser tests
 //! and benchmarks.
 
-use std::fmt::Write as _;
+use std::fmt::{self, Write as _};
 
-use chrono::{DateTime, Datelike as _, Duration, Timelike as _};
+use chrono::{DateTime, Datelike as _, Duration, Timelike as _, Utc};
 
 /// How much text [`synthetic_journald_log`] writes, and the seed deciding what
 /// it writes.
@@ -30,7 +30,7 @@ const UNITS: [&str; 8] = [
     "gpsd[412]",
     "NetworkManager[588]",
     "connmand[431]",
-    "device-plus[770]",
+    "navsyncd[770]",
     "sshd[1032]",
     "dbus-daemon[401]",
 ];
@@ -41,8 +41,8 @@ const MESSAGES: [&str; 10] = [
     "gnss: fix acquired, 9 satellites in view",
     "can0: bus-off state entered, restarting",
     "Started Network Time Synchronization.",
-    "wlan0: authenticate with 7c:10:c9:2f:aa:01",
-    "device-plus: uploaded 2 recordings, queue empty",
+    "wlan0: authenticate with 02:00:5e:2f:aa:01",
+    "navsyncd: uploaded 2 recordings, queue empty",
     "Failed to start Modem Manager, retrying in 30s",
     "systemd-journald: file /var/log/journal rotated",
     "usb 1-1: new high-speed USB device number 4",
@@ -52,14 +52,14 @@ const MESSAGES: [&str; 10] = [
 const MESSAGE_TAILS: [&str; 6] = [
     " (state=0x1f flags=0x00c0)",
     " [ 0x0000c3f4 0x0000c410 0x0000c44c ]",
-    " uid=0 pid=770 comm=device-plus exe=/usr/bin/device-plus",
+    " uid=0 pid=770 comm=navsyncd exe=/usr/bin/navsyncd",
     " rc=-110 retries=3 backoff=250ms",
     " ttyS1 115200n8 rts/cts off dtr on",
     "",
 ];
 
-/// Lines carrying no timestamp: the journal export's own separators and the
-/// continuation lines of anything that logs more than one line at a time.
+/// Lines carrying no timestamp: blank lines and the continuation lines of
+/// anything that logs more than one line at a time.
 const UNTIMED_LINES: [&str; 4] = [
     "",
     "Stack trace follows:",
@@ -67,8 +67,11 @@ const UNTIMED_LINES: [&str; 4] = [
     "  ... 3 frames omitted ...",
 ];
 
-/// One in this many lines carries no timestamp.
+/// One in this many lines opens a run of lines carrying no timestamp.
 const UNTIMED_LINE_ONE_IN: usize = 50;
+
+/// Lines one such run can be long, covering both runs and lone lines.
+const MAX_UNTIMED_RUN_LINES: usize = 3;
 
 /// One in this many lines is a reboot marker, after which the clock restarts
 /// behind where it left off, as an unsynchronised device's does.
@@ -79,53 +82,158 @@ const REBOOT_MARKER: &str = "--- Device reboot ---";
 /// Seconds a reboot can set the clock back by.
 const MAX_REBOOT_CLOCK_STEP_BACK_SECS: usize = 60;
 
+/// One in this many lines is preceded by a clock correction: the device syncs
+/// against a time server mid-session and journald says so on the next line.
+const CLOCK_ADJUSTMENT_ONE_IN: usize = 1024;
+
+/// Seconds a mid-session clock correction can set the clock back by, always
+/// larger than [`MAX_LINE_INTERVAL_MILLIS`]: every correction steps the clock
+/// backwards.
+const MAX_ADJUSTMENT_CLOCK_STEP_BACK_SECS: usize = 30;
+
+const CLOCK_ADJUSTMENT_UNIT: &str = "systemd-journald";
+
+const CLOCK_ADJUSTMENT_MESSAGE: &str = "Time jumped backwards, rotating.";
+
+const SUMMARY_BLOCK_HEADER: &str = "----------- Journal summary -----------";
+
+const SUMMARY_DEVICE_TYPE: &str = "nav-devkit-mk2";
+
+/// `Fri 29-May-2026 18:48:25 UTC`, how the exporter writes the log's span.
+const SUMMARY_TIME_FORMAT: &str = "%a %d-%b-%Y %H:%M:%S UTC";
+
+/// The head of the per-service tables of a real export.
+const SUMMARY_ERROR_ROWS: [(&str, u32); 3] =
+    [("hal-powerd", 56429), ("ofonod", 1092), ("hal-gnssd", 1027)];
+
+const SUMMARY_WARNING_ROWS: [(&str, u32); 2] = [("core-appd", 29562), ("kernel", 315)];
+
 /// Syslog-short text of about [`SyntheticLogSpec::approx_bytes`], shaped like a
 /// journald export from an embedded device: several lines per second, message
-/// widths from a few characters to a few hundred, lines without a timestamp,
-/// and reboots that send the clock backwards.
+/// widths from a few characters to a few hundred, runs of lines without a
+/// timestamp, reboots that send the clock backwards, mid-session clock
+/// corrections that say so, and the exporter's trailing summary block.
 pub fn synthetic_journald_log(spec: SyntheticLogSpec) -> String {
     let SyntheticLogSpec { approx_bytes, seed } = spec;
     let mut rng = DeterministicRng::new(seed);
     let mut text = String::with_capacity(approx_bytes);
     let mut time =
         DateTime::from_timestamp(FIRST_LINE_UNIX_SECS, 0).unwrap_or(DateTime::UNIX_EPOCH);
+    let mut first_entry_time = None;
+    let mut last_entry_time = time;
+    let mut entry_count: u64 = 0;
 
     while text.len() < approx_bytes {
         if rng.below(REBOOT_ONE_IN) == 0 {
             text.push_str(REBOOT_MARKER);
             text.push('\n');
-            let step_back = rng.below(MAX_REBOOT_CLOCK_STEP_BACK_SECS);
-            time -= Duration::seconds(i64::try_from(step_back).unwrap_or(0));
+            time -= rng.seconds_below(MAX_REBOOT_CLOCK_STEP_BACK_SECS);
             continue;
         }
         if rng.below(UNTIMED_LINE_ONE_IN) == 0 {
-            text.push_str(rng.pick_one_of(&UNTIMED_LINES));
-            text.push('\n');
+            for _ in 0..=rng.below(MAX_UNTIMED_RUN_LINES) {
+                text.push_str(rng.pick_one_of(&UNTIMED_LINES));
+                text.push('\n');
+            }
             continue;
         }
 
-        let step = rng.below(MAX_LINE_INTERVAL_MILLIS);
-        time += Duration::milliseconds(i64::try_from(step).unwrap_or(0));
-        let month = MONTH_ABBREVS
-            .get(time.month0() as usize)
-            .copied()
-            .unwrap_or("Jan");
-        write!(
-            text,
-            "{month} {day:2} {hour:02}:{minute:02}:{second:02} {unit}: {message}{tail}",
-            day = time.day(),
-            hour = time.hour(),
-            minute = time.minute(),
-            second = time.second(),
-            unit = rng.pick_one_of(&UNITS),
-            message = rng.pick_one_of(&MESSAGES),
-            tail = rng.pick_one_of(&MESSAGE_TAILS),
-        )
-        .ok();
-        text.push('\n');
+        let corrected_clock = rng.below(CLOCK_ADJUSTMENT_ONE_IN) == 0;
+        if corrected_clock {
+            time -= rng.seconds_below(MAX_ADJUSTMENT_CLOCK_STEP_BACK_SECS) + Duration::seconds(1);
+        } else {
+            time += Duration::milliseconds(
+                i64::try_from(rng.below(MAX_LINE_INTERVAL_MILLIS)).unwrap_or(0),
+            );
+        }
+
+        let unit = rng.pick_one_of(&UNITS);
+        let message = rng.pick_one_of(&MESSAGES);
+        let tail = rng.pick_one_of(&MESSAGE_TAILS);
+        write_entry(&mut text, time, format_args!("{unit}: {message}{tail}"));
+        if corrected_clock {
+            write_entry(
+                &mut text,
+                time,
+                format_args!("{CLOCK_ADJUSTMENT_UNIT}: {CLOCK_ADJUSTMENT_MESSAGE}"),
+            );
+            entry_count += 1;
+        }
+        first_entry_time.get_or_insert(time);
+        last_entry_time = time;
+        entry_count += 1;
     }
 
+    if let Some(logs_begin_at) = first_entry_time {
+        write_summary_block(
+            &mut text,
+            &SummaryFigures {
+                logs_begin_at,
+                logs_end_at: last_entry_time,
+                entry_count,
+            },
+        );
+    }
     text
+}
+
+/// Writes one syslog-short line: the moment `time` names, then `message`.
+fn write_entry(text: &mut String, time: DateTime<Utc>, message: fmt::Arguments<'_>) {
+    let month = MONTH_ABBREVS
+        .get(time.month0() as usize)
+        .copied()
+        .unwrap_or("Jan");
+    writeln!(
+        text,
+        "{month} {day:2} {hour:02}:{minute:02}:{second:02} {message}",
+        day = time.day(),
+        hour = time.hour(),
+        minute = time.minute(),
+        second = time.second(),
+    )
+    .ok();
+}
+
+/// What the exporter states about the log it wrote.
+struct SummaryFigures {
+    logs_begin_at: DateTime<Utc>,
+    logs_end_at: DateTime<Utc>,
+
+    /// Timestamped lines only, as the exporter counts journal entries.
+    entry_count: u64,
+}
+
+fn write_summary_block(
+    text: &mut String,
+    &SummaryFigures {
+        logs_begin_at,
+        logs_end_at,
+        entry_count,
+    }: &SummaryFigures,
+) {
+    writeln!(text, "{SUMMARY_BLOCK_HEADER}").ok();
+    writeln!(text, "Device type: {SUMMARY_DEVICE_TYPE}").ok();
+    writeln!(
+        text,
+        "Logs begin at: {}",
+        logs_begin_at.format(SUMMARY_TIME_FORMAT)
+    )
+    .ok();
+    writeln!(
+        text,
+        "Logs end at  : {}",
+        logs_end_at.format(SUMMARY_TIME_FORMAT)
+    )
+    .ok();
+    writeln!(text, "Log entries: {entry_count}").ok();
+    writeln!(text, "--- Service error count ---").ok();
+    for (service, count) in SUMMARY_ERROR_ROWS {
+        writeln!(text, "{service:20} -> {count} Errors").ok();
+    }
+    writeln!(text, "--- Service warning count ---").ok();
+    for (service, count) in SUMMARY_WARNING_ROWS {
+        writeln!(text, "{service:20} -> {count} Warnings").ok();
+    }
 }
 
 /// A fixture is the same text on every machine and every run: SplitMix64 is a
@@ -153,6 +261,10 @@ impl DeterministicRng {
             Ok(0) | Err(_) => 0,
             Ok(max) => usize::try_from(drawn % max).unwrap_or(0),
         }
+    }
+
+    fn seconds_below(&mut self, exclusive_max_secs: usize) -> Duration {
+        Duration::seconds(i64::try_from(self.below(exclusive_max_secs)).unwrap_or(0))
     }
 
     fn pick_one_of<'options>(&mut self, options: &[&'options str]) -> &'options str {
@@ -199,5 +311,18 @@ mod tests {
         );
         assert!(lines.iter().any(|line| line.starts_with("  at 0x")));
         assert!(lines.contains(&REBOOT_MARKER));
+        assert!(lines.contains(&SUMMARY_BLOCK_HEADER));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.ends_with(CLOCK_ADJUSTMENT_MESSAGE)),
+            "the clock is corrected mid-session at least once"
+        );
+        assert!(
+            lines
+                .windows(2)
+                .any(|pair| pair.iter().all(|line| line.starts_with("  "))),
+            "untimestamped lines come in runs, not only one at a time"
+        );
     }
 }

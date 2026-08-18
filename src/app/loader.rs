@@ -753,10 +753,11 @@ fn finish_log_load(
             return;
         }
     };
-    let skipped_line_count = parsed.skipped_line_count();
-    if skipped_line_count > 0 {
+    let unindexable_line_count = parsed.unindexable_line_count();
+    if unindexable_line_count > 0 {
+        let noun = gt_fmt::pluralize(unindexable_line_count, "line", "lines");
         log::warn!(
-            "Skipped {skipped_line_count} line(s) of {filename:?} carrying no recognised timestamp"
+            "Dropped {unindexable_line_count} {noun} of {filename:?} that the log index cannot address"
         );
     }
 
@@ -780,6 +781,8 @@ fn finish_log_load(
             None => unassociated.push((entry.timestamp, message)),
         }
     }
+    markers.sort_by_key(|marker| marker.time);
+    unassociated.sort_by_key(|(time, _)| *time);
     let loaded = build_log_loaded_file(filename, markers, source);
     report(0.95, STAGE_PLOTTING);
     // Log files carry no satellite reports, so the utilization series is empty
