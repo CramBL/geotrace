@@ -68,6 +68,7 @@ pub enum QueryMetric {
     Jamming,
     Hp30,
     Kp,
+    Tec,
 }
 
 /// The dimension of a value, checked statically before a run.
@@ -88,8 +89,8 @@ pub enum Quantity {
     Ratio,
     Rate,
     /// Compares only against a bare number, never a count or a ratio: a
-    /// number on a published scale (the geomagnetic Kp scale), dimensionless
-    /// like a count but neither discrete nor a share.
+    /// number on a published scale (the geomagnetic Kp scale, TEC units),
+    /// dimensionless like a count but neither discrete nor a share.
     Index,
     Condition,
 }
@@ -154,7 +155,7 @@ impl QueryMetric {
             | QueryMetric::SlipBeidou
             | QueryMetric::SlipNavic
             | QueryMetric::SlipQzss => Quantity::Rate,
-            QueryMetric::Hp30 | QueryMetric::Kp => Quantity::Index,
+            QueryMetric::Hp30 | QueryMetric::Kp | QueryMetric::Tec => Quantity::Index,
         }
     }
 
@@ -202,6 +203,7 @@ impl QueryMetric {
             QueryMetric::Jamming => Some(MetricKind::Jamming),
             QueryMetric::Hp30 => Some(MetricKind::Hp30),
             QueryMetric::Kp => Some(MetricKind::Kp),
+            QueryMetric::Tec => Some(MetricKind::Tec),
         }
     }
 

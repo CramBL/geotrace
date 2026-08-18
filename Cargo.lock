@@ -2738,6 +2738,7 @@ dependencies = [
  "gt-egui-mipmap",
  "gt-filter",
  "gt-fmt",
+ "gt-ionex",
  "gt-jam",
  "gt-loaded-files",
  "gt-solar",
@@ -2757,6 +2758,7 @@ name = "gt-query"
 version = "0.12.0"
 dependencies = [
  "geotrace-sdk-units",
+ "gt-ionex",
  "gt-jam",
  "gt-solar",
  "gt-types",

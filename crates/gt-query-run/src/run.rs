@@ -83,6 +83,7 @@ impl TrackSnapshot {
             snap_errors,
             jamming,
             geomagnetic,
+            tec,
             ..
         } = inputs;
         let files: &[LoadedFile] = loaded_files.files();
@@ -100,6 +101,7 @@ impl TrackSnapshot {
                         snap_error: snap_errors.get(&track_ref).cloned(),
                         jamming: jamming.get(&track_ref).cloned(),
                         geomagnetic: geomagnetic.points_by_track.get(&track_ref).cloned(),
+                        tec: tec.points_by_track.get(&track_ref).cloned(),
                     },
                 })
             })

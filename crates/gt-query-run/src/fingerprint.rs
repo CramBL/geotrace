@@ -4,7 +4,7 @@ use std::sync::Arc;
 use gt_filter::GlobalFilter;
 use gt_loaded_files::LoadedFilesView;
 use gt_types::{FileIdx, TrackIdx, TrackRef};
-use gt_ui_types::{ArcIdentity, GeomagneticSeries, TrackDataVisibility};
+use gt_ui_types::{ArcIdentity, GeomagneticSeries, TecSeries, TrackDataVisibility};
 
 /// Per-track dense snap error values, one entry per track with a completed
 /// snap run - handed in by the app each frame, shared with its per-run cache
@@ -27,6 +27,9 @@ pub struct RunInputs<'a> {
     /// The same per-fix geomagnetic index points the plot draws, so a query
     /// and the plot line read one resolution of the archive.
     pub geomagnetic: &'a GeomagneticSeries,
+    /// The same per-fix TEC values the plot draws, shared like
+    /// [`Self::geomagnetic`].
+    pub tec: &'a TecSeries,
 }
 
 /// Everything a run's results depend on besides the query text. Results
@@ -49,6 +52,9 @@ pub struct RunFingerprint {
     /// The geomagnetic index values each evaluated track saw, tracked like
     /// [`Self::jamming_days`].
     geomagnetic_days: Vec<Option<ArcIdentity>>,
+    /// The TEC values each evaluated track saw, tracked like
+    /// [`Self::jamming_days`].
+    tec_days: Vec<Option<ArcIdentity>>,
 }
 
 impl RunFingerprint {
@@ -61,6 +67,7 @@ impl RunFingerprint {
             snap_errors,
             jamming,
             geomagnetic,
+            tec,
         } = inputs;
         let mut file_identities = Vec::with_capacity(loaded_files.entries().len());
         let mut tracks = Vec::new();
@@ -94,6 +101,10 @@ impl RunFingerprint {
                     .map(ArcIdentity::of)
             })
             .collect();
+        let tec_days = tracks
+            .iter()
+            .map(|track_ref| tec.points_by_track.get(track_ref).map(ArcIdentity::of))
+            .collect();
         Self {
             file_identities,
             tracks,
@@ -101,6 +112,7 @@ impl RunFingerprint {
             snap_runs,
             jamming_days,
             geomagnetic_days,
+            tec_days,
         }
     }
 
@@ -129,6 +141,7 @@ mod tests {
                 snap_errors: &SnapErrorValues::default(),
                 jamming: &JammingValues::default(),
                 geomagnetic: &GeomagneticSeries::default(),
+                tec: &TecSeries::default(),
             })
         };
 
@@ -157,6 +170,7 @@ mod tests {
                 snap_errors,
                 jamming: &JammingValues::default(),
                 geomagnetic: &GeomagneticSeries::default(),
+                tec: &TecSeries::default(),
             })
         };
 
@@ -185,6 +199,7 @@ mod tests {
             snap_errors: &SnapErrorValues::default(),
             jamming: &JammingValues::default(),
             geomagnetic: &GeomagneticSeries::default(),
+            tec: &TecSeries::default(),
         });
         assert_eq!(
             fingerprint.tracks(),
@@ -208,6 +223,7 @@ mod tests {
                 snap_errors: &SnapErrorValues::default(),
                 jamming: &JammingValues::default(),
                 geomagnetic,
+                tec: &TecSeries::default(),
             })
         };
         let series_of = |hp30: f64| {
@@ -234,6 +250,51 @@ mod tests {
         assert_ne!(
             fingerprint(&archived),
             fingerprint(&series_of(6.0)),
+            "a revised day must gray results out"
+        );
+    }
+
+    /// An archived TEC day reaching an evaluated track changes the input the
+    /// same way an archived geomagnetic day does.
+    #[test]
+    fn fingerprint_tracks_tec_values() {
+        let mut loaded_files = LoadedFiles::new();
+        loaded_files.push(loaded_file(), FileHistory::None);
+        let visibility = TrackDataVisibility::from_loaded(loaded_files.files());
+        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        let fingerprint = |tec: &TecSeries| {
+            RunFingerprint::of(RunInputs {
+                loaded_files: loaded_files.view(),
+                visibility: &visibility,
+                filter: &GlobalFilter::default(),
+                snap_errors: &SnapErrorValues::default(),
+                jamming: &JammingValues::default(),
+                geomagnetic: &GeomagneticSeries::default(),
+                tec,
+            })
+        };
+        let series_of = |tecu: f64| {
+            let mut series = TecSeries::default();
+            series.points_by_track.insert(
+                track,
+                Arc::new(vec![gt_ui_types::TecPoint {
+                    x_secs: 0.0,
+                    tecu: Some(tecu),
+                }]),
+            );
+            series
+        };
+
+        let archived = series_of(42.0);
+        assert_ne!(
+            fingerprint(&TecSeries::default()),
+            fingerprint(&archived),
+            "an archived day changes the input"
+        );
+        assert_eq!(fingerprint(&archived), fingerprint(&archived), "stable");
+        assert_ne!(
+            fingerprint(&archived),
+            fingerprint(&series_of(43.0)),
             "a revised day must gray results out"
         );
     }

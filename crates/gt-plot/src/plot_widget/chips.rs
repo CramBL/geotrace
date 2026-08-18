@@ -72,7 +72,8 @@ impl MetricKindUi for MetricKind {
             | Self::SnapError
             | Self::Jamming
             | Self::Hp30
-            | Self::Kp => None,
+            | Self::Kp
+            | Self::Tec => None,
         }
     }
 
@@ -134,14 +135,14 @@ impl MetricKindUi for MetricKind {
             Self::Jamming => "Aircraft interference (%)",
             Self::Hp30 => "Hp30 index",
             Self::Kp => "Kp index",
+            Self::Tec => "TEC (TECU)",
         }
     }
 
     fn hover_text(self) -> Option<&'static str> {
-        if self == Self::Jamming {
-            return Some(gt_jam::text::PLOT_HOVER.as_str());
-        }
         match self {
+            Self::Jamming => Some(gt_jam::text::PLOT_HOVER.as_str()),
+            Self::Tec => Some(gt_ionex::text::PLOT_HOVER.as_str()),
             Self::Hp30 => Some(GeomagneticIndex::Hp30.plot_hover_text()),
             Self::Kp => Some(GeomagneticIndex::Kp.plot_hover_text()),
             Self::Eph => Some(
@@ -391,6 +392,7 @@ const BASIC_GROUPS: [&[MetricKind]; 2] = [
         MetricKind::Jamming,
         MetricKind::Hp30,
         MetricKind::Kp,
+        MetricKind::Tec,
         MetricKind::HeadingDeg,
         MetricKind::ClockDeltaMs,
     ],
@@ -444,6 +446,7 @@ pub(super) struct MetricAvailability {
     pub(super) jamming: bool,
     pub(super) hp30: bool,
     pub(super) kp: bool,
+    pub(super) tec: bool,
 }
 
 impl MetricAvailability {
@@ -461,6 +464,9 @@ impl MetricAvailability {
                 Some("No Hp30 values are archived for these tracks' days")
             }
             MetricKind::Kp if !self.kp => Some("No Kp values are archived for these tracks' days"),
+            MetricKind::Tec if !self.tec => {
+                Some("No TEC values are archived for these tracks' days")
+            }
             _ => None,
         }
     }

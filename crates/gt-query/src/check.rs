@@ -299,7 +299,7 @@ enum Kind {
     Count,
     /// A percentage-denominated share (satellite utilization).
     Ratio,
-    /// A number on a published scale (the geomagnetic indices).
+    /// A number on a published scale (the geomagnetic indices, TEC units).
     Index,
 }
 

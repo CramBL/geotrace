@@ -13,6 +13,7 @@ pub mod sky_glyphs;
 pub mod sky_trails_request;
 pub mod snap_error_series;
 pub mod snapped_tracks;
+pub mod tec_series;
 pub mod visibility;
 
 pub use arc_identity::ArcIdentity;
@@ -34,6 +35,7 @@ pub use snapped_tracks::{
     SnapCosting, SnappedEdgeInfo, SnappedEdgeSpan, SnappedSegment, SnappedTrackGeometry,
     SnappedTracks, WhiskerAnchor,
 };
+pub use tec_series::{TecPoint, TecSeries};
 pub use visibility::{
     FileVisibility, MapScope, PointVisibility, TrackDataVisibility, TrackVisibility,
 };

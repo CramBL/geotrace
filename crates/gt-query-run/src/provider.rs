@@ -6,7 +6,7 @@ use gt_analysis::satellite_utilization::{self, UtilPerPoint};
 use gt_query::{ChannelSamples, ChannelTimeline, MetricProvider, Params, QueryMetric, Unit};
 use gt_types::satellites::Constellation;
 use gt_types::{Channel, NavPoint};
-use gt_ui_types::GeomagneticPoint;
+use gt_ui_types::{GeomagneticPoint, TecPoint};
 use uom::si::angle::degree;
 use uom::si::velocity::meter_per_second;
 
@@ -19,6 +19,7 @@ pub(crate) struct CapturedTrackValues {
     pub(crate) snap_error: Option<Arc<Vec<Option<f64>>>>,
     pub(crate) jamming: Option<Arc<Vec<Option<f64>>>>,
     pub(crate) geomagnetic: Option<Arc<Vec<GeomagneticPoint>>>,
+    pub(crate) tec: Option<Arc<Vec<TecPoint>>>,
 }
 
 /// Owned per-track inputs for [`TrackProvider`], computed once per run.
@@ -35,6 +36,8 @@ pub struct TrackQueryData {
     /// Dense per-point geomagnetic index values at spawn time, one entry per
     /// fix carrying both indices.
     geomagnetic: Option<Arc<Vec<GeomagneticPoint>>>,
+    /// Dense per-point TEC values at spawn time.
+    tec: Option<Arc<Vec<TecPoint>>>,
     /// Index of the first point inside the global time filter - the offset
     /// between slice-relative evaluation indices and absolute point indices.
     slice_start: usize,
@@ -77,6 +80,7 @@ impl TrackQueryData {
         Self {
             jamming: captured.jamming,
             geomagnetic: captured.geomagnetic,
+            tec: captured.tec,
             util,
             slip,
             snap_error: captured.snap_error,
@@ -109,6 +113,9 @@ pub struct TrackProvider<'a> {
     /// Dense per-point geomagnetic index values, missing under the same
     /// conditions as [`Self::jamming`].
     geomagnetic: Option<&'a [GeomagneticPoint]>,
+    /// Dense per-point TEC values, missing under the same conditions as
+    /// [`Self::jamming`].
+    tec: Option<&'a [TecPoint]>,
 }
 
 impl<'a> TrackProvider<'a> {
@@ -127,6 +134,7 @@ impl<'a> TrackProvider<'a> {
             snap_error: data.and_then(|d| d.snap_error.as_deref().map(Vec::as_slice)),
             jamming: data.and_then(|d| d.jamming.as_deref().map(Vec::as_slice)),
             geomagnetic: data.and_then(|d| d.geomagnetic.as_deref().map(Vec::as_slice)),
+            tec: data.and_then(|d| d.tec.as_deref().map(Vec::as_slice)),
         }
     }
 
@@ -284,6 +292,10 @@ impl MetricProvider for TrackProvider<'_> {
                 .map(|percent| percent * Unit::PERCENT.to_base()),
             QueryMetric::Hp30 => self.geomagnetic_value(index, |point| point.hp30),
             QueryMetric::Kp => self.geomagnetic_value(index, |point| point.kp),
+            QueryMetric::Tec => self
+                .tec
+                .and_then(|points| points.get(index))
+                .and_then(|point| point.tecu),
         }
     }
 
@@ -417,6 +429,18 @@ mod tests {
                     kp: None,
                 },
             ])),
+            // Point 0 sits under an archived storm-day map. Point 1's day is
+            // not archived.
+            tec: Some(Arc::new(vec![
+                TecPoint {
+                    x_secs: 0.0,
+                    tecu: Some(112.5),
+                },
+                TecPoint {
+                    x_secs: 1.0,
+                    tecu: None,
+                },
+            ])),
             util: Some(util),
             slip: Some(slip),
             // Point 0 snapped with a 3.5 m error; point 1 carries no value
@@ -445,6 +469,7 @@ mod tests {
             (QueryMetric::Jamming, 0, Some(0.1)), // 10 % as a fraction
             (QueryMetric::Hp30, 0, Some(11.333)), // the published index value
             (QueryMetric::Kp, 0, Some(9.0)),
+            (QueryMetric::Tec, 0, Some(112.5)), // already TEC units
             // The reportless point: counts and derived series are missing,
             // never zero.
             (QueryMetric::Velocity, 1, None),
@@ -456,6 +481,7 @@ mod tests {
             (QueryMetric::Jamming, 1, None),
             (QueryMetric::Hp30, 1, None),
             (QueryMetric::Kp, 1, None),
+            (QueryMetric::Tec, 1, None),
         ];
         for (metric, index, expected) in cases {
             let value = provider.value(metric, index);
@@ -528,6 +554,51 @@ mod tests {
         assert_eq!(
             output.summary.match_count, 1,
             "only the fix under the storm"
+        );
+    }
+
+    /// The correlation query the TEC metric exists for: a fix under a storm
+    /// ionosphere that also lost lock. Only the fix under the enhanced TEC
+    /// matches, so the metric is what narrows the result.
+    #[test]
+    fn a_tec_and_slip_correlation_checks_and_runs_end_to_end() {
+        let points = test_points();
+        let data = TrackQueryData {
+            tec: Some(Arc::new(vec![
+                TecPoint {
+                    x_secs: 0.0,
+                    tecu: Some(112.5),
+                },
+                TecPoint {
+                    x_secs: 1.0,
+                    tecu: Some(18.4),
+                },
+            ])),
+            slip: Some(SlipRatePerPoint {
+                all: vec![Some(3.0), Some(3.0)],
+                ..SlipRatePerPoint::default()
+            }),
+            ..TrackQueryData::default()
+        };
+        let schema = schema_from_files(&[]);
+        let query = check_text(
+            "points | with mask 15 deg, snr_drop 10, slip_window 5 min | \
+             where tec > 100 and slip_all > 2 per min",
+            &schema,
+        )
+        .expect("TEC compares against a bare number");
+
+        let provider = TrackProvider::new(&points, &[], Some(&data));
+        let output = gt_query::run(
+            &query,
+            &[gt_query::TrackInput {
+                track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+                provider: &provider,
+            }],
+        );
+        assert_eq!(
+            output.summary.match_count, 1,
+            "only the fix under the enhanced ionosphere"
         );
     }
 

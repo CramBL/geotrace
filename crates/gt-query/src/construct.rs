@@ -474,6 +474,11 @@ fn metric_docs(metric: QueryMetric) -> (&'static str, &'static str, &'static [&'
             gt_solar::GeomagneticIndex::Kp.query_doc(),
             &["where kp >= 5"],
         ),
+        QueryMetric::Tec => (
+            "ionospheric total electron content over the fix",
+            gt_ionex::text::QUERY_DOC.as_str(),
+            &["where tec > 100"],
+        ),
     }
 }
 

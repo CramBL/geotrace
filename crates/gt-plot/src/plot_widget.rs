@@ -10,6 +10,7 @@ mod levels;
 mod lines;
 mod snap_error;
 mod style;
+mod tec;
 
 pub use chips::{ChannelVisibility, MetricVisibility};
 pub use legend::{LEGEND_DOCK_OFFSET, legend_is_docked};
@@ -20,8 +21,11 @@ use geomagnetic::{GeomagneticPlotCache, geomagnetic_availability, sync_geomagnet
 use jamming::{JammingPlotCache, jamming_available, sync_jamming_cache};
 use legend::show_file_legend_overlay;
 use levels::{LineViewport, TrackLevelCache, budget_cap, compute_level_cache, single_target};
-use lines::{NearestHoverLabel, add_series_lines, add_util_anomalies, show_nearest_hover_label};
+use lines::{
+    NearestHoverLabel, PerFixCaches, add_series_lines, add_util_anomalies, show_nearest_hover_label,
+};
 use snap_error::{SnapErrorPlotCache, snap_error_available, sync_snap_error_cache};
+use tec::{TecPlotCache, sync_tec_cache, tec_available};
 
 use crate::AnalysisConfig;
 use crate::series::{PlacedTrackSeries, build_all_series};
@@ -34,7 +38,8 @@ use gt_loaded_files::RecordingNames;
 use gt_types::satellites::ConstellationSet;
 use gt_types::{FileIdx, LoadedFile, MetricKind, PointIdx, TrackIdx, TrackRef};
 use gt_ui_types::{
-    GeomagneticSeries, HighlightScope, JammingSeries, SnapErrorSeries, TrackDataVisibility,
+    GeomagneticSeries, HighlightScope, JammingSeries, SnapErrorSeries, TecSeries,
+    TrackDataVisibility,
 };
 use rayon::prelude::*;
 use std::cell::Cell;
@@ -171,6 +176,9 @@ pub struct PlotState {
     /// Per-track geomagnetic index lines, rebuilt when the app's series
     /// `Arc` changes (see [`sync_geomagnetic_cache`]).
     geomagnetic_cache: HashMap<TrackRef, GeomagneticPlotCache>,
+    /// Per-track TEC lines, rebuilt when the app's series `Arc` changes (see
+    /// [`sync_tec_cache`]).
+    tec_cache: HashMap<TrackRef, TecPlotCache>,
     /// User-chosen component colors, keyed by channel name: one optional
     /// override per component, `None` = the derived hue. Edited through the
     /// chip's right-click menu; persisted with the plot settings.
@@ -210,6 +218,7 @@ impl Default for PlotState {
             snap_error_cache: HashMap::new(),
             jamming_cache: HashMap::new(),
             geomagnetic_cache: HashMap::new(),
+            tec_cache: HashMap::new(),
             channel_component_colors: HashMap::new(),
             plot_cursor_snapped: false,
         }
@@ -311,6 +320,9 @@ pub fn show_track_plot(
     // Geomagnetic index values per fix, resolved by the app from the archive
     // (see `gt_ui_types::GeomagneticSeries`).
     geomagnetic: &GeomagneticSeries,
+    // TEC per fix, resolved by the app from the archive
+    // (see `gt_ui_types::TecSeries`).
+    tec: &TecSeries,
     state: &mut PlotState,
 ) {
     // Computed once, shared by visible_count, the full-x-range loop and the
@@ -391,6 +403,15 @@ pub fn show_track_plot(
             .map(|(entry, _)| entry.track_ref()),
         geomagnetic,
     );
+    let tec_available = tec_available(
+        state
+            .series_cache
+            .iter()
+            .zip(&visible)
+            .filter(|&(_, &visible)| visible)
+            .map(|(entry, _)| entry.track_ref()),
+        tec,
+    );
 
     // Draw the per-metric filter row before the plot so it consumes vertical
     // space first.  `ui.available_height()` below then gives the remainder.
@@ -411,6 +432,7 @@ pub fn show_track_plot(
             jamming: jamming_available,
             hp30: geomagnetic_available.hp30,
             kp: geomagnetic_available.kp,
+            tec: tec_available,
         },
     );
 
@@ -449,6 +471,7 @@ pub fn show_track_plot(
     sync_snap_error_cache(&mut state.snap_error_cache, snap_error);
     sync_jamming_cache(&mut state.jamming_cache, jamming);
     sync_geomagnetic_cache(&mut state.geomagnetic_cache, geomagnetic);
+    sync_tec_cache(&mut state.tec_cache, tec);
 
     // Split borrows: extract immutable refs to the caches and metric visibility
     // before the closure so the borrow checker can see they are disjoint from
@@ -458,6 +481,7 @@ pub fn show_track_plot(
     let snap_error_cache = &state.snap_error_cache;
     let jamming_cache = &state.jamming_cache;
     let geomagnetic_cache = &state.geomagnetic_cache;
+    let tec_cache = &state.tec_cache;
     let channel_component_colors = &state.channel_component_colors;
     let level_cache = &state.level_cache;
     let last_computed_bounds = state.last_computed_bounds;
@@ -636,10 +660,13 @@ pub fn show_track_plot(
                 },
                 line_width,
                 dark_mode,
-                snap_error_cache.get(&series.track_ref()),
+                PerFixCaches {
+                    snap_error: snap_error_cache.get(&series.track_ref()),
+                    jamming: jamming_cache.get(&series.track_ref()),
+                    geomagnetic: geomagnetic_cache.get(&series.track_ref()),
+                    tec: tec_cache.get(&series.track_ref()),
+                },
                 series_pointer,
-                jamming_cache.get(&series.track_ref()),
-                geomagnetic_cache.get(&series.track_ref()),
                 LineViewport {
                     x_min: eff_x_min,
                     x_max: eff_x_max,

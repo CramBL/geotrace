@@ -9,7 +9,7 @@ use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::time_types::GpsTime;
 use gt_types::tpv::TimePositionVelocity;
 use gt_types::{FileIdx, FileSource, LoadedFile, NavPoint, TrackIdx, TrackRef};
-use gt_ui_types::{GeomagneticPoint, GeomagneticSeries};
+use gt_ui_types::{GeomagneticPoint, GeomagneticSeries, TecPoint, TecSeries};
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Velocity};
 use uom::si::velocity::kilometer_per_hour;
@@ -112,13 +112,14 @@ impl PointSpec {
 
 /// One synthetic track: its points, plus the per-track series a query can read
 /// that do not live in the recording (snap error, interference, geomagnetic
-/// indices).
+/// indices, TEC).
 #[derive(Debug, Clone, Default)]
 pub struct TrackSpec {
     points: Vec<PointSpec>,
     snap_error: Option<Vec<Option<f64>>>,
     jamming: Option<Vec<Option<f64>>>,
     geomagnetic: Option<Vec<GeomagneticPoint>>,
+    tec: Option<Vec<TecPoint>>,
 }
 
 impl TrackSpec {
@@ -161,6 +162,12 @@ impl TrackSpec {
     /// One geomagnetic index point per fix, as the app hands them to a run.
     pub fn geomagnetic(mut self, points: Vec<GeomagneticPoint>) -> Self {
         self.geomagnetic = Some(points);
+        self
+    }
+
+    /// One TEC point per fix, as the app hands them to a run.
+    pub fn tec(mut self, points: Vec<TecPoint>) -> Self {
+        self.tec = Some(points);
         self
     }
 }
@@ -230,6 +237,7 @@ pub struct Dataset {
     snap_errors: SnapErrorValues,
     jamming: JammingValues,
     geomagnetic: GeomagneticSeries,
+    tec: TecSeries,
 }
 
 impl Dataset {
@@ -239,6 +247,7 @@ impl Dataset {
         let mut snap_errors = SnapErrorValues::new();
         let mut jamming = JammingValues::new();
         let mut geomagnetic = GeomagneticSeries::default();
+        let mut tec = TecSeries::default();
         for (fi, spec) in specs.iter().enumerate() {
             files.push(spec.build(), FileHistory::None);
             for (ti, track_spec) in spec.tracks.iter().enumerate() {
@@ -254,6 +263,10 @@ impl Dataset {
                         .points_by_track
                         .insert(track_ref, Arc::new(points.clone()));
                 }
+                if let Some(points) = &track_spec.tec {
+                    tec.points_by_track
+                        .insert(track_ref, Arc::new(points.clone()));
+                }
             }
         }
         Self {
@@ -261,6 +274,7 @@ impl Dataset {
             snap_errors,
             jamming,
             geomagnetic,
+            tec,
         }
     }
 
@@ -289,6 +303,10 @@ impl Dataset {
 
     pub fn geomagnetic(&self) -> &GeomagneticSeries {
         &self.geomagnetic
+    }
+
+    pub fn tec(&self) -> &TecSeries {
+        &self.tec
     }
 
     /// Every track of every file, in tree order.
@@ -378,6 +396,16 @@ mod tests {
                         hp30: Some(6.333),
                         kp: Some(5.0),
                     },
+                ])
+                .tec(vec![
+                    TecPoint {
+                        x_secs: EPOCH_SECS as f64,
+                        tecu: Some(112.5),
+                    },
+                    TecPoint {
+                        x_secs: EPOCH_SECS as f64 + 1.0,
+                        tecu: Some(110.0),
+                    },
                 ]),
         ]);
         assert!(dataset.snap_errors().contains_key(&track(0, 0)));
@@ -389,6 +417,7 @@ mod tests {
                 .points_by_track
                 .contains_key(&track(0, 1))
         );
+        assert!(dataset.tec().points_by_track.contains_key(&track(0, 1)));
         assert_eq!(dataset.track_refs(), [track(0, 0), track(0, 1)]);
     }
 }

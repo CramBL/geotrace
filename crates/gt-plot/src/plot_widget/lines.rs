@@ -28,6 +28,7 @@ use super::snap_error::{
 use super::style::{
     channel_line_color, effective_component_color, file_line_style, metric_line_color,
 };
+use super::tec::{TecHover, TecPlotCache, TecTrack, add_tec_series};
 use crate::series::{PlacedTrackSeries, TrackSeries};
 
 /// The sub-slice of `items` - sorted ascending by `key` - whose key lies in
@@ -44,6 +45,10 @@ pub(super) fn visible_by_x<T>(
     let end = items.partition_point(|it| key(it) <= x_max);
     items.get(start..end).unwrap_or_default()
 }
+
+/// Format of the time a per-fix hover label reports, as the archived sources
+/// write their own epochs.
+pub(super) const HOVER_INSTANT_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
 
 /// Pixel radius within which the pointer is considered to be hovering a
 /// masked-satellite anomaly marker.
@@ -101,12 +106,10 @@ pub(super) fn add_series_lines<'a>(
     sections: SectionGates,
     line_width: f32,
     dark_mode: bool,
-    snap_error: Option<&'a SnapErrorPlotCache>,
+    per_fix: PerFixCaches<'a>,
     // Where the pointer is, for the per-fix lines that hit-test their own
-    // fixes: snap error, interference, and the geomagnetic indices.
+    // fixes: snap error, interference, the geomagnetic indices and TEC.
     pointer: Option<egui::Pos2>,
-    jamming: Option<&'a JammingPlotCache>,
-    geomagnetic: Option<&'a GeomagneticPlotCache>,
     viewport: LineViewport,
     nearest: &mut NearestHoverLabel,
 ) {
@@ -161,73 +164,25 @@ pub(super) fn add_series_lines<'a>(
         );
     }
 
-    if metric_vis.field(MetricKind::SnapError)
-        && let Some(snap_cache) = snap_error
-    {
-        let is_hovered = hovered_chip == Some(&HoveredChip::Metric(MetricKind::SnapError));
-        let stroke = stroke_with_hover_treatment(
-            metric_line_color(MetricKind::SnapError, placed.fi, dark_mode),
-            is_hovered,
-        );
-        add_snap_error_series(
-            plot_ui,
-            &prefix,
+    add_per_fix_lines(
+        plot_ui,
+        PerFixContext {
+            prefix: &prefix,
             track_label,
-            snap_cache,
-            viewport,
             pointer,
-            nearest,
-            SnapErrorStyle { stroke, dark_mode },
-        );
-    }
-
-    if metric_vis.field(MetricKind::Jamming)
-        && let Some(jamming_cache) = jamming
-    {
-        let is_hovered = hovered_chip == Some(&HoveredChip::Metric(MetricKind::Jamming));
-        let stroke = stroke_with_hover_treatment(
-            metric_line_color(MetricKind::Jamming, placed.fi, dark_mode),
-            is_hovered,
-        );
-        add_jamming_series(
-            plot_ui,
-            &prefix,
-            JammingTrack {
-                track_label,
-                pointer,
-            },
-            jamming_cache,
             viewport,
-            stroke,
-            nearest,
-        );
-    }
-
-    if let Some(geomagnetic_cache) = geomagnetic {
-        for line in geomagnetic_cache.lines() {
-            let kind = line.metric_kind();
-            if !metric_vis.field(kind) {
-                continue;
-            }
-            let is_hovered = hovered_chip == Some(&HoveredChip::Metric(kind));
-            let stroke = stroke_with_hover_treatment(
+            dark_mode,
+        },
+        per_fix,
+        metric_vis,
+        |kind| {
+            stroke_with_hover_treatment(
                 metric_line_color(kind, placed.fi, dark_mode),
-                is_hovered,
-            );
-            add_geomagnetic_series(
-                plot_ui,
-                &prefix,
-                GeomagneticTrack {
-                    track_label,
-                    pointer,
-                },
-                line,
-                viewport,
-                stroke,
-                nearest,
-            );
-        }
-    }
+                hovered_chip == Some(&HoveredChip::Metric(kind)),
+            )
+        },
+        nearest,
+    );
 
     // Channel lines, one per component, gated like the chips: the whole
     // section while collapsed, then the per-channel toggle.
@@ -272,6 +227,109 @@ pub(super) fn add_series_lines<'a>(
     }
 }
 
+/// The per-fix series of one track: values the app resolved outside the
+/// recording, each with its own cache.
+#[derive(Clone, Copy)]
+pub(super) struct PerFixCaches<'a> {
+    pub(super) snap_error: Option<&'a SnapErrorPlotCache>,
+    pub(super) jamming: Option<&'a JammingPlotCache>,
+    pub(super) geomagnetic: Option<&'a GeomagneticPlotCache>,
+    pub(super) tec: Option<&'a TecPlotCache>,
+}
+
+/// What every per-fix line of one track needs besides its own values.
+#[derive(Clone, Copy)]
+struct PerFixContext<'a> {
+    /// Line-name prefix naming the recording, empty while a single track is
+    /// visible.
+    prefix: &'a str,
+    track_label: Option<&'a str>,
+    pointer: Option<egui::Pos2>,
+    viewport: LineViewport,
+    dark_mode: bool,
+}
+
+/// Draw the lines whose values are resolved per fix outside the recording,
+/// each gated on its own chip and hit-testing its own fixes for the hover.
+fn add_per_fix_lines<'a>(
+    plot_ui: &mut egui_plot::PlotUi<'a>,
+    context: PerFixContext<'_>,
+    caches: PerFixCaches<'a>,
+    metric_vis: &MetricVisibility,
+    stroke_of: impl Fn(MetricKind) -> LineStroke,
+    nearest: &mut NearestHoverLabel,
+) {
+    if metric_vis.field(MetricKind::SnapError)
+        && let Some(cache) = caches.snap_error
+    {
+        add_snap_error_series(
+            plot_ui,
+            context.prefix,
+            context.track_label,
+            cache,
+            context.viewport,
+            context.pointer,
+            nearest,
+            SnapErrorStyle {
+                stroke: stroke_of(MetricKind::SnapError),
+                dark_mode: context.dark_mode,
+            },
+        );
+    }
+
+    if metric_vis.field(MetricKind::Jamming)
+        && let Some(cache) = caches.jamming
+    {
+        add_jamming_series(
+            plot_ui,
+            context.prefix,
+            JammingTrack {
+                track_label: context.track_label,
+                pointer: context.pointer,
+            },
+            cache,
+            context.viewport,
+            stroke_of(MetricKind::Jamming),
+            nearest,
+        );
+    }
+
+    for line in caches.geomagnetic.iter().flat_map(|cache| cache.lines()) {
+        if !metric_vis.field(line.metric_kind()) {
+            continue;
+        }
+        add_geomagnetic_series(
+            plot_ui,
+            context.prefix,
+            GeomagneticTrack {
+                track_label: context.track_label,
+                pointer: context.pointer,
+            },
+            line,
+            context.viewport,
+            stroke_of(line.metric_kind()),
+            nearest,
+        );
+    }
+
+    if metric_vis.field(MetricKind::Tec)
+        && let Some(cache) = caches.tec
+    {
+        add_tec_series(
+            plot_ui,
+            context.prefix,
+            TecTrack {
+                track_label: context.track_label,
+                pointer: context.pointer,
+            },
+            cache,
+            context.viewport,
+            stroke_of(MetricKind::Tec),
+            nearest,
+        );
+    }
+}
+
 /// One custom hover label, for the plot items whose message egui_plot's own
 /// label cannot carry.
 pub(super) enum PlotHoverLabel {
@@ -279,6 +337,7 @@ pub(super) enum PlotHoverLabel {
     SnapError(SnapErrorHover),
     Jamming(JammingHover),
     Geomagnetic(GeomagneticHover),
+    Tec(TecHover),
     ClockExcursion(ClockExcursionHover),
 }
 
@@ -289,6 +348,7 @@ impl PlotHoverLabel {
             Self::SnapError(hover) => hover.show(ui),
             Self::Jamming(hover) => hover.show(ui),
             Self::Geomagnetic(hover) => hover.show(ui),
+            Self::Tec(hover) => hover.show(ui),
             Self::ClockExcursion(hover) => hover.show(ui),
         }
     }

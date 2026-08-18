@@ -42,6 +42,8 @@ pub(super) struct MainBehavior<'a> {
     pub(super) jamming_series: &'a gt_ui_types::JammingSeries,
     /// Geomagnetic index values per fix, resolved from the archive.
     pub(super) geomagnetic_series: &'a gt_ui_types::GeomagneticSeries,
+    /// TEC per fix, resolved from the archive.
+    pub(super) tec_series: &'a gt_ui_types::TecSeries,
 }
 
 impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
@@ -127,6 +129,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     self.snap_error,
                     self.jamming_series,
                     self.geomagnetic_series,
+                    self.tec_series,
                     &mut s.plot_state,
                 );
             }

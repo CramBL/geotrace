@@ -18,13 +18,9 @@ use gt_ui_types::{ArcIdentity, GeomagneticPoint, GeomagneticSeries};
 use super::chips::MetricKindUi;
 use super::levels::LineViewport;
 use super::lines::{
-    HOVER_RADIUS_PX, LineStroke, NearestHoverLabel, PlotHoverLabel, add_line, line_runs,
-    nearest_fix_under_pointer, visible_by_x,
+    HOVER_INSTANT_FORMAT, HOVER_RADIUS_PX, LineStroke, NearestHoverLabel, PlotHoverLabel, add_line,
+    line_runs, nearest_fix_under_pointer, visible_by_x,
 };
-
-/// Format of the period start in the hover label, as the index service writes
-/// its period times.
-const PERIOD_START_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
 
 /// One track's index lines, rebuilt only when its source changes.
 #[derive(Debug, Clone)]
@@ -165,7 +161,7 @@ impl GeomagneticHover {
     ) -> Self {
         let period_start = DateTime::from_timestamp(point.x as i64, 0)
             .and_then(|time| index.period_start_covering(time))
-            .map(|start| start.format(PERIOD_START_FORMAT).to_string())
+            .map(|start| start.format(HOVER_INSTANT_FORMAT).to_string())
             .unwrap_or_default();
         Self {
             track: track_label.map(ToOwned::to_owned),
