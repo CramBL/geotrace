@@ -446,6 +446,10 @@ impl App {
             let shared = self.shared.borrow();
             self.geomagnetic_indices.plot_series(&shared.loaded_files)
         };
+        let tec_series = {
+            let shared = self.shared.borrow();
+            self.tec_maps.plot_series(&shared.loaded_files)
+        };
 
         CentralPanel::default().show(ui, |ui| {
             let panel_rect = ui.max_rect();
@@ -485,6 +489,7 @@ impl App {
                     snap_error: &snap_error,
                     jamming_series: &jamming_series,
                     geomagnetic_series: &geomagnetic_series,
+                    tec_series: &tec_series,
                     jamming_dataset,
                     jamming_day,
                     jamming_empty,
@@ -566,6 +571,7 @@ impl App {
                 RunInputs {
                     jamming: &jamming_query_values,
                     geomagnetic: &geomagnetic_series,
+                    tec: &tec_series,
                     loaded_files: loaded_files.view(),
                     visibility: tree.visibility(),
                     filter,

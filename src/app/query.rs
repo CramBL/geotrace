@@ -1838,7 +1838,12 @@ fn format_value(metric: QueryMetric, value: Option<f64>) -> String {
         Quantity::Length => format!("{v:.1} m"),
         Quantity::Duration => format!("{v:.3} s"),
         Quantity::Count => format!("{v:.0}"),
-        Quantity::Index => format!("{v}"),
+        // Trimmed to three decimals: an interpolated TEC value would
+        // otherwise print a full float expansion.
+        Quantity::Index => format!("{v:.3}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_owned(),
         Quantity::Ratio => format!("{:.0} %", v / Unit::PERCENT.to_base()),
         Quantity::Rate => format!("{v:.2}/min"),
         Quantity::Condition => EM_DASH.to_owned(),
@@ -2125,6 +2130,11 @@ mod tests {
         assert_eq!(format_value(QueryMetric::UtilGps, Some(0.5)), "50 %");
         assert_eq!(format_value(QueryMetric::SlipAll, Some(2.0)), "2.00/min");
         assert_eq!(format_value(QueryMetric::Hp30, Some(11.333)), "11.333");
+        assert_eq!(format_value(QueryMetric::Kp, Some(5.0)), "5");
+        assert_eq!(
+            format_value(QueryMetric::Tec, Some(112.483_333_333_333_33)),
+            "112.483"
+        );
         assert_eq!(format_value(QueryMetric::Eph, None), EM_DASH);
     }
 

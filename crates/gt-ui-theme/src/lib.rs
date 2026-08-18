@@ -567,6 +567,7 @@ pub const fn metric_themed_color(kind: gt_types::MetricKind) -> ThemedColor {
         // constellation's seen/fix lines are: Hp30 is the brighter of the two.
         M::Hp30 => ((205, 245, 95), (92, 118, 20)), // chartreuse
         M::Kp => ((150, 190, 45), (60, 80, 8)),     // olive
+        M::Tec => ((140, 180, 255), (58, 92, 190)), // periwinkle
     };
     ThemedColor::new(
         Color32::from_rgb(dark.0, dark.1, dark.2),

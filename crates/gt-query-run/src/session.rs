@@ -277,7 +277,7 @@ mod tests {
     use gt_filter::GlobalFilter;
     use gt_loaded_files::{FileHistory, LoadedFiles};
     use gt_types::{FileIdx, TrackIdx, TrackRef};
-    use gt_ui_types::{GeomagneticSeries, TrackDataVisibility};
+    use gt_ui_types::{GeomagneticSeries, TecSeries, TrackDataVisibility};
     use rstest::rstest;
 
     use super::*;
@@ -294,6 +294,7 @@ mod tests {
         snap_errors: SnapErrorValues,
         jamming: JammingValues,
         geomagnetic: GeomagneticSeries,
+        tec: TecSeries,
     }
 
     impl LoadedState {
@@ -308,6 +309,7 @@ mod tests {
                 snap_errors: SnapErrorValues::default(),
                 jamming: JammingValues::default(),
                 geomagnetic: GeomagneticSeries::default(),
+                tec: TecSeries::default(),
             }
         }
 
@@ -319,6 +321,7 @@ mod tests {
                 snap_errors: &self.snap_errors,
                 jamming: &self.jamming,
                 geomagnetic: &self.geomagnetic,
+                tec: &self.tec,
             }
         }
 

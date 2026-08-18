@@ -19,6 +19,7 @@ gt-analysis = { path = "../gt-analysis" }
 gt-egui-mipmap = { path = "../gt-egui-mipmap" }
 gt-filter = { path = "../gt-filter" }
 gt-fmt = { path = "../gt-fmt" }
+gt-ionex = { path = "../gt-ionex" }
 gt-jam = { path = "../gt-jam" }
 gt-loaded-files = { path = "../gt-loaded-files" }
 gt-solar = { path = "../gt-solar" }

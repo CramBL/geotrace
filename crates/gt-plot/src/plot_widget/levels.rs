@@ -137,9 +137,9 @@ pub(super) struct TrackLevelCache {
 }
 
 impl TrackLevelCache {
-    /// `None` for metrics with no mipmap: snap error, interference and the
-    /// geomagnetic indices draw from their own per-track series, not from
-    /// `TrackSeries`.
+    /// `None` for metrics with no mipmap: snap error, interference, the
+    /// geomagnetic indices and TEC draw from their own per-track series, not
+    /// from `TrackSeries`.
     pub(super) fn level_for(&self, kind: MetricKind) -> Option<LevelSelection> {
         Some(match kind {
             MetricKind::SatsSeen => self.total_seen,
@@ -174,7 +174,11 @@ impl TrackLevelCache {
             MetricKind::SlipBeidou => self.slip_beidou,
             MetricKind::SlipNavic => self.slip_navic,
             MetricKind::SlipQzss => self.slip_qzss,
-            MetricKind::SnapError | MetricKind::Jamming | MetricKind::Hp30 | MetricKind::Kp => {
+            MetricKind::SnapError
+            | MetricKind::Jamming
+            | MetricKind::Hp30
+            | MetricKind::Kp
+            | MetricKind::Tec => {
                 return None;
             }
         })
@@ -218,7 +222,11 @@ impl crate::series::TrackSeries {
             MetricKind::SlipBeidou => &self.slip_beidou,
             MetricKind::SlipNavic => &self.slip_navic,
             MetricKind::SlipQzss => &self.slip_qzss,
-            MetricKind::SnapError | MetricKind::Jamming | MetricKind::Hp30 | MetricKind::Kp => {
+            MetricKind::SnapError
+            | MetricKind::Jamming
+            | MetricKind::Hp30
+            | MetricKind::Kp
+            | MetricKind::Tec => {
                 return None;
             }
         })

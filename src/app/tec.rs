@@ -9,6 +9,7 @@
 //! is in flight at a time, and the transport spaces requests
 //! [`transport::REQUEST_INTERVAL`] apart.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
@@ -17,10 +18,13 @@ use chrono::{NaiveDate, Utc};
 use egui::Context;
 
 use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
+use gt_ionex::maps::GlobalIonosphereMaps;
 use gt_ionex::mirrors::{MirrorAttempt, MirrorBaseUrl, MirrorList, MirrorOutcome};
+use gt_ionex::tec::TotalElectronContent;
 use gt_ionex::{IonexProduct, calendar, transport};
 use gt_store::{IonexStore, IonexStoreError};
-use gt_types::TimeRange;
+use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
+use gt_ui_types::{TecPoint, TecSeries};
 
 use super::day_fetch_queue::DayFetchQueue;
 
@@ -65,6 +69,14 @@ pub struct TecMapScheduler {
     /// nothing here determines whether requests may leave the machine.
     transport_source: TransportSource,
     days: DayFetchQueue,
+    /// UTC days the archive holds maps for, read once at startup and extended
+    /// on ingest, so resolving a fix's value never reads the day index per
+    /// frame. Assumes this process is the archive's only writer.
+    archived_days: HashSet<NaiveDate>,
+    /// Per-track plot points, keyed by the days they were resolved from, so
+    /// the `Arc` identity the plot caches on only changes when the archive
+    /// gained a day the track needs.
+    plot_points: HashMap<TrackRef, (Vec<NaiveDate>, Arc<Vec<TecPoint>>)>,
 }
 
 impl TecMapScheduler {
@@ -75,6 +87,10 @@ impl TecMapScheduler {
         transport_source: TransportSource,
     ) -> Self {
         let (tx, rx) = mpsc::channel();
+        let archived_days = store
+            .as_ref()
+            .map(|store| archived_days_of(store))
+            .unwrap_or_default();
         Self {
             ctx,
             tx,
@@ -84,6 +100,8 @@ impl TecMapScheduler {
             http: None,
             transport_source,
             days: DayFetchQueue::default(),
+            archived_days,
+            plot_points: HashMap::new(),
         }
     }
 
@@ -175,6 +193,7 @@ impl TecMapScheduler {
                             ),
                         }
                     }
+                    self.archived_days.insert(day);
                     self.days.mark_archived(day);
                     log::info!("Archived {map_count} {product} TEC maps for {day} from {mirror}");
                 }
@@ -199,6 +218,94 @@ impl TecMapScheduler {
         self.mirrors = mirrors.clone();
         self.http = None;
         self.days.forget_host();
+    }
+
+    /// TEC values for the plot: one point per fix of every loaded track,
+    /// interpolated from the archived maps over that fix's own position and
+    /// time.
+    ///
+    /// A track's points are rebuilt only when the archive gains one of the
+    /// days it spans, so the `Arc` the plot caches on stays stable.
+    pub fn plot_series(&mut self, files: &[LoadedFile]) -> TecSeries {
+        let mut series = TecSeries::default();
+        let mut live: HashSet<TrackRef> = HashSet::new();
+        // Shared across tracks: a batch of recordings from one drive all read
+        // the same day.
+        let mut archived: HashMap<NaiveDate, Option<GlobalIonosphereMaps>> = HashMap::new();
+
+        for (fi, file) in files.iter().enumerate() {
+            for (ti, track) in file.tracks.iter().enumerate() {
+                let track_ref =
+                    TrackRef::new(gt_types::FileIdx::new(fi), gt_types::TrackIdx::new(ti));
+                live.insert(track_ref);
+
+                let resolved_from = self.archived_days_spanned_by(track);
+                let cached = self
+                    .plot_points
+                    .get(&track_ref)
+                    .filter(|(days, _)| *days == resolved_from);
+                let points = match cached {
+                    Some((_, points)) => Arc::clone(points),
+                    None => {
+                        let points = Arc::new(Self::resolve_points(
+                            self.store.as_deref(),
+                            &mut archived,
+                            track,
+                        ));
+                        self.plot_points
+                            .insert(track_ref, (resolved_from, Arc::clone(&points)));
+                        points
+                    }
+                };
+                if points.iter().any(|point| point.tecu.is_some()) {
+                    series.points_by_track.insert(track_ref, points);
+                }
+            }
+        }
+        self.plot_points.retain(|track, _| live.contains(track));
+        series
+    }
+
+    /// The archived days the track's fixes fall in, as the cache key: a
+    /// track's points change exactly when this set does.
+    fn archived_days_spanned_by(&self, track: &LoadedTrack) -> Vec<NaiveDate> {
+        let range = track.metadata.time_range;
+        gt_types::utc_days::days_in_range(
+            range.start.date_naive()..=range.end.date_naive(),
+            |day| self.archived_days.contains(&day),
+        )
+    }
+
+    /// One point per fix, interpolated from the maps archived for the fix's
+    /// own UTC day. Both maps bracketing any instant inside the day sit in
+    /// that day's file, because a published file carries a map at each end of
+    /// its day (the last epoch is the next day's midnight). A fix whose time
+    /// falls outside the epochs its day was archived with has no value.
+    fn resolve_points(
+        store: Option<&IonexStore>,
+        archived: &mut HashMap<NaiveDate, Option<GlobalIonosphereMaps>>,
+        track: &LoadedTrack,
+    ) -> Vec<TecPoint> {
+        track
+            .points
+            .iter()
+            .map(|point| {
+                let time = point.tpv.time().utc();
+                let day = time.date_naive();
+                let maps = archived
+                    .entry(day)
+                    .or_insert_with(|| read_archived_maps(store, day));
+                TecPoint {
+                    x_secs: time.timestamp() as f64,
+                    tecu: maps
+                        .as_ref()
+                        .and_then(|maps| {
+                            maps.total_electron_content_at(point.tpv.lat(), point.tpv.lon(), time)
+                        })
+                        .map(TotalElectronContent::tecu),
+                }
+            })
+            .collect()
     }
 
     fn start_next(&mut self) {
@@ -263,6 +370,27 @@ fn day_needs_fetch(
         return Ok(true);
     };
     Ok(product == IonexProduct::Rapid || day >= today_utc)
+}
+
+/// The maps archived for `day`, reporting a read that failed and treating it
+/// as an unarchived day.
+fn read_archived_maps(store: Option<&IonexStore>, day: NaiveDate) -> Option<GlobalIonosphereMaps> {
+    store?
+        .day_maps(day)
+        .inspect_err(|err| log::error!("Reading the archived TEC maps for {day}: {err}"))
+        .ok()
+        .flatten()
+}
+
+/// Every day the archive holds maps for.
+fn archived_days_of(store: &IonexStore) -> HashSet<NaiveDate> {
+    store
+        .archived_days()
+        .inspect_err(|err| log::error!("Reading the TEC map archive index: {err}"))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|archived| archived.day)
+        .collect()
 }
 
 #[expect(
@@ -932,5 +1060,152 @@ mod tests {
 
         assert_eq!(scheduler.days.queued(), 0);
         assert!(scheduler.days.is_fetching());
+    }
+
+    /// The fixes of one recording, `step_secs` apart, with the time range a
+    /// real load derives from its points. The fixture points sit at 55 N,
+    /// 12 E, inside the grid [`uniform_maps`] declares.
+    fn track_over(start: DateTime<Utc>, count: usize, step_secs: i64) -> gt_types::LoadedTrack {
+        let mut track = gt_test_utils::fixtures::loaded_track_with_points(
+            gt_test_utils::fixtures::nav_points_from(start, count, step_secs),
+        );
+        track.metadata.time_range = TimeRange::new(
+            start,
+            start + TimeDelta::seconds(step_secs * count.saturating_sub(1) as i64),
+        );
+        track
+    }
+
+    fn loaded_files_of(track: gt_types::LoadedTrack) -> Vec<gt_types::LoadedFile> {
+        vec![gt_types::LoadedFile {
+            metadata: gt_test_utils::empty_file_metadata(),
+            tracks: vec![track],
+            event_marker_styles: std::collections::HashMap::new(),
+            orphaned_event_markers: vec![],
+            load_warnings: vec![],
+            source: gt_types::FileSource::GtdBytes(Arc::from(Vec::<u8>::new())),
+        }]
+    }
+
+    /// Maps of `day` whose every node carries one value, at the given whole
+    /// hours from that day's midnight. Hour 24 is the map at the end of the
+    /// day, which a published file dates to the next day's midnight.
+    fn uniform_maps(day: NaiveDate, samples: &[(i64, f64)]) -> GlobalIonosphereMaps {
+        let midnight = day.and_time(chrono::NaiveTime::MIN).and_utc();
+        let axis = |first_degrees: f64, last_degrees: f64, step_degrees: f64| {
+            gt_ionex::grid::GridAxis::new(gt_ionex::grid::AxisDeclaration {
+                first_degrees,
+                last_degrees,
+                step_degrees,
+            })
+            .expect("axis")
+        };
+        let grid = gt_ionex::grid::MapGrid {
+            latitudes: gt_ionex::grid::LatitudeAxis::new(axis(57.5, 52.5, -2.5)),
+            longitudes: gt_ionex::grid::LongitudeAxis::new(axis(10.0, 15.0, 5.0)),
+            shell_height_km: 450.0,
+        };
+        let maps = samples
+            .iter()
+            .map(|&(hours, tecu)| {
+                gt_ionex::maps::TecMap::new(
+                    midnight + TimeDelta::hours(hours),
+                    vec![vec![Some(TotalElectronContent::from_tecu(tecu)); 2]; 3],
+                )
+            })
+            .collect();
+        GlobalIonosphereMaps::new(grid, TimeDelta::hours(2), maps)
+    }
+
+    /// Archive `archived` with the last two maps a published day carries: one
+    /// at 22:00 and the one dated to the next day's midnight.
+    fn archive_last_maps_of(store: &IonexStore, archived: NaiveDate) {
+        store
+            .insert_or_replace_day(
+                archived,
+                "host",
+                Utc::now(),
+                IonexProduct::Final,
+                &uniform_maps(archived, &[(22, 10.0), (24, 20.0)]),
+            )
+            .expect("insert");
+    }
+
+    /// A fix takes the value interpolated at its own time, and one after the
+    /// last full hour reads the map at the end of its day - the map a
+    /// published file dates to the next day's midnight and archives under the
+    /// day it belongs to.
+    #[test]
+    fn a_fix_is_valued_between_the_maps_bracketing_its_own_time() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived = day(2024, 5, 10);
+        archive_last_maps_of(&store, archived);
+        scheduler.archived_days.insert(archived);
+        let files = loaded_files_of(track_over(at(2024, 5, 10, 22), 4, 1800));
+
+        let series = scheduler.plot_series(&files);
+        let points = series
+            .points_by_track
+            .values()
+            .next()
+            .expect("the track has values");
+
+        assert_eq!(
+            points.iter().map(|point| point.tecu).collect::<Vec<_>>(),
+            [Some(10.0), Some(12.5), Some(15.0), Some(17.5)]
+        );
+    }
+
+    /// A fix outside the epochs its day was archived with has no value, and
+    /// its track offers no series when no fix has one.
+    #[test]
+    fn a_track_outside_every_archived_epoch_has_no_plot_series() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived = day(2024, 5, 10);
+        archive_last_maps_of(&store, archived);
+        scheduler.archived_days.insert(archived);
+        let files = loaded_files_of(track_over(at(2024, 5, 10, 12), 4, 1800));
+
+        assert!(scheduler.plot_series(&files).is_empty());
+    }
+
+    /// Until the day arrives the track has no points to draw.
+    #[test]
+    fn a_track_with_no_archived_day_has_no_plot_series() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        let files = loaded_files_of(track_over(at(2024, 5, 10, 22), 4, 1800));
+
+        assert!(scheduler.plot_series(&files).is_empty());
+    }
+
+    /// A day the fetch worker archives is resolved into the loaded track's
+    /// points on the next frame, without reloading the recording.
+    #[test]
+    fn archiving_a_day_gives_the_loaded_track_its_values() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived = day(2024, 5, 10);
+        let files = loaded_files_of(track_over(at(2024, 5, 10, 22), 4, 1800));
+        assert!(scheduler.plot_series(&files).is_empty());
+
+        archive_last_maps_of(&store, archived);
+        scheduler
+            .tx
+            .send(MapDayMessage::Stored {
+                day: archived,
+                mirror: MirrorBaseUrl::new(DEFAULT_BASE_URL),
+                product: IonexProduct::Final,
+                map_count: 2,
+                skipped: Vec::new(),
+            })
+            .expect("send");
+        scheduler.poll();
+
+        let series = scheduler.plot_series(&files);
+        let points = series
+            .points_by_track
+            .values()
+            .next()
+            .expect("the archived day reached the track");
+        assert_eq!(points.first().map(|point| point.tecu), Some(Some(10.0)));
     }
 }

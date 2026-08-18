@@ -71,6 +71,10 @@ pub enum MetricKind {
     Hp30,
     /// The same scale over the 3-hour Kp period the fix falls in, capped at 9.
     Kp,
+    /// Vertical total electron content over the fix's position and time, in
+    /// TEC units (see `gt-ionex`). Values exist only for days held in the TEC
+    /// map archive.
+    Tec,
 }
 
 impl MetricKind {
@@ -78,9 +82,11 @@ impl MetricKind {
     ///
     /// Kp starts disabled: it is the same field as [`MetricKind::Hp30`] at a
     /// six times coarser cadence, so drawing both by default draws the same
-    /// storm twice.
+    /// storm twice. [`MetricKind::Tec`] starts disabled because a storm day
+    /// reaches past 150 TECU, which on the shared y-axis flattens every
+    /// satellite count and speed the plot draws.
     pub const fn visible_by_default(self) -> bool {
-        !matches!(self, Self::Kp)
+        !matches!(self, Self::Kp | Self::Tec)
     }
 }
 
@@ -137,6 +143,7 @@ mod tests {
             (MetricKind::Jamming, "jamming"),
             (MetricKind::Hp30, "hp30"),
             (MetricKind::Kp, "kp"),
+            (MetricKind::Tec, "tec"),
         ];
         assert_eq!(expected.len(), MetricKind::COUNT);
         for (kind, wire) in expected {
@@ -149,13 +156,13 @@ mod tests {
         }
     }
 
-    /// Kp is the one metric that starts hidden, so a fresh install draws the
-    /// half-hourly index alone.
+    /// A fresh install draws the half-hourly index alone and leaves the
+    /// wide-ranged TEC line to be switched on.
     #[test]
-    fn only_kp_starts_hidden() {
+    fn the_context_metrics_start_hidden() {
         let hidden: Vec<MetricKind> = MetricKind::iter()
             .filter(|kind| !kind.visible_by_default())
             .collect();
-        assert_eq!(hidden, [MetricKind::Kp]);
+        assert_eq!(hidden, [MetricKind::Kp, MetricKind::Tec]);
     }
 }
