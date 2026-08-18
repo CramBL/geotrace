@@ -1,8 +1,13 @@
 //! Detecting a log's format from its head and indexing every line against its text.
 
-use std::{num::NonZeroUsize, sync::Arc};
+use std::{
+    num::NonZeroUsize,
+    sync::{Arc, OnceLock},
+    thread,
+};
 
 use chrono::{DateTime, Utc};
+use rayon::{ThreadPool, ThreadPoolBuilder, prelude::*};
 
 use crate::format::{self, LogFormat};
 
@@ -14,6 +19,19 @@ const ERROR_LINE_EXCERPT_CHARS: NonZeroUsize = match NonZeroUsize::new(120) {
     Some(chars) => chars,
     None => NonZeroUsize::MIN,
 };
+
+/// Text one worker indexes, before the chunk's end is aligned forward to the
+/// next newline. A log shorter than this is indexed on the calling thread.
+const CHUNK_TARGET_BYTES: NonZeroUsize = match NonZeroUsize::new(16 * 1024 * 1024) {
+    Some(bytes) => bytes,
+    None => NonZeroUsize::MIN,
+};
+
+/// The share of the machine's cores the parse pool may occupy. Indexing a log
+/// is a background job behind a desktop the user is still working in, and a log
+/// is large enough to saturate every core for long enough to be felt: measured
+/// on an 80 MiB journal, half the cores index it as fast as all of them.
+const CORES_PER_PARSE_WORKER: usize = 2;
 
 /// One parsed line: its timestamp and the byte range of its message inside the
 /// text of the [`ParsedLog`] it was indexed from, read with [`ParsedLog::message`].
@@ -80,14 +98,19 @@ pub enum LogParseError {
 /// stack trace in the middle of a journal costs those lines and nothing else.
 /// A line whose message exceeds [`u32::MAX`] bytes is skipped the same way.
 pub fn parse_log(text: Arc<str>, now: DateTime<Utc>) -> Result<ParsedLog, LogParseError> {
-    let format = detect_head_format(&text)?;
+    parse_log_in_chunks_of(text, now, CHUNK_TARGET_BYTES)
+}
 
-    let ParsedChunk {
-        mut entries,
+fn parse_log_in_chunks_of(
+    text: Arc<str>,
+    now: DateTime<Utc>,
+    chunk_target_bytes: NonZeroUsize,
+) -> Result<ParsedLog, LogParseError> {
+    let format = detect_head_format(&text)?;
+    let LineIndex {
+        entries,
         skipped_line_count,
-    } = parse_chunk(&text, 0, format, now);
-    // Entries sharing a timestamp keep their line order: the sort is stable.
-    entries.sort_by_key(|entry| entry.timestamp);
+    } = index_lines_in_timestamp_order(&text, format, now, chunk_target_bytes);
 
     Ok(ParsedLog {
         text,
@@ -117,67 +140,184 @@ fn detect_head_format(text: &str) -> Result<LogFormat, LogParseError> {
     }
 }
 
-struct ParsedChunk {
+#[derive(Default)]
+struct LineIndex {
     entries: Vec<LogEntry>,
     skipped_line_count: usize,
 }
 
-/// Indexes every line of one newline-aligned slice of a log's text.
+impl LineIndex {
+    /// Joins per-chunk indices, given in the order their chunks appear in the log.
+    fn concatenated(chunks: &[Self]) -> Self {
+        let mut entries = Vec::with_capacity(chunks.iter().map(|chunk| chunk.entries.len()).sum());
+        let mut skipped_line_count = 0;
+        for chunk in chunks {
+            entries.extend_from_slice(&chunk.entries);
+            skipped_line_count += chunk.skipped_line_count;
+        }
+        Self {
+            entries,
+            skipped_line_count,
+        }
+    }
+}
+
+/// The pool a log longer than [`CHUNK_TARGET_BYTES`] is indexed on, holding
+/// one worker per [`CORES_PER_PARSE_WORKER`] cores.
 ///
-/// Entry offsets address the whole text: `chunk_offset` is where the slice
-/// starts in it.
-fn parse_chunk(
-    chunk: &str,
-    chunk_offset: u64,
+/// A pool dedicated to log parsing. gt-plot renders frames on rayon's global
+/// pool, and a parse sharing it would stall frame rendering.
+fn parse_pool() -> Option<&'static ThreadPool> {
+    static PARSE_POOL: OnceLock<Option<ThreadPool>> = OnceLock::new();
+
+    PARSE_POOL
+        .get_or_init(|| {
+            let cores = thread::available_parallelism().map_or(1, NonZeroUsize::get);
+            let workers = (cores / CORES_PER_PARSE_WORKER).max(1);
+            match ThreadPoolBuilder::new()
+                .num_threads(workers)
+                .thread_name(|index| format!("gt-logfile-parse-{index}"))
+                .build()
+            {
+                Ok(pool) => Some(pool),
+                Err(err) => {
+                    log::warn!("Indexing logs on the calling thread only: {err:#}");
+                    None
+                }
+            }
+        })
+        .as_ref()
+}
+
+/// Indexes every line of `text`, spreading a log longer than
+/// `chunk_target_bytes` over [`parse_pool`].
+///
+/// Entries sharing a timestamp come out in line order: chunks concatenate in
+/// the order they appear in the log, and both sorts below are stable.
+fn index_lines_in_timestamp_order(
+    text: &str,
     format: LogFormat,
     now: DateTime<Utc>,
-) -> ParsedChunk {
-    let mut entries = Vec::new();
-    let mut skipped_line_count = 0;
+    chunk_target_bytes: NonZeroUsize,
+) -> LineIndex {
+    let chunks = newline_aligned_chunks(text, chunk_target_bytes);
+    let mut index = match chunks.as_slice() {
+        [] => LineIndex::default(),
+        [only] => only.parse(format, now),
+        many => match parse_pool() {
+            Some(pool) => {
+                return pool.install(|| {
+                    let per_chunk: Vec<LineIndex> = many
+                        .par_iter()
+                        .map(|chunk| chunk.parse(format, now))
+                        .collect();
+                    let mut index = LineIndex::concatenated(&per_chunk);
+                    index.entries.par_sort_by_key(|entry| entry.timestamp);
+                    index
+                });
+            }
+            None => LineIndex::concatenated(
+                &many
+                    .iter()
+                    .map(|chunk| chunk.parse(format, now))
+                    .collect::<Vec<_>>(),
+            ),
+        },
+    };
+    index.entries.sort_by_key(|entry| entry.timestamp);
+    index
+}
 
-    let mut line_offset: u64 = 0;
+/// One newline-aligned slice of a log's text, and where it starts in that text.
+struct LogChunk<'text> {
+    offset_in_text: u64,
+    text: &'text str,
+}
 
-    for line in chunk.split_inclusive('\n') {
-        let offset_of_line = line_offset;
-        line_offset += line.len() as u64;
+/// Splits `text` into slices of at least `chunk_target_bytes` that each end
+/// after a newline, so no line spans two chunks.
+fn newline_aligned_chunks(text: &str, chunk_target_bytes: NonZeroUsize) -> Vec<LogChunk<'_>> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
 
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let Some((timestamp, message)) = format::parse_line(trimmed, format, now) else {
-            skipped_line_count += 1;
-            continue;
-        };
-        // Every format returns the message as a trailing slice of the line.
-        let message_start = trimmed.len().checked_sub(message.len());
-        debug_assert_eq!(
-            message_start.and_then(|start| trimmed.get(start..)),
-            Some(message),
-            "the message is a trailing slice of the line it was read from"
+    while start < text.len() {
+        let unaligned_end = start
+            .saturating_add(chunk_target_bytes.get())
+            .min(text.len());
+        let past_target = text.as_bytes().get(unaligned_end..).unwrap_or_default();
+        let end = memchr::memchr(b'\n', past_target)
+            .map_or(text.len(), |newline| unaligned_end + newline + 1);
+        // Every bound is a character boundary: a newline is never part of a
+        // multi-byte character.
+        let chunk_text = text.get(start..end);
+        debug_assert!(
+            chunk_text.is_some(),
+            "chunk {start}..{end} splits the log text mid-character"
         );
-        let (Some(message_start), Ok(message_len)) = (message_start, u32::try_from(message.len()))
-        else {
-            skipped_line_count += 1;
-            continue;
-        };
-        let indent = line.len() - line.trim_start().len();
-        entries.push(LogEntry {
-            timestamp,
-            message_offset: chunk_offset + offset_of_line + (indent + message_start) as u64,
-            message_len,
+        chunks.push(LogChunk {
+            offset_in_text: start as u64,
+            text: chunk_text.unwrap_or_default(),
         });
+        start = end;
     }
 
-    ParsedChunk {
-        entries,
-        skipped_line_count,
+    chunks
+}
+
+impl LogChunk<'_> {
+    /// Indexes every line of this chunk against the offsets of the whole log text.
+    fn parse(&self, format: LogFormat, now: DateTime<Utc>) -> LineIndex {
+        let mut entries = Vec::new();
+        let mut skipped_line_count = 0;
+
+        let mut line_offset: u64 = 0;
+
+        for line in self.text.split_inclusive('\n') {
+            let offset_of_line = line_offset;
+            line_offset += line.len() as u64;
+
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let Some((timestamp, message)) = format::parse_line(trimmed, format, now) else {
+                skipped_line_count += 1;
+                continue;
+            };
+            // Every format returns the message as a trailing slice of the line.
+            let message_start = trimmed.len().checked_sub(message.len());
+            debug_assert_eq!(
+                message_start.and_then(|start| trimmed.get(start..)),
+                Some(message),
+                "the message is a trailing slice of the line it was read from"
+            );
+            let (Some(message_start), Ok(message_len)) =
+                (message_start, u32::try_from(message.len()))
+            else {
+                skipped_line_count += 1;
+                continue;
+            };
+            let indent = line.len() - line.trim_start().len();
+            entries.push(LogEntry {
+                timestamp,
+                message_offset: self.offset_in_text
+                    + offset_of_line
+                    + (indent + message_start) as u64,
+                message_len,
+            });
+        }
+
+        LineIndex {
+            entries,
+            skipped_line_count,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use chrono::TimeZone as _;
+    use gt_test_utils::log_fixtures::{self, SyntheticLogSpec};
     use proptest::{prelude::*, prop_oneof, proptest};
     use rstest::rstest;
 
@@ -203,6 +343,10 @@ mod tests {
             .iter()
             .map(|entry| parsed.message(entry))
             .collect()
+    }
+
+    fn chunk_bytes(bytes: usize) -> NonZeroUsize {
+        NonZeroUsize::new(bytes).expect("positive chunk size")
     }
 
     #[test]
@@ -338,6 +482,45 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_parse_pool_leaves_at_least_half_the_cores_to_the_rest_of_the_machine() {
+        let cores = thread::available_parallelism().map_or(1, NonZeroUsize::get);
+        let pool = parse_pool().expect("the pool builds");
+        assert_eq!(
+            pool.current_num_threads(),
+            (cores / CORES_PER_PARSE_WORKER).max(1),
+            "on {cores} cores"
+        );
+    }
+
+    /// Covers sort stability across a chunk bound: thousands of entries, many
+    /// of them sharing a second, enough for the parallel sort to split its
+    /// input.
+    #[test]
+    fn a_chunked_parse_of_a_journald_sized_log_matches_the_one_chunk_parse() {
+        let text = log_fixtures::synthetic_journald_log(SyntheticLogSpec {
+            approx_bytes: 200 * 1024,
+            seed: 7,
+        });
+        let chunk_target_bytes = chunk_bytes(4 * 1024);
+        assert!(
+            newline_aligned_chunks(&text, chunk_target_bytes).len() > 8,
+            "the fixture has to span several chunks for this to compare the two paths"
+        );
+
+        let one_chunk = parse_log_in_chunks_of(
+            Arc::from(text.as_str()),
+            now(),
+            chunk_bytes(text.len().saturating_add(1)),
+        );
+        let chunked = parse_log_in_chunks_of(Arc::from(text.as_str()), now(), chunk_target_bytes);
+        assert_eq!(one_chunk, chunked);
+
+        let parsed = chunked.expect("the fixture parses");
+        assert!(parsed.skipped_line_count() > 0, "the fixture has bad lines");
+        assert!(parsed.entries().len() > 1_000, "the fixture has entries");
+    }
+
     fn any_line() -> impl Strategy<Value = String> {
         prop_oneof![
             r"\PC*",
@@ -373,6 +556,51 @@ mod tests {
                 prop_assert_eq!(text.get(start..end), Some(message));
                 prop_assert_eq!(message, message.trim());
             }
+        }
+
+        /// However badly a log is formed and wherever the chunk bounds fall
+        /// in it, the chunked path returns what the one-chunk path returns.
+        #[test]
+        fn a_chunked_parse_of_any_text_matches_the_one_chunk_parse(
+            lines in prop::collection::vec(any_line(), 0..40),
+            chunk_target_bytes in 1usize..64,
+        ) {
+            let text = lines.join("\n");
+            let one_chunk = parse_log_in_chunks_of(
+                Arc::from(text.as_str()),
+                now(),
+                chunk_bytes(text.len().saturating_add(1)),
+            );
+            let chunked = parse_log_in_chunks_of(
+                Arc::from(text.as_str()),
+                now(),
+                chunk_bytes(chunk_target_bytes),
+            );
+            prop_assert_eq!(one_chunk, chunked);
+        }
+
+        #[test]
+        fn chunks_tile_the_log_text_and_break_only_after_a_newline(
+            text in r"(\PC|\n){0,300}",
+            chunk_target_bytes in 1usize..64,
+        ) {
+            let chunks = newline_aligned_chunks(&text, chunk_bytes(chunk_target_bytes));
+
+            let mut expected_offset = 0;
+            for (i, chunk) in chunks.iter().enumerate() {
+                prop_assert_eq!(chunk.offset_in_text, expected_offset);
+                prop_assert!(!chunk.text.is_empty());
+                let last_chunk = i + 1 == chunks.len();
+                prop_assert!(
+                    last_chunk || chunk.text.ends_with('\n'),
+                    "chunk {} of {} ends mid-line: {:?}", i, chunks.len(), chunk.text
+                );
+                expected_offset += chunk.text.len() as u64;
+            }
+            prop_assert_eq!(expected_offset, text.len() as u64);
+
+            let rejoined: String = chunks.iter().map(|chunk| chunk.text).collect();
+            prop_assert_eq!(rejoined, text);
         }
     }
 
