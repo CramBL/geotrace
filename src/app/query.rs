@@ -1710,10 +1710,7 @@ fn construct_tooltip_ui(ui: &mut egui::Ui, construct: &Construct) {
         ui.label(doc);
     }
     for example in construct.examples {
-        let mut job = LayoutJob::default();
-        append_query_syntax(&mut job, &mono, default, dark, example);
-        job.wrap.max_width = ui.available_width();
-        ui.label(job);
+        ui.label(query_syntax_layout(ui, example));
     }
 }
 
@@ -1761,6 +1758,21 @@ fn syntax_color(class: TokenClass, default: egui::Color32, dark_mode: bool) -> e
         TokenClass::Punctuation => default,
         TokenClass::Error => gt_ui_theme::error_indicator(dark_mode),
     }
+}
+
+/// One query in the editor's colors and font, wrapped to the width available,
+/// for the windows that show a query they do not edit.
+pub(super) fn query_syntax_layout(ui: &egui::Ui, query: &str) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    append_query_syntax(
+        &mut job,
+        &egui::TextStyle::Monospace.resolve(ui.style()),
+        ui.visuals().text_color(),
+        ui.visuals().dark_mode,
+        query,
+    );
+    job.wrap.max_width = ui.available_width();
+    job
 }
 
 /// Append `text` to `job` in `font`, coloring query tokens the way the editor

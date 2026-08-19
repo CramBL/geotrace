@@ -27,6 +27,7 @@ use chrono::{DateTime, NaiveDate, NaiveTime, TimeDelta, Utc};
 
 pub mod activity;
 pub mod calendar;
+pub mod reference;
 pub mod series;
 pub mod text;
 pub mod transport;

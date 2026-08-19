@@ -1,16 +1,24 @@
 //! Settings for the Kp and Hp30 geomagnetic index downloads.
 
+use egui_phosphor::regular::BOOK_OPEN_TEXT as ICON_BOOK_OPEN_TEXT;
+
 use crate::app::App;
 use crate::app::backfill_ui::{self, BackfillAction};
 use crate::app::day_fetch_status::{self, FetchRowHoverText};
 use crate::app::settings_ui::SettingsPage;
 use crate::app::settings_ui::source_page::{self, SourcePageSlots};
 
+const REFERENCE_LINK_LABEL: &str = gt_solar::reference::GEOMAGNETIC_ACTIVITY.link_question;
+
+const REFERENCE_LINK_HOVER: &str = "Reference material on geomagnetic storms, the Kp and Hp30 \
+                                    scales, and the effect on satellite navigation";
+
 pub(super) const SEARCHABLE_LABELS: &[&str] = &[
     source_page::BASE_URL_LABEL,
     day_fetch_status::FETCH_QUEUE_LABEL,
     day_fetch_status::RECORDING_DAYS_LABEL,
     backfill_ui::DOWNLOAD_HISTORY_LABEL,
+    REFERENCE_LINK_LABEL,
 ];
 
 const URL_HOVER: &str = "Base URL of the host serving the Kp and Hp30 geomagnetic indices. The \
@@ -53,6 +61,16 @@ impl App {
                 },
             },
         );
+
+        ui.add_space(12.0);
+        if ui
+            .link(format!("{ICON_BOOK_OPEN_TEXT} {REFERENCE_LINK_LABEL}"))
+            .on_hover_text(REFERENCE_LINK_HOVER)
+            .clicked()
+        {
+            self.reference_window
+                .open(gt_solar::reference::GEOMAGNETIC_ACTIVITY);
+        }
 
         if base_url_changed {
             self.geomagnetic_indices.set_base_url(&base_url);

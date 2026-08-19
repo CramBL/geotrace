@@ -1,0 +1,42 @@
+---
+source: crates/gt-solar/src/reference.rs
+expression: GEOMAGNETIC_ACTIVITY.to_string()
+---
+Geomagnetic activity and GNSS
+
+A geomagnetic storm is a major disturbance of Earth's magnetosphere that occurs when the solar wind transfers energy very efficiently into the space environment around Earth. The largest storms follow coronal mass ejections ([CME]s), where a billion tons of plasma from the Sun, with its embedded magnetic field, arrives at Earth. [CME]s typically take several days to arrive, but have been observed to arrive in as little as 18 hours for the most intense storms.[^noaa-storms]
+
+Storm heating creates strong horizontal variations in ionospheric density that modify the path of radio signals and create errors in the positioning information provided by [GNSS].[^noaa-storms]
+
+[Kp] summarizes this disturbance. It is the mean standardized K index of 13 geomagnetic observatories between 44 and 60 degrees geomagnetic latitude,[^noaa-kp] published every 3 hours since 1932 on a quasi-logarithmic 0 to 9 scale in steps of thirds.[^matzka-2021] Hp30 is its half-hour counterpart and is not capped at 9.
+
+NOAA G-scale: navigation effects[^noaa-scales]
+Scale | Kp | Navigation effects (NOAA wording) | Occurrences per solar cycle
+G1 minor | 5 |  | 1700
+G2 moderate | 6 | "HF radio propagation can fade at higher latitudes" | 600
+G3 strong | 7 | "Intermittent satellite navigation and low-frequency radio navigation problems may occur" | 200
+G4 severe | 8 | "Satellite navigation degraded for hours" | 100
+G5 extreme | 9 | "Satellite navigation may be degraded for days" | 4
+
+The strongest storm in two decades, the G5 storm of 10 to 12 May 2024 (the Gannon storm), reached [Kp] 9.0[^gfz-kp] and Hp30 11.333[^gfz-hpo], the values archived by GeoTrace for those days. GPS-guided agricultural equipment was disrupted during the US planting season, and foregone corn revenue across 12 Midwestern states was estimated at 69.6 million to 1.7 billion dollars.[^griffin-2025] JPL's GUARDIAN system publishes the slant total electron content measured at [GNSS] ground stations through those days.[^jpl-guardian]
+
+Illustration nasa_svs_thermosphere_2024_05_10_quiet (Quiet)
+Illustration nasa_svs_thermosphere_2024_05_11_storm_peak (Storm peak)
+Simulated thermosphere temperature from a TIEGCM run of the storm by the NASA DRIVE Science Center for Geospace Storms. [Kp] was 2.667 for the quiet frame's 3-hour interval and 9.0 for the storm frame's.[^gfz-kp]
+NASA Scientific Visualization Studio (NASA/AJ Christensen) (https://svs.gsfc.nasa.gov/14835/)
+
+The fixes a recording holds from the half hours at storm level:
+points | where hp30 > 5
+
+The same fixes narrowed to those that also show more than two cycle slips per minute:
+points | with mask 15 deg, snr_drop 10, slip_window 5 min | where hp30 > 5 and slip_all > 2 per min
+
+Sources
+1. NOAA SWPC Geomagnetic Storms (https://www.spaceweather.gov/phenomena/geomagnetic-storms)
+2. NOAA Space Weather Scales (https://www.spaceweather.gov/noaa-scales-explanation)
+3. NOAA Planetary K-index (https://www.spaceweather.gov/products/planetary-k-index)
+4. GFZ Kp (https://kp.gfz.de/en/)
+5. GFZ Hpo (https://kp.gfz.de/en/hp30-hp60/)
+6. Matzka et al. 2021, Space Weather, doi:10.1029/2020SW002641 (https://doi.org/10.1029/2020SW002641)
+7. Griffin et al. 2025, K-State Department of Agricultural Economics, doi:10.5281/zenodo.14976490 (https://doi.org/10.5281/zenodo.14976490)
+8. JPL GUARDIAN Gannon example (https://guardian.jpl.nasa.gov/examples/20240513_gannon/)
