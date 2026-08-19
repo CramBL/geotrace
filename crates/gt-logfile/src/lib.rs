@@ -17,6 +17,7 @@ mod summary;
 pub use associate::{associate_entries, associate_position};
 pub use format::{LogFormat, detect_format, infer_year};
 pub use parse::{LogEntry, LogParseError, ParsedLog, TextSlice, TimestampKind, parse_log};
+pub use pool::log_worker_pool;
 pub use session::{AnchoredBounds, BootSession, OrderAnomaly};
 pub use structure::{StructuralLine, StructuralLineKind};
 pub use summary::{EntryCountMismatch, ServiceCount, ServiceIssueCounts, SummaryBlock};
