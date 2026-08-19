@@ -2,6 +2,7 @@
 //! expands into, and the virtualized table of the selected log's lines.
 
 mod association_window;
+pub(super) mod filters;
 mod line_table;
 mod summary_panel;
 #[cfg(test)]
@@ -47,6 +48,10 @@ pub(super) struct LogViewerWindow {
     summary_expanded: bool,
     association_window_unit: AssociationWindowUnit,
 
+    /// When the shown log's filters started scanning, for the note the viewer
+    /// shows once a scan runs long enough to notice.
+    query_pending_since: Option<f64>,
+
     /// The table row the summary panel asked to scroll to, consumed by the
     /// table on the frame after it was asked for.
     scroll_to_row: Option<usize>,
@@ -66,6 +71,7 @@ impl LogViewerWindow {
             selected: 0,
             summary_expanded: false,
             association_window_unit: AssociationWindowUnit::Seconds,
+            query_pending_since: None,
             scroll_to_row: None,
         }
     }
@@ -92,6 +98,9 @@ impl LogViewerWindow {
             map_center_request,
         }: LogViewerContext<'_>,
     ) {
+        // The scans run on worker threads: whatever finished since the last
+        // frame becomes what this one draws.
+        logs.apply_finished_queries();
         if !self.open {
             return;
         }
@@ -115,6 +124,7 @@ impl LogViewerWindow {
                 {
                     self.summary_panel_ui(ui, log);
                 }
+                self.filters_ui(ui, logs);
                 ui.separator();
                 // The footer claims its height first: the table then fills
                 // what remains of the window.

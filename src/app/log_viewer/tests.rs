@@ -4,15 +4,18 @@
 use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, TimeZone as _, Utc};
+use egui::accesskit::Role;
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable as _;
+use egui_kittest::kittest::{NodeT as _, Queryable as _};
+use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
+use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
-use gt_log_view::{LoadedLog, LoadedLogs};
+use gt_log_view::{FilterChipMode, LayerColorSlot, LoadedLog, LoadedLogs};
 use gt_test_utils::{By, HarnessInteraction as _};
 use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::{FileSource, Latitude, Longitude};
 
-use super::{AssociationWindowUnit, LogViewerContext, LogViewerWindow};
+use super::{AssociationWindowUnit, LogViewerContext, LogViewerWindow, filters};
 
 /// One log holding every row kind the table draws: an entry timestamped from
 /// its neighbours, a reboot separator, and a backwards timestamp step no clock
@@ -25,6 +28,13 @@ const LOG_WITH_EVERY_ROW_KIND: &str = "\
 2026-05-29 18:48:30 navsyncd: starting
 2026-05-29 18:44:00 navsyncd: telemetry queued
 2026-05-29 18:48:40 navsyncd: fix acquired
+";
+
+/// A second log sharing none of the first one's messages: switching the
+/// selector switches what the filter row shows.
+const SECOND_LOG: &str = "\
+2026-05-29 18:48:26 hal-powerd: battery low
+2026-05-29 18:48:28 hal-powerd: battery critical
 ";
 
 /// The timestamp column of the log's first entry, as the table writes it: a
@@ -81,24 +91,36 @@ fn recording(filename: &str, first_lat_deg: f64) -> gt_types::LoadedFile {
 /// The viewer open on the fixture log, associated against `recordings` when any
 /// of them unambiguously covers it.
 fn harness_with(recordings: Vec<gt_types::LoadedFile>) -> Harness<'static, ViewerState> {
+    harness_of(recordings, &[("navsyncd.log", LOG_WITH_EVERY_ROW_KIND)])
+}
+
+/// The viewer open on the last of `logs`, each of them named and parsed from
+/// its own text.
+fn harness_of(
+    recordings: Vec<gt_types::LoadedFile>,
+    logs: &[(&str, &str)],
+) -> Harness<'static, ViewerState> {
     let mut loaded_recordings = LoadedFiles::new();
     for file in recordings {
         loaded_recordings.push(file, FileHistory::None);
     }
-    let parsed = gt_logfile::parse_log(LOG_WITH_EVERY_ROW_KIND.into(), log_start())
-        .unwrap_or_else(|error| panic!("the fixture log parses: {error}"));
-    let mut log = LoadedLog::new(
-        Some("navsyncd.log".to_owned()),
-        parsed,
-        Duration::seconds(ASSOCIATION_WINDOW_SECS),
-    );
-    let target = log
-        .rank_association_candidates(&loaded_recordings.view())
-        .unambiguous_target();
-    log.associate_with(target, &loaded_recordings.view());
+    let mut loaded_logs = LoadedLogs::default();
+    for (name, text) in logs {
+        let parsed = gt_logfile::parse_log((*text).into(), log_start())
+            .unwrap_or_else(|error| panic!("the fixture log parses: {error}"));
+        let mut log = LoadedLog::new(
+            Some((*name).to_owned()),
+            parsed,
+            Duration::seconds(ASSOCIATION_WINDOW_SECS),
+        );
+        let target = log
+            .rank_association_candidates(&loaded_recordings.view())
+            .unambiguous_target();
+        log.associate_with(target, &loaded_recordings.view());
+        loaded_logs.push(log);
+    }
 
-    let mut logs = LoadedLogs::default();
-    logs.push(log);
+    let logs = loaded_logs;
     let mut viewer = LogViewerWindow::new();
     viewer.open_on_newly_loaded_log(&logs);
 
@@ -266,4 +288,341 @@ fn unloading_the_shown_log_leaves_the_viewer_on_its_empty_state() {
 
     assert_eq!(harness.state().logs.len(), 0);
     harness.get_by_label(super::EMPTY_STATE_HINT);
+}
+
+/// Runs until every scan the shown log's filters started has landed: they run
+/// on worker threads, and the table draws the matches that have arrived.
+fn run_until_the_scans_land(harness: &mut Harness<ViewerState>) {
+    // The frame that reads the click or the keystroke is the one that starts
+    // the scan: the wait below is only meaningful after it.
+    harness.run_steps(1);
+    let landed = harness.step_until(|harness| {
+        harness
+            .state()
+            .shown_log()
+            .is_some_and(|log| !log.filters().is_query_pending())
+    });
+    assert!(landed, "the filter scans landed");
+    harness.run_steps(2);
+}
+
+/// Types `text` into the live filter, then runs the frames its scan needs to
+/// land. The field is focused by its own id: the viewer renders further text
+/// inputs of its own.
+fn type_into_live_filter(harness: &mut Harness<ViewerState>, text: &str) {
+    harness.ctx.memory_mut(|memory| {
+        memory.request_focus(egui::Id::new(filters::LIVE_FILTER_FIELD_ID));
+    });
+    harness.run_steps(2);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text(text.to_owned()));
+    run_until_the_scans_land(harness);
+}
+
+/// The count the filter row shows: the lines the table draws, of the log's
+/// entries.
+fn match_count(harness: &Harness<ViewerState>) -> String {
+    let filters = harness
+        .state()
+        .shown_log()
+        .map(LoadedLog::filters)
+        .expect("a log is shown");
+    format!(
+        "{} of {}",
+        filters.visible_entries().len(),
+        filters.entry_count()
+    )
+}
+
+fn live_filter_text(harness: &Harness<ViewerState>) -> String {
+    harness
+        .state()
+        .shown_log()
+        .map(|log| log.filters().live_filter_text().to_owned())
+        .unwrap_or_default()
+}
+
+/// Every chip of the shown log: its text, its mode, and the palette colour it
+/// draws in.
+fn chips(harness: &Harness<ViewerState>) -> Vec<(String, FilterChipMode, Option<usize>)> {
+    harness
+        .state()
+        .shown_log()
+        .map(|log| {
+            log.filters()
+                .chips()
+                .iter()
+                .map(|chip| {
+                    (
+                        chip.pattern().text.clone(),
+                        chip.mode(),
+                        chip.layer_slot().map(LayerColorSlot::index),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn add_filter(harness: &mut Harness<ViewerState>, text: &str) {
+    type_into_live_filter(harness, text);
+    harness.get_by_label(filters::ADD_FILTER_LABEL).click();
+    run_until_the_scans_land(harness);
+}
+
+/// Clicks the mode toggle of the chip at `index`, which carries the glyph of
+/// the mode that chip is in.
+fn switch_chip_mode(harness: &mut Harness<ViewerState>, index: usize) {
+    let modes: Vec<FilterChipMode> = chips(harness).iter().map(|(_, mode, _)| *mode).collect();
+    let mode = modes.get(index).copied().expect("the chip is in the stack");
+    let glyph = match mode {
+        FilterChipMode::Layer => ICON_PLUS_CIRCLE,
+        FilterChipMode::Refine => ICON_FUNNEL,
+    };
+    let among_the_same_mode = modes.iter().take(index).filter(|&&m| m == mode).count();
+    harness
+        .nth_matching(By::new().label(glyph), among_the_same_mode)
+        .click();
+    run_until_the_scans_land(harness);
+}
+
+/// Clicks the ✕ of the chip at `index`. The selector row's unload button
+/// carries the same glyph and comes before every chip.
+fn remove_chip(harness: &mut Harness<ViewerState>, index: usize) {
+    harness
+        .nth_matching(By::new().label(super::ICON_X), index + 1)
+        .click();
+    run_until_the_scans_land(harness);
+}
+
+/// Shows the log named `name`, through the selector the user would use.
+fn select_log(harness: &mut Harness<ViewerState>, name: &str) {
+    let shown = harness
+        .state()
+        .shown_log()
+        .map(LoadedLog::name)
+        .unwrap_or_default()
+        .to_owned();
+    harness.get(By::new().value(shown.as_str())).click();
+    harness.run_steps(2);
+    // The popup's row is the lower of the two: the selector above it shows the
+    // name it is already on.
+    harness.bottommost_matching(By::new().label(name)).click();
+    run_until_the_scans_land(harness);
+}
+
+#[test]
+fn typing_a_filter_leaves_the_table_showing_the_lines_it_matches() {
+    let mut harness = harness_with(Vec::new());
+    assert_eq!(match_count(&harness), "6 of 6");
+
+    type_into_live_filter(&mut harness, "fix");
+
+    assert_eq!(match_count(&harness), "2 of 6");
+    harness.get_by_label("2 of 6");
+    assert!(
+        harness.query_by_label(FIRST_ENTRY_TIMESTAMP).is_none(),
+        "a line the filter misses leaves the table"
+    );
+    harness.get_by_label("Boot 1 · up 2s · 3 entries");
+    harness.get_by_label("Boot 2 · up 10s · 3 entries");
+}
+
+/// A boot session the filter leaves nothing of takes its divider with it.
+#[test]
+fn a_boot_the_filter_empties_loses_its_divider() {
+    let mut harness = harness_with(Vec::new());
+
+    type_into_live_filter(&mut harness, "telemetry");
+
+    assert_eq!(match_count(&harness), "1 of 6");
+    harness.get_by_label("Boot 2 · up 10s · 3 entries");
+    assert!(
+        harness
+            .query_by_label("Boot 1 · up 2s · 3 entries")
+            .is_none(),
+        "the first boot has no line the filter matched"
+    );
+}
+
+/// The terms of a plain filter match in any order. A regex matches the message
+/// as one pattern.
+#[test]
+fn the_regex_toggle_switches_what_the_field_means() {
+    let mut harness = harness_with(Vec::new());
+    type_into_live_filter(&mut harness, "acquired fix");
+    assert_eq!(match_count(&harness), "2 of 6");
+
+    harness.get_by_label(filters::REGEX_TOGGLE_LABEL).click();
+    run_until_the_scans_land(&mut harness);
+
+    assert_eq!(
+        match_count(&harness),
+        "0 of 6",
+        "no message holds the terms in the order the regex demands"
+    );
+    assert!(
+        harness
+            .state()
+            .shown_log()
+            .is_some_and(|log| log.filters().live_filter_is_regex()),
+        "the toggle belongs to the field, and stays on for the next filter"
+    );
+}
+
+#[test]
+fn an_invalid_regex_is_reported_under_the_field_and_leaves_the_table_whole() {
+    let mut harness = harness_with(Vec::new());
+    harness.get_by_label(filters::REGEX_TOGGLE_LABEL).click();
+    harness.run_steps(2);
+
+    type_into_live_filter(&mut harness, "navsyncd(");
+
+    harness.get_by_label_contains("unclosed group");
+    assert_eq!(match_count(&harness), "6 of 6");
+    harness.get_by_label(FIRST_ENTRY_TIMESTAMP);
+    assert!(
+        harness
+            .get_by_label(filters::ADD_FILTER_LABEL)
+            .accesskit_node()
+            .is_disabled(),
+        "there is nothing to add while the pattern does not compile"
+    );
+}
+
+#[test]
+fn adding_a_filter_grays_out_while_the_field_is_empty() {
+    let mut harness = harness_with(Vec::new());
+    assert!(
+        harness
+            .get_by_label(filters::ADD_FILTER_LABEL)
+            .accesskit_node()
+            .is_disabled()
+    );
+
+    type_into_live_filter(&mut harness, "fix");
+
+    assert!(
+        !harness
+            .get_by_label(filters::ADD_FILTER_LABEL)
+            .accesskit_node()
+            .is_disabled(),
+        "a written filter can become a chip"
+    );
+}
+
+#[test]
+fn adding_a_filter_turns_it_into_a_chip_and_empties_the_field() {
+    let mut harness = harness_with(Vec::new());
+
+    add_filter(&mut harness, "fix");
+
+    assert_eq!(
+        chips(&harness),
+        [("fix".to_owned(), FilterChipMode::Layer, Some(0))]
+    );
+    assert_eq!(live_filter_text(&harness), "");
+    harness.get_by_label("fix");
+}
+
+/// The compare-phenomena-spatially mode: a layer chip colours its lines and
+/// leaves the table whole, a refine chip narrows it.
+#[test]
+fn a_layer_chip_leaves_the_table_whole_and_a_refine_chip_narrows_it() {
+    let mut harness = harness_with(Vec::new());
+    add_filter(&mut harness, "fix");
+    assert_eq!(match_count(&harness), "6 of 6");
+
+    switch_chip_mode(&mut harness, 0);
+
+    assert_eq!(match_count(&harness), "2 of 6");
+    assert_eq!(
+        chips(&harness),
+        [("fix".to_owned(), FilterChipMode::Refine, None)],
+        "a refine chip hands back the colour it drew in"
+    );
+
+    switch_chip_mode(&mut harness, 0);
+
+    assert_eq!(match_count(&harness), "6 of 6");
+    assert_eq!(
+        chips(&harness),
+        [("fix".to_owned(), FilterChipMode::Layer, Some(0))]
+    );
+}
+
+#[test]
+fn unticking_a_chip_takes_it_out_of_the_table_and_ticking_it_puts_it_back() {
+    let mut harness = harness_with(Vec::new());
+    add_filter(&mut harness, "fix");
+    switch_chip_mode(&mut harness, 0);
+    assert_eq!(match_count(&harness), "2 of 6");
+
+    harness.get(By::new().role(Role::CheckBox)).click();
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(match_count(&harness), "6 of 6");
+
+    harness.get(By::new().role(Role::CheckBox)).click();
+    run_until_the_scans_land(&mut harness);
+    assert_eq!(
+        match_count(&harness),
+        "2 of 6",
+        "a chip ticked again filters as it did before"
+    );
+}
+
+#[test]
+fn removing_a_chip_frees_the_colour_it_drew_in() {
+    let mut harness = harness_with(Vec::new());
+    add_filter(&mut harness, "fix");
+    add_filter(&mut harness, "starting");
+
+    remove_chip(&mut harness, 0);
+    add_filter(&mut harness, "telemetry");
+
+    assert_eq!(
+        chips(&harness),
+        [
+            ("starting".to_owned(), FilterChipMode::Layer, Some(1)),
+            ("telemetry".to_owned(), FilterChipMode::Layer, Some(0)),
+        ],
+        "the freed colour is the lowest one free again"
+    );
+}
+
+/// Each log keeps the filter it was written for: the field switches with the
+/// selector.
+#[test]
+fn the_live_filter_belongs_to_the_log_it_was_written_for() {
+    let mut harness = harness_of(
+        Vec::new(),
+        &[
+            ("navsyncd.log", LOG_WITH_EVERY_ROW_KIND),
+            ("hal-powerd.log", SECOND_LOG),
+        ],
+    );
+    assert_eq!(
+        harness.state().viewer.selected_log_index(),
+        1,
+        "the viewer opens on the log that loaded last"
+    );
+
+    type_into_live_filter(&mut harness, "battery low");
+    assert_eq!(match_count(&harness), "1 of 2");
+
+    select_log(&mut harness, "navsyncd.log");
+
+    assert_eq!(match_count(&harness), "6 of 6");
+    assert_eq!(
+        live_filter_text(&harness),
+        "",
+        "the log that was filtered is the one holding the filter"
+    );
+
+    select_log(&mut harness, "hal-powerd.log");
+
+    assert_eq!(match_count(&harness), "1 of 2");
+    assert_eq!(live_filter_text(&harness), "battery low");
 }

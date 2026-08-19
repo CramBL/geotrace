@@ -1,6 +1,6 @@
 //! One log's filters: the live filter, and the chips added from it.
 
-use std::{iter, mem, sync::Arc};
+use std::{iter, mem, ops::Range, sync::Arc};
 
 use gt_logfile::ParsedLog;
 
@@ -59,6 +59,18 @@ impl VisibleEntries {
     pub fn entry_indices(&self) -> impl Iterator<Item = usize> + '_ {
         (0..self.len()).filter_map(|row| self.entry_index(row))
     }
+
+    /// Which row shows the first entry at or after `entry_index`, or
+    /// [`len`](Self::len) when this set holds no such entry.
+    ///
+    /// The table calls this with each boot session's bounds, to find how many
+    /// rows of that session the filters left.
+    pub fn row_at_or_after(&self, entry_index: usize) -> usize {
+        match self {
+            Self::All { entry_count } => entry_index.min(*entry_count),
+            Self::Matching(entries) => entries.partition_point(|entry| *entry < entry_index),
+        }
+    }
 }
 
 /// The live filter and the chips of one log.
@@ -106,6 +118,16 @@ impl FilterStack {
     /// reserved for it. Empty while the field is empty or its regex invalid.
     pub fn live_filter_matches(&self) -> &EntryMatches {
         self.live.query.matches()
+    }
+
+    /// Where in `message` the live filter matched, as byte ranges the table
+    /// paints the live colour over: every occurrence of every term of a plain
+    /// filter, and every match of a regex.
+    pub fn live_filter_match_spans(&self, message: &str) -> Vec<Range<usize>> {
+        match &self.live.compiled {
+            Ok(compiled) => compiled.match_spans(message),
+            Err(_) => Vec::new(),
+        }
     }
 
     pub fn set_live_filter_text(&mut self, text: &str) {
@@ -167,11 +189,13 @@ impl FilterStack {
         self.chips.iter().find(|chip| chip.id == id)
     }
 
-    /// The layer chips drawing on the map right now.
-    pub fn enabled_layer_chips(&self) -> impl Iterator<Item = &FilterChip> {
+    /// The layer chips drawing on the map right now, each with the palette slot
+    /// it draws in.
+    pub fn enabled_layer_chips(&self) -> impl Iterator<Item = (LayerColorSlot, &FilterChip)> {
         self.chips
             .iter()
-            .filter(|chip| chip.enabled && chip.layer_slot.is_some())
+            .filter(|chip| chip.enabled)
+            .filter_map(|chip| Some((chip.layer_slot?, chip)))
     }
 
     /// Takes a chip out of the map and the table, keeping everything else about
@@ -531,6 +555,42 @@ mod tests {
             !stack.can_add_live_filter_as_chip(),
             "there is nothing to add while the pattern does not compile"
         );
+    }
+
+    /// The table paints the live colour over what the filter selected the line
+    /// for, and over nothing at all while the pattern does not compile.
+    #[test]
+    fn the_live_filter_names_where_it_matched_in_a_line() {
+        let stack = scanned_stack(|stack, _| stack.set_live_filter_text("gnss fix"));
+        assert_eq!(
+            stack.live_filter_match_spans("navsyncd: gnss fix acquired"),
+            [10..14, 15..18]
+        );
+
+        let stack = scanned_stack(|stack, _| {
+            stack.set_live_filter_regex(true);
+            stack.set_live_filter_text("navsyncd(");
+        });
+        assert_eq!(
+            stack.live_filter_match_spans("navsyncd: gnss fix acquired"),
+            Vec::<Range<usize>>::new()
+        );
+    }
+
+    /// Where the table resumes a boot session under a narrowed visible set: the
+    /// row showing the first line of that session still visible.
+    #[test]
+    fn the_visible_set_names_the_row_a_session_resumes_at() {
+        let stack = scanned_stack(|stack, _| stack.set_live_filter_text("battery"));
+
+        let visible = stack.visible_entries();
+        assert_eq!(visible.row_at_or_after(0), 0);
+        assert_eq!(visible.row_at_or_after(2), 1, "entry 3 is the second match");
+        assert_eq!(visible.row_at_or_after(4), 2, "past the last entry");
+
+        let unfiltered = scanned_stack(|_, _| {});
+        assert_eq!(unfiltered.visible_entries().row_at_or_after(2), 2);
+        assert_eq!(unfiltered.visible_entries().row_at_or_after(9), 4);
     }
 
     #[test]

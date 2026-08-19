@@ -2,6 +2,7 @@ use egui::TextEdit;
 use egui_phosphor::regular::ARROW_LINE_UP_LEFT as ICON_ARROW_LINE_UP_LEFT;
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
 use egui_phosphor::regular::DOTS_SIX as ICON_DOTS_SIX;
+use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use egui_phosphor::regular::PUSH_PIN as ICON_PUSH_PIN;
 use egui_phosphor::regular::TERMINAL_WINDOW as ICON_TERMINAL_WINDOW;
 use egui_phosphor::regular::X as ICON_X;
@@ -22,6 +23,7 @@ use gt_types::{FileIdx, LoadWarning, TrackIdx, TrackRef};
 use strum::IntoEnumIterator as _;
 
 use super::App;
+use super::log_viewer;
 use super::settings_ui::{self, SettingsPage};
 
 /// In-memory [`egui::DroppedFile`] for drag-drop tests. `bytes` drops carry a
@@ -4790,6 +4792,68 @@ fn snapshot_app_log_viewer() {
     harness.inner.run_steps(8);
 
     harness.snapshot_loose("app_log_viewer");
+}
+
+/// Types `text` into the log viewer's live filter and runs until the scan it
+/// starts has landed. The field is focused by its own id: the app renders text
+/// fields of its own behind the window.
+fn type_into_log_filter(harness: &mut TestHarness<'_, App>, text: &str) {
+    harness.inner.ctx.memory_mut(|memory| {
+        memory.request_focus(egui::Id::new(log_viewer::filters::LIVE_FILTER_FIELD_ID));
+    });
+    harness.inner.run_steps(2);
+    harness
+        .inner
+        .input_mut()
+        .events
+        .push(egui::Event::Text(text.to_owned()));
+    harness.inner.run_steps(6);
+}
+
+/// Writes `text` into the live filter and keeps it as a chip.
+fn add_log_filter(harness: &mut TestHarness<'_, App>, text: &str) {
+    type_into_log_filter(harness, text);
+    harness
+        .inner
+        .get_by_label(log_viewer::filters::ADD_FILTER_LABEL)
+        .click();
+    harness.inner.run_steps(5);
+}
+
+/// The viewer filtering a journald-shaped log: the live filter with its match
+/// count and the term it highlights in the table, a layer chip with its colour
+/// swatch and gutter bars, and a refine chip narrowing the table to what it
+/// matched.
+#[test]
+fn snapshot_app_log_viewer_filters() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        recording_alongside_the_log("walk.gtd", 55.0),
+    );
+    drop_log_and_wait_for_load(
+        &mut harness.inner,
+        &synthetic_log(64 * 1024),
+        "navsyncd.log",
+    );
+    harness.inner.run_steps(5);
+
+    add_log_filter(&mut harness, "kernel");
+    add_log_filter(&mut harness, "rotated");
+    add_log_filter(&mut harness, "rc=-110");
+    // The last chip added is the one furthest right in the chip row.
+    harness
+        .inner
+        .nth_matching(By::new().label(ICON_PLUS_CIRCLE), 2)
+        .click();
+    harness.inner.run_steps(5);
+    type_into_log_filter(&mut harness, "retries");
+
+    harness.snapshot_loose("app_log_viewer_filters");
 }
 
 #[test]

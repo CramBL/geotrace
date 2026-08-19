@@ -1,5 +1,7 @@
 //! What a filter matches a log entry's message against.
 
+use std::ops::Range;
+
 use regex::{Regex, RegexBuilder};
 
 /// A filter as the user wrote it: the text of the field, and whether the `.*`
@@ -85,6 +87,49 @@ impl CompiledFilter {
     pub(crate) fn matches_nothing(&self) -> bool {
         matches!(self.0, Matcher::MatchesNothing)
     }
+
+    /// Where in `message` the filter matched, as byte ranges the viewer paints
+    /// the match colour over: every occurrence of every term of a plain filter,
+    /// and every match of a regex. Ascending, non-overlapping, and empty for a
+    /// message the filter does not match.
+    pub(crate) fn match_spans(&self, message: &str) -> Vec<Range<usize>> {
+        let mut spans = Vec::new();
+        match &self.0 {
+            Matcher::MatchesNothing => return spans,
+            Matcher::AllTerms(terms) => {
+                for term in terms {
+                    let term_spans = term.spans(message);
+                    if term_spans.is_empty() {
+                        return Vec::new();
+                    }
+                    spans.extend(term_spans);
+                }
+            }
+            Matcher::Regex(regex) => {
+                spans.extend(regex.find_iter(message).map(|found| found.range()));
+            }
+        }
+        merged_spans(spans, message)
+    }
+}
+
+/// `spans` sorted and joined where they overlap or touch, dropping the empty
+/// ones and any that a byte-wise search put inside a character of `message`.
+fn merged_spans(mut spans: Vec<Range<usize>>, message: &str) -> Vec<Range<usize>> {
+    spans.retain(|span| {
+        span.start < span.end
+            && message.is_char_boundary(span.start)
+            && message.is_char_boundary(span.end)
+    });
+    spans.sort_unstable_by_key(|span| span.start);
+    let mut merged: Vec<Range<usize>> = Vec::with_capacity(spans.len());
+    for span in spans {
+        match merged.last_mut() {
+            Some(last) if span.start <= last.end => last.end = last.end.max(span.end),
+            _ => merged.push(span),
+        }
+    }
+    merged
 }
 
 #[derive(Debug)]
@@ -127,8 +172,20 @@ impl PlainTerm {
 
     fn matches(&self, message: &str) -> bool {
         match self {
-            Self::Ascii(term) => term.matches(message),
+            Self::Ascii(term) => term.find_from(message, 0).is_some(),
             Self::Unicode(regex) => regex.is_match(message),
+        }
+    }
+
+    /// Every occurrence of this term in `message`, ascending and
+    /// non-overlapping.
+    fn spans(&self, message: &str) -> Vec<Range<usize>> {
+        match self {
+            Self::Ascii(term) => term.spans(message),
+            Self::Unicode(regex) => regex
+                .find_iter(message)
+                .map(|found| found.range())
+                .collect(),
         }
     }
 }
@@ -146,27 +203,41 @@ impl AsciiTerm {
         }
     }
 
-    fn matches(&self, message: &str) -> bool {
+    /// Where this term next occurs in `message` at or after the byte offset
+    /// `from`. An empty term occurs at `from`.
+    fn find_from(&self, message: &str, from: usize) -> Option<Range<usize>> {
         let Some(&first_lowercase) = self.lowercase.first() else {
-            return true;
+            return Some(from..from);
         };
         let first_uppercase = first_lowercase.to_ascii_uppercase();
         let haystack = message.as_bytes();
-        let mut from = 0;
-        while let Some(rest) = haystack.get(from..) {
-            let Some(candidate_start) = memchr::memchr2(first_lowercase, first_uppercase, rest)
-                .map(|hit| from.saturating_add(hit))
-            else {
-                return false;
-            };
+        let mut searched_to = from;
+        while let Some(rest) = haystack.get(searched_to..) {
+            let candidate_start = memchr::memchr2(first_lowercase, first_uppercase, rest)
+                .map(|hit| searched_to.saturating_add(hit))?;
             let candidate_end = candidate_start.saturating_add(self.lowercase.len());
             match haystack.get(candidate_start..candidate_end) {
-                Some(candidate) if candidate.eq_ignore_ascii_case(&self.lowercase) => return true,
-                Some(_) => from = candidate_start.saturating_add(1),
-                None => return false,
+                Some(candidate) if candidate.eq_ignore_ascii_case(&self.lowercase) => {
+                    return Some(candidate_start..candidate_end);
+                }
+                Some(_) => searched_to = candidate_start.saturating_add(1),
+                None => return None,
             }
         }
-        false
+        None
+    }
+
+    fn spans(&self, message: &str) -> Vec<Range<usize>> {
+        let mut spans = Vec::new();
+        if self.lowercase.is_empty() {
+            return spans;
+        }
+        let mut searched_to = 0;
+        while let Some(span) = self.find_from(message, searched_to) {
+            searched_to = span.end;
+            spans.push(span);
+        }
+        spans
     }
 }
 
@@ -264,6 +335,51 @@ mod tests {
         assert!(!matches(&pattern, "  at 0x0000c3f4 in gnss_taskk0x54"));
     }
 
+    fn spans(pattern: &FilterPattern, message: &str) -> Vec<Range<usize>> {
+        pattern
+            .compile()
+            .expect("the fixture pattern compiles")
+            .match_spans(message)
+    }
+
+    #[rstest]
+    #[case::one_term(FilterPattern::plain("gnss"), vec![10..14])]
+    #[case::every_occurrence_of_a_term(FilterPattern::plain("fix"), vec![15..18, 29..32])]
+    #[case::one_span_per_term(FilterPattern::plain("gnss lost"), vec![10..14, 33..37])]
+    #[case::a_term_in_another_case(FilterPattern::plain("GNSS"), vec![10..14])]
+    #[case::a_term_the_message_misses(FilterPattern::plain("gnss modem"), Vec::new())]
+    #[case::the_whole_regex_match(FilterPattern::regex("gnss.*acquired"), vec![10..27])]
+    #[case::every_regex_match(FilterPattern::regex("fix"), vec![15..18, 29..32])]
+    #[case::an_empty_field(FilterPattern::plain(""), Vec::new())]
+    fn the_spans_are_where_the_table_paints_the_match_colour(
+        #[case] pattern: FilterPattern,
+        #[case] expected: Vec<Range<usize>>,
+    ) {
+        let message = "navsyncd: gnss fix acquired, fix lost again";
+        assert_eq!(spans(&pattern, message), expected);
+    }
+
+    /// Two terms sharing a stretch of the message paint one span, not two
+    /// overlapping ones.
+    #[test]
+    fn overlapping_terms_paint_one_span() {
+        let message = "navsyncd: gnss fix acquired";
+        assert_eq!(
+            spans(&FilterPattern::plain("gnss ss"), message),
+            vec![10..14]
+        );
+    }
+
+    /// A term whose bytes could be found inside a character never yields a span
+    /// the table would have to slice a character in half to paint.
+    #[test]
+    fn a_span_always_starts_and_ends_on_a_character() {
+        let message = "größe: 4 KiB";
+        for span in spans(&FilterPattern::plain("größe"), message) {
+            assert!(message.get(span.clone()).is_some(), "{span:?}");
+        }
+    }
+
     fn any_filter_text() -> impl Strategy<Value = String> {
         prop_oneof![
             // Metacharacter soup: the regex mode has to meet patterns it rejects.
@@ -273,6 +389,35 @@ mod tests {
     }
 
     proptest! {
+        /// Whatever the user wrote and whatever the message holds, the table
+        /// can paint every span it is handed: they are ascending, apart, and
+        /// slices of the message.
+        #[test]
+        fn every_span_is_a_slice_of_the_message_after_the_one_before_it(
+            text in any_filter_text(),
+            regex in any::<bool>(),
+            message in any::<String>(),
+        ) {
+            let pattern = FilterPattern { text, regex };
+            let Ok(compiled) = pattern.compile() else {
+                return Ok(());
+            };
+
+            let mut painted_to: Option<usize> = None;
+            for span in compiled.match_spans(&message) {
+                prop_assert!(span.start < span.end, "{span:?} paints nothing");
+                if let Some(previous_end) = painted_to {
+                    prop_assert!(span.start > previous_end, "{span:?} is not apart");
+                }
+                prop_assert!(message.get(span.clone()).is_some(), "{span:?} is no slice");
+                painted_to = Some(span.end);
+            }
+            prop_assert!(
+                painted_to.is_none() || compiled.matches(&message),
+                "a message the filter misses is painted nowhere"
+            );
+        }
+
         /// Whatever a user writes into the field, it compiles into a matcher or
         /// into the error the viewer shows under the field.
         #[test]
