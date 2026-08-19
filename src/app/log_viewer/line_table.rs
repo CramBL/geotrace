@@ -1,12 +1,13 @@
-//! The virtualized line table: every entry of a log in file order, with a
-//! divider row opening each boot session.
+//! The virtualized line table: the entries of a log its filters leave visible,
+//! in file order, with a divider row opening each boot session.
 
 use std::collections::HashMap;
+use std::ops::Range;
 
 use chrono::Duration;
-use egui::{Label, RichText, ScrollArea, Separator};
+use egui::{Color32, Label, RichText, ScrollArea, Separator, text::LayoutJob};
 use gt_fmt::MIDDLE_DOT;
-use gt_log_view::LoadedLog;
+use gt_log_view::{EntryMatches, FilterStack, LoadedLog, VisibleEntries};
 use gt_logfile::{BootSession, LogEntry, ParsedLog, TimestampKind};
 use gt_types::{Latitude, Longitude};
 use gt_ui_theme::EM_DASH;
@@ -20,11 +21,23 @@ const INTERPOLATED_TIMESTAMP_HOVER: &str = "Timestamp interpolated between neigh
 
 const ASSOCIATED_ROW_HOVER: &str = "Centre the map on this line";
 
-/// Width of the gutter left of every row, wide enough for the order-anomaly
-/// marker and keeping the timestamp column aligned on the rows without one.
-const GUTTER_WIDTH_PX: f32 = 6.0;
+/// Width of the gutter column holding the order-anomaly marker, keeping the
+/// timestamp column aligned on the rows without one.
+const ANOMALY_COLUMN_WIDTH_PX: f32 = 6.0;
 
 const ANOMALY_MARKER_WIDTH_PX: f32 = 3.0;
+
+/// Width of the bar a row takes in the gutter column of a layer chip it
+/// matches.
+const LAYER_BAR_WIDTH_PX: f32 = 4.0;
+
+/// Gap between one layer chip's bars and the next chip's.
+const LAYER_BAR_GAP_PX: f32 = 1.0;
+
+/// Width one layer chip claims in the gutter: its bar and the gap after it.
+const LAYER_COLUMN_WIDTH_PX: f32 = LAYER_BAR_WIDTH_PX + LAYER_BAR_GAP_PX;
+
+const GUTTER_MARKER_CORNER_RADIUS: u8 = 1;
 
 /// One row of the table: a boot session's divider, or one entry of the log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,75 +46,124 @@ pub(super) enum LineTableRow {
     Entry { entry_index: usize },
 }
 
-/// The table's rows over one log: every entry in file order, each boot session
-/// preceded by its divider row.
-#[derive(Debug, Clone, Copy)]
+/// The table's rows over one log: the entries its filters leave visible in file
+/// order, each boot session preceded by its divider row.
+///
+/// A boot session whose every entry is filtered out drops out of the table
+/// along with its divider.
+#[derive(Debug)]
 pub(super) struct LineTableRows<'a> {
-    boot_sessions: &'a [BootSession],
-    entry_count: usize,
+    visible: &'a VisibleEntries,
+
+    /// The boot sessions holding at least one visible entry, in file order.
+    shown_sessions: Vec<ShownBootSession>,
+
+    row_count: usize,
+}
+
+/// One boot session the table draws, and the stretch of the visible set it
+/// covers.
+#[derive(Debug)]
+struct ShownBootSession {
+    session_index: usize,
+
+    /// The table row this session's divider is drawn at.
+    separator_row: usize,
+
+    /// The rows of the visible set holding this session's entries.
+    visible_rows: Range<usize>,
 }
 
 impl<'a> LineTableRows<'a> {
-    pub(super) fn of(parsed: &'a ParsedLog) -> Self {
+    pub(super) fn of(parsed: &ParsedLog, visible: &'a VisibleEntries) -> Self {
+        Self::over(parsed.boot_sessions(), visible)
+    }
+
+    fn over(boot_sessions: &[BootSession], visible: &'a VisibleEntries) -> Self {
+        let mut shown_sessions = Vec::with_capacity(boot_sessions.len());
+        let mut row_count = 0;
+        for (session_index, session) in boot_sessions.iter().enumerate() {
+            let first = visible.row_at_or_after(session.entry_range.start);
+            let past_last = visible.row_at_or_after(session.entry_range.end);
+            if first >= past_last {
+                continue;
+            }
+            shown_sessions.push(ShownBootSession {
+                session_index,
+                separator_row: row_count,
+                visible_rows: first..past_last,
+            });
+            row_count = row_count
+                .saturating_add(past_last.saturating_sub(first))
+                .saturating_add(1);
+        }
         Self {
-            boot_sessions: parsed.boot_sessions(),
-            entry_count: parsed.entries().len(),
+            visible,
+            shown_sessions,
+            row_count,
         }
     }
 
     pub(super) fn len(&self) -> usize {
-        self.entry_count.saturating_add(self.boot_sessions.len())
+        self.row_count
     }
 
     pub(super) fn at(&self, row: usize) -> Option<LineTableRow> {
-        let session_index = self.session_at(row)?;
-        let separator_row = self.row_of_boot_separator(session_index)?;
-        if row == separator_row {
-            return Some(LineTableRow::BootSeparator { session_index });
+        let shown = self.shown_session_at(row)?;
+        if row == shown.separator_row {
+            return Some(LineTableRow::BootSeparator {
+                session_index: shown.session_index,
+            });
         }
-        let entries_into_session = row.saturating_sub(separator_row).saturating_sub(1);
-        let entry_index = self
-            .boot_sessions
-            .get(session_index)?
-            .entry_range
-            .start
-            .saturating_add(entries_into_session);
-        (entry_index < self.entry_count).then_some(LineTableRow::Entry { entry_index })
-    }
-
-    pub(super) fn row_of_boot_separator(&self, session_index: usize) -> Option<usize> {
-        let session = self.boot_sessions.get(session_index)?;
-        Some(session.entry_range.start.saturating_add(session_index))
-    }
-
-    pub(super) fn row_of_entry(&self, entry_index: usize) -> Option<usize> {
-        if entry_index >= self.entry_count {
+        let rows_into_session = row
+            .saturating_sub(shown.separator_row)
+            .saturating_sub(1)
+            .saturating_add(shown.visible_rows.start);
+        if rows_into_session >= shown.visible_rows.end {
             return None;
         }
-        let sessions_before = self
-            .boot_sessions
-            .partition_point(|session| session.entry_range.start <= entry_index);
-        Some(entry_index.saturating_add(sessions_before))
+        self.visible
+            .entry_index(rows_into_session)
+            .map(|entry_index| LineTableRow::Entry { entry_index })
     }
 
-    /// The boot session whose divider or entries `row` falls in.
-    fn session_at(&self, row: usize) -> Option<usize> {
-        let mut first = 0;
-        let mut past_last = self.boot_sessions.len();
-        while first < past_last {
-            let middle = first + (past_last - first) / 2;
-            match self.row_of_boot_separator(middle) {
-                Some(separator_row) if separator_row <= row => first = middle + 1,
-                _ => past_last = middle,
-            }
-        }
-        first.checked_sub(1)
+    /// The row the divider of `session_index` is drawn at, `None` for a session
+    /// the filters left nothing visible of.
+    pub(super) fn row_of_boot_separator(&self, session_index: usize) -> Option<usize> {
+        self.shown_sessions
+            .iter()
+            .find(|shown| shown.session_index == session_index)
+            .map(|shown| shown.separator_row)
+    }
+
+    /// The row showing the first visible entry at or after `entry_index`,
+    /// `None` when the filters left none of the rest of its session visible.
+    pub(super) fn row_of_entry(&self, entry_index: usize) -> Option<usize> {
+        let visible_row = self.visible.row_at_or_after(entry_index);
+        let shown = self
+            .shown_sessions
+            .iter()
+            .find(|shown| shown.visible_rows.contains(&visible_row))?;
+        Some(
+            shown
+                .separator_row
+                .saturating_add(1)
+                .saturating_add(visible_row.saturating_sub(shown.visible_rows.start)),
+        )
+    }
+
+    /// The shown session whose divider or entries `row` falls in.
+    fn shown_session_at(&self, row: usize) -> Option<&ShownBootSession> {
+        let past_row = self
+            .shown_sessions
+            .partition_point(|shown| shown.separator_row <= row);
+        self.shown_sessions.get(past_row.checked_sub(1)?)
     }
 }
 
 impl LogViewerWindow {
-    /// The table of `log`'s lines. Only the rows on screen are built: a journal
-    /// of a million lines costs what one of a hundred does.
+    /// The table of `log`'s visible lines. Only the rows on screen are built: a
+    /// journal of a million lines costs what one of a hundred does.
     pub(super) fn line_table_ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -109,7 +171,8 @@ impl LogViewerWindow {
         map_center_request: &mut Option<(f64, f64)>,
     ) {
         let parsed = log.parsed();
-        let rows = LineTableRows::of(parsed);
+        let filters = log.filters();
+        let rows = LineTableRows::of(parsed, filters.visible_entries());
         let anomaly_steps: HashMap<usize, Duration> = parsed
             .order_anomalies()
             .iter()
@@ -124,6 +187,9 @@ impl LogViewerWindow {
             .collect();
         let unit = self.association_window_unit;
         let association_window = log.association_window();
+        let dark_mode = ui.visuals().dark_mode;
+        let gutter = LayerGutter::of(filters, dark_mode);
+        let highlight = gt_ui_theme::LOG_LIVE_FILTER.resolve(dark_mode);
 
         ui.scope(|ui| {
             // Rows sit directly on top of each other, so the table reads as one
@@ -150,12 +216,19 @@ impl LogViewerWindow {
                             let Some(entry) = parsed.entries().get(entry_index) else {
                                 continue;
                             };
+                            let message = parsed.message(entry);
                             let clicked_position = EntryRow {
                                 entry,
-                                message: parsed.message(entry),
+                                message,
+                                highlighted: HighlightedMessage {
+                                    spans: filters.live_filter_match_spans(message),
+                                    color: highlight,
+                                },
                                 position: log.entry_position(entry_index),
                                 order_anomaly_step: anomaly_steps.get(&entry_index).copied(),
                                 association_window,
+                                gutter: &gutter,
+                                entry_index,
                             }
                             .ui(ui, unit);
                             if let Some(position) = clicked_position {
@@ -170,10 +243,40 @@ impl LogViewerWindow {
     }
 }
 
+/// The gutter left of the table: the order-anomaly column, then one column per
+/// enabled layer chip in chip order. One chip's bars line up down the table.
+struct LayerGutter<'a> {
+    columns: Vec<LayerGutterColumn<'a>>,
+}
+
+struct LayerGutterColumn<'a> {
+    matched_entries: &'a EntryMatches,
+    color: Color32,
+}
+
+impl<'a> LayerGutter<'a> {
+    fn of(filters: &'a FilterStack, dark_mode: bool) -> Self {
+        Self {
+            columns: filters
+                .enabled_layer_chips()
+                .map(|(slot, chip)| LayerGutterColumn {
+                    matched_entries: chip.matches(),
+                    color: gt_ui_theme::log_layer_slot_color(slot.index()).resolve(dark_mode),
+                })
+                .collect(),
+        }
+    }
+
+    fn width_px(&self) -> f32 {
+        ANOMALY_COLUMN_WIDTH_PX + self.columns.len() as f32 * LAYER_COLUMN_WIDTH_PX
+    }
+}
+
 /// One entry of the log, as the table draws it.
 struct EntryRow<'a> {
     entry: &'a LogEntry,
     message: &'a str,
+    highlighted: HighlightedMessage,
     position: Option<(Latitude, Longitude)>,
 
     /// The backwards step this entry opens, for the rows an order anomaly
@@ -181,6 +284,14 @@ struct EntryRow<'a> {
     order_anomaly_step: Option<Duration>,
 
     association_window: Duration,
+    gutter: &'a LayerGutter<'a>,
+    entry_index: usize,
+}
+
+/// Where the live filter matched the message, and the colour reserved for it.
+struct HighlightedMessage {
+    spans: Vec<Range<usize>>,
+    color: Color32,
 }
 
 impl EntryRow<'_> {
@@ -193,14 +304,13 @@ impl EntryRow<'_> {
             TimestampKind::Interpolated => (ALMOST_EQUAL_TO, true),
         };
         let mut timestamp_text = RichText::new(format!("{prefix}{timestamp}")).monospace();
-        let mut message_text = RichText::new(self.message).monospace();
-        if interpolated {
+        if interpolated || !associated {
             timestamp_text = timestamp_text.weak();
         }
-        if !associated {
-            timestamp_text = timestamp_text.weak();
-            message_text = message_text.weak();
-        }
+        let message_color = match associated {
+            true => ui.visuals().text_color(),
+            false => ui.visuals().weak_text_color(),
+        };
 
         let row = ui
             .horizontal(|ui| {
@@ -209,7 +319,8 @@ impl EntryRow<'_> {
                 if interpolated {
                     timestamp.on_hover_text(INTERPOLATED_TIMESTAMP_HOVER);
                 }
-                ui.add(Label::new(message_text).truncate());
+                let message = self.message_job(ui, message_color);
+                ui.add(Label::new(message));
             })
             .response;
 
@@ -234,22 +345,72 @@ impl EntryRow<'_> {
             .then(|| (latitude.as_degrees(), longitude.as_degrees()))
     }
 
+    /// The message, with what the live filter matched painted in the colour
+    /// reserved for it. Laid out as one truncated row: a long line must not
+    /// push the rows below it out of the virtualized table's grid.
+    fn message_job(&self, ui: &egui::Ui, color: Color32) -> LayoutJob {
+        let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+        let mut job = LayoutJob {
+            wrap: egui::text::TextWrapping::truncate_at_width(ui.available_width()),
+            ..LayoutJob::default()
+        };
+        let mut appended_to = 0;
+        for span in &self.highlighted.spans {
+            let (Some(plain), Some(matched)) = (
+                self.message.get(appended_to..span.start),
+                self.message.get(span.clone()),
+            ) else {
+                continue;
+            };
+            job.append(plain, 0.0, egui::TextFormat::simple(font_id.clone(), color));
+            job.append(
+                matched,
+                0.0,
+                egui::TextFormat::simple(font_id.clone(), self.highlighted.color),
+            );
+            appended_to = span.end;
+        }
+        if let Some(rest) = self.message.get(appended_to..) {
+            job.append(rest, 0.0, egui::TextFormat::simple(font_id, color));
+        }
+        job
+    }
+
     /// The warning-amber marker on the row an unexplained backwards timestamp
-    /// step starts at.
+    /// step starts at, and a bar in every enabled layer chip's column this row
+    /// matched.
     fn gutter_ui(&self, ui: &mut egui::Ui) {
         let height = ui.text_style_height(&egui::TextStyle::Monospace);
-        let (rect, _) =
-            ui.allocate_exact_size(egui::vec2(GUTTER_WIDTH_PX, height), egui::Sense::hover());
-        if self.order_anomaly_step.is_none() {
-            return;
-        }
-        let marker =
-            egui::Rect::from_min_size(rect.left_top(), egui::vec2(ANOMALY_MARKER_WIDTH_PX, height));
-        ui.painter().rect_filled(
-            marker,
-            1.0,
-            gt_ui_theme::warning_amber(ui.visuals().dark_mode),
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(self.gutter.width_px(), height),
+            egui::Sense::hover(),
         );
+        let painter = ui.painter();
+        if self.order_anomaly_step.is_some() {
+            painter.rect_filled(
+                egui::Rect::from_min_size(
+                    rect.left_top(),
+                    egui::vec2(ANOMALY_MARKER_WIDTH_PX, height),
+                ),
+                GUTTER_MARKER_CORNER_RADIUS,
+                gt_ui_theme::warning_amber(ui.visuals().dark_mode),
+            );
+        }
+        for (column, layer) in self.gutter.columns.iter().enumerate() {
+            if !layer.matched_entries.contains(self.entry_index) {
+                continue;
+            }
+            let left =
+                rect.left() + ANOMALY_COLUMN_WIDTH_PX + column as f32 * LAYER_COLUMN_WIDTH_PX;
+            painter.rect_filled(
+                egui::Rect::from_min_size(
+                    egui::pos2(left, rect.top()),
+                    egui::vec2(LAYER_BAR_WIDTH_PX, height),
+                ),
+                GUTTER_MARKER_CORNER_RADIUS,
+                layer.color,
+            );
+        }
     }
 }
 
@@ -273,9 +434,26 @@ fn boot_separator_row_ui(ui: &mut egui::Ui, session: &BootSession) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use chrono::{DateTime, TimeZone as _, Utc};
+    use gt_log_view::LayerColorSlots;
     use gt_logfile::AnchoredBounds;
 
     use super::*;
+
+    /// Two phenomena a filter can pick out, one of them logged twice.
+    const GUTTER_LOG: &str = "\
+2026-01-01 14:02:11 navsyncd: gnss fix acquired
+2026-01-01 14:02:12 hal-powerd: battery low
+2026-01-01 14:02:13 navsyncd: gnss fix lost
+";
+
+    fn gutter_log_start() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 1, 1, 14, 2, 11)
+            .single()
+            .unwrap_or_default()
+    }
 
     fn sessions(entries_per_session: &[usize]) -> Vec<BootSession> {
         let mut sessions = Vec::new();
@@ -291,19 +469,23 @@ mod tests {
         sessions
     }
 
-    fn drawn_rows(entries_per_session: &[usize]) -> Vec<LineTableRow> {
-        let boot_sessions = sessions(entries_per_session);
-        let rows = LineTableRows {
-            boot_sessions: &boot_sessions,
+    fn every_entry(entries_per_session: &[usize]) -> VisibleEntries {
+        VisibleEntries::All {
             entry_count: entries_per_session.iter().sum(),
-        };
+        }
+    }
+
+    fn drawn_rows(rows: &LineTableRows<'_>) -> Vec<LineTableRow> {
         (0..rows.len()).filter_map(|row| rows.at(row)).collect()
     }
 
     #[test]
     fn each_boot_session_opens_with_its_divider_and_is_followed_by_its_entries() {
+        let boot_sessions = sessions(&[2, 1]);
+        let visible = every_entry(&[2, 1]);
+
         assert_eq!(
-            drawn_rows(&[2, 1]),
+            drawn_rows(&LineTableRows::over(&boot_sessions, &visible)),
             [
                 LineTableRow::BootSeparator { session_index: 0 },
                 LineTableRow::Entry { entry_index: 0 },
@@ -316,8 +498,11 @@ mod tests {
 
     #[test]
     fn a_log_with_no_reboot_separator_is_one_session_of_every_entry() {
+        let boot_sessions = sessions(&[2]);
+        let visible = every_entry(&[2]);
+
         assert_eq!(
-            drawn_rows(&[2]),
+            drawn_rows(&LineTableRows::over(&boot_sessions, &visible)),
             [
                 LineTableRow::BootSeparator { session_index: 0 },
                 LineTableRow::Entry { entry_index: 0 },
@@ -326,15 +511,41 @@ mod tests {
         );
     }
 
+    /// A filtered table keeps the divider of every boot session it still shows
+    /// a line of, and drops the ones it shows nothing of.
+    #[test]
+    fn a_boot_session_the_filters_emptied_drops_out_with_its_divider() {
+        let boot_sessions = sessions(&[2, 2, 2]);
+        let visible = VisibleEntries::Matching(vec![1, 4, 5]);
+
+        let rows = LineTableRows::over(&boot_sessions, &visible);
+
+        assert_eq!(
+            drawn_rows(&rows),
+            [
+                LineTableRow::BootSeparator { session_index: 0 },
+                LineTableRow::Entry { entry_index: 1 },
+                LineTableRow::BootSeparator { session_index: 2 },
+                LineTableRow::Entry { entry_index: 4 },
+                LineTableRow::Entry { entry_index: 5 },
+            ]
+        );
+        assert_eq!(rows.row_of_boot_separator(2), Some(2));
+        assert_eq!(
+            rows.row_of_boot_separator(1),
+            None,
+            "the middle boot has no line the filters show"
+        );
+    }
+
     /// Both accessors name the row the table draws a session or an entry at,
     /// which is the row the summary panel scrolls to.
     #[test]
     fn the_row_of_a_session_and_of_an_entry_is_where_the_table_draws_them() {
         let boot_sessions = sessions(&[2, 3]);
-        let rows = LineTableRows {
-            boot_sessions: &boot_sessions,
-            entry_count: 5,
-        };
+        let visible = every_entry(&[2, 3]);
+
+        let rows = LineTableRows::over(&boot_sessions, &visible);
 
         assert_eq!(rows.row_of_boot_separator(1), Some(3));
         assert_eq!(
@@ -345,5 +556,84 @@ mod tests {
         assert_eq!(rows.at(6), Some(LineTableRow::Entry { entry_index: 4 }));
         assert_eq!(rows.row_of_entry(5), None);
         assert_eq!(rows.at(7), None);
+    }
+
+    /// A line the filters hid scrolls to the next line of its session that they
+    /// left visible.
+    #[test]
+    fn a_hidden_line_scrolls_to_the_next_one_its_session_still_shows() {
+        let boot_sessions = sessions(&[4]);
+        let visible = VisibleEntries::Matching(vec![0, 3]);
+
+        let rows = LineTableRows::over(&boot_sessions, &visible);
+
+        assert_eq!(rows.row_of_entry(0), Some(1));
+        assert_eq!(rows.row_of_entry(1), Some(2), "entry 3 is the next visible");
+        assert_eq!(rows.row_of_entry(3), Some(2));
+    }
+
+    /// Two logged phenomena compared side by side: each enabled layer chip
+    /// claims a column of the gutter, in its own palette colour.
+    #[test]
+    fn each_enabled_layer_chip_marks_the_rows_it_matched_in_its_own_column() {
+        let log = Arc::new(
+            gt_logfile::parse_log(GUTTER_LOG.into(), gutter_log_start()).expect("the log parses"),
+        );
+        let mut stack = FilterStack::new(log);
+        let mut slots = LayerColorSlots::default();
+        for text in ["gnss", "battery"] {
+            stack.set_live_filter_text(text);
+            stack.add_live_filter_as_chip(&mut slots);
+        }
+        stack.wait_for_queries();
+
+        let gutter = LayerGutter::of(&stack, true);
+
+        assert_eq!(
+            gutter
+                .columns
+                .iter()
+                .map(|column| column.color)
+                .collect::<Vec<_>>(),
+            [
+                gt_ui_theme::log_layer_slot_color(0).dark(),
+                gt_ui_theme::log_layer_slot_color(1).dark(),
+            ]
+        );
+        assert_eq!(
+            gutter
+                .columns
+                .iter()
+                .map(|column| column.matched_entries.matched_entry_indices().collect())
+                .collect::<Vec<Vec<usize>>>(),
+            [vec![0, 2], vec![1]]
+        );
+        let expected_width = ANOMALY_COLUMN_WIDTH_PX + 2.0 * LAYER_COLUMN_WIDTH_PX;
+        assert!(
+            (gutter.width_px() - expected_width).abs() < f32::EPSILON,
+            "the gutter makes room for both columns beside the anomaly marker, got {}",
+            gutter.width_px()
+        );
+    }
+
+    /// The gutter narrows back to the columns still marking rows: a chip
+    /// switched off draws nothing.
+    #[test]
+    fn a_chip_that_is_switched_off_gives_up_its_gutter_column() {
+        let log = Arc::new(
+            gt_logfile::parse_log(GUTTER_LOG.into(), gutter_log_start()).expect("the log parses"),
+        );
+        let mut stack = FilterStack::new(log);
+        let mut slots = LayerColorSlots::default();
+        stack.set_live_filter_text("gnss");
+        let chip = stack
+            .add_live_filter_as_chip(&mut slots)
+            .expect("a written filter becomes a chip");
+        stack.wait_for_queries();
+        assert_eq!(LayerGutter::of(&stack, true).columns.len(), 1);
+
+        stack.set_chip_enabled(chip, false);
+
+        assert_eq!(LayerGutter::of(&stack, true).columns.len(), 0);
     }
 }

@@ -566,6 +566,7 @@ pub const THEMED_FOREGROUNDS: &[(&str, ThemedColor)] = &[
     ("FIX_QUALITY_GREEN", FIX_QUALITY_GREEN),
     ("FIX_QUALITY_YELLOW", FIX_QUALITY_YELLOW),
     ("FIX_QUALITY_RED", FIX_QUALITY_RED),
+    ("LOG_LIVE_FILTER", LOG_LIVE_FILTER),
 ];
 
 /// The query editor's syntax-highlight colours. Checked against the editor
@@ -766,6 +767,60 @@ pub const fn metric_color(kind: gt_types::MetricKind, dark_mode: bool) -> Color3
 /// background.
 pub const PLOT_CANVAS_LIGHT: Color32 = Color32::from_gray(232);
 
+/// The colour reserved for a log's live filter: the highlight over a matched
+/// term in the viewer's table, and the glyphs its matches draw on the map.
+///
+/// Held apart from the layer slots below: a warm gold, which no filter already
+/// added ever draws in.
+pub const LOG_LIVE_FILTER: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(255, 212, 121),
+    Color32::from_rgb(138, 109, 31),
+);
+
+/// The colours a log's layer chips draw in, indexed by the palette slot each
+/// chip holds.
+///
+/// Magenta through rose. The hues are clear of the track blues and cyans and of
+/// the semantic amber, red and green: a log layer never reads as a warning, an
+/// error or a track.
+pub const LOG_LAYER_SLOTS: [ThemedColor; 5] = [
+    // Magenta.
+    ThemedColor::new(
+        Color32::from_rgb(230, 79, 200),
+        Color32::from_rgb(164, 37, 138),
+    ),
+    // Orange.
+    ThemedColor::new(
+        Color32::from_rgb(255, 158, 44),
+        Color32::from_rgb(178, 95, 0),
+    ),
+    // Leaf green, kept apart from the affirmative SUCCESS_GREEN.
+    ThemedColor::new(
+        Color32::from_rgb(139, 195, 74),
+        Color32::from_rgb(78, 122, 27),
+    ),
+    // Violet.
+    ThemedColor::new(
+        Color32::from_rgb(179, 136, 255),
+        Color32::from_rgb(106, 63, 196),
+    ),
+    // Rose, kept apart from the ERROR_INDICATOR red.
+    ThemedColor::new(
+        Color32::from_rgb(255, 90, 122),
+        Color32::from_rgb(189, 34, 69),
+    ),
+];
+
+/// The colour of layer palette slot `slot_index`. Slots past the last one cycle
+/// the palette, as the sixth and later layer chip of a session do.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "the slot is reduced modulo the palette length, so always in bounds"
+)]
+pub fn log_layer_slot_color(slot_index: usize) -> ThemedColor {
+    LOG_LAYER_SLOTS[slot_index % LOG_LAYER_SLOTS.len()]
+}
+
 /// Colors used for log-entry markers, cycling over the marker's log index.
 pub const LOG_COLORS: [Color32; 8] = [
     Color32::from_rgb(230, 57, 70),
@@ -921,6 +976,9 @@ mod tests {
                 constellation_themed_color(constellation),
             ));
         }
+        for (slot, color) in LOG_LAYER_SLOTS.iter().enumerate() {
+            all.push((format!("LOG_LAYER_SLOTS[{slot}]"), *color));
+        }
         all
     }
 
@@ -1010,6 +1068,27 @@ mod tests {
             "illegible query syntax colours:\n{}",
             failures.join("\n")
         );
+    }
+
+    /// The sixth layer chip of a session takes a slot past the palette, and
+    /// draws in the first colour again.
+    #[test]
+    fn a_layer_slot_past_the_palette_cycles_it() {
+        assert_eq!(log_layer_slot_color(0), log_layer_slot_color(5));
+        assert_eq!(log_layer_slot_color(1), log_layer_slot_color(6));
+        assert_ne!(log_layer_slot_color(0), log_layer_slot_color(1));
+    }
+
+    /// A layer colour must not be mistakable for a warning, an error or a
+    /// track, all of which the map draws alongside the log's hexagons.
+    #[test]
+    fn no_layer_colour_repeats_a_semantic_or_track_colour() {
+        for color in LOG_LAYER_SLOTS {
+            assert!(!TRACK_COLORS.contains(&color.dark()));
+            assert_ne!(color.dark(), WARNING_AMBER);
+            assert_ne!(color.dark(), ERROR_INDICATOR);
+            assert_ne!(color.dark(), SUCCESS_GREEN);
+        }
     }
 
     #[test]

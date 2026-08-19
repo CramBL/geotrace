@@ -14,6 +14,7 @@
 - The `--offline` flag runs the app without network access (replaces the `GEOTRACE_OFFLINE` environment variable).
 - A search field in Settings to easily filter pages and rows.
 - A log viewer window: a loaded log opens in it showing its lines, boot sessions and parse summary, and clicking a line centres the map where it was recorded.
+- The log viewer filters as you type, in plain terms or a regular expression, and "+ Add filter" keeps the filter.
 
 ### Changed
 

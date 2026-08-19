@@ -3,7 +3,7 @@
 //! order anomalies the parse found.
 
 use chrono::Duration;
-use egui::{Frame, Grid, RichText, ScrollArea};
+use egui::{Button, Frame, Grid, RichText, ScrollArea};
 use gt_log_view::LoadedLog;
 use gt_logfile::{BootSession, ParsedLog};
 use gt_ui_theme::EM_DASH;
@@ -20,6 +20,8 @@ const UPTIME_BAR_WIDTH_PX: f32 = 90.0;
 
 const UPTIME_BAR_HEIGHT_PX: f32 = 6.0;
 
+const FILTERED_OUT_HOVER: &str = "The filters show no line of this";
+
 /// Column and row spacing shared by the panel's grids, so their rows sit
 /// tighter than the window's default.
 const GRID_SPACING: egui::Vec2 = egui::vec2(8.0, 2.0);
@@ -27,7 +29,7 @@ const GRID_SPACING: egui::Vec2 = egui::vec2(8.0, 2.0);
 impl LogViewerWindow {
     pub(super) fn summary_panel_ui(&mut self, ui: &mut egui::Ui, log: &LoadedLog) {
         let parsed = log.parsed();
-        let rows = LineTableRows::of(parsed);
+        let rows = LineTableRows::of(parsed, log.filters().visible_entries());
         Frame::group(ui.style()).show(ui, |ui| {
             ScrollArea::vertical()
                 .id_salt("log_viewer_summary_panel")
@@ -35,16 +37,21 @@ impl LogViewerWindow {
                 .show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     parse_figures_ui(ui, parsed);
-                    self.boot_sessions_ui(ui, parsed, rows);
+                    self.boot_sessions_ui(ui, parsed, &rows);
                     service_summary_ui(ui, parsed);
-                    self.order_anomalies_ui(ui, parsed, rows);
+                    self.order_anomalies_ui(ui, parsed, &rows);
                 });
         });
     }
 
     /// One row per boot session, with a bar proportional to its uptime: the
     /// boot history reads as a timeline.
-    fn boot_sessions_ui(&mut self, ui: &mut egui::Ui, parsed: &ParsedLog, rows: LineTableRows<'_>) {
+    fn boot_sessions_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        parsed: &ParsedLog,
+        rows: &LineTableRows<'_>,
+    ) {
         let longest_uptime = parsed
             .boot_sessions()
             .iter()
@@ -58,12 +65,17 @@ impl LogViewerWindow {
             .spacing(GRID_SPACING)
             .show(ui, |ui| {
                 for (session_index, session) in parsed.boot_sessions().iter().enumerate() {
+                    let separator_row = rows.row_of_boot_separator(session_index);
                     if ui
-                        .button(format!("Boot {}", session.boot_number))
+                        .add_enabled(
+                            separator_row.is_some(),
+                            Button::new(format!("Boot {}", session.boot_number)),
+                        )
                         .on_hover_text("Scroll the table to this boot session")
+                        .on_disabled_hover_text(FILTERED_OUT_HOVER)
                         .clicked()
                     {
-                        self.scroll_to_row = rows.row_of_boot_separator(session_index);
+                        self.scroll_to_row = separator_row;
                     }
                     let uptime = session.uptime();
                     ui.label(session.anchored.map_or_else(
@@ -98,7 +110,7 @@ impl LogViewerWindow {
         &mut self,
         ui: &mut egui::Ui,
         parsed: &ParsedLog,
-        rows: LineTableRows<'_>,
+        rows: &LineTableRows<'_>,
     ) {
         if parsed.order_anomalies().is_empty() {
             return;
@@ -111,18 +123,23 @@ impl LogViewerWindow {
             .spacing(GRID_SPACING)
             .show(ui, |ui| {
                 for anomaly in parsed.order_anomalies() {
+                    let entry_index = parsed
+                        .entries()
+                        .partition_point(|entry| entry.line_number < anomaly.line_number);
+                    let anomaly_row = rows.row_of_entry(entry_index);
                     if ui
-                        .button(format!(
-                            "Line {}",
-                            gt_fmt::format_count_u64(u64::from(anomaly.line_number))
-                        ))
+                        .add_enabled(
+                            anomaly_row.is_some(),
+                            Button::new(format!(
+                                "Line {}",
+                                gt_fmt::format_count_u64(u64::from(anomaly.line_number))
+                            )),
+                        )
                         .on_hover_text("Scroll the table to this line")
+                        .on_disabled_hover_text(FILTERED_OUT_HOVER)
                         .clicked()
                     {
-                        let entry_index = parsed
-                            .entries()
-                            .partition_point(|entry| entry.line_number < anomaly.line_number);
-                        self.scroll_to_row = rows.row_of_entry(entry_index);
+                        self.scroll_to_row = anomaly_row;
                     }
                     ui.label(
                         RichText::new(format!(
