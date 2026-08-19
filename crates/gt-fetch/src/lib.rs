@@ -6,6 +6,7 @@
 //! [`HttpResponse`]s into its own outcome type via [`send_classified`], which
 //! retries a transient failure once, the same policy for every pipeline.
 
+use std::fmt;
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
@@ -21,11 +22,65 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// with every request.
 pub const CLIENT_ID_HEADER: (&str, &str) = ("X-Client-Id", "geotrace");
 
+/// Stands in for a secret wherever text that may hold one is written down.
+pub const REDACTED_SECRET: &str = "[redacted]";
+
+/// A credential the user registers for and enters in settings, which a host
+/// takes in a request header or a query parameter.
+///
+/// The value is a secret, so this type's [`Debug`] output is
+/// [`REDACTED_SECRET`] and it has no [`Display`](std::fmt::Display)
+/// implementation: reaching the value takes
+/// [`expose_secret`](Self::expose_secret), which every call site is read as a
+/// leak unless it is building the request itself. Text that may hold the
+/// value, such as a transport failure quoting the request it tried, goes
+/// through [`redact`](Self::redact) first.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SecretToken(String);
+
+impl SecretToken {
+    /// The value entered, or [`None`] for an entry holding nothing but
+    /// whitespace, which is how an empty settings field reads.
+    pub fn new(entered: &str) -> Option<Self> {
+        let trimmed = entered.trim();
+        (!trimmed.is_empty()).then(|| Self(trimmed.to_owned()))
+    }
+
+    /// `text` with every occurrence of the value replaced by
+    /// [`REDACTED_SECRET`].
+    pub fn redact(&self, text: &str) -> String {
+        text.replace(&self.0, REDACTED_SECRET)
+    }
+
+    /// The value as it goes into the request that carries it. Every other use
+    /// is a leak.
+    pub fn expose_secret(&self) -> &str {
+        &self.0
+    }
+
+    /// The `Authorization` header value of a bearer request.
+    fn bearer_header_value(&self) -> String {
+        format!("Bearer {}", self.0)
+    }
+}
+
+impl fmt::Debug for SecretToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(REDACTED_SECRET)
+    }
+}
+
 /// One request as a transport sends it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HttpRequest {
     Get {
         url: String,
+    },
+    /// A GET authenticated with a [`SecretToken`], for a host that serves the
+    /// file to registered callers only.
+    GetWithBearerToken {
+        url: String,
+        token: SecretToken,
     },
     /// A POST with a JSON body, sent as `application/json`.
     PostJson {
@@ -39,6 +94,13 @@ impl HttpRequest {
         Self::Get { url: url.into() }
     }
 
+    pub fn get_with_bearer_token(url: impl Into<String>, token: SecretToken) -> Self {
+        Self::GetWithBearerToken {
+            url: url.into(),
+            token,
+        }
+    }
+
     pub fn post_json(url: impl Into<String>, body: impl Into<String>) -> Self {
         Self::PostJson {
             url: url.into(),
@@ -48,7 +110,9 @@ impl HttpRequest {
 
     pub fn url(&self) -> &str {
         match self {
-            Self::Get { url } | Self::PostJson { url, .. } => url,
+            Self::Get { url }
+            | Self::GetWithBearerToken { url, .. }
+            | Self::PostJson { url, .. } => url,
         }
     }
 }
@@ -227,6 +291,10 @@ impl HttpTransport {
         let (header_name, header_value) = CLIENT_ID_HEADER;
         let builder = match request {
             HttpRequest::Get { url } => self.client.get(url),
+            HttpRequest::GetWithBearerToken { url, token } => self
+                .client
+                .get(url)
+                .header(reqwest::header::AUTHORIZATION, token.bearer_header_value()),
             HttpRequest::PostJson { url, body } => self
                 .client
                 .post(url)
@@ -451,11 +519,52 @@ mod tests {
     }
 
     #[test]
-    fn both_request_forms_expose_their_url() {
+    fn every_request_form_exposes_its_url() {
         assert_eq!(HttpRequest::get("https://a/b").url(), "https://a/b");
         assert_eq!(
             HttpRequest::post_json("https://a/b", "{}").url(),
             "https://a/b"
+        );
+        assert_eq!(
+            HttpRequest::get_with_bearer_token("https://a/b", token("secret")).url(),
+            "https://a/b"
+        );
+    }
+
+    fn token(entered: &str) -> SecretToken {
+        SecretToken::new(entered).expect("a token")
+    }
+
+    #[rstest]
+    #[case::entered("abc123", Some("Bearer abc123"))]
+    #[case::padded("  abc123\n", Some("Bearer abc123"))]
+    #[case::empty("", None)]
+    #[case::whitespace("   ", None)]
+    fn a_token_is_the_entry_without_its_padding(
+        #[case] entered: &str,
+        #[case] expected: Option<&str>,
+    ) {
+        assert_eq!(
+            SecretToken::new(entered).map(|token| token.bearer_header_value()),
+            expected.map(str::to_owned)
+        );
+    }
+
+    /// A request is written to logs and to test failures whole, so its debug
+    /// output must not hold the token it authenticates with.
+    #[test]
+    fn a_debugged_request_shows_no_token() {
+        let request = HttpRequest::get_with_bearer_token("https://a/b", token("secret"));
+        let debugged = format!("{request:?}");
+        assert!(!debugged.contains("secret"), "{debugged}");
+        assert!(debugged.contains(REDACTED_SECRET), "{debugged}");
+    }
+
+    #[test]
+    fn redacting_removes_the_token_from_a_quoted_failure() {
+        assert_eq!(
+            token("secret").redact("error sending request: 401 for header Bearer secret"),
+            format!("error sending request: 401 for header Bearer {REDACTED_SECRET}")
         );
     }
 

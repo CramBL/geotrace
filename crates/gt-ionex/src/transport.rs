@@ -2,26 +2,32 @@
 //! response.
 //!
 //! Requests go out over a [`Transport`] of [`Vec<u8>`]: the archives serve
-//! gzipped files, and decoding the body as text first would replace every byte
-//! that is not valid UTF-8.
+//! compressed files, and decoding the body as text first would replace every
+//! byte that is not valid UTF-8.
 //!
 //! [`fetch_day_maps`] walks the whole [`MirrorList`] for one product before it
 //! moves on to the next, and reports [`DayFetch::Missing`] only once every
 //! mirror has returned 404 for every product: a 404 means that one mirror
 //! holds no file of that product for the day.
+//!
+//! The Earthdata token reaches the mirrors of
+//! [`MirrorLayout::Cddis`](crate::mirrors::MirrorLayout::Cddis) and no others.
+//! A mirror needing one while the setting is empty is passed over as
+//! [`MirrorOutcome::SkippedWithoutToken`], which the day's failure names.
 
 use std::io::Read as _;
 use std::time::Duration;
 
 use chrono::NaiveDate;
 use flate2::read::GzDecoder;
-use gt_fetch::{BytesResponse, Classified, HttpRequest, Transport};
+use gt_fetch::{BytesResponse, Classified, HttpRequest, SecretToken, Transport};
 
 use crate::maps::GlobalIonosphereMaps;
 use crate::mirrors::{
-    MirrorAttempt, MirrorBaseUrl, MirrorFailure, MirrorList, MirrorOutcome, ProductFetchFailure,
+    FileCandidate, FileCompression, Mirror, MirrorAttempt, MirrorBaseUrl, MirrorFailure,
+    MirrorList, MirrorOutcome, ProductFetchFailure,
 };
-use crate::{IonexProduct, calendar, parse};
+use crate::{IonexProduct, calendar, parse, unix_compress};
 
 /// Minimum gap between requests, enforced by the transport the fetch worker
 /// connects with.
@@ -54,40 +60,44 @@ pub enum DayFetch {
 /// Fetch `day` from `mirrors`, requesting every product
 /// [`calendar::fetchable_products`] offers from each of them in order.
 ///
-/// The first mirror serving a file that reads wins. A mirror returning 404 is
-/// passed over, and the next product is reached only once every mirror has
-/// returned 404 for the current one: a failure leaves it unknown whether the
-/// day has a settled file, and an earlier product's estimate cannot settle
-/// that.
+/// The first mirror serving a file that reads wins. A mirror returning 404 for
+/// every name it files the product under is passed over, and the next product
+/// is reached only once every mirror has done so: a failure leaves it unknown
+/// whether the day has a settled file, and an earlier product's estimate
+/// cannot settle that.
 ///
 /// A file that arrives but cannot be decompressed or parsed counts as that
 /// mirror's failure, and the same product is requested from the next mirror.
 pub fn fetch_day_maps(
     transport: &impl Transport<Vec<u8>>,
     mirrors: &MirrorList,
+    earthdata_token: Option<&SecretToken>,
     day: NaiveDate,
     today_utc: NaiveDate,
 ) -> DayFetch {
     let mut skipped: Vec<MirrorAttempt> = Vec::new();
     for &product in calendar::fetchable_products(day, today_utc) {
         for mirror in mirrors.as_slice() {
-            let outcome = match fetch_product(transport, mirror, product, day) {
-                ProductFetch::Served(body) => match read_maps(&body) {
-                    Ok(maps) => {
-                        return DayFetch::Fetched {
-                            mirror: mirror.clone(),
-                            product,
-                            maps: Box::new(maps),
-                            skipped,
-                        };
+            let outcome = match fetch_product(transport, mirror, earthdata_token, product, day) {
+                ProductFetch::Served { body, compression } => {
+                    match read_served_file(&body, compression) {
+                        Ok(maps) => {
+                            return DayFetch::Fetched {
+                                mirror: mirror.base_url.clone(),
+                                product,
+                                maps: Box::new(maps),
+                                skipped,
+                            };
+                        }
+                        Err(detail) => MirrorOutcome::Failed(detail),
                     }
-                    Err(detail) => MirrorOutcome::Failed(detail),
-                },
+                }
                 ProductFetch::Missing => MirrorOutcome::NoFile,
+                ProductFetch::SkippedWithoutToken => MirrorOutcome::SkippedWithoutToken,
                 ProductFetch::Failed(detail) => MirrorOutcome::Failed(detail),
             };
             skipped.push(MirrorAttempt {
-                mirror: mirror.clone(),
+                mirror: mirror.base_url.clone(),
                 product,
                 outcome,
             });
@@ -109,53 +119,109 @@ pub fn fetch_day_maps(
 
 /// What one product's request to one mirror produced, before the body is read.
 enum ProductFetch {
+    Served {
+        body: Vec<u8>,
+        compression: FileCompression,
+    },
+    Missing,
+    SkippedWithoutToken,
+    Failed(String),
+}
+
+/// Request `product` from `mirror` under each name it files that product
+/// under, in order, until one is served.
+///
+/// A 404 moves on to the next name, and a failure ends the mirror: it leaves
+/// unknown whether the file is there under any name.
+fn fetch_product(
+    transport: &impl Transport<Vec<u8>>,
+    mirror: &Mirror,
+    earthdata_token: Option<&SecretToken>,
+    product: IonexProduct,
+    day: NaiveDate,
+) -> ProductFetch {
+    let token = if mirror.layout.needs_earthdata_token() {
+        match earthdata_token {
+            Some(token) => Some(token),
+            None => return ProductFetch::SkippedWithoutToken,
+        }
+    } else {
+        None
+    };
+
+    for FileCandidate { url, compression } in mirror.file_candidates(product, day) {
+        let request = match token {
+            Some(token) => HttpRequest::get_with_bearer_token(url, token.clone()),
+            None => HttpRequest::get(url),
+        };
+        match gt_fetch::send_classified(transport, &request, classify, ServedFile::Failed) {
+            ServedFile::Served(body) => return ProductFetch::Served { body, compression },
+            // A failure detail can quote the request the client tried, so it
+            // passes the token's own redaction before it is reported.
+            ServedFile::Failed(detail) => {
+                return ProductFetch::Failed(
+                    token.map_or_else(|| detail.clone(), |token| token.redact(&detail)),
+                );
+            }
+            ServedFile::Missing => {}
+        }
+    }
+    ProductFetch::Missing
+}
+
+/// What one request for one name produced.
+enum ServedFile {
     Served(Vec<u8>),
     Missing,
     Failed(String),
 }
 
-fn fetch_product(
-    transport: &impl Transport<Vec<u8>>,
-    mirror: &MirrorBaseUrl,
-    product: IonexProduct,
-    day: NaiveDate,
-) -> ProductFetch {
-    let request = HttpRequest::get(product.file_url(mirror.as_ref(), day));
-    gt_fetch::send_classified(transport, &request, classify, ProductFetch::Failed)
-}
-
 /// A 5xx is retried once. A 4xx is deterministic and is not.
-fn classify(response: BytesResponse) -> Classified<ProductFetch> {
+fn classify(response: BytesResponse) -> Classified<ServedFile> {
     if !response.status_is_valid() {
-        return Classified::Outcome(ProductFetch::Failed(format!(
+        return Classified::Outcome(ServedFile::Failed(format!(
             "invalid HTTP status {}",
             response.status
         )));
     }
     if response.is_success() {
-        return Classified::Outcome(ProductFetch::Served(response.body));
+        return Classified::Outcome(ServedFile::Served(response.body));
     }
     if response.status == HTTP_NOT_FOUND {
-        return Classified::Outcome(ProductFetch::Missing);
+        return Classified::Outcome(ServedFile::Missing);
     }
     if response.is_server_error() {
         return Classified::Transient(format!("HTTP {}", response.status_line()));
     }
-    Classified::Outcome(ProductFetch::Failed(format!(
+    Classified::Outcome(ServedFile::Failed(format!(
         "HTTP {}",
         response.status_line()
     )))
 }
 
-/// Decompress a served file and parse it.
+/// Decompress a served file the way the name it was requested under packs it,
+/// and parse it.
 ///
 /// Both steps are deterministic for a given body, so the same file cannot
 /// succeed on a retry.
-fn read_maps(compressed: &[u8]) -> Result<GlobalIonosphereMaps, String> {
-    let mut text = String::new();
-    GzDecoder::new(compressed)
-        .read_to_string(&mut text)
-        .map_err(|err| format!("decompressing the file: {err}"))?;
+pub fn read_served_file(
+    compressed: &[u8],
+    compression: FileCompression,
+) -> Result<GlobalIonosphereMaps, String> {
+    let text = match compression {
+        FileCompression::Gzip => {
+            let mut text = String::new();
+            GzDecoder::new(compressed)
+                .read_to_string(&mut text)
+                .map_err(|err| format!("decompressing the file: {err}"))?;
+            text
+        }
+        FileCompression::UnixCompress => {
+            let bytes = unix_compress::decompress(compressed)
+                .map_err(|err| format!("decompressing the file: {err}"))?;
+            String::from_utf8(bytes).map_err(|err| format!("decompressing the file: {err}"))?
+        }
+    };
     parse::global_ionosphere_maps(&text).map_err(|err| format!("reading the file: {err}"))
 }
 
@@ -166,6 +232,8 @@ mod tests {
 
     use gt_fetch::{TransportError, TransportSource};
     use rstest::rstest;
+
+    use crate::mirrors::MirrorLayout;
 
     use super::*;
 
@@ -225,28 +293,36 @@ mod tests {
         Ok(BytesResponse { status, body })
     }
 
-    /// Replays a scripted sequence and records the URLs requested from it.
+    /// Replays a scripted sequence and records the requests it was sent.
     struct CannedTransport {
         script: RefCell<Vec<Result<BytesResponse, TransportError>>>,
-        urls: RefCell<Vec<String>>,
+        requests: RefCell<Vec<HttpRequest>>,
     }
 
     impl CannedTransport {
         fn new(script: Vec<Result<BytesResponse, TransportError>>) -> Self {
             Self {
                 script: RefCell::new(script),
-                urls: RefCell::new(Vec::new()),
+                requests: RefCell::new(Vec::new()),
             }
         }
 
         fn urls(&self) -> Vec<String> {
-            self.urls.borrow().clone()
+            self.requests
+                .borrow()
+                .iter()
+                .map(|request| request.url().to_owned())
+                .collect()
+        }
+
+        fn requests(&self) -> Vec<HttpRequest> {
+            self.requests.borrow().clone()
         }
     }
 
     impl Transport<Vec<u8>> for CannedTransport {
         fn send(&self, request: &HttpRequest) -> Result<BytesResponse, TransportError> {
-            self.urls.borrow_mut().push(request.url().to_owned());
+            self.requests.borrow_mut().push(request.clone());
             let mut script = self.script.borrow_mut();
             if script.is_empty() {
                 return Err(TransportError {
@@ -260,25 +336,50 @@ mod tests {
     const FIRST_MIRROR: &str = "https://first.example";
     const SECOND_MIRROR: &str = "https://second.example";
 
+    /// The legacy name's file, generated by
+    /// `just qa::generate-unix-compress-fixtures`.
+    const LEGACY_FILE: &[u8] = include_bytes!("../tests/fixtures/unix_compress/JPLG0920.24I.Z");
+
+    fn token() -> SecretToken {
+        SecretToken::new("earthdata-token").expect("a token")
+    }
+
+    fn jpl(base_url: &str) -> Mirror {
+        Mirror::new(MirrorBaseUrl::new(base_url), MirrorLayout::Jpl)
+    }
+
+    fn one_mirror(mirror: Mirror) -> MirrorList {
+        MirrorList::single(mirror)
+    }
+
+    fn publishing_host() -> MirrorList {
+        one_mirror(jpl(crate::DEFAULT_BASE_URL))
+    }
+
     fn two_mirrors() -> MirrorList {
-        MirrorList::new(vec![
-            MirrorBaseUrl::new(FIRST_MIRROR),
-            MirrorBaseUrl::new(SECOND_MIRROR),
-        ])
-        .expect("two named hosts")
+        MirrorList::new(vec![jpl(FIRST_MIRROR), jpl(SECOND_MIRROR)]).expect("two named hosts")
+    }
+
+    fn fetch_with_token(
+        mirrors: &MirrorList,
+        earthdata_token: Option<&SecretToken>,
+        script: Vec<Result<BytesResponse, TransportError>>,
+    ) -> (DayFetch, CannedTransport) {
+        let transport = CannedTransport::new(script);
+        let outcome = fetch_day_maps(&transport, mirrors, earthdata_token, day(), today());
+        (outcome, transport)
     }
 
     fn fetch_from(
         mirrors: &MirrorList,
         script: Vec<Result<BytesResponse, TransportError>>,
     ) -> (DayFetch, Vec<String>) {
-        let transport = CannedTransport::new(script);
-        let outcome = fetch_day_maps(&transport, mirrors, day(), today());
+        let (outcome, transport) = fetch_with_token(mirrors, None, script);
         (outcome, transport.urls())
     }
 
     fn fetch(script: Vec<Result<BytesResponse, TransportError>>) -> (DayFetch, Vec<String>) {
-        fetch_from(&MirrorList::default(), script)
+        fetch_from(&publishing_host(), script)
     }
 
     /// The settled product serves a file, so the earlier estimate is never
@@ -381,7 +482,8 @@ mod tests {
         let transport = CannedTransport::new(Vec::new());
         let outcome = fetch_day_maps(
             &transport,
-            &MirrorList::default(),
+            &publishing_host(),
+            None,
             day.unwrap_or_default(),
             today(),
         );
@@ -396,7 +498,7 @@ mod tests {
         let transport = TransportSource::Offline
             .connect(None)
             .expect("the offline source connects");
-        let outcome = fetch_day_maps(&transport, &MirrorList::default(), day(), today());
+        let outcome = fetch_day_maps(&transport, &publishing_host(), None, day(), today());
         assert!(matches!(outcome, DayFetch::Failed(_)), "{outcome:?}");
     }
 
@@ -526,6 +628,118 @@ mod tests {
                     failure.to_string(),
                     "final: https://second.example: HTTP 403 Forbidden"
                 );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// The archive needing a token is never requested while none is set, and
+    /// the day says so instead of reporting that nobody published it.
+    #[test]
+    fn a_mirror_needing_a_token_is_passed_over_while_none_is_set() {
+        let (outcome, transport) = fetch_with_token(
+            &one_mirror(Mirror::publishing(MirrorLayout::Cddis)),
+            None,
+            Vec::new(),
+        );
+
+        match outcome {
+            DayFetch::Failed(failure) => {
+                assert_eq!(
+                    failure.to_string(),
+                    format!(
+                        "final: {}: no Earthdata token set",
+                        crate::cddis::DEFAULT_BASE_URL
+                    )
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(transport.urls().is_empty(), "nothing was requested");
+    }
+
+    /// The token authenticates the archive that needs one, and the mirrors
+    /// that do not are requested without it.
+    #[test]
+    fn the_token_reaches_the_archive_that_needs_one_and_no_other_mirror() {
+        let mirrors = MirrorList::new(vec![
+            jpl(FIRST_MIRROR),
+            Mirror::publishing(MirrorLayout::Cddis),
+        ])
+        .expect("two named hosts");
+
+        let (outcome, transport) = fetch_with_token(
+            &mirrors,
+            Some(&token()),
+            vec![
+                response(404, Vec::new()),
+                response(200, gzipped(&published_file())),
+            ],
+        );
+
+        assert!(matches!(outcome, DayFetch::Fetched { .. }), "{outcome:?}");
+        assert_eq!(
+            transport.requests(),
+            [
+                HttpRequest::get(format!("{FIRST_MIRROR}/IONEX_final/y2024/JPLG1310.24I.gz")),
+                HttpRequest::get_with_bearer_token(
+                    "https://cddis.nasa.gov/archive/gnss/products/ionex/2024/131\
+                     /JPL0OPSFIN_20241310000_01D_02H_GIM.INX.gz",
+                    token(),
+                ),
+            ]
+        );
+    }
+
+    /// The authenticated archive files the same day under a long name and a
+    /// legacy one, and the legacy file is LZW compressed rather than gzipped.
+    #[test]
+    fn a_legacy_file_is_read_through_the_compress_decoder() {
+        let (outcome, transport) = fetch_with_token(
+            &one_mirror(Mirror::publishing(MirrorLayout::Cddis)),
+            Some(&token()),
+            vec![
+                response(404, Vec::new()),
+                response(200, LEGACY_FILE.to_vec()),
+            ],
+        );
+
+        match outcome {
+            DayFetch::Fetched { maps, product, .. } => {
+                assert_eq!(product, IonexProduct::Final);
+                assert_eq!(maps.maps().len(), 13);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            transport.urls().last().map(String::as_str),
+            Some("https://cddis.nasa.gov/archive/gnss/products/ionex/2024/131/jplg1310.24i.Z")
+        );
+    }
+
+    /// A failure quoting the request is reported through the token's own
+    /// redaction, so nothing the user reads holds the token.
+    #[test]
+    fn a_failure_from_the_authenticated_archive_holds_no_token() {
+        let (outcome, _transport) = fetch_with_token(
+            &one_mirror(Mirror::publishing(MirrorLayout::Cddis)),
+            Some(&token()),
+            // Twice: a transport failure is retried once.
+            vec![
+                Err(TransportError {
+                    detail: "error sending request with header Bearer earthdata-token".to_owned(),
+                }),
+                Err(TransportError {
+                    detail: "error sending request with header Bearer earthdata-token".to_owned(),
+                }),
+            ],
+        );
+
+        match outcome {
+            DayFetch::Failed(failure) => {
+                let reported = failure.to_string();
+                assert!(!reported.contains("earthdata-token"), "{reported}");
+                assert!(reported.contains(gt_fetch::REDACTED_SECRET), "{reported}");
             }
             other => panic!("{other:?}"),
         }

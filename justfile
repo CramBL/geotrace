@@ -85,6 +85,13 @@ flare-fixtures *WINDOWS:
 ionex-fixtures *FILES:
     cargo run -p gt-ionex --example fetch_ionex_fixtures -- {{ FILES }}
 
+# Check the CDDIS mirror addressing against the live archive (network!).
+# Needs EARTHDATA_TOKEN, a NASA Earthdata token.
+# Pass --capture to write the served files under gt-ionex/tests/fixtures/cddis/.
+[group("native")]
+cddis-verify *ARGS:
+    cargo run -p gt-ionex --example verify_cddis_mirror -- {{ ARGS }}
+
 # Refresh the gt-jam interference dataset fixtures from gpsjam.org (network!).
 # Fixtures are frozen once committed - review the resulting diff like code.
 # Name days to capture only those (additive); no args captures all.

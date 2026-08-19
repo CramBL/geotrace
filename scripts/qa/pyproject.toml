@@ -11,6 +11,7 @@ check-narrative-comments = "qa.check_narrative_comments:main"
 check-no-network = "qa.check_no_network:main"
 check-raw-colors = "qa.check_raw_colors:main"
 generate-gold = "qa.generate_gold_dataset:main"
+generate-unix-compress-fixtures = "qa.generate_unix_compress_fixtures:main"
 scrub-capture-manifests = "qa.scrub_capture_manifests:main"
 versions = "qa.versions:main"
 

@@ -2,9 +2,9 @@
 //!
 //! One file holds a day of vertical total electron content maps on a fixed
 //! latitude/longitude grid, two hours apart in the products GeoTrace reads
-//! (JPL's `JPLG`/`JPLR` and CODE's `CODG`). TEC is what the ionosphere adds
-//! to a GNSS pseudorange, so a recording can be read against the ionosphere
-//! it was made under.
+//! (JPL's `JPLG` and `JPLR`). TEC is what the ionosphere adds to a GNSS
+//! pseudorange, so a recording can be read against the ionosphere it was made
+//! under.
 //!
 //! [`parse::global_ionosphere_maps`] reads a decompressed file into
 //! [`maps::GlobalIonosphereMaps`], whose
@@ -21,13 +21,17 @@
 //!
 //! [`calendar`] says which days and products are worth requesting,
 //! [`mirrors`] holds the hosts to try in order, and [`transport`] fetches one
-//! day and decompresses it.
+//! day and decompresses it. A mirror serves either that layout or the CDDIS
+//! one ([`cddis`]), which files the same producer's day under a long IGS name
+//! and a legacy [`unix_compress`] one and serves it to callers holding an
+//! Earthdata token.
 
 use std::path::PathBuf;
 
 use chrono::{Datelike as _, NaiveDate};
 
 pub mod calendar;
+pub mod cddis;
 pub mod grid;
 pub mod instant_selection;
 pub mod maps;
@@ -36,11 +40,12 @@ pub mod parse;
 pub mod tec;
 pub mod text;
 pub mod transport;
+pub mod unix_compress;
 
 pub use instant_selection::{ShownInstant, TecEmptyReason, TecInstantSelection};
-pub use mirrors::{MirrorBaseUrl, MirrorList};
+pub use mirrors::{Mirror, MirrorBaseUrl, MirrorLayout, MirrorList};
 
-/// Suffix the archives serve their files under. The parser reads the
+/// Suffix of the gzipped files the archives serve. The parser reads the
 /// decompressed text.
 pub const COMPRESSED_SUFFIX: &str = ".gz";
 
@@ -119,7 +124,7 @@ impl IonexProduct {
 
 /// Digit distinguishing several files for one day. Both daily products
 /// publish a single file, numbered zero.
-const FILE_SEQUENCE_DIGIT: char = '0';
+pub(crate) const FILE_SEQUENCE_DIGIT: char = '0';
 
 /// File type letter of ionosphere maps, which ends a file name and which the
 /// header's type record declares.

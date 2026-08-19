@@ -43,35 +43,11 @@ const FLARE_PATH: &str = "/DONKI/FLR";
 const DATE_FORMAT: &str = "%Y-%m-%d";
 
 /// Stands in for the key wherever text that may hold it is written down.
-pub const REDACTED_KEY: &str = "[redacted]";
+pub const REDACTED_KEY: &str = gt_fetch::REDACTED_SECRET;
 
-/// The api.nasa.gov key a user registers for and enters in settings.
-///
-/// The key is a secret, so this type has no [`Debug`] or [`Display`](std::fmt::Display)
-/// implementation: printing one does not compile. Text that may hold it, such
-/// as a transport failure quoting the URL it tried, goes through
-/// [`redact`](Self::redact) first.
-#[derive(Clone, PartialEq, Eq)]
-pub struct ApiKey(String);
-
-impl ApiKey {
-    /// The key entered, or [`None`] for an entry holding nothing but
-    /// whitespace, which is how an empty settings field reads.
-    pub fn new(entered: &str) -> Option<Self> {
-        let trimmed = entered.trim();
-        (!trimmed.is_empty()).then(|| Self(trimmed.to_owned()))
-    }
-
-    /// `text` with every occurrence of the key replaced by [`REDACTED_KEY`].
-    pub fn redact(&self, text: &str) -> String {
-        text.replace(&self.0, REDACTED_KEY)
-    }
-
-    /// The key as it goes into a request URL. Every other use is a leak.
-    fn query_value(&self) -> &str {
-        &self.0
-    }
-}
+/// The api.nasa.gov key a user registers for and enters in settings, which
+/// every request carries in its query string.
+pub type ApiKey = gt_fetch::SecretToken;
 
 /// The UTC days one request covers, inclusive of both ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,7 +72,7 @@ pub fn flare_url(base_url: &str, window: DateWindow, key: &ApiKey) -> String {
         "{base_url}{FLARE_PATH}?startDate={start}&endDate={end}&api_key={api_key}",
         start = window.start.format(DATE_FORMAT),
         end = window.end.format(DATE_FORMAT),
-        api_key = key.query_value(),
+        api_key = key.expose_secret(),
     )
 }
 
@@ -221,7 +197,7 @@ mod tests {
         #[case] expected: Option<&str>,
     ) {
         assert_eq!(
-            ApiKey::new(entered).map(|key| key.query_value().to_owned()),
+            ApiKey::new(entered).map(|key| key.expose_secret().to_owned()),
             expected.map(str::to_owned)
         );
     }

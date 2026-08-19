@@ -18,3 +18,6 @@ hidden layer stepper: Show the TEC heatmap to step map epochs
 hidden layer opacity: Show the TEC heatmap to change its opacity
 fetch queue hover: Map days waiting to be downloaded. One day is requested at a time, and a day costs one request per mirror tried until one serves the file.
 recording day coverage hover: UTC days the recordings loaded this session span, and how many of them the archive holds maps for. Days downloaded by a backfill are not counted here.
+mirror skipped without a token: no Earthdata token set
+missing Earthdata token: GeoTrace skips this mirror until an Earthdata token is set: CDDIS serves the maps to registered callers only. Registering at https://urs.earthdata.nasa.gov is free.
+Earthdata signup: https://urs.earthdata.nasa.gov

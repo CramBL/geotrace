@@ -76,7 +76,15 @@ base_url = "https://gpsjam.org"
 base_url = "https://kp.gfz.de"
 
 [tec]
-mirrors = ["https://sideshow.jpl.nasa.gov/pub/iono_daily"]
+earthdata_token = ""
+
+[[tec.mirrors]]
+url = "https://sideshow.jpl.nasa.gov/pub/iono_daily"
+layout = "jpl"
+
+[[tec.mirrors]]
+url = "https://cddis.nasa.gov/archive/gnss/products/ionex"
+layout = "cddis"
 
 [solar_flares]
 base_url = "https://api.nasa.gov"
