@@ -987,6 +987,218 @@ fn snap_query_match_hover_halo() {
     harness.snapshot_loose("query_match_hover_halo");
 }
 
+/// Every state a log hexagon draws in, over one track: a filter's plain
+/// glyphs, a cluster large enough to state its count, a second filter's
+/// colour beside the first, and the doubled outline of a shared colour.
+#[test]
+fn snap_log_match_hexagons() {
+    use gt_ui_types::{LogMatchColor, LogMatchLayer, LogMatches};
+
+    let files = vec![make_snapshot_file()];
+    let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
+    let merc_at = |index: usize| {
+        files
+            .first()
+            .and_then(|file| file.tracks.first())
+            .and_then(|track| track.points.get(index))
+            .map_or(MercPoint { x: 0.5, y: 0.5 }, |point| point.merc)
+    };
+    let spread = |every: usize, count: usize| {
+        (0..count)
+            .map(|step| merc_at(step.saturating_mul(every)))
+            .collect::<Vec<_>>()
+    };
+    // Eight lines logged where the recording stood still: one cluster stating
+    // what it collapsed.
+    let clustered = vec![merc_at(70); 8];
+    let log_matches = LogMatches::from_layers(vec![
+        LogMatchLayer {
+            color: LogMatchColor::LayerSlot {
+                index: 0,
+                shared: false,
+            },
+            positions: spread(40, 6),
+        },
+        LogMatchLayer {
+            color: LogMatchColor::LayerSlot {
+                index: 1,
+                shared: true,
+            },
+            positions: spread(53, 4),
+        },
+        LogMatchLayer {
+            color: LogMatchColor::LiveFilter,
+            positions: clustered,
+        },
+    ]);
+
+    let mut harness = crate::test_harness::builder()
+        .size(egui::vec2(800.0, 600.0))
+        .ui_state(
+            move |ui, map: &mut Option<NavMap>| {
+                let map =
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                let mut state = DrawState {
+                    log_matches: log_matches.clone(),
+                    ..DrawState::default()
+                };
+                map.draw(ui, state.context(&files, &visibility));
+            },
+            None,
+        );
+
+    for _ in 0..5 {
+        harness.run();
+    }
+    harness.snapshot_loose("log_match_hexagons");
+}
+
+/// A filter that matched every point of the track: its clusters draw evenly
+/// spaced along the line, each stating its own count.
+#[test]
+fn snap_log_matches_along_a_dense_track() {
+    use gt_ui_types::{LogMatchColor, LogMatchLayer, LogMatches};
+
+    let files = vec![make_snapshot_file()];
+    let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
+    let positions: Vec<MercPoint> = files
+        .first()
+        .and_then(|file| file.tracks.first())
+        .map(|track| track.points.iter().map(|point| point.merc).collect())
+        .unwrap_or_default();
+    let log_matches = LogMatches::from_layers(vec![LogMatchLayer {
+        color: LogMatchColor::LayerSlot {
+            index: 0,
+            shared: false,
+        },
+        positions,
+    }]);
+
+    let mut harness = crate::test_harness::builder()
+        .size(egui::vec2(800.0, 600.0))
+        .ui_state(
+            move |ui, map: &mut Option<NavMap>| {
+                let map =
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                let mut state = DrawState {
+                    log_matches: log_matches.clone(),
+                    ..DrawState::default()
+                };
+                map.draw(ui, state.context(&files, &visibility));
+            },
+            None,
+        );
+
+    for _ in 0..5 {
+        harness.run();
+    }
+    harness.snapshot_loose("log_matches_along_a_dense_track");
+}
+
+/// Two filters that matched the same run of lines: the layer on top covers the
+/// one below glyph by glyph, count and all. The layer below counts three times
+/// as many lines, so a count escaping from under a covering hexagon would be
+/// wider than the one that belongs there.
+#[test]
+fn snap_log_matches_of_overlapping_layers() {
+    use gt_ui_types::{LogMatchColor, LogMatchLayer, LogMatches};
+
+    let files = vec![make_snapshot_file()];
+    let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
+    let track_positions: Vec<MercPoint> = files
+        .first()
+        .and_then(|file| file.tracks.first())
+        .map(|track| track.points.iter().map(|point| point.merc).collect())
+        .unwrap_or_default();
+    let covered = LogMatchLayer {
+        color: LogMatchColor::LayerSlot {
+            index: 0,
+            shared: false,
+        },
+        positions: track_positions.iter().flat_map(|&merc| [merc; 3]).collect(),
+    };
+    // This layer matched only the first half of the run, so the layer below
+    // draws its own hexagons and counts along the rest of the track.
+    let covering = LogMatchLayer {
+        color: LogMatchColor::LayerSlot {
+            index: 1,
+            shared: false,
+        },
+        positions: track_positions
+            .iter()
+            .skip(2)
+            .take(track_positions.len() / 2)
+            .copied()
+            .collect(),
+    };
+    let log_matches = LogMatches::from_layers(vec![covered, covering]);
+
+    let mut harness = crate::test_harness::builder()
+        .size(egui::vec2(800.0, 600.0))
+        .ui_state(
+            move |ui, map: &mut Option<NavMap>| {
+                let map =
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                let mut state = DrawState {
+                    log_matches: log_matches.clone(),
+                    ..DrawState::default()
+                };
+                map.draw(ui, state.context(&files, &visibility));
+            },
+            None,
+        );
+
+    for _ in 0..5 {
+        harness.run();
+    }
+    harness.snapshot_loose("log_matches_of_overlapping_layers");
+}
+
+/// The layer switches off with its display category, like every other kind of
+/// map ink.
+#[test]
+fn snap_log_matches_hidden_by_display_mask() {
+    use gt_ui_types::{LogMatchColor, LogMatchLayer, LogMatches};
+
+    let files = vec![make_snapshot_file()];
+    let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
+    let positions: Vec<gt_types::MercPoint> = files
+        .first()
+        .and_then(|file| file.tracks.first())
+        .map(|track| track.points.iter().map(|point| point.merc).collect())
+        .unwrap_or_default();
+    let log_matches = LogMatches::from_layers(vec![LogMatchLayer {
+        color: LogMatchColor::LayerSlot {
+            index: 0,
+            shared: false,
+        },
+        positions,
+    }]);
+    let mut mask = DisplayMask::default();
+    mask.set_visible(DisplayCategory::LogMatches, false);
+
+    let mut harness = crate::test_harness::builder()
+        .size(egui::vec2(800.0, 600.0))
+        .ui_state(
+            move |ui, map: &mut Option<NavMap>| {
+                let map =
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                let mut state = DrawState {
+                    log_matches: log_matches.clone(),
+                    display_mask: mask,
+                    ..DrawState::default()
+                };
+                map.draw(ui, state.context(&files, &visibility));
+            },
+            None,
+        );
+
+    for _ in 0..5 {
+        harness.run();
+    }
+    harness.snapshot_loose("log_matches_hidden_by_display_mask");
+}
+
 /// Snapshot: the display mask removes the marker ink (custom, generated,
 /// event) while the track, its icons, and the satellite labels stay.
 /// Compare against the marker-bearing fixture in the other snapshots.

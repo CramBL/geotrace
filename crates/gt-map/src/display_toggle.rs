@@ -91,6 +91,7 @@ fn popup_label(category: DisplayCategory) -> &'static str {
         DisplayCategory::SkyGlyphs => "Sky glyphs",
         DisplayCategory::JammingHexes => gt_jam::text::LAYER_LABEL,
         DisplayCategory::TecHeatmap => gt_ionex::text::LAYER_LABEL,
+        DisplayCategory::LogMatches => "Log matches",
     }
 }
 
@@ -99,6 +100,9 @@ fn empty_hover_text(category: DisplayCategory) -> String {
     match category {
         DisplayCategory::JammingHexes => "No interference data archived for this day".to_owned(),
         DisplayCategory::TecHeatmap => "No TEC maps archived for this instant".to_owned(),
+        DisplayCategory::LogMatches => {
+            "No log filter is selecting lines with a position".to_owned()
+        }
         _ => format!(
             "No {} in the loaded recordings",
             popup_label(category).to_lowercase()
@@ -111,6 +115,10 @@ fn row_hover_text(category: DisplayCategory, visible: bool) -> String {
     let description = match category {
         DisplayCategory::SkyGlyphs => {
             " Sky glyphs show the directions of the satellites used in each fix."
+        }
+        DisplayCategory::LogMatches => {
+            " Log matches are the lines a log's filters selected, at the position they were \
+             recorded at."
         }
         DisplayCategory::JammingHexes => return jamming_hover_text(visible),
         DisplayCategory::TecHeatmap => return tec_hover_text(visible),
@@ -622,6 +630,7 @@ mod tests {
             DisplayCategory::SkyGlyphs => 187,
             DisplayCategory::JammingHexes => jamming_hexes,
             DisplayCategory::TecHeatmap => tec_nodes,
+            DisplayCategory::LogMatches => 42,
         })
     }
 

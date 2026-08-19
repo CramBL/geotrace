@@ -15,6 +15,7 @@ gt-fmt = { path = "../gt-fmt" }
 gt-loaded-files = { path = "../gt-loaded-files" }
 gt-logfile = { path = "../gt-logfile" }
 gt-types = { path = "../gt-types" }
+gt-ui-types = { path = "../gt-ui-types" }
 log.workspace = true
 memchr.workspace = true
 parking_lot.workspace = true

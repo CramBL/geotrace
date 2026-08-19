@@ -1,16 +1,17 @@
 //! The loaded logs of a session and each log's association state.
 
-use std::{fmt::Write as _, sync::Arc};
+use std::{fmt::Write as _, mem, sync::Arc};
 
 use chrono::Duration;
 use gt_fmt::MIDDLE_DOT;
 use gt_loaded_files::{LoadedFileId, LoadedFilesView};
 use gt_logfile::ParsedLog;
-use gt_types::{Latitude, Longitude, TimeRange};
+use gt_types::{Latitude, Longitude, MercPoint, TimeRange, mercator};
+use gt_ui_types::{LogMatchColor, LogMatchLayer, LogMatches};
 
 use crate::{
     association::AssociationCandidates,
-    filter::{FilterStack, LayerColorSlots},
+    filter::{EntryMatches, FilterStack, LayerColorSlots},
 };
 
 /// How a log that arrived without a filename is named, followed by the time of
@@ -220,6 +221,17 @@ impl LoadedLog {
         }
     }
 
+    /// Where on the map the entries `matches` selected are. Each position
+    /// comes from the recording this log is associated against, so an entry
+    /// with no fix inside the association window contributes nothing.
+    fn matched_positions(&self, matches: &EntryMatches) -> Vec<MercPoint> {
+        matches
+            .matched_entry_indices()
+            .filter_map(|entry_index| self.entry_position(entry_index))
+            .map(|(latitude, longitude)| mercator::normalize(latitude, longitude))
+            .collect()
+    }
+
     fn clear_entry_positions(&mut self) {
         self.association.entry_positions = Vec::new();
         self.association.associated_entry_count = 0;
@@ -235,6 +247,13 @@ pub struct LoadedLogs {
     /// Shared by every log's layer chips: a colour means one filter across the
     /// session, whichever log added it.
     layer_color_slots: LayerColorSlots,
+
+    map_matches: LogMatches,
+
+    /// Raised by every path that can change what the map draws, including the
+    /// ones handing out `&mut` to a log or its filters. Cleared by
+    /// [`LoadedLogs::map_matches`], which rebuilds what it stands for.
+    map_matches_stale: bool,
 }
 
 impl LoadedLogs {
@@ -255,6 +274,7 @@ impl LoadedLogs {
     }
 
     pub fn get_mut(&mut self, index: usize) -> Option<&mut LoadedLog> {
+        self.map_matches_stale = true;
         self.logs.get_mut(index)
     }
 
@@ -263,6 +283,7 @@ impl LoadedLogs {
         log.filters
             .take_layer_color_slots(&mut self.layer_color_slots);
         self.logs.push(log);
+        self.map_matches_stale = true;
     }
 
     /// Unloads the log at `index`, freeing the colour slots its layer chips
@@ -272,6 +293,7 @@ impl LoadedLogs {
         removed
             .filters
             .release_layer_color_slots(&mut self.layer_color_slots);
+        self.map_matches_stale = true;
         Some(removed)
     }
 
@@ -281,6 +303,7 @@ impl LoadedLogs {
         &mut self,
         index: usize,
     ) -> Option<(&mut FilterStack, &mut LayerColorSlots)> {
+        self.map_matches_stale = true;
         let log = self.logs.get_mut(index)?;
         Some((&mut log.filters, &mut self.layer_color_slots))
     }
@@ -293,8 +316,45 @@ impl LoadedLogs {
     /// frame, before it reads what the filters matched.
     pub fn apply_finished_queries(&mut self) {
         for log in &mut self.logs {
-            log.filters.apply_finished_queries();
+            self.map_matches_stale |= log.filters.apply_finished_queries();
         }
+    }
+
+    /// What the shown logs' filters put on the map, rebuilt only after
+    /// something changed what that is.
+    ///
+    /// The added filters draw first, in the order their colours were handed
+    /// out, and the live filters over them: the filter being typed is the
+    /// answer to what the user is doing right now.
+    pub fn map_matches(&mut self) -> &LogMatches {
+        if mem::take(&mut self.map_matches_stale) {
+            self.map_matches = self.build_map_matches();
+        }
+        &self.map_matches
+    }
+
+    fn build_map_matches(&self) -> LogMatches {
+        let shown = || self.logs.iter().filter(|log| log.visible);
+        let mut layers = Vec::new();
+        for log in shown() {
+            for (slot, chip) in log.filters.enabled_layer_chips() {
+                layers.push(LogMatchLayer {
+                    color: LogMatchColor::LayerSlot {
+                        index: slot.index(),
+                        shared: self.layer_color_slots.is_shared(slot),
+                    },
+                    positions: log.matched_positions(chip.matches()),
+                });
+            }
+        }
+        for log in shown() {
+            layers.push(LogMatchLayer {
+                color: LogMatchColor::LiveFilter,
+                positions: log.matched_positions(log.filters.live_filter_matches()),
+            });
+        }
+        layers.retain(|layer| !layer.positions.is_empty());
+        LogMatches::from_layers(layers)
     }
 
     /// Associates every loaded log again, after the loaded recordings changed.
@@ -302,6 +362,7 @@ impl LoadedLogs {
         for log in &mut self.logs {
             log.reassociate(recordings);
         }
+        self.map_matches_stale = true;
     }
 }
 
@@ -334,6 +395,16 @@ mod tests {
     };
 
     use super::*;
+
+    /// Waits for every log's filter scans, as the viewer's per-frame polling
+    /// does once they land.
+    fn wait_for_scans(logs: &mut LoadedLogs) {
+        for index in 0..logs.len() {
+            if let Some((stack, _)) = logs.filter_stack_mut(index) {
+                stack.wait_for_queries();
+            }
+        }
+    }
 
     /// Adds the live filter of the log at `index` as a layer chip, and answers
     /// with the palette colour that chip took.
@@ -453,6 +524,154 @@ mod tests {
     fn a_log_that_arrived_without_a_filename_is_named_after_its_first_entry() {
         let log = LoadedLog::new(None, parsed_log(3), association_window());
         assert_eq!(log.name(), "pasted 14:02:11");
+    }
+
+    /// What the map draws for a log: the entries a chip matched, at the fixes
+    /// they were associated to.
+    #[test]
+    fn a_layer_chip_puts_the_lines_it_matched_on_the_map() {
+        let files = loaded(vec![recording_at(55.0, 10)]);
+        let mut logs = LoadedLogs::default();
+        let mut log = log_of(10);
+        log.associate_with(Some(id_of(&files, 0)), &files.view());
+        logs.push(log);
+
+        add_layer_chip(&mut logs, 0, "entry 1");
+        wait_for_scans(&mut logs);
+
+        let matches = logs.map_matches();
+        assert_eq!(
+            matches.layers().len(),
+            1,
+            "the live filter is empty, so it draws nothing"
+        );
+        assert_eq!(
+            matches.layers().first().map(|layer| layer.color),
+            Some(LogMatchColor::LayerSlot {
+                index: 0,
+                shared: false,
+            })
+        );
+        assert_eq!(matches.position_count(), 1, "\"entry 1\" matches one line");
+    }
+
+    /// A log with no association target has nothing to put on the map, however
+    /// much its filters match.
+    #[test]
+    fn an_unassociated_log_draws_nothing() {
+        let mut logs = LoadedLogs::default();
+        logs.push(log_of(10));
+
+        add_layer_chip(&mut logs, 0, "entry");
+        wait_for_scans(&mut logs);
+
+        assert!(logs.map_matches().is_empty());
+    }
+
+    /// The whole map contribution of a log switches off with the log, and comes
+    /// back with it.
+    #[test]
+    fn hiding_a_log_takes_its_layers_off_the_map() {
+        let files = loaded(vec![recording_at(55.0, 10)]);
+        let mut logs = LoadedLogs::default();
+        let mut log = log_of(10);
+        log.associate_with(Some(id_of(&files, 0)), &files.view());
+        logs.push(log);
+        add_layer_chip(&mut logs, 0, "entry");
+        wait_for_scans(&mut logs);
+        assert_eq!(logs.map_matches().position_count(), 10);
+
+        if let Some(log) = logs.get_mut(0) {
+            log.set_visible(false);
+        }
+        assert!(logs.map_matches().is_empty());
+
+        if let Some(log) = logs.get_mut(0) {
+            log.set_visible(true);
+        }
+        assert_eq!(logs.map_matches().position_count(), 10);
+    }
+
+    /// A refine chip narrows the table, never the map: it has no colour to draw
+    /// in. The live filter draws over the chips that were added.
+    #[test]
+    fn the_map_holds_the_layer_chips_and_the_live_filter_over_them() {
+        let files = loaded(vec![recording_at(55.0, 10)]);
+        let mut logs = LoadedLogs::default();
+        let mut log = log_of(10);
+        log.associate_with(Some(id_of(&files, 0)), &files.view());
+        logs.push(log);
+        add_layer_chip(&mut logs, 0, "entry 2");
+        if let Some((stack, slots)) = logs.filter_stack_mut(0) {
+            stack.set_live_filter_text("entry 3");
+            let refined = stack.add_live_filter_as_chip(slots);
+            if let Some(id) = refined {
+                stack.switch_chip_to_refine_mode(id, slots);
+            }
+            stack.set_live_filter_text("entry");
+        }
+        wait_for_scans(&mut logs);
+
+        let colors: Vec<LogMatchColor> = logs
+            .map_matches()
+            .layers()
+            .iter()
+            .map(|layer| layer.color)
+            .collect();
+        assert_eq!(
+            colors,
+            [
+                LogMatchColor::LayerSlot {
+                    index: 0,
+                    shared: false,
+                },
+                LogMatchColor::LiveFilter,
+            ]
+        );
+    }
+
+    /// Unloading a log takes what it drew with it: the cached layers are what
+    /// the logs still loaded selected.
+    #[test]
+    fn unloading_a_log_takes_its_layers_off_the_map() {
+        let files = loaded(vec![recording_at(55.0, 10)]);
+        let mut logs = LoadedLogs::default();
+        for _ in 0..2 {
+            let mut log = log_of(10);
+            log.associate_with(Some(id_of(&files, 0)), &files.view());
+            logs.push(log);
+        }
+        add_layer_chip(&mut logs, 0, "entry 1");
+        add_layer_chip(&mut logs, 1, "entry");
+        wait_for_scans(&mut logs);
+        assert_eq!(logs.map_matches().position_count(), 11);
+
+        logs.remove(1);
+
+        assert_eq!(
+            logs.map_matches().position_count(),
+            1,
+            "only the log still loaded draws"
+        );
+    }
+
+    /// Losing the association target strands the log's layers: nothing draws
+    /// where no fix says it was.
+    #[test]
+    fn re_association_after_a_recording_is_unloaded_empties_the_map() {
+        let mut files = loaded(vec![recording_at(55.0, 10)]);
+        let mut logs = LoadedLogs::default();
+        let mut log = log_of(10);
+        log.associate_with(Some(id_of(&files, 0)), &files.view());
+        logs.push(log);
+        add_layer_chip(&mut logs, 0, "entry");
+        wait_for_scans(&mut logs);
+        assert_eq!(logs.map_matches().position_count(), 10);
+
+        files.remove_file(0);
+        logs.reassociate_all(&files.view());
+
+        assert!(logs.map_matches().is_empty());
     }
 
     /// The second log's first layer chip takes the colour after the first

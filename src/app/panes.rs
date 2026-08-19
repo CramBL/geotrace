@@ -30,6 +30,8 @@ pub(super) struct MainBehavior<'a> {
     pub(super) query_matches: Option<&'a gt_ui_types::QueryMatches>,
     /// Snapped-track geometry of completed, shown snap runs.
     pub(super) snapped_tracks: &'a gt_ui_types::SnappedTracks,
+    /// What the loaded logs' filters selected onto the map.
+    pub(super) log_matches: &'a gt_ui_types::LogMatches,
     /// The interference cells the overlay draws, for the shown day.
     pub(super) jamming_dataset: Option<&'a gt_jam::dataset::JamDataset>,
     /// Which day the overlay shows, driven by the stepper in the eye popup.
@@ -80,6 +82,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                             empty_reason: self.tec_empty,
                         },
                         query_matches: self.query_matches,
+                        log_matches: self.log_matches,
                         empty_reason: self.jamming_empty,
                         filter: &s.filter,
                         visibility: s.tree.visibility(),

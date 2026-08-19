@@ -526,6 +526,7 @@ impl App {
                     instant: tec_instant,
                     empty_reason: tec_empty,
                 } = self.tec_maps.overlay_layer();
+                let log_matches = self.logs.map_matches();
                 let mut behavior = MainBehavior {
                     map,
                     state: &mut s,
@@ -535,6 +536,7 @@ impl App {
                     toggle_plot_request: false,
                     query_matches: self.query_window.matches(),
                     snapped_tracks: &snapped_tracks,
+                    log_matches,
                     snap_error: &snap_error,
                     jamming_series: &jamming_series,
                     geomagnetic_series: &geomagnetic_series,
