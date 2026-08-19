@@ -11,9 +11,10 @@ use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
 use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
 use gt_log_view::{FilterChipMode, LayerColorSlot, LoadedLog, LoadedLogs};
-use gt_test_utils::{By, HarnessInteraction as _};
+use gt_test_utils::{By, HarnessInteraction as _, TestHarness, snapshot_harness};
 use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::{FileSource, Latitude, Longitude};
+use gt_ui_types::{HoveredLogGlyph, LogMatchColor, LogMatchHover};
 
 use super::{AssociationWindowUnit, LogViewerContext, LogViewerWindow, filters};
 
@@ -41,9 +42,21 @@ const SECOND_LOG: &str = "\
 /// leading space where an interpolated entry carries its marker.
 const FIRST_ENTRY_TIMESTAMP: &str = " 2026-05-29 18:48:25";
 
+/// The second row of the fixture log, whose line carries no timestamp of its
+/// own.
+const INTERPOLATED_ENTRY_TIMESTAMP: &str = "≈2026-05-29 18:48:26";
+
+/// A log that was never loaded here, standing in for one the viewer is not
+/// showing.
+const UNLOADED_LOG: gt_ui_types::LoadedLogId = gt_ui_types::LoadedLogId::new(7);
+
 /// The association window a freshly loaded log starts with, matching the app's
 /// default.
 const ASSOCIATION_WINDOW_SECS: i64 = 60;
+
+/// The window the viewer is driven in, wide enough for the footer's controls
+/// to sit on one row.
+const VIEWER_SIZE: egui::Vec2 = egui::vec2(760.0, 560.0);
 
 fn log_start() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 5, 29, 18, 48, 25)
@@ -56,6 +69,7 @@ struct ViewerState {
     logs: LoadedLogs,
     recordings: LoadedFiles,
     map_center: Option<(f64, f64)>,
+    log_hover: LogMatchHover,
 }
 
 impl ViewerState {
@@ -100,6 +114,44 @@ fn harness_of(
     recordings: Vec<gt_types::LoadedFile>,
     logs: &[(&str, &str)],
 ) -> Harness<'static, ViewerState> {
+    let mut harness = Harness::builder()
+        .with_size(VIEWER_SIZE)
+        .build_ui_state(viewer_ui, viewer_state(recordings, logs));
+    harness.run_steps(3);
+    harness
+}
+
+/// [`harness_of`] on a rendering harness, for the test that reads the pixels
+/// of the rows back.
+fn rendering_harness_with(
+    recordings: Vec<gt_types::LoadedFile>,
+) -> TestHarness<'static, ViewerState> {
+    let mut harness = TestHarness::builder().size(VIEWER_SIZE).ui_state(
+        viewer_ui,
+        viewer_state(recordings, &[("navsyncd.log", LOG_WITH_EVERY_ROW_KIND)]),
+    );
+    harness.inner.run_steps(3);
+    harness
+}
+
+/// One frame of the viewer, as the app draws it.
+fn viewer_ui(ui: &mut egui::Ui, state: &mut ViewerState) {
+    let names = RecordingNames::resolve(state.recordings.view(), "{filename}");
+    state.viewer.show(
+        ui.ctx(),
+        &mut state.logs,
+        LogViewerContext {
+            recordings: state.recordings.view(),
+            recording_names: &names,
+            map_center_request: &mut state.map_center,
+            log_hover: &mut state.log_hover,
+        },
+    );
+}
+
+/// The recordings and logs the viewer opens on, the viewer showing the log
+/// that loaded last.
+fn viewer_state(recordings: Vec<gt_types::LoadedFile>, logs: &[(&str, &str)]) -> ViewerState {
     let mut loaded_recordings = LoadedFiles::new();
     for file in recordings {
         loaded_recordings.push(file, FileHistory::None);
@@ -124,30 +176,13 @@ fn harness_of(
     let mut viewer = LogViewerWindow::new();
     viewer.open_on_newly_loaded_log(&logs);
 
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(760.0, 560.0))
-        .build_ui_state(
-            |ui, state: &mut ViewerState| {
-                let names = RecordingNames::resolve(state.recordings.view(), "{filename}");
-                state.viewer.show(
-                    ui.ctx(),
-                    &mut state.logs,
-                    LogViewerContext {
-                        recordings: state.recordings.view(),
-                        recording_names: &names,
-                        map_center_request: &mut state.map_center,
-                    },
-                );
-            },
-            ViewerState {
-                viewer,
-                logs,
-                recordings: loaded_recordings,
-                map_center: None,
-            },
-        );
-    harness.run_steps(3);
-    harness
+    ViewerState {
+        viewer,
+        logs,
+        recordings: loaded_recordings,
+        map_center: None,
+        log_hover: LogMatchHover::default(),
+    }
 }
 
 /// Clicks the table row whose timestamp column reads `timestamp`.
@@ -155,6 +190,17 @@ fn click_line(harness: &mut Harness<ViewerState>, timestamp: &str) {
     let row = harness.get_by_label(timestamp).rect().center();
     harness.press_drag_release(row, egui::Vec2::ZERO, 1);
     harness.run_steps(2);
+}
+
+/// Parks the cursor on the table row whose timestamp column reads `timestamp`.
+fn hover_line(harness: &mut Harness<ViewerState>, timestamp: &str) {
+    let row = harness.get_by_label(timestamp).rect().center();
+    harness.hover_at_and_settle(row, 2);
+}
+
+/// The position the map draws its cross-highlight ring at.
+fn ringed_position(harness: &Harness<ViewerState>) -> Option<gt_types::MercPoint> {
+    harness.state().log_hover.row_position
 }
 
 #[test]
@@ -225,6 +271,100 @@ fn clicking_a_line_with_no_fix_within_the_window_leaves_the_map_where_it_was() {
     click_line(&mut harness, FIRST_ENTRY_TIMESTAMP);
 
     assert_eq!(harness.state().map_center, None);
+}
+
+#[test]
+fn hovering_a_line_with_a_position_rings_it_on_the_map() {
+    let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
+
+    hover_line(&mut harness, FIRST_ENTRY_TIMESTAMP);
+
+    let position = harness
+        .state()
+        .shown_log()
+        .and_then(|log| log.entry_position(0))
+        .map(|(latitude, longitude)| gt_types::mercator::normalize(latitude, longitude));
+    assert!(
+        position.is_some(),
+        "the one overlapping recording gave the line a position"
+    );
+    assert_eq!(ringed_position(&harness), position);
+}
+
+#[test]
+fn hovering_a_line_with_no_fix_within_the_window_rings_nothing() {
+    let mut harness = harness_with(Vec::new());
+
+    hover_line(&mut harness, FIRST_ENTRY_TIMESTAMP);
+
+    assert_eq!(ringed_position(&harness), None);
+}
+
+/// The hexagon the cursor is on over the map marks the rows of the lines it
+/// stands for, and leaves the rest of the table as it was.
+#[test]
+fn a_hovered_hexagon_marks_its_own_lines_in_the_table() {
+    let mut harness = rendering_harness_with(vec![recording("walk.gtd", 55.0)]);
+    let pixels_per_point = harness.inner.ctx.pixels_per_point();
+    let marked_row = harness.inner.get_by_label(FIRST_ENTRY_TIMESTAMP).rect();
+    let other_row = harness
+        .inner
+        .get_by_label(INTERPOLATED_ENTRY_TIMESTAMP)
+        .rect();
+    let before = harness.inner.render().expect("the harness renders a frame");
+    let shown_log = harness
+        .state()
+        .logs
+        .get_with_id(0)
+        .map(|(id, _)| id)
+        .expect("the fixture log is loaded");
+
+    harness.state_mut().log_hover.glyph = Some(HoveredLogGlyph {
+        log: shown_log,
+        color: LogMatchColor::LiveFilter,
+        entry_indices: vec![0],
+    });
+    harness.inner.run_steps(2);
+
+    let after = harness.inner.render().expect("the harness renders a frame");
+    assert!(
+        snapshot_harness::pixels_differ(&before, &after, marked_row, pixels_per_point),
+        "the line the hexagon stands for takes a background"
+    );
+    assert!(
+        !snapshot_harness::pixels_differ(&before, &after, other_row, pixels_per_point),
+        "a line it does not stand for is left alone"
+    );
+}
+
+/// A hexagon of a log the viewer is not showing marks nothing: stacks are per
+/// log, and the viewer never switches logs on its own.
+#[test]
+fn a_hovered_hexagon_of_another_log_leaves_the_shown_one_alone() {
+    let mut harness = rendering_harness_with(vec![recording("walk.gtd", 55.0)]);
+    let pixels_per_point = harness.inner.ctx.pixels_per_point();
+    let first_row = harness.inner.get_by_label(FIRST_ENTRY_TIMESTAMP).rect();
+    let before = harness.inner.render().expect("the harness renders a frame");
+
+    harness.state_mut().log_hover.glyph = Some(HoveredLogGlyph {
+        log: UNLOADED_LOG,
+        color: LogMatchColor::LiveFilter,
+        entry_indices: vec![0],
+    });
+    harness.inner.run_steps(2);
+
+    let after = harness.inner.render().expect("the harness renders a frame");
+    assert!(!snapshot_harness::pixels_differ(
+        &before,
+        &after,
+        first_row,
+        pixels_per_point
+    ));
+    assert_eq!(
+        harness.state().viewer.selected_log_index(),
+        0,
+        "the viewer stays on the log it was showing"
+    );
 }
 
 /// The value field and the unit dropdown together name the window a log

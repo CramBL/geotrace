@@ -4902,12 +4902,7 @@ fn a_layer_chip_puts_the_lines_it_matched_on_the_map() {
 
     add_log_filter(&mut harness, "gnss");
 
-    let matched = harness
-        .inner
-        .state_mut()
-        .logs
-        .map_matches()
-        .position_count();
+    let matched = harness.inner.state_mut().logs.map_matches().match_count();
     assert!(matched > 0, "the chip's lines reach the map");
 
     if let Some(log) = harness.inner.state_mut().logs.get_mut(0) {

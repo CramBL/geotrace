@@ -573,15 +573,18 @@ fn the_disambiguation_popup_survives_the_frame_it_opened_on(
 }
 
 /// What the compound hover label leans on: a renderer keeps its own label
-/// unless the disambiguation popup owns the cursor area, or the previous
-/// frame already had several candidates under the pointer.
+/// unless the disambiguation popup owns the cursor area, the previous frame
+/// already had several candidates under the pointer, or a log hexagon over the
+/// fix took the pointer and listed that line itself.
 #[rstest::rstest]
-#[case::one_candidate(false, 1, false)]
-#[case::popup_open(true, 1, true)]
-#[case::settled_multi_hover(false, 2, true)]
-fn hover_labels_yield_to_the_popup_or_a_previous_multi_hover(
+#[case::one_candidate(false, 1, false, false)]
+#[case::popup_open(true, 1, false, true)]
+#[case::settled_multi_hover(false, 2, false, true)]
+#[case::a_log_hexagon_over_the_fix(false, 1, true, true)]
+fn hover_labels_yield_to_the_popup_a_previous_multi_hover_or_a_log_hexagon(
     #[case] disambig_open: bool,
     #[case] previous_candidates: usize,
+    #[case] log_glyph_hovered: bool,
     #[case] expected: bool,
 ) {
     let visibility = TrackDataVisibility::from_loaded(&[]);
@@ -594,6 +597,13 @@ fn hover_labels_yield_to_the_popup_or_a_previous_multi_hover(
             .highlight
             .hover_candidates
             .keep_nearest(hover_ref(category));
+    }
+    if log_glyph_hovered {
+        state.log_hover.glyph = Some(gt_ui_types::HoveredLogGlyph {
+            log: gt_ui_types::LoadedLogId::new(0),
+            color: gt_ui_types::LogMatchColor::LiveFilter,
+            entry_indices: vec![0],
+        });
     }
 
     let mut ctx = state.context(&[], &visibility);

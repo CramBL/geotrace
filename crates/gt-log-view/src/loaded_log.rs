@@ -6,8 +6,10 @@ use chrono::Duration;
 use gt_fmt::MIDDLE_DOT;
 use gt_loaded_files::{LoadedFileId, LoadedFilesView};
 use gt_logfile::ParsedLog;
-use gt_types::{Latitude, Longitude, MercPoint, TimeRange, mercator};
-use gt_ui_types::{LogMatchColor, LogMatchLayer, LogMatches};
+use gt_types::{Latitude, Longitude, TimeRange, mercator};
+use gt_ui_types::{
+    LoadedLogId, LogMatch, LogMatchColor, LogMatchLayer, LogMatchSource, LogMatches,
+};
 
 use crate::{
     association::AssociationCandidates,
@@ -221,14 +223,20 @@ impl LoadedLog {
         }
     }
 
-    /// Where on the map the entries `matches` selected are. Each position
-    /// comes from the recording this log is associated against, so an entry
-    /// with no fix inside the association window contributes nothing.
-    fn matched_positions(&self, matches: &EntryMatches) -> Vec<MercPoint> {
+    /// Where on the map the entries `matches` selected are, in file order.
+    /// Each position comes from the recording this log is associated against,
+    /// so an entry with no fix inside the association window contributes
+    /// nothing.
+    fn matched_points(&self, matches: &EntryMatches) -> Vec<LogMatch> {
         matches
             .matched_entry_indices()
-            .filter_map(|entry_index| self.entry_position(entry_index))
-            .map(|(latitude, longitude)| mercator::normalize(latitude, longitude))
+            .filter_map(|entry_index| {
+                let (latitude, longitude) = self.entry_position(entry_index)?;
+                Some(LogMatch {
+                    merc: mercator::normalize(latitude, longitude),
+                    entry_index,
+                })
+            })
             .collect()
     }
 
@@ -238,11 +246,34 @@ impl LoadedLog {
     }
 }
 
+/// One loaded log under the identity it was loaded with.
+#[derive(Debug)]
+struct StoredLog {
+    id: LoadedLogId,
+    log: LoadedLog,
+}
+
+impl StoredLog {
+    /// What the map needs to read this log's hovered lines back: its identity
+    /// and the parse its layers' entries index into.
+    fn source(&self) -> LogMatchSource {
+        LogMatchSource {
+            id: self.id,
+            parsed: Arc::clone(&self.log.parsed),
+        }
+    }
+}
+
 /// Every log loaded in this session, in load order. The same log may be loaded
 /// more than once: the copies are separate logs.
 #[derive(Debug, Default)]
 pub struct LoadedLogs {
-    logs: Vec<LoadedLog>,
+    logs: Vec<StoredLog>,
+
+    /// The identity the next loaded log takes. Nothing that named an unloaded
+    /// log ever resolves to the one that took its place in the list: an id is
+    /// never handed out twice in a session.
+    next_id: LoadedLogId,
 
     /// Shared by every log's layer chips: a colour means one filter across the
     /// session, whichever log added it.
@@ -265,24 +296,35 @@ impl LoadedLogs {
         self.logs.is_empty()
     }
 
-    pub fn iter(&self) -> std::slice::Iter<'_, LoadedLog> {
-        self.logs.iter()
+    pub fn iter(&self) -> impl Iterator<Item = &LoadedLog> {
+        self.logs.iter().map(|stored| &stored.log)
     }
 
     pub fn get(&self, index: usize) -> Option<&LoadedLog> {
-        self.logs.get(index)
+        self.logs.get(index).map(|stored| &stored.log)
     }
 
     pub fn get_mut(&mut self, index: usize) -> Option<&mut LoadedLog> {
         self.map_matches_stale = true;
-        self.logs.get_mut(index)
+        self.logs.get_mut(index).map(|stored| &mut stored.log)
     }
 
-    /// Loads `log`, taking a colour slot for each layer chip it arrives with.
+    /// The log at `index` under the identity it was loaded with, which the
+    /// map's hexagons name their log by.
+    pub fn get_with_id(&self, index: usize) -> Option<(LoadedLogId, &LoadedLog)> {
+        self.logs.get(index).map(|stored| (stored.id, &stored.log))
+    }
+
+    /// Loads `log` under a fresh identity, taking a colour slot for each layer
+    /// chip it arrives with.
     pub fn push(&mut self, mut log: LoadedLog) {
         log.filters
             .take_layer_color_slots(&mut self.layer_color_slots);
-        self.logs.push(log);
+        self.logs.push(StoredLog {
+            id: self.next_id,
+            log,
+        });
+        self.next_id = self.next_id.next();
         self.map_matches_stale = true;
     }
 
@@ -291,10 +333,11 @@ impl LoadedLogs {
     pub fn remove(&mut self, index: usize) -> Option<LoadedLog> {
         let removed = (index < self.logs.len()).then(|| self.logs.remove(index))?;
         removed
+            .log
             .filters
             .release_layer_color_slots(&mut self.layer_color_slots);
         self.map_matches_stale = true;
-        Some(removed)
+        Some(removed.log)
     }
 
     /// The filter stack of the log at `index`, with the palette its layer chips
@@ -304,8 +347,8 @@ impl LoadedLogs {
         index: usize,
     ) -> Option<(&mut FilterStack, &mut LayerColorSlots)> {
         self.map_matches_stale = true;
-        let log = self.logs.get_mut(index)?;
-        Some((&mut log.filters, &mut self.layer_color_slots))
+        let stored = self.logs.get_mut(index)?;
+        Some((&mut stored.log.filters, &mut self.layer_color_slots))
     }
 
     pub fn layer_color_slots(&self) -> &LayerColorSlots {
@@ -315,8 +358,8 @@ impl LoadedLogs {
     /// Reads in every log's finished filter scans. The viewer calls this once a
     /// frame, before it reads what the filters matched.
     pub fn apply_finished_queries(&mut self) {
-        for log in &mut self.logs {
-            self.map_matches_stale |= log.filters.apply_finished_queries();
+        for stored in &mut self.logs {
+            self.map_matches_stale |= stored.log.filters.apply_finished_queries();
         }
     }
 
@@ -334,44 +377,39 @@ impl LoadedLogs {
     }
 
     fn build_map_matches(&self) -> LogMatches {
-        let shown = || self.logs.iter().filter(|log| log.visible);
+        let shown = || self.logs.iter().filter(|stored| stored.log.visible);
         let mut layers = Vec::new();
-        for log in shown() {
-            for (slot, chip) in log.filters.enabled_layer_chips() {
+        for stored in shown() {
+            for (slot, chip) in stored.log.filters.enabled_layer_chips() {
                 layers.push(LogMatchLayer {
                     color: LogMatchColor::LayerSlot {
                         index: slot.index(),
                         shared: self.layer_color_slots.is_shared(slot),
                     },
-                    positions: log.matched_positions(chip.matches()),
+                    log: stored.source(),
+                    matches: stored.log.matched_points(chip.matches()),
                 });
             }
         }
-        for log in shown() {
+        for stored in shown() {
             layers.push(LogMatchLayer {
                 color: LogMatchColor::LiveFilter,
-                positions: log.matched_positions(log.filters.live_filter_matches()),
+                log: stored.source(),
+                matches: stored
+                    .log
+                    .matched_points(stored.log.filters.live_filter_matches()),
             });
         }
-        layers.retain(|layer| !layer.positions.is_empty());
+        layers.retain(|layer| !layer.matches.is_empty());
         LogMatches::from_layers(layers)
     }
 
     /// Associates every loaded log again, after the loaded recordings changed.
     pub fn reassociate_all(&mut self, recordings: &LoadedFilesView<'_>) {
-        for log in &mut self.logs {
-            log.reassociate(recordings);
+        for stored in &mut self.logs {
+            stored.log.reassociate(recordings);
         }
         self.map_matches_stale = true;
-    }
-}
-
-impl<'a> IntoIterator for &'a LoadedLogs {
-    type Item = &'a LoadedLog;
-    type IntoIter = std::slice::Iter<'a, LoadedLog>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
     }
 }
 
@@ -552,7 +590,7 @@ mod tests {
                 shared: false,
             })
         );
-        assert_eq!(matches.position_count(), 1, "\"entry 1\" matches one line");
+        assert_eq!(matches.match_count(), 1, "\"entry 1\" matches one line");
     }
 
     /// A log with no association target has nothing to put on the map, however
@@ -579,7 +617,7 @@ mod tests {
         logs.push(log);
         add_layer_chip(&mut logs, 0, "entry");
         wait_for_scans(&mut logs);
-        assert_eq!(logs.map_matches().position_count(), 10);
+        assert_eq!(logs.map_matches().match_count(), 10);
 
         if let Some(log) = logs.get_mut(0) {
             log.set_visible(false);
@@ -589,7 +627,7 @@ mod tests {
         if let Some(log) = logs.get_mut(0) {
             log.set_visible(true);
         }
-        assert_eq!(logs.map_matches().position_count(), 10);
+        assert_eq!(logs.map_matches().match_count(), 10);
     }
 
     /// A refine chip narrows the table, never the map: it has no colour to draw
@@ -644,12 +682,12 @@ mod tests {
         add_layer_chip(&mut logs, 0, "entry 1");
         add_layer_chip(&mut logs, 1, "entry");
         wait_for_scans(&mut logs);
-        assert_eq!(logs.map_matches().position_count(), 11);
+        assert_eq!(logs.map_matches().match_count(), 11);
 
         logs.remove(1);
 
         assert_eq!(
-            logs.map_matches().position_count(),
+            logs.map_matches().match_count(),
             1,
             "only the log still loaded draws"
         );
@@ -666,12 +704,62 @@ mod tests {
         logs.push(log);
         add_layer_chip(&mut logs, 0, "entry");
         wait_for_scans(&mut logs);
-        assert_eq!(logs.map_matches().position_count(), 10);
+        assert_eq!(logs.map_matches().match_count(), 10);
 
         files.remove_file(0);
         logs.reassociate_all(&files.view());
 
         assert!(logs.map_matches().is_empty());
+    }
+
+    /// Each layer names the log its filter read, which is how the map hands a
+    /// hovered hexagon back to the viewer showing that log.
+    #[test]
+    fn every_layer_names_the_log_it_was_filtered_out_of() {
+        let files = loaded(vec![recording_at(55.0, 10)]);
+        let mut logs = LoadedLogs::default();
+        for _ in 0..2 {
+            let mut log = log_of(10);
+            log.associate_with(Some(id_of(&files, 0)), &files.view());
+            logs.push(log);
+        }
+        add_layer_chip(&mut logs, 0, "entry 1");
+        add_layer_chip(&mut logs, 1, "entry 2");
+        wait_for_scans(&mut logs);
+        let ids: Vec<Option<LoadedLogId>> = (0..2)
+            .map(|index| logs.get_with_id(index).map(|(id, _)| id))
+            .collect();
+
+        let layer_logs: Vec<Option<LoadedLogId>> = logs
+            .map_matches()
+            .layers()
+            .iter()
+            .map(|layer| Some(layer.log.id))
+            .collect();
+
+        assert_eq!(layer_logs, ids, "one layer per log, each naming its own");
+    }
+
+    /// A hexagon of an unloaded log never names the log that took its place in
+    /// the list: an identity is never handed out twice.
+    #[test]
+    fn an_unloaded_logs_identity_is_never_handed_out_again() {
+        let mut logs = LoadedLogs::default();
+        logs.push(log_of(3));
+        logs.push(log_of(3));
+        let unloaded = logs.get_with_id(0).map(|(id, _)| id);
+        let kept = logs.get_with_id(1).map(|(id, _)| id);
+        assert_ne!(unloaded, kept);
+
+        logs.remove(0);
+        logs.push(log_of(3));
+
+        assert_eq!(
+            logs.get_with_id(0).map(|(id, _)| id),
+            kept,
+            "the log that stayed keeps its identity where it moved to"
+        );
+        assert_ne!(logs.get_with_id(1).map(|(id, _)| id), unloaded);
     }
 
     /// The second log's first layer chip takes the colour after the first

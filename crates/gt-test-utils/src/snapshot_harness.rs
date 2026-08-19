@@ -130,6 +130,30 @@ impl<'a, State> TestHarness<'a, State> {
     }
 }
 
+/// Whether anything inside `rect` was painted differently between two rendered
+/// frames.
+///
+/// `rect` is in points, as a widget reports it, and is scaled by
+/// `pixels_per_point` to address the frames.
+pub fn pixels_differ(
+    before: &image::RgbaImage,
+    after: &image::RgbaImage,
+    rect: egui::Rect,
+    pixels_per_point: f32,
+) -> bool {
+    #[expect(
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation,
+        reason = "a widget rect is inside a canvas of a few hundred points"
+    )]
+    let bound = |value: f32| value.max(0.0) as u32;
+    let pixels = rect * pixels_per_point;
+    let columns = bound(pixels.left())..bound(pixels.right()).min(before.width());
+    let rows = bound(pixels.top())..bound(pixels.bottom()).min(before.height());
+    rows.flat_map(|y| columns.clone().map(move |x| (x, y)))
+        .any(|(x, y)| before.get_pixel(x, y) != after.get_pixel(x, y))
+}
+
 pub struct TestHarnessBuilder<'a> {
     size: Option<egui::Vec2>,
     fading_enabled: bool,

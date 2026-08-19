@@ -83,6 +83,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                         },
                         query_matches: self.query_matches,
                         log_matches: self.log_matches,
+                        log_hover: &mut s.log_hover,
                         empty_reason: self.jamming_empty,
                         filter: &s.filter,
                         visibility: s.tree.visibility(),

@@ -6,6 +6,7 @@ pub mod generated_marker_visibility;
 pub mod geomagnetic_series;
 pub mod highlight;
 pub mod jamming_series;
+pub mod log_hover;
 pub mod log_matches;
 pub mod point_window;
 pub mod query_matches;
@@ -33,7 +34,10 @@ pub use highlight::{
     PinnedPopup,
 };
 pub use jamming_series::{JammingPoint, JammingSeries};
-pub use log_matches::{LogMatchColor, LogMatchLayer, LogMatches};
+pub use log_hover::{HoveredLogGlyph, LogMatchHover};
+pub use log_matches::{
+    LoadedLogId, LogMatch, LogMatchColor, LogMatchLayer, LogMatchSource, LogMatches,
+};
 pub use point_window::PointWindowFolds;
 pub use query_matches::{DrawLayer, DrawLayerMask, QueryMatches};
 pub use reference::{

@@ -22,6 +22,7 @@ gt-icon-tessellate = { path = "../gt-icon-tessellate", default-features = false 
 gt-ionex = { path = "../gt-ionex" }
 gt-jam = { path = "../gt-jam" }
 gt-loaded-files = { path = "../gt-loaded-files" }
+gt-logfile = { path = "../gt-logfile" }
 gt-sky = { path = "../gt-sky" }
 gt-track-builder = { path = "../gt-track-builder" }
 gt-types = { path = "../gt-types" }

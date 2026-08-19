@@ -618,6 +618,7 @@ impl App {
                 map_center_request,
                 popup_pos_request,
                 plot_state,
+                log_hover,
                 display_mask,
                 recording_name_template,
                 ..
@@ -662,6 +663,7 @@ impl App {
                     recordings: loaded_files.view(),
                     recording_names: &recording_names,
                     map_center_request,
+                    log_hover,
                 },
             );
         });

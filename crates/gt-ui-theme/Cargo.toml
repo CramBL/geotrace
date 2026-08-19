@@ -13,6 +13,7 @@ doctest = false
 egui.workspace = true
 gt-fmt = { path = "../gt-fmt" }
 gt-types = { path = "../gt-types" }
+gt-ui-types = { path = "../gt-ui-types" }
 strum.workspace = true
 
 [dev-dependencies]

@@ -32,7 +32,7 @@ pub use sky_trails_window::SkyTrailsWindow;
 pub use tec_renderer::{TecHeatmapSnapshot, TecLayer};
 pub use viewport::GeoBounds;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use egui::Context;
 
@@ -43,9 +43,9 @@ use gt_loaded_files::RecordingNames;
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
-    HighlightScope, HoverCandidates, LogMatches, MapHighlight, MapScope, PinnedPopup,
-    PointWindowFolds, QueryMatches, SkyGlyphVariant, SkyTrailsRequest, SnappedTracks,
-    TrackDataVisibility,
+    HighlightScope, HoverCandidates, HoveredLogGlyph, LogMatchHover, LogMatches, MapHighlight,
+    MapScope, PinnedPopup, PointWindowFolds, QueryMatches, SkyGlyphVariant, SkyTrailsRequest,
+    SnappedTracks, TrackDataVisibility,
 };
 use rstar::PointDistance as _;
 use walkers::sources::OpenStreetMap;
@@ -266,6 +266,8 @@ pub struct MapDrawContext<'a> {
     pub query_matches: Option<&'a QueryMatches>,
     /// What the loaded logs' filters selected onto the map.
     pub log_matches: &'a LogMatches,
+    /// The log match under the cursor, on the map and in the viewer alike.
+    pub log_hover: &'a mut LogMatchHover,
     pub empty_reason: Option<EmptyReason>,
     pub filter: &'a GlobalFilter,
     pub visibility: &'a TrackDataVisibility,
@@ -309,7 +311,11 @@ impl<'a> MapDrawContext<'a> {
     /// independent renderers do not pile theirs at the same spot.
     fn suppress_overlapping_hover_labels(&mut self, disambig_open: bool) {
         let prev_multi_hover = self.highlight.hover_candidates.is_ambiguous();
-        self.highlight.suppress_hover_labels = disambig_open || prev_multi_hover;
+        // A hovered log hexagon takes the pointer from the fix underneath it:
+        // it draws over that fix and lists its line itself.
+        let prev_log_glyph_hovered = self.log_hover.glyph.is_some();
+        self.highlight.suppress_hover_labels =
+            disambig_open || prev_multi_hover || prev_log_glyph_hovered;
     }
 }
 
@@ -392,6 +398,9 @@ pub struct NavMap {
     /// Whether the snapped-track renderer drew its edge tooltip, raised
     /// during the frame and read at the start of the next one.
     snapped_edge_tooltip_shown: Cell<bool>,
+    /// The log hexagon the renderer found under the cursor, filled while the
+    /// plugins draw and handed to the caller at the end of the frame.
+    hovered_log_glyph: RefCell<Option<HoveredLogGlyph>>,
     /// How strongly the TEC heatmap is drawn, as the opacity control's
     /// percentage. A persisted preference, seeded from settings via
     /// [`NavMap::set_tec_heatmap_opacity_percent`].
@@ -435,6 +444,7 @@ impl NavMap {
             sat_label_scratch: sat_labels::LabelSelection::default(),
             sky_glyph_scratch: sky_glyph_renderer::GlyphSelection::default(),
             snapped_edge_tooltip_shown: Cell::new(false),
+            hovered_log_glyph: RefCell::new(None),
             tec_heatmap_opacity_percent: gt_ui_theme::TEC_OPACITY_PERCENT_DEFAULT,
         }
     }
@@ -576,6 +586,7 @@ impl NavMap {
             .unwrap_or_else(default_map_center);
         let plan = self.collect_viewport_points(ui.max_rect(), map_center, &ctx);
         let map_response = self.show_map(ui, &ctx, &plan, animation);
+        ctx.log_hover.glyph = self.hovered_log_glyph.take();
 
         if map_response.double_clicked()
             && let Some(bbox) = ctx.visible_bounding_box()
@@ -760,6 +771,7 @@ impl NavMap {
         };
         let pointer_ownership = PointerOwnership {
             recorded_element_hovered: ctx.highlight.hover.is_some(),
+            marker_hovered: ctx.highlight.hover_candidates.any_marker(),
             snapped_edge_tooltip_shown: self.snapped_edge_tooltip_shown.replace(false),
             interference_layer_drawn: ctx.display_mask.is_visible(DisplayCategory::JammingHexes)
                 && ctx.jamming_dataset.is_some(),
@@ -818,13 +830,22 @@ impl NavMap {
             ));
         }
         // Between the track line and the markers: a hexagon must not cover a
-        // pin, and must be legible over the line it sits on.
-        if ctx.display_mask.is_visible(DisplayCategory::LogMatches) && !ctx.log_matches.is_empty() {
-            map = map.with_plugin(log_match_renderer::LogMatchRenderer::new(
-                ctx.log_matches,
-                self.icon_meshes.as_ref(),
-                ui.visuals().dark_mode,
-            ));
+        // pin, and must be legible over the line it sits on. This renderer
+        // also draws the ring at the viewer's hovered row, which has a
+        // position even where the filters selected no line of its log.
+        if ctx.display_mask.is_visible(DisplayCategory::LogMatches)
+            && (!ctx.log_matches.is_empty() || ctx.log_hover.row_position.is_some())
+        {
+            map = map.with_plugin(
+                log_match_renderer::LogMatchRenderer::builder()
+                    .matches(ctx.log_matches)
+                    .maybe_icon_meshes(self.icon_meshes.as_ref())
+                    .dark_mode(ui.visuals().dark_mode)
+                    .hover_enabled(pointer_ownership.log_hexagon_hover_enabled())
+                    .maybe_hovered_row_position(ctx.log_hover.row_position)
+                    .hovered_glyph(&self.hovered_log_glyph)
+                    .build(),
+            );
         }
         if ctx.display_mask.is_visible(DisplayCategory::CustomMarkers) {
             map = map.with_plugin(MarkerRenderer::new(
@@ -967,7 +988,7 @@ impl NavMap {
                         snapped_tracks: ctx.snapped_tracks,
                         jamming_cells: ctx.jamming_dataset.map_or(0, JamDataset::len),
                         tec_nodes,
-                        log_matches: ctx.log_matches.position_count(),
+                        log_matches: ctx.log_matches.match_count(),
                     },
                 )
             },
@@ -1418,6 +1439,7 @@ struct DrawState {
     day_selection: DaySelection,
     tec_instant: gt_ionex::TecInstantSelection,
     log_matches: LogMatches,
+    log_hover: LogMatchHover,
 }
 
 #[cfg(test)]
@@ -1426,6 +1448,7 @@ impl Default for DrawState {
         Self {
             recording_names: RecordingNames::default(),
             log_matches: LogMatches::default(),
+            log_hover: LogMatchHover::default(),
             filter: GlobalFilter::default(),
             event_marker_visibility: EventMarkerVisibility::default(),
             generated_marker_visibility: GeneratedMarkerVisibility::default(),
@@ -1460,6 +1483,7 @@ impl DrawState {
             },
             query_matches: None,
             log_matches: &self.log_matches,
+            log_hover: &mut self.log_hover,
             empty_reason: None,
             filter: &self.filter,
             visibility,

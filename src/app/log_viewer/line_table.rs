@@ -5,12 +5,13 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use chrono::Duration;
-use egui::{Color32, Label, RichText, ScrollArea, Separator, text::LayoutJob};
+use egui::{Color32, Label, RichText, ScrollArea, Separator, Shape, text::LayoutJob};
 use gt_fmt::MIDDLE_DOT;
 use gt_log_view::{EntryMatches, FilterStack, LoadedLog, VisibleEntries};
 use gt_logfile::{BootSession, LogEntry, ParsedLog, TimestampKind};
-use gt_types::{Latitude, Longitude};
+use gt_types::{Latitude, Longitude, mercator};
 use gt_ui_theme::EM_DASH;
+use gt_ui_types::{HoveredLogGlyph, LoadedLogId, LogMatchHover};
 
 use super::{AssociationWindowUnit, LogViewerWindow, TIMESTAMP_FORMAT};
 
@@ -38,6 +39,11 @@ const LAYER_BAR_GAP_PX: f32 = 1.0;
 const LAYER_COLUMN_WIDTH_PX: f32 = LAYER_BAR_WIDTH_PX + LAYER_BAR_GAP_PX;
 
 const GUTTER_MARKER_CORNER_RADIUS: u8 = 1;
+
+/// How strongly the rows of the map's hovered hexagon are tinted in that
+/// hexagon's colour: enough to find them in a scrolling table, light enough to
+/// read the line through.
+const CROSS_HIGHLIGHT_ROW_ALPHA: f32 = 0.3;
 
 /// One row of the table: a boot session's divider, or one entry of the log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,6 +167,46 @@ impl<'a> LineTableRows<'a> {
     }
 }
 
+/// What the table hands back to the app: where a click centres the map, and
+/// the hover it shares with the map's hexagons.
+pub(super) struct LineTableRequests<'a> {
+    pub(super) map_center: &'a mut Option<(f64, f64)>,
+    pub(super) hover: &'a mut LogMatchHover,
+}
+
+/// The rows the hexagon under the cursor on the map marks in the table.
+///
+/// A hexagon of another log than the one shown marks nothing: filter stacks
+/// are per log, and marking rows across a log switch the reader did not ask
+/// for would show them the wrong log's lines.
+struct CrossHighlightedRows<'a> {
+    glyph: Option<&'a HoveredLogGlyph>,
+    shown_log: LoadedLogId,
+    fill: Color32,
+}
+
+impl<'a> CrossHighlightedRows<'a> {
+    fn of(glyph: Option<&'a HoveredLogGlyph>, shown_log: LoadedLogId, dark_mode: bool) -> Self {
+        let fill = glyph.map_or(Color32::TRANSPARENT, |glyph| {
+            gt_ui_theme::log_match_color(glyph.color, dark_mode)
+                .gamma_multiply(CROSS_HIGHLIGHT_ROW_ALPHA)
+        });
+        Self {
+            glyph,
+            shown_log,
+            fill,
+        }
+    }
+
+    /// The background the row of `entry_index` draws behind it, `None` for a
+    /// row the hovered hexagon does not stand for.
+    fn fill_of(&self, entry_index: usize) -> Option<Color32> {
+        self.glyph?
+            .covers(self.shown_log, entry_index)
+            .then_some(self.fill)
+    }
+}
+
 impl LogViewerWindow {
     /// The table of `log`'s visible lines. Only the rows on screen are built: a
     /// journal of a million lines costs what one of a hundred does.
@@ -168,7 +214,8 @@ impl LogViewerWindow {
         &mut self,
         ui: &mut egui::Ui,
         log: &LoadedLog,
-        map_center_request: &mut Option<(f64, f64)>,
+        log_id: LoadedLogId,
+        requests: &mut LineTableRequests<'_>,
     ) {
         let parsed = log.parsed();
         let filters = log.filters();
@@ -190,6 +237,9 @@ impl LogViewerWindow {
         let dark_mode = ui.visuals().dark_mode;
         let gutter = LayerGutter::of(filters, dark_mode);
         let highlight = gt_ui_theme::LOG_LIVE_FILTER.resolve(dark_mode);
+        let cross_highlighted =
+            CrossHighlightedRows::of(requests.hover.glyph.as_ref(), log_id, dark_mode);
+        let mut hovered_row_position = None;
 
         ui.scope(|ui| {
             // Rows sit directly on top of each other, so the table reads as one
@@ -217,7 +267,7 @@ impl LogViewerWindow {
                                 continue;
                             };
                             let message = parsed.message(entry);
-                            let clicked_position = EntryRow {
+                            let interaction = EntryRow {
                                 entry,
                                 message,
                                 highlighted: HighlightedMessage {
@@ -229,10 +279,21 @@ impl LogViewerWindow {
                                 association_window,
                                 gutter: &gutter,
                                 entry_index,
+                                cross_highlight_fill: cross_highlighted.fill_of(entry_index),
                             }
                             .ui(ui, unit);
-                            if let Some(position) = clicked_position {
-                                *map_center_request = Some(position);
+                            if let Some(RowInteraction {
+                                latitude,
+                                longitude,
+                                clicked,
+                            }) = interaction
+                            {
+                                hovered_row_position =
+                                    Some(mercator::normalize(latitude, longitude));
+                                if clicked {
+                                    *requests.map_center =
+                                        Some((latitude.as_degrees(), longitude.as_degrees()));
+                                }
                             }
                         }
                         None => {}
@@ -240,6 +301,7 @@ impl LogViewerWindow {
                 }
             });
         });
+        requests.hover.row_position = hovered_row_position;
     }
 }
 
@@ -286,6 +348,17 @@ struct EntryRow<'a> {
     association_window: Duration,
     gutter: &'a LayerGutter<'a>,
     entry_index: usize,
+
+    /// The background of a row the map's hovered hexagon stands for.
+    cross_highlight_fill: Option<Color32>,
+}
+
+/// What the cursor did to a row carrying a position: hovering it rings that
+/// position on the map, clicking centres the map there.
+struct RowInteraction {
+    latitude: Latitude,
+    longitude: Longitude,
+    clicked: bool,
 }
 
 /// Where the live filter matched the message, and the colour reserved for it.
@@ -295,8 +368,8 @@ struct HighlightedMessage {
 }
 
 impl EntryRow<'_> {
-    /// Renders the row, returning where the map should centre when it was clicked.
-    fn ui(&self, ui: &mut egui::Ui, unit: AssociationWindowUnit) -> Option<(f64, f64)> {
+    /// Renders the row, returning what the cursor did to it.
+    fn ui(&self, ui: &mut egui::Ui, unit: AssociationWindowUnit) -> Option<RowInteraction> {
         let associated = self.position.is_some();
         let timestamp = self.entry.timestamp.format(TIMESTAMP_FORMAT);
         let (prefix, interpolated) = match self.entry.timestamp_kind {
@@ -312,6 +385,8 @@ impl EntryRow<'_> {
             false => ui.visuals().weak_text_color(),
         };
 
+        // Claimed before the row draws: the fill belongs behind its text.
+        let background = ui.painter().add(Shape::Noop);
         let row = ui
             .horizontal(|ui| {
                 self.gutter_ui(ui);
@@ -323,6 +398,10 @@ impl EntryRow<'_> {
                 ui.add(Label::new(message));
             })
             .response;
+        if let Some(fill) = self.cross_highlight_fill {
+            ui.painter()
+                .set(background, Shape::rect_filled(row.rect, 0, fill));
+        }
 
         let hover = match (self.order_anomaly_step, self.position) {
             (Some(step), _) => format!(
@@ -341,8 +420,11 @@ impl EntryRow<'_> {
             return None;
         };
         let row = row.interact(egui::Sense::click()).on_hover_text(hover);
-        row.clicked()
-            .then(|| (latitude.as_degrees(), longitude.as_degrees()))
+        row.hovered().then_some(RowInteraction {
+            latitude,
+            longitude,
+            clicked: row.clicked(),
+        })
     }
 
     /// The message, with what the live filter matched painted in the colour
@@ -439,8 +521,14 @@ mod tests {
     use chrono::{DateTime, TimeZone as _, Utc};
     use gt_log_view::LayerColorSlots;
     use gt_logfile::AnchoredBounds;
+    use gt_ui_types::LogMatchColor;
 
     use super::*;
+
+    /// The log the viewer is showing in the cross-highlight cases.
+    const SHOWN_LOG: LoadedLogId = LoadedLogId::new(1);
+
+    const OTHER_LOG: LoadedLogId = LoadedLogId::new(2);
 
     /// Two phenomena a filter can pick out, one of them logged twice.
     const GUTTER_LOG: &str = "\
@@ -570,6 +658,47 @@ mod tests {
         assert_eq!(rows.row_of_entry(0), Some(1));
         assert_eq!(rows.row_of_entry(1), Some(2), "entry 3 is the next visible");
         assert_eq!(rows.row_of_entry(3), Some(2));
+    }
+
+    /// A hexagon of `log` standing for `entry_indices`, as the map publishes
+    /// one while the cursor is on it.
+    fn hovering(log: LoadedLogId, entry_indices: &[usize]) -> LogMatchHover {
+        LogMatchHover {
+            glyph: Some(HoveredLogGlyph {
+                log,
+                color: LogMatchColor::LayerSlot {
+                    index: 0,
+                    shared: false,
+                },
+                entry_indices: entry_indices.to_vec(),
+            }),
+            row_position: None,
+        }
+    }
+
+    /// The background a marked row draws: the hexagon's own palette colour,
+    /// tinted down.
+    fn marked_row_fill() -> Color32 {
+        gt_ui_theme::log_layer_slot_color(0)
+            .dark()
+            .gamma_multiply(CROSS_HIGHLIGHT_ROW_ALPHA)
+    }
+
+    /// The map's hovered hexagon marks the rows of the lines it stands for,
+    /// and only while it belongs to the log the viewer is showing.
+    #[rstest::rstest]
+    #[case::a_line_the_hexagon_stands_for(hovering(SHOWN_LOG, &[2, 5]), 5, Some(marked_row_fill()))]
+    #[case::a_line_it_does_not(hovering(SHOWN_LOG, &[2, 5]), 4, None)]
+    #[case::a_hexagon_of_another_log(hovering(OTHER_LOG, &[2, 5]), 5, None)]
+    #[case::no_hexagon_hovered(LogMatchHover::default(), 5, None)]
+    fn the_table_marks_the_rows_of_the_hovered_hexagon(
+        #[case] hover: LogMatchHover,
+        #[case] entry_index: usize,
+        #[case] expected: Option<Color32>,
+    ) {
+        let marked = CrossHighlightedRows::of(hover.glyph.as_ref(), SHOWN_LOG, true);
+
+        assert_eq!(marked.fill_of(entry_index), expected);
     }
 
     /// Two logged phenomena compared side by side: each enabled layer chip
