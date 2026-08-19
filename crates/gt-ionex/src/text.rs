@@ -134,6 +134,20 @@ pub static QUERY_DOC: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
+/// Where a user registers for the token the CDDIS archive needs.
+pub const EARTHDATA_SIGNUP_URL: &str = "https://urs.earthdata.nasa.gov";
+
+/// Why a mirror was passed over, as the download failures list it.
+pub const MIRROR_SKIPPED_WITHOUT_TOKEN: &str = "no Earthdata token set";
+
+/// Shown wherever a mirror is held back for want of a token.
+pub static MISSING_EARTHDATA_TOKEN: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "GeoTrace skips this mirror until an Earthdata token is set: CDDIS serves the maps to \
+         registered callers only. Registering at {EARTHDATA_SIGNUP_URL} is free."
+    )
+});
+
 /// Hover text of the settings page's fetch queue row, stating what one
 /// request covers.
 pub const FETCH_QUEUE_HOVER: &str = "Map days waiting to be downloaded. One day is requested at a \
@@ -205,8 +219,11 @@ mod tests {
              hidden layer stepper: {HIDDEN_LAYER_STEPPER}\n\
              hidden layer opacity: {HIDDEN_LAYER_OPACITY}\n\
              fetch queue hover: {FETCH_QUEUE_HOVER}\n\
-             recording day coverage hover: {RECORDING_DAY_COVERAGE_HOVER}",
-            *SCALE_CAVEAT, *PLOT_HOVER, *QUERY_DOC
+             recording day coverage hover: {RECORDING_DAY_COVERAGE_HOVER}\n\
+             mirror skipped without a token: {MIRROR_SKIPPED_WITHOUT_TOKEN}\n\
+             missing Earthdata token: {}\n\
+             Earthdata signup: {EARTHDATA_SIGNUP_URL}",
+            *SCALE_CAVEAT, *PLOT_HOVER, *QUERY_DOC, *MISSING_EARTHDATA_TOKEN
         );
         insta::assert_snapshot!("shared_wording", wording);
     }

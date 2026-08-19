@@ -78,9 +78,13 @@ impl Default for GeomagneticIndexSettings {
 #[serde(from = "TecWireSettings")]
 pub struct TecSettings {
     /// Hosts serving the ionospheric TEC maps, tried in this order. Defaults
-    /// to JPL, which publishes them. Self-hosted mirrors and offline copies of
-    /// the same directory layout go here.
+    /// to JPL, which publishes them, followed by the CDDIS archive. Self-hosted
+    /// mirrors and offline copies of either layout go here.
     pub mirrors: gt_ionex::MirrorList,
+    /// The user's own Earthdata token, empty until one is entered. Stored as
+    /// entered, like the Mapbox token. Mirrors serving the CDDIS archive are
+    /// skipped while it is empty.
+    pub earthdata_token: String,
 }
 
 /// The `[tec]` section as files on disk hold it.
@@ -91,16 +95,35 @@ pub struct TecSettings {
 #[derive(Default, serde::Deserialize)]
 #[serde(default)]
 struct TecWireSettings {
-    mirrors: Vec<gt_ionex::MirrorBaseUrl>,
+    mirrors: Vec<gt_ionex::Mirror>,
     base_url: Option<gt_ionex::MirrorBaseUrl>,
+    earthdata_token: String,
 }
 
 impl From<TecWireSettings> for TecSettings {
     fn from(wire: TecWireSettings) -> Self {
         let mirrors = gt_ionex::MirrorList::new(wire.mirrors)
-            .or_else(|| wire.base_url.map(gt_ionex::MirrorList::single))
+            .or_else(|| {
+                wire.base_url.map(|base_url| {
+                    gt_ionex::MirrorList::single(gt_ionex::Mirror::new(
+                        base_url,
+                        gt_ionex::MirrorLayout::Jpl,
+                    ))
+                })
+            })
             .unwrap_or_default();
-        Self { mirrors }
+        Self {
+            mirrors,
+            earthdata_token: wire.earthdata_token,
+        }
+    }
+}
+
+impl TecSettings {
+    /// The token the CDDIS mirrors are requested with, or [`None`] while the
+    /// field is empty.
+    pub fn earthdata_token(&self) -> Option<gt_fetch::SecretToken> {
+        gt_fetch::SecretToken::new(&self.earthdata_token)
     }
 }
 
@@ -731,15 +754,18 @@ mod snap_settings_tests {
             .mirrors
             .as_slice()
             .iter()
-            .map(gt_ionex::MirrorBaseUrl::to_string)
+            .map(|mirror| mirror.base_url.to_string())
             .collect()
     }
 
     /// A file written before the mirror list existed keeps fetching from the
     /// host it names, and one written before the TEC section existed fetches
-    /// from the publishing host.
+    /// from the publishing host and the archive behind it.
     #[rstest]
-    #[case::without_the_tec_section("version = 1", &[gt_ionex::DEFAULT_BASE_URL])]
+    #[case::without_the_tec_section(
+        "version = 1",
+        &[gt_ionex::DEFAULT_BASE_URL, gt_ionex::cddis::DEFAULT_BASE_URL]
+    )]
     #[case::with_the_single_host_key(
         "[tec]\nbase_url = \"https://mirror.example\"",
         &["https://mirror.example"]
@@ -752,7 +778,14 @@ mod snap_settings_tests {
         "[tec]\nmirrors = [\"https://first.example\"]\nbase_url = \"https://mirror.example\"",
         &["https://first.example"]
     )]
-    #[case::with_an_empty_list("[tec]\nmirrors = []", &[gt_ionex::DEFAULT_BASE_URL])]
+    #[case::with_an_entry_naming_its_layout(
+        "[tec]\nmirrors = [{ url = \"https://first.example\", layout = \"cddis\" }]",
+        &["https://first.example"]
+    )]
+    #[case::with_an_empty_list(
+        "[tec]\nmirrors = []",
+        &[gt_ionex::DEFAULT_BASE_URL, gt_ionex::cddis::DEFAULT_BASE_URL]
+    )]
     fn a_stored_tec_section_loads_as_the_mirrors_to_fetch_from(
         #[case] stored: &str,
         #[case] expected: &[&str],
@@ -776,7 +809,37 @@ mod snap_settings_tests {
         );
         assert_eq!(
             reloaded.tec.mirrors.as_slice(),
-            [gt_ionex::MirrorBaseUrl::new("https://mirror.example")]
+            [gt_ionex::Mirror::new(
+                gt_ionex::MirrorBaseUrl::new("https://mirror.example"),
+                gt_ionex::MirrorLayout::Jpl
+            )]
+        );
+    }
+
+    /// A stored entry naming its layout keeps it, and an entry from before the
+    /// layouts existed is one of the publishing archive's.
+    #[rstest]
+    #[case::a_bare_url(
+        "[tec]\nmirrors = [\"https://first.example\"]",
+        gt_ionex::MirrorLayout::Jpl
+    )]
+    #[case::an_entry_naming_its_layout(
+        "[tec]\nmirrors = [{ url = \"https://first.example\", layout = \"cddis\" }]",
+        gt_ionex::MirrorLayout::Cddis
+    )]
+    fn a_stored_mirror_keeps_the_layout_it_names(
+        #[case] stored: &str,
+        #[case] expected: gt_ionex::MirrorLayout,
+    ) {
+        let settings: Settings = toml::from_str(stored).expect("parse");
+        assert_eq!(
+            settings
+                .tec
+                .mirrors
+                .as_slice()
+                .first()
+                .map(|mirror| mirror.layout),
+            Some(expected)
         );
     }
 
@@ -784,8 +847,14 @@ mod snap_settings_tests {
     fn a_configured_tec_mirror_list_round_trips() {
         let mut settings = Settings::default();
         settings.tec.mirrors = gt_ionex::MirrorList::new(vec![
-            gt_ionex::MirrorBaseUrl::new("https://first.example"),
-            gt_ionex::MirrorBaseUrl::new("https://second.example"),
+            gt_ionex::Mirror::new(
+                gt_ionex::MirrorBaseUrl::new("https://first.example"),
+                gt_ionex::MirrorLayout::Jpl,
+            ),
+            gt_ionex::Mirror::new(
+                gt_ionex::MirrorBaseUrl::new("https://second.example"),
+                gt_ionex::MirrorLayout::Cddis,
+            ),
         ])
         .expect("two named hosts");
 
@@ -793,6 +862,25 @@ mod snap_settings_tests {
         let parsed: Settings = toml::from_str(&text).expect("parse");
 
         assert_eq!(parsed.tec.mirrors, settings.tec.mirrors);
+    }
+
+    /// A file written before the token setting existed loads without one,
+    /// which leaves the mirrors needing one unrequested.
+    #[test]
+    fn a_settings_file_without_the_earthdata_token_loads() {
+        let settings: Settings = toml::from_str("version = 1\n").expect("parse");
+        assert!(settings.tec.earthdata_token().is_none());
+    }
+
+    #[test]
+    fn a_configured_earthdata_token_round_trips() {
+        let mut settings = Settings::default();
+        settings.tec.earthdata_token = "entered-token".to_owned();
+
+        let text = toml::to_string(&settings).expect("serialize");
+        let parsed: Settings = toml::from_str(&text).expect("parse");
+
+        assert_eq!(parsed.tec.earthdata_token, "entered-token");
     }
 
     /// A settings file written before the solar flare section existed loads

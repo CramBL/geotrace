@@ -17,11 +17,12 @@ use std::thread;
 use chrono::{DateTime, NaiveDate, Utc};
 use egui::Context;
 
-use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
+use gt_fetch::{Connection, OfflineTransport, SecretToken, Transport, TransportSource};
 use gt_ionex::instant_selection::TecInstantSelection;
 use gt_ionex::maps::GlobalIonosphereMaps;
 use gt_ionex::mirrors::{MirrorAttempt, MirrorBaseUrl, MirrorList, MirrorOutcome};
 use gt_ionex::tec::TotalElectronContent;
+use gt_ionex::text;
 use gt_ionex::{IonexProduct, calendar, transport};
 use gt_map::{TecHeatmapSnapshot, TecLayer};
 use gt_store::{IonexStore, IonexStoreError};
@@ -64,6 +65,9 @@ pub struct TecMapScheduler {
     rx: mpsc::Receiver<MapDayMessage>,
     /// The hosts a day is requested from, in the order they are tried.
     mirrors: MirrorList,
+    /// Authenticates the mirrors serving an archive that needs it. [`None`]
+    /// leaves those mirrors unrequested.
+    earthdata_token: Option<SecretToken>,
     /// `None` disables fetching: no archive to write to.
     store: Option<Arc<IonexStore>>,
     /// Connected on the first request, and dropped when the mirror list
@@ -97,6 +101,7 @@ impl TecMapScheduler {
         ctx: Context,
         store: Option<Arc<IonexStore>>,
         mirrors: MirrorList,
+        earthdata_token: Option<SecretToken>,
         transport_source: TransportSource,
     ) -> Self {
         let (tx, rx) = mpsc::channel();
@@ -109,6 +114,7 @@ impl TecMapScheduler {
             tx,
             rx,
             mirrors,
+            earthdata_token,
             store,
             http: None,
             transport_source,
@@ -203,6 +209,12 @@ impl TecMapScheduler {
                                 attempt.mirror,
                                 attempt.product
                             ),
+                            MirrorOutcome::SkippedWithoutToken => log::warn!(
+                                "No {} TEC map for {day} from {}: {}",
+                                attempt.product,
+                                attempt.mirror,
+                                text::MIRROR_SKIPPED_WITHOUT_TOKEN
+                            ),
                             MirrorOutcome::Failed(detail) => log::warn!(
                                 "No {} TEC map for {day} from {}: {detail}",
                                 attempt.product,
@@ -238,6 +250,19 @@ impl TecMapScheduler {
         }
         self.mirrors = mirrors.clone();
         self.http = None;
+        self.days.forget_host();
+    }
+
+    /// Authenticate the mirrors that need a token with `earthdata_token`.
+    ///
+    /// A changed token drops the queue and its failures the same way a changed
+    /// mirror list does: the days passed over for want of one are worth
+    /// requesting again.
+    pub fn set_earthdata_token(&mut self, earthdata_token: Option<SecretToken>) {
+        if self.earthdata_token == earthdata_token {
+            return;
+        }
+        self.earthdata_token = earthdata_token;
         self.days.forget_host();
     }
 
@@ -418,6 +443,7 @@ impl TecMapScheduler {
             transport,
             store,
             self.mirrors.clone(),
+            self.earthdata_token.clone(),
             day,
         );
     }
@@ -530,12 +556,19 @@ fn spawn_fetch(
     transport: Arc<Connection>,
     store: Arc<IonexStore>,
     mirrors: MirrorList,
+    earthdata_token: Option<SecretToken>,
     day: NaiveDate,
 ) {
     thread::Builder::new()
         .name(format!("tec-{day}"))
         .spawn(move || {
-            let message = ingest(transport.as_ref(), &store, &mirrors, day);
+            let message = ingest(
+                transport.as_ref(),
+                &store,
+                &mirrors,
+                earthdata_token.as_ref(),
+                day,
+            );
             tx.send(message).ok();
             ctx.request_repaint();
         })
@@ -551,11 +584,12 @@ fn ingest(
     transport: &impl Transport<Vec<u8>>,
     store: &IonexStore,
     mirrors: &MirrorList,
+    earthdata_token: Option<&SecretToken>,
     day: NaiveDate,
 ) -> MapDayMessage {
     let today = Utc::now().date_naive();
     let (mirror, product, maps, skipped) =
-        match transport::fetch_day_maps(transport, mirrors, day, today) {
+        match transport::fetch_day_maps(transport, mirrors, earthdata_token, day, today) {
             transport::DayFetch::Fetched {
                 mirror,
                 product,
@@ -605,7 +639,7 @@ mod tests {
     use crate::app::day_fetch_status::DayFetchStatus;
     use crate::app::fix_positions::FixPositions;
     use gt_fetch::BytesResponse;
-    use gt_ionex::DEFAULT_BASE_URL;
+    use gt_ionex::{DEFAULT_BASE_URL, MirrorLayout};
     use gt_store::Store;
     use gt_test_utils::{ScriptedTransport, UrlPrefixAnswers};
 
@@ -678,6 +712,7 @@ mod tests {
             Context::default(),
             Some(Arc::clone(&store)),
             MirrorList::default(),
+            None,
             TransportSource::Offline,
         );
         (dir, store, scheduler)
@@ -689,13 +724,24 @@ mod tests {
             Context::default(),
             None,
             MirrorList::default(),
+            None,
             TransportSource::Offline,
         )
     }
 
     fn mirrors(hosts: &[&str]) -> MirrorList {
-        MirrorList::new(hosts.iter().copied().map(MirrorBaseUrl::new).collect())
-            .expect("a named host")
+        MirrorList::new(
+            hosts
+                .iter()
+                .map(|host| gt_ionex::Mirror::new(MirrorBaseUrl::new(*host), MirrorLayout::Jpl))
+                .collect(),
+        )
+        .expect("a named host")
+    }
+
+    /// The publishing host alone, which every ingest test fetches from.
+    fn publishing_host() -> MirrorList {
+        mirrors(&[DEFAULT_BASE_URL])
     }
 
     /// Archive `archived` as a whole day from `product`, the way a finished
@@ -819,6 +865,68 @@ mod tests {
         assert_eq!(scheduler.days.backfill_progress(), None);
     }
 
+    /// A token entered after days were passed over releases them, and their
+    /// failures, for another request.
+    #[test]
+    fn changing_the_earthdata_token_drops_the_queue_and_its_failures() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 11, 17)));
+        scheduler.days.report_failure(
+            day(2024, 5, 10),
+            format!("final: {}", gt_ionex::text::MIRROR_SKIPPED_WITHOUT_TOKEN),
+        );
+
+        scheduler.set_earthdata_token(SecretToken::new("entered-token"));
+
+        assert!(
+            scheduler.days.requested_days().is_empty(),
+            "the days requested without a token"
+        );
+        assert_eq!(scheduler.days.queued(), 0);
+        assert!(scheduler.days.failures().is_empty());
+    }
+
+    #[test]
+    fn setting_the_same_earthdata_token_changes_nothing() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17)));
+        let seen = scheduler.days.requested_days().len();
+
+        scheduler.set_earthdata_token(None);
+
+        assert_eq!(scheduler.days.requested_days().len(), seen);
+    }
+
+    /// A mirror serving an archive that needs a token is not requested while
+    /// none is set, and the day reports why instead of archiving nothing
+    /// quietly.
+    #[test]
+    fn a_day_is_not_requested_from_an_authenticated_archive_without_a_token() {
+        let (_dir, store) = archive();
+        let transport = ScriptedTransport::always(Ok(BytesResponse {
+            status: 200,
+            body: gzipped(&published_file()),
+        }));
+
+        let message = ingest(
+            &transport,
+            &store,
+            &MirrorList::single(gt_ionex::Mirror::publishing(MirrorLayout::Cddis)),
+            None,
+            day(2024, 5, 10),
+        );
+
+        match message {
+            MapDayMessage::Failed { detail, .. } => assert!(
+                detail.contains(gt_ionex::text::MIRROR_SKIPPED_WITHOUT_TOKEN),
+                "{detail}"
+            ),
+            MapDayMessage::Stored { .. } => panic!("the archive was never requested"),
+        }
+        assert!(transport.requested_urls().is_empty());
+        assert!(store.archived_days().expect("days").is_empty());
+    }
+
     #[test]
     fn setting_the_same_mirror_list_changes_nothing() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
@@ -863,7 +971,7 @@ mod tests {
             body: gzipped(&published_file()),
         }));
 
-        let message = ingest(&transport, &store, &MirrorList::default(), ingested);
+        let message = ingest(&transport, &store, &publishing_host(), None, ingested);
 
         assert!(matches!(
             message,
@@ -899,7 +1007,7 @@ mod tests {
             body: gzipped(&published_file()),
         }));
 
-        ingest(&transport, &store, &MirrorList::default(), ingested);
+        ingest(&transport, &store, &publishing_host(), None, ingested);
 
         let maps = store
             .day_maps(ingested)
@@ -927,8 +1035,8 @@ mod tests {
             body: gzipped(&published_file()),
         }));
 
-        ingest(&transport, &store, &MirrorList::default(), ingested);
-        ingest(&transport, &store, &MirrorList::default(), ingested);
+        ingest(&transport, &store, &publishing_host(), None, ingested);
+        ingest(&transport, &store, &publishing_host(), None, ingested);
 
         assert_eq!(store.archived_days().expect("days").len(), 1);
     }
@@ -942,7 +1050,13 @@ mod tests {
         let (_dir, store) = archive();
         let transport = ScriptedTransport::always(Ok(BytesResponse { status, body }));
 
-        let message = ingest(&transport, &store, &MirrorList::default(), day(2024, 5, 10));
+        let message = ingest(
+            &transport,
+            &store,
+            &publishing_host(),
+            None,
+            day(2024, 5, 10),
+        );
 
         assert!(matches!(message, MapDayMessage::Failed { .. }));
         assert!(store.archived_days().expect("days").is_empty());
@@ -968,6 +1082,7 @@ mod tests {
             &transport,
             &store,
             &mirrors(&["https://first.example", "https://second.example"]),
+            None,
             ingested,
         );
 
@@ -1003,6 +1118,7 @@ mod tests {
             &transport,
             &store,
             &mirrors(&["https://first.example", "https://second.example"]),
+            None,
             day(2024, 5, 10),
         );
 

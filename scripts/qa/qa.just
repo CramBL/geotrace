@@ -40,6 +40,12 @@ scrub-capture-manifests *MANIFESTS:
 generate-gold:
     {{ _QA }} generate-gold
 
+# Write the .Z fixtures the gt-ionex compress decoder tests read, checking each
+# generated stream against the system gzip before it lands.
+[group("qa")]
+generate-unix-compress-fixtures:
+    {{ _QA }} generate-unix-compress-fixtures
+
 # Run the QA Python unit tests.
 [group("qa")]
 test *ARGS:

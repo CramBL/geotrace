@@ -115,6 +115,7 @@ impl App {
             .set_base_url(&s.geomagnetic_indices.base_url);
         self.tec_settings = s.tec.clone();
         self.tec_maps.set_mirrors(&s.tec.mirrors);
+        self.tec_maps.set_earthdata_token(s.tec.earthdata_token());
         self.solar_flare_settings = s.solar_flares.clone();
         self.solar_flares.set_base_url(&s.solar_flares.base_url);
         self.solar_flares.set_api_key(s.solar_flares.api_key());

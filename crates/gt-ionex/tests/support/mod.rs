@@ -29,6 +29,25 @@ pub fn captured_maps(name: &str) -> Result<GlobalIonosphereMaps, String> {
         .map_err(|err| format!("{}: {err}", fixture.name))
 }
 
+/// Directory of the streams `just qa::generate-unix-compress-fixtures` writes.
+const COMPRESSED_DIR: &str = "unix_compress";
+
+/// The capture those streams hold, and how much of it the partial ones do,
+/// declared the same way on the generator's side.
+pub const COMPRESSED_CAPTURE: &str = "JPLG0920.24I";
+pub const COMPRESSED_HEAD_BYTES: usize = 65_536;
+
+pub fn compressed_fixture(name: &str) -> Result<Vec<u8>, String> {
+    let path = fixtures_dir().join(COMPRESSED_DIR).join(name);
+    fs::read(&path).map_err(|err| format!("reading {}: {err}", path.display()))
+}
+
+/// The bytes [`COMPRESSED_CAPTURE`] holds, which the streams decode to.
+pub fn compressed_capture_bytes() -> Result<Vec<u8>, String> {
+    let path = fixtures_dir().join(COMPRESSED_CAPTURE);
+    fs::read(&path).map_err(|err| format!("reading {}: {err}", path.display()))
+}
+
 pub fn manifest() -> Result<Value, String> {
     let path = fixtures_dir().join(CAPTURE_MANIFEST);
     let contents =

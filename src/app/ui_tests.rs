@@ -1307,7 +1307,10 @@ fn tec_mirrors_persist_across_settings_roundtrip() {
         .state_mut()
         .tec_settings
         .mirrors
-        .add(gt_ionex::MirrorBaseUrl::new("https://mirror.example"));
+        .add(gt_ionex::Mirror::new(
+            gt_ionex::MirrorBaseUrl::new("https://mirror.example"),
+            gt_ionex::MirrorLayout::Jpl,
+        ));
 
     assert!(
         harness.state().collect_snapshot() != before,
@@ -1320,10 +1323,18 @@ fn tec_mirrors_persist_across_settings_roundtrip() {
 
     harness.state_mut().apply_startup_settings(&reloaded);
     assert_eq!(
-        harness.state().tec_settings.mirrors.as_slice(),
+        harness
+            .state()
+            .tec_settings
+            .mirrors
+            .as_slice()
+            .iter()
+            .map(|mirror| mirror.base_url.to_string())
+            .collect::<Vec<_>>(),
         [
-            gt_ionex::MirrorBaseUrl::new(gt_ionex::DEFAULT_BASE_URL),
-            gt_ionex::MirrorBaseUrl::new("https://mirror.example"),
+            gt_ionex::DEFAULT_BASE_URL,
+            gt_ionex::cddis::DEFAULT_BASE_URL,
+            "https://mirror.example",
         ]
     );
 }

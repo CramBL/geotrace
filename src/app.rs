@@ -432,10 +432,12 @@ impl App {
             gt_solar::DEFAULT_BASE_URL.to_owned(),
             transport_source(options.offline),
         );
+        let tec_settings = crate::settings::TecSettings::default();
         let tec_maps = tec::TecMapScheduler::new(
             cc.egui_ctx.clone(),
             tec_maps,
-            gt_ionex::MirrorList::default(),
+            tec_settings.mirrors.clone(),
+            tec_settings.earthdata_token(),
             transport_source(options.offline),
         );
         let solar_flare_settings = crate::settings::SolarFlareSettings::default();
@@ -454,7 +456,7 @@ impl App {
             geomagnetic_indices,
             geomagnetic_index_settings: crate::settings::GeomagneticIndexSettings::default(),
             tec_maps,
-            tec_settings: crate::settings::TecSettings::default(),
+            tec_settings,
             solar_flares,
             solar_flare_settings,
             offline: options.offline,

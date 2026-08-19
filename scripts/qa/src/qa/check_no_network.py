@@ -51,6 +51,10 @@ _ALLOWED: dict[str, frozenset[str]] = {
     "crates/gt-jam/examples/fetch_jam_fixtures.rs": _EVERY_CONSTRUCT,
     "crates/gt-solar/examples/fetch_solar_fixtures.rs": _EVERY_CONSTRUCT,
     "crates/gt-snap/examples/fetch_snap_fixtures.rs": _EVERY_CONSTRUCT,
+    # The CDDIS verification tool, run by hand through `just cddis-verify`:
+    # the archive it addresses serves files to callers holding a per-user
+    # Earthdata token, which CI has none of.
+    "crates/gt-ionex/examples/verify_cddis_mirror.rs": _EVERY_CONSTRUCT,
     # The live map-matching API smoke test. Every test in it is `#[ignore]`d
     # and runs only under `just snap-live-test`.
     "crates/gt-snap/tests/live_api.rs": _EVERY_CONSTRUCT,
