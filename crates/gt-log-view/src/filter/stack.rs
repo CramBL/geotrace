@@ -265,18 +265,21 @@ impl FilterStack {
     }
 
     /// Reads in the scans that finished since the last call, replacing the
-    /// filters' matches. Every filter keeps the matches it had until its own
-    /// newer scan lands.
-    pub fn apply_finished_queries(&mut self) {
-        let mut visible_entries_changed =
-            self.live.query.take_landed() && self.live.narrows_visible_set();
+    /// filters' matches, and answers whether any of them landed. Every filter
+    /// keeps the matches it had until its own newer scan lands.
+    pub fn apply_finished_queries(&mut self) -> bool {
+        let live_landed = self.live.query.take_landed();
+        let mut any_landed = live_landed;
+        let mut visible_entries_changed = live_landed && self.live.narrows_visible_set();
         for chip in &mut self.chips {
-            visible_entries_changed |=
-                chip.filter.query.take_landed() && chip.narrows_visible_set();
+            let landed = chip.filter.query.take_landed();
+            any_landed |= landed;
+            visible_entries_changed |= landed && chip.narrows_visible_set();
         }
         if visible_entries_changed {
             self.recompose_visible_entries();
         }
+        any_landed
     }
 
     /// Blocks until every scan this stack started has landed.

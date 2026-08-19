@@ -811,6 +811,11 @@ pub const LOG_LAYER_SLOTS: [ThemedColor; 5] = [
     ),
 ];
 
+/// Outline tone of the map's log hexagons. One dark tone separates a glyph
+/// from the track line and the tiles on either theme: the background here is
+/// the map's tiles, not the app's.
+pub const LOG_HEXAGON_OUTLINE: Color32 = Color32::from_gray(24);
+
 /// The colour of layer palette slot `slot_index`. Slots past the last one cycle
 /// the palette, as the sixth and later layer chip of a session do.
 #[expect(

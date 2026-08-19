@@ -32,6 +32,9 @@ pub struct SuppliedCounts<'a> {
     pub jamming_cells: usize,
     /// Grid nodes archived for the day the heatmap shows.
     pub tec_nodes: usize,
+    /// Hexagons the loaded logs' filters put on the map, already scoped by the
+    /// app: only shown logs and enabled filters reach here.
+    pub log_matches: usize,
 }
 
 /// The in-scope element count of every [`DisplayCategory`].
@@ -54,6 +57,8 @@ pub struct DisplayCounts {
     jamming_hexes: usize,
     /// TEC grid nodes available for the shown instant, from the archive.
     tec_heatmap: usize,
+    /// Hexagons the loaded logs' filters selected, from the app.
+    log_matches: usize,
 }
 
 impl DisplayCounts {
@@ -70,6 +75,7 @@ impl DisplayCounts {
             DisplayCategory::SkyGlyphs => self.sky_glyphs,
             DisplayCategory::JammingHexes => self.jamming_hexes,
             DisplayCategory::TecHeatmap => self.tec_heatmap,
+            DisplayCategory::LogMatches => self.log_matches,
         }
     }
 
@@ -87,6 +93,7 @@ impl DisplayCounts {
             query_highlights: get(DisplayCategory::QueryHighlights),
             snapped_tracks: get(DisplayCategory::SnappedTracks),
             sky_glyphs: get(DisplayCategory::SkyGlyphs),
+            log_matches: get(DisplayCategory::LogMatches),
             jamming_hexes: get(DisplayCategory::JammingHexes),
             tec_heatmap: get(DisplayCategory::TecHeatmap),
         }
@@ -106,6 +113,7 @@ impl DisplayCounts {
         let mut counts = Self {
             jamming_hexes: supplied.jamming_cells,
             tec_heatmap: supplied.tec_nodes,
+            log_matches: supplied.log_matches,
             snapped_tracks: supplied.snapped_tracks.map_or(0, |s| s.by_track.len()),
             ..Self::default()
         };
@@ -209,6 +217,7 @@ struct DisplayCountsKey {
     snapped_len: usize,
     jamming_cells: usize,
     tec_nodes: usize,
+    log_matches: usize,
     filter: GlobalFilter,
     visibility: TrackDataVisibility,
     event_marker_visibility: EventMarkerVisibility,
@@ -294,6 +303,7 @@ impl DisplayCountsCache {
             && key.snapped_len == snapped_len
             && key.jamming_cells == supplied.jamming_cells
             && key.tec_nodes == supplied.tec_nodes
+            && key.log_matches == supplied.log_matches
             && key.filter == *filter
             && key.visibility == *visibility
             && key.event_marker_visibility == *event_marker_visibility
@@ -319,6 +329,7 @@ impl DisplayCountsCache {
             DisplayCountsKey {
                 jamming_cells: supplied.jamming_cells,
                 tec_nodes: supplied.tec_nodes,
+                log_matches: supplied.log_matches,
                 files_sig,
                 snapped_len,
                 filter: *filter,
@@ -470,9 +481,10 @@ mod tests {
             (DisplayCategory::QueryHighlights, 0),
             (DisplayCategory::SnappedTracks, 0),
             (DisplayCategory::SkyGlyphs, 1),
-            // Archive-supplied, so a recording fixture contributes none.
+            // Supplied by the app, so a recording fixture contributes none.
             (DisplayCategory::JammingHexes, 0),
             (DisplayCategory::TecHeatmap, 0),
+            (DisplayCategory::LogMatches, 0),
         ];
         assert_eq!(expected.len(), DisplayCategory::iter().count());
         for (category, n) in expected {

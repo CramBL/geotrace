@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+  <!-- Flat-top regular hexagon, the shape reserved for log matches on the map.
+       Circumradius 9.25 user units around the viewbox center (10,10), leaving
+       room for the 1.5-unit outline centered on the path to end at the edge.
+       An instance with half extent s therefore draws a hexagon of circumradius
+       0.925s (see gt_map::log_match_renderer).
+       Both elements are white and tinted per instance: the fill by the primary
+       tint (the filter's palette colour), the outline by the secondary tint
+       (id="tint2" selects the secondary slot, see gt-icon-tessellate). -->
+  <path d="M 19.25 10 L 14.625 18.011 L 5.375 18.011 L 0.75 10 L 5.375 1.989 L 14.625 1.989 Z"
+        fill="white"/>
+  <path id="tint2"
+        d="M 19.25 10 L 14.625 18.011 L 5.375 18.011 L 0.75 10 L 5.375 1.989 L 14.625 1.989 Z"
+        fill="none" stroke="white" stroke-width="1.5" stroke-linejoin="miter"/>
+</svg>

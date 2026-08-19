@@ -4856,6 +4856,76 @@ fn snapshot_app_log_viewer_filters() {
     harness.snapshot_loose("app_log_viewer_filters");
 }
 
+/// The map draws what a filter selected, and stops when the log that owns the
+/// filter is hidden.
+#[test]
+fn a_layer_chip_puts_the_lines_it_matched_on_the_map() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        recording_alongside_the_log("walk.gtd", 55.0),
+    );
+    drop_log_and_wait_for_load(&mut harness.inner, &synthetic_log(8 * 1024), "navsyncd.log");
+    harness.inner.run_steps(5);
+    assert!(
+        harness.inner.state_mut().logs.map_matches().is_empty(),
+        "a loaded log draws nothing until a filter selects lines"
+    );
+
+    add_log_filter(&mut harness, "gnss");
+
+    let matched = harness
+        .inner
+        .state_mut()
+        .logs
+        .map_matches()
+        .position_count();
+    assert!(matched > 0, "the chip's lines reach the map");
+
+    if let Some(log) = harness.inner.state_mut().logs.get_mut(0) {
+        log.set_visible(false);
+    }
+    harness.inner.run_steps(2);
+    assert!(
+        harness.inner.state_mut().logs.map_matches().is_empty(),
+        "hiding the log takes its layer off the map"
+    );
+}
+
+/// The map under a filtered log: a layer chip's hexagons along the recording,
+/// clustered where the lines are dense, with the live filter's own colour over
+/// them. The viewer is closed so the map it draws on is visible.
+#[test]
+fn snapshot_app_log_map_hexagons() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        recording_alongside_the_log("walk.gtd", 55.0),
+    );
+    // A log long enough to span the whole recording, so its hexagons run the
+    // length of the track the map frames.
+    drop_log_and_wait_for_load(
+        &mut harness.inner,
+        &synthetic_log(384 * 1024),
+        "navsyncd.log",
+    );
+    harness.inner.run_steps(5);
+
+    add_log_filter(&mut harness, "kernel");
+    type_into_log_filter(&mut harness, "bus-off");
+    harness.inner.get_by_label(ICON_ARTICLE).click();
+    harness.inner.run_steps(5);
+
+    harness.snapshot_loose("app_log_map_hexagons");
+}
+
 #[test]
 fn choosing_a_target_in_the_footer_associates_the_log_against_it() {
     let mut harness = Harness::builder()

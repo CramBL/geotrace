@@ -44,6 +44,8 @@ pub enum DisplayCategory {
     JammingHexes,
     /// The ionospheric TEC grid drawn beneath the track ink.
     TecHeatmap,
+    /// The hexagons a loaded log's filters put on the map.
+    LogMatches,
 }
 
 impl DisplayCategory {
@@ -210,6 +212,7 @@ mod tests {
             (DisplayCategory::SkyGlyphs, "sky_glyphs"),
             (DisplayCategory::JammingHexes, "jamming_hexes"),
             (DisplayCategory::TecHeatmap, "tec_heatmap"),
+            (DisplayCategory::LogMatches, "log_matches"),
         ];
         assert_eq!(expected.len(), DisplayCategory::COUNT);
         for (category, wire) in expected {

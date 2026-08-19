@@ -9,6 +9,7 @@ pub(crate) mod generated_marker_renderer;
 mod hover_labels;
 pub mod icon_mesh;
 mod jamming_renderer;
+mod log_match_renderer;
 pub mod mapbox_tiles;
 pub mod marker_renderer;
 mod polyline;
@@ -42,8 +43,9 @@ use gt_loaded_files::RecordingNames;
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
-    HighlightScope, HoverCandidates, MapHighlight, MapScope, PinnedPopup, PointWindowFolds,
-    QueryMatches, SkyGlyphVariant, SkyTrailsRequest, SnappedTracks, TrackDataVisibility,
+    HighlightScope, HoverCandidates, LogMatches, MapHighlight, MapScope, PinnedPopup,
+    PointWindowFolds, QueryMatches, SkyGlyphVariant, SkyTrailsRequest, SnappedTracks,
+    TrackDataVisibility,
 };
 use rstar::PointDistance as _;
 use walkers::sources::OpenStreetMap;
@@ -262,6 +264,8 @@ pub struct MapDrawContext<'a> {
     /// The archived TEC grid, the instant it is shown at, and why it is empty.
     pub tec: TecLayer<'a>,
     pub query_matches: Option<&'a QueryMatches>,
+    /// What the loaded logs' filters selected onto the map.
+    pub log_matches: &'a LogMatches,
     pub empty_reason: Option<EmptyReason>,
     pub filter: &'a GlobalFilter,
     pub visibility: &'a TrackDataVisibility,
@@ -813,6 +817,15 @@ impl NavMap {
                 &self.snapped_edge_tooltip_shown,
             ));
         }
+        // Between the track line and the markers: a hexagon must not cover a
+        // pin, and must be legible over the line it sits on.
+        if ctx.display_mask.is_visible(DisplayCategory::LogMatches) && !ctx.log_matches.is_empty() {
+            map = map.with_plugin(log_match_renderer::LogMatchRenderer::new(
+                ctx.log_matches,
+                self.icon_meshes.as_ref(),
+                ui.visuals().dark_mode,
+            ));
+        }
         if ctx.display_mask.is_visible(DisplayCategory::CustomMarkers) {
             map = map.with_plugin(MarkerRenderer::new(
                 ctx.files,
@@ -954,6 +967,7 @@ impl NavMap {
                         snapped_tracks: ctx.snapped_tracks,
                         jamming_cells: ctx.jamming_dataset.map_or(0, JamDataset::len),
                         tec_nodes,
+                        log_matches: ctx.log_matches.position_count(),
                     },
                 )
             },
@@ -1403,6 +1417,7 @@ struct DrawState {
     highlight: MapHighlight,
     day_selection: DaySelection,
     tec_instant: gt_ionex::TecInstantSelection,
+    log_matches: LogMatches,
 }
 
 #[cfg(test)]
@@ -1410,6 +1425,7 @@ impl Default for DrawState {
     fn default() -> Self {
         Self {
             recording_names: RecordingNames::default(),
+            log_matches: LogMatches::default(),
             filter: GlobalFilter::default(),
             event_marker_visibility: EventMarkerVisibility::default(),
             generated_marker_visibility: GeneratedMarkerVisibility::default(),
@@ -1443,6 +1459,7 @@ impl DrawState {
                 empty_reason: None,
             },
             query_matches: None,
+            log_matches: &self.log_matches,
             empty_reason: None,
             filter: &self.filter,
             visibility,
