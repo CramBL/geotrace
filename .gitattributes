@@ -1,0 +1,4 @@
+# Captured fixtures are byte-exact copies of what a service served, and tests
+# compare them byte for byte. Checkout must never rewrite their line endings
+# (git's text heuristic would CRLF-convert the NUL-free ones on Windows).
+**/tests/fixtures/** -text
