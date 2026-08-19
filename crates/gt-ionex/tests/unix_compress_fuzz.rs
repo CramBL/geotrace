@@ -12,6 +12,11 @@ use proptest::test_runner::TestCaseError;
 
 use gt_ionex::unix_compress::{self, MAX_DECOMPRESSED_BYTES};
 
+/// Magic plus the flags byte. A cut inside the header leaves bytes that are no
+/// compress stream at all, which is a different property from a stream cut
+/// short.
+const HEADER_LEN: usize = 3;
+
 /// The stream the truncation property cuts, small enough to decode a few
 /// hundred times.
 fn head_stream() -> Result<Vec<u8>, String> {
@@ -67,7 +72,7 @@ proptest::proptest! {
     /// truncated stream still holds sit where they did, so what it decodes to
     /// is the start of what the whole stream does.
     #[test]
-    fn a_truncated_stream_decodes_to_the_start_of_the_whole_one(cut in 0_usize..19_000) {
+    fn a_truncated_stream_decodes_to_the_start_of_the_whole_one(cut in HEADER_LEN..19_000) {
         let stream = head_stream().map_err(TestCaseError::fail)?;
         let whole = unix_compress::decompress(&stream)
             .map_err(|err| TestCaseError::fail(err.to_string()))?;
