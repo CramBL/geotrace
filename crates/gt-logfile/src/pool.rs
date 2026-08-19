@@ -1,21 +1,23 @@
-//! The worker pool this crate indexes and associates logs on.
+//! The worker pool the chunked passes over a log run on, shared by every crate
+//! that walks a log: gt-logfile indexes and associates on it, gt-log-view
+//! filters on it.
 
 use std::{num::NonZeroUsize, sync::OnceLock, thread};
 
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
-/// The share of the machine's cores the pool may occupy. Reading a log is a
+/// The share of the machine's cores the pool may occupy. A log pass is a
 /// background job behind a desktop the user is still working in, and a log is
 /// large enough to saturate every core for long enough to be felt: measured on
 /// an 80 MiB journal, half the cores index it as fast as all of them.
 const CORES_PER_WORKER: usize = 2;
 
-/// The pool the chunked passes over a log run on, or `None` when it could not
-/// be built and the caller must do the work on the calling thread.
+/// The pool, or `None` when it could not be built and the caller must do the
+/// work on the calling thread.
 ///
-/// A pool dedicated to this crate. gt-plot renders frames on rayon's global
-/// pool, and a log pass sharing it would stall frame rendering.
-pub(crate) fn log_worker_pool() -> Option<&'static ThreadPool> {
+/// One pool for every log pass there is. gt-plot renders frames on rayon's
+/// global pool, and a log pass sharing it would stall frame rendering.
+pub fn log_worker_pool() -> Option<&'static ThreadPool> {
     static LOG_WORKER_POOL: OnceLock<Option<ThreadPool>> = OnceLock::new();
 
     LOG_WORKER_POOL
@@ -24,7 +26,7 @@ pub(crate) fn log_worker_pool() -> Option<&'static ThreadPool> {
             let workers = (cores / CORES_PER_WORKER).max(1);
             match ThreadPoolBuilder::new()
                 .num_threads(workers)
-                .thread_name(|index| format!("gt-logfile-{index}"))
+                .thread_name(|index| format!("gt-log-{index}"))
                 .build()
             {
                 Ok(pool) => Some(pool),

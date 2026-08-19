@@ -1,6 +1,6 @@
 //! The loaded logs of a session and each log's association state.
 
-use std::fmt::Write as _;
+use std::{fmt::Write as _, sync::Arc};
 
 use chrono::Duration;
 use gt_fmt::MIDDLE_DOT;
@@ -8,7 +8,10 @@ use gt_loaded_files::{LoadedFileId, LoadedFilesView};
 use gt_logfile::ParsedLog;
 use gt_types::{Latitude, Longitude, TimeRange};
 
-use crate::association::AssociationCandidates;
+use crate::{
+    association::AssociationCandidates,
+    filter::{FilterStack, LayerColorSlots},
+};
 
 /// How a log that arrived without a filename is named, followed by the time of
 /// its first anchored entry.
@@ -17,13 +20,17 @@ const UNNAMED_LOG_NAME_PREFIX: &str = "pasted";
 const UNNAMED_LOG_NAME_TIME_FORMAT: &str = "%H:%M:%S";
 
 /// One loaded log: the text it was parsed from, the recording it is associated
-/// against, and whether it draws on the map.
+/// against, the filters over it, and whether it draws on the map.
 #[derive(Debug)]
 pub struct LoadedLog {
     name: String,
-    parsed: ParsedLog,
+
+    /// Shared with the workers scanning the log for its filters.
+    parsed: Arc<ParsedLog>,
+
     entry_time_range: Option<TimeRange>,
     association: Association,
+    filters: FilterStack,
     visible: bool,
 }
 
@@ -46,9 +53,11 @@ impl LoadedLog {
     /// name from the time of its first anchored entry, e.g. "pasted 14:02:11".
     pub fn new(filename: Option<String>, parsed: ParsedLog, association_window: Duration) -> Self {
         let name = filename.unwrap_or_else(|| name_from_first_anchored_entry(&parsed));
+        let parsed = Arc::new(parsed);
         Self {
             name,
             entry_time_range: parsed.time_range(),
+            filters: FilterStack::new(Arc::clone(&parsed)),
             parsed,
             association: Association {
                 target: None,
@@ -66,6 +75,13 @@ impl LoadedLog {
 
     pub fn parsed(&self) -> &ParsedLog {
         &self.parsed
+    }
+
+    /// The filters over this log. Mutating them goes through
+    /// [`LoadedLogs::filter_stack_mut`], which hands out the palette slots the
+    /// layer chips share with every other log.
+    pub fn filters(&self) -> &FilterStack {
+        &self.filters
     }
 
     /// The one-line parse summary the viewer shows beside the log's name:
@@ -215,6 +231,10 @@ impl LoadedLog {
 #[derive(Debug, Default)]
 pub struct LoadedLogs {
     logs: Vec<LoadedLog>,
+
+    /// Shared by every log's layer chips: a colour means one filter across the
+    /// session, whichever log added it.
+    layer_color_slots: LayerColorSlots,
 }
 
 impl LoadedLogs {
@@ -238,13 +258,43 @@ impl LoadedLogs {
         self.logs.get_mut(index)
     }
 
-    pub fn push(&mut self, log: LoadedLog) {
+    /// Loads `log`, taking a colour slot for each layer chip it arrives with.
+    pub fn push(&mut self, mut log: LoadedLog) {
+        log.filters
+            .take_layer_color_slots(&mut self.layer_color_slots);
         self.logs.push(log);
     }
 
-    /// Unloads the log at `index`.
+    /// Unloads the log at `index`, freeing the colour slots its layer chips
+    /// held.
     pub fn remove(&mut self, index: usize) -> Option<LoadedLog> {
-        (index < self.logs.len()).then(|| self.logs.remove(index))
+        let removed = (index < self.logs.len()).then(|| self.logs.remove(index))?;
+        removed
+            .filters
+            .release_layer_color_slots(&mut self.layer_color_slots);
+        Some(removed)
+    }
+
+    /// The filter stack of the log at `index`, with the palette its layer chips
+    /// take their colours from.
+    pub fn filter_stack_mut(
+        &mut self,
+        index: usize,
+    ) -> Option<(&mut FilterStack, &mut LayerColorSlots)> {
+        let log = self.logs.get_mut(index)?;
+        Some((&mut log.filters, &mut self.layer_color_slots))
+    }
+
+    pub fn layer_color_slots(&self) -> &LayerColorSlots {
+        &self.layer_color_slots
+    }
+
+    /// Reads in every log's finished filter scans. The viewer calls this once a
+    /// frame, before it reads what the filters matched.
+    pub fn apply_finished_queries(&mut self) {
+        for log in &mut self.logs {
+            log.filters.apply_finished_queries();
+        }
     }
 
     /// Associates every loaded log again, after the loaded recordings changed.
@@ -276,11 +326,33 @@ fn name_from_first_anchored_entry(parsed: &ParsedLog) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_fixtures::{
-        association_window, id_of, loaded, log_of, parsed_log, recording_at, start,
+    use crate::{
+        LayerColorSlot,
+        test_fixtures::{
+            association_window, id_of, loaded, log_of, parsed_log, recording_at, start,
+        },
     };
 
     use super::*;
+
+    /// Adds the live filter of the log at `index` as a layer chip, and answers
+    /// with the palette colour that chip took.
+    fn add_layer_chip(logs: &mut LoadedLogs, index: usize, text: &str) -> Option<usize> {
+        let (stack, slots) = logs.filter_stack_mut(index)?;
+        stack.set_live_filter_text(text);
+        let id = stack.add_live_filter_as_chip(slots)?;
+        stack.chip(id)?.layer_slot().map(LayerColorSlot::index)
+    }
+
+    /// The palette colour the first chip of the log at `index` draws in.
+    fn first_chip_slot(logs: &LoadedLogs, index: usize) -> Option<usize> {
+        logs.get(index)?
+            .filters()
+            .chips()
+            .first()?
+            .layer_slot()
+            .map(LayerColorSlot::index)
+    }
 
     /// The single-target rule: two recordings run at the same time in different
     /// places, and the log takes its positions from the one it was pointed at.
@@ -381,6 +453,51 @@ mod tests {
     fn a_log_that_arrived_without_a_filename_is_named_after_its_first_entry() {
         let log = LoadedLog::new(None, parsed_log(3), association_window());
         assert_eq!(log.name(), "pasted 14:02:11");
+    }
+
+    /// The second log's first layer chip takes the colour after the first
+    /// log's: a colour means one filter across the session.
+    #[test]
+    fn layer_colours_are_handed_out_across_every_loaded_log() {
+        let mut logs = LoadedLogs::default();
+        logs.push(log_of(3));
+        logs.push(log_of(3));
+
+        assert_eq!(add_layer_chip(&mut logs, 0, "entry 0"), Some(0));
+        assert_eq!(add_layer_chip(&mut logs, 1, "entry 1"), Some(1));
+
+        logs.remove(0);
+
+        assert_eq!(
+            add_layer_chip(&mut logs, 0, "entry 2"),
+            Some(0),
+            "unloading a log frees the colours its chips held"
+        );
+    }
+
+    /// A log hands its colours back when it is unloaded, and takes them anew
+    /// when it is loaded again with the chips it kept.
+    #[test]
+    fn a_log_loaded_again_takes_colours_for_the_chips_it_kept() {
+        let mut logs = LoadedLogs::default();
+        logs.push(log_of(3));
+        logs.push(log_of(3));
+        add_layer_chip(&mut logs, 0, "entry 0");
+        add_layer_chip(&mut logs, 1, "entry 1");
+
+        let unloaded = logs.remove(0).expect("the log is loaded");
+        logs.push(unloaded);
+
+        assert_eq!(
+            first_chip_slot(&logs, 0),
+            Some(1),
+            "the log that stayed loaded keeps the colour it had"
+        );
+        assert_eq!(
+            first_chip_slot(&logs, 1),
+            Some(0),
+            "the colour the unloaded log freed is the lowest one free again"
+        );
     }
 
     /// The same log may be loaded twice: the two are separate logs with

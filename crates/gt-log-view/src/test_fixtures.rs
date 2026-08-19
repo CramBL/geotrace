@@ -35,6 +35,11 @@ pub(crate) fn parsed_log(count: usize) -> ParsedLog {
             )
         })
         .collect();
+    parsed_log_of_text(&text)
+}
+
+/// The log `text` parses into, in the format its head declares.
+pub(crate) fn parsed_log_of_text(text: &str) -> ParsedLog {
     gt_logfile::parse_log(text.into(), start()).expect("the fixture log parses")
 }
 

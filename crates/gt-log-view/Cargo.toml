@@ -16,10 +16,21 @@ gt-loaded-files = { path = "../gt-loaded-files" }
 gt-logfile = { path = "../gt-logfile" }
 gt-types = { path = "../gt-types" }
 log.workspace = true
+memchr.workspace = true
+parking_lot.workspace = true
+rayon.workspace = true
+regex.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 gt-test-utils = { path = "../gt-test-utils" }
+proptest.workspace = true
 rstest.workspace = true
+
+[[bench]]
+name = "filter_log"
+harness = false
 
 [lints]
 workspace = true
