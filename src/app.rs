@@ -20,6 +20,7 @@ mod modals;
 mod panes;
 mod query;
 mod recording_name_template;
+mod reference_window;
 mod settings_autosave;
 mod settings_ui;
 mod snap;
@@ -310,6 +311,9 @@ pub struct App {
     query_window: query::QueryWindow,
     /// The log viewer window, opened whenever a log finishes loading.
     log_viewer: log_viewer::LogViewerWindow,
+    /// The reference material window, opened from the settings page of the
+    /// data source it describes.
+    reference_window: reference_window::ReferenceWindow,
     /// The whole-track sky trails window.
     sky_trails_window: gt_map::SkyTrailsWindow,
 
@@ -530,6 +534,7 @@ impl App {
             history_window: history::HistoryWindow::new(),
             query_window: query::QueryWindow::new(),
             log_viewer: log_viewer::LogViewerWindow::new(),
+            reference_window: reference_window::ReferenceWindow::new(),
             sky_trails_window: gt_map::SkyTrailsWindow::default(),
             toasts: egui_notify::Toasts::default(),
             #[cfg(feature = "self-update")]

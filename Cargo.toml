@@ -89,7 +89,7 @@ bytemuck = { version = "1", features = ["derive"] }
 chrono = { version = "0.4.44", default-features = false, features = ["std", "now", "clock", "oldtime"] }
 criterion = "0.8"
 dirs = "6"
-eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "wayland"] }
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "links", "wgpu", "wayland"] }
 egui = "0.36"
 egui-phosphor = "0.13.0"
 egui-wgpu = "0.36"
@@ -315,6 +315,9 @@ gt-track-builder = { path = "crates/gt-track-builder" }
 gt-types = { path = "crates/gt-types" }
 gt-ui-theme = { path = "crates/gt-ui-theme" }
 gt-ui-types = { path = "crates/gt-ui-types" }
+# Decodes the images committed alongside the reference material. Only the
+# codecs those assets use.
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 jiff.workspace = true
 log.workspace = true
 mimalloc = { version = "0.1.48", features = ["v3"] }

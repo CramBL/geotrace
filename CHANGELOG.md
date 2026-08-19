@@ -16,6 +16,7 @@
 - A log viewer window: a loaded log opens in it showing its lines, boot sessions and parse summary, and clicking a line centres the map where it was recorded.
 - The log viewer filters as you type, in plain terms or a regular expression, and "+ Add filter" keeps the filter.
 - Filtered log lines draw on the map as hexagons in their filter's colour.
+- Settings' "Geomagnetic indices" page links to reference material on geomagnetic storms and what they do to satellite navigation.
 
 ### Changed
 
@@ -25,6 +26,7 @@
 
 ### Fixed
 
+- Links in dialogs and reference material now open in the browser (clicking them did nothing).
 - Hover labels no longer overlap in the plot and map interference layer.
 - The plot's file legend no longer covers the settings and query windows.
 - Snapped tracks no longer improperly route through nearby roads during dead reckoning gaps (e.g., in parking garages).

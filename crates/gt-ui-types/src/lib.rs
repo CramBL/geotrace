@@ -9,6 +9,7 @@ pub mod jamming_series;
 pub mod log_matches;
 pub mod point_window;
 pub mod query_matches;
+pub mod reference;
 #[cfg(test)]
 mod scope_fixture;
 pub mod sky_glyphs;
@@ -35,6 +36,10 @@ pub use jamming_series::{JammingPoint, JammingSeries};
 pub use log_matches::{LogMatchColor, LogMatchLayer, LogMatches};
 pub use point_window::PointWindowFolds;
 pub use query_matches::{DrawLayer, DrawLayerMask, QueryMatches};
+pub use reference::{
+    Abbreviation, ColumnWidth, ProseSpan, ReferenceBlock, ReferenceDocument, ReferenceIllustration,
+    ReferenceTable, SourceLink, TableCell, TableColumn,
+};
 pub use sky_glyphs::SkyGlyphVariant;
 pub use sky_trails_request::SkyTrailsRequest;
 pub use snap_error_series::{SnapErrorKind, SnapErrorPoint, SnapErrorSeries};

@@ -61,6 +61,7 @@ impl eframe::App for App {
         if apply_resegment {
             self.apply_resegmentation();
         }
+        self.reference_window.show(ui.ctx());
 
         if self.map.layer() == MapLayer::Satellite && !self.map.has_mapbox_token() {
             show_mapbox_token_dialog(ui, &mut self.map, &mut self.mapbox_token_field);

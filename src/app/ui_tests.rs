@@ -2549,6 +2549,31 @@ fn every_settings_page_renders_the_labels_it_declares() {
     }
 }
 
+/// The geomagnetic page's reference link opens the reference window on the
+/// geomagnetic material.
+#[test]
+fn the_geomagnetic_page_opens_the_reference_window() {
+    let (mut harness, _config_path) = harness_with_settings_window_open();
+    harness.inner.state_mut().settings_page = SettingsPage::GeomagneticIndices;
+    harness.run();
+
+    harness
+        .inner
+        .get_by_label_contains(gt_solar::reference::GEOMAGNETIC_ACTIVITY.link_question)
+        .click();
+    harness.run();
+
+    assert!(harness.inner.state().reference_window.is_open());
+    assert!(
+        harness
+            .inner
+            .query_all_by_label_contains(gt_solar::reference::GEOMAGNETIC_ACTIVITY.title)
+            .next()
+            .is_some(),
+        "the reference window shows its title"
+    );
+}
+
 #[test]
 fn an_empty_query_lists_every_page_in_the_rail() {
     let (mut harness, _config_path) = harness_with_settings_window_open();
