@@ -27,8 +27,14 @@ Shown per point, as a whole-track overlay on the map, and as a scrubbable trails
 
 **Analysis** - satellite utilization, loss of lock and slip rate, and clock offset excursions, computed over configurable parameters and surfaced as plot metrics and map markers.
 
-**GNSS interference** - aircraft-reported interference from gpsjam.org drawn as a map layer and available as a metric.
+**GNSS interference** - aircraft-reported interference from [gpsjam.org](https://gpsjam.org) drawn as a map layer and available as a metric.
 Days are archived locally as they are fetched, so they stay available offline.
+
+**Geomagnetic indices and ionospheric TEC** - Kp/Hp30 and global ionosphere maps for the days a recording spans, drawn as plot lines and queryable as metrics, with TEC also drawn as a map heatmap under the tracks.
+Days are archived locally as they are fetched.
+
+**Solar flares** - flares from NASA's DONKI catalog marked on the plot at their peak, coloured by class.
+Needs a free [api.nasa.gov](https://api.nasa.gov) key, set in Settings.
 
 **Snap to road** - match a track against the OpenStreetMap road network with Valhalla.
 The matched geometry draws on the map and the per-point distance to it becomes a metric.
@@ -96,8 +102,10 @@ The check can be turned off under Settings.
 
 ## Network access
 
-Map tiles and the update check are the only requests made on their own.
-The interference layer and snap to road reach out for their own data, both against a configurable host, and snap to road uploads track coordinates only after explicit consent.
+Map tiles and the update check are requested on their own, as is the day data of a loaded recording: aircraft interference, geomagnetic indices from GFZ, ionosphere maps from JPL (or the CDDIS archive once you set an Earthdata token), and solar flares, with an [api.nasa.gov](https://api.nasa.gov) key of your own.
+Those requests contain the UTC days they cover and nothing from the recording.
+Snap to road reaches out for its own data too, and uploads track coordinates only after explicit consent.
+Every host is configurable, and `--offline` runs GeoTrace with no network access.
 
 ## SDKs
 
@@ -188,3 +196,6 @@ GeoTrace uses a split-licensing model.
 
 Map tiles and road-network matching build on [OpenStreetMap](https://www.openstreetmap.org/copyright) data.
 Interference data is published by [gpsjam.org](https://gpsjam.org) from [adsbexchange.com](https://adsbexchange.com) reports.
+Kp and Hp30 index data is published by the [GFZ German Research Centre for Geosciences](https://kp.gfz.de) under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+Global ionosphere maps are published by [NASA JPL](https://sideshow.jpl.nasa.gov) and archived by [NASA CDDIS](https://cddis.nasa.gov).
+Solar flare data comes from the [NASA DONKI](https://ccmc.gsfc.nasa.gov/tools/DONKI/) catalog.
