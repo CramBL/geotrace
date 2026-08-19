@@ -1,5 +1,6 @@
 use egui::TextEdit;
 use egui_phosphor::regular::ARROW_LINE_UP_LEFT as ICON_ARROW_LINE_UP_LEFT;
+use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
 use egui_phosphor::regular::DOTS_SIX as ICON_DOTS_SIX;
 use egui_phosphor::regular::PUSH_PIN as ICON_PUSH_PIN;
 use egui_phosphor::regular::TERMINAL_WINDOW as ICON_TERMINAL_WINDOW;
@@ -13,8 +14,9 @@ use std::{
 use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
 use geotrace_sdk::{Channel, ChannelUnit, DateTime, Duration, Unit, Utc};
 use gt_test_utils::{
-    By, DEMO_BYTES, GOLD_BYTES, HarnessInteraction as _, SyntheticGtdSpec, TestHarness,
-    synthetic_gtd_bytes,
+    By, DEMO_BYTES, GOLD_BYTES, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec,
+    SyntheticLogTimestamps, TestHarness, synthetic_gtd_bytes, synthetic_journald_log,
+    synthetic_log_start,
 };
 use gt_types::{FileIdx, LoadWarning, TrackIdx, TrackRef};
 use strum::IntoEnumIterator as _;
@@ -4656,4 +4658,181 @@ fn snapshot_recording_details_dialog() {
         });
     harness.run();
     harness.snapshot("recording_details_dialog");
+}
+
+/// A journald-shaped log in the ISO form: its lines carry the year, so what the
+/// viewer draws does not depend on the year the test runs in.
+fn synthetic_log(approx_bytes: usize) -> String {
+    synthetic_journald_log(SyntheticLogSpec {
+        approx_bytes,
+        seed: 7,
+        timestamps: SyntheticLogTimestamps::Iso8601Space,
+    })
+}
+
+/// A recording running from the moment the generated log starts, so the log
+/// finds it as an association candidate when it loads after it.
+fn recording_alongside_the_log(name: &str, start_lat_deg: f64) -> TestDroppedFile {
+    TestDroppedFile::bytes(
+        synthetic_gtd_bytes(SyntheticGtdSpec {
+            start: synthetic_log_start(),
+            point_count: 600,
+            step_secs: 1,
+            start_lat_deg,
+            start_lon_deg: 12.0,
+            lat_step_deg: 0.00005,
+            lon_step_deg: 0.00008,
+            heading_deg: 20.0,
+            speed_kmh: 28.0,
+            eph_m: 1.8,
+            sats_seen: 14,
+            sats_in_fix: 11,
+        }),
+        name,
+    )
+}
+
+fn drop_log_and_wait_for_load(harness: &mut Harness<App>, text: &str, name: &str) {
+    drop_file_and_wait_for_load(harness, TestDroppedFile::bytes(text.as_bytes(), name));
+}
+
+fn app_with_a_log_loaded() -> Harness<'static, App> {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    drop_log_and_wait_for_load(&mut harness, &synthetic_log(64 * 1024), "navsyncd.log");
+    harness.run_steps(3);
+    harness
+}
+
+fn parse_summary_of_the_shown_log(harness: &Harness<App>) -> String {
+    harness
+        .state()
+        .logs
+        .get(harness.state().log_viewer.selected_log_index())
+        .map(|log| log.parse_summary_line())
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_log_that_finished_loading_opens_the_viewer_on_its_parse_summary() {
+    let harness = app_with_a_log_loaded();
+
+    assert!(
+        harness.state().log_viewer.open,
+        "the viewer opens by itself"
+    );
+    assert_eq!(harness.state().logs.len(), 1);
+    let summary = parse_summary_of_the_shown_log(&harness);
+    assert!(
+        summary.starts_with("ISO 8601 · "),
+        "the summary names the detected format, got {summary:?}"
+    );
+    harness.get_by_label(summary.as_str());
+}
+
+#[test]
+fn the_menu_bar_icon_closes_and_reopens_the_viewer() {
+    let mut harness = app_with_a_log_loaded();
+
+    harness.get_by_label(ICON_ARTICLE).click();
+    harness.run_steps(2);
+    assert!(!harness.state().log_viewer.open);
+
+    harness.get_by_label(ICON_ARTICLE).click();
+    harness.run_steps(2);
+    assert!(harness.state().log_viewer.open);
+}
+
+#[test]
+fn clicking_the_parse_summary_unfolds_the_boots_and_the_service_table() {
+    let mut harness = app_with_a_log_loaded();
+    assert!(
+        harness.query_by_label("Boots").is_none(),
+        "the summary panel starts folded away"
+    );
+
+    let summary = parse_summary_of_the_shown_log(&harness);
+    harness.get_by_label(summary.as_str()).click();
+    harness.run_steps(3);
+
+    harness.get_by_label("Boots");
+    harness.get_by_label("Service summary");
+    // What the fixture's exporter summary block states about the device.
+    harness.get_by_label("nav-devkit-mk2");
+    harness.get_by_label("hal-powerd");
+}
+
+/// The viewer over a journald-shaped log: the selector row with its parse
+/// summary, the summary panel unfolded onto the boot timeline and the
+/// exporter's service table, the line table, and the footer's association
+/// controls.
+#[test]
+fn snapshot_app_log_viewer() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        recording_alongside_the_log("walk.gtd", 55.0),
+    );
+    drop_log_and_wait_for_load(
+        &mut harness.inner,
+        &synthetic_log(64 * 1024),
+        "navsyncd.log",
+    );
+    harness.inner.run_steps(5);
+
+    let summary = parse_summary_of_the_shown_log(&harness.inner);
+    harness.inner.get_by_label(summary.as_str()).click();
+    harness.inner.run_steps(8);
+
+    harness.snapshot_loose("app_log_viewer");
+}
+
+#[test]
+fn choosing_a_target_in_the_footer_associates_the_log_against_it() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    drop_file_and_wait_for_load(
+        &mut harness,
+        recording_alongside_the_log("walk_a.gtd", 55.0),
+    );
+    drop_file_and_wait_for_load(
+        &mut harness,
+        recording_alongside_the_log("walk_b.gtd", 60.0),
+    );
+    drop_log_and_wait_for_load(&mut harness, &synthetic_log(8 * 1024), "navsyncd.log");
+    harness.run_steps(3);
+    assert_eq!(
+        harness
+            .state()
+            .logs
+            .get(0)
+            .and_then(|log| log.association_target()),
+        None,
+        "two overlapping recordings leave the choice to the user"
+    );
+
+    harness.get_by_label("Associated with");
+    harness.get(By::new().value(gt_ui_theme::EM_DASH)).click();
+    harness.run_steps(2);
+    // The side panel lists the same recording, so take the row the combo
+    // popup opened at the bottom of the viewer.
+    harness
+        .bottommost_matching(By::new().label("walk_b.gtd"))
+        .click();
+    harness.run_steps(3);
+
+    assert!(
+        harness
+            .state()
+            .logs
+            .get(0)
+            .is_some_and(|log| log.associated_entry_count() > 0),
+        "picking a target associates the log against it right away"
+    );
 }

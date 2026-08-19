@@ -13,6 +13,7 @@
 - Settings' "Geomagnetic indices" and "Ionospheric TEC" pages show cached history and allow downloading more.
 - The `--offline` flag runs the app without network access (replaces the `GEOTRACE_OFFLINE` environment variable).
 - A search field in Settings to easily filter pages and rows.
+- A log viewer window: a loaded log opens in it showing its lines, boot sessions and parse summary, and clicking a line centres the map where it was recorded.
 
 ### Changed
 

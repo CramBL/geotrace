@@ -5,16 +5,35 @@ use std::fmt::{self, Write as _};
 
 use chrono::{DateTime, Datelike as _, Duration, Timelike as _, Utc};
 
-/// How much text [`synthetic_journald_log`] writes, and the seed deciding what
-/// it writes.
+/// How much text [`synthetic_journald_log`] writes, the seed deciding what it
+/// writes, and the timestamp form it writes the lines in.
 #[derive(Debug, Clone, Copy)]
 pub struct SyntheticLogSpec {
     pub approx_bytes: usize,
     pub seed: u64,
+    pub timestamps: SyntheticLogTimestamps,
+}
+
+/// The timestamp form the generated lines carry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyntheticLogTimestamps {
+    /// The year-less short form journald's own export writes, whose year the
+    /// parser infers from the clock.
+    SyslogShort,
+
+    /// ISO 8601 with a space separator, carrying the year: the form a test
+    /// whose expectations name absolute times needs.
+    Iso8601Space,
 }
 
 /// 2026-05-29 18:48:25 UTC, the moment the first generated line is logged at.
 const FIRST_LINE_UNIX_SECS: i64 = 1_780_080_505;
+
+/// The moment [`synthetic_journald_log`] logs its first line at, for a test
+/// building a recording that runs alongside the generated log.
+pub fn synthetic_log_start() -> DateTime<Utc> {
+    DateTime::from_timestamp(FIRST_LINE_UNIX_SECS, 0).unwrap_or(DateTime::UNIX_EPOCH)
+}
 
 /// Milliseconds one line can advance the clock, so several lines share the
 /// second that the syslog-short format records them at.
@@ -102,6 +121,9 @@ const SUMMARY_DEVICE_TYPE: &str = "nav-devkit-mk2";
 /// `Fri 29-May-2026 18:48:25 UTC`, how the exporter writes the log's span.
 const SUMMARY_TIME_FORMAT: &str = "%a %d-%b-%Y %H:%M:%S UTC";
 
+/// `2026-05-29 18:48:25`, the ISO form carrying the year.
+const ISO_8601_SPACE_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+
 /// The head of the per-service tables of a real export.
 const SUMMARY_ERROR_ROWS: [(&str, u32); 3] =
     [("hal-powerd", 56429), ("ofonod", 1092), ("hal-gnssd", 1027)];
@@ -114,11 +136,14 @@ const SUMMARY_WARNING_ROWS: [(&str, u32); 2] = [("core-appd", 29562), ("kernel",
 /// timestamp, reboots that send the clock backwards, mid-session clock
 /// corrections that say so, and the exporter's trailing summary block.
 pub fn synthetic_journald_log(spec: SyntheticLogSpec) -> String {
-    let SyntheticLogSpec { approx_bytes, seed } = spec;
+    let SyntheticLogSpec {
+        approx_bytes,
+        seed,
+        timestamps,
+    } = spec;
     let mut rng = DeterministicRng::new(seed);
     let mut text = String::with_capacity(approx_bytes);
-    let mut time =
-        DateTime::from_timestamp(FIRST_LINE_UNIX_SECS, 0).unwrap_or(DateTime::UNIX_EPOCH);
+    let mut time = synthetic_log_start();
     let mut first_entry_time = None;
     let mut last_entry_time = time;
     let mut entry_count: u64 = 0;
@@ -150,10 +175,16 @@ pub fn synthetic_journald_log(spec: SyntheticLogSpec) -> String {
         let unit = rng.pick_one_of(&UNITS);
         let message = rng.pick_one_of(&MESSAGES);
         let tail = rng.pick_one_of(&MESSAGE_TAILS);
-        write_entry(&mut text, time, format_args!("{unit}: {message}{tail}"));
+        write_entry(
+            &mut text,
+            timestamps,
+            time,
+            format_args!("{unit}: {message}{tail}"),
+        );
         if corrected_clock {
             write_entry(
                 &mut text,
+                timestamps,
                 time,
                 format_args!("{CLOCK_ADJUSTMENT_UNIT}: {CLOCK_ADJUSTMENT_MESSAGE}"),
             );
@@ -177,21 +208,33 @@ pub fn synthetic_journald_log(spec: SyntheticLogSpec) -> String {
     text
 }
 
-/// Writes one syslog-short line: the moment `time` names, then `message`.
-fn write_entry(text: &mut String, time: DateTime<Utc>, message: fmt::Arguments<'_>) {
-    let month = MONTH_ABBREVS
-        .get(time.month0() as usize)
-        .copied()
-        .unwrap_or("Jan");
-    writeln!(
-        text,
-        "{month} {day:2} {hour:02}:{minute:02}:{second:02} {message}",
-        day = time.day(),
-        hour = time.hour(),
-        minute = time.minute(),
-        second = time.second(),
-    )
-    .ok();
+/// Writes one line: the moment `time` names in the requested form, then `message`.
+fn write_entry(
+    text: &mut String,
+    timestamps: SyntheticLogTimestamps,
+    time: DateTime<Utc>,
+    message: fmt::Arguments<'_>,
+) {
+    match timestamps {
+        SyntheticLogTimestamps::SyslogShort => {
+            let month = MONTH_ABBREVS
+                .get(time.month0() as usize)
+                .copied()
+                .unwrap_or("Jan");
+            writeln!(
+                text,
+                "{month} {day:2} {hour:02}:{minute:02}:{second:02} {message}",
+                day = time.day(),
+                hour = time.hour(),
+                minute = time.minute(),
+                second = time.second(),
+            )
+            .ok();
+        }
+        SyntheticLogTimestamps::Iso8601Space => {
+            writeln!(text, "{} {message}", time.format(ISO_8601_SPACE_FORMAT)).ok();
+        }
+    }
 }
 
 /// What the exporter states about the log it wrote.
@@ -282,11 +325,30 @@ mod tests {
         let spec = SyntheticLogSpec {
             approx_bytes: 8 * 1024,
             seed: 3,
+            timestamps: SyntheticLogTimestamps::SyslogShort,
         };
         assert_eq!(synthetic_journald_log(spec), synthetic_journald_log(spec));
         assert_ne!(
             synthetic_journald_log(spec),
             synthetic_journald_log(SyntheticLogSpec { seed: 4, ..spec })
+        );
+    }
+
+    /// The ISO form carries the year, so a test naming absolute times reads the
+    /// same log whenever it runs.
+    #[test]
+    fn the_iso_form_dates_every_entry_it_writes() {
+        let text = synthetic_journald_log(SyntheticLogSpec {
+            approx_bytes: 8 * 1024,
+            seed: 1,
+            timestamps: SyntheticLogTimestamps::Iso8601Space,
+        });
+        assert_eq!(
+            text.lines().next(),
+            Some(
+                "2026-05-29 18:48:25 systemd[1]: systemd-journald: file /var/log/journal rotated \
+                 rc=-110 retries=3 backoff=250ms"
+            )
         );
     }
 
@@ -296,6 +358,7 @@ mod tests {
         let text = synthetic_journald_log(SyntheticLogSpec {
             approx_bytes,
             seed: 1,
+            timestamps: SyntheticLogTimestamps::SyslogShort,
         });
         assert!(text.len() >= approx_bytes);
 
@@ -317,6 +380,12 @@ mod tests {
                 .iter()
                 .any(|line| line.ends_with(CLOCK_ADJUSTMENT_MESSAGE)),
             "the clock is corrected mid-session at least once"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("  ") || line.is_empty()),
+            "some lines carry no timestamp at all"
         );
         assert!(
             lines

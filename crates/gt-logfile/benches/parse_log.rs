@@ -19,7 +19,7 @@ use std::{hint, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use gt_test_utils::log_fixtures::{self, SyntheticLogSpec};
+use gt_test_utils::log_fixtures::{self, SyntheticLogSpec, SyntheticLogTimestamps};
 
 const MIB: usize = 1024 * 1024;
 
@@ -35,6 +35,7 @@ fn fixture(approx_bytes: usize) -> Arc<str> {
     Arc::from(log_fixtures::synthetic_journald_log(SyntheticLogSpec {
         approx_bytes,
         seed: 1,
+        timestamps: SyntheticLogTimestamps::SyslogShort,
     }))
 }
 

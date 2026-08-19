@@ -2,6 +2,7 @@ use std::str;
 use std::sync::Arc;
 
 use egui::{Button, CentralPanel, Label, MenuBar, ProgressBar, RichText, Sides, Window};
+use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
 use egui_phosphor::regular::CHART_LINE_UP as ICON_CHART_LINE_UP;
 use egui_phosphor::regular::CHECK as ICON_CHECK;
 use egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE as ICON_CLOCK_COUNTER_CLOCKWISE;
@@ -22,6 +23,7 @@ use super::context_line::ContextSpan;
 use super::loader::{
     CompletedLoad, FINISHED_JOB_EXPIRE_SECS, FINISHED_JOB_FADE_START_SECS, LoadJobs,
 };
+use super::log_viewer::LogViewerContext;
 use super::modals::{
     SnapAutoChoice, SnapConsentChoice, SnapReplaceChoice, SnapScopeChoice, show_about_dialog,
     show_delete_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
@@ -208,6 +210,14 @@ impl App {
                     {
                         self.history_window.open = !self.history_window.open;
                         self.history_window.invalidate();
+                    }
+
+                    if ui
+                        .selectable_label(self.log_viewer.open, ICON_ARTICLE)
+                        .on_hover_text("Read the loaded logs against the recordings")
+                        .clicked()
+                    {
+                        self.log_viewer.open = !self.log_viewer.open;
                     }
 
                     // While a query is filtering the map but its window is
@@ -606,6 +616,7 @@ impl App {
                 popup_pos_request,
                 plot_state,
                 display_mask,
+                recording_name_template,
                 ..
             } = &mut *s;
             // The map and plot consumed last frame's hovered match above.
@@ -638,6 +649,17 @@ impl App {
                 loaded_files.files(),
                 plot_state.analysis.elevation_mask_deg,
                 highlight,
+            );
+            let recording_names =
+                RecordingNames::resolve(loaded_files.view(), recording_name_template);
+            self.log_viewer.show(
+                ui.ctx(),
+                &mut self.logs,
+                LogViewerContext {
+                    recordings: loaded_files.view(),
+                    recording_names: &recording_names,
+                    map_center_request,
+                },
             );
         });
     }

@@ -1,6 +1,9 @@
 //! The loaded logs of a session and each log's association state.
 
+use std::fmt::Write as _;
+
 use chrono::Duration;
+use gt_fmt::MIDDLE_DOT;
 use gt_loaded_files::{LoadedFileId, LoadedFilesView};
 use gt_logfile::ParsedLog;
 use gt_types::{Latitude, Longitude, TimeRange};
@@ -63,6 +66,40 @@ impl LoadedLog {
 
     pub fn parsed(&self) -> &ParsedLog {
         &self.parsed
+    }
+
+    /// The one-line parse summary the viewer shows beside the log's name:
+    /// detected format, entry count with the interpolated portion, boot count,
+    /// and how many entries took no position.
+    pub fn parse_summary_line(&self) -> String {
+        let entries = self.parsed.entries().len();
+        let interpolated = self.parsed.interpolated_entry_count();
+        let boots = self.parsed.boot_sessions().len();
+        let unassociated = self.unassociated_entry_count();
+
+        let mut summary = format!(
+            "{} {MIDDLE_DOT} {} {}",
+            self.parsed.format().display_name(),
+            gt_fmt::format_count(entries),
+            gt_fmt::pluralize(entries, "entry", "entries"),
+        );
+        if interpolated > 0 {
+            write!(
+                summary,
+                " ({} interpolated)",
+                gt_fmt::format_count(interpolated)
+            )
+            .ok();
+        }
+        write!(
+            summary,
+            " {MIDDLE_DOT} {} {} {MIDDLE_DOT} {} unassociated",
+            gt_fmt::format_count(boots),
+            gt_fmt::pluralize(boots, "boot", "boots"),
+            gt_fmt::format_count(unassociated),
+        )
+        .ok();
+        summary
     }
 
     /// First to last entry timestamp, `None` for a log with no entries.
@@ -240,7 +277,7 @@ fn name_from_first_anchored_entry(parsed: &ParsedLog) -> String {
 #[cfg(test)]
 mod tests {
     use crate::test_fixtures::{
-        association_window, id_of, loaded, log_of, parsed_log, recording_at,
+        association_window, id_of, loaded, log_of, parsed_log, recording_at, start,
     };
 
     use super::*;
@@ -297,6 +334,47 @@ mod tests {
         assert_eq!(log.association_target(), None);
         assert_eq!(log.associated_entry_count(), 0);
         assert_eq!(log.entry_position(0), None);
+    }
+
+    #[test]
+    fn the_summary_names_the_format_the_counts_and_what_took_no_position() {
+        let files = loaded(vec![recording_at(55.0, 10)]);
+        let mut log = log_of(10);
+
+        assert_eq!(
+            log.parse_summary_line(),
+            "ISO 8601 · 10 entries · 1 boot · 10 unassociated"
+        );
+
+        log.associate_with(Some(id_of(&files, 0)), &files.view());
+
+        assert_eq!(
+            log.parse_summary_line(),
+            "ISO 8601 · 10 entries · 1 boot · 0 unassociated"
+        );
+    }
+
+    /// A log whose lines do not all carry a timestamp, across two boots.
+    #[test]
+    fn the_summary_states_how_many_entries_were_timestamped_from_their_neighbours() {
+        let text = "\
+2026-01-01 14:02:11 navsyncd: starting
+  at 0x0000c3f4 in gnss_task+0x54
+2026-01-01 14:02:13 navsyncd: fix acquired
+--- Device reboot ---
+2026-01-01 14:02:20 navsyncd: starting
+";
+        let parsed = gt_logfile::parse_log(text.into(), start()).expect("the log parses");
+        let log = LoadedLog::new(
+            Some("navsyncd.log".to_owned()),
+            parsed,
+            association_window(),
+        );
+
+        assert_eq!(
+            log.parse_summary_line(),
+            "ISO 8601 · 4 entries (1 interpolated) · 2 boots · 4 unassociated"
+        );
     }
 
     #[test]
