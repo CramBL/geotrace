@@ -21,6 +21,9 @@ pub const MINUS_SIGN: &str = "−";
 /// Re-exported by `gt-ui-theme` alongside the other UI glyphs.
 pub const ELLIPSIS: &str = "…";
 
+/// U+00B7 MIDDLE DOT, separating the fields of a one-line summary.
+pub const MIDDLE_DOT: &str = "·";
+
 /// Two spaces, U+00B7 MIDDLE DOT, two spaces, joins fields inside tooltip strings.
 const TOOLTIP_JOINER: &str = "  ·  ";
 
@@ -295,7 +298,16 @@ pub fn truncate_with_ellipsis(value: &str, max_chars: NonZeroUsize) -> Cow<'_, s
 
 /// Format a count with comma thousands separators (`8,940`).
 pub fn format_count(n: usize) -> String {
-    let digits = n.to_string();
+    group_thousands(&n.to_string())
+}
+
+/// [`format_count`] for a count that arrives as a [`u64`], such as one a log
+/// exporter stated about the file it wrote.
+pub fn format_count_u64(n: u64) -> String {
+    group_thousands(&n.to_string())
+}
+
+fn group_thousands(digits: &str) -> String {
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (i, c) in digits.chars().enumerate() {
         if i > 0 && (digits.len() - i).is_multiple_of(3) {

@@ -37,6 +37,15 @@ impl BootSession {
     pub fn entry_count(&self) -> usize {
         self.entry_range.len()
     }
+
+    /// How long the device ran, from the session's first anchored entry to its
+    /// last. Unset for a session no line of which anchored, and for one whose
+    /// clock was adjusted back past the moment the session started.
+    pub fn uptime(&self) -> Option<Duration> {
+        self.anchored
+            .map(AnchoredBounds::uptime)
+            .filter(|uptime| *uptime >= Duration::zero())
+    }
 }
 
 /// The first and the last anchored timestamp of a boot session, in file order.
@@ -59,7 +68,7 @@ impl AnchoredBounds {
         })
     }
 
-    pub fn uptime(&self) -> Duration {
+    pub fn uptime(self) -> Duration {
         self.last - self.first
     }
 }

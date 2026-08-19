@@ -10,6 +10,18 @@ pub enum LogFormat {
     Iso8601T,
 }
 
+impl LogFormat {
+    /// How the viewer names the format in a log's parse summary.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::SyslogShort => "syslog",
+            Self::SyslogShortMicro => "syslog µs",
+            Self::Iso8601Space => "ISO 8601",
+            Self::Iso8601T => "ISO 8601 T",
+        }
+    }
+}
+
 pub fn detect_format(line: &str) -> Option<LogFormat> {
     // SyslogShortMicro before SyslogShort so the more-specific pattern wins
     if parse_syslog(line, true).is_some() {

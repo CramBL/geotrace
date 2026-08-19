@@ -573,7 +573,7 @@ fn positioned_lines(
 #[cfg(test)]
 mod tests {
     use chrono::{Duration, TimeZone as _};
-    use gt_test_utils::log_fixtures::{self, SyntheticLogSpec};
+    use gt_test_utils::log_fixtures::{self, SyntheticLogSpec, SyntheticLogTimestamps};
     use proptest::{prelude::*, prop_oneof, proptest};
     use rstest::rstest;
 
@@ -947,20 +947,20 @@ mod tests {
         );
     }
 
+    /// A session's uptime spans its own anchors. A clock adjustment that lands
+    /// the session's last anchor before its first leaves it without one.
     #[test]
     fn a_boot_session_spans_its_own_anchors() {
         let parsed = parse(&format!(
-            "2026-01-01 00:00:00 a\n2026-01-01 02:30:00 b\n{REBOOT}2026-01-01 00:05:00 c\n"
+            "2026-01-01 00:00:00 a\n2026-01-01 02:30:00 b\n{REBOOT}2026-01-01 00:05:00 c\n\
+             2026-01-01 00:04:00 systemd-timedated: Time has been changed\n"
         ));
         let uptimes: Vec<Option<Duration>> = parsed
             .boot_sessions()
             .iter()
-            .map(|session| session.anchored.map(|anchored| anchored.uptime()))
+            .map(BootSession::uptime)
             .collect();
-        assert_eq!(
-            uptimes,
-            [Some(Duration::minutes(150)), Some(Duration::zero())]
-        );
+        assert_eq!(uptimes, [Some(Duration::minutes(150)), None]);
     }
 
     #[rstest]
@@ -1072,6 +1072,7 @@ mod tests {
         let text = log_fixtures::synthetic_journald_log(SyntheticLogSpec {
             approx_bytes: 200 * 1024,
             seed: 7,
+            timestamps: SyntheticLogTimestamps::SyslogShort,
         });
         let chunk_target_bytes = chunk_bytes(4 * 1024);
         assert!(

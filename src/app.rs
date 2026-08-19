@@ -13,6 +13,7 @@ mod history_db;
 mod history_open;
 mod jamming;
 mod loader;
+mod log_viewer;
 mod mapbox_token;
 mod mapbox_token_test;
 mod modals;
@@ -307,6 +308,8 @@ pub struct App {
     /// History window state.
     history_window: history::HistoryWindow,
     query_window: query::QueryWindow,
+    /// The log viewer window, opened whenever a log finishes loading.
+    log_viewer: log_viewer::LogViewerWindow,
     /// The whole-track sky trails window.
     sky_trails_window: gt_map::SkyTrailsWindow,
 
@@ -526,6 +529,7 @@ impl App {
             pending_auto_prune: None,
             history_window: history::HistoryWindow::new(),
             query_window: query::QueryWindow::new(),
+            log_viewer: log_viewer::LogViewerWindow::new(),
             sky_trails_window: gt_map::SkyTrailsWindow::default(),
             toasts: egui_notify::Toasts::default(),
             #[cfg(feature = "self-update")]
@@ -842,6 +846,7 @@ impl App {
                     log.associated_entry_count()
                 );
                 self.logs.push(log);
+                self.log_viewer.open_on_newly_loaded_log(&self.logs);
                 self.load_error = None;
                 self.loader.finishing_jobs.push(FinishedJob {
                     filename: completed.filename,

@@ -2713,6 +2713,7 @@ name = "gt-log-view"
 version = "0.12.0"
 dependencies = [
  "chrono",
+ "gt-fmt",
  "gt-loaded-files",
  "gt-logfile",
  "gt-test-utils",

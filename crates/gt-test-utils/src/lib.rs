@@ -14,7 +14,9 @@ pub use fixtures::{
 };
 #[cfg(feature = "snapshot")]
 pub use interaction::HarnessInteraction;
-pub use log_fixtures::{SyntheticLogSpec, synthetic_journald_log};
+pub use log_fixtures::{
+    SyntheticLogSpec, SyntheticLogTimestamps, synthetic_journald_log, synthetic_log_start,
+};
 #[cfg(feature = "snapshot")]
 pub use snapshot_harness::{By, Queryable, TestHarness, TestHarnessBuilder};
 pub use transport::{ScriptedTransport, TransportAnswer, UrlPrefixAnswers};

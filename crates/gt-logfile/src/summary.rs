@@ -1,5 +1,7 @@
 //! The exporter's trailing summary block, read into the figures it states.
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, NaiveDateTime, Utc};
 
 const DEVICE_TYPE_KEY: &str = "Device type";
@@ -47,6 +49,46 @@ impl ServiceCount {
             service: service.trim().to_owned(),
             count,
         })
+    }
+}
+
+/// One service of the summary block's tables, with both of its counts. The
+/// exporter writes errors and warnings as two tables: a service listed in only
+/// one of them counts zero in the other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceIssueCounts {
+    pub service: String,
+    pub errors: u64,
+    pub warnings: u64,
+}
+
+impl SummaryBlock {
+    /// Every service either table names, most errors first, then most warnings,
+    /// then by name.
+    pub fn service_counts_by_errors_descending(&self) -> Vec<ServiceIssueCounts> {
+        let mut by_service: BTreeMap<&str, (u64, u64)> = BTreeMap::new();
+        for row in &self.service_error_counts {
+            by_service.entry(&row.service).or_default().0 = row.count;
+        }
+        for row in &self.service_warning_counts {
+            by_service.entry(&row.service).or_default().1 = row.count;
+        }
+        let mut counts: Vec<ServiceIssueCounts> = by_service
+            .into_iter()
+            .map(|(service, (errors, warnings))| ServiceIssueCounts {
+                service: service.to_owned(),
+                errors,
+                warnings,
+            })
+            .collect();
+        counts.sort_by(|left, right| {
+            right
+                .errors
+                .cmp(&left.errors)
+                .then(right.warnings.cmp(&left.warnings))
+                .then(left.service.cmp(&right.service))
+        });
+        counts
     }
 }
 
@@ -191,6 +233,38 @@ kernel               -> 315 Warnings";
                 device_type: Some("nav-devkit-mk2".to_owned()),
                 ..SummaryBlock::default()
             }
+        );
+    }
+
+    /// A service the exporter listed as warning-only still gets a row, and the
+    /// order is by errors first.
+    #[test]
+    fn the_two_tables_merge_into_one_row_per_service_worst_first() {
+        let summary = parse(EXPORTED_BLOCK);
+        assert_eq!(
+            summary.service_counts_by_errors_descending(),
+            [
+                ServiceIssueCounts {
+                    service: "hal-powerd".to_owned(),
+                    errors: 56_429,
+                    warnings: 0,
+                },
+                ServiceIssueCounts {
+                    service: "ofonod".to_owned(),
+                    errors: 1_092,
+                    warnings: 0,
+                },
+                ServiceIssueCounts {
+                    service: "core-appd".to_owned(),
+                    errors: 0,
+                    warnings: 29_562,
+                },
+                ServiceIssueCounts {
+                    service: "kernel".to_owned(),
+                    errors: 0,
+                    warnings: 315,
+                },
+            ]
         );
     }
 
