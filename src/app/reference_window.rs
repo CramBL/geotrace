@@ -12,7 +12,8 @@ use std::collections::HashMap;
 use egui::{CursorIcon, Grid, Label, RichText, ScrollArea, Window};
 use gt_ui_types::reference::{
     Abbreviation, Citation, ColumnWidth, IllustrationFrame, ProseSpan, ReferenceBlock,
-    ReferenceDocument, ReferenceIllustration, ReferenceTable, Source, TableCell,
+    ReferenceDocument, ReferenceEquation, ReferenceIllustration, ReferenceImage, ReferenceTable,
+    Source, TableCell,
 };
 
 use crate::app::query;
@@ -27,6 +28,14 @@ const DEFAULT_WINDOW_SIZE: egui::Vec2 = egui::vec2(1080.0, 720.0);
 const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(680.0, 320.0);
 
 const BLOCK_SPACING: f32 = 10.0;
+
+/// Space above and below a display equation, on top of [`BLOCK_SPACING`], so
+/// it stands clear of the prose it sits between.
+const EQUATION_SPACING: f32 = 12.0;
+
+/// Equation assets are rendered at twice the size the window draws them at, so
+/// their glyphs stay sharp on a high-dpi display.
+const EQUATION_ASSET_SCALE: f32 = 2.0;
 
 /// Width a wrapping table column lays its cells out in, wide enough for the
 /// longest quotation to take two lines.
@@ -44,6 +53,16 @@ const QUERY_BLOCK_MARGIN: egui::Margin = egui::Margin::symmetric(6, 3);
 const UNDERLINE_DOT_SPACING: f32 = 3.0;
 const UNDERLINE_DOT_RADIUS: f32 = 0.6;
 const UNDERLINE_RISE_FROM_ROW_BOTTOM: f32 = 3.0;
+
+/// What an image needs doing to it before it is uploaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImagePreparation {
+    /// Uploaded with the pixels the file holds.
+    AsDecoded,
+    /// Uploaded white at the coverage the alpha channel holds. Drawing it
+    /// under a tint then paints it in the tint colour alone.
+    WhitenedForTinting,
+}
 
 /// How a run of prose is styled: body text, a heading over the block under it,
 /// a line labelling the block under it, or the small print beneath an
@@ -70,17 +89,17 @@ impl ProseStyle {
 pub(super) struct ReferenceWindow {
     document: Option<ReferenceDocument>,
 
-    /// One entry per illustration frame the window has shown. [`None`] records
-    /// an image that did not decode, so the window neither retries it every
-    /// frame nor reports it more than once.
-    frame_textures: HashMap<&'static str, Option<egui::TextureHandle>>,
+    /// One entry per image the window has shown. [`None`] records an image
+    /// that did not decode, so the window neither retries it every frame nor
+    /// reports it more than once.
+    image_textures: HashMap<&'static str, Option<egui::TextureHandle>>,
 }
 
 impl ReferenceWindow {
     pub(super) fn new() -> Self {
         Self {
             document: None,
-            frame_textures: HashMap::new(),
+            image_textures: HashMap::new(),
         }
     }
 
@@ -136,10 +155,39 @@ impl ReferenceWindow {
                 query_example_ui(ui, query);
             }
             ReferenceBlock::Table(table) => table_ui(ui, document, table),
+            ReferenceBlock::Equation(equation) => self.equation_ui(ui, equation),
             ReferenceBlock::Illustration(illustration) => {
                 self.illustration_ui(ui, document, illustration);
             }
         }
+    }
+
+    /// One equation centred on the prose column, its glyphs tinted to the
+    /// colour the prose around it is written in.
+    fn equation_ui(&mut self, ui: &mut egui::Ui, equation: &ReferenceEquation) {
+        let text_color = ui.visuals().text_color();
+        let Some(texture) = self.texture(
+            ui.ctx(),
+            equation.image,
+            ImagePreparation::WhitenedForTinting,
+        ) else {
+            return;
+        };
+        let sized = egui::load::SizedTexture::from_handle(texture);
+        let width = (sized.size.x / EQUATION_ASSET_SCALE).min(ui.available_width());
+        ui.add_space(EQUATION_SPACING);
+        ui.scope(|ui| {
+            ui.set_max_width(ui.available_width().min(PROSE_MAX_WIDTH));
+            ui.vertical_centered(|ui| {
+                ui.add(
+                    egui::Image::from_texture(sized)
+                        .max_width(width)
+                        .tint(text_color)
+                        .alt_text(equation.alt_text),
+                );
+            });
+        });
+        ui.add_space(EQUATION_SPACING);
     }
 
     fn illustration_ui(
@@ -153,17 +201,16 @@ impl ReferenceWindow {
             self.frame_image_ui(ui, frame);
         }
         paragraph_ui(ui, document, illustration.caption, ProseStyle::Caption);
-        ui.hyperlink_to(
-            RichText::new(illustration.credit.name).weak().small(),
-            illustration.credit.url,
-        );
+        if let Some(credit) = illustration.credit {
+            ui.hyperlink_to(RichText::new(credit.name).weak().small(), credit.url);
+        }
     }
 
     /// One frame at the width the window has left, never blown up past the
     /// pixel width of the image itself.
     fn frame_image_ui(&mut self, ui: &mut egui::Ui, frame: &IllustrationFrame) {
         let available_width = ui.available_width();
-        let Some(texture) = self.frame_texture(ui.ctx(), frame) else {
+        let Some(texture) = self.texture(ui.ctx(), frame.image, ImagePreparation::AsDecoded) else {
             return;
         };
         let sized = egui::load::SizedTexture::from_handle(texture);
@@ -171,16 +218,20 @@ impl ReferenceWindow {
         ui.add(egui::Image::from_texture(sized).max_width(width));
     }
 
-    fn frame_texture(
+    fn texture(
         &mut self,
         ctx: &egui::Context,
-        frame: &IllustrationFrame,
+        asset: ReferenceImage,
+        preparation: ImagePreparation,
     ) -> Option<&egui::TextureHandle> {
-        self.frame_textures
-            .entry(frame.asset_name)
+        self.image_textures
+            .entry(asset.asset_name)
             .or_insert_with(|| {
-                decode_frame(frame).map(|image| {
-                    ctx.load_texture(frame.asset_name, image, egui::TextureOptions::LINEAR)
+                decode_image(asset).map(|mut decoded| {
+                    if matches!(preparation, ImagePreparation::WhitenedForTinting) {
+                        whiten_keeping_coverage(&mut decoded);
+                    }
+                    ctx.load_texture(asset.asset_name, decoded, egui::TextureOptions::LINEAR)
                 })
             })
             .as_ref()
@@ -322,13 +373,22 @@ fn sources_ui(ui: &mut egui::Ui, sources: &[Source]) {
     }
 }
 
-fn decode_frame(frame: &IllustrationFrame) -> Option<egui::ColorImage> {
-    let decoded = match image::load_from_memory(frame.image_bytes) {
+/// Sets every pixel to white at the coverage it already carries, which the
+/// alpha channel holds. An equation asset is committed as black glyphs, so it
+/// is legible in any image viewer.
+fn whiten_keeping_coverage(image: &mut egui::ColorImage) {
+    for pixel in &mut image.pixels {
+        *pixel = egui::Color32::from_white_alpha(pixel.a());
+    }
+}
+
+fn decode_image(asset: ReferenceImage) -> Option<egui::ColorImage> {
+    let decoded = match image::load_from_memory(asset.image_bytes) {
         Ok(decoded) => decoded.to_rgba8(),
         Err(error) => {
             log::error!(
-                "Reference illustration {:?} did not decode: {error}",
-                frame.asset_name
+                "Reference image {:?} did not decode: {error}",
+                asset.asset_name
             );
             return None;
         }

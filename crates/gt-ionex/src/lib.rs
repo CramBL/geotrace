@@ -30,6 +30,8 @@ use std::path::PathBuf;
 
 use chrono::{Datelike as _, NaiveDate};
 
+use crate::maps::GlobalIonosphereMaps;
+
 pub mod calendar;
 pub mod cddis;
 pub mod grid;
@@ -37,6 +39,7 @@ pub mod instant_selection;
 pub mod maps;
 pub mod mirrors;
 pub mod parse;
+pub mod reference;
 pub mod tec;
 pub mod text;
 pub mod transport;
@@ -183,6 +186,46 @@ pub fn fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("fixtures")
+}
+
+/// Why a captured file did not reach the caller as maps.
+#[derive(Debug, thiserror::Error)]
+pub enum CaptureError {
+    #[error("{name} is not declared in FIXTURE_FILES")]
+    Undeclared { name: String },
+    #[error("reading {}: {source}", path.display())]
+    Read {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("{file_name}: {source}")]
+    Parse {
+        file_name: &'static str,
+        source: parse::ParseError,
+    },
+}
+
+/// The capture [`FIXTURE_FILES`] declares under `name`.
+pub fn declared_fixture(name: &str) -> Option<&'static FixtureFile> {
+    FIXTURE_FILES.iter().find(|fixture| fixture.name == name)
+}
+
+/// The decompressed text of one capture, as the archive published it.
+pub fn captured_text(fixture: &FixtureFile) -> Result<String, CaptureError> {
+    let path = fixtures_dir().join(fixture.file_name);
+    std::fs::read_to_string(&path).map_err(|source| CaptureError::Read { path, source })
+}
+
+/// The maps of the capture declared under `name`, which the tests and the
+/// asset generators of the workspace read their archived day from.
+pub fn captured_maps(name: &str) -> Result<GlobalIonosphereMaps, CaptureError> {
+    let fixture = declared_fixture(name).ok_or_else(|| CaptureError::Undeclared {
+        name: name.to_owned(),
+    })?;
+    parse::global_ionosphere_maps(&captured_text(fixture)?).map_err(|source| CaptureError::Parse {
+        file_name: fixture.file_name,
+        source,
+    })
 }
 
 #[cfg(test)]

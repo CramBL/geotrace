@@ -1,4 +1,5 @@
 use egui_kittest::kittest::{By, Queryable as _};
+use gt_ionex::reference::IONOSPHERIC_TEC;
 use gt_solar::reference::GEOMAGNETIC_ACTIVITY;
 use gt_test_utils::{HarnessInteraction as _, TestHarness};
 use gt_ui_types::reference::{
@@ -7,7 +8,7 @@ use gt_ui_types::reference::{
 };
 use rstest::rstest;
 
-use super::{ReferenceWindow, WRAPPING_COLUMN_WIDTH, decode_frame};
+use super::{ReferenceWindow, WRAPPING_COLUMN_WIDTH, decode_image};
 
 /// Room for the window at its default size.
 const HARNESS_SIZE: egui::Vec2 = egui::vec2(1120.0, 820.0);
@@ -17,6 +18,10 @@ const SCROLL_TO_END_POINTS: f32 = 6000.0;
 
 /// Frames the scroll's smooth animation takes to come to rest.
 const SCROLL_SETTLE_FRAMES: usize = 12;
+
+/// Coverage an equation asset's darkest pixel reaches, below which its glyphs
+/// would tint to a wash of the text colour rather than the text colour itself.
+const MIN_EQUATION_PEAK_COVERAGE: u8 = 200;
 
 fn harness_showing<'a>(
     document: ReferenceDocument,
@@ -94,6 +99,40 @@ fn snapshot_reference_window_geomagnetic(
         scroll_to_end(&mut harness, GEOMAGNETIC_ACTIVITY);
     }
     harness.snapshot(snapshot_name);
+}
+
+/// Both themes at both ends of the TEC document. The top holds the display
+/// equations, tinted to the theme's text colour, the end the storm map and the
+/// query examples.
+#[rstest]
+#[case(true, DocumentPosition::Top, "reference_window_tec")]
+#[case(false, DocumentPosition::Top, "reference_window_tec_light")]
+#[case(true, DocumentPosition::End, "reference_window_tec_end")]
+#[case(false, DocumentPosition::End, "reference_window_tec_end_light")]
+fn snapshot_reference_window_tec(
+    #[case] dark_mode: bool,
+    #[case] position: DocumentPosition,
+    #[case] snapshot_name: &str,
+) {
+    let mut harness = harness_showing(IONOSPHERIC_TEC, dark_mode);
+    if matches!(position, DocumentPosition::End) {
+        scroll_to_end(&mut harness, IONOSPHERIC_TEC);
+    }
+    harness.snapshot(snapshot_name);
+}
+
+/// A reader who cannot see the equation image is offered the equation as one
+/// line of text.
+#[test]
+fn an_equation_carries_its_line_of_text() {
+    let harness = harness_showing(IONOSPHERIC_TEC, true);
+    assert!(
+        harness
+            .inner
+            .query_by_label_contains("STEC = integral of N_e along the signal path")
+            .is_some(),
+        "the equation's alt text reaches the accessibility tree"
+    );
 }
 
 #[test]
@@ -175,27 +214,63 @@ fn closing_the_window_drops_the_document() {
     assert!(!harness.state().is_open());
 }
 
-/// The committed illustrations decode with the codecs the app builds in.
-#[test]
-fn every_illustration_frame_decodes() {
-    for block in GEOMAGNETIC_ACTIVITY.blocks {
-        if let ReferenceBlock::Illustration(illustration) = block {
-            for frame in illustration.frames {
-                assert!(
-                    decode_frame(frame).is_some(),
-                    "{} decodes",
-                    frame.asset_name
-                );
-            }
-        }
+/// The committed illustrations and equations decode with the codecs the app
+/// builds in.
+#[rstest]
+#[case(GEOMAGNETIC_ACTIVITY)]
+#[case(IONOSPHERIC_TEC)]
+fn every_image_decodes(#[case] document: ReferenceDocument) {
+    for asset in document.images() {
+        assert!(
+            decode_image(asset).is_some(),
+            "{} decodes",
+            asset.asset_name
+        );
+    }
+}
+
+/// Every equation asset is committed as black glyphs whose coverage is in the
+/// alpha channel, which is what the window's tint multiplies against. An asset
+/// rendered in any other colour would paint the equation in that colour times
+/// the theme's text colour.
+#[rstest]
+#[case(GEOMAGNETIC_ACTIVITY)]
+#[case(IONOSPHERIC_TEC)]
+fn every_equation_asset_is_black_with_its_coverage_in_alpha(#[case] document: ReferenceDocument) {
+    for block in document.blocks {
+        let ReferenceBlock::Equation(equation) = block else {
+            continue;
+        };
+        let decoded = decode_image(equation.image).expect("the asset decodes");
+        assert!(
+            decoded
+                .pixels
+                .iter()
+                .all(|pixel| pixel.r() == 0 && pixel.g() == 0 && pixel.b() == 0),
+            "{} holds a pixel that is not black",
+            equation.image.asset_name
+        );
+        let peak_coverage = decoded
+            .pixels
+            .iter()
+            .map(egui::Color32::a)
+            .max()
+            .unwrap_or_default();
+        assert!(
+            peak_coverage > MIN_EQUATION_PEAK_COVERAGE,
+            "{} peaks at {peak_coverage} coverage, too faint to tint",
+            equation.image.asset_name
+        );
     }
 }
 
 /// The queries the material offers run as written, so a change to the query
 /// language cannot leave the reference material handing out a broken example.
-#[test]
-fn every_query_example_checks_clean() {
-    for text in GEOMAGNETIC_ACTIVITY.query_examples() {
+#[rstest]
+#[case(GEOMAGNETIC_ACTIVITY)]
+#[case(IONOSPHERIC_TEC)]
+fn every_query_example_checks_clean(#[case] document: ReferenceDocument) {
+    for text in document.query_examples() {
         let query = gt_query::parse(text)
             .unwrap_or_else(|diagnostic| panic!("{text:?} parses: {diagnostic:?}"));
         gt_query::check(&query, &gt_query::ChannelSchema::new())

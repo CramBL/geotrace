@@ -5,11 +5,16 @@ use egui::{RichText, Ui};
 use crate::app::backfill_ui::{self, BackfillAction};
 use crate::app::day_fetch_status::{self, FetchRowHoverText};
 use crate::app::settings_ui::SettingsPage;
-use crate::app::settings_ui::source_page::{self, SourcePageSlots};
+use crate::app::settings_ui::source_page::{self, ReferenceLink, SourcePageSlots};
 use crate::app::tec_mirrors_ui::EarthdataToken;
 use crate::app::{App, tec_mirrors_ui};
 
 const MIRRORS_LABEL: &str = "Mirrors";
+
+const REFERENCE_LINK_LABEL: &str = gt_ionex::reference::IONOSPHERIC_TEC.link_question;
+
+const REFERENCE_LINK_HOVER: &str = "Reference material on the ionosphere, total electron content, \
+                                    and the delay it adds to satellite navigation signals";
 
 pub(super) const EARTHDATA_TOKEN_LABEL: &str = "Earthdata token";
 
@@ -19,6 +24,7 @@ pub(super) const SEARCHABLE_LABELS: &[&str] = &[
     day_fetch_status::FETCH_QUEUE_LABEL,
     day_fetch_status::RECORDING_DAYS_LABEL,
     backfill_ui::DOWNLOAD_HISTORY_LABEL,
+    REFERENCE_LINK_LABEL,
 ];
 
 const MIRRORS_HOVER: &str = "Hosts serving the global ionosphere maps, tried in order until one \
@@ -49,7 +55,7 @@ impl App {
         let readiness = self.backfill_readiness(self.tec_maps.archive_available());
         let mut backfill_action = None;
 
-        source_page::show_source_page(
+        let opened_reference = source_page::show_source_page(
             ui,
             SettingsPage::IonosphericTec,
             SourcePageSlots {
@@ -74,9 +80,16 @@ impl App {
                 backfill: |ui: &mut Ui| {
                     backfill_action = self.tec_map_backfill_ui.ui(ui, progress, readiness);
                 },
+                reference: Some(ReferenceLink {
+                    document: gt_ionex::reference::IONOSPHERIC_TEC,
+                    hover_text: REFERENCE_LINK_HOVER,
+                }),
             },
         );
 
+        if let Some(document) = opened_reference {
+            self.reference_window.open(document);
+        }
         if mirrors_changed {
             self.tec_maps.set_mirrors(&settings.mirrors);
         }

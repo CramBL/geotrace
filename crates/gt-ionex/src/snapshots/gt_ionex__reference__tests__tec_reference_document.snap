@@ -1,0 +1,51 @@
+---
+source: crates/gt-ionex/src/reference.rs
+expression: IONOSPHERIC_TEC.to_string()
+---
+Ionospheric TEC and GNSS
+
+The ionosphere is ionized by solar radiation: during the day, Sun radiation ionizes neutral atoms, producing free electrons and ions, and at night the recombination process prevails.[^navipedia-iono]
+
+[TEC], the total electron content, counts those electrons along the signal path. Along one satellite's ray that count is the slant total electron content, [STEC].[^navipedia-iono]
+
+Equation slant_tec
+STEC = integral of N_e along the signal path
+
+One [TECU] is 10^16 electrons per square metre, and a [GNSS] code measurement is delayed in proportion, about 0.16 m on [L1] per [TECU], at the coefficient below.[^navipedia-iono]
+
+Equation delay_coefficient
+alpha_f = 40.3e16 / f^2 metres per TECU
+
+The [TEC], and thence, the ionospheric refraction, depends on the geographical location of the receiver, the hour of day and the solar activity, and the delay can reach 10 to 20 m.[^navipedia-iono]
+
+Dual-frequency receivers remove almost all of this error by combining the two frequencies. Single-frequency receivers carry whatever their broadcast correction model misses.[^navipedia-iono]
+
+A receiver never measures range alone. Each pseudorange is the geometric range plus the receiver clock offset times c, plus the propagation terms. With four or more satellites, the receiver solves jointly for four unknowns: the coordinates (x, y, z) and the receiver clock offset.[^navipedia-code]
+
+Equation pseudorange
+R = rho + c (dt - dt^s) + T + alpha_f I + TGD + M + epsilon
+
+A delay that is identical on every pseudorange is algebraically indistinguishable from a larger clock offset, and the position does not move at all. Only the part of the ionospheric delay that differs between satellites displaces the position: each ray crosses a different slice of ionosphere, a low satellite through more of it than one overhead. That differential error is scaled by the satellite geometry.[^navipedia-pos]
+
+The delay component common to all satellites is attributed to the receiver clock offset estimate. Positioning accuracy is therefore preserved, while the receiver's time estimate carries the error.
+
+During geomagnetic storms the ionospheric density develops strong horizontal variations that modify the path of radio signals and create errors in the positioning information provided by [GNSS].[^noaa-storms] The reference material on geomagnetic activity covers the storm mechanism.
+
+During the geomagnetic storm of 10 to 12 May 2024 the archived maps peak above 175 [TECU]. At 0.16 m per [TECU] an [L1]-only receiver carried roughly 28 m of uncorrected delay.[^guardian]
+
+Illustration tec_map_2024_05_10_gannon_storm (10 May 2024, 22:00 UTC)
+Global [TEC] during the Gannon storm of May 2024, as archived by GeoTrace.[^jpl]
+
+The fixes recorded under elevated [TEC]:
+points | where tec > 100
+
+The same fixes narrowed to those that also show more than two cycle slips per minute:
+points | with mask 15 deg, snr_drop 10, slip_window 5 min | where tec > 100 and slip_all > 2 per min
+
+Sources
+1. Navipedia: Ionospheric Delay (Sanz Subirana, Juan Zornoza and Hernandez-Pajares, UPC/ESA) (https://gssc.esa.int/navipedia/index.php/Ionospheric_Delay)
+2. Navipedia: Code Based Positioning (SPS) (https://gssc.esa.int/navipedia/index.php/Code_Based_Positioning_(SPS))
+3. Navipedia: Positioning Error (https://gssc.esa.int/navipedia/index.php/Positioning_Error)
+4. NOAA SWPC Geomagnetic Storms (https://www.spaceweather.gov/phenomena/geomagnetic-storms)
+5. JPL GUARDIAN Gannon example (https://guardian.jpl.nasa.gov/examples/20240513_gannon/)
+6. NASA JPL ionosphere products (https://sideshow.jpl.nasa.gov)

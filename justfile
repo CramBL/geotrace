@@ -78,6 +78,16 @@ gen-fixture:
 flare-fixtures *WINDOWS:
     cargo run -p gt-flare --example fetch_flare_fixtures -- {{ WINDOWS }}
 
+# Render the reference material's display equations from their typst sources (needs typst-cli).
+[group("native")]
+generate-reference-equations:
+    bash scripts/generate-reference-equations.sh
+
+# Render the TEC reference material's illustration from the committed storm fixture.
+[group("native")]
+generate-reference-tec-map:
+    cargo nextest run -p gt-map --run-ignored all -E 'test(generate_tec_reference_illustration)'
+
 # Refresh the gt-ionex map fixtures from the JPL archive (network!).
 # Fixtures are frozen once committed - review the resulting diff like code.
 # Name files to capture only those (additive); no args captures all.

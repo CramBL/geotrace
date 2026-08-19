@@ -9,24 +9,23 @@ use std::fs;
 use serde_json::Value;
 
 use gt_ionex::maps::GlobalIonosphereMaps;
-use gt_ionex::{CAPTURE_MANIFEST, FIXTURE_FILES, FixtureFile, fixtures_dir, parse};
+use gt_ionex::{CAPTURE_MANIFEST, CaptureError, FixtureFile, fixtures_dir};
 
 pub fn declared_fixture(name: &str) -> Result<&'static FixtureFile, String> {
-    FIXTURE_FILES
-        .iter()
-        .find(|fixture| fixture.name == name)
-        .ok_or_else(|| format!("{name} is not declared in FIXTURE_FILES"))
+    gt_ionex::declared_fixture(name).ok_or_else(|| {
+        CaptureError::Undeclared {
+            name: name.to_owned(),
+        }
+        .to_string()
+    })
 }
 
 pub fn captured_text(fixture: &FixtureFile) -> Result<String, String> {
-    let path = fixtures_dir().join(fixture.file_name);
-    fs::read_to_string(&path).map_err(|err| format!("reading {}: {err}", path.display()))
+    gt_ionex::captured_text(fixture).map_err(|error| error.to_string())
 }
 
 pub fn captured_maps(name: &str) -> Result<GlobalIonosphereMaps, String> {
-    let fixture = declared_fixture(name)?;
-    parse::global_ionosphere_maps(&captured_text(fixture)?)
-        .map_err(|err| format!("{}: {err}", fixture.name))
+    gt_ionex::captured_maps(name).map_err(|error| error.to_string())
 }
 
 /// Directory of the streams `just qa::generate-unix-compress-fixtures` writes.

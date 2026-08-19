@@ -2549,17 +2549,25 @@ fn every_settings_page_renders_the_labels_it_declares() {
     }
 }
 
-/// The geomagnetic page's reference link opens the reference window on the
-/// geomagnetic material.
-#[test]
-fn the_geomagnetic_page_opens_the_reference_window() {
+/// A source page's reference link opens the reference window on that source's
+/// material.
+#[rstest::rstest]
+#[case(
+    SettingsPage::GeomagneticIndices,
+    gt_solar::reference::GEOMAGNETIC_ACTIVITY
+)]
+#[case(SettingsPage::IonosphericTec, gt_ionex::reference::IONOSPHERIC_TEC)]
+fn a_source_page_opens_its_reference_window(
+    #[case] page: SettingsPage,
+    #[case] document: gt_ui_types::reference::ReferenceDocument,
+) {
     let (mut harness, _config_path) = harness_with_settings_window_open();
-    harness.inner.state_mut().settings_page = SettingsPage::GeomagneticIndices;
+    harness.inner.state_mut().settings_page = page;
     harness.run();
 
     harness
         .inner
-        .get_by_label_contains(gt_solar::reference::GEOMAGNETIC_ACTIVITY.link_question)
+        .get_by_label_contains(document.link_question)
         .click();
     harness.run();
 
@@ -2567,7 +2575,7 @@ fn the_geomagnetic_page_opens_the_reference_window() {
     assert!(
         harness
             .inner
-            .query_all_by_label_contains(gt_solar::reference::GEOMAGNETIC_ACTIVITY.title)
+            .query_all_by_label_contains(document.title)
             .next()
             .is_some(),
         "the reference window shows its title"

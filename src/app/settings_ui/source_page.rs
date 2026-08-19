@@ -2,11 +2,21 @@
 //! endpoint, fetch status, failed days, download history.
 
 use egui::Ui;
+use egui_phosphor::regular::BOOK_OPEN_TEXT as ICON_BOOK_OPEN_TEXT;
+use gt_ui_types::reference::ReferenceDocument;
 
 use crate::app::day_failures::{self, DayFailure};
 use crate::app::settings_ui::SettingsPage;
 
 pub(super) const BASE_URL_LABEL: &str = "Base URL";
+
+/// The reference material a source page links under its layout, and what the
+/// link says on hover.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ReferenceLink {
+    pub(super) document: ReferenceDocument,
+    pub(super) hover_text: &'static str,
+}
 
 /// What one data source page puts in each part of the shared layout. The slots
 /// are closures because each one reaches a differently typed scheduler field on
@@ -16,13 +26,18 @@ pub(super) struct SourcePageSlots<'a, Endpoint, Status, Backfill> {
     pub(super) status: Status,
     pub(super) failures: &'a [DayFailure],
     pub(super) backfill: Backfill,
+    /// The reference material this source has, for the sources that have it.
+    pub(super) reference: Option<ReferenceLink>,
 }
 
+/// Returns the document whose link was clicked this frame, for the caller to
+/// open its reference window on.
 pub(super) fn show_source_page<Endpoint, Status, Backfill>(
     ui: &mut Ui,
     page: SettingsPage,
     slots: SourcePageSlots<'_, Endpoint, Status, Backfill>,
-) where
+) -> Option<ReferenceDocument>
+where
     Endpoint: FnOnce(&mut Ui),
     Status: FnOnce(&mut Ui),
     Backfill: FnOnce(&mut Ui),
@@ -39,7 +54,24 @@ pub(super) fn show_source_page<Endpoint, Status, Backfill>(
         day_failures::show_failures(ui, "failures", slots.failures);
         ui.add_space(8.0);
         (slots.backfill)(ui);
-    });
+        slots
+            .reference
+            .filter(|link| show_reference_link(ui, *link))
+            .map(|link| link.document)
+    })
+    .inner
+}
+
+/// The link to a source's reference material, under the rest of its page.
+/// Returns `true` in the frame it is clicked.
+fn show_reference_link(ui: &mut Ui, link: ReferenceLink) -> bool {
+    ui.add_space(12.0);
+    ui.link(format!(
+        "{ICON_BOOK_OPEN_TEXT} {}",
+        link.document.link_question
+    ))
+    .on_hover_text(link.hover_text)
+    .clicked()
 }
 
 /// The endpoint row of a source that fetches from a single host. Returns `true`
@@ -89,6 +121,7 @@ mod tests {
                     backfill: |ui: &mut Ui| {
                         ui.label("backfill slot");
                     },
+                    reference: None,
                 },
             );
         });

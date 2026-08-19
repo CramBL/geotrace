@@ -60,6 +60,7 @@ impl App {
                 backfill: |ui: &mut Ui| {
                     backfill_action = self.solar_flare_backfill_ui.ui(ui, progress, readiness);
                 },
+                reference: None,
             },
         );
 
