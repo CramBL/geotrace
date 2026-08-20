@@ -2623,6 +2623,7 @@ dependencies = [
  "flate2",
  "gt-fetch",
  "gt-types",
+ "gt-ui-types",
  "insta",
  "proptest",
  "reqwest 0.13.4",

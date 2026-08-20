@@ -1505,4 +1505,7 @@ impl DrawState {
 mod tests;
 
 #[cfg(test)]
+mod reference_illustration;
+
+#[cfg(test)]
 mod snapshot_tests;

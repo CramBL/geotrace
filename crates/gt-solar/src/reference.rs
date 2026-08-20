@@ -8,7 +8,8 @@
 
 use gt_ui_types::reference::{
     Abbreviation, ColumnWidth, IllustrationFrame, ReferenceBlock, ReferenceDocument,
-    ReferenceIllustration, ReferenceTable, Source, SourceLink, TableCell, TableColumn,
+    ReferenceIllustration, ReferenceImage, ReferenceTable, Source, SourceLink, TableCell,
+    TableColumn,
 };
 
 pub const GEOMAGNETIC_ACTIVITY: ReferenceDocument = ReferenceDocument {
@@ -137,29 +138,33 @@ const G_SCALE_TABLE: ReferenceTable = ReferenceTable {
 const THERMOSPHERE_ILLUSTRATION: ReferenceIllustration = ReferenceIllustration {
     frames: &[
         IllustrationFrame {
-            image_bytes: include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/assets/nasa_svs_thermosphere_2024_05_10_quiet.jpg"
-            )),
-            asset_name: "nasa_svs_thermosphere_2024_05_10_quiet",
+            image: ReferenceImage {
+                image_bytes: include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/assets/nasa_svs_thermosphere_2024_05_10_quiet.jpg"
+                )),
+                asset_name: "nasa_svs_thermosphere_2024_05_10_quiet",
+            },
             label: "Quiet",
         },
         IllustrationFrame {
-            image_bytes: include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/assets/nasa_svs_thermosphere_2024_05_11_storm_peak.jpg"
-            )),
-            asset_name: "nasa_svs_thermosphere_2024_05_11_storm_peak",
+            image: ReferenceImage {
+                image_bytes: include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/assets/nasa_svs_thermosphere_2024_05_11_storm_peak.jpg"
+                )),
+                asset_name: "nasa_svs_thermosphere_2024_05_11_storm_peak",
+            },
             label: "Storm peak",
         },
     ],
     caption: "Simulated thermosphere temperature from a TIEGCM run of the storm by the NASA DRIVE \
               Science Center for Geospace Storms. [Kp] was 2.667 for the quiet frame's 3-hour \
               interval and 9.0 for the storm frame's.[^gfz-kp]",
-    credit: SourceLink {
+    credit: Some(SourceLink {
         name: "NASA Scientific Visualization Studio (NASA/AJ Christensen)",
         url: "https://svs.gsfc.nasa.gov/14835/",
-    },
+    }),
 };
 
 const SOURCES: &[Source] = &[
@@ -208,8 +213,6 @@ const SOURCES: &[Source] = &[
 
 #[cfg(test)]
 mod tests {
-    use gt_ui_types::reference::ProseSpan;
-
     use super::*;
 
     /// The window's wording, in one place.
@@ -221,89 +224,9 @@ mod tests {
         );
     }
 
-    /// Prose is written without em-dashes and semicolons. A quotation keeps
-    /// its source's punctuation and is exempt, which is why quotations are
-    /// data of their own.
     #[test]
-    fn prose_avoids_em_dashes_and_semicolons() {
-        for text in GEOMAGNETIC_ACTIVITY.prose_texts() {
-            assert!(!text.contains('—'), "em-dash in {text:?}");
-            assert!(!text.contains(';'), "semicolon in {text:?}");
-        }
-    }
-
-    /// A marker naming an abbreviation or a citation key the document does not
-    /// declare would reach the window with its brackets showing.
-    #[test]
-    fn every_prose_marker_resolves() {
-        for text in GEOMAGNETIC_ACTIVITY.prose_texts() {
-            for span in GEOMAGNETIC_ACTIVITY.prose_spans(text) {
-                if let ProseSpan::Text(plain) = span {
-                    assert!(!plain.contains('['), "unresolved marker in {text:?}");
-                }
-            }
-        }
-    }
-
-    /// Two sources sharing a citation key would make the marker resolve to
-    /// whichever is listed first.
-    #[test]
-    fn every_citation_key_is_unique() {
-        let mut keys: Vec<&str> = SOURCES.iter().map(|source| source.citation_key).collect();
-        keys.sort_unstable();
-        let count = keys.len();
-        keys.dedup();
-        assert_eq!(keys.len(), count, "duplicate citation key in {keys:?}");
-    }
-
-    /// A source no prose cites would stand in the footer under a number
-    /// nothing points at.
-    #[test]
-    fn every_source_is_cited() {
-        let cited: Vec<&str> = GEOMAGNETIC_ACTIVITY
-            .prose_texts()
-            .into_iter()
-            .flat_map(|text| GEOMAGNETIC_ACTIVITY.prose_spans(text))
-            .filter_map(|span| match span {
-                ProseSpan::Citation(citation) => Some(citation.source.citation_key),
-                ProseSpan::Text(_) | ProseSpan::Abbreviation(_) => None,
-            })
-            .collect();
-        for source in SOURCES {
-            assert!(
-                cited.contains(&source.citation_key),
-                "{} is never cited",
-                source.citation_key
-            );
-        }
-    }
-
-    /// An abbreviation no prose marks up defines a term the window never
-    /// shows.
-    #[test]
-    fn every_abbreviation_is_used() {
-        let marked_up: Vec<&str> = GEOMAGNETIC_ACTIVITY
-            .prose_texts()
-            .into_iter()
-            .flat_map(|text| GEOMAGNETIC_ACTIVITY.prose_spans(text))
-            .filter_map(|span| match span {
-                ProseSpan::Abbreviation(abbreviation) => Some(abbreviation.short_form),
-                ProseSpan::Text(_) | ProseSpan::Citation(_) => None,
-            })
-            .collect();
-        for abbreviation in ABBREVIATIONS {
-            assert!(
-                marked_up.contains(&abbreviation.short_form),
-                "{} is never marked up",
-                abbreviation.short_form
-            );
-        }
-    }
-
-    #[test]
-    fn every_table_row_has_one_cell_per_column() {
-        for row in G_SCALE_TABLE.rows {
-            assert_eq!(row.len(), G_SCALE_TABLE.columns.len());
-        }
+    fn the_document_is_well_formed() {
+        let defects = GEOMAGNETIC_ACTIVITY.defects();
+        assert!(defects.is_empty(), "{defects:?}");
     }
 }

@@ -1,12 +1,14 @@
 //! The document model behind the reference windows: prose carrying inline
-//! abbreviations and citations, tables, query examples, illustrations, and the
-//! numbered sources the text is written from.
+//! abbreviations and citations, tables, query examples, display equations,
+//! illustrations, and the numbered sources the text is written from.
 //!
 //! Prose marks an abbreviation up as `[GNSS]` and a citation as `[^gfz-kp]`,
 //! resolved against the document's own [`ReferenceDocument::abbreviations`]
 //! and [`ReferenceDocument::sources`] when the window walks the text with
 //! [`ReferenceDocument::prose_spans`]. A marker no entry matches stays in the
 //! text brackets and all, so the window shows what the author wrote.
+//! [`ReferenceDocument::defects`] finds those, and the rest of what makes a
+//! document ill formed, for each document's own test to assert on.
 //!
 //! [`std::fmt::Display`] writes the whole document as text, for the snapshot
 //! that pins the wording.
@@ -67,6 +69,7 @@ pub enum ReferenceBlock {
         query: &'static str,
     },
     Table(ReferenceTable),
+    Equation(ReferenceEquation),
     Illustration(ReferenceIllustration),
 }
 
@@ -100,21 +103,43 @@ pub enum TableCell {
     Empty,
 }
 
+/// An image committed alongside the text it belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReferenceImage {
+    pub image_bytes: &'static [u8],
+    /// Names the image wherever it is addressed by name, such as the texture
+    /// the window uploads it to.
+    pub asset_name: &'static str,
+}
+
+/// An equation set on a line of its own, pre-rendered from its typst source.
+///
+/// The asset holds black glyphs whose anti-aliased coverage lives in the alpha
+/// channel, which is what lets the window tint them to the theme's text
+/// colour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReferenceEquation {
+    pub image: ReferenceImage,
+    /// The equation written as one line of text, which the window offers to a
+    /// reader who cannot see the image.
+    pub alt_text: &'static str,
+}
+
 /// The images committed alongside the text they illustrate, shown in the order
 /// they are declared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReferenceIllustration {
     pub frames: &'static [IllustrationFrame],
     pub caption: &'static str,
-    pub credit: SourceLink,
+    /// Who made the image, for an illustration taken from elsewhere. An
+    /// illustration GeoTrace rendered itself has none, and its caption cites
+    /// the source of the data instead.
+    pub credit: Option<SourceLink>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IllustrationFrame {
-    pub image_bytes: &'static [u8],
-    /// Names the image wherever it is addressed by name, such as the texture
-    /// the window uploads it to.
-    pub asset_name: &'static str,
+    pub image: ReferenceImage,
     pub label: &'static str,
 }
 
@@ -136,6 +161,30 @@ pub struct Citation {
     pub source: Source,
 }
 
+/// One way a document is not well formed. Each document's own test asserts
+/// [`ReferenceDocument::defects`] finds none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocumentDefect {
+    /// A marker naming an abbreviation or a citation key the document does not
+    /// declare, which the window shows with its brackets.
+    UnresolvedMarker { prose: &'static str },
+    /// Prose is written without em-dashes. A quotation keeps its source's
+    /// punctuation and is exempt, which is why quotations are data of their
+    /// own.
+    EmDashInProse { prose: &'static str },
+    /// Prose is written without semicolons, quotations again exempt.
+    SemicolonInProse { prose: &'static str },
+    /// Two sources under one key, which makes the marker resolve to whichever
+    /// is listed first.
+    DuplicateCitationKey { citation_key: &'static str },
+    /// A source standing in the footer under a number no prose points at.
+    UncitedSource { citation_key: &'static str },
+    /// An abbreviation defining a term the window never shows.
+    UnmarkedAbbreviation { short_form: &'static str },
+    /// A table row with a cell count other than the column count.
+    TableRowLength { table_title: &'static str },
+}
+
 impl ReferenceDocument {
     /// Walks one prose string, resolving its abbreviation and citation
     /// markers.
@@ -148,8 +197,8 @@ impl ReferenceDocument {
     }
 
     /// Every string the document renders as prose, in document order.
-    /// Quotations, query text, and URLs are not prose: they are reproduced as
-    /// their source wrote them.
+    /// Quotations, query text, equations, and URLs are not prose: they are
+    /// reproduced as their source wrote them.
     pub fn prose_texts(&self) -> Vec<&'static str> {
         let mut texts = vec![self.title];
         for block in self.blocks {
@@ -166,10 +215,11 @@ impl ReferenceDocument {
                         })
                     }));
                 }
+                ReferenceBlock::Equation(_) => {}
                 ReferenceBlock::Illustration(illustration) => {
                     texts.extend(illustration.frames.iter().map(|frame| frame.label));
                     texts.push(illustration.caption);
-                    texts.push(illustration.credit.name);
+                    texts.extend(illustration.credit.map(|credit| credit.name));
                 }
             }
         }
@@ -185,9 +235,93 @@ impl ReferenceDocument {
                 ReferenceBlock::QueryExample { intro: _, query } => Some(*query),
                 ReferenceBlock::Paragraph(_)
                 | ReferenceBlock::Table(_)
+                | ReferenceBlock::Equation(_)
                 | ReferenceBlock::Illustration(_) => None,
             })
             .collect()
+    }
+
+    /// Every image the document shows, in document order.
+    pub fn images(&self) -> Vec<ReferenceImage> {
+        self.blocks
+            .iter()
+            .flat_map(|block| match block {
+                ReferenceBlock::Equation(equation) => vec![equation.image],
+                ReferenceBlock::Illustration(illustration) => illustration
+                    .frames
+                    .iter()
+                    .map(|frame| frame.image)
+                    .collect(),
+                ReferenceBlock::Paragraph(_)
+                | ReferenceBlock::QueryExample { .. }
+                | ReferenceBlock::Table(_) => Vec::new(),
+            })
+            .collect()
+    }
+
+    /// Every way this document is not well formed.
+    pub fn defects(&self) -> Vec<DocumentDefect> {
+        let mut defects = Vec::new();
+        let mut cited: Vec<&str> = Vec::new();
+        let mut marked_up: Vec<&str> = Vec::new();
+        for prose in self.prose_texts() {
+            if prose.contains('—') {
+                defects.push(DocumentDefect::EmDashInProse { prose });
+            }
+            if prose.contains(';') {
+                defects.push(DocumentDefect::SemicolonInProse { prose });
+            }
+            let mut unresolved = false;
+            for span in self.prose_spans(prose) {
+                match span {
+                    ProseSpan::Text(text) => unresolved |= text.contains(MARKER_OPEN),
+                    ProseSpan::Abbreviation(abbreviation) => {
+                        marked_up.push(abbreviation.short_form)
+                    }
+                    ProseSpan::Citation(citation) => cited.push(citation.source.citation_key),
+                }
+            }
+            if unresolved {
+                defects.push(DocumentDefect::UnresolvedMarker { prose });
+            }
+        }
+        for (index, source) in self.sources.iter().enumerate() {
+            if self
+                .sources
+                .iter()
+                .take(index)
+                .any(|earlier| earlier.citation_key == source.citation_key)
+            {
+                defects.push(DocumentDefect::DuplicateCitationKey {
+                    citation_key: source.citation_key,
+                });
+            }
+            if !cited.contains(&source.citation_key) {
+                defects.push(DocumentDefect::UncitedSource {
+                    citation_key: source.citation_key,
+                });
+            }
+        }
+        for abbreviation in self.abbreviations {
+            if !marked_up.contains(&abbreviation.short_form) {
+                defects.push(DocumentDefect::UnmarkedAbbreviation {
+                    short_form: abbreviation.short_form,
+                });
+            }
+        }
+        for block in self.blocks {
+            if let ReferenceBlock::Table(table) = block
+                && table
+                    .rows
+                    .iter()
+                    .any(|row| row.len() != table.columns.len())
+            {
+                defects.push(DocumentDefect::TableRowLength {
+                    table_title: table.title,
+                });
+            }
+        }
+        defects
     }
 }
 
@@ -212,6 +346,7 @@ impl fmt::Display for ReferenceBlock {
             Self::Paragraph(prose) => writeln!(f, "{prose}"),
             Self::QueryExample { intro, query } => writeln!(f, "{intro}\n{query}"),
             Self::Table(table) => write!(f, "{table}"),
+            Self::Equation(equation) => write!(f, "{equation}"),
             Self::Illustration(illustration) => write!(f, "{illustration}"),
         }
     }
@@ -240,13 +375,50 @@ impl fmt::Display for TableCell {
     }
 }
 
+impl fmt::Display for ReferenceEquation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Equation {}", self.image.asset_name)?;
+        writeln!(f, "{}", self.alt_text)
+    }
+}
+
 impl fmt::Display for ReferenceIllustration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for frame in self.frames {
-            writeln!(f, "Illustration {} ({})", frame.asset_name, frame.label)?;
+            writeln!(
+                f,
+                "Illustration {} ({})",
+                frame.image.asset_name, frame.label
+            )?;
         }
         writeln!(f, "{}", self.caption)?;
-        writeln!(f, "{} ({})", self.credit.name, self.credit.url)
+        match self.credit {
+            Some(credit) => writeln!(f, "{} ({})", credit.name, credit.url),
+            None => Ok(()),
+        }
+    }
+}
+
+impl fmt::Display for DocumentDefect {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnresolvedMarker { prose } => write!(f, "unresolved marker in {prose:?}"),
+            Self::EmDashInProse { prose } => write!(f, "em-dash in {prose:?}"),
+            Self::SemicolonInProse { prose } => write!(f, "semicolon in {prose:?}"),
+            Self::DuplicateCitationKey { citation_key } => {
+                write!(f, "two sources under the key {citation_key:?}")
+            }
+            Self::UncitedSource { citation_key } => write!(f, "{citation_key:?} is never cited"),
+            Self::UnmarkedAbbreviation { short_form } => {
+                write!(f, "{short_form:?} is never marked up")
+            }
+            Self::TableRowLength { table_title } => {
+                write!(
+                    f,
+                    "a row of {table_title:?} has one cell too few or too many"
+                )
+            }
+        }
     }
 }
 
@@ -447,6 +619,147 @@ mod tests {
         assert_eq!(
             DOCUMENT.prose_texts(),
             vec!["Test document", "GFZ Kp", "Matzka et al. 2021"]
+        );
+    }
+
+    const EQUATION_IMAGE: ReferenceImage = ReferenceImage {
+        image_bytes: &[],
+        asset_name: "test_equation",
+    };
+
+    const ILLUSTRATION_IMAGE: ReferenceImage = ReferenceImage {
+        image_bytes: &[],
+        asset_name: "test_illustration",
+    };
+
+    const IMAGE_BLOCKS: &[ReferenceBlock] = &[
+        ReferenceBlock::Equation(ReferenceEquation {
+            image: EQUATION_IMAGE,
+            alt_text: "STEC = integral of N_e along the signal path",
+        }),
+        ReferenceBlock::Illustration(ReferenceIllustration {
+            frames: &[IllustrationFrame {
+                image: ILLUSTRATION_IMAGE,
+                label: "Storm peak",
+            }],
+            caption: "A caption citing[^gfz-kp]",
+            credit: None,
+        }),
+    ];
+
+    /// This list holds an equation's asset as well as every illustration
+    /// frame's, which the test that decodes what the window uploads walks.
+    #[test]
+    fn images_lists_every_equation_and_frame() {
+        let document = ReferenceDocument {
+            blocks: IMAGE_BLOCKS,
+            ..DOCUMENT
+        };
+        assert_eq!(document.images(), vec![EQUATION_IMAGE, ILLUSTRATION_IMAGE]);
+    }
+
+    #[test]
+    fn a_document_meeting_every_rule_has_no_defects() {
+        const BLOCKS: &[ReferenceBlock] = &[ReferenceBlock::Paragraph(
+            "Storms disturb [GNSS][^gfz-kp] and are indexed in thirds.[^matzka-2021]",
+        )];
+        let document = ReferenceDocument {
+            blocks: BLOCKS,
+            ..DOCUMENT
+        };
+        assert_eq!(document.defects(), vec![]);
+    }
+
+    const UNRESOLVED_MARKER_PROSE: &str = "Storms disturb [TEC] and [GNSS].[^gfz-kp][^matzka-2021]";
+
+    const EM_DASH_PROSE: &str = "Storms — the largest ones — disturb [GNSS].[^gfz-kp]\
+                                 [^matzka-2021]";
+
+    const SEMICOLON_PROSE: &str = "Storms disturb [GNSS]; badly.[^gfz-kp][^matzka-2021]";
+
+    const UNCITED_SOURCE_PROSE: &str = "Storms disturb [GNSS].[^gfz-kp]";
+
+    const UNMARKED_ABBREVIATION_PROSE: &str = "Storms disturb GNSS.[^gfz-kp][^matzka-2021]";
+
+    #[rstest]
+    #[case(
+        &[ReferenceBlock::Paragraph(UNRESOLVED_MARKER_PROSE)],
+        DocumentDefect::UnresolvedMarker { prose: UNRESOLVED_MARKER_PROSE }
+    )]
+    #[case(
+        &[ReferenceBlock::Paragraph(EM_DASH_PROSE)],
+        DocumentDefect::EmDashInProse { prose: EM_DASH_PROSE }
+    )]
+    #[case(
+        &[ReferenceBlock::Paragraph(SEMICOLON_PROSE)],
+        DocumentDefect::SemicolonInProse { prose: SEMICOLON_PROSE }
+    )]
+    #[case(
+        &[ReferenceBlock::Paragraph(UNCITED_SOURCE_PROSE)],
+        DocumentDefect::UncitedSource { citation_key: "matzka-2021" }
+    )]
+    #[case(
+        &[ReferenceBlock::Paragraph(UNMARKED_ABBREVIATION_PROSE)],
+        DocumentDefect::UnmarkedAbbreviation { short_form: "GNSS" }
+    )]
+    fn a_paragraph_breaking_one_rule_yields_its_defect(
+        #[case] blocks: &'static [ReferenceBlock],
+        #[case] expected: DocumentDefect,
+    ) {
+        let document = ReferenceDocument { blocks, ..DOCUMENT };
+        let defects = document.defects();
+        assert!(
+            defects.contains(&expected),
+            "expected {expected} among {defects:?}"
+        );
+    }
+
+    #[test]
+    fn two_sources_under_one_key_are_a_defect() {
+        const DUPLICATE_SOURCES: &[Source] = &[GFZ_KP, GFZ_KP];
+        const BLOCKS: &[ReferenceBlock] =
+            &[ReferenceBlock::Paragraph("Storms disturb [GNSS].[^gfz-kp]")];
+        let document = ReferenceDocument {
+            blocks: BLOCKS,
+            sources: DUPLICATE_SOURCES,
+            ..DOCUMENT
+        };
+        assert_eq!(
+            document.defects(),
+            vec![DocumentDefect::DuplicateCitationKey {
+                citation_key: "gfz-kp"
+            }]
+        );
+    }
+
+    #[test]
+    fn a_row_shorter_than_the_columns_is_a_defect() {
+        const BLOCKS: &[ReferenceBlock] = &[
+            ReferenceBlock::Paragraph("Storms disturb [GNSS].[^gfz-kp][^matzka-2021]"),
+            ReferenceBlock::Table(ReferenceTable {
+                title: "Scales",
+                columns: &[
+                    TableColumn {
+                        header: "Scale",
+                        width: ColumnWidth::Fits,
+                    },
+                    TableColumn {
+                        header: "Effects",
+                        width: ColumnWidth::Wraps,
+                    },
+                ],
+                rows: &[&[TableCell::Prose("G1 minor")]],
+            }),
+        ];
+        let document = ReferenceDocument {
+            blocks: BLOCKS,
+            ..DOCUMENT
+        };
+        assert_eq!(
+            document.defects(),
+            vec![DocumentDefect::TableRowLength {
+                table_title: "Scales"
+            }]
         );
     }
 }

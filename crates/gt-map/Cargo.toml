@@ -47,10 +47,10 @@ postcard.workspace = true
 criterion.workspace = true
 egui_kittest.workspace = true
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
-# Only for reading back rendered frames in projection tests; this is the same
-# `image` version egui_kittest's `Harness::render` returns. No codec features:
-# the frames come from `Harness::render` in memory, never decoded from a file.
-image = { version = "0.25", default-features = false }
+# For reading back rendered frames in projection tests and for encoding the
+# reference illustration asset; this is the same `image` version
+# egui_kittest's `Harness::render` returns.
+image = { version = "0.25", default-features = false, features = ["png"] }
 proptest.workspace = true
 rstest.workspace = true
 vec1.workspace = true

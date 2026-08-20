@@ -46,6 +46,7 @@ impl App {
                 backfill: |ui: &mut egui::Ui| {
                     backfill_action = self.interference_backfill_ui.ui(ui, progress, readiness);
                 },
+                reference: None,
             },
         );
 

@@ -440,17 +440,6 @@ fn snapshot_jamming_overlay(
 /// `256 * 2^zoom` pixels.
 const WORLD_ZOOM: f64 = 1.5;
 
-/// The captured storm day, whose TEC peaks far above a quiet day's.
-fn storm_day_maps() -> gt_ionex::maps::GlobalIonosphereMaps {
-    let fixture = gt_ionex::FIXTURE_FILES
-        .iter()
-        .find(|fixture| fixture.name == gt_ionex::STORM_CAPTURE)
-        .expect("the storm capture is declared");
-    let text = std::fs::read_to_string(gt_ionex::fixtures_dir().join(fixture.file_name))
-        .expect("the captured file");
-    gt_ionex::parse::global_ionosphere_maps(&text).expect("a parsable capture")
-}
-
 /// The TEC heatmap under the fixture track, at the 10 May 2024 storm's peak
 /// hours. The whole world is in view, so one snapshot covers the ramp from the
 /// quiet night side to the equatorial crests past 150 TECU. No map tiles
@@ -466,7 +455,7 @@ fn snapshot_tec_heatmap(
 ) {
     let files = vec![make_snapshot_file()];
     let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
-    let maps = storm_day_maps();
+    let maps = gt_ionex::captured_maps(gt_ionex::STORM_CAPTURE).expect("the storm capture");
     let instant = chrono::NaiveDate::from_ymd_opt(2024, 5, 10)
         .and_then(|day| day.and_hms_opt(20, 0, 0))
         .map(|naive| naive.and_utc())

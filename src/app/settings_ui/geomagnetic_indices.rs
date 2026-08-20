@@ -1,12 +1,10 @@
 //! Settings for the Kp and Hp30 geomagnetic index downloads.
 
-use egui_phosphor::regular::BOOK_OPEN_TEXT as ICON_BOOK_OPEN_TEXT;
-
 use crate::app::App;
 use crate::app::backfill_ui::{self, BackfillAction};
 use crate::app::day_fetch_status::{self, FetchRowHoverText};
 use crate::app::settings_ui::SettingsPage;
-use crate::app::settings_ui::source_page::{self, SourcePageSlots};
+use crate::app::settings_ui::source_page::{self, ReferenceLink, SourcePageSlots};
 
 const REFERENCE_LINK_LABEL: &str = gt_solar::reference::GEOMAGNETIC_ACTIVITY.link_question;
 
@@ -43,7 +41,7 @@ impl App {
         let readiness = self.backfill_readiness(self.geomagnetic_indices.archive_available());
         let mut backfill_action = None;
 
-        source_page::show_source_page(
+        let opened_reference = source_page::show_source_page(
             ui,
             SettingsPage::GeomagneticIndices,
             SourcePageSlots {
@@ -59,19 +57,16 @@ impl App {
                         .geomagnetic_index_backfill_ui
                         .ui(ui, progress, readiness);
                 },
+                reference: Some(ReferenceLink {
+                    document: gt_solar::reference::GEOMAGNETIC_ACTIVITY,
+                    hover_text: REFERENCE_LINK_HOVER,
+                }),
             },
         );
 
-        ui.add_space(12.0);
-        if ui
-            .link(format!("{ICON_BOOK_OPEN_TEXT} {REFERENCE_LINK_LABEL}"))
-            .on_hover_text(REFERENCE_LINK_HOVER)
-            .clicked()
-        {
-            self.reference_window
-                .open(gt_solar::reference::GEOMAGNETIC_ACTIVITY);
+        if let Some(document) = opened_reference {
+            self.reference_window.open(document);
         }
-
         if base_url_changed {
             self.geomagnetic_indices.set_base_url(&base_url);
             self.geomagnetic_index_settings.base_url = base_url;
