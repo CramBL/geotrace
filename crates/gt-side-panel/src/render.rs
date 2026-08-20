@@ -444,13 +444,18 @@ fn render_file_row(
     let check = file_node.check;
     let file_key = NodeKey::File(fi);
 
+    // The plot writes its hover after this panel renders: a plot hover marks the
+    // row one frame later.
     let file_map_hovered = ctx.highlight.hover.is_some_and(|s| match s {
         HighlightScope::Point(r) => r.track.fi == fi,
         HighlightScope::Track(track) | HighlightScope::TrackCategory { track, .. } => {
             track.fi == fi
         }
         HighlightScope::File { file_index } => file_index == fi,
-    });
+    }) || ctx
+        .highlight
+        .snapped_plot_hover_track()
+        .is_some_and(|track| track.fi == fi);
 
     let map_hover_bg = gt_ui_theme::map_hover_color(ui.visuals().dark_mode);
 
@@ -1024,10 +1029,13 @@ fn render_track_row(
             .highlight
             .hover
             .is_some_and(|s| matches!(s, HighlightScope::Track(t) if t == track_ref));
+        // The plot writes its hover after this panel renders: a plot hover marks
+        // the row one frame later.
         let map_hovered = ctx
             .highlight
             .hover
-            .is_some_and(|s| matches!(s, HighlightScope::Point(r) if r.track == track_ref));
+            .is_some_and(|s| matches!(s, HighlightScope::Point(r) if r.track == track_ref))
+            || ctx.highlight.snapped_plot_hover_track() == Some(track_ref);
         let key = NodeKey::Track(track_ref);
         (
             track.clone(),
