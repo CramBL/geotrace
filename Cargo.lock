@@ -3001,7 +3001,6 @@ dependencies = [
  "chrono",
  "eframe",
  "egui",
- "egui-phosphor",
  "egui-wgpu",
  "egui_kittest",
  "geo",
@@ -3009,6 +3008,7 @@ dependencies = [
  "geotrace-sdk",
  "gt-fetch",
  "gt-types",
+ "gt-ui-theme",
  "image",
  "parking_lot",
  "tempfile",
@@ -3053,6 +3053,7 @@ name = "gt-ui-theme"
 version = "0.12.0"
 dependencies = [
  "egui",
+ "egui-phosphor",
  "gt-fmt",
  "gt-types",
  "gt-ui-types",

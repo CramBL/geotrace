@@ -15,14 +15,11 @@ fn snapshot_options() -> SnapshotOptions {
 /// small allowance keeps those tests stable without masking real regressions.
 const LOOSE_PIXEL_COUNT_TOLERANCE: usize = 32;
 
-/// Installs the Phosphor icon font into the test context so snapshots render
-/// real glyphs instead of fallback boxes, mirroring the production setup in
-/// `App::new_with_config`. (Marker icons need no setup: they draw from
+/// Installs the font stack `App::new_with_config` installs, so snapshots
+/// render the faces the app does. (Marker icons need no setup: they draw from
 /// meshes embedded in `gt-map` at build time.)
-fn install_icon_assets(ctx: &egui::Context) {
-    let mut fonts = egui::FontDefinitions::default();
-    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
-    ctx.set_fonts(fonts);
+fn install_font_stack(ctx: &egui::Context) {
+    ctx.set_fonts(gt_ui_theme::fonts::font_definitions());
 }
 
 /// Snapshot comparison runs locally, on macOS CI (Metal), and on Linux CI
@@ -251,7 +248,7 @@ impl<'a> TestHarnessBuilder<'a> {
             builder = builder.with_step_dt(dt);
         }
         let mut inner = builder.build_ui(f);
-        install_icon_assets(&inner.ctx);
+        install_font_stack(&inner.ctx);
         if let Some(hook) = self.render_state_hook {
             hook(&inner.ctx, &render_state);
         }
@@ -284,7 +281,7 @@ impl<'a> TestHarnessBuilder<'a> {
             builder = builder.with_step_dt(dt);
         }
         let mut inner = builder.build_ui_state(f, state);
-        install_icon_assets(&inner.ctx);
+        install_font_stack(&inner.ctx);
         if let Some(hook) = self.render_state_hook {
             hook(&inner.ctx, &render_state);
         }

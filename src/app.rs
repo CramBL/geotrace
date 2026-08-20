@@ -363,9 +363,8 @@ impl App {
         config_path: Option<PathBuf>,
         options: StartupOptions,
     ) -> Self {
-        let mut fonts = egui::FontDefinitions::default();
-        egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
-        cc.egui_ctx.set_fonts(fonts);
+        cc.egui_ctx
+            .set_fonts(gt_ui_theme::fonts::font_definitions());
 
         // GPU-instanced icon rendering. Without a wgpu render state (or with
         // a corrupted embed, which NavMap reports) the map falls back to the
