@@ -99,7 +99,7 @@ fn snapshot_reference_window_geomagnetic(
     if matches!(position, DocumentPosition::End) {
         scroll_to_end(&mut harness, GEOMAGNETIC_ACTIVITY);
     }
-    harness.snapshot(snapshot_name);
+    harness.snapshot_loose(snapshot_name);
 }
 
 /// Both themes at both ends of the TEC document. The top holds the display
@@ -119,7 +119,7 @@ fn snapshot_reference_window_tec(
     if matches!(position, DocumentPosition::End) {
         scroll_to_end(&mut harness, IONOSPHERIC_TEC);
     }
-    harness.snapshot(snapshot_name);
+    harness.snapshot_loose(snapshot_name);
 }
 
 /// Both themes at both ends of the flare document. The top holds the flare
@@ -138,7 +138,7 @@ fn snapshot_reference_window_flares(
     if matches!(position, DocumentPosition::End) {
         scroll_to_end(&mut harness, SOLAR_FLARES);
     }
-    harness.snapshot(snapshot_name);
+    harness.snapshot_loose(snapshot_name);
 }
 
 /// A reader who cannot see the equation image is offered the equation as one
