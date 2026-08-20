@@ -4536,6 +4536,20 @@ fn snapshot_app_plot_solar_flare_markers() {
     harness.snapshot_loose("app_plot_solar_flare_markers");
 }
 
+#[test]
+fn snapshot_app_environment_chip_hover() {
+    let (mut harness, _archived) = harness_with_archived_flares(&[(0, &[(9, "X2.2")])]);
+    // Tall enough for the whole tooltip to fit under the chip row.
+    harness.set_size(egui::vec2(800.0, 900.0));
+    harness.run_steps(3);
+    harness.get_by_label(gt_flare::text::LAYER_LABEL).hover();
+    // Tooltips appear after egui's hover delay.
+    harness.run_steps(60);
+
+    let mut harness = gt_test_utils::TestHarness::from_harness(harness);
+    harness.snapshot_loose("app_environment_chip_hover");
+}
+
 /// With nothing archived the flare chip renders disabled - visible, not
 /// hidden - and an archived day enables it.
 #[test]

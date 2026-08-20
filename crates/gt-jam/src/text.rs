@@ -10,6 +10,10 @@
 
 use std::sync::LazyLock;
 
+use gt_ui_types::MetricChipHover;
+
+use crate::reference::AIRCRAFT_INTERFERENCE;
+
 /// Name of the data everywhere it is offered: the display-toggle row, the
 /// plot line, the legend.
 ///
@@ -58,15 +62,13 @@ pub static QUERY_DOC: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
-/// The plot chip's hover text, composed from the shared caveats so it
-/// cannot drift from what the map says.
-pub static PLOT_HOVER: LazyLock<String> = LazyLock::new(|| {
-    format!(
-        "Share of aircraft that reported low navigation accuracy, one value per archived UTC day \
-         across the span the plot shows, over the cell the receiver was in nearest that day in \
-         time. {SOURCE_CAVEAT} {RESOLUTION_CAVEAT} The line breaks over days that are not \
-         archived."
-    )
+pub static PLOT_HOVER: LazyLock<MetricChipHover> = LazyLock::new(|| MetricChipHover {
+    definition: "Share of aircraft over the fix's cell that reported low navigation accuracy."
+        .to_owned(),
+    source_cadence_and_scale: "gpsjam.org over ADS-B Exchange, one value per UTC day and 22 km \
+                               cell, percent."
+        .to_owned(),
+    reference: AIRCRAFT_INTERFERENCE,
 });
 
 /// Hover text of the settings page's fetch queue row, stating what one

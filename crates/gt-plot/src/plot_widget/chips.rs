@@ -15,10 +15,31 @@ use egui_phosphor::regular::WAVE_SINE as ICON_WAVE_SINE;
 use gt_solar::GeomagneticIndex;
 use gt_types::MetricKind;
 use gt_types::satellites::{Constellation, ConstellationSet};
+use gt_ui_types::MetricChipHover;
 use strum::IntoEnumIterator;
 
 use super::style::{channel_color, effective_component_color};
 use super::{DEFAULT_PLOT_LINE_WIDTH, PLOT_LINE_WIDTH_RANGE};
+
+/// What a chip shows on hover: a paragraph of prose, or the three scannable
+/// lines of an environment metric.
+pub(super) enum ChipHover {
+    Paragraph(&'static str),
+    Structured(&'static MetricChipHover),
+}
+
+impl ChipHover {
+    fn attach(self, response: egui::Response) -> egui::Response {
+        match self {
+            Self::Paragraph(text) => response.on_hover_text(text),
+            Self::Structured(hover) => response.on_hover_ui(|ui| {
+                ui.strong(&hover.definition);
+                ui.label(&hover.source_cadence_and_scale);
+                ui.label(RichText::new(hover.reference_line()).weak());
+            }),
+        }
+    }
+}
 
 /// Chip color, label, and optional hover tooltip for each [`MetricKind`].
 ///
@@ -29,7 +50,7 @@ use super::{DEFAULT_PLOT_LINE_WIDTH, PLOT_LINE_WIDTH_RANGE};
 /// compile error here when a variant is added until every arm is filled in.
 pub(super) trait MetricKindUi {
     fn label(self) -> &'static str;
-    fn hover_text(self) -> Option<&'static str>;
+    fn hover(self) -> Option<ChipHover>;
     /// Whether this metric belongs to the advanced analysis group, hidden behind
     /// the "Advanced" toggle in the chip row and off by default.
     fn is_advanced(&self) -> bool;
@@ -139,91 +160,91 @@ impl MetricKindUi for MetricKind {
         }
     }
 
-    fn hover_text(self) -> Option<&'static str> {
+    fn hover(self) -> Option<ChipHover> {
         match self {
-            Self::Jamming => Some(gt_jam::text::PLOT_HOVER.as_str()),
-            Self::Tec => Some(gt_ionex::text::PLOT_HOVER.as_str()),
-            Self::Hp30 => Some(GeomagneticIndex::Hp30.plot_hover_text()),
-            Self::Kp => Some(GeomagneticIndex::Kp.plot_hover_text()),
-            Self::Eph => Some(
+            Self::Jamming => Some(ChipHover::Structured(&gt_jam::text::PLOT_HOVER)),
+            Self::Tec => Some(ChipHover::Structured(&gt_ionex::text::PLOT_HOVER)),
+            Self::Hp30 => Some(ChipHover::Structured(GeomagneticIndex::Hp30.plot_hover())),
+            Self::Kp => Some(ChipHover::Structured(GeomagneticIndex::Kp.plot_hover())),
+            Self::Eph => Some(ChipHover::Paragraph(
                 "Estimated Horizontal Position error - the GPS receiver's own estimate of how \
                  far the reported position may be from the true position, in metres. \
                  Lower is more accurate.",
-            ),
-            Self::SnapError => Some(
+            )),
+            Self::SnapError => Some(ChipHover::Paragraph(
                 "Distance from each recorded point to its road-snapped position, in metres - \
                  the observed deviation from the road network. Plot it next to EPH to compare \
                  the receiver's claimed accuracy with the observed deviation. Values exist only \
                  for points sent in a completed snap run. Zoomed in, a dot marks a point the \
                  matcher placed independently; the plain line between dots is interpolated \
                  along the road; a cross at the baseline is a point the road network rejected.",
-            ),
-            Self::ClockDeltaMs => Some(
+            )),
+            Self::ClockDeltaMs => Some(ChipHover::Paragraph(
                 "GPS clock lead over the host system clock, in milliseconds. \
                  Positive = GPS clock ahead of the system clock; negative = system clock ahead. \
                  Only shown when the receiver reports a system timestamp alongside the GPS fix.",
-            ),
-            Self::UtilAll => Some(
+            )),
+            Self::UtilAll => Some(ChipHover::Paragraph(
                 "Utilization rate, all constellations: satellites used in the fix divided by \
                  satellites in view, both counted above the elevation mask. A red cross marks \
                  where a used satellite fell below the mask and was excluded. Adjust the mask in \
                  Settings.",
-            ),
-            Self::UtilGps => Some(
+            )),
+            Self::UtilGps => Some(ChipHover::Paragraph(
                 "GPS utilization rate: GPS satellites used in the fix divided by GPS satellites \
                  in view above the elevation mask.",
-            ),
-            Self::UtilGlonass => Some(
+            )),
+            Self::UtilGlonass => Some(ChipHover::Paragraph(
                 "GLONASS utilization rate: GLONASS satellites used in the fix divided by GLONASS \
                  satellites in view above the elevation mask.",
-            ),
-            Self::UtilGalileo => Some(
+            )),
+            Self::UtilGalileo => Some(ChipHover::Paragraph(
                 "Galileo utilization rate: Galileo satellites used in the fix divided by Galileo \
                  satellites in view above the elevation mask.",
-            ),
-            Self::UtilBeidou => Some(
+            )),
+            Self::UtilBeidou => Some(ChipHover::Paragraph(
                 "BeiDou utilization rate: BeiDou satellites used in the fix divided by BeiDou \
                  satellites in view above the elevation mask.",
-            ),
-            Self::UtilNavic => Some(
+            )),
+            Self::UtilNavic => Some(ChipHover::Paragraph(
                 "NavIC utilization rate: NavIC satellites used in the fix divided by NavIC \
                  satellites in view above the elevation mask.",
-            ),
-            Self::UtilQzss => Some(
+            )),
+            Self::UtilQzss => Some(ChipHover::Paragraph(
                 "QZSS utilization rate: QZSS satellites used in the fix divided by QZSS \
                  satellites in view above the elevation mask.",
-            ),
-            Self::SlipAll => Some(
+            )),
+            Self::SlipAll => Some(ChipHover::Paragraph(
                 "Loss-of-lock (slip) rate per minute, all constellations: how often the receiver \
                  loses a satellite it should still be tracking. A slip is counted when an \
                  above-mask satellite vanishes, or when its SNR drops sharply between epochs. \
                  Averaged over a trailing window. Tune the mask, SNR-drop threshold, and window \
                  in Settings.",
-            ),
-            Self::SlipGps => Some(
+            )),
+            Self::SlipGps => Some(ChipHover::Paragraph(
                 "GPS loss-of-lock (slip) rate per minute: GPS satellites lost or sharply faded \
                  above the elevation mask, averaged over the slip window.",
-            ),
-            Self::SlipGlonass => Some(
+            )),
+            Self::SlipGlonass => Some(ChipHover::Paragraph(
                 "GLONASS loss-of-lock (slip) rate per minute: GLONASS satellites lost or sharply \
                  faded above the elevation mask, averaged over the slip window.",
-            ),
-            Self::SlipGalileo => Some(
+            )),
+            Self::SlipGalileo => Some(ChipHover::Paragraph(
                 "Galileo loss-of-lock (slip) rate per minute: Galileo satellites lost or sharply \
                  faded above the elevation mask, averaged over the slip window.",
-            ),
-            Self::SlipBeidou => Some(
+            )),
+            Self::SlipBeidou => Some(ChipHover::Paragraph(
                 "BeiDou loss-of-lock (slip) rate per minute: BeiDou satellites lost or sharply \
                  faded above the elevation mask, averaged over the slip window.",
-            ),
-            Self::SlipNavic => Some(
+            )),
+            Self::SlipNavic => Some(ChipHover::Paragraph(
                 "NavIC loss-of-lock (slip) rate per minute: NavIC satellites lost or sharply \
                  faded above the elevation mask, averaged over the slip window.",
-            ),
-            Self::SlipQzss => Some(
+            )),
+            Self::SlipQzss => Some(ChipHover::Paragraph(
                 "QZSS loss-of-lock (slip) rate per minute: QZSS satellites lost or sharply \
                  faded above the elevation mask, averaged over the slip window.",
-            ),
+            )),
             _ => None,
         }
     }
@@ -389,10 +410,6 @@ const BASIC_GROUPS: [&[MetricKind]; 2] = [
         MetricKind::Velocity,
         MetricKind::Eph,
         MetricKind::SnapError,
-        MetricKind::Jamming,
-        MetricKind::Hp30,
-        MetricKind::Kp,
-        MetricKind::Tec,
         MetricKind::HeadingDeg,
         MetricKind::ClockDeltaMs,
     ],
@@ -412,6 +429,16 @@ const BASIC_GROUPS: [&[MetricKind]; 2] = [
         MetricKind::QzssSeen,
         MetricKind::QzssFix,
     ],
+];
+
+/// The Environment group: phenomena around the receiver, downloaded from an
+/// archive for the days in view. The solar flare chip closes the group and
+/// carries no [`MetricKind`], so it is not listed here.
+const ENVIRONMENT_GROUP: &[MetricKind] = &[
+    MetricKind::Jamming,
+    MetricKind::Kp,
+    MetricKind::Hp30,
+    MetricKind::Tec,
 ];
 
 /// The chip groups shown only while the advanced section is open.
@@ -508,9 +535,8 @@ fn flare_chip(ui: &mut egui::Ui, visible: &mut bool, available: bool) {
     )
     .fill(fill)
     .corner_radius(4.0);
-    if ui
-        .add(chip)
-        .on_hover_text(gt_flare::text::PLOT_HOVER.as_str())
+    if ChipHover::Structured(&gt_flare::text::PLOT_HOVER)
+        .attach(ui.add(chip))
         .clicked()
     {
         *visible = !*visible;
@@ -579,7 +605,7 @@ fn chip_group(
             &mut enabled,
             kind.label(),
             gt_ui_theme::metric_color(kind, dark_mode),
-            kind.hover_text(),
+            kind.hover(),
         );
         vis.set(kind, enabled);
         if s {
@@ -756,7 +782,16 @@ pub(super) fn metric_filter_row(
             );
         }
 
-        ui.separator();
+        chip_group(
+            ui,
+            vis,
+            present,
+            ENVIRONMENT_GROUP,
+            *show_advanced,
+            available,
+            &mut show_only,
+            &mut hovered_chip,
+        );
         flare_chip(ui, flares_visible, flares_available);
 
         // Advanced groups, shown only when revealed.  Every kind here must report
@@ -857,12 +892,12 @@ fn metric_chip(
     enabled: &mut bool,
     name: &str,
     color: Color32,
-    tooltip: Option<&str>,
+    hover: Option<ChipHover>,
 ) -> (bool, bool) {
     let (show_only, response) = chip_button(ui, enabled, name, color, |_| {});
     let hovered = response.hovered();
-    if let Some(tip) = tooltip {
-        response.on_hover_text(tip);
+    if let Some(hover) = hover {
+        hover.attach(response);
     }
     (show_only, hovered)
 }
@@ -1033,6 +1068,8 @@ fn channel_chip(
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
     use crate::plot_widget::style::CHANNEL_PALETTE;
 
@@ -1168,14 +1205,57 @@ mod tests {
         assert_eq!(channel_color(0), channel_color(CHANNEL_PALETTE.len()));
     }
 
+    /// Every metric in the Environment group answers with the three scannable
+    /// lines, not a paragraph of prose.
+    #[test]
+    fn every_environment_metric_hovers_with_scannable_lines() {
+        assert!(
+            ENVIRONMENT_GROUP
+                .iter()
+                .all(|&kind| matches!(kind.hover(), Some(ChipHover::Structured(_)))),
+            "an environment chip still hovers with prose"
+        );
+    }
+
+    /// Each environment chip closes its hover on its own reference document,
+    /// in the one phrasing all five share.
+    #[rstest]
+    #[case::interference(
+        &gt_jam::text::PLOT_HOVER,
+        "More: 'How does aircraft interference data relate to GNSS?' in Settings."
+    )]
+    #[case::kp(
+        GeomagneticIndex::Kp.plot_hover(),
+        "More: 'How does geomagnetic activity affect GNSS?' in Settings."
+    )]
+    #[case::hp30(
+        GeomagneticIndex::Hp30.plot_hover(),
+        "More: 'How does geomagnetic activity affect GNSS?' in Settings."
+    )]
+    #[case::tec(
+        &gt_ionex::text::PLOT_HOVER,
+        "More: 'How does ionospheric TEC affect GNSS?' in Settings."
+    )]
+    #[case::solar_flares(
+        &gt_flare::text::PLOT_HOVER,
+        "More: 'How do solar flares affect GNSS?' in Settings."
+    )]
+    fn every_environment_chip_hover_points_at_its_reference_document(
+        #[case] hover: &MetricChipHover,
+        #[case] expected_reference_line: &str,
+    ) {
+        assert_eq!(hover.reference_line(), expected_reference_line);
+    }
+
     /// Every metric must appear in exactly one chip group. A metric wired
-    /// into `label`, `hover_text` and the line renderer but left out of the
+    /// into `label`, `hover` and the line renderer but left out of the
     /// groups draws with no chip to discover or toggle it.
     #[test]
     fn every_metric_has_exactly_one_chip() {
         let mut seen: Vec<MetricKind> = BASIC_GROUPS
             .into_iter()
             .chain(ADVANCED_GROUPS)
+            .chain([ENVIRONMENT_GROUP])
             .flatten()
             .copied()
             .collect();

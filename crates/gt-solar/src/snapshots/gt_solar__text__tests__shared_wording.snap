@@ -9,8 +9,12 @@ summary: Planetary geomagnetic activity index over the time each fix was recorde
 source caveat: Averaged over magnetometer stations worldwide, so a value describes the planet over a period, not the ionosphere above one receiver.
 scale caveat: The scale is quasi logarithmic and published in thirds of a unit. Storm levels start at 5 (G1), Kp stops at 9, and Hp30 keeps climbing past it in an extreme storm.
 no value caveat: No value was published for this period.
-Kp plot hover: Planetary geomagnetic activity, one value per archived 3-hour Kp period across the span the plot shows. Averaged over magnetometer stations worldwide, so a value describes the planet over a period, not the ionosphere above one receiver. The scale is quasi logarithmic and published in thirds of a unit. Storm levels start at 5 (G1), Kp stops at 9, and Hp30 keeps climbing past it in an extreme storm. The line breaks over periods no value is archived for.
-Hp30 plot hover: Planetary geomagnetic activity, one value per archived 30-minute Hp30 period across the span the plot shows. Averaged over magnetometer stations worldwide, so a value describes the planet over a period, not the ionosphere above one receiver. The scale is quasi logarithmic and published in thirds of a unit. Storm levels start at 5 (G1), Kp stops at 9, and Hp30 keeps climbing past it in an extreme storm. The line breaks over periods no value is archived for.
+Kp plot hover: Planetary geomagnetic disturbance index, 3-hour cadence.
+GFZ Potsdam, averaged over stations worldwide, 0 to 9 in thirds of a unit.
+More: 'How does geomagnetic activity affect GNSS?' in Settings.
+Hp30 plot hover: Geomagnetic disturbance index like Kp, 30-minute cadence, open-ended scale.
+GFZ Potsdam, averaged over stations worldwide, thirds of a unit with no upper end.
+More: 'How does geomagnetic activity affect GNSS?' in Settings.
 Kp query doc: Planetary geomagnetic activity over the 3-hour Kp period the fix's own UTC time falls in. Averaged over magnetometer stations worldwide, so a value describes the planet over a period, not the ionosphere above one receiver. The scale is quasi logarithmic and published in thirds of a unit. Storm levels start at 5 (G1), Kp stops at 9, and Hp30 keeps climbing past it in an extreme storm. Fixes whose day is not in the geomagnetic index archive carry no value.
 Hp30 query doc: Planetary geomagnetic activity over the 30-minute Hp30 period the fix's own UTC time falls in. Averaged over magnetometer stations worldwide, so a value describes the planet over a period, not the ionosphere above one receiver. The scale is quasi logarithmic and published in thirds of a unit. Storm levels start at 5 (G1), Kp stops at 9, and Hp30 keeps climbing past it in an extreme storm. Fixes whose day is not in the geomagnetic index archive carry no value.
 attribution: Geomagnetic index data from GFZ Potsdam, published under CC BY 4.0.

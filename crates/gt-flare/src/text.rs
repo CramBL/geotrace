@@ -9,27 +9,21 @@
 use std::sync::LazyLock;
 
 use gt_types::SunlitSide;
+use gt_ui_types::MetricChipHover;
 
 use crate::class::RadioBlackoutClass;
 use crate::flare::{MarkedFlare, SolarFlare};
+use crate::reference::SOLAR_FLARES;
 
 /// Name of the data everywhere it is offered: the plot chip, the settings
 /// page, the legend.
 pub const LAYER_LABEL: &str = "Solar flares";
-
-/// One-line description of what a marker is, for hover text on the chip.
-pub const LAYER_SUMMARY: &str = "Solar flares of the days in the archive, marked at their peak.";
 
 /// The standing caveat, shown wherever a flare is. Never abbreviated, even
 /// when another surface already said it.
 pub const SOURCE_CAVEAT: &str = "The catalog lists every flare the Sun produced, so a flare \
                                  raises the ionization above a receiver only where the Sun was \
                                  up at the time.";
-
-/// What the scale means, shown alongside the first flare on a surface.
-pub const SCALE_CAVEAT: &str = "Each class letter is ten times the peak X-ray flux of the one \
-                                before, so an X1 is ten times an M1. NOAA counts a radio \
-                                blackout from M1 upwards.";
 
 /// Shown for a flare below the radio blackout scale, which starts at M1.
 pub const BELOW_BLACKOUT_SCALE: &str = "Below the radio blackout scale";
@@ -95,13 +89,11 @@ fn flare_origin(flare: &SolarFlare) -> Option<String> {
     }
 }
 
-/// The plot chip's hover text, composed from the shared caveats so it cannot
-/// drift from what the marker hover says.
-pub static PLOT_HOVER: LazyLock<String> = LazyLock::new(|| {
-    format!(
-        "{LAYER_SUMMARY} Each flare is one vertical line at its peak, coloured by class. \
-         {SOURCE_CAVEAT} {SCALE_CAVEAT}"
-    )
+pub static PLOT_HOVER: LazyLock<MetricChipHover> = LazyLock::new(|| MetricChipHover {
+    definition: format!("Solar flares from the {SOURCE_NAME} catalog, marked at their peak."),
+    source_cadence_and_scale: "One vertical line at each peak, coloured by class, X ten times M."
+        .to_owned(),
+    reference: SOLAR_FLARES,
 });
 
 /// The events GeoTrace downloads, as every control offering them names them.
@@ -230,9 +222,7 @@ mod tests {
             "label: {LAYER_LABEL}\n\
              events: {EVENT_NAMES}\n\
              archive: {ARCHIVE_NAME}\n\
-             summary: {LAYER_SUMMARY}\n\
              source caveat: {SOURCE_CAVEAT}\n\
-             scale caveat: {SCALE_CAVEAT}\n\
              below the scale: {BELOW_BLACKOUT_SCALE}\n\
              no end time: {NO_END_TIME}\n\
              receiver sunlit: {RECEIVER_SUNLIT}\n\
