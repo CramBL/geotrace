@@ -8,6 +8,7 @@ alias cix := ci-extras
 
 import 'container.just'
 import 'scripts/container-rust.just'
+import 'scripts/fixtures.just'
 import 'scripts/sdk.just'
 mod qa 'scripts/qa/qa.just'
 mod release 'scripts/release.just'
@@ -65,19 +66,6 @@ test-snapshots *ARGS:
 examples:
     bash scripts/examples.sh
 
-# Generate the minimal.gtd fixture used by the C SDK tests.
-[group("native")]
-gen-fixture:
-    cargo run -p geotrace-c --bin gen_fixture
-
-# Refresh the gt-flare event fixtures from the NASA DONKI catalog (network!).
-# Needs GEOTRACE_FLARE_API_KEY, an api.nasa.gov key.
-# Fixtures are frozen once committed - review the resulting diff like code.
-# Name windows to capture only those (additive); no args captures all.
-[group("native")]
-flare-fixtures *WINDOWS:
-    cargo run -p gt-flare --example fetch_flare_fixtures -- {{ WINDOWS }}
-
 # Render the reference material's display equations from their typst sources (needs typst-cli).
 [group("native")]
 generate-reference-equations:
@@ -88,40 +76,6 @@ generate-reference-equations:
 generate-reference-tec-map:
     cargo nextest run -p gt-map --run-ignored all -E 'test(generate_tec_reference_illustration)'
 
-# Refresh the gt-ionex map fixtures from the JPL archive (network!).
-# Fixtures are frozen once committed - review the resulting diff like code.
-# Name files to capture only those (additive); no args captures all.
-[group("native")]
-ionex-fixtures *FILES:
-    cargo run -p gt-ionex --example fetch_ionex_fixtures -- {{ FILES }}
-
-# Check the CDDIS mirror addressing against the live archive (network!).
-# Needs EARTHDATA_TOKEN, a NASA Earthdata token.
-# Pass --capture to write the served files under gt-ionex/tests/fixtures/cddis/.
-[group("native")]
-cddis-verify *ARGS:
-    cargo run -p gt-ionex --example verify_cddis_mirror -- {{ ARGS }}
-
-# Refresh the gt-jam interference dataset fixtures from gpsjam.org (network!).
-# Fixtures are frozen once committed - review the resulting diff like code.
-# Name days to capture only those (additive); no args captures all.
-[group("native")]
-jam-fixtures *DAYS:
-    cargo run -p gt-jam --example fetch_jam_fixtures -- {{ DAYS }}
-
-# Refresh the gt-solar index fixtures from the GFZ Potsdam service (network!).
-# Fixtures are frozen once committed - review the resulting diff like code.
-# Name windows to capture only those (additive); no args captures all.
-[group("native")]
-solar-fixtures *WINDOWS:
-    cargo run -p gt-solar --example fetch_solar_fixtures -- {{ WINDOWS }}
-
-# Refresh the gt-snap live-API fixtures from the Valhalla server (network!).
-# Fixtures are frozen once committed - review the resulting diff like code.
-# Name scenarios to capture only those (additive); no args captures all.
-[group("native")]
-snap-fixtures *SCENARIOS:
-    cargo run -p gt-snap --example fetch_snap_fixtures -- {{ SCENARIOS }}
 
 # Run the gt-snap live-API smoke test against the real Valhalla server
 # (network!) - the on-demand drift check for the API boundary.
