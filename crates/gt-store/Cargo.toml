@@ -24,11 +24,15 @@ gt-history = { path = "../gt-history", default-features = false }
 gt-ionex-store = { path = "../gt-ionex-store" }
 gt-jam-store = { path = "../gt-jam-store" }
 gt-solar-store = { path = "../gt-solar-store" }
+log.workspace = true
 parking_lot.workspace = true
 thiserror.workspace = true
+zstd.workspace = true
 
 [dev-dependencies]
+hdf5-pure.workspace = true
 tempfile.workspace = true
+test-log.workspace = true
 
 [lints]
 workspace = true

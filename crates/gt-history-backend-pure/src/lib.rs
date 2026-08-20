@@ -2,8 +2,9 @@ use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US, CURRENT_SCHEMA_VERSION,
     DatabaseRef, DbError, GTD_META_DEVICE_ATTR, GTD_META_NOTES_ATTR, GTD_META_TITLE_ATTR,
-    GTD_META_TRAVEL_MODE_ATTR, HistoryDatabase, RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR,
-    StoredRecording, StoredSegmentation, TrackRange, identity_from_group_name,
+    GTD_META_TRAVEL_MODE_ATTR, HistoryDatabase, LogAttachment, LogAttachmentEntry, LogAttachmentId,
+    RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation,
+    TrackRange, identity_from_group_name,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 use parking_lot::Mutex;
@@ -115,6 +116,39 @@ impl HistoryDatabase for PureDb {
     fn snap_blob(&self, db_ref: &DatabaseRef) -> Result<Option<Vec<u8>>, DbError> {
         let _guard = DB_LOCK.lock();
         copy::snap_blob(&self.path, &db_ref.identity, &db_ref.group_name).map_err(Into::into)
+    }
+
+    fn log_attachments(&self, db_ref: &DatabaseRef) -> Result<Vec<LogAttachmentEntry>, DbError> {
+        let _guard = DB_LOCK.lock();
+        copy::log_attachments(&self.path, &db_ref.identity, &db_ref.group_name).map_err(Into::into)
+    }
+
+    fn write_log_attachment_attribute(
+        &mut self,
+        db_ref: &DatabaseRef,
+        id: LogAttachmentId,
+        attachment: &LogAttachment,
+    ) -> Result<(), DbError> {
+        let attribute_json = attachment.to_attribute_json()?;
+        let _guard = DB_LOCK.lock();
+        copy::set_log_attachment_attribute(
+            &self.path,
+            &db_ref.identity,
+            &db_ref.group_name,
+            id,
+            &attribute_json,
+        )
+        .map_err(Into::into)
+    }
+
+    fn delete_log_attachment_attribute(
+        &mut self,
+        db_ref: &DatabaseRef,
+        id: LogAttachmentId,
+    ) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        copy::delete_log_attachment_attribute(&self.path, &db_ref.identity, &db_ref.group_name, id)
+            .map_err(Into::into)
     }
 
     fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError> {

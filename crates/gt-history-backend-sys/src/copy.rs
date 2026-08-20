@@ -5,10 +5,10 @@ use gt_history_types::{
     GTD_CHANNEL_COMPONENTS_ATTR, GTD_CHANNEL_DESCRIPTION_ATTR, GTD_CHANNEL_TIME_DATASET,
     GTD_CHANNEL_UNIT_ATTR, GTD_CHANNELS_GROUP, GTD_META_DEVICE_ATTR, GTD_META_NOTES_ATTR,
     GTD_META_TITLE_ATTR, GTD_META_TRAVEL_MODE_ATTR, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
-    RecordingEntry, RecordingMeta, SNAP_BLOB_DATASET, SNAP_GROUP, StoredRecording,
-    StoredSegmentation, TRACK_END_DATASET, TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP,
-    TrackRange, identity_from_group_name, identity_group_name, is_db_internal_group,
-    is_db_recording_attr, make_group_name,
+    LogAttachment, LogAttachmentEntry, LogAttachmentId, RecordingEntry, RecordingMeta,
+    SNAP_BLOB_DATASET, SNAP_GROUP, StoredRecording, StoredSegmentation, TRACK_END_DATASET,
+    TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP, TrackRange, identity_from_group_name,
+    identity_group_name, is_db_internal_group, is_db_recording_attr, make_group_name,
 };
 use hdf5::Group;
 use std::path::Path;
@@ -1187,6 +1187,98 @@ pub(crate) fn snap_blob(
         return Ok(None);
     };
     Ok(dataset.read_raw::<u8>().ok())
+}
+
+/// Every log attached to a recording, sorted by id.
+pub(crate) fn log_attachments(
+    db_path: &std::path::Path,
+    identity: &str,
+    group_name: &str,
+) -> Result<Vec<LogAttachmentEntry>, InternalError> {
+    let file = hdf5::File::open(db_path)?;
+    let by_id = file.group("by_identity")?;
+    let id_grp = open_identity_group(&by_id, identity)?;
+    let rec_grp = id_grp.group(group_name)?;
+
+    let mut entries = Vec::new();
+    for key in rec_grp.attr_names()? {
+        let Some(id) = LogAttachmentId::from_attr_key(&key) else {
+            continue;
+        };
+        match read_group_string_attr(&rec_grp, &key) {
+            Ok(json) => {
+                if let Some(attachment) = LogAttachment::from_attribute_json(&json) {
+                    entries.push(LogAttachmentEntry { id, attachment });
+                }
+            }
+            Err(err) => log::warn!("Ignoring the log attachment attribute {key:?}: {err}"),
+        }
+    }
+    entries.sort_unstable_by_key(|entry| entry.id);
+    Ok(entries)
+}
+
+/// Store one attachment's attribute JSON on a recording, replacing whatever
+/// was stored under the same id.
+pub(crate) fn set_log_attachment_attribute(
+    db_path: &std::path::Path,
+    identity: &str,
+    group_name: &str,
+    id: LogAttachmentId,
+    attribute_json: &str,
+) -> Result<(), InternalError> {
+    let file = hdf5::File::open_rw(db_path)?;
+    let by_id = file.group("by_identity")?;
+    let id_grp = open_identity_group(&by_id, identity)?;
+    let rec_grp = id_grp.group(group_name)?;
+
+    let key = id.attr_key();
+    if rec_grp.attr(&key).is_ok() {
+        rec_grp.delete_attr(&key)?;
+    }
+    write_string_attr(&rec_grp, &key, attribute_json)
+}
+
+/// Remove one attachment's attribute. A recording that carries no such
+/// attachment, or that is gone entirely, leaves nothing to remove.
+pub(crate) fn delete_log_attachment_attribute(
+    db_path: &std::path::Path,
+    identity: &str,
+    group_name: &str,
+    id: LogAttachmentId,
+) -> Result<(), InternalError> {
+    let file = hdf5::File::open_rw(db_path)?;
+    let by_id = file.group("by_identity")?;
+    let recording = open_identity_group(&by_id, identity)
+        .ok()
+        .and_then(|id_grp| id_grp.group(group_name).ok());
+    let Some(rec_grp) = recording else {
+        log::warn!(
+            "Removing log attachment {id} from {identity}/{group_name}, which is not in the database"
+        );
+        return Ok(());
+    };
+
+    let key = id.attr_key();
+    if rec_grp.attr(&key).is_ok() {
+        rec_grp.delete_attr(&key)?;
+    }
+    Ok(())
+}
+
+/// The attachments of a recording group, for deleting their logs with it.
+pub(crate) fn log_attachment_ids(rec_grp: &Group) -> Vec<LogAttachmentId> {
+    match rec_grp.attr_names() {
+        Ok(keys) => keys
+            .iter()
+            .map(String::as_str)
+            .filter_map(LogAttachmentId::from_attr_key)
+            .collect(),
+        Err(err) => {
+            log::warn!("Could not read the attributes of a recording being deleted: {err}");
+            Vec::new()
+        }
+    }
 }
 
 /// Set or clear the hidden flag on the given tracks (by index) of a recording.

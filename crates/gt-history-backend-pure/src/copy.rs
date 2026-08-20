@@ -11,10 +11,11 @@ use gt_history_types::{
     ATTR_SEG_GAP_US, ATTR_START_US, CURRENT_SCHEMA_VERSION, ChannelSummary, DatabaseRef, DbError,
     GTD_CHANNEL_COMPONENTS_ATTR, GTD_CHANNEL_DESCRIPTION_ATTR, GTD_CHANNEL_TIME_DATASET,
     GTD_CHANNEL_UNIT_ATTR, GTD_CHANNELS_GROUP, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
-    RecordingMeta, SCHEMA_VERSION_ATTR, SNAP_BLOB_DATASET, SNAP_GROUP, StoredRecording,
-    StoredSegmentation, TRACK_END_DATASET, TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP,
-    TrackRange, identity_from_group_name, identity_group_name, is_db_internal_group,
-    is_db_recording_attr, make_group_name,
+    LogAttachment, LogAttachmentEntry, LogAttachmentId, RecordingMeta, SCHEMA_VERSION_ATTR,
+    SNAP_BLOB_DATASET, SNAP_GROUP, StoredRecording, StoredSegmentation, TRACK_END_DATASET,
+    TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP, TrackRange, identity_from_group_name,
+    identity_group_name, is_db_internal_group, is_db_recording_attr, log_attachment,
+    make_group_name,
 };
 use hdf5_pure::{AttrValue, DType, FileBuilder, Group, GroupBuilder};
 use thiserror::Error;
@@ -28,6 +29,11 @@ pub(crate) enum InternalError {
     /// A rename could not proceed without losing or overwriting data.
     #[error("{0}")]
     Conflict(String),
+    #[error("no recording {identity:?}/{group_name:?} in the history database")]
+    NoSuchRecording {
+        identity: String,
+        group_name: String,
+    },
 }
 
 impl From<InternalError> for DbError {
@@ -36,6 +42,9 @@ impl From<InternalError> for DbError {
             InternalError::Hdf5(e) => crate::classify_hdf5_error(e),
             InternalError::Io(e) => DbError::Io(e),
             InternalError::Conflict(msg) => DbError::Backend(msg),
+            missing @ InternalError::NoSuchRecording { .. } => {
+                DbError::Backend(missing.to_string())
+            }
         }
     }
 }
@@ -125,6 +134,17 @@ fn find_identity_node_mut<'a>(
     identity_nodes
         .iter_mut()
         .find(|n| n.name == storage_name || (!identity.contains('/') && n.name == identity))
+}
+
+fn find_recording_node_mut<'a>(
+    identity_nodes: &'a mut [GroupNode],
+    identity: &str,
+    group_name: &str,
+) -> Option<&'a mut GroupNode> {
+    find_identity_node_mut(identity_nodes, identity)?
+        .groups
+        .iter_mut()
+        .find(|rec| rec.name == group_name)
 }
 
 fn find_identity_group(by_id: &Group, identity: &str) -> Result<Group, hdf5_pure::Error> {
@@ -495,14 +515,26 @@ pub(crate) fn delete_batch(
     let mut identity_nodes = snapshot_by_identity(&existing_db)?;
     drop(existing_db);
 
+    let mut attachments = Vec::new();
     for db_ref in refs {
         if let Some(id_node) = find_identity_node_mut(&mut identity_nodes, &db_ref.identity) {
+            if let Some(rec) = id_node.groups.iter().find(|r| r.name == db_ref.group_name) {
+                attachments.extend(
+                    rec.attrs
+                        .iter()
+                        .filter_map(|(key, _)| LogAttachmentId::from_attr_key(key)),
+                );
+            }
             id_node.groups.retain(|r| r.name != db_ref.group_name);
         }
     }
     identity_nodes.retain(|n| !n.groups.is_empty());
 
     write_db(&identity_nodes, db_path)?;
+    log_attachment::delete_files(
+        &log_attachment::logs_directory_for_database(db_path),
+        &attachments,
+    );
     log::info!("Deleted {} recording(s) in batch prune", refs.len());
     Ok(())
 }
@@ -707,6 +739,85 @@ pub(crate) fn snap_blob(
         return Ok(None);
     };
     Ok(dataset.read_u8().ok())
+}
+
+/// Every log attached to a recording, sorted by id.
+pub(crate) fn log_attachments(
+    db_path: &std::path::Path,
+    identity: &str,
+    group_name: &str,
+) -> Result<Vec<LogAttachmentEntry>, InternalError> {
+    let file = hdf5_pure::File::open(db_path)?;
+    let root = file.root();
+    let by_id = root.group("by_identity")?;
+    let id_grp = find_identity_group(&by_id, identity)?;
+    let rec_grp = id_grp.group(group_name)?;
+
+    let mut entries = Vec::new();
+    for (key, value) in rec_grp.attrs()? {
+        let Some(id) = LogAttachmentId::from_attr_key(&key) else {
+            continue;
+        };
+        let (AttrValue::String(json) | AttrValue::AsciiString(json)) = value else {
+            log::warn!("Ignoring the log attachment attribute {key:?}, which is not a string");
+            continue;
+        };
+        if let Some(attachment) = LogAttachment::from_attribute_json(&json) {
+            entries.push(LogAttachmentEntry { id, attachment });
+        }
+    }
+    entries.sort_unstable_by_key(|entry| entry.id);
+    Ok(entries)
+}
+
+/// Store one attachment's attribute JSON on a recording, replacing whatever
+/// was stored under the same id.
+pub(crate) fn set_log_attachment_attribute(
+    db_path: &std::path::Path,
+    identity: &str,
+    group_name: &str,
+    id: LogAttachmentId,
+    attribute_json: &str,
+) -> Result<(), InternalError> {
+    let existing_db = hdf5_pure::File::open(db_path)?;
+    let mut identity_nodes = snapshot_by_identity(&existing_db)?;
+    drop(existing_db);
+
+    let key = id.attr_key();
+    let Some(rec) = find_recording_node_mut(&mut identity_nodes, identity, group_name) else {
+        return Err(InternalError::NoSuchRecording {
+            identity: identity.to_owned(),
+            group_name: group_name.to_owned(),
+        });
+    };
+    rec.attrs.retain(|(existing, _)| *existing != key);
+    rec.attrs
+        .push((key, AttrValue::String(attribute_json.to_owned())));
+
+    write_db(&identity_nodes, db_path)
+}
+
+/// Remove one attachment's attribute. A recording that carries no such
+/// attachment, or that is gone entirely, leaves nothing to remove.
+pub(crate) fn delete_log_attachment_attribute(
+    db_path: &std::path::Path,
+    identity: &str,
+    group_name: &str,
+    id: LogAttachmentId,
+) -> Result<(), InternalError> {
+    let existing_db = hdf5_pure::File::open(db_path)?;
+    let mut identity_nodes = snapshot_by_identity(&existing_db)?;
+    drop(existing_db);
+
+    let key = id.attr_key();
+    match find_recording_node_mut(&mut identity_nodes, identity, group_name) {
+        Some(rec) => rec.attrs.retain(|(existing, _)| *existing != key),
+        None => log::warn!(
+            "Removing log attachment {id} from {identity}/{group_name}, which is not in the database"
+        ),
+    }
+
+    write_db(&identity_nodes, db_path)
 }
 
 /// Read the stored track ranges from a recording group (empty if absent).

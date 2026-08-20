@@ -190,12 +190,16 @@ jobs:
 
       - name: Tests (pure backend)
         shell: bash
-        run: cargo nextest run -p gt-history --test integration --no-default-features --features backend-pure --profile ci
+        run: |
+          cargo nextest run -p gt-history --test integration --no-default-features --features backend-pure --profile ci
+          cargo nextest run -p gt-store --test log_attachments --no-default-features --features backend-pure --profile ci
 
       - name: Tests (sys backend)
         if: ${{ !cancelled() }}
         shell: bash
-        run: cargo nextest run -p gt-history --test integration --no-default-features --features backend-sys --profile ci
+        run: |
+          cargo nextest run -p gt-history --test integration --no-default-features --features backend-sys --profile ci
+          cargo nextest run -p gt-store --test log_attachments --no-default-features --features backend-sys --profile ci
 
   examples:
     name: examples / ${{ matrix.os }}

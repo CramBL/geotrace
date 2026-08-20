@@ -1,6 +1,13 @@
 use std::path::Path;
 use thiserror::Error;
 
+pub mod log_attachment;
+
+pub use log_attachment::{
+    LOG_ATTACHMENT_ATTR_PREFIX, LOGS_DIRECTORY, LogAttachment, LogAttachmentEntry, LogAttachmentId,
+    LogContentHash, StoredLogFilter, StoredLogFilterMode, logs_directory_for_database,
+};
+
 pub const CURRENT_SCHEMA_VERSION: i64 = 0;
 pub const SCHEMA_VERSION_ATTR: &str = "schema_version";
 
@@ -140,7 +147,7 @@ pub fn is_db_recording_attr(key: &str) -> bool {
             | ATTR_SEG_GAP_US
             | ATTR_SEG_DETECT_CLOCK
             | ATTR_SEG_CLOCK_SIGMAS
-    )
+    ) || key.starts_with(LOG_ATTACHMENT_ATTR_PREFIX)
 }
 
 /// Returns true for recording child-group names that are GeoTrace history
@@ -460,6 +467,45 @@ pub trait HistoryDatabase {
     /// The stored snap run bytes for a recording, or `None` when it carries
     /// none (never snapped, or stored before snap persistence existed).
     fn snap_blob(&self, db_ref: &DatabaseRef) -> Result<Option<Vec<u8>>, DbError>;
+
+    /// Every log attached to a recording, sorted by id.
+    ///
+    /// An attribute this build cannot decode is skipped with a warning. The
+    /// recording's other attachments are still listed.
+    fn log_attachments(&self, db_ref: &DatabaseRef) -> Result<Vec<LogAttachmentEntry>, DbError>;
+
+    /// Write one attachment's attribute, replacing whatever was stored under
+    /// its id.
+    ///
+    /// Fails when the recording is not in the database.
+    fn write_log_attachment_attribute(
+        &mut self,
+        db_ref: &DatabaseRef,
+        id: LogAttachmentId,
+        attachment: &LogAttachment,
+    ) -> Result<(), DbError>;
+
+    /// Remove one attachment's attribute, a no-op when the recording carries
+    /// no such attachment. The compressed log is deleted alongside it by
+    /// `gt_store`'s `LogAttachments::detach_log`.
+    fn delete_log_attachment_attribute(
+        &mut self,
+        db_ref: &DatabaseRef,
+        id: LogAttachmentId,
+    ) -> Result<(), DbError>;
+
+    /// The recording's attachment holding this exact log, for warning about a
+    /// duplicate before attaching one.
+    fn log_attachment_with_content(
+        &self,
+        db_ref: &DatabaseRef,
+        content_hash: LogContentHash,
+    ) -> Result<Option<LogAttachmentEntry>, DbError> {
+        Ok(self
+            .log_attachments(db_ref)?
+            .into_iter()
+            .find(|entry| entry.attachment.content_hash == content_hash))
+    }
 
     fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError>;
     /// Whether a recording with the same content already exists (content-addressed

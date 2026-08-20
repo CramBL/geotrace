@@ -55,8 +55,10 @@ test *ARGS:
 test-all-backends:
     @echo "Running tests for pure backend"
     cargo nextest run -p gt-history --test integration --no-default-features --features backend-pure
+    cargo nextest run -p gt-store --test log_attachments --no-default-features --features backend-pure
     @echo "Running tests for sys backend"
     cargo nextest run -p gt-history --test integration --no-default-features --features backend-sys
+    cargo nextest run -p gt-store --test log_attachments --no-default-features --features backend-sys
 
 [group("native")]
 test-snapshots *ARGS:
