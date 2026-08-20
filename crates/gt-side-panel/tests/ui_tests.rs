@@ -19,7 +19,7 @@ use gt_side_panel::{
     show_side_panel,
 };
 use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
-use gt_types::{FileIdx, FixStats, LoadWarning, TrackIdx, TrackRef};
+use gt_types::{FileIdx, FixStats, LoadWarning, PointIdx, TrackIdx, TrackRef};
 use gt_ui_types::{DisplayCategory, DisplayMask, MapHighlight, SnapCosting};
 
 struct State {
@@ -1296,5 +1296,78 @@ fn long_filename_does_not_widen_panel() {
     assert!(
         (long - short).abs() < 1.0,
         "long filename widened the panel: short={short}px, long={long}px"
+    );
+}
+
+/// Whether the plot cursor sits close enough to the point it hovers for the
+/// cross-highlight to activate.
+struct PlotHoverSnapped(bool);
+
+/// The rows that repainted when the plot reported a hover on the first track of
+/// `ride_0.gtd`, with `ride_1.gtd` as the untouched control.
+#[derive(Debug, PartialEq, Eq)]
+struct RepaintedRows {
+    hovered_file: bool,
+    hovered_track: bool,
+    other_file: bool,
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "a harness that cannot render is a fatal test setup failure"
+)]
+fn rows_repainted_by_plot_hover(PlotHoverSnapped(snapped): PlotHoverSnapped) -> RepaintedRows {
+    let mut state = make_state(2);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    let mut harness = make_harness(state);
+    harness.run();
+
+    let pixels_per_point = harness.inner.ctx.pixels_per_point();
+    let hovered_file = harness.inner.get_by_label_contains("ride_0").rect();
+    let hovered_track = harness.inner.get_by_label_contains("#1  4.6 km").rect();
+    let other_file = harness.inner.get_by_label_contains("ride_1").rect();
+    let before = harness.inner.render().expect("the harness renders a frame");
+
+    let highlight = &mut harness.state_mut().highlight;
+    highlight.plot_hover_point = Some((FileIdx::new(0), TrackIdx::new(0), PointIdx::new(0)));
+    highlight.plot_hover_snapped = snapped;
+    harness.inner.run_steps(2);
+
+    let after = harness.inner.render().expect("the harness renders a frame");
+    let repainted = |rect| {
+        gt_test_utils::snapshot_harness::pixels_differ(&before, &after, rect, pixels_per_point)
+    };
+    RepaintedRows {
+        hovered_file: repainted(hovered_file),
+        hovered_track: repainted(hovered_track),
+        other_file: repainted(other_file),
+    }
+}
+
+/// A plot hover marks the same rows a map hover on that point marks: the track
+/// row and the row of the recording it belongs to.
+#[test]
+fn a_snapped_plot_hover_marks_its_track_row_and_its_recording_row() {
+    assert_eq!(
+        rows_repainted_by_plot_hover(PlotHoverSnapped(true)),
+        RepaintedRows {
+            hovered_file: true,
+            hovered_track: true,
+            other_file: false,
+        }
+    );
+}
+
+/// The cursor crossing into the plot area without reaching any data point marks
+/// nothing.
+#[test]
+fn a_plot_hover_that_has_not_snapped_marks_no_row() {
+    assert_eq!(
+        rows_repainted_by_plot_hover(PlotHoverSnapped(false)),
+        RepaintedRows {
+            hovered_file: false,
+            hovered_track: false,
+            other_file: false,
+        }
     );
 }

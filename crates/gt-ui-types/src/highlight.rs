@@ -194,6 +194,13 @@ impl MapHighlight {
         matches!(self.hover, Some(HighlightScope::Point(r)) if r.category == DataCategory::Tpv)
     }
 
+    /// The track the plot cursor points at, and `None` until the cursor has
+    /// snapped to a data point (see [`Self::plot_hover_snapped`]).
+    pub fn snapped_plot_hover_track(&self) -> Option<TrackRef> {
+        let (fi, ti, _) = self.plot_hover_snapped.then_some(self.plot_hover_point)??;
+        Some(TrackRef::new(fi, ti))
+    }
+
     /// What the pinned popup does this frame, dropping a pin whose element is
     /// gone. Called once per frame by the map, and by the headless tests.
     pub fn pin_this_frame(&mut self, scope: MapScope<'_>) -> Option<PinnedPopup> {

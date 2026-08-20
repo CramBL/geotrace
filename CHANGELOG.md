@@ -33,6 +33,7 @@
 ### Fixed
 
 - Links in dialogs and reference material now open in the browser (clicking them did nothing).
+- Hovering the plot highlights the recording and track rows in the side panel, matching what hovering the map already does.
 - Hover labels no longer overlap in the plot and map interference layer.
 - The plot's file legend no longer covers the settings and query windows.
 - Snapped tracks no longer improperly route through nearby roads during dead reckoning gaps (e.g., in parking garages).

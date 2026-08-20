@@ -118,18 +118,7 @@ pub(crate) fn is_track_in_focus(highlight: &MapHighlight, fi: FileIdx, ti: Track
         Some(HighlightScope::Point(r)) => r.track == track,
         None => false,
     };
-    if from_map_hover {
-        return true;
-    }
-    // Only treat the plot hover as a focus source when the cursor has actually
-    // snapped close to a data point. Otherwise moving into the plot area would
-    // immediately change which track is "in focus" on the map.
-    if highlight.plot_hover_snapped
-        && let Some((phfi, phti, _)) = highlight.plot_hover_point
-    {
-        return phfi == fi && phti == ti;
-    }
-    false
+    from_map_hover || highlight.snapped_plot_hover_track() == Some(track)
 }
 
 /// Returns the single [`TrackRef`] currently in focus, or `None` when no
@@ -143,17 +132,7 @@ pub(crate) fn focused_track_from_highlight(highlight: &MapHighlight) -> Option<T
             Some(t)
         }
         Some(HighlightScope::Point(r)) => Some(r.track),
-        Some(HighlightScope::File { .. }) | None => {
-            // Only return a plot-hover track when the cursor has actually
-            // snapped to a data point. Entering the plot area does not count.
-            if highlight.plot_hover_snapped {
-                highlight
-                    .plot_hover_point
-                    .map(|(fi, ti, _)| TrackRef::new(fi, ti))
-            } else {
-                None
-            }
-        }
+        Some(HighlightScope::File { .. }) | None => highlight.snapped_plot_hover_track(),
     }
 }
 
