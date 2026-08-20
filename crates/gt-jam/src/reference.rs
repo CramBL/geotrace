@@ -70,8 +70,9 @@ const BLOCKS: &[ReferenceBlock] = &[
     ),
     ReferenceBlock::Paragraph(
         "The subtraction of one is the author's deliberate denoising of single-aircraft cells. \
-         GeoTrace draws the share as counted and hatches the cells holding too few aircraft for it \
-         to carry weight, so a thin cell stays on the map as a thin cell.",
+         GeoTrace draws the share as counted. Cells with fewer than five aircraft are hatched, \
+         drawn with thin diagonal lines in place of a solid fill. gpsjam publishes cells with as \
+         few as two aircraft, where one bad report would read as 50 percent.",
     ),
     ReferenceBlock::Quotation(
         "Green hexagons show where more than 98% of all aircraft who flew through that area \

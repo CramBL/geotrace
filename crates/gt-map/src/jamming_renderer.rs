@@ -561,6 +561,27 @@ mod tests {
         }
     }
 
+    /// The guard writes [`MIN_AIRCRAFT_FOR_SOLID_FILL`] as a word because the
+    /// material spells the count out.
+    #[test]
+    fn the_reference_material_names_the_aircraft_count_cells_are_hatched_below() {
+        let spelled_out = match MIN_AIRCRAFT_FOR_SOLID_FILL {
+            3 => "three",
+            4 => "four",
+            5 => "five",
+            6 => "six",
+            7 => "seven",
+            other => panic!("{other} aircraft is outside the range this guard spells out"),
+        };
+        let wording = format!("Cells with fewer than {spelled_out} aircraft are hatched");
+        let material = gt_jam::reference::AIRCRAFT_INTERFERENCE.to_string();
+
+        assert!(
+            material.contains(&wording),
+            "the material never says {wording:?}"
+        );
+    }
+
     fn bounds(x_min: f64, x_max: f64, y_min: f64, y_max: f64) -> gt_types::MercBounds {
         gt_types::MercBounds {
             x_min,
