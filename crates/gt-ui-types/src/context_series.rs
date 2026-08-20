@@ -7,14 +7,14 @@ pub struct JammingContextSample {
     /// Plot x: the day's UTC midnight as Unix seconds. The share holds for
     /// the whole day.
     pub start_secs: f64,
-    /// Share of aircraft reporting low navigation integrity, in percent.
+    /// Share of aircraft reporting low navigation accuracy, in percent.
     /// [`None`] where the archive holds no cell over the receiver, or no
     /// recording is loaded to place the day at, which breaks the line.
     pub percent: Option<f64>,
     /// Aircraft the share was computed over. Zero where `percent` is
     /// [`None`].
     pub aircraft: u32,
-    /// Aircraft of those that reported low navigation integrity, for the
+    /// Aircraft of those that reported low navigation accuracy, for the
     /// hover's counts.
     pub bad: u32,
 }
