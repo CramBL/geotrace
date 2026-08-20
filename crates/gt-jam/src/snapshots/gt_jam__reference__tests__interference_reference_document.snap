@@ -1,0 +1,41 @@
+---
+source: crates/gt-jam/src/reference.rs
+expression: AIRCRAFT_INTERFERENCE.to_string()
+---
+Aircraft interference and GNSS
+
+The map uses data provided by [ADS-B] Exchange to generate maps of likely [GPS] interference, based on aircraft reports of their navigation system accuracy.[^gpsjam-about][^adsbx]
+
+The accuracy reports are digital instrument telemetry, not observations by pilots. Aircraft avionics broadcast [ADS-B] messages automatically, and these include the navigation accuracy the avionics compute from their own [GNSS] receiver.[^gpsjam-faq] Broadcasting is not voluntary for most traffic: [ADS-B] Out equipage has been required in most US controlled airspace since 1 January 2020,[^cfr-adsb] and in Europe for aircraft above 5 700 kg or 250 knots.[^eu-adsb]
+
+The voluntary part is on the ground. The data reaches the map through [ADS-B] Exchange, "a network of thousands of enthusiasts who receive those signals".[^gpsjam-faq] Coverage therefore depends on where receivers exist, which is one reason blank cells appear.
+
+Illustration interference_map_2026_07_20 (20 July 2026 (UTC))
+Every cell published for 20 July 2026, on the colour ramp the map layer uses. Where a cell is missing, no aircraft flew over it or no receiver heard one.[^gpsjam-about]
+
+Each cell aggregates one [UTC] day. GeoTrace colours a cell by the share of aircraft that reported low navigation accuracy there. The dataset's author colours his own map from a share with one bad aircraft subtracted:[^gpsjam-faq]
+
+"percent_bad_aircraft = 100 * (num_bad_aircraft - 1) / (num_good_aircraft + num_bad_aircraft)[^gpsjam-faq]"
+
+The subtraction of one is the author's deliberate denoising of single-aircraft cells. GeoTrace draws the share as counted and hatches the cells holding too few aircraft for it to carry weight, so a thin cell stays on the map as a thin cell.
+
+"Green hexagons show where more than 98% of all aircraft who flew through that area reported good navigation accuracy. Yellow hexagons show where between 2% and 10% of aircraft reported low navigation accuracy. Red hexagons show where more than 10% of aircraft reported low navigation accuracy.[^gpsjam-faq]"
+
+GeoTrace colours cells on the same 2 % and 10 % breakpoints, shading continuously between them.
+
+The most common reason for aircraft [GPS] systems to have degraded accuracy is jamming by military systems.[^gpsjam-faq] The dataset's author also names jamming-system testing outside conflict zones and drone-defence jamming among the causes.[^gpsjam-faq]
+
+The dataset records the effect, not the cause: the author notes the data does not show what caused the low accuracy.[^gpsjam-faq] The author's denoising biases his own map against showing potential interference where there is very little data.[^gpsjam-faq] A short interference episode can colour a whole day's cell, since the aggregation window is 24 hours.[^gpsjam-faq] Blank cells mean no aircraft or no receivers, for example in an active war zone.[^gpsjam-faq]
+
+At the receiver, jamming and spoofing differ. Jamming is radio frequency interference that prevents the receiver from tracking satellite signals, degrading or denying positioning: the same carrier-to-noise mechanism as a solar radio burst. Spoofing instead broadcasts counterfeit satellite signals, and the receiver computes incorrect positioning, navigation and timing data, including time and date shifts.[^easa-sib] Spoofing is reported as common in some regions since 2022.[^gpsjam-faq]
+
+The fixes recorded inside cells with reported interference:
+points | where jamming > 10 %
+
+Sources
+1. gpsjam.org: About (https://gpsjam.org/about)
+2. ADS-B Exchange (https://adsbexchange.com)
+3. gpsjam.org: FAQ (John Wiseman) (https://gpsjam.org/faq)
+4. 14 CFR 91.225, ADS-B Out equipment and use (https://www.ecfr.gov/current/title-14/chapter-I/subchapter-F/part-91/subpart-C/section-91.225)
+5. Commission Implementing Regulation (EU) No 1207/2011, Article 5 (as amended) (https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32011R1207)
+6. EASA Safety Information Bulletin 2022-02, GNSS outages and alterations (https://ad.easa.europa.eu/blob/EASA_SIB_2022_02R2.pdf/SIB_2022-02R2_1)

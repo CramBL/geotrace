@@ -2558,6 +2558,10 @@ fn every_settings_page_renders_the_labels_it_declares() {
 )]
 #[case(SettingsPage::IonosphericTec, gt_ionex::reference::IONOSPHERIC_TEC)]
 #[case(SettingsPage::SolarFlares, gt_flare::reference::SOLAR_FLARES)]
+#[case(
+    SettingsPage::AircraftInterference,
+    gt_jam::reference::AIRCRAFT_INTERFERENCE
+)]
 fn a_source_page_opens_its_reference_window(
     #[case] page: SettingsPage,
     #[case] document: gt_ui_types::reference::ReferenceDocument,

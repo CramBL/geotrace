@@ -25,7 +25,7 @@ const HEX_COLUMN: &str = "hex";
 /// Name of the good-aircraft count column, as published.
 const GOOD_COLUMN: &str = "count_good_aircraft";
 
-/// Name of the low-integrity aircraft count column, as published.
+/// Name of the low-accuracy aircraft count column, as published.
 const BAD_COLUMN: &str = "count_bad_aircraft";
 
 /// The published columns, in order. The header must match exactly.
@@ -48,9 +48,9 @@ fn header_line() -> String {
 pub struct HexObservation {
     /// The cell the tally covers, at [`H3_RESOLUTION`].
     pub cell: CellIndex,
-    /// Aircraft that reported good navigation integrity.
+    /// Aircraft that reported good navigation accuracy.
     pub good: u32,
-    /// Aircraft that reported low navigation integrity.
+    /// Aircraft that reported low navigation accuracy.
     pub bad: u32,
 }
 
@@ -63,7 +63,7 @@ impl HexObservation {
         self.good.saturating_add(self.bad)
     }
 
-    /// The share of aircraft that reported low navigation integrity, with
+    /// The share of aircraft that reported low navigation accuracy, with
     /// the sample size behind it.
     ///
     /// [`None`] for an empty tally, which would otherwise render as 0 % and
@@ -81,7 +81,7 @@ impl HexObservation {
     }
 }
 
-/// The share of aircraft reporting low navigation integrity, with its
+/// The share of aircraft reporting low navigation accuracy, with its
 /// sample size.
 ///
 /// One value so a share cannot be rendered without its confidence: 1 bad of

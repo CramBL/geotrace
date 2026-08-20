@@ -4,13 +4,19 @@ use crate::app::App;
 use crate::app::backfill_ui::{self, BackfillAction};
 use crate::app::day_fetch_status::{self, FetchRowHoverText};
 use crate::app::settings_ui::SettingsPage;
-use crate::app::settings_ui::source_page::{self, SourcePageSlots};
+use crate::app::settings_ui::source_page::{self, ReferenceLink, SourcePageSlots};
+
+const REFERENCE_LINK_LABEL: &str = gt_jam::reference::AIRCRAFT_INTERFERENCE.link_question;
+
+const REFERENCE_LINK_HOVER: &str = "Reference material on what aircraft report, how the daily \
+                                    cells are computed, and what the data does and does not show";
 
 pub(super) const SEARCHABLE_LABELS: &[&str] = &[
     source_page::BASE_URL_LABEL,
     day_fetch_status::FETCH_QUEUE_LABEL,
     day_fetch_status::RECORDING_DAYS_LABEL,
     backfill_ui::DOWNLOAD_HISTORY_LABEL,
+    REFERENCE_LINK_LABEL,
 ];
 
 const URL_HOVER: &str = "Base URL of the host serving the daily interference datasets. The \
@@ -32,7 +38,7 @@ impl App {
         let readiness = self.backfill_readiness(self.jamming.archive_available());
         let mut backfill_action = None;
 
-        source_page::show_source_page(
+        let opened_reference = source_page::show_source_page(
             ui,
             SettingsPage::AircraftInterference,
             SourcePageSlots {
@@ -46,10 +52,16 @@ impl App {
                 backfill: |ui: &mut egui::Ui| {
                     backfill_action = self.interference_backfill_ui.ui(ui, progress, readiness);
                 },
-                reference: None,
+                reference: Some(ReferenceLink {
+                    document: gt_jam::reference::AIRCRAFT_INTERFERENCE,
+                    hover_text: REFERENCE_LINK_HOVER,
+                }),
             },
         );
 
+        if let Some(document) = opened_reference {
+            self.reference_window.open(document);
+        }
         if base_url_changed {
             self.jamming.set_base_url(&base_url);
             self.interference_settings.base_url = base_url;

@@ -2662,6 +2662,7 @@ dependencies = [
  "chrono",
  "gt-fetch",
  "gt-types",
+ "gt-ui-types",
  "h3o",
  "insta",
  "parking_lot",
