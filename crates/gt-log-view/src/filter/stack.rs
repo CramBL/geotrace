@@ -2,6 +2,7 @@
 
 use std::{iter, mem, ops::Range, sync::Arc};
 
+use gt_history_types::{StoredLogFilter, StoredLogFilterMode};
 use gt_logfile::ParsedLog;
 
 use crate::filter::{
@@ -98,6 +99,31 @@ impl FilterStack {
             next_chip_id: 0,
             visible: VisibleEntries::All { entry_count },
         }
+    }
+
+    /// The stack an attachment's stored filters restore into, in the order
+    /// they were stored. Each chip starts the scan that finds what it matches,
+    /// as an added filter does.
+    ///
+    /// The layer chips carry the slots they were stored with as preferences:
+    /// [`LoadedLogs::push`](crate::LoadedLogs::push) hands out the session's
+    /// slots when the log is loaded.
+    pub fn from_stored_filters(log: Arc<ParsedLog>, stored: &[StoredLogFilter]) -> Self {
+        let mut stack = Self::new(log);
+        for filter in stored {
+            stack.push_stored_chip(filter);
+        }
+        stack.recompose_visible_entries();
+        stack
+    }
+
+    /// The chips of this stack in the form an attachment stores them. The live
+    /// filter is not part of it: it belongs to the field, not to the stack.
+    pub fn to_stored_filters(&self) -> Vec<StoredLogFilter> {
+        self.chips
+            .iter()
+            .map(FilterChip::to_stored_filter)
+            .collect()
     }
 
     pub fn live_filter_text(&self) -> &str {
@@ -309,10 +335,34 @@ impl FilterStack {
     /// loaded into a session.
     pub(crate) fn take_layer_color_slots(&mut self, slots: &mut LayerColorSlots) {
         for chip in &mut self.chips {
-            if chip.layer_slot.is_some() {
-                chip.layer_slot = Some(slots.allocate());
+            if let Some(held) = chip.layer_slot {
+                chip.layer_slot = Some(slots.allocate_preferring(held));
             }
         }
+    }
+
+    fn push_stored_chip(&mut self, stored: &StoredLogFilter) {
+        let id = FilterChipId(self.next_chip_id);
+        self.next_chip_id = self.next_chip_id.saturating_add(1);
+        let mut filter = LogFilter::unwritten(self.log.entries().len());
+        filter.rewrite(
+            FilterPattern {
+                text: stored.text.clone(),
+                regex: stored.regex,
+            },
+            &self.log,
+        );
+        self.chips.push(FilterChip {
+            id,
+            filter,
+            layer_slot: match stored.mode {
+                StoredLogFilterMode::Layer { color_slot } => {
+                    Some(LayerColorSlot::from_stored_index(color_slot))
+                }
+                StoredLogFilterMode::Refine => None,
+            },
+            enabled: stored.enabled,
+        });
     }
 
     fn set_live_filter(&mut self, pattern: FilterPattern) {
@@ -390,6 +440,20 @@ impl FilterChip {
     fn narrows_visible_set(&self) -> bool {
         self.enabled && self.layer_slot.is_none() && self.filter.narrows_visible_set()
     }
+
+    fn to_stored_filter(&self) -> StoredLogFilter {
+        StoredLogFilter {
+            text: self.filter.pattern.text.clone(),
+            regex: self.filter.pattern.regex,
+            enabled: self.enabled,
+            mode: match self.layer_slot {
+                Some(slot) => StoredLogFilterMode::Layer {
+                    color_slot: slot.index(),
+                },
+                None => StoredLogFilterMode::Refine,
+            },
+        }
+    }
 }
 
 /// The live filter or a chip's filter: the pattern, what it compiled to, and
@@ -446,7 +510,7 @@ mod tests {
     use proptest::{prelude::*, proptest};
 
     use super::*;
-    use crate::test_fixtures;
+    use crate::{filter::slots::LAYER_COLOR_SLOT_COUNT, test_fixtures};
 
     /// A filter can select a service, a phenomenon, or one line: two services
     /// write two lines each.
@@ -762,6 +826,80 @@ mod tests {
             [vec![0, 2], vec![3]]
         );
         assert_eq!(chip_ids(&stack), [gnss, critical]);
+    }
+
+    /// The stack an attachment stores and restores: every chip's text, mode,
+    /// enabled state and colour come back, and each chip scans the log again
+    /// for what it matches.
+    #[test]
+    fn a_stored_stack_restores_every_chip_with_what_it_matched() {
+        let (mut stack, mut slots) = unfiltered_stack();
+        let gnss = add_chip(&mut stack, &mut slots, "gnss");
+        let battery = add_chip(&mut stack, &mut slots, "battery");
+        stack.switch_chip_to_refine_mode(gnss, &mut slots);
+        stack.set_chip_enabled(battery, false);
+
+        let stored = stack.to_stored_filters();
+        assert_eq!(
+            stored,
+            [
+                StoredLogFilter {
+                    text: "gnss".to_owned(),
+                    regex: false,
+                    enabled: true,
+                    mode: StoredLogFilterMode::Refine,
+                },
+                StoredLogFilter {
+                    text: "battery".to_owned(),
+                    regex: false,
+                    enabled: false,
+                    mode: StoredLogFilterMode::Layer { color_slot: 1 },
+                },
+            ]
+        );
+
+        let log = Arc::new(test_fixtures::parsed_log_of_text(LOG));
+        let mut restored = FilterStack::from_stored_filters(log, &stored);
+        restored.wait_for_queries();
+
+        assert_eq!(restored.to_stored_filters(), stored);
+        assert_eq!(
+            visible(&restored),
+            [0, 2],
+            "the restored refine chip narrows the table as it did"
+        );
+        assert_eq!(
+            restored
+                .chips()
+                .iter()
+                .map(|chip| chip.matches().match_count())
+                .collect::<Vec<_>>(),
+            [2, 2],
+            "every restored chip scanned the log for its own matches"
+        );
+    }
+
+    /// A regex chip stays a regex chip, and a stored slot this build's palette
+    /// does not have still restores as a layer chip.
+    #[test]
+    fn a_stored_regex_chip_and_an_unknown_colour_slot_restore_as_they_were() {
+        let stored = [StoredLogFilter {
+            text: "^navsyncd".to_owned(),
+            regex: true,
+            enabled: true,
+            mode: StoredLogFilterMode::Layer {
+                color_slot: LAYER_COLOR_SLOT_COUNT + 3,
+            },
+        }];
+
+        let log = Arc::new(test_fixtures::parsed_log_of_text(LOG));
+        let mut restored = FilterStack::from_stored_filters(log, &stored);
+        restored.wait_for_queries();
+
+        let chip = restored.chips().first().expect("the chip was restored");
+        assert_eq!(chip.pattern(), &FilterPattern::regex("^navsyncd"));
+        assert_eq!(chip.mode(), FilterChipMode::Layer);
+        assert_eq!(chip.matches().match_count(), 2);
     }
 
     proptest! {

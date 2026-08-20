@@ -13,6 +13,7 @@ mod history_db;
 mod history_open;
 mod jamming;
 mod loader;
+mod log_association;
 mod log_viewer;
 mod mapbox_token;
 mod mapbox_token_test;
@@ -41,7 +42,7 @@ use std::{cell::RefCell, env, path::PathBuf, rc::Rc};
 use egui_tiles::{Container, Linear, LinearDir, Tile, TileId, Tiles, Tree};
 use gt_fetch::TransportSource;
 use gt_filter::GlobalFilter;
-use gt_loaded_files::LoadedFiles;
+use gt_loaded_files::{LoadedFileId, LoadedFiles};
 use gt_log_view::{LoadedLog, LoadedLogs};
 use gt_map::NavMap;
 use gt_plot::PlotState;
@@ -51,6 +52,8 @@ use gt_track_builder::SegmentationConfig;
 use gt_types::{AssociationConfig, LoadWarning, TrackRef};
 use gt_ui_types::{DisplayMask, MapHighlight, SkyGlyphVariant};
 use loader::{CompletedLoad, FinishedJob, LoadJobs, LoadOutcome};
+use log_viewer::LogViewerRequests;
+use log_viewer::association_dialog::LogAssociationDialog;
 use panes::MainPane;
 use recording_name_template::TemplatePreviewRecording;
 use settings_autosave::{AppSnapshot, SettingsAutosaver};
@@ -314,6 +317,15 @@ pub struct App {
     query_window: query::QueryWindow,
     /// The log viewer window, opened whenever a log finishes loading.
     log_viewer: log_viewer::LogViewerWindow,
+    /// What the log viewer requested while it drew, applied once the shared
+    /// state it drew from is no longer borrowed.
+    log_viewer_requests: LogViewerRequests,
+    /// The association dialog of the log it names, shown until the user
+    /// decides.
+    association_dialog: Option<LogAssociationDialog>,
+    /// Whether a loading log raises the association dialog. Off leaves a log
+    /// to associate by itself where exactly one loaded recording overlaps it.
+    ask_log_association_target: bool,
     /// The reference material window, opened from the settings page of the
     /// data source it describes.
     reference_window: reference_window::ReferenceWindow,
@@ -538,6 +550,9 @@ impl App {
             history_window: history::HistoryWindow::new(),
             query_window: query::QueryWindow::new(),
             log_viewer: log_viewer::LogViewerWindow::new(),
+            log_viewer_requests: LogViewerRequests::default(),
+            association_dialog: None,
+            ask_log_association_target: true,
             reference_window: reference_window::ReferenceWindow::new(),
             sky_trails_window: gt_map::SkyTrailsWindow::default(),
             toasts: egui_notify::Toasts::default(),
@@ -673,6 +688,7 @@ impl App {
                 .to_std()
                 .map_or(300, |d| d.as_secs()),
             log_association_window_s: self.assoc_config.log_association_window_s,
+            ask_log_association_target: self.ask_log_association_target,
             detect_gnss_fix_lost: self
                 .processing_config
                 .generated_markers
@@ -791,6 +807,7 @@ impl App {
                 // restores them into the session stores.
                 if let Some(db_ref) = history.db_ref() {
                     self.history.load_snap_runs(db_ref.clone());
+                    self.history.load_attached_logs(db_ref.clone());
                 }
                 for track in &file.tracks {
                     self.jamming.request_days_for(track.metadata.time_range);
@@ -830,32 +847,54 @@ impl App {
                         .info("Applied current marker settings to loaded data");
                 }
             }
-            Ok(LoadOutcome::Log { filename, parsed }) => {
+            Ok(LoadOutcome::Log {
+                filename,
+                parsed,
+                restored,
+            }) => {
                 let window = chrono::Duration::seconds(
                     i64::try_from(self.assoc_config.log_association_window_s).unwrap_or(i64::MAX),
                 );
                 let mut log = LoadedLog::new(filename, parsed, window);
-                {
-                    // Associating runs on the UI thread, as the spatial-index
-                    // rebuild after a recording load does: one binary search
-                    // per entry, spread over gt-logfile's workers.
-                    let shared = self.shared.borrow();
-                    let recordings = shared.loaded_files.view();
-                    // Anchoring without the user choosing is safe only where
-                    // there is nothing to choose between.
-                    let target = log
-                        .rank_association_candidates(&recordings)
-                        .unambiguous_target();
-                    log.associate_with(target, &recordings);
+                let mut restored_target = None;
+                let restored_from_history = restored.is_some();
+                if let Some(restore) = restored {
+                    restored_target = self.loaded_recording_id(&restore.attachment.recording);
+                    log.restore_attachment(restore.attachment, restore.filters);
                 }
+                // Associating runs on the UI thread, as the spatial-index
+                // rebuild after a recording load does: one binary search per
+                // entry, spread over gt-logfile's workers.
+                let shared = self.shared.borrow();
+                let recordings = shared.loaded_files.view();
+                let unambiguous = log
+                    .rank_association_candidates(&recordings)
+                    .unambiguous_target();
+                let ask = self.ask_log_association_target
+                    && !restored_from_history
+                    && !recordings.is_empty();
+                // Anchoring without the user choosing is safe only where there
+                // is nothing to choose between, and the dialog is that choice.
+                let target = if restored_from_history {
+                    restored_target
+                } else if ask {
+                    None
+                } else {
+                    unambiguous
+                };
+                log.associate_with(target, &recordings);
+                drop(shared);
                 log::info!(
                     "Loaded log {:?}: {} entries, {} of them associated",
                     log.name(),
                     log.parsed().entries().len(),
                     log.associated_entry_count()
                 );
-                self.logs.push(log);
+                let log_id = self.logs.push(log);
                 self.log_viewer.open_on_newly_loaded_log(&self.logs);
+                if ask {
+                    self.association_dialog = Some(LogAssociationDialog::new(log_id, unambiguous));
+                }
                 self.load_error = None;
                 self.loader.finishing_jobs.push(FinishedJob {
                     filename: completed.filename,
@@ -868,6 +907,17 @@ impl App {
                 self.load_error = Some(e);
             }
         }
+    }
+
+    /// The loaded recording stored as `recording`, or `None` once it has been
+    /// unloaded.
+    fn loaded_recording_id(&self, recording: &gt_store::DatabaseRef) -> Option<LoadedFileId> {
+        let shared = self.shared.borrow();
+        let recordings = shared.loaded_files.view();
+        recordings
+            .entries()
+            .find(|entry| entry.history().db_ref() == Some(recording))
+            .map(|entry| entry.id())
     }
 
     /// Bookkeeping after any structural change to `loaded_files` (removal,

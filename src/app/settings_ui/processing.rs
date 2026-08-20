@@ -3,6 +3,7 @@
 use egui::{DragValue, Grid};
 use egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE as ICON_ARROW_COUNTER_CLOCKWISE;
 use egui_phosphor::regular::ARROWS_IN_LINE_HORIZONTAL as ICON_ARROWS_IN_LINE_HORIZONTAL;
+use egui_phosphor::regular::CHAT_CIRCLE_TEXT as ICON_CHAT_CIRCLE_TEXT;
 use egui_phosphor::regular::CHECK as ICON_CHECK;
 use egui_phosphor::regular::CHECK_CIRCLE as ICON_CHECK_CIRCLE;
 use egui_phosphor::regular::LINK_BREAK as ICON_LINK_BREAK;
@@ -17,6 +18,8 @@ use crate::app::settings_ui::analysis::CLOCK_OFFSET_EXCURSION_LABEL;
 
 const TRACK_SPLIT_GAP_LABEL: &str = "Track split gap";
 const LOG_ASSOCIATION_WINDOW_LABEL: &str = "Log association window";
+pub(in crate::app) const ASK_LOG_ASSOCIATION_TARGET_LABEL: &str =
+    "Ask which recording a log belongs to";
 const GENERATED_MARKERS_LABEL: &str = "Generated markers";
 const GNSS_FIX_LOST_LABEL: &str = "GNSS fix lost";
 const GNSS_FIX_REGAINED_LABEL: &str = "GNSS fix regained";
@@ -28,6 +31,7 @@ const RESTORE_DEFAULTS_LABEL: &str = "Restore defaults";
 pub(super) const SEARCHABLE_LABELS: &[&str] = &[
     TRACK_SPLIT_GAP_LABEL,
     LOG_ASSOCIATION_WINDOW_LABEL,
+    ASK_LOG_ASSOCIATION_TARGET_LABEL,
     GENERATED_MARKERS_LABEL,
     GNSS_FIX_LOST_LABEL,
     GNSS_FIX_REGAINED_LABEL,
@@ -81,6 +85,19 @@ impl App {
                 });
                 self.assoc_config.log_association_window_s = window_s;
                 ui.end_row();
+
+                let ask_help =
+                    "Show the dialog choosing which of the loaded recordings a log takes its \
+                     positions from, and whether to store the log with that recording. With this \
+                     off a log only associates by itself when exactly one loaded recording \
+                     overlaps it.";
+                ui.label(format!(
+                    "{ICON_CHAT_CIRCLE_TEXT} {ASK_LOG_ASSOCIATION_TARGET_LABEL}"
+                ))
+                .on_hover_text(ask_help);
+                ui.checkbox(&mut self.ask_log_association_target, "")
+                    .on_hover_text(ask_help);
+                ui.end_row();
             });
 
         self.show_generated_marker_settings(ui);
@@ -101,6 +118,7 @@ impl App {
                 self.processing_config.track_layout.track_split_gap =
                     chrono::Duration::seconds(defaults.track_split_gap_seconds as i64);
                 self.assoc_config.log_association_window_s = defaults.log_association_window_s;
+                self.ask_log_association_target = defaults.ask_log_association_target;
                 self.processing_config
                     .generated_markers
                     .detect_gnss_fix_lost = defaults.detect_gnss_fix_lost;

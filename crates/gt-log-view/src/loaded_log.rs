@@ -4,6 +4,7 @@ use std::{fmt::Write as _, mem, sync::Arc};
 
 use chrono::Duration;
 use gt_fmt::MIDDLE_DOT;
+use gt_history_types::StoredLogFilter;
 use gt_loaded_files::{LoadedFileId, LoadedFilesView};
 use gt_logfile::ParsedLog;
 use gt_types::{Latitude, Longitude, TimeRange, mercator};
@@ -13,6 +14,7 @@ use gt_ui_types::{
 
 use crate::{
     association::AssociationCandidates,
+    attachment::{LogAttachmentRef, LogAttachmentState},
     filter::{EntryMatches, FilterStack, LayerColorSlots},
 };
 
@@ -35,6 +37,10 @@ pub struct LoadedLog {
     association: Association,
     filters: FilterStack,
     visible: bool,
+
+    /// Set while this log is stored with a recording in history. Unloading the
+    /// log leaves the attachment in place: only detaching removes it.
+    attachment: Option<LogAttachmentState>,
 }
 
 /// What a log is associated against, and what that association produced.
@@ -69,7 +75,61 @@ impl LoadedLog {
                 associated_entry_count: 0,
             },
             visible: true,
+            attachment: None,
         }
+    }
+
+    /// Puts back the filter stack this log was stored with, and points its
+    /// later filter edits at the attachment it came from.
+    ///
+    /// The restored layer chips take their palette slots when the log is
+    /// loaded with [`LoadedLogs::push`].
+    pub fn restore_attachment(
+        &mut self,
+        attachment: LogAttachmentRef,
+        stored_filters: Vec<StoredLogFilter>,
+    ) {
+        self.filters = FilterStack::from_stored_filters(Arc::clone(&self.parsed), &stored_filters);
+        self.record_attachment(attachment, stored_filters);
+    }
+
+    /// Notes that this log is now stored as `attachment`, holding
+    /// `stored_filters`.
+    pub fn record_attachment(
+        &mut self,
+        attachment: LogAttachmentRef,
+        stored_filters: Vec<StoredLogFilter>,
+    ) {
+        self.attachment = Some(LogAttachmentState {
+            reference: attachment,
+            stored_filters,
+        });
+    }
+
+    /// The attachment this log is stored as, `None` for one that lives only in
+    /// this session.
+    pub fn attachment(&self) -> Option<&LogAttachmentRef> {
+        self.attachment.as_ref().map(|state| &state.reference)
+    }
+
+    /// Drops the attachment, leaving the log loaded: what "Remove attachment"
+    /// does once the database has removed it.
+    pub fn forget_attachment(&mut self) {
+        self.attachment = None;
+    }
+
+    /// The filter-stack edits this log's attachment has yet to be written,
+    /// and `None` while the database holds the stack the user is looking at.
+    pub fn take_filter_stack_edits_to_store(
+        &mut self,
+    ) -> Option<(LogAttachmentRef, Vec<StoredLogFilter>)> {
+        let state = self.attachment.as_mut()?;
+        let filters = self.filters.to_stored_filters();
+        if filters == state.stored_filters {
+            return None;
+        }
+        state.stored_filters.clone_from(&filters);
+        Some((state.reference.clone(), filters))
     }
 
     pub fn name(&self) -> &str {
@@ -316,16 +376,30 @@ impl LoadedLogs {
     }
 
     /// Loads `log` under a fresh identity, taking a colour slot for each layer
-    /// chip it arrives with.
-    pub fn push(&mut self, mut log: LoadedLog) {
+    /// chip it arrives with, and returns the identity it took.
+    pub fn push(&mut self, mut log: LoadedLog) -> LoadedLogId {
         log.filters
             .take_layer_color_slots(&mut self.layer_color_slots);
-        self.logs.push(StoredLog {
-            id: self.next_id,
-            log,
-        });
+        let id = self.next_id;
+        self.logs.push(StoredLog { id, log });
         self.next_id = self.next_id.next();
         self.map_matches_stale = true;
+        id
+    }
+
+    pub fn get_by_id(&self, id: LoadedLogId) -> Option<&LoadedLog> {
+        self.logs
+            .iter()
+            .find(|stored| stored.id == id)
+            .map(|stored| &stored.log)
+    }
+
+    pub fn get_mut_by_id(&mut self, id: LoadedLogId) -> Option<&mut LoadedLog> {
+        self.map_matches_stale = true;
+        self.logs
+            .iter_mut()
+            .find(|stored| stored.id == id)
+            .map(|stored| &mut stored.log)
     }
 
     /// Unloads the log at `index`, freeing the colour slots its layer chips
@@ -404,6 +478,17 @@ impl LoadedLogs {
         LogMatches::from_layers(layers)
     }
 
+    /// The filter-stack edits the attached logs have yet to be written, one
+    /// entry per log whose stack the database no longer holds.
+    pub fn take_filter_stack_edits_to_store(
+        &mut self,
+    ) -> Vec<(LogAttachmentRef, Vec<StoredLogFilter>)> {
+        self.logs
+            .iter_mut()
+            .filter_map(|stored| stored.log.take_filter_stack_edits_to_store())
+            .collect()
+    }
+
     /// Associates every loaded log again, after the loaded recordings changed.
     pub fn reassociate_all(&mut self, recordings: &LoadedFilesView<'_>) {
         for stored in &mut self.logs {
@@ -425,6 +510,8 @@ fn name_from_first_anchored_entry(parsed: &ParsedLog) -> String {
 
 #[cfg(test)]
 mod tests {
+    use gt_history_types::{DatabaseRef, LogAttachmentId, StoredLogFilterMode};
+
     use crate::{
         LayerColorSlot,
         test_fixtures::{
@@ -433,6 +520,16 @@ mod tests {
     };
 
     use super::*;
+
+    fn attachment_ref() -> LogAttachmentRef {
+        LogAttachmentRef {
+            recording: DatabaseRef {
+                identity: "nav-devkit-mk2".to_owned(),
+                group_name: "2026-01-01T14-02-11".to_owned(),
+            },
+            id: LogAttachmentId::new_random(),
+        }
+    }
 
     /// Waits for every log's filter scans, as the viewer's per-frame polling
     /// does once they land.
@@ -804,6 +901,91 @@ mod tests {
             first_chip_slot(&logs, 1),
             Some(0),
             "the colour the unloaded log freed is the lowest one free again"
+        );
+    }
+
+    /// An attachment is written again only for the edits the database has not
+    /// seen, and the log stays loaded once the attachment is gone.
+    #[test]
+    fn an_attached_log_reports_the_filter_stack_edits_the_database_has_not_seen() {
+        let attachment = attachment_ref();
+        let mut logs = LoadedLogs::default();
+        let mut log = log_of(10);
+        log.record_attachment(attachment.clone(), Vec::new());
+        let id = logs.push(log);
+
+        assert!(
+            logs.take_filter_stack_edits_to_store().is_empty(),
+            "the database holds the stack the log was attached with"
+        );
+
+        add_layer_chip(&mut logs, 0, "entry 1");
+
+        let edits = logs.take_filter_stack_edits_to_store();
+        assert_eq!(
+            edits
+                .iter()
+                .map(|(attachment, filters)| (attachment.id, filters.as_slice()))
+                .collect::<Vec<_>>(),
+            [(
+                attachment.id,
+                [StoredLogFilter {
+                    text: "entry 1".to_owned(),
+                    regex: false,
+                    enabled: true,
+                    mode: StoredLogFilterMode::Layer { color_slot: 0 },
+                }]
+                .as_slice()
+            )],
+            "the added chip is what the attachment has yet to be written"
+        );
+        assert!(
+            logs.take_filter_stack_edits_to_store().is_empty(),
+            "an edit that was written is not written again"
+        );
+
+        if let Some(log) = logs.get_mut_by_id(id) {
+            log.forget_attachment();
+        }
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs.get_by_id(id).and_then(LoadedLog::attachment), None);
+    }
+
+    /// A log restored from an attachment comes back with its chips, drawing in
+    /// the colours it was stored with.
+    #[test]
+    fn a_restored_attachment_puts_back_the_stack_it_was_stored_with() {
+        let stored = vec![
+            StoredLogFilter {
+                text: "entry 1".to_owned(),
+                regex: false,
+                enabled: true,
+                mode: StoredLogFilterMode::Layer { color_slot: 2 },
+            },
+            StoredLogFilter {
+                text: "entry".to_owned(),
+                regex: false,
+                enabled: false,
+                mode: StoredLogFilterMode::Refine,
+            },
+        ];
+        let attachment = attachment_ref();
+        let mut logs = LoadedLogs::default();
+        let mut log = log_of(10);
+        log.restore_attachment(attachment.clone(), stored.clone());
+        let id = logs.push(log);
+        wait_for_scans(&mut logs);
+
+        let log = logs.get_by_id(id).expect("the restored log is loaded");
+        assert_eq!(log.attachment(), Some(&attachment));
+        assert_eq!(
+            log.filters().to_stored_filters(),
+            stored,
+            "the restored stack is the stored one, colours and all"
+        );
+        assert!(
+            logs.take_filter_stack_edits_to_store().is_empty(),
+            "a stack that came back as it was stored needs no write-back"
         );
     }
 

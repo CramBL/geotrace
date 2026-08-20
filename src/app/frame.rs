@@ -57,6 +57,8 @@ impl eframe::App for App {
         self.forward_legend_hover_to_map_highlight();
         self.show_track_data_panel(ui);
         self.show_central_area(ui);
+        self.apply_log_viewer_requests();
+        self.store_attached_log_filter_edits();
 
         let apply_resegment = self.show_settings_window(ui);
         if apply_resegment {
@@ -83,6 +85,7 @@ impl eframe::App for App {
         self.show_history_failure_prompt(ui);
         self.show_resegment_prompt(ui);
         self.show_auto_prune_prompt(ui);
+        self.show_log_association_dialog(ui);
 
         // Show the self-update prompt (if an in-place update was found and not
         // skipped). Package-manager/manual builds show the menu-bar badge instead.
@@ -674,6 +677,8 @@ impl App {
                     recording_names: &recording_names,
                     map_center_request,
                     log_hover,
+                    requests: &mut self.log_viewer_requests,
+                    dialog_open: self.association_dialog.is_some(),
                 },
             );
         });

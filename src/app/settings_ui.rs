@@ -5,7 +5,7 @@ mod geomagnetic_indices;
 mod interface;
 mod interference;
 mod persist;
-mod processing;
+pub(super) mod processing;
 pub(super) mod search;
 mod snap;
 mod solar_flares;

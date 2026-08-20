@@ -14,6 +14,14 @@ impl LayerColorSlot {
     pub fn index(self) -> usize {
         self.0
     }
+
+    /// The slot a stored filter stack drew in. An index past this build's
+    /// palette reads as its last slot, and stays a preference either way:
+    /// [`LayerColorSlots::allocate_preferring`] hands out a free slot when the
+    /// session already gave this one away.
+    pub(crate) fn from_stored_index(index: usize) -> Self {
+        Self(index.min(LAYER_COLOR_SLOT_COUNT.saturating_sub(1)))
+    }
 }
 
 /// The slots every loaded log's layer chips draw from: a colour means one
@@ -42,6 +50,23 @@ impl LayerColorSlots {
             *holders = holders.saturating_add(1);
         }
         LayerColorSlot(slot)
+    }
+
+    /// Hands out `preferred` while no chip holds it, so a log unloaded and
+    /// loaded again - or restored from an attachment - draws in the colours it
+    /// had. Falls back to [`allocate`](Self::allocate) when it is taken.
+    pub(crate) fn allocate_preferring(&mut self, preferred: LayerColorSlot) -> LayerColorSlot {
+        let free = self
+            .holders
+            .get(preferred.index())
+            .is_some_and(|holders| *holders == 0);
+        if !free {
+            return self.allocate();
+        }
+        if let Some(holders) = self.holders.get_mut(preferred.index()) {
+            *holders = holders.saturating_add(1);
+        }
+        preferred
     }
 
     pub(crate) fn release(&mut self, slot: LayerColorSlot) {
@@ -79,6 +104,21 @@ mod tests {
         assert_eq!(
             allocated(&mut slots, LAYER_COLOR_SLOT_COUNT),
             [0, 1, 2, 3, 4]
+        );
+    }
+
+    #[test]
+    fn a_preferred_slot_is_handed_out_while_it_is_free_and_skipped_once_it_is_taken() {
+        let mut slots = LayerColorSlots::default();
+
+        assert_eq!(
+            slots.allocate_preferring(LayerColorSlot(3)),
+            LayerColorSlot(3)
+        );
+        assert_eq!(
+            slots.allocate_preferring(LayerColorSlot(3)),
+            LayerColorSlot(0),
+            "a slot another chip holds falls back to the lowest free one"
         );
     }
 
