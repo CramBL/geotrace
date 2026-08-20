@@ -1,6 +1,7 @@
 use egui::TextEdit;
 use egui_phosphor::regular::ARROW_LINE_UP_LEFT as ICON_ARROW_LINE_UP_LEFT;
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
+use egui_phosphor::regular::CLOUD_LIGHTNING as ICON_CLOUD_LIGHTNING;
 use egui_phosphor::regular::DOTS_SIX as ICON_DOTS_SIX;
 use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use egui_phosphor::regular::PUSH_PIN as ICON_PUSH_PIN;
@@ -744,6 +745,33 @@ fn snapshot_app_with_file_loaded() {
     // Use per-test tolerance: this snapshot includes live map/plot rendering,
     // so allow tiny pixel-level variance across runs and platforms.
     harness.snapshot_with_tolerance("app_with_file_loaded", 2.5, 4);
+}
+
+/// The load warning as the user meets it: the toast the application raises
+/// for a recording the archives place a disturbance in, over a loaded
+/// recording.
+#[test]
+fn snapshot_space_weather_warning_toast() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        TestDroppedFile::bytes(GOLD_BYTES, "gold.gtd"),
+    );
+    harness.inner.run_steps(60);
+
+    harness
+        .state_mut()
+        .toasts
+        .warning(super::space_weather_warning::LOAD_WARNING);
+    // Two frames put the toast past its slide-in without reaching its expiry.
+    harness.inner.step();
+    harness.inner.step();
+
+    harness.snapshot_loose("space_weather_warning_toast");
 }
 
 /// The same loaded-file view under the light theme, so the side panel, chip row,
@@ -4432,9 +4460,71 @@ fn snapshot_app_plot_context_line_spans_the_archived_days() {
         }
     }
     harness.run_steps(5);
+    // The archived storm days raise the space weather warning, whose toast
+    // has its own snapshot.
+    harness.state_mut().toasts.dismiss_all_toasts();
+    harness.run_steps(2);
 
     let mut harness = gt_test_utils::TestHarness::from_harness(harness);
     harness.snapshot_loose("app_plot_context_line");
+}
+
+/// A geomagnetic day archived after the recording was loaded reaches it: the
+/// map's warning indicator appears and the load toast is raised once, however
+/// many frames follow.
+#[test]
+fn a_storm_day_archived_after_the_load_warns_on_the_map() {
+    let gtd_bytes = minimal_gtd_bytes();
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(gtd_bytes.as_slice(), "ride.gtd"),
+    );
+    harness.run_steps(2);
+    assert!(
+        harness.query_by_label(ICON_CLOUD_LIGHTNING).is_none(),
+        "no archived day overlaps the recording yet"
+    );
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path())
+        .open_geomagnetic_indices()
+        .expect("archive");
+    archive_kp_day(&store, base_time().date_naive());
+    let ctx = harness.ctx.clone();
+    harness.state_mut().geomagnetic_indices = crate::app::solar::GeomagneticIndexScheduler::new(
+        ctx,
+        Some(store),
+        gt_solar::DEFAULT_BASE_URL.to_owned(),
+        gt_fetch::TransportSource::Offline,
+    );
+    harness.run_steps(2);
+
+    assert!(
+        harness.query_by_label(ICON_CLOUD_LIGHTNING).is_some(),
+        "the archived storm day reached the loaded recording"
+    );
+    assert_eq!(
+        harness
+            .state()
+            .space_weather_warning
+            .lines()
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["Geomagnetic storm: Kp reached 5 (G1)"],
+        "the period the recording's fixes fall in is what it carries"
+    );
+    assert_eq!(harness.state().toasts.len(), 1);
+
+    harness.run_steps(2);
+    assert_eq!(
+        harness.state().toasts.len(),
+        1,
+        "a later frame does not raise the toast again"
+    );
 }
 
 /// The flares of the May 2024 storm, as the fetch worker archives a day:
@@ -4504,6 +4594,10 @@ fn harness_with_archived_flares<'a>(
         gt_fetch::TransportSource::Offline,
     );
     harness.run_steps(5);
+    // The archived flares raise the space weather warning, whose toast has
+    // its own snapshot.
+    harness.state_mut().toasts.dismiss_all_toasts();
+    harness.run_steps(2);
     (harness, dir)
 }
 

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use egui_kittest::kittest::Queryable as _;
+use egui_phosphor::regular::CLOUD_LIGHTNING as ICON_CLOUD_LIGHTNING;
 
 use super::*;
 use gt_types::mercator::MercPoint;
@@ -427,6 +428,51 @@ fn snapshot_jamming_overlay(
         }
     }
     harness.snapshot_loose(name);
+}
+
+/// The warning indicator in the map's top-right corner, with the pointer on
+/// it so the snapshot pins both its place and every line it lists. No map
+/// tiles render: the map is built with [`TileAccess::Offline`].
+#[test]
+fn snapshot_space_weather_warning() {
+    let files = vec![make_snapshot_file()];
+    let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
+    let warning = [
+        "Geomagnetic storm: Hp30 reached 7.667 (G3)".to_owned(),
+        "Aircraft interference: up to 34.2 % of aircraft in a crossed cell".to_owned(),
+        "Solar flare: X5.8 at 2024-05-11 02:01 UTC, receiver on the sunlit side".to_owned(),
+        "TEC over the recording: 12 to 175 TECU".to_owned(),
+    ];
+
+    let mut harness = crate::test_harness::builder()
+        .size(egui::vec2(800.0, 600.0))
+        .ui_state(
+            move |ui, map: &mut Option<NavMap>| {
+                let map =
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                let mut state = DrawState::default();
+                map.draw(
+                    ui,
+                    MapDrawContext {
+                        space_weather_warning: &warning,
+                        ..state.context(&files, &visibility)
+                    },
+                );
+            },
+            None,
+        );
+
+    // The first frame zooms to fit the file. The rest settle animations.
+    for _ in 0..5 {
+        harness.run();
+    }
+    let glyph = harness.inner.get_by_label(ICON_CLOUD_LIGHTNING).rect();
+    harness.inner.hover_at(glyph.center());
+    // Tooltips appear after egui's hover delay.
+    for _ in 0..60 {
+        harness.run();
+    }
+    harness.snapshot_loose("space_weather_warning");
 }
 
 /// Zoom at which the whole world fits the snapshot canvas: the world spans

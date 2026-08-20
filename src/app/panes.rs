@@ -57,6 +57,9 @@ pub(super) struct MainBehavior<'a> {
     pub(super) context_lines: &'a gt_ui_types::ContextLines,
     /// The flares of the archived days in that span.
     pub(super) solar_flares: &'a [gt_flare::MarkedFlare],
+    /// The map warning indicator's lines, from
+    /// [`SpaceWeatherWarning`](crate::app::space_weather_warning::SpaceWeatherWarning).
+    pub(super) space_weather_warning: &'a [String],
 }
 
 impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
@@ -85,6 +88,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                         log_matches: self.log_matches,
                         log_hover: &mut s.log_hover,
                         empty_reason: self.jamming_empty,
+                        space_weather_warning: self.space_weather_warning,
                         filter: &s.filter,
                         visibility: s.tree.visibility(),
                         event_marker_visibility: s.tree.event_marker_visibility(),

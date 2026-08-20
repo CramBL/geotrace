@@ -250,6 +250,42 @@ impl SolarFlareScheduler {
         )
     }
 
+    /// The UTC days a flare peaking inside `range` can be archived under,
+    /// oldest first.
+    ///
+    /// The catalog files a flare under the day it began, so a flare peaking
+    /// just after midnight belongs to the day before its peak.
+    pub fn archived_days_for(&self, range: TimeRange) -> Vec<NaiveDate> {
+        let first = range
+            .start
+            .date_naive()
+            .pred_opt()
+            .unwrap_or(NaiveDate::MIN);
+        self.archived_days
+            .range(first..=range.end.date_naive())
+            .copied()
+            .collect()
+    }
+
+    /// The archived flares peaking inside `range`, each with the side of
+    /// Earth the receiver was on at that peak.
+    pub fn flares_peaking_in(
+        &self,
+        range: TimeRange,
+        positions: &FixPositionTimeline,
+    ) -> Vec<MarkedFlare> {
+        let Some(store) = self.store.as_deref() else {
+            return Vec::new();
+        };
+        self.archived_days_for(range)
+            .into_iter()
+            .filter_map(|day| read_archived_flares(store, day))
+            .flatten()
+            .filter(|flare| (range.start..=range.end).contains(&flare.peak))
+            .map(|flare| mark_with_receiver_side(flare, positions))
+            .collect()
+    }
+
     /// The archive to fetch into, or [`None`] when nothing may be requested.
     fn fetchable_archive(&self) -> Option<Arc<FlareStore>> {
         self.api_key.as_ref()?;
@@ -983,6 +1019,55 @@ mod tests {
                 .map(|marked| marked.flare.classification.to_string())
                 .collect::<Vec<_>>(),
             ["X2.2", "X5.8"]
+        );
+    }
+
+    /// A flare peaking outside the recording is not evidence about it, and
+    /// one peaking inside it is read at the receiver's position.
+    #[test]
+    fn only_the_flares_peaking_over_the_recording_are_read() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived = day(2024, 5, 9);
+        archive_one_flare(&store, archived, "X2.2");
+        scheduler.archived_days.insert(archived);
+        let positions = timeline_at(Latitude::new(55.0), Longitude::new(12.0));
+
+        let peaking = scheduler.flares_peaking_in(
+            TimeRange::new(at(2024, 5, 9, 9), at(2024, 5, 9, 10)),
+            &positions,
+        );
+        assert_eq!(
+            peaking
+                .iter()
+                .map(|marked| marked.receiver_side)
+                .collect::<Vec<_>>(),
+            [Some(SunlitSide::Sunlit)],
+            "the 09:13 peak falls inside the range"
+        );
+
+        assert!(
+            scheduler
+                .flares_peaking_in(
+                    TimeRange::new(at(2024, 5, 9, 10), at(2024, 5, 9, 12)),
+                    &positions,
+                )
+                .is_empty()
+        );
+    }
+
+    /// The catalog files a flare under the day it began, so the day before a
+    /// range is read too: a flare that began before midnight can peak inside
+    /// it.
+    #[test]
+    fn the_day_before_the_range_is_read_for_a_flare_that_crossed_midnight() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        for archived in [day(2024, 5, 9), day(2024, 5, 10)] {
+            scheduler.archived_days.insert(archived);
+        }
+
+        assert_eq!(
+            scheduler.archived_days_for(TimeRange::new(at(2024, 5, 10, 0), at(2024, 5, 10, 6))),
+            [day(2024, 5, 9), day(2024, 5, 10)]
         );
     }
 

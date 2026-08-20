@@ -15,8 +15,11 @@ use gt_map::MapLayer;
 use gt_query_run::RunInputs;
 use gt_side_panel::{PanelContext, SnapCostingTarget, SnapPanelView, show_side_panel};
 use gt_track_builder::SegmentationConfig;
-use gt_types::{DataCategory, FileIdx, LoadedFile, TrackRef};
-use gt_ui_types::{ContextLines, HighlightScope, MapHighlight};
+use gt_types::{DataCategory, FileIdx, LoadedFile, TrackIdx, TrackRef};
+use gt_ui_types::{
+    ArcIdentity, ContextLines, GeomagneticSeries, HighlightScope, JammingSeries, MapHighlight,
+    TecSeries,
+};
 
 use super::context_line::ContextSpan;
 use super::fix_positions::FixPositionTimeline;
@@ -32,6 +35,7 @@ use super::modals::{
 };
 use super::panes::MainBehavior;
 use super::snap_state::PendingSnapRequest;
+use super::space_weather_warning::{self, RecordingSeries, RecordingUnderAssessment};
 #[cfg(feature = "self-update")]
 use super::update;
 use super::{App, SharedAppState, jamming, modals};
@@ -510,6 +514,50 @@ impl App {
         }
     }
 
+    /// Assess every loaded recording against the archived environment values,
+    /// and toast the ones a disturbance reaches for the first time.
+    ///
+    /// Runs every frame: a fetch worker archiving a day replaces the series it
+    /// reaches, which is what warns about a recording loaded before its days
+    /// arrived.
+    fn assess_space_weather(
+        &mut self,
+        jamming: &JammingSeries,
+        geomagnetic: &GeomagneticSeries,
+        tec: &TecSeries,
+        positions: &Arc<FixPositionTimeline>,
+    ) {
+        let newly_warned = {
+            let shared = self.shared.borrow();
+            let recordings: Vec<RecordingUnderAssessment<'_>> = shared
+                .loaded_files
+                .view()
+                .entries()
+                .enumerate()
+                .map(|(index, entry)| {
+                    let file = entry.file();
+                    let span = file.metadata.time_range;
+                    let fi = FileIdx::new(index);
+                    let tracks =
+                        (0..file.tracks.len()).map(move |ti| TrackRef::new(fi, TrackIdx::new(ti)));
+                    RecordingUnderAssessment {
+                        id: entry.id(),
+                        span,
+                        series: RecordingSeries::of(tracks, jamming, geomagnetic, tec),
+                        archived_flare_days: self.solar_flares.archived_days_for(span),
+                        positions: ArcIdentity::of(positions),
+                    }
+                })
+                .collect();
+            self.space_weather_warning.reassess(&recordings, |span| {
+                self.solar_flares.flares_peaking_in(span, positions)
+            })
+        };
+        for _ in 0..newly_warned {
+            self.toasts.warning(space_weather_warning::LOAD_WARNING);
+        }
+    }
+
     fn show_central_area(&mut self, ui: &mut egui::Ui) {
         // Assembled after the panel so a visibility toggle takes effect in
         // the same frame's map render.
@@ -537,6 +585,12 @@ impl App {
         let solar_flares = context_span
             .map(|span| self.solar_flares.markers(span, &fix_positions))
             .unwrap_or_default();
+        self.assess_space_weather(
+            &jamming_series,
+            &geomagnetic_series,
+            &tec_series,
+            &fix_positions,
+        );
 
         CentralPanel::default().show(ui, |ui| {
             let panel_rect = ui.max_rect();
@@ -575,6 +629,7 @@ impl App {
                     empty_reason: tec_empty,
                 } = self.tec_maps.overlay_layer();
                 let log_matches = self.logs.map_matches();
+                let space_weather_warning = self.space_weather_warning.lines();
                 let mut behavior = MainBehavior {
                     map,
                     state: &mut s,
@@ -591,6 +646,7 @@ impl App {
                     tec_series: &tec_series,
                     context_lines: &context_lines,
                     solar_flares: &solar_flares,
+                    space_weather_warning,
                     jamming_dataset,
                     jamming_day,
                     jamming_empty,

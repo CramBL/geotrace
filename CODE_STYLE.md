@@ -274,6 +274,7 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 | **log match** | An entry a log filter selected, drawn on the map as a hexagon in that filter's colour. Not "match" - that is a query match. | `LogMatch`, `LogMatches`, `DisplayCategory::LogMatches` |
 | **association target** | The one recording a log takes its positions from, always chosen explicitly. Not "linked file" or "parent". | `association_target`, `associate_with` |
 | **association window** | How far an entry's timestamp may be from a fix for the entry to take that position. Not "tolerance" or "threshold". | `association_window`, `AssociationWindowUnit` |
+| **space weather warning** | The finding that an archived environment value overlapping a loaded recording reaches a level that can disturb reception. Raised by aircraft interference, geomagnetic activity and solar flares. TEC is listed as context and never raises it. Not "alert" or "space weather event". | `SpaceWeatherWarning`, `DisturbanceEvidence`, `app::space_weather_warning` |
 | **attachment** | A log stored with a recording in the history database, restored when that recording is opened again. Not "saved log" or "bound log". | `LogAttachmentRef`, `AttachedLog`, `Store::logs_path` |
 
 Terms to avoid and their replacements:
