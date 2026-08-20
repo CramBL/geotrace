@@ -188,8 +188,7 @@ const SOURCES: &[Source] = &[
         citation_key: "swsc-bursts",
         name: "Solar radio bursts impact on the IGS network during Solar Cycle 24, J. Space \
                Weather Space Clim. 2024",
-        url: "https://www.swsc-journal.org/articles/swsc/full_html/2024/01/swsc240021/swsc240021.\
-              html",
+        url: "https://www.swsc-journal.org/articles/swsc/full_html/2024/01/swsc240021/swsc240021.html",
     },
     Source {
         citation_key: "cerruti",
