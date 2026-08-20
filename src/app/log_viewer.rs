@@ -26,8 +26,9 @@ use strum::IntoEnumIterator as _;
 use association_window::AssociationWindowUnit;
 use line_table::LineTableRequests;
 
-/// What the window says while no log is loaded.
-const EMPTY_STATE_HINT: &str = "Open a log file or drop it here";
+/// The three ways a log gets in, shown by the viewer's empty state and by the
+/// drag-and-drop overlay alike.
+pub(super) const LOG_LOAD_HINT: &str = "Open a log file, drop it here, or paste log text (Ctrl+V)";
 
 /// How the viewer writes a moment, in the table and in the summary panel alike.
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
@@ -177,7 +178,7 @@ impl LogViewerWindow {
             .show(ctx, |ui| {
                 self.notices_ui(ui);
                 if logs.is_empty() {
-                    ui.label(RichText::new(EMPTY_STATE_HINT).weak());
+                    ui.label(RichText::new(LOG_LOAD_HINT).weak());
                     return;
                 }
                 unload_selected = self.selector_row_ui(ui, logs);

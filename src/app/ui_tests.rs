@@ -424,20 +424,25 @@ fn query_match_header_hover_highlights_the_match() {
     );
 }
 
+/// Anything that is not a recording is read as a log, so binary junk fails as
+/// one: nothing in it carries a timestamp.
 #[test]
-fn drag_drop_unknown_bytes_sets_error() {
+fn drag_drop_binary_junk_reports_that_no_line_is_timestamped() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
-    // \xff is not valid UTF-8 and doesn't match the HDF5 magic, so the error
-    // is detected synchronously without spawning a background thread.
     drop_file_and_wait_for_load(
         &mut harness,
         TestDroppedFile::bytes(b"\xff\xfe\x00binary_junk".as_slice(), "mystery.bin"),
     );
 
-    assert!(harness.state().load_error.is_some());
+    let error = harness.state().load_error.clone().unwrap_or_default();
+    assert!(
+        error.starts_with("No recognised timestamp format"),
+        "got {error:?}"
+    );
     assert_eq!(harness.state().shared.borrow().loaded_files.len(), 0);
+    assert_eq!(harness.state().logs.len(), 0);
 }
 
 #[test]
@@ -4796,6 +4801,157 @@ fn a_log_that_finished_loading_opens_the_viewer_on_its_parse_summary() {
         "the summary names the detected format, got {summary:?}"
     );
     harness.get_by_label(summary.as_str());
+}
+
+/// A drag over the app covers it with the hint the empty viewer shows.
+#[test]
+fn a_drag_over_the_app_shows_the_hint_naming_every_way_a_log_gets_in() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    assert!(
+        harness.query_by_label(log_viewer::LOG_LOAD_HINT).is_none(),
+        "nothing is being dragged yet"
+    );
+
+    harness
+        .input_mut()
+        .hovered_files
+        .push(egui::HoveredFile::default());
+    harness.step();
+
+    harness.get_by_label(log_viewer::LOG_LOAD_HINT);
+}
+
+/// A log line whose timestamp the pasted-log name is taken from.
+const PASTED_LOG: &str = "2026-01-01 14:02:11 navsyncd: uploaded 2 recordings\n";
+
+/// Pastes `text` as Ctrl+V does, and runs until the load it started has
+/// finished.
+fn paste_and_wait_for_load(harness: &mut Harness<App>, text: &str) {
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Paste(text.to_owned()));
+    harness.step();
+    assert!(
+        harness.step_until(|harness| harness.state().loader.loading_jobs.is_empty()),
+        "the background load did not finish"
+    );
+}
+
+/// Ctrl+V with nothing focused loads the clipboard text as a log, named after
+/// the first entry it anchored.
+#[test]
+fn pasting_log_text_loads_it_named_after_its_first_entry() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+
+    paste_and_wait_for_load(&mut harness, PASTED_LOG);
+    harness.run_steps(3);
+
+    assert_eq!(harness.state().logs.len(), 1);
+    assert_eq!(
+        harness
+            .state()
+            .logs
+            .get(0)
+            .map(gt_log_view::LoadedLog::name),
+        Some("pasted 14:02:11")
+    );
+    assert!(harness.state().log_viewer.open);
+}
+
+/// A paste while a text field holds focus belongs to that field, and loads
+/// nothing.
+#[test]
+fn pasting_into_a_focused_field_reaches_the_field_and_loads_no_log() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    harness.state_mut().query_window.open = true;
+    harness.run_steps(2);
+    focus_query_editor_at_end(&harness, "");
+    harness.run_steps(2);
+
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Paste(PASTED_LOG.to_owned()));
+    harness.run_steps(3);
+
+    assert_eq!(harness.state().logs.len(), 0);
+    assert!(
+        harness.state().query_window.text().contains("navsyncd"),
+        "the paste reached the editor, got {:?}",
+        harness.state().query_window.text()
+    );
+}
+
+/// An empty clipboard has no log in it.
+#[test]
+fn pasting_empty_text_loads_no_log() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Paste(String::new()));
+    harness.run_steps(3);
+
+    assert_eq!(harness.state().logs.len(), 0);
+    assert!(harness.state().loader.loading_jobs.is_empty());
+}
+
+/// A log carrying a byte that is not UTF-8 loads, and its summary states what
+/// reading it as text cost.
+#[test]
+fn dropping_a_log_that_is_not_utf8_states_the_replacement_in_its_summary() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(
+            b"2026-01-01 14:02:11 navsyncd: caf\xe9 open\n".as_slice(),
+            "navsyncd.log",
+        ),
+    );
+    harness.run_steps(3);
+
+    assert_eq!(harness.state().logs.len(), 1);
+    let summary = parse_summary_of_the_shown_log(&harness);
+    assert!(
+        summary.ends_with("1 byte replaced"),
+        "the summary states the lossy decode, got {summary:?}"
+    );
+    harness.get_by_label(summary.as_str());
+}
+
+/// With no recording loaded a log is still fully readable: nothing asks which
+/// recording it belongs to, and it puts nothing on the map.
+#[test]
+fn a_log_loaded_without_a_recording_stays_untargeted_and_raises_no_dialog() {
+    let mut harness = app_with_a_log_loaded();
+
+    assert!(harness.state().association_dialog.is_none());
+    assert_eq!(
+        harness
+            .state()
+            .logs
+            .get(0)
+            .and_then(gt_log_view::LoadedLog::association_target),
+        None
+    );
+    assert!(harness.state_mut().logs.map_matches().is_empty());
+    harness.get_by_label(parse_summary_of_the_shown_log(&harness).as_str());
 }
 
 #[test]

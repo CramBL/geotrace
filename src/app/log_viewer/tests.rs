@@ -239,6 +239,31 @@ fn the_summary_panel_lists_the_line_an_unexplained_backwards_step_lands_on() {
         "the summary panel starts folded away"
     );
 
+    unfold_the_summary_panel(&mut harness);
+
+    harness.get_by_label("Order anomalies");
+    harness.get_by_label("Line 6");
+    harness.get_by_label("steps back 4m");
+}
+
+/// A log no exporter wrote a summary block for has no service table to show:
+/// the panel is the figures the parse derived.
+#[test]
+fn the_summary_panel_of_a_log_without_an_exporter_block_shows_the_derived_figures_alone() {
+    let mut harness = harness_with(Vec::new());
+
+    unfold_the_summary_panel(&mut harness);
+
+    harness.get_by_label("Format");
+    harness.get_by_label("Boots");
+    assert!(
+        harness.query_by_label("Service summary").is_none(),
+        "nothing in this log states a service table"
+    );
+}
+
+/// Clicks the parse summary, which unfolds the panel beneath it.
+fn unfold_the_summary_panel(harness: &mut Harness<ViewerState>) {
     let summary = harness
         .state()
         .shown_log()
@@ -246,10 +271,6 @@ fn the_summary_panel_lists_the_line_an_unexplained_backwards_step_lands_on() {
         .unwrap_or_default();
     harness.get_by_label(summary.as_str()).click();
     harness.run_steps(3);
-
-    harness.get_by_label("Order anomalies");
-    harness.get_by_label("Line 6");
-    harness.get_by_label("steps back 4m");
 }
 
 #[test]
@@ -497,7 +518,7 @@ fn unloading_the_shown_log_leaves_the_viewer_on_its_empty_state() {
     harness.run_steps(3);
 
     assert_eq!(harness.state().logs.len(), 0);
-    harness.get_by_label(super::EMPTY_STATE_HINT);
+    harness.get_by_label(super::LOG_LOAD_HINT);
 }
 
 /// Runs until every scan the shown log's filters started has landed: they run

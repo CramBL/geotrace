@@ -13,6 +13,7 @@ use crate::{
     session::{self, BootSession, OrderAnomaly},
     structure::{StructuralExtent, StructuralLine, StructuralLineKind},
     summary::{self, EntryCountMismatch, SummaryBlock},
+    text::LogText,
 };
 
 /// Non-empty lines the format detector reads before giving up on the log.
@@ -102,6 +103,7 @@ pub struct ParsedLog {
     format: LogFormat,
     anchored_entry_count: usize,
     unindexable_line_count: usize,
+    replaced_byte_count: usize,
 }
 
 impl ParsedLog {
@@ -167,6 +169,11 @@ impl ParsedLog {
         self.unindexable_line_count
     }
 
+    /// Bytes [`LogText::decode_lossy`] replaced to read this log as UTF-8.
+    pub fn replaced_byte_count(&self) -> usize {
+        self.replaced_byte_count
+    }
+
     pub fn message(&self, entry: &LogEntry) -> &str {
         entry.message.in_text(&self.text)
     }
@@ -210,15 +217,16 @@ pub enum LogParseError {
 /// is either a structural line of a recognized exporter idiom or an entry
 /// timestamped from its anchored neighbours. Only a line the index cannot
 /// address is dropped.
-pub fn parse_log(text: Arc<str>, now: DateTime<Utc>) -> Result<ParsedLog, LogParseError> {
+pub fn parse_log(text: LogText, now: DateTime<Utc>) -> Result<ParsedLog, LogParseError> {
     parse_log_in_chunks_of(text, now, CHUNK_TARGET_BYTES)
 }
 
 fn parse_log_in_chunks_of(
-    text: Arc<str>,
+    text: LogText,
     now: DateTime<Utc>,
     chunk_target_bytes: NonZeroUsize,
 ) -> Result<ParsedLog, LogParseError> {
+    let (text, replaced_byte_count) = text.into_parts();
     let format = detect_head_format(&text)?;
     let mut index = index_lines_in_file_order(&text, format, now, chunk_target_bytes);
     let summary_block = index.take_trailing_summary_block(&text);
@@ -250,6 +258,7 @@ fn parse_log_in_chunks_of(
         format,
         anchored_entry_count,
         unindexable_line_count: index.unindexable_line_count,
+        replaced_byte_count,
     })
 }
 
@@ -593,7 +602,7 @@ mod tests {
     }
 
     fn parse(text: &str) -> ParsedLog {
-        parse_log(Arc::from(text), now()).expect("parses")
+        parse_log(text.into(), now()).expect("parses")
     }
 
     fn messages(parsed: &ParsedLog) -> Vec<&str> {
@@ -661,7 +670,7 @@ mod tests {
     #[test]
     fn a_log_without_any_recognised_timestamp_names_its_first_line() {
         let error =
-            parse_log(Arc::from("nothing here\nnor here\n"), now()).expect_err("fails to parse");
+            parse_log("nothing here\nnor here\n".into(), now()).expect_err("fails to parse");
         assert_eq!(
             error.to_string(),
             "No recognised timestamp format (first line: \"nothing here\")"
@@ -671,7 +680,7 @@ mod tests {
     #[test]
     fn a_very_long_first_line_is_quoted_up_to_an_excerpt() {
         let text = "x".repeat(ERROR_LINE_EXCERPT_CHARS.get() + 50);
-        let error = parse_log(Arc::from(text.as_str()), now()).expect_err("fails to parse");
+        let error = parse_log(text.as_str().into(), now()).expect_err("fails to parse");
         assert_eq!(
             error,
             LogParseError::NoRecognisedFormat {
@@ -688,7 +697,7 @@ mod tests {
     #[case::no_bytes("")]
     #[case::only_blank_lines("\n\n   \n")]
     fn a_log_without_any_line_is_empty(#[case] text: &str) {
-        assert_eq!(parse_log(Arc::from(text), now()), Err(LogParseError::Empty));
+        assert_eq!(parse_log(text.into(), now()), Err(LogParseError::Empty));
     }
 
     /// The three kinds a non-empty line can be read as, in one log.
@@ -756,7 +765,7 @@ mod tests {
 
         let past_head = "banner\n".repeat(FORMAT_DETECTION_LINE_LIMIT) + "2026-01-01 00:00:00 body";
         assert_eq!(
-            parse_log(Arc::from(past_head.as_str()), now()),
+            parse_log(past_head.as_str().into(), now()),
             Err(LogParseError::NoRecognisedFormat {
                 first_line: "banner".to_owned(),
             })
@@ -817,7 +826,7 @@ mod tests {
     #[test]
     fn a_year_less_format_resolves_against_now() {
         let parsed = parse_log(
-            Arc::from("Dec 31 23:59:59 rollover\n"),
+            "Dec 31 23:59:59 rollover\n".into(),
             utc(2026, 1, 1, 0, 0, 0),
         )
         .expect("parses");
@@ -1050,9 +1059,8 @@ mod tests {
     #[test]
     fn a_log_whose_only_anchor_the_summary_block_swallowed_fails_to_load() {
         let error = parse_log(
-            Arc::from(
-                "kernel output\n----------- Journal summary -----------\n2026-01-01 00:00:00 a\n",
-            ),
+            "kernel output\n----------- Journal summary -----------\n2026-01-01 00:00:00 a\n"
+                .into(),
             now(),
         )
         .expect_err("fails to parse");
@@ -1081,11 +1089,11 @@ mod tests {
         );
 
         let one_chunk = parse_log_in_chunks_of(
-            Arc::from(text.as_str()),
+            text.as_str().into(),
             now(),
             chunk_bytes(text.len().saturating_add(1)),
         );
-        let chunked = parse_log_in_chunks_of(Arc::from(text.as_str()), now(), chunk_target_bytes);
+        let chunked = parse_log_in_chunks_of(text.as_str().into(), now(), chunk_target_bytes);
         assert_eq!(one_chunk, chunked);
 
         assert!(
@@ -1132,7 +1140,7 @@ mod tests {
             lines in prop::collection::vec(any_line(), 0..20),
         ) {
             let text = lines.join("\n");
-            let Ok(parsed) = parse_log(Arc::from(text.as_str()), now()) else {
+            let Ok(parsed) = parse_log(text.as_str().into(), now()) else {
                 return Ok(());
             };
 
@@ -1153,7 +1161,7 @@ mod tests {
             lines in prop::collection::vec(any_line(), 0..20),
         ) {
             let text = lines.join("\n");
-            let Ok(parsed) = parse_log(Arc::from(text.as_str()), now()) else {
+            let Ok(parsed) = parse_log(text.as_str().into(), now()) else {
                 return Ok(());
             };
 
@@ -1187,12 +1195,12 @@ mod tests {
         ) {
             let text = lines.join("\n");
             let one_chunk = parse_log_in_chunks_of(
-                Arc::from(text.as_str()),
+                text.as_str().into(),
                 now(),
                 chunk_bytes(text.len().saturating_add(1)),
             );
             let chunked = parse_log_in_chunks_of(
-                Arc::from(text.as_str()),
+                text.as_str().into(),
                 now(),
                 chunk_bytes(chunk_target_bytes),
             );

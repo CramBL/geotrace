@@ -149,12 +149,13 @@ impl LoadedLog {
 
     /// The one-line parse summary the viewer shows beside the log's name:
     /// detected format, entry count with the interpolated portion, boot count,
-    /// and how many entries took no position.
+    /// how many entries took no position, and what a lossy decode cost.
     pub fn parse_summary_line(&self) -> String {
         let entries = self.parsed.entries().len();
         let interpolated = self.parsed.interpolated_entry_count();
         let boots = self.parsed.boot_sessions().len();
         let unassociated = self.unassociated_entry_count();
+        let replaced_bytes = self.parsed.replaced_byte_count();
 
         let mut summary = format!(
             "{} {MIDDLE_DOT} {} {}",
@@ -178,6 +179,15 @@ impl LoadedLog {
             gt_fmt::format_count(unassociated),
         )
         .ok();
+        if replaced_bytes > 0 {
+            write!(
+                summary,
+                " {MIDDLE_DOT} {} {} replaced",
+                gt_fmt::format_count(replaced_bytes),
+                gt_fmt::pluralize(replaced_bytes, "byte", "bytes"),
+            )
+            .ok();
+        }
         summary
     }
 

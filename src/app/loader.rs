@@ -11,7 +11,7 @@ use chrono::Utc;
 use egui::Context;
 use gt_loaded_files::FileHistory;
 use gt_log_view::LogAttachmentRef;
-use gt_logfile::ParsedLog;
+use gt_logfile::{LogText, ParsedLog};
 use gt_plot::{AnalysisConfig, PreparedSeries};
 use gt_store::{AttachedLog, StoredLogFilter};
 use gt_types::LoadedFile;
@@ -450,8 +450,8 @@ impl LoadJobs {
             .spawn(move || {
                 let report = progress_reporter(id, tx.clone(), ctx.clone());
                 report(0.20, STAGE_READING);
-                let text = match fs::read_to_string(&path) {
-                    Ok(text) => text,
+                let bytes = match fs::read(&path) {
+                    Ok(bytes) => bytes,
                     Err(e) => {
                         tx.send(LoadMessage::Completed {
                             id,
@@ -462,18 +462,36 @@ impl LoadJobs {
                         return;
                     }
                 };
-                finish_log_load(id, Some(filename), Arc::from(text), None, &tx, &ctx, report);
+                let text = LogText::decode_lossy(&bytes);
+                finish_log_load(id, Some(filename), text, None, &tx, &ctx, report);
             })
             .expect("failed to spawn log-path loader thread");
     }
 
-    /// Loads log text received as bytes from a drop or a paste. `filename` is
-    /// `None` when the text carried no name.
+    /// Loads the bytes of a dropped log, which need not be valid UTF-8.
+    /// `filename` is `None` when the drop carried no name.
+    pub fn spawn_log_bytes(&mut self, bytes: Arc<[u8]>, filename: Option<String>) {
+        self.spawn_log_load(filename, move || LogText::decode_lossy(&bytes));
+    }
+
+    /// Loads pasted log text. Pasted text has no name of its own, so the log
+    /// takes its name from its first entry.
+    pub fn spawn_pasted_log_text(&mut self, text: String) {
+        log::info!("Loading {} bytes of pasted log text", text.len());
+        self.spawn_log_load(None, move || LogText::from(text));
+    }
+
+    /// Runs `decode` on a loader thread and parses what it yields, under a job
+    /// named after `filename`.
     #[expect(
         clippy::expect_used,
         reason = "thread spawn can only fail under extreme system resource exhaustion"
     )]
-    pub fn spawn_log_text(&mut self, text: String, filename: Option<String>) {
+    fn spawn_log_load(
+        &mut self,
+        filename: Option<String>,
+        decode: impl FnOnce() -> LogText + Send + 'static,
+    ) {
         let id = self.alloc_id();
         let job_name = filename.clone().unwrap_or_else(|| "log text".to_owned());
         self.loading_jobs.push(LoadingJob {
@@ -485,11 +503,12 @@ impl LoadJobs {
         });
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
-        let text: Arc<str> = Arc::from(text);
         thread::Builder::new()
             .name(format!("load-log-{job_name}"))
             .spawn(move || {
                 let report = progress_reporter(id, tx.clone(), ctx.clone());
+                report(0.20, STAGE_READING);
+                let text = decode();
                 finish_log_load(id, filename, text, None, &tx, &ctx, report);
             })
             .expect("failed to spawn log-text loader thread");
@@ -517,7 +536,7 @@ impl LoadJobs {
         });
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
-        let text: Arc<str> = Arc::from(text);
+        let text = LogText::from(text);
         let restored = AttachedLogRestore {
             attachment,
             filters,
@@ -639,7 +658,7 @@ fn progress_reporter(
 fn finish_log_load(
     id: u64,
     filename: Option<String>,
-    text: Arc<str>,
+    text: LogText,
     restored: Option<AttachedLogRestore>,
     tx: &mpsc::Sender<LoadMessage>,
     ctx: &Context,
@@ -1037,14 +1056,13 @@ mod tests {
         }
     }
 
-    /// Dropped or pasted log text reaches the app as a parsed log, with no
-    /// name of its own for the log to be named after its first entry.
+    /// Pasted log text reaches the app as a parsed log, with no name of its
+    /// own for the log to be named after its first entry.
     #[test]
-    fn loading_log_text_completes_as_a_parsed_log() {
+    fn loading_pasted_log_text_completes_as_a_parsed_log() {
         let mut jobs = LoadJobs::new(egui::Context::default());
-        jobs.spawn_log_text(
+        jobs.spawn_pasted_log_text(
             "2026-01-01 14:02:11 navsyncd: uploaded 2 recordings\n".to_owned(),
-            None,
         );
 
         let completed = drain_until_complete(&mut jobs);
@@ -1083,7 +1101,7 @@ mod tests {
     #[test]
     fn loading_log_text_without_a_recognised_timestamp_fails() {
         let mut jobs = LoadJobs::new(egui::Context::default());
-        jobs.spawn_log_text("kernel: no timestamp here\n".to_owned(), None);
+        jobs.spawn_pasted_log_text("kernel: no timestamp here\n".to_owned());
 
         let completed = drain_until_complete(&mut jobs);
         assert_eq!(
