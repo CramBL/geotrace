@@ -839,18 +839,6 @@ pub fn log_match_color(color: gt_ui_types::LogMatchColor, dark_mode: bool) -> Co
     }
 }
 
-/// Colors used for log-entry markers, cycling over the marker's log index.
-pub const LOG_COLORS: [Color32; 8] = [
-    Color32::from_rgb(230, 57, 70),
-    Color32::from_rgb(255, 149, 0),
-    Color32::from_rgb(255, 190, 11),
-    Color32::from_rgb(6, 214, 160),
-    Color32::from_rgb(46, 196, 182),
-    Color32::from_rgb(131, 56, 236),
-    Color32::from_rgb(255, 45, 85),
-    Color32::from_rgb(238, 66, 102),
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;

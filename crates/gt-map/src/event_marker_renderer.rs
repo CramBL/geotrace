@@ -202,8 +202,8 @@ fn draw_event_marker(
     fade: f32,
 ) {
     match icon {
-        // Event markers render the pin styles as colorable diamonds.
-        MarkerIcon::Pin | MarkerIcon::Log => draw_diamond(ui, center, color, highlighted, fade),
+        // Event markers render the pin style as a colorable diamond.
+        MarkerIcon::Pin => draw_diamond(ui, center, color, highlighted, fade),
         MarkerIcon::Cross
         | MarkerIcon::Circle
         | MarkerIcon::Lightning

@@ -403,8 +403,8 @@ mod tests {
                 anchor(3, SatLabelTier::Endpoint),
             ],
             custom_markers: vec![
-                CustomMarker::new(t(0), "a".into(), MarkerIcon::Pin, lat, lon, None),
-                CustomMarker::new(t(2), "b".into(), MarkerIcon::Pin, lat, lon, None),
+                CustomMarker::new(t(0), "a".into(), MarkerIcon::Pin, lat, lon),
+                CustomMarker::new(t(2), "b".into(), MarkerIcon::Pin, lat, lon),
             ],
             generated_markers: vec![GeneratedMarker {
                 time: t(1),
@@ -619,7 +619,6 @@ mod tests {
                 MarkerIcon::Pin,
                 lat,
                 lon,
-                None,
             ));
             f
         };

@@ -489,7 +489,7 @@ mod tests {
 
     /// Every icon asset, sorted. Kept in sync with `assets/icons/` by
     /// [icon_names_match_assets_dir]; the rstest cases below must mirror it.
-    const ICON_NAMES: [&str; 19] = [
+    const ICON_NAMES: [&str; 18] = [
         "check",
         "circle_marker",
         "connection_lost",
@@ -500,7 +500,6 @@ mod tests {
         "ghost_fix",
         "hexagon",
         "lightning",
-        "log_pin",
         "nav_arrow",
         "pin",
         "refresh",
@@ -582,7 +581,6 @@ mod tests {
     #[case::ghost_fix("ghost_fix")]
     #[case::hexagon("hexagon")]
     #[case::lightning("lightning")]
-    #[case::log_pin("log_pin")]
     #[case::nav_arrow("nav_arrow")]
     #[case::pin("pin")]
     #[case::refresh("refresh")]
@@ -607,7 +605,6 @@ mod tests {
     #[case::ghost_fix("ghost_fix")]
     #[case::hexagon("hexagon")]
     #[case::lightning("lightning")]
-    #[case::log_pin("log_pin")]
     #[case::nav_arrow("nav_arrow")]
     #[case::pin("pin")]
     #[case::refresh("refresh")]

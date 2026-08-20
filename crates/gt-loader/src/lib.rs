@@ -455,15 +455,13 @@ fn convert_marker(m: &SdkMarker) -> CustomMarker {
         m.annotation.icon.map_or(MarkerIcon::Pin, convert_icon),
         Latitude::new(m.lat.as_degrees()),
         Longitude::new(m.lon.as_degrees()),
-        None,
     )
 }
 
-/// Converts the SDK's wire-format icon to the app's internal `MarkerIcon`.
+/// Converts the SDK's wire-format icon to the app's internal [`MarkerIcon`].
 ///
-/// The internal type has one variant the SDK doesn't (`Log`, never produced
-/// here). This is the only place that maps between the two, so a rename on
-/// either side fails to compile here.
+/// This is the only place that maps between the two, so a rename on either
+/// side fails to compile here.
 fn convert_icon(icon: SdkMarkerIcon) -> MarkerIcon {
     match icon {
         SdkMarkerIcon::Pin => MarkerIcon::Pin,
@@ -973,8 +971,7 @@ mod tests {
 
     #[test]
     fn marker_icon_some() {
-        // The full mapping table, checked against `SdkIcon::COUNT`. Internal
-        // `MarkerIcon::Log` has no SDK counterpart.
+        // The full mapping table, checked against `SdkIcon::COUNT`.
         let pairs = [
             (SdkIcon::Pin, MarkerIcon::Pin),
             (SdkIcon::Cross, MarkerIcon::Cross),

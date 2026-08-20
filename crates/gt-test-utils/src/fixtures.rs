@@ -503,7 +503,6 @@ pub fn marker_test_data() -> Vec<CustomMarker> {
                         MarkerIcon::Warning,
                         last_point.tpv.lat(),
                         last_point.tpv.lon(),
-                        None,
                     ));
                 }
                 last_fix_index = None;
@@ -537,7 +536,6 @@ pub fn marker_test_data() -> Vec<CustomMarker> {
                         MarkerIcon::Check,
                         p.tpv.lat(),
                         p.tpv.lon(),
-                        None,
                     ));
                 }
                 last_fix_index = Some(i);

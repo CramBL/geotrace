@@ -206,7 +206,10 @@ pub enum LogParseError {
     #[error("Log is empty")]
     Empty,
 
-    #[error("No recognised timestamp format (first line: {first_line:?})")]
+    #[error(
+        "Not a recognised log: no line has a timestamp in a known format \
+         (first line: {first_line:?})"
+    )]
     NoRecognisedFormat { first_line: String },
 }
 
@@ -673,7 +676,8 @@ mod tests {
             parse_log("nothing here\nnor here\n".into(), now()).expect_err("fails to parse");
         assert_eq!(
             error.to_string(),
-            "No recognised timestamp format (first line: \"nothing here\")"
+            "Not a recognised log: no line has a timestamp in a known format \
+             (first line: \"nothing here\")"
         );
     }
 

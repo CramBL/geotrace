@@ -1,7 +1,7 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui, Vec2};
 use gt_filter::GlobalFilter;
 use gt_types::{CustomMarker, DataCategory, LoadedFile, MarkerIcon, SpatialPoint};
-use gt_ui_theme::{HIGHLIGHT_BLUE, LOG_COLORS};
+use gt_ui_theme::HIGHLIGHT_BLUE;
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, TrackDataVisibility, visibility};
 use walkers::{MapMemory, Plugin, Projector};
 
@@ -177,21 +177,11 @@ fn draw_marker_icon(
         ui.painter()
             .circle_stroke(center, 14.0, Stroke::new(2.0_f32, HIGHLIGHT_BLUE));
     }
-    // The SVGs have their own colors. Only the log pin is recolored, cycling
-    // through the per-logfile palette.
-    let color = match marker.icon {
-        MarkerIcon::Log => {
-            let idx = marker
-                .color_group
-                .map_or(0, |id| id as usize % LOG_COLORS.len());
-            LOG_COLORS.get(idx).copied().unwrap_or(Color32::WHITE)
-        }
-        _ => Color32::WHITE,
-    };
-    let tint = track_renderer::apply_fade_alpha(color, fade);
+    // The SVGs paint their own colors: the tint only applies the fade.
+    let tint = track_renderer::apply_fade_alpha(Color32::WHITE, fade);
     let instance = match marker.icon {
-        // The pins anchor their tip at the marker position.
-        MarkerIcon::Pin | MarkerIcon::Log => IconInstance {
+        // The pin anchors its tip at the marker position.
+        MarkerIcon::Pin => IconInstance {
             icon: marker.icon.into(),
             center: center - egui::vec2(0.0, PIN_HALF_EXTENTS_PT.y),
             half_extents: PIN_HALF_EXTENTS_PT,

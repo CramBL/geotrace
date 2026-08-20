@@ -63,14 +63,7 @@ fn make_snapshot_file() -> gt_types::LoadedFile {
         lat,
         lon,
     );
-    let custom_marker = CustomMarker::new(
-        t0,
-        "Coffee stop".to_string(),
-        MarkerIcon::Pin,
-        lat,
-        lon,
-        None,
-    );
+    let custom_marker = CustomMarker::new(t0, "Coffee stop".to_string(), MarkerIcon::Pin, lat, lon);
     let generated_marker = GeneratedMarker {
         time: t0,
         kind: GeneratedMarkerKind::GnssFixRegained {
