@@ -1,7 +1,8 @@
 #[cfg(feature = "backend-sys")]
 use geotrace_sdk::NavFile;
 use gt_history::{
-    Database, DatabaseRef, DbError, HistoryDatabase, RecordingMeta, StoredRecording,
+    Database, DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentId,
+    LogContentHash, RecordingMeta, StoredLogFilter, StoredLogFilterMode, StoredRecording,
     StoredSegmentation, TrackRange, extract_meta,
 };
 #[cfg(feature = "backend-pure")]
@@ -2460,4 +2461,273 @@ fn a_write_locked_database_is_refused_and_repaired_on_the_pure_backend() {
 
     let db = Database::open_or_create(&path).expect("open after clearing the lock");
     assert_eq!(db.list_recordings().expect("list").len(), 1);
+}
+
+/// A stack with one chip of each mode, with and without a palette slot.
+fn log_filters() -> Vec<StoredLogFilter> {
+    vec![
+        StoredLogFilter {
+            text: "gnss".to_owned(),
+            regex: false,
+            enabled: true,
+            mode: StoredLogFilterMode::Layer { color_slot: 3 },
+        },
+        StoredLogFilter {
+            text: "hal-powerd|navsyncd".to_owned(),
+            regex: true,
+            enabled: false,
+            mode: StoredLogFilterMode::Refine,
+        },
+    ]
+}
+
+fn log_attachment(name: &str) -> LogAttachment {
+    LogAttachment::new(
+        name.to_owned(),
+        LogContentHash::of_log_bytes(name.as_bytes()),
+        log_filters(),
+    )
+}
+
+/// Write an attachment's attribute and a stand-in for the log it names.
+///
+/// The database's half of an attachment is the attribute, and deleting the
+/// file named alongside it. Compressing that file is `gt_store`'s half.
+#[expect(
+    clippy::expect_used,
+    reason = "test helper; panicking on I/O failure is the right behaviour"
+)]
+fn attach_placeholder_log(db: &mut Database, db_ref: &DatabaseRef, name: &str) -> LogAttachmentId {
+    let id = LogAttachmentId::new_random();
+    let path = attached_log_path(db.path(), id);
+    std::fs::create_dir_all(path.parent().expect("the logs directory")).expect("create");
+    std::fs::write(&path, b"a stored log").expect("write the log");
+    db.write_log_attachment_attribute(db_ref, id, &log_attachment(name))
+        .expect("write the attribute");
+    id
+}
+
+fn attached_log_path(db_path: &std::path::Path, id: LogAttachmentId) -> std::path::PathBuf {
+    id.file_path(&gt_history::logs_directory_for_database(db_path))
+}
+
+/// Logs in the store directory. The delete paths keep this in step with the
+/// attributes.
+fn stored_log_count(db_path: &std::path::Path) -> usize {
+    match std::fs::read_dir(gt_history::logs_directory_for_database(db_path)) {
+        Ok(entries) => entries.count(),
+        Err(_) => 0,
+    }
+}
+
+#[test_log::test]
+fn an_attachment_attribute_comes_back_with_its_name_hash_and_filters() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+
+    let id = attach_placeholder_log(&mut db, &db_ref, "navsyncd.log");
+
+    let listed = db.log_attachments(&db_ref).expect("list");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        listed.first().map(|entry| (entry.id, &entry.attachment)),
+        Some((id, &log_attachment("navsyncd.log")))
+    );
+}
+
+/// Attachments belong to one recording: a second recording in the same
+/// database lists none of them.
+#[test_log::test]
+fn attachments_are_listed_per_recording() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let attached_to = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    let bare = insert_two_track(&mut db, "dev", 2_000_000_000, 50);
+
+    attach_placeholder_log(&mut db, &attached_to, "navsyncd.log");
+    attach_placeholder_log(&mut db, &attached_to, "hal-powerd.log");
+
+    let mut names: Vec<String> = db
+        .log_attachments(&attached_to)
+        .expect("list")
+        .into_iter()
+        .map(|entry| entry.attachment.name)
+        .collect();
+    names.sort();
+    assert_eq!(names, ["hal-powerd.log", "navsyncd.log"]);
+    assert!(db.log_attachments(&bare).expect("list").is_empty());
+}
+
+/// Rewriting an attachment's attribute replaces it, leaving one attachment
+/// under that id.
+#[test_log::test]
+fn writing_an_attachment_attribute_twice_replaces_it() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    let id = attach_placeholder_log(&mut db, &db_ref, "navsyncd.log");
+
+    let refiltered = LogAttachment::new(
+        "navsyncd.log".to_owned(),
+        LogContentHash::of_log_bytes(b"navsyncd.log"),
+        Vec::new(),
+    );
+    db.write_log_attachment_attribute(&db_ref, id, &refiltered)
+        .expect("rewrite");
+
+    assert_eq!(
+        db.log_attachments(&db_ref)
+            .expect("list")
+            .into_iter()
+            .map(|entry| entry.attachment)
+            .collect::<Vec<_>>(),
+        [refiltered]
+    );
+}
+
+#[test_log::test]
+fn writing_an_attachment_attribute_to_a_deleted_recording_fails() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    db.delete_batch(std::slice::from_ref(&db_ref))
+        .expect("delete");
+
+    assert!(
+        db.write_log_attachment_attribute(
+            &db_ref,
+            LogAttachmentId::new_random(),
+            &log_attachment("navsyncd.log"),
+        )
+        .is_err()
+    );
+}
+
+#[test_log::test]
+fn deleting_a_recording_deletes_the_logs_attached_to_it() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let doomed = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    let kept = insert_two_track(&mut db, "dev", 2_000_000_000, 50);
+    let deleted_log = attach_placeholder_log(&mut db, &doomed, "navsyncd.log");
+    let kept_log = attach_placeholder_log(&mut db, &kept, "navsyncd.log");
+
+    db.delete_batch(std::slice::from_ref(&doomed))
+        .expect("delete");
+
+    assert!(!attached_log_path(&db_path, deleted_log).exists());
+    assert!(attached_log_path(&db_path, kept_log).exists());
+    assert_eq!(stored_log_count(&db_path), 1);
+    assert_eq!(db.log_attachments(&kept).expect("list").len(), 1);
+}
+
+/// Cleaning up an attachment does not depend on its log still being there.
+#[test_log::test]
+fn deleting_a_recording_whose_attached_log_is_already_gone_succeeds() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    let id = attach_placeholder_log(&mut db, &db_ref, "navsyncd.log");
+    std::fs::remove_file(attached_log_path(&db_path, id)).expect("remove the log by hand");
+
+    db.delete_batch(std::slice::from_ref(&db_ref))
+        .expect("deleting the recording tolerates the missing log");
+
+    assert!(db.list_recordings().expect("list").is_empty());
+}
+
+#[test_log::test]
+fn deleting_one_attachment_attribute_leaves_the_recordings_other_attachments() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    let removed = attach_placeholder_log(&mut db, &db_ref, "navsyncd.log");
+    let kept = attach_placeholder_log(&mut db, &db_ref, "hal-powerd.log");
+
+    db.delete_log_attachment_attribute(&db_ref, removed)
+        .expect("remove the attribute");
+
+    assert_eq!(
+        db.log_attachments(&db_ref)
+            .expect("list")
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>(),
+        [kept]
+    );
+}
+
+/// Removing an attachment a recording never had, or one whose recording is
+/// gone, leaves nothing to remove.
+#[test_log::test]
+fn deleting_an_attachment_attribute_that_is_not_there_succeeds() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+
+    db.delete_log_attachment_attribute(&db_ref, LogAttachmentId::new_random())
+        .expect("an attachment the recording never had");
+
+    db.delete_batch(std::slice::from_ref(&db_ref))
+        .expect("delete");
+    db.delete_log_attachment_attribute(&db_ref, LogAttachmentId::new_random())
+        .expect("a recording that is gone");
+}
+
+#[test_log::test]
+fn an_attachment_holding_the_same_log_is_found_by_its_content_hash() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    let id = attach_placeholder_log(&mut db, &db_ref, "navsyncd.log");
+
+    let same = db
+        .log_attachment_with_content(&db_ref, LogContentHash::of_log_bytes(b"navsyncd.log"))
+        .expect("query");
+    assert_eq!(same.map(|entry| entry.id), Some(id));
+
+    let other = db
+        .log_attachment_with_content(
+            &db_ref,
+            LogContentHash::of_log_bytes(b"nav-devkit-mk2 boot"),
+        )
+        .expect("query");
+    assert_eq!(other, None, "a log that was never attached matches nothing");
+}
+
+/// Attachment attributes are database bookkeeping: they must not reach the
+/// GTD file the recording is reconstructed into.
+#[test_log::test]
+fn attachment_attributes_stay_out_of_the_reconstructed_gtd() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    let baseline = db.load_bytes(&db_ref).expect("load");
+
+    let id = attach_placeholder_log(&mut db, &db_ref, "navsyncd.log");
+
+    let after = db.load_bytes(&db_ref).expect("load");
+    let key = id.attr_key();
+    assert!(
+        !after
+            .windows(key.len())
+            .any(|window| window == key.as_bytes()),
+        "the attachment attribute must not appear in the reconstructed GTD file"
+    );
+    assert_eq!(
+        after.len(),
+        baseline.len(),
+        "attaching a log must not add anything to the reconstructed GTD file"
+    );
 }

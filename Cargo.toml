@@ -145,6 +145,10 @@ uom = "0.38.0"
 uuid = { version = "1", features = ["v4"] }
 vec1 = "1"
 walkers = "0.58.0"
+# XXH3, for the content hash a log attachment is stored under. The algorithm
+# is frozen upstream: every build reads back the same hash.
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+zstd = "0.13"
 
 [workspace.lints.rust]
 missing_copy_implementations = "warn"

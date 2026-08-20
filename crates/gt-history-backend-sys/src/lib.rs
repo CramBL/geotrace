@@ -1,7 +1,8 @@
 use crate::copy::list_recordings;
 use gt_history_types::{
-    CURRENT_SCHEMA_VERSION, DatabaseRef, DbError, HistoryDatabase, RecordingEntry, RecordingMeta,
-    SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation, TrackRange,
+    CURRENT_SCHEMA_VERSION, DatabaseRef, DbError, HistoryDatabase, LogAttachment,
+    LogAttachmentEntry, LogAttachmentId, RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR,
+    StoredRecording, StoredSegmentation, TrackRange, log_attachment,
 };
 
 use parking_lot::Mutex;
@@ -234,6 +235,45 @@ impl HistoryDatabase for SysDb {
         crate::copy::snap_blob(&self.path, &db_ref.identity, &db_ref.group_name).map_err(Into::into)
     }
 
+    fn log_attachments(&self, db_ref: &DatabaseRef) -> Result<Vec<LogAttachmentEntry>, DbError> {
+        let _guard = DB_LOCK.lock();
+        crate::copy::log_attachments(&self.path, &db_ref.identity, &db_ref.group_name)
+            .map_err(Into::into)
+    }
+
+    fn write_log_attachment_attribute(
+        &mut self,
+        db_ref: &DatabaseRef,
+        id: LogAttachmentId,
+        attachment: &LogAttachment,
+    ) -> Result<(), DbError> {
+        let attribute_json = attachment.to_attribute_json()?;
+        let _guard = DB_LOCK.lock();
+        crate::copy::set_log_attachment_attribute(
+            &self.path,
+            &db_ref.identity,
+            &db_ref.group_name,
+            id,
+            &attribute_json,
+        )
+        .map_err(Into::into)
+    }
+
+    fn delete_log_attachment_attribute(
+        &mut self,
+        db_ref: &DatabaseRef,
+        id: LogAttachmentId,
+    ) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        crate::copy::delete_log_attachment_attribute(
+            &self.path,
+            &db_ref.identity,
+            &db_ref.group_name,
+            id,
+        )
+        .map_err(Into::into)
+    }
+
     fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError> {
         let _guard = DB_LOCK.lock();
         list_recordings(&self.path).map_err(Into::into)
@@ -250,6 +290,7 @@ impl HistoryDatabase for SysDb {
         let by_id = file
             .group("by_identity")
             .map_err(|e| DbError::Backend(e.to_string()))?;
+        let mut attachments = Vec::new();
         for db_ref in refs {
             let storage_name = gt_history_types::identity_group_name(&db_ref.identity);
             let id_grp = match by_id.group(&storage_name) {
@@ -284,11 +325,18 @@ impl HistoryDatabase for SysDb {
                 continue;
             };
             if id_grp.link_exists(&db_ref.group_name) {
+                if let Ok(rec_grp) = id_grp.group(&db_ref.group_name) {
+                    attachments.extend(crate::copy::log_attachment_ids(&rec_grp));
+                }
                 id_grp
                     .unlink(&db_ref.group_name)
                     .map_err(|e| DbError::Backend(e.to_string()))?;
             }
         }
+        log_attachment::delete_files(
+            &log_attachment::logs_directory_for_database(&self.path),
+            &attachments,
+        );
         Ok(())
     }
 

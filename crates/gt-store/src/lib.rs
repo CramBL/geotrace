@@ -19,13 +19,19 @@ use parking_lot::Mutex;
 
 pub use gt_flare_store::{ArchivedFlareDay, FlareStore, FlareStoreError};
 pub use gt_history::{
-    ChannelSummary, DatabaseRef, DbError, HistoryDatabase, PruneMode, RecordingEntry,
-    RecordingMeta, StoredRecording, StoredSegmentation, TrackRange, extract_meta,
-    format_count_suffix, identity_from_group_name, identity_group_name, make_group_name,
+    ChannelSummary, DatabaseRef, DbError, HistoryDatabase, LOGS_DIRECTORY, LogAttachment,
+    LogAttachmentEntry, LogAttachmentId, LogContentHash, PruneMode, RecordingEntry, RecordingMeta,
+    StoredLogFilter, StoredLogFilterMode, StoredRecording, StoredSegmentation, TrackRange,
+    extract_meta, format_count_suffix, identity_from_group_name, identity_group_name,
+    make_group_name,
 };
 pub use gt_ionex_store::{ArchivedMapDay, IonexStore, IonexStoreError};
 pub use gt_jam_store::{JamStore, JamStoreError, StoredDay};
 pub use gt_solar_store::{ArchivedIndexDay, SolarStore, SolarStoreError};
+
+pub mod log_attachments;
+
+pub use log_attachments::{AttachedLog, LogAttachmentError, LogAttachments, LogToAttach};
 
 /// The recording history database. Named for what it holds, since the store
 /// fronts more than one.
@@ -83,6 +89,14 @@ impl Store {
     /// Path of the recording history database.
     pub fn recordings_path(&self) -> PathBuf {
         self.root.join(gt_history::FILE_NAME)
+    }
+
+    /// Directory of the logs attached to recordings in the history database,
+    /// created when the first log is attached.
+    ///
+    /// Deleting a recording deletes the logs attached to it.
+    pub fn logs_path(&self) -> PathBuf {
+        self.root.join(LOGS_DIRECTORY)
     }
 
     /// Path of the interference archive.
@@ -196,6 +210,20 @@ mod tests {
         }
         let named: BTreeSet<&PathBuf> = paths.iter().collect();
         assert_eq!(named.len(), paths.len());
+    }
+
+    /// The store's logs directory and the history database's own derivation
+    /// of it name the same directory. The database deletes an attachment's
+    /// log when its recording goes.
+    #[test]
+    fn attached_logs_sit_in_one_directory_beside_the_recording_history() {
+        let (dir, store) = store();
+
+        assert_eq!(store.logs_path().parent(), Some(dir.path()));
+        assert_eq!(
+            store.logs_path(),
+            gt_history::logs_directory_for_database(&store.recordings_path())
+        );
     }
 
     #[test]
