@@ -1,0 +1,54 @@
+no_progress = true
+
+# A host that is slow or rate-limiting today must not fail the build: retry
+# before declaring a link dead, and treat 429 as a live-host response.
+max_retries = 5
+retry_wait_time = 2
+timeout = 30
+accept = ["100..=103", "200..=299", "429"]
+
+exclude_path = [
+    # Captured service responses, frozen at the day they were recorded and
+    # never edited for link rot.
+    "(^|/)tests/fixtures/",
+    # lychee reads the regex patterns below as malformed links when it walks
+    # this file.
+    "^lychee\\.toml$",
+]
+
+exclude = [
+    # Placeholder hosts in unit tests. `.example` and `.invalid` are reserved
+    # for exactly this by RFC 6761, and nothing listens on localhost in CI.
+    '^https?://localhost',
+    '\.example($|[/:\\])',
+    '^https://example\.(com|invalid)',
+    '^https://a/b',
+    # A path the map-matching URL parser is asserted against, not a link.
+    '^file:///tmp/',
+    # lychee reads these as the literal template: the release and smoke
+    # workflows expand the shell variables in them at run time.
+    '\$',
+    # For the tap push URL, lychee requests `https://x-access-token/`: it
+    # reads the userinfo credential as the host.
+    '^https://x-access-token',
+    # The DONKI endpoint returns 403 without a real API key, and both the
+    # module docs and the URL-builder tests spell the key as `KEY`.
+    '^https://api\.nasa\.gov/DONKI/',
+    # The tile endpoint returns 401 without a real token, and the token-test
+    # URL builder is asserted with the token `tok`.
+    '^https://api\.mapbox\.com/',
+    # The rapid IONEX directory returns 404 for the fixed day the transport
+    # tests pin once that day ages out: it holds only the most recent days.
+    '^https://sideshow\.jpl\.nasa\.gov/pub/iono_daily/IONEX_rapid/',
+    # The public Valhalla instance serves its API paths only: it returns 404
+    # for the base URL GeoTrace defaults to.
+    '^https://valhalla1\.openstreetmap\.de/?$',
+    # Wiley, which hosts the AGU journals these DOIs resolve to, returns 403
+    # for a scraper.
+    '^https://doi\.org/10\.1029/',
+    # EDP Sciences returns 403 for a scraper.
+    '^https://www\.swsc-journal\.org/',
+    # eCFR returns 200 for an interstitial page here, not for the cited
+    # section: it redirects a scraper to unblock.federalregister.gov.
+    '^https://www\.ecfr\.gov/',
+]

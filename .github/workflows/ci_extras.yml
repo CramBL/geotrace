@@ -45,7 +45,9 @@ jobs:
       - name: Install tools
         uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
         with:
-          tool: just,typos,cargo-sort,cargo-shear,cargo-msrv,zizmor
+          # lychee has no install-action manifest: the cargo-binstall
+          # fallback installs it from its own GitHub release.
+          tool: just,typos,cargo-sort,cargo-shear,cargo-msrv,zizmor,lychee
 
       - name: Check dependency sort order
         run: just sort-check
@@ -58,6 +60,9 @@ jobs:
 
       - name: Check MSRV
         run: just msrv
+
+      - name: Check links (lychee)
+        run: just lychee
 
       - name: Vulnerability scan (osv-scanner)
         run: just osv-scanner

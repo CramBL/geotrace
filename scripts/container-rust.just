@@ -33,5 +33,12 @@ msrv:
 sdk-msrv:
     cargo msrv verify --manifest-path sdk/rust/geotrace-sdk/Cargo.toml
 
+# Requests every URL the tracked files cite (network!), under the settings and
+# exclusions of lychee.toml. Kept out of the dev image like msrv: install it
+# natively with `cargo install lychee` (see CI).
+[group("native-checks")]
+lychee:
+    git ls-files -- '*.rs' '*.md' '*.toml' '*.yml' '*.yaml' | lychee --files-from -
+
 [group("container-rust")]
 python-sdk: (_dev "bash" "scripts/python-sdk.sh")

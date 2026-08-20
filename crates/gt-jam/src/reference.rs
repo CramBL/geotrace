@@ -145,8 +145,7 @@ const SOURCES: &[Source] = &[
     Source {
         citation_key: "cfr-adsb",
         name: "14 CFR 91.225, ADS-B Out equipment and use",
-        url: "https://www.ecfr.gov/current/title-14/chapter-I/subchapter-F/part-91/subpart-C/\
-              section-91.225",
+        url: "https://www.ecfr.gov/current/title-14/chapter-I/subchapter-F/part-91/subpart-C/section-91.225",
     },
     Source {
         citation_key: "eu-adsb",
