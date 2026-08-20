@@ -9,6 +9,7 @@ alias cix := ci-extras
 import 'container.just'
 import 'scripts/container-rust.just'
 import 'scripts/fixtures.just'
+import 'scripts/reference-assets.just'
 import 'scripts/sdk.just'
 mod qa 'scripts/qa/qa.just'
 mod release 'scripts/release.just'
@@ -67,21 +68,6 @@ test-snapshots *ARGS:
 [group("native")]
 examples:
     bash scripts/examples.sh
-
-# Render the reference material's display equations from their typst sources (needs typst-cli).
-[group("native")]
-generate-reference-equations:
-    bash scripts/generate-reference-equations.sh
-
-# Render the TEC reference material's illustration from the committed storm fixture.
-[group("native")]
-generate-reference-tec-map:
-    cargo nextest run -p gt-map --run-ignored all -E 'test(generate_tec_reference_illustration)'
-
-# Render the interference reference material's illustration from the committed world day.
-[group("native")]
-generate-reference-interference-map:
-    cargo nextest run -p gt-map --run-ignored all -E 'test(generate_interference_reference_illustration)'
 
 
 # Run the gt-snap live-API smoke test against the real Valhalla server
