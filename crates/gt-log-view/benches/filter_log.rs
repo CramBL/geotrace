@@ -44,7 +44,7 @@ fn fixture(approx_bytes: usize) -> Arc<ParsedLog> {
         seed: 1,
         timestamps: SyntheticLogTimestamps::SyslogShort,
     });
-    Arc::new(gt_logfile::parse_log(Arc::from(text), now()).expect("the fixture log parses"))
+    Arc::new(gt_logfile::parse_log(text.into(), now()).expect("the fixture log parses"))
 }
 
 /// One generation of the scan: a fresh stack takes the filter and blocks until

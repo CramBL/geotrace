@@ -50,7 +50,7 @@ fn bench_parse_log(c: &mut Criterion) {
             BenchmarkId::from_parameter(format!("{} MiB", approx_bytes / MIB)),
             &text,
             |b, text| {
-                b.iter(|| hint::black_box(gt_logfile::parse_log(Arc::clone(text), now())));
+                b.iter(|| hint::black_box(gt_logfile::parse_log(Arc::clone(text).into(), now())));
             },
         );
     }
@@ -69,7 +69,7 @@ fn bench_parse_log_single_chunk(c: &mut Criterion) {
         BenchmarkId::from_parameter(format!("{} MiB", SINGLE_CHUNK_BYTES / MIB)),
         &text,
         |b, text| {
-            b.iter(|| hint::black_box(gt_logfile::parse_log(Arc::clone(text), now())));
+            b.iter(|| hint::black_box(gt_logfile::parse_log(Arc::clone(text).into(), now())));
         },
     );
     group.finish();

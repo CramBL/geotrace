@@ -1,4 +1,3 @@
-use std::str;
 use std::sync::Arc;
 
 use egui::{Button, CentralPanel, Label, MenuBar, ProgressBar, RichText, Sides, Window};
@@ -24,7 +23,7 @@ use super::fix_positions::FixPositionTimeline;
 use super::loader::{
     CompletedLoad, FINISHED_JOB_EXPIRE_SECS, FINISHED_JOB_FADE_START_SECS, LoadJobs,
 };
-use super::log_viewer::LogViewerContext;
+use super::log_viewer::{self, LogViewerContext};
 use super::modals::{
     SnapAutoChoice, SnapConsentChoice, SnapReplaceChoice, SnapScopeChoice, show_about_dialog,
     show_delete_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
@@ -36,6 +35,8 @@ use super::snap_state::PendingSnapRequest;
 #[cfg(feature = "self-update")]
 use super::update;
 use super::{App, SharedAppState, jamming, modals};
+
+const DROP_OVERLAY_SCRIM_OPACITY: f32 = 0.85;
 
 impl eframe::App for App {
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
@@ -51,7 +52,7 @@ impl eframe::App for App {
         }
 
         self.apply_finished_background_work(ui);
-        self.load_files_from_dialog_and_drops(ui);
+        self.load_files_from_dialog_drops_and_paste(ui);
         self.unload_selection_on_delete_key(ui);
         self.show_top_menu_bar(ui);
         self.forward_legend_hover_to_map_highlight();
@@ -74,6 +75,7 @@ impl eframe::App for App {
 
         self.show_snap_prompts(ui);
         self.show_loading_progress_overlay(ui);
+        show_drop_hint_overlay(ui.ctx());
         self.show_load_error_bar(ui);
         self.apply_pending_unload_and_removal(ui);
 
@@ -143,7 +145,7 @@ impl App {
         }
     }
 
-    fn load_files_from_dialog_and_drops(&mut self, ui: &egui::Ui) {
+    fn load_files_from_dialog_drops_and_paste(&mut self, ui: &egui::Ui) {
         // Consume a pending file-picker result and dispatch the chosen path.
         if let Some(path) = self.loader.drain_file_dialog() {
             self.spawn_load_path(path);
@@ -163,6 +165,38 @@ impl App {
                 );
                 self.handle_dropped_bytes(bytes.into(), &name);
             }
+        }
+
+        self.load_pasted_log_text(ui.ctx());
+    }
+
+    /// Reads a Ctrl+V anywhere in the app as log text, unless a widget holds
+    /// keyboard focus: a paste into a text field belongs to that field.
+    ///
+    /// Only text arrives as [`egui::Event::Paste`], so other clipboard content
+    /// never reaches this.
+    fn load_pasted_log_text(&mut self, ctx: &egui::Context) {
+        if ctx.memory(|memory| memory.focused()).is_some() {
+            return;
+        }
+        // Taken out of the frame's events: nothing else may act on a paste the
+        // log loader has claimed.
+        let pasted = ctx.input_mut(|input| {
+            let mut pasted: Vec<String> = Vec::new();
+            input.events.retain_mut(|event| match event {
+                egui::Event::Paste(text) => {
+                    pasted.push(std::mem::take(text));
+                    false
+                }
+                _ => true,
+            });
+            pasted
+        });
+        for text in pasted {
+            if text.is_empty() {
+                continue;
+            }
+            self.loader.spawn_pasted_log_text(text);
         }
     }
 
@@ -904,19 +938,15 @@ impl App {
     }
 
     fn handle_dropped_bytes(&mut self, bytes: Arc<[u8]>, name: &str) {
-        handle_dropped_bytes_dispatch(
-            &mut self.loader,
-            &mut self.load_error,
-            bytes,
-            name,
-            self.processing_config,
-        );
+        handle_dropped_bytes_dispatch(&mut self.loader, bytes, name, self.processing_config);
     }
 }
 
+/// Sends dropped bytes to the recording loader or the log parser, deciding by
+/// content: anything that is not HDF5 is read as a log, lossily decoded where
+/// it is not UTF-8.
 fn handle_dropped_bytes_dispatch(
     loader: &mut LoadJobs,
-    load_error: &mut Option<String>,
     bytes: Arc<[u8]>,
     name: &str,
     config: SegmentationConfig,
@@ -929,14 +959,37 @@ fn handle_dropped_bytes_dispatch(
             name.to_owned()
         };
         loader.spawn_gtd_bytes(bytes, filename, config);
-    } else if let Ok(text) = str::from_utf8(&bytes) {
+    } else {
         // The log takes its name from its first entry when the drop carries
         // no file name, as pasted text does.
         let filename = (!name.is_empty()).then(|| name.to_owned());
-        loader.spawn_log_text(text.to_owned(), filename);
-    } else {
-        *load_error = Some("Unrecognised file format".to_owned());
+        loader.spawn_log_bytes(bytes, filename);
     }
+}
+
+/// Covers the window with the hint stating every way a log gets in, shown
+/// while a file is dragged over the app.
+fn show_drop_hint_overlay(ctx: &egui::Context) {
+    if ctx.input(|input| input.raw.hovered_files.is_empty()) {
+        return;
+    }
+    let window = ctx.content_rect();
+    egui::Area::new(egui::Id::new("drop_hint_overlay"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(window.min)
+        .show(ctx, |ui| {
+            ui.set_min_size(window.size());
+            ui.painter().rect_filled(
+                window,
+                0.0,
+                ui.visuals()
+                    .window_fill
+                    .gamma_multiply(DROP_OVERLAY_SCRIM_OPACITY),
+            );
+            ui.centered_and_justified(|ui| {
+                ui.heading(log_viewer::LOG_LOAD_HINT);
+            });
+        });
 }
 
 /// Extract the GPS timestamp of the map-hovered TPV point (if any) so the plot

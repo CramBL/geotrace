@@ -260,6 +260,21 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 | **sky highlight** | A subset of satellites emphasized on the sky plot (the rest dimmed), driven by hovering the satellite tables beside it. | `SkyHighlight`, `SkyPlot::with_highlight` |
 | **sky trail** | One satellite's azimuth/elevation path across the sky over a whole track, drawn as a time-ramped polyline in the trails plot. | `SkyTrail`, `SkyTrailsPlot`, `extract_trails` |
 | **context line** | A plot line valued from a day archive across the whole span the plot shows: aircraft interference, Kp, Hp30, TEC. Not a metric series - those are valued per fix and are what the query reads. | `ContextLines`, `TecContextSample`, `app::context_line` |
+| **log** | A loaded ad-hoc text log (journald, syslog, plain text) read alongside the recordings. Not "log file layer", and not "trace" - that is the TPV trace. | `LoadedLog`, `LoadedLogs`, `gt-logfile` |
+| **entry** | One parsed line of a log: a timestamp and a message. Not "event" (event markers) or "record". | `LogEntry`, `anchored_entry_count`, `entry_positions` |
+| **anchored** / **interpolated** | An entry's timestamp kind: parsed from the line itself, or derived from its anchored neighbours. Not "real/fake" or "exact/estimated". | `TimestampKind`, `LogEntry::is_anchored`, `interpolate_timestamps` |
+| **structural line** | A recognized non-entry line of an exporter idiom (reboot separator, summary block), excluded from filtering, association, and the map. Not "separator line" as a general term, and not "marker". | `StructuralLine`, `StructuralLineKind` |
+| **boot session** | The entries between two reboot separators, carrying the boot number, uptime, and entry count. Not bare "boot", "power cycle", or "segment". | `BootSession`, `segment_into_boot_sessions` |
+| **summary block** | The trailing summary the exporter wrote, read into the figures it states. Not "footer" or "epilogue". | `SummaryBlock`, `parse_summary_block` |
+| **time-change pattern** | A registry entry recognizing a message that reports a legitimate clock adjustment, which explains a backwards timestamp step. Not "clock skew" or "time warp". | `TIME_CHANGE_REGISTRY`, `reports_a_clock_adjustment` |
+| **order anomaly** | A backwards timestamp step inside a boot session that no time-change pattern explains. Reported and kept in file order, never sorted away. Not "corruption" or "sort error". | `OrderAnomaly`, `scan_for_order_anomalies` |
+| **live filter** | The filter in the log viewer's text field, matching as it is typed. Not "search", and not "query" - that is the query window's language. | `set_live_filter_text`, `live_filter_matches` |
+| **filter chip** | A live filter kept with "+ Add filter". Not "frozen filter" or "pinned filter". | `FilterChip`, `add_live_filter_as_chip` |
+| **layer chip** / **refine chip** | The two chip modes: a layer chip draws its own palette colour on the map, a refine chip narrows the table instead. Not "overlay" or "mask". | `enabled_layer_chips`, `switch_chip_to_refine_mode` |
+| **log match** | An entry a log filter selected, drawn on the map as a hexagon in that filter's colour. Not "match" - that is a query match. | `LogMatch`, `LogMatches`, `DisplayCategory::LogMatches` |
+| **association target** | The one recording a log takes its positions from, always chosen explicitly. Not "linked file" or "parent". | `association_target`, `associate_with` |
+| **association window** | How far an entry's timestamp may be from a fix for the entry to take that position. Not "tolerance" or "threshold". | `association_window`, `AssociationWindowUnit` |
+| **attachment** | A log stored with a recording in the history database, restored when that recording is opened again. Not "saved log" or "bound log". | `LogAttachmentRef`, `AttachedLog`, `Store::logs_path` |
 
 Terms to avoid and their replacements:
 

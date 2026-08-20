@@ -13,6 +13,7 @@ mod pool;
 mod session;
 mod structure;
 mod summary;
+mod text;
 
 pub use associate::{associate_entries, associate_position};
 pub use format::{LogFormat, detect_format, infer_year};
@@ -21,3 +22,4 @@ pub use pool::log_worker_pool;
 pub use session::{AnchoredBounds, BootSession, OrderAnomaly};
 pub use structure::{StructuralLine, StructuralLineKind};
 pub use summary::{EntryCountMismatch, ServiceCount, ServiceIssueCounts, SummaryBlock};
+pub use text::LogText;
