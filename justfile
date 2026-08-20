@@ -78,6 +78,11 @@ generate-reference-equations:
 generate-reference-tec-map:
     cargo nextest run -p gt-map --run-ignored all -E 'test(generate_tec_reference_illustration)'
 
+# Render the interference reference material's illustration from the committed world day.
+[group("native")]
+generate-reference-interference-map:
+    cargo nextest run -p gt-map --run-ignored all -E 'test(generate_interference_reference_illustration)'
+
 
 # Run the gt-snap live-API smoke test against the real Valhalla server
 # (network!) - the on-demand drift check for the API boundary.

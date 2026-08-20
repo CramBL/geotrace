@@ -1,9 +1,10 @@
 //! Aircraft-reported GNSS interference, as published daily by gpsjam.org.
 //!
 //! The dataset counts aircraft that reported good versus low navigation
-//! integrity (ADS-B NIC) inside each H3 cell over one UTC day, aggregated by
-//! adsbexchange.com from volunteer receivers. GeoTrace draws it as a map
-//! overlay and as a per-track plot line.
+//! accuracy inside each H3 cell over one UTC day, aggregated by
+//! adsbexchange.com from volunteer receivers. The publisher does not state
+//! which ADS-B field the two counts are taken from. GeoTrace draws the
+//! dataset as a map overlay and as a per-track plot line.
 //!
 //! **This is airborne data**, averaged over a whole day and cells tens of
 //! kilometers across, and a cell holding two aircraft carries no statistical
@@ -26,6 +27,7 @@ use h3o::Resolution;
 pub mod calendar;
 pub mod dataset;
 pub mod day_selection;
+pub mod reference;
 pub mod text;
 pub mod transport;
 pub mod wire;

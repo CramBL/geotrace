@@ -13,7 +13,7 @@ use gt_jam::wire::HexObservation;
 use gt_types::mercator::MercPoint;
 use gt_types::{Latitude, Longitude, mercator};
 use gt_ui_theme::{INTERFERENCE_FILL_ALPHA, interference_color};
-use h3o::CellIndex;
+use h3o::{CellIndex, LatLng};
 
 use walkers::{MapMemory, Plugin, Projector};
 
@@ -24,6 +24,12 @@ use crate::transform::MercTransform;
 /// hatched. gpsjam publishes cells with as few as two aircraft, where one
 /// bad report reads as 50 %.
 pub const MIN_AIRCRAFT_FOR_SOLID_FILL: u32 = 5;
+
+/// Span of the whole world in normalised mercator x, which is what a
+/// longitude past the antimeridian wraps by.
+const WORLD_WIDTH: f64 = 1.0;
+
+const HALF_WORLD_WIDTH: f64 = WORLD_WIDTH / 2.0;
 
 /// Spacing between hatch lines, in pixels.
 const HATCH_SPACING_PX: f32 = 6.0;
@@ -56,14 +62,24 @@ fn cell_outline(cell: CellIndex, transform: &MercTransform) -> Option<Vec<Pos2>>
     if boundary.len() < 3 {
         return None;
     }
+    let center = LatLng::from(cell);
+    let center_x = mercator::normalize(Latitude::new(center.lat()), Longitude::new(center.lng())).x;
     Some(
         boundary
             .iter()
             .map(|vertex| {
-                transform.to_screen(mercator::normalize(
-                    Latitude::new(vertex.lat()),
-                    Longitude::new(vertex.lng()),
-                ))
+                let mut merc =
+                    mercator::normalize(Latitude::new(vertex.lat()), Longitude::new(vertex.lng()));
+                // A cell straddling the antimeridian has vertices normalising
+                // to both edges of the world. Each one is moved onto the turn
+                // of the world its cell centre is on, which keeps the polygon
+                // one cell wide.
+                if merc.x - center_x > HALF_WORLD_WIDTH {
+                    merc.x -= WORLD_WIDTH;
+                } else if center_x - merc.x > HALF_WORLD_WIDTH {
+                    merc.x += WORLD_WIDTH;
+                }
+                transform.to_screen(merc)
             })
             .collect(),
     )
@@ -341,12 +357,15 @@ fn bounding_rect(outline: &[Pos2]) -> Option<egui::Rect> {
 mod tests {
     use std::str::FromStr as _;
 
-    use h3o::LatLng;
-
     use chrono::NaiveDate;
+    use h3o::LatLng;
     use rstest::rstest;
 
     use super::*;
+
+    /// Pixels the whole world spans in the transforms below, which is the
+    /// width a cell wrapped across the antimeridian would project to.
+    const WORLD_PX: f64 = 1024.0;
 
     /// A cell from the captured fixture day: 55.016 N, 15.413 E.
     const BALTIC: &str = "841f0c9ffffffff";
@@ -386,6 +405,29 @@ mod tests {
         let cell = CellIndex::from_str(BALTIC).expect("cell index");
         let outline = cell_outline(cell, &transform).expect("outline");
         assert!(outline.len() >= 5, "an H3 cell has 5 or 6 vertices");
+    }
+
+    /// A cell straddling the antimeridian projects to a polygon of its own
+    /// width: its vertices normalise to both edges of the world, and each one
+    /// is placed on the turn of the world its cell centre is on.
+    #[test]
+    fn a_cell_on_the_antimeridian_stays_one_cell_wide() {
+        let position = LatLng::new(0.0, 179.99).expect("a position");
+        let cell = position.to_cell(gt_jam::H3_RESOLUTION);
+        let longitudes: Vec<f64> = cell.boundary().iter().map(|vertex| vertex.lng()).collect();
+        assert!(
+            longitudes.iter().any(|lng| *lng > 0.0) && longitudes.iter().any(|lng| *lng < 0.0),
+            "{cell} was picked for straddling the antimeridian, got {longitudes:?}"
+        );
+
+        let outline = cell_outline(cell, &MercTransform::for_test(WORLD_PX)).expect("outline");
+        let bounds = bounding_rect(&outline).expect("bounds");
+        let widest_a_cell_can_project = WORLD_PX as f32 / 100.0;
+        assert!(
+            bounds.width() < widest_a_cell_can_project,
+            "the cell projected {} px of the {WORLD_PX} px world",
+            bounds.width()
+        );
     }
 
     /// Cells outside the viewport are not projected.
@@ -498,6 +540,25 @@ mod tests {
             color.r() >= clear.r(),
             "{fraction} should be no less red than a clear cell"
         );
+    }
+
+    #[test]
+    fn the_reference_material_quotes_the_breakpoints_cells_are_coloured_at() {
+        let low_percent = gt_ui_theme::INTERFERENCE_LOW_BREAKPOINT * 100.0;
+        let high_percent = gt_ui_theme::INTERFERENCE_HIGH_BREAKPOINT * 100.0;
+        let material = gt_jam::reference::AIRCRAFT_INTERFERENCE.to_string();
+
+        for wording in [
+            format!("more than {:.0}% of all aircraft", 100.0 - low_percent),
+            format!("between {low_percent:.0}% and {high_percent:.0}% of aircraft"),
+            format!("more than {high_percent:.0}% of aircraft"),
+            format!("same {low_percent:.0} % and {high_percent:.0} % breakpoints"),
+        ] {
+            assert!(
+                material.contains(&wording),
+                "the material never says {wording:?}"
+            );
+        }
     }
 
     fn bounds(x_min: f64, x_max: f64, y_min: f64, y_max: f64) -> gt_types::MercBounds {
