@@ -2671,6 +2671,22 @@ fn snapshot_settings_window_search_matches() {
     harness.snapshot("settings_window_search_matches");
 }
 
+/// Clicks the tickbox of the settings row headed `label`.
+///
+/// A settings row is its label beside its control, and the tickbox carries no
+/// label of its own: it is the one drawn across the label's row.
+fn click_settings_row_tickbox(harness: &mut Harness<App>, label: &str) {
+    let row = harness.get_by_label_contains(label).rect();
+    let tickbox = harness
+        .query_all(By::new().role(egui::accesskit::Role::CheckBox))
+        .find(|node| row.y_range().contains(node.rect().center().y));
+    match tickbox {
+        Some(tickbox) => tickbox.click(),
+        None => panic!("the settings row {label:?} draws a tickbox"),
+    }
+    harness.run_steps(2);
+}
+
 /// Load one recording and give it the metadata the name template draws on.
 fn load_recording_with_metadata(harness: &mut Harness<App>) {
     drop_file_and_wait_for_load(
@@ -4736,6 +4752,17 @@ fn drop_log_and_wait_for_load(harness: &mut Harness<App>, text: &str, name: &str
     drop_file_and_wait_for_load(harness, TestDroppedFile::bytes(text.as_bytes(), name));
 }
 
+/// Drops a log and confirms the association dialog it raises: the log is left
+/// associated with the recording the dialog preselected.
+fn drop_log_and_associate_it(harness: &mut Harness<App>, text: &str, name: &str) {
+    drop_log_and_wait_for_load(harness, text, name);
+    harness.run_steps(3);
+    harness
+        .get_by_label(log_viewer::association_dialog::CONFIRM_LABEL)
+        .click();
+    harness.run_steps(3);
+}
+
 fn app_with_a_log_loaded() -> Harness<'static, App> {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
@@ -4818,7 +4845,7 @@ fn snapshot_app_log_viewer() {
         &mut harness.inner,
         recording_alongside_the_log("walk.gtd", 55.0),
     );
-    drop_log_and_wait_for_load(
+    drop_log_and_associate_it(
         &mut harness.inner,
         &synthetic_log(64 * 1024),
         "navsyncd.log",
@@ -4836,26 +4863,32 @@ fn snapshot_app_log_viewer() {
 /// starts has landed. The field is focused by its own id: the app renders text
 /// fields of its own behind the window.
 fn type_into_log_filter(harness: &mut TestHarness<'_, App>, text: &str) {
-    harness.inner.ctx.memory_mut(|memory| {
+    type_into_log_filter_of(&mut harness.inner, text);
+}
+
+fn type_into_log_filter_of(harness: &mut Harness<'_, App>, text: &str) {
+    harness.ctx.memory_mut(|memory| {
         memory.request_focus(egui::Id::new(log_viewer::filters::LIVE_FILTER_FIELD_ID));
     });
-    harness.inner.run_steps(2);
+    harness.run_steps(2);
     harness
-        .inner
         .input_mut()
         .events
         .push(egui::Event::Text(text.to_owned()));
-    harness.inner.run_steps(6);
+    harness.run_steps(6);
 }
 
 /// Writes `text` into the live filter and keeps it as a chip.
 fn add_log_filter(harness: &mut TestHarness<'_, App>, text: &str) {
-    type_into_log_filter(harness, text);
+    add_log_filter_in(&mut harness.inner, text);
+}
+
+fn add_log_filter_in(harness: &mut Harness<'_, App>, text: &str) {
+    type_into_log_filter_of(harness, text);
     harness
-        .inner
         .get_by_label(log_viewer::filters::ADD_FILTER_LABEL)
         .click();
-    harness.inner.run_steps(5);
+    harness.run_steps(5);
 }
 
 /// The viewer filtering a journald-shaped log: the live filter with its match
@@ -4873,7 +4906,7 @@ fn snapshot_app_log_viewer_filters() {
         &mut harness.inner,
         recording_alongside_the_log("walk.gtd", 55.0),
     );
-    drop_log_and_wait_for_load(
+    drop_log_and_associate_it(
         &mut harness.inner,
         &synthetic_log(64 * 1024),
         "navsyncd.log",
@@ -4894,6 +4927,77 @@ fn snapshot_app_log_viewer_filters() {
     harness.snapshot_loose("app_log_viewer_filters");
 }
 
+/// The association dialog over a freshly loaded log: the loaded recordings
+/// ranked by how much of the log each ran alongside, the one that missed it
+/// grayed, and the attach tickbox live for a recording the history database
+/// holds.
+#[test]
+fn snapshot_log_association_dialog() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness.inner.state_mut().history = crate::app::history_db::HistoryWorker::spawn(
+        open_temporary_history_database(&dir.path().join("geotrace.h5")),
+        egui::Context::default(),
+    );
+    harness.inner.state_mut().sync_db_path();
+    harness.inner.state_mut().history.hide_path();
+
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        recording_alongside_the_log("walk.gtd", 55.0),
+    );
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        recording_a_day_after_the_log("drive.gtd"),
+    );
+    drop_log_and_wait_for_load(
+        &mut harness.inner,
+        &synthetic_log(64 * 1024),
+        "navsyncd.log",
+    );
+    harness.inner.run_steps(5);
+
+    harness
+        .inner
+        .get_by_label(log_viewer::association_dialog::ATTACH_LABEL)
+        .click();
+    harness.inner.run_steps(5);
+
+    harness.snapshot_loose("log_association_dialog");
+}
+
+/// A recordings database of this run's own, so a test can store a log with a
+/// recording without touching the user's history.
+fn open_temporary_history_database(path: &std::path::Path) -> gt_store::Recordings {
+    use gt_store::HistoryDatabase as _;
+    gt_store::Recordings::open_or_create(path).expect("the temporary database opens")
+}
+
+/// A recording from a day the log does not cover, which the dialog lists as a
+/// choice that would leave every line unassociated.
+fn recording_a_day_after_the_log(name: &str) -> TestDroppedFile {
+    TestDroppedFile::bytes(
+        synthetic_gtd_bytes(SyntheticGtdSpec {
+            start: synthetic_log_start() + chrono::Duration::days(1),
+            point_count: 300,
+            step_secs: 1,
+            start_lat_deg: 48.2,
+            start_lon_deg: 11.6,
+            lat_step_deg: 0.00004,
+            lon_step_deg: 0.00009,
+            heading_deg: 75.0,
+            speed_kmh: 42.0,
+            eph_m: 2.2,
+            sats_seen: 12,
+            sats_in_fix: 9,
+        }),
+        name,
+    )
+}
+
 /// The map draws what a filter selected, and stops when the log that owns the
 /// filter is hidden.
 #[test]
@@ -4906,7 +5010,7 @@ fn a_layer_chip_puts_the_lines_it_matched_on_the_map() {
         &mut harness.inner,
         recording_alongside_the_log("walk.gtd", 55.0),
     );
-    drop_log_and_wait_for_load(&mut harness.inner, &synthetic_log(8 * 1024), "navsyncd.log");
+    drop_log_and_associate_it(&mut harness.inner, &synthetic_log(8 * 1024), "navsyncd.log");
     harness.inner.run_steps(5);
     assert!(
         harness.inner.state_mut().logs.map_matches().is_empty(),
@@ -4944,7 +5048,7 @@ fn snapshot_app_log_map_hexagons() {
     );
     // A log long enough to span the whole recording, so its hexagons run the
     // length of the track the map frames.
-    drop_log_and_wait_for_load(
+    drop_log_and_associate_it(
         &mut harness.inner,
         &synthetic_log(384 * 1024),
         "navsyncd.log",
@@ -4974,6 +5078,10 @@ fn choosing_a_target_in_the_footer_associates_the_log_against_it() {
     );
     drop_log_and_wait_for_load(&mut harness, &synthetic_log(8 * 1024), "navsyncd.log");
     harness.run_steps(3);
+    // The footer is the fallback for a log left untargeted, which cancelling
+    // the association dialog is one way to reach.
+    harness.get_by_label("Cancel").click();
+    harness.run_steps(3);
     assert_eq!(
         harness
             .state()
@@ -5002,4 +5110,544 @@ fn choosing_a_target_in_the_footer_associates_the_log_against_it() {
             .is_some_and(|log| log.associated_entry_count() > 0),
         "picking a target associates the log against it right away"
     );
+}
+
+/// The dialog every loaded log raises while a recording is open, and what
+/// confirming it does.
+mod log_association {
+    use gt_store::{HistoryDatabase as _, LogAttachmentEntry, Recordings, StoredLogFilterMode};
+
+    use crate::app::history_db::HistoryWorker;
+    use crate::app::log_viewer::association_dialog;
+
+    use super::*;
+
+    /// An app whose history worker owns a database of its own, so a log can be
+    /// stored with a recording and read back.
+    fn app_over_a_history_database(db_path: &std::path::Path) -> Harness<'static, App> {
+        let mut harness = Harness::builder()
+            .with_wait_for_pending_images(false)
+            .build_eframe(transient_app);
+        harness.step();
+        harness.state_mut().history = HistoryWorker::spawn(
+            open_temporary_history_database(db_path),
+            egui::Context::default(),
+        );
+        harness.state_mut().sync_db_path();
+        harness
+    }
+
+    fn drop_the_log(harness: &mut Harness<App>) {
+        drop_log_and_wait_for_load(harness, &synthetic_log(8 * 1024), "navsyncd.log");
+        harness.run_steps(3);
+    }
+
+    fn dialog_is_open(harness: &Harness<App>) -> bool {
+        harness.state().association_dialog.is_some()
+    }
+
+    fn confirm(harness: &mut Harness<App>) {
+        harness
+            .get_by_label(association_dialog::CONFIRM_LABEL)
+            .click();
+        harness.run_steps(3);
+    }
+
+    fn cancel(harness: &mut Harness<App>) {
+        harness.get_by_label("Cancel").click();
+        harness.run_steps(3);
+    }
+
+    fn shown_log_target(harness: &Harness<App>) -> Option<gt_loaded_files::LoadedFileId> {
+        harness
+            .state()
+            .logs
+            .get(0)
+            .and_then(gt_log_view::LoadedLog::association_target)
+    }
+
+    /// Every attachment the recording carries, as the database holds it.
+    fn stored_attachments(
+        db_path: &std::path::Path,
+        db_ref: &gt_store::DatabaseRef,
+    ) -> Vec<LogAttachmentEntry> {
+        Recordings::open_or_create(db_path)
+            .ok()
+            .and_then(|db| db.log_attachments(db_ref).ok())
+            .unwrap_or_default()
+    }
+
+    /// An app over a database of its own, holding the fixture recording and
+    /// the fixture log with its association dialog open. Returns the recording
+    /// the database stored.
+    fn harness_over_a_recording_and_its_log(
+        db_path: &std::path::Path,
+    ) -> (Harness<'static, App>, gt_store::DatabaseRef) {
+        let mut harness = app_over_a_history_database(db_path);
+        drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+        let db_ref = stored_recording(&harness);
+        drop_the_log(&mut harness);
+        (harness, db_ref)
+    }
+
+    /// Ticks the dialog's attach box and confirms it, leaving the log stored
+    /// with the recording it was associated against.
+    fn attach_the_log(
+        harness: &mut Harness<App>,
+        db_path: &std::path::Path,
+        db_ref: &gt_store::DatabaseRef,
+    ) {
+        harness
+            .get_by_label(association_dialog::ATTACH_LABEL)
+            .click();
+        harness.run_steps(2);
+        confirm(harness);
+        assert!(
+            harness.step_until(|_| !stored_attachments(db_path, db_ref).is_empty()),
+            "the worker stored the log with the recording"
+        );
+    }
+
+    /// The recording the app stored when the fixture recording was dropped.
+    fn stored_recording(harness: &Harness<App>) -> gt_store::DatabaseRef {
+        let state = harness.state();
+        let shared = state.shared.borrow();
+        let entry = shared
+            .loaded_files
+            .view()
+            .get(0)
+            .expect("the recording is loaded");
+        entry
+            .history()
+            .db_ref()
+            .cloned()
+            .expect("the dropped recording was stored in history")
+    }
+
+    /// The one recording the log overlaps is preselected, and confirming takes
+    /// the log's positions from it.
+    #[test]
+    fn confirming_the_dialog_associates_the_log_with_the_preselected_recording() {
+        let mut harness = Harness::builder()
+            .with_wait_for_pending_images(false)
+            .build_eframe(transient_app);
+        drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+        drop_the_log(&mut harness);
+
+        assert!(dialog_is_open(&harness), "a loaded log raises the dialog");
+        harness.get_by_label(association_dialog::TITLE);
+        assert_eq!(
+            shown_log_target(&harness),
+            None,
+            "the log takes no position until the choice is made"
+        );
+
+        confirm(&mut harness);
+
+        assert!(!dialog_is_open(&harness));
+        assert!(
+            harness
+                .state()
+                .logs
+                .get(0)
+                .is_some_and(|log| log.associated_entry_count() > 0),
+            "the preselected recording is what the log associates against"
+        );
+    }
+
+    /// Several overlapping recordings leave the choice to the user: confirming
+    /// without making one leaves the log untargeted.
+    #[test]
+    fn several_overlapping_recordings_leave_the_dialog_without_a_preselection() {
+        let mut harness = Harness::builder()
+            .with_wait_for_pending_images(false)
+            .build_eframe(transient_app);
+        drop_file_and_wait_for_load(
+            &mut harness,
+            recording_alongside_the_log("walk_a.gtd", 55.0),
+        );
+        drop_file_and_wait_for_load(
+            &mut harness,
+            recording_alongside_the_log("walk_b.gtd", 60.0),
+        );
+        drop_the_log(&mut harness);
+        assert!(dialog_is_open(&harness));
+
+        confirm(&mut harness);
+
+        assert_eq!(shown_log_target(&harness), None);
+        assert_eq!(
+            harness
+                .state()
+                .logs
+                .get(0)
+                .map(gt_log_view::LoadedLog::associated_entry_count),
+            Some(0)
+        );
+    }
+
+    /// Cancelling loads the log as text: no target, and the viewer's footer
+    /// left as the way to pick one.
+    #[test]
+    fn cancelling_the_dialog_loads_the_log_untargeted() {
+        let mut harness = Harness::builder()
+            .with_wait_for_pending_images(false)
+            .build_eframe(transient_app);
+        drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+        drop_the_log(&mut harness);
+
+        cancel(&mut harness);
+
+        assert!(!dialog_is_open(&harness));
+        assert_eq!(shown_log_target(&harness), None);
+        assert_eq!(
+            harness.state().logs.len(),
+            1,
+            "the log is loaded either way"
+        );
+        assert!(harness.state().log_viewer.open);
+    }
+
+    /// Escape belongs to the dialog while it is open: the viewer it stands over
+    /// stays open.
+    #[test]
+    fn escape_cancels_the_dialog_and_leaves_the_viewer_open() {
+        let mut harness = Harness::builder()
+            .with_wait_for_pending_images(false)
+            .build_eframe(transient_app);
+        drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+        drop_the_log(&mut harness);
+        assert!(dialog_is_open(&harness));
+
+        press_escape(&mut harness);
+        harness.run_steps(3);
+
+        assert!(!dialog_is_open(&harness));
+        assert!(harness.state().log_viewer.open, "the viewer stays open");
+        assert_eq!(shown_log_target(&harness), None);
+
+        press_escape(&mut harness);
+        harness.run_steps(3);
+
+        assert!(
+            !harness.state().log_viewer.open,
+            "with the dialog gone, Escape closes the viewer"
+        );
+    }
+
+    /// A stored log that is not the log the attribute names it as: the same
+    /// warning path as one that went missing.
+    #[test]
+    fn an_attachment_whose_stored_log_changed_is_reported_in_the_viewer() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("geotrace.h5");
+        let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
+        attach_the_log(&mut harness, &db_path, &db_ref);
+
+        // The attribute now names a log the stored file is not.
+        let stored = stored_attachments(&db_path, &db_ref);
+        let entry = stored.first().expect("the attachment was stored");
+        let mut db = open_temporary_history_database(&db_path);
+        db.write_log_attachment_attribute(
+            &db_ref,
+            entry.id,
+            &gt_store::LogAttachment::new(
+                entry.attachment.name.clone(),
+                gt_store::LogContentHash::of_log_bytes(b"a different log"),
+                Vec::new(),
+            ),
+        )
+        .expect("the attribute is writable");
+        drop(db);
+
+        drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+
+        assert!(
+            harness.step_until(|harness| harness
+                .query_by_label_contains("is not the log it was stored as")
+                .is_some()),
+            "the viewer says the stored log is not the one that was attached"
+        );
+        assert_eq!(
+            harness.state().logs.len(),
+            1,
+            "nothing was restored from the attachment"
+        );
+    }
+
+    /// Once the dialog is switched off, only the unambiguous case associates by
+    /// itself. The settings page switches it back on.
+    #[test]
+    fn dont_show_this_again_leaves_the_unambiguous_case_to_associate_by_itself() {
+        let mut harness = Harness::builder()
+            .with_wait_for_pending_images(false)
+            .build_eframe(transient_app);
+        drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+        drop_the_log(&mut harness);
+
+        harness
+            .get_by_label(association_dialog::DONT_SHOW_AGAIN_LABEL)
+            .click();
+        harness.run_steps(2);
+        cancel(&mut harness);
+        assert!(!harness.state().ask_log_association_target);
+
+        drop_the_log(&mut harness);
+
+        assert!(!dialog_is_open(&harness), "the dialog stays away");
+        assert!(
+            harness
+                .state()
+                .logs
+                .get(1)
+                .is_some_and(|log| log.associated_entry_count() > 0),
+            "the one overlapping recording is taken without asking"
+        );
+
+        harness.state_mut().settings_open = true;
+        harness.state_mut().settings_page = settings_ui::SettingsPage::Processing;
+        harness.run_steps(2);
+        click_settings_row_tickbox(
+            &mut harness,
+            settings_ui::processing::ASK_LOG_ASSOCIATION_TARGET_LABEL,
+        );
+        harness.run_steps(2);
+        harness.state_mut().settings_open = false;
+        harness.run_steps(2);
+        assert!(harness.state().ask_log_association_target);
+
+        drop_the_log(&mut harness);
+
+        assert!(
+            dialog_is_open(&harness),
+            "the setting brings the dialog back"
+        );
+    }
+
+    /// The whole attachment path over a real database: the dialog stores the
+    /// log with the recording, chip edits follow it, and opening that recording
+    /// again brings the log back with its filter stack.
+    #[test]
+    fn an_attached_log_comes_back_with_its_filters_when_the_recording_opens_again() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("geotrace.h5");
+        let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
+
+        attach_the_log(&mut harness, &db_path, &db_ref);
+
+        assert!(
+            harness.step_until(|harness| {
+                harness
+                    .state()
+                    .logs
+                    .get(0)
+                    .is_some_and(|log| log.attachment().is_some())
+            }),
+            "the viewer notes the attachment the worker stored"
+        );
+        let attachments = stored_attachments(&db_path, &db_ref);
+        assert_eq!(
+            attachments
+                .iter()
+                .map(|entry| entry.attachment.name.as_str())
+                .collect::<Vec<_>>(),
+            ["navsyncd.log"]
+        );
+
+        // A chip added after the attachment was stored is written to it.
+        add_log_filter_in(&mut harness, "kernel");
+        assert!(
+            harness.step_until(|_| {
+                !stored_attachments(&db_path, &db_ref)
+                    .first()
+                    .is_none_or(|entry| entry.attachment.filters.is_empty())
+            }),
+            "the chip reached the stored attachment"
+        );
+
+        // Opening the recording again restores the log it carries.
+        drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+        assert!(
+            harness.step_until(|harness| harness.state().logs.len() == 2),
+            "the attached log came back with the recording"
+        );
+        let restored = harness
+            .state()
+            .logs
+            .get(1)
+            .map(|log| {
+                log.filters()
+                    .chips()
+                    .iter()
+                    .map(|chip| (chip.pattern().text.clone(), chip.mode()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        assert_eq!(
+            restored,
+            [("kernel".to_owned(), gt_log_view::FilterChipMode::Layer)],
+            "the restored log carries the stack it was stored with"
+        );
+        assert!(
+            harness
+                .state()
+                .logs
+                .get(1)
+                .is_some_and(|log| log.association_target().is_some()),
+            "a restored log is associated with the recording that carried it"
+        );
+        assert!(harness.state().log_viewer.open);
+    }
+
+    /// The stored log is gone from the store, and the recording still opens.
+    #[test]
+    fn an_attachment_whose_log_file_is_gone_is_reported_in_the_viewer() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("geotrace.h5");
+        let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
+        attach_the_log(&mut harness, &db_path, &db_ref);
+
+        for entry in std::fs::read_dir(dir.path().join(gt_store::LOGS_DIRECTORY))
+            .expect("the logs directory exists")
+            .flatten()
+        {
+            std::fs::remove_file(entry.path()).expect("the stored log is removable");
+        }
+        drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+
+        assert!(
+            harness.step_until(|harness| harness
+                .query_by_label_contains("attachment missing")
+                .is_some()),
+            "the viewer says the attachment did not come back"
+        );
+        assert_eq!(
+            harness.state().shared.borrow().loaded_files.len(),
+            2,
+            "the recording loads either way"
+        );
+    }
+
+    /// Removing the attachment takes it out of the database and leaves the log
+    /// loaded.
+    #[test]
+    fn removing_an_attachment_leaves_the_log_loaded() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("geotrace.h5");
+        let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
+        attach_the_log(&mut harness, &db_path, &db_ref);
+
+        harness.get_by_label(log_viewer::DETACH_LABEL).click();
+        harness.run_steps(3);
+
+        assert!(
+            harness.step_until(|_| stored_attachments(&db_path, &db_ref).is_empty()),
+            "the database no longer holds the log"
+        );
+        assert_eq!(harness.state().logs.len(), 1, "the session copy stays");
+        assert!(
+            harness
+                .state()
+                .logs
+                .get(0)
+                .is_some_and(|log| log.attachment().is_none())
+        );
+    }
+
+    /// The recording's database entry is gone by the time the attach runs: the
+    /// failure is reported and the loaded log is untouched.
+    #[test]
+    fn attaching_to_a_recording_deleted_mid_session_reports_the_failure() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("geotrace.h5");
+        let mut harness = app_over_a_history_database(&db_path);
+        drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+        let db_ref = stored_recording(&harness);
+        drop_the_log(&mut harness);
+
+        let mut db = Recordings::open_or_create(&db_path).expect("the database opens");
+        db.delete_batch(std::slice::from_ref(&db_ref))
+            .expect("the recording is deletable");
+        drop(db);
+
+        harness
+            .get_by_label(association_dialog::ATTACH_LABEL)
+            .click();
+        harness.run_steps(2);
+        confirm(&mut harness);
+
+        assert!(
+            harness.step_until(|harness| harness
+                .query_by_label_contains("Could not attach navsyncd.log")
+                .is_some()),
+            "the viewer reports what the database refused"
+        );
+        assert_eq!(harness.state().logs.len(), 1);
+        assert!(
+            harness
+                .state()
+                .logs
+                .get(0)
+                .is_some_and(|log| log.attachment().is_none()),
+            "nothing about the loaded log changed"
+        );
+    }
+
+    /// A log attached twice to the same recording is a duplicate the dialog
+    /// warns about before it happens.
+    #[test]
+    fn a_recording_that_already_holds_the_log_warns_in_the_dialog() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("geotrace.h5");
+        let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
+        attach_the_log(&mut harness, &db_path, &db_ref);
+
+        harness.get_by_label(log_viewer::ATTACH_LABEL).click();
+        harness.run_steps(3);
+
+        assert!(
+            harness.step_until(|harness| harness
+                .query_by_label_contains("already holds this log")
+                .is_some()),
+            "the dialog warns before the same log is attached twice"
+        );
+    }
+
+    /// The stored stack is the chips, in the modes and colours they were in.
+    #[test]
+    fn the_stored_stack_holds_every_chips_mode_and_colour() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("geotrace.h5");
+        let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
+        attach_the_log(&mut harness, &db_path, &db_ref);
+
+        add_log_filter_in(&mut harness, "kernel");
+        add_log_filter_in(&mut harness, "rotated");
+        assert!(
+            harness.step_until(|_| stored_attachments(&db_path, &db_ref)
+                .first()
+                .is_some_and(|entry| entry.attachment.filters.len() == 2)),
+            "both chips reached the stored attachment"
+        );
+
+        let stored = stored_attachments(&db_path, &db_ref);
+        let filters = stored
+            .first()
+            .map(|entry| entry.attachment.filters.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            filters
+                .iter()
+                .map(|filter| (filter.text.as_str(), filter.enabled, filter.mode))
+                .collect::<Vec<_>>(),
+            [
+                ("kernel", true, StoredLogFilterMode::Layer { color_slot: 0 }),
+                (
+                    "rotated",
+                    true,
+                    StoredLogFilterMode::Layer { color_slot: 1 }
+                ),
+            ]
+        );
+    }
 }

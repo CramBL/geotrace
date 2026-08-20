@@ -268,6 +268,28 @@ impl App {
                 Ok(None) => {}
                 Err(e) => log::warn!("Loading stored snap runs failed: {e}"),
             },
+            Response::LogAttached { log, name, result } => {
+                self.apply_log_attach_outcome(log, &name, result);
+            }
+            Response::AttachedLogsLoaded {
+                db_ref,
+                attachments,
+            } => self.restore_attached_logs(&db_ref, attachments),
+            // A failed write costs only the stored copy: the loaded log keeps
+            // the stack the user is looking at.
+            Response::AttachedLogFiltersStored(result) => {
+                if let Err(e) = result {
+                    log::warn!("Storing an attached log's filters failed: {e}");
+                }
+            }
+            Response::LogDetached { log, name, result } => {
+                self.apply_log_detach_outcome(log, &name, result);
+            }
+            Response::DuplicateAttachmentFound {
+                log,
+                recording,
+                existing,
+            } => self.set_duplicate_log_attachment(log, &recording, existing),
         }
     }
 

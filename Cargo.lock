@@ -2724,6 +2724,7 @@ dependencies = [
  "chrono",
  "criterion",
  "gt-fmt",
+ "gt-history-types",
  "gt-loaded-files",
  "gt-logfile",
  "gt-test-utils",

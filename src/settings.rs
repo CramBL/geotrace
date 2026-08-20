@@ -506,6 +506,10 @@ pub struct ProcessingSettings {
     /// take a position from it.
     #[serde(alias = "log_marker_window_s")]
     pub log_association_window_s: u64,
+    /// Whether a loading log raises the dialog choosing the recording it
+    /// associates against. Off leaves a log to associate by itself where
+    /// exactly one loaded recording overlaps it.
+    pub ask_log_association_target: bool,
     /// Whether to emit a marker when the GNSS fix drops.
     pub detect_gnss_fix_lost: bool,
     /// Whether to emit a marker when the GNSS fix returns.
@@ -530,6 +534,7 @@ impl Default for ProcessingSettings {
         Self {
             track_split_gap_seconds: 300,
             log_association_window_s: 60,
+            ask_log_association_target: true,
             detect_gnss_fix_lost: true,
             detect_gnss_fix_regained: true,
             detect_clock_discontinuities: true,

@@ -12,6 +12,7 @@ doctest = false
 [dependencies]
 chrono.workspace = true
 gt-fmt = { path = "../gt-fmt" }
+gt-history-types = { path = "../gt-history-types" }
 gt-loaded-files = { path = "../gt-loaded-files" }
 gt-logfile = { path = "../gt-logfile" }
 gt-types = { path = "../gt-types" }

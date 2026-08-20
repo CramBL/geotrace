@@ -44,7 +44,7 @@ pub struct RemoveOutcome {
 /// affirmative (or destructive action) rightmost - `add_contents` adds them
 /// in right-to-left order. The horizontal wrapper keeps the layout from
 /// claiming the window's full height.
-fn dialog_button_row(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+pub(super) fn dialog_button_row(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
     ui.horizontal(|ui| {
         ui.with_layout(
             egui::Layout::right_to_left(egui::Align::Center),

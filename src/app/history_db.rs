@@ -11,15 +11,19 @@
 use std::collections::HashSet;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 
 use egui::Context;
+use gt_log_view::LogAttachmentRef;
 use gt_store::{
-    DatabaseRef, DbError, HistoryDatabase, PruneMode, RecordingEntry, Recordings, StoredRecording,
-    TrackRange,
+    AttachedLog, DatabaseRef, DbError, HistoryDatabase, LogAttachmentError, LogAttachmentId,
+    LogAttachments as _, LogContentHash, LogToAttach, PruneMode, RecordingEntry, Recordings,
+    StoredLogFilter, StoredRecording, TrackRange,
 };
 use gt_track_builder::SegmentationConfig;
+use gt_ui_types::LoadedLogId;
 
 use crate::app::auto_prune::{self, AutoPruneOutcome};
 use crate::app::loader::stored_segmentation_from_config;
@@ -91,6 +95,47 @@ enum Request {
     },
     /// Fetch a recording's stored snap runs, if any.
     LoadSnapRuns(DatabaseRef),
+    /// Store a log with a recording, log bytes and all.
+    AttachLog {
+        db_ref: DatabaseRef,
+        log: LoadedLogId,
+        name: String,
+        text: Arc<str>,
+        filters: Vec<StoredLogFilter>,
+    },
+    /// Read back every log attached to a recording that just opened.
+    LoadAttachedLogs(DatabaseRef),
+    /// Rewrite one attachment's stored filter stack.
+    SetAttachedLogFilters {
+        attachment: LogAttachmentRef,
+        filters: Vec<StoredLogFilter>,
+    },
+    /// Remove one attachment: its attribute, and the log stored with it.
+    DetachLog {
+        attachment: LogAttachmentRef,
+        log: LoadedLogId,
+        name: String,
+    },
+    /// Whether a recording already holds this exact log.
+    FindDuplicateAttachment {
+        db_ref: DatabaseRef,
+        log: LoadedLogId,
+        text: Arc<str>,
+    },
+}
+
+/// One of a recording's attachments, as the worker read it back. `name` comes
+/// from the attribute, so a log that could not be read is still nameable.
+pub struct RestoredLogAttachment {
+    pub id: LogAttachmentId,
+    pub name: String,
+    pub log: Result<AttachedLog, LogAttachmentError>,
+}
+
+/// A log the worker stored with a recording, and the stack it stored with it.
+pub struct StoredLogAttachment {
+    pub attachment: LogAttachmentRef,
+    pub filters: Vec<StoredLogFilter>,
 }
 
 /// A result delivered back to the UI thread, drained via [`HistoryWorker::poll`].
@@ -114,6 +159,32 @@ pub enum Response {
     SnapRunsLoaded {
         db_ref: DatabaseRef,
         blob: Result<Option<Vec<u8>>, DbError>,
+    },
+    /// Outcome of storing a log with a recording.
+    LogAttached {
+        log: LoadedLogId,
+        name: String,
+        result: Result<StoredLogAttachment, LogAttachmentError>,
+    },
+    /// The logs a recording carries, one entry per attachment it names.
+    AttachedLogsLoaded {
+        db_ref: DatabaseRef,
+        attachments: Result<Vec<RestoredLogAttachment>, DbError>,
+    },
+    /// Outcome of a filter-stack write. A failure costs only the stored copy:
+    /// the loaded log keeps the stack the user is looking at.
+    AttachedLogFiltersStored(Result<(), LogAttachmentError>),
+    /// Outcome of removing an attachment.
+    LogDetached {
+        log: LoadedLogId,
+        name: String,
+        result: Result<(), LogAttachmentError>,
+    },
+    /// What `recording` already holds the dialog's log as, if anything.
+    DuplicateAttachmentFound {
+        log: LoadedLogId,
+        recording: DatabaseRef,
+        existing: Result<Option<String>, DbError>,
     },
 }
 
@@ -229,6 +300,50 @@ impl HistoryWorker {
         self.send(Request::LoadSnapRuns(db_ref));
     }
 
+    pub fn attach_log(
+        &self,
+        db_ref: DatabaseRef,
+        log: LoadedLogId,
+        name: String,
+        text: Arc<str>,
+        filters: Vec<StoredLogFilter>,
+    ) {
+        self.send(Request::AttachLog {
+            db_ref,
+            log,
+            name,
+            text,
+            filters,
+        });
+    }
+
+    pub fn load_attached_logs(&self, db_ref: DatabaseRef) {
+        self.send(Request::LoadAttachedLogs(db_ref));
+    }
+
+    pub fn set_attached_log_filters(
+        &self,
+        attachment: LogAttachmentRef,
+        filters: Vec<StoredLogFilter>,
+    ) {
+        self.send(Request::SetAttachedLogFilters {
+            attachment,
+            filters,
+        });
+    }
+
+    pub fn detach_log(&self, attachment: LogAttachmentRef, log: LoadedLogId, name: String) {
+        self.send(Request::DetachLog {
+            attachment,
+            log,
+            name,
+        });
+    }
+
+    pub fn find_duplicate_attachment(&self, db_ref: DatabaseRef, log: LoadedLogId, text: Arc<str>) {
+        self.send(Request::FindDuplicateAttachment { db_ref, log, text });
+    }
+
     pub fn auto_prune(&self, max_bytes: u64, confirm: bool) {
         self.send(Request::AutoPrune { max_bytes, confirm });
     }
@@ -332,6 +447,73 @@ fn handle_request(db: &mut Recordings, req: Request) -> Response {
         }
         Request::AutoPrune { max_bytes, confirm } => {
             Response::AutoPruned(auto_prune::run(db, max_bytes, confirm))
+        }
+        Request::AttachLog {
+            db_ref,
+            log,
+            name,
+            text,
+            filters,
+        } => {
+            let result = db
+                .attach_log(
+                    &db_ref,
+                    &LogToAttach {
+                        name: &name,
+                        text: &text,
+                        filters: filters.clone(),
+                    },
+                )
+                .map(|id| StoredLogAttachment {
+                    attachment: LogAttachmentRef {
+                        recording: db_ref,
+                        id,
+                    },
+                    filters,
+                });
+            Response::LogAttached { log, name, result }
+        }
+        Request::LoadAttachedLogs(db_ref) => {
+            let attachments = db.log_attachments(&db_ref).map(|entries| {
+                entries
+                    .into_iter()
+                    .map(|entry| RestoredLogAttachment {
+                        id: entry.id,
+                        name: entry.attachment.name,
+                        log: db.load_attached_log(&db_ref, entry.id),
+                    })
+                    .collect()
+            });
+            Response::AttachedLogsLoaded {
+                db_ref,
+                attachments,
+            }
+        }
+        Request::SetAttachedLogFilters {
+            attachment,
+            filters,
+        } => Response::AttachedLogFiltersStored(db.set_attached_log_filters(
+            &attachment.recording,
+            attachment.id,
+            filters,
+        )),
+        Request::DetachLog {
+            attachment,
+            log,
+            name,
+        } => {
+            let result = db.detach_log(&attachment.recording, attachment.id);
+            Response::LogDetached { log, name, result }
+        }
+        Request::FindDuplicateAttachment { db_ref, log, text } => {
+            let existing = db
+                .log_attachment_with_content(&db_ref, LogContentHash::of_log_bytes(text.as_bytes()))
+                .map(|entry| entry.map(|entry| entry.attachment.name));
+            Response::DuplicateAttachmentFound {
+                log,
+                recording: db_ref,
+                existing,
+            }
         }
     }
 }

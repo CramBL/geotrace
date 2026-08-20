@@ -39,6 +39,7 @@ recording_name_template = "{filename}"
 [processing]
 track_split_gap_seconds = 300
 log_association_window_s = 60
+ask_log_association_target = true
 detect_gnss_fix_lost = true
 detect_gnss_fix_regained = true
 detect_clock_discontinuities = true

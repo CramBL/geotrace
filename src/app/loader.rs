@@ -10,8 +10,10 @@ use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig, TrackLayoutCon
 use chrono::Utc;
 use egui::Context;
 use gt_loaded_files::FileHistory;
+use gt_log_view::LogAttachmentRef;
 use gt_logfile::ParsedLog;
 use gt_plot::{AnalysisConfig, PreparedSeries};
+use gt_store::{AttachedLog, StoredLogFilter};
 use gt_types::LoadedFile;
 
 /// A finished load stays fully opaque in the status list this long before its
@@ -53,10 +55,6 @@ pub struct FinishedJob {
 }
 
 /// Final result produced by a background load thread.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a loaded recording is carried whole; boxing would add an allocation on the infrequent completion path"
-)]
 pub enum LoadOutcome {
     /// A successfully parsed `.gtd` / HDF5 file with pre-built plot series.
     GtdFile {
@@ -77,7 +75,16 @@ pub enum LoadOutcome {
         /// arrived without one.
         filename: Option<String>,
         parsed: ParsedLog,
+        /// Set for a log that came back with a recording opened from history.
+        restored: Option<AttachedLogRestore>,
     },
+}
+
+/// A log read back out of history: the attachment it is stored as, and the
+/// filter stack stored with it.
+pub(super) struct AttachedLogRestore {
+    pub attachment: LogAttachmentRef,
+    pub filters: Vec<StoredLogFilter>,
 }
 
 /// Messages sent from background load threads to the UI thread via `mpsc`.
@@ -455,7 +462,7 @@ impl LoadJobs {
                         return;
                     }
                 };
-                finish_log_load(id, Some(filename), Arc::from(text), &tx, &ctx, report);
+                finish_log_load(id, Some(filename), Arc::from(text), None, &tx, &ctx, report);
             })
             .expect("failed to spawn log-path loader thread");
     }
@@ -483,9 +490,46 @@ impl LoadJobs {
             .name(format!("load-log-{job_name}"))
             .spawn(move || {
                 let report = progress_reporter(id, tx.clone(), ctx.clone());
-                finish_log_load(id, filename, text, &tx, &ctx, report);
+                finish_log_load(id, filename, text, None, &tx, &ctx, report);
             })
             .expect("failed to spawn log-text loader thread");
+    }
+
+    /// Parses a log a recording carries as an attachment, so it comes back
+    /// with that recording.
+    #[expect(
+        clippy::expect_used,
+        reason = "thread spawn can only fail under extreme system resource exhaustion"
+    )]
+    pub fn spawn_attached_log(&mut self, log: AttachedLog, attachment: LogAttachmentRef) {
+        let id = self.alloc_id();
+        let AttachedLog {
+            name,
+            text,
+            filters,
+        } = log;
+        self.loading_jobs.push(LoadingJob {
+            id,
+            filename: name.clone(),
+            progress: 0.0,
+            stage: STAGE_STARTING,
+            started_at: std::time::Instant::now(),
+        });
+        let tx = self.load_tx.clone();
+        let ctx = self.ctx.clone();
+        let text: Arc<str> = Arc::from(text);
+        let restored = AttachedLogRestore {
+            attachment,
+            filters,
+        };
+        log::info!("Loading the log {name:?} attached to a recording opened from history");
+        thread::Builder::new()
+            .name(format!("load-log-{name}"))
+            .spawn(move || {
+                let report = progress_reporter(id, tx.clone(), ctx.clone());
+                finish_log_load(id, Some(name), text, Some(restored), &tx, &ctx, report);
+            })
+            .expect("failed to spawn attached-log loader thread");
     }
 
     /// Spawn a background thread that shows the OS file-picker dialog.
@@ -596,6 +640,7 @@ fn finish_log_load(
     id: u64,
     filename: Option<String>,
     text: Arc<str>,
+    restored: Option<AttachedLogRestore>,
     tx: &mpsc::Sender<LoadMessage>,
     ctx: &Context,
     report: impl Fn(f32, &'static str),
@@ -611,7 +656,11 @@ fn finish_log_load(
                     "Dropped {unindexable_line_count} {noun} of {name:?} that the log index cannot address"
                 );
             }
-            Ok(LoadOutcome::Log { filename, parsed })
+            Ok(LoadOutcome::Log {
+                filename,
+                parsed,
+                restored,
+            })
         }
         Err(err) => Err(err.to_string()),
     };
@@ -999,7 +1048,9 @@ mod tests {
         );
 
         let completed = drain_until_complete(&mut jobs);
-        let LoadOutcome::Log { filename, parsed } = completed.outcome.expect("load should succeed")
+        let LoadOutcome::Log {
+            filename, parsed, ..
+        } = completed.outcome.expect("load should succeed")
         else {
             panic!("expected a Log outcome");
         };
@@ -1018,7 +1069,9 @@ mod tests {
         jobs.spawn_log_path(path);
 
         let completed = drain_until_complete(&mut jobs);
-        let LoadOutcome::Log { filename, parsed } = completed.outcome.expect("load should succeed")
+        let LoadOutcome::Log {
+            filename, parsed, ..
+        } = completed.outcome.expect("load should succeed")
         else {
             panic!("expected a Log outcome");
         };

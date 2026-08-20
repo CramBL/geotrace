@@ -1,6 +1,7 @@
 //! The log viewer window: the loaded logs, the parse summary each of them
 //! expands into, and the virtualized table of the selected log's lines.
 
+pub(super) mod association_dialog;
 mod association_window;
 pub(super) mod filters;
 mod line_table;
@@ -10,15 +11,16 @@ mod tests;
 
 use std::collections::HashMap;
 
-use egui::{ComboBox, DragValue, Label, RichText, Sides, Window};
+use egui::{Button, ComboBox, DragValue, Label, RichText, Sides, Window};
 use egui_phosphor::regular::EYE as ICON_EYE;
 use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
+use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
 use egui_phosphor::regular::X as ICON_X;
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
 use gt_log_view::{LoadedLog, LoadedLogs};
 use gt_types::FileIdx;
 use gt_ui_theme::EM_DASH;
-use gt_ui_types::LogMatchHover;
+use gt_ui_types::{LoadedLogId, LogMatchHover};
 use strum::IntoEnumIterator as _;
 
 use association_window::AssociationWindowUnit;
@@ -34,6 +36,26 @@ const SUMMARY_HOVER: &str = "Show what the parse read from this log";
 
 const ASSOCIATION_WINDOW_HOVER: &str = "Furthest a line's timestamp may be from a fix of the association target for \
      the line to take its position";
+
+/// Why a recording that ran at no time the log covers is still a choice: a
+/// clock-skewed source is a recording too.
+pub(super) const NO_OVERLAP_HOVER: &str =
+    "This recording ran at no time the log covers: every line would stay unassociated";
+
+pub(in crate::app) const ATTACH_LABEL: &str = "Attach to recording…";
+
+const ATTACH_HOVER: &str = "Choose the recording this log belongs to, and store it there";
+
+const ATTACH_NO_RECORDING_HOVER: &str = "Load a recording to attach this log to it";
+
+pub(in crate::app) const DETACH_LABEL: &str = "Remove attachment";
+
+const DETACH_HOVER: &str =
+    "Take this log out of the recording in history. It stays loaded in this session.";
+
+const DETACH_UNATTACHED_HOVER: &str = "This log is not stored with a recording in history";
+
+const NOTICE_DISMISS_HOVER: &str = "Dismiss this warning";
 
 /// Fixed width for the unit dropdown: a wider unit label must not shift the
 /// controls beside it.
@@ -57,6 +79,9 @@ pub(super) struct LogViewerWindow {
     /// The table row the summary panel asked to scroll to, consumed by the
     /// table on the frame after it was asked for.
     scroll_to_row: Option<usize>,
+
+    /// What went wrong with this session's attachments, shown until dismissed.
+    notices: Vec<String>,
 }
 
 /// The app state the viewer reads and writes while it renders.
@@ -67,6 +92,22 @@ pub(super) struct LogViewerContext<'a> {
     /// The hexagon the map found under the cursor, and the row this viewer
     /// puts under it in return.
     pub log_hover: &'a mut LogMatchHover,
+    pub requests: &'a mut LogViewerRequests,
+
+    /// Whether the association dialog is over the viewer, which then takes the
+    /// Escape press for itself.
+    pub dialog_open: bool,
+}
+
+/// What the viewer requests of the app for the log it is showing. The app owns
+/// the history database, the dialog, and the log's association target.
+#[derive(Debug, Default)]
+pub(super) struct LogViewerRequests {
+    /// Open the association dialog on this log.
+    pub open_association_dialog: Option<LoadedLogId>,
+
+    /// Remove this log's attachment from the history database.
+    pub detach: Option<LoadedLogId>,
 }
 
 impl LogViewerWindow {
@@ -78,7 +119,16 @@ impl LogViewerWindow {
             association_window_unit: AssociationWindowUnit::Seconds,
             query_pending_since: None,
             scroll_to_row: None,
+            notices: Vec::new(),
         }
+    }
+
+    /// Shows `notice` in the viewer until the user dismisses it, opening the
+    /// window on it: an attachment that did not come back is only visible here.
+    pub(super) fn report_warning(&mut self, notice: String) {
+        log::warn!("{notice}");
+        self.notices.push(notice);
+        self.open = true;
     }
 
     /// Shows the log that just finished loading, opening the window on it.
@@ -102,6 +152,8 @@ impl LogViewerWindow {
             recording_names,
             map_center_request,
             log_hover,
+            requests,
+            dialog_open,
         }: LogViewerContext<'_>,
     ) {
         // The scans run on worker threads: whatever finished since the last
@@ -123,6 +175,7 @@ impl LogViewerWindow {
             .default_height(520.0)
             .resizable(true)
             .show(ctx, |ui| {
+                self.notices_ui(ui);
                 if logs.is_empty() {
                     ui.label(RichText::new(EMPTY_STATE_HINT).weak());
                     return;
@@ -140,7 +193,7 @@ impl LogViewerWindow {
                 egui::Panel::bottom("log_viewer_footer")
                     .show_separator_line(false)
                     .show(ui, |ui| {
-                        self.footer_ui(ui, logs, recordings, recording_names);
+                        self.footer_ui(ui, logs, recordings, recording_names, requests);
                     });
                 if let Some((log_id, log)) = logs.get_with_id(self.selected) {
                     self.line_table_ui(
@@ -155,7 +208,9 @@ impl LogViewerWindow {
                 }
             });
 
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        if !dialog_open
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
             open = false;
         }
         self.open = open;
@@ -166,6 +221,29 @@ impl LogViewerWindow {
                 log::info!("Unloaded log {:?}", log.name());
             }
             self.selected = self.selected.min(logs.len().saturating_sub(1));
+        }
+    }
+
+    /// The warnings this session's attachments produced, each dismissed on its
+    /// own.
+    fn notices_ui(&mut self, ui: &mut egui::Ui) {
+        let mut dismissed = None;
+        for (index, notice) in self.notices.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(notice).color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                );
+                if ui
+                    .small_button(ICON_X)
+                    .on_hover_text(NOTICE_DISMISS_HOVER)
+                    .clicked()
+                {
+                    dismissed = Some(index);
+                }
+            });
+        }
+        if let Some(index) = dismissed {
+            self.notices.remove(index);
         }
     }
 
@@ -209,6 +287,12 @@ impl LogViewerWindow {
                 {
                     log.set_visible(!visible);
                 }
+                if let Some(attachment) = logs.get(selected).and_then(LoadedLog::attachment) {
+                    let (recording, _) =
+                        gt_loaded_files::display_identity(&attachment.recording.identity);
+                    ui.label(ICON_PAPERCLIP)
+                        .on_hover_text(format!("Stored with the recording {recording}"));
+                }
                 unload = ui
                     .small_button(ICON_X)
                     .on_hover_text("Unload this log")
@@ -237,9 +321,10 @@ impl LogViewerWindow {
         logs: &mut LoadedLogs,
         recordings: LoadedFilesView<'_>,
         recording_names: &RecordingNames,
+        requests: &mut LogViewerRequests,
     ) {
         let selected = self.selected;
-        let Some(log) = logs.get(selected) else {
+        let Some((log_id, log)) = logs.get_with_id(selected) else {
             return;
         };
         let target = log.association_target();
@@ -250,16 +335,8 @@ impl LogViewerWindow {
         let mut chosen_target = target;
         let mut window_edited = false;
 
-        let names: HashMap<LoadedFileId, &str> = recordings
-            .entries()
-            .enumerate()
-            .map(|(index, entry)| {
-                (
-                    entry.id(),
-                    recording_names.get(FileIdx::new(index)).unwrap_or(EM_DASH),
-                )
-            })
-            .collect();
+        let attached = log.attachment().is_some();
+        let names = recording_names_by_id(recordings, recording_names);
 
         ui.horizontal_wrapped(|ui| {
             ui.label("Associated with");
@@ -294,9 +371,7 @@ impl LogViewerWindow {
                                     gt_fmt::format_fraction_percent(candidate.fraction_of_log)
                                 )
                             } else {
-                                "This recording ran at no time the log covers: every line would \
-                                 stay unassociated"
-                                    .to_owned()
+                                NO_OVERLAP_HOVER.to_owned()
                             };
                             if ui
                                 .selectable_label(target == Some(candidate.recording), label)
@@ -325,6 +400,22 @@ impl LogViewerWindow {
                         ui.selectable_value(&mut unit, choice, choice.label());
                     }
                 });
+
+            ui.separator();
+            let attach = ui.add_enabled(!recordings.is_empty(), Button::new(ATTACH_LABEL));
+            if attach.clicked() {
+                requests.open_association_dialog = Some(log_id);
+            }
+            attach
+                .on_hover_text(ATTACH_HOVER)
+                .on_disabled_hover_text(ATTACH_NO_RECORDING_HOVER);
+            let detach = ui.add_enabled(attached, Button::new(DETACH_LABEL));
+            if detach.clicked() {
+                requests.detach = Some(log_id);
+            }
+            detach
+                .on_hover_text(DETACH_HOVER)
+                .on_disabled_hover_text(DETACH_UNATTACHED_HOVER);
         });
 
         self.association_window_unit = unit;
@@ -338,4 +429,22 @@ impl LogViewerWindow {
             log.associate_with(chosen_target, &recordings);
         }
     }
+}
+
+/// The name each loaded recording goes by, under the identity a log names its
+/// association target with.
+fn recording_names_by_id<'a>(
+    recordings: LoadedFilesView<'a>,
+    recording_names: &'a RecordingNames,
+) -> HashMap<LoadedFileId, &'a str> {
+    recordings
+        .entries()
+        .enumerate()
+        .map(|(index, entry)| {
+            (
+                entry.id(),
+                recording_names.get(FileIdx::new(index)).unwrap_or(EM_DASH),
+            )
+        })
+        .collect()
 }

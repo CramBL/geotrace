@@ -11,12 +11,14 @@
 //! it.
 
 mod association;
+mod attachment;
 mod filter;
 mod loaded_log;
 #[cfg(test)]
 mod test_fixtures;
 
 pub use association::{AssociationCandidate, AssociationCandidates};
+pub use attachment::LogAttachmentRef;
 pub use filter::{
     EntryMatches, FilterChip, FilterChipId, FilterChipMode, FilterPattern, FilterStack,
     InvalidFilterPattern, LAYER_COLOR_SLOT_COUNT, LayerColorSlot, LayerColorSlots, VisibleEntries,

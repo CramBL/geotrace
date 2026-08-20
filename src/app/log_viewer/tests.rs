@@ -16,7 +16,7 @@ use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::{FileSource, Latitude, Longitude};
 use gt_ui_types::{HoveredLogGlyph, LogMatchColor, LogMatchHover};
 
-use super::{AssociationWindowUnit, LogViewerContext, LogViewerWindow, filters};
+use super::{AssociationWindowUnit, LogViewerContext, LogViewerRequests, LogViewerWindow, filters};
 
 /// One log holding every row kind the table draws: an entry timestamped from
 /// its neighbours, a reboot separator, and a backwards timestamp step no clock
@@ -70,6 +70,7 @@ struct ViewerState {
     recordings: LoadedFiles,
     map_center: Option<(f64, f64)>,
     log_hover: LogMatchHover,
+    requests: LogViewerRequests,
 }
 
 impl ViewerState {
@@ -145,6 +146,8 @@ fn viewer_ui(ui: &mut egui::Ui, state: &mut ViewerState) {
             recording_names: &names,
             map_center_request: &mut state.map_center,
             log_hover: &mut state.log_hover,
+            requests: &mut state.requests,
+            dialog_open: false,
         },
     );
 }
@@ -182,6 +185,7 @@ fn viewer_state(recordings: Vec<gt_types::LoadedFile>, logs: &[(&str, &str)]) ->
         recordings: loaded_recordings,
         map_center: None,
         log_hover: LogMatchHover::default(),
+        requests: LogViewerRequests::default(),
     }
 }
 
@@ -196,6 +200,18 @@ fn click_line(harness: &mut Harness<ViewerState>, timestamp: &str) {
 fn hover_line(harness: &mut Harness<ViewerState>, timestamp: &str) {
     let row = harness.get_by_label(timestamp).rect().center();
     harness.hover_at_and_settle(row, 2);
+}
+
+/// A recording in the history database, standing in for one this session's
+/// log was stored with.
+fn attachment_ref() -> gt_log_view::LogAttachmentRef {
+    gt_log_view::LogAttachmentRef {
+        recording: gt_store::DatabaseRef {
+            identity: "nav-devkit-mk2".to_owned(),
+            group_name: "2026-05-29T18-48-25".to_owned(),
+        },
+        id: gt_store::LogAttachmentId::new_random(),
+    }
 }
 
 /// The position the map draws its cross-highlight ring at.
@@ -417,6 +433,60 @@ fn the_footer_reads_the_association_window_in_the_unit_its_dropdown_shows() {
         Some(Duration::minutes(2)),
         "the value is read as minutes, the unit the dropdown was switched to"
     );
+}
+
+/// The manual path to the association dialog, which the app opens on the log
+/// the footer names.
+#[test]
+fn the_footer_requests_the_association_dialog_for_the_shown_log() {
+    let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
+    let shown = harness
+        .state()
+        .logs
+        .get_with_id(0)
+        .map(|(id, _)| id)
+        .expect("the fixture log is loaded");
+
+    harness.get_by_label(super::ATTACH_LABEL).click();
+    harness.run_steps(2);
+
+    assert_eq!(
+        harness.state().requests.open_association_dialog,
+        Some(shown)
+    );
+}
+
+/// The attachment the viewer shows and takes off: the indicator names the
+/// recording holding the log, and "Remove attachment" acts only on a log that
+/// has one.
+#[test]
+fn an_attachment_is_shown_and_removable_only_while_the_log_has_one() {
+    let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
+    assert!(
+        harness
+            .get_by_label(super::DETACH_LABEL)
+            .accesskit_node()
+            .is_disabled(),
+        "a log stored nowhere has no attachment to remove"
+    );
+    assert!(harness.query_by_label(super::ICON_PAPERCLIP).is_none());
+
+    let shown = harness
+        .state()
+        .logs
+        .get_with_id(0)
+        .map(|(id, _)| id)
+        .expect("the fixture log is loaded");
+    if let Some(log) = harness.state_mut().logs.get_mut_by_id(shown) {
+        log.record_attachment(attachment_ref(), Vec::new());
+    }
+    harness.run_steps(2);
+
+    harness.get_by_label(super::ICON_PAPERCLIP);
+    harness.get_by_label(super::DETACH_LABEL).click();
+    harness.run_steps(2);
+
+    assert_eq!(harness.state().requests.detach, Some(shown));
 }
 
 #[test]
