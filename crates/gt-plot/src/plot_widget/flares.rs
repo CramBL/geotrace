@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use egui::epaint::{Shape, Stroke};
 use egui::{Color32, Ui};
 use egui_plot::{PlotBounds, PlotGeometry, PlotItem, PlotItemBase, PlotPoint, PlotTransform};
-use gt_flare::SolarFlare;
+use gt_flare::MarkedFlare;
 use gt_flare::text::{self, FormattedFlareTimes};
 
 use super::lines::{NearestHoverLabel, PlotHoverLabel};
@@ -99,12 +99,12 @@ impl FlareViewport {
 /// `nearest` so the caller can show its tooltip.
 pub(super) fn add_flare_markers(
     plot_ui: &mut egui_plot::PlotUi<'_>,
-    flares: &[SolarFlare],
+    flares: &[MarkedFlare],
     viewport: FlareViewport,
     pointer: Option<egui::Pos2>,
     nearest: &mut NearestHoverLabel,
 ) {
-    let visible: Vec<&SolarFlare> = flares
+    let visible: Vec<&MarkedFlare> = flares
         .iter()
         .filter(|flare| viewport.holds(peak_secs(flare)))
         .collect();
@@ -116,11 +116,14 @@ pub(super) fn add_flare_markers(
         base: PlotItemBase::new(text::LAYER_LABEL.to_owned()),
         markers: visible
             .iter()
-            .map(|flare| {
+            .map(|marked| {
                 (
-                    peak_secs(flare),
+                    peak_secs(marked),
                     gt_ui_theme::solar_flare_color(
-                        flare.classification.peak_flux_watts_per_square_meter(),
+                        marked
+                            .flare
+                            .classification
+                            .peak_flux_watts_per_square_meter(),
                     )
                     .resolve(viewport.dark_mode),
                 )
@@ -132,22 +135,22 @@ pub(super) fn add_flare_markers(
     let Some(pointer) = pointer else {
         return;
     };
-    for flare in visible {
+    for marked in visible {
         let x = plot_ui
-            .screen_from_plot(PlotPoint::new(peak_secs(flare), 0.0))
+            .screen_from_plot(PlotPoint::new(peak_secs(marked), 0.0))
             .x;
         let distance = (x - pointer.x).abs();
         if distance <= HOVER_RADIUS_PX {
             nearest.offer(distance, || {
-                PlotHoverLabel::SolarFlare(SolarFlareHover::of_archived_flare(flare))
+                PlotHoverLabel::SolarFlare(SolarFlareHover::of_archived_flare(marked))
             });
         }
     }
 }
 
 /// The plot x a flare is marked at.
-fn peak_secs(flare: &SolarFlare) -> f64 {
-    flare.peak.timestamp() as f64
+fn peak_secs(marked: &MarkedFlare) -> f64 {
+    marked.flare.peak.timestamp() as f64
 }
 
 /// Pre-formatted tooltip contents for one flare.
@@ -156,12 +159,13 @@ pub(super) struct SolarFlareHover {
 }
 
 impl SolarFlareHover {
-    fn of_archived_flare(flare: &SolarFlare) -> Self {
+    fn of_archived_flare(marked: &MarkedFlare) -> Self {
         let formatted = |time: DateTime<Utc>| time.format(FLARE_TIME_FORMAT).to_string();
+        let flare = &marked.flare;
         let end = flare.end.map(formatted);
         Self {
             lines: text::flare_summary(
-                flare,
+                marked,
                 FormattedFlareTimes {
                     begin: &formatted(flare.begin),
                     peak: &formatted(flare.peak),
@@ -188,21 +192,26 @@ impl SolarFlareHover {
 mod tests {
     use chrono::NaiveDate;
     use gt_flare::FlareClass;
+    use gt_types::SunlitSide;
     use rstest::rstest;
 
     use super::*;
 
-    /// One flare of the catalog, with the times the storm's X2.2 had.
-    pub(super) fn flare(peak: &str, class_type: &str) -> SolarFlare {
+    /// One flare of the catalog, with the times the storm's X2.2 had, marked
+    /// with no recording loaded to place the receiver.
+    pub(super) fn flare(peak: &str, class_type: &str) -> MarkedFlare {
         let peak = gt_flare::wire::parse_flare_time(peak).expect("a catalog time");
-        SolarFlare {
-            id: format!("{peak}-FLR-001"),
-            begin: peak - chrono::TimeDelta::minutes(28),
-            peak,
-            end: Some(peak + chrono::TimeDelta::minutes(23)),
-            classification: class_type.parse().expect("a published class"),
-            source_location: Some("S20W25".to_owned()),
-            active_region: Some(13664),
+        MarkedFlare {
+            flare: gt_flare::SolarFlare {
+                id: format!("{peak}-FLR-001"),
+                begin: peak - chrono::TimeDelta::minutes(28),
+                peak,
+                end: Some(peak + chrono::TimeDelta::minutes(23)),
+                classification: class_type.parse().expect("a published class"),
+                source_location: Some("S20W25".to_owned()),
+                active_region: Some(13664),
+            },
+            receiver_side: None,
         }
     }
 
@@ -245,11 +254,15 @@ mod tests {
         assert!(!viewport.holds(peak_secs(&flare("2024-05-11T01:23Z", "X5.8"))));
     }
 
-    /// The hover leads with the classification and closes with the standing
-    /// caveat's subject.
+    /// The hover leads with the classification and closes on the side of Earth
+    /// the loaded recording puts the receiver on.
     #[test]
     fn the_hover_reports_the_whole_event() {
-        let hover = SolarFlareHover::of_archived_flare(&flare("2024-05-09T09:13Z", "X2.2"));
+        let marked = MarkedFlare {
+            receiver_side: Some(SunlitSide::Sunlit),
+            ..flare("2024-05-09T09:13Z", "X2.2")
+        };
+        let hover = SolarFlareHover::of_archived_flare(&marked);
         assert_eq!(
             hover.lines,
             [
@@ -258,6 +271,7 @@ mod tests {
                 "Peaked at 2024-05-09T09:13 (UTC)",
                 "Began 2024-05-09T08:45, ended 2024-05-09T09:36",
                 "Active region 13664 at S20W25",
+                "The receiver was on the sunlit side",
             ]
         );
     }
@@ -275,7 +289,7 @@ mod snapshot_tests {
 
     /// The May 2024 storm day, as the archive holds it: an X-class flare
     /// among M-class ones, and a C-class flare below the blackout scale.
-    fn storm_day() -> Vec<SolarFlare> {
+    fn storm_day() -> Vec<MarkedFlare> {
         [
             ("2024-05-09T01:15Z", "M1.8"),
             ("2024-05-09T03:32Z", "C4.5"),

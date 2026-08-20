@@ -1,0 +1,36 @@
+---
+source: crates/gt-flare/src/reference.rs
+expression: SOLAR_FLARES.to_string()
+---
+Solar flares and GNSS
+
+Solar flares are large eruptions of electromagnetic radiation from the Sun lasting from minutes to hours.[^noaa-flares] Because the radiation travels at light speed, any effect on the sunlit side of Earth's atmosphere occurs at the same time the event is observed. A [CME]'s geomagnetic storm, by contrast, arrives days later.[^noaa-flares]
+
+Illustration nasa_solar_flare_swpc (A flare on the solar disc)
+The bright point on the disc is the flare. NOAA SWPC publishes this image with its description of radio blackouts.[^noaa-flares]
+Image courtesy of NASA, published by NOAA SWPC (https://www.spaceweather.gov/phenomena/solar-flares-radio-blackouts)
+
+The increased X-ray and extreme ultraviolet ([EUV]) radiation ionizes the lower layers of the ionosphere on the sunlit side.[^noaa-flares] Radio waves crossing the denser [D-layer] lose energy to more frequent electron collisions. [HF] signals degrade or are completely absorbed, and low-frequency navigation signals degrade with them.[^noaa-flares]
+
+Strong flares can also emit radio noise directly at [GNSS] frequencies. During the flare of 6 December 2006, the [L-band] radio burst reduced the carrier-to-noise density of GPS receivers by 17 dB at [L1] and 18 to 20 dB at [L2], and many sunlit receivers of the International GNSS Service tracked fewer than four satellites.[^swsc-bursts][^cerruti] This mechanism is receiver interference rather than propagation delay, and no frequency combination removes it.
+
+"The X-ray flux levels start with the "A" level (nominally starting at 10^-8 W/m^2). The next level, ten times higher, is the "B" level (>= 10^-7 W/m^2); followed by "C" flares (10^-6 W/m^2), "M" flares (10^-5 W/m^2), and finally "X" flares (10^-4 W/m^2).[^noaa-flares]"
+
+The number suffix scales within the class, so an X6 flare peaks at 6 x 10^-4 W/m^2.
+
+NOAA R-scale: navigation effects[^noaa-scales]
+Scale | Flare class | Navigation effects (NOAA wording) | Occurrences per solar cycle
+R1 minor | M1 | "Low-frequency navigation signals degraded for brief intervals" | 2000
+R2 moderate | M5 | "Degradation of low-frequency navigation signals for tens of minutes" | 350
+R3 strong | X1 | "Low-frequency navigation signals degraded for about an hour" | 175
+R4 severe | X10 | "Outages of low-frequency navigation signals cause increased error in positioning for one to two hours. Minor disruptions of satellite navigation possible on sunlit side" | 8
+R5 extreme | X20 | "Low-frequency navigation signals experience outages on sunlit side for many hours. Increased satellite navigation errors in positioning for several hours on sunlit side, which may spread into night side" | fewer than 1
+
+The plot marks each archived flare at its peak.[^donki] Whether a flare could have affected a recording depends on whether the receiver was on the sunlit side at that instant, and the marker's hover states which side the receiver was on.
+
+Sources
+1. NOAA SWPC Solar Flares (Radio Blackouts) (https://www.spaceweather.gov/phenomena/solar-flares-radio-blackouts)
+2. Solar radio bursts impact on the IGS network during Solar Cycle 24, J. Space Weather Space Clim. 2024 (https://www.swsc-journal.org/articles/swsc/full_html/2024/01/swsc240021/swsc240021.html)
+3. Cerruti et al. 2008, Space Weather, doi:10.1029/2007SW000375 (https://doi.org/10.1029/2007SW000375)
+4. NOAA Space Weather Scales (https://www.spaceweather.gov/noaa-scales-explanation)
+5. NASA DONKI (https://ccmc.gsfc.nasa.gov/tools/DONKI/)

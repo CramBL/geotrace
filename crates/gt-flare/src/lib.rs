@@ -16,7 +16,8 @@
 //! for. The key is the user's own: [`ApiKey`] keeps it out of everything the
 //! app writes down.
 //!
-//! [`text`] holds the wording every surface showing a flare uses.
+//! [`text`] holds the wording every surface showing a flare uses, and
+//! [`mod@reference`] the material the flare reference window renders.
 
 use std::path::PathBuf;
 
@@ -25,12 +26,13 @@ use chrono::NaiveDate;
 pub mod calendar;
 pub mod class;
 pub mod flare;
+pub mod reference;
 pub mod text;
 pub mod transport;
 pub mod wire;
 
 pub use class::{FlareClass, FlareClassification, RadioBlackoutClass};
-pub use flare::SolarFlare;
+pub use flare::{MarkedFlare, SolarFlare};
 
 /// Base URL of the default host. Configurable in settings, for a proxy or an
 /// offline copy.

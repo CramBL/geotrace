@@ -20,6 +20,7 @@ use gt_types::{DataCategory, FileIdx, LoadedFile, TrackRef};
 use gt_ui_types::{ContextLines, HighlightScope, MapHighlight};
 
 use super::context_line::ContextSpan;
+use super::fix_positions::FixPositionTimeline;
 use super::loader::{
     CompletedLoad, FINISHED_JOB_EXPIRE_SECS, FINISHED_JOB_FADE_START_SECS, LoadJobs,
 };
@@ -448,19 +449,27 @@ impl App {
         plot_state.visible_x_range().map(ContextSpan::covering)
     }
 
-    /// The context metric lines over `span`, read from the archives.
-    fn context_lines(&mut self, span: Option<ContextSpan>) -> ContextLines {
+    /// Where the receiver was over time, rebuilt when the loaded recordings
+    /// change.
+    fn fix_position_timeline(&mut self) -> Arc<FixPositionTimeline> {
+        let shared = self.shared.borrow();
+        Arc::clone(self.fix_positions.timeline(&shared.loaded_files))
+    }
+
+    /// The context metric lines over `span`, read from the archives at the
+    /// receiver's positions.
+    fn context_lines(
+        &mut self,
+        span: Option<ContextSpan>,
+        positions: &Arc<FixPositionTimeline>,
+    ) -> ContextLines {
         let Some(span) = span else {
             return ContextLines::default();
         };
-        let positions = {
-            let shared = self.shared.borrow();
-            Arc::clone(self.fix_positions.timeline(&shared.loaded_files))
-        };
         ContextLines {
-            jamming: self.jamming.context_line(span, &positions),
+            jamming: self.jamming.context_line(span, positions),
             geomagnetic: self.geomagnetic_indices.context_lines(span),
-            tec: self.tec_maps.context_line(span, &positions),
+            tec: self.tec_maps.context_line(span, positions),
         }
     }
 
@@ -486,9 +495,10 @@ impl App {
         // Resolved over the span the plot reported when it last drew, so a
         // pan or zoom reaches the lines on the frame after it.
         let context_span = Self::context_span_of(&self.shared.borrow().plot_state);
-        let context_lines = self.context_lines(context_span);
+        let fix_positions = self.fix_position_timeline();
+        let context_lines = self.context_lines(context_span, &fix_positions);
         let solar_flares = context_span
-            .map(|span| self.solar_flares.markers(span))
+            .map(|span| self.solar_flares.markers(span, &fix_positions))
             .unwrap_or_default();
 
         CentralPanel::default().show(ui, |ui| {

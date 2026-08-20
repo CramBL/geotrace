@@ -18,12 +18,14 @@ use chrono::{NaiveDate, Utc};
 use egui::Context;
 
 use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
-use gt_flare::{ApiKey, DateWindow, SolarFlare, calendar, transport, wire};
+use gt_flare::{ApiKey, DateWindow, MarkedFlare, SolarFlare, calendar, transport, wire};
 use gt_store::{FlareStore, FlareStoreError};
-use gt_types::TimeRange;
+use gt_types::{SunlitSide, TimeRange};
+use gt_ui_types::ArcIdentity;
 
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan};
 use super::day_fetch_queue::DayFetchQueue;
+use super::fix_positions::FixPositionTimeline;
 
 /// What one day's fetch produced.
 enum FlareDayMessage {
@@ -69,7 +71,7 @@ pub struct SolarFlareScheduler {
     /// per frame. Assumes this process is the archive's only writer.
     archived_days: BTreeSet<NaiveDate>,
     /// The flares of the archived days the plot shows, read once per day.
-    markers: ContextSampleCache<SolarFlare>,
+    markers: ContextSampleCache<MarkedFlare>,
 }
 
 impl SolarFlareScheduler {
@@ -219,14 +221,20 @@ impl SolarFlareScheduler {
         self.days.forget_host();
     }
 
-    /// The flares to mark across `span`, from the archived days it covers.
-    pub fn markers(&mut self, span: ContextSpan) -> Arc<Vec<SolarFlare>> {
+    /// The flares to mark across `span`, from the archived days it covers,
+    /// each with the side of Earth the receiver was on when it peaked.
+    pub fn markers(
+        &mut self,
+        span: ContextSpan,
+        positions: &Arc<FixPositionTimeline>,
+    ) -> Arc<Vec<MarkedFlare>> {
         let source = ContextSource {
             span,
             archived_days: self.archived_days.range(span.days()).copied().collect(),
-            positions: None,
+            positions: Some(ArcIdentity::of(positions)),
         };
         let store = self.store.as_ref().map(Arc::clone);
+        let positions = Arc::clone(positions);
         self.markers.resolve(
             source,
             |day| {
@@ -234,6 +242,9 @@ impl SolarFlareScheduler {
                     .as_deref()
                     .and_then(|store| read_archived_flares(store, day))
                     .unwrap_or_default()
+                    .into_iter()
+                    .map(|flare| mark_with_receiver_side(flare, &positions))
+                    .collect()
             },
             |_uncovered| None,
         )
@@ -315,6 +326,19 @@ fn day_needs_fetch(
     today_utc: NaiveDate,
 ) -> Result<bool, FlareStoreError> {
     Ok(day >= today_utc || !store.contains(day)?)
+}
+
+/// One flare with the side of Earth the receiver was on at its peak, read at
+/// the position of the fix nearest that instant. A flare no loaded recording
+/// places the receiver at is marked without a side.
+fn mark_with_receiver_side(flare: SolarFlare, positions: &FixPositionTimeline) -> MarkedFlare {
+    let receiver_side = positions
+        .nearest_position(flare.peak)
+        .map(|(latitude, longitude)| SunlitSide::at_position(latitude, longitude, flare.peak));
+    MarkedFlare {
+        flare,
+        receiver_side,
+    }
 }
 
 /// The archived flares of one day, reporting a read that failed and treating
@@ -418,9 +442,11 @@ mod tests {
     use gt_flare::DEFAULT_BASE_URL;
     use gt_store::Store;
     use gt_test_utils::ScriptedTransport;
+    use gt_types::{Latitude, Longitude};
 
     use crate::app::day_failures::DayFailure;
     use crate::app::day_fetch_status::DayFetchStatus;
+    use crate::app::fix_positions::FixPositions;
 
     use super::*;
 
@@ -852,13 +878,39 @@ mod tests {
     /// The markers a context span holds, resolved from the archive.
     fn markers_over(
         scheduler: &mut SolarFlareScheduler,
+        positions: &Arc<FixPositionTimeline>,
         days: std::ops::RangeInclusive<NaiveDate>,
-    ) -> Arc<Vec<SolarFlare>> {
+    ) -> Arc<Vec<MarkedFlare>> {
         let midnight =
             |day: NaiveDate| day.and_time(chrono::NaiveTime::MIN).and_utc().timestamp() as f64;
-        scheduler.markers(ContextSpan::covering(
-            midnight(*days.start())..=midnight(*days.end()),
-        ))
+        scheduler.markers(
+            ContextSpan::covering(midnight(*days.start())..=midnight(*days.end())),
+            positions,
+        )
+    }
+
+    fn no_recording_loaded() -> Arc<FixPositionTimeline> {
+        Arc::new(FixPositionTimeline::default())
+    }
+
+    /// A recording of four hourly fixes from 08:00 on the archived day, at the
+    /// position the caller places the receiver at.
+    fn timeline_at(latitude: Latitude, longitude: Longitude) -> Arc<FixPositionTimeline> {
+        let start = at(2024, 5, 9, 8);
+        let mut track = gt_test_utils::fixtures::loaded_track_with_points(
+            gt_test_utils::fixtures::nav_points_walking_from(start, 4, 3600, latitude, longitude),
+        );
+        track.metadata.time_range = TimeRange::new(start, start + TimeDelta::hours(3));
+        let files = vec![gt_types::LoadedFile {
+            metadata: gt_test_utils::empty_file_metadata(),
+            tracks: vec![track],
+            event_marker_styles: std::collections::HashMap::new(),
+            orphaned_event_markers: vec![],
+            load_warnings: vec![],
+            source: gt_types::FileSource::GtdBytes(Arc::from(Vec::<u8>::new())),
+        }];
+        let mut positions = FixPositions::default();
+        Arc::clone(positions.timeline(&files))
     }
 
     fn archive_one_flare(store: &FlareStore, day: NaiveDate, class_type: &str) {
@@ -876,6 +928,39 @@ mod tests {
             .expect("archive");
     }
 
+    /// The side is read at the position of the fix nearest the peak, and stays
+    /// absent while no recording places the receiver. The 09:13 peak is
+    /// mid-morning over Denmark and late evening over the mid-Pacific.
+    #[rstest]
+    #[case::recorded_in_daylight(
+        Some((Latitude::new(55.0), Longitude::new(12.0))),
+        Some(SunlitSide::Sunlit)
+    )]
+    #[case::recorded_on_the_night_side(
+        Some((Latitude::new(0.0), Longitude::new(-170.0))),
+        Some(SunlitSide::Night)
+    )]
+    #[case::no_recording_loaded(None, None)]
+    fn a_marker_states_which_side_of_earth_the_receiver_was_on(
+        #[case] receiver: Option<(Latitude, Longitude)>,
+        #[case] expected: Option<SunlitSide>,
+    ) {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived = day(2024, 5, 9);
+        archive_one_flare(&store, archived, "X2.2");
+        scheduler.archived_days.insert(archived);
+        let positions = receiver.map_or_else(no_recording_loaded, |(latitude, longitude)| {
+            timeline_at(latitude, longitude)
+        });
+
+        let markers = markers_over(&mut scheduler, &positions, archived..=archived);
+
+        assert_eq!(
+            markers.first().map(|marked| marked.receiver_side),
+            Some(expected)
+        );
+    }
+
     /// Every archived day in the span contributes its flares, and a day the
     /// archive lacks contributes none.
     #[test]
@@ -886,12 +971,16 @@ mod tests {
             scheduler.archived_days.insert(archived);
         }
 
-        let markers = markers_over(&mut scheduler, day(2024, 5, 9)..=day(2024, 5, 11));
+        let markers = markers_over(
+            &mut scheduler,
+            &no_recording_loaded(),
+            day(2024, 5, 9)..=day(2024, 5, 11),
+        );
 
         assert_eq!(
             markers
                 .iter()
-                .map(|flare| flare.classification.to_string())
+                .map(|marked| marked.flare.classification.to_string())
                 .collect::<Vec<_>>(),
             ["X2.2", "X5.8"]
         );
@@ -903,7 +992,9 @@ mod tests {
     fn archiving_a_day_gives_the_plot_its_markers() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         let archived = day(2024, 5, 9);
-        assert!(markers_over(&mut scheduler, archived..=archived).is_empty());
+        assert!(
+            markers_over(&mut scheduler, &no_recording_loaded(), archived..=archived).is_empty()
+        );
 
         archive_one_flare(&store, archived, "X2.2");
         scheduler
@@ -915,6 +1006,9 @@ mod tests {
             .expect("send");
         scheduler.poll();
 
-        assert_eq!(markers_over(&mut scheduler, archived..=archived).len(), 1);
+        assert_eq!(
+            markers_over(&mut scheduler, &no_recording_loaded(), archived..=archived).len(),
+            1
+        );
     }
 }

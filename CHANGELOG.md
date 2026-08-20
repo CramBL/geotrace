@@ -18,6 +18,7 @@
 - Filtered log lines draw on the map as hexagons in their filter's colour: hovering one lists the lines behind it and marks them in the log viewer, and hovering a line in the viewer rings it on the map.
 - Settings' "Geomagnetic indices" page links to reference material on geomagnetic storms and what they do to satellite navigation.
 - Settings' "Ionospheric TEC" page links to reference material on the ionosphere, TEC and the delay it adds to satellite navigation signals.
+- Settings' "Solar flares" page links to reference material on solar flares, radio blackouts and what they do to satellite navigation, and a flare marker's hover states whether the receiver was on the sunlit side when the flare peaked.
 
 ### Changed
 

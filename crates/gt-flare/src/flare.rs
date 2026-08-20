@@ -1,6 +1,7 @@
 //! One flare event, as the catalog lists it.
 
 use chrono::{DateTime, NaiveDate, Utc};
+use gt_types::SunlitSide;
 
 use crate::class::FlareClassification;
 
@@ -29,4 +30,14 @@ impl SolarFlare {
     pub fn begin_day(&self) -> NaiveDate {
         self.begin.date_naive()
     }
+}
+
+/// One archived flare as a surface marks it, with the side of Earth the
+/// receiver was on when the flare peaked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkedFlare {
+    pub flare: SolarFlare,
+    /// [`None`] with no recording loaded, which leaves the receiver without a
+    /// position to read a side at.
+    pub receiver_side: Option<SunlitSide>,
 }

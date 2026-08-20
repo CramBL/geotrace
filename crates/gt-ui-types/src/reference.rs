@@ -68,6 +68,9 @@ pub enum ReferenceBlock {
         intro: &'static str,
         query: &'static str,
     },
+    /// Words as the source published them, set off from the prose around the
+    /// block and keeping the source's own punctuation.
+    Quotation(&'static str),
     Table(ReferenceTable),
     Equation(ReferenceEquation),
     Illustration(ReferenceIllustration),
@@ -215,7 +218,7 @@ impl ReferenceDocument {
                         })
                     }));
                 }
-                ReferenceBlock::Equation(_) => {}
+                ReferenceBlock::Quotation(_) | ReferenceBlock::Equation(_) => {}
                 ReferenceBlock::Illustration(illustration) => {
                     texts.extend(illustration.frames.iter().map(|frame| frame.label));
                     texts.push(illustration.caption);
@@ -227,6 +230,22 @@ impl ReferenceDocument {
         texts
     }
 
+    /// Every quotation the document sets off from its prose, in document
+    /// order. The window resolves their markers like prose.
+    pub fn quoted_texts(&self) -> Vec<&'static str> {
+        self.blocks
+            .iter()
+            .filter_map(|block| match block {
+                ReferenceBlock::Quotation(quotation) => Some(*quotation),
+                ReferenceBlock::Paragraph(_)
+                | ReferenceBlock::QueryExample { .. }
+                | ReferenceBlock::Table(_)
+                | ReferenceBlock::Equation(_)
+                | ReferenceBlock::Illustration(_) => None,
+            })
+            .collect()
+    }
+
     /// The queries the document offers to run, in document order.
     pub fn query_examples(&self) -> Vec<&'static str> {
         self.blocks
@@ -234,6 +253,7 @@ impl ReferenceDocument {
             .filter_map(|block| match block {
                 ReferenceBlock::QueryExample { intro: _, query } => Some(*query),
                 ReferenceBlock::Paragraph(_)
+                | ReferenceBlock::Quotation(_)
                 | ReferenceBlock::Table(_)
                 | ReferenceBlock::Equation(_)
                 | ReferenceBlock::Illustration(_) => None,
@@ -254,6 +274,7 @@ impl ReferenceDocument {
                     .collect(),
                 ReferenceBlock::Paragraph(_)
                 | ReferenceBlock::QueryExample { .. }
+                | ReferenceBlock::Quotation(_)
                 | ReferenceBlock::Table(_) => Vec::new(),
             })
             .collect()
@@ -271,6 +292,8 @@ impl ReferenceDocument {
             if prose.contains(';') {
                 defects.push(DocumentDefect::SemicolonInProse { prose });
             }
+        }
+        for prose in self.prose_texts().into_iter().chain(self.quoted_texts()) {
             let mut unresolved = false;
             for span in self.prose_spans(prose) {
                 match span {
@@ -345,6 +368,7 @@ impl fmt::Display for ReferenceBlock {
         match self {
             Self::Paragraph(prose) => writeln!(f, "{prose}"),
             Self::QueryExample { intro, query } => writeln!(f, "{intro}\n{query}"),
+            Self::Quotation(quotation) => writeln!(f, "\"{quotation}\""),
             Self::Table(table) => write!(f, "{table}"),
             Self::Equation(equation) => write!(f, "{equation}"),
             Self::Illustration(illustration) => write!(f, "{illustration}"),
@@ -668,6 +692,43 @@ mod tests {
             ..DOCUMENT
         };
         assert_eq!(document.defects(), vec![]);
+    }
+
+    /// A quotation is reproduced with its source's punctuation, and the
+    /// citation it carries numbers that source like a citation from prose.
+    #[test]
+    fn a_quotation_keeps_its_punctuation_and_cites_its_source() {
+        const BLOCKS: &[ReferenceBlock] = &[
+            ReferenceBlock::Paragraph("Storms are indexed in thirds.[^matzka-2021]"),
+            ReferenceBlock::Quotation(
+                "The \"B\" level; followed by \"C\" flares, and [GNSS] with them.[^gfz-kp]",
+            ),
+        ];
+        let document = ReferenceDocument {
+            blocks: BLOCKS,
+            ..DOCUMENT
+        };
+        assert_eq!(document.defects(), vec![]);
+    }
+
+    const UNRESOLVED_MARKER_QUOTATION: &str = "Storms disturb [TEC].[^gfz-kp][^matzka-2021]";
+
+    #[test]
+    fn an_unresolved_marker_in_a_quotation_is_a_defect() {
+        const BLOCKS: &[ReferenceBlock] = &[ReferenceBlock::Quotation(UNRESOLVED_MARKER_QUOTATION)];
+        let document = ReferenceDocument {
+            blocks: BLOCKS,
+            ..DOCUMENT
+        };
+        assert_eq!(
+            document.defects(),
+            vec![
+                DocumentDefect::UnresolvedMarker {
+                    prose: UNRESOLVED_MARKER_QUOTATION
+                },
+                DocumentDefect::UnmarkedAbbreviation { short_form: "GNSS" },
+            ]
+        );
     }
 
     const UNRESOLVED_MARKER_PROSE: &str = "Storms disturb [TEC] and [GNSS].[^gfz-kp][^matzka-2021]";
