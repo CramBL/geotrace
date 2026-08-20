@@ -1107,7 +1107,8 @@ mod tests {
         assert_eq!(
             completed.outcome.err(),
             Some(
-                "No recognised timestamp format (first line: \"kernel: no timestamp here\")"
+                "Not a recognised log: no line has a timestamp in a known format \
+                 (first line: \"kernel: no timestamp here\")"
                     .to_owned()
             )
         );

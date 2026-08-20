@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 24">
-  <!-- Diamond-headed pin for log markers. All white so it can be tinted at runtime.
-       Derived from draw_log_pin (size=12, r=7.2): diamond center at (0,-12),
-       scaled ×1.25 to fill 18×24 viewBox with pin tip at bottom-centre (9,24). -->
-  <polygon points="9,0 18,9 9,18 0,9" fill="white"/>
-  <line x1="9" y1="18" x2="9" y2="24" stroke="white" stroke-width="2" stroke-linecap="round"/>
-</svg>

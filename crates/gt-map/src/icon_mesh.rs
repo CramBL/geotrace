@@ -23,9 +23,8 @@ pub(crate) const ICON_HALF_EXTENT_PT: f32 = 10.0;
 /// Half extent in points of the larger square marker icons (24 pt across).
 pub(crate) const ICON_HALF_EXTENT_LARGE_PT: f32 = 12.0;
 
-/// Half extents in points of the bottom-anchored pins ([IconId::Pin] and
-/// [IconId::LogPin]): an aspect-true 18x24 pt rect whose tip sits one
-/// y-half-extent below the instance center.
+/// Half extents in points of the bottom-anchored [IconId::Pin]: an aspect-true
+/// 18x24 pt rect whose tip sits one y-half-extent below the instance center.
 pub(crate) const PIN_HALF_EXTENTS_PT: Vec2 = Vec2::new(9.0, 12.0);
 
 /// The half extent a [MarkerIcon] is drawn with when rendered as a square
@@ -41,7 +40,6 @@ pub(crate) fn marker_icon_half_extent(icon: MarkerIcon) -> f32 {
         | MarkerIcon::Lightning
         | MarkerIcon::Error
         | MarkerIcon::Check
-        | MarkerIcon::Log
         | MarkerIcon::Gear
         | MarkerIcon::Refresh
         | MarkerIcon::Download
@@ -80,7 +78,6 @@ pub enum IconId {
     GhostFix,
     Hexagon,
     Lightning,
-    LogPin,
     NavArrow,
     Pin,
     Refresh,
@@ -101,7 +98,6 @@ impl From<MarkerIcon> for IconId {
             MarkerIcon::Warning => Self::Warning,
             MarkerIcon::Error => Self::Error,
             MarkerIcon::Check => Self::Check,
-            MarkerIcon::Log => Self::LogPin,
             MarkerIcon::Satellite => Self::Satellite,
             MarkerIcon::SatelliteLost => Self::SatelliteLost,
             MarkerIcon::Gear => Self::Gear,
@@ -146,7 +142,6 @@ pub struct IconMeshLibrary {
     ghost_fix: IconTessellation,
     hexagon: IconTessellation,
     lightning: IconTessellation,
-    log_pin: IconTessellation,
     nav_arrow: IconTessellation,
     pin: IconTessellation,
     refresh: IconTessellation,
@@ -194,7 +189,6 @@ impl IconMeshLibrary {
             ghost_fix: take(IconId::GhostFix)?,
             hexagon: take(IconId::Hexagon)?,
             lightning: take(IconId::Lightning)?,
-            log_pin: take(IconId::LogPin)?,
             nav_arrow: take(IconId::NavArrow)?,
             pin: take(IconId::Pin)?,
             refresh: take(IconId::Refresh)?,
@@ -218,7 +212,6 @@ impl IconMeshLibrary {
             IconId::GhostFix => &self.ghost_fix,
             IconId::Hexagon => &self.hexagon,
             IconId::Lightning => &self.lightning,
-            IconId::LogPin => &self.log_pin,
             IconId::NavArrow => &self.nav_arrow,
             IconId::Pin => &self.pin,
             IconId::Refresh => &self.refresh,
@@ -274,7 +267,6 @@ mod tests {
             (IconId::GhostFix, "ghost_fix"),
             (IconId::Hexagon, "hexagon"),
             (IconId::Lightning, "lightning"),
-            (IconId::LogPin, "log_pin"),
             (IconId::NavArrow, "nav_arrow"),
             (IconId::Pin, "pin"),
             (IconId::Refresh, "refresh"),
@@ -301,7 +293,6 @@ mod tests {
             (MarkerIcon::Warning, IconId::Warning),
             (MarkerIcon::Error, IconId::Error),
             (MarkerIcon::Check, IconId::Check),
-            (MarkerIcon::Log, IconId::LogPin),
             (MarkerIcon::Satellite, IconId::Satellite),
             (MarkerIcon::SatelliteLost, IconId::SatelliteLost),
             (MarkerIcon::Gear, IconId::Gear),

@@ -29,8 +29,6 @@ const EVENT_FALLBACK_COLORS: [MarkerColor; 8] = [
 ];
 
 /// Deterministic fallback color for an unstyled event marker variant.
-///
-/// Hashes `variant_path` into the `LOG_COLORS`-compatible palette.
 pub fn event_marker_fallback_color(variant_path: &str) -> MarkerColor {
     let mut hash: u64 = 5381;
     for b in variant_path.bytes() {
@@ -311,7 +309,6 @@ pub enum MarkerIcon {
     Warning,
     Error,
     Check,
-    Log,
     Satellite,
     SatelliteLost,
     Gear,
@@ -328,7 +325,6 @@ pub struct CustomMarker {
     pub icon: MarkerIcon,
     pub lat: Latitude,
     pub lon: Longitude,
-    pub color_group: Option<u32>,
     /// Pre-computed normalized Mercator coordinates, see [`crate::mercator`].
     pub merc: MercPoint,
 }
@@ -340,7 +336,6 @@ impl CustomMarker {
         icon: MarkerIcon,
         lat: Latitude,
         lon: Longitude,
-        color_group: Option<u32>,
     ) -> Self {
         let merc = crate::mercator::normalize(lat, lon);
         Self {
@@ -349,7 +344,6 @@ impl CustomMarker {
             icon,
             lat,
             lon,
-            color_group,
             merc,
         }
     }

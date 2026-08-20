@@ -427,7 +427,7 @@ fn query_match_header_hover_highlights_the_match() {
 /// Anything that is not a recording is read as a log, so binary junk fails as
 /// one: nothing in it carries a timestamp.
 #[test]
-fn drag_drop_binary_junk_reports_that_no_line_is_timestamped() {
+fn drag_drop_binary_junk_reports_it_is_not_a_recognised_log() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
@@ -438,7 +438,7 @@ fn drag_drop_binary_junk_reports_that_no_line_is_timestamped() {
 
     let error = harness.state().load_error.clone().unwrap_or_default();
     assert!(
-        error.starts_with("No recognised timestamp format"),
+        error.starts_with("Not a recognised log: no line has a timestamp in a known format"),
         "got {error:?}"
     );
     assert_eq!(harness.state().shared.borrow().loaded_files.len(), 0);

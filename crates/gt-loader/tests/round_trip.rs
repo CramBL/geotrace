@@ -18,8 +18,7 @@ fn sdk_constellation(c: Constellation) -> SdkConst {
 
 fn sdk_icon(icon: gt_types::MarkerIcon) -> SdkIcon {
     match icon {
-        // Log markers are not stored in .gtd files. Map to Pin as a fallback
-        gt_types::MarkerIcon::Pin | gt_types::MarkerIcon::Log => SdkIcon::Pin,
+        gt_types::MarkerIcon::Pin => SdkIcon::Pin,
         gt_types::MarkerIcon::Cross => SdkIcon::Cross,
         gt_types::MarkerIcon::Circle => SdkIcon::Circle,
         gt_types::MarkerIcon::Lightning => SdkIcon::Lightning,
