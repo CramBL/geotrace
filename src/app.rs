@@ -28,6 +28,7 @@ mod snap;
 mod snap_persist;
 mod snap_state;
 mod solar;
+mod space_weather_warning;
 mod storage;
 mod storage_controls;
 mod tec;
@@ -287,6 +288,8 @@ pub struct App {
     tec_settings: crate::settings::TecSettings,
     /// Queues and ingests solar flare days for loaded tracks.
     solar_flares: flares::SolarFlareScheduler,
+    /// What the archived environment values say about the loaded recordings.
+    space_weather_warning: space_weather_warning::SpaceWeatherWarning,
     /// Persisted solar flare configuration: the host serving the catalog and
     /// the user's key for it.
     solar_flare_settings: crate::settings::SolarFlareSettings,
@@ -480,6 +483,7 @@ impl App {
             tec_settings,
             solar_flares,
             solar_flare_settings,
+            space_weather_warning: space_weather_warning::SpaceWeatherWarning::default(),
             offline: options.offline,
             interference_backfill_ui: backfill_ui::BackfillUi::default(),
             geomagnetic_index_backfill_ui: backfill_ui::BackfillUi::default(),

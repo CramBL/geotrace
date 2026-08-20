@@ -19,6 +19,7 @@ mod sat_labels;
 mod sky_glyph_renderer;
 mod sky_trails_window;
 mod snapped_track_renderer;
+mod space_weather_indicator;
 mod tec_renderer;
 #[cfg(test)]
 mod test_harness;
@@ -269,6 +270,10 @@ pub struct MapDrawContext<'a> {
     /// The log match under the cursor, on the map and in the viewer alike.
     pub log_hover: &'a mut LogMatchHover,
     pub empty_reason: Option<EmptyReason>,
+    /// One line per environment metric that could have disturbed a loaded
+    /// recording, empty while the archives place none. Drives the warning
+    /// indicator in the map's top-right corner.
+    pub space_weather_warning: &'a [String],
     pub filter: &'a GlobalFilter,
     pub visibility: &'a TrackDataVisibility,
     pub event_marker_visibility: &'a EventMarkerVisibility,
@@ -934,8 +939,9 @@ impl NavMap {
         hover
     }
 
-    /// The floating controls in the map's bottom-right corner: the tile layer
-    /// picker, and the display toggle stacked above it.
+    /// The map's floating controls: the tile layer picker with the display
+    /// toggle stacked above it in the bottom-right corner, and the space
+    /// weather warning in the top-right one.
     fn show_overlay_controls(
         &mut self,
         ui: &egui::Ui,
@@ -992,6 +998,12 @@ impl NavMap {
                     },
                 )
             },
+        );
+
+        space_weather_indicator::show_space_weather_warning(
+            ui,
+            map_rect,
+            ctx.space_weather_warning,
         );
     }
 
@@ -1440,6 +1452,7 @@ struct DrawState {
     tec_instant: gt_ionex::TecInstantSelection,
     log_matches: LogMatches,
     log_hover: LogMatchHover,
+    space_weather_warning: Vec<String>,
 }
 
 #[cfg(test)]
@@ -1449,6 +1462,7 @@ impl Default for DrawState {
             recording_names: RecordingNames::default(),
             log_matches: LogMatches::default(),
             log_hover: LogMatchHover::default(),
+            space_weather_warning: Vec::new(),
             filter: GlobalFilter::default(),
             event_marker_visibility: EventMarkerVisibility::default(),
             generated_marker_visibility: GeneratedMarkerVisibility::default(),
@@ -1485,6 +1499,7 @@ impl DrawState {
             log_matches: &self.log_matches,
             log_hover: &mut self.log_hover,
             empty_reason: None,
+            space_weather_warning: &self.space_weather_warning,
             filter: &self.filter,
             visibility,
             event_marker_visibility: &self.event_marker_visibility,
