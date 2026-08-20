@@ -1,3 +1,5 @@
+pub mod fonts;
+
 use egui::Color32;
 
 /// U+2026 HORIZONTAL ELLIPSIS - truncation marker, and the button-label

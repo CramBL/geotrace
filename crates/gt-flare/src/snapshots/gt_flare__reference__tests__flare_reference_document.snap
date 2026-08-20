@@ -14,9 +14,9 @@ The increased X-ray and extreme ultraviolet ([EUV]) radiation ionizes the lower 
 
 Strong flares can also emit radio noise directly at [GNSS] frequencies. During the flare of 6 December 2006, the [L-band] radio burst reduced the carrier-to-noise density of GPS receivers by 17 dB at [L1] and 18 to 20 dB at [L2], and many sunlit receivers of the International GNSS Service tracked fewer than four satellites.[^swsc-bursts][^cerruti] This interference enters at the receiver's antenna and raises the noise floor on all frequencies at once. Dual-frequency combinations remove propagation delay, not receiver noise.
 
-"The X-ray flux levels start with the "A" level (nominally starting at 10^-8 W/m^2). The next level, ten times higher, is the "B" level (>= 10^-7 W/m^2); followed by "C" flares (10^-6 W/m^2), "M" flares (10^-5 W/m^2), and finally "X" flares (10^-4 W/m^2).[^noaa-flares]"
+"The X-ray flux levels start with the "A" level (nominally starting at 10⁻⁸ W/m²). The next level, ten times higher, is the "B" level (>= 10⁻⁷ W/m²); followed by "C" flares (10⁻⁶ W/m²), "M" flares (10⁻⁵ W/m²), and finally "X" flares (10⁻⁴ W/m²).[^noaa-flares]"
 
-The number suffix scales within the class, e.g. an X6 flare peaks at 6 x 10^-4 W/m^2.
+The number suffix scales within the class, e.g. an X6 flare peaks at 6 × 10⁻⁴ W/m².
 
 NOAA R-scale: navigation effects[^noaa-scales]
 Scale | Flare class | Navigation effects (NOAA wording) | Occurrences per solar cycle

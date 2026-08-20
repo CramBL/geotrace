@@ -79,16 +79,14 @@ const BLOCKS: &[ReferenceBlock] = &[
          frequencies at once. Dual-frequency combinations remove propagation delay, not receiver \
          noise.",
     ),
-    // Exponents stay ASCII: the proportional font stack has no glyph for
-    // U+207B SUPERSCRIPT MINUS and draws it as a box.
     ReferenceBlock::Quotation(
-        "The X-ray flux levels start with the \"A\" level (nominally starting at 10^-8 W/m^2). The \
-         next level, ten times higher, is the \"B\" level (>= 10^-7 W/m^2); followed by \"C\" \
-         flares (10^-6 W/m^2), \"M\" flares (10^-5 W/m^2), and finally \"X\" flares (10^-4 \
-         W/m^2).[^noaa-flares]",
+        "The X-ray flux levels start with the \"A\" level (nominally starting at 10⁻⁸ W/m²). \
+         The next level, ten times higher, is the \"B\" level (>= 10⁻⁷ W/m²); followed by \
+         \"C\" flares (10⁻⁶ W/m²), \"M\" flares (10⁻⁵ W/m²), and finally \"X\" flares \
+         (10⁻⁴ W/m²).[^noaa-flares]",
     ),
     ReferenceBlock::Paragraph(
-        "The number suffix scales within the class, e.g. an X6 flare peaks at 6 x 10^-4 W/m^2.",
+        "The number suffix scales within the class, e.g. an X6 flare peaks at 6 × 10⁻⁴ W/m².",
     ),
     ReferenceBlock::Table(R_SCALE_TABLE),
     ReferenceBlock::Paragraph(
