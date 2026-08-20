@@ -63,7 +63,7 @@ pub const SOURCE_CAVEAT: &str = "Modelled from ground stations onto a global gri
 /// What the unit means, shown alongside the first value on a surface.
 pub static SCALE_CAVEAT: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "One TEC unit is 10^16 electrons per square metre and adds about \
+        "One TEC unit is 10¹⁶ electrons per square metre and adds about \
          {L1_DELAY_METERS_PER_TECU:.2} m of range on L1. A quiet mid-latitude day stays under 20 \
          TECU, and a storm reaches past 150."
     )

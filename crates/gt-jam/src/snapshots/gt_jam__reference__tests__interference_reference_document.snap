@@ -17,7 +17,7 @@ Each cell aggregates one [UTC] day. GeoTrace colours a cell by the share of airc
 
 "percent_bad_aircraft = 100 * (num_bad_aircraft - 1) / (num_good_aircraft + num_bad_aircraft)[^gpsjam-faq]"
 
-The subtraction of one is the author's deliberate denoising of single-aircraft cells. GeoTrace draws the share as counted and hatches the cells holding too few aircraft for it to carry weight, so a thin cell stays on the map as a thin cell.
+The subtraction of one is the author's deliberate denoising of single-aircraft cells. GeoTrace draws the share as counted. Cells with fewer than five aircraft are hatched, drawn with thin diagonal lines in place of a solid fill. gpsjam publishes cells with as few as two aircraft, where one bad report would read as 50 percent.
 
 "Green hexagons show where more than 98% of all aircraft who flew through that area reported good navigation accuracy. Yellow hexagons show where between 2% and 10% of aircraft reported low navigation accuracy. Red hexagons show where more than 10% of aircraft reported low navigation accuracy.[^gpsjam-faq]"
 

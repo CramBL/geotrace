@@ -57,6 +57,10 @@ const QUOTATION_INDENT: i8 = 12;
 /// the prose.
 const QUOTATION_RULE_WIDTH: f32 = 2.0;
 
+/// Raised comma written between two adjacent citation numbers, so a run of
+/// citations reads as a list.
+const CITATION_SEPARATOR: &str = ",";
+
 /// The dots of an abbreviation's underline: how far apart they sit, how big
 /// they are, and how far above the bottom of the text row they run.
 const UNDERLINE_DOT_SPACING: f32 = 3.0;
@@ -310,14 +314,21 @@ fn prose_spans_ui(
     style: ProseStyle,
 ) {
     ui.spacing_mut().item_spacing.x = 0.0;
+    let mut previous_span_was_citation = false;
     for span in document.prose_spans(prose) {
         match span {
             ProseSpan::Text(text) => {
                 ui.label(style.rich_text(text));
             }
             ProseSpan::Abbreviation(abbreviation) => abbreviation_ui(ui, abbreviation, style),
-            ProseSpan::Citation(citation) => citation_ui(ui, citation),
+            ProseSpan::Citation(citation) => {
+                if previous_span_was_citation {
+                    ui.label(RichText::new(CITATION_SEPARATOR).small_raised());
+                }
+                citation_ui(ui, citation);
+            }
         }
+        previous_span_was_citation = matches!(span, ProseSpan::Citation(_));
     }
 }
 

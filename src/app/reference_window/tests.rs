@@ -5,12 +5,12 @@ use gt_jam::reference::AIRCRAFT_INTERFERENCE;
 use gt_solar::reference::GEOMAGNETIC_ACTIVITY;
 use gt_test_utils::{HarnessInteraction as _, TestHarness};
 use gt_ui_types::reference::{
-    Abbreviation, ColumnWidth, ReferenceBlock, ReferenceDocument, ReferenceTable, TableCell,
-    TableColumn,
+    Abbreviation, ColumnWidth, ReferenceBlock, ReferenceDocument, ReferenceTable, Source,
+    TableCell, TableColumn,
 };
 use rstest::rstest;
 
-use super::{ReferenceWindow, WRAPPING_COLUMN_WIDTH, decode_image};
+use super::{CITATION_SEPARATOR, ReferenceWindow, WRAPPING_COLUMN_WIDTH, decode_image};
 
 /// Room for the window at its default size.
 const HARNESS_SIZE: egui::Vec2 = egui::vec2(1120.0, 820.0);
@@ -327,6 +327,44 @@ fn every_query_example_checks_clean(#[case] document: ReferenceDocument) {
         gt_query::check(&query, &gt_query::ChannelSchema::new())
             .unwrap_or_else(|diagnostic| panic!("{text:?} checks: {diagnostic:?}"));
     }
+}
+
+/// Prose citing two sources at once, written without a comma of its own so the
+/// only comma the window renders is the one it writes between the citations.
+const ADJACENT_CITATION_DOCUMENT: ReferenceDocument = ReferenceDocument {
+    title: "Adjacent citations",
+    link_question: "How do adjacent citations affect GNSS?",
+    blocks: &[ReferenceBlock::Paragraph(
+        "Two sources say so.[^first][^second]",
+    )],
+    abbreviations: &[],
+    sources: &[
+        Source {
+            citation_key: "first",
+            name: "First source",
+            url: "https://example.invalid/first",
+        },
+        Source {
+            citation_key: "second",
+            name: "Second source",
+            url: "https://example.invalid/second",
+        },
+    ],
+};
+
+/// Two citations in a row read as a list of source numbers. The window
+/// snapshots show the comma raised with the numbers.
+#[test]
+fn adjacent_citations_are_separated_by_a_comma() {
+    let harness = harness_showing(ADJACENT_CITATION_DOCUMENT, true);
+    let first = harness.inner.get_by_label("1").rect();
+    let separator = harness.inner.get_by_label(CITATION_SEPARATOR).rect();
+    let second = harness.inner.get_by_label("2").rect();
+
+    assert!(
+        first.left() < separator.left() && separator.left() < second.left(),
+        "the comma at {separator:?} sits between {first:?} and {second:?}"
+    );
 }
 
 /// A cell long enough to need a second line in the column it belongs to.

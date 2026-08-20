@@ -11,12 +11,12 @@ The ionosphere is ionized by solar radiation: during the day, Sun radiation ioni
 Equation slant_tec
 STEC = integral of N_e along the signal path
 
-One [TECU] is 10^16 electrons per square metre, and a [GNSS] code measurement is delayed in proportion, about 0.16 m on [L1] per [TECU], at the coefficient below.[^navipedia-iono]
+One [TECU] is 10¹⁶ electrons per square metre.[^navipedia-iono] A [GNSS] code measurement is delayed in proportion, at the coefficient below.[^navipedia-iono]
 
 Equation delay_coefficient
 alpha_f = 40.3e16 / f^2 metres per TECU
 
-The [TEC], and thence, the ionospheric refraction, depends on the geographical location of the receiver, the hour of day and the solar activity, and the delay can reach 10 to 20 m.[^navipedia-iono]
+The [TEC], and thence, the ionospheric refraction, depends on the geographical location of the receiver, the hour of day and the solar activity.[^navipedia-iono] The delay can reach 10 to 20 m.[^navipedia-iono]
 
 Dual-frequency receivers remove almost all of this error by combining the two frequencies. Single-frequency receivers carry whatever their broadcast correction model misses.[^navipedia-iono]
 
@@ -25,7 +25,7 @@ A receiver never measures range alone. Each pseudorange is the geometric range p
 Equation pseudorange
 R = rho + c (dt - dt^s) + T + alpha_f I + TGD + M + epsilon
 
-A delay that is identical on every pseudorange is algebraically indistinguishable from a larger clock offset, and the position does not move at all. Only the part of the ionospheric delay that differs between satellites displaces the position: each ray crosses a different slice of ionosphere, a low satellite through more of it than one overhead. That differential error is scaled by the satellite geometry.[^navipedia-pos]
+A delay that is identical on every pseudorange is algebraically indistinguishable from a larger clock offset. The position estimate is unchanged. Only the part of the ionospheric delay that differs between satellites displaces the position: each ray crosses a different slice of ionosphere, a low satellite through more of it than one overhead. That differential error is scaled by the satellite geometry.[^navipedia-pos]
 
 The delay component common to all satellites is attributed to the receiver clock offset estimate. Positioning accuracy is therefore preserved, while the receiver's time estimate carries the error.
 

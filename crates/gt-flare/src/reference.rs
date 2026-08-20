@@ -75,9 +75,12 @@ const BLOCKS: &[ReferenceBlock] = &[
          of 6 December 2006, the [L-band] radio burst reduced the carrier-to-noise density of GPS \
          receivers by 17 dB at [L1] and 18 to 20 dB at [L2], and many sunlit receivers of the \
          International GNSS Service tracked fewer than four satellites.[^swsc-bursts][^cerruti] \
-         This mechanism is receiver interference rather than propagation delay, and no frequency \
-         combination removes it.",
+         This interference enters at the receiver's antenna and raises the noise floor on all \
+         frequencies at once. Dual-frequency combinations remove propagation delay, not receiver \
+         noise.",
     ),
+    // Exponents stay ASCII: the proportional font stack has no glyph for
+    // U+207B SUPERSCRIPT MINUS and draws it as a box.
     ReferenceBlock::Quotation(
         "The X-ray flux levels start with the \"A\" level (nominally starting at 10^-8 W/m^2). The \
          next level, ten times higher, is the \"B\" level (>= 10^-7 W/m^2); followed by \"C\" \
@@ -85,13 +88,13 @@ const BLOCKS: &[ReferenceBlock] = &[
          W/m^2).[^noaa-flares]",
     ),
     ReferenceBlock::Paragraph(
-        "The number suffix scales within the class, so an X6 flare peaks at 6 x 10^-4 W/m^2.",
+        "The number suffix scales within the class, e.g. an X6 flare peaks at 6 x 10^-4 W/m^2.",
     ),
     ReferenceBlock::Table(R_SCALE_TABLE),
     ReferenceBlock::Paragraph(
-        "The plot marks each archived flare at its peak.[^donki] Whether a flare could have \
-         affected a recording depends on whether the receiver was on the sunlit side at that \
-         instant, and the marker's hover states which side the receiver was on.",
+        "The plot marks each archived flare at its peak.[^donki] Receivers are not affected by a \
+         flare unless they are on the sunlit side of Earth. On hover, the plot's flare markers \
+         indicate whether the receiver was on the sunlit side.",
     ),
 ];
 

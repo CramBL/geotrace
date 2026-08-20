@@ -32,7 +32,7 @@ const ABBREVIATIONS: &[Abbreviation] = &[
     },
     Abbreviation {
         short_form: "TECU",
-        full_form: "TEC unit, 10^16 electrons per square metre",
+        full_form: "TEC unit, 10¹⁶ electrons per square metre",
     },
     Abbreviation {
         short_form: "STEC",
@@ -57,15 +57,14 @@ const BLOCKS: &[ReferenceBlock] = &[
     ),
     ReferenceBlock::Equation(SLANT_TEC_EQUATION),
     ReferenceBlock::Paragraph(
-        "One [TECU] is 10^16 electrons per square metre, and a [GNSS] code measurement is delayed \
-         in proportion, about 0.16 m on [L1] per [TECU], at the coefficient \
-         below.[^navipedia-iono]",
+        "One [TECU] is 10¹⁶ electrons per square metre.[^navipedia-iono] A [GNSS] code \
+         measurement is delayed in proportion, at the coefficient below.[^navipedia-iono]",
     ),
     ReferenceBlock::Equation(DELAY_COEFFICIENT_EQUATION),
     ReferenceBlock::Paragraph(
         "The [TEC], and thence, the ionospheric refraction, depends on the geographical location \
-         of the receiver, the hour of day and the solar activity, and the delay can reach 10 to \
-         20 m.[^navipedia-iono]",
+         of the receiver, the hour of day and the solar activity.[^navipedia-iono] The delay can \
+         reach 10 to 20 m.[^navipedia-iono]",
     ),
     ReferenceBlock::Paragraph(
         "Dual-frequency receivers remove almost all of this error by combining the two \
@@ -81,7 +80,7 @@ const BLOCKS: &[ReferenceBlock] = &[
     ReferenceBlock::Equation(PSEUDORANGE_EQUATION),
     ReferenceBlock::Paragraph(
         "A delay that is identical on every pseudorange is algebraically indistinguishable from a \
-         larger clock offset, and the position does not move at all. Only the part of the \
+         larger clock offset. The position estimate is unchanged. Only the part of the \
          ionospheric delay that differs between satellites displaces the position: each ray \
          crosses a different slice of ionosphere, a low satellite through more of it than one \
          overhead. That differential error is scaled by the satellite geometry.[^navipedia-pos]",
