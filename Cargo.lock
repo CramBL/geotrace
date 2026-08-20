@@ -2767,6 +2767,7 @@ dependencies = [
  "gt-ionex",
  "gt-jam",
  "gt-loaded-files",
+ "gt-logfile",
  "gt-sky",
  "gt-test-utils",
  "gt-track-builder",
@@ -2996,6 +2997,7 @@ dependencies = [
  "geotrace-sdk",
  "gt-fetch",
  "gt-types",
+ "image",
  "parking_lot",
  "tempfile",
  "uom",
@@ -3041,6 +3043,7 @@ dependencies = [
  "egui",
  "gt-fmt",
  "gt-types",
+ "gt-ui-types",
  "rstest",
  "strum",
 ]
@@ -3051,6 +3054,7 @@ version = "0.12.0"
 dependencies = [
  "chrono",
  "gt-filter",
+ "gt-logfile",
  "gt-track-builder",
  "gt-types",
  "rstest",

@@ -15,7 +15,7 @@
 - A search field in Settings to easily filter pages and rows.
 - A log viewer window: a loaded log opens in it showing its lines, boot sessions and parse summary, and clicking a line centres the map where it was recorded.
 - The log viewer filters as you type, in plain terms or a regular expression, and "+ Add filter" keeps the filter.
-- Filtered log lines draw on the map as hexagons in their filter's colour.
+- Filtered log lines draw on the map as hexagons in their filter's colour: hovering one lists the lines behind it and marks them in the log viewer, and hovering a line in the viewer rings it on the map.
 - Settings' "Geomagnetic indices" page links to reference material on geomagnetic storms and what they do to satellite navigation.
 
 ### Changed

@@ -9,6 +9,7 @@ authors.workspace = true
 [features]
 snapshot = [
     "dep:egui",
+    "dep:image",
     "dep:egui_kittest",
     "dep:egui-wgpu",
     "dep:egui-phosphor",
@@ -28,6 +29,10 @@ geo-types.workspace = true
 geotrace-sdk = { path = "../../sdk/rust/geotrace-sdk" }
 gt-fetch = { path = "../gt-fetch" }
 gt-types = { path = "../gt-types" }
+# Compares rendered frames in `snapshot_harness`. The same `image` version
+# `egui_kittest`'s `Harness::render` returns. No codec features: the frames
+# never leave memory.
+image = { version = "0.25", default-features = false, optional = true }
 parking_lot.workspace = true
 tempfile = { workspace = true, optional = true }
 uom.workspace = true

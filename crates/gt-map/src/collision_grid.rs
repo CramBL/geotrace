@@ -117,12 +117,15 @@ pub(crate) fn decimation_cell_merc(spacing_px: f32, zoom: f64) -> f64 {
     f64::from(spacing_px) / MapScale::from_zoom(decimation_zoom(zoom)).px_per_merc()
 }
 
-/// One screen-space cluster of log matches: where its hexagon draws, and how
-/// many matches collapsed into it.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// One screen-space cluster of log matches: where its hexagon draws, and which
+/// of the positions it was built from collapsed into it.
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PositionCluster {
     pub(crate) merc: MercPoint,
-    pub(crate) count: usize,
+
+    /// Positions of this cluster, as indices into the ones handed in,
+    /// ascending.
+    pub(crate) members: Vec<usize>,
 }
 
 /// Collapses positions less than `spacing_merc` apart into one cluster each,
@@ -140,7 +143,7 @@ pub(crate) struct PositionCluster {
 /// The clusters come back in the order their positions arrived in, which is
 /// the order they are drawn in.
 pub(crate) fn cluster_positions(
-    positions: &[MercPoint],
+    positions: impl IntoIterator<Item = MercPoint>,
     spacing_merc: f64,
     viewport: MercBounds,
 ) -> Vec<PositionCluster> {
@@ -150,7 +153,7 @@ pub(crate) fn cluster_positions(
     // size, so the candidates all sit in the position's own cell or the eight
     // around it.
     let mut clusters_by_cell: FxHashMap<(i64, i64), Vec<usize>> = FxHashMap::default();
-    for &merc in positions {
+    for (position_index, merc) in positions.into_iter().enumerate() {
         let cell = cell_key(merc.x, merc.y, spacing_merc);
         let nearest = neighbouring_cells(cell)
             .filter_map(|neighbour| clusters_by_cell.get(&neighbour))
@@ -164,13 +167,16 @@ pub(crate) fn cluster_positions(
             .min_by(|&(_, a), &(_, b)| a.total_cmp(&b))
             .map(|(index, _)| index);
         match nearest.and_then(|index| clusters.get_mut(index)) {
-            Some(cluster) => cluster.count = cluster.count.saturating_add(1),
+            Some(cluster) => cluster.members.push(position_index),
             None => {
                 clusters_by_cell
                     .entry(cell)
                     .or_default()
                     .push(clusters.len());
-                clusters.push(PositionCluster { merc, count: 1 });
+                clusters.push(PositionCluster {
+                    merc,
+                    members: vec![position_index],
+                });
             }
         }
     }
@@ -255,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn positions_within_the_spacing_collapse_into_a_cluster_counting_them() {
+    fn positions_within_the_spacing_collapse_into_a_cluster_naming_them() {
         let positions = [
             merc(0.100, 0.100),
             merc(0.101, 0.101),
@@ -263,18 +269,18 @@ mod tests {
             merc(0.400, 0.400),
         ];
 
-        let clusters = cluster_positions(&positions, 0.01, whole_world());
+        let clusters = cluster_positions(positions, 0.01, whole_world());
 
         assert_eq!(
             clusters,
             [
                 PositionCluster {
                     merc: merc(0.100, 0.100),
-                    count: 3,
+                    members: vec![0, 1, 2],
                 },
                 PositionCluster {
                     merc: merc(0.400, 0.400),
-                    count: 1,
+                    members: vec![3],
                 },
             ],
             "a cluster draws where the first of its positions is"
@@ -289,10 +295,10 @@ mod tests {
         let positions = [merc(0.009_999, 0.1), merc(0.010_001, 0.1)];
 
         assert_eq!(
-            cluster_positions(&positions, 0.01, whole_world()),
+            cluster_positions(positions, 0.01, whole_world()),
             [PositionCluster {
                 merc: merc(0.009_999, 0.1),
-                count: 2,
+                members: vec![0, 1],
             }]
         );
     }
@@ -309,9 +315,9 @@ mod tests {
             })
             .collect();
 
-        let counts: Vec<usize> = cluster_positions(&positions, 0.01, whole_world())
+        let counts: Vec<usize> = cluster_positions(positions, 0.01, whole_world())
             .iter()
-            .map(|cluster| cluster.count)
+            .map(|cluster| cluster.members.len())
             .collect();
 
         // The run steps 0.000_2 in both axes, so a cluster takes in the 36
@@ -335,10 +341,10 @@ mod tests {
         ) {
             let positions: Vec<MercPoint> = points.iter().map(|&(x, y)| merc(x, y)).collect();
 
-            let clusters = cluster_positions(&positions, spacing, whole_world());
+            let clusters = cluster_positions(positions.iter().copied(), spacing, whole_world());
 
             proptest::prop_assert_eq!(
-                clusters.iter().map(|cluster| cluster.count).sum::<usize>(),
+                clusters.iter().map(|cluster| cluster.members.len()).sum::<usize>(),
                 positions.len()
             );
             for (index, cluster) in clusters.iter().enumerate() {
@@ -364,8 +370,8 @@ mod tests {
     fn a_smaller_spacing_splits_a_cluster() {
         let positions = [merc(0.1000, 0.1), merc(0.1050, 0.1)];
 
-        assert_eq!(cluster_positions(&positions, 0.01, whole_world()).len(), 1);
-        assert_eq!(cluster_positions(&positions, 0.001, whole_world()).len(), 2);
+        assert_eq!(cluster_positions(positions, 0.01, whole_world()).len(), 1);
+        assert_eq!(cluster_positions(positions, 0.001, whole_world()).len(), 2);
     }
 
     /// Panning moves what is on screen without regrouping anything: positions
@@ -391,8 +397,8 @@ mod tests {
         };
 
         assert_eq!(
-            cluster_positions(&positions, 0.01, wide),
-            cluster_positions(&positions, 0.01, panned)
+            cluster_positions(positions, 0.01, wide),
+            cluster_positions(positions, 0.01, panned)
         );
     }
 
@@ -407,10 +413,10 @@ mod tests {
         };
 
         assert_eq!(
-            cluster_positions(&positions, 0.01, viewport),
+            cluster_positions(positions, 0.01, viewport),
             [PositionCluster {
                 merc: merc(0.1, 0.1),
-                count: 1,
+                members: vec![0],
             }]
         );
     }

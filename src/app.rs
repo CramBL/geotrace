@@ -73,6 +73,9 @@ struct SharedAppState {
     point_window_folds: gt_ui_types::PointWindowFolds,
     filter_state: FilterPanelState,
     plot_state: PlotState,
+    /// The log match under the cursor: the map writes the hexagon it is on,
+    /// the log viewer the row it is on, and each reads what the other wrote.
+    log_hover: gt_ui_types::LogMatchHover,
     map_center_request: Option<(f64, f64)>,
     /// Requested screen position for the next sticky info popup, set by panel
     /// item clicks and consumed by `NavMap::draw` as the popup's default position.
@@ -486,6 +489,7 @@ impl App {
                 point_window_folds: gt_ui_types::PointWindowFolds::default(),
                 filter_state: FilterPanelState::default(),
                 plot_state: PlotState::default(),
+                log_hover: gt_ui_types::LogMatchHover::default(),
                 map_center_request: None,
                 popup_pos_request: None,
                 zoom_to_visible_request: false,

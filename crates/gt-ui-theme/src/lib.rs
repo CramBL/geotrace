@@ -826,6 +826,17 @@ pub fn log_layer_slot_color(slot_index: usize) -> ThemedColor {
     LOG_LAYER_SLOTS[slot_index % LOG_LAYER_SLOTS.len()]
 }
 
+/// The colour one of a log's filters draws in, on the map and in the viewer
+/// alike.
+pub fn log_match_color(color: gt_ui_types::LogMatchColor, dark_mode: bool) -> Color32 {
+    match color {
+        gt_ui_types::LogMatchColor::LiveFilter => LOG_LIVE_FILTER.resolve(dark_mode),
+        gt_ui_types::LogMatchColor::LayerSlot { index, .. } => {
+            log_layer_slot_color(index).resolve(dark_mode)
+        }
+    }
+}
+
 /// Colors used for log-entry markers, cycling over the marker's log index.
 pub const LOG_COLORS: [Color32; 8] = [
     Color32::from_rgb(230, 57, 70),

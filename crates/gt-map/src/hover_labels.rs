@@ -18,14 +18,17 @@ use crate::recording_labels::RecordingLabels;
 
 /// Which map layer owns the pointer, determining whose hover label draws.
 ///
-/// Recorded elements come first, then the snapped track, then the
-/// interference cells beneath both: an overlay yields to everything above it
-/// so only one hover label draws at a time. Both flags describe the previous
-/// frame, since a layer's own hit test runs after the layers beneath it have
-/// already drawn.
+/// Recorded elements come first, then the log hexagons over the track line,
+/// then the snapped track, then the interference cells beneath all of them: a
+/// layer yields to everything above it so only one hover label draws at a
+/// time. The flags describe the previous frame, since a layer's own hit test
+/// runs after the layers beneath it have already drawn.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct PointerOwnership {
     pub(crate) recorded_element_hovered: bool,
+    /// Whether a marker was under the pointer, whose pin draws over the log
+    /// hexagons and takes the hover from them.
+    pub(crate) marker_hovered: bool,
     pub(crate) snapped_edge_tooltip_shown: bool,
     /// Whether the interference layer is drawing, whose cells sit over the TEC
     /// grid and take the hover in its place.
@@ -35,6 +38,10 @@ pub(crate) struct PointerOwnership {
 impl PointerOwnership {
     pub(crate) fn snapped_track_hover_enabled(self) -> bool {
         !self.recorded_element_hovered
+    }
+
+    pub(crate) fn log_hexagon_hover_enabled(self) -> bool {
+        !self.marker_hovered
     }
 
     pub(crate) fn jamming_cell_hover_enabled(self) -> bool {
@@ -312,67 +319,79 @@ mod tests {
         snapped_hover: bool,
         jamming_hover: bool,
         tec_hover: bool,
+        log_hexagon_hover: bool,
     }
 
     #[rstest]
     #[case::nothing_hovered(
-        PointerOwnership {
-            recorded_element_hovered: false,
-            snapped_edge_tooltip_shown: false,
-            interference_layer_drawn: false,
-        },
+        PointerOwnership::default(),
         Expected {
             snapped_hover: true,
             jamming_hover: true,
             tec_hover: true,
+            log_hexagon_hover: true,
         }
     )]
     #[case::snapped_edge_hovered(
         PointerOwnership {
-            recorded_element_hovered: false,
             snapped_edge_tooltip_shown: true,
-            interference_layer_drawn: false,
+            ..PointerOwnership::default()
         },
         Expected {
             snapped_hover: true,
             jamming_hover: false,
             tec_hover: false,
+            log_hexagon_hover: true,
         }
     )]
     #[case::recorded_element_hovered(
         PointerOwnership {
             recorded_element_hovered: true,
-            snapped_edge_tooltip_shown: false,
-            interference_layer_drawn: false,
+            ..PointerOwnership::default()
         },
         Expected {
             snapped_hover: false,
             jamming_hover: false,
             tec_hover: false,
+            log_hexagon_hover: true,
         }
     )]
     #[case::recorded_element_over_a_snapped_edge(
         PointerOwnership {
             recorded_element_hovered: true,
             snapped_edge_tooltip_shown: true,
-            interference_layer_drawn: false,
+            ..PointerOwnership::default()
         },
         Expected {
             snapped_hover: false,
             jamming_hover: false,
             tec_hover: false,
+            log_hexagon_hover: true,
         }
     )]
     #[case::the_interference_layer_over_the_grid(
         PointerOwnership {
-            recorded_element_hovered: false,
-            snapped_edge_tooltip_shown: false,
             interference_layer_drawn: true,
+            ..PointerOwnership::default()
         },
         Expected {
             snapped_hover: true,
             jamming_hover: true,
             tec_hover: false,
+            log_hexagon_hover: true,
+        }
+    )]
+    #[case::a_marker_over_a_hexagon(
+        PointerOwnership {
+            recorded_element_hovered: true,
+            marker_hovered: true,
+            ..PointerOwnership::default()
+        },
+        Expected {
+            snapped_hover: false,
+            jamming_hover: false,
+            tec_hover: false,
+            log_hexagon_hover: false,
         }
     )]
     fn overlay_hovers_yield_to_the_layers_above_them(
@@ -388,5 +407,9 @@ mod tests {
             expected.jamming_hover
         );
         assert_eq!(ownership.tec_node_hover_enabled(), expected.tec_hover);
+        assert_eq!(
+            ownership.log_hexagon_hover_enabled(),
+            expected.log_hexagon_hover
+        );
     }
 }

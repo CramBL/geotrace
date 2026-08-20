@@ -106,6 +106,14 @@ impl HoverCandidates {
         self.iter().count() > 1
     }
 
+    /// Whether a marker of any kind is under the cursor. A marker takes the
+    /// hover from the log hexagons: its pin draws over them.
+    pub fn any_marker(&self) -> bool {
+        self.event_marker.is_some()
+            || self.custom_marker.is_some()
+            || self.generated_marker.is_some()
+    }
+
     pub fn every_category_filled(&self) -> bool {
         self.tpv_or_satellite_report.is_some()
             && self.event_marker.is_some()

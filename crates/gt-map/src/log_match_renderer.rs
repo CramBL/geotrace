@@ -11,13 +11,25 @@
 //! so a hexagon of the layer above covers a glyph and its count together. Two
 //! layers do overlap where they matched the same place: they are two filters,
 //! and each keeps its own colour.
+//!
+//! The cursor picks the hexagon of the topmost layer it is on. That hexagon
+//! lists its lines in a tooltip and takes the highlight ring, and the log
+//! viewer marks the rows of those same lines.
 
-use egui::{Align2, Color32, FontId, Response, Ui, Vec2};
-use gt_ui_types::{LogMatchColor, LogMatchLayer, LogMatches};
+use std::cell::RefCell;
+use std::num::NonZeroUsize;
+
+use egui::{Align2, Color32, FontId, Response, RichText, Ui, Vec2};
+use gt_fmt::ELLIPSIS;
+use gt_logfile::ParsedLog;
+use gt_types::MercPoint;
+use gt_ui_types::{HoveredLogGlyph, LogMatchColor, LogMatches};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::collision_grid;
+use crate::hover_labels::TOOLTIP_POINTER_GAP_PX;
 use crate::icon_mesh::{IconId, IconInstance, IconMeshBatch, IconMeshLibrary};
+use crate::query_match_renderer;
 use crate::transform::MercTransform;
 
 /// Circumradius of one match's hexagon, comparable to the fix dot it sits on.
@@ -48,33 +60,52 @@ const CLUSTER_COUNT_FONT_PX: f32 = 11.0;
 /// handed the same colour still read as two: one of them is ringed.
 const SHARED_COLOR_RING_SCALE: f32 = 1.35;
 
+/// Lines the hover tooltip writes out before it states how many are left.
+const HOVER_LINE_CAP: usize = 5;
+
+/// Characters of a message the hover tooltip shows: one long line must not
+/// stretch the tooltip across the map.
+const HOVER_MESSAGE_MAX_CHARS: NonZeroUsize = match NonZeroUsize::new(64) {
+    Some(chars) => chars,
+    None => NonZeroUsize::MIN,
+};
+
+/// How the hover tooltip writes a line's moment, as the map's other hover
+/// labels write a fix's.
+const HOVER_TIME_FORMAT: &str = "%H:%M:%S";
+
 /// Draws what the loaded logs' filters selected, above the track line and
 /// below the markers.
+#[derive(bon::Builder)]
 pub(crate) struct LogMatchRenderer<'a> {
     matches: &'a LogMatches,
     icon_meshes: Option<&'a IconMeshLibrary>,
     dark_mode: bool,
+
+    /// Whether a hexagon may take the pointer this frame: a marker above the
+    /// layer owns it first.
+    hover_enabled: bool,
+
+    /// Where the log viewer's hovered row was recorded, which the map rings.
+    hovered_row_position: Option<MercPoint>,
+
+    /// Where the hexagon under the cursor is published for the viewer.
+    hovered_glyph: &'a RefCell<Option<HoveredLogGlyph>>,
 }
 
-impl<'a> LogMatchRenderer<'a> {
-    pub(crate) fn new(
-        matches: &'a LogMatches,
-        icon_meshes: Option<&'a IconMeshLibrary>,
-        dark_mode: bool,
-    ) -> Self {
-        Self {
-            matches,
-            icon_meshes,
-            dark_mode,
-        }
-    }
+/// The hexagon the cursor is on, once every layer has drawn.
+struct HoveredHexagon<'a> {
+    center: egui::Pos2,
+    circumradius: f32,
+    parsed: &'a ParsedLog,
+    glyph: HoveredLogGlyph,
 }
 
 impl Plugin for LogMatchRenderer<'_> {
     fn run(
         self: Box<Self>,
         ui: &mut Ui,
-        _response: &Response,
+        response: &Response,
         projector: &Projector,
         map_memory: &MapMemory,
     ) {
@@ -83,23 +114,49 @@ impl Plugin for LogMatchRenderer<'_> {
         let cluster_spacing_merc =
             collision_grid::decimation_cell_merc(CLUSTER_SPACING_PX, map_memory.zoom());
         let outline = gt_ui_theme::LOG_HEXAGON_OUTLINE;
+        let pointer = (self.hover_enabled && response.hovered())
+            .then(|| response.hover_pos())
+            .flatten();
 
         let mut batch = IconMeshBatch::gpu_when_available(ui, self.icon_meshes);
         let mut counted_clusters: Vec<(egui::Pos2, usize)> = Vec::new();
+        let mut hovered: Option<HoveredHexagon<'_>> = None;
         for layer in self.matches.layers() {
-            let fill = layer_color(layer, self.dark_mode);
+            let fill = gt_ui_theme::log_match_color(layer.color, self.dark_mode);
             let shared = matches!(layer.color, LogMatchColor::LayerSlot { shared: true, .. });
             counted_clusters.clear();
-            for cluster in
-                collision_grid::cluster_positions(&layer.positions, cluster_spacing_merc, viewport)
-            {
+            for cluster in collision_grid::cluster_positions(
+                layer.matches.iter().map(|entry| entry.merc),
+                cluster_spacing_merc,
+                viewport,
+            ) {
                 let center = transform.to_screen(cluster.merc);
-                let counted = cluster.count >= CLUSTER_COUNT_FROM;
+                let counted = cluster.members.len() >= CLUSTER_COUNT_FROM;
                 let circumradius = if counted {
                     CLUSTER_CIRCUMRADIUS_PX
                 } else {
                     GLYPH_CIRCUMRADIUS_PX
                 };
+                // The last hit is the hexagon the cursor is on: a later layer
+                // draws over an earlier one.
+                if pointer.is_some_and(|pos| (pos - center).length() <= circumradius) {
+                    hovered = Some(HoveredHexagon {
+                        center,
+                        circumradius,
+                        parsed: &layer.log.parsed,
+                        glyph: HoveredLogGlyph {
+                            log: layer.log.id,
+                            color: layer.color,
+                            // The entries come out ascending: a layer's
+                            // matches are in file order.
+                            entry_indices: cluster
+                                .members
+                                .iter()
+                                .filter_map(|&member| Some(layer.matches.get(member)?.entry_index))
+                                .collect(),
+                        },
+                    });
+                }
                 if shared {
                     batch.push(hexagon(
                         center,
@@ -116,7 +173,7 @@ impl Plugin for LogMatchRenderer<'_> {
                     HexagonTints { fill, outline },
                 ));
                 if counted {
-                    counted_clusters.push((center, cluster.count));
+                    counted_clusters.push((center, cluster.members.len()));
                 }
             }
             // The barrier flushes this layer's hexagons, so its counts draw
@@ -133,16 +190,68 @@ impl Plugin for LogMatchRenderer<'_> {
             }
         }
         batch.paint(ui.painter());
+
+        // The ring the app draws around a cross-highlighted element, here at
+        // the position of the viewer's hovered row and around the hexagon
+        // under the cursor. Log hover rings are the live-filter gold, keeping
+        // the log layer's hover language in its reserved colour.
+        let hover_ring = gt_ui_theme::LOG_LIVE_FILTER.resolve(self.dark_mode);
+        if let Some(merc) = self.hovered_row_position {
+            query_match_renderer::draw_match_ring(
+                ui,
+                transform.to_screen(merc),
+                GLYPH_CIRCUMRADIUS_PX,
+                hover_ring,
+            );
+        }
+        if let Some(hexagon) = hovered {
+            query_match_renderer::draw_match_ring(
+                ui,
+                hexagon.center,
+                hexagon.circumradius,
+                hover_ring,
+            );
+            egui::Tooltip::always_open(
+                ui.ctx().clone(),
+                ui.layer_id(),
+                response.id,
+                egui::PopupAnchor::Pointer,
+            )
+            .gap(TOOLTIP_POINTER_GAP_PX)
+            .show(|ui| hovered_lines_ui(ui, hexagon.parsed, &hexagon.glyph.entry_indices));
+            *self.hovered_glyph.borrow_mut() = Some(hexagon.glyph);
+        }
     }
 }
 
-/// The colour this layer's hexagons are filled with.
-fn layer_color(layer: &LogMatchLayer, dark_mode: bool) -> Color32 {
-    match layer.color {
-        LogMatchColor::LiveFilter => gt_ui_theme::LOG_LIVE_FILTER.resolve(dark_mode),
-        LogMatchColor::LayerSlot { index, .. } => {
-            gt_ui_theme::log_layer_slot_color(index).resolve(dark_mode)
-        }
+/// The lines the hovered hexagon stands for, the last row stating how many of
+/// them the tooltip left out.
+fn hovered_lines_ui(ui: &mut Ui, parsed: &ParsedLog, entry_indices: &[usize]) {
+    // One line per row: a message is already cut to a width the tooltip fits.
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+    for entry in entry_indices
+        .iter()
+        .take(HOVER_LINE_CAP)
+        .filter_map(|&entry_index| parsed.entries().get(entry_index))
+    {
+        ui.label(
+            RichText::new(format!(
+                "{}  {}",
+                entry.timestamp.format(HOVER_TIME_FORMAT),
+                gt_fmt::truncate_with_ellipsis(parsed.message(entry), HOVER_MESSAGE_MAX_CHARS)
+            ))
+            .monospace(),
+        );
+    }
+    let left_out = entry_indices.len().saturating_sub(HOVER_LINE_CAP);
+    if left_out > 0 {
+        ui.label(
+            RichText::new(format!(
+                "{ELLIPSIS}and {left_out} more {}",
+                gt_fmt::pluralize(left_out, "line", "lines")
+            ))
+            .weak(),
+        );
     }
 }
 

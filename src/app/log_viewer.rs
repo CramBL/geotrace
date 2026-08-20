@@ -18,9 +18,11 @@ use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
 use gt_log_view::{LoadedLog, LoadedLogs};
 use gt_types::FileIdx;
 use gt_ui_theme::EM_DASH;
+use gt_ui_types::LogMatchHover;
 use strum::IntoEnumIterator as _;
 
 use association_window::AssociationWindowUnit;
+use line_table::LineTableRequests;
 
 /// What the window says while no log is loaded.
 const EMPTY_STATE_HINT: &str = "Open a log file or drop it here";
@@ -62,6 +64,9 @@ pub(super) struct LogViewerContext<'a> {
     pub recordings: LoadedFilesView<'a>,
     pub recording_names: &'a RecordingNames,
     pub map_center_request: &'a mut Option<(f64, f64)>,
+    /// The hexagon the map found under the cursor, and the row this viewer
+    /// puts under it in return.
+    pub log_hover: &'a mut LogMatchHover,
 }
 
 impl LogViewerWindow {
@@ -96,11 +101,15 @@ impl LogViewerWindow {
             recordings,
             recording_names,
             map_center_request,
+            log_hover,
         }: LogViewerContext<'_>,
     ) {
         // The scans run on worker threads: whatever finished since the last
         // frame becomes what this one draws.
         logs.apply_finished_queries();
+        // The ring on the map lives exactly as long as the cursor is on a
+        // row: the rows below fill this in again while they draw.
+        log_hover.row_position = None;
         if !self.open {
             return;
         }
@@ -133,8 +142,16 @@ impl LogViewerWindow {
                     .show(ui, |ui| {
                         self.footer_ui(ui, logs, recordings, recording_names);
                     });
-                if let Some(log) = logs.get(self.selected) {
-                    self.line_table_ui(ui, log, map_center_request);
+                if let Some((log_id, log)) = logs.get_with_id(self.selected) {
+                    self.line_table_ui(
+                        ui,
+                        log,
+                        log_id,
+                        &mut LineTableRequests {
+                            map_center: map_center_request,
+                            hover: log_hover,
+                        },
+                    );
                 }
             });
 
