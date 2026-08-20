@@ -303,9 +303,7 @@ impl App {
                     continue;
                 }
                 if let Some(run) = self.snap.latest_run_for(track) {
-                    snapped
-                        .by_track
-                        .insert(track_ref, Arc::clone(&run.geometry));
+                    snapped.insert(track_ref, Arc::clone(&run.geometry));
                 }
             }
         }

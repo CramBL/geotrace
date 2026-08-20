@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use gt_types::mercator::MercPoint;
@@ -10,14 +9,41 @@ use gt_types::{PointIdx, TrackRef};
 /// Prepared once per run by the app (runs are immutable, the map redraws
 /// every frame) and shared via `Arc`. Plain data mirrored from the snap
 /// machinery, so the map keeps no gt-snap dependency.
+///
+/// Iteration order is insertion order, kept ascending by [`TrackRef`]. The
+/// renderer paints the translucent traces in this order. A stable order keeps
+/// overlapping traces from flickering between frames.
 #[derive(Debug, Clone, Default)]
-pub struct SnappedTracks {
-    pub by_track: HashMap<TrackRef, Arc<SnappedTrackGeometry>>,
-}
+pub struct SnappedTracks(Vec<(TrackRef, Arc<SnappedTrackGeometry>)>);
 
 impl SnappedTracks {
+    pub fn insert(&mut self, track_ref: TrackRef, geometry: Arc<SnappedTrackGeometry>) {
+        debug_assert!(
+            self.0.last().is_none_or(|(last, _)| *last < track_ref),
+            "snapped tracks must be inserted in ascending track order"
+        );
+        self.0.push((track_ref, geometry));
+    }
+
+    pub fn get(&self, track_ref: TrackRef) -> Option<&Arc<SnappedTrackGeometry>> {
+        self.0
+            .iter()
+            .find(|(candidate, _)| *candidate == track_ref)
+            .map(|(_, geometry)| geometry)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (TrackRef, &Arc<SnappedTrackGeometry>)> {
+        self.0
+            .iter()
+            .map(|(track_ref, geometry)| (*track_ref, geometry))
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.by_track.is_empty()
+        self.0.is_empty()
     }
 }
 
@@ -103,6 +129,8 @@ pub struct SnappedEdgeInfo {
 
 #[cfg(test)]
 mod tests {
+    use gt_types::{FileIdx, TrackIdx};
+
     use super::*;
 
     /// Boundary vertices shared by two spans resolve to the first span;
@@ -128,5 +156,36 @@ mod tests {
         assert_eq!(segment.edge_at(2), Some(7), "boundary vertex: first span");
         assert_eq!(segment.edge_at(4), Some(8));
         assert_eq!(segment.edge_at(5), None, "past the last span");
+    }
+
+    fn track_ref(fi: usize, ti: usize) -> TrackRef {
+        TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti))
+    }
+
+    #[test]
+    fn iteration_follows_insertion_order_and_get_finds_each_track() {
+        let mut snapped = SnappedTracks::default();
+        let refs = [track_ref(0, 0), track_ref(0, 3), track_ref(2, 1)];
+        for &track in &refs {
+            snapped.insert(track, Arc::new(SnappedTrackGeometry::default()));
+        }
+
+        assert_eq!(snapped.len(), refs.len());
+        assert!(!snapped.is_empty());
+        assert_eq!(
+            snapped.iter().map(|(track, _)| track).collect::<Vec<_>>(),
+            refs
+        );
+        assert!(refs.iter().all(|&track| snapped.get(track).is_some()));
+        assert!(snapped.get(track_ref(1, 0)).is_none());
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "ascending track order")]
+    fn inserting_out_of_order_trips_the_debug_assert() {
+        let mut snapped = SnappedTracks::default();
+        snapped.insert(track_ref(1, 0), Arc::new(SnappedTrackGeometry::default()));
+        snapped.insert(track_ref(0, 0), Arc::new(SnappedTrackGeometry::default()));
     }
 }

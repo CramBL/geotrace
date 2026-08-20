@@ -4220,8 +4220,7 @@ fn snapped_tracks_view_respects_toggle_and_tree_visibility() {
 
     let view = harness.state().snapped_tracks_view();
     let geometry = view
-        .by_track
-        .get(&track)
+        .get(track)
         .expect("a shown completed run must reach the map");
     assert_eq!(
         geometry.segments.len(),
@@ -5376,6 +5375,14 @@ mod log_association {
             harness.step_until(|_| !stored_attachments(db_path, db_ref).is_empty()),
             "the worker stored the log with the recording"
         );
+        assert!(
+            harness.step_until(|harness| harness
+                .state()
+                .logs
+                .get(0)
+                .is_some_and(|log| log.attachment().is_some())),
+            "the viewer noted the attachment the worker stored"
+        );
     }
 
     /// The recording the app stored when the fixture recording was dropped.
@@ -5605,16 +5612,6 @@ mod log_association {
 
         attach_the_log(&mut harness, &db_path, &db_ref);
 
-        assert!(
-            harness.step_until(|harness| {
-                harness
-                    .state()
-                    .logs
-                    .get(0)
-                    .is_some_and(|log| log.attachment().is_some())
-            }),
-            "the viewer notes the attachment the worker stored"
-        );
         let attachments = stored_attachments(&db_path, &db_ref);
         assert_eq!(
             attachments
@@ -5714,14 +5711,15 @@ mod log_association {
             harness.step_until(|_| stored_attachments(&db_path, &db_ref).is_empty()),
             "the database no longer holds the log"
         );
-        assert_eq!(harness.state().logs.len(), 1, "the session copy stays");
         assert!(
-            harness
+            harness.step_until(|harness| harness
                 .state()
                 .logs
                 .get(0)
-                .is_some_and(|log| log.attachment().is_none())
+                .is_some_and(|log| log.attachment().is_none())),
+            "the viewer noted the attachment the worker removed"
         );
+        assert_eq!(harness.state().logs.len(), 1, "the session copy stays");
     }
 
     /// The recording's database entry is gone by the time the attach runs: the

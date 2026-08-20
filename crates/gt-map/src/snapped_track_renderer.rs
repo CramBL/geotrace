@@ -124,10 +124,10 @@ impl Plugin for SnappedTrackRenderer<'_> {
         let mut projected: Vec<Pos2> = Vec::new();
         let mut span_points: Vec<Pos2> = Vec::new();
         // Order-independent: only a strictly nearer hit replaces `best`, so
-        // the HashMap's iteration order never affects the result.
+        // the paint order never affects the result.
         let mut best: Option<HoverHit> = None;
 
-        for (&track_ref, geometry) in &self.snapped.by_track {
+        for (track_ref, geometry) in self.snapped.iter() {
             let color =
                 gt_ui_theme::track_color(track_ref.fi.as_usize(), track_ref.index.as_usize())
                     .gamma_multiply(SNAPPED_ALPHA);
@@ -185,7 +185,7 @@ impl Plugin for SnappedTrackRenderer<'_> {
         }
 
         if let Some(hit) = &best {
-            let edge = self.snapped.by_track.get(&hit.track).and_then(|geometry| {
+            let edge = self.snapped.get(hit.track).and_then(|geometry| {
                 let info = geometry.segments.get(hit.segment)?.edge_at(hit.vertex)?;
                 geometry.edges.get(info)
             });
