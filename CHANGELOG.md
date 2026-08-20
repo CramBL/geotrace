@@ -35,6 +35,7 @@
 - Hover labels no longer overlap in the plot and map interference layer.
 - The plot's file legend no longer covers the settings and query windows.
 - Snapped tracks no longer improperly route through nearby roads during dead reckoning gaps (e.g., in parking garages).
+- Overlapping snapped tracks no longer flicker as they are redrawn.
 
 ## 0.12.0 - 2026-08-15
 

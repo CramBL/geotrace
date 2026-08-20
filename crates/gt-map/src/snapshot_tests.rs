@@ -536,9 +536,8 @@ fn snapshot_snapped_tracks_with(
         .and_then(|f| f.tracks.first())
         .map(|t| t.points.clone())
         .unwrap_or_default();
-    let snapped = SnappedTracks {
-        by_track: std::collections::HashMap::from([(track_ref, Arc::new(geometry_for(&points)))]),
-    };
+    let mut snapped = SnappedTracks::default();
+    snapped.insert(track_ref, Arc::new(geometry_for(&points)));
 
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(800.0, 600.0))
@@ -873,12 +872,8 @@ fn snap_snapped_track_whiskers_at_high_zoom() {
         .and_then(|f| f.tracks.first())
         .map(|t| t.points.clone())
         .unwrap_or_default();
-    let snapped = SnappedTracks {
-        by_track: std::collections::HashMap::from([(
-            track_ref,
-            Arc::new(whisker_geometry(&points)),
-        )]),
-    };
+    let mut snapped = SnappedTracks::default();
+    snapped.insert(track_ref, Arc::new(whisker_geometry(&points)));
 
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(800.0, 600.0))

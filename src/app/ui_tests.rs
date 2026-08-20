@@ -4220,8 +4220,7 @@ fn snapped_tracks_view_respects_toggle_and_tree_visibility() {
 
     let view = harness.state().snapped_tracks_view();
     let geometry = view
-        .by_track
-        .get(&track)
+        .get(track)
         .expect("a shown completed run must reach the map");
     assert_eq!(
         geometry.segments.len(),

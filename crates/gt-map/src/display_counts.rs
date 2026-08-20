@@ -114,7 +114,7 @@ impl DisplayCounts {
             jamming_hexes: supplied.jamming_cells,
             tec_heatmap: supplied.tec_nodes,
             log_matches: supplied.log_matches,
-            snapped_tracks: supplied.snapped_tracks.map_or(0, |s| s.by_track.len()),
+            snapped_tracks: supplied.snapped_tracks.map_or(0, |s| s.len()),
             ..Self::default()
         };
         for (fi, file) in files.iter().enumerate() {
@@ -297,7 +297,7 @@ impl DisplayCountsCache {
         supplied: SuppliedCounts<'_>,
     ) -> DisplayCounts {
         let files_sig = files_signature(files);
-        let snapped_len = supplied.snapped_tracks.map_or(0, |s| s.by_track.len());
+        let snapped_len = supplied.snapped_tracks.map_or(0, |s| s.len());
         if let Some((key, counts)) = &self.cached
             && key.files_sig == files_sig
             && key.snapped_len == snapped_len
@@ -497,12 +497,11 @@ mod tests {
     #[test]
     fn snapped_tracks_are_counted_from_the_prescoped_view() {
         let files = vec![fixture()];
-        let snapped = SnappedTracks {
-            by_track: HashMap::from([(
-                TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-                Arc::new(gt_ui_types::SnappedTrackGeometry::default()),
-            )]),
-        };
+        let mut snapped = SnappedTracks::default();
+        snapped.insert(
+            TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+            Arc::new(gt_ui_types::SnappedTrackGeometry::default()),
+        );
         let counts = DisplayCounts::compute(
             &files,
             &vis_all(),
@@ -642,12 +641,11 @@ mod tests {
         );
         let mut emv_hidden = EventMarkerVisibility::default();
         emv_hidden.set_hidden(track_ref, std::iter::once("Lap".to_string()));
-        let snapped = SnappedTracks {
-            by_track: HashMap::from([(
-                track_ref,
-                Arc::new(gt_ui_types::SnappedTrackGeometry::default()),
-            )]),
-        };
+        let mut snapped = SnappedTracks::default();
+        snapped.insert(
+            track_ref,
+            Arc::new(gt_ui_types::SnappedTrackGeometry::default()),
+        );
         let query = QueryMatches {
             hidden: HashMap::from([(track_ref, std::iter::once(0..1).collect())]),
             ..QueryMatches::default()
