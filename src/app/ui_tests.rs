@@ -1,7 +1,6 @@
 use egui::TextEdit;
 use egui_phosphor::regular::ARROW_LINE_UP_LEFT as ICON_ARROW_LINE_UP_LEFT;
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
-use egui_phosphor::regular::CLOUD_LIGHTNING as ICON_CLOUD_LIGHTNING;
 use egui_phosphor::regular::DOTS_SIX as ICON_DOTS_SIX;
 use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use egui_phosphor::regular::PUSH_PIN as ICON_PUSH_PIN;
@@ -4470,8 +4469,8 @@ fn snapshot_app_plot_context_line_spans_the_archived_days() {
 }
 
 /// A geomagnetic day archived after the recording was loaded reaches it: the
-/// map's warning indicator appears and the load toast is raised once, however
-/// many frames follow.
+/// warning line behind the map indicator appears and the load toast is raised
+/// once, however many frames follow.
 #[test]
 fn a_storm_day_archived_after_the_load_warns_on_the_map() {
     let gtd_bytes = minimal_gtd_bytes();
@@ -4484,7 +4483,7 @@ fn a_storm_day_archived_after_the_load_warns_on_the_map() {
     );
     harness.run_steps(2);
     assert!(
-        harness.query_by_label(ICON_CLOUD_LIGHTNING).is_none(),
+        harness.state().space_weather_warning.lines().is_empty(),
         "no archived day overlaps the recording yet"
     );
 
@@ -4502,10 +4501,6 @@ fn a_storm_day_archived_after_the_load_warns_on_the_map() {
     );
     harness.run_steps(2);
 
-    assert!(
-        harness.query_by_label(ICON_CLOUD_LIGHTNING).is_some(),
-        "the archived storm day reached the loaded recording"
-    );
     assert_eq!(
         harness
             .state()

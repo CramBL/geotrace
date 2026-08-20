@@ -271,8 +271,9 @@ pub struct MapDrawContext<'a> {
     pub log_hover: &'a mut LogMatchHover,
     pub empty_reason: Option<EmptyReason>,
     /// One line per environment metric that could have disturbed a loaded
-    /// recording, empty while the archives place none. Drives the warning
-    /// indicator in the map's top-right corner.
+    /// recording, empty while the archives place none. Fills the hover of the
+    /// warning indicator in the map's top-right corner, which is drawn either
+    /// way.
     pub space_weather_warning: &'a [String],
     pub filter: &'a GlobalFilter,
     pub visibility: &'a TrackDataVisibility,

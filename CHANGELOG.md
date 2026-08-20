@@ -22,7 +22,7 @@
 - Settings' "Ionospheric TEC" page links to reference material on the ionosphere, TEC and the delay it adds to satellite navigation signals.
 - Settings' "Solar flares" page links to reference material on solar flares, radio blackouts and what they do to satellite navigation, and a flare marker's hover states whether the receiver was on the sunlit side when the flare peaked.
 - Settings' "Aircraft interference" page links to reference material on what aircraft report, how a day's cells are computed and what the data does and does not show.
-- A warning when downloaded space weather or interference data overlaps a loaded recording at a level that can disturb reception: a toast on load, and a storm icon in the map corner listing what was found.
+- A warning when downloaded space weather or interference data overlaps a loaded recording at a level that can disturb reception: a toast on load, and a storm icon in the map corner that lists what was found and stays faintly visible while nothing warns.
 
 ### Changed
 

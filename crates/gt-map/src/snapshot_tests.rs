@@ -430,19 +430,25 @@ fn snapshot_jamming_overlay(
     harness.snapshot_loose(name);
 }
 
-/// The warning indicator in the map's top-right corner, with the pointer on
-/// it so the snapshot pins both its place and every line it lists. No map
-/// tiles render: the map is built with [`TileAccess::Offline`].
-#[test]
-fn snapshot_space_weather_warning() {
-    let files = vec![make_snapshot_file()];
-    let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
-    let warning = [
+fn snapshot_warning_lines() -> Vec<String> {
+    vec![
         "Geomagnetic storm: Hp30 reached 7.667 (G3)".to_owned(),
         "Aircraft interference: up to 34.2 % of aircraft in a crossed cell".to_owned(),
         "Solar flare: X5.8 at 2024-05-11 02:01 UTC, receiver on the sunlit side".to_owned(),
         "TEC over the recording: 12 to 175 TECU".to_owned(),
-    ];
+    ]
+}
+
+/// The warning indicator in the map's top-right corner, with the pointer on
+/// it so the snapshot pins its place, its strength, and whatever its hover
+/// holds. The idle case pins the faint glyph the map shows until a metric
+/// warns. No map tiles render: the map is built with [`TileAccess::Offline`].
+#[rstest::rstest]
+#[case::warned("space_weather_warning", snapshot_warning_lines())]
+#[case::idle("space_weather_warning_idle", Vec::new())]
+fn snapshot_space_weather_warning(#[case] name: &str, #[case] warning: Vec<String>) {
+    let files = vec![make_snapshot_file()];
+    let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
 
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(800.0, 600.0))
@@ -472,7 +478,7 @@ fn snapshot_space_weather_warning() {
     for _ in 0..60 {
         harness.run();
     }
-    harness.snapshot_loose("space_weather_warning");
+    harness.snapshot_loose(name);
 }
 
 /// Zoom at which the whole world fits the snapshot canvas: the world spans
