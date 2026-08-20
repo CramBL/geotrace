@@ -25,6 +25,7 @@
 
 ### Changed
 
+- The plot's aircraft interference, Kp, Hp30, TEC and solar flare chips sit in a group of their own, and each hover states in three lines what the metric is, where it comes from and where to read more.
 - The aircraft interference plot line spans every archived day in view instead of breaking outside recordings.
 - The Settings window displays one category at a time using a left-side navigation rail.
 - Log files load even if some lines have unrecognised timestamps (those lines are kept, timed from their neighbours).

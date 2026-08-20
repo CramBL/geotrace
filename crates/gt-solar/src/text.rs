@@ -8,8 +8,11 @@
 
 use std::sync::LazyLock;
 
+use gt_ui_types::MetricChipHover;
+
 use crate::GeomagneticIndex;
 use crate::activity::GeomagneticActivity;
+use crate::reference::GEOMAGNETIC_ACTIVITY;
 
 /// Name of the data everywhere it is offered: the display-toggle row, the
 /// plot line, the legend.
@@ -56,12 +59,10 @@ pub fn period_summary(
 }
 
 impl GeomagneticIndex {
-    /// The plot chip's hover text, composed from the shared caveats so it
-    /// cannot drift from what the hover label and the query metric say.
-    pub fn plot_hover_text(self) -> &'static str {
+    pub fn plot_hover(self) -> &'static MetricChipHover {
         match self {
-            Self::Kp => KP_PLOT_HOVER.as_str(),
-            Self::Hp30 => HP30_PLOT_HOVER.as_str(),
+            Self::Kp => &KP_PLOT_HOVER,
+            Self::Hp30 => &HP30_PLOT_HOVER,
         }
     }
 
@@ -73,13 +74,24 @@ impl GeomagneticIndex {
         }
     }
 
-    fn build_plot_hover_text(self) -> String {
-        format!(
-            "Planetary geomagnetic activity, one value per archived {period} {self} period \
-             across the span the plot shows. {SOURCE_CAVEAT} {SCALE_CAVEAT} The line breaks over \
-             periods no value is archived for.",
-            period = self.period_length_adjective()
-        )
+    fn build_plot_hover(self) -> MetricChipHover {
+        MetricChipHover {
+            definition: match self {
+                Self::Kp => "Planetary geomagnetic disturbance index, 3-hour cadence.",
+                Self::Hp30 => {
+                    "Geomagnetic disturbance index like Kp, 30-minute cadence, open-ended scale."
+                }
+            }
+            .to_owned(),
+            source_cadence_and_scale: format!(
+                "{SOURCE_NAME}, averaged over stations worldwide, {scale}",
+                scale = match self {
+                    Self::Kp => "0 to 9 in thirds of a unit.",
+                    Self::Hp30 => "thirds of a unit with no upper end.",
+                }
+            ),
+            reference: GEOMAGNETIC_ACTIVITY,
+        }
     }
 
     fn build_query_doc(self) -> String {
@@ -100,10 +112,10 @@ impl GeomagneticIndex {
     }
 }
 
-static KP_PLOT_HOVER: LazyLock<String> =
-    LazyLock::new(|| GeomagneticIndex::Kp.build_plot_hover_text());
-static HP30_PLOT_HOVER: LazyLock<String> =
-    LazyLock::new(|| GeomagneticIndex::Hp30.build_plot_hover_text());
+static KP_PLOT_HOVER: LazyLock<MetricChipHover> =
+    LazyLock::new(|| GeomagneticIndex::Kp.build_plot_hover());
+static HP30_PLOT_HOVER: LazyLock<MetricChipHover> =
+    LazyLock::new(|| GeomagneticIndex::Hp30.build_plot_hover());
 static KP_QUERY_DOC: LazyLock<String> = LazyLock::new(|| GeomagneticIndex::Kp.build_query_doc());
 static HP30_QUERY_DOC: LazyLock<String> =
     LazyLock::new(|| GeomagneticIndex::Hp30.build_query_doc());
@@ -190,8 +202,8 @@ mod tests {
              attribution: {}\n\
              publisher: {PUBLISHER_URL}\n\
              license: {LICENSE_URL}",
-            GeomagneticIndex::Kp.plot_hover_text(),
-            GeomagneticIndex::Hp30.plot_hover_text(),
+            GeomagneticIndex::Kp.plot_hover(),
+            GeomagneticIndex::Hp30.plot_hover(),
             GeomagneticIndex::Kp.query_doc(),
             GeomagneticIndex::Hp30.query_doc(),
             *ATTRIBUTION

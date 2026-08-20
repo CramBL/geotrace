@@ -8,6 +8,7 @@ pub mod highlight;
 pub mod jamming_series;
 pub mod log_hover;
 pub mod log_matches;
+pub mod metric_chip_hover;
 pub mod point_window;
 pub mod query_matches;
 pub mod reference;
@@ -38,6 +39,7 @@ pub use log_hover::{HoveredLogGlyph, LogMatchHover};
 pub use log_matches::{
     LoadedLogId, LogMatch, LogMatchColor, LogMatchLayer, LogMatchSource, LogMatches,
 };
+pub use metric_chip_hover::MetricChipHover;
 pub use point_window::PointWindowFolds;
 pub use query_matches::{DrawLayer, DrawLayerMask, QueryMatches};
 pub use reference::{

@@ -10,7 +10,9 @@
 use std::sync::LazyLock;
 
 use gt_types::{Latitude, Longitude};
+use gt_ui_types::MetricChipHover;
 
+use crate::reference::IONOSPHERIC_TEC;
 use crate::tec::{L1_DELAY_METERS_PER_TECU, TotalElectronContent};
 
 /// The maps GeoTrace downloads, as every control offering them names them.
@@ -113,15 +115,10 @@ fn node_position(latitude: Latitude, longitude: Longitude) -> String {
     )
 }
 
-/// The plot chip's hover text, composed from the shared caveats so it cannot
-/// drift from what the hover label says.
-pub static PLOT_HOVER: LazyLock<String> = LazyLock::new(|| {
-    format!(
-        "Vertical total electron content across the span the plot shows, interpolated from the \
-         archived {MAP_NAMES} at the position of the fix nearest each map epoch in time. \
-         {SOURCE_CAVEAT} {} The line breaks over days no maps are archived for.",
-        *SCALE_CAVEAT
-    )
+pub static PLOT_HOVER: LazyLock<MetricChipHover> = LazyLock::new(|| MetricChipHover {
+    definition: "Total electron content of the ionosphere above the fix's position.".to_owned(),
+    source_cadence_and_scale: "NASA JPL, maps every 1 to 2 h, vertical content in TECU.".to_owned(),
+    reference: IONOSPHERIC_TEC,
 });
 
 /// The query metric's documentation body.
