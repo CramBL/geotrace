@@ -56,7 +56,7 @@ pub(super) struct MainBehavior<'a> {
     /// The context metric lines, resolved over the span the plot last drew.
     pub(super) context_lines: &'a gt_ui_types::ContextLines,
     /// The flares of the archived days in that span.
-    pub(super) solar_flares: &'a [gt_flare::SolarFlare],
+    pub(super) solar_flares: &'a [gt_flare::MarkedFlare],
 }
 
 impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {

@@ -48,6 +48,15 @@ const PROSE_MAX_WIDTH: f32 = 760.0;
 /// Padding around the query text inside its code background.
 const QUERY_BLOCK_MARGIN: egui::Margin = egui::Margin::symmetric(6, 3);
 
+/// Space above and below a quotation, on top of [`BLOCK_SPACING`], and how
+/// far it is indented past the prose it sits between.
+const QUOTATION_SPACING: f32 = 6.0;
+const QUOTATION_INDENT: i8 = 12;
+
+/// The rule drawn down the indent, which is what sets the quotation off from
+/// the prose.
+const QUOTATION_RULE_WIDTH: f32 = 2.0;
+
 /// The dots of an abbreviation's underline: how far apart they sit, how big
 /// they are, and how far above the bottom of the text row they run.
 const UNDERLINE_DOT_SPACING: f32 = 3.0;
@@ -73,6 +82,7 @@ enum ProseStyle {
     Heading,
     Label,
     Caption,
+    Quotation,
 }
 
 impl ProseStyle {
@@ -82,6 +92,7 @@ impl ProseStyle {
             Self::Heading => RichText::new(text).heading(),
             Self::Label => RichText::new(text).strong(),
             Self::Caption => RichText::new(text).weak().small(),
+            Self::Quotation => RichText::new(text).italics(),
         }
     }
 }
@@ -154,6 +165,7 @@ impl ReferenceWindow {
                 paragraph_ui(ui, document, intro, ProseStyle::Body);
                 query_example_ui(ui, query);
             }
+            ReferenceBlock::Quotation(quotation) => quotation_ui(ui, document, quotation),
             ReferenceBlock::Table(table) => table_ui(ui, document, table),
             ReferenceBlock::Equation(equation) => self.equation_ui(ui, equation),
             ReferenceBlock::Illustration(illustration) => {
@@ -249,6 +261,32 @@ fn query_example_ui(ui: &mut egui::Ui, query_text: &str) {
         .show(ui, |ui| {
             ui.add(Label::new(query::query_syntax_layout(ui, query_text)).selectable(true));
         });
+}
+
+/// A quotation set off from the prose around it: the words the source
+/// published, indented behind a rule down the gutter the indent opens.
+fn quotation_ui(ui: &mut egui::Ui, document: ReferenceDocument, quotation: &'static str) {
+    ui.add_space(QUOTATION_SPACING);
+    let rule_color = ui.visuals().weak_text_color();
+    let quoted = egui::Frame::new()
+        .inner_margin(egui::Margin {
+            left: QUOTATION_INDENT,
+            ..egui::Margin::ZERO
+        })
+        .show(ui, |ui| {
+            ui.set_max_width(ui.available_width().min(PROSE_MAX_WIDTH));
+            ui.horizontal_wrapped(|ui| {
+                prose_spans_ui(ui, document, quotation, ProseStyle::Quotation);
+            });
+        })
+        .response
+        .rect;
+    ui.painter().vline(
+        quoted.left(),
+        quoted.y_range(),
+        egui::Stroke::new(QUOTATION_RULE_WIDTH, rule_color),
+    );
+    ui.add_space(QUOTATION_SPACING);
 }
 
 /// One paragraph, laid out as a run of spans so an abbreviation carries its

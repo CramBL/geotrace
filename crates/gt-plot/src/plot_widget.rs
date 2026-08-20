@@ -42,7 +42,7 @@ use egui::Color32;
 use egui::RichText;
 use egui_plot::{LineStyle, Span, VLine};
 use gt_filter::GlobalFilter;
-use gt_flare::SolarFlare;
+use gt_flare::MarkedFlare;
 use gt_loaded_files::RecordingNames;
 use gt_types::satellites::ConstellationSet;
 use gt_types::{FileIdx, LoadedFile, MetricKind, PointIdx, TrackIdx, TrackRef};
@@ -135,7 +135,7 @@ pub struct ArchiveOverlays<'a> {
     pub context_lines: &'a ContextLines,
     /// The flares of the archived days in that span, in the order the archive
     /// holds them.
-    pub solar_flares: &'a [SolarFlare],
+    pub solar_flares: &'a [MarkedFlare],
 }
 
 /// Persistent state for the track plot panel.

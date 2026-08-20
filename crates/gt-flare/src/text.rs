@@ -8,8 +8,10 @@
 
 use std::sync::LazyLock;
 
+use gt_types::SunlitSide;
+
 use crate::class::RadioBlackoutClass;
-use crate::flare::SolarFlare;
+use crate::flare::{MarkedFlare, SolarFlare};
 
 /// Name of the data everywhere it is offered: the plot chip, the settings
 /// page, the legend.
@@ -35,6 +37,11 @@ pub const BELOW_BLACKOUT_SCALE: &str = "Below the radio blackout scale";
 /// Shown for a flare the catalog published no end time for.
 pub const NO_END_TIME: &str = "no end published";
 
+/// Which side of Earth the receiver was on when the flare peaked, shown once
+/// a loaded recording places it.
+pub const RECEIVER_SUNLIT: &str = "The receiver was on the sunlit side";
+pub const RECEIVER_NIGHT: &str = "The receiver was on the night side";
+
 /// The three times of one flare, formatted by the surface showing them so
 /// every hover reads the same way.
 #[derive(Debug, Clone, Copy)]
@@ -46,8 +53,9 @@ pub struct FormattedFlareTimes<'a> {
 }
 
 /// The lines describing one flare, leading with the classification that
-/// places it on the scale.
-pub fn flare_summary(flare: &SolarFlare, times: FormattedFlareTimes<'_>) -> Vec<String> {
+/// places it on the scale and closing with where the receiver stood.
+pub fn flare_summary(marked: &MarkedFlare, times: FormattedFlareTimes<'_>) -> Vec<String> {
+    let flare = &marked.flare;
     let mut lines = vec![
         format!("{} solar flare", flare.classification),
         flare
@@ -63,6 +71,15 @@ pub fn flare_summary(flare: &SolarFlare, times: FormattedFlareTimes<'_>) -> Vec<
     ];
     if let Some(origin) = flare_origin(flare) {
         lines.push(origin);
+    }
+    if let Some(side) = marked.receiver_side {
+        lines.push(
+            match side {
+                SunlitSide::Sunlit => RECEIVER_SUNLIT,
+                SunlitSide::Night => RECEIVER_NIGHT,
+            }
+            .to_owned(),
+        );
     }
     lines
 }
@@ -117,6 +134,7 @@ pub static MISSING_KEY: LazyLock<String> = LazyLock::new(|| {
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, Utc};
+    use rstest::rstest;
 
     use super::*;
     use crate::wire::parse_flare_time;
@@ -142,9 +160,20 @@ mod tests {
         FormattedFlareTimes { begin, peak, end }
     }
 
+    /// The storm flare with no recording loaded to place the receiver.
+    fn unplaced(flare: SolarFlare) -> MarkedFlare {
+        MarkedFlare {
+            flare,
+            receiver_side: None,
+        }
+    }
+
     #[test]
     fn a_flare_summary_leads_with_the_classification() {
-        let lines = flare_summary(&storm_flare(), times("08:45", "09:13", Some("09:36")));
+        let lines = flare_summary(
+            &unplaced(storm_flare()),
+            times("08:45", "09:13", Some("09:36")),
+        );
         insta::assert_debug_snapshot!("flare_summary", lines);
     }
 
@@ -158,8 +187,26 @@ mod tests {
             classification: "C5.0".parse().expect("a published class"),
             ..storm_flare()
         };
-        let lines = flare_summary(&flare, times("13:13", "13:22", None));
+        let lines = flare_summary(&unplaced(flare), times("13:13", "13:22", None));
         insta::assert_debug_snapshot!("flare_summary_without_an_end", lines);
+    }
+
+    /// The receiver's side closes the summary, and is stated only for a flare
+    /// a loaded recording places the receiver at.
+    #[rstest]
+    #[case::sunlit(Some(SunlitSide::Sunlit), RECEIVER_SUNLIT)]
+    #[case::night(Some(SunlitSide::Night), RECEIVER_NIGHT)]
+    #[case::no_recording_loaded(None, "Active region 13664 at S20W25")]
+    fn a_flare_summary_closes_on_the_side_the_receiver_was_on(
+        #[case] receiver_side: Option<SunlitSide>,
+        #[case] expected_last_line: &str,
+    ) {
+        let marked = MarkedFlare {
+            flare: storm_flare(),
+            receiver_side,
+        };
+        let lines = flare_summary(&marked, times("08:45", "09:13", Some("09:36")));
+        assert_eq!(lines.last().map(String::as_str), Some(expected_last_line));
     }
 
     /// A location without a region number still says where the flare came
@@ -188,6 +235,8 @@ mod tests {
              scale caveat: {SCALE_CAVEAT}\n\
              below the scale: {BELOW_BLACKOUT_SCALE}\n\
              no end time: {NO_END_TIME}\n\
+             receiver sunlit: {RECEIVER_SUNLIT}\n\
+             receiver on the night side: {RECEIVER_NIGHT}\n\
              plot hover: {}\n\
              missing key: {}\n\
              attribution: {}\n\

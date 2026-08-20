@@ -1,4 +1,5 @@
 use egui_kittest::kittest::{By, Queryable as _};
+use gt_flare::reference::SOLAR_FLARES;
 use gt_ionex::reference::IONOSPHERIC_TEC;
 use gt_solar::reference::GEOMAGNETIC_ACTIVITY;
 use gt_test_utils::{HarnessInteraction as _, TestHarness};
@@ -121,6 +122,25 @@ fn snapshot_reference_window_tec(
     harness.snapshot(snapshot_name);
 }
 
+/// Both themes at both ends of the flare document. The top holds the flare
+/// image and the quotation of the class ladder, the end the R-scale table.
+#[rstest]
+#[case(true, DocumentPosition::Top, "reference_window_flares")]
+#[case(false, DocumentPosition::Top, "reference_window_flares_light")]
+#[case(true, DocumentPosition::End, "reference_window_flares_end")]
+#[case(false, DocumentPosition::End, "reference_window_flares_end_light")]
+fn snapshot_reference_window_flares(
+    #[case] dark_mode: bool,
+    #[case] position: DocumentPosition,
+    #[case] snapshot_name: &str,
+) {
+    let mut harness = harness_showing(SOLAR_FLARES, dark_mode);
+    if matches!(position, DocumentPosition::End) {
+        scroll_to_end(&mut harness, SOLAR_FLARES);
+    }
+    harness.snapshot(snapshot_name);
+}
+
 /// A reader who cannot see the equation image is offered the equation as one
 /// line of text.
 #[test]
@@ -219,6 +239,7 @@ fn closing_the_window_drops_the_document() {
 #[rstest]
 #[case(GEOMAGNETIC_ACTIVITY)]
 #[case(IONOSPHERIC_TEC)]
+#[case(SOLAR_FLARES)]
 fn every_image_decodes(#[case] document: ReferenceDocument) {
     for asset in document.images() {
         assert!(
@@ -236,6 +257,7 @@ fn every_image_decodes(#[case] document: ReferenceDocument) {
 #[rstest]
 #[case(GEOMAGNETIC_ACTIVITY)]
 #[case(IONOSPHERIC_TEC)]
+#[case(SOLAR_FLARES)]
 fn every_equation_asset_is_black_with_its_coverage_in_alpha(#[case] document: ReferenceDocument) {
     for block in document.blocks {
         let ReferenceBlock::Equation(equation) = block else {
@@ -269,6 +291,7 @@ fn every_equation_asset_is_black_with_its_coverage_in_alpha(#[case] document: Re
 #[rstest]
 #[case(GEOMAGNETIC_ACTIVITY)]
 #[case(IONOSPHERIC_TEC)]
+#[case(SOLAR_FLARES)]
 fn every_query_example_checks_clean(#[case] document: ReferenceDocument) {
     for text in document.query_examples() {
         let query = gt_query::parse(text)

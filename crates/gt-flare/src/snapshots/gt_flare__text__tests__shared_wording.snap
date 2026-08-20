@@ -10,6 +10,8 @@ source caveat: The catalog lists every flare the Sun produced, so a flare raises
 scale caveat: Each class letter is ten times the peak X-ray flux of the one before, so an X1 is ten times an M1. NOAA counts a radio blackout from M1 upwards.
 below the scale: Below the radio blackout scale
 no end time: no end published
+receiver sunlit: The receiver was on the sunlit side
+receiver on the night side: The receiver was on the night side
 plot hover: Solar flares of the days in the archive, marked at their peak. Each flare is one vertical line at its peak, coloured by class. The catalog lists every flare the Sun produced, so a flare raises the ionization above a receiver only where the Sun was up at the time. Each class letter is ten times the peak X-ray flux of the one before, so an X1 is ten times an M1. NOAA counts a radio blackout from M1 upwards.
 missing key: The NASA DONKI endpoint needs an API key of your own. Without one GeoTrace requests no flares. Registering at https://api.nasa.gov is free and the key arrives by email.
 attribution: Solar flare events from the NASA DONKI catalog.

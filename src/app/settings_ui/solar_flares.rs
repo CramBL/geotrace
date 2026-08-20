@@ -6,9 +6,14 @@ use crate::app::App;
 use crate::app::backfill_ui::{self, BackfillAction};
 use crate::app::day_fetch_status::{self, FetchRowHoverText};
 use crate::app::settings_ui::SettingsPage;
-use crate::app::settings_ui::source_page::{self, SourcePageSlots};
+use crate::app::settings_ui::source_page::{self, ReferenceLink, SourcePageSlots};
 
 pub(super) const API_KEY_LABEL: &str = "API key";
+
+const REFERENCE_LINK_LABEL: &str = gt_flare::reference::SOLAR_FLARES.link_question;
+
+const REFERENCE_LINK_HOVER: &str = "Reference material on solar flares, the NOAA radio blackout \
+                                    scale, and the effect on satellite navigation";
 
 pub(super) const SEARCHABLE_LABELS: &[&str] = &[
     source_page::BASE_URL_LABEL,
@@ -16,6 +21,7 @@ pub(super) const SEARCHABLE_LABELS: &[&str] = &[
     day_fetch_status::FETCH_QUEUE_LABEL,
     day_fetch_status::RECORDING_DAYS_LABEL,
     backfill_ui::DOWNLOAD_HISTORY_LABEL,
+    REFERENCE_LINK_LABEL,
 ];
 
 const URL_HOVER: &str = "Base URL of the host serving the solar flare catalog. The default is \
@@ -44,7 +50,7 @@ impl App {
         let readiness = self.solar_flare_backfill_readiness();
         let mut backfill_action = None;
 
-        source_page::show_source_page(
+        let opened_reference = source_page::show_source_page(
             ui,
             SettingsPage::SolarFlares,
             SourcePageSlots {
@@ -60,10 +66,16 @@ impl App {
                 backfill: |ui: &mut Ui| {
                     backfill_action = self.solar_flare_backfill_ui.ui(ui, progress, readiness);
                 },
-                reference: None,
+                reference: Some(ReferenceLink {
+                    document: gt_flare::reference::SOLAR_FLARES,
+                    hover_text: REFERENCE_LINK_HOVER,
+                }),
             },
         );
 
+        if let Some(document) = opened_reference {
+            self.reference_window.open(document);
+        }
         if api_key_changed {
             self.solar_flares.set_api_key(settings.api_key());
         }
