@@ -8,14 +8,14 @@ use gt_types::TrackRef;
 pub struct JammingPoint {
     /// Plot x: the fix's time as Unix seconds (the plot's shared x-axis).
     pub x_secs: f64,
-    /// Share of aircraft reporting low navigation integrity in the fix's
+    /// Share of aircraft reporting low navigation accuracy in the fix's
     /// cell, in percent. [`None`] where the fix's day is not archived, or
     /// its cell was not published, which breaks the line.
     pub percent: Option<f64>,
     /// Aircraft the share was computed over. Zero where `percent` is
     /// [`None`].
     pub aircraft: u32,
-    /// Aircraft of those that reported low navigation integrity, for the
+    /// Aircraft of those that reported low navigation accuracy, for the
     /// hover's counts.
     pub bad: u32,
 }

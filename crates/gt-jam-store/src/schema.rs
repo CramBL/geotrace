@@ -26,9 +26,9 @@ pub const DAYS_GROUP: &str = "days";
 pub const OBS_DAY: &str = "day";
 /// H3 cell index, per observation row.
 pub const OBS_CELL: &str = "cell";
-/// Aircraft reporting good navigation integrity.
+/// Aircraft reporting good navigation accuracy.
 pub const OBS_GOOD: &str = "good";
-/// Aircraft reporting low navigation integrity.
+/// Aircraft reporting low navigation accuracy.
 pub const OBS_BAD: &str = "bad";
 
 /// The observation columns, for checks that must cover all of them.

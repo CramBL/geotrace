@@ -61,7 +61,7 @@ pub enum MetricKind {
     /// shared y-axis for the claimed-accuracy vs. observed-deviation read.
     SnapError,
     /// Share of aircraft over the fix's cell that reported low navigation
-    /// integrity, in percent, for the fix's own UTC day (see `gt-jam`).
+    /// accuracy, in percent, for the fix's own UTC day (see `gt-jam`).
     /// Values exist only for days held in the interference archive.
     Jamming,
     /// Planetary geomagnetic activity on the Kp scale over the 30-minute

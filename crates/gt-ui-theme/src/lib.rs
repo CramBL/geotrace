@@ -191,7 +191,7 @@ pub const INTERFERENCE_HIGH_BREAKPOINT: f32 = 0.10;
 pub const INTERFERENCE_FILL_ALPHA: u8 = 70;
 
 /// The themed fill for a cell where `bad_fraction` of aircraft reported low
-/// navigation integrity.
+/// navigation accuracy.
 ///
 /// A continuous green → yellow → red ramp with the breakpoints as its
 /// anchors, so a cell just past a breakpoint does not jump a whole tier.

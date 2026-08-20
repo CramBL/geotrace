@@ -413,7 +413,7 @@ mod tests {
         };
         let data = TrackQueryData {
             // Point 0 in a cell where 10 % of aircraft reported low
-            // integrity; point 1's day is not archived.
+            // accuracy. Point 1's day is not archived.
             jamming: Some(Arc::new(vec![Some(10.0), None])),
             // Point 0 is in an archived storm period, Hp30 above the Kp
             // ceiling. Point 1's day is not archived.
