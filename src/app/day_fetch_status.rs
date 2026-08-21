@@ -50,6 +50,10 @@ impl DayArchiveCoverage {
         }
     }
 
+    pub fn oldest_day(&self) -> Option<NaiveDate> {
+        self.days.keys().next().copied()
+    }
+
     pub fn holds(&self, day: NaiveDate) -> bool {
         self.days.contains_key(&day)
     }

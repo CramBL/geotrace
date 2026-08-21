@@ -10,7 +10,8 @@ use egui_phosphor::regular::QUESTION as ICON_QUESTION;
 use crate::app::App;
 use crate::app::environment_storage::PrunedDays;
 use crate::app::environment_storage_ui::{
-    DELETE_ALL_LABEL, ENVIRONMENT_DATA_LABEL, EnvironmentStorageState, PRUNE_LABEL,
+    self, AUTO_PRUNE_LABEL as ENVIRONMENT_AUTO_PRUNE_LABEL, DELETE_ALL_LABEL,
+    ENVIRONMENT_DATA_LABEL, EnvironmentStorageState, PRUNE_LABEL,
 };
 use crate::app::settings_ui::SettingsPage;
 use crate::app::storage_controls;
@@ -33,6 +34,7 @@ pub(super) const SEARCHABLE_LABELS: &[&str] = &[
     ENVIRONMENT_DATA_LABEL,
     PRUNE_LABEL,
     DELETE_ALL_LABEL,
+    ENVIRONMENT_AUTO_PRUNE_LABEL,
 ];
 
 impl App {
@@ -100,5 +102,6 @@ impl App {
         if let Some(request) = self.environment_storage_ui.ui(ui, state) {
             self.pending_environment_prune = Some(request);
         }
+        environment_storage_ui::show_auto_prune_age(ui, &mut self.environment_storage_settings);
     }
 }

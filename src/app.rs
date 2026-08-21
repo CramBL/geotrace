@@ -324,6 +324,7 @@ pub struct App {
     storage_settings: crate::settings::StorageSettings,
     /// Recordings selected for auto-pruning, waiting for the user to confirm.
     pending_auto_prune: Option<Vec<gt_store::DatabaseRef>>,
+    environment_storage_settings: crate::settings::EnvironmentStorageSettings,
     /// The environment data section of the settings window.
     environment_storage_ui: environment_storage_ui::EnvironmentStorageUi,
     /// The environment-data delete waiting for the user to confirm.
@@ -568,6 +569,7 @@ impl App {
             pending_resegment: None,
             storage_settings: crate::settings::StorageSettings::default(),
             pending_auto_prune: None,
+            environment_storage_settings: crate::settings::EnvironmentStorageSettings::default(),
             environment_storage_ui: environment_storage_ui::EnvironmentStorageUi::default(),
             pending_environment_prune: None,
             environment_prune: environment_storage::EnvironmentPruneRun::default(),
@@ -587,6 +589,7 @@ impl App {
         };
 
         app.apply_startup_settings(&loaded_settings);
+        app.auto_prune_environment_days();
         let initial_snapshot = app.collect_snapshot();
         app.config = SettingsAutosaver::new(initial_snapshot);
 
@@ -744,6 +747,7 @@ impl App {
             auto_prune_enabled: self.storage_settings.auto_prune_enabled,
             auto_prune_max_bytes: self.storage_settings.auto_prune_max_bytes,
             auto_prune_confirm: self.storage_settings.auto_prune_confirm,
+            environment_storage: self.environment_storage_settings,
             update_check_on_startup: self.update_check_on_startup,
             skipped_version: self.skipped_version.clone(),
             query_history_revision: self.query_window.history_revision(),
@@ -841,6 +845,7 @@ impl App {
                 for range in track_ranges {
                     self.request_environment_days_for(range);
                 }
+                self.auto_prune_environment_days();
                 let orphans: Vec<(chrono::DateTime<chrono::Utc>, String)> = file
                     .orphaned_event_markers
                     .iter()

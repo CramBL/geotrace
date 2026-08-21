@@ -2,7 +2,7 @@
 //! what each archive holds, and the controls that delete days from them.
 
 use chrono::{Datelike as _, Days, NaiveDate, Utc};
-use egui::{Button, Grid, RichText, Ui};
+use egui::{Button, Checkbox, DragValue, Grid, RichText, Ui};
 use egui_extras::DatePickerButton;
 use egui_phosphor::regular::BROOM as ICON_BROOM;
 use gt_store::ArchiveUsage;
@@ -14,9 +14,11 @@ use super::civil_date;
 use super::environment_storage::{
     CoveredDayCounts, EnvironmentArchive, EnvironmentUsage, PruneRequest, PruneScope, PrunedDays,
 };
+use crate::settings::EnvironmentStorageSettings;
 
 pub const ENVIRONMENT_DATA_LABEL: &str = "Environment data";
 pub const PRUNE_LABEL: &str = "Prune days older than";
+pub const AUTO_PRUNE_LABEL: &str = "Auto-prune days older than";
 /// The button that opens the confirmation. The suffix marks a control that
 /// needs further input before it acts, as DESIGN.md has it.
 pub const PRUNE_BUTTON_LABEL: &str = "Prune…";
@@ -34,6 +36,37 @@ const EARLIEST_PICKABLE_YEAR: i16 = 1970;
 
 /// Hover text of every control a running delete grays.
 const PRUNE_RUNNING: &str = "Wait for the running delete to finish";
+
+/// Hover text of the age control while auto-pruning is off.
+const ENABLE_AUTO_PRUNE_FIRST: &str = "Tick 'Auto-prune days older than' to configure this";
+
+/// The auto-prune switch and the age past which it deletes archived days.
+///
+/// This row starts nothing itself and stays live while a delete runs:
+/// auto-pruning acts at startup and after a recording finishes loading.
+pub fn show_auto_prune_age(ui: &mut Ui, settings: &mut EnvironmentStorageSettings) {
+    ui.horizontal(|ui| {
+        ui.add(Checkbox::new(
+            &mut settings.auto_prune_enabled,
+            AUTO_PRUNE_LABEL,
+        ))
+        .on_hover_text(
+            "Delete days past this age from every archive on startup and after a recording \
+             loads. Days a loaded recording needs are kept.",
+        );
+
+        let auto_prune_on = settings.auto_prune_enabled;
+        ui.add_enabled(
+            auto_prune_on,
+            DragValue::new(&mut settings.auto_prune_max_age_months)
+                .range(EnvironmentStorageSettings::AUTO_PRUNE_AGE_MONTHS_RANGE),
+        )
+        .on_hover_text("Age an archived day reaches before it is deleted")
+        .on_disabled_hover_text(ENABLE_AUTO_PRUNE_FIRST);
+
+        ui.label("months");
+    });
+}
 
 /// Session state of the section: the day its prune deletes everything before.
 ///
@@ -217,9 +250,10 @@ fn span_line(usage: Option<ArchiveUsage>) -> String {
 mod tests {
     use std::cell::RefCell;
 
+    use egui::accesskit::Role;
     use egui_kittest::kittest::{NodeT as _, Queryable as _};
     use gt_store::ArchivedDaySpan;
-    use gt_test_utils::TestHarness;
+    use gt_test_utils::{By, TestHarness};
     use rstest::rstest;
 
     use super::*;
@@ -275,6 +309,25 @@ mod tests {
         harness.run();
         drop(harness);
         requested.into_inner()
+    }
+
+    /// Never hidden, per DESIGN.md: the age is grayed while auto-pruning is
+    /// off.
+    #[rstest]
+    #[case::auto_pruning_off(false)]
+    #[case::auto_pruning_on(true)]
+    fn the_auto_prune_age_takes_input_only_while_auto_pruning_is_on(
+        #[case] auto_prune_enabled: bool,
+    ) {
+        let mut settings = EnvironmentStorageSettings {
+            auto_prune_enabled,
+            ..EnvironmentStorageSettings::default()
+        };
+        let mut harness = TestHarness::builder().ui(|ui| show_auto_prune_age(ui, &mut settings));
+        harness.run();
+
+        let age = harness.inner.get(By::new().role(Role::SpinButton));
+        assert_eq!(!age.accesskit_node().is_disabled(), auto_prune_enabled);
     }
 
     #[rstest]
