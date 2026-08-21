@@ -7,6 +7,8 @@
 
 use std::fmt;
 
+use strum::IntoEnumIterator as _;
+
 use crate::GeomagneticIndex;
 
 /// Lowest value the service publishes for either index.
@@ -17,11 +19,6 @@ pub const KP_MAX_VALUE: f64 = 9.0;
 
 const UNSETTLED_LOWEST_VALUE: f64 = 3.0;
 const ACTIVE_LOWEST_VALUE: f64 = 4.0;
-const MINOR_STORM_LOWEST_VALUE: f64 = 5.0;
-const MODERATE_STORM_LOWEST_VALUE: f64 = 6.0;
-const STRONG_STORM_LOWEST_VALUE: f64 = 7.0;
-const SEVERE_STORM_LOWEST_VALUE: f64 = 8.0;
-const EXTREME_STORM_LOWEST_VALUE: f64 = 9.0;
 
 /// One index value on the Kp scale.
 ///
@@ -50,25 +47,14 @@ impl GeomagneticActivity {
     /// Where the value sits on the NOAA G-scale, which counts Kp 5 as the
     /// first storm level and Kp 9 as the last.
     pub fn class(self) -> GeomagneticActivityClass {
-        match self.0 {
-            value if value >= EXTREME_STORM_LOWEST_VALUE => {
-                GeomagneticActivityClass::Storm(GeomagneticStormClass::Extreme)
-            }
-            value if value >= SEVERE_STORM_LOWEST_VALUE => {
-                GeomagneticActivityClass::Storm(GeomagneticStormClass::Severe)
-            }
-            value if value >= STRONG_STORM_LOWEST_VALUE => {
-                GeomagneticActivityClass::Storm(GeomagneticStormClass::Strong)
-            }
-            value if value >= MODERATE_STORM_LOWEST_VALUE => {
-                GeomagneticActivityClass::Storm(GeomagneticStormClass::Moderate)
-            }
-            value if value >= MINOR_STORM_LOWEST_VALUE => {
-                GeomagneticActivityClass::Storm(GeomagneticStormClass::Minor)
-            }
-            value if value >= ACTIVE_LOWEST_VALUE => GeomagneticActivityClass::Active,
-            value if value >= UNSETTLED_LOWEST_VALUE => GeomagneticActivityClass::Unsettled,
-            _ => GeomagneticActivityClass::Quiet,
+        let storm = GeomagneticStormClass::iter()
+            .rev()
+            .find(|storm| self.0 >= storm.lowest_value());
+        match storm {
+            Some(storm) => GeomagneticActivityClass::Storm(storm),
+            None if self.0 >= ACTIVE_LOWEST_VALUE => GeomagneticActivityClass::Active,
+            None if self.0 >= UNSETTLED_LOWEST_VALUE => GeomagneticActivityClass::Unsettled,
+            None => GeomagneticActivityClass::Quiet,
         }
     }
 
@@ -101,6 +87,18 @@ pub enum GeomagneticStormClass {
 }
 
 impl GeomagneticStormClass {
+    /// Lowest index value that reaches this storm level, on the Kp scale both
+    /// indices are published on.
+    pub const fn lowest_value(self) -> f64 {
+        match self {
+            Self::Minor => 5.0,
+            Self::Moderate => 6.0,
+            Self::Strong => 7.0,
+            Self::Severe => 8.0,
+            Self::Extreme => 9.0,
+        }
+    }
+
     /// The G-scale designation on its own, for a compact chip or legend.
     pub const fn scale_name(self) -> &'static str {
         match self {
@@ -218,23 +216,22 @@ mod tests {
         assert_eq!(kp(4.667).storm_class(), None);
     }
 
-    /// Every storm level is reachable from a value, and each names its own
-    /// G number.
+    /// Every storm level is reachable from its own lowest value, and each
+    /// names its own G number.
     #[test]
     fn every_storm_class_is_reachable_and_named() {
-        let named: Vec<(&str, &str)> = GeomagneticStormClass::iter()
-            .map(|storm| (storm.scale_name(), storm.display_name()))
-            .collect();
-        assert_eq!(named.len(), GeomagneticStormClass::COUNT);
-        for (index, (scale_name, display_name)) in named.iter().enumerate() {
-            let value = MINOR_STORM_LOWEST_VALUE + index as f64;
+        let storms: Vec<GeomagneticStormClass> = GeomagneticStormClass::iter().collect();
+        assert_eq!(storms.len(), GeomagneticStormClass::COUNT);
+        for storm in storms {
             assert_eq!(
-                GeomagneticActivity::from_published_value(GeomagneticIndex::Hp30, value)
-                    .and_then(GeomagneticActivity::storm_class)
-                    .map(GeomagneticStormClass::display_name),
-                Some(*display_name)
+                GeomagneticActivity::from_published_value(
+                    GeomagneticIndex::Hp30,
+                    storm.lowest_value()
+                )
+                .and_then(GeomagneticActivity::storm_class),
+                Some(storm)
             );
-            assert!(display_name.starts_with(scale_name));
+            assert!(storm.display_name().starts_with(storm.scale_name()));
         }
     }
 

@@ -430,6 +430,24 @@ fn snapshot_jamming_overlay(
     harness.snapshot_loose(name);
 }
 
+/// The levels the application lists, as the popup receives them.
+fn snapshot_warning_levels() -> Vec<gt_ui_types::WarningLevelExplanation> {
+    vec![
+        gt_ui_types::WarningLevelExplanation {
+            trigger: "Aircraft interference: 2 % or more of aircraft in a crossed cell reported \
+                      low navigation accuracy (gpsjam.org's own yellow level)."
+                .to_owned(),
+            reference: gt_jam::reference::AIRCRAFT_INTERFERENCE,
+        },
+        gt_ui_types::WarningLevelExplanation {
+            trigger: "TEC does not trigger a warning: no sourced level exists for an absolute TEC \
+                      value. It is shown for context when a warning is active."
+                .to_owned(),
+            reference: gt_ionex::reference::IONOSPHERIC_TEC,
+        },
+    ]
+}
+
 fn snapshot_warning_lines() -> Vec<String> {
     vec![
         "Geomagnetic storm: Hp30 reached 7.667 (G3)".to_owned(),
@@ -439,16 +457,40 @@ fn snapshot_warning_lines() -> Vec<String> {
     ]
 }
 
+/// How the glyph is interacted with before the snapshot is taken.
+enum IndicatorInteraction {
+    /// Hold the pointer on it, which opens its hover.
+    Hover,
+    /// Click it, which opens the levels popup under it.
+    Click,
+}
+
 /// The warning indicator in the map's top-right corner, with the pointer on
 /// it so the snapshot pins its place, its strength, and whatever its hover
 /// holds. The idle case pins the faint glyph the map shows until a metric
-/// warns. No map tiles render: the map is built with [`TileAccess::Offline`].
+/// warns, and the levels case the popup a click opens, which lists the same
+/// rows either way. No map tiles render: the map is built with
+/// [`TileAccess::Offline`].
 #[rstest::rstest]
-#[case::warned("space_weather_warning", snapshot_warning_lines())]
-#[case::idle("space_weather_warning_idle", Vec::new())]
-fn snapshot_space_weather_warning(#[case] name: &str, #[case] warning: Vec<String>) {
+#[case::warned(
+    "space_weather_warning",
+    snapshot_warning_lines(),
+    IndicatorInteraction::Hover
+)]
+#[case::idle("space_weather_warning_idle", Vec::new(), IndicatorInteraction::Hover)]
+#[case::levels(
+    "space_weather_warning_levels",
+    snapshot_warning_lines(),
+    IndicatorInteraction::Click
+)]
+fn snapshot_space_weather_warning(
+    #[case] name: &str,
+    #[case] warning: Vec<String>,
+    #[case] interaction: IndicatorInteraction,
+) {
     let files = vec![make_snapshot_file()];
     let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
+    let levels = snapshot_warning_levels();
 
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(800.0, 600.0))
@@ -460,7 +502,10 @@ fn snapshot_space_weather_warning(#[case] name: &str, #[case] warning: Vec<Strin
                 map.draw(
                     ui,
                     MapDrawContext {
-                        space_weather_warning: &warning,
+                        space_weather: crate::SpaceWeatherIndicator {
+                            warning_lines: &warning,
+                            levels: &levels,
+                        },
                         ..state.context(&files, &visibility)
                     },
                 );
@@ -472,11 +517,19 @@ fn snapshot_space_weather_warning(#[case] name: &str, #[case] warning: Vec<Strin
     for _ in 0..5 {
         harness.run();
     }
-    let glyph = harness.inner.get_by_label(ICON_CLOUD_LIGHTNING).rect();
-    harness.inner.hover_at(glyph.center());
-    // Tooltips appear after egui's hover delay.
-    for _ in 0..60 {
-        harness.run();
+    match interaction {
+        IndicatorInteraction::Hover => {
+            let glyph = harness.inner.get_by_label(ICON_CLOUD_LIGHTNING).rect();
+            harness.inner.hover_at(glyph.center());
+            // Tooltips appear after egui's hover delay.
+            for _ in 0..60 {
+                harness.run();
+            }
+        }
+        IndicatorInteraction::Click => {
+            harness.inner.get_by_label(ICON_CLOUD_LIGHTNING).click();
+            harness.inner.run_steps(2);
+        }
     }
     harness.snapshot_loose(name);
 }
@@ -1600,7 +1653,7 @@ fn snap_sticky_point_window() {
 
 /// The point window's open-trails button has to travel the whole way out
 /// of `draw`: through the window body, into a [`SkyTrailsRequest`] carrying
-/// the clicked point's instant, and out as a [`MapContextAction`]. The
+/// the clicked point's instant, and out as a [`MapAction`]. The
 /// widget-level test one layer down cannot see this wiring, so a dropped
 /// return value here would leave the button a silent no-op.
 #[test]
@@ -1658,7 +1711,7 @@ fn the_point_window_button_returns_a_timed_sky_trails_action() {
 
     assert_eq!(
         action.get(),
-        Some(MapContextAction::ShowSkyTrails(
+        Some(MapAction::ShowSkyTrails(
             gt_ui_types::SkyTrailsRequest::at_instant(clicked.track, point_time)
         ))
     );

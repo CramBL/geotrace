@@ -1,0 +1,15 @@
+---
+source: src/app/space_weather_warning.rs
+expression: "listed.join(\"\\n\\n\")"
+---
+Aircraft interference: 2 % or more of aircraft in a crossed cell reported low navigation accuracy (gpsjam.org's own yellow level).
+How does aircraft interference data relate to GNSS?
+
+Geomagnetic activity: Kp or Hp30 at 5 or higher, NOAA's G1 storm level.
+How does geomagnetic activity affect GNSS?
+
+Solar flares: class M1 or stronger, NOAA's R1 level, while the receiver was on the sunlit side.
+How do solar flares affect GNSS?
+
+TEC does not trigger a warning: no sourced level exists for an absolute TEC value. It is shown for context when a warning is active.
+How does ionospheric TEC affect GNSS?
