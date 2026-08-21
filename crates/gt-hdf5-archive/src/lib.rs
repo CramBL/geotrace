@@ -19,7 +19,7 @@ pub mod day_index;
 pub mod prune;
 mod usage;
 
-pub use archive_file::{ArchiveFile, OpenArchive};
+pub use archive_file::{ArchiveFile, FileSpaceMigration, OpenArchive};
 pub use usage::{ArchiveUsage, ArchivedDaySpan};
 
 /// Why an archive access failed. Each archive converts this into its own
