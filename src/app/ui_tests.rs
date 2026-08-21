@@ -436,6 +436,164 @@ fn demo_app_with_query_run(query: &str) -> Harness<'static, App> {
     harness
 }
 
+/// Wheel points sent over the results, past the rows one viewport holds.
+const RESULTS_WHEEL_POINTS: f32 = 200.0;
+
+/// Frames a wheel scroll's smooth animation takes to come to rest.
+const WHEEL_SETTLE_FRAMES: usize = 12;
+
+/// Motion below which a widget counts as having stayed where it was.
+const STATIONARY_TOLERANCE_PX: f32 = 0.5;
+
+/// Length of the bare wall-clock label a point row's time column states.
+const ROW_TIME_LEN: usize = "14:00:19".len();
+
+/// Matches the point rows of the results by their time column, the only
+/// widget labeled with a bare wall-clock time: a match's name row states its
+/// times inside a longer line.
+fn point_row_times<'a>() -> By<'a> {
+    By::new().role(egui::accesskit::Role::Label).predicate(
+        |node: &egui_kittest::kittest::AccessKitNode<'_>| {
+            node.value().is_some_and(|value| {
+                value.len() == ROW_TIME_LEN && value.chars().all(|c| c.is_ascii_digit() || c == ':')
+            })
+        },
+    )
+}
+
+/// The time stated by the topmost point row on display.
+fn topmost_row_time(harness: &Harness<'_, App>) -> String {
+    harness
+        .query_all(point_row_times())
+        .min_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+        .and_then(|node| node.accesskit_node().value())
+        .expect("the results list point rows")
+}
+
+/// The wheel over a match table scrolls its rows, and the editor above the tab
+/// strip stays where it is: the tab owns the only scroll level under it.
+#[test]
+fn the_wheel_over_the_results_scrolls_its_rows() {
+    let mut harness = demo_app_with_query_run("points | where velocity > 1 km/h");
+    let run_button_top = |harness: &Harness<'_, App>| {
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
+            .rect()
+            .top()
+    };
+    let first_time = topmost_row_time(&harness);
+    let run_button_before = run_button_top(&harness);
+
+    let rows = harness
+        .topmost_matching(By::new().label_contains(" points"))
+        .rect()
+        .center();
+    harness.scroll_wheel_at(rows, -RESULTS_WHEEL_POINTS, WHEEL_SETTLE_FRAMES);
+
+    let scrolled_time = topmost_row_time(&harness);
+    assert!(
+        scrolled_time > first_time,
+        "the wheel scrolled to later rows: {first_time} then {scrolled_time}"
+    );
+    let editor_shift = (run_button_top(&harness) - run_button_before).abs();
+    assert!(
+        editor_shift < STATIONARY_TOLERANCE_PX,
+        "the editor above the tabs moved {editor_shift} px with the rows"
+    );
+}
+
+/// The tab strip shows one list at a time: the history tab replaces the
+/// results, and the results tab shows them again.
+#[test]
+fn the_history_tab_replaces_the_results() {
+    let mut harness = app_with_query_window_open();
+    run_query(&mut harness, "points | where velocity > 1 km/h");
+    assert_eq!(
+        harness.query_all_by_label_contains("Show on map").count(),
+        1,
+        "the results tab opens on the run"
+    );
+
+    harness.get_by_label("Query history").click();
+    harness.run_steps(3);
+    assert_eq!(
+        harness.query_all_by_label_contains("Show on map").count(),
+        0,
+        "the history tab replaces the results"
+    );
+    assert_eq!(
+        harness
+            .query_all_by_label_contains("points | where velocity")
+            .count(),
+        1,
+        "the history lists the query that ran"
+    );
+
+    harness.get_by_label("Results").click();
+    harness.run_steps(3);
+    assert_eq!(
+        harness.query_all_by_label_contains("Show on map").count(),
+        1,
+        "the results tab shows them again"
+    );
+}
+
+/// Neither scrolling the results nor switching tabs may widen the window over
+/// the map: a tab's scroll area uses the width the window has, never more.
+#[test]
+fn scrolling_and_switching_tabs_leave_the_query_window_at_its_default_width() {
+    let mut harness = demo_app_with_query_run("points | where velocity > 1 km/h");
+    let rows = harness
+        .topmost_matching(By::new().label_contains(" points"))
+        .rect()
+        .center();
+    harness.scroll_wheel_at(rows, -RESULTS_WHEEL_POINTS, WHEEL_SETTLE_FRAMES);
+
+    let width_of = |harness: &Harness<'_, App>| {
+        harness
+            .window_rect("Query")
+            .expect("the query window is open")
+            .width()
+    };
+    let scrolled = width_of(&harness);
+    assert!(
+        scrolled <= query::DEFAULT_WINDOW_WIDTH,
+        "scrolling the results widened the window to {scrolled}"
+    );
+
+    harness.get_by_label("Examples").click();
+    harness.run_steps(5);
+    let switched = width_of(&harness);
+    assert!(
+        switched <= query::DEFAULT_WINDOW_WIDTH,
+        "the examples tab widened the window to {switched}"
+    );
+}
+
+/// Height a row and the gap under it take, as a tolerance on where the last
+/// listed row ends.
+const ROW_HEIGHT_ALLOWANCE: f32 = 40.0;
+
+/// The results reach down to the bottom of the window: the rows are laid out
+/// directly in the tab's own scroll area.
+#[test]
+fn the_results_fill_the_rest_of_the_window() {
+    let harness = demo_app_with_query_run("points | where velocity > 1 km/h");
+    let window = harness
+        .window_rect("Query")
+        .expect("the query window is open");
+    let lowest_row = harness
+        .query_all(point_row_times())
+        .map(|node| node.rect().bottom())
+        .fold(f32::MIN, f32::max);
+
+    assert!(
+        window.bottom() - lowest_row < ROW_HEIGHT_ALLOWANCE,
+        "the rows stop at {lowest_row} in a window ending at {}",
+        window.bottom()
+    );
+}
+
 /// Clicking a match's name row folds its point rows away, and clicking it
 /// again brings them back. The match below it moves up into the freed rows.
 #[test]
@@ -1268,8 +1426,8 @@ fn snapshot_app_demo_trip() {
 }
 
 /// Snapshot of the query window end to end over the demo trip: highlighted
-/// editor text, a run whose matches draw as halos on the map, the run
-/// summary, and an expanded match table.
+/// editor text, the tab strip on its results, a run whose matches draw as
+/// halos on the map, the run summary, and the match table filling the window.
 #[test]
 fn snapshot_app_query_window() {
     let (mut harness, _config_path) = TestHarness::builder()
@@ -1313,14 +1471,6 @@ fn snapshot_app_query_window() {
         })
     };
     assert!(match_count > 0, "the demo trip has stretches above 25 km/h");
-
-    // Expand the query-history and examples lists so the snapshot documents
-    // them: history now holds the run above, examples lists the built-ins.
-    // Re-render between clicks so the second targets the reflowed layout.
-    harness.inner.get_by_label("Query history").click();
-    harness.inner.run_steps(5);
-    harness.inner.get_by_label("Examples").click();
-    harness.inner.run_steps(10);
 
     let history_len = harness.inner.state().query_window.history().len();
     assert_eq!(history_len, 1, "the run above is recorded in history");

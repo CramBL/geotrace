@@ -26,9 +26,6 @@ use gt_ui_types::{
 use super::column_format::{self, ColumnFormat};
 use super::{match_name_text, sample_span_name_text};
 
-/// Rows the table shows before it scrolls within the results panel.
-const ROWS_BEFORE_SCROLLING: usize = 8;
-
 /// Width of the rule down the left of a group's rows, in the halo colour its
 /// query paints on the map.
 const MATCH_RULE_WIDTH: f32 = 3.0;
@@ -556,8 +553,6 @@ impl<'a> MatchTable<'a> {
             .collect();
         let row_height = ui.text_style_height(&TextStyle::Monospace) + ROW_PADDING;
         let header_height = column_format::header_height(ui);
-        let max_scroll_height =
-            (row_height + ui.spacing().item_spacing.y) * ROWS_BEFORE_SCROLLING as f32;
         let mut action: Option<RowAction> = None;
 
         ui.scope(|ui| {
@@ -575,7 +570,9 @@ impl<'a> MatchTable<'a> {
                 .striped(true)
                 .sense(egui::Sense::click())
                 .auto_shrink([false, true])
-                .max_scroll_height(max_scroll_height)
+                // The results tab scrolls these rows: they are virtualized
+                // against its viewport.
+                .vscroll(false)
                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                 // The rule column does not clip: `paint_match_rule` paints into
                 // the gap below its row as well.

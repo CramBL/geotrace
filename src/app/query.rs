@@ -3,9 +3,7 @@
 //! visible tracks, and a results area whose matches also draw on the map as
 //! halos.
 
-use egui::{
-    Area, Button, CollapsingHeader, Frame, Grid, Label, RichText, ScrollArea, TextEdit, Window,
-};
+use egui::{Area, Button, Frame, Grid, Label, RichText, ScrollArea, TextEdit, Window};
 use egui_phosphor::regular::ARROWS_IN as ICON_ARROWS_IN;
 use egui_phosphor::regular::ARROWS_OUT as ICON_ARROWS_OUT;
 use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
@@ -33,6 +31,7 @@ use gt_side_panel::widgets::PointClickRequests;
 use gt_types::{LoadedFile, NavPoint, TrackRef};
 use gt_ui_theme::{EM_DASH, MIDDLE_DOT, RIGHTWARDS_ARROW};
 use gt_ui_types::{DisplayMask, MapHighlight, MapScope, MatchRevealTarget, QueryMatches};
+use strum::{EnumIter, IntoEnumIterator as _};
 
 use crate::settings::QueryHistoryEntry;
 
@@ -123,6 +122,25 @@ const EXAMPLES: &[QueryExample] = &[
     },
 ];
 
+/// The list the query window shows below its editor, one at a time.
+#[derive(Clone, Copy, Default, PartialEq, Eq, EnumIter)]
+enum QueryTab {
+    #[default]
+    Results,
+    History,
+    Examples,
+}
+
+impl QueryTab {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Results => "Results",
+            Self::History => "Query history",
+            Self::Examples => "Examples",
+        }
+    }
+}
+
 /// The floating query window: the editor, the results panel, and the query
 /// history list around a [`QuerySession`].
 pub struct QueryWindow {
@@ -166,6 +184,9 @@ pub struct QueryWindow {
     /// track and first point, so a rerun over unchanged data folds the same
     /// matches it folded before.
     folded_matches: FoldedMatches,
+    /// The tab on display, kept across frames. A finished run switches it back
+    /// to the results.
+    tab: QueryTab,
 }
 
 /// One completion offered in the popup: a language construct or a loaded
@@ -298,6 +319,7 @@ impl QueryWindow {
             editor_had_focus: false,
             hover_doc_span: None,
             folded_matches: FoldedMatches::default(),
+            tab: QueryTab::default(),
         }
     }
 
@@ -446,20 +468,31 @@ impl QueryWindow {
             .default_width(DEFAULT_WINDOW_WIDTH)
             .default_height(520.0)
             .resizable(true)
-            .vscroll(true)
             .show(ctx, |ui| {
                 self.editor_ui(ui, &schema);
                 ui.separator();
-                self.results_ui(
-                    ui,
-                    inputs,
-                    display_mask,
-                    highlight,
-                    requests,
-                    reveal_matches_request,
-                );
+                self.tab_strip_ui(ui);
                 ui.separator();
-                self.history_examples_ui(ui);
+                match self.tab {
+                    QueryTab::Results => {
+                        tab_scroll_area("query_results_tab").show(ui, |ui| {
+                            self.results_ui(
+                                ui,
+                                inputs,
+                                display_mask,
+                                highlight,
+                                requests,
+                                reveal_matches_request,
+                            );
+                        });
+                    }
+                    QueryTab::History => {
+                        tab_scroll_area("query_history_tab").show(ui, |ui| self.history_ui(ui));
+                    }
+                    QueryTab::Examples => {
+                        tab_scroll_area("query_examples_tab").show(ui, |ui| self.examples_ui(ui));
+                    }
+                }
             });
 
         // Esc closes the window. With the editor focused, the first Esc only
@@ -502,9 +535,20 @@ impl QueryWindow {
         }
     }
 
-    /// The collapsible query-history and examples lists below the results.
-    /// Loading an entry only fills the editor - running stays explicit.
-    fn history_examples_ui(&mut self, ui: &mut egui::Ui) {
+    /// The strip choosing which list fills the rest of the window.
+    fn tab_strip_ui(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            for tab in QueryTab::iter() {
+                if ui.selectable_label(self.tab == tab, tab.label()).clicked() {
+                    self.tab = tab;
+                }
+            }
+        });
+    }
+
+    /// The query history, newest first. Loading an entry only fills the editor
+    /// - running stays explicit.
+    fn history_ui(&mut self, ui: &mut egui::Ui) {
         // Gather actions during the borrow of `self.history`, apply after.
         let mut load: Option<String> = None;
         let mut toggle_pin: Option<usize> = None;
@@ -512,78 +556,56 @@ impl QueryWindow {
         let mut clear_history = false;
         let now = Utc::now();
 
-        CollapsingHeader::new("Query history")
-            .default_open(false)
+        if self.history.is_empty() {
+            ui.label(RichText::new("No queries run yet").weak());
+            return;
+        }
+        if ui
+            .small_button(ICON_TRASH)
+            .on_hover_text("Clear the query history (pinned queries are kept)")
+            .clicked()
+        {
+            clear_history = true;
+        }
+        // A table so the age and remove columns line up across rows.
+        Grid::new(ui.id().with("query_history_grid"))
+            .num_columns(4)
+            .spacing(egui::vec2(8.0, 4.0))
             .show(ui, |ui| {
-                if self.history.is_empty() {
-                    ui.label(RichText::new("No queries run yet").weak());
-                    return;
-                }
-                if ui
-                    .small_button(ICON_TRASH)
-                    .on_hover_text("Clear the query history (pinned queries are kept)")
-                    .clicked()
-                {
-                    clear_history = true;
-                }
-                // A table so the age and remove columns line up across rows.
-                Grid::new(ui.id().with("query_history_grid"))
-                    .num_columns(4)
-                    .spacing(egui::vec2(8.0, 4.0))
-                    .show(ui, |ui| {
-                        for (index, entry) in self.history.iter().enumerate() {
-                            let pin_hover = if entry.pinned {
-                                "Pinned, never evicted. Click to unpin."
-                            } else {
-                                "Pin so this query is never evicted"
-                            };
-                            if ui
-                                .selectable_label(entry.pinned, ICON_PUSH_PIN)
-                                .on_hover_text(pin_hover)
-                                .clicked()
-                            {
-                                toggle_pin = Some(index);
-                            }
-                            // The button flattens the query and drops
-                            // comments. Its hover shows the full verbatim text
-                            // (comments included). Loading restores that text
-                            // unchanged.
-                            if ui
-                                .button(query_one_line(&entry.text))
-                                .on_hover_text(&entry.text)
-                                .clicked()
-                            {
-                                load = Some(entry.text.clone());
-                            }
-                            let age =
-                                DateTime::<Utc>::from_timestamp_millis(entry.last_run_unix_ms)
-                                    .map_or_else(String::new, |last_run| {
-                                        format_history_age(now - last_run)
-                                    });
-                            ui.label(RichText::new(age).weak());
-                            if ui
-                                .small_button(ICON_X)
-                                .on_hover_text("Remove from history")
-                                .clicked()
-                            {
-                                delete = Some(index);
-                            }
-                            ui.end_row();
-                        }
-                    });
-            });
-
-        CollapsingHeader::new("Examples")
-            .default_open(false)
-            .show(ui, |ui| {
-                for example in EXAMPLES {
+                for (index, entry) in self.history.iter().enumerate() {
+                    let pin_hover = if entry.pinned {
+                        "Pinned, never evicted. Click to unpin."
+                    } else {
+                        "Pin so this query is never evicted"
+                    };
                     if ui
-                        .button(example.name)
-                        .on_hover_text(example.description)
+                        .selectable_label(entry.pinned, ICON_PUSH_PIN)
+                        .on_hover_text(pin_hover)
                         .clicked()
                     {
-                        load = Some(example.text.to_owned());
+                        toggle_pin = Some(index);
                     }
+                    // The button flattens the query and drops comments. Its
+                    // hover shows the full verbatim text (comments included).
+                    // Loading restores that text unchanged.
+                    if ui
+                        .button(query_one_line(&entry.text))
+                        .on_hover_text(&entry.text)
+                        .clicked()
+                    {
+                        load = Some(entry.text.clone());
+                    }
+                    let age = DateTime::<Utc>::from_timestamp_millis(entry.last_run_unix_ms)
+                        .map_or_else(String::new, |last_run| format_history_age(now - last_run));
+                    ui.label(RichText::new(age).weak());
+                    if ui
+                        .small_button(ICON_X)
+                        .on_hover_text("Remove from history")
+                        .clicked()
+                    {
+                        delete = Some(index);
+                    }
+                    ui.end_row();
                 }
             });
 
@@ -609,6 +631,23 @@ impl QueryWindow {
         }
     }
 
+    /// The built-in starter queries. Clicking one only fills the editor.
+    fn examples_ui(&mut self, ui: &mut egui::Ui) {
+        let mut load: Option<&'static str> = None;
+        for example in EXAMPLES {
+            if ui
+                .button(example.name)
+                .on_hover_text(example.description)
+                .clicked()
+            {
+                load = Some(example.text);
+            }
+        }
+        if let Some(text) = load {
+            self.set_text(text.to_owned());
+        }
+    }
+
     /// Collect the worker's outcome, if any. A cancelled run keeps the previous
     /// results - partial output is never shown.
     fn drain_completed(&mut self) {
@@ -619,6 +658,7 @@ impl QueryWindow {
             Ok(outcome) => {
                 self.worker = None;
                 self.session.finish_run(outcome);
+                self.tab = QueryTab::Results;
             }
             Err(mpsc::TryRecvError::Empty) => {}
             // The worker is gone without a message, so nothing to keep.
@@ -1225,6 +1265,14 @@ impl QueryWindow {
 
         self.worker = Some(rx);
     }
+}
+
+/// Nothing below the tab strip scrolls on its own: the tab fills what the
+/// window has left, so the wheel over a match table reaches its rows.
+fn tab_scroll_area(id_salt: &'static str) -> ScrollArea {
+    ScrollArea::vertical()
+        .id_salt(id_salt)
+        .auto_shrink([false, false])
 }
 
 /// The button that frames the map on this run's matches and plays their

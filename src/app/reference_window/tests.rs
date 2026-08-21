@@ -47,18 +47,11 @@ fn scroll_to_end(harness: &mut TestHarness<'_, ReferenceWindow>, document: Refer
     let Some(window_rect) = harness.inner.window_rect(document.title) else {
         panic!("the reference window is open");
     };
-    harness.inner.hover_at(window_rect.center());
-    harness
-        .inner
-        .input_mut()
-        .events
-        .push(egui::Event::MouseWheel {
-            unit: egui::MouseWheelUnit::Point,
-            delta: egui::vec2(0.0, -SCROLL_TO_END_POINTS),
-            phase: egui::TouchPhase::Move,
-            modifiers: egui::Modifiers::NONE,
-        });
-    harness.inner.run_steps(SCROLL_SETTLE_FRAMES);
+    harness.inner.scroll_wheel_at(
+        window_rect.center(),
+        -SCROLL_TO_END_POINTS,
+        SCROLL_SETTLE_FRAMES,
+    );
 }
 
 /// The urls of the [`egui::OutputCommand::OpenUrl`] commands in the output of

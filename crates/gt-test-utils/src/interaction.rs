@@ -43,6 +43,11 @@ pub trait HarnessInteraction {
 
     fn press_drag_release(&mut self, from: egui::Pos2, delta: egui::Vec2, move_frames: u16);
 
+    /// Moves the pointer to `target`, sends one wheel scroll of `delta_points`
+    /// there (negative scrolls towards the end of the content), and runs the
+    /// frames the smooth scroll takes to come to rest.
+    fn scroll_wheel_at(&mut self, target: egui::Pos2, delta_points: f32, settle_frames: usize);
+
     /// The matching node with the smallest `rect().top()`, for labels that
     /// several widgets on screen share.
     fn topmost_matching<'t>(&'t self, by: By<'t>) -> Node<'t>;
@@ -108,6 +113,18 @@ impl<State> HarnessInteraction for Harness<'_, State> {
         }
         self.drop_at(from + delta);
         self.step();
+    }
+
+    fn scroll_wheel_at(&mut self, target: egui::Pos2, delta_points: f32, settle_frames: usize) {
+        self.hover_at(target);
+        self.step();
+        self.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, delta_points),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        self.run_steps(settle_frames);
     }
 
     #[expect(
