@@ -5,6 +5,8 @@ pub mod terms;
 
 use std::{path::PathBuf, process::ExitCode};
 
+use gt_pending_writes::PendingWrites;
+
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -88,6 +90,15 @@ fn run_self_update_cli() -> ExitCode {
 fn run_self_update_cli() -> ExitCode {
     eprintln!("updating is not supported by this build");
     ExitCode::FAILURE
+}
+
+fn begin_shutdown_and_wait_for_pending_writes(pending_writes: &PendingWrites) {
+    pending_writes.begin_shutdown();
+    for status in pending_writes.snapshot().running {
+        log::info!("Waiting for background work to finish: {}", status.label);
+    }
+    pending_writes.wait_until_idle();
+    log::info!("Shutdown complete");
 }
 
 fn main() -> ExitCode {
@@ -195,6 +206,8 @@ fn main() -> ExitCode {
         },
         ..Default::default()
     };
+    let pending_writes = PendingWrites::default();
+    let app_pending_writes = pending_writes.clone();
     let result = eframe::run_native(
         concat!("GeoTrace v", env!("CARGO_PKG_VERSION")),
         native_options,
@@ -207,10 +220,12 @@ fn main() -> ExitCode {
                     offline,
                     storage: app::Storage::DataDirectory,
                     app_version: env!("CARGO_PKG_VERSION"),
+                    pending_writes: app_pending_writes,
                 },
             )))
         }),
     );
+    begin_shutdown_and_wait_for_pending_writes(&pending_writes);
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
