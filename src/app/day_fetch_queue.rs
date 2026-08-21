@@ -9,7 +9,9 @@ use chrono::NaiveDate;
 
 use super::backfill::{BackfillProgress, PendingBackfill};
 use super::day_failures::DayFailure;
-use super::day_fetch_status::{DayFetchStatus, RecordingDayArchiveState, RecordingDayCoverage};
+use super::day_fetch_status::{
+    ArchivedDayCount, DayArchiveCoverage, DayArchiveState, DayFetchStatus,
+};
 
 /// The days one fetch worker has queued, is fetching, or could not archive,
 /// and how far the archive covers the loaded recordings.
@@ -23,36 +25,63 @@ pub struct DayFetchQueue {
     requested: HashSet<NaiveDate>,
     in_flight: Option<NaiveDate>,
     failures: Vec<DayFailure>,
-    recording_days: RecordingDayCoverage,
+    recording_days: DayArchiveCoverage,
+    /// Days fetched only to place the recording days against the archive
+    /// around them, counted apart from the recording days themselves.
+    background_days: DayArchiveCoverage,
     backfill: Option<PendingBackfill>,
 }
 
 impl DayFetchQueue {
     /// Queue `day` for a loaded recording, and record what the archive holds
     /// for it.
-    ///
-    /// `needs_fetch` is the scheduler's refresh rule for the day. An archive
-    /// it could not be read from leaves the day awaited and reports the read
-    /// as a failure.
     pub fn request_recording_day<E: Display>(
         &mut self,
         day: NaiveDate,
         needs_fetch: Result<bool, E>,
     ) {
-        let state = match needs_fetch {
-            Ok(false) => RecordingDayArchiveState::Archived,
+        let state = self.queue_counted_day(day, needs_fetch);
+        self.background_days.forget(day);
+        self.recording_days.record(day, state);
+    }
+
+    /// Queue `day` to place a recording day against the archive around it.
+    ///
+    /// A day a loaded recording spans keeps its recording-day count and is
+    /// left alone here.
+    pub fn request_background_day<E: Display>(
+        &mut self,
+        day: NaiveDate,
+        needs_fetch: Result<bool, E>,
+    ) {
+        if self.recording_days.holds(day) {
+            return;
+        }
+        let state = self.queue_counted_day(day, needs_fetch);
+        self.background_days.record(day, state);
+    }
+
+    /// Queue `day` under the scheduler's refresh rule and report what the
+    /// archive holds for it. An archive it could not be read from leaves the
+    /// day awaited and reports the read as a failure.
+    fn queue_counted_day<E: Display>(
+        &mut self,
+        day: NaiveDate,
+        needs_fetch: Result<bool, E>,
+    ) -> DayArchiveState {
+        match needs_fetch {
+            Ok(false) => DayArchiveState::Archived,
             Ok(true) => {
                 self.queue_day(day);
-                RecordingDayArchiveState::Awaited
+                DayArchiveState::Awaited
             }
             Err(err) => {
                 if self.requested.insert(day) {
                     self.report_unreadable_archive(day, &err);
                 }
-                RecordingDayArchiveState::Awaited
+                DayArchiveState::Awaited
             }
-        };
-        self.recording_days.record(day, state);
+        }
     }
 
     /// Queue every day of `days` the refresh rule wants, as one backfill.
@@ -116,9 +145,13 @@ impl DayFetchQueue {
         DayFetchStatus {
             fetching: self.in_flight,
             queued: self.queue.len(),
-            recording_days: self.recording_days.recording_days(),
-            archived_recording_days: self.recording_days.archived_recording_days(),
+            recording_days: self.recording_days.counts(),
         }
+    }
+
+    /// How far the archive covers the days fetched around the recording days.
+    pub fn background_day_coverage(&self) -> ArchivedDayCount {
+        self.background_days.counts()
     }
 
     /// Days that could not be archived, in the order they were reported.
@@ -133,6 +166,7 @@ impl DayFetchQueue {
     /// Report `day` as holding everything the source publishes for it.
     pub fn mark_archived(&mut self, day: NaiveDate) {
         self.recording_days.mark_archived(day);
+        self.background_days.mark_archived(day);
     }
 
     /// The next day to dispatch, or [`None`] while one is already in flight or
@@ -216,7 +250,6 @@ impl DayFetchQueue {
     /// Record `day` as a loaded recording's day the archive lacks.
     #[cfg(test)]
     pub fn await_recording_day(&mut self, day: NaiveDate) {
-        self.recording_days
-            .record(day, RecordingDayArchiveState::Awaited);
+        self.recording_days.record(day, DayArchiveState::Awaited);
     }
 }

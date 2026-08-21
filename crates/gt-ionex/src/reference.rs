@@ -102,6 +102,16 @@ const BLOCKS: &[ReferenceBlock] = &[
          delay.[^guardian]",
     ),
     ReferenceBlock::Illustration(STORM_MAP_ILLUSTRATION),
+    ReferenceBlock::Paragraph(
+        "Storm studies quantify the ionospheric response as the deviation of [TEC] from its \
+         quiet-time level, the median over the same location and time of day, and place typical \
+         quiet-time variation at around 40 % either way from that median.[^storm-2017] The \
+         planetary ionospheric storm index takes the quiet reference as the median of the 27 days \
+         before the day observed and grades the logarithmic deviation from quiet through moderate \
+         disturbance to moderate and intense storm.[^iono-storm-index] GeoTrace's environment \
+         warning uses that index: it warns from the moderate-storm grade, a deviation of at least \
+         43 % above or 30 % below the 27-day median.[^iono-storm-index][^w-index-thresholds]",
+    ),
     ReferenceBlock::QueryExample {
         intro: "The fixes recorded under elevated [TEC]:",
         query: "points | where tec > 100",
@@ -191,6 +201,25 @@ const SOURCES: &[Source] = &[
         citation_key: "jpl",
         name: "NASA JPL ionosphere products",
         url: "https://sideshow.jpl.nasa.gov",
+    },
+    Source {
+        citation_key: "storm-2017",
+        name: "TEC disturbances caused by CME-triggered geomagnetic storm of September 6 to 9, \
+               2017 (Uga, Gautam and Seba, Heliyon 10, 2024)",
+        url: "https://doi.org/10.1016/j.heliyon.2024.e30725",
+    },
+    Source {
+        citation_key: "iono-storm-index",
+        name: "Derivation of a planetary ionospheric storm index (Gulyaeva and Stanislawska, \
+               Annales Geophysicae 26, 2008)",
+        url: "https://doi.org/10.5194/angeo-26-2645-2008",
+    },
+    Source {
+        citation_key: "w-index-thresholds",
+        name: "Ionospheric weather: cloning missed foF2 observations for derivation of \
+               variability index (Gulyaeva, Stanislawska and Tomasik, Annales Geophysicae 26, \
+               2008)",
+        url: "https://doi.org/10.5194/angeo-26-315-2008",
     },
 ];
 

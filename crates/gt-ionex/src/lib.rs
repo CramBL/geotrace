@@ -39,6 +39,7 @@ pub mod instant_selection;
 pub mod maps;
 pub mod mirrors;
 pub mod parse;
+pub mod quiet_time;
 pub mod reference;
 pub mod tec;
 pub mod text;

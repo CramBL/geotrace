@@ -21,3 +21,5 @@ PN = "PN"
 # Extreme Ultraviolet and X-ray Irradiance Sensors, the GOES instrument the
 # flare catalog names in every event
 EXIS = "EXIS"
+# foF2, the F2 layer critical frequency, in the title of a cited paper
+fo = "fo"

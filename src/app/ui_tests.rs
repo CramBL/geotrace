@@ -4566,6 +4566,108 @@ fn a_storm_day_archived_after_the_load_warns_on_the_map() {
     );
 }
 
+/// Archive one UTC day of TEC maps over the recording's own position, every
+/// node standing at `tecu`, two hours apart.
+fn archive_tec_day(store: &gt_store::IonexStore, day: chrono::NaiveDate, tecu: f64) {
+    let axis = |first_degrees: f64, last_degrees: f64, step_degrees: f64| {
+        gt_ionex::grid::GridAxis::new(gt_ionex::grid::AxisDeclaration {
+            first_degrees,
+            last_degrees,
+            step_degrees,
+        })
+        .expect("axis")
+    };
+    let grid = gt_ionex::grid::MapGrid {
+        latitudes: gt_ionex::grid::LatitudeAxis::new(axis(55.0, 50.0, -2.5)),
+        longitudes: gt_ionex::grid::LongitudeAxis::new(axis(-5.0, 5.0, 5.0)),
+        shell_height_km: 450.0,
+    };
+    let midnight = day.and_time(chrono::NaiveTime::MIN).and_utc();
+    let maps = (0..=12)
+        .map(|step| {
+            gt_ionex::maps::TecMap::new(
+                midnight + chrono::TimeDelta::hours(step * 2),
+                vec![vec![Some(gt_ionex::tec::TotalElectronContent::from_tecu(tecu)); 3]; 3],
+            )
+        })
+        .collect();
+    store
+        .insert_or_replace_day(
+            day,
+            "host",
+            Utc::now(),
+            gt_ionex::IonexProduct::Final,
+            &gt_ionex::maps::GlobalIonosphereMaps::new(grid, chrono::TimeDelta::hours(2), maps),
+        )
+        .expect("insert TEC day");
+}
+
+/// The quiet-time window before a loaded recording arrives after it: the map
+/// indicator names the deviation and the load toast is raised once, however
+/// many frames follow.
+#[test]
+fn a_tec_window_archived_after_the_load_warns_on_the_map() {
+    let gtd_bytes = minimal_gtd_bytes();
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(gtd_bytes.as_slice(), "ride.gtd"),
+    );
+    harness.run_steps(2);
+    assert!(
+        harness.state().space_weather_warning.lines().is_empty(),
+        "no archived day overlaps the recording yet"
+    );
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path())
+        .open_tec_maps()
+        .expect("archive");
+    let recorded = base_time().date_naive();
+    archive_tec_day(&store, recorded, 35.0);
+    for days_before in 1..=gt_ionex::quiet_time::BACKGROUND_WINDOW_DAYS as i64 {
+        archive_tec_day(
+            &store,
+            recorded - chrono::TimeDelta::days(days_before),
+            20.0,
+        );
+    }
+    let ctx = harness.ctx.clone();
+    harness.state_mut().tec_maps = crate::app::tec::TecMapScheduler::new(
+        ctx,
+        Some(store),
+        gt_ionex::MirrorList::default(),
+        None,
+        gt_fetch::TransportSource::Offline,
+    );
+    harness.run_steps(2);
+
+    assert_eq!(
+        harness
+            .state()
+            .space_weather_warning
+            .lines()
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "TEC deviation: +75 % from the 27-day median, moderate ionospheric storm (W = 3)",
+            "TEC over the recording: 35 to 35 TECU",
+        ],
+        "the recording's day stands well above the median of the 27 days before it"
+    );
+    assert_eq!(harness.state().toasts.len(), 1);
+
+    harness.run_steps(2);
+    assert_eq!(
+        harness.state().toasts.len(),
+        1,
+        "a later frame does not raise the toast again"
+    );
+}
+
 /// The flares of the May 2024 storm, as the fetch worker archives a day:
 /// classes spread across the scale so each marker colour is drawn.
 fn archive_flare_day(store: &gt_store::FlareStore, day: chrono::NaiveDate, peaks: &[(u32, &str)]) {

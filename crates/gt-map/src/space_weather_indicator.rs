@@ -13,11 +13,8 @@ use gt_ui_types::reference::ReferenceDocument;
 const CORNER_INSET_PX: f32 = 8.0;
 
 const IDLE_HOVER_TEXT: &str = "No environment warnings. Warnings appear here when archived \
-                               interference, geomagnetic or solar flare data crosses a warning \
-                               level during a loaded recording.";
-
-/// The last line of both the idle and the warned hover.
-const CLICK_HINT_TEXT: &str = "Click for the warning levels";
+                               interference, geomagnetic, solar flare or TEC deviation data \
+                               crosses a warning level during a loaded recording.";
 
 const LEVELS_TITLE: &str = "Environment warning levels";
 
@@ -118,18 +115,15 @@ fn glyph_ui(ui: &mut Ui, levels_open: bool, warning_lines: &[String]) -> Respons
         RichText::new(ICON_CLOUD_LIGHTNING).color(color),
     )
     .on_hover_cursor(CursorIcon::PointingHand)
-    .on_hover_ui(|ui| {
-        match warning_lines {
-            [] => {
-                ui.label(IDLE_HOVER_TEXT);
-            }
-            lines => {
-                for line in lines {
-                    ui.label(line);
-                }
+    .on_hover_ui(|ui| match warning_lines {
+        [] => {
+            ui.label(IDLE_HOVER_TEXT);
+        }
+        lines => {
+            for line in lines {
+                ui.label(line);
             }
         }
-        ui.label(RichText::new(CLICK_HINT_TEXT).weak());
     })
 }
 
@@ -188,7 +182,7 @@ mod tests {
                 reference: gt_jam::reference::AIRCRAFT_INTERFERENCE,
             },
             WarningLevelExplanation {
-                trigger: "TEC does not trigger a warning.".to_owned(),
+                trigger: gt_ionex::text::DEVIATION_WARNING_TRIGGER.clone(),
                 reference: gt_ionex::reference::IONOSPHERIC_TEC,
             },
         ]

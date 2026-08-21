@@ -600,7 +600,7 @@ mod tests {
 
     use crate::app::backfill::BackfillProgress;
     use crate::app::day_failures::DayFailure;
-    use crate::app::day_fetch_status::DayFetchStatus;
+    use crate::app::day_fetch_status::{ArchivedDayCount, DayFetchStatus};
 
     use super::*;
 
@@ -1069,8 +1069,10 @@ mod tests {
             DayFetchStatus {
                 fetching: Some(day(2026, 7, 21)),
                 queued: 0,
-                recording_days: 2,
-                archived_recording_days: 1,
+                recording_days: ArchivedDayCount {
+                    days: 2,
+                    archived: 1,
+                },
             }
         );
     }
@@ -1091,7 +1093,7 @@ mod tests {
             .expect("send");
         scheduler.poll();
 
-        assert_eq!(scheduler.days.fetch_status().archived_recording_days, 1);
+        assert_eq!(scheduler.days.fetch_status().recording_days.archived, 1);
     }
 
     /// Both indices are requested for one day, and the archive records the

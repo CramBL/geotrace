@@ -180,6 +180,18 @@ pub struct AxisPosition {
     pub fraction: f64,
 }
 
+impl AxisPosition {
+    /// The nearer of the two nodes the position falls between, the upper one
+    /// exactly halfway.
+    pub fn nearest_index(self) -> usize {
+        if self.fraction < 0.5 {
+            self.lower_index
+        } else {
+            self.upper_index
+        }
+    }
+}
+
 /// The grid's latitude axis, declared by `LAT1 / LAT2 / DLAT`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LatitudeAxis(GridAxis);
@@ -258,8 +270,19 @@ pub struct MapGrid {
     pub shell_height_km: f64,
 }
 
+impl MapGrid {
+    /// The node nearest a position, or [`None`] where the position lies off
+    /// the grid.
+    pub fn nearest_node(self, latitude: Latitude, longitude: Longitude) -> Option<GridPoint> {
+        Some(GridPoint {
+            latitude_index: self.latitudes.position_of(latitude)?.nearest_index(),
+            longitude_index: self.longitudes.position_of(longitude)?.nearest_index(),
+        })
+    }
+}
+
 /// One node of a [`MapGrid`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GridPoint {
     pub latitude_index: usize,
     pub longitude_index: usize,
@@ -323,6 +346,46 @@ mod tests {
         assert!(
             (position.fraction - fraction).abs() < 1e-9,
             "{position:?} is not {fraction} past node {lower_index}"
+        );
+    }
+
+    /// A position between two nodes takes the nearer of them, and the upper
+    /// node exactly halfway.
+    #[rstest]
+    #[case::just_short_of_halfway(86.26, 0)]
+    #[case::halfway(86.25, 1)]
+    #[case::just_past_halfway(86.24, 1)]
+    fn a_position_reads_back_as_the_node_nearest_it(#[case] degrees: f64, #[case] expected: usize) {
+        let position = jpl_latitudes()
+            .position_of(Latitude::new(degrees))
+            .expect("a latitude on the grid");
+
+        assert_eq!(position.nearest_index(), expected);
+    }
+
+    /// Both axes round together, and a position off the grid names no node
+    /// at all.
+    #[rstest]
+    #[case::a_node_itself(87.5, -180.0, Some((0, 0)))]
+    #[case::the_nearest_corner_of_a_cell(86.0, -178.0, Some((1, 0)))]
+    #[case::north_of_the_grid(89.0, 0.0, None)]
+    fn a_grid_reads_back_the_node_nearest_a_position(
+        #[case] latitude: f64,
+        #[case] longitude: f64,
+        #[case] expected: Option<(usize, usize)>,
+    ) {
+        let grid = MapGrid {
+            latitudes: jpl_latitudes(),
+            longitudes: jpl_longitudes(),
+            shell_height_km: 450.0,
+        };
+
+        assert_eq!(
+            grid.nearest_node(Latitude::new(latitude), Longitude::new(longitude)),
+            expected.map(|(latitude_index, longitude_index)| GridPoint {
+                latitude_index,
+                longitude_index,
+            })
         );
     }
 

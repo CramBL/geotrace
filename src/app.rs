@@ -33,6 +33,7 @@ mod storage;
 mod storage_controls;
 mod tec;
 mod tec_mirrors_ui;
+mod tec_quiet_time;
 pub use storage::Storage;
 #[cfg(feature = "self-update")]
 pub mod update;

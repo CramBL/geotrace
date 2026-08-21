@@ -23,6 +23,7 @@ pub(super) const SEARCHABLE_LABELS: &[&str] = &[
     EARTHDATA_TOKEN_LABEL,
     day_fetch_status::FETCH_QUEUE_LABEL,
     day_fetch_status::RECORDING_DAYS_LABEL,
+    day_fetch_status::BACKGROUND_DAYS_LABEL,
     backfill_ui::DOWNLOAD_HISTORY_LABEL,
     REFERENCE_LINK_LABEL,
 ];
@@ -51,6 +52,7 @@ impl App {
         let mut mirrors_changed = false;
         let mut token_changed = false;
         let fetch_status = self.tec_maps.fetch_queue().fetch_status();
+        let background_days = self.tec_maps.background_day_coverage();
         let progress = self.tec_maps.fetch_queue().backfill_progress();
         let readiness = self.backfill_readiness(self.tec_maps.archive_available());
         let mut backfill_action = None;
@@ -75,6 +77,11 @@ impl App {
                 },
                 status: |ui: &mut Ui| {
                     day_fetch_status::show_fetch_rows(ui, fetch_status, FETCH_ROW_HOVER);
+                    day_fetch_status::show_background_day_row(
+                        ui,
+                        background_days,
+                        gt_ionex::text::BACKGROUND_DAY_COVERAGE_HOVER.as_str(),
+                    );
                 },
                 failures: self.tec_maps.fetch_queue().failures(),
                 backfill: |ui: &mut Ui| {

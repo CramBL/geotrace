@@ -12,6 +12,7 @@ use std::sync::LazyLock;
 use gt_types::{Latitude, Longitude};
 use gt_ui_types::MetricChipHover;
 
+use crate::quiet_time::{self, QuietTimeDeviation};
 use crate::reference::IONOSPHERIC_TEC;
 use crate::tec::{L1_DELAY_METERS_PER_TECU, TotalElectronContent};
 
@@ -158,6 +159,32 @@ pub const RECORDING_DAY_COVERAGE_HOVER: &str = "UTC days the recordings loaded t
                                                 Days downloaded by a backfill are not counted \
                                                 here.";
 
+/// Hover text of the settings page's background day row, stating why the days
+/// before a recording are downloaded too.
+pub static BACKGROUND_DAY_COVERAGE_HOVER: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "Days downloaded before the recording days, and how many of them the archive holds maps \
+         for. One recording day pulls in the {} days before it, since the environment warning \
+         reads a recording's TEC against the median of those days.",
+        quiet_time::BACKGROUND_WINDOW_DAYS
+    )
+});
+
+/// The TEC row of the environment warning levels, stating the deviation from
+/// the quiet-time median that raises a warning.
+pub static DEVIATION_WARNING_TRIGGER: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "TEC: at least {:.0} % above or {:.0} % below the median of the {} days before, the \
+         moderate-storm grade of the planetary ionospheric storm index.",
+        QuietTimeDeviation::from_log_ratio(quiet_time::MODERATE_STORM_LOG_RATIO)
+            .percent_from_median(),
+        QuietTimeDeviation::from_log_ratio(-quiet_time::MODERATE_STORM_LOG_RATIO)
+            .percent_from_median()
+            .abs(),
+        quiet_time::BACKGROUND_WINDOW_DAYS
+    )
+});
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,10 +244,17 @@ mod tests {
              hidden layer opacity: {HIDDEN_LAYER_OPACITY}\n\
              fetch queue hover: {FETCH_QUEUE_HOVER}\n\
              recording day coverage hover: {RECORDING_DAY_COVERAGE_HOVER}\n\
+             background day coverage hover: {}\n\
+             deviation warning trigger: {}\n\
              mirror skipped without a token: {MIRROR_SKIPPED_WITHOUT_TOKEN}\n\
              missing Earthdata token: {}\n\
              Earthdata signup: {EARTHDATA_SIGNUP_URL}",
-            *SCALE_CAVEAT, *PLOT_HOVER, *QUERY_DOC, *MISSING_EARTHDATA_TOKEN
+            *SCALE_CAVEAT,
+            *PLOT_HOVER,
+            *QUERY_DOC,
+            *BACKGROUND_DAY_COVERAGE_HOVER,
+            *DEVIATION_WARNING_TRIGGER,
+            *MISSING_EARTHDATA_TOKEN
         );
         insta::assert_snapshot!("shared_wording", wording);
     }

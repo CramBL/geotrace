@@ -440,9 +440,7 @@ fn snapshot_warning_levels() -> Vec<gt_ui_types::WarningLevelExplanation> {
             reference: gt_jam::reference::AIRCRAFT_INTERFERENCE,
         },
         gt_ui_types::WarningLevelExplanation {
-            trigger: "TEC does not trigger a warning: no sourced level exists for an absolute TEC \
-                      value. It is shown for context when a warning is active."
-                .to_owned(),
+            trigger: gt_ionex::text::DEVIATION_WARNING_TRIGGER.clone(),
             reference: gt_ionex::reference::IONOSPHERIC_TEC,
         },
     ]

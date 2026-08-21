@@ -10,6 +10,7 @@ use std::sync::{Arc, LazyLock};
 
 use chrono::{DateTime, NaiveDate, Utc};
 use gt_flare::{FlareClassification, MarkedFlare, RadioBlackoutClass};
+use gt_ionex::quiet_time::{self, QuietTimeDeviation};
 use gt_loaded_files::LoadedFileId;
 use gt_solar::GeomagneticIndex;
 use gt_solar::activity::{GeomagneticActivity, GeomagneticStormClass};
@@ -36,6 +37,10 @@ const SOLAR_FLARE: &str = "Solar flare";
 
 /// Leads the TEC line, which states a range of values.
 const TEC_OVER_THE_RECORDING: &str = "TEC over the recording";
+
+/// Leads the TEC deviation line, which states one share of the quiet median
+/// and the storm grade it reaches.
+const TEC_DEVIATION: &str = "TEC deviation";
 
 /// Closes the solar flare line. Only a flare that peaked while the receiver
 /// was in daylight counts, so every flare line ends this way.
@@ -82,9 +87,7 @@ pub static WARNING_LEVELS: LazyLock<Vec<WarningLevelExplanation>> = LazyLock::ne
             reference: gt_flare::reference::SOLAR_FLARES,
         },
         WarningLevelExplanation {
-            trigger: "TEC does not trigger a warning: no sourced level exists for an absolute \
-                      TEC value. It is shown for context when a warning is active."
-                .to_owned(),
+            trigger: gt_ionex::text::DEVIATION_WARNING_TRIGGER.clone(),
             reference: gt_ionex::reference::IONOSPHERIC_TEC,
         },
     ]
@@ -94,18 +97,17 @@ pub static WARNING_LEVELS: LazyLock<Vec<WarningLevelExplanation>> = LazyLock::ne
 /// recordings, kept only where it reaches the level that can disturb
 /// reception.
 ///
-/// Aircraft interference, geomagnetic activity and solar flares each have a
-/// published level above which reception is known to suffer, and those three
-/// levels are what raises the warning. Total electron content has no such
-/// level: no sourced disturbance threshold exists for an absolute TEC value,
-/// and the way TEC harms GNSS is through gradients, which the geomagnetic
-/// trigger already covers. Its range is kept as context beside a warning
-/// another metric raised, and never raises one.
+/// Aircraft interference, geomagnetic activity, solar flares and the TEC
+/// deviation each have a published level above which reception is known to
+/// suffer, and those four levels are what raises the warning. The absolute
+/// TEC range has no such level, so it is kept as context beside a warning
+/// another metric raised and never raises one.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct DisturbanceEvidence {
     aircraft_interference: Option<f64>,
     geomagnetic: Option<GeomagneticStormPeak>,
     solar_flare: Option<SunlitFlarePeak>,
+    tec_deviation: Option<QuietTimeDeviation>,
     total_electron_content: Option<TecSpan>,
 }
 
@@ -123,6 +125,9 @@ impl DisturbanceEvidence {
         for points in &series.tec {
             evidence.collect_tec_from(points);
         }
+        for deviation in &series.tec_deviations {
+            evidence.keep_stronger_tec_deviation(Some(*deviation));
+        }
         evidence.collect_flares_from(flares);
         evidence
     }
@@ -134,9 +139,13 @@ impl DisturbanceEvidence {
             aircraft_interference,
             geomagnetic,
             solar_flare,
+            tec_deviation,
             total_electron_content: _,
         } = self;
-        aircraft_interference.is_some() || geomagnetic.is_some() || solar_flare.is_some()
+        aircraft_interference.is_some()
+            || geomagnetic.is_some()
+            || solar_flare.is_some()
+            || tec_deviation.is_some()
     }
 
     /// One line per metric that reached its disturbance level, closed by the
@@ -152,6 +161,7 @@ impl DisturbanceEvidence {
             aircraft_interference,
             geomagnetic,
             solar_flare,
+            tec_deviation,
             total_electron_content,
         } = self;
         let mut lines = Vec::new();
@@ -167,6 +177,15 @@ impl DisturbanceEvidence {
         if let Some(peak) = *solar_flare {
             lines.push(peak.warning_line());
         }
+        if let Some(deviation) = *tec_deviation {
+            lines.push(format!(
+                "{TEC_DEVIATION}: {:+.0} % from the {}-day median, {} (W = {})",
+                deviation.percent_from_median(),
+                quiet_time::BACKGROUND_WINDOW_DAYS,
+                deviation.grade(),
+                deviation.storm_index_value()
+            ));
+        }
         if let Some(span) = *total_electron_content {
             lines.push(span.context_line());
         }
@@ -180,11 +199,13 @@ impl DisturbanceEvidence {
             aircraft_interference,
             geomagnetic,
             solar_flare,
+            tec_deviation,
             total_electron_content,
         } = *other;
         self.keep_stronger_interference(aircraft_interference);
         self.keep_stronger_storm(geomagnetic);
         self.keep_stronger_flare(solar_flare);
+        self.keep_stronger_tec_deviation(tec_deviation);
         self.widen_tec_to(total_electron_content);
     }
 
@@ -257,6 +278,18 @@ impl DisturbanceEvidence {
                 .is_none_or(|kept| peak.classification > kept.classification)
         {
             self.solar_flare = Some(peak);
+        }
+    }
+
+    /// Keep the deviation standing furthest from its quiet median, of those
+    /// the index grades a storm.
+    fn keep_stronger_tec_deviation(&mut self, candidate: Option<QuietTimeDeviation>) {
+        if let Some(deviation) = candidate.filter(|deviation| deviation.grade().is_a_storm())
+            && self
+                .tec_deviation
+                .is_none_or(|kept| deviation.log_ratio().abs() > kept.log_ratio().abs())
+        {
+            self.tec_deviation = Some(deviation);
         }
     }
 
@@ -358,6 +391,9 @@ pub struct RecordingSeries<'a> {
     interference: Vec<&'a Arc<Vec<JammingPoint>>>,
     geomagnetic: Vec<&'a Arc<Vec<GeomagneticPoint>>>,
     tec: Vec<&'a Arc<Vec<TecPoint>>>,
+    /// The peak deviation of each track that has one. It is read from days
+    /// the track itself never spans, so it is kept as its own field.
+    tec_deviations: Vec<QuietTimeDeviation>,
 }
 
 impl<'a> RecordingSeries<'a> {
@@ -368,6 +404,7 @@ impl<'a> RecordingSeries<'a> {
         jamming: &'a JammingSeries,
         geomagnetic: &'a GeomagneticSeries,
         tec: &'a TecSeries,
+        tec_deviations: &HashMap<TrackRef, QuietTimeDeviation>,
     ) -> Self {
         Self {
             interference: tracks
@@ -379,7 +416,11 @@ impl<'a> RecordingSeries<'a> {
                 .filter_map(|track| geomagnetic.points_by_track.get(&track))
                 .collect(),
             tec: tracks
+                .clone()
                 .filter_map(|track| tec.points_by_track.get(&track))
+                .collect(),
+            tec_deviations: tracks
+                .filter_map(|track| tec_deviations.get(&track).copied())
                 .collect(),
         }
     }
@@ -413,6 +454,9 @@ pub struct RecordingUnderAssessment<'a> {
 #[derive(Debug, Clone, PartialEq)]
 struct EvidenceSource {
     series: Vec<ArcIdentity>,
+    /// Carried by value: a deviation is read from days outside the track's
+    /// own, so no allocation the track holds changes when one moves.
+    tec_deviations: Vec<QuietTimeDeviation>,
     archived_flare_days: Vec<NaiveDate>,
     positions: ArcIdentity,
 }
@@ -421,6 +465,7 @@ impl EvidenceSource {
     fn of(recording: &RecordingUnderAssessment<'_>) -> Self {
         Self {
             series: recording.series.identities(),
+            tec_deviations: recording.series.tec_deviations.clone(),
             archived_flare_days: recording.archived_flare_days.clone(),
             positions: recording.positions,
         }
@@ -515,6 +560,7 @@ mod tests {
     use std::collections::HashMap;
 
     use gt_flare::SolarFlare;
+    use gt_ionex::tec::TotalElectronContent;
     use gt_loaded_files::{FileHistory, LoadedFiles};
     use gt_types::{FileSource, LoadedFile};
     use rstest::rstest;
@@ -539,6 +585,7 @@ mod tests {
         interference: Vec<Arc<Vec<JammingPoint>>>,
         geomagnetic: Vec<Arc<Vec<GeomagneticPoint>>>,
         tec: Vec<Arc<Vec<TecPoint>>>,
+        tec_deviations: Vec<QuietTimeDeviation>,
     }
 
     impl SeriesFixture {
@@ -547,8 +594,22 @@ mod tests {
                 interference: self.interference.iter().collect(),
                 geomagnetic: self.geomagnetic.iter().collect(),
                 tec: self.tec.iter().collect(),
+                tec_deviations: self.tec_deviations.clone(),
             }
         }
+    }
+
+    /// The deviation a track reaches at `percent` of a fully archived quiet
+    /// window's median, built the way the archive read builds it.
+    fn tec_deviation(percent: f64) -> QuietTimeDeviation {
+        let median = 20.0;
+        let window =
+            vec![TotalElectronContent::from_tecu(median); quiet_time::BACKGROUND_WINDOW_DAYS];
+        quiet_time::deviation_from_quiet_time(
+            TotalElectronContent::from_tecu(median * (1.0 + percent / 100.0)),
+            &window,
+        )
+        .expect("a fully archived window")
     }
 
     fn interference_points(percents: &[f64]) -> Vec<Arc<Vec<JammingPoint>>> {
@@ -726,10 +787,10 @@ mod tests {
         assert!(!evidence_of(&SeriesFixture::default(), &flares).warns());
     }
 
-    /// TEC is context, so it raises no warning on its own and is listed only
-    /// once another metric has.
+    /// An absolute TEC value is context, so it raises no warning on its own
+    /// and is listed only once another metric has.
     #[test]
-    fn tec_never_warns_on_its_own() {
+    fn the_tec_range_never_warns_on_its_own() {
         let fixture = SeriesFixture {
             tec: tec_points(&[12.4, 175.2, 40.0]),
             ..SeriesFixture::default()
@@ -749,6 +810,7 @@ mod tests {
             interference: interference_points(&[0.4, 34.2]),
             geomagnetic: geomagnetic_points(Some(7.667), Some(9.0)),
             tec: tec_points(&[12.4, 175.2]),
+            tec_deviations: vec![tec_deviation(62.0)],
         };
         let flares = [
             flare("M1.2", Some(SunlitSide::Sunlit)),
@@ -761,9 +823,50 @@ mod tests {
                 "Geomagnetic storm: Kp reached 9 (G5)",
                 "Aircraft interference: up to 34.2 % of aircraft in a crossed cell",
                 "Solar flare: X5.8 at 2024-05-11 02:01 UTC, receiver on the sunlit side",
+                "TEC deviation: +62 % from the 27-day median, moderate ionospheric storm (W = 3)",
                 "TEC over the recording: 12 to 175 TECU",
             ]
         );
+    }
+
+    /// A deviation the index grades below a storm is quiet-time variation,
+    /// and is left out of the evidence entirely.
+    #[test]
+    fn a_deviation_short_of_the_storm_grade_warns_about_nothing() {
+        let fixture = SeriesFixture {
+            tec_deviations: vec![tec_deviation(42.5)],
+            ..SeriesFixture::default()
+        };
+
+        let evidence = evidence_of(&fixture, &[]);
+
+        assert!(!evidence.warns());
+        assert!(evidence.warning_lines().is_empty());
+    }
+
+    /// The line states the signed share of the median and the grade the index
+    /// puts it at, and a deviation either side of the median raises the
+    /// warning.
+    #[rstest]
+    #[case::a_moderate_storm(
+        62.0,
+        "TEC deviation: +62 % from the 27-day median, moderate ionospheric storm (W = 3)"
+    )]
+    #[case::a_negative_moderate_storm(
+        -35.0,
+        "TEC deviation: -35 % from the 27-day median, moderate ionospheric storm (W = -3)"
+    )]
+    #[case::an_intense_storm(
+        200.0,
+        "TEC deviation: +200 % from the 27-day median, intense ionospheric storm (W = 4)"
+    )]
+    fn the_deviation_line_states_its_share_and_grade(#[case] percent: f64, #[case] expected: &str) {
+        let fixture = SeriesFixture {
+            tec_deviations: vec![tec_deviation(percent)],
+            ..SeriesFixture::default()
+        };
+
+        assert_eq!(evidence_of(&fixture, &[]).warning_lines(), [expected]);
     }
 
     /// Every level the map indicator's popup states, with the link each row

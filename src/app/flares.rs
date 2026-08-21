@@ -481,7 +481,7 @@ mod tests {
     use gt_types::{Latitude, Longitude};
 
     use crate::app::day_failures::DayFailure;
-    use crate::app::day_fetch_status::DayFetchStatus;
+    use crate::app::day_fetch_status::{ArchivedDayCount, DayFetchStatus};
     use crate::app::fix_positions::FixPositions;
 
     use super::*;
@@ -774,8 +774,10 @@ mod tests {
             DayFetchStatus {
                 fetching: Some(day(2024, 5, 10)),
                 queued: 0,
-                recording_days: 2,
-                archived_recording_days: 1,
+                recording_days: ArchivedDayCount {
+                    days: 2,
+                    archived: 1,
+                },
             }
         );
     }

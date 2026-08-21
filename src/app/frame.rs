@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use egui::{Button, CentralPanel, Label, MenuBar, ProgressBar, RichText, Sides, Window};
@@ -10,6 +11,7 @@ use egui_phosphor::regular::TERMINAL_WINDOW as ICON_TERMINAL_WINDOW;
 use egui_phosphor::regular::TRASH as ICON_TRASH;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use egui_phosphor::regular::X as ICON_X;
+use gt_ionex::quiet_time::QuietTimeDeviation;
 use gt_loaded_files::RecordingNames;
 use gt_map::MapLayer;
 use gt_query_run::RunInputs;
@@ -530,6 +532,7 @@ impl App {
         jamming: &JammingSeries,
         geomagnetic: &GeomagneticSeries,
         tec: &TecSeries,
+        tec_deviations: &HashMap<TrackRef, QuietTimeDeviation>,
         positions: &Arc<FixPositionTimeline>,
     ) {
         let newly_warned = {
@@ -548,7 +551,13 @@ impl App {
                     RecordingUnderAssessment {
                         id: entry.id(),
                         span,
-                        series: RecordingSeries::of(tracks, jamming, geomagnetic, tec),
+                        series: RecordingSeries::of(
+                            tracks,
+                            jamming,
+                            geomagnetic,
+                            tec,
+                            tec_deviations,
+                        ),
                         archived_flare_days: self.solar_flares.archived_days_for(span),
                         positions: ArcIdentity::of(positions),
                     }
@@ -582,6 +591,10 @@ impl App {
             let shared = self.shared.borrow();
             self.tec_maps.plot_series(&shared.loaded_files)
         };
+        let tec_deviations = {
+            let shared = self.shared.borrow();
+            self.tec_maps.quiet_time_deviations(&shared.loaded_files)
+        };
         // Resolved over the span the plot reported when it last drew, so a
         // pan or zoom reaches the lines on the frame after it.
         let context_span = Self::context_span_of(&self.shared.borrow().plot_state);
@@ -594,6 +607,7 @@ impl App {
             &jamming_series,
             &geomagnetic_series,
             &tec_series,
+            &tec_deviations,
             &fix_positions,
         );
 

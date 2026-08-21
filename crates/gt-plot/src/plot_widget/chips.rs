@@ -733,7 +733,7 @@ pub(super) fn metric_filter_row(
         if ui
             .selectable_label(*sync_to_map, ICON_LINK)
             .on_hover_text(if *sync_to_map {
-                "Syncing plot time range to map viewport — click to disable"
+                "Syncing plot time range to map viewport. Click to disable."
             } else {
                 "Sync plot time range to map viewport"
             })
