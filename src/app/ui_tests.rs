@@ -24,6 +24,7 @@ use strum::IntoEnumIterator as _;
 
 use super::App;
 use super::log_viewer;
+use super::query;
 use super::settings_ui::{self, SettingsPage};
 
 /// In-memory [`egui::DroppedFile`] for drag-drop tests. `bytes` drops carry a
@@ -390,6 +391,25 @@ fn query_match_row_click_pins_its_point() {
         TrackRef::new(FileIdx::new(0), TrackIdx::new(0))
     );
     assert_eq!(sticky.category, gt_types::DataCategory::Tpv);
+}
+
+/// A match's name reads past the column it starts in, and the table stretches
+/// its striping across the window: neither may widen the window, which would
+/// cover the map beside it.
+#[test]
+fn a_run_leaves_the_query_window_at_its_default_width() {
+    let mut harness = app_with_query_window_open();
+    run_query(&mut harness, "points | where velocity > 1 km/h");
+    harness.run_steps(5);
+
+    let width = harness
+        .window_rect("Query")
+        .expect("the query window is open")
+        .width();
+    assert!(
+        width <= query::DEFAULT_WINDOW_WIDTH,
+        "the results widened the window to {width}"
+    );
 }
 
 /// The query results' "Show on map" frames the map on what the run drew: the

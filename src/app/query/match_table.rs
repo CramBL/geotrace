@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 use std::ops::Range;
 
-use egui::{Label, RichText, TextStyle, TextWrapMode};
+use egui::{RichText, TextStyle, TextWrapMode, WidgetInfo, WidgetText, WidgetType};
 use egui_extras::{Column, TableBuilder, TableRow};
 use gt_query::{MetricProvider as _, QueryMetric, TrackMatches};
 use gt_query_run::{PanelQuery, PointsResults, SliceProvider, TrackProvider, TrackQueryData};
@@ -255,13 +255,18 @@ pub(super) fn query_matches_ui(
             .auto_shrink([false, true])
             .max_scroll_height(max_scroll_height)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(fixed_column(MATCH_RULE_WIDTH));
+            // The rule column does not clip: `paint_match_rule` paints into
+            // the gap below its row as well.
+            .column(Column::initial(MATCH_RULE_WIDTH).range(MATCH_RULE_WIDTH..=MATCH_RULE_WIDTH));
         for width in &column_widths {
-            table = table.column(fixed_column(*width));
+            // Exact columns clip: a value wider than the width its column was
+            // sized for is cut off there, and the table stays as wide as the
+            // window it is in.
+            table = table.column(Column::exact(*width));
         }
         // The trailing column holds no value: it stretches the striping and the
-        // hover fill across the full width of the table, and takes the spill of
-        // a match's name.
+        // hover fill across the full width of the table, and is where a match's
+        // name is painted from.
         table = table.column(Column::remainder());
 
         table
@@ -296,12 +301,6 @@ pub(super) fn query_matches_ui(
     }
 }
 
-/// A column of exactly `width` whose content may overflow it.
-/// [`Column::exact`] clips, which cuts a match's name off at the first column.
-fn fixed_column(width: f32) -> Column {
-    Column::initial(width).range(width..=width)
-}
-
 /// One row of the table, and the click it took.
 fn row_ui(
     row: &mut TableRow<'_, '_>,
@@ -330,27 +329,52 @@ fn row_ui(
 }
 
 /// The row naming one match: its recording, track, start and point count,
-/// spilling over the value columns it does not fill.
+/// reading across the value columns it leaves empty.
 fn match_name_row_ui(row: &mut TableRow<'_, '_>, cx: &RowContext<'_>, entry: &MatchEntry) {
-    // The row fills as many columns as the table declared: the name takes the
-    // place of the first value column.
+    // The row fills as many columns as the table declared: the name is painted
+    // over them from the last one.
     debug_assert!(
         !cx.formats.is_empty(),
         "a query's columns always start with `time`"
     );
     row.set_overline(true);
-    // The hover fill would paint over the name where it spills past its own
-    // column: a hovered match answers on the map and the plot instead.
+    // The hover fill would paint over the name where it reads past the first
+    // value column: a hovered match answers on the map and the plot instead.
     row.set_hovered(false);
     row.col(|ui| paint_match_rule(ui, cx.rule_color));
-    let name = match_header_text(cx.files, entry.track, &entry.points);
-    row.col(|ui| {
-        ui.add(Label::new(RichText::new(name).strong()).wrap_mode(TextWrapMode::Extend));
-    });
+    let (first_value_cell, _) = row.col(|_| {});
     for _ in cx.formats.iter().skip(1) {
         row.col(|_| {});
     }
-    row.col(|_| {});
+    let name = match_header_text(cx.files, entry.track, &entry.points);
+    row.col(|ui| match_name_ui(ui, first_value_cell.left(), &name));
+}
+
+/// One match's name, painted onto the row from its last cell back to `left`,
+/// the left edge of the first value column.
+///
+/// The name is painted and nothing is allocated for it: a widget claims the
+/// width it draws, and a cell wider than its column widens the table past the
+/// window, which the auto-sized window then follows. Painting it from the last
+/// cell puts it over the backgrounds the cells before it fill in as they are
+/// added.
+fn match_name_ui(ui: &egui::Ui, left: f32, name: &str) {
+    ui.response()
+        .widget_info(|| WidgetInfo::labeled(WidgetType::Label, ui.is_enabled(), name));
+    // The table's own clip rect: the name reads to the end of the table, not
+    // to the end of the cell it is painted from.
+    let galley = WidgetText::from(RichText::new(name).strong()).into_galley(
+        ui,
+        Some(TextWrapMode::Truncate),
+        ui.clip_rect().right() - left,
+        TextStyle::Body,
+    );
+    let top = ui.max_rect().center().y - galley.size().y * 0.5;
+    ui.painter().galley(
+        egui::pos2(left, top),
+        galley,
+        ui.visuals().strong_text_color(),
+    );
 }
 
 /// One matched point: its value under each column the query tables, and the
