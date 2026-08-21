@@ -1,11 +1,16 @@
 use egui::TextEdit;
 use egui_phosphor::regular::ARROW_LINE_UP_LEFT as ICON_ARROW_LINE_UP_LEFT;
+use egui_phosphor::regular::ARROWS_IN as ICON_ARROWS_IN;
+use egui_phosphor::regular::ARROWS_OUT as ICON_ARROWS_OUT;
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
+use egui_phosphor::regular::COPY as ICON_COPY;
 use egui_phosphor::regular::DOTS_SIX as ICON_DOTS_SIX;
+use egui_phosphor::regular::FRAME_CORNERS as ICON_FRAME_CORNERS;
 use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use egui_phosphor::regular::PUSH_PIN as ICON_PUSH_PIN;
 use egui_phosphor::regular::TERMINAL_WINDOW as ICON_TERMINAL_WINDOW;
 use egui_phosphor::regular::X as ICON_X;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::{
     sync::Arc,
@@ -374,7 +379,7 @@ fn query_match_row_click_pins_its_point() {
 
     // The first point row sits one row below the match's name: the height of
     // the name's own label, plus the gap between two rows.
-    let header = harness.get_by_label_contains("test.gtd #0").rect();
+    let header = harness.get_by_label_contains("#0 ·").rect();
     let point_row = header.center() + egui::vec2(0.0, header.height() + 5.0);
     harness.press_drag_release(point_row, egui::Vec2::ZERO, 1);
     harness.run_steps(2);
@@ -412,10 +417,10 @@ fn a_run_leaves_the_query_window_at_its_default_width() {
     );
 }
 
-/// The query results' "Show on map" frames the map on what the run drew: the
-/// viewport narrows from the whole recording to the matched stretches.
-#[test]
-fn show_on_map_frames_the_query_matches() {
+/// The demo recording loaded with `query` run over it, for the tests that
+/// drive the results table. Its track matches in several stretches, which one
+/// match table then lists.
+fn demo_app_with_query_run(query: &str) -> Harness<'static, App> {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
@@ -423,19 +428,174 @@ fn show_on_map_frames_the_query_matches() {
         &mut harness,
         TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
     );
-
-    {
-        let app = harness.state_mut();
-        app.query_window.open = true;
-        app.query_window
-            .set_text("points | where velocity > 25 km/h".to_owned());
-    }
+    harness.state_mut().query_window.open = true;
     harness.run_steps(3);
+    run_query(&mut harness, query);
     harness
-        .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
-        .click();
-    step_until_query_result(&mut harness);
+}
+
+/// Clicking a match's name row folds its point rows away, and clicking it
+/// again brings them back. The match below it moves up into the freed rows.
+#[test]
+fn clicking_a_match_name_row_folds_its_points() {
+    let mut harness = demo_app_with_query_run("points | window 10 | where avg(velocity) > 25 km/h");
+    let first_point_row =
+        |harness: &Harness<'_, App>| harness.query_all_by_label_contains("14:00:19").count();
+    let second_match_row =
+        |harness: &Harness<'_, App>| harness.query_all_by_label_contains("· 12 points").count();
+    assert_eq!(first_point_row(&harness), 1, "the match lists its points");
+    assert_eq!(
+        second_match_row(&harness),
+        0,
+        "the second match is below the rows the first one fills"
+    );
+
+    harness.get_by_label_contains("· 62 points").click();
     harness.run_steps(3);
+    assert_eq!(
+        first_point_row(&harness),
+        0,
+        "the folded match lists nothing"
+    );
+    assert_eq!(
+        second_match_row(&harness),
+        1,
+        "the second match moves up into the freed rows"
+    );
+
+    harness.get_by_label_contains("· 62 points").click();
+    harness.run_steps(3);
+    assert_eq!(first_point_row(&harness), 1, "unfolding lists them again");
+}
+
+/// "Collapse all" folds every match of the section at once, and turns into
+/// the "Expand all" that undoes it.
+#[test]
+fn collapse_all_folds_every_match_of_a_query() {
+    let mut harness = demo_app_with_query_run("points | window 10 | where avg(velocity) > 25 km/h");
+    let point_rows =
+        |harness: &Harness<'_, App>| harness.query_all_by_label_contains("14:00:19").count();
+    assert_eq!(point_rows(&harness), 1);
+
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, ICON_ARROWS_IN)
+        .click();
+    harness.run_steps(3);
+    assert_eq!(point_rows(&harness), 0, "every match folded");
+    assert_eq!(
+        harness.query_all_by_label_contains("· 12 points").count(),
+        1,
+        "both name rows are listed"
+    );
+
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, ICON_ARROWS_OUT)
+        .click();
+    harness.run_steps(3);
+    assert_eq!(point_rows(&harness), 1, "expanding lists the points again");
+}
+
+/// A match's own "Show on map" frames the map on that one match, tighter than
+/// the run-wide button frames every match of the run.
+#[test]
+fn a_match_row_frames_the_map_on_that_match() {
+    let mut harness =
+        demo_app_with_query_run("points | window 10 | where avg(velocity) > 25 km/h | draw");
+
+    harness.get_by_label_contains("Show on map").click();
+    harness.run_steps(3);
+    let framed_run = harness
+        .state()
+        .map
+        .viewport_geo_bounds()
+        .expect("the map framed the run's matches");
+
+    harness
+        .get_all_by_role_and_label(egui::accesskit::Role::Button, ICON_FRAME_CORNERS)
+        .next()
+        .expect("every match row offers its own button")
+        .click();
+    harness.run_steps(3);
+    let framed_match = harness
+        .state()
+        .map
+        .viewport_geo_bounds()
+        .expect("the map framed the one match");
+
+    assert!(
+        framed_match.lon_max - framed_match.lon_min < framed_run.lon_max - framed_run.lon_min,
+        "one match frames tighter than the whole run: \
+         {framed_match:?} against {framed_run:?}"
+    );
+    assert_eq!(
+        harness.query_all_by_label_contains("14:00:19").count(),
+        1,
+        "the row the button sits in stays unfolded"
+    );
+}
+
+/// Hovering a value column's header explains the metric it holds, out of the
+/// same catalog the editor documents that metric from.
+#[test]
+fn hovering_a_column_header_explains_its_metric() {
+    let mut harness = app_with_query_window_open();
+    run_query(&mut harness, "points | where velocity > 1 km/h");
+
+    let header = harness.get_by_label("velocity").rect().center();
+    harness.hover_at_and_settle(header, 5);
+
+    assert_eq!(
+        harness.query_all_by_label_contains("ground speed").count(),
+        1,
+        "the header hover states what the metric measures"
+    );
+}
+
+/// "Copy as TSV" writes the whole run to the clipboard: a header line naming
+/// each column in its unit, then one line per matched point.
+#[test]
+fn copying_a_query_result_writes_a_tab_separated_table() {
+    let mut harness = app_with_query_window_open();
+    run_query(&mut harness, "points | where velocity > 1 km/h | draw");
+
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, ICON_COPY)
+        .click();
+    harness.run_steps(1);
+
+    let copied = harness
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            egui::OutputCommand::CopyText(text) => Some(text.clone()),
+            egui::OutputCommand::OpenUrl(_) | egui::OutputCommand::CopyImage(_) => None,
+        })
+        .expect("the button copied the table");
+    let matches = harness
+        .state()
+        .query_window
+        .matches()
+        .expect("the run produced matches");
+    let matched_points: usize = matches.draws.first().map_or(0, |layer| {
+        layer.ranges.values().flatten().map(Range::len).sum()
+    });
+    let mut lines = copied.lines();
+    assert_eq!(lines.next(), Some("match\tpoint\ttime\tvelocity (km/h)"));
+    assert_eq!(lines.next(), Some("1\t0\t11:33:20\t22.0"));
+    assert_eq!(
+        copied.lines().count(),
+        matched_points + 1,
+        "one line per matched point, under the header"
+    );
+}
+
+/// The query results' "Show on map" frames the map on what the run drew: the
+/// viewport narrows from the whole recording to the matched stretches.
+#[test]
+fn show_on_map_frames_the_query_matches() {
+    let mut harness = demo_app_with_query_run("points | where velocity > 25 km/h");
 
     let whole_trip = harness
         .state()
@@ -487,8 +647,8 @@ fn query_match_header_hover_highlights_the_match() {
     step_until_query_result(&mut harness);
     harness.run_steps(3);
 
-    // The match header reads "test.gtd #0 — <time> — <count> points".
-    let header_pos = harness.get_by_label_contains("test.gtd #0").rect().center();
+    // The match's name row reads "#0 · <time> → <time> · <count> points · <duration>".
+    let header_pos = harness.get_by_label_contains("#0 ·").rect().center();
     harness.hover_at(header_pos);
     harness.run_steps(2);
 
@@ -1356,17 +1516,8 @@ fn snapshot_app_query_points_with_channel() {
         "the matched windows halo the track"
     );
 
-    // Expand the first match so the snapshot shows the point table with the
-    // query's `table time, velocity` columns.
-    let first_match = harness
-        .inner
-        .query_all_by_label_contains("accel_demo.gtd #0")
-        .next()
-        .expect("the run lists match headers");
-    first_match.click();
-    harness.inner.run_steps(10);
-    // Park the pointer off the header so the hovered-match cross-highlight
-    // (its own snapshot) does not blend into this one.
+    // Park the pointer off the table so the hovered-match cross-highlight (its
+    // own snapshot) does not blend into this one.
     harness.inner.hover_at(egui::pos2(1.0, 1.0));
     harness.inner.run_steps(5);
 

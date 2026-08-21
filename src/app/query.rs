@@ -3,8 +3,13 @@
 //! visible tracks, and a results area whose matches also draw on the map as
 //! halos.
 
-use egui::{Area, Button, CollapsingHeader, Frame, Grid, RichText, ScrollArea, TextEdit, Window};
+use egui::{
+    Area, Button, CollapsingHeader, Frame, Grid, Label, RichText, ScrollArea, TextEdit, Window,
+};
+use egui_phosphor::regular::ARROWS_IN as ICON_ARROWS_IN;
+use egui_phosphor::regular::ARROWS_OUT as ICON_ARROWS_OUT;
 use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
+use egui_phosphor::regular::COPY as ICON_COPY;
 use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
 use egui_phosphor::regular::PUSH_PIN as ICON_PUSH_PIN;
 use egui_phosphor::regular::TRASH as ICON_TRASH;
@@ -21,18 +26,18 @@ use egui::text::{CCursor, CCursorRange, LayoutJob};
 use gt_query::lexer::{self, TokenClass};
 use gt_query::{ChannelSchema, CompletionTrigger, Construct, ConstructKind, Diagnostic, Span};
 use gt_query_run::{
-    ChannelResults, ChannelTrackResult, CheckRefresh, PointsResults, QuerySession, RunInputs,
-    RunKind, RunOutcome, RunResults, schema_from_files,
+    ChannelResults, ChannelTrackResult, CheckRefresh, PanelQuery, PointsResults, QuerySession,
+    RunInputs, RunKind, RunOutcome, RunResults, schema_from_files,
 };
 use gt_side_panel::widgets::PointClickRequests;
 use gt_types::{LoadedFile, NavPoint, TrackRef};
-use gt_ui_theme::EM_DASH;
-use gt_ui_types::{DisplayMask, MapHighlight, MapScope, QueryMatches};
+use gt_ui_theme::{EM_DASH, MIDDLE_DOT, RIGHTWARDS_ARROW};
+use gt_ui_types::{DisplayMask, MapHighlight, MapScope, MatchRevealTarget, QueryMatches};
 
 use crate::settings::QueryHistoryEntry;
 
 use self::column_format::ColumnFormat;
-use self::match_table::MatchTableContext;
+use self::match_table::{FoldedMatches, MatchTableContext, MatchTableOutputs};
 
 mod column_format;
 mod match_table;
@@ -162,6 +167,10 @@ pub struct QueryWindow {
     /// `None` while no doc shows. Keeps the doc up while the pointer moves
     /// within the token.
     hover_doc_span: Option<Range<usize>>,
+    /// The matches whose point rows are folded away in the results. Keyed by
+    /// track and first point, so a rerun over unchanged data folds the same
+    /// matches it folded before.
+    folded_matches: FoldedMatches,
 }
 
 /// One completion offered in the popup: a language construct or a loaded
@@ -293,6 +302,7 @@ impl QueryWindow {
             last_edit_time: None,
             editor_had_focus: false,
             hover_doc_span: None,
+            folded_matches: FoldedMatches::default(),
         }
     }
 
@@ -414,7 +424,7 @@ impl QueryWindow {
         display_mask: DisplayMask,
         highlight: &mut MapHighlight,
         requests: &mut PointClickRequests<'_>,
-        reveal_matches_request: &mut bool,
+        reveal_matches_request: &mut Option<MatchRevealTarget>,
     ) {
         let RunInputs { loaded_files, .. } = inputs;
         // Collect a finished worker even while the window is closed, so its
@@ -445,19 +455,10 @@ impl QueryWindow {
             .show(ctx, |ui| {
                 self.editor_ui(ui, &schema);
                 ui.separator();
-                // What the map draws right now: a match row can only pin a
-                // point that is on it.
-                let scope = MapScope {
-                    files,
-                    visibility: inputs.visibility,
-                    filter: inputs.filter,
-                    display_mask,
-                    query_matches: self.session.matches(),
-                };
                 self.results_ui(
                     ui,
-                    files,
-                    scope,
+                    inputs,
+                    display_mask,
                     highlight,
                     requests,
                     reveal_matches_request,
@@ -1151,22 +1152,45 @@ impl QueryWindow {
     }
 
     fn results_ui(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
-        files: &[LoadedFile],
-        scope: MapScope<'_>,
+        inputs: RunInputs<'_>,
+        display_mask: DisplayMask,
         highlight: &mut MapHighlight,
         requests: &mut PointClickRequests<'_>,
-        reveal_matches_request: &mut bool,
+        reveal_matches_request: &mut Option<MatchRevealTarget>,
     ) {
-        let Some(results) = self.session.results() else {
+        // Split borrows: the results are read while the fold state they drive
+        // is written.
+        let Self {
+            session,
+            folded_matches,
+            ..
+        } = self;
+        let files = inputs.loaded_files.files();
+        // What the map draws right now: a match row can only pin a point that
+        // is on it.
+        let scope = MapScope {
+            files,
+            visibility: inputs.visibility,
+            filter: inputs.filter,
+            display_mask,
+            query_matches: session.matches(),
+        };
+        let Some(results) = session.results() else {
             ui.label(RichText::new("No runs yet").weak());
             return;
         };
         show_on_map_ui(ui, results.matches(), reveal_matches_request);
         match results {
             RunResults::Points(points) => {
-                points_results_ui(ui, points, files, scope, highlight, requests);
+                let mut outputs = MatchTableOutputs {
+                    highlight,
+                    requests,
+                    folds: folded_matches,
+                    reveal: reveal_matches_request,
+                };
+                points_results_ui(ui, points, files, scope, &mut outputs);
             }
             RunResults::Channel(channel) => channel_results_ui(ui, channel, files),
         }
@@ -1209,7 +1233,11 @@ impl QueryWindow {
 /// The button that frames the map on this run's matches and plays their
 /// reveal animation again. Disabled with the reason in its hover text when the
 /// run drew no halos, or when the data changed after it.
-fn show_on_map_ui(ui: &mut egui::Ui, matches: &QueryMatches, reveal_matches_request: &mut bool) {
+fn show_on_map_ui(
+    ui: &mut egui::Ui,
+    matches: &QueryMatches,
+    reveal_matches_request: &mut Option<MatchRevealTarget>,
+) {
     let disabled_reason = if matches.stale {
         Some(format!(
             "Data changed since this run {EM_DASH} run again to show its matches"
@@ -1227,7 +1255,7 @@ fn show_on_map_ui(ui: &mut egui::Ui, matches: &QueryMatches, reveal_matches_requ
         .on_hover_text("Zoom the map to the matches and highlight them")
         .clicked()
     {
-        *reveal_matches_request = true;
+        *reveal_matches_request = Some(MatchRevealTarget::WholeRun);
     }
 }
 
@@ -1242,28 +1270,51 @@ fn query_swatch(ui: &mut egui::Ui, color: egui::Color32) {
     ui.add_space(ui.spacing().item_spacing.x);
 }
 
-/// The line naming one match: its recording and track, when it starts, and
-/// how many points it covers.
-pub(super) fn match_header_text(
+/// The line naming one match: the track it is on, the wall-clock span it
+/// covers, how many points it holds and how long it ran.
+///
+/// The recording's filename leads only while several files are loaded, where
+/// the track number alone would not say which recording is meant.
+pub(super) fn match_name_text(
     files: &[LoadedFile],
     track_ref: TrackRef,
     range: &Range<usize>,
 ) -> String {
-    let start_time = points_of(files, track_ref)
-        .and_then(|points| points.get(range.start))
-        .map(|p| p.tpv.time().utc().format("%H:%M:%S").to_string());
-    let file = track_ref.fi.get(files).map_or_else(
-        || format!("file {}", track_ref.fi),
-        |f| f.metadata.filename.clone(),
-    );
-    let count = range.len();
-    match start_time {
-        Some(time) => format!(
-            "{file} #{} {EM_DASH} {time} {EM_DASH} {count} points",
-            track_ref.index
-        ),
-        None => format!("{file} #{} {EM_DASH} {count} points", track_ref.index),
+    let time_of = |index: usize| {
+        points_of(files, track_ref)
+            .and_then(|points| points.get(index))
+            .map(|p| p.tpv.time().utc().format("%H:%M:%S").to_string())
+    };
+    let track = match files.len() {
+        0 | 1 => format!("#{}", track_ref.index),
+        _ => {
+            let file = track_ref.fi.get(files).map_or_else(
+                || format!("file {}", track_ref.fi),
+                |f| f.metadata.filename.clone(),
+            );
+            format!("{file} #{}", track_ref.index)
+        }
+    };
+    let mut fields = vec![track];
+    let last = gt_fmt::last_index_of_span(range);
+    if let Some(start) = time_of(range.start) {
+        fields.push(match last.and_then(time_of) {
+            Some(end) => format!("{start} {RIGHTWARDS_ARROW} {end}"),
+            None => start,
+        });
     }
+    let count = range.len();
+    fields.push(format!(
+        "{count} {}",
+        gt_fmt::pluralize(count, "point", "points")
+    ));
+    if let Some(seconds) = track_ref
+        .resolve(files)
+        .and_then(|track| gt_fmt::match_duration_seconds(track, range))
+    {
+        fields.push(gt_fmt::format_match_duration(seconds));
+    }
+    fields.join(&format!(" {MIDDLE_DOT} "))
 }
 
 /// Render a points pipeline's per-query sections with their point match tables.
@@ -1272,8 +1323,7 @@ fn points_results_ui(
     points: &PointsResults,
     files: &[LoadedFile],
     scope: MapScope<'_>,
-    highlight: &mut MapHighlight,
-    requests: &mut PointClickRequests<'_>,
+    out: &mut MatchTableOutputs<'_, '_>,
 ) {
     let stale = points.matches.stale;
     // One collapsible section per query, in editor order: its summary is the
@@ -1291,11 +1341,60 @@ fn points_results_ui(
                 if let Some(color) = query.color {
                     query_swatch(ui, gt_ui_theme::query_halo_color(color, false));
                 }
-                ui.label(query.summary.as_str());
+                // Ahead of the summary, whose length varies with the run: the
+                // two buttons then sit in the same place in every section.
+                fold_all_button_ui(ui, query, out.folds);
+                copy_tsv_button_ui(ui, &ctx, query);
+                // Truncated to the width that is left, and stated in full on
+                // hover: a summary that extends would push the window over the
+                // map beside it.
+                ui.add(Label::new(query.summary.as_str()).truncate())
+                    .on_hover_text(query.summary.as_str());
             })
             .body(|ui| {
-                match_table::query_matches_ui(ui, &ctx, qi, query, stale, highlight, requests);
+                match_table::query_matches_ui(ui, &ctx, qi, query, stale, out);
             });
+    }
+}
+
+/// Folds every match of one query away, or expands them all again. The icon
+/// and its hover text state which of the two the press performs.
+fn fold_all_button_ui(ui: &mut egui::Ui, query: &PanelQuery, folds: &mut FoldedMatches) {
+    let all_folded = folds.all_folded(&query.matches);
+    let (icon, tooltip) = if all_folded {
+        (ICON_ARROWS_OUT, "Expand all matches")
+    } else {
+        (ICON_ARROWS_IN, "Collapse all matches")
+    };
+    let has_matches = !query.matches.is_empty();
+    let response = ui.add_enabled(has_matches, Button::new(icon).small());
+    if !has_matches {
+        response.on_disabled_hover_text("This query matched nothing");
+    } else if response.on_hover_text(tooltip).clicked() {
+        if all_folded {
+            folds.expand_all(&query.matches);
+        } else {
+            folds.fold_all(&query.matches);
+        }
+    }
+}
+
+/// Copies one query's whole result to the clipboard as tab-separated values,
+/// for a spreadsheet.
+fn copy_tsv_button_ui(ui: &mut egui::Ui, ctx: &MatchTableContext<'_>, query: &PanelQuery) {
+    let has_matches = !query.matches.is_empty();
+    let response = ui.add_enabled(has_matches, Button::new(ICON_COPY).small());
+    if !has_matches {
+        response.on_disabled_hover_text("This query matched nothing");
+    } else if response
+        .on_hover_text(
+            "Copy as tab-separated values: one line per matched point, \
+             starting with the number of the match it belongs to and its \
+             index in the track",
+        )
+        .clicked()
+    {
+        ui.ctx().copy_text(match_table::matches_as_tsv(ctx, query));
     }
 }
 
@@ -1362,9 +1461,9 @@ fn channel_track_ui(
     Grid::new(ui.id().with(("channel_table", track.track)))
         .striped(true)
         .show(ui, |ui| {
-            time_format.header_ui(ui, "time");
+            time_format.header_ui(ui, "time", None);
             for header in &value_headers {
-                value_format.header_ui(ui, header);
+                value_format.header_ui(ui, header, None);
             }
             ui.end_row();
 
@@ -2020,5 +2119,54 @@ mod tests {
         assert_eq!(func.caret_back, 1);
         let unit = Candidate::from_construct(find("km/h").expect("km/h is catalogued"));
         assert!(unit.pad_after_digit);
+    }
+
+    /// One loaded file named `filename`, holding one track of `points` fixes a
+    /// second apart from noon.
+    fn file_of(filename: &str, points: usize) -> LoadedFile {
+        let noon = DateTime::<Utc>::from_timestamp(12 * 3600, 0).unwrap_or_default();
+        LoadedFile {
+            metadata: gt_types::FileMetadata {
+                filename: filename.to_owned(),
+                ..gt_test_utils::empty_file_metadata()
+            },
+            tracks: vec![gt_test_utils::loaded_track_with_points(
+                gt_test_utils::nav_points_from(noon, points, 1),
+            )],
+            event_marker_styles: std::collections::HashMap::new(),
+            orphaned_event_markers: Vec::new(),
+            source: gt_types::FileSource::GtdBytes(std::sync::Arc::from(Vec::<u8>::new())),
+            load_warnings: Vec::new(),
+        }
+    }
+
+    /// A match's name states which track it is on, the span it covers, how many
+    /// points it holds and how long it ran. The filename leads only where
+    /// several recordings are loaded.
+    #[rstest]
+    #[case::one_file(1, rng(0, 5), "#0 · 12:00:00 → 12:00:04 · 5 points · 4 s")]
+    #[case::several_files(2, rng(0, 5), "one.gtd #0 · 12:00:00 → 12:00:04 · 5 points · 4 s")]
+    #[case::single_point(1, rng(3, 4), "#0 · 12:00:03 · 1 point")]
+    #[case::over_a_minute(1, rng(0, 61), "#0 · 12:00:00 → 12:01:00 · 61 points · 1:00 min")]
+    fn a_match_name_states_its_track_span_and_duration(
+        #[case] file_count: usize,
+        #[case] range: Range<usize>,
+        #[case] expected: &str,
+    ) {
+        let files: Vec<LoadedFile> = ["one.gtd", "two.gtd"]
+            .into_iter()
+            .take(file_count)
+            .map(|name| file_of(name, 61))
+            .collect();
+        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        assert_eq!(match_name_text(&files, track, &range), expected);
+    }
+
+    /// A track that is no longer loaded has no times to state: the name is
+    /// left with the match's own point count.
+    #[test]
+    fn a_match_on_an_unloaded_track_states_only_its_size() {
+        let track = TrackRef::new(FileIdx::new(3), TrackIdx::new(1));
+        assert_eq!(match_name_text(&[], track, &rng(0, 3)), "#1 · 3 points");
     }
 }

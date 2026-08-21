@@ -27,6 +27,17 @@ pub struct QueryMatches {
     pub run: u64,
 }
 
+/// What the map frames and re-reveals for a "Show on map" press in the query
+/// window: every match the run drew, or the one match on a name row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MatchRevealTarget {
+    WholeRun,
+    OneMatch {
+        track: TrackRef,
+        points: Range<usize>,
+    },
+}
+
 /// Which `draw` layers cover one point, as a fixed-width bitset (bit `i` for
 /// `draws[i]`).
 ///

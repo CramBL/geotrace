@@ -34,7 +34,7 @@ mod unit;
 
 pub use ast::{ParamName, Query, Span};
 pub use check::{ChannelConflict, ChannelInfo, ChannelSchema, CheckedQuery, Params, Window, check};
-pub use construct::{Construct, ConstructKind, catalog};
+pub use construct::{Construct, ConstructKind, catalog, metric_documentation};
 pub use dimension::Dimension;
 pub use eval::{
     ChannelSamples, ChannelTimeline, MetricProvider, RunOutput, RunSummary, TrackInput,

@@ -1,6 +1,7 @@
-use std::{borrow::Cow, fmt::Write, num::NonZeroUsize};
+use std::{borrow::Cow, fmt::Write, num::NonZeroUsize, ops::Range};
 
 use chrono::{DateTime, Utc};
+use gt_types::LoadedTrack;
 use gt_types::track::FixStats;
 
 pub mod name_template;
@@ -23,6 +24,12 @@ pub const ELLIPSIS: &str = "…";
 
 /// U+00B7 MIDDLE DOT, separating the fields of a one-line summary.
 pub const MIDDLE_DOT: &str = "·";
+
+/// U+2013 EN DASH, joining the two ends of a numeric range.
+pub const EN_DASH: &str = "–";
+
+/// U+2192 RIGHTWARDS ARROW, leading from where a span starts to where it ends.
+pub const RIGHTWARDS_ARROW: &str = "→";
 
 /// Two spaces, U+00B7 MIDDLE DOT, two spaces, joins fields inside tooltip strings.
 const TOOLTIP_JOINER: &str = "  ·  ";
@@ -250,6 +257,30 @@ pub fn format_time_range(start: DateTime<Utc>, end: DateTime<Utc>) -> String {
     }
 }
 
+/// The last index `range` covers, absent where it holds one point or none.
+/// Both ends of a span are stated only where they differ.
+pub fn last_index_of_span(range: &Range<usize>) -> Option<usize> {
+    range.end.checked_sub(1).filter(|last| *last > range.start)
+}
+
+/// Wall-clock seconds from a match's first to its last point. `None` for a
+/// single-point match and for a range reaching past the track.
+pub fn match_duration_seconds(track: &LoadedTrack, range: &Range<usize>) -> Option<i64> {
+    let last = last_index_of_span(range)?;
+    let first = track.points.get(range.start)?;
+    let last = track.points.get(last)?;
+    Some((last.tpv.time().utc() - first.tpv.time().utc()).num_seconds())
+}
+
+/// A match's duration, as `42 s` under a minute and `12:34 min` above it.
+pub fn format_match_duration(secs: i64) -> String {
+    if secs >= 60 {
+        format!("{}:{:02} min", secs / 60, secs % 60)
+    } else {
+        format!("{secs} s")
+    }
+}
+
 pub fn pluralize<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
     if count == 1 { singular } else { plural }
 }
@@ -322,6 +353,16 @@ fn group_thousands(digits: &str) -> String {
 mod tests {
     use super::*;
     use chrono::Duration;
+
+    #[rstest::rstest]
+    #[case(0, "0 s")]
+    #[case(42, "42 s")]
+    #[case(59, "59 s")]
+    #[case(60, "1:00 min")]
+    #[case(754, "12:34 min")]
+    fn a_match_duration_reads_in_seconds_below_a_minute(#[case] secs: i64, #[case] text: &str) {
+        assert_eq!(format_match_duration(secs), text);
+    }
 
     #[rstest::rstest]
     // Shorter than the limit: unchanged.

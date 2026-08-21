@@ -2,9 +2,9 @@
 //! decimals its cells line up on.
 
 use chrono::{DateTime, Utc};
-use egui::{Align, Label, Layout, RichText, TextStyle, TextWrapMode};
+use egui::{Align, CursorIcon, Label, Layout, RichText, Sense, TextStyle, TextWrapMode};
 use geotrace_sdk_units::{ChannelUnit, Unit};
-use gt_query::{Quantity, QueryMetric};
+use gt_query::{Construct, Quantity, QueryMetric};
 use gt_query_run::MICROS_PER_SEC;
 use gt_ui_theme::{DEGREE_SIGN, EM_DASH};
 
@@ -184,8 +184,19 @@ impl<'a> ColumnFormat<'a> {
         });
     }
 
-    /// The column header: `name` over the unit its cells are in.
-    pub(super) fn header_ui(self, ui: &mut egui::Ui, name: &str) {
+    /// This column's name for a copied table, carrying the unit its values are
+    /// in: the copy has no second header line to name it on.
+    pub(super) fn header_with_unit(self, name: &str) -> String {
+        match self.unit {
+            Some(unit) => format!("{name} ({unit})"),
+            None => name.to_owned(),
+        }
+    }
+
+    /// The column header: `name` over the unit its cells are in. A `doc`
+    /// underlines the name and explains the metric on hover, the way the
+    /// editor explains it under the pointer.
+    pub(super) fn header_ui(self, ui: &mut egui::Ui, name: &str, doc: Option<&'static Construct>) {
         let align = match self.kind {
             ColumnKind::Number => Align::Max,
             ColumnKind::TimeOfDay { .. } | ColumnKind::Blank => Align::Min,
@@ -193,7 +204,21 @@ impl<'a> ColumnFormat<'a> {
         // The header text extends to its full width, setting the width of the
         // column under it.
         ui.with_layout(Layout::top_down(align), |ui| {
-            ui.add(Label::new(RichText::new(name).strong()).wrap_mode(TextWrapMode::Extend));
+            let name = RichText::new(name).strong();
+            match doc {
+                Some(construct) => {
+                    ui.add(
+                        Label::new(name.underline())
+                            .wrap_mode(TextWrapMode::Extend)
+                            .sense(Sense::hover()),
+                    )
+                    .on_hover_cursor(CursorIcon::Help)
+                    .on_hover_ui(|ui| super::construct_tooltip_ui(ui, construct));
+                }
+                None => {
+                    ui.add(Label::new(name).wrap_mode(TextWrapMode::Extend));
+                }
+            }
             if let Some(unit) = self.unit {
                 ui.add(
                     Label::new(RichText::new(unit).weak().small()).wrap_mode(TextWrapMode::Extend),

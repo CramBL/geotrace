@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use super::*;
 use crate::hover_labels::candidate_label;
+use crate::viewport::match_bounding_box;
 use gt_test_utils::nav_test_data;
 use gt_types::{
     Coord, DataCategory, FileIdx, FileMetadata, LoadedFile, LoadedTrack, MercPoint, PointIdx, Rect,
@@ -722,6 +723,22 @@ fn matched_bounding_box_covers_only_the_drawn_matches() {
     assert_eq!(matched_bounding_box(&files, &QueryMatches::default()), None);
 }
 
+/// A match row's own "Show on map" frames that match's points, not every match
+/// the run drew.
+#[test]
+fn match_bounding_box_covers_one_match() {
+    let files = vec![file_with_tracks(vec![track_at(55.0, 12.0)])];
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    assert_eq!(
+        match_bounding_box(&files, track, &(0..1)),
+        Some((55.0, 55.0, 12.0, 12.0))
+    );
+    // A range reaching past the track frames nothing: its points are gone.
+    assert_eq!(match_bounding_box(&files, track, &(0..10_000)), None);
+    let missing_file = TrackRef::new(FileIdx::new(9), TrackIdx::new(0));
+    assert_eq!(match_bounding_box(&files, missing_file, &(0..1)), None);
+}
+
 /// The map answers the query window's "Show on map" by framing the matches,
 /// wherever the camera stood before.
 #[test]
@@ -732,7 +749,7 @@ fn revealing_matches_frames_the_map_on_them() {
     ])];
     let visibility = TrackDataVisibility::from_loaded(&files);
     let matches = matches_of_run(1, TrackRef::new(FileIdx::new(0), TrackIdx::new(1)));
-    let reveal_requested = std::cell::Cell::new(false);
+    let reveal_requested = std::cell::RefCell::new(None);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(400.0, 400.0))
         .ui_state(
@@ -744,7 +761,7 @@ fn revealing_matches_frames_the_map_on_them() {
                     ui,
                     MapDrawContext {
                         query_matches: Some(&matches),
-                        reveal_query_matches: reveal_requested.get(),
+                        reveal_query_matches: reveal_requested.borrow().clone(),
                         ..state.context(&files, &visibility)
                     },
                 );
@@ -763,7 +780,7 @@ fn revealing_matches_frames_the_map_on_them() {
         "loading frames both tracks, got {framed_all:?}"
     );
 
-    reveal_requested.set(true);
+    *reveal_requested.borrow_mut() = Some(MatchRevealTarget::WholeRun);
     harness.step();
     let framed_matches = harness
         .state()

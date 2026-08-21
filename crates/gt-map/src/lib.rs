@@ -48,8 +48,8 @@ use gt_ui_types::reference::ReferenceDocument;
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
     HighlightScope, HoverCandidates, HoveredLogGlyph, LogMatchHover, LogMatches, MapHighlight,
-    MapScope, PinnedPopup, PointWindowFolds, QueryMatches, SkyGlyphVariant, SkyTrailsRequest,
-    SnappedTracks, TrackDataVisibility,
+    MapScope, MatchRevealTarget, PinnedPopup, PointWindowFolds, QueryMatches, SkyGlyphVariant,
+    SkyTrailsRequest, SnappedTracks, TrackDataVisibility,
 };
 use rstar::PointDistance as _;
 use walkers::sources::OpenStreetMap;
@@ -69,7 +69,7 @@ use crate::track_layers::TrackLayers;
 use crate::transform::{MapScale, MercTransform};
 use crate::viewport::{
     compute_viewport_bounds, compute_visible_bounding_box, is_spatial_point_visible,
-    matched_bounding_box, zoom_to_fit,
+    match_bounding_box, matched_bounding_box, zoom_to_fit,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -290,9 +290,9 @@ pub struct MapDrawContext<'a> {
     pub point_window_folds: &'a mut PointWindowFolds,
     pub center_request: Option<(f64, f64)>,
     pub zoom_to_visible: bool,
-    /// Set for one frame by the query window's "Show on map": frames the map on
-    /// the matched points and plays their reveal animation again.
-    pub reveal_query_matches: bool,
+    /// Set for one frame by a "Show on map" in the query window: frames the map
+    /// on what the request names and plays the reveal animation again.
+    pub reveal_query_matches: Option<MatchRevealTarget>,
     pub sticky_pos_override: Option<egui::Pos2>,
 }
 
@@ -316,6 +316,17 @@ impl<'a> MapDrawContext<'a> {
     /// The bounding box around every element currently drawn, for framing.
     fn visible_bounding_box(&self) -> Option<(f64, f64, f64, f64)> {
         compute_visible_bounding_box(self.files, self.visibility, self.filter, *self.display_mask)
+    }
+
+    /// The bounding box a reveal request frames: every match the run drew, or
+    /// the points of the one match the request names.
+    fn reveal_bounding_box(&self, target: &MatchRevealTarget) -> Option<(f64, f64, f64, f64)> {
+        match target {
+            MatchRevealTarget::WholeRun => matched_bounding_box(self.files, self.query_matches?),
+            MatchRevealTarget::OneMatch { track, points } => {
+                match_bounding_box(self.files, *track, points)
+            }
+        }
     }
 
     /// Suppress the renderers' individual hover labels when the disambiguation
@@ -654,9 +665,8 @@ impl NavMap {
         {
             zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
         }
-        if ctx.reveal_query_matches
-            && let Some(matches) = ctx.query_matches
-            && let Some(bbox) = matched_bounding_box(ctx.files, matches)
+        if let Some(target) = &ctx.reveal_query_matches
+            && let Some(bbox) = ctx.reveal_bounding_box(target)
         {
             zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
         }
@@ -712,7 +722,7 @@ impl NavMap {
         } else {
             0.0
         };
-        if ctx.reveal_query_matches {
+        if ctx.reveal_query_matches.is_some() {
             self.match_reveal.restart(now);
         }
         self.match_reveal
@@ -1553,7 +1563,7 @@ impl DrawState {
             point_window_folds: &mut self.point_window_folds,
             center_request: None,
             zoom_to_visible: false,
-            reveal_query_matches: false,
+            reveal_query_matches: None,
             sticky_pos_override: None,
         }
     }
