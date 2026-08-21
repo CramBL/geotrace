@@ -18,6 +18,25 @@
       "product": "final",
       "shell_height_km": 450.0,
       "url": "https://cddis.nasa.gov/archive/gnss/products/ionex/2024/131/JPL0OPSFIN_20241310000_01D_02H_GIM.INX.gz"
+    },
+    {
+      "captured_at": "2026-08-21T15:17:03.910870602+00:00",
+      "day": "2020-05-10",
+      "file_name": "jplg1310.20i.Z",
+      "first_epoch": "2020-05-10T00:00:00+00:00",
+      "gaps": 0,
+      "http_status": 200,
+      "interval_seconds": 7200,
+      "last_epoch": "2020-05-11T00:00:00+00:00",
+      "latitude_nodes": 71,
+      "latitude_step_degrees": -2.5,
+      "longitude_nodes": 73,
+      "longitude_step_degrees": 5.0,
+      "maps": 13,
+      "peak_tecu": 41.8,
+      "product": "final",
+      "shell_height_km": 450.0,
+      "url": "https://cddis.nasa.gov/archive/gnss/products/ionex/2020/131/jplg1310.20i.Z"
     }
   ]
 }
