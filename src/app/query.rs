@@ -3,9 +3,7 @@
 //! visible tracks, and a results area whose matches also draw on the map as
 //! halos.
 
-use egui::{
-    Area, Button, CollapsingHeader, Frame, Grid, Label, RichText, ScrollArea, TextEdit, Window,
-};
+use egui::{Area, Button, CollapsingHeader, Frame, Grid, RichText, ScrollArea, TextEdit, Window};
 use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
 use egui_phosphor::regular::PUSH_PIN as ICON_PUSH_PIN;
@@ -21,30 +19,27 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use egui::text::{CCursor, CCursorRange, LayoutJob};
 use gt_query::lexer::{self, TokenClass};
-use gt_query::{
-    ChannelSchema, CompletionTrigger, Construct, ConstructKind, Diagnostic, MetricProvider as _,
-    QueryMetric, Span,
-};
+use gt_query::{ChannelSchema, CompletionTrigger, Construct, ConstructKind, Diagnostic, Span};
 use gt_query_run::{
     ChannelResults, ChannelTrackResult, CheckRefresh, PointsResults, QuerySession, RunInputs,
-    RunKind, RunOutcome, RunResults, SliceProvider, TrackProvider, TrackQueryData,
-    schema_from_files,
+    RunKind, RunOutcome, RunResults, schema_from_files,
 };
-use gt_side_panel::widgets::{PointClickRequests, apply_point_click};
-use gt_types::{DataCategory, LoadedFile, NavPoint, PointIdx, TrackRef};
+use gt_side_panel::widgets::PointClickRequests;
+use gt_types::{LoadedFile, NavPoint, TrackRef};
 use gt_ui_theme::EM_DASH;
-use gt_ui_types::{
-    DataPointRef, DisplayMask, HighlightScope, MapHighlight, MapScope, MatchHighlight, QueryMatches,
-};
+use gt_ui_types::{DisplayMask, MapHighlight, MapScope, QueryMatches};
 
 use crate::settings::QueryHistoryEntry;
 
 use self::column_format::ColumnFormat;
+use self::match_table::MatchTableContext;
 
 mod column_format;
+mod match_table;
 
-/// Rows shown per match table before truncating with a "more points" note.
-const MATCH_TABLE_ROW_CAP: usize = 100;
+/// Samples shown per channel table before truncating with a "more samples"
+/// note.
+const CHANNEL_SAMPLE_ROW_CAP: usize = 100;
 
 /// Unpinned history entries kept before the oldest is evicted. Pinned
 /// entries never count against this cap.
@@ -1243,146 +1238,13 @@ fn query_swatch(ui: &mut egui::Ui, color: egui::Color32) {
     ui.add_space(ui.spacing().item_spacing.x);
 }
 
-/// The shared inputs a query's match tables read: the files, the run whose
-/// derived series back the values, and the query's columns.
-struct MatchCtx<'a> {
-    files: &'a [LoadedFile],
-    results: &'a PointsResults,
-    columns: &'a [QueryMetric],
-    /// What the map draws, so a row click pins only a point that is on it.
-    scope: MapScope<'a>,
-}
-
-/// One match: a collapsing header with the point table inside. Header hover
-/// echoes the whole match on the map (a halo band plus track focus) and on
-/// the plot (a shaded time band, via the app layer). Row hover echoes the
-/// single point through the plot cross-highlight ring.
-fn match_ui(
-    ui: &mut egui::Ui,
-    ctx: &MatchCtx<'_>,
+/// The line naming one match: its recording and track, when it starts, and
+/// how many points it covers.
+pub(super) fn match_header_text(
+    files: &[LoadedFile],
     track_ref: TrackRef,
     range: &Range<usize>,
-    stale: bool,
-    highlight: &mut MapHighlight,
-    requests: &mut PointClickRequests<'_>,
-) {
-    let header = match_header_text(ctx.files, track_ref, range);
-    let id = ui.id().with(("query_match", track_ref, range.start));
-    if stale {
-        // Grayed out, not hidden: the rows reference point indices that may
-        // no longer address the same data.
-        ui.add_enabled(false, Label::new(header))
-            .on_disabled_hover_text(format!("Data changed since this run {EM_DASH} run again"));
-        return;
-    }
-    let response = CollapsingHeader::new(header).id_salt(id).show(ui, |ui| {
-        match_table_ui(ui, ctx, track_ref, range, highlight, requests);
-    });
-    if response.header_response.hovered() {
-        highlight.hover_match = Some(MatchHighlight::new(track_ref, range));
-        // Track focus alongside the band: the map fades the other tracks and
-        // the plot dims their series, like hovering the track in the side
-        // panel.
-        highlight.hover = Some(HighlightScope::Track(track_ref));
-    }
-}
-
-fn match_table_ui(
-    ui: &mut egui::Ui,
-    ctx: &MatchCtx<'_>,
-    track_ref: TrackRef,
-    range: &Range<usize>,
-    highlight: &mut MapHighlight,
-    requests: &mut PointClickRequests<'_>,
-) {
-    let columns = ctx.columns;
-    let Some(points) = points_of(ctx.files, track_ref) else {
-        return;
-    };
-    let data = ctx.results.track_data(track_ref);
-    // The match table reads only metric columns (channels cannot be columns
-    // yet), so it needs no channel data.
-    let provider = TrackProvider::new(points, &[], data);
-    // accel derives through the same slice the evaluator saw, so the first
-    // point of a time-filtered run shows the missing value the predicate
-    // used, not a value reaching before the filter window.
-    let slice_start = data.map_or(0, TrackQueryData::slice_start);
-    let slice = SliceProvider::new(
-        provider,
-        slice_start,
-        points.len().saturating_sub(slice_start),
-    );
-
-    let formats: Vec<ColumnFormat<'static>> = columns
-        .iter()
-        .map(|column| ColumnFormat::of_metric(*column))
-        .collect();
-
-    Grid::new(ui.id().with("match_table"))
-        .striped(true)
-        .show(ui, |ui| {
-            for (column, format) in columns.iter().zip(&formats) {
-                format.header_ui(ui, &column.to_string());
-            }
-            ui.end_row();
-
-            for pi in range.clone().take(MATCH_TABLE_ROW_CAP) {
-                // The cell responses union into one row response, so the row
-                // reacts as a whole wherever it is hovered or clicked.
-                let mut row_response: Option<egui::Response> = None;
-                for (column, format) in columns.iter().zip(&formats) {
-                    let value = if *column == QueryMetric::Accel {
-                        pi.checked_sub(slice_start)
-                            .and_then(|rel| gt_query::derived_accel(&slice, rel))
-                    } else {
-                        provider.value(*column, pi)
-                    };
-                    let response = format.value_ui(ui, value);
-                    row_response = Some(match row_response {
-                        Some(row) => row.union(response),
-                        None => response,
-                    });
-                }
-                if let Some(response) = row_response {
-                    if response.hovered() {
-                        // Echo the hovered row on the map, same ring as the
-                        // plot cursor cross-highlight.
-                        highlight.plot_hover_point =
-                            Some((track_ref.fi, track_ref.index, PointIdx::new(pi)));
-                    }
-                    if let Some(p) = points.get(pi) {
-                        // The side panel's point-row semantics: click pins the
-                        // point's map popup, double-click centers the map.
-                        apply_point_click(
-                            ui,
-                            &response,
-                            DataPointRef {
-                                track: track_ref,
-                                category: DataCategory::Tpv,
-                                point_index: PointIdx::new(pi),
-                            },
-                            (p.tpv.lat().as_degrees(), p.tpv.lon().as_degrees()),
-                            ctx.scope,
-                            highlight,
-                            requests,
-                        );
-                    }
-                }
-                ui.end_row();
-            }
-        });
-    if range.len() > MATCH_TABLE_ROW_CAP {
-        ui.label(
-            RichText::new(format!(
-                "{EM_DASH} {} more points",
-                range.len() - MATCH_TABLE_ROW_CAP
-            ))
-            .weak(),
-        );
-    }
-}
-
-fn match_header_text(files: &[LoadedFile], track_ref: TrackRef, range: &Range<usize>) -> String {
+) -> String {
     let start_time = points_of(files, track_ref)
         .and_then(|points| points.get(range.start))
         .map(|p| p.tpv.time().utc().format("%H:%M:%S").to_string());
@@ -1413,18 +1275,12 @@ fn points_results_ui(
     // One collapsible section per query, in editor order: its summary is the
     // header (with a color swatch for draw queries), its match tables the body.
     // Stable ids keep the open/closed state across reruns.
+    let ctx = MatchTableContext {
+        files,
+        results: points,
+        scope,
+    };
     for (qi, query) in points.queries.iter().enumerate() {
-        let matches = query
-            .matches
-            .iter()
-            .map(|tm| tm.ranges.len())
-            .sum::<usize>();
-        let match_ctx = MatchCtx {
-            files,
-            results: points,
-            columns: &query.columns,
-            scope,
-        };
         let id = ui.make_persistent_id(("query_result", qi));
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
             .show_header(ui, |ui| {
@@ -1434,14 +1290,7 @@ fn points_results_ui(
                 ui.label(query.summary.as_str());
             })
             .body(|ui| {
-                if matches == 0 {
-                    ui.label(RichText::new("No matches").weak());
-                }
-                for tm in &query.matches {
-                    for range in &tm.ranges {
-                        match_ui(ui, &match_ctx, tm.track, range, stale, highlight, requests);
-                    }
-                }
+                match_table::query_matches_ui(ui, &ctx, qi, query, stale, highlight, requests);
             });
     }
 }
@@ -1520,7 +1369,7 @@ fn channel_track_ui(
                 .ranges
                 .iter()
                 .flat_map(Clone::clone)
-                .take(MATCH_TABLE_ROW_CAP)
+                .take(CHANNEL_SAMPLE_ROW_CAP)
             {
                 time_format.value_ui(ui, track.timeline.times.get(sample).copied());
                 for col in 0..columns {
@@ -1530,11 +1379,11 @@ fn channel_track_ui(
                 ui.end_row();
             }
         });
-    if matched > MATCH_TABLE_ROW_CAP {
+    if matched > CHANNEL_SAMPLE_ROW_CAP {
         ui.label(
             RichText::new(format!(
                 "{EM_DASH} {} more samples",
-                matched - MATCH_TABLE_ROW_CAP
+                matched - CHANNEL_SAMPLE_ROW_CAP
             ))
             .weak(),
         );
@@ -1946,6 +1795,7 @@ fn segments(range: Range<usize>, underlines: &[(usize, usize)]) -> Vec<Range<usi
 #[cfg(test)]
 mod tests {
     use gt_query::TrackInput;
+    use gt_query_run::TrackProvider;
     use gt_types::{FileIdx, TrackIdx};
     use gt_ui_theme::ELLIPSIS;
     use rstest::rstest;
