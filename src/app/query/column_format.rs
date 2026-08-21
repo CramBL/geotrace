@@ -2,7 +2,7 @@
 //! decimals its cells line up on.
 
 use chrono::{DateTime, Utc};
-use egui::{Align, Label, Layout, RichText, TextWrapMode};
+use egui::{Align, Label, Layout, RichText, TextStyle, TextWrapMode};
 use geotrace_sdk_units::{ChannelUnit, Unit};
 use gt_query::{Quantity, QueryMetric};
 use gt_query_run::MICROS_PER_SEC;
@@ -10,6 +10,11 @@ use gt_ui_theme::{DEGREE_SIGN, EM_DASH};
 
 /// Decimals a channel sample prints, matching the plot's channel readout.
 const CHANNEL_DECIMALS: usize = 3;
+
+/// Integer digits a value column budgets for: its width is then the same
+/// whichever rows are on screen. Four covers every metric a column holds
+/// today - a wider value overflows its column instead of aligning in it.
+const BUDGETED_INTEGER_DIGITS: usize = 4;
 
 /// How one column of a match table prints its values.
 #[derive(Debug, Clone, Copy)]
@@ -129,6 +134,34 @@ impl<'a> ColumnFormat<'a> {
         }
     }
 
+    /// The widest text a cell of this column prints, for sizing the column
+    /// once instead of measuring every row.
+    fn widest_cell_text(self) -> String {
+        match self.kind {
+            ColumnKind::TimeOfDay { millis } => time_of_day(0.0, millis),
+            ColumnKind::Number => {
+                let mut widest = String::from("-");
+                widest.extend(std::iter::repeat_n('0', BUDGETED_INTEGER_DIGITS));
+                if self.decimals > 0 {
+                    widest.push('.');
+                    widest.extend(std::iter::repeat_n('0', self.decimals));
+                }
+                widest
+            }
+            ColumnKind::Blank => EM_DASH.to_owned(),
+        }
+    }
+
+    /// How wide this column has to be for its header and any value it prints.
+    pub(super) fn column_width(self, ui: &egui::Ui, name: &str) -> f32 {
+        let cells = text_width(ui, &self.widest_cell_text(), &TextStyle::Monospace);
+        let name = text_width(ui, name, &TextStyle::Body);
+        let unit = self
+            .unit
+            .map_or(0.0, |unit| text_width(ui, unit, &TextStyle::Small));
+        cells.max(name).max(unit)
+    }
+
     /// The layout a cell and its header read in: numbers align on their right
     /// edge, times on their left.
     fn cell_layout(self) -> Layout {
@@ -141,17 +174,14 @@ impl<'a> ColumnFormat<'a> {
     }
 
     /// One value cell, aligned the way its column reads. Monospace, so the
-    /// digits of a column line up on their decimal point. Sensing clicks, so a
-    /// point table can union a row out of its cells.
-    pub(super) fn value_ui(self, ui: &mut egui::Ui, value: Option<f64>) -> egui::Response {
+    /// digits of a column line up on their decimal point.
+    pub(super) fn value_ui(self, ui: &mut egui::Ui, value: Option<f64>) {
         ui.with_layout(self.cell_layout(), |ui| {
             ui.add(
                 Label::new(RichText::new(self.cell_text(value)).monospace())
-                    .wrap_mode(TextWrapMode::Extend)
-                    .sense(egui::Sense::click()),
-            )
-        })
-        .inner
+                    .wrap_mode(TextWrapMode::Extend),
+            );
+        });
     }
 
     /// The column header: `name` over the unit its cells are in.
@@ -171,6 +201,15 @@ impl<'a> ColumnFormat<'a> {
             }
         });
     }
+}
+
+/// The width one line of `text` lays out to in `style`.
+fn text_width(ui: &egui::Ui, text: &str, style: &TextStyle) -> f32 {
+    let font = style.resolve(ui.style());
+    ui.painter()
+        .layout_no_wrap(text.to_owned(), font, egui::Color32::PLACEHOLDER)
+        .size()
+        .x
 }
 
 /// Seconds since the Unix epoch as a wall-clock time of day.

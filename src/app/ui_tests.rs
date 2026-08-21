@@ -361,6 +361,35 @@ fn query_matches_on_snap_error_after_a_run() {
     );
 }
 
+/// Clicking a point row pins that point, like a point row in the side panel:
+/// the map then owns a pinned popup for it.
+#[test]
+fn query_match_row_click_pins_its_point() {
+    let mut harness = app_with_query_window_open();
+    run_query(&mut harness, "points | where velocity > 1 km/h");
+    harness.run_steps(3);
+
+    // The first point row sits one row below the match's name: the height of
+    // the name's own label, plus the gap between two rows.
+    let header = harness.get_by_label_contains("test.gtd #0").rect();
+    let point_row = header.center() + egui::vec2(0.0, header.height() + 5.0);
+    harness.press_drag_release(point_row, egui::Vec2::ZERO, 1);
+    harness.run_steps(2);
+
+    let sticky = harness
+        .state()
+        .shared
+        .borrow()
+        .highlight
+        .sticky
+        .expect("the row click pins its point");
+    assert_eq!(
+        sticky.track,
+        TrackRef::new(FileIdx::new(0), TrackIdx::new(0))
+    );
+    assert_eq!(sticky.category, gt_types::DataCategory::Tpv);
+}
+
 /// The query results' "Show on map" frames the map on what the run drew: the
 /// viewport narrows from the whole recording to the matched stretches.
 #[test]
@@ -1002,11 +1031,6 @@ fn snapshot_app_query_window() {
         })
     };
     assert!(match_count > 0, "the demo trip has stretches above 25 km/h");
-
-    // Expand the second match (the smaller one) so the snapshot covers the
-    // point table with the query's columns.
-    harness.inner.get_by_label_contains("12 points").click();
-    harness.inner.run_steps(10);
 
     // Expand the query-history and examples lists so the snapshot documents
     // them: history now holds the run above, examples lists the built-ins.

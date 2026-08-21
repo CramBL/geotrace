@@ -28,7 +28,7 @@
 
 ### Changed
 
-- The query results' match tables print their values as aligned columns of digits, with each column's unit shown once in its header.
+- The query results show all of a query's matches in one table, a row per matched point: the columns line up across every match under a header that stays put while scrolling, each column's unit is named once in that header, and every matched point is listed however many there are.
 - The plot's aircraft interference, Kp, Hp30, TEC and solar flare chips sit in a group of their own, and each hover states in three lines what the metric is, where it comes from and where to read more.
 - The aircraft interference plot line spans every archived day in view instead of breaking outside recordings.
 - The Settings window displays one category at a time using a left-side navigation rail.
