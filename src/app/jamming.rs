@@ -23,6 +23,7 @@ use gt_jam::dataset::JamDataset;
 use gt_jam::day_selection::{DaySelection, EmptyReason};
 use gt_jam::transport::{self, FetchOutcome, REQUEST_INTERVAL};
 use gt_jam::wire::{self, ParseWarningReporter};
+use gt_pending_writes::PendingWrites;
 use gt_query_run::JammingValues;
 #[cfg(test)]
 use gt_store::Store;
@@ -33,7 +34,7 @@ use gt_ui_types::{ArcIdentity, JammingContextSample, JammingPoint, JammingSeries
 
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
-use super::environment_storage::PrunedDays;
+use super::environment_storage::{EnvironmentArchive, PrunedDays};
 use super::fix_positions::FixPositionTimeline;
 
 /// What one day's fetch produced.
@@ -51,12 +52,20 @@ enum JamMessage {
         day: NaiveDate,
         detail: String,
     },
+    /// The day was downloaded, then discarded unarchived because the process
+    /// is shutting down.
+    NotArchivedDuringShutdown {
+        day: NaiveDate,
+    },
 }
 
 impl JamMessage {
     fn day(&self) -> NaiveDate {
         match *self {
-            Self::Stored { day, .. } | Self::Missing { day, .. } | Self::Failed { day, .. } => day,
+            Self::Stored { day, .. }
+            | Self::Missing { day, .. }
+            | Self::Failed { day, .. }
+            | Self::NotArchivedDuringShutdown { day } => day,
         }
     }
 }
@@ -100,6 +109,9 @@ pub struct JammingScheduler {
     /// When the last request was handed to a worker, so [`REQUEST_INTERVAL`]
     /// is honoured across days.
     last_request: Option<Instant>,
+    /// Registers every archive insert, and refuses the ones that would start
+    /// after shutdown began.
+    pending_writes: PendingWrites,
 }
 
 impl JammingScheduler {
@@ -108,6 +120,7 @@ impl JammingScheduler {
         store: Option<Arc<JamStore>>,
         base_url: String,
         transport_source: TransportSource,
+        pending_writes: PendingWrites,
     ) -> Self {
         let (tx, rx) = mpsc::channel();
         let archived_cells = store
@@ -137,6 +150,7 @@ impl JammingScheduler {
             transport_source,
             days: DayFetchQueue::default(),
             last_request: None,
+            pending_writes,
         }
     }
 
@@ -148,6 +162,7 @@ impl JammingScheduler {
             None,
             gt_jam::DEFAULT_BASE_URL.to_owned(),
             TransportSource::Offline,
+            PendingWrites::default(),
         )
     }
 
@@ -265,6 +280,9 @@ impl JammingScheduler {
                 JamMessage::Failed { day, detail } => {
                     log::error!("No interference data archived for {day}: {detail}");
                     self.days.report_failure(day, detail);
+                }
+                JamMessage::NotArchivedDuringShutdown { day } => {
+                    log::debug!("No interference data archived for {day}: shutting down");
                 }
             }
         }
@@ -496,21 +514,42 @@ impl JammingScheduler {
         let Some(store) = self.store.as_ref().map(Arc::clone) else {
             return;
         };
+        if self.pending_writes.is_shutting_down() {
+            return;
+        }
         let Some(day) = self.days.take_next_day() else {
             return;
         };
         let transport = self.transport();
         let delay = dispatch_delay(self.last_request, Instant::now());
         self.last_request = Some(Instant::now() + delay);
-        spawn_fetch(
-            self.ctx.clone(),
-            self.tx.clone(),
-            transport,
-            store,
-            self.base_url.clone(),
-            day,
-            delay,
-        );
+        self.spawn_fetch(transport, store, day, delay);
+    }
+
+    #[expect(
+        clippy::expect_used,
+        reason = "thread spawn can only fail under extreme system resource exhaustion"
+    )]
+    fn spawn_fetch(
+        &self,
+        transport: Arc<Connection>,
+        store: Arc<JamStore>,
+        day: NaiveDate,
+        delay: Duration,
+    ) {
+        let ctx = self.ctx.clone();
+        let tx = self.tx.clone();
+        let base_url = self.base_url.clone();
+        let pending_writes = self.pending_writes.clone();
+        thread::Builder::new()
+            .name(format!("jam-{day}"))
+            .spawn(move || {
+                thread::sleep(delay);
+                let message = ingest(transport.as_ref(), &store, &base_url, day, &pending_writes);
+                tx.send(message).ok();
+                ctx.request_repaint();
+            })
+            .expect("failed to spawn interference worker thread");
     }
 
     /// The transport to fetch on, opened once and kept until the host
@@ -587,36 +626,13 @@ fn dispatch_delay(last_request: Option<Instant>, now: Instant) -> Duration {
     (last + REQUEST_INTERVAL).saturating_duration_since(now)
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "thread spawn can only fail under extreme system resource exhaustion"
-)]
-fn spawn_fetch(
-    ctx: Context,
-    tx: mpsc::Sender<JamMessage>,
-    transport: Arc<Connection>,
-    store: Arc<JamStore>,
-    base_url: String,
-    day: NaiveDate,
-    delay: Duration,
-) {
-    thread::Builder::new()
-        .name(format!("jam-{day}"))
-        .spawn(move || {
-            thread::sleep(delay);
-            let message = ingest(transport.as_ref(), &store, &base_url, day);
-            tx.send(message).ok();
-            ctx.request_repaint();
-        })
-        .expect("failed to spawn interference worker thread");
-}
-
 /// Fetch `day`, parse it, and add it to the archive.
 fn ingest(
     transport: &impl Transport,
     store: &JamStore,
     base_url: &str,
     day: NaiveDate,
+    pending_writes: &PendingWrites,
 ) -> JamMessage {
     match transport::fetch_day(transport, base_url, day) {
         FetchOutcome::Served(csv) => {
@@ -637,6 +653,11 @@ fn ingest(
                     reporter.warnings()
                 );
             }
+            let Some(_write) =
+                EnvironmentArchive::AircraftInterference.try_begin_day_insert(pending_writes, day)
+            else {
+                return JamMessage::NotArchivedDuringShutdown { day };
+            };
             match store.insert_day(day, base_url, Utc::now(), &observations) {
                 Ok(()) => JamMessage::Stored {
                     day,
@@ -708,6 +729,7 @@ mod tests {
             Some(Arc::clone(&store)),
             DEFAULT_BASE_URL.to_owned(),
             TransportSource::Offline,
+            PendingWrites::default(),
         );
         (dir, store, scheduler)
     }
@@ -770,6 +792,7 @@ mod tests {
     #[case::stored(JamMessage::Stored { day: day(2026, 7, 20), cells: 1 })]
     #[case::missing(JamMessage::Missing { day: day(2026, 7, 20), pending: false })]
     #[case::failed(JamMessage::Failed { day: day(2026, 7, 20), detail: "boom".to_owned() })]
+    #[case::shutting_down(JamMessage::NotArchivedDuringShutdown { day: day(2026, 7, 20) })]
     fn progress_advances_on_every_outcome(#[case] message: JamMessage) {
         let mut scheduler = scheduler();
         let days = [day(2026, 7, 20), day(2026, 7, 21)];
@@ -934,6 +957,58 @@ mod tests {
         );
     }
 
+    /// Shutting down is not a fetch failure: the day was downloaded and
+    /// discarded, and the settings page has nothing to report about it.
+    #[test]
+    fn a_day_discarded_during_shutdown_is_not_reported_as_a_failure() {
+        let mut scheduler = scheduler();
+        scheduler
+            .tx
+            .send(JamMessage::NotArchivedDuringShutdown {
+                day: day(2026, 7, 20),
+            })
+            .expect("send");
+
+        scheduler.poll();
+
+        assert!(scheduler.days.failures().is_empty());
+    }
+
+    /// A day queued once shutdown began stays queued: no worker starts a
+    /// download whose archive insert would be refused.
+    #[test]
+    fn no_day_is_dispatched_once_shutting_down() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        scheduler.pending_writes.begin_shutdown();
+
+        scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 20, 17)));
+
+        assert_eq!(scheduler.days.queued(), 1);
+        assert!(!scheduler.days.is_fetching());
+    }
+
+    /// A download that finishes after shutdown began is discarded, not
+    /// archived.
+    #[test]
+    fn a_day_downloaded_during_shutdown_is_not_archived() {
+        let (_dir, store) = archive();
+        let day = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
+        let transport = ScriptedTransport::always(Ok(HttpResponse {
+            status: 200,
+            body: "hex,count_good_aircraft,count_bad_aircraft\n84005c7ffffffff,412,3\n".to_owned(),
+        }));
+        let pending_writes = PendingWrites::default();
+        pending_writes.begin_shutdown();
+
+        let message = ingest(&transport, &store, DEFAULT_BASE_URL, day, &pending_writes);
+
+        assert!(matches!(
+            message,
+            JamMessage::NotArchivedDuringShutdown { .. }
+        ));
+        assert!(store.days().expect("days").is_empty());
+    }
+
     /// The status reports the day in flight, the queue behind it, and how much
     /// of what is loaded the archive holds.
     #[test]
@@ -1089,7 +1164,13 @@ mod tests {
             body: "hex,count_good_aircraft,count_bad_aircraft\n84005c7ffffffff,412,3\n".to_owned(),
         }));
 
-        let message = ingest(&transport, &store, DEFAULT_BASE_URL, day);
+        let message = ingest(
+            &transport,
+            &store,
+            DEFAULT_BASE_URL,
+            day,
+            &PendingWrites::default(),
+        );
         assert!(matches!(message, JamMessage::Stored { cells: 1, .. }));
 
         let stored = store.days().expect("days");
@@ -1108,7 +1189,13 @@ mod tests {
             body: r#"{"message":"File not found"}"#.to_owned(),
         }));
 
-        let message = ingest(&transport, &store, DEFAULT_BASE_URL, day);
+        let message = ingest(
+            &transport,
+            &store,
+            DEFAULT_BASE_URL,
+            day,
+            &PendingWrites::default(),
+        );
         assert!(matches!(message, JamMessage::Missing { .. }));
         assert!(store.days().expect("days").is_empty());
     }
@@ -1123,7 +1210,13 @@ mod tests {
             body: "<html>captive portal</html>".to_owned(),
         }));
 
-        let message = ingest(&transport, &store, DEFAULT_BASE_URL, day);
+        let message = ingest(
+            &transport,
+            &store,
+            DEFAULT_BASE_URL,
+            day,
+            &PendingWrites::default(),
+        );
         assert!(matches!(message, JamMessage::Failed { .. }));
         assert!(store.days().expect("days").is_empty());
     }

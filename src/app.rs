@@ -313,7 +313,7 @@ pub struct App {
     /// `main` so the process waits for the writes that outlive the window.
     #[expect(
         dead_code,
-        reason = "the app carries the registry for the write sites, none of which takes a guard yet"
+        reason = "the schedulers and the loader hold their own clones: the write sites the app itself owns take no guard yet"
     )]
     pending_writes: PendingWrites,
     interference_backfill_ui: backfill_ui::BackfillUi<backfill_ui::InterferenceBackfill>,
@@ -443,7 +443,7 @@ impl App {
                 gt_map::TileAccess::Network
             },
         );
-        let loader = LoadJobs::new(cc.egui_ctx.clone());
+        let loader = LoadJobs::new(cc.egui_ctx.clone(), options.pending_writes.clone());
         let snap = snap::SnapScheduler::new(
             cc.egui_ctx.clone(),
             transport_source(options.offline),
@@ -477,12 +477,14 @@ impl App {
             archive,
             gt_jam::DEFAULT_BASE_URL.to_owned(),
             transport_source(options.offline),
+            options.pending_writes.clone(),
         );
         let geomagnetic_indices = solar::GeomagneticIndexScheduler::new(
             cc.egui_ctx.clone(),
             geomagnetic_indices,
             gt_solar::DEFAULT_BASE_URL.to_owned(),
             transport_source(options.offline),
+            options.pending_writes.clone(),
         );
         let tec_settings = crate::settings::TecSettings::default();
         let tec_maps = tec::TecMapScheduler::new(
@@ -491,6 +493,7 @@ impl App {
             tec_settings.mirrors.clone(),
             tec_settings.earthdata_token(),
             transport_source(options.offline),
+            options.pending_writes.clone(),
         );
         let solar_flare_settings = crate::settings::SolarFlareSettings::default();
         let solar_flares = flares::SolarFlareScheduler::new(
@@ -499,6 +502,7 @@ impl App {
             gt_flare::DEFAULT_BASE_URL.to_owned(),
             solar_flare_settings.api_key(),
             transport_source(options.offline),
+            options.pending_writes.clone(),
         );
         let app_version = options.app_version;
 
