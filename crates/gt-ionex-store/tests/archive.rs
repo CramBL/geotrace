@@ -479,3 +479,85 @@ fn a_column_shorter_than_what_refers_to_it_is_reported(
         other => panic!("the truncated column opened: {other:?}"),
     }
 }
+
+/// Days go from the front and the maps of the rest read back through the
+/// offsets the delete rebased, at both levels: the day names its maps, and
+/// each map names its values.
+#[test]
+fn deleting_days_before_a_cutoff_keeps_the_maps_of_the_rest() {
+    let (_dir, store) = store().expect("archive");
+    let deleted = published_day(day(0)).expect("a day of maps");
+    let kept = day_with_a_gap(day(1)).expect("a day with a gap");
+    let newest = published_day(day(2)).expect("a day of maps");
+    for (day, maps) in [(day(0), &deleted), (day(1), &kept), (day(2), &newest)] {
+        store
+            .insert_or_replace_day(day, HOST, fetched_at(), IonexProduct::Final, maps)
+            .expect("insert");
+    }
+
+    let removed = store.delete_days_before(day(1)).expect("delete days");
+
+    assert_eq!(removed, 1);
+    assert_eq!(store.day_maps(day(0)).expect("archive read"), None);
+    assert_eq!(store.day_maps(day(1)).expect("archive read"), Some(kept));
+    assert_eq!(store.day_maps(day(2)).expect("archive read"), Some(newest));
+    assert_eq!(
+        store
+            .archived_days()
+            .expect("days")
+            .into_iter()
+            .map(|archived| archived.day)
+            .collect::<Vec<NaiveDate>>(),
+        [day(1), day(2)]
+    );
+}
+
+#[test]
+fn deleting_every_day_empties_the_archive() {
+    let (_dir, store) = store().expect("archive");
+    for offset in 0..2 {
+        store
+            .insert_or_replace_day(
+                day(offset),
+                HOST,
+                fetched_at(),
+                IonexProduct::Final,
+                &published_day(day(offset)).expect("a day of maps"),
+            )
+            .expect("insert");
+    }
+
+    let removed = store.delete_all_days().expect("delete all");
+
+    assert_eq!(removed, 2);
+    assert!(store.archived_days().expect("days").is_empty());
+    assert_eq!(store.day_maps(day(0)).expect("archive read"), None);
+}
+
+/// The product and grid a day was archived from sit in columns beside the day
+/// index, and move with it.
+#[test]
+fn the_columns_beside_the_day_index_move_with_the_days_that_stay() {
+    let (_dir, store) = store().expect("archive");
+    store
+        .insert_or_replace_day(
+            day(0),
+            HOST,
+            fetched_at(),
+            IonexProduct::Final,
+            &published_day(day(0)).expect("a day of maps"),
+        )
+        .expect("insert");
+    let kept = day_with_a_gap(day(1)).expect("a day with a gap");
+    store
+        .insert_or_replace_day(day(1), HOST, fetched_at(), IonexProduct::Rapid, &kept)
+        .expect("insert");
+
+    store.delete_days_before(day(1)).expect("delete days");
+
+    assert_eq!(
+        store.archived_product(day(1)).expect("product"),
+        Some(IonexProduct::Rapid)
+    );
+    assert_eq!(store.day_maps(day(1)).expect("archive read"), Some(kept));
+}

@@ -7,6 +7,7 @@ use h3o::CellIndex;
 use rstest::rstest;
 use tempfile::TempDir;
 
+use gt_hdf5_archive::prune::DeleteState;
 use gt_jam::wire::HexObservation;
 use gt_jam_store::{FILE_NAME, JamStore, JamStoreError, schema};
 
@@ -364,4 +365,114 @@ fn an_undecodable_cell_is_reported() {
 
     let err = store.observations(day(0)).expect_err("undecodable cell");
     assert!(matches!(err, JamStoreError::Corrupt(_)), "{err}");
+}
+
+/// Days go from the front and the rest keep their observations, read back
+/// through the offsets the delete rebased.
+#[rstest]
+#[case::the_oldest(1, vec![day(1), day(2)])]
+#[case::all_but_the_newest(2, vec![day(2)])]
+#[case::none_of_them(0, vec![day(0), day(1), day(2)])]
+fn deleting_days_before_a_cutoff_keeps_the_rest(
+    #[case] cutoff_offset: i64,
+    #[case] expected: Vec<NaiveDate>,
+) {
+    let (_dir, store) = store().unwrap();
+    for offset in 0..3 {
+        let count = usize::try_from(offset).unwrap_or_default() + 1;
+        store
+            .insert_day(day(offset), HOST, fetched_at(), &observations(count))
+            .expect("insert");
+    }
+
+    let removed = store
+        .delete_days_before(day(cutoff_offset))
+        .expect("delete days");
+
+    assert_eq!(removed, 3 - expected.len());
+    assert_eq!(
+        store
+            .days()
+            .expect("days")
+            .into_iter()
+            .map(|stored| stored.day)
+            .collect::<Vec<NaiveDate>>(),
+        expected
+    );
+    for day in expected {
+        let count = usize::try_from((day - self::day(0)).num_days()).unwrap_or_default() + 1;
+        assert_eq!(
+            store.observations(day).expect("observations"),
+            Some(observations(count)),
+            "{day} lost its observations"
+        );
+    }
+}
+
+#[test]
+fn deleting_every_day_empties_the_archive() {
+    let (_dir, store) = store().unwrap();
+    for offset in 0..3 {
+        store
+            .insert_day(day(offset), HOST, fetched_at(), &observations(2))
+            .expect("insert");
+    }
+
+    let removed = store.delete_all_days().expect("delete all");
+
+    assert_eq!(removed, 3);
+    assert!(store.days().expect("days").is_empty());
+    assert!(!store.contains(day(0)).expect("contains"));
+}
+
+/// A day deleted and fetched again is stored where the delete freed room for
+/// it, and reads back on its own.
+#[test]
+fn a_day_can_be_stored_again_after_it_was_deleted() {
+    let (_dir, store) = store().unwrap();
+    store
+        .insert_day(day(0), HOST, fetched_at(), &observations(4))
+        .expect("insert");
+    store
+        .insert_day(day(1), HOST, fetched_at(), &observations(2))
+        .expect("insert");
+
+    store.delete_days_before(day(1)).expect("delete days");
+    store
+        .insert_day(day(0), HOST, fetched_at(), &observations(3))
+        .expect("insert again");
+
+    assert_eq!(
+        store.observations(day(0)).expect("observations"),
+        Some(observations(3))
+    );
+    assert_eq!(
+        store.observations(day(1)).expect("observations"),
+        Some(observations(2))
+    );
+}
+
+/// A delete interrupted while the rows were moving leaves observations of two
+/// layouts mixed. The next open drops every day the archive holds.
+#[test]
+fn an_interrupted_delete_is_dropped_when_the_archive_is_opened_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    let store = JamStore::open_or_create(&path).unwrap();
+    for offset in 0..2 {
+        store
+            .insert_day(day(offset), HOST, fetched_at(), &observations(2))
+            .expect("insert");
+    }
+    drop(store);
+    {
+        let file = hdf5::File::open_rw(&path).expect("open");
+        let days = file.group(schema::DAYS_GROUP).expect("days group");
+        DeleteState::InFlight.write(&days).expect("mark the delete");
+    }
+
+    let store = JamStore::open_or_create(&path).expect("open after the interruption");
+
+    assert!(store.days().expect("days").is_empty());
+    assert_eq!(store.observations(day(0)).expect("observations"), None);
 }

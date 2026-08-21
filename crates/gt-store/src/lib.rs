@@ -18,6 +18,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 pub use gt_flare_store::{ArchivedFlareDay, FlareStore, FlareStoreError};
+pub use gt_hdf5_archive::{ArchiveUsage, ArchivedDaySpan};
 pub use gt_history::{
     ChannelSummary, DatabaseRef, DbError, HistoryDatabase, LOGS_DIRECTORY, LogAttachment,
     LogAttachmentEntry, LogAttachmentId, LogContentHash, PruneMode, RecordingEntry, RecordingMeta,
