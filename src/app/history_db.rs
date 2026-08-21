@@ -7,6 +7,10 @@
 //! or a large recording never stalls a render. Inserts still happen on the load
 //! threads, which open the database by path. The global database lock keeps the
 //! two paths safe.
+//!
+//! A request that writes runs under a [`PendingWrites`] guard, so the process
+//! waits for it on the way out. Once shutdown has begun such a request is
+//! refused and answered with [`Response::WriteRefusedDuringShutdown`].
 
 use std::collections::HashSet;
 use std::ops::Range;
@@ -17,6 +21,7 @@ use std::thread::JoinHandle;
 
 use egui::Context;
 use gt_log_view::LogAttachmentRef;
+use gt_pending_writes::{PendingWrites, WriteKind};
 use gt_store::{
     AttachedLog, DatabaseRef, DbError, HistoryDatabase, LogAttachmentError, LogAttachmentId,
     LogAttachments as _, LogContentHash, LogToAttach, PruneMode, RecordingEntry, Recordings,
@@ -124,6 +129,36 @@ enum Request {
     },
 }
 
+impl Request {
+    /// The label the write registry lists this request under, or [`None`] for
+    /// a request that only reads.
+    fn database_write_label(&self) -> Option<&'static str> {
+        match self {
+            Self::List
+            | Self::Open(_)
+            | Self::PrunePreview(_)
+            | Self::LoadSnapRuns(_)
+            | Self::LoadAttachedLogs(_)
+            | Self::FindDuplicateAttachment { .. } => None,
+            Self::SetTracksHidden { hidden: true, .. } => {
+                Some("Hiding tracks in recording history")
+            }
+            Self::SetTracksHidden { hidden: false, .. } => {
+                Some("Showing tracks in recording history")
+            }
+            Self::DeleteTracks { .. } => Some("Deleting tracks from recording history"),
+            Self::DeleteHiddenTracks => Some("Deleting hidden tracks from recording history"),
+            Self::DeleteRecordings { .. } => Some("Deleting recordings from recording history"),
+            Self::RenameIdentity { .. } => Some("Renaming an identity in recording history"),
+            Self::AutoPrune { .. } => Some("Auto-pruning recording history"),
+            Self::StoreSnapRuns { .. } => Some("Storing snap runs in recording history"),
+            Self::AttachLog { .. } => Some("Storing a log with a recording"),
+            Self::SetAttachedLogFilters { .. } => Some("Storing an attached log's filters"),
+            Self::DetachLog { .. } => Some("Removing an attached log from a recording"),
+        }
+    }
+}
+
 /// One of a recording's attachments, as the worker read it back. `name` comes
 /// from the attribute, so a log that could not be read is still nameable.
 pub struct RestoredLogAttachment {
@@ -186,6 +221,11 @@ pub enum Response {
         recording: DatabaseRef,
         existing: Result<Option<String>, DbError>,
     },
+    /// The worker refused a write that arrived after shutdown began, and
+    /// answered without touching the database.
+    WriteRefusedDuringShutdown {
+        label: &'static str,
+    },
 }
 
 /// Owns the history-database worker thread and the request and response
@@ -216,13 +256,13 @@ impl HistoryWorker {
         clippy::expect_used,
         reason = "thread spawn can only fail under extreme system resource exhaustion"
     )]
-    pub fn spawn(db: Recordings, ctx: Context) -> Self {
+    pub fn spawn(db: Recordings, ctx: Context, pending_writes: PendingWrites) -> Self {
         let path = Some(db.path().to_owned());
         let (req_tx, req_rx) = mpsc::channel::<Request>();
         let (resp_tx, resp_rx) = mpsc::channel::<Response>();
         let handle = std::thread::Builder::new()
             .name("history-db".to_owned())
-            .spawn(move || worker_loop(db, &req_rx, &resp_tx, &ctx))
+            .spawn(move || worker_loop(db, &req_rx, &resp_tx, &ctx, &pending_writes))
             .expect("failed to spawn history-db worker thread");
         Self {
             req_tx: Some(req_tx),
@@ -356,16 +396,26 @@ impl HistoryWorker {
         }
         out
     }
-}
 
-impl Drop for HistoryWorker {
-    fn drop(&mut self) {
-        // Dropping the request sender disconnects the worker's `recv`, ending its
-        // loop. Then join so the thread is gone before we return.
+    /// End the worker and wait for the request it is on to finish. A worker
+    /// from [`HistoryWorker::disabled`] has no thread and returns at once.
+    pub fn shutdown(mut self) {
+        self.end_and_join_worker_thread();
+    }
+
+    /// Dropping the request sender disconnects the worker's `recv`, ending its
+    /// loop. Then join so the thread is gone before we return.
+    fn end_and_join_worker_thread(&mut self) {
         self.req_tx = None;
         if let Some(handle) = self.handle.take() {
             handle.join().ok();
         }
+    }
+}
+
+impl Drop for HistoryWorker {
+    fn drop(&mut self) {
+        self.end_and_join_worker_thread();
     }
 }
 
@@ -374,9 +424,16 @@ fn worker_loop(
     req_rx: &Receiver<Request>,
     resp_tx: &Sender<Response>,
     ctx: &Context,
+    pending_writes: &PendingWrites,
 ) {
     while let Ok(req) = req_rx.recv() {
-        let resp = handle_request(&mut db, req);
+        let resp = match req.database_write_label() {
+            None => handle_request(&mut db, req),
+            Some(label) => match pending_writes.try_begin(label, WriteKind::RecordingDatabase) {
+                Some(_write) => handle_request(&mut db, req),
+                None => Response::WriteRefusedDuringShutdown { label },
+            },
+        };
         // If the UI is gone the send fails, there is nothing left to repaint.
         if resp_tx.send(resp).is_err() {
             break;
@@ -628,6 +685,7 @@ mod tests {
     use chrono::DateTime;
     use gt_store::{StoredSegmentation, TrackRange};
     use gt_test_utils::{SyntheticGtdSpec, synthetic_gtd_bytes};
+    use rstest::rstest;
 
     use super::*;
 
@@ -648,6 +706,32 @@ mod tests {
         })
     }
 
+    /// Store one recording of two ten-point tracks in a database at `path`.
+    fn seed_two_track_recording(path: &Path) {
+        let bytes = sample_bytes();
+        let mut db = Recordings::open_or_create(path).expect("open");
+        let meta = gt_store::extract_meta(&bytes).expect("meta");
+        let tracks = [
+            TrackRange {
+                start: 0,
+                end: 10,
+                hidden: false,
+            },
+            TrackRange {
+                start: 10,
+                end: 20,
+                hidden: false,
+            },
+        ];
+        let settings = StoredSegmentation {
+            track_split_gap_us: 300_000_000,
+            detect_clock_discontinuities: true,
+            clock_discontinuity_sigmas: 5.0,
+        };
+        db.insert("dev", &meta, &tracks, settings, &bytes)
+            .expect("insert");
+    }
+
     /// Block until the worker delivers exactly one response, or time out.
     fn next_response(worker: &HistoryWorker) -> Response {
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -664,39 +748,27 @@ mod tests {
         }
     }
 
+    /// The reference to the one recording the worker's database holds.
+    fn only_recording_ref(worker: &HistoryWorker) -> DatabaseRef {
+        worker.list();
+        let Response::Listed(Ok(entries)) = next_response(worker) else {
+            panic!("expected a Listed response");
+        };
+        let [entry] = entries.as_slice() else {
+            panic!("expected exactly one recording, got {}", entries.len());
+        };
+        entry.db_ref.clone()
+    }
+
     #[test]
     fn worker_round_trips_every_operation() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
 
-        // Seed one recording (two tracks) through a plain handle.
-        let bytes = sample_bytes();
-        {
-            let mut db = Recordings::open_or_create(&path).expect("open");
-            let meta = gt_store::extract_meta(&bytes).expect("meta");
-            let tracks = [
-                TrackRange {
-                    start: 0,
-                    end: 10,
-                    hidden: false,
-                },
-                TrackRange {
-                    start: 10,
-                    end: 20,
-                    hidden: false,
-                },
-            ];
-            let settings = StoredSegmentation {
-                track_split_gap_us: 300_000_000,
-                detect_clock_discontinuities: true,
-                clock_discontinuity_sigmas: 5.0,
-            };
-            db.insert("dev", &meta, &tracks, settings, &bytes)
-                .expect("insert");
-        }
+        seed_two_track_recording(&path);
 
         let db = Recordings::open_or_create(&path).expect("reopen");
-        let worker = HistoryWorker::spawn(db, Context::default());
+        let worker = HistoryWorker::spawn(db, Context::default(), PendingWrites::default());
         assert!(worker.available());
         assert_eq!(worker.path(), Some(path.as_path()));
 
@@ -767,43 +839,13 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
 
-        // 20 points, manually split into two ten-point tracks.
-        let bytes = sample_bytes();
-        let settings = StoredSegmentation {
-            track_split_gap_us: 300_000_000,
-            detect_clock_discontinuities: false,
-            clock_discontinuity_sigmas: 5.0,
-        };
-        {
-            let mut db = Recordings::open_or_create(&path).expect("open");
-            let meta = gt_store::extract_meta(&bytes).expect("meta");
-            let tracks = [
-                TrackRange {
-                    start: 0,
-                    end: 10,
-                    hidden: false,
-                },
-                TrackRange {
-                    start: 10,
-                    end: 20,
-                    hidden: false,
-                },
-            ];
-            db.insert("dev", &meta, &tracks, settings, &bytes)
-                .expect("insert");
-        }
+        seed_two_track_recording(&path);
 
         let db = Recordings::open_or_create(&path).expect("reopen");
-        let worker = HistoryWorker::spawn(db, Context::default());
+        let worker = HistoryWorker::spawn(db, Context::default(), PendingWrites::default());
 
         // Hide the first track, then permanently delete all hidden tracks.
-        let db_ref = {
-            worker.list();
-            let Response::Listed(Ok(entries)) = next_response(&worker) else {
-                panic!("expected Listed");
-            };
-            entries[0].db_ref.clone()
-        };
+        let db_ref = only_recording_ref(&worker);
         worker.set_tracks_hidden(db_ref, vec![0], true);
         next_response(&worker);
 
@@ -851,5 +893,174 @@ mod tests {
         assert!(worker.path().is_none());
         worker.list();
         assert!(worker.poll().is_empty());
+        worker.shutdown();
+    }
+
+    #[test]
+    fn a_mutation_registers_and_releases_its_write_guard() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        seed_two_track_recording(&path);
+        let pending_writes = PendingWrites::default();
+        let db = Recordings::open_or_create(&path).expect("reopen");
+        let worker = HistoryWorker::spawn(db, Context::default(), pending_writes.clone());
+        let db_ref = only_recording_ref(&worker);
+
+        worker.set_tracks_hidden(db_ref, vec![0], true);
+        let Response::Mutated { result, .. } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+
+        result.expect("hide ok");
+        assert_eq!(
+            pending_writes.snapshot().recently_finished,
+            vec!["Hiding tracks in recording history"],
+            "the listing before it registered nothing, the hide registered while it ran"
+        );
+        assert!(pending_writes.is_idle());
+        worker.shutdown();
+    }
+
+    #[test]
+    fn a_mutation_requested_after_shutdown_began_is_refused_and_answered() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        seed_two_track_recording(&path);
+        let pending_writes = PendingWrites::default();
+        let db = Recordings::open_or_create(&path).expect("reopen");
+        let worker = HistoryWorker::spawn(db, Context::default(), pending_writes.clone());
+        let db_ref = only_recording_ref(&worker);
+        pending_writes.begin_shutdown();
+
+        worker.set_tracks_hidden(db_ref, vec![0], true);
+
+        let Response::WriteRefusedDuringShutdown { label } = next_response(&worker) else {
+            panic!("expected the write to be refused");
+        };
+        assert_eq!(label, "Hiding tracks in recording history");
+        assert!(pending_writes.is_idle());
+
+        // Reads still answer, and report a database the refused write left alone.
+        worker.list();
+        let Response::Listed(Ok(entries)) = next_response(&worker) else {
+            panic!("expected a Listed response");
+        };
+        assert_eq!(entries.first().map(|entry| entry.hidden_tracks), Some(0));
+        worker.shutdown();
+    }
+
+    fn db_ref() -> DatabaseRef {
+        DatabaseRef {
+            identity: "dev".to_owned(),
+            group_name: "2025-05-23T12-53-20".to_owned(),
+        }
+    }
+
+    fn attachment_ref() -> LogAttachmentRef {
+        LogAttachmentRef {
+            recording: db_ref(),
+            id: LogAttachmentId::new_random(),
+        }
+    }
+
+    #[rstest]
+    #[case(Request::List, None)]
+    #[case(Request::Open(db_ref()), None)]
+    #[case(Request::PrunePreview(PruneMode::ByCount { keep: 0 }), None)]
+    #[case(Request::LoadSnapRuns(db_ref()), None)]
+    #[case(Request::LoadAttachedLogs(db_ref()), None)]
+    #[case(
+        Request::FindDuplicateAttachment {
+            db_ref: db_ref(),
+            log: LoadedLogId::new(1),
+            text: "boot".into(),
+        },
+        None
+    )]
+    #[case(
+        Request::SetTracksHidden {
+            db_ref: db_ref(),
+            indices: vec![0],
+            hidden: true,
+        },
+        Some("Hiding tracks in recording history")
+    )]
+    #[case(
+        Request::SetTracksHidden {
+            db_ref: db_ref(),
+            indices: vec![0],
+            hidden: false,
+        },
+        Some("Showing tracks in recording history")
+    )]
+    #[case(
+        Request::DeleteTracks {
+            db_ref: db_ref(),
+            indices: vec![0],
+        },
+        Some("Deleting tracks from recording history")
+    )]
+    #[case(
+        Request::DeleteHiddenTracks,
+        Some("Deleting hidden tracks from recording history")
+    )]
+    #[case(
+        Request::DeleteRecordings {
+            refs: vec![db_ref()],
+            reason: DeleteReason::Manual,
+        },
+        Some("Deleting recordings from recording history")
+    )]
+    #[case(
+        Request::RenameIdentity {
+            old: "dev".to_owned(),
+            new: "rover".to_owned(),
+        },
+        Some("Renaming an identity in recording history")
+    )]
+    #[case(
+        Request::AutoPrune {
+            max_bytes: 0,
+            confirm: false,
+        },
+        Some("Auto-pruning recording history")
+    )]
+    #[case(
+        Request::StoreSnapRuns {
+            db_ref: db_ref(),
+            blob: Vec::new(),
+        },
+        Some("Storing snap runs in recording history")
+    )]
+    #[case(
+        Request::AttachLog {
+            db_ref: db_ref(),
+            log: LoadedLogId::new(1),
+            name: "navsyncd.log".to_owned(),
+            text: "boot".into(),
+            filters: Vec::new(),
+        },
+        Some("Storing a log with a recording")
+    )]
+    #[case(
+        Request::SetAttachedLogFilters {
+            attachment: attachment_ref(),
+            filters: Vec::new(),
+        },
+        Some("Storing an attached log's filters")
+    )]
+    #[case(
+        Request::DetachLog {
+            attachment: attachment_ref(),
+            log: LoadedLogId::new(1),
+            name: "navsyncd.log".to_owned(),
+        },
+        Some("Removing an attached log from a recording")
+    )]
+    fn only_a_request_that_writes_carries_a_write_label(
+        #[case] request: Request,
+        #[case] label: Option<&str>,
+    ) {
+        assert_eq!(request.database_write_label(), label);
     }
 }

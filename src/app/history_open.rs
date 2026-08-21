@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use egui::{Grid, Label, RichText, ScrollArea, Window};
+use gt_store::DbError;
 
 use super::{App, ResegmentPrompt, auto_prune, history_db, loader, storage};
 
@@ -31,7 +32,11 @@ impl App {
         ctx: &egui::Context,
         toast: &str,
     ) {
-        self.history = history_db::HistoryWorker::spawn(db, ctx.clone());
+        let previous = std::mem::replace(
+            &mut self.history,
+            history_db::HistoryWorker::spawn(db, ctx.clone(), self.pending_writes.clone()),
+        );
+        previous.shutdown();
         self.sync_db_path();
         self.history_window.invalidate();
         self.toasts.info(toast);
@@ -206,6 +211,29 @@ impl App {
         }
     }
 
+    /// Refresh the history list and toast a finished mutation, or report the
+    /// failure it came back with.
+    fn apply_mutation_outcome(&mut self, op: &history_db::DbOp, result: &Result<(), DbError>) {
+        match result {
+            Ok(()) => {
+                // Keep loaded recordings pointing at the renamed identity so
+                // later history operations on them still resolve.
+                if let history_db::DbOp::IdentityRenamed { old, new } = op {
+                    self.shared
+                        .borrow_mut()
+                        .loaded_files
+                        .rename_identity(old, new);
+                }
+                self.history_window.invalidate();
+                self.toasts.info(mutation_toast(op));
+            }
+            Err(e) => {
+                log::error!("History update failed: {e}");
+                self.toasts.error(format!("History update failed: {e}"));
+            }
+        }
+    }
+
     /// Apply a result delivered by the history worker thread.
     pub(super) fn handle_history_response(&mut self, resp: history_db::Response) {
         use history_db::Response;
@@ -222,24 +250,7 @@ impl App {
                     self.toasts.error(format!("Could not open recording: {e}"));
                 }
             },
-            Response::Mutated { op, result } => match result {
-                Ok(()) => {
-                    // Keep loaded recordings pointing at the renamed identity so
-                    // later history operations on them still resolve.
-                    if let history_db::DbOp::IdentityRenamed { old, new } = &op {
-                        self.shared
-                            .borrow_mut()
-                            .loaded_files
-                            .rename_identity(old, new);
-                    }
-                    self.history_window.invalidate();
-                    self.toasts.info(mutation_toast(&op));
-                }
-                Err(e) => {
-                    log::error!("History update failed: {e}");
-                    self.toasts.error(format!("History update failed: {e}"));
-                }
-            },
+            Response::Mutated { op, result } => self.apply_mutation_outcome(&op, &result),
             Response::PrunePreview(Ok(refs)) => self.history_window.set_prune_preview(refs),
             Response::PrunePreview(Err(e)) => log::error!("Prune preview failed: {e}"),
             Response::AutoPruned(Ok(auto_prune::AutoPruneOutcome::NotNeeded)) => {}
@@ -290,6 +301,9 @@ impl App {
                 recording,
                 existing,
             } => self.set_duplicate_log_attachment(log, &recording, existing),
+            Response::WriteRefusedDuringShutdown { label } => {
+                log::debug!("Did not run {label:?}: shutting down");
+            }
         }
     }
 
