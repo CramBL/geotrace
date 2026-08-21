@@ -4109,6 +4109,22 @@ fn environment_auto_pruning_keeps_the_days_the_loaded_recording_needs() {
     );
 }
 
+/// No delete starts once shutdown has begun: the archives keep their days and
+/// the process has no rewrite to wait for.
+#[test]
+fn environment_pruning_does_not_start_during_shutdown() {
+    let old = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap_or_default();
+    let (mut harness, _dir, store) = app_with_interference_days(&[old]);
+    enable_environment_auto_prune(&mut harness, 12);
+    harness.state().pending_writes.begin_shutdown();
+
+    harness.state_mut().auto_prune_environment_days();
+    harness.run_steps(3);
+
+    assert!(!harness.state().environment_prune_running());
+    assert_eq!(archived_days(&store), [old]);
+}
+
 /// A second delete never starts underneath a running one: both would rewrite
 /// the same columns.
 #[test]

@@ -64,6 +64,17 @@ impl EnvironmentArchive {
             },
         )
     }
+
+    /// Register the rewrite that deletes this archive's days, or [`None`]
+    /// once shutdown has begun and the days stay archived.
+    pub fn try_begin_day_delete(self, pending_writes: &PendingWrites) -> Option<PendingWriteGuard> {
+        pending_writes.try_begin(
+            format!("Deleting {} days", self.label_in_sentence()),
+            WriteKind::ArchiveCompaction {
+                archive: self.label_in_sentence(),
+            },
+        )
+    }
 }
 
 /// The days a delete removed from an archive.
@@ -126,12 +137,31 @@ pub fn auto_prune_cutoff(
     Some(oldest_needed_day.map_or(configured, |needed| configured.min(needed)))
 }
 
+/// How one archive's delete ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArchivePruneOutcome {
+    Removed(usize),
+    /// What the archive said when its rewrite failed.
+    Failed(String),
+    /// The archive kept its days: shutdown began before the rewrite started.
+    SkippedDuringShutdown,
+}
+
+impl ArchivePruneOutcome {
+    /// How many days went, or [`None`] where the archive kept them.
+    pub const fn days_removed(&self) -> Option<usize> {
+        match self {
+            Self::Removed(days) => Some(*days),
+            Self::Failed(_) | Self::SkippedDuringShutdown => None,
+        }
+    }
+}
+
 /// What one archive's delete reported.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArchivePruneReport {
     pub archive: EnvironmentArchive,
-    /// How many days went, or why none did.
-    pub outcome: Result<usize, String>,
+    pub outcome: ArchivePruneOutcome,
 }
 
 /// What a whole delete reported, one entry per archive it acted on.
@@ -153,7 +183,7 @@ impl PruneReport {
             .archives
             .iter()
             .filter_map(|report| {
-                let removed = *report.outcome.as_ref().ok()?;
+                let removed = report.outcome.days_removed()?;
                 (removed > 0).then(|| format!("{removed} {}", report.archive.label_in_sentence()))
             })
             .collect();
@@ -164,23 +194,41 @@ impl PruneReport {
         ))
     }
 
+    /// The archives shutdown stopped the delete from reaching, or [`None`]
+    /// where it reached every one of them.
+    pub fn skipped_during_shutdown_line(&self) -> Option<String> {
+        let skipped: Vec<&str> = self
+            .archives
+            .iter()
+            .filter(|report| report.outcome == ArchivePruneOutcome::SkippedDuringShutdown)
+            .map(|report| report.archive.label_in_sentence())
+            .collect();
+        (!skipped.is_empty()).then(|| {
+            format!(
+                "Not deleting archived days from {}: shutting down",
+                skipped.join(", ")
+            )
+        })
+    }
+
     /// How many days went across the archives that succeeded.
     pub fn days_removed(&self) -> usize {
         self.archives
             .iter()
-            .filter_map(|report| report.outcome.as_ref().ok())
+            .filter_map(|report| report.outcome.days_removed())
             .sum()
     }
 
     /// The archives whose delete failed, with what each reported.
     pub fn failures(&self) -> impl Iterator<Item = (EnvironmentArchive, &str)> {
-        self.archives.iter().filter_map(|report| {
-            report
-                .outcome
-                .as_ref()
-                .err()
-                .map(|detail| (report.archive, detail.as_str()))
-        })
+        self.archives
+            .iter()
+            .filter_map(|report| match &report.outcome {
+                ArchivePruneOutcome::Failed(detail) => Some((report.archive, detail.as_str())),
+                ArchivePruneOutcome::Removed(_) | ArchivePruneOutcome::SkippedDuringShutdown => {
+                    None
+                }
+            })
     }
 }
 
@@ -193,6 +241,29 @@ pub struct OpenEnvironmentArchives {
     pub geomagnetic_indices: Option<Arc<SolarStore>>,
     pub tec_maps: Option<Arc<IonexStore>>,
     pub solar_flares: Option<Arc<FlareStore>>,
+}
+
+impl OpenEnvironmentArchives {
+    /// The archives `scope` covers that are open, in the order the settings
+    /// rows list them.
+    fn covered_and_open(
+        &self,
+        scope: PruneScope,
+    ) -> Vec<(EnvironmentArchive, &dyn ArchivedDayDeletion)> {
+        EnvironmentArchive::iter()
+            .filter(|archive| scope.covers(*archive))
+            .filter_map(|archive| Some((archive, self.opened(archive)?)))
+            .collect()
+    }
+
+    fn opened(&self, archive: EnvironmentArchive) -> Option<&dyn ArchivedDayDeletion> {
+        match archive {
+            EnvironmentArchive::AircraftInterference => Some(self.interference.as_deref()?),
+            EnvironmentArchive::GeomagneticIndices => Some(self.geomagnetic_indices.as_deref()?),
+            EnvironmentArchive::IonosphericTec => Some(self.tec_maps.as_deref()?),
+            EnvironmentArchive::SolarFlares => Some(self.solar_flares.as_deref()?),
+        }
+    }
 }
 
 /// Deleting archived days, as each archive offers it. The errors differ per
@@ -262,6 +333,7 @@ impl EnvironmentPruneRun {
         &mut self,
         ctx: Context,
         archives: OpenEnvironmentArchives,
+        pending_writes: PendingWrites,
         request: PruneRequest,
     ) {
         let (tx, rx) = mpsc::channel();
@@ -269,7 +341,7 @@ impl EnvironmentPruneRun {
         thread::Builder::new()
             .name("environment-prune".to_owned())
             .spawn(move || {
-                tx.send(prune(&archives, request)).ok();
+                tx.send(prune(&archives, &pending_writes, request)).ok();
                 ctx.request_repaint();
             })
             .expect("failed to spawn the environment prune thread");
@@ -296,30 +368,37 @@ impl EnvironmentPruneRun {
 }
 
 /// Delete from every archive the request covers, in turn.
-fn prune(archives: &OpenEnvironmentArchives, request: PruneRequest) -> PruneReport {
-    let mut reports = Vec::new();
-    for archive in EnvironmentArchive::iter().filter(|one| request.scope.covers(*one)) {
-        let outcome = match archive {
-            EnvironmentArchive::AircraftInterference => archives
-                .interference
-                .as_deref()
-                .map(|store| store.delete_pruned_days(request.days)),
-            EnvironmentArchive::GeomagneticIndices => archives
-                .geomagnetic_indices
-                .as_deref()
-                .map(|store| store.delete_pruned_days(request.days)),
-            EnvironmentArchive::IonosphericTec => archives
-                .tec_maps
-                .as_deref()
-                .map(|store| store.delete_pruned_days(request.days)),
-            EnvironmentArchive::SolarFlares => archives
-                .solar_flares
-                .as_deref()
-                .map(|store| store.delete_pruned_days(request.days)),
+///
+/// A rewrite that has begun runs to its end even once shutdown starts: the
+/// archive is unreadable until it finishes.
+fn prune(
+    archives: &OpenEnvironmentArchives,
+    pending_writes: &PendingWrites,
+    request: PruneRequest,
+) -> PruneReport {
+    let covered = archives.covered_and_open(request.scope);
+    let mut reports = Vec::with_capacity(covered.len());
+    for (index, (archive, store)) in covered.iter().enumerate() {
+        let Some(_write) = archive.try_begin_day_delete(pending_writes) else {
+            reports.extend(
+                covered
+                    .iter()
+                    .skip(index)
+                    .map(|(archive, _)| ArchivePruneReport {
+                        archive: *archive,
+                        outcome: ArchivePruneOutcome::SkippedDuringShutdown,
+                    }),
+            );
+            break;
         };
-        if let Some(outcome) = outcome {
-            reports.push(ArchivePruneReport { archive, outcome });
-        }
+        let outcome = match store.delete_pruned_days(request.days) {
+            Ok(removed) => ArchivePruneOutcome::Removed(removed),
+            Err(detail) => ArchivePruneOutcome::Failed(detail),
+        };
+        reports.push(ArchivePruneReport {
+            archive: *archive,
+            outcome,
+        });
     }
     PruneReport {
         request,
@@ -493,8 +572,13 @@ impl App {
         if self.environment_prune.is_running() {
             return;
         }
+        if self.pending_writes.is_shutting_down() {
+            log::debug!("Not deleting archived environment days: shutting down");
+            return;
+        }
         let archives = self.open_environment_archives();
-        self.environment_prune.start(ctx.clone(), archives, request);
+        self.environment_prune
+            .start(ctx.clone(), archives, self.pending_writes.clone(), request);
     }
 
     /// Apply a finished delete: report it, and put the schedulers back on the
@@ -510,6 +594,9 @@ impl App {
             );
             self.toasts.error(format!("{}: {detail}", archive.label()));
         }
+        if let Some(line) = report.skipped_during_shutdown_line() {
+            log::info!("{line}");
+        }
         self.forget_pruned_environment_days(&report);
         self.request_environment_days_of_loaded_recordings();
 
@@ -524,7 +611,11 @@ impl App {
     /// Drop what the schedulers hold for the days the delete removed.
     fn forget_pruned_environment_days(&mut self, report: &PruneReport) {
         let pruned = report.request.days;
-        for archive in report.archives.iter().filter(|one| one.outcome.is_ok()) {
+        for archive in report
+            .archives
+            .iter()
+            .filter(|one| one.outcome.days_removed().is_some())
+        {
             match archive.archive {
                 EnvironmentArchive::AircraftInterference => {
                     self.jamming.forget_pruned_days(pruned);
@@ -618,6 +709,33 @@ mod tests {
         (dir, archives)
     }
 
+    /// The archives of [`archives_with_interference`], with a solar flare
+    /// archive holding three days beside them.
+    fn archives_with_interference_and_solar_flares() -> (tempfile::TempDir, OpenEnvironmentArchives)
+    {
+        let (dir, mut archives) = archives_with_interference();
+        let store = gt_store::Store::open_in(dir.path())
+            .open_solar_flares()
+            .expect("open the archive");
+        for offset in 0..3 {
+            store
+                .insert_or_replace_day(day(offset), "host", Utc::now(), &[])
+                .expect("insert");
+        }
+        archives.solar_flares = Some(store);
+        (dir, archives)
+    }
+
+    fn archived_interference_days(archives: &OpenEnvironmentArchives) -> usize {
+        archives
+            .interference
+            .as_ref()
+            .expect("the archive is open")
+            .days()
+            .expect("days")
+            .len()
+    }
+
     fn ymd(year: i32, month: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
     }
@@ -660,6 +778,7 @@ mod tests {
 
         let report = prune(
             &archives,
+            &PendingWrites::default(),
             PruneRequest {
                 scope: PruneScope::Every,
                 days: PrunedDays::Before(day(2)),
@@ -683,6 +802,7 @@ mod tests {
 
         let report = prune(
             &archives,
+            &PendingWrites::default(),
             PruneRequest {
                 scope: PruneScope::One(EnvironmentArchive::SolarFlares),
                 days: PrunedDays::All,
@@ -692,29 +812,82 @@ mod tests {
         assert!(report.archives.is_empty());
         assert_eq!(report.days_removed(), 0);
         assert_eq!(
-            archives
-                .interference
-                .as_ref()
-                .expect("the archive is open")
-                .days()
-                .expect("days")
-                .len(),
+            archived_interference_days(&archives),
             3,
             "another archive's delete took days from the interference archive"
+        );
+    }
+
+    /// Shutdown stops the delete before it rewrites anything, and every
+    /// archive it would have reached is reported as skipped.
+    #[test]
+    fn a_delete_started_during_shutdown_leaves_every_archive_alone() {
+        let (_dir, archives) = archives_with_interference_and_solar_flares();
+        let pending_writes = PendingWrites::default();
+        pending_writes.begin_shutdown();
+
+        let report = prune(
+            &archives,
+            &pending_writes,
+            PruneRequest {
+                scope: PruneScope::Every,
+                days: PrunedDays::All,
+            },
+        );
+
+        assert_eq!(
+            report.archives,
+            vec![
+                skipped(EnvironmentArchive::AircraftInterference),
+                skipped(EnvironmentArchive::SolarFlares),
+            ]
+        );
+        assert_eq!(report.days_removed(), 0);
+        assert_eq!(report.failures().count(), 0);
+        assert_eq!(archived_interference_days(&archives), 3);
+    }
+
+    /// A delete keeps the process from closing underneath it, and lets go of
+    /// it once the archive is rewritten.
+    #[test]
+    fn a_finished_delete_is_registered_while_it_runs() {
+        let (_dir, archives) = archives_with_interference();
+        let pending_writes = PendingWrites::default();
+
+        prune(
+            &archives,
+            &pending_writes,
+            PruneRequest {
+                scope: PruneScope::Every,
+                days: PrunedDays::All,
+            },
+        );
+
+        assert!(pending_writes.is_idle());
+        assert_eq!(
+            pending_writes.snapshot().recently_finished,
+            ["Deleting aircraft interference days"]
         );
     }
 
     fn removed(archive: EnvironmentArchive, days: usize) -> ArchivePruneReport {
         ArchivePruneReport {
             archive,
-            outcome: Ok(days),
+            outcome: ArchivePruneOutcome::Removed(days),
         }
     }
 
     fn failed(archive: EnvironmentArchive) -> ArchivePruneReport {
         ArchivePruneReport {
             archive,
-            outcome: Err("archive is inconsistent".to_owned()),
+            outcome: ArchivePruneOutcome::Failed("archive is inconsistent".to_owned()),
+        }
+    }
+
+    fn skipped(archive: EnvironmentArchive) -> ArchivePruneReport {
+        ArchivePruneReport {
+            archive,
+            outcome: ArchivePruneOutcome::SkippedDuringShutdown,
         }
     }
 
@@ -768,6 +941,36 @@ mod tests {
         assert_eq!(report.removed_days_line().as_deref(), expected);
     }
 
+    /// The line names every archive the delete did not reach, and nothing at
+    /// all where it reached all of them.
+    #[rstest]
+    #[case::every_archive_reached(vec![removed(EnvironmentArchive::AircraftInterference, 3)], None)]
+    #[case::two_archives_skipped(
+        vec![
+            removed(EnvironmentArchive::AircraftInterference, 3),
+            skipped(EnvironmentArchive::GeomagneticIndices),
+            skipped(EnvironmentArchive::IonosphericTec),
+        ],
+        Some(
+            "Not deleting archived days from geomagnetic indices, ionospheric TEC: \
+             shutting down"
+        )
+    )]
+    fn the_skipped_line_names_the_archives_that_kept_their_days(
+        #[case] archives: Vec<ArchivePruneReport>,
+        #[case] expected: Option<&str>,
+    ) {
+        let report = PruneReport {
+            request: PruneRequest {
+                scope: PruneScope::Every,
+                days: PrunedDays::All,
+            },
+            archives,
+        };
+
+        assert_eq!(report.skipped_during_shutdown_line().as_deref(), expected);
+    }
+
     /// The sentence form names the same archive as the settings row.
     #[test]
     fn every_archive_reads_the_same_inside_a_sentence() {
@@ -780,21 +983,16 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_delete_is_reported_with_what_it_said() {
+    fn a_failed_delete_is_reported_with_what_it_said_and_a_skipped_one_is_not() {
         let report = PruneReport {
             request: PruneRequest {
                 scope: PruneScope::Every,
                 days: PrunedDays::All,
             },
             archives: vec![
-                ArchivePruneReport {
-                    archive: EnvironmentArchive::AircraftInterference,
-                    outcome: Ok(4),
-                },
-                ArchivePruneReport {
-                    archive: EnvironmentArchive::IonosphericTec,
-                    outcome: Err("archive is inconsistent".to_owned()),
-                },
+                removed(EnvironmentArchive::AircraftInterference, 4),
+                failed(EnvironmentArchive::IonosphericTec),
+                skipped(EnvironmentArchive::SolarFlares),
             ],
         };
 
