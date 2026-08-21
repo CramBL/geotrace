@@ -92,12 +92,16 @@ pub struct FlareStore {
 impl FlareStore {
     /// Open the archive at `path`, creating it if it does not exist.
     ///
+    /// An archive created before archives recorded their free space in pages
+    /// is rebuilt first, see [`ArchiveFile::migrate_file_space_if_needed`].
+    ///
     /// Events left behind by an interrupted store are dropped here, and so
     /// are the days an interrupted [`Self::delete_days_before`] left in an
     /// unknown layout.
     pub fn open_or_create(path: &Path) -> Result<Self, FlareStoreError> {
         let mut archive = ArchiveFile::new(path);
         if archive.exists() {
+            archive.migrate_file_space_if_needed()?;
             archive.validate_schema_version(
                 schema::SCHEMA_VERSION_ATTR,
                 schema::CURRENT_SCHEMA_VERSION,

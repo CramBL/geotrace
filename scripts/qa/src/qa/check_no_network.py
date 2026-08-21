@@ -62,10 +62,12 @@ _ALLOWED: dict[str, frozenset[str]] = {
     # go to a canned transport that answers from a committed fixture.
     "crates/gt-flare-store/tests/archive.rs": _URL_LITERAL_ONLY,
     "crates/gt-hdf5-archive/tests/columns.rs": _URL_LITERAL_ONLY,
+    "crates/gt-hdf5-archive/tests/file_space_migration.rs": _URL_LITERAL_ONLY,
     "crates/gt-hdf5-archive/tests/prune.rs": _URL_LITERAL_ONLY,
     "crates/gt-ionex-store/tests/archive.rs": _URL_LITERAL_ONLY,
     "crates/gt-jam-store/tests/archive.rs": _URL_LITERAL_ONLY,
     "crates/gt-jam-store/tests/captured_day.rs": _URL_LITERAL_ONLY,
+    "crates/gt-jam-store/tests/file_space_migration.rs": _URL_LITERAL_ONLY,
     "crates/gt-solar-store/tests/archive.rs": _URL_LITERAL_ONLY,
     # A URL parsed into its host part, asserted against the expected result.
     "crates/gt-snap/tests/wire_format.rs": _URL_LITERAL_ONLY,
