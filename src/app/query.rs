@@ -20,25 +20,28 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use egui::text::{CCursor, CCursorRange, LayoutJob};
-use geotrace_sdk_units::ChannelUnit;
 use gt_query::lexer::{self, TokenClass};
 use gt_query::{
     ChannelSchema, CompletionTrigger, Construct, ConstructKind, Diagnostic, MetricProvider as _,
-    Quantity, QueryMetric, Span, Unit,
+    QueryMetric, Span,
 };
 use gt_query_run::{
-    ChannelResults, ChannelTrackResult, CheckRefresh, MICROS_PER_SEC, PointsResults, QuerySession,
-    RunInputs, RunKind, RunOutcome, RunResults, SliceProvider, TrackProvider, TrackQueryData,
+    ChannelResults, ChannelTrackResult, CheckRefresh, PointsResults, QuerySession, RunInputs,
+    RunKind, RunOutcome, RunResults, SliceProvider, TrackProvider, TrackQueryData,
     schema_from_files,
 };
 use gt_side_panel::widgets::{PointClickRequests, apply_point_click};
 use gt_types::{DataCategory, LoadedFile, NavPoint, PointIdx, TrackRef};
-use gt_ui_theme::{DEGREE_SIGN, EM_DASH};
+use gt_ui_theme::EM_DASH;
 use gt_ui_types::{
     DataPointRef, DisplayMask, HighlightScope, MapHighlight, MapScope, MatchHighlight, QueryMatches,
 };
 
 use crate::settings::QueryHistoryEntry;
+
+use self::column_format::ColumnFormat;
+
+mod column_format;
 
 /// Rows shown per match table before truncating with a "more points" note.
 const MATCH_TABLE_ROW_CAP: usize = 100;
@@ -1310,11 +1313,16 @@ fn match_table_ui(
         points.len().saturating_sub(slice_start),
     );
 
+    let formats: Vec<ColumnFormat<'static>> = columns
+        .iter()
+        .map(|column| ColumnFormat::of_metric(*column))
+        .collect();
+
     Grid::new(ui.id().with("match_table"))
         .striped(true)
         .show(ui, |ui| {
-            for column in columns {
-                ui.strong(column.to_string());
+            for (column, format) in columns.iter().zip(&formats) {
+                format.header_ui(ui, &column.to_string());
             }
             ui.end_row();
 
@@ -1322,15 +1330,14 @@ fn match_table_ui(
                 // The cell responses union into one row response, so the row
                 // reacts as a whole wherever it is hovered or clicked.
                 let mut row_response: Option<egui::Response> = None;
-                for column in columns {
+                for (column, format) in columns.iter().zip(&formats) {
                     let value = if *column == QueryMetric::Accel {
                         pi.checked_sub(slice_start)
                             .and_then(|rel| gt_query::derived_accel(&slice, rel))
                     } else {
                         provider.value(*column, pi)
                     };
-                    let response = ui
-                        .add(Label::new(format_value(*column, value)).sense(egui::Sense::click()));
+                    let response = format.value_ui(ui, value);
                     row_response = Some(match row_response {
                         Some(row) => row.union(response),
                         None => response,
@@ -1495,17 +1502,16 @@ fn channel_track_ui(
     } else {
         channel.components.clone()
     };
-    let unit_suffix = track
-        .unit
-        .as_ref()
-        .map_or_else(String::new, |unit| format!(" ({unit})"));
-    let from_base = channel_from_base_scale(track.unit.as_ref());
+    let value_format = ColumnFormat::of_channel_unit(track.unit.as_ref());
+    // Samples are timed finer than points, so their times keep the
+    // milliseconds the point tables leave out.
+    let time_format = ColumnFormat::time_of_day_with_millis();
     Grid::new(ui.id().with(("channel_table", track.track)))
         .striped(true)
         .show(ui, |ui| {
-            ui.strong("time");
+            time_format.header_ui(ui, "time");
             for header in &value_headers {
-                ui.strong(format!("{header}{unit_suffix}"));
+                value_format.header_ui(ui, header);
             }
             ui.end_row();
 
@@ -1516,19 +1522,10 @@ fn channel_track_ui(
                 .flat_map(Clone::clone)
                 .take(MATCH_TABLE_ROW_CAP)
             {
-                let time = track
-                    .timeline
-                    .times
-                    .get(sample)
-                    .and_then(|t| {
-                        DateTime::<Utc>::from_timestamp_micros((t * MICROS_PER_SEC) as i64)
-                    })
-                    .map(|dt| dt.format("%H:%M:%S%.3f").to_string())
-                    .unwrap_or_default();
-                ui.label(time);
+                time_format.value_ui(ui, track.timeline.times.get(sample).copied());
                 for col in 0..columns {
-                    let value = track.timeline.values.get(sample * columns + col);
-                    ui.label(value.map_or_else(String::new, |v| format!("{:.3}", v * from_base)));
+                    let value = track.timeline.values.get(sample * columns + col).copied();
+                    value_format.value_ui(ui, value);
                 }
                 ui.end_row();
             }
@@ -1542,11 +1539,6 @@ fn channel_track_ui(
             .weak(),
         );
     }
-}
-
-fn channel_from_base_scale(unit: Option<&ChannelUnit>) -> f64 {
-    unit.and_then(ChannelUnit::as_recognized)
-        .map_or(1.0, Unit::from_base)
 }
 
 /// Coarse age for a history entry, at minute granularity or coarser.
@@ -1871,33 +1863,6 @@ fn error_message_layout(ui: &egui::Ui, message: &str) -> LayoutJob {
     job
 }
 
-/// Display formatting per metric quantity, for match tables. Values arrive
-/// in the evaluator's base units.
-fn format_value(metric: QueryMetric, value: Option<f64>) -> String {
-    let Some(v) = value else {
-        return EM_DASH.to_owned();
-    };
-    match metric.quantity() {
-        Quantity::Timestamp => DateTime::<Utc>::from_timestamp_millis((v * 1_000.0) as i64)
-            .map_or_else(|| EM_DASH.to_owned(), |t| t.format("%H:%M:%S").to_string()),
-        Quantity::Angle | Quantity::Direction => format!("{v:.1}{DEGREE_SIGN}"),
-        Quantity::Speed => format!("{:.1} km/h", v * 3.6),
-        Quantity::Acceleration => format!("{v:.2} m/s²"),
-        Quantity::Length => format!("{v:.1} m"),
-        Quantity::Duration => format!("{v:.3} s"),
-        Quantity::Count => format!("{v:.0}"),
-        // Trimmed to three decimals: an interpolated TEC value would
-        // otherwise print a full float expansion.
-        Quantity::Index => format!("{v:.3}")
-            .trim_end_matches('0')
-            .trim_end_matches('.')
-            .to_owned(),
-        Quantity::Ratio => format!("{:.0} %", v / Unit::PERCENT.to_base()),
-        Quantity::Rate => format!("{v:.2}/min"),
-        Quantity::Condition => EM_DASH.to_owned(),
-    }
-}
-
 /// Token-driven syntax highlighting plus the diagnostic underlines (one per
 /// failing chunk), built from the same lexer the parser uses.
 fn highlight_layout(ui: &egui::Ui, text: &str, diagnostics: &[Span]) -> LayoutJob {
@@ -2168,33 +2133,6 @@ mod tests {
             segments(0..10, &[(1, 3), (5, 7)]),
             vec![0..1, 1..3, 3..5, 5..7, 7..10]
         );
-    }
-
-    #[test]
-    fn values_format_by_quantity_in_base_units() {
-        assert_eq!(format_value(QueryMetric::Velocity, Some(10.0)), "36.0 km/h");
-        assert_eq!(format_value(QueryMetric::Heading, Some(271.53)), "271.5°");
-        assert_eq!(format_value(QueryMetric::SatsFix, Some(7.0)), "7");
-        assert_eq!(format_value(QueryMetric::UtilGps, Some(0.5)), "50 %");
-        assert_eq!(format_value(QueryMetric::SlipAll, Some(2.0)), "2.00/min");
-        assert_eq!(format_value(QueryMetric::Hp30, Some(11.333)), "11.333");
-        assert_eq!(format_value(QueryMetric::Kp, Some(5.0)), "5");
-        assert_eq!(
-            format_value(QueryMetric::Tec, Some(112.483_333_333_333_33)),
-            "112.483"
-        );
-        assert_eq!(format_value(QueryMetric::Eph, None), EM_DASH);
-    }
-
-    #[test]
-    fn channel_results_convert_base_values_back_to_the_declared_unit() {
-        let unit = ChannelUnit::recognized(Unit::from_label("mg").expect("mg is recognized"));
-        let base_value = 80.0 * Unit::from_label("mg").expect("mg is recognized").to_base();
-        let displayed = base_value * channel_from_base_scale(Some(&unit));
-        assert!((displayed - 80.0).abs() < 1e-12);
-
-        let custom = ChannelUnit::custom("rpm").expect("valid custom unit");
-        assert!((channel_from_base_scale(Some(&custom)) - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]
