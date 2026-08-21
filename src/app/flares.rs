@@ -19,13 +19,14 @@ use egui::Context;
 
 use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
 use gt_flare::{ApiKey, DateWindow, MarkedFlare, SolarFlare, calendar, transport, wire};
+use gt_pending_writes::PendingWrites;
 use gt_store::{ArchiveUsage, FlareStore, FlareStoreError};
 use gt_types::{SunlitSide, TimeRange};
 use gt_ui_types::ArcIdentity;
 
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan};
 use super::day_fetch_queue::DayFetchQueue;
-use super::environment_storage::PrunedDays;
+use super::environment_storage::{EnvironmentArchive, PrunedDays};
 use super::fix_positions::FixPositionTimeline;
 
 /// What one day's fetch produced.
@@ -40,12 +41,19 @@ enum FlareDayMessage {
         day: NaiveDate,
         detail: String,
     },
+    /// The day was downloaded, then discarded unarchived because the process
+    /// is shutting down.
+    NotArchivedDuringShutdown {
+        day: NaiveDate,
+    },
 }
 
 impl FlareDayMessage {
     fn day(&self) -> NaiveDate {
         match *self {
-            Self::Stored { day, .. } | Self::Failed { day, .. } => day,
+            Self::Stored { day, .. }
+            | Self::Failed { day, .. }
+            | Self::NotArchivedDuringShutdown { day } => day,
         }
     }
 }
@@ -73,6 +81,9 @@ pub struct SolarFlareScheduler {
     archived_days: BTreeSet<NaiveDate>,
     /// The flares of the archived days the plot shows, read once per day.
     markers: ContextSampleCache<MarkedFlare>,
+    /// Registers every archive insert, and refuses the ones that would start
+    /// after shutdown began.
+    pending_writes: PendingWrites,
 }
 
 impl SolarFlareScheduler {
@@ -82,6 +93,7 @@ impl SolarFlareScheduler {
         base_url: String,
         api_key: Option<ApiKey>,
         transport_source: TransportSource,
+        pending_writes: PendingWrites,
     ) -> Self {
         let (tx, rx) = mpsc::channel();
         let archived_days = store
@@ -100,6 +112,7 @@ impl SolarFlareScheduler {
             http: None,
             transport_source,
             days: DayFetchQueue::default(),
+            pending_writes,
         }
     }
 
@@ -217,6 +230,9 @@ impl SolarFlareScheduler {
                     log::error!("No solar flares archived for {day}: {detail}");
                     self.days.report_failure(day, detail);
                 }
+                FlareDayMessage::NotArchivedDuringShutdown { day } => {
+                    log::debug!("No solar flares archived for {day}: shutting down");
+                }
             }
         }
         self.start_next();
@@ -327,21 +343,42 @@ impl SolarFlareScheduler {
         let Some(key) = self.api_key.clone() else {
             return;
         };
+        if self.pending_writes.is_shutting_down() {
+            return;
+        }
         let Some(day) = self.days.take_next_day() else {
             return;
         };
         let transport = self.transport();
-        spawn_fetch(
-            self.ctx.clone(),
-            self.tx.clone(),
-            transport,
-            store,
-            Endpoint {
-                base_url: self.base_url.clone(),
-                key,
-            },
-            day,
-        );
+        let endpoint = Endpoint {
+            base_url: self.base_url.clone(),
+            key,
+        };
+        self.spawn_fetch(transport, store, endpoint, day);
+    }
+
+    #[expect(
+        clippy::expect_used,
+        reason = "thread spawn can only fail under extreme system resource exhaustion"
+    )]
+    fn spawn_fetch(
+        &self,
+        transport: Arc<Connection>,
+        store: Arc<FlareStore>,
+        endpoint: Endpoint,
+        day: NaiveDate,
+    ) {
+        let ctx = self.ctx.clone();
+        let tx = self.tx.clone();
+        let pending_writes = self.pending_writes.clone();
+        thread::Builder::new()
+            .name(format!("flares-{day}"))
+            .spawn(move || {
+                let message = ingest(transport.as_ref(), &store, &endpoint, day, &pending_writes);
+                tx.send(message).ok();
+                ctx.request_repaint();
+            })
+            .expect("failed to spawn solar flare worker thread");
     }
 
     /// The transport to fetch on, opened once and kept until the endpoint
@@ -426,28 +463,6 @@ fn archived_days_of(store: &FlareStore) -> BTreeSet<NaiveDate> {
         .collect()
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "thread spawn can only fail under extreme system resource exhaustion"
-)]
-fn spawn_fetch(
-    ctx: Context,
-    tx: mpsc::Sender<FlareDayMessage>,
-    transport: Arc<Connection>,
-    store: Arc<FlareStore>,
-    endpoint: Endpoint,
-    day: NaiveDate,
-) {
-    thread::Builder::new()
-        .name(format!("flares-{day}"))
-        .spawn(move || {
-            let message = ingest(transport.as_ref(), &store, &endpoint, day);
-            tx.send(message).ok();
-            ctx.request_repaint();
-        })
-        .expect("failed to spawn solar flare worker thread");
-}
-
 /// Fetch `day`, parse it, and add it to the archive.
 ///
 /// Only the flares beginning on `day` are stored, which is the day the
@@ -458,6 +473,7 @@ fn ingest(
     store: &FlareStore,
     endpoint: &Endpoint,
     day: NaiveDate,
+    pending_writes: &PendingWrites,
 ) -> FlareDayMessage {
     let window = DateWindow::covering_utc_day(day);
     let body =
@@ -483,6 +499,10 @@ fn ingest(
         }
     };
 
+    let Some(_write) = EnvironmentArchive::SolarFlares.try_begin_day_insert(pending_writes, day)
+    else {
+        return FlareDayMessage::NotArchivedDuringShutdown { day };
+    };
     // The key is never part of what the archive records.
     match store.insert_or_replace_day(day, &endpoint.base_url, Utc::now(), &flares) {
         Ok(()) => FlareDayMessage::Stored {
@@ -557,6 +577,7 @@ mod tests {
             DEFAULT_BASE_URL.to_owned(),
             key(),
             TransportSource::Offline,
+            PendingWrites::default(),
         );
         (dir, store, scheduler)
     }
@@ -569,6 +590,7 @@ mod tests {
             DEFAULT_BASE_URL.to_owned(),
             key(),
             TransportSource::Offline,
+            PendingWrites::default(),
         )
     }
 
@@ -601,6 +623,7 @@ mod tests {
             DEFAULT_BASE_URL.to_owned(),
             None,
             TransportSource::Offline,
+            PendingWrites::default(),
         );
 
         scheduler.request_days_for(a_recording_day());
@@ -623,6 +646,7 @@ mod tests {
             DEFAULT_BASE_URL.to_owned(),
             None,
             TransportSource::Offline,
+            PendingWrites::default(),
         );
         scheduler.request_days_for(a_recording_day());
         assert!(!scheduler.days.is_fetching());
@@ -818,7 +842,13 @@ mod tests {
         let ingested = day(2024, 5, 9);
         let transport = serving(ONE_FLARE);
 
-        let message = ingest(&transport, &store, &endpoint(), ingested);
+        let message = ingest(
+            &transport,
+            &store,
+            &endpoint(),
+            ingested,
+            &PendingWrites::default(),
+        );
 
         assert!(matches!(message, FlareDayMessage::Stored { flares: 1, .. }));
         let archived = store.archived_days().expect("days");
@@ -842,7 +872,13 @@ mod tests {
         let (_dir, store) = archive();
         let transport = serving(NO_FLARES);
 
-        ingest(&transport, &store, &endpoint(), day(2024, 5, 9));
+        ingest(
+            &transport,
+            &store,
+            &endpoint(),
+            day(2024, 5, 9),
+            &PendingWrites::default(),
+        );
 
         assert!(
             transport
@@ -869,7 +905,13 @@ mod tests {
         let ingested = day(2024, 5, 9);
         let transport = serving(NO_FLARES);
 
-        let message = ingest(&transport, &store, &endpoint(), ingested);
+        let message = ingest(
+            &transport,
+            &store,
+            &endpoint(),
+            ingested,
+            &PendingWrites::default(),
+        );
 
         assert!(matches!(message, FlareDayMessage::Stored { flares: 0, .. }));
         assert_eq!(store.flares(ingested).expect("flares"), Some(vec![]));
@@ -887,7 +929,13 @@ mod tests {
                 "classType":"M1.3"}]"#,
         );
 
-        let message = ingest(&transport, &store, &endpoint(), day(2024, 5, 9));
+        let message = ingest(
+            &transport,
+            &store,
+            &endpoint(),
+            day(2024, 5, 9),
+            &PendingWrites::default(),
+        );
 
         assert!(matches!(message, FlareDayMessage::Stored { flares: 1, .. }));
         assert_eq!(
@@ -910,7 +958,13 @@ mod tests {
             body: body.to_owned(),
         }));
 
-        let message = ingest(&transport, &store, &endpoint(), day(2024, 5, 9));
+        let message = ingest(
+            &transport,
+            &store,
+            &endpoint(),
+            day(2024, 5, 9),
+            &PendingWrites::default(),
+        );
 
         assert!(matches!(message, FlareDayMessage::Failed { .. }));
         assert!(store.archived_days().expect("days").is_empty());
@@ -932,7 +986,13 @@ mod tests {
             ),
         }));
 
-        let message = ingest(&transport, &store, &endpoint(), day(2024, 5, 9));
+        let message = ingest(
+            &transport,
+            &store,
+            &endpoint(),
+            day(2024, 5, 9),
+            &PendingWrites::default(),
+        );
 
         let FlareDayMessage::Failed { detail, .. } = message else {
             panic!("the transport refused every attempt");

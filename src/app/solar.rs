@@ -18,6 +18,7 @@ use chrono::{NaiveDate, Utc};
 use egui::Context;
 
 use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
+use gt_pending_writes::PendingWrites;
 use gt_solar::activity::GeomagneticActivity;
 use gt_solar::series::{Hp30Series, IndexSample, IndexSeries, KpSeries};
 use gt_solar::{GeomagneticIndex, TimeWindow, calendar, transport, wire};
@@ -30,7 +31,7 @@ use strum::IntoEnumIterator as _;
 
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
-use super::environment_storage::PrunedDays;
+use super::environment_storage::{EnvironmentArchive, PrunedDays};
 
 /// What one day's fetch produced.
 enum IndexDayMessage {
@@ -45,12 +46,19 @@ enum IndexDayMessage {
         day: NaiveDate,
         detail: String,
     },
+    /// The day was downloaded, then discarded unarchived because the process
+    /// is shutting down.
+    NotArchivedDuringShutdown {
+        day: NaiveDate,
+    },
 }
 
 impl IndexDayMessage {
     fn day(&self) -> NaiveDate {
         match *self {
-            Self::Stored { day, .. } | Self::Failed { day, .. } => day,
+            Self::Stored { day, .. }
+            | Self::Failed { day, .. }
+            | Self::NotArchivedDuringShutdown { day } => day,
         }
     }
 }
@@ -83,6 +91,9 @@ pub struct GeomagneticIndexScheduler {
     hp30_context: ContextSampleCache<IndexContextSample>,
     /// The Kp line, sampled like [`Self::hp30_context`] at its own cadence.
     kp_context: ContextSampleCache<IndexContextSample>,
+    /// Registers every archive insert, and refuses the ones that would start
+    /// after shutdown began.
+    pending_writes: PendingWrites,
 }
 
 impl GeomagneticIndexScheduler {
@@ -91,6 +102,7 @@ impl GeomagneticIndexScheduler {
         store: Option<Arc<SolarStore>>,
         base_url: String,
         transport_source: TransportSource,
+        pending_writes: PendingWrites,
     ) -> Self {
         let (tx, rx) = mpsc::channel();
         let archived_days = store
@@ -110,6 +122,7 @@ impl GeomagneticIndexScheduler {
             http: None,
             transport_source,
             days: DayFetchQueue::default(),
+            pending_writes,
         }
     }
 
@@ -230,6 +243,9 @@ impl GeomagneticIndexScheduler {
                 IndexDayMessage::Failed { day, detail } => {
                     log::error!("No geomagnetic indices archived for {day}: {detail}");
                     self.days.report_failure(day, detail);
+                }
+                IndexDayMessage::NotArchivedDuringShutdown { day } => {
+                    log::debug!("No geomagnetic indices archived for {day}: shutting down");
                 }
             }
         }
@@ -388,18 +404,33 @@ impl GeomagneticIndexScheduler {
         let Some(store) = self.store.as_ref().map(Arc::clone) else {
             return;
         };
+        if self.pending_writes.is_shutting_down() {
+            return;
+        }
         let Some(day) = self.days.take_next_day() else {
             return;
         };
         let transport = self.transport();
-        spawn_fetch(
-            self.ctx.clone(),
-            self.tx.clone(),
-            transport,
-            store,
-            self.base_url.clone(),
-            day,
-        );
+        self.spawn_fetch(transport, store, day);
+    }
+
+    #[expect(
+        clippy::expect_used,
+        reason = "thread spawn can only fail under extreme system resource exhaustion"
+    )]
+    fn spawn_fetch(&self, transport: Arc<Connection>, store: Arc<SolarStore>, day: NaiveDate) {
+        let ctx = self.ctx.clone();
+        let tx = self.tx.clone();
+        let base_url = self.base_url.clone();
+        let pending_writes = self.pending_writes.clone();
+        thread::Builder::new()
+            .name(format!("solar-{day}"))
+            .spawn(move || {
+                let message = ingest(transport.as_ref(), &store, &base_url, day, &pending_writes);
+                tx.send(message).ok();
+                ctx.request_repaint();
+            })
+            .expect("failed to spawn geomagnetic index worker thread");
     }
 
     /// The transport to fetch on, opened once and kept until the host changes.
@@ -515,28 +546,6 @@ fn archived_days_of(store: &SolarStore) -> BTreeSet<NaiveDate> {
         .collect()
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "thread spawn can only fail under extreme system resource exhaustion"
-)]
-fn spawn_fetch(
-    ctx: Context,
-    tx: mpsc::Sender<IndexDayMessage>,
-    transport: Arc<Connection>,
-    store: Arc<SolarStore>,
-    base_url: String,
-    day: NaiveDate,
-) {
-    thread::Builder::new()
-        .name(format!("solar-{day}"))
-        .spawn(move || {
-            let message = ingest(transport.as_ref(), &store, &base_url, day);
-            tx.send(message).ok();
-            ctx.request_repaint();
-        })
-        .expect("failed to spawn geomagnetic index worker thread");
-}
-
 /// The series of one day, as far as the fetch got.
 #[derive(Default)]
 struct FetchedDay {
@@ -553,6 +562,7 @@ fn ingest(
     store: &SolarStore,
     base_url: &str,
     day: NaiveDate,
+    pending_writes: &PendingWrites,
 ) -> IndexDayMessage {
     let window = TimeWindow::covering_utc_day(day);
     let mut fetched = FetchedDay::default();
@@ -589,6 +599,11 @@ fn ingest(
         }
     }
 
+    let Some(_write) =
+        EnvironmentArchive::GeomagneticIndices.try_begin_day_insert(pending_writes, day)
+    else {
+        return IndexDayMessage::NotArchivedDuringShutdown { day };
+    };
     let fetched_at = Utc::now();
     let mut kp_samples = 0;
     let mut hp30_samples = 0;
@@ -669,6 +684,7 @@ mod tests {
             Some(Arc::clone(&store)),
             DEFAULT_BASE_URL.to_owned(),
             TransportSource::Offline,
+            PendingWrites::default(),
         );
         (dir, store, scheduler)
     }
@@ -680,6 +696,7 @@ mod tests {
             None,
             DEFAULT_BASE_URL.to_owned(),
             TransportSource::Offline,
+            PendingWrites::default(),
         )
     }
 
@@ -981,6 +998,7 @@ mod tests {
     #[rstest]
     #[case::stored(IndexDayMessage::Stored { day: day(2026, 7, 20), kp_samples: 8, hp30_samples: 48 })]
     #[case::failed(IndexDayMessage::Failed { day: day(2026, 7, 20), detail: "boom".to_owned() })]
+    #[case::shutting_down(IndexDayMessage::NotArchivedDuringShutdown { day: day(2026, 7, 20) })]
     fn progress_advances_on_every_outcome(#[case] message: IndexDayMessage) {
         let mut scheduler = scheduler_without_archive();
         scheduler
@@ -1135,7 +1153,13 @@ mod tests {
         let ingested = day(2026, 7, 20);
         let transport = serving(ONE_PERIOD_OF_BOTH_INDICES);
 
-        let message = ingest(&transport, &store, DEFAULT_BASE_URL, ingested);
+        let message = ingest(
+            &transport,
+            &store,
+            DEFAULT_BASE_URL,
+            ingested,
+            &PendingWrites::default(),
+        );
 
         assert!(matches!(
             message,
@@ -1156,6 +1180,36 @@ mod tests {
         }
     }
 
+    /// One guard covers both index inserts, so a day downloaded after
+    /// shutdown began archives neither.
+    #[test]
+    fn a_day_downloaded_during_shutdown_archives_no_index() {
+        let (_dir, store) = archive();
+        let ingested = day(2026, 7, 20);
+        let transport = serving(ONE_PERIOD_OF_BOTH_INDICES);
+        let pending_writes = PendingWrites::default();
+        pending_writes.begin_shutdown();
+
+        let message = ingest(
+            &transport,
+            &store,
+            DEFAULT_BASE_URL,
+            ingested,
+            &pending_writes,
+        );
+
+        assert!(matches!(
+            message,
+            IndexDayMessage::NotArchivedDuringShutdown { .. }
+        ));
+        for index in [GeomagneticIndex::Kp, GeomagneticIndex::Hp30] {
+            assert!(
+                store.archived_days(index).expect("days").is_empty(),
+                "{index}"
+            );
+        }
+    }
+
     /// Before Hp30 begins, only Kp is requested, and the day is archived from
     /// what the service does publish.
     #[test]
@@ -1165,7 +1219,13 @@ mod tests {
         let transport =
             serving(r#"{"Kp":[2.667],"datetime":["1970-01-01T00:00:00Z"],"status":["def"]}"#);
 
-        let message = ingest(&transport, &store, DEFAULT_BASE_URL, ingested);
+        let message = ingest(
+            &transport,
+            &store,
+            DEFAULT_BASE_URL,
+            ingested,
+            &PendingWrites::default(),
+        );
 
         assert!(matches!(
             message,
@@ -1192,7 +1252,13 @@ mod tests {
         let ingested = day(2026, 7, 20);
         let transport = serving(NO_VALUES);
 
-        let message = ingest(&transport, &store, DEFAULT_BASE_URL, ingested);
+        let message = ingest(
+            &transport,
+            &store,
+            DEFAULT_BASE_URL,
+            ingested,
+            &PendingWrites::default(),
+        );
 
         assert!(matches!(
             message,
@@ -1219,8 +1285,20 @@ mod tests {
         let ingested = day(2026, 7, 20);
         let transport = serving(ONE_PERIOD_OF_BOTH_INDICES);
 
-        ingest(&transport, &store, DEFAULT_BASE_URL, ingested);
-        ingest(&transport, &store, DEFAULT_BASE_URL, ingested);
+        ingest(
+            &transport,
+            &store,
+            DEFAULT_BASE_URL,
+            ingested,
+            &PendingWrites::default(),
+        );
+        ingest(
+            &transport,
+            &store,
+            DEFAULT_BASE_URL,
+            ingested,
+            &PendingWrites::default(),
+        );
 
         assert_eq!(
             store
@@ -1242,7 +1320,13 @@ mod tests {
             body: body.to_owned(),
         }));
 
-        let message = ingest(&transport, &store, DEFAULT_BASE_URL, day(2026, 7, 20));
+        let message = ingest(
+            &transport,
+            &store,
+            DEFAULT_BASE_URL,
+            day(2026, 7, 20),
+            &PendingWrites::default(),
+        );
 
         assert!(matches!(message, IndexDayMessage::Failed { .. }));
         for index in [GeomagneticIndex::Kp, GeomagneticIndex::Hp30] {
@@ -1542,7 +1626,13 @@ mod tests {
         let transport =
             serving(r#"{"Kp":[2.667],"datetime":["2026-07-20T00:00:00Z"],"status":["def"]}"#);
 
-        let message = ingest(&transport, &store, DEFAULT_BASE_URL, day(2026, 7, 20));
+        let message = ingest(
+            &transport,
+            &store,
+            DEFAULT_BASE_URL,
+            day(2026, 7, 20),
+            &PendingWrites::default(),
+        );
 
         assert!(
             matches!(message, IndexDayMessage::Failed { .. }),

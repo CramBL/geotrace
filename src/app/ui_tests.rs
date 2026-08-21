@@ -3771,6 +3771,7 @@ fn install_interference_archive(
         Some(Arc::clone(&store)),
         gt_jam::DEFAULT_BASE_URL.to_owned(),
         gt_fetch::TransportSource::Offline,
+        gt_pending_writes::PendingWrites::default(),
     );
     (dir, store)
 }
@@ -4868,6 +4869,7 @@ fn snapshot_app_plot_context_line_spans_the_archived_days() {
         Some(store),
         gt_solar::DEFAULT_BASE_URL.to_owned(),
         gt_fetch::TransportSource::Offline,
+        gt_pending_writes::PendingWrites::default(),
     );
 
     {
@@ -4918,6 +4920,7 @@ fn a_storm_day_archived_after_the_load_warns_on_the_map() {
         Some(store),
         gt_solar::DEFAULT_BASE_URL.to_owned(),
         gt_fetch::TransportSource::Offline,
+        gt_pending_writes::PendingWrites::default(),
     );
     harness.run_steps(2);
 
@@ -5017,6 +5020,7 @@ fn a_tec_window_archived_after_the_load_warns_on_the_map() {
         gt_ionex::MirrorList::default(),
         None,
         gt_fetch::TransportSource::Offline,
+        gt_pending_writes::PendingWrites::default(),
     );
     harness.run_steps(2);
 
@@ -5109,6 +5113,7 @@ fn harness_with_archived_flares<'a>(
         gt_flare::DEFAULT_BASE_URL.to_owned(),
         gt_flare::ApiKey::new("test-key"),
         gt_fetch::TransportSource::Offline,
+        gt_pending_writes::PendingWrites::default(),
     );
     harness.run_steps(5);
     // The archived flares raise the space weather warning, whose toast has

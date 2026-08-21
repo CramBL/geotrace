@@ -12,6 +12,7 @@ use egui::Context;
 use gt_loaded_files::FileHistory;
 use gt_log_view::LogAttachmentRef;
 use gt_logfile::{LogText, ParsedLog};
+use gt_pending_writes::{PendingWrites, WriteKind};
 use gt_plot::{AnalysisConfig, PreparedSeries};
 use gt_store::{AttachedLog, StoredLogFilter};
 use gt_types::LoadedFile;
@@ -169,10 +170,13 @@ pub(super) struct LoadJobs {
     /// so freshly built plot series match the rest of the plot.  Kept in sync
     /// with the plot state's analysis config by the app.
     pub analysis_config: AnalysisConfig,
+    /// Registers every recording-database write a load thread makes, and
+    /// refuses the ones that would start after shutdown began.
+    pending_writes: PendingWrites,
 }
 
 impl LoadJobs {
-    pub fn new(ctx: Context) -> Self {
+    pub fn new(ctx: Context, pending_writes: PendingWrites) -> Self {
         let (load_tx, load_rx) = mpsc::channel::<LoadMessage>();
         Self {
             ctx,
@@ -184,6 +188,7 @@ impl LoadJobs {
             file_dialog_rx: None,
             db_path: None,
             analysis_config: AnalysisConfig::default(),
+            pending_writes,
         }
     }
 
@@ -215,6 +220,7 @@ impl LoadJobs {
         let ctx = self.ctx.clone();
         let db_path = self.db_path.clone();
         let analysis = self.analysis_config;
+        let pending_writes = self.pending_writes.clone();
         let log_name = filename.clone();
         log::info!("Loading file '{filename}'");
         thread::Builder::new()
@@ -267,15 +273,17 @@ impl LoadJobs {
                             None => None,
                         };
                         log::debug!("Parsed '{log_name}': {} track(s)", file.tracks.len());
-                        let db_ref = store_in_history(
-                            db_path.as_deref(),
-                            &file,
-                            &loaded.identity,
-                            meta.as_ref(),
-                            &config,
-                            bytes.as_deref(),
-                            &log_name,
-                        );
+                        let db_ref = HistoryInsert {
+                            db_path: db_path.as_deref(),
+                            file: &file,
+                            identity: &loaded.identity,
+                            meta: meta.as_ref(),
+                            config: &config,
+                            bytes: bytes.as_deref(),
+                            filename: &log_name,
+                            pending_writes: &pending_writes,
+                        }
+                        .store();
                         let history = meta.map_or(FileHistory::None, |meta| {
                             FileHistory::recording(loaded.identity, meta, db_ref)
                         });
@@ -338,6 +346,7 @@ impl LoadJobs {
         let ctx = self.ctx.clone();
         let db_path = self.db_path.clone();
         let analysis = self.analysis_config;
+        let pending_writes = self.pending_writes.clone();
         let log_name = filename.clone();
         log::info!("Loading file '{filename}'");
         thread::Builder::new()
@@ -376,21 +385,30 @@ impl LoadJobs {
                             // Store first (de-duplicates against the existing
                             // recording, keeping its stored track table) while the
                             // freshly segmented tracks are still in stored order.
-                            let db_ref = store_in_history(
-                                db_path.as_deref(),
-                                &file,
-                                &loaded.identity,
-                                meta.as_ref(),
-                                &config,
-                                Some(&bytes),
-                                &log_name,
-                            );
+                            let db_ref = HistoryInsert {
+                                db_path: db_path.as_deref(),
+                                file: &file,
+                                identity: &loaded.identity,
+                                meta: meta.as_ref(),
+                                config: &config,
+                                bytes: Some(&bytes),
+                                filename: &log_name,
+                                pending_writes: &pending_writes,
+                            }
+                            .store();
                             let open_db_ref = open.as_ref().map(HistoryOpen::db_ref).cloned();
                             let history_db_ref = db_ref.or(open_db_ref);
                             match &open {
                                 Some(HistoryOpen::Recalculate { db_ref, .. }) => {
                                     if let Some(path) = db_path.as_deref() {
-                                        recalculate_stored_tracks(path, db_ref, &file, &config);
+                                        recalculate_stored_tracks(
+                                            path,
+                                            db_ref,
+                                            &file,
+                                            &config,
+                                            &log_name,
+                                            &pending_writes,
+                                        );
                                     }
                                 }
                                 Some(HistoryOpen::ApplyHidden { positions, .. }) => {
@@ -804,8 +822,17 @@ fn recalculate_stored_tracks(
     db_ref: &gt_store::DatabaseRef,
     file: &LoadedFile,
     config: &SegmentationConfig,
+    filename: &str,
+    pending_writes: &PendingWrites,
 ) {
     use gt_store::HistoryDatabase;
+    let Some(_write) = pending_writes.try_begin(
+        format!("Recalculating the stored tracks of {filename}"),
+        WriteKind::RecordingDatabase,
+    ) else {
+        log::debug!("Not recalculating the stored tracks of '{filename}': shutting down");
+        return;
+    };
     let tracks = track_ranges_from_file(file);
     let settings = stored_segmentation_from_config(config);
     match gt_store::Recordings::open_or_create(db_path) {
@@ -826,88 +853,115 @@ fn recalculate_stored_tracks(
     }
 }
 
-/// Insert a freshly-loaded recording into the history database, logging the
-/// outcome at each branch. Returns the stored reference, or `None` when storage
-/// is disabled, metadata is missing, or the insert failed.
-fn store_in_history(
-    db_path: Option<&std::path::Path>,
-    file: &LoadedFile,
-    identity: &str,
-    meta: Option<&gt_store::RecordingMeta>,
-    config: &SegmentationConfig,
-    bytes: Option<&[u8]>,
-    filename: &str,
-) -> Option<gt_store::DatabaseRef> {
-    use gt_store::HistoryDatabase;
+/// One freshly loaded recording, and where it is to be stored.
+struct HistoryInsert<'a> {
+    /// `None` when storage is unavailable: nothing is stored then.
+    db_path: Option<&'a std::path::Path>,
+    file: &'a LoadedFile,
+    identity: &'a str,
+    meta: Option<&'a gt_store::RecordingMeta>,
+    config: &'a SegmentationConfig,
+    /// The `.gtd` bytes as they were read, stored alongside the recording.
+    bytes: Option<&'a [u8]>,
+    filename: &'a str,
+    pending_writes: &'a PendingWrites,
+}
 
-    let Some(path) = db_path else {
-        log::debug!("Storage disabled; not storing '{filename}' in history");
-        return None;
-    };
-    let (Some(meta), Some(bytes)) = (meta, bytes) else {
-        log::warn!("No recording metadata for '{filename}'; not storing in history");
-        return None;
-    };
+impl HistoryInsert<'_> {
+    /// Insert the recording into the history database, logging the outcome at
+    /// each branch. Returns the stored reference, or `None` when storage is
+    /// disabled, metadata is missing, the process is shutting down, or the
+    /// insert failed.
+    fn store(self) -> Option<gt_store::DatabaseRef> {
+        use gt_store::HistoryDatabase;
 
-    let tracks = track_ranges_from_file(file);
-    // The cumulative end must cover exactly the recording's nav points (tracks
-    // are a contiguous 1:1 partition), otherwise the derivation is unsound.
-    debug_assert_eq!(
-        tracks.last().map_or(0, |t| t.end),
-        meta.nav_point_count,
-        "track ranges must cover all nav points"
-    );
-    let settings = stored_segmentation_from_config(config);
+        let Self {
+            db_path,
+            file,
+            identity,
+            meta,
+            config,
+            bytes,
+            filename,
+            pending_writes,
+        } = self;
 
-    let mut db = match gt_store::Recordings::open_or_create(path) {
-        Ok(db) => db,
-        Err(e) => {
-            log::warn!("Could not open history database at {}: {e}", path.display());
+        let Some(path) = db_path else {
+            log::debug!("Storage disabled; not storing '{filename}' in history");
             return None;
-        }
-    };
-    log::debug!(
-        "Storing '{filename}' in history at {} with identity={identity:?}, start_us={}, nav_points={}, tracks={}",
-        path.display(),
-        meta.start_us,
-        meta.nav_point_count,
-        tracks.len()
-    );
-    match db.insert(identity, meta, &tracks, settings, bytes) {
-        Ok(db_ref) => {
-            match db.list_recordings() {
-                Ok(entries) => {
-                    if entries.iter().any(|entry| entry.db_ref == db_ref) {
-                        log::info!(
-                            "Stored '{filename}' in history as identity={:?}, group={:?} ({} track(s))",
-                            db_ref.identity,
-                            db_ref.group_name,
-                            tracks.len()
-                        );
-                    } else {
+        };
+        let (Some(meta), Some(bytes)) = (meta, bytes) else {
+            log::warn!("No recording metadata for '{filename}'; not storing in history");
+            return None;
+        };
+        let Some(_write) = pending_writes.try_begin(
+            format!("Storing {filename} in recording history"),
+            WriteKind::RecordingDatabase,
+        ) else {
+            log::debug!("Not storing '{filename}' in history: shutting down");
+            return None;
+        };
+
+        let tracks = track_ranges_from_file(file);
+        // The cumulative end must cover exactly the recording's nav points (tracks
+        // are a contiguous 1:1 partition), otherwise the derivation is unsound.
+        debug_assert_eq!(
+            tracks.last().map_or(0, |t| t.end),
+            meta.nav_point_count,
+            "track ranges must cover all nav points"
+        );
+        let settings = stored_segmentation_from_config(config);
+
+        let mut db = match gt_store::Recordings::open_or_create(path) {
+            Ok(db) => db,
+            Err(e) => {
+                log::warn!("Could not open history database at {}: {e}", path.display());
+                return None;
+            }
+        };
+        log::debug!(
+            "Storing '{filename}' in history at {} with identity={identity:?}, start_us={}, nav_points={}, tracks={}",
+            path.display(),
+            meta.start_us,
+            meta.nav_point_count,
+            tracks.len()
+        );
+        match db.insert(identity, meta, &tracks, settings, bytes) {
+            Ok(db_ref) => {
+                match db.list_recordings() {
+                    Ok(entries) => {
+                        if entries.iter().any(|entry| entry.db_ref == db_ref) {
+                            log::info!(
+                                "Stored '{filename}' in history as identity={:?}, group={:?} ({} track(s))",
+                                db_ref.identity,
+                                db_ref.group_name,
+                                tracks.len()
+                            );
+                        } else {
+                            log::error!(
+                                "Stored '{filename}' in history as identity={:?}, group={:?}, but it is not visible in the history listing",
+                                db_ref.identity,
+                                db_ref.group_name
+                            );
+                        }
+                    }
+                    Err(e) => {
                         log::error!(
-                            "Stored '{filename}' in history as identity={:?}, group={:?}, but it is not visible in the history listing",
+                            "Stored '{filename}' in history as identity={:?}, group={:?}, but listing the history failed: {e}",
                             db_ref.identity,
                             db_ref.group_name
                         );
                     }
                 }
-                Err(e) => {
-                    log::error!(
-                        "Stored '{filename}' in history as identity={:?}, group={:?}, but listing the history failed: {e}",
-                        db_ref.identity,
-                        db_ref.group_name
-                    );
-                }
+                Some(db_ref)
             }
-            Some(db_ref)
-        }
-        Err(e) => {
-            log::warn!(
-                "Failed to store '{filename}' in history at {} with identity={identity:?}: {e}",
-                path.display()
-            );
-            None
+            Err(e) => {
+                log::warn!(
+                    "Failed to store '{filename}' in history at {} with identity={identity:?}: {e}",
+                    path.display()
+                );
+                None
+            }
         }
     }
 }
@@ -1060,7 +1114,7 @@ mod tests {
     /// own for the log to be named after its first entry.
     #[test]
     fn loading_pasted_log_text_completes_as_a_parsed_log() {
-        let mut jobs = LoadJobs::new(egui::Context::default());
+        let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
         jobs.spawn_pasted_log_text(
             "2026-01-01 14:02:11 navsyncd: uploaded 2 recordings\n".to_owned(),
         );
@@ -1083,7 +1137,7 @@ mod tests {
         let path = dir.path().join("navsyncd.log");
         std::fs::write(&path, "2026-01-01 14:02:11 navsyncd: queue empty\n").expect("write log");
 
-        let mut jobs = LoadJobs::new(egui::Context::default());
+        let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
         jobs.spawn_log_path(path);
 
         let completed = drain_until_complete(&mut jobs);
@@ -1100,7 +1154,7 @@ mod tests {
     /// Log text with no recognised timestamp format fails the load.
     #[test]
     fn loading_log_text_without_a_recognised_timestamp_fails() {
-        let mut jobs = LoadJobs::new(egui::Context::default());
+        let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
         jobs.spawn_pasted_log_text("kernel: no timestamp here\n".to_owned());
 
         let completed = drain_until_complete(&mut jobs);
@@ -1122,7 +1176,7 @@ mod tests {
         let gtd_path = write_sample_gtd(dir.path());
         let db_path = dir.path().join("history.h5");
 
-        let mut jobs = LoadJobs::new(egui::Context::default());
+        let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
         jobs.db_path = Some(db_path.clone());
         jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default());
 
@@ -1152,7 +1206,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let gtd_path = write_sample_gtd(dir.path());
 
-        let mut jobs = LoadJobs::new(egui::Context::default());
+        let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
         jobs.db_path = None;
         jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default());
 
@@ -1167,6 +1221,116 @@ mod tests {
         );
     }
 
+    /// A load finishing after shutdown began still reaches the view, and
+    /// leaves the recording database as it was.
+    #[test]
+    fn loading_a_gtd_file_while_shutting_down_stores_nothing() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let gtd_path = write_sample_gtd(dir.path());
+        let db_path = dir.path().join("history.h5");
+        let pending_writes = PendingWrites::default();
+        pending_writes.begin_shutdown();
+
+        let mut jobs = LoadJobs::new(egui::Context::default(), pending_writes);
+        jobs.db_path = Some(db_path.clone());
+        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default());
+
+        let completed = drain_until_complete(&mut jobs);
+        let outcome = completed.outcome.expect("load should succeed");
+        let LoadOutcome::GtdFile { file, history, .. } = outcome else {
+            panic!("expected a GtdFile outcome");
+        };
+        assert!(!file.tracks.is_empty(), "the recording still loads");
+        assert!(history.db_ref().is_none());
+        assert!(!db_path.exists(), "the database was never opened");
+    }
+
+    /// A sample recording, loaded and stored in a fresh history database.
+    fn load_and_store_sample(
+        dir: &std::path::Path,
+    ) -> (PathBuf, gt_store::DatabaseRef, LoadedFile) {
+        let gtd_path = write_sample_gtd(dir);
+        let db_path = dir.join("history.h5");
+        let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
+        jobs.db_path = Some(db_path.clone());
+        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default());
+
+        let completed = drain_until_complete(&mut jobs);
+        let LoadOutcome::GtdFile { file, history, .. } =
+            completed.outcome.expect("load should succeed")
+        else {
+            panic!("expected a GtdFile outcome");
+        };
+        let db_ref = history
+            .db_ref()
+            .cloned()
+            .expect("loaded file must be stored in history");
+        (db_path, db_ref, file)
+    }
+
+    /// The stored track split gap of `db_ref`, as the database holds it now.
+    fn stored_track_split_gap_us(db_path: &std::path::Path, db_ref: &gt_store::DatabaseRef) -> i64 {
+        let db = Recordings::open_or_create(db_path).expect("open db");
+        db.load(db_ref)
+            .expect("load stored recording")
+            .segmentation
+            .expect("a stored segmentation")
+            .track_split_gap_us
+    }
+
+    /// Recalculating overwrites the stored segmentation with the one the
+    /// recording was opened under.
+    #[test]
+    fn recalculating_stored_tracks_writes_the_segmentation_it_ran_under() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (db_path, db_ref, file) = load_and_store_sample(dir.path());
+        let config = SegmentationConfig {
+            track_layout: TrackLayoutConfig {
+                track_split_gap: chrono::Duration::milliseconds(42_500),
+            },
+            ..SegmentationConfig::default()
+        };
+
+        recalculate_stored_tracks(
+            &db_path,
+            &db_ref,
+            &file,
+            &config,
+            "sample.gtd",
+            &PendingWrites::default(),
+        );
+
+        assert_eq!(stored_track_split_gap_us(&db_path, &db_ref), 42_500_000);
+    }
+
+    /// Recalculating after shutdown began leaves the stored segmentation as it
+    /// was.
+    #[test]
+    fn recalculating_stored_tracks_while_shutting_down_writes_nothing() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (db_path, db_ref, file) = load_and_store_sample(dir.path());
+        let stored_before = stored_track_split_gap_us(&db_path, &db_ref);
+        let config = SegmentationConfig {
+            track_layout: TrackLayoutConfig {
+                track_split_gap: chrono::Duration::milliseconds(42_500),
+            },
+            ..SegmentationConfig::default()
+        };
+        let pending_writes = PendingWrites::default();
+        pending_writes.begin_shutdown();
+
+        recalculate_stored_tracks(
+            &db_path,
+            &db_ref,
+            &file,
+            &config,
+            "sample.gtd",
+            &pending_writes,
+        );
+
+        assert_eq!(stored_track_split_gap_us(&db_path, &db_ref), stored_before);
+    }
+
     /// A loaded recording is stored with a per-track table, and those tracks can
     /// be hidden (what "Remove filtered data" does), surfacing in the listing so
     /// "Delete hidden data" enables.
@@ -1176,7 +1340,7 @@ mod tests {
         let gtd_path = write_sample_gtd(dir.path());
         let db_path = dir.path().join("history.h5");
 
-        let mut jobs = LoadJobs::new(egui::Context::default());
+        let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
         jobs.db_path = Some(db_path.clone());
         jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default());
         let completed = drain_until_complete(&mut jobs);

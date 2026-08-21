@@ -26,6 +26,7 @@ use gt_ionex::tec::TotalElectronContent;
 use gt_ionex::text;
 use gt_ionex::{IonexProduct, calendar, transport};
 use gt_map::{TecHeatmapSnapshot, TecLayer};
+use gt_pending_writes::PendingWrites;
 use gt_store::{ArchiveUsage, IonexStore, IonexStoreError};
 use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{ArcIdentity, TecContextSample, TecPoint, TecSeries};
@@ -33,7 +34,7 @@ use gt_ui_types::{ArcIdentity, TecContextSample, TecPoint, TecSeries};
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
 use super::day_fetch_status::ArchivedDayCount;
-use super::environment_storage::PrunedDays;
+use super::environment_storage::{EnvironmentArchive, PrunedDays};
 use super::fix_positions::FixPositionTimeline;
 use super::tec_quiet_time::QuietTimeDeviationCache;
 
@@ -52,12 +53,19 @@ enum MapDayMessage {
         day: NaiveDate,
         detail: String,
     },
+    /// The day was downloaded, then discarded unarchived because the process
+    /// is shutting down.
+    NotArchivedDuringShutdown {
+        day: NaiveDate,
+    },
 }
 
 impl MapDayMessage {
     fn day(&self) -> NaiveDate {
         match *self {
-            Self::Stored { day, .. } | Self::Failed { day, .. } => day,
+            Self::Stored { day, .. }
+            | Self::Failed { day, .. }
+            | Self::NotArchivedDuringShutdown { day } => day,
         }
     }
 }
@@ -101,6 +109,9 @@ pub struct TecMapScheduler {
     /// The day the heatmap draws and its maps, read from the archive on demand
     /// and kept until the shown day changes or that day is archived again.
     shown: Option<(NaiveDate, GlobalIonosphereMaps)>,
+    /// Registers every archive insert, and refuses the ones that would start
+    /// after shutdown began.
+    pending_writes: PendingWrites,
 }
 
 impl TecMapScheduler {
@@ -110,6 +121,7 @@ impl TecMapScheduler {
         mirrors: MirrorList,
         earthdata_token: Option<SecretToken>,
         transport_source: TransportSource,
+        pending_writes: PendingWrites,
     ) -> Self {
         let (tx, rx) = mpsc::channel();
         let archived_days = store
@@ -132,6 +144,7 @@ impl TecMapScheduler {
             quiet_time: QuietTimeDeviationCache::default(),
             selection: TecInstantSelection::new(None, Utc::now().date_naive()),
             shown: None,
+            pending_writes,
         }
     }
 
@@ -303,6 +316,9 @@ impl TecMapScheduler {
                 MapDayMessage::Failed { day, detail } => {
                     log::error!("No TEC maps archived for {day}: {detail}");
                     self.days.report_failure(day, detail);
+                }
+                MapDayMessage::NotArchivedDuringShutdown { day } => {
+                    log::debug!("No TEC maps archived for {day}: shutting down");
                 }
             }
         }
@@ -516,19 +532,41 @@ impl TecMapScheduler {
         let Some(store) = self.store.as_ref().map(Arc::clone) else {
             return;
         };
+        if self.pending_writes.is_shutting_down() {
+            return;
+        }
         let Some(day) = self.days.take_next_day() else {
             return;
         };
         let transport = self.transport();
-        spawn_fetch(
-            self.ctx.clone(),
-            self.tx.clone(),
-            transport,
-            store,
-            self.mirrors.clone(),
-            self.earthdata_token.clone(),
-            day,
-        );
+        self.spawn_fetch(transport, store, day);
+    }
+
+    #[expect(
+        clippy::expect_used,
+        reason = "thread spawn can only fail under extreme system resource exhaustion"
+    )]
+    fn spawn_fetch(&self, transport: Arc<Connection>, store: Arc<IonexStore>, day: NaiveDate) {
+        let ctx = self.ctx.clone();
+        let tx = self.tx.clone();
+        let mirrors = self.mirrors.clone();
+        let earthdata_token = self.earthdata_token.clone();
+        let pending_writes = self.pending_writes.clone();
+        thread::Builder::new()
+            .name(format!("tec-{day}"))
+            .spawn(move || {
+                let message = ingest(
+                    transport.as_ref(),
+                    &store,
+                    &mirrors,
+                    earthdata_token.as_ref(),
+                    day,
+                    &pending_writes,
+                );
+                tx.send(message).ok();
+                ctx.request_repaint();
+            })
+            .expect("failed to spawn TEC map worker thread");
     }
 
     /// The transport to fetch on, opened once and kept until the mirror list
@@ -632,35 +670,6 @@ fn archived_days_of(store: &IonexStore) -> BTreeSet<NaiveDate> {
         .collect()
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "thread spawn can only fail under extreme system resource exhaustion"
-)]
-fn spawn_fetch(
-    ctx: Context,
-    tx: mpsc::Sender<MapDayMessage>,
-    transport: Arc<Connection>,
-    store: Arc<IonexStore>,
-    mirrors: MirrorList,
-    earthdata_token: Option<SecretToken>,
-    day: NaiveDate,
-) {
-    thread::Builder::new()
-        .name(format!("tec-{day}"))
-        .spawn(move || {
-            let message = ingest(
-                transport.as_ref(),
-                &store,
-                &mirrors,
-                earthdata_token.as_ref(),
-                day,
-            );
-            tx.send(message).ok();
-            ctx.request_repaint();
-        })
-        .expect("failed to spawn TEC map worker thread");
-}
-
 /// Fetch `day` from the first mirror that has it, parse the file, and add its
 /// maps to the archive.
 ///
@@ -672,6 +681,7 @@ fn ingest(
     mirrors: &MirrorList,
     earthdata_token: Option<&SecretToken>,
     day: NaiveDate,
+    pending_writes: &PendingWrites,
 ) -> MapDayMessage {
     let today = Utc::now().date_naive();
     let (mirror, product, maps, skipped) =
@@ -696,6 +706,10 @@ fn ingest(
             }
         };
 
+    let Some(_write) = EnvironmentArchive::IonosphericTec.try_begin_day_insert(pending_writes, day)
+    else {
+        return MapDayMessage::NotArchivedDuringShutdown { day };
+    };
     if let Err(err) = store.insert_or_replace_day(day, mirror.as_ref(), Utc::now(), product, &maps)
     {
         return MapDayMessage::Failed {
@@ -801,6 +815,7 @@ mod tests {
             MirrorList::default(),
             None,
             TransportSource::Offline,
+            PendingWrites::default(),
         );
         (dir, store, scheduler)
     }
@@ -813,6 +828,7 @@ mod tests {
             MirrorList::default(),
             None,
             TransportSource::Offline,
+            PendingWrites::default(),
         )
     }
 
@@ -1065,6 +1081,7 @@ mod tests {
             &MirrorList::single(gt_ionex::Mirror::publishing(MirrorLayout::Cddis)),
             None,
             day(2024, 5, 10),
+            &PendingWrites::default(),
         );
 
         match message {
@@ -1072,7 +1089,9 @@ mod tests {
                 detail.contains(gt_ionex::text::MIRROR_SKIPPED_WITHOUT_TOKEN),
                 "{detail}"
             ),
-            MapDayMessage::Stored { .. } => panic!("the archive was never requested"),
+            MapDayMessage::Stored { .. } | MapDayMessage::NotArchivedDuringShutdown { .. } => {
+                panic!("the archive was never requested")
+            }
         }
         assert!(transport.requested_urls().is_empty());
         assert!(store.archived_days().expect("days").is_empty());
@@ -1122,7 +1141,14 @@ mod tests {
             body: gzipped(&published_file()),
         }));
 
-        let message = ingest(&transport, &store, &publishing_host(), None, ingested);
+        let message = ingest(
+            &transport,
+            &store,
+            &publishing_host(),
+            None,
+            ingested,
+            &PendingWrites::default(),
+        );
 
         assert!(matches!(
             message,
@@ -1158,7 +1184,14 @@ mod tests {
             body: gzipped(&published_file()),
         }));
 
-        ingest(&transport, &store, &publishing_host(), None, ingested);
+        ingest(
+            &transport,
+            &store,
+            &publishing_host(),
+            None,
+            ingested,
+            &PendingWrites::default(),
+        );
 
         let maps = store
             .day_maps(ingested)
@@ -1186,8 +1219,22 @@ mod tests {
             body: gzipped(&published_file()),
         }));
 
-        ingest(&transport, &store, &publishing_host(), None, ingested);
-        ingest(&transport, &store, &publishing_host(), None, ingested);
+        ingest(
+            &transport,
+            &store,
+            &publishing_host(),
+            None,
+            ingested,
+            &PendingWrites::default(),
+        );
+        ingest(
+            &transport,
+            &store,
+            &publishing_host(),
+            None,
+            ingested,
+            &PendingWrites::default(),
+        );
 
         assert_eq!(store.archived_days().expect("days").len(), 1);
     }
@@ -1207,6 +1254,7 @@ mod tests {
             &publishing_host(),
             None,
             day(2024, 5, 10),
+            &PendingWrites::default(),
         );
 
         assert!(matches!(message, MapDayMessage::Failed { .. }));
@@ -1235,6 +1283,7 @@ mod tests {
             &mirrors(&["https://first.example", "https://second.example"]),
             None,
             ingested,
+            &PendingWrites::default(),
         );
 
         match message {
@@ -1245,6 +1294,9 @@ mod tests {
                 assert_eq!(skipped.len(), 1, "the first mirror holds no file");
             }
             MapDayMessage::Failed { detail, .. } => panic!("{detail}"),
+            MapDayMessage::NotArchivedDuringShutdown { .. } => {
+                panic!("the run is not shutting down")
+            }
         }
         assert_eq!(
             store
@@ -1271,6 +1323,7 @@ mod tests {
             &mirrors(&["https://first.example", "https://second.example"]),
             None,
             day(2024, 5, 10),
+            &PendingWrites::default(),
         );
 
         match message {
@@ -1281,7 +1334,9 @@ mod tests {
                      https://second.example: HTTP 500 Internal Server Error"
                 );
             }
-            MapDayMessage::Stored { .. } => panic!("no mirror served a file"),
+            MapDayMessage::Stored { .. } | MapDayMessage::NotArchivedDuringShutdown { .. } => {
+                panic!("no mirror served a file")
+            }
         }
     }
 
@@ -1353,6 +1408,7 @@ mod tests {
         day: day(2024, 5, 10),
         detail: "final: HTTP 500 Internal Server Error".to_owned(),
     })]
+    #[case::shutting_down(MapDayMessage::NotArchivedDuringShutdown { day: day(2024, 5, 10) })]
     fn progress_advances_on_every_outcome(#[case] message: MapDayMessage) {
         let mut scheduler = scheduler_without_archive();
         scheduler

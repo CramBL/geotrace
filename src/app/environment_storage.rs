@@ -10,6 +10,7 @@ use std::thread;
 
 use chrono::{Months, NaiveDate, Utc};
 use egui::Context;
+use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteKind};
 use gt_store::{ArchiveUsage, FlareStore, IonexStore, JamStore, SolarStore};
 use strum::{EnumIter, IntoEnumIterator as _};
 
@@ -47,6 +48,21 @@ impl EnvironmentArchive {
             Self::IonosphericTec => "ionospheric TEC",
             Self::SolarFlares => "solar flares",
         }
+    }
+
+    /// Register the insert of one downloaded day, or [`None`] once shutdown
+    /// has begun and the day is to be discarded.
+    pub fn try_begin_day_insert(
+        self,
+        pending_writes: &PendingWrites,
+        day: NaiveDate,
+    ) -> Option<PendingWriteGuard> {
+        pending_writes.try_begin(
+            format!("Archiving {} for {day}", self.label_in_sentence()),
+            WriteKind::ArchiveDayInsert {
+                archive: self.label_in_sentence(),
+            },
+        )
     }
 }
 
