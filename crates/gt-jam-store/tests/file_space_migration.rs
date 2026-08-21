@@ -101,7 +101,7 @@ fn an_archive_from_before_the_paged_strategy_is_rebuilt_and_reads_back() {
         Some((day, HOST, fetched_at))
     );
     assert!(
-        !dir.path().join(format!("{FILE_NAME}.rebuilding")).exists(),
+        !ArchiveFile::new(&path).rebuilding_path().exists(),
         "the rebuild left its file behind"
     );
 }

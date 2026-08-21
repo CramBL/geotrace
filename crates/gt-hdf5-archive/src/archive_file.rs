@@ -124,9 +124,10 @@ impl ArchiveFile {
         Ok(())
     }
 
-    /// Path of the file a rebuild fills. It sits beside the archive, where a
-    /// rename onto it stays within one filesystem.
-    fn rebuilding_path(&self) -> PathBuf {
+    /// Path of the file a rebuild fills, which is left behind when the
+    /// rebuild is interrupted. It sits beside the archive, where a rename
+    /// onto it stays within one filesystem.
+    pub fn rebuilding_path(&self) -> PathBuf {
         let mut path = self.path.clone().into_os_string();
         path.push(REBUILD_SUFFIX);
         PathBuf::from(path)

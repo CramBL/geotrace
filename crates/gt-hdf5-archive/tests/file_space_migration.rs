@@ -1,6 +1,7 @@
 //! Rebuilding an archive created before archives recorded their free space in
 //! pages.
 
+use std::fs;
 use std::path::PathBuf;
 
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
@@ -90,15 +91,8 @@ impl TestArchive {
             .map_err(|err| format!("strategy: {err}"))
     }
 
-    /// Path of the file an interrupted rebuild leaves beside the archive.
-    fn rebuilding_path(&self) -> PathBuf {
-        let mut path = self.path.clone().into_os_string();
-        path.push(".rebuilding");
-        PathBuf::from(path)
-    }
-
     fn size_on_disk(&self) -> Result<u64, String> {
-        Ok(std::fs::metadata(&self.path)
+        Ok(fs::metadata(&self.path)
             .map_err(|err| format!("metadata: {err}"))?
             .len())
     }
@@ -265,7 +259,7 @@ fn a_rebuilt_archive_is_not_rebuilt_again() {
 fn a_paged_archive_is_left_as_it_is() {
     let archive = TestArchive::create_paged().expect("archive");
     archive.insert_days(&STORED_DAYS).expect("insert");
-    let modified = std::fs::metadata(&archive.path)
+    let modified = fs::metadata(&archive.path)
         .and_then(|file| file.modified())
         .expect("modified time");
     let size = archive.size_on_disk().expect("size");
@@ -277,7 +271,7 @@ fn a_paged_archive_is_left_as_it_is() {
 
     assert_eq!(archive.size_on_disk().expect("size"), size);
     assert_eq!(
-        std::fs::metadata(&archive.path)
+        fs::metadata(&archive.path)
             .and_then(|file| file.modified())
             .expect("modified time"),
         modified
@@ -293,12 +287,16 @@ fn a_file_an_interrupted_rebuild_left_is_removed(
 ) {
     let archive = archive.expect("archive");
     archive.insert_days(&STORED_DAYS).expect("insert");
-    std::fs::write(archive.rebuilding_path(), b"half a rebuild").expect("write");
+    fs::write(
+        ArchiveFile::new(&archive.path).rebuilding_path(),
+        b"half a rebuild",
+    )
+    .expect("write");
 
     assert_eq!(archive.migrate().expect("migrate"), expected);
 
     assert!(
-        !archive.rebuilding_path().exists(),
+        !ArchiveFile::new(&archive.path).rebuilding_path().exists(),
         "the file is still there"
     );
     assert_eq!(
