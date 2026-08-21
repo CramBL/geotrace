@@ -565,16 +565,7 @@ fn copying_a_query_result_writes_a_tab_separated_table() {
         .click();
     harness.run_steps(1);
 
-    let copied = harness
-        .output()
-        .platform_output
-        .commands
-        .iter()
-        .find_map(|command| match command {
-            egui::OutputCommand::CopyText(text) => Some(text.clone()),
-            egui::OutputCommand::OpenUrl(_) | egui::OutputCommand::CopyImage(_) => None,
-        })
-        .expect("the button copied the table");
+    let copied = copied_text(&harness);
     let matches = harness
         .state()
         .query_window
@@ -590,6 +581,113 @@ fn copying_a_query_result_writes_a_tab_separated_table() {
         copied.lines().count(),
         matched_points + 1,
         "one line per matched point, under the header"
+    );
+}
+
+/// The text the app last put on the clipboard.
+fn copied_text(harness: &Harness<'_, App>) -> String {
+    harness
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            egui::OutputCommand::CopyText(text) => Some(text.clone()),
+            egui::OutputCommand::OpenUrl(_) | egui::OutputCommand::CopyImage(_) => None,
+        })
+        .expect("nothing was copied")
+}
+
+/// The accel fixture with a channel-source query run over it: two stretches of
+/// matched samples for one table to list.
+fn channel_app_with_query_run() -> Harness<'static, App> {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(accel_channel_gtd_bytes(28.0), "accel_demo.gtd"),
+    );
+    harness.state_mut().query_window.open = true;
+    harness.run_steps(3);
+    run_query(&mut harness, "@accel | where @accel.x > 1 g");
+    harness
+}
+
+/// A channel run's samples fold like a points query's matches: collapsing them
+/// all leaves one name row per matched stretch, listing no samples.
+#[test]
+fn collapsing_a_channel_run_leaves_a_name_row_per_matched_stretch() {
+    let mut harness = channel_app_with_query_run();
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, ICON_ARROWS_IN)
+        .click();
+    harness.run_steps(3);
+
+    for stretch in ACCEL_HIGH_RANGES {
+        assert_eq!(
+            harness
+                .query_all_by_label_contains(&format!("{} samples", stretch.len()))
+                .count(),
+            1,
+            "every matched stretch is named"
+        );
+    }
+    assert_eq!(
+        harness.query_all_by_label_contains("11:34:20.000").count(),
+        0,
+        "the folded stretches list no samples"
+    );
+}
+
+/// "Copy as TSV" writes a channel run the way it writes a points query: a
+/// header line naming each column in the unit the track declared, then one
+/// line per matched sample.
+#[test]
+fn copying_a_channel_result_writes_a_tab_separated_sample_table() {
+    let mut harness = channel_app_with_query_run();
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, ICON_COPY)
+        .click();
+    harness.run_steps(1);
+
+    let copied = copied_text(&harness);
+    let mut lines = copied.lines();
+    assert_eq!(
+        lines.next(),
+        Some("match\tsample\ttime\tx (g)\ty (g)\tz (g)")
+    );
+    assert_eq!(
+        lines.next(),
+        Some("1\t60\t11:34:20.000\t1.500\t0.100\t0.980")
+    );
+    let samples: usize = ACCEL_HIGH_RANGES.iter().map(Range::len).sum();
+    assert_eq!(
+        copied.lines().count(),
+        samples + 1,
+        "one line per matched sample, under the header"
+    );
+}
+
+/// A channel match's "Show on map" button is grayed out, stating on hover that
+/// a sample has no position of its own.
+#[test]
+fn a_channel_match_states_why_it_cannot_frame_the_map() {
+    let mut harness = channel_app_with_query_run();
+    let button = harness.get_by_role_and_label(egui::accesskit::Role::Button, ICON_FRAME_CORNERS);
+    assert!(
+        button.accesskit_node().is_disabled(),
+        "a sample range cannot frame the map"
+    );
+
+    let center = button.rect().center();
+    harness.hover_at_and_settle(center, 5);
+    assert_eq!(
+        harness
+            .query_all_by_label_contains("Channel samples have no position")
+            .count(),
+        1,
+        "the disabled button states why"
     );
 }
 
@@ -1425,9 +1523,9 @@ fn snapshot_app_plot_light() {
 }
 
 /// A channel-source query end to end: filtering on a vector channel's
-/// component (`@accel.x`) runs standalone, the results list per-track sample
-/// tables (time plus each component), and the map halos the track segments
-/// the matched samples cover.
+/// component (`@accel.x`) runs standalone, the results list the matched
+/// samples in one table (time plus each component) under a name row per
+/// matched stretch, and the map halos the track segments those samples cover.
 #[test]
 fn snapshot_app_query_channel_source() {
     let (mut harness, _config_path) = TestHarness::builder()
@@ -1457,12 +1555,13 @@ fn snapshot_app_query_channel_source() {
     step_until_query_result(&mut harness.inner);
     harness.inner.run_steps(60);
 
-    // The crafted stretches match: the per-track sample table lists them
-    // and the map draws halos over the covered segments.
-    let matched: usize = ACCEL_HIGH_RANGES.iter().map(|r| r.len()).sum();
+    // The first crafted stretch is named over its sample rows, and the map
+    // draws halos over the segments those samples cover. The stretch after it
+    // starts below the rows the table scrolls at.
+    let first_stretch = ACCEL_HIGH_RANGES.first().expect("two crafted stretches");
     harness
         .inner
-        .get_by_label_contains(&format!("{matched} samples"));
+        .get_by_label_contains(&format!("{} samples", first_stretch.len()));
 
     harness.snapshot_loose("app_query_channel_source");
 }
