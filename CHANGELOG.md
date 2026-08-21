@@ -23,6 +23,7 @@
 - Settings' "Solar flares" page links to reference material on solar flares, radio blackouts and what they do to satellite navigation, and a flare marker's hover states whether the receiver was on the sunlit side when the flare peaked.
 - Settings' "Aircraft interference" page links to reference material on what aircraft report, how a day's cells are computed and what the data does and does not show.
 - A warning when downloaded space weather or interference data overlaps a loaded recording at a level that can disturb reception: a toast on load, and a storm icon in the map corner that lists what was found and stays faintly visible while nothing warns. Clicking the icon states the level each metric warns at, with a link to that metric's reference material.
+- TEC now warns too, from the moderate-storm grade of the planetary ionospheric storm index: at least 43 % above or 30 % below the median of the 27 days before the recording, read at the same location and time of day. Those days' maps are downloaded as well, about 3.4 MB per recording day.
 
 ### Changed
 

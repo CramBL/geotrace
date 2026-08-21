@@ -21,6 +21,7 @@ use gt_fetch::{Connection, OfflineTransport, SecretToken, Transport, TransportSo
 use gt_ionex::instant_selection::TecInstantSelection;
 use gt_ionex::maps::GlobalIonosphereMaps;
 use gt_ionex::mirrors::{MirrorAttempt, MirrorBaseUrl, MirrorList, MirrorOutcome};
+use gt_ionex::quiet_time::{self, QuietTimeDeviation};
 use gt_ionex::tec::TotalElectronContent;
 use gt_ionex::text;
 use gt_ionex::{IonexProduct, calendar, transport};
@@ -31,7 +32,9 @@ use gt_ui_types::{ArcIdentity, TecContextSample, TecPoint, TecSeries};
 
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
+use super::day_fetch_status::ArchivedDayCount;
 use super::fix_positions::FixPositionTimeline;
+use super::tec_quiet_time::QuietTimeDeviationCache;
 
 /// What one day's fetch produced.
 enum MapDayMessage {
@@ -89,6 +92,9 @@ pub struct TecMapScheduler {
     /// The line drawn across the plot's whole span, one sample per archived
     /// map epoch.
     context: ContextSampleCache<TecContextSample>,
+    /// How far each track's TEC stands from the quiet-time background of the
+    /// days before it.
+    quiet_time: QuietTimeDeviationCache,
     /// Which instant the heatmap draws, and the stepper's bounds.
     selection: TecInstantSelection,
     /// The day the heatmap draws and its maps, read from the archive on demand
@@ -122,23 +128,29 @@ impl TecMapScheduler {
             archived_days,
             plot_points: HashMap::new(),
             context: ContextSampleCache::default(),
+            quiet_time: QuietTimeDeviationCache::default(),
             selection: TecInstantSelection::new(None, Utc::now().date_naive()),
             shown: None,
         }
     }
 
-    /// Queue the days a recording spans.
+    /// Queue the days a recording spans, and the quiet-time window before each
+    /// of them.
     ///
     /// Days already archived in the settled product, outside the archives'
     /// coverage, or already queued are dropped. A recording spanning more than
     /// [`calendar::MAX_DAYS_PER_TRACK`] queues nothing.
+    ///
+    /// The window is what the TEC deviation warning measures against, so one
+    /// recording day pulls in the 27 days before it as well: about 3.4 MB per
+    /// recording day at the 125 KiB a day's file costs.
     pub fn request_days_for(&mut self, range: TimeRange) {
         let Some(store) = self.store.as_ref().map(Arc::clone) else {
             return;
         };
         let Some(days) = range.utc_days(calendar::MAX_DAYS_PER_TRACK) else {
             log::info!(
-                "A recording spanning {} is past the {}-day limit; no TEC map days queued",
+                "A recording spanning {} is past the {}-day limit. No TEC map days queued.",
                 range.duration(),
                 calendar::MAX_DAYS_PER_TRACK
             );
@@ -146,14 +158,33 @@ impl TecMapScheduler {
         };
         let today = Utc::now().date_naive();
         self.selection.adopt_default(range.start);
-        for day in days {
+        let recording_days: Vec<NaiveDate> = days
+            .into_iter()
+            .filter(|day| !calendar::fetchable_products(*day, today).is_empty())
+            .collect();
+        let mut background: BTreeSet<NaiveDate> = recording_days
+            .iter()
+            .flat_map(|day| quiet_time::background_days(*day))
+            .collect();
+        for day in &recording_days {
+            background.remove(day);
+            self.days
+                .request_recording_day(*day, day_needs_fetch(&store, *day, today));
+        }
+        for day in background {
             if calendar::fetchable_products(day, today).is_empty() {
                 continue;
             }
             self.days
-                .request_recording_day(day, day_needs_fetch(&store, day, today));
+                .request_background_day(day, day_needs_fetch(&store, day, today));
         }
         self.start_next();
+    }
+
+    /// How far the archive covers the quiet-time windows of the loaded
+    /// recordings, as the settings page reports it.
+    pub fn background_day_coverage(&self) -> ArchivedDayCount {
+        self.days.background_day_coverage()
     }
 
     /// Queue every day in `from..=to` the archive does not already hold in the
@@ -225,6 +256,7 @@ impl TecMapScheduler {
                     self.archived_days.insert(day);
                     self.days.mark_archived(day);
                     self.context.forget(day);
+                    self.quiet_time.forget(day);
                     if self.shown.as_ref().is_some_and(|(shown, _)| *shown == day) {
                         self.shown = None;
                     }
@@ -355,6 +387,19 @@ impl TecMapScheduler {
         }
         self.plot_points.retain(|track, _| live.contains(track));
         series
+    }
+
+    /// The peak deviation of each loaded track's TEC from the quiet-time
+    /// background of the same grid node and time of day.
+    ///
+    /// A track without a value carries no entry: a window the archive holds
+    /// too little of yields no background at all.
+    pub fn quiet_time_deviations(
+        &mut self,
+        files: &[LoadedFile],
+    ) -> HashMap<TrackRef, QuietTimeDeviation> {
+        self.quiet_time
+            .resolve(self.store.as_deref(), &self.archived_days, files)
     }
 
     /// The TEC line across `span`: one sample per archived map epoch, read at
@@ -527,7 +572,10 @@ fn context_day(
 
 /// The maps archived for `day`, reporting a read that failed and treating it
 /// as an unarchived day.
-fn read_archived_maps(store: Option<&IonexStore>, day: NaiveDate) -> Option<GlobalIonosphereMaps> {
+pub(super) fn read_archived_maps(
+    store: Option<&IonexStore>,
+    day: NaiveDate,
+) -> Option<GlobalIonosphereMaps> {
     store?
         .day_maps(day)
         .inspect_err(|err| log::error!("Reading the archived TEC maps for {day}: {err}"))
@@ -630,15 +678,16 @@ fn ingest(
 mod tests {
     use std::io::Write as _;
 
-    use chrono::{DateTime, TimeDelta};
+    use chrono::{DateTime, Datelike as _, TimeDelta};
     use rstest::rstest;
     use tempfile::TempDir;
 
     use crate::app::backfill::BackfillProgress;
     use crate::app::day_failures::DayFailure;
-    use crate::app::day_fetch_status::DayFetchStatus;
+    use crate::app::day_fetch_status::{ArchivedDayCount, DayFetchStatus};
     use crate::app::fix_positions::FixPositions;
     use gt_fetch::BytesResponse;
+    use gt_ionex::quiet_time::IonosphericStormGrade;
     use gt_ionex::{DEFAULT_BASE_URL, MirrorLayout};
     use gt_store::Store;
     use gt_test_utils::{ScriptedTransport, UrlPrefixAnswers};
@@ -789,8 +838,72 @@ mod tests {
         archive_day(&store, day(2024, 5, 10), IonexProduct::Final);
 
         scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17)));
-        assert_eq!(scheduler.days.queued(), 0);
-        assert!(!scheduler.days.is_fetching());
+
+        assert!(
+            !scheduler.days.requested_days().contains(&day(2024, 5, 10)),
+            "the archived recording day stayed off the queue"
+        );
+    }
+
+    /// A recording day is read against the quiet-time window before it, so
+    /// the 27 days preceding it go out too and no later day does. A day the
+    /// archive already holds is counted without being requested.
+    #[test]
+    fn a_recording_day_queues_the_quiet_time_window_before_it() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        archive_day(&store, day(2024, 5, 3), IonexProduct::Final);
+
+        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17)));
+
+        let requested = scheduler.days.requested_days();
+        assert!(
+            requested.contains(&day(2024, 4, 13)),
+            "the first day of the window"
+        );
+        assert!(
+            requested.contains(&day(2024, 5, 9)),
+            "the last day of the window"
+        );
+        assert!(
+            !requested.contains(&day(2024, 4, 12)),
+            "a day before the window"
+        );
+        assert!(
+            !requested.contains(&day(2024, 5, 11)),
+            "a day after the recording"
+        );
+        assert!(
+            !requested.contains(&day(2024, 5, 3)),
+            "a day the archive already holds"
+        );
+        assert_eq!(
+            scheduler.background_day_coverage(),
+            ArchivedDayCount {
+                days: 27,
+                archived: 1,
+            }
+        );
+    }
+
+    /// The window is clipped to what JPL publishes: a recording five days
+    /// into the published record queues those five days alone.
+    #[test]
+    fn a_window_reaching_before_coverage_stops_at_the_first_published_day() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        let recorded = calendar::COVERAGE_START + TimeDelta::days(5);
+
+        scheduler.request_days_for(TimeRange::new(
+            at(recorded.year(), recorded.month(), recorded.day(), 8),
+            at(recorded.year(), recorded.month(), recorded.day(), 17),
+        ));
+
+        assert_eq!(
+            scheduler.background_day_coverage(),
+            ArchivedDayCount {
+                days: 5,
+                archived: 0,
+            }
+        );
     }
 
     /// A rapid map is replaced by a final one about two days later, so the day
@@ -1253,13 +1366,24 @@ mod tests {
 
         scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 11, 17)));
 
+        // The two recording days' windows run from 13 April to 9 May, 27 days
+        // behind the recording day in flight.
         assert_eq!(
             scheduler.days.fetch_status(),
             DayFetchStatus {
                 fetching: Some(day(2024, 5, 11)),
-                queued: 0,
-                recording_days: 2,
-                archived_recording_days: 1,
+                queued: 27,
+                recording_days: ArchivedDayCount {
+                    days: 2,
+                    archived: 1,
+                },
+            }
+        );
+        assert_eq!(
+            scheduler.background_day_coverage(),
+            ArchivedDayCount {
+                days: 27,
+                archived: 0,
             }
         );
     }
@@ -1271,7 +1395,7 @@ mod tests {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.request_days_for(TimeRange::new(at(1970, 1, 1, 0), at(1970, 1, 1, 1)));
 
-        assert_eq!(scheduler.days.fetch_status().recording_days, 0);
+        assert_eq!(scheduler.days.fetch_status().recording_days.days, 0);
     }
 
     /// An archived day moves the loaded recording's coverage up.
@@ -1292,7 +1416,7 @@ mod tests {
             .expect("send");
         scheduler.poll();
 
-        assert_eq!(scheduler.days.fetch_status().archived_recording_days, 1);
+        assert_eq!(scheduler.days.fetch_status().recording_days.archived, 1);
     }
 
     /// Offline, a queued day is still dispatched: the transport declines the
@@ -1302,7 +1426,6 @@ mod tests {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17)));
 
-        assert_eq!(scheduler.days.queued(), 0);
         assert!(scheduler.days.is_fetching());
     }
 
@@ -1398,6 +1521,226 @@ mod tests {
             points.iter().map(|point| point.tecu).collect::<Vec<_>>(),
             [Some(10.0), Some(12.5), Some(15.0), Some(17.5)]
         );
+    }
+
+    /// One day of maps at `step_hours` epochs, every node standing at `scale`
+    /// times the hour of day. It stands in for the diurnal rise, linearly, so
+    /// a clock time between two epochs interpolates to an exact value.
+    fn rising_maps(archived: NaiveDate, step_hours: i64, scale: f64) -> GlobalIonosphereMaps {
+        let samples: Vec<(i64, f64)> = (0..=(24 / step_hours))
+            .map(|step| {
+                let hours = step * step_hours;
+                (hours, scale * hours as f64)
+            })
+            .collect();
+        uniform_maps(archived, &samples)
+    }
+
+    /// Archive one day of `maps` and record it as archived in the scheduler.
+    fn archive_maps(
+        scheduler: &mut TecMapScheduler,
+        store: &IonexStore,
+        archived: NaiveDate,
+        maps: &GlobalIonosphereMaps,
+    ) {
+        store
+            .insert_or_replace_day(archived, "host", Utc::now(), IonexProduct::Final, maps)
+            .expect("insert");
+        scheduler.archived_days.insert(archived);
+    }
+
+    /// The day the deviation tests record on, far enough from the calendar's
+    /// ends for a whole window to exist.
+    fn recorded_day() -> NaiveDate {
+        day(2024, 5, 20)
+    }
+
+    /// The peak deviation of the one loaded track, or [`None`] where its
+    /// window yields no background.
+    fn peak_deviation(
+        scheduler: &mut TecMapScheduler,
+        files: &[gt_types::LoadedFile],
+    ) -> Option<QuietTimeDeviation> {
+        scheduler
+            .quiet_time_deviations(files)
+            .values()
+            .copied()
+            .next()
+    }
+
+    /// Archive the whole window before [`recorded_day`], the recording day
+    /// itself rising at `recorded_scale` and every background day at one.
+    fn archive_whole_window(
+        scheduler: &mut TecMapScheduler,
+        store: &IonexStore,
+        recorded_scale: f64,
+    ) {
+        let recorded = recorded_day();
+        archive_maps(
+            scheduler,
+            store,
+            recorded,
+            &rising_maps(recorded, 2, recorded_scale),
+        );
+        for days_before in 1..=quiet_time::BACKGROUND_WINDOW_DAYS as i64 {
+            let archived = recorded - TimeDelta::days(days_before);
+            archive_maps(scheduler, store, archived, &rising_maps(archived, 2, 1.0));
+        }
+    }
+
+    /// A median is formed only once a majority of the 27 days before the
+    /// recording is archived, so a handful of days never stands in for the
+    /// quiet level.
+    #[rstest]
+    #[case::one_short_of_the_minimum(13, false)]
+    #[case::the_minimum(14, true)]
+    fn a_deviation_needs_a_majority_of_the_window_archived(
+        #[case] archived_days: i64,
+        #[case] expected: bool,
+    ) {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let recorded = recorded_day();
+        archive_maps(
+            &mut scheduler,
+            &store,
+            recorded,
+            &rising_maps(recorded, 2, 1.75),
+        );
+        for days_before in 1..=archived_days {
+            let background = recorded - TimeDelta::days(days_before);
+            archive_maps(
+                &mut scheduler,
+                &store,
+                background,
+                &rising_maps(background, 2, 1.0),
+            );
+        }
+        let files = loaded_files_of(track_over(at(2024, 5, 20, 12), 4, 600));
+
+        let deviation = peak_deviation(&mut scheduler, &files);
+
+        assert_eq!(deviation.is_some(), expected);
+        if let Some(deviation) = deviation {
+            assert!(
+                (deviation.percent_from_median() - 75.0).abs() < 1e-9,
+                "{deviation:?}"
+            );
+            assert_eq!(deviation.grade(), IonosphericStormGrade::ModerateStorm);
+        }
+    }
+
+    /// The background is read at the fix's own time of day, so a day that only
+    /// repeats the ordinary diurnal rise sits at its quiet level and is
+    /// graded quiet.
+    #[test]
+    fn a_diurnal_rise_every_day_repeats_is_no_deviation() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        archive_whole_window(&mut scheduler, &store, 1.0);
+        let files = loaded_files_of(track_over(at(2024, 5, 20, 12), 4, 600));
+
+        let deviation = peak_deviation(&mut scheduler, &files).expect("a fully archived window");
+
+        assert!(
+            deviation.percent_from_median().abs() < 1e-9,
+            "{deviation:?}"
+        );
+        assert_eq!(deviation.grade(), IonosphericStormGrade::Quiet);
+    }
+
+    /// A rapid day publishes maps an hour apart and a final day two, so a
+    /// window holding both is read at the clock time the fix's own epoch names
+    /// rather than by matching epochs off against each other. The final days
+    /// interpolate between the two epochs bracketing that time.
+    #[test]
+    fn a_window_of_hourly_and_two_hourly_days_is_read_at_one_clock_time() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let recorded = recorded_day();
+        archive_maps(
+            &mut scheduler,
+            &store,
+            recorded,
+            &rising_maps(recorded, 1, 3.0),
+        );
+        for days_before in 1..=quiet_time::BACKGROUND_WINDOW_DAYS as i64 {
+            let archived = recorded - TimeDelta::days(days_before);
+            let step_hours = if days_before % 2 == 0 { 2 } else { 1 };
+            archive_maps(
+                &mut scheduler,
+                &store,
+                archived,
+                &rising_maps(archived, step_hours, 1.0),
+            );
+        }
+        // 13:07 sits nearest the recording day's own 13:00 epoch, which the
+        // two-hourly days reach only between their 12:00 and 14:00 maps.
+        let files = loaded_files_of(track_over(
+            at(2024, 5, 20, 13) + TimeDelta::minutes(7),
+            4,
+            60,
+        ));
+
+        let deviation = peak_deviation(&mut scheduler, &files).expect("a fully archived window");
+
+        assert!(
+            (deviation.percent_from_median() - 200.0).abs() < 1e-9,
+            "{deviation:?}"
+        );
+        assert_eq!(deviation.grade(), IonosphericStormGrade::IntenseStorm);
+    }
+
+    /// A rapid day replaced by a final one holds different values under the
+    /// same date, so the day the ingest reports is read again.
+    #[test]
+    fn a_day_archived_again_is_read_into_the_deviation_again() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        archive_whole_window(&mut scheduler, &store, 1.75);
+        let files = loaded_files_of(track_over(at(2024, 5, 20, 12), 4, 600));
+
+        let first = peak_deviation(&mut scheduler, &files).expect("a fully archived window");
+        assert!(
+            (first.percent_from_median() - 75.0).abs() < 1e-9,
+            "{first:?}"
+        );
+
+        let recorded = recorded_day();
+        store
+            .insert_or_replace_day(
+                recorded,
+                "host",
+                Utc::now(),
+                IonexProduct::Final,
+                &rising_maps(recorded, 2, 3.0),
+            )
+            .expect("insert");
+        scheduler
+            .tx
+            .send(MapDayMessage::Stored {
+                day: recorded,
+                mirror: MirrorBaseUrl::new(DEFAULT_BASE_URL),
+                product: IonexProduct::Final,
+                map_count: 13,
+                skipped: Vec::new(),
+            })
+            .expect("send");
+        scheduler.poll();
+
+        let revised = peak_deviation(&mut scheduler, &files).expect("a fully archived window");
+
+        assert!(
+            (revised.percent_from_median() - 200.0).abs() < 1e-9,
+            "{revised:?}"
+        );
+    }
+
+    /// A recording that is closed takes its deviation with it.
+    #[test]
+    fn unloading_a_recording_drops_its_deviation() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        archive_whole_window(&mut scheduler, &store, 1.75);
+        let files = loaded_files_of(track_over(at(2024, 5, 20, 12), 4, 600));
+
+        assert_eq!(scheduler.quiet_time_deviations(&files).len(), 1);
+        assert!(scheduler.quiet_time_deviations(&[]).is_empty());
     }
 
     /// Loading a recording points the heatmap at its first fix's instant.

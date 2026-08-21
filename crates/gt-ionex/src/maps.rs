@@ -177,6 +177,20 @@ impl GlobalIonosphereMaps {
         ))
     }
 
+    /// The epoch of the map nearest `time`, the later one exactly halfway
+    /// between two.
+    ///
+    /// [`None`] for a time outside the file's epochs, which the file says
+    /// nothing about.
+    pub fn nearest_epoch(&self, time: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        let bracket = self.bracketing_maps(time)?;
+        Some(if bracket.fraction_from_earlier < 0.5 {
+            bracket.earlier.epoch()
+        } else {
+            bracket.later.epoch()
+        })
+    }
+
     fn bracketing_maps(&self, time: DateTime<Utc>) -> Option<TimeBracket<'_>> {
         let later_index = self.maps.partition_point(|map| map.epoch() <= time);
         let earlier = self.maps.get(later_index.checked_sub(1)?)?;
@@ -335,6 +349,24 @@ mod tests {
     fn a_time_outside_the_file_has_no_value(#[case] hours_from_the_first_epoch: i64) {
         let time = epoch(0) + TimeDelta::hours(hours_from_the_first_epoch);
         assert_eq!(value_at(&two_maps(), 10.0, -180.0, time), None);
+    }
+
+    /// The nearest epoch to a time, the later map exactly halfway between
+    /// two, and nothing for a time the file does not reach.
+    #[rstest]
+    #[case::before_the_first_map(-60, None)]
+    #[case::the_first_epoch(0, Some(0))]
+    #[case::just_short_of_halfway(59, Some(0))]
+    #[case::halfway(60, Some(2))]
+    #[case::the_last_epoch(120, Some(2))]
+    #[case::after_the_last_map(121, None)]
+    fn a_time_reads_back_as_the_epoch_nearest_it(
+        #[case] minutes_from_the_first_epoch: i64,
+        #[case] expected_hour: Option<u32>,
+    ) {
+        let time = epoch(0) + TimeDelta::minutes(minutes_from_the_first_epoch);
+
+        assert_eq!(two_maps().nearest_epoch(time), expected_hour.map(epoch));
     }
 
     #[test]

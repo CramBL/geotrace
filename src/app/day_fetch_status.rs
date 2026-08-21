@@ -9,44 +9,71 @@ use chrono::NaiveDate;
 use egui::Ui;
 use gt_ui_theme::EM_DASH;
 
-/// What the archive holds for one UTC day a loaded recording spans.
+/// What the archive holds for one UTC day a fetch worker counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RecordingDayArchiveState {
+pub enum DayArchiveState {
     /// Everything the source publishes for the day is archived.
     Archived,
     /// Something the source publishes for the day is still to be fetched.
     Awaited,
 }
 
-/// The UTC days the recordings loaded this session span, and what the archive
-/// holds for each.
+/// A set of UTC days one fetch worker counts, and what the archive holds for
+/// each.
 #[derive(Debug, Default)]
-pub struct RecordingDayCoverage {
-    days: BTreeMap<NaiveDate, RecordingDayArchiveState>,
+pub struct DayArchiveCoverage {
+    days: BTreeMap<NaiveDate, DayArchiveState>,
 }
 
-impl RecordingDayCoverage {
-    pub fn record(&mut self, day: NaiveDate, state: RecordingDayArchiveState) {
+impl DayArchiveCoverage {
+    pub fn record(&mut self, day: NaiveDate, state: DayArchiveState) {
         self.days.insert(day, state);
     }
 
-    /// Report `day` as fully archived, ignoring a day no loaded recording
-    /// spans: a backfilled day is not part of the count.
+    /// Report `day` as fully archived, ignoring a day this set does not hold:
+    /// a backfilled day is not part of the count.
     pub fn mark_archived(&mut self, day: NaiveDate) {
         if let Some(state) = self.days.get_mut(&day) {
-            *state = RecordingDayArchiveState::Archived;
+            *state = DayArchiveState::Archived;
         }
     }
 
-    pub fn recording_days(&self) -> usize {
-        self.days.len()
+    pub fn holds(&self, day: NaiveDate) -> bool {
+        self.days.contains_key(&day)
     }
 
-    pub fn archived_recording_days(&self) -> usize {
-        self.days
-            .values()
-            .filter(|state| **state == RecordingDayArchiveState::Archived)
-            .count()
+    /// Take `day` out of the count, for a day that has moved to another set.
+    pub fn forget(&mut self, day: NaiveDate) {
+        self.days.remove(&day);
+    }
+
+    pub fn counts(&self) -> ArchivedDayCount {
+        ArchivedDayCount {
+            days: self.days.len(),
+            archived: self
+                .days
+                .values()
+                .filter(|state| **state == DayArchiveState::Archived)
+                .count(),
+        }
+    }
+}
+
+/// UTC days one fetch worker counts, and how many of them the archive holds
+/// everything published for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ArchivedDayCount {
+    pub days: usize,
+    pub archived: usize,
+}
+
+impl ArchivedDayCount {
+    /// The row's text, an absent value while there is nothing to count.
+    fn line(self) -> String {
+        if self.days == 0 {
+            return EM_DASH.to_owned();
+        }
+        format!("{} of {} archived", self.archived, self.days)
     }
 }
 
@@ -60,9 +87,7 @@ pub struct DayFetchStatus {
     pub queued: usize,
     /// UTC days the recordings loaded this session span, inside the source's
     /// coverage.
-    pub recording_days: usize,
-    /// Those of them the archive holds everything the source publishes for.
-    pub archived_recording_days: usize,
+    pub recording_days: ArchivedDayCount,
 }
 
 impl DayFetchStatus {
@@ -79,16 +104,6 @@ impl DayFetchStatus {
             (None, _) => queued,
         }
     }
-
-    fn coverage_line(&self) -> String {
-        if self.recording_days == 0 {
-            return EM_DASH.to_owned();
-        }
-        format!(
-            "{} of {} archived",
-            self.archived_recording_days, self.recording_days
-        )
-    }
 }
 
 /// The hover text naming the source the rows report on.
@@ -100,6 +115,7 @@ pub struct FetchRowHoverText {
 
 pub const FETCH_QUEUE_LABEL: &str = "Fetch queue";
 pub const RECORDING_DAYS_LABEL: &str = "Recording days";
+pub const BACKGROUND_DAYS_LABEL: &str = "Background days";
 
 /// Two rows of a data source page's grid: what is being fetched, and what the
 /// archive holds for the loaded recordings.
@@ -109,8 +125,16 @@ pub fn show_fetch_rows(ui: &mut Ui, status: DayFetchStatus, hover: FetchRowHover
     ui.end_row();
 
     ui.label(RECORDING_DAYS_LABEL).on_hover_text(hover.coverage);
-    ui.label(status.coverage_line())
+    ui.label(status.recording_days.line())
         .on_hover_text(hover.coverage);
+    ui.end_row();
+}
+
+/// One more row, for a source that also fetches the days before each recording
+/// day.
+pub fn show_background_day_row(ui: &mut Ui, coverage: ArchivedDayCount, hover: &str) {
+    ui.label(BACKGROUND_DAYS_LABEL).on_hover_text(hover);
+    ui.label(coverage.line()).on_hover_text(hover);
     ui.end_row();
 }
 
@@ -149,29 +173,29 @@ mod tests {
     #[case::nothing_loaded(0, 0, EM_DASH)]
     #[case::partly_archived(7, 5, "5 of 7 archived")]
     #[case::fully_archived(3, 3, "3 of 3 archived")]
-    fn the_coverage_line_counts_the_archived_days_of_loaded_recordings(
-        #[case] recording_days: usize,
-        #[case] archived_recording_days: usize,
+    fn the_coverage_line_counts_the_archived_days(
+        #[case] days: usize,
+        #[case] archived: usize,
         #[case] expected: &str,
     ) {
-        let status = DayFetchStatus {
-            recording_days,
-            archived_recording_days,
-            ..DayFetchStatus::default()
-        };
-        assert_eq!(status.coverage_line(), expected);
+        assert_eq!(ArchivedDayCount { days, archived }.line(), expected);
     }
 
     /// A backfill cannot report coverage the loaded recordings do not have:
     /// a day none of them spans stays out of the count.
     #[test]
     fn archiving_a_day_outside_the_loaded_recordings_changes_no_count() {
-        let mut coverage = RecordingDayCoverage::default();
-        coverage.record(day(2026, 7, 20), RecordingDayArchiveState::Awaited);
+        let mut coverage = DayArchiveCoverage::default();
+        coverage.record(day(2026, 7, 20), DayArchiveState::Awaited);
 
         coverage.mark_archived(day(2026, 7, 25));
 
-        assert_eq!(coverage.recording_days(), 1);
-        assert_eq!(coverage.archived_recording_days(), 0);
+        assert_eq!(
+            coverage.counts(),
+            ArchivedDayCount {
+                days: 1,
+                archived: 0
+            }
+        );
     }
 }

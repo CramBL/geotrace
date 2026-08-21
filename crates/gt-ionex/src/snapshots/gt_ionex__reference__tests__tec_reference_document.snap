@@ -36,6 +36,8 @@ During the geomagnetic storm of 10 to 12 May 2024 the archived maps peak above 1
 Illustration tec_map_2024_05_10_gannon_storm (10 May 2024, 22:00 UTC)
 Global [TEC] during the Gannon storm of May 2024, as archived by GeoTrace.[^jpl]
 
+Storm studies quantify the ionospheric response as the deviation of [TEC] from its quiet-time level, the median over the same location and time of day, and place typical quiet-time variation at around 40 % either way from that median.[^storm-2017] The planetary ionospheric storm index takes the quiet reference as the median of the 27 days before the day observed and grades the logarithmic deviation from quiet through moderate disturbance to moderate and intense storm.[^iono-storm-index] GeoTrace's environment warning uses that index: it warns from the moderate-storm grade, a deviation of at least 43 % above or 30 % below the 27-day median.[^iono-storm-index][^w-index-thresholds]
+
 The fixes recorded under elevated [TEC]:
 points | where tec > 100
 
@@ -49,3 +51,6 @@ Sources
 4. NOAA SWPC Geomagnetic Storms (https://www.spaceweather.gov/phenomena/geomagnetic-storms)
 5. JPL GUARDIAN Gannon example (https://guardian.jpl.nasa.gov/examples/20240513_gannon/)
 6. NASA JPL ionosphere products (https://sideshow.jpl.nasa.gov)
+7. TEC disturbances caused by CME-triggered geomagnetic storm of September 6 to 9, 2017 (Uga, Gautam and Seba, Heliyon 10, 2024) (https://doi.org/10.1016/j.heliyon.2024.e30725)
+8. Derivation of a planetary ionospheric storm index (Gulyaeva and Stanislawska, Annales Geophysicae 26, 2008) (https://doi.org/10.5194/angeo-26-2645-2008)
+9. Ionospheric weather: cloning missed foF2 observations for derivation of variability index (Gulyaeva, Stanislawska and Tomasik, Annales Geophysicae 26, 2008) (https://doi.org/10.5194/angeo-26-315-2008)

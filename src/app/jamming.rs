@@ -637,7 +637,7 @@ mod tests {
 
     use crate::app::backfill::BackfillProgress;
     use crate::app::day_failures::DayFailure;
-    use crate::app::day_fetch_status::DayFetchStatus;
+    use crate::app::day_fetch_status::{ArchivedDayCount, DayFetchStatus};
     use crate::app::fix_positions::FixPositions;
 
     use super::*;
@@ -919,8 +919,10 @@ mod tests {
             DayFetchStatus {
                 fetching: Some(day(2026, 7, 21)),
                 queued: 0,
-                recording_days: 2,
-                archived_recording_days: 1,
+                recording_days: ArchivedDayCount {
+                    days: 2,
+                    archived: 1,
+                },
             }
         );
     }
@@ -932,7 +934,7 @@ mod tests {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.request_days_for(range(at(2020, 1, 1, 0), at(2020, 1, 1, 1)));
 
-        assert_eq!(scheduler.days.fetch_status().recording_days, 0);
+        assert_eq!(scheduler.days.fetch_status().recording_days.days, 0);
     }
 
     /// An archived day moves the loaded recording's coverage up.
@@ -950,7 +952,7 @@ mod tests {
             .expect("send");
         scheduler.poll();
 
-        assert_eq!(scheduler.days.fetch_status().archived_recording_days, 1);
+        assert_eq!(scheduler.days.fetch_status().recording_days.archived, 1);
     }
 
     #[test]

@@ -36,6 +36,9 @@ Days are archived locally as they are fetched.
 **Solar flares** - flares from NASA's DONKI catalog marked on the plot at their peak, coloured by class.
 Needs a free [api.nasa.gov](https://api.nasa.gov) key, set in Settings.
 
+**Environment warnings** - a toast when a loaded recording overlaps archived interference, geomagnetic activity, solar flare or TEC deviation values that reach a level known to disturb reception.
+An icon in the map's corner stays up either way, and its popup states every level.
+
 **Snap to road** - match a track against the OpenStreetMap road network with Valhalla.
 The matched geometry draws on the map and the per-point distance to it becomes a metric.
 Nothing is uploaded without consent, and you can optionally route requests to a custom server.
@@ -103,6 +106,7 @@ The check can be turned off under Settings.
 ## Network access
 
 Map tiles and the update check are requested on their own, as is the day data of a loaded recording: aircraft interference, geomagnetic indices from GFZ, ionosphere maps from JPL (or the CDDIS archive once you set an Earthdata token), and solar flares, with an [api.nasa.gov](https://api.nasa.gov) key of your own.
+For each recording day the 27 ionosphere map days before it are downloaded as well, which is what the TEC deviation warning measures against.
 Those requests contain the UTC days they cover and nothing from the recording.
 Snap to road reaches out for its own data too, and uploads track coordinates only after explicit consent.
 Every host is configurable, and `--offline` runs GeoTrace with no network access.
