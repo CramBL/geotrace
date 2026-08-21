@@ -40,7 +40,7 @@ use super::snap_state::PendingSnapRequest;
 use super::space_weather_warning::{self, RecordingSeries, RecordingUnderAssessment};
 #[cfg(feature = "self-update")]
 use super::update;
-use super::{App, SharedAppState, jamming, modals};
+use super::{App, SharedAppState, modals};
 
 const DROP_OVERLAY_SCRIM_OPACITY: f32 = 0.85;
 
@@ -584,7 +584,7 @@ impl App {
             let shared = self.shared.borrow();
             self.jamming.plot_series(&shared.loaded_files)
         };
-        let jamming_query_values = jamming::JammingScheduler::query_values(&jamming_series);
+        let jamming_query_values = self.jamming.query_values();
         let geomagnetic_series = {
             let shared = self.shared.borrow();
             self.geomagnetic_indices.plot_series(&shared.loaded_files)

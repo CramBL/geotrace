@@ -10,6 +10,7 @@ use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use egui_phosphor::regular::PUSH_PIN as ICON_PUSH_PIN;
 use egui_phosphor::regular::TERMINAL_WINDOW as ICON_TERMINAL_WINDOW;
 use egui_phosphor::regular::X as ICON_X;
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::{
@@ -19,6 +20,7 @@ use std::{
 
 use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
 use geotrace_sdk::{Channel, ChannelUnit, DateTime, Duration, Unit, Utc};
+use gt_jam::wire::HexObservation;
 use gt_test_utils::{
     By, DEMO_BYTES, GOLD_BYTES, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec,
     SyntheticLogTimestamps, TestHarness, synthetic_gtd_bytes, synthetic_journald_log,
@@ -313,6 +315,95 @@ fn query_results_go_stale_when_the_filter_changes() {
         .expect("results kept")
         .stale;
     assert!(!stale_after_revert, "reverting the filter un-grays results");
+}
+
+/// Gives every loaded track interference query values: installs a scheduler
+/// whose archive values the cell each loaded fix sits in.
+fn install_interference_archive_covering_loaded_fixes(
+    harness: &mut Harness<'_, App>,
+) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path())
+        .open_interference()
+        .expect("archive");
+    let mut observations_by_day: BTreeMap<chrono::NaiveDate, Vec<HexObservation>> = BTreeMap::new();
+    {
+        let state = harness.state();
+        let shared = state.shared.borrow();
+        for file in shared.loaded_files.files() {
+            for track in &file.tracks {
+                for point in &track.points {
+                    let Some(cell) = gt_jam::dataset::cell_at(point.tpv.lat(), point.tpv.lon())
+                    else {
+                        continue;
+                    };
+                    let observations = observations_by_day
+                        .entry(point.tpv.time().utc().date_naive())
+                        .or_default();
+                    if !observations
+                        .iter()
+                        .any(|observation| observation.cell == cell)
+                    {
+                        observations.push(HexObservation {
+                            cell,
+                            good: 90,
+                            bad: 10,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    for (day, observations) in observations_by_day {
+        store
+            .insert_day(day, "host", chrono::Utc::now(), &observations)
+            .expect("insert");
+    }
+    install_interference_scheduler(harness, &store);
+    dir
+}
+
+/// A run over a recording with archived interference stays live: the
+/// per-track interference values the app hands the query fingerprint every
+/// frame keep their `Arc` identity while the archive holds them.
+#[test]
+fn query_results_over_archived_interference_stay_fresh() {
+    let gtd_bytes = minimal_gtd_bytes();
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(gtd_bytes.as_slice(), "test.gtd"),
+    );
+    let _archive = install_interference_archive_covering_loaded_fixes(&mut harness);
+
+    {
+        let app = harness.state_mut();
+        app.query_window.open = true;
+        app.query_window
+            .set_text("points | where velocity > 1 km/h".to_owned());
+    }
+    harness.run_steps(3);
+    assert!(
+        !harness.state().jamming.query_values().is_empty(),
+        "the loaded track must carry interference values for the fingerprint to compare"
+    );
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
+        .click();
+    step_until_query_result(&mut harness);
+    harness.run_steps(5);
+
+    assert!(
+        !harness
+            .state()
+            .query_window
+            .matches()
+            .expect("run produced matches")
+            .stale,
+        "its results stay live: nothing changed since the run"
+    );
 }
 
 /// `snap_error` evaluates over a completed run's values without any network
@@ -4014,15 +4105,20 @@ fn install_interference_archive(
             .insert_day(*day, "host", chrono::Utc::now(), &[])
             .expect("insert");
     }
+    install_interference_scheduler(harness, &store);
+    (dir, store)
+}
+
+/// Point the app at `store` for interference, with nothing to fetch from.
+fn install_interference_scheduler(harness: &mut Harness<'_, App>, store: &Arc<gt_store::JamStore>) {
     let ctx = harness.ctx.clone();
     harness.state_mut().jamming = crate::app::jamming::JammingScheduler::new(
         ctx,
-        Some(Arc::clone(&store)),
+        Some(Arc::clone(store)),
         gt_jam::DEFAULT_BASE_URL.to_owned(),
         gt_fetch::TransportSource::Offline,
         gt_pending_writes::PendingWrites::default(),
     );
-    (dir, store)
 }
 
 fn archived_days(store: &gt_store::JamStore) -> Vec<chrono::NaiveDate> {
