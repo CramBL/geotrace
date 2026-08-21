@@ -5,22 +5,15 @@ use std::fs;
 use std::path::Path;
 
 use chrono::{DateTime, TimeDelta, Utc};
+use hdf5::File;
 use hdf5::plist::file_create::FileSpaceStrategy;
-use hdf5::{File, Group};
 
-use gt_hdf5_archive::attributes;
+use gt_hdf5_archive::{ArchiveFile, attributes};
 use gt_jam::wire::{self, HexObservation, ParseWarningReporter};
 use gt_jam::{FIXTURE_DAYS, dataset_file_name, fixtures_dir, parse_day};
 use gt_jam_store::{FILE_NAME, JamStore};
 
 const HOST: &str = "https://gpsjam.org";
-
-/// What [`gt_hdf5_archive::ArchiveFile::create`] creates an archive with.
-const PAGED_FILE_SPACE: FileSpaceStrategy = FileSpaceStrategy::FreeSpaceManager {
-    paged: true,
-    persist: true,
-    threshold: 1,
-};
 
 /// The day the archive is filled with, and its observations.
 fn captured_day() -> Result<(chrono::NaiveDate, Vec<HexObservation>), String> {
@@ -37,11 +30,9 @@ fn captured_day() -> Result<(chrono::NaiveDate, Vec<HexObservation>), String> {
 }
 
 fn file_space_strategy(path: &Path) -> Result<FileSpaceStrategy, String> {
-    let file = File::open(path).map_err(|err| format!("open: {err}"))?;
-    Ok(file
-        .fcpl()
-        .map_err(|err| format!("fcpl: {err}"))?
-        .file_space_strategy())
+    ArchiveFile::new(path)
+        .file_space_strategy()
+        .map_err(|err| format!("strategy: {err}"))
 }
 
 /// Rewrite the archive at `path` into a file laid out the way libhdf5
@@ -51,14 +42,6 @@ fn rewrite_with_the_default_file_space(path: &Path) -> Result<(), String> {
     let unpaged = path.with_extension("unpaged");
     let source = File::open(path).map_err(|err| format!("open: {err}"))?;
     let target = File::create(&unpaged).map_err(|err| format!("create: {err}"))?;
-    copy_members(&source, &target)?;
-    copy_attributes(&source, &target)?;
-    drop(target);
-    drop(source);
-    fs::rename(&unpaged, path).map_err(|err| format!("rename: {err}"))
-}
-
-fn copy_members(source: &Group, target: &Group) -> Result<(), String> {
     for name in source
         .member_names()
         .map_err(|err| format!("members: {err}"))?
@@ -66,27 +49,23 @@ fn copy_members(source: &Group, target: &Group) -> Result<(), String> {
         source
             .group(&name)
             .map_err(|err| format!("{name} group: {err}"))?
-            .copy_to(target, &name)
+            .copy_to(&target, &name)
             .map_err(|err| format!("copy {name}: {err}"))?;
     }
-    Ok(())
-}
-
-fn copy_attributes(source: &Group, target: &Group) -> Result<(), String> {
     for name in source
         .attr_names()
         .map_err(|err| format!("attributes: {err}"))?
     {
-        let value = attributes::read_i64(source, &name)
+        let value = attributes::read_i64(&source, &name)
             .ok_or_else(|| format!("attribute {name} is not a whole number"))?;
-        attributes::write_i64(target, &name, value)
+        attributes::write_i64(&target, &name, value)
             .map_err(|err| format!("attribute {name}: {err}"))?;
     }
-    Ok(())
+    drop(target);
+    drop(source);
+    fs::rename(&unpaged, path).map_err(|err| format!("rename: {err}"))
 }
 
-/// Opening an archive from before the paged strategy rebuilds it, and the day
-/// it held reads back through the store as it was stored.
 #[test]
 fn an_archive_from_before_the_paged_strategy_is_rebuilt_and_reads_back() {
     let (day, parsed) = captured_day().expect("a captured day");
@@ -110,7 +89,7 @@ fn an_archive_from_before_the_paged_strategy_is_rebuilt_and_reads_back() {
 
     assert_eq!(
         file_space_strategy(&path).expect("strategy"),
-        PAGED_FILE_SPACE
+        ArchiveFile::FILE_SPACE_STRATEGY
     );
     assert_eq!(store.observations(day).expect("read back"), Some(parsed));
     let stored = store.days().expect("days");
@@ -127,8 +106,6 @@ fn an_archive_from_before_the_paged_strategy_is_rebuilt_and_reads_back() {
     );
 }
 
-/// A rebuilt archive takes days the way it did before: the day index and the
-/// columns it names still agree.
 #[test]
 fn a_rebuilt_archive_stores_days_again() {
     let (day, parsed) = captured_day().expect("a captured day");

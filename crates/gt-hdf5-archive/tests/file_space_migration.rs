@@ -26,14 +26,6 @@ const HOST: &str = "https://example.invalid";
 const SCHEMA_VERSION_ATTR: &str = "schema_version";
 const SCHEMA_VERSION: i64 = 3;
 
-/// What [`ArchiveFile::create`] creates an archive with, and what a migrated
-/// archive is expected to carry.
-const PAGED_FILE_SPACE: FileSpaceStrategy = FileSpaceStrategy::FreeSpaceManager {
-    paged: true,
-    persist: true,
-    threshold: 1,
-};
-
 /// The days the tests that read an archive back store, out of the order they
 /// fall in.
 const STORED_DAYS: [(NaiveDate, usize); 3] = [(day_at(2), 5), (day_at(0), 3), (day_at(1), 4)];
@@ -76,7 +68,6 @@ impl TestArchive {
         Ok(Self { _dir: dir, path })
     }
 
-    /// An archive [`ArchiveFile::create`] created.
     fn create_paged() -> Result<Self, String> {
         let dir = tempfile::tempdir().map_err(|err| format!("temp dir: {err}"))?;
         let path = dir.path().join("archive.h5");
@@ -94,11 +85,9 @@ impl TestArchive {
     }
 
     fn file_space_strategy(&self) -> Result<FileSpaceStrategy, String> {
-        let file = File::open(&self.path).map_err(|err| format!("open: {err}"))?;
-        Ok(file
-            .fcpl()
-            .map_err(|err| format!("fcpl: {err}"))?
-            .file_space_strategy())
+        ArchiveFile::new(&self.path)
+            .file_space_strategy()
+            .map_err(|err| format!("strategy: {err}"))
     }
 
     /// Path of the file an interrupted rebuild leaves beside the archive.
@@ -220,8 +209,6 @@ fn write_schema(file: &File) -> Result<(), String> {
     Column::create::<u64>(&rows, VALUE, FORMAT).map_err(|err| format!("value: {err}"))
 }
 
-/// An archive from before the paged strategy is rebuilt on open, and reads
-/// back everything it held.
 #[test]
 fn an_unpaged_archive_is_rebuilt_and_keeps_what_it_held() {
     let archive = TestArchive::create_unpaged().expect("archive");
@@ -234,7 +221,7 @@ fn an_unpaged_archive_is_rebuilt_and_keeps_what_it_held() {
 
     assert_eq!(
         archive.file_space_strategy().expect("strategy"),
-        PAGED_FILE_SPACE
+        ArchiveFile::FILE_SPACE_STRATEGY
     );
     assert_eq!(
         archive.schema_version().expect("schema version"),
@@ -260,8 +247,6 @@ fn an_unpaged_archive_is_rebuilt_and_keeps_what_it_held() {
     assert!(value.is_resizable());
 }
 
-/// The rebuild runs once: the archive it leaves is one every later open
-/// accepts as it is.
 #[test]
 fn a_rebuilt_archive_is_not_rebuilt_again() {
     let archive = TestArchive::create_unpaged().expect("archive");
@@ -276,7 +261,6 @@ fn a_rebuilt_archive_is_not_rebuilt_again() {
     assert_eq!(archive.size_on_disk().expect("size"), rebuilt);
 }
 
-/// An archive already recording its free space in pages is not touched.
 #[test]
 fn a_paged_archive_is_left_as_it_is() {
     let archive = TestArchive::create_paged().expect("archive");
@@ -300,8 +284,6 @@ fn a_paged_archive_is_left_as_it_is() {
     );
 }
 
-/// A rebuild that was interrupted leaves a file beside the archive, which the
-/// next open removes before it looks at the archive itself.
 #[rstest]
 #[case::unpaged(TestArchive::create_unpaged(), FileSpaceMigration::Rebuilt)]
 #[case::paged(TestArchive::create_paged(), FileSpaceMigration::NotNeeded)]
@@ -325,9 +307,6 @@ fn a_file_an_interrupted_rebuild_left_is_removed(
     );
 }
 
-/// What the rebuild is for: on a migrated archive the days stored after a
-/// delete are written into the space it freed, which an archive left on the
-/// strategy libhdf5 defaults to does not do.
 #[test]
 fn days_stored_after_a_delete_reuse_the_space_a_migrated_archive_freed() {
     let migrated = TestArchive::create_unpaged().expect("archive");

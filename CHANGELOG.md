@@ -38,7 +38,7 @@
 
 ### Fixed
 
-- Environment archives created by older versions are rebuilt when they are opened, so deleting days from them frees space the days downloaded afterwards are written into.
+- Environment archives created by older versions are rebuilt when they are opened: deleting days from them then frees space for the days downloaded afterwards.
 - Links in dialogs and reference material now open in the browser (clicking them did nothing).
 - Hovering the plot highlights the recording and track rows in the side panel, matching what hovering the map already does.
 - Hover labels no longer overlap in the plot and map interference layer.

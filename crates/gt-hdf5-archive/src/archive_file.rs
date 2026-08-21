@@ -18,16 +18,6 @@ use crate::{ArchiveError, attributes};
 /// a day's rows free whole pages, and the pages are what later days reuse.
 const FREE_SPACE_THRESHOLD_BYTES: u64 = 1;
 
-/// How an archive records where its free space is. libhdf5 fixes this when it
-/// creates the file, so an archive from before [`ArchiveFile::create`] set it
-/// keeps what libhdf5 defaults to and is rebuilt by
-/// [`ArchiveFile::migrate_file_space_if_needed`].
-const FILE_SPACE_STRATEGY: FileSpaceStrategy = FileSpaceStrategy::FreeSpaceManager {
-    paged: true,
-    persist: true,
-    threshold: FREE_SPACE_THRESHOLD_BYTES,
-};
-
 /// Appended to an archive's path for the file a rebuild writes.
 const REBUILD_SUFFIX: &str = ".rebuilding";
 
@@ -48,6 +38,16 @@ pub struct ArchiveFile {
 }
 
 impl ArchiveFile {
+    /// How an archive records where its free space is. libhdf5 fixes this
+    /// when it creates the file, so an archive from before [`Self::create`]
+    /// set it keeps what libhdf5 defaults to until
+    /// [`Self::migrate_file_space_if_needed`] rebuilds it.
+    pub const FILE_SPACE_STRATEGY: FileSpaceStrategy = FileSpaceStrategy::FreeSpaceManager {
+        paged: true,
+        persist: true,
+        threshold: FREE_SPACE_THRESHOLD_BYTES,
+    };
+
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self { path: path.into() }
     }
@@ -94,18 +94,19 @@ impl ArchiveFile {
         if rebuilding.exists() {
             fs::remove_file(&rebuilding)?;
         }
-        if self.file_space_strategy()? == FILE_SPACE_STRATEGY {
+        if self.file_space_strategy()? == Self::FILE_SPACE_STRATEGY {
             return Ok(FileSpaceMigration::NotNeeded);
         }
 
         let bytes = fs::metadata(&self.path)?.len();
         log::info!(
-            "Rebuilding the archive {:?} of {bytes} bytes, so that deleting a day frees space the \
-             days stored after it are written into",
+            "Rebuilding the archive {:?} of {bytes} bytes: it was created without the paged free \
+             space record, and a delete on it frees no space later days are written into",
             self.path
         );
         self.copy_into_new_archive(&rebuilding)?;
-        Ok(fs::rename(&rebuilding, &self.path).map(|()| FileSpaceMigration::Rebuilt)?)
+        fs::rename(&rebuilding, &self.path)?;
+        Ok(FileSpaceMigration::Rebuilt)
     }
 
     /// Refuse an archive whose `attribute` names a schema newer than
@@ -131,7 +132,9 @@ impl ArchiveFile {
         PathBuf::from(path)
     }
 
-    fn file_space_strategy(&mut self) -> Result<FileSpaceStrategy, ArchiveError> {
+    /// The strategy the file was created with, which is
+    /// [`Self::FILE_SPACE_STRATEGY`] once it has been migrated.
+    pub fn file_space_strategy(&mut self) -> Result<FileSpaceStrategy, ArchiveError> {
         let file = self.open_read_only()?;
         Ok(file.fcpl()?.file_space_strategy())
     }
@@ -142,9 +145,9 @@ impl ArchiveFile {
         let source = hdf5::File::open(&self.path)?;
         let rebuilt = create_file(target)?;
         for name in source.member_names()? {
-            copy_object(&source, &rebuilt, &name)?;
+            copy_object(CopiedFrom(&source), CopiedInto(&rebuilt), &name)?;
         }
-        copy_i64_attributes(&source, &rebuilt)?;
+        copy_i64_attributes(CopiedFrom(&source), CopiedInto(&rebuilt))?;
         Ok(rebuilt.flush()?)
     }
 }
@@ -181,15 +184,27 @@ fn create_file(path: &Path) -> Result<hdf5::File, ArchiveError> {
     }
     let mut builder = hdf5::FileBuilder::new();
     builder.with_fcpl(|fcpl| {
-        fcpl.file_space_strategy(FILE_SPACE_STRATEGY);
+        fcpl.file_space_strategy(ArchiveFile::FILE_SPACE_STRATEGY);
         fcpl
     });
     Ok(builder.create(path)?)
 }
 
-/// Copy one member of `source` into `target` under the same name, with
+/// The archive a rebuild reads.
+#[derive(Clone, Copy)]
+struct CopiedFrom<'a>(&'a Group);
+
+/// The archive a rebuild fills.
+#[derive(Clone, Copy)]
+struct CopiedInto<'a>(&'a Group);
+
+/// Copy one member of an archive into another under the same name, with
 /// everything below it: its rows, chunking, filters and attributes.
-fn copy_object(source: &Group, target: &Group, name: &str) -> Result<(), ArchiveError> {
+fn copy_object(
+    CopiedFrom(source): CopiedFrom<'_>,
+    CopiedInto(target): CopiedInto<'_>,
+    name: &str,
+) -> Result<(), ArchiveError> {
     match source.loc_type_by_name(name)? {
         LocationType::Group => source.group(name)?.copy_to(target, name)?,
         LocationType::Dataset => source.dataset(name)?.copy_to(target, name)?,
@@ -202,10 +217,13 @@ fn copy_object(source: &Group, target: &Group, name: &str) -> Result<(), Archive
     Ok(())
 }
 
-/// Copy the attributes of `source` itself, which the copy of its members does
-/// not reach. An archive writes whole numbers there, and an attribute of any
-/// other type is refused rather than dropped.
-fn copy_i64_attributes(source: &Group, target: &Group) -> Result<(), ArchiveError> {
+/// Copy the attributes an archive holds itself, which the copy of its members
+/// does not reach. An archive writes whole numbers there, and an attribute of
+/// any other type is refused.
+fn copy_i64_attributes(
+    CopiedFrom(source): CopiedFrom<'_>,
+    CopiedInto(target): CopiedInto<'_>,
+) -> Result<(), ArchiveError> {
     for name in source.attr_names()? {
         let value = attributes::read_i64(source, &name).ok_or_else(|| {
             ArchiveError::Corrupt(format!(
