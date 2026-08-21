@@ -51,6 +51,10 @@ const HISTORY_LINE_MAX_CHARS: NonZeroUsize = match NonZeroUsize::new(48) {
     None => NonZeroUsize::MIN,
 };
 
+/// Width the query window opens at. It grows only when the user drags it
+/// wider: nothing inside it may widen it, or the window covers the map.
+pub(crate) const DEFAULT_WINDOW_WIDTH: f32 = 460.0;
+
 /// Max width of an editor hover tooltip, shared by the construct and channel
 /// tooltips so they stay the same size.
 const TOOLTIP_MAX_WIDTH: f32 = 360.0;
@@ -434,7 +438,7 @@ impl QueryWindow {
         let mut open = self.open;
         Window::new("Query")
             .open(&mut open)
-            .default_width(460.0)
+            .default_width(DEFAULT_WINDOW_WIDTH)
             .default_height(520.0)
             .resizable(true)
             .vscroll(true)

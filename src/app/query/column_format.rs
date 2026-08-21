@@ -13,7 +13,7 @@ const CHANNEL_DECIMALS: usize = 3;
 
 /// Integer digits a value column budgets for: its width is then the same
 /// whichever rows are on screen. Four covers every metric a column holds
-/// today - a wider value overflows its column instead of aligning in it.
+/// today - a wider value is cut off where its column ends.
 const BUDGETED_INTEGER_DIGITS: usize = 4;
 
 /// How one column of a match table prints its values.
