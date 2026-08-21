@@ -51,6 +51,7 @@ members = [
     "crates/gt-log-view",
     "crates/gt-logfile",
     "crates/gt-map",
+    "crates/gt-pending-writes",
     "crates/gt-plot",
     "crates/gt-query",
     "crates/gt-query-map-harness",
@@ -307,6 +308,7 @@ gt-loader = { path = "crates/gt-loader" }
 gt-log-view = { path = "crates/gt-log-view" }
 gt-logfile = { path = "crates/gt-logfile" }
 gt-map = { path = "crates/gt-map" }
+gt-pending-writes = { path = "crates/gt-pending-writes" }
 gt-plot = { path = "crates/gt-plot" }
 gt-query = { path = "crates/gt-query" }
 gt-query-run = { path = "crates/gt-query-run" }

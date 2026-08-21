@@ -2172,6 +2172,7 @@ dependencies = [
  "gt-log-view",
  "gt-logfile",
  "gt-map",
+ "gt-pending-writes",
  "gt-plot",
  "gt-query",
  "gt-query-run",
@@ -2796,6 +2797,14 @@ dependencies = [
  "uom",
  "vec1",
  "walkers",
+]
+
+[[package]]
+name = "gt-pending-writes"
+version = "0.12.0"
+dependencies = [
+ "parking_lot",
+ "rstest",
 ]
 
 [[package]]
