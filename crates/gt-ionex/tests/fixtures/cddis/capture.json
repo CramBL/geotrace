@@ -1,0 +1,23 @@
+{
+  "files": [
+    {
+      "captured_at": "2026-08-21T14:17:12.642878850+00:00",
+      "day": "2024-05-10",
+      "file_name": "JPL0OPSFIN_20241310000_01D_02H_GIM.INX.gz",
+      "first_epoch": "2024-05-10T00:00:00+00:00",
+      "gaps": 0,
+      "http_status": 200,
+      "interval_seconds": 7200,
+      "last_epoch": "2024-05-11T00:00:00+00:00",
+      "latitude_nodes": 71,
+      "latitude_step_degrees": -2.5,
+      "longitude_nodes": 73,
+      "longitude_step_degrees": 5.0,
+      "maps": 13,
+      "peak_tecu": 175.2,
+      "product": "final",
+      "shell_height_km": 450.0,
+      "url": "https://cddis.nasa.gov/archive/gnss/products/ionex/2024/131/JPL0OPSFIN_20241310000_01D_02H_GIM.INX.gz"
+    }
+  ]
+}

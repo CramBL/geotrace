@@ -4,12 +4,13 @@
 // subset, so "unused" here only means "unused by this binary".
 #![allow(dead_code, reason = "shared across binaries with different needs")]
 
-use std::fs;
+use std::path::Path;
+use std::{fs, io};
 
 use serde_json::Value;
 
 use gt_ionex::maps::GlobalIonosphereMaps;
-use gt_ionex::{CAPTURE_MANIFEST, CaptureError, FixtureFile, fixtures_dir};
+use gt_ionex::{CAPTURE_MANIFEST, CaptureError, FixtureFile, cddis_fixtures_dir, fixtures_dir};
 
 pub fn declared_fixture(name: &str) -> Result<&'static FixtureFile, String> {
     gt_ionex::declared_fixture(name).ok_or_else(|| {
@@ -47,19 +48,23 @@ pub fn compressed_capture_bytes() -> Result<Vec<u8>, String> {
     fs::read(&path).map_err(|err| format!("reading {}: {err}", path.display()))
 }
 
-pub fn manifest() -> Result<Value, String> {
-    let path = fixtures_dir().join(CAPTURE_MANIFEST);
+/// The entries of the manifest `directory` holds, which the capture tools all
+/// write in the same shape.
+fn manifest_entries_in(directory: &Path) -> Result<Vec<Value>, String> {
+    let path = directory.join(CAPTURE_MANIFEST);
     let contents =
         fs::read_to_string(&path).map_err(|err| format!("reading {}: {err}", path.display()))?;
-    serde_json::from_str(&contents).map_err(|err| format!("{CAPTURE_MANIFEST}: {err}"))
-}
-
-pub fn manifest_entries() -> Result<Vec<Value>, String> {
-    manifest()?
+    let manifest: Value =
+        serde_json::from_str(&contents).map_err(|err| format!("{}: {err}", path.display()))?;
+    manifest
         .get("files")
         .and_then(Value::as_array)
         .cloned()
-        .ok_or_else(|| format!("{CAPTURE_MANIFEST} has no files array"))
+        .ok_or_else(|| format!("{} has no files array", path.display()))
+}
+
+pub fn manifest_entries() -> Result<Vec<Value>, String> {
+    manifest_entries_in(&fixtures_dir())
 }
 
 pub fn manifest_entry(name: &str) -> Result<Value, String> {
@@ -67,4 +72,30 @@ pub fn manifest_entry(name: &str) -> Result<Value, String> {
         .into_iter()
         .find(|entry| entry.get("name").and_then(Value::as_str) == Some(name))
         .ok_or_else(|| format!("{name} has no manifest entry - run `just ionex-fixtures {name}`"))
+}
+
+/// What `just cddis-verify --capture` recorded about the files the archive
+/// served.
+pub fn cddis_manifest_entries() -> Result<Vec<Value>, String> {
+    manifest_entries_in(&cddis_fixtures_dir())
+}
+
+/// The files the archive served, as they arrived: still compressed, under the
+/// name they were requested under.
+pub fn cddis_capture_file_names() -> Result<Vec<String>, String> {
+    let directory = cddis_fixtures_dir();
+    let mut names: Vec<String> = fs::read_dir(&directory)
+        .and_then(|entries| entries.collect::<Result<Vec<_>, io::Error>>())
+        .map_err(|err| format!("reading {}: {err}", directory.display()))?
+        .iter()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name != CAPTURE_MANIFEST)
+        .collect();
+    names.sort();
+    Ok(names)
+}
+
+pub fn cddis_capture_bytes(file_name: &str) -> Result<Vec<u8>, String> {
+    let path = cddis_fixtures_dir().join(file_name);
+    fs::read(&path).map_err(|err| format!("reading {}: {err}", path.display()))
 }

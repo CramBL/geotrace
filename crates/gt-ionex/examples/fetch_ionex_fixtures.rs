@@ -23,7 +23,6 @@
     reason = "capture tool: development-only code"
 )]
 
-use std::collections::BTreeMap;
 use std::error::Error;
 use std::io::Read as _;
 use std::time::Duration;
@@ -33,9 +32,11 @@ use chrono::Utc;
 use flate2::read::GzDecoder;
 use serde_json::{Value, json};
 
-use gt_ionex::maps::GlobalIonosphereMaps;
 use gt_ionex::tec::TotalElectronContent;
-use gt_ionex::{CAPTURE_MANIFEST, FIXTURE_FILES, FixtureFile, fixtures_dir, parse};
+use gt_ionex::{FIXTURE_FILES, FixtureFile, fixtures_dir, parse};
+
+#[path = "shared/capture_manifest.rs"]
+mod capture_manifest;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -69,17 +70,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .build()?;
 
     // Start from the existing entries, so a subset capture keeps the rest.
-    let mut entries_by_name: BTreeMap<String, Value> =
-        match fs::read_to_string(dir.join(CAPTURE_MANIFEST)) {
-            Ok(existing) => serde_json::from_str::<Value>(&existing)?
-                .get("files")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(|entry| Some((entry.get("name")?.as_str()?.to_owned(), entry.clone())))
-                .collect(),
-            Err(_) => BTreeMap::new(),
-        };
+    let mut entries_by_name = capture_manifest::recorded_entries(&dir, "name");
 
     for (position, fixture) in selected.iter().enumerate() {
         if position > 0 {
@@ -113,7 +104,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         entries_by_name.insert(
             fixture.name.to_owned(),
-            manifest_entry(fixture, status, &maps),
+            capture_manifest::entry(naming_fields(fixture, status), &maps),
         );
     }
 
@@ -123,35 +114,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         .iter()
         .filter_map(|fixture| entries_by_name.get(fixture.name).cloned())
         .collect();
-    fs::write(
-        dir.join(CAPTURE_MANIFEST),
-        format!(
-            "{}\n",
-            serde_json::to_string_pretty(&json!({ "files": files }))?
-        ),
-    )?;
+    capture_manifest::write(&dir, &files)?;
 
     Ok(())
 }
 
-fn manifest_entry(fixture: &FixtureFile, http_status: u16, maps: &GlobalIonosphereMaps) -> Value {
-    let grid = maps.grid();
+fn naming_fields(fixture: &FixtureFile, http_status: u16) -> Value {
     json!({
         "name": fixture.name,
         "file_name": fixture.file_name,
         "url": fixture.url,
         "captured_at": Utc::now().to_rfc3339(),
         "http_status": http_status,
-        "maps": maps.maps().len(),
-        "interval_seconds": maps.interval().num_seconds(),
-        "first_epoch": maps.epoch_of_first_map().map(|epoch| epoch.to_rfc3339()),
-        "last_epoch": maps.epoch_of_last_map().map(|epoch| epoch.to_rfc3339()),
-        "latitude_nodes": grid.latitudes.node_count(),
-        "longitude_nodes": grid.longitudes.node_count(),
-        "latitude_step_degrees": grid.latitudes.axis().step_degrees(),
-        "longitude_step_degrees": grid.longitudes.axis().step_degrees(),
-        "shell_height_km": grid.shell_height_km,
-        "peak_tecu": maps.peak_total_electron_content().map(TotalElectronContent::tecu),
-        "gaps": maps.maps().iter().flat_map(|map| map.values()).filter(Option::is_none).count(),
     })
 }

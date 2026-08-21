@@ -22,9 +22,9 @@
 //! [`calendar`] says which days and products are worth requesting,
 //! [`mirrors`] holds the hosts to try in order, and [`transport`] fetches one
 //! day and decompresses it. A mirror serves either that layout or the CDDIS
-//! one ([`cddis`]), which files the same producer's day under a long IGS name
-//! and a legacy [`unix_compress`] one and serves it to callers holding an
-//! Earthdata token.
+//! one ([`cddis`]), which serves the same producer's day to callers holding an
+//! Earthdata token: under a long IGS name, and, in the older years of the
+//! archive, under a legacy [`unix_compress`] short name as well.
 
 use std::path::PathBuf;
 
@@ -62,7 +62,16 @@ pub const DEFAULT_BASE_URL: &str = "https://sideshow.jpl.nasa.gov/pub/iono_daily
 /// The same day is published twice: once about a day after it ends, and again
 /// two days later from the full station set. The second replaces the first.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display, strum::EnumCount, strum::EnumIter,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::Display,
+    strum::EnumCount,
+    strum::EnumIter,
+    strum::EnumString,
 )]
 #[strum(serialize_all = "snake_case")]
 pub enum IonexProduct {
@@ -189,6 +198,15 @@ pub fn fixtures_dir() -> PathBuf {
         .join("fixtures")
 }
 
+/// Directory holding the files CDDIS served, captured by
+/// `just cddis-verify --capture` with a manifest of the same shape beside
+/// them.
+pub fn cddis_fixtures_dir() -> PathBuf {
+    fixtures_dir().join(CDDIS_CAPTURE_DIR)
+}
+
+const CDDIS_CAPTURE_DIR: &str = "cddis";
+
 /// Why a captured file did not reach the caller as maps.
 #[derive(Debug, thiserror::Error)]
 pub enum CaptureError {
@@ -209,6 +227,19 @@ pub enum CaptureError {
 /// The capture [`FIXTURE_FILES`] declares under `name`.
 pub fn declared_fixture(name: &str) -> Option<&'static FixtureFile> {
     FIXTURE_FILES.iter().find(|fixture| fixture.name == name)
+}
+
+/// The capture [`FIXTURE_FILES`] holds of `product` on `day`, [`None`] for a
+/// day no capture was taken on.
+pub fn declared_fixture_for_day(
+    product: IonexProduct,
+    day: NaiveDate,
+) -> Option<&'static FixtureFile> {
+    let published = product.file_name(day);
+    let stored = published.strip_suffix(COMPRESSED_SUFFIX)?;
+    FIXTURE_FILES
+        .iter()
+        .find(|fixture| fixture.file_name == stored)
 }
 
 /// The decompressed text of one capture, as the archive published it.
@@ -333,6 +364,24 @@ mod tests {
                 fixture.purpose
             );
         }
+    }
+
+    /// A day is matched by the file the product publishes it as, so only a
+    /// day and product a capture was taken of resolves.
+    #[rstest]
+    #[case::the_captured_storm_day(IonexProduct::Final, date(2024, 5, 10), Some(STORM_CAPTURE))]
+    #[case::the_captured_quiet_day(IonexProduct::Final, date(2024, 4, 1), Some(QUIET_CAPTURE))]
+    #[case::an_uncaptured_day(IonexProduct::Final, date(2020, 5, 10), None)]
+    #[case::the_uncaptured_product_of_a_captured_day(IonexProduct::Rapid, date(2024, 5, 10), None)]
+    fn a_day_resolves_to_the_capture_taken_of_it(
+        #[case] product: IonexProduct,
+        #[case] day: NaiveDate,
+        #[case] expected: Option<&str>,
+    ) {
+        assert_eq!(
+            declared_fixture_for_day(product, day).map(|fixture| fixture.name),
+            expected
+        );
     }
 
     #[test]
