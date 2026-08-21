@@ -64,6 +64,9 @@ pub struct QuerySession {
     checked_schema: ChannelSchema,
     in_flight: Option<InFlightRun>,
     completed: Option<CompletedRun>,
+    /// Sequence number the next completed run's matches carry. Starts at 1, so
+    /// the map can read 0 as "no run".
+    next_run: u64,
 }
 
 impl Default for QuerySession {
@@ -83,6 +86,7 @@ impl QuerySession {
             text,
             in_flight: None,
             completed: None,
+            next_run: 1,
         }
     }
 
@@ -204,12 +208,14 @@ impl QuerySession {
         let Some((product, track_data)) = outcome.into_product() else {
             return;
         };
-        let results = match product {
+        let mut results = match product {
             RunProduct::Points(pipeline) => {
                 RunResults::Points(PointsResults::project(&pipeline, track_data))
             }
             RunProduct::Channel(run) => RunResults::Channel(ChannelResults::project(*run)),
         };
+        results.set_run(self.next_run);
+        self.next_run = self.next_run.saturating_add(1);
         self.completed = Some(CompletedRun {
             results,
             fingerprint: in_flight.fingerprint,
@@ -376,6 +382,24 @@ mod tests {
         let matches = session.matches().expect("the second run has matches");
         assert!(matches.draws.is_empty(), "hide draws nothing");
         assert_eq!(matches.hidden_ranges(track), [rng(0, 1)]);
+    }
+
+    #[test]
+    fn each_completed_run_numbers_its_matches() {
+        let state = LoadedState::with_channels(vec![]);
+        let mut session = QuerySession::new();
+        let text = "points | where velocity > 30 km/h | draw";
+        run_text(&mut session, &state, text);
+        assert_eq!(session.matches().expect("first run").run, 1);
+        run_text(&mut session, &state, text);
+        assert_eq!(session.matches().expect("second run").run, 2);
+
+        // A cancelled run keeps the previous results, numbers and all.
+        session.sync_checks(&state.schema());
+        let prepared = session.start_run(state.inputs()).expect("checks");
+        session.cancel_run();
+        session.finish_run(prepared.execute());
+        assert_eq!(session.matches().expect("previous results").run, 2);
     }
 
     #[test]

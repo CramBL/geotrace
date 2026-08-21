@@ -7,6 +7,7 @@ use egui::{
     Area, Button, CollapsingHeader, Frame, Grid, Label, RichText, ScrollArea, TextEdit, Window,
 };
 use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
+use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
 use egui_phosphor::regular::PUSH_PIN as ICON_PUSH_PIN;
 use egui_phosphor::regular::TRASH as ICON_TRASH;
 use egui_phosphor::regular::WARNING_OCTAGON as ICON_WARNING_OCTAGON;
@@ -411,6 +412,7 @@ impl QueryWindow {
         display_mask: DisplayMask,
         highlight: &mut MapHighlight,
         requests: &mut PointClickRequests<'_>,
+        reveal_matches_request: &mut bool,
     ) {
         let RunInputs { loaded_files, .. } = inputs;
         // Collect a finished worker even while the window is closed, so its
@@ -450,7 +452,14 @@ impl QueryWindow {
                     display_mask,
                     query_matches: self.session.matches(),
                 };
-                self.results_ui(ui, files, scope, highlight, requests);
+                self.results_ui(
+                    ui,
+                    files,
+                    scope,
+                    highlight,
+                    requests,
+                    reveal_matches_request,
+                );
                 ui.separator();
                 self.history_examples_ui(ui);
             });
@@ -1146,11 +1155,13 @@ impl QueryWindow {
         scope: MapScope<'_>,
         highlight: &mut MapHighlight,
         requests: &mut PointClickRequests<'_>,
+        reveal_matches_request: &mut bool,
     ) {
         let Some(results) = self.session.results() else {
             ui.label(RichText::new("No runs yet").weak());
             return;
         };
+        show_on_map_ui(ui, results.matches(), reveal_matches_request);
         match results {
             RunResults::Points(points) => {
                 points_results_ui(ui, points, files, scope, highlight, requests);
@@ -1190,6 +1201,31 @@ impl QueryWindow {
             .expect("failed to spawn query worker thread");
 
         self.worker = Some(rx);
+    }
+}
+
+/// The button that frames the map on this run's matches and plays their
+/// reveal animation again. Disabled with the reason in its hover text when the
+/// run drew no halos, or when the data changed after it.
+fn show_on_map_ui(ui: &mut egui::Ui, matches: &QueryMatches, reveal_matches_request: &mut bool) {
+    let disabled_reason = if matches.stale {
+        Some(format!(
+            "Data changed since this run {EM_DASH} run again to show its matches"
+        ))
+    } else if !matches.has_halos() {
+        Some("This run drew no matches on the map".to_owned())
+    } else {
+        None
+    };
+    let button = Button::new(format!("{ICON_CROSSHAIR} Show on map")).small();
+    let response = ui.add_enabled(disabled_reason.is_none(), button);
+    if let Some(reason) = disabled_reason {
+        response.on_disabled_hover_text(reason);
+    } else if response
+        .on_hover_text("Zoom the map to the matches and highlight them")
+        .clicked()
+    {
+        *reveal_matches_request = true;
     }
 }
 

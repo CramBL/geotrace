@@ -742,6 +742,7 @@ impl App {
                 filter,
                 map_center_request,
                 popup_pos_request,
+                reveal_query_matches_request,
                 plot_state,
                 log_hover,
                 display_mask,
@@ -772,6 +773,7 @@ impl App {
                     map_center: map_center_request,
                     popup_pos: popup_pos_request,
                 },
+                reveal_query_matches_request,
             );
             self.sky_trails_window.show(
                 ui.ctx(),

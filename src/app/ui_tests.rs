@@ -361,6 +361,52 @@ fn query_matches_on_snap_error_after_a_run() {
     );
 }
 
+/// The query results' "Show on map" frames the map on what the run drew: the
+/// viewport narrows from the whole recording to the matched stretches.
+#[test]
+fn show_on_map_frames_the_query_matches() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
+    );
+
+    {
+        let app = harness.state_mut();
+        app.query_window.open = true;
+        app.query_window
+            .set_text("points | where velocity > 25 km/h".to_owned());
+    }
+    harness.run_steps(3);
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
+        .click();
+    step_until_query_result(&mut harness);
+    harness.run_steps(3);
+
+    let whole_trip = harness
+        .state()
+        .map
+        .viewport_geo_bounds()
+        .expect("the map framed the loaded recording");
+
+    harness.get_by_label_contains("Show on map").click();
+    harness.run_steps(3);
+
+    let framed_matches = harness
+        .state()
+        .map
+        .viewport_geo_bounds()
+        .expect("the map framed the matches");
+    assert!(
+        framed_matches.lon_max - framed_matches.lon_min < whole_trip.lon_max - whole_trip.lon_min,
+        "the matched stretches frame tighter than the whole trip: \
+         {framed_matches:?} against {whole_trip:?}"
+    );
+}
+
 /// Hovering a match header in the query results table cross-highlights the
 /// whole match: its range lands in `hover_match` (the map halo band and the
 /// plot time band read it) and the match's track gets hover focus.

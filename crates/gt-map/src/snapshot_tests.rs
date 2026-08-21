@@ -283,10 +283,26 @@ fn complement(ranges: &[std::ops::Range<usize>], len: usize) -> Vec<std::ops::Ra
     out
 }
 
+/// When a matches snapshot captures the map.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MatchCapture {
+    /// Once the halos and every load animation have settled. The matches carry
+    /// no run number, so the reveal never fires.
+    Settled,
+    /// On the single frame a completed run's reveal fires, with the halos at
+    /// their most inflated.
+    RevealStart,
+}
+
 /// Drive the full `NavMap::draw` path over the fixture track with a
 /// hardcoded set of query matches. No map tiles render beneath the halos:
 /// the map is built with [`TileAccess::Offline`].
-fn snapshot_nav_map_with_matches(name: &'static str, mode: DisplayMode, stale: bool) {
+fn snapshot_nav_map_with_matches(
+    name: &'static str,
+    mode: DisplayMode,
+    stale: bool,
+    capture: MatchCapture,
+) {
     use std::collections::HashMap;
 
     use gt_ui_types::{DrawLayer, QueryMatches, TrackDataVisibility};
@@ -302,6 +318,10 @@ fn snapshot_nav_map_with_matches(name: &'static str, mode: DisplayMode, stale: b
     // plus a single-point match that must render as a ring.
     let ranges = vec![150..300, 700..701, 900..1000];
     let per_track = |rs: Vec<std::ops::Range<usize>>| HashMap::from([(track, rs)]);
+    let run = match capture {
+        MatchCapture::Settled => 0,
+        MatchCapture::RevealStart => 1,
+    };
     let matches = match mode {
         DisplayMode::Draw => QueryMatches {
             draws: vec![DrawLayer {
@@ -309,16 +329,19 @@ fn snapshot_nav_map_with_matches(name: &'static str, mode: DisplayMode, stale: b
                 ranges: per_track(ranges),
             }],
             stale,
+            run,
             ..QueryMatches::default()
         },
         DisplayMode::Hide => QueryMatches {
             hidden: per_track(ranges),
             stale,
+            run,
             ..QueryMatches::default()
         },
         DisplayMode::Keep => QueryMatches {
             hidden: per_track(complement(&ranges, len)),
             stale,
+            run,
             ..QueryMatches::default()
         },
     };
@@ -341,10 +364,16 @@ fn snapshot_nav_map_with_matches(name: &'static str, mode: DisplayMode, stale: b
             None,
         );
 
-    // First frame zooms to fit the newly seen file; extra frames let the
-    // blink/fade animations settle before the snapshot.
-    for _ in 0..5 {
-        harness.run();
+    match capture {
+        // The first frame zooms to fit the newly seen file; the rest let the
+        // blink and fade animations settle before the snapshot.
+        MatchCapture::Settled => {
+            for _ in 0..5 {
+                harness.run();
+            }
+        }
+        // One frame exactly, so the reveal is captured on the frame it starts.
+        MatchCapture::RevealStart => harness.step(),
     }
     harness.snapshot_loose(name);
 }
@@ -1010,28 +1039,61 @@ fn snap_snapped_track_whiskers_hidden_below_gate() {
 /// ring, over the live map canvas.
 #[test]
 fn snap_query_match_halos() {
-    snapshot_nav_map_with_matches("query_match_halos", DisplayMode::Draw, false);
+    snapshot_nav_map_with_matches(
+        "query_match_halos",
+        DisplayMode::Draw,
+        false,
+        MatchCapture::Settled,
+    );
 }
 
 /// Snapshot: the same matches grayed out after the visible data changed
 /// (stale results are dimmed, never hidden).
 #[test]
 fn snap_query_match_halos_stale() {
-    snapshot_nav_map_with_matches("query_match_halos_stale", DisplayMode::Draw, true);
+    snapshot_nav_map_with_matches(
+        "query_match_halos_stale",
+        DisplayMode::Draw,
+        true,
+        MatchCapture::Settled,
+    );
 }
 
 /// Snapshot: `keep` mode shows only the matching stretches; the rest of
 /// the track is hidden and the polyline breaks at the gaps.
 #[test]
 fn snap_query_keep_mode() {
-    snapshot_nav_map_with_matches("query_keep_mode", DisplayMode::Keep, false);
+    snapshot_nav_map_with_matches(
+        "query_keep_mode",
+        DisplayMode::Keep,
+        false,
+        MatchCapture::Settled,
+    );
 }
 
 /// Snapshot: `hide` mode drops the matching stretches, leaving the rest
 /// of the track with breaks where the matches were.
 #[test]
 fn snap_query_hide_mode() {
-    snapshot_nav_map_with_matches("query_hide_mode", DisplayMode::Hide, false);
+    snapshot_nav_map_with_matches(
+        "query_hide_mode",
+        DisplayMode::Hide,
+        false,
+        MatchCapture::Settled,
+    );
+}
+
+/// Snapshot: the halos of a run that just completed, caught on the frame its
+/// reveal fires - every band and ring inflated and brightened before it
+/// settles back to the state `snap_query_match_halos` shows.
+#[test]
+fn snap_query_match_reveal() {
+    snapshot_nav_map_with_matches(
+        "query_match_reveal",
+        DisplayMode::Draw,
+        false,
+        MatchCapture::RevealStart,
+    );
 }
 
 /// Snapshot: the halo band for the match hovered in the query results

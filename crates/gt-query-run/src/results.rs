@@ -39,6 +39,15 @@ impl RunResults {
             Self::Channel(channel) => channel.matches.stale = stale,
         }
     }
+
+    /// Stamp the sequence number of the run that produced these results, which
+    /// the map reveals a new run's halos by.
+    pub(crate) fn set_run(&mut self, run: u64) {
+        match self {
+            Self::Points(points) => points.matches.run = run,
+            Self::Channel(channel) => channel.matches.run = run,
+        }
+    }
 }
 
 /// A points-pipeline run: its composed map effect and per-query panel rows.
@@ -110,6 +119,7 @@ impl PointsResults {
                 })
                 .collect(),
             stale: false,
+            run: 0,
         };
         let queries = output
             .queries

@@ -71,6 +71,8 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                 let center_req = s.map_center_request.take();
                 let popup_pos = s.popup_pos_request.take();
                 let zoom_to_visible = std::mem::replace(&mut s.zoom_to_visible_request, false);
+                let reveal_query_matches =
+                    std::mem::replace(&mut s.reveal_query_matches_request, false);
                 let recording_names =
                     RecordingNames::resolve(s.loaded_files.view(), &s.recording_name_template);
                 if let Some(action) = self.map.draw(
@@ -101,6 +103,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                         point_window_folds: &mut s.point_window_folds,
                         center_request: center_req,
                         zoom_to_visible,
+                        reveal_query_matches,
                         sticky_pos_override: popup_pos,
                     },
                 ) {

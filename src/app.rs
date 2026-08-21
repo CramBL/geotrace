@@ -87,6 +87,9 @@ struct SharedAppState {
     popup_pos_request: Option<egui::Pos2>,
     /// When `true`, `NavMap::draw` zooms the map to fit all currently visible data.
     zoom_to_visible_request: bool,
+    /// Set by the query window's "Show on map", consumed by `NavMap::draw` to
+    /// frame the query matches and play their reveal animation again.
+    reveal_query_matches_request: bool,
     /// Filename and warnings for the currently open data quality warnings dialog, if any.
     warnings_popup: Option<(String, Vec<LoadWarning>)>,
     /// The recording whose metadata-details dialog is open, if any.
@@ -512,6 +515,7 @@ impl App {
                 map_center_request: None,
                 popup_pos_request: None,
                 zoom_to_visible_request: false,
+                reveal_query_matches_request: false,
                 sky_trails_request: None,
                 reference_document_request: None,
                 warnings_popup: None,

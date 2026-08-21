@@ -7,7 +7,7 @@ use gt_types::{
     Coord, DataCategory, FileIdx, FileMetadata, LoadedFile, LoadedTrack, MercPoint, PointIdx, Rect,
     SpatialPoint, TimeRange, TrackIdx, TrackMetadata, merc_bounds_for_rect,
 };
-use gt_ui_types::{FileVisibility, TrackVisibility};
+use gt_ui_types::{DrawLayer, FileVisibility, TrackVisibility};
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
 
@@ -688,5 +688,93 @@ fn candidate_label_generated_marker_matches_header() {
         candidate_label(candidate, &[file]),
         expected,
         "candidate_label must delegate to generated_marker_header"
+    );
+}
+
+/// A draw layer covering the first point of `track`, as one completed run.
+fn matches_of_run(run: u64, track: TrackRef) -> QueryMatches {
+    // A range built from arguments, so the single-element vec does not trip
+    // clippy's `single_range_in_vec_init`.
+    let rng = |start: usize, end: usize| start..end;
+    QueryMatches {
+        draws: vec![DrawLayer {
+            color: 0,
+            ranges: std::collections::HashMap::from([(track, vec![rng(0, 1)])]),
+        }],
+        run,
+        ..QueryMatches::default()
+    }
+}
+
+/// "Show on map" frames the matched points alone, not every recording the
+/// query ran over.
+#[test]
+fn matched_bounding_box_covers_only_the_drawn_matches() {
+    let files = vec![file_with_tracks(vec![
+        track_at(55.0, 12.0),
+        track_at(56.0, 13.0),
+    ])];
+    let matches = matches_of_run(1, TrackRef::new(FileIdx::new(0), TrackIdx::new(1)));
+    assert_eq!(
+        matched_bounding_box(&files, &matches),
+        Some((56.0, 56.0, 13.0, 13.0))
+    );
+    assert_eq!(matched_bounding_box(&files, &QueryMatches::default()), None);
+}
+
+/// The map answers the query window's "Show on map" by framing the matches,
+/// wherever the camera stood before.
+#[test]
+fn revealing_matches_frames_the_map_on_them() {
+    let files = vec![file_with_tracks(vec![
+        track_at(55.0, 12.0),
+        track_at(56.0, 13.0),
+    ])];
+    let visibility = TrackDataVisibility::from_loaded(&files);
+    let matches = matches_of_run(1, TrackRef::new(FileIdx::new(0), TrackIdx::new(1)));
+    let reveal_requested = std::cell::Cell::new(false);
+    let mut harness = crate::test_harness::builder()
+        .size(egui::vec2(400.0, 400.0))
+        .ui_state(
+            |ui, map: &mut Option<NavMap>| {
+                let map =
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                let mut state = DrawState::default();
+                map.draw(
+                    ui,
+                    MapDrawContext {
+                        query_matches: Some(&matches),
+                        reveal_query_matches: reveal_requested.get(),
+                        ..state.context(&files, &visibility)
+                    },
+                );
+            },
+            None,
+        );
+
+    harness.step();
+    let framed_all = harness
+        .state()
+        .as_ref()
+        .and_then(NavMap::viewport_geo_bounds)
+        .expect("the map framed the newly loaded file");
+    assert!(
+        framed_all.lon_min < 12.0 && framed_all.lon_max > 13.0,
+        "loading frames both tracks, got {framed_all:?}"
+    );
+
+    reveal_requested.set(true);
+    harness.step();
+    let framed_matches = harness
+        .state()
+        .as_ref()
+        .and_then(NavMap::viewport_geo_bounds)
+        .expect("the map framed the matches");
+    assert!(
+        framed_matches.lon_min > 12.9
+            && framed_matches.lon_max < 13.1
+            && framed_matches.lat_min > 55.9
+            && framed_matches.lat_max < 56.1,
+        "the reveal frames the matched track alone, got {framed_matches:?}"
     );
 }
