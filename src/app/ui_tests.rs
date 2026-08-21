@@ -4623,6 +4623,7 @@ fn snap_runs_persist_and_restore_through_the_app() {
     harness.state_mut().history = crate::app::history_db::HistoryWorker::spawn(
         Recordings::open_or_create(&db_path).expect("reopen"),
         egui::Context::default(),
+        gt_pending_writes::PendingWrites::default(),
     );
 
     // A loaded file associated with the stored recording, with a completed
@@ -5825,6 +5826,7 @@ fn snapshot_log_association_dialog() {
     harness.inner.state_mut().history = crate::app::history_db::HistoryWorker::spawn(
         open_temporary_history_database(&dir.path().join("geotrace.h5")),
         egui::Context::default(),
+        gt_pending_writes::PendingWrites::default(),
     );
     harness.inner.state_mut().sync_db_path();
     harness.inner.state_mut().history.hide_path();
@@ -6016,6 +6018,7 @@ mod log_association {
         harness.state_mut().history = HistoryWorker::spawn(
             open_temporary_history_database(db_path),
             egui::Context::default(),
+            gt_pending_writes::PendingWrites::default(),
         );
         harness.state_mut().sync_db_path();
         harness

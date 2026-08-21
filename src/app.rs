@@ -311,10 +311,6 @@ pub struct App {
     offline: bool,
     /// The registry every background write registers itself in, shared with
     /// `main` so the process waits for the writes that outlive the window.
-    #[expect(
-        dead_code,
-        reason = "the schedulers and the loader hold their own clones: the write sites the app itself owns take no guard yet"
-    )]
     pending_writes: PendingWrites,
     interference_backfill_ui: backfill_ui::BackfillUi<backfill_ui::InterferenceBackfill>,
     geomagnetic_index_backfill_ui: backfill_ui::BackfillUi<backfill_ui::GeomagneticIndexBackfill>,
@@ -470,7 +466,9 @@ impl App {
             geomagnetic_indices,
             tec_maps,
             solar_flares,
-        } = options.storage.open(&cc.egui_ctx);
+        } = options
+            .storage
+            .open(&cc.egui_ctx, options.pending_writes.clone());
 
         let jamming = jamming::JammingScheduler::new(
             cc.egui_ctx.clone(),

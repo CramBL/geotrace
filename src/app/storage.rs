@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use egui::Context;
+use gt_pending_writes::PendingWrites;
 use gt_store::{
     DbError, FlareStore, HistoryDatabase as _, IonexStore, JamStore, Recordings, SolarStore, Store,
 };
@@ -79,11 +80,11 @@ impl OpenStorage {
 }
 
 impl Storage {
-    pub fn open(self, ctx: &Context) -> OpenStorage {
+    pub fn open(self, ctx: &Context, pending_writes: PendingWrites) -> OpenStorage {
         match self {
             Self::Disabled => OpenStorage::disabled(),
             Self::DataDirectory => match Store::open_default() {
-                Ok(store) => open_in(&store, ctx),
+                Ok(store) => open_in(&store, ctx, pending_writes),
                 Err(err) => {
                     log::error!("Failed to locate the data directory: {err}");
                     OpenStorage::disabled()
@@ -130,9 +131,9 @@ pub(crate) fn reopen_recordings(path: &Path) -> Result<Recordings, HistoryFailur
 ///
 /// Each archive is opened whatever the recordings database did: one being
 /// unusable says nothing about the others.
-fn open_in(store: &Store, ctx: &Context) -> OpenStorage {
+fn open_in(store: &Store, ctx: &Context, pending_writes: PendingWrites) -> OpenStorage {
     let (history, history_failure) = match store.open_recordings() {
-        Ok(db) => (HistoryWorker::spawn(db, ctx.clone()), None),
+        Ok(db) => (HistoryWorker::spawn(db, ctx.clone(), pending_writes), None),
         Err(err) => (
             HistoryWorker::disabled(),
             Some(classify_failure(&err, store.recordings_path())),
@@ -212,7 +213,7 @@ mod tests {
     /// through the app's own startup path.
     #[test]
     fn disabled_storage_opens_nothing() {
-        let opened = Storage::Disabled.open(&Context::default());
+        let opened = Storage::Disabled.open(&Context::default(), PendingWrites::default());
         assert!(opened.history.path().is_none());
         assert!(opened.history_failure.is_none());
         assert!(opened.archive.is_none());
@@ -224,7 +225,7 @@ mod tests {
     #[test]
     fn a_usable_store_opens_every_database() {
         let (_dir, store) = store();
-        let opened = open_in(&store, &Context::default());
+        let opened = open_in(&store, &Context::default(), PendingWrites::default());
 
         assert!(opened.history.path().is_some(), "the worker has a database");
         assert!(opened.archive.is_some());
@@ -262,7 +263,7 @@ mod tests {
         let (_dir, store) = store();
         std::fs::write(store.recordings_path(), b"not a database").expect("write");
 
-        let opened = open_in(&store, &Context::default());
+        let opened = open_in(&store, &Context::default(), PendingWrites::default());
 
         assert_eq!(
             opened.history_failure,
