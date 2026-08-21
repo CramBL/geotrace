@@ -10,6 +10,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use hdf5::Group;
 use hdf5::types::VarLenUnicode;
 
+use crate::prune::DeleteState;
 use crate::{ArchiveError, Column, ColumnFormat, dates};
 
 /// Days since the Unix epoch, per stored day.
@@ -49,12 +50,15 @@ impl<'a> DayIndex<'a> {
         Self { group }
     }
 
+    /// Create the index columns, and the attribute a delete marks its progress
+    /// in ([`crate::prune`]).
     pub fn create_columns(group: &Group, format: ColumnFormat) -> Result<(), ArchiveError> {
         Column::create::<i32>(group, DAY, format)?;
         Column::create::<u64>(group, OFFSET, format)?;
         Column::create::<u32>(group, COUNT, format)?;
         Column::create::<i64>(group, FETCHED_AT, format)?;
-        Column::create_strings(group, HOST, format)
+        Column::create_strings(group, HOST, format)?;
+        DeleteState::Settled.write(group)
     }
 
     /// Every stored day, oldest first.
