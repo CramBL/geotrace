@@ -64,7 +64,7 @@ points
 Every plot metric is queryable, along with the recording's own sensor channels.
 A query can halo its matches, keep only them, or hide them.
 
-![The query window over the map: a windowed velocity query, its per-point results table, the matching stretches halo'd on the track, and the query history below](tests/snapshots/snap_app_query_window.png)
+![The query window over the map: a windowed velocity query, its per-point results table under the Results tab, and the matching stretches halo'd on the track](tests/snapshots/snap_app_query_window.png)
 
 ## Install
 
