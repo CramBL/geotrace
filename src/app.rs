@@ -96,6 +96,9 @@ struct SharedAppState {
     /// Set by the map context menu's "Show sky trails", consumed by the app to
     /// open the sky trails window (which is not part of shared state).
     sky_trails_request: Option<gt_ui_types::SkyTrailsRequest>,
+    /// Set by a link in the map warning indicator's popup, consumed by the app
+    /// to open the reference window (which is not part of shared state).
+    reference_document_request: Option<gt_ui_types::reference::ReferenceDocument>,
     /// User template for the recording name shown in the side panel. See
     /// [`gt_fmt::render_name_template`].
     recording_name_template: String,
@@ -509,6 +512,7 @@ impl App {
                 popup_pos_request: None,
                 zoom_to_visible_request: false,
                 sky_trails_request: None,
+                reference_document_request: None,
                 warnings_popup: None,
                 metadata_popup: None,
                 clear_query_request: false,

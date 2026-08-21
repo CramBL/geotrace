@@ -478,6 +478,11 @@ impl App {
             self.sky_trails_window.open(request);
         }
 
+        let reference_request = self.shared.borrow_mut().reference_document_request.take();
+        if let Some(document) = reference_request {
+            self.reference_window.open(document);
+        }
+
         // "Reset filters" also drops the query filter so the map fully clears.
         if std::mem::take(&mut self.shared.borrow_mut().clear_query_request) {
             self.query_window.clear_filter();
@@ -629,7 +634,10 @@ impl App {
                     empty_reason: tec_empty,
                 } = self.tec_maps.overlay_layer();
                 let log_matches = self.logs.map_matches();
-                let space_weather_warning = self.space_weather_warning.lines();
+                let space_weather = gt_map::SpaceWeatherIndicator {
+                    warning_lines: self.space_weather_warning.lines(),
+                    levels: &space_weather_warning::WARNING_LEVELS,
+                };
                 let mut behavior = MainBehavior {
                     map,
                     state: &mut s,
@@ -646,7 +654,7 @@ impl App {
                     tec_series: &tec_series,
                     context_lines: &context_lines,
                     solar_flares: &solar_flares,
-                    space_weather_warning,
+                    space_weather,
                     jamming_dataset,
                     jamming_day,
                     jamming_empty,

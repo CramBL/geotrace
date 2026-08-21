@@ -30,6 +30,7 @@ mod transform;
 mod viewport;
 
 pub use sky_trails_window::SkyTrailsWindow;
+pub use space_weather_indicator::SpaceWeatherIndicator;
 pub use tec_renderer::{TecHeatmapSnapshot, TecLayer};
 pub use viewport::GeoBounds;
 
@@ -42,6 +43,7 @@ use gt_jam::dataset::JamDataset;
 use gt_jam::day_selection::{DaySelection, EmptyReason};
 use gt_loaded_files::RecordingNames;
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackRef};
+use gt_ui_types::reference::ReferenceDocument;
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
     HighlightScope, HoverCandidates, HoveredLogGlyph, LogMatchHover, LogMatches, MapHighlight,
@@ -91,16 +93,17 @@ pub const SATELLITE_LAYER_NEEDS_TOKEN: &str = "Enter a Mapbox token to use the s
 /// [`NavMap::use_mapbox_tiles`] for what happens below it.
 pub(crate) const MAPBOX_MIN_SAFE_ZOOM: u8 = 2;
 
-/// Action requested from a right-click context menu on a map element.
-///
-/// Returned by [`NavMap::draw`] when the user selects an item. The caller is
-/// responsible for applying it to the visibility state.
+/// Action the user asked for through a map context menu or popup, returned by
+/// [`NavMap::draw`] for the caller to apply to the state it owns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MapContextAction {
+pub enum MapAction {
     ShowOnlyTrack(TrackRef),
     ShowOnlyFile(FileIdx),
     /// Open the sky trails window, per the request's track and instant.
     ShowSkyTrails(SkyTrailsRequest),
+    /// Open the reference window on this document, asked for by a link in the
+    /// environment warning indicator's popup.
+    OpenReferenceDocument(ReferenceDocument),
 }
 
 const BLINK_DURATION_SEC: f32 = 3.0;
@@ -270,11 +273,9 @@ pub struct MapDrawContext<'a> {
     /// The log match under the cursor, on the map and in the viewer alike.
     pub log_hover: &'a mut LogMatchHover,
     pub empty_reason: Option<EmptyReason>,
-    /// One line per environment metric that could have disturbed a loaded
-    /// recording, empty while the archives place none. Fills the hover of the
-    /// warning indicator in the map's top-right corner, which is drawn either
-    /// way.
-    pub space_weather_warning: &'a [String],
+    /// What the environment warning indicator in the map's top-right corner
+    /// shows, which is drawn whether or not a metric warns.
+    pub space_weather: SpaceWeatherIndicator<'a>,
     pub filter: &'a GlobalFilter,
     pub visibility: &'a TrackDataVisibility,
     pub event_marker_visibility: &'a EventMarkerVisibility,
@@ -386,6 +387,8 @@ pub struct NavMap {
     disambiguation_pos: egui::Pos2,
     /// Session-only state of the display toggle (popup open, solo restore).
     display_toggle: display_toggle::DisplayToggleState,
+    /// Session-only state of the environment warning indicator (popup open).
+    space_weather_indicator: space_weather_indicator::SpaceWeatherIndicatorState,
     /// Memoized per-category counts for the display-toggle popup, so an open
     /// popup does not re-walk every point each frame.
     display_counts_cache: display_counts::DisplayCountsCache,
@@ -444,6 +447,7 @@ impl NavMap {
             disambiguation_candidates: HoverCandidates::default(),
             disambiguation_pos: egui::pos2(0.0, 0.0),
             display_toggle: display_toggle::DisplayToggleState::default(),
+            space_weather_indicator: space_weather_indicator::SpaceWeatherIndicatorState::default(),
             display_counts_cache: display_counts::DisplayCountsCache::default(),
             icon_meshes,
             visible_points: viewport::VisiblePoints::default(),
@@ -571,11 +575,7 @@ impl NavMap {
 
     /// Draw one frame of the map, and return the action the user asked for
     /// through a context menu or a popup button.
-    pub fn draw(
-        &mut self,
-        ui: &mut egui::Ui,
-        mut ctx: MapDrawContext<'_>,
-    ) -> Option<MapContextAction> {
+    pub fn draw(&mut self, ui: &mut egui::Ui, mut ctx: MapDrawContext<'_>) -> Option<MapAction> {
         let now = ui.ctx().input(|i| i.time);
         self.apply_camera_requests(ui, &ctx);
         self.adopt_new_files(ui, &ctx, now);
@@ -608,21 +608,24 @@ impl NavMap {
         let scope = ctx.scope();
         let hover = self.detect_hover(ui, &map_response, map_center, scope);
 
-        self.show_overlay_controls(ui, map_rect, &mut ctx);
+        let reference_document = self.show_overlay_controls(ui, map_rect, &mut ctx);
 
         let just_opened_disambig = self.apply_click(ui, &map_response, &mut ctx, scope, hover);
         self.show_disambiguation_popup(ui, &mut ctx, scope, just_opened_disambig);
 
-        let mut context_action = self.show_context_menu(&map_response, &ctx, hover.primary());
+        let mut action = self.show_context_menu(&map_response, &ctx, hover.primary());
         if let Some(request) = self.show_pinned_popup(ui, &mut ctx, scope) {
-            context_action = Some(MapContextAction::ShowSkyTrails(request));
+            action = Some(MapAction::ShowSkyTrails(request));
+        }
+        if let Some(document) = reference_document {
+            action = Some(MapAction::OpenReferenceDocument(document));
         }
         show_compound_hover_label(ui, &ctx, hover, disambig_open);
 
         ctx.highlight.hover = hover.primary().map(HighlightScope::Point);
         ctx.highlight.hover_candidates = hover;
 
-        context_action
+        action
     }
 
     /// Apply the caller's camera requests: an explicit center, a position for
@@ -941,14 +944,17 @@ impl NavMap {
     }
 
     /// The map's floating controls: the tile layer picker with the display
-    /// toggle stacked above it in the bottom-right corner, and the space
-    /// weather warning in the top-right one.
+    /// toggle stacked above it in the bottom-right corner, and the environment
+    /// warning indicator in the top-right one.
+    ///
+    /// Returns the reference document a link in the indicator's popup asked
+    /// for.
     fn show_overlay_controls(
         &mut self,
         ui: &egui::Ui,
         map_rect: egui::Rect,
         ctx: &mut MapDrawContext<'_>,
-    ) {
+    ) -> Option<ReferenceDocument> {
         let layer_toggle = Area::new(egui::Id::new("map_layer_toggle"))
             .fixed_pos(egui::pos2(map_rect.right() - 8.0, map_rect.bottom() - 8.0))
             .pivot(egui::Align2::RIGHT_BOTTOM)
@@ -1004,8 +1010,9 @@ impl NavMap {
         space_weather_indicator::show_space_weather_warning(
             ui,
             map_rect,
-            ctx.space_weather_warning,
-        );
+            &mut self.space_weather_indicator,
+            ctx.space_weather,
+        )
     }
 
     /// Apply this frame's primary click: pin the hovered element, unpin it
@@ -1105,12 +1112,12 @@ impl NavMap {
         map_response: &egui::Response,
         ctx: &MapDrawContext<'_>,
         hover_point_ref: Option<DataPointRef>,
-    ) -> Option<MapContextAction> {
+    ) -> Option<MapAction> {
         if map_response.secondary_clicked() {
             self.right_click_ref = hover_point_ref;
         }
         let right_click_ref = self.right_click_ref;
-        let mut action: Option<MapContextAction> = None;
+        let mut action: Option<MapAction> = None;
         map_response.context_menu(|ui| {
             let Some(point_ref) = right_click_ref else {
                 // Right-clicked on empty map space - nothing to show.
@@ -1131,18 +1138,18 @@ impl NavMap {
             }
             ui.separator();
             if ui.button("Only show elements from this track").clicked() {
-                action = Some(MapContextAction::ShowOnlyTrack(point_ref.track));
+                action = Some(MapAction::ShowOnlyTrack(point_ref.track));
                 ui.close();
             }
             if ui.button("Only show elements from this file").clicked() {
-                action = Some(MapContextAction::ShowOnlyFile(point_ref.track.fi));
+                action = Some(MapAction::ShowOnlyFile(point_ref.track.fi));
                 ui.close();
             }
             ui.separator();
             if ui.button("Show sky trails…").clicked() {
-                action = Some(MapContextAction::ShowSkyTrails(
-                    SkyTrailsRequest::whole_track(point_ref.track),
-                ));
+                action = Some(MapAction::ShowSkyTrails(SkyTrailsRequest::whole_track(
+                    point_ref.track,
+                )));
                 ui.close();
             }
         });
@@ -1454,6 +1461,7 @@ struct DrawState {
     log_matches: LogMatches,
     log_hover: LogMatchHover,
     space_weather_warning: Vec<String>,
+    space_weather_levels: Vec<gt_ui_types::WarningLevelExplanation>,
 }
 
 #[cfg(test)]
@@ -1464,6 +1472,7 @@ impl Default for DrawState {
             log_matches: LogMatches::default(),
             log_hover: LogMatchHover::default(),
             space_weather_warning: Vec::new(),
+            space_weather_levels: Vec::new(),
             filter: GlobalFilter::default(),
             event_marker_visibility: EventMarkerVisibility::default(),
             generated_marker_visibility: GeneratedMarkerVisibility::default(),
@@ -1500,7 +1509,10 @@ impl DrawState {
             log_matches: &self.log_matches,
             log_hover: &mut self.log_hover,
             empty_reason: None,
-            space_weather_warning: &self.space_weather_warning,
+            space_weather: SpaceWeatherIndicator {
+                warning_lines: &self.space_weather_warning,
+                levels: &self.space_weather_levels,
+            },
             filter: &self.filter,
             visibility,
             event_marker_visibility: &self.event_marker_visibility,

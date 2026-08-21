@@ -6,17 +6,17 @@
 //! recording no archived day overlaps warns about nothing.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use chrono::{DateTime, NaiveDate, Utc};
-use gt_flare::{FlareClassification, MarkedFlare};
+use gt_flare::{FlareClassification, MarkedFlare, RadioBlackoutClass};
 use gt_loaded_files::LoadedFileId;
 use gt_solar::GeomagneticIndex;
 use gt_solar::activity::{GeomagneticActivity, GeomagneticStormClass};
 use gt_types::{SunlitSide, TimeRange, TrackRef};
 use gt_ui_types::{
     ArcIdentity, GeomagneticPoint, GeomagneticSeries, JammingPoint, JammingSeries, TecPoint,
-    TecSeries,
+    TecSeries, WarningLevelExplanation,
 };
 
 /// Shown as a toast the first time a loaded recording is found to overlap an
@@ -44,6 +44,51 @@ const RECEIVER_ON_THE_SUNLIT_SIDE: &str = "receiver on the sunlit side";
 /// How the flare line writes a peak instant, which the catalog publishes to
 /// the minute.
 const FLARE_PEAK_FORMAT: &str = "%Y-%m-%d %H:%M";
+
+/// The weakest flare classification the NOAA radio blackout scale covers, as
+/// the catalog writes it. The scale's own floor is a peak flux rather than a
+/// classification, so the test `the_stated_flare_class_is_the_first_blackout_level`
+/// pins this string against the scale.
+const FLARE_TRIGGER_CLASSIFICATION: &str = "M1";
+
+/// One row per environment metric, stating the level at which it raises a
+/// warning, listed by the popup behind the map's warning icon.
+pub static WARNING_LEVELS: LazyLock<Vec<WarningLevelExplanation>> = LazyLock::new(|| {
+    vec![
+        WarningLevelExplanation {
+            trigger: format!(
+                "{}: {INTERFERENCE_TRIGGER_PERCENT:.0} % or more of aircraft in a crossed cell \
+                 reported low navigation accuracy (gpsjam.org's own yellow level).",
+                gt_jam::text::LAYER_LABEL
+            ),
+            reference: gt_jam::reference::AIRCRAFT_INTERFERENCE,
+        },
+        WarningLevelExplanation {
+            trigger: format!(
+                "Geomagnetic activity: {} or {} at {} or higher, NOAA's {} storm level.",
+                GeomagneticIndex::Kp,
+                GeomagneticIndex::Hp30,
+                GeomagneticStormClass::Minor.lowest_value(),
+                GeomagneticStormClass::Minor.scale_name()
+            ),
+            reference: gt_solar::reference::GEOMAGNETIC_ACTIVITY,
+        },
+        WarningLevelExplanation {
+            trigger: format!(
+                "Solar flares: class {FLARE_TRIGGER_CLASSIFICATION} or stronger, NOAA's {} level, \
+                 while the receiver was on the sunlit side.",
+                RadioBlackoutClass::Minor.scale_name()
+            ),
+            reference: gt_flare::reference::SOLAR_FLARES,
+        },
+        WarningLevelExplanation {
+            trigger: "TEC does not trigger a warning: no sourced level exists for an absolute \
+                      TEC value. It is shown for context when a warning is active."
+                .to_owned(),
+            reference: gt_ionex::reference::IONOSPHERIC_TEC,
+        },
+    ]
+});
 
 /// The peak archived value of each environment metric over one or more
 /// recordings, kept only where it reaches the level that can disturb
@@ -719,6 +764,34 @@ mod tests {
                 "TEC over the recording: 12 to 175 TECU",
             ]
         );
+    }
+
+    /// Every level the map indicator's popup states, with the link each row
+    /// carries.
+    #[test]
+    fn the_warning_levels_state_what_raises_each_warning() {
+        let listed: Vec<String> = WARNING_LEVELS
+            .iter()
+            .map(|level| format!("{}\n{}", level.trigger, level.reference.link_question))
+            .collect();
+
+        insta::assert_snapshot!("warning_levels", listed.join("\n\n"));
+    }
+
+    /// The flare row names a classification, while the blackout scale is
+    /// defined in peak flux: M1 is the weakest class that reaches the scale.
+    #[test]
+    fn the_stated_flare_class_is_the_first_blackout_level() {
+        let stated: FlareClassification = format!("{FLARE_TRIGGER_CLASSIFICATION}.0")
+            .parse()
+            .expect("a published class");
+        let below: FlareClassification = "C9.9".parse().expect("a published class");
+
+        assert_eq!(
+            stated.radio_blackout_class(),
+            Some(RadioBlackoutClass::Minor)
+        );
+        assert_eq!(below.radio_blackout_class(), None);
     }
 
     /// A recording no archived day overlaps carries no value at all, so

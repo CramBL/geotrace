@@ -773,6 +773,50 @@ fn snapshot_space_weather_warning_toast() {
     harness.snapshot_loose("space_weather_warning_toast");
 }
 
+/// Every level the map's environment indicator lists, and the reference
+/// window a row's link opens on that metric's material.
+#[test]
+fn the_map_warning_levels_open_their_reference_windows() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.run_steps(2);
+
+    harness
+        .inner
+        .get_by_label(egui_phosphor::regular::CLOUD_LIGHTNING)
+        .click();
+    harness.inner.run_steps(2);
+
+    for level in &*super::space_weather_warning::WARNING_LEVELS {
+        assert!(
+            harness
+                .inner
+                .query_by_label_contains(&level.trigger)
+                .is_some(),
+            "the popup never states {:?}",
+            level.trigger
+        );
+    }
+
+    let interference = gt_jam::reference::AIRCRAFT_INTERFERENCE;
+    harness
+        .inner
+        .get_by_label_contains(interference.link_question)
+        .click();
+    harness.inner.run_steps(2);
+
+    assert!(harness.inner.state().reference_window.is_open());
+    assert!(
+        harness
+            .inner
+            .query_all_by_label_contains(interference.title)
+            .next()
+            .is_some(),
+        "the reference window shows its title"
+    );
+}
+
 /// The same loaded-file view under the light theme, so the side panel, chip row,
 /// and plot are all exercised on a light background - the general light-mode
 /// baseline alongside the plot- and badge-specific ones.

@@ -20,6 +20,7 @@ pub mod snap_error_series;
 pub mod snapped_tracks;
 pub mod tec_series;
 pub mod visibility;
+pub mod warning_levels;
 
 pub use arc_identity::ArcIdentity;
 pub use context_series::{
@@ -57,3 +58,4 @@ pub use tec_series::{TecPoint, TecSeries};
 pub use visibility::{
     FileVisibility, MapScope, PointVisibility, TrackDataVisibility, TrackVisibility,
 };
+pub use warning_levels::WarningLevelExplanation;

@@ -2,7 +2,7 @@ use egui::WidgetText;
 use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_tiles::{SimplificationOptions, TileId, UiResponse};
 use gt_loaded_files::RecordingNames;
-use gt_map::{MapContextAction, MapDrawContext, NavMap};
+use gt_map::{MapAction, MapDrawContext, NavMap};
 use gt_types::LoadedFile;
 use gt_ui_types::{HighlightScope, TrackDataVisibility};
 
@@ -57,9 +57,10 @@ pub(super) struct MainBehavior<'a> {
     pub(super) context_lines: &'a gt_ui_types::ContextLines,
     /// The flares of the archived days in that span.
     pub(super) solar_flares: &'a [gt_flare::MarkedFlare],
-    /// The map warning indicator's lines, from
-    /// [`SpaceWeatherWarning`](crate::app::space_weather_warning::SpaceWeatherWarning).
-    pub(super) space_weather_warning: &'a [String],
+    /// What the map's environment warning indicator shows: the lines from
+    /// [`SpaceWeatherWarning`](crate::app::space_weather_warning::SpaceWeatherWarning)
+    /// and the levels behind them.
+    pub(super) space_weather: gt_map::SpaceWeatherIndicator<'a>,
 }
 
 impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
@@ -88,7 +89,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                         log_matches: self.log_matches,
                         log_hover: &mut s.log_hover,
                         empty_reason: self.jamming_empty,
-                        space_weather_warning: self.space_weather_warning,
+                        space_weather: self.space_weather,
                         filter: &s.filter,
                         visibility: s.tree.visibility(),
                         event_marker_visibility: s.tree.event_marker_visibility(),
@@ -104,14 +105,17 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     },
                 ) {
                     match action {
-                        MapContextAction::ShowOnlyTrack(track) => {
+                        MapAction::ShowOnlyTrack(track) => {
                             s.tree.show_only_track(track);
                         }
-                        MapContextAction::ShowOnlyFile(fi) => {
+                        MapAction::ShowOnlyFile(fi) => {
                             s.tree.show_only_file(fi);
                         }
-                        MapContextAction::ShowSkyTrails(request) => {
+                        MapAction::ShowSkyTrails(request) => {
                             s.sky_trails_request = Some(request);
+                        }
+                        MapAction::OpenReferenceDocument(document) => {
+                            s.reference_document_request = Some(document);
                         }
                     }
                 }
