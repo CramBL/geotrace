@@ -50,6 +50,7 @@ use gt_filter::GlobalFilter;
 use gt_loaded_files::{LoadedFileId, LoadedFiles};
 use gt_log_view::{LoadedLog, LoadedLogs};
 use gt_map::NavMap;
+use gt_pending_writes::PendingWrites;
 use gt_plot::PlotState;
 use gt_side_panel::{FilterPanelState, TreeState};
 use gt_snap::wire::Costing;
@@ -142,7 +143,7 @@ fn transport_source(offline: bool) -> TransportSource {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct StartupOptions {
     pub fading_enabled: bool,
     /// Whether the app runs without network access: no interference
@@ -157,6 +158,9 @@ pub struct StartupOptions {
     /// check. Tests pin it to a fixed string so version-bearing snapshots
     /// survive a release bump.
     pub app_version: &'static str,
+    /// The registry every background write registers itself in, created by
+    /// `main` so the process can wait for the writes that outlive the window.
+    pub pending_writes: PendingWrites,
 }
 
 /// The dense per-component color slots the plot reads, from the settings
@@ -305,6 +309,13 @@ pub struct App {
     solar_flare_settings: crate::settings::SolarFlareSettings,
     /// No network access this run. Set once from [`StartupOptions`].
     offline: bool,
+    /// The registry every background write registers itself in, shared with
+    /// `main` so the process waits for the writes that outlive the window.
+    #[expect(
+        dead_code,
+        reason = "the app carries the registry for the write sites, none of which takes a guard yet"
+    )]
+    pending_writes: PendingWrites,
     interference_backfill_ui: backfill_ui::BackfillUi<backfill_ui::InterferenceBackfill>,
     geomagnetic_index_backfill_ui: backfill_ui::BackfillUi<backfill_ui::GeomagneticIndexBackfill>,
     tec_map_backfill_ui: backfill_ui::BackfillUi<backfill_ui::TecMapBackfill>,
@@ -502,6 +513,7 @@ impl App {
             solar_flare_settings,
             space_weather_warning: space_weather_warning::SpaceWeatherWarning::default(),
             offline: options.offline,
+            pending_writes: options.pending_writes,
             interference_backfill_ui: backfill_ui::BackfillUi::default(),
             geomagnetic_index_backfill_ui: backfill_ui::BackfillUi::default(),
             tec_map_backfill_ui: backfill_ui::BackfillUi::default(),

@@ -80,6 +80,7 @@ fn build_app(cc: &eframe::CreationContext<'_>, config_path: &std::path::Path, fa
             offline: true,
             storage: crate::app::Storage::Disabled,
             app_version: super::TEST_APP_VERSION,
+            pending_writes: gt_pending_writes::PendingWrites::default(),
         },
     )
 }
@@ -108,6 +109,7 @@ fn transient_app(cc: &mut eframe::CreationContext<'_>) -> App {
             offline: true,
             storage: crate::app::Storage::Disabled,
             app_version: super::TEST_APP_VERSION,
+            pending_writes: gt_pending_writes::PendingWrites::default(),
         },
     )
 }
