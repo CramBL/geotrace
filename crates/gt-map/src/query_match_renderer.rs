@@ -6,17 +6,7 @@ use egui::RichText;
 use egui::{Color32, Pos2, Stroke, Ui};
 use gt_types::{LoadedFile, LoadedTrack, TrackRef};
 
-/// Width of the halo stroke. Deliberately wider than the trackline, the
-/// quality line (5.0), and typical accuracy-circle bands, so the halo reads
-/// as a band around the track rather than a second line under it.
-const HALO_WIDTH: f32 = 22.0;
-
-/// Stroke width of the ring drawn around a single-point match.
-const RING_STROKE_WIDTH: f32 = 3.0;
-
-/// Padding between the icon size and the single-point ring radius, so the
-/// ring encloses the fix icon like the plot-hover ring does.
-const RING_RADIUS_PADDING: f32 = 5.0;
+use crate::match_reveal::HaloStyle;
 
 /// Paint one draw layer's halos from a track's prepared span geometry, in the
 /// layer's `color`.
@@ -31,14 +21,14 @@ pub(crate) fn paint_match_halo_span<K>(
     ui: &Ui,
     span: &[(K, Pos2)],
     matched: impl Fn(&K) -> bool,
-    ring_radius: f32,
+    halo: HaloStyle,
     color: Color32,
 ) {
-    let stroke = Stroke::new(HALO_WIDTH, color);
+    let stroke = Stroke::new(halo.band_width, color);
     for run in matched_runs(span, &matched) {
         match run {
             [] => {}
-            [(_, pos)] => draw_match_ring(ui, *pos, ring_radius, color),
+            [(_, pos)] => draw_match_ring(ui, *pos, halo, color),
             _ => {
                 let points: Vec<Pos2> = run.iter().map(|&(_, pos)| pos).collect();
                 ui.painter().add(egui::Shape::line(points, stroke));
@@ -49,11 +39,11 @@ pub(crate) fn paint_match_halo_span<K>(
 
 /// Ring around an isolated matched point (also used when a whole track
 /// collapses to a sub-pixel dot).
-pub(crate) fn draw_match_ring(ui: &Ui, pos: Pos2, radius: f32, color: Color32) {
+pub(crate) fn draw_match_ring(ui: &Ui, pos: Pos2, halo: HaloStyle, color: Color32) {
     ui.painter().circle_stroke(
         pos,
-        radius + RING_RADIUS_PADDING,
-        Stroke::new(RING_STROKE_WIDTH, color),
+        halo.ring_radius,
+        Stroke::new(halo.ring_stroke_width, color),
     );
 }
 

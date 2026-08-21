@@ -29,11 +29,17 @@ use walkers::{MapMemory, Plugin, Projector};
 use crate::collision_grid;
 use crate::hover_labels::TOOLTIP_POINTER_GAP_PX;
 use crate::icon_mesh::{IconId, IconInstance, IconMeshBatch, IconMeshLibrary};
-use crate::query_match_renderer;
 use crate::transform::MercTransform;
 
 /// Circumradius of one match's hexagon, comparable to the fix dot it sits on.
 const GLYPH_CIRCUMRADIUS_PX: f32 = 8.0;
+
+/// Gap between a glyph's circumradius and the cross-highlight ring around it,
+/// so the ring encloses the glyph rather than tracing it.
+const HOVER_RING_GAP_PX: f32 = 5.0;
+
+/// Stroke width of the cross-highlight ring.
+const HOVER_RING_STROKE_WIDTH_PX: f32 = 3.0;
 
 /// Circumradius of a cluster's hexagon, which carries a count.
 const CLUSTER_CIRCUMRADIUS_PX: f32 = 11.0;
@@ -197,7 +203,7 @@ impl Plugin for LogMatchRenderer<'_> {
         // the log layer's hover language in its reserved colour.
         let hover_ring = gt_ui_theme::LOG_LIVE_FILTER.resolve(self.dark_mode);
         if let Some(merc) = self.hovered_row_position {
-            query_match_renderer::draw_match_ring(
+            draw_hover_ring(
                 ui,
                 transform.to_screen(merc),
                 GLYPH_CIRCUMRADIUS_PX,
@@ -205,12 +211,7 @@ impl Plugin for LogMatchRenderer<'_> {
             );
         }
         if let Some(hexagon) = hovered {
-            query_match_renderer::draw_match_ring(
-                ui,
-                hexagon.center,
-                hexagon.circumradius,
-                hover_ring,
-            );
+            draw_hover_ring(ui, hexagon.center, hexagon.circumradius, hover_ring);
             egui::Tooltip::always_open(
                 ui.ctx().clone(),
                 ui.layer_id(),
@@ -222,6 +223,15 @@ impl Plugin for LogMatchRenderer<'_> {
             *self.hovered_glyph.borrow_mut() = Some(hexagon.glyph);
         }
     }
+}
+
+/// The cross-highlight ring around a glyph the viewer or the cursor points at.
+fn draw_hover_ring(ui: &Ui, center: egui::Pos2, circumradius: f32, color: Color32) {
+    ui.painter().circle_stroke(
+        center,
+        circumradius + HOVER_RING_GAP_PX,
+        egui::Stroke::new(HOVER_RING_STROKE_WIDTH_PX, color),
+    );
 }
 
 /// The lines the hovered hexagon stands for, the last row stating how many of

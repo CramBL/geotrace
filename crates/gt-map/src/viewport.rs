@@ -4,7 +4,9 @@
 
 use gt_filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackIdx, TrackRef};
-use gt_ui_types::{DataPointRef, DisplayCategory, DisplayMask, MapScope, TrackDataVisibility};
+use gt_ui_types::{
+    DataPointRef, DisplayCategory, DisplayMask, MapScope, QueryMatches, TrackDataVisibility,
+};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use walkers::MapMemory;
@@ -289,6 +291,39 @@ pub(crate) fn compute_visible_bounding_box(
     } else {
         None
     }
+}
+
+/// Bounding box over the points every `draw` layer of `matches` covers, for
+/// framing the map on what a query run drew. `None` when no draw layer covers
+/// a point of a loaded track.
+pub(crate) fn matched_bounding_box(
+    files: &[LoadedFile],
+    matches: &QueryMatches,
+) -> Option<(f64, f64, f64, f64)> {
+    let mut min_lat = f64::MAX;
+    let mut max_lat = f64::MIN;
+    let mut min_lon = f64::MAX;
+    let mut max_lon = f64::MIN;
+    let mut any = false;
+    for layer in &matches.draws {
+        for (track_ref, ranges) in &layer.ranges {
+            let Some(track) = track_ref.resolve(files) else {
+                continue;
+            };
+            for range in ranges {
+                for point in track.points.get(range.clone()).unwrap_or_default() {
+                    let lat = point.tpv.lat().as_degrees();
+                    let lon = point.tpv.lon().as_degrees();
+                    min_lat = min_lat.min(lat);
+                    max_lat = max_lat.max(lat);
+                    min_lon = min_lon.min(lon);
+                    max_lon = max_lon.max(lon);
+                    any = true;
+                }
+            }
+        }
+    }
+    any.then_some((min_lat, max_lat, min_lon, max_lon))
 }
 
 /// Compute the geographic bounding box of the given map viewport rect.

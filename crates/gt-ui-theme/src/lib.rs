@@ -630,6 +630,10 @@ pub const QUERY_MATCH_HALOS: [Color32; 5] = [
     Color32::from_rgba_premultiplied(129, 53, 53, 150),
 ];
 
+/// Alpha the match halos are drawn at while a new run's reveal animation is at
+/// its brightest, before settling back to each layer colour's own alpha.
+pub const QUERY_MATCH_REVEAL_PEAK_ALPHA: u8 = 230;
+
 /// Halo colour for the `index`-th `draw` query, or the stale grey when the
 /// visible data changed after the run. The palette cycles past its length.
 pub fn query_halo_color(index: usize, stale: bool) -> Color32 {

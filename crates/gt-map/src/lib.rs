@@ -12,6 +12,7 @@ mod jamming_renderer;
 mod log_match_renderer;
 pub mod mapbox_tiles;
 pub mod marker_renderer;
+mod match_reveal;
 mod polyline;
 mod query_match_renderer;
 mod recording_labels;
@@ -61,12 +62,14 @@ use crate::hover_labels::{
     should_show_compound_label,
 };
 use crate::marker_renderer::MarkerRenderer;
+use crate::match_reveal::MatchRevealState;
 use crate::recording_labels::RecordingLabels;
 use crate::snapped_track_renderer::SnappedTrackRenderer;
 use crate::track_layers::TrackLayers;
 use crate::transform::{MapScale, MercTransform};
 use crate::viewport::{
-    compute_viewport_bounds, compute_visible_bounding_box, is_spatial_point_visible, zoom_to_fit,
+    compute_viewport_bounds, compute_visible_bounding_box, is_spatial_point_visible,
+    matched_bounding_box, zoom_to_fit,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -287,6 +290,9 @@ pub struct MapDrawContext<'a> {
     pub point_window_folds: &'a mut PointWindowFolds,
     pub center_request: Option<(f64, f64)>,
     pub zoom_to_visible: bool,
+    /// Set for one frame by the query window's "Show on map": frames the map on
+    /// the matched points and plays their reveal animation again.
+    pub reveal_query_matches: bool,
     pub sticky_pos_override: Option<egui::Pos2>,
 }
 
@@ -350,6 +356,9 @@ struct FrameAnimation {
     blink_alpha: f32,
     /// Progress of the hover-focus overlay, 0 = absent, 1 = fully faded in.
     hover_fade: f32,
+    /// How far into a new run's match reveal this frame is, 1 = fully
+    /// inflated at its start, 0 = settled.
+    match_reveal: f32,
 }
 
 pub struct NavMap {
@@ -374,6 +383,8 @@ pub struct NavMap {
     new_file_boundary: usize,
     /// Smooth fade animation for the hover-focus overlay.
     hover_fade: HoverFadeState,
+    /// Reveal animation for the match halos of a newly completed query run.
+    match_reveal: MatchRevealState,
     /// Geographic bounds of the last rendered viewport.
     /// `None` before the first draw call.
     last_viewport_bounds: Option<GeoBounds>,
@@ -442,6 +453,7 @@ impl NavMap {
             blink: BlinkState { start: None },
             new_file_boundary: 0,
             hover_fade: HoverFadeState::default(),
+            match_reveal: MatchRevealState::default(),
             last_viewport_bounds: None,
             right_click_ref: None,
             disambiguation_candidates: HoverCandidates::default(),
@@ -642,6 +654,12 @@ impl NavMap {
         {
             zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
         }
+        if ctx.reveal_query_matches
+            && let Some(matches) = ctx.query_matches
+            && let Some(bbox) = matched_bounding_box(ctx.files, matches)
+        {
+            zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
+        }
     }
 
     /// Frame newly loaded files, start the load-highlight pulse, and rebuild
@@ -666,8 +684,8 @@ impl NavMap {
         self.global_tree = gt_track_builder::build_global_tree(ctx.files);
     }
 
-    /// Advance the blink pulse and the hover-focus fade, requesting another
-    /// frame while either is running.
+    /// Advance the blink pulse, the hover-focus fade, and the query-match
+    /// reveal, requesting another frame while any of them is running.
     ///
     /// The fade reads the previous frame's highlight, which is what the
     /// renderers will see this frame.
@@ -694,9 +712,19 @@ impl NavMap {
         } else {
             0.0
         };
+        if ctx.reveal_query_matches {
+            self.match_reveal.restart(now);
+        }
+        self.match_reveal
+            .start_reveal_for_new_run(ctx.query_matches, now);
+        let match_reveal = self.match_reveal.tick(now);
+        if self.match_reveal.is_active() {
+            request_animation_frame(ui);
+        }
         FrameAnimation {
             blink_alpha,
             hover_fade,
+            match_reveal,
         }
     }
 
@@ -814,6 +842,7 @@ impl NavMap {
                 .new_file_boundary(self.new_file_boundary)
                 .blink_alpha(animation.blink_alpha)
                 .hover_fade_alpha(animation.hover_fade)
+                .match_reveal(animation.match_reveal)
                 .maybe_query_matches(ctx.query_matches)
                 .display_query_highlights(
                     ctx.display_mask
@@ -1524,6 +1553,7 @@ impl DrawState {
             point_window_folds: &mut self.point_window_folds,
             center_request: None,
             zoom_to_visible: false,
+            reveal_query_matches: false,
             sticky_pos_override: None,
         }
     }

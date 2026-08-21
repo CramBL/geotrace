@@ -21,6 +21,10 @@ pub struct QueryMatches {
     /// True when the visible data changed after the run - the display grays
     /// out (or reverts) until the query runs again.
     pub stale: bool,
+    /// Monotonic sequence number of the run that produced these matches. Zero
+    /// means no run produced them - a synthetic or hand-built value, which the
+    /// map never animates.
+    pub run: u64,
 }
 
 /// Which `draw` layers cover one point, as a fixed-width bitset (bit `i` for
@@ -76,6 +80,12 @@ impl QueryMatches {
     /// Whether this run affects the map at all.
     pub fn is_empty(&self) -> bool {
         self.hidden.is_empty() && self.draws.iter().all(|d| d.ranges.is_empty())
+    }
+
+    /// Whether any `draw` layer matched a point, so the map paints at least
+    /// one halo.
+    pub fn has_halos(&self) -> bool {
+        self.draws.iter().any(|layer| !layer.ranges.is_empty())
     }
 
     /// The hidden ranges for one track, empty when none.

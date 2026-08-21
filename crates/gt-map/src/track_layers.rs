@@ -15,6 +15,7 @@ use walkers::{MapMemory, Plugin, Projector};
 
 use crate::collision_grid;
 use crate::icon_mesh::IconMeshLibrary;
+use crate::match_reveal::HaloStyle;
 use crate::polyline::{CULL_MARGIN_PX, VisiblePath, visible_path};
 use crate::query_match_renderer;
 use crate::recording_labels::RecordingLabels;
@@ -113,6 +114,10 @@ pub struct TrackLayers<'a> {
     /// Animated hover-fade progress in [0.0, 1.0].
     /// Driven by [`crate::HoverFadeState`]: 0 = no overlay, 1 = full overlay.
     hover_fade_alpha: f32,
+    /// How far into a new run's reveal the match halos are, from
+    /// [`crate::match_reveal::MatchRevealState`]: 1 = fully inflated at the
+    /// start of the reveal, 0 = settled.
+    match_reveal: f32,
     /// Matches of the last query run, drawn as halos beneath the tracklines.
     query_matches: Option<&'a QueryMatches>,
     /// Whether the query-highlights display category is visible. Gates the
@@ -386,7 +391,7 @@ impl<'a> TrackLayers<'a> {
         if draws.is_none() && hover_match.is_none() {
             return;
         }
-        let ring_radius = style.base_arrow_size;
+        let halo = HaloStyle::new(style, self.match_reveal);
         for (i, geo) in geometries.iter().enumerate() {
             if !filter(i) {
                 continue;
@@ -406,16 +411,18 @@ impl<'a> TrackLayers<'a> {
                     continue;
                 }
                 let stale = draws.is_some_and(|(_, stale)| stale);
-                let color = gt_ui_theme::query_halo_color(layer.color, stale);
-                Self::paint_halo_path(ui, &geo.path, ring_radius, color, |key| {
+                let color = halo.revealed_color(gt_ui_theme::query_halo_color(layer.color, stale));
+                Self::paint_halo_path(ui, &geo.path, halo, color, |key| {
                     key.matched.contains(layer_idx)
                 });
             }
+            // The hovered match paints settled: the reveal belongs to the
+            // draw layers of the run.
             if hover_match.is_some_and(|hm| hm.track == track_ref) {
                 Self::paint_halo_path(
                     ui,
                     &geo.path,
-                    ring_radius,
+                    HaloStyle::new(style, 0.0),
                     gt_ui_theme::QUERY_MATCH_HOVER_HALO,
                     |key| key.hover_matched,
                 );
@@ -428,7 +435,7 @@ impl<'a> TrackLayers<'a> {
     fn paint_halo_path(
         ui: &Ui,
         path: &VisiblePath<LinePointKey>,
-        ring_radius: f32,
+        halo: HaloStyle,
         color: egui::Color32,
         covered: impl Fn(&LinePointKey) -> bool,
     ) {
@@ -436,18 +443,12 @@ impl<'a> TrackLayers<'a> {
             VisiblePath::OffScreen => {}
             VisiblePath::Dot(key, pos) => {
                 if covered(key) {
-                    query_match_renderer::draw_match_ring(ui, *pos, ring_radius, color);
+                    query_match_renderer::draw_match_ring(ui, *pos, halo, color);
                 }
             }
             VisiblePath::Spans(spans) => {
                 for span in spans.iter() {
-                    query_match_renderer::paint_match_halo_span(
-                        ui,
-                        span,
-                        &covered,
-                        ring_radius,
-                        color,
-                    );
+                    query_match_renderer::paint_match_halo_span(ui, span, &covered, halo, color);
                 }
             }
         }
