@@ -228,6 +228,15 @@ impl<'a> ColumnFormat<'a> {
     }
 }
 
+/// The height [`ColumnFormat::header_ui`] lays out to: the name over the unit,
+/// with the padding a value row adds around its text.
+pub(super) fn header_height(ui: &egui::Ui) -> f32 {
+    ui.text_style_height(&TextStyle::Body)
+        + ui.spacing().item_spacing.y
+        + ui.text_style_height(&TextStyle::Small)
+        + super::match_table::ROW_PADDING
+}
+
 /// The width one line of `text` lays out to in `style`.
 fn text_width(ui: &egui::Ui, text: &str, style: &TextStyle) -> f32 {
     let font = style.resolve(ui.style());
@@ -240,8 +249,14 @@ fn text_width(ui: &egui::Ui, text: &str, style: &TextStyle) -> f32 {
 /// Seconds since the Unix epoch as a wall-clock time of day.
 fn time_of_day(seconds: f64, millis: bool) -> String {
     let pattern = if millis { "%H:%M:%S%.3f" } else { "%H:%M:%S" };
-    DateTime::<Utc>::from_timestamp_micros((seconds * MICROS_PER_SEC) as i64)
-        .map_or_else(|| EM_DASH.to_owned(), |t| t.format(pattern).to_string())
+    wall_clock(seconds).map_or_else(|| EM_DASH.to_owned(), |t| t.format(pattern).to_string())
+}
+
+/// The instant `unix_secs` names, absent for a timestamp outside the
+/// representable range. Shared with the name rows, which state their span in
+/// the same wall clock the cells below them read in.
+pub(super) fn wall_clock(unix_secs: f64) -> Option<DateTime<Utc>> {
+    DateTime::<Utc>::from_timestamp_micros((unix_secs * MICROS_PER_SEC) as i64)
 }
 
 #[cfg(test)]

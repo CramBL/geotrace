@@ -26,8 +26,8 @@ use egui::text::{CCursor, CCursorRange, LayoutJob};
 use gt_query::lexer::{self, TokenClass};
 use gt_query::{ChannelSchema, CompletionTrigger, Construct, ConstructKind, Diagnostic, Span};
 use gt_query_run::{
-    ChannelResults, ChannelTrackResult, CheckRefresh, PanelQuery, PointsResults, QuerySession,
-    RunInputs, RunKind, RunOutcome, RunResults, schema_from_files,
+    ChannelResults, CheckRefresh, PointsResults, QuerySession, RunInputs, RunKind, RunOutcome,
+    RunResults, schema_from_files,
 };
 use gt_side_panel::widgets::PointClickRequests;
 use gt_types::{LoadedFile, NavPoint, TrackRef};
@@ -36,15 +36,10 @@ use gt_ui_types::{DisplayMask, MapHighlight, MapScope, MatchRevealTarget, QueryM
 
 use crate::settings::QueryHistoryEntry;
 
-use self::column_format::ColumnFormat;
-use self::match_table::{FoldedMatches, MatchTableContext, MatchTableOutputs};
+use self::match_table::{FoldedMatches, MatchTable, MatchTableOutputs, RowGroup};
 
 mod column_format;
 mod match_table;
-
-/// Samples shown per channel table before truncating with a "more samples"
-/// note.
-const CHANNEL_SAMPLE_ROW_CAP: usize = 100;
 
 /// Unpinned history entries kept before the oldest is evicted. Pinned
 /// entries never count against this cap.
@@ -1182,17 +1177,19 @@ impl QueryWindow {
             return;
         };
         show_on_map_ui(ui, results.matches(), reveal_matches_request);
+        let mut outputs = MatchTableOutputs {
+            highlight,
+            requests,
+            folds: folded_matches,
+            reveal: reveal_matches_request,
+        };
         match results {
             RunResults::Points(points) => {
-                let mut outputs = MatchTableOutputs {
-                    highlight,
-                    requests,
-                    folds: folded_matches,
-                    reveal: reveal_matches_request,
-                };
                 points_results_ui(ui, points, files, scope, &mut outputs);
             }
-            RunResults::Channel(channel) => channel_results_ui(ui, channel, files),
+            RunResults::Channel(channel) => {
+                channel_results_ui(ui, channel, files, scope, &mut outputs);
+            }
         }
         if results.stale() {
             ui.label(
@@ -1270,11 +1267,46 @@ fn query_swatch(ui: &mut egui::Ui, color: egui::Color32) {
     ui.add_space(ui.spacing().item_spacing.x);
 }
 
+/// The wall-clock times a name row states: the first row's, with the last
+/// row's where the group covers more than one row.
+struct NameRowSpan {
+    start: String,
+    end: Option<String>,
+}
+
+/// What a name row states, in the order it reads: the track the group is on,
+/// the wall-clock span it covers, how many rows it holds and how long it ran.
+struct NameRowLine {
+    track: String,
+    span: Option<NameRowSpan>,
+    count: String,
+    duration: Option<String>,
+}
+
+impl NameRowLine {
+    /// The fields as one line, separated the way every name row separates them.
+    fn text(self) -> String {
+        let Self {
+            track,
+            span,
+            count,
+            duration,
+        } = self;
+        let mut fields = vec![track];
+        if let Some(NameRowSpan { start, end }) = span {
+            fields.push(match end {
+                Some(end) => format!("{start} {RIGHTWARDS_ARROW} {end}"),
+                None => start,
+            });
+        }
+        fields.push(count);
+        fields.extend(duration);
+        fields.join(&format!(" {MIDDLE_DOT} "))
+    }
+}
+
 /// The line naming one match: the track it is on, the wall-clock span it
 /// covers, how many points it holds and how long it ran.
-///
-/// The recording's filename leads only while several files are loaded, where
-/// the track number alone would not say which recording is meant.
 pub(super) fn match_name_text(
     files: &[LoadedFile],
     track_ref: TrackRef,
@@ -1285,7 +1317,55 @@ pub(super) fn match_name_text(
             .and_then(|points| points.get(index))
             .map(|p| p.tpv.time().utc().format("%H:%M:%S").to_string())
     };
-    let track = match files.len() {
+    let count = range.len();
+    NameRowLine {
+        track: track_label(files, track_ref),
+        span: time_of(range.start).map(|start| NameRowSpan {
+            start,
+            end: gt_fmt::last_index_of_span(range).and_then(time_of),
+        }),
+        count: format!("{count} {}", gt_fmt::pluralize(count, "point", "points")),
+        duration: track_ref
+            .resolve(files)
+            .and_then(|track| gt_fmt::match_duration_seconds(track, range))
+            .map(gt_fmt::format_match_duration),
+    }
+    .text()
+}
+
+/// The line naming one track's matched channel samples, reading like the
+/// [`match_name_text`] line above the sample rows it names.
+pub(super) fn sample_span_name_text(
+    files: &[LoadedFile],
+    track_ref: TrackRef,
+    times: &[f64],
+    samples: &Range<usize>,
+) -> String {
+    let time_of = |unix_secs: f64| {
+        column_format::wall_clock(unix_secs).map(|time| time.format("%H:%M:%S").to_string())
+    };
+    let first = times.get(samples.start).copied();
+    let last = gt_fmt::last_index_of_span(samples).and_then(|last| times.get(last).copied());
+    let count = samples.len();
+    NameRowLine {
+        track: track_label(files, track_ref),
+        span: first.and_then(time_of).map(|start| NameRowSpan {
+            start,
+            end: last.and_then(time_of),
+        }),
+        count: format!("{count} {}", gt_fmt::pluralize(count, "sample", "samples")),
+        duration: first
+            .zip(last)
+            .map(|(first, last)| gt_fmt::format_match_duration((last - first) as i64)),
+    }
+    .text()
+}
+
+/// Which track a name row is on: its number, led by the recording's filename
+/// while several files are loaded, where the number alone would not say which
+/// recording is meant.
+fn track_label(files: &[LoadedFile], track_ref: TrackRef) -> String {
+    match files.len() {
         0 | 1 => format!("#{}", track_ref.index),
         _ => {
             let file = track_ref.fi.get(files).map_or_else(
@@ -1294,27 +1374,7 @@ pub(super) fn match_name_text(
             );
             format!("{file} #{}", track_ref.index)
         }
-    };
-    let mut fields = vec![track];
-    let last = gt_fmt::last_index_of_span(range);
-    if let Some(start) = time_of(range.start) {
-        fields.push(match last.and_then(time_of) {
-            Some(end) => format!("{start} {RIGHTWARDS_ARROW} {end}"),
-            None => start,
-        });
     }
-    let count = range.len();
-    fields.push(format!(
-        "{count} {}",
-        gt_fmt::pluralize(count, "point", "points")
-    ));
-    if let Some(seconds) = track_ref
-        .resolve(files)
-        .and_then(|track| gt_fmt::match_duration_seconds(track, range))
-    {
-        fields.push(gt_fmt::format_match_duration(seconds));
-    }
-    fields.join(&format!(" {MIDDLE_DOT} "))
 }
 
 /// Render a points pipeline's per-query sections with their point match tables.
@@ -1325,171 +1385,93 @@ fn points_results_ui(
     scope: MapScope<'_>,
     out: &mut MatchTableOutputs<'_, '_>,
 ) {
-    let stale = points.matches.stale;
     // One collapsible section per query, in editor order: its summary is the
-    // header (with a color swatch for draw queries), its match tables the body.
+    // header (with a color swatch for draw queries), its match table the body.
     // Stable ids keep the open/closed state across reruns.
-    let ctx = MatchTableContext {
-        files,
-        results: points,
-        scope,
-    };
     for (qi, query) in points.queries.iter().enumerate() {
+        let table = MatchTable::of_query_matches(files, points, query, qi);
         let id = ui.make_persistent_id(("query_result", qi));
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
             .show_header(ui, |ui| {
                 if let Some(color) = query.color {
                     query_swatch(ui, gt_ui_theme::query_halo_color(color, false));
                 }
-                // Ahead of the summary, whose length varies with the run: the
-                // two buttons then sit in the same place in every section.
-                fold_all_button_ui(ui, query, out.folds);
-                copy_tsv_button_ui(ui, &ctx, query);
-                // Truncated to the width that is left, and stated in full on
-                // hover: a summary that extends would push the window over the
-                // map beside it.
-                ui.add(Label::new(query.summary.as_str()).truncate())
-                    .on_hover_text(query.summary.as_str());
+                section_header_ui(ui, &table, &query.summary, out.folds);
             })
-            .body(|ui| {
-                match_table::query_matches_ui(ui, &ctx, qi, query, stale, out);
-            });
+            .body(|ui| table.ui(ui, scope, out));
     }
 }
 
-/// Folds every match of one query away, or expands them all again. The icon
+/// Render a channel-source run: one section for the channel, holding the table
+/// of every track's matched samples.
+fn channel_results_ui(
+    ui: &mut egui::Ui,
+    channel: &ChannelResults,
+    files: &[LoadedFile],
+    scope: MapScope<'_>,
+    out: &mut MatchTableOutputs<'_, '_>,
+) {
+    let table = MatchTable::of_channel_samples(files, channel);
+    let id = ui.make_persistent_id(("channel_result", channel.channel.as_str()));
+    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
+        .show_header(ui, |ui| {
+            if let Some(layer) = channel.matches.draws.first() {
+                query_swatch(ui, gt_ui_theme::query_halo_color(layer.color, false));
+            }
+            section_header_ui(ui, &table, &channel.summary, out.folds);
+        })
+        .body(|ui| table.ui(ui, scope, out));
+}
+
+/// One results section's header: the two buttons acting on the whole table,
+/// then the run summary that fills what is left of the row.
+fn section_header_ui(
+    ui: &mut egui::Ui,
+    table: &MatchTable<'_>,
+    summary: &str,
+    folds: &mut FoldedMatches,
+) {
+    // Ahead of the summary, whose length varies with the run: the two buttons
+    // then sit in the same place in every section.
+    fold_all_button_ui(ui, table.groups(), folds);
+    copy_tsv_button_ui(ui, table);
+    // Truncated to the width that is left, and stated in full on hover: a
+    // summary that extends would push the window over the map beside it.
+    ui.add(Label::new(summary).truncate())
+        .on_hover_text(summary);
+}
+
+/// Folds every group of one table away, or expands them all again. The icon
 /// and its hover text state which of the two the press performs.
-fn fold_all_button_ui(ui: &mut egui::Ui, query: &PanelQuery, folds: &mut FoldedMatches) {
-    let all_folded = folds.all_folded(&query.matches);
+fn fold_all_button_ui(ui: &mut egui::Ui, groups: &[RowGroup], folds: &mut FoldedMatches) {
+    let all_folded = folds.all_folded(groups);
     let (icon, tooltip) = if all_folded {
         (ICON_ARROWS_OUT, "Expand all matches")
     } else {
         (ICON_ARROWS_IN, "Collapse all matches")
     };
-    let has_matches = !query.matches.is_empty();
+    let has_matches = !groups.is_empty();
     let response = ui.add_enabled(has_matches, Button::new(icon).small());
     if !has_matches {
         response.on_disabled_hover_text("This query matched nothing");
     } else if response.on_hover_text(tooltip).clicked() {
         if all_folded {
-            folds.expand_all(&query.matches);
+            folds.expand_all(groups);
         } else {
-            folds.fold_all(&query.matches);
+            folds.fold_all(groups);
         }
     }
 }
 
 /// Copies one query's whole result to the clipboard as tab-separated values,
 /// for a spreadsheet.
-fn copy_tsv_button_ui(ui: &mut egui::Ui, ctx: &MatchTableContext<'_>, query: &PanelQuery) {
-    let has_matches = !query.matches.is_empty();
+fn copy_tsv_button_ui(ui: &mut egui::Ui, table: &MatchTable<'_>) {
+    let has_matches = !table.groups().is_empty();
     let response = ui.add_enabled(has_matches, Button::new(ICON_COPY).small());
     if !has_matches {
         response.on_disabled_hover_text("This query matched nothing");
-    } else if response
-        .on_hover_text(
-            "Copy as tab-separated values: one line per matched point, \
-             starting with the number of the match it belongs to and its \
-             index in the track",
-        )
-        .clicked()
-    {
-        ui.ctx().copy_text(match_table::matches_as_tsv(ctx, query));
-    }
-}
-
-/// Render a channel-source run: a summary header, then one sample match table
-/// per track. Each row is a matched sample's time and component values.
-fn channel_results_ui(ui: &mut egui::Ui, channel: &ChannelResults, files: &[LoadedFile]) {
-    let id = ui.make_persistent_id(("channel_result", channel.channel.as_str()));
-    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
-        .show_header(ui, |ui| {
-            ui.label(channel.summary.as_str());
-        })
-        .body(|ui| {
-            let total: usize = channel
-                .tracks
-                .iter()
-                .map(|t| t.ranges.iter().map(Range::len).sum::<usize>())
-                .sum();
-            if total == 0 {
-                ui.label(RichText::new("No matches").weak());
-            }
-            for track in &channel.tracks {
-                channel_track_ui(ui, channel, track, files);
-            }
-        });
-}
-
-/// One track's matched channel samples as a table: `time` plus one column per
-/// component (or the channel name for a scalar). Capped like the point tables.
-/// Values are evaluated in base units, then converted back to each track's
-/// declared unit for display.
-fn channel_track_ui(
-    ui: &mut egui::Ui,
-    channel: &ChannelResults,
-    track: &ChannelTrackResult,
-    files: &[LoadedFile],
-) {
-    let matched: usize = track.ranges.iter().map(Range::len).sum();
-    if matched == 0 {
-        return;
-    }
-    let file = track.track.fi.get(files).map_or_else(
-        || format!("file {}", track.track.fi),
-        |f| f.metadata.filename.clone(),
-    );
-    ui.label(
-        RichText::new(format!(
-            "{file} #{} {EM_DASH} {matched} {}",
-            track.track.index,
-            gt_fmt::pluralize(matched, "sample", "samples"),
-        ))
-        .strong(),
-    );
-
-    // Column headers: time, then each component (the channel name when scalar).
-    let value_headers: Vec<String> = if channel.components.is_empty() {
-        vec![channel.channel.clone()]
-    } else {
-        channel.components.clone()
-    };
-    let value_format = ColumnFormat::of_channel_unit(track.unit.as_ref());
-    // Samples are timed finer than points, so their times keep the
-    // milliseconds the point tables leave out.
-    let time_format = ColumnFormat::time_of_day_with_millis();
-    Grid::new(ui.id().with(("channel_table", track.track)))
-        .striped(true)
-        .show(ui, |ui| {
-            time_format.header_ui(ui, "time", None);
-            for header in &value_headers {
-                value_format.header_ui(ui, header, None);
-            }
-            ui.end_row();
-
-            let columns = track.timeline.columns.max(1);
-            for sample in track
-                .ranges
-                .iter()
-                .flat_map(Clone::clone)
-                .take(CHANNEL_SAMPLE_ROW_CAP)
-            {
-                time_format.value_ui(ui, track.timeline.times.get(sample).copied());
-                for col in 0..columns {
-                    let value = track.timeline.values.get(sample * columns + col).copied();
-                    value_format.value_ui(ui, value);
-                }
-                ui.end_row();
-            }
-        });
-    if matched > CHANNEL_SAMPLE_ROW_CAP {
-        ui.label(
-            RichText::new(format!(
-                "{EM_DASH} {} more samples",
-                matched - CHANNEL_SAMPLE_ROW_CAP
-            ))
-            .weak(),
-        );
+    } else if response.on_hover_text(table.copy_tooltip()).clicked() {
+        ui.ctx().copy_text(table.as_tsv());
     }
 }
 

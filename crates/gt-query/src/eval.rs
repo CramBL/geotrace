@@ -70,6 +70,11 @@ impl ChannelTimeline {
         let columns = self.columns.max(1);
         self.values.get(index * columns..(index + 1) * columns)
     }
+
+    /// One sample's value for one component, or `None` past either end.
+    pub fn value(&self, sample: usize, component: usize) -> Option<f64> {
+        self.row(sample)?.get(component).copied()
+    }
 }
 
 /// Per-point metric access for one track.
@@ -1084,6 +1089,34 @@ pub(crate) fn ranges_from(matched: &[bool]) -> Vec<Range<usize>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A component is addressed within the row of the sample it belongs to and
+    /// never reaches into the next sample: a vector channel's values are
+    /// row-major.
+    #[test]
+    fn a_timeline_addresses_one_sample_component() {
+        let timeline = ChannelTimeline {
+            times: vec![0.0, 1.0],
+            values: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            columns: 3,
+        };
+        assert_eq!(timeline.value(0, 2), Some(3.0));
+        assert_eq!(timeline.value(1, 0), Some(4.0));
+        assert_eq!(timeline.value(1, 3), None, "the row holds three components");
+        assert_eq!(timeline.value(2, 0), None, "the timeline holds two samples");
+    }
+
+    /// A scalar channel's rows are one value wide: it declares no components.
+    #[test]
+    fn a_scalar_timeline_has_one_value_per_sample() {
+        let timeline = ChannelTimeline {
+            times: vec![0.0, 1.0],
+            values: vec![9.8, 9.9],
+            columns: 0,
+        };
+        assert_eq!(timeline.value(1, 0), Some(9.9));
+        assert_eq!(timeline.value(0, 1), None);
+    }
 
     #[test]
     fn circular_delta_takes_the_short_way() {
