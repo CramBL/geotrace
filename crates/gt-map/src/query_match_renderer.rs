@@ -4,7 +4,7 @@
 
 use egui::RichText;
 use egui::{Color32, Pos2, Stroke, Ui};
-use gt_types::{LoadedFile, LoadedTrack, TrackRef};
+use gt_types::{LoadedFile, TrackRef};
 
 use crate::match_reveal::HaloStyle;
 
@@ -72,12 +72,12 @@ pub(crate) fn match_header_ui(
         return;
     };
     let count = range.len();
-    let duration = match_duration_seconds(track, range);
+    let duration = gt_fmt::match_duration_seconds(track, range);
     let em_dash = gt_ui_theme::EM_DASH;
     let heading = match duration {
         Some(secs) => format!(
             "Match {em_dash} {count} points over {}",
-            format_seconds(secs)
+            gt_fmt::format_match_duration(secs)
         ),
         None => format!("Match {em_dash} {count} points"),
     };
@@ -92,31 +92,9 @@ pub(crate) fn match_header_ui(
     ui.separator();
 }
 
-/// Wall-clock duration covered by the match, from its first to its last
-/// point. `None` for single-point matches and out-of-bounds ranges.
-fn match_duration_seconds(track: &LoadedTrack, range: &std::ops::Range<usize>) -> Option<i64> {
-    let last = range.end.checked_sub(1)?;
-    if last <= range.start {
-        return None;
-    }
-    let first = track.points.get(range.start)?;
-    let last = track.points.get(last)?;
-    let duration = last.tpv.time().utc() - first.tpv.time().utc();
-    Some(duration.num_seconds())
-}
-
-fn format_seconds(secs: i64) -> String {
-    if secs >= 60 {
-        format!("{}:{:02} min", secs / 60, secs % 60)
-    } else {
-        format!("{secs} s")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use egui::pos2;
-    use gt_types::LoadedTrack;
 
     use super::*;
 
@@ -152,30 +130,18 @@ mod tests {
         assert_eq!(matched_runs(&s, &is_matched).count(), 0);
     }
 
-    #[test]
-    fn duration_formats_compactly() {
-        assert_eq!(format_seconds(42), "42 s");
-        assert_eq!(format_seconds(60), "1:00 min");
-        assert_eq!(format_seconds(754), "12:34 min");
-    }
-
+    /// The header states how long the match ran, over the shared duration
+    /// helper. The fixture's points are spaced exactly one second apart.
     #[test]
     fn match_duration_covers_first_to_last_point() {
-        // Fixture points are spaced exactly one second apart.
-        let track = LoadedTrack {
-            metadata: gt_test_utils::empty_track_metadata(),
-            points: gt_test_utils::nav_test_data(),
-            lod: gt_types::TrackLod::default(),
-            sat_label_anchors: Vec::new(),
-            custom_markers: vec![],
-            generated_markers: vec![],
-            event_markers: vec![],
-            channels: vec![],
-        };
-        assert_eq!(match_duration_seconds(&track, &(0..1)), None);
-        assert_eq!(match_duration_seconds(&track, &(0..3)), Some(2));
-        assert_eq!(match_duration_seconds(&track, &(150..300)), Some(149));
-        assert_eq!(match_duration_seconds(&track, &(0..10_000)), None);
-        assert_eq!(match_duration_seconds(&track, &(5..5)), None);
+        let track = gt_test_utils::loaded_track_with_points(gt_test_utils::nav_test_data());
+        assert_eq!(gt_fmt::match_duration_seconds(&track, &(0..1)), None);
+        assert_eq!(gt_fmt::match_duration_seconds(&track, &(0..3)), Some(2));
+        assert_eq!(
+            gt_fmt::match_duration_seconds(&track, &(150..300)),
+            Some(149)
+        );
+        assert_eq!(gt_fmt::match_duration_seconds(&track, &(0..10_000)), None);
+        assert_eq!(gt_fmt::match_duration_seconds(&track, &(5..5)), None);
     }
 }

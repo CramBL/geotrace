@@ -29,7 +29,7 @@
 
 ### Changed
 
-- The query results show all of a query's matches in one table, a row per matched point: the columns line up across every match under a header that stays put while scrolling, each column's unit is named once in that header, and every matched point is listed however many there are.
+- The query results show all of a query's matches in one table, a row per matched point: the columns line up across every match under a header that stays put while scrolling, each column's unit is named once in that header, and every matched point is listed however many there are. A match's name row states the span, the point count and how long it ran, folds its points away when clicked, and frames the map on that one match. Hovering a column header explains the metric, and hovering a row states its point index and position. The section header collapses every match at once, or copies the whole result as tab-separated values.
 - The plot's aircraft interference, Kp, Hp30, TEC and solar flare chips sit in a group of their own, and each hover states in three lines what the metric is, where it comes from and where to read more.
 - The aircraft interference plot line spans every archived day in view instead of breaking outside recordings.
 - The Settings window displays one category at a time using a left-side navigation rail.

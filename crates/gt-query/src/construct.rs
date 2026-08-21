@@ -337,6 +337,15 @@ fn unit_construct(unit: Unit, name: &'static str) -> Construct {
     }
 }
 
+/// Looks `metric` up in the catalog, so a table header outside the editor can
+/// show the same documentation the editor's hover shows.
+pub fn metric_documentation(metric: QueryMetric) -> Option<&'static Construct> {
+    let name: &'static str = metric.into();
+    catalog()
+        .iter()
+        .find(|construct| construct.kind == ConstructKind::Metric && construct.name == name)
+}
+
 fn metric_construct(metric: QueryMetric) -> Construct {
     let (summary, doc, examples) = metric_docs(metric);
     Construct {
@@ -502,6 +511,19 @@ mod tests {
             + Unit::CANONICAL.len()
             + ParamName::COUNT;
         assert_eq!(entries.len(), expected);
+    }
+
+    /// Every metric a table header can carry finds its own entry, so a header
+    /// hover always has the doc the editor would show for that name.
+    #[test]
+    fn every_metric_has_documentation_under_its_own_name() {
+        for metric in QueryMetric::iter() {
+            let construct = metric_documentation(metric)
+                .unwrap_or_else(|| panic!("{metric} is documented in the catalog"));
+            assert_eq!(construct.name, Into::<&'static str>::into(metric));
+            assert_eq!(construct.kind, ConstructKind::Metric);
+            assert!(!construct.summary.is_empty());
+        }
     }
 
     #[test]

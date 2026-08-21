@@ -10,9 +10,16 @@ pub use gt_fmt::ELLIPSIS;
 /// U+2014 EM DASH - used as a placeholder when a value is absent. Defined by
 /// [`gt_fmt`], which formats values for both the UI and non-UI callers.
 pub use gt_fmt::EM_DASH;
+/// U+00B7 MIDDLE DOT - separates the fields of a one-line summary. Defined by
+/// [`gt_fmt`], which formats values for both the UI and non-UI callers.
+pub use gt_fmt::MIDDLE_DOT;
 /// U+2212 MINUS SIGN - visually distinct from the ASCII hyphen-minus. Defined
 /// by [`gt_fmt`], which formats values for both the UI and non-UI callers.
 pub use gt_fmt::MINUS_SIGN;
+/// U+2192 RIGHTWARDS ARROW - leads from where a span starts to where it ends.
+/// Defined by [`gt_fmt`], which formats values for both the UI and non-UI
+/// callers.
+pub use gt_fmt::RIGHTWARDS_ARROW;
 /// U+0394 GREEK CAPITAL LETTER DELTA - used as a mathematical difference symbol.
 pub const DELTA: &str = "Δ";
 /// U+00B0 DEGREE SIGN.

@@ -2,8 +2,10 @@
 //! visible map, zoom-to-fit, hit-test visibility, and the per-frame
 //! collection of spatial points the render plugins draw.
 
+use std::ops::Range;
+
 use gt_filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
-use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackIdx, TrackRef};
+use gt_types::{DataCategory, FileIdx, LoadedFile, NavPoint, SpatialPoint, TrackIdx, TrackRef};
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, MapScope, QueryMatches, TrackDataVisibility,
 };
@@ -300,30 +302,53 @@ pub(crate) fn matched_bounding_box(
     files: &[LoadedFile],
     matches: &QueryMatches,
 ) -> Option<(f64, f64, f64, f64)> {
-    let mut min_lat = f64::MAX;
-    let mut max_lat = f64::MIN;
-    let mut min_lon = f64::MAX;
-    let mut max_lon = f64::MIN;
-    let mut any = false;
+    let mut bounds = None;
     for layer in &matches.draws {
         for (track_ref, ranges) in &layer.ranges {
             let Some(track) = track_ref.resolve(files) else {
                 continue;
             };
             for range in ranges {
-                for point in track.points.get(range.clone()).unwrap_or_default() {
-                    let lat = point.tpv.lat().as_degrees();
-                    let lon = point.tpv.lon().as_degrees();
-                    min_lat = min_lat.min(lat);
-                    max_lat = max_lat.max(lat);
-                    min_lon = min_lon.min(lon);
-                    max_lon = max_lon.max(lon);
-                    any = true;
-                }
+                grow_bounds_over(
+                    &mut bounds,
+                    track.points.get(range.clone()).unwrap_or_default(),
+                );
             }
         }
     }
-    any.then_some((min_lat, max_lat, min_lon, max_lon))
+    bounds
+}
+
+/// Bounding box over the points of one match, for framing the map on the match
+/// a results row points at. `None` when its track is no longer loaded or the
+/// range reaches past it.
+pub(crate) fn match_bounding_box(
+    files: &[LoadedFile],
+    track_ref: TrackRef,
+    points: &Range<usize>,
+) -> Option<(f64, f64, f64, f64)> {
+    let track = track_ref.resolve(files)?;
+    let mut bounds = None;
+    grow_bounds_over(&mut bounds, track.points.get(points.clone())?);
+    bounds
+}
+
+/// Grows `bounds` over every point of `points`, starting it at the first one
+/// when it is still `None`.
+fn grow_bounds_over(bounds: &mut Option<(f64, f64, f64, f64)>, points: &[NavPoint]) {
+    for point in points {
+        let lat = point.tpv.lat().as_degrees();
+        let lon = point.tpv.lon().as_degrees();
+        *bounds = Some(match *bounds {
+            None => (lat, lat, lon, lon),
+            Some((min_lat, max_lat, min_lon, max_lon)) => (
+                min_lat.min(lat),
+                max_lat.max(lat),
+                min_lon.min(lon),
+                max_lon.max(lon),
+            ),
+        });
+    }
 }
 
 /// Compute the geographic bounding box of the given map viewport rect.
