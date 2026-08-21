@@ -21,7 +21,7 @@ use std::thread::JoinHandle;
 
 use egui::Context;
 use gt_log_view::LogAttachmentRef;
-use gt_pending_writes::{PendingWrites, WriteKind};
+use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteKind};
 use gt_store::{
     AttachedLog, DatabaseRef, DbError, HistoryDatabase, LogAttachmentError, LogAttachmentId,
     LogAttachments as _, LogContentHash, LogToAttach, PruneMode, RecordingEntry, Recordings,
@@ -228,6 +228,19 @@ pub enum Response {
     },
 }
 
+/// A second sender on a worker's request channel: while it lives the worker's
+/// `recv` cannot fail, so its thread stays on its loop.
+#[cfg(test)]
+pub struct HeldOpenWorkerThread(Sender<Request>);
+
+#[cfg(test)]
+impl HeldOpenWorkerThread {
+    /// Lets the worker's thread reach the end of its loop.
+    pub fn release(self) {
+        drop(self.0);
+    }
+}
+
 /// Owns the history-database worker thread and the request and response
 /// channels to it.
 pub struct HistoryWorker {
@@ -270,6 +283,23 @@ impl HistoryWorker {
             handle: Some(handle),
             path,
         }
+    }
+
+    /// A worker whose thread stays on its request loop until the returned
+    /// [`HeldOpenWorkerThread`] drops, so a test controls when the shutdown
+    /// join returns.
+    #[cfg(test)]
+    pub fn spawn_held_open(
+        db: Recordings,
+        ctx: Context,
+        pending_writes: PendingWrites,
+    ) -> (Self, HeldOpenWorkerThread) {
+        let worker = Self::spawn(db, ctx, pending_writes);
+        let held_open = worker
+            .req_tx
+            .clone()
+            .expect("a spawned worker holds a request sender");
+        (worker, HeldOpenWorkerThread(held_open))
     }
 
     /// Whether a backing database is available (the worker is running).
@@ -401,6 +431,30 @@ impl HistoryWorker {
     /// from [`HistoryWorker::disabled`] has no thread and returns at once.
     pub fn shutdown(mut self) {
         self.end_and_join_worker_thread();
+    }
+
+    /// Ends the worker on a thread of its own, which holds `write` until the
+    /// database is closed. The caller returns as soon as that thread is
+    /// spawned.
+    ///
+    /// Where the thread cannot be spawned the worker is left detached: its
+    /// `history-db` thread ends by itself once the request sender drops, and
+    /// `write` is released because nothing waits for it.
+    pub fn shutdown_on_a_thread_of_its_own(mut self, write: PendingWriteGuard) {
+        let req_tx = self.req_tx.take();
+        let handle = self.handle.take();
+        let spawned = std::thread::Builder::new()
+            .name("history-db-shutdown".to_owned())
+            .spawn(move || {
+                drop(req_tx);
+                if let Some(handle) = handle {
+                    handle.join().ok();
+                }
+                drop(write);
+            });
+        if let Err(error) = spawned {
+            log::error!("Failed to spawn the history shutdown thread: {error:#}");
+        }
     }
 
     /// Dropping the request sender disconnects the worker's `recv`, ending its

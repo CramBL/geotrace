@@ -39,7 +39,7 @@
 ### Fixed
 
 - Closing GeoTrace while a downloaded environment day, a recording, an edit to the recording history, or a delete of archived environment days is being written waits for that write to finish instead of leaving a partially written file behind.
-- Closing GeoTrace while a downloaded environment day, a recording, or an edit to the recording history is being written waits for that write to finish instead of leaving a partially written file behind.
+- Closing GeoTrace while a write is still running keeps the window up and names what it is finishing.
 - Environment archives created by older versions are rebuilt when they are opened: deleting days from them then frees space for the days downloaded afterwards.
 - Links in dialogs and reference material now open in the browser (clicking them did nothing).
 - Hovering the plot highlights the recording and track rows in the side panel, matching what hovering the map already does.

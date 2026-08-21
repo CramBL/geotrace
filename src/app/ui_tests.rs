@@ -4221,6 +4221,184 @@ fn environment_pruning_does_not_start_during_shutdown() {
     assert_eq!(archived_days(&store), [old]);
 }
 
+/// The close request a window manager sends when the close button is pressed.
+fn request_window_close(harness: &mut Harness<'_, App>) {
+    harness
+        .input_mut()
+        .viewports
+        .entry(egui::ViewportId::ROOT)
+        .or_default()
+        .events
+        .push(egui::ViewportEvent::Close);
+}
+
+fn root_viewport_commands(harness: &Harness<'_, App>) -> Vec<egui::ViewportCommand> {
+    harness
+        .output()
+        .viewport_output
+        .get(&egui::ViewportId::ROOT)
+        .map(|viewport| viewport.commands.clone())
+        .unwrap_or_default()
+}
+
+fn closed_the_window(harness: &Harness<'_, App>) -> bool {
+    root_viewport_commands(harness).contains(&egui::ViewportCommand::Close)
+}
+
+/// Pressing the close button with nothing pending: the app takes the close
+/// over, writes the settings, and closes the window itself.
+#[test]
+fn closing_the_window_takes_the_close_over_and_writes_the_settings() {
+    let (mut harness, config_path) = TestHarness::builder().eframe(build_app);
+    harness.inner.step();
+    assert!(
+        !config_path.exists(),
+        "nothing has written the settings yet"
+    );
+
+    request_window_close(&mut harness.inner);
+    harness.inner.step();
+
+    assert!(
+        root_viewport_commands(&harness.inner).contains(&egui::ViewportCommand::CancelClose),
+        "the close was cancelled instead of tearing the app down"
+    );
+    assert!(config_path.exists(), "shutdown wrote the settings");
+    assert!(
+        harness.inner.step_until(closed_the_window),
+        "the window never closed"
+    );
+}
+
+/// A write that was running when the close button was pressed holds the
+/// window open, and the panel names it once the grace elapses.
+#[test]
+fn a_running_write_holds_the_window_open_and_is_named_while_it_runs() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    let compaction = harness
+        .state()
+        .pending_writes
+        .try_begin(
+            "Compacting the TEC archive",
+            gt_pending_writes::WriteKind::ArchiveCompaction {
+                archive: "ionospheric TEC",
+            },
+        )
+        .expect("the registry is running");
+
+    request_window_close(&mut harness);
+    harness.run_steps(2);
+    assert!(
+        !closed_the_window(&harness),
+        "the window closed over a running write"
+    );
+
+    std::thread::sleep(crate::app::shutdown::PANEL_GRACE);
+    harness.step();
+    assert!(
+        harness.query_by_label("Shutting down").is_some(),
+        "the panel is up once the grace elapsed"
+    );
+    assert!(
+        harness
+            .query_by_label_contains("Compacting the TEC archive")
+            .is_some(),
+        "the panel names the write it is waiting for"
+    );
+
+    drop(compaction);
+    assert!(
+        harness.step_until(closed_the_window),
+        "the window never closed after the write finished"
+    );
+}
+
+/// A close frame runs in well under this even on a loaded CI machine, while
+/// joining the held-open history worker on it would never return.
+const CLOSE_FRAME_BUDGET: StdDuration = StdDuration::from_secs(5);
+
+/// The history worker ends on a thread of its own: the close frame returns
+/// while the worker is still on its loop, and the window closes once the
+/// worker's thread ends.
+///
+/// The test holds that worker's request channel open, so a close frame that
+/// joined the worker itself would never return.
+#[test]
+fn closing_the_window_hands_the_history_worker_to_its_own_thread() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    let (worker, held_open) = crate::app::history_db::HistoryWorker::spawn_held_open(
+        open_temporary_history_database(&dir.path().join("geotrace.h5")),
+        harness.ctx.clone(),
+        harness.state().pending_writes.clone(),
+    );
+    harness.state_mut().history = worker;
+
+    request_window_close(&mut harness);
+    let started_at = Instant::now();
+    harness.step();
+
+    assert!(
+        started_at.elapsed() < CLOSE_FRAME_BUDGET,
+        "the close frame waited for the history worker on the GUI thread"
+    );
+    assert!(
+        !harness.state().history.available(),
+        "the app kept a worker whose drop would join on the GUI thread"
+    );
+    harness.run_steps(3);
+    assert!(
+        !closed_the_window(&harness),
+        "the window closed while the worker's write was still registered"
+    );
+
+    held_open.release();
+
+    assert!(
+        harness.step_until(closed_the_window),
+        "the window never closed after the worker's thread ended"
+    );
+}
+
+/// A closing app sends no new snap request: the auto sweep a load armed is
+/// dropped once the close began.
+#[test]
+fn the_auto_snap_sweep_is_paused_once_the_close_began() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    // A scheduler that queues the way an online run does, over a transport
+    // that reaches nothing.
+    harness.state_mut().snap = crate::app::snap::SnapScheduler::new(
+        harness.ctx.clone(),
+        gt_fetch::TransportSource::Offline,
+        false,
+    );
+    harness.state_mut().offline = false;
+    harness.state_mut().snap_settings.acknowledge_consent();
+    harness.state_mut().snap_settings.auto_snap = Some(true);
+    let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
+    // Armed the way a load or a snap dialog arms it, on the frame the close
+    // request arrives.
+    harness.state_mut().snap_auto_sweep = true;
+
+    request_window_close(&mut harness);
+    harness.run_steps(3);
+
+    assert!(harness.state().snap_settings.auto_snap_active());
+    assert!(
+        harness.state().snap.activity_for(track).is_none(),
+        "a closing app enqueues no snap run"
+    );
+}
+
 /// A second delete never starts underneath a running one: both would rewrite
 /// the same columns.
 #[test]
