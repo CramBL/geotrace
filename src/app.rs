@@ -27,6 +27,7 @@ mod recording_name_template;
 mod reference_window;
 mod settings_autosave;
 mod settings_ui;
+mod shutdown;
 mod snap;
 mod snap_persist;
 mod snap_state;
@@ -312,6 +313,9 @@ pub struct App {
     /// The registry every background write registers itself in, shared with
     /// `main` so the process waits for the writes that outlive the window.
     pending_writes: PendingWrites,
+    /// How far the app has got in closing, from the close request to the
+    /// window going away.
+    shutdown: shutdown::ShutdownState,
     interference_backfill_ui: backfill_ui::BackfillUi<backfill_ui::InterferenceBackfill>,
     geomagnetic_index_backfill_ui: backfill_ui::BackfillUi<backfill_ui::GeomagneticIndexBackfill>,
     tec_map_backfill_ui: backfill_ui::BackfillUi<backfill_ui::TecMapBackfill>,
@@ -516,6 +520,7 @@ impl App {
             space_weather_warning: space_weather_warning::SpaceWeatherWarning::default(),
             offline: options.offline,
             pending_writes: options.pending_writes,
+            shutdown: shutdown::ShutdownState::default(),
             interference_backfill_ui: backfill_ui::BackfillUi::default(),
             geomagnetic_index_backfill_ui: backfill_ui::BackfillUi::default(),
             tec_map_backfill_ui: backfill_ui::BackfillUi::default(),

@@ -50,6 +50,10 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if self.intercept_close_request(ui) {
+            return;
+        }
+
         // Kick off the one-shot startup update check (no-op after the first
         // frame, and only when enabled / release build / not offline).
         #[cfg(feature = "self-update")]
@@ -120,7 +124,7 @@ impl eframe::App for App {
 }
 
 impl App {
-    fn apply_finished_background_work(&mut self, ui: &egui::Ui) {
+    pub(in crate::app) fn apply_finished_background_work(&mut self, ui: &egui::Ui) {
         // Drain background load results first so newly loaded data is
         // visible in the same frame that it arrives.
         let completed_loads: Vec<CompletedLoad> = self.loader.drain();
@@ -148,7 +152,7 @@ impl App {
         }
         self.snap
             .set_visibility(self.shared.borrow().tree.visibility());
-        if std::mem::take(&mut self.snap_auto_sweep) {
+        if std::mem::take(&mut self.snap_auto_sweep) && !self.shutdown.has_begun() {
             self.queue_auto_snaps();
         }
     }

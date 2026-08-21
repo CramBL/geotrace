@@ -130,21 +130,41 @@ impl PendingWrites {
         if state.shutting_down {
             return None;
         }
+        Some(self.register(&mut state, label.into(), kind))
+    }
+
+    /// Register a write shutdown itself performs, which [`Self::try_begin`]
+    /// refuses by design.
+    pub fn begin_shutdown_write(
+        &self,
+        label: impl Into<String>,
+        kind: WriteKind,
+    ) -> PendingWriteGuard {
+        let mut state = self.0.state.lock();
+        self.register(&mut state, label.into(), kind)
+    }
+
+    fn register(
+        &self,
+        state: &mut RegistryState,
+        label: String,
+        kind: WriteKind,
+    ) -> PendingWriteGuard {
         let id = state.next_id;
         state.next_id += 1;
         state.running.insert(
             id,
             RunningWrite {
-                label: label.into(),
+                label,
                 kind,
                 progress: None,
                 stage: None,
             },
         );
-        Some(PendingWriteGuard {
+        PendingWriteGuard {
             registry: Arc::clone(&self.0),
             id,
-        })
+        }
     }
 
     /// Refuse every write that has not started yet.
@@ -188,6 +208,7 @@ impl PendingWrites {
 
 /// Keeps one write registered for as long as it runs.
 #[derive(Debug)]
+#[must_use]
 pub struct PendingWriteGuard {
     registry: Arc<Registry>,
     id: WriteId,
@@ -272,6 +293,18 @@ mod tests {
                 .try_begin("Compacting the TEC archive", TEC)
                 .is_none()
         );
+        assert!(writes.is_idle());
+    }
+
+    #[test]
+    fn a_write_shutdown_performs_itself_registers_after_shutdown_began() {
+        let writes = PendingWrites::default();
+        writes.begin_shutdown();
+
+        let guard = writes.begin_shutdown_write("Saving settings", WriteKind::Settings);
+
+        assert!(!writes.is_idle());
+        drop(guard);
         assert!(writes.is_idle());
     }
 
