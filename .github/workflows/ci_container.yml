@@ -43,10 +43,10 @@ jobs:
       - name: Install tools
         uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
         with:
-          tool: just,nextest,cargo-msrv
+          tool: just,nextest,cargo-msrv,lychee
 
-      # The dev image no longer ships cargo-msrv, so the `msrv` and `sdk-msrv`
-      # recipes run natively on this host.
+      # The dev image ships neither cargo-msrv nor lychee, so the `msrv`,
+      # `sdk-msrv` and `lychee` recipes run natively on this host.
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
 
