@@ -1,10 +1,13 @@
 mod auto_prune;
 mod backfill;
 mod backfill_ui;
+mod civil_date;
 mod context_line;
 mod day_failures;
 mod day_fetch_queue;
 mod day_fetch_status;
+mod environment_storage;
+mod environment_storage_ui;
 mod fix_positions;
 mod flares;
 mod frame;
@@ -321,6 +324,12 @@ pub struct App {
     storage_settings: crate::settings::StorageSettings,
     /// Recordings selected for auto-pruning, waiting for the user to confirm.
     pending_auto_prune: Option<Vec<gt_store::DatabaseRef>>,
+    /// The environment data section of the settings window.
+    environment_storage_ui: environment_storage_ui::EnvironmentStorageUi,
+    /// The environment-data delete waiting for the user to confirm.
+    pending_environment_prune: Option<environment_storage::PruneRequest>,
+    /// The environment-data delete running off the UI thread.
+    environment_prune: environment_storage::EnvironmentPruneRun,
 
     /// History window state.
     history_window: history::HistoryWindow,
@@ -559,6 +568,9 @@ impl App {
             pending_resegment: None,
             storage_settings: crate::settings::StorageSettings::default(),
             pending_auto_prune: None,
+            environment_storage_ui: environment_storage_ui::EnvironmentStorageUi::default(),
+            pending_environment_prune: None,
+            environment_prune: environment_storage::EnvironmentPruneRun::default(),
             history_window: history::HistoryWindow::new(),
             query_window: query::QueryWindow::new(),
             log_viewer: log_viewer::LogViewerWindow::new(),
@@ -821,13 +833,13 @@ impl App {
                     self.history.load_snap_runs(db_ref.clone());
                     self.history.load_attached_logs(db_ref.clone());
                 }
-                for track in &file.tracks {
-                    self.jamming.request_days_for(track.metadata.time_range);
-                    self.geomagnetic_indices
-                        .request_days_for(track.metadata.time_range);
-                    self.tec_maps.request_days_for(track.metadata.time_range);
-                    self.solar_flares
-                        .request_days_for(track.metadata.time_range);
+                let track_ranges: Vec<gt_types::TimeRange> = file
+                    .tracks
+                    .iter()
+                    .map(|track| track.metadata.time_range)
+                    .collect();
+                for range in track_ranges {
+                    self.request_environment_days_for(range);
                 }
                 let orphans: Vec<(chrono::DateTime<chrono::Utc>, String)> = file
                     .orphaned_event_markers

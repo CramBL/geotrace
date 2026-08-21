@@ -12,6 +12,7 @@ use super::day_failures::DayFailure;
 use super::day_fetch_status::{
     ArchivedDayCount, DayArchiveCoverage, DayArchiveState, DayFetchStatus,
 };
+use super::environment_storage::PrunedDays;
 
 /// The days one fetch worker has queued, is fetching, or could not archive,
 /// and how far the archive covers the loaded recordings.
@@ -201,6 +202,21 @@ impl DayFetchQueue {
         self.requested.clear();
         self.failures.clear();
         self.backfill = None;
+    }
+
+    /// Forget what the queue holds about the days a delete removed from the
+    /// archive, so the scheduler requests the ones a loaded recording spans
+    /// again.
+    ///
+    /// The day in flight keeps its place: releasing it would let a second
+    /// request go out for a day already being fetched.
+    pub fn forget_pruned_days(&mut self, pruned: PrunedDays) {
+        let in_flight = self.in_flight;
+        self.requested
+            .retain(|day| !pruned.covers(*day) || Some(*day) == in_flight);
+        self.failures.retain(|failure| !pruned.covers(failure.day));
+        self.recording_days.mark_pruned_days_awaited(pruned);
+        self.background_days.mark_pruned_days_awaited(pruned);
     }
 
     fn queue_day(&mut self, day: NaiveDate) {

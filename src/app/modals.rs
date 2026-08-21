@@ -9,9 +9,13 @@ use gt_side_panel::{NodeKey, RecordingDetails, TreeState};
 use gt_store::DatabaseRef;
 use gt_types::{LoadWarning, TrackRef};
 use gt_ui_theme::warning_amber;
+use strum::IntoEnumIterator as _;
 
 use gt_loaded_files::{LoadedFiles, LoadedFilesView, RecordingNames};
 
+use crate::app::environment_storage::{
+    CoveredDayCounts, EnvironmentArchive, PruneRequest, PruneScope, PrunedDays,
+};
 use crate::app::mapbox_token;
 use crate::app::mapbox_token::{MapboxTokenCommit, MapboxTokenField};
 
@@ -887,6 +891,112 @@ pub fn show_mapbox_token_dialog(
     }
 }
 
+/// The environment-data delete waiting for the user to confirm, and what it
+/// would take.
+pub struct EnvironmentPrunePrompt<'a> {
+    pub request: PruneRequest,
+    /// How many days each archive holds inside the delete's range.
+    pub covered: CoveredDayCounts,
+    /// Loaded recordings spanning a day the delete removes, named as the rest
+    /// of the app names them.
+    pub loaded_recordings: &'a [String],
+}
+
+pub enum EnvironmentPruneChoice {
+    Delete,
+    Cancel,
+}
+
+/// Confirm an environment-data delete, naming what goes and which loaded
+/// recordings are downloaded again straight after.
+///
+/// Returns the choice in the frame the user makes it, and [`None`] while the
+/// dialog is still open.
+pub fn show_environment_prune_confirmation(
+    ui: &egui::Ui,
+    prompt: &EnvironmentPrunePrompt<'_>,
+) -> Option<EnvironmentPruneChoice> {
+    let mut choice = ui
+        .ctx()
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        .then_some(EnvironmentPruneChoice::Cancel);
+
+    Window::new("Delete archived days?")
+        .resizable(false)
+        .collapsible(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .show(ui.ctx(), |ui| {
+            ui.set_max_width(460.0);
+            ui.label(prune_scope_line(prompt.request));
+            ui.add_space(4.0);
+            Grid::new("environment_prune_grid")
+                .num_columns(2)
+                .spacing([12.0, 2.0])
+                .show(ui, |ui| {
+                    for archive in EnvironmentArchive::iter()
+                        .filter(|archive| prompt.request.scope.covers(*archive))
+                    {
+                        let days = prompt.covered.of(archive);
+                        ui.label(archive.label());
+                        ui.label(format!("{days} {}", gt_fmt::pluralize(days, "day", "days")));
+                        ui.end_row();
+                    }
+                });
+
+            if !prompt.loaded_recordings.is_empty() {
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(
+                        "These loaded recordings span days in that range. Those days are \
+                         downloaded again as soon as the delete finishes.",
+                    )
+                    .weak()
+                    .small(),
+                );
+                ScrollArea::vertical().max_height(120.0).show(ui, |ui| {
+                    for name in prompt.loaded_recordings {
+                        ui.add(Label::new(name.as_str()).truncate());
+                    }
+                });
+            }
+
+            ui.add_space(6.0);
+            dialog_button_row(ui, |ui| {
+                if ui
+                    .button(RichText::new("Delete").color(warning_amber(ui.visuals().dark_mode)))
+                    .on_hover_text(
+                        "This cannot be undone. The days are downloaded again as they are needed.",
+                    )
+                    .clicked()
+                {
+                    choice = Some(EnvironmentPruneChoice::Delete);
+                }
+                if ui.button("Cancel").clicked() {
+                    choice = Some(EnvironmentPruneChoice::Cancel);
+                }
+            });
+        });
+
+    choice
+}
+
+/// What the delete acts on, as the dialog opens with.
+fn prune_scope_line(request: PruneRequest) -> String {
+    match (request.scope, request.days) {
+        (PruneScope::Every, PrunedDays::Before(cutoff)) => {
+            format!("Every archive loses the days it holds before {cutoff}")
+        }
+        (PruneScope::Every, PrunedDays::All) => "Every archive loses every day it holds".to_owned(),
+        (PruneScope::One(archive), PrunedDays::Before(cutoff)) => format!(
+            "The {} archive loses the days it holds before {cutoff}",
+            archive.label()
+        ),
+        (PruneScope::One(archive), PrunedDays::All) => {
+            format!("The {} archive loses every day it holds", archive.label())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -901,10 +1011,159 @@ mod tests {
     use gt_test_utils::{HarnessInteraction as _, TestHarness};
 
     use super::{
-        MapLayer, MapboxTokenField, NavMap, NodeKey, TrackRef, files_fully_removed,
+        CoveredDayCounts, EnvironmentArchive, EnvironmentPruneChoice, EnvironmentPrunePrompt,
+        MapLayer, MapboxTokenField, NavMap, NodeKey, PruneRequest, PruneScope, PrunedDays,
+        TrackRef, files_fully_removed, prune_scope_line, show_environment_prune_confirmation,
         show_mapbox_token_dialog, track_removals,
     };
     use gt_loaded_files::{FileHistory, LoadedFiles};
+
+    fn day(offset: i64) -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(2026, 7, 5).unwrap_or_default()
+            + chrono::TimeDelta::days(offset)
+    }
+
+    fn prune_request(scope: PruneScope) -> PruneRequest {
+        PruneRequest {
+            scope,
+            days: PrunedDays::Before(day(0)),
+        }
+    }
+
+    fn covered_days() -> CoveredDayCounts {
+        CoveredDayCounts {
+            interference: 2,
+            geomagnetic_indices: 3,
+            tec_maps: 29,
+            solar_flares: 1,
+        }
+    }
+
+    /// Renders the confirmation and reports the choice it took.
+    fn prune_dialog<'a>(
+        prompt: &'a EnvironmentPrunePrompt<'a>,
+        choice: &'a std::cell::RefCell<Option<EnvironmentPruneChoice>>,
+    ) -> TestHarness<'a, ()> {
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(520.0, 320.0))
+            .ui(|ui| {
+                if let Some(made) = show_environment_prune_confirmation(ui, prompt) {
+                    *choice.borrow_mut() = Some(made);
+                }
+            });
+        harness.run();
+        harness
+    }
+
+    /// The dialog names the loaded recordings whose days go: the fetch
+    /// schedulers download those days again straight after.
+    #[test]
+    fn the_prune_dialog_names_the_loaded_recordings_it_affects() {
+        let recordings = ["Morning ride".to_owned(), "Ferry crossing".to_owned()];
+        let prompt = EnvironmentPrunePrompt {
+            request: prune_request(PruneScope::Every),
+            covered: covered_days(),
+            loaded_recordings: &recordings,
+        };
+        let choice = std::cell::RefCell::new(None);
+        let harness = prune_dialog(&prompt, &choice);
+
+        for name in &recordings {
+            assert!(
+                harness.inner.query_by_label_contains(name).is_some(),
+                "{name} is not named in the dialog"
+            );
+        }
+        assert!(
+            harness
+                .inner
+                .query_by_label_contains("downloaded again")
+                .is_some(),
+            "the dialog does not say the days come back"
+        );
+    }
+
+    #[test]
+    fn confirming_the_prune_dialog_reports_the_delete() {
+        let prompt = EnvironmentPrunePrompt {
+            request: prune_request(PruneScope::Every),
+            covered: covered_days(),
+            loaded_recordings: &[],
+        };
+        let choice = std::cell::RefCell::new(None);
+        let mut harness = prune_dialog(&prompt, &choice);
+        harness.inner.get_by_label("Delete").click();
+        harness.run();
+        drop(harness);
+
+        assert!(matches!(
+            choice.into_inner(),
+            Some(EnvironmentPruneChoice::Delete)
+        ));
+    }
+
+    #[test]
+    fn cancelling_the_prune_dialog_deletes_nothing() {
+        let prompt = EnvironmentPrunePrompt {
+            request: prune_request(PruneScope::Every),
+            covered: covered_days(),
+            loaded_recordings: &[],
+        };
+        let choice = std::cell::RefCell::new(None);
+        let mut harness = prune_dialog(&prompt, &choice);
+        harness.inner.get_by_label("Cancel").click();
+        harness.run();
+        drop(harness);
+
+        assert!(matches!(
+            choice.into_inner(),
+            Some(EnvironmentPruneChoice::Cancel)
+        ));
+    }
+
+    #[rstest::rstest]
+    #[case::every_archive_before_a_day(
+        PruneScope::Every,
+        PrunedDays::Before(day(0)),
+        "Every archive loses the days it holds before 2026-07-05"
+    )]
+    #[case::every_archive_entirely(
+        PruneScope::Every,
+        PrunedDays::All,
+        "Every archive loses every day it holds"
+    )]
+    #[case::one_archive_before_a_day(
+        PruneScope::One(EnvironmentArchive::IonosphericTec),
+        PrunedDays::Before(day(0)),
+        "The Ionospheric TEC archive loses the days it holds before 2026-07-05"
+    )]
+    #[case::one_archive_entirely(
+        PruneScope::One(EnvironmentArchive::SolarFlares),
+        PrunedDays::All,
+        "The Solar flares archive loses every day it holds"
+    )]
+    fn the_dialog_opens_with_what_the_delete_takes(
+        #[case] scope: PruneScope,
+        #[case] days: PrunedDays,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(prune_scope_line(PruneRequest { scope, days }), expected);
+    }
+
+    /// The dialog as the user meets it: what goes, and which loaded recordings
+    /// are downloaded again.
+    #[test]
+    fn snapshot_environment_prune_dialog() {
+        let recordings = ["Morning ride".to_owned(), "Ferry crossing".to_owned()];
+        let prompt = EnvironmentPrunePrompt {
+            request: prune_request(PruneScope::Every),
+            covered: covered_days(),
+            loaded_recordings: &recordings,
+        };
+        let choice = std::cell::RefCell::new(None);
+        let mut harness = prune_dialog(&prompt, &choice);
+        harness.snapshot("environment_prune_dialog");
+    }
 
     struct TokenDialogState {
         map: NavMap,

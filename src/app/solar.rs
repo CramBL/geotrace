@@ -21,7 +21,7 @@ use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
 use gt_solar::activity::GeomagneticActivity;
 use gt_solar::series::{Hp30Series, IndexSample, IndexSeries, KpSeries};
 use gt_solar::{GeomagneticIndex, TimeWindow, calendar, transport, wire};
-use gt_store::{SolarStore, SolarStoreError};
+use gt_store::{ArchiveUsage, SolarStore, SolarStoreError};
 use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{
     GeomagneticContextLines, GeomagneticPoint, GeomagneticSeries, IndexContextSample,
@@ -30,6 +30,7 @@ use strum::IntoEnumIterator as _;
 
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
+use super::environment_storage::PrunedDays;
 
 /// What one day's fetch produced.
 enum IndexDayMessage {
@@ -162,6 +163,36 @@ impl GeomagneticIndexScheduler {
     /// control when there is not.
     pub fn archive_available(&self) -> bool {
         self.store.is_some()
+    }
+
+    /// The archive, for the settings page to report and delete from.
+    pub fn archive(&self) -> Option<Arc<SolarStore>> {
+        self.store.as_ref().map(Arc::clone)
+    }
+
+    /// What the archive holds, as the environment storage rows show it.
+    pub fn archive_usage(&self) -> Option<ArchiveUsage> {
+        let store = self.store.as_ref()?;
+        Some(ArchiveUsage::measure(
+            store.path(),
+            self.archived_days.iter().copied(),
+        ))
+    }
+
+    /// How many archived days a delete of `pruned` would remove.
+    pub fn archived_days_covered(&self, pruned: PrunedDays) -> usize {
+        pruned.count_covered(self.archived_days.iter().copied())
+    }
+
+    /// Drop what this scheduler holds for the days a delete removed from the
+    /// archive.
+    pub fn forget_pruned_days(&mut self, pruned: PrunedDays) {
+        self.archived_days.retain(|day| !pruned.covers(*day));
+        self.plot_points
+            .retain(|_, (days, _)| !days.iter().any(|day| pruned.covers(*day)));
+        self.hp30_context.forget_pruned_days(pruned);
+        self.kp_context.forget_pruned_days(pruned);
+        self.days.forget_pruned_days(pruned);
     }
 
     /// The queued, in-flight and failed days, as the settings page reports

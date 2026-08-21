@@ -93,6 +93,7 @@ impl eframe::App for App {
         self.show_history_failure_prompt(ui);
         self.show_resegment_prompt(ui);
         self.show_auto_prune_prompt(ui);
+        self.show_environment_prune_prompt(ui);
         self.show_log_association_dialog(ui);
 
         // Show the self-update prompt (if an in-place update was found and not
@@ -136,6 +137,7 @@ impl App {
         self.geomagnetic_indices.poll();
         self.tec_maps.poll();
         self.solar_flares.poll();
+        self.poll_environment_prune();
 
         // Apply finished snap runs and progress updates, persist completed
         // runs of history-stored files, and let the queue react to

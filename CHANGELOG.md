@@ -24,6 +24,7 @@
 - Settings' "Aircraft interference" page links to reference material on what aircraft report, how a day's cells are computed and what the data does and does not show.
 - A warning when downloaded space weather or interference data overlaps a loaded recording at a level that can disturb reception: a toast on load, and a storm icon in the map corner that lists what was found and stays faintly visible while nothing warns. Clicking the icon states the level each metric warns at, with a link to that metric's reference material.
 - A finished query's match halos flare up and settle back on the map, so a new run's matches stand out among many tracks. "Show on map" in the results plays that again and zooms to the matches.
+- Settings' "Application" page lists what the downloaded aircraft interference, geomagnetic index, TEC and solar flare archives take up on disk, and deletes days older than a chosen date across all of them or everything one archive holds. The space a delete frees is what the days downloaded after it are written into.
 - TEC now warns too, from the moderate-storm grade of the planetary ionospheric storm index: at least 43 % above or 30 % below the median of the 27 days before the recording, read at the same location and time of day. Those days' maps are downloaded as well, about 3.4 MB per recording day.
 
 ### Changed

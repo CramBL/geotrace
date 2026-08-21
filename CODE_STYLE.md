@@ -275,6 +275,7 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 | **association target** | The one recording a log takes its positions from, always chosen explicitly. Not "linked file" or "parent". | `association_target`, `associate_with` |
 | **association window** | How far an entry's timestamp may be from a fix for the entry to take that position. Not "tolerance" or "threshold". | `association_window`, `AssociationWindowUnit` |
 | **space weather warning** | The finding that an archived environment value overlapping a loaded recording reaches a level that can disturb reception. Raised by aircraft interference, geomagnetic activity, solar flares and TEC deviation from its quiet-time median. The absolute TEC range is listed as context and never raises it on its own. Not "alert" or "space weather event". | `SpaceWeatherWarning`, `DisturbanceEvidence`, `app::space_weather_warning` |
+| **environment data** | The four day-keyed archives downloaded for the days a recording spans: aircraft interference, geomagnetic indices, ionospheric TEC and solar flares. Their storage is managed together on Settings' Application page. Not "space weather data" - that names the warning. | `EnvironmentArchive`, `ArchiveUsage`, `app::environment_storage` |
 | **attachment** | A log stored with a recording in the history database, restored when that recording is opened again. Not "saved log" or "bound log". | `LogAttachmentRef`, `AttachedLog`, `Store::logs_path` |
 
 Terms to avoid and their replacements:
