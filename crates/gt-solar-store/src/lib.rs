@@ -6,12 +6,16 @@
 //! An archived day can be stored again: GFZ publishes Kp nowcast values and
 //! replaces them with definitive ones once every station has reported.
 
+use std::collections::BTreeSet;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, Utc};
 use gt_hdf5_archive::day_index::{DayIndex, RowPlacement};
-use gt_hdf5_archive::{ArchiveError, ArchiveFile, Column, StoredPresence, attributes, dates};
+use gt_hdf5_archive::prune::{ArchiveLayout, RowLevel};
+use gt_hdf5_archive::{
+    ArchiveError, ArchiveFile, Column, OpenArchive, StoredPresence, attributes, dates,
+};
 use gt_solar::GeomagneticIndex;
 use gt_solar::activity::GeomagneticActivity;
 use gt_solar::series::{Hp30Sample, Hp30Series, IndexSample, IndexSeries, KpSample, KpSeries};
@@ -79,12 +83,17 @@ pub struct SolarStore {
     /// appends, and writes the day index last, and a caller reading between
     /// those steps sees samples that no index entry names.
     archive: Mutex<ArchiveFile>,
+    /// Held beside the lock: a caller reading the archive's path never waits
+    /// for a delete rewriting it.
+    path: PathBuf,
 }
 
 impl SolarStore {
     /// Open the archive at `path`, creating it if it does not exist.
     ///
-    /// Samples left behind by an interrupted store are dropped here.
+    /// Samples left behind by an interrupted store are dropped here, and so
+    /// are the days an interrupted [`Self::delete_days_before`] left in an
+    /// unknown layout.
     pub fn open_or_create(path: &Path) -> Result<Self, SolarStoreError> {
         let mut archive = ArchiveFile::new(path);
         if archive.exists() {
@@ -92,17 +101,19 @@ impl SolarStore {
                 schema::SCHEMA_VERSION_ATTR,
                 schema::CURRENT_SCHEMA_VERSION,
             )?;
+            Self::recover_interrupted_delete(&mut archive)?;
             Self::drop_unindexed_samples(&mut archive)?;
         } else {
             Self::create(&mut archive)?;
         }
         Ok(Self {
             archive: Mutex::new(archive),
+            path: path.to_owned(),
         })
     }
 
-    pub fn path(&self) -> PathBuf {
-        self.archive.lock().path().to_owned()
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     fn create(archive: &mut ArchiveFile) -> Result<(), SolarStoreError> {
@@ -132,6 +143,16 @@ impl SolarStore {
         Ok(())
     }
 
+    fn recover_interrupted_delete(archive: &mut ArchiveFile) -> Result<(), SolarStoreError> {
+        let file = archive.open_read_write()?;
+        for index in GeomagneticIndex::iter() {
+            with_layout(&file, index, |layout| {
+                layout.recover_interrupted_delete(&archive_name(index))
+            })?;
+        }
+        Ok(())
+    }
+
     fn drop_unindexed_samples(archive: &mut ArchiveFile) -> Result<(), SolarStoreError> {
         let file = archive.open_read_write()?;
         for index in GeomagneticIndex::iter() {
@@ -140,10 +161,55 @@ impl SolarStore {
             DayIndex::new(&days).drop_unindexed_rows(
                 &samples,
                 index.sample_columns(),
-                &format!("geomagnetic archive {index}"),
+                &archive_name(index),
             )?;
         }
         Ok(())
+    }
+
+    /// Remove every day before `cutoff` from both indices, reporting how many
+    /// days went. A day either index held counts once.
+    ///
+    /// The samples the remaining days hold move down to close the gap. The
+    /// file itself rarely shrinks: the space is what the days stored after the
+    /// delete are written into.
+    pub fn delete_days_before(&self, cutoff: NaiveDate) -> Result<usize, SolarStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_write()?;
+        let mut removed: BTreeSet<NaiveDate> = BTreeSet::new();
+        for index in GeomagneticIndex::iter() {
+            let days = file.group(&index.days_group_path())?;
+            removed.extend(
+                DayIndex::new(&days)
+                    .entries()?
+                    .into_iter()
+                    .map(|entry| entry.day)
+                    .filter(|day| *day < cutoff),
+            );
+            drop(days);
+            with_layout(&file, index, |layout| layout.delete_days_before(cutoff))?;
+        }
+        Ok(removed.len())
+    }
+
+    /// Remove every archived day from both indices, reporting how many went.
+    /// A day either index held counts once.
+    pub fn delete_all_days(&self) -> Result<usize, SolarStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_write()?;
+        let mut removed: BTreeSet<NaiveDate> = BTreeSet::new();
+        for index in GeomagneticIndex::iter() {
+            let days = file.group(&index.days_group_path())?;
+            removed.extend(
+                DayIndex::new(&days)
+                    .entries()?
+                    .into_iter()
+                    .map(|entry| entry.day),
+            );
+            drop(days);
+            with_layout(&file, index, |layout| layout.delete_all_days())?;
+        }
+        Ok(removed.len())
     }
 
     /// Every day archived for `index`, oldest first.
@@ -399,4 +465,30 @@ fn read_period_columns(
             })
         })
         .collect()
+}
+
+/// The index's archive, as messages about its columns name it.
+fn archive_name(index: GeomagneticIndex) -> String {
+    format!("geomagnetic archive {index}")
+}
+
+/// Run `act` against one index's layout: its day index over its sample
+/// columns.
+fn with_layout<T>(
+    file: &OpenArchive<'_>,
+    index: GeomagneticIndex,
+    act: impl FnOnce(&ArchiveLayout<'_>) -> Result<T, ArchiveError>,
+) -> Result<T, SolarStoreError> {
+    let samples = file.group(&index.samples_group_path())?;
+    let levels = [RowLevel {
+        group: &samples,
+        columns: index.sample_columns(),
+        extent: None,
+    }];
+    Ok(act(&ArchiveLayout {
+        parent: file,
+        index_name: &index.days_group_path(),
+        day_columns: &[],
+        levels: &levels,
+    })?)
 }

@@ -20,6 +20,7 @@ backend-sys = ["gt-history/backend-sys"]
 [dependencies]
 dirs.workspace = true
 gt-flare-store = { path = "../gt-flare-store" }
+gt-hdf5-archive = { path = "../gt-hdf5-archive" }
 gt-history = { path = "../gt-history", default-features = false }
 gt-ionex-store = { path = "../gt-ionex-store" }
 gt-jam-store = { path = "../gt-jam-store" }

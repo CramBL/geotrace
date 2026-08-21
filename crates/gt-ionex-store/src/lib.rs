@@ -16,7 +16,10 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use gt_hdf5_archive::day_index::{self, DayIndex, RowPlacement};
-use gt_hdf5_archive::{ArchiveError, ArchiveFile, Column, StoredPresence, attributes, dates};
+use gt_hdf5_archive::prune::{ArchiveLayout, ExtentColumns, RowLevel};
+use gt_hdf5_archive::{
+    ArchiveError, ArchiveFile, Column, OpenArchive, StoredPresence, attributes, dates,
+};
 use gt_ionex::IonexProduct;
 use gt_ionex::grid::{AxisDeclaration, GridAxis, LatitudeAxis, LongitudeAxis, MapGrid};
 use gt_ionex::maps::{GlobalIonosphereMaps, TecMap};
@@ -30,6 +33,9 @@ pub mod schema;
 
 /// Name of the archive file, joined to the data directory by the caller.
 pub const FILE_NAME: &str = "tec.h5";
+
+/// The archive's name in messages about its columns.
+const ARCHIVE_NAME: &str = "TEC map archive";
 
 #[derive(Debug, thiserror::Error)]
 pub enum IonexStoreError {
@@ -87,12 +93,17 @@ pub struct IonexStore {
     /// the day's own columns and indexes the day last, and a caller reading
     /// between those steps sees rows that no day entry names.
     archive: Mutex<ArchiveFile>,
+    /// Held beside the lock: a caller reading the archive's path never waits
+    /// for a delete rewriting it.
+    path: PathBuf,
 }
 
 impl IonexStore {
     /// Open the archive at `path`, creating it if it does not exist.
     ///
-    /// Rows left behind by an interrupted store are dropped here.
+    /// Rows left behind by an interrupted store are dropped here, and so are
+    /// the days an interrupted [`Self::delete_days_before`] left in an unknown
+    /// layout.
     pub fn open_or_create(path: &Path) -> Result<Self, IonexStoreError> {
         let mut archive = ArchiveFile::new(path);
         if archive.exists() {
@@ -100,17 +111,19 @@ impl IonexStore {
                 schema::SCHEMA_VERSION_ATTR,
                 schema::CURRENT_SCHEMA_VERSION,
             )?;
+            Self::recover_interrupted_delete(&mut archive)?;
             Self::drop_unindexed_rows(&mut archive)?;
         } else {
             Self::create(&mut archive)?;
         }
         Ok(Self {
             archive: Mutex::new(archive),
+            path: path.to_owned(),
         })
     }
 
-    pub fn path(&self) -> PathBuf {
-        self.archive.lock().path().to_owned()
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     fn create(archive: &mut ArchiveFile) -> Result<(), IonexStoreError> {
@@ -148,6 +161,13 @@ impl IonexStore {
         Ok(())
     }
 
+    fn recover_interrupted_delete(archive: &mut ArchiveFile) -> Result<(), IonexStoreError> {
+        let file = archive.open_read_write()?;
+        with_layout(&file, |layout| {
+            layout.recover_interrupted_delete(ARCHIVE_NAME)
+        })
+    }
+
     /// Cut the rows an interrupted store left behind, outermost group first:
     /// map rows no day names, then value rows no surviving map names, then the
     /// per-day columns down to the day index.
@@ -157,7 +177,7 @@ impl IonexStore {
         let maps = file.group(schema::MAPS_GROUP)?;
         let values = file.group(schema::VALUES_GROUP)?;
 
-        DayIndex::new(&days).drop_unindexed_rows(&maps, &schema::MAP_COLUMNS, "TEC map archive")?;
+        DayIndex::new(&days).drop_unindexed_rows(&maps, &schema::MAP_COLUMNS, ARCHIVE_NAME)?;
 
         let reached = values_reached(&maps)?;
         for name in schema::VALUE_COLUMNS {
@@ -191,6 +211,24 @@ impl IonexStore {
             }
         }
         Ok(())
+    }
+
+    /// Remove every day before `cutoff`, reporting how many days went.
+    ///
+    /// The maps and values the remaining days hold move down to close the
+    /// gap. The file itself rarely shrinks: the space is what the days stored
+    /// after the delete are written into.
+    pub fn delete_days_before(&self, cutoff: NaiveDate) -> Result<usize, IonexStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_write()?;
+        with_layout(&file, |layout| layout.delete_days_before(cutoff))
+    }
+
+    /// Remove every archived day, reporting how many went.
+    pub fn delete_all_days(&self) -> Result<usize, IonexStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_write()?;
+        with_layout(&file, |layout| layout.delete_all_days())
     }
 
     /// Every day archived, oldest first.
@@ -384,6 +422,37 @@ impl IonexStore {
             maps,
         )))
     }
+}
+
+/// Run `act` against the archive's layout: a day index over the map columns
+/// beside the day's own, and the value columns each map names.
+fn with_layout<T>(
+    file: &OpenArchive<'_>,
+    act: impl FnOnce(&ArchiveLayout<'_>) -> Result<T, ArchiveError>,
+) -> Result<T, IonexStoreError> {
+    let maps = file.group(schema::MAPS_GROUP)?;
+    let values = file.group(schema::VALUES_GROUP)?;
+    let levels = [
+        RowLevel {
+            group: &maps,
+            columns: &[schema::MAP_EPOCH],
+            extent: Some(ExtentColumns {
+                offset: schema::MAP_VALUE_OFFSET,
+                count: schema::MAP_VALUE_COUNT,
+            }),
+        },
+        RowLevel {
+            group: &values,
+            columns: &schema::VALUE_COLUMNS,
+            extent: None,
+        },
+    ];
+    Ok(act(&ArchiveLayout {
+        parent: file,
+        index_name: schema::DAYS_GROUP,
+        day_columns: &schema::DAY_COLUMNS,
+        levels: &levels,
+    })?)
 }
 
 /// The grid columns of one day, paired with the value each holds.

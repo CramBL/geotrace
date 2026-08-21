@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, Utc};
 use gt_hdf5_archive::day_index::{DayIndex, RowPlacement};
-use gt_hdf5_archive::{ArchiveError, ArchiveFile, Column, attributes};
+use gt_hdf5_archive::prune::{ArchiveLayout, RowLevel};
+use gt_hdf5_archive::{ArchiveError, ArchiveFile, Column, OpenArchive, attributes};
 use gt_jam::dataset::JamDataset;
 use gt_jam::wire::HexObservation;
 use h3o::CellIndex;
@@ -79,13 +80,17 @@ pub struct JamStore {
     /// last, and a caller reading between those steps sees rows that no index
     /// entry names.
     archive: Mutex<ArchiveFile>,
+    /// Held beside the lock: a caller reading the archive's path never waits
+    /// for a delete rewriting it.
+    path: PathBuf,
 }
 
 impl JamStore {
     /// Open the archive at `path`, creating it if it does not exist.
     ///
     /// Rows left behind by an interrupted [`Self::insert_day`] are dropped
-    /// here.
+    /// here, and so are the days an interrupted
+    /// [`Self::delete_days_before`] left in an unknown layout.
     pub fn open_or_create(path: &Path) -> Result<Self, JamStoreError> {
         let mut archive = ArchiveFile::new(path);
         if archive.exists() {
@@ -93,17 +98,19 @@ impl JamStore {
                 schema::SCHEMA_VERSION_ATTR,
                 schema::CURRENT_SCHEMA_VERSION,
             )?;
+            Self::recover_interrupted_delete(&mut archive)?;
             Self::drop_unindexed_rows(&mut archive)?;
         } else {
             Self::create(&mut archive)?;
         }
         Ok(Self {
             archive: Mutex::new(archive),
+            path: path.to_owned(),
         })
     }
 
-    pub fn path(&self) -> PathBuf {
-        self.archive.lock().path().to_owned()
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     fn create(archive: &mut ArchiveFile) -> Result<(), JamStoreError> {
@@ -128,6 +135,13 @@ impl JamStore {
         let days = file.create_group(schema::DAYS_GROUP)?;
         DayIndex::create_columns(&days, schema::DAY_FORMAT)?;
         Ok(())
+    }
+
+    fn recover_interrupted_delete(archive: &mut ArchiveFile) -> Result<(), JamStoreError> {
+        let file = archive.open_read_write()?;
+        with_layout(&file, |layout| {
+            layout.recover_interrupted_delete(ARCHIVE_NAME)
+        })
     }
 
     fn drop_unindexed_rows(archive: &mut ArchiveFile) -> Result<(), JamStoreError> {
@@ -253,10 +267,48 @@ impl JamStore {
         Ok(Some(observations))
     }
 
+    /// Remove every day before `cutoff`, reporting how many days went.
+    ///
+    /// The observations the remaining days hold move down to close the gap.
+    /// The file itself rarely shrinks: the space is what the days stored
+    /// after the delete are written into.
+    pub fn delete_days_before(&self, cutoff: NaiveDate) -> Result<usize, JamStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_write()?;
+        with_layout(&file, |layout| layout.delete_days_before(cutoff))
+    }
+
+    /// Remove every stored day, reporting how many went.
+    pub fn delete_all_days(&self) -> Result<usize, JamStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_write()?;
+        with_layout(&file, |layout| layout.delete_all_days())
+    }
+
     /// The stored day, indexed for lookup and drawing.
     pub fn dataset(&self, day: NaiveDate) -> Result<Option<JamDataset>, JamStoreError> {
         Ok(self
             .observations(day)?
             .map(|observations| JamDataset::new(day, observations)))
     }
+}
+
+/// Run `act` against the archive's layout: one day index over one group of
+/// observation columns.
+fn with_layout<T>(
+    file: &OpenArchive<'_>,
+    act: impl FnOnce(&ArchiveLayout<'_>) -> Result<T, ArchiveError>,
+) -> Result<T, JamStoreError> {
+    let observations = file.group(schema::OBSERVATIONS_GROUP)?;
+    let levels = [RowLevel {
+        group: &observations,
+        columns: &schema::OBSERVATION_COLUMNS,
+        extent: None,
+    }];
+    Ok(act(&ArchiveLayout {
+        parent: file,
+        index_name: schema::DAYS_GROUP,
+        day_columns: &[],
+        levels: &levels,
+    })?)
 }

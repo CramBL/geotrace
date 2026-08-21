@@ -462,3 +462,57 @@ fn an_activity_outside_the_published_range_is_reported() {
         "archive is inconsistent: Kp sample 0 is 11.333, outside the range Kp is published in"
     );
 }
+
+/// Both series lose the days before the cutoff, and a day either of them held
+/// counts once.
+#[test]
+fn deleting_days_before_a_cutoff_covers_both_series() {
+    let (_dir, store) = store().unwrap();
+    for offset in 0..3 {
+        store
+            .insert_or_replace_kp_day(day(offset), HOST, fetched_at(), &kp_day(day(offset)))
+            .expect("store kp");
+    }
+    // Hp30 is one day behind, so the oldest two days are Kp alone.
+    for offset in 2..3 {
+        store
+            .insert_or_replace_hp30_day(day(offset), HOST, fetched_at(), &hp30_day(day(offset)))
+            .expect("store hp30");
+    }
+
+    let removed = store.delete_days_before(day(2)).expect("delete days");
+
+    assert_eq!(removed, 2);
+    assert_eq!(store.kp_series(day(0)).expect("kp"), None);
+    assert_eq!(store.kp_series(day(1)).expect("kp"), None);
+    assert_eq!(
+        store.kp_series(day(2)).expect("kp"),
+        Some(kp_day(day(2))),
+        "the surviving Kp day lost its samples"
+    );
+    assert_eq!(
+        store.hp30_series(day(2)).expect("hp30"),
+        Some(hp30_day(day(2))),
+        "the surviving Hp30 day lost its samples"
+    );
+}
+
+#[test]
+fn deleting_every_day_empties_both_series() {
+    let (_dir, store) = store().unwrap();
+    store
+        .insert_or_replace_kp_day(day(0), HOST, fetched_at(), &kp_day(day(0)))
+        .expect("store kp");
+    store
+        .insert_or_replace_hp30_day(day(0), HOST, fetched_at(), &hp30_day(day(0)))
+        .expect("store hp30");
+
+    let removed = store.delete_all_days().expect("delete all");
+
+    assert_eq!(removed, 1, "the day both series held counts once");
+    for index in [GeomagneticIndex::Kp, GeomagneticIndex::Hp30] {
+        assert!(store.archived_days(index).expect("days").is_empty());
+    }
+    assert_eq!(store.kp_series(day(0)).expect("kp"), None);
+    assert_eq!(store.hp30_series(day(0)).expect("hp30"), None);
+}

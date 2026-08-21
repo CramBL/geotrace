@@ -13,7 +13,10 @@ use chrono::{DateTime, NaiveDate, Utc};
 use gt_flare::SolarFlare;
 use gt_flare::class::{FlareClass, FlareClassification};
 use gt_hdf5_archive::day_index::{DayIndex, RowPlacement};
-use gt_hdf5_archive::{ArchiveError, ArchiveFile, Column, StoredPresence, attributes, dates};
+use gt_hdf5_archive::prune::{ArchiveLayout, RowLevel};
+use gt_hdf5_archive::{
+    ArchiveError, ArchiveFile, Column, OpenArchive, StoredPresence, attributes, dates,
+};
 use hdf5::Group;
 use hdf5::types::VarLenUnicode;
 use parking_lot::Mutex;
@@ -21,6 +24,9 @@ use parking_lot::Mutex;
 use crate::schema::StoredFlareClass;
 
 pub mod schema;
+
+/// The archive's name in messages about its columns.
+const ARCHIVE_NAME: &str = "solar flare archive";
 
 /// Name of the archive file, joined to the data directory by the caller.
 pub const FILE_NAME: &str = "solar_flares.h5";
@@ -78,12 +84,17 @@ pub struct FlareStore {
     /// and writes the day index last, and a caller reading between those steps
     /// sees events that no index entry names.
     archive: Mutex<ArchiveFile>,
+    /// Held beside the lock: a caller reading the archive's path never waits
+    /// for a delete rewriting it.
+    path: PathBuf,
 }
 
 impl FlareStore {
     /// Open the archive at `path`, creating it if it does not exist.
     ///
-    /// Events left behind by an interrupted store are dropped here.
+    /// Events left behind by an interrupted store are dropped here, and so
+    /// are the days an interrupted [`Self::delete_days_before`] left in an
+    /// unknown layout.
     pub fn open_or_create(path: &Path) -> Result<Self, FlareStoreError> {
         let mut archive = ArchiveFile::new(path);
         if archive.exists() {
@@ -91,17 +102,19 @@ impl FlareStore {
                 schema::SCHEMA_VERSION_ATTR,
                 schema::CURRENT_SCHEMA_VERSION,
             )?;
+            Self::recover_interrupted_delete(&mut archive)?;
             Self::drop_unindexed_events(&mut archive)?;
         } else {
             Self::create(&mut archive)?;
         }
         Ok(Self {
             archive: Mutex::new(archive),
+            path: path.to_owned(),
         })
     }
 
-    pub fn path(&self) -> PathBuf {
-        self.archive.lock().path().to_owned()
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     fn create(archive: &mut ArchiveFile) -> Result<(), FlareStoreError> {
@@ -138,16 +151,38 @@ impl FlareStore {
         Ok(())
     }
 
+    fn recover_interrupted_delete(archive: &mut ArchiveFile) -> Result<(), FlareStoreError> {
+        let file = archive.open_read_write()?;
+        with_layout(&file, |layout| {
+            layout.recover_interrupted_delete(ARCHIVE_NAME)
+        })
+    }
+
     fn drop_unindexed_events(archive: &mut ArchiveFile) -> Result<(), FlareStoreError> {
         let file = archive.open_read_write()?;
         let days = file.group(schema::DAYS_GROUP)?;
         let events = file.group(schema::EVENTS_GROUP)?;
-        DayIndex::new(&days).drop_unindexed_rows(
-            &events,
-            &schema::EVENT_COLUMNS,
-            "solar flare archive",
-        )?;
+        DayIndex::new(&days).drop_unindexed_rows(&events, &schema::EVENT_COLUMNS, ARCHIVE_NAME)?;
         Ok(())
+    }
+
+    /// Remove every day before `cutoff`, reporting how many days went.
+    ///
+    /// The events the remaining days hold move down to close the gap. The
+    /// file itself does not shrink here at all: most of what a flare holds is
+    /// text, whose bytes libhdf5 never hands back. The space the rest freed is
+    /// what the days stored after the delete are written into.
+    pub fn delete_days_before(&self, cutoff: NaiveDate) -> Result<usize, FlareStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_write()?;
+        with_layout(&file, |layout| layout.delete_days_before(cutoff))
+    }
+
+    /// Remove every archived day, reporting how many went.
+    pub fn delete_all_days(&self) -> Result<usize, FlareStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_write()?;
+        with_layout(&file, |layout| layout.delete_all_days())
     }
 
     /// Every day archived, oldest first.
@@ -384,4 +419,24 @@ fn stored_strings<'a>(
             })
         })
         .collect()
+}
+
+/// Run `act` against the archive's layout: one day index over one group of
+/// event columns.
+fn with_layout<T>(
+    file: &OpenArchive<'_>,
+    act: impl FnOnce(&ArchiveLayout<'_>) -> Result<T, ArchiveError>,
+) -> Result<T, FlareStoreError> {
+    let events = file.group(schema::EVENTS_GROUP)?;
+    let levels = [RowLevel {
+        group: &events,
+        columns: &schema::EVENT_COLUMNS,
+        extent: None,
+    }];
+    Ok(act(&ArchiveLayout {
+        parent: file,
+        index_name: schema::DAYS_GROUP,
+        day_columns: &[],
+        levels: &levels,
+    })?)
 }

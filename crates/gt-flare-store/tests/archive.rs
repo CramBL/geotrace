@@ -427,3 +427,44 @@ fn an_undecodable_event_is_reported(
         format!("archive is inconsistent: {expected}")
     );
 }
+
+/// Days go from the front and the flares of the rest read back through the
+/// offsets the delete rebased, text columns included.
+#[test]
+fn deleting_days_before_a_cutoff_keeps_the_flares_of_the_rest() {
+    let (_dir, store) = store().unwrap();
+    let kept = flare_day(day(1)).expect("a day of flares");
+    for (day, flares) in [
+        (day(0), flare_day(day(0)).expect("a day of flares")),
+        (day(1), kept.clone()),
+    ] {
+        store
+            .insert_or_replace_day(day, HOST, fetched_at(), &flares)
+            .expect("store");
+    }
+
+    let removed = store.delete_days_before(day(1)).expect("delete days");
+
+    assert_eq!(removed, 1);
+    assert_eq!(store.flares(day(0)).expect("flares"), None);
+    assert_eq!(store.flares(day(1)).expect("flares"), Some(kept));
+}
+
+#[test]
+fn deleting_every_day_empties_the_archive() {
+    let (_dir, store) = store().unwrap();
+    store
+        .insert_or_replace_day(
+            day(0),
+            HOST,
+            fetched_at(),
+            &flare_day(day(0)).expect("a day of flares"),
+        )
+        .expect("store");
+
+    let removed = store.delete_all_days().expect("delete all");
+
+    assert_eq!(removed, 1);
+    assert!(store.archived_days().expect("days").is_empty());
+    assert_eq!(store.flares(day(0)).expect("flares"), None);
+}
