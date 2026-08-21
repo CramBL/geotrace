@@ -375,7 +375,7 @@ mod tests {
     }
 
     /// A mirror of the publisher's layout holds one file per product, and the
-    /// authenticated archive holds several names for the same one.
+    /// authenticated archive is addressed under several names for the same one.
     #[rstest]
     #[case::the_publishers_layout(
         MirrorLayout::Jpl,

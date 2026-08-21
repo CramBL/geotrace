@@ -691,8 +691,8 @@ mod tests {
         );
     }
 
-    /// The authenticated archive files the same day under a long name and a
-    /// legacy one, and the legacy file is LZW compressed rather than gzipped.
+    /// A day is requested under its long name and then its legacy one, and the
+    /// file under the legacy name is LZW compressed rather than gzipped.
     #[test]
     fn a_legacy_file_is_read_through_the_compress_decoder() {
         let (outcome, transport) = fetch_with_token(

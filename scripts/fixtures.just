@@ -21,7 +21,10 @@ ionex-fixtures *FILES:
 
 # Check the CDDIS mirror addressing against the live archive (network!).
 # Needs EARTHDATA_TOKEN, a NASA Earthdata token.
-# Pass --capture to write the served files under gt-ionex/tests/fixtures/cddis/.
+# Pass --day YYYY-MM-DD to address another day than 2024-05-10, such as one
+# from the years the archive files under the legacy short names.
+# Pass --capture to write the served files and their manifest entries under
+# gt-ionex/tests/fixtures/cddis/.
 [group("fixtures")]
 cddis-verify *ARGS:
     cargo run -p gt-ionex --example verify_cddis_mirror -- {{ ARGS }}

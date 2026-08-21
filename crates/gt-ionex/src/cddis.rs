@@ -1,13 +1,14 @@
 //! Addressing the IONEX files CDDIS serves.
 //!
 //! One directory per year and day of the year holds every producer's file for
-//! that day: the long IGS name of each solution, and the legacy short name the
-//! same file was published under for decades. GeoTrace reads JPL's, so a day
-//! is looked for under the long name first and the legacy one after it.
+//! that day, under the long IGS name of each solution. The older years hold
+//! the legacy short name of the same file as well: 2024 serves the long name
+//! alone, 2020 serves both. A day is looked for under the long name first and
+//! the legacy one after it, which covers both eras of JPL's files.
 //!
 //! ```text
 //! https://cddis.nasa.gov/archive/gnss/products/ionex/2024/131/JPL0OPSFIN_20241310000_01D_02H_GIM.INX.gz
-//! https://cddis.nasa.gov/archive/gnss/products/ionex/2024/131/jplg1310.24i.Z
+//! https://cddis.nasa.gov/archive/gnss/products/ionex/2020/131/jplg1310.20i.Z
 //! ```
 //!
 //! The archive answers a request without an Earthdata bearer token with a
@@ -101,8 +102,8 @@ fn long_name(product: IonexProduct, day: NaiveDate, map_spacing: &str) -> String
     )
 }
 
-/// `jplg1310.24i.Z` for the final maps of 10 May 2024, the name the same file
-/// has been published under since before the long names existed.
+/// `jplg1310.20i.Z` for the final maps of 10 May 2020, the name the archive
+/// filed a day under before the long names replaced it.
 fn legacy_name(product: IonexProduct, day: NaiveDate) -> String {
     format!(
         "{prefix}{day_of_year:03}{FILE_SEQUENCE_DIGIT}.{year:02}{maps_type}{LEGACY_SUFFIX}",

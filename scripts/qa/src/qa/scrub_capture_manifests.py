@@ -25,12 +25,13 @@ SCRUBBED_VALUE = "<scrubbed>"
 _NONDETERMINISTIC_FIELDS = frozenset({"captured_at"})
 
 # The manifests of the sources the fixture-freshness workflow re-captures.
-# Two manifests are absent: gt-snap's map-matching answers change with every
+# Three manifests are absent: gt-snap's map-matching answers change with every
 # OpenStreetMap edit, so it is checked on demand through `just snap-live-test`,
-# and gt-flare's endpoint needs a per-user api.nasa.gov key that CI has none
-# of, so it is re-captured by hand through `just flare-fixtures`. The CDDIS
-# mirror keeps no manifest at all: it needs a per-user Earthdata token, and
-# `just cddis-verify` checks its addressing by hand.
+# gt-flare's endpoint needs a per-user api.nasa.gov key that CI has none of, so
+# it is re-captured by hand through `just flare-fixtures`, and the CDDIS
+# manifest under gt-ionex/tests/fixtures/cddis/ needs a per-user Earthdata
+# token, so `just cddis-verify --capture` writes it by hand. Naming one of
+# those on the command line scrubs it all the same.
 _MANIFESTS = (
     "crates/gt-ionex/tests/fixtures/capture.json",
     "crates/gt-jam/tests/fixtures/capture.json",
