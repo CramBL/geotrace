@@ -1,5 +1,4 @@
 mod analysis;
-#[cfg(feature = "self-update")]
 mod application;
 mod geomagnetic_indices;
 mod interface;
@@ -24,7 +23,6 @@ use egui_phosphor::regular::WAVES as ICON_WAVES;
 use gt_map::MapLayer;
 use strum::{EnumIter, IntoEnumIterator};
 
-#[cfg(feature = "self-update")]
 use egui_phosphor::regular::APP_WINDOW as ICON_APP_WINDOW;
 
 use super::App;
@@ -42,9 +40,6 @@ pub(super) enum SettingsPage {
     SolarFlares,
     SnapToRoad,
     Interface,
-    /// Gated on `self-update` because the update check is the page's only
-    /// control.
-    #[cfg(feature = "self-update")]
     Application,
 }
 
@@ -59,7 +54,6 @@ impl SettingsPage {
             Self::SolarFlares => gt_flare::text::LAYER_LABEL,
             Self::SnapToRoad => "Snap to road",
             Self::Interface => "Interface",
-            #[cfg(feature = "self-update")]
             Self::Application => "Application",
         }
     }
@@ -74,7 +68,6 @@ impl SettingsPage {
             Self::SolarFlares => ICON_SUN,
             Self::SnapToRoad => ICON_PATH,
             Self::Interface => ICON_MONITOR,
-            #[cfg(feature = "self-update")]
             Self::Application => ICON_APP_WINDOW,
         }
     }
@@ -92,7 +85,6 @@ impl SettingsPage {
             Self::SolarFlares => solar_flares::SEARCHABLE_LABELS,
             Self::SnapToRoad => snap::SEARCHABLE_LABELS,
             Self::Interface => interface::SEARCHABLE_LABELS,
-            #[cfg(feature = "self-update")]
             Self::Application => application::SEARCHABLE_LABELS,
         }
     }
@@ -278,7 +270,6 @@ impl App {
                 self.show_interface_page(ui);
                 false
             }
-            #[cfg(feature = "self-update")]
             SettingsPage::Application => {
                 self.show_application_page(ui);
                 false

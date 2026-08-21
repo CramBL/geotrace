@@ -26,13 +26,14 @@ use gt_ionex::tec::TotalElectronContent;
 use gt_ionex::text;
 use gt_ionex::{IonexProduct, calendar, transport};
 use gt_map::{TecHeatmapSnapshot, TecLayer};
-use gt_store::{IonexStore, IonexStoreError};
+use gt_store::{ArchiveUsage, IonexStore, IonexStoreError};
 use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{ArcIdentity, TecContextSample, TecPoint, TecSeries};
 
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
 use super::day_fetch_status::ArchivedDayCount;
+use super::environment_storage::PrunedDays;
 use super::fix_positions::FixPositionTimeline;
 use super::tec_quiet_time::QuietTimeDeviationCache;
 
@@ -209,6 +210,43 @@ impl TecMapScheduler {
     /// control when there is not.
     pub fn archive_available(&self) -> bool {
         self.store.is_some()
+    }
+
+    /// The archive, for the settings page to report and delete from.
+    pub fn archive(&self) -> Option<Arc<IonexStore>> {
+        self.store.as_ref().map(Arc::clone)
+    }
+
+    /// What the archive holds, as the environment storage rows show it.
+    pub fn archive_usage(&self) -> Option<ArchiveUsage> {
+        let store = self.store.as_ref()?;
+        Some(ArchiveUsage::measure(
+            store.path(),
+            self.archived_days.iter().copied(),
+        ))
+    }
+
+    /// How many archived days a delete of `pruned` would remove.
+    pub fn archived_days_covered(&self, pruned: PrunedDays) -> usize {
+        pruned.count_covered(self.archived_days.iter().copied())
+    }
+
+    /// Drop what this scheduler holds for the days a delete removed from the
+    /// archive.
+    pub fn forget_pruned_days(&mut self, pruned: PrunedDays) {
+        self.archived_days.retain(|day| !pruned.covers(*day));
+        self.plot_points
+            .retain(|_, (days, _)| !days.iter().any(|day| pruned.covers(*day)));
+        self.context.forget_pruned_days(pruned);
+        self.quiet_time.forget_pruned_days(pruned);
+        if self
+            .shown
+            .as_ref()
+            .is_some_and(|(day, _)| pruned.covers(*day))
+        {
+            self.shown = None;
+        }
+        self.days.forget_pruned_days(pruned);
     }
 
     /// The queued, in-flight and failed days, as the settings page reports

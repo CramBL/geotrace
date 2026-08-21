@@ -15,6 +15,7 @@ use egui_phosphor::regular::X as ICON_CANCEL;
 use jiff::civil::Date;
 
 use super::backfill::BackfillProgress;
+use super::civil_date;
 
 pub const DOWNLOAD_HISTORY_LABEL: &str = "Download history";
 
@@ -271,25 +272,6 @@ impl<D: BackfillDataset> Default for BackfillUi<D> {
     }
 }
 
-/// [`chrono`] to [`jiff`].
-fn to_jiff(date: NaiveDate) -> Date {
-    i16::try_from(date.year())
-        .ok()
-        .zip(i8::try_from(date.month()).ok())
-        .zip(i8::try_from(date.day()).ok())
-        .and_then(|((year, month), day)| Date::new(year, month, day).ok())
-        .unwrap_or_default()
-}
-
-/// [`jiff`] to [`chrono`].
-fn to_chrono(date: Date) -> Option<NaiveDate> {
-    NaiveDate::from_ymd_opt(
-        i32::from(date.year()),
-        u32::try_from(date.month()).ok()?,
-        u32::try_from(date.day()).ok()?,
-    )
-}
-
 impl<D: BackfillDataset> BackfillUi<D> {
     /// Seeded with the last [`DEFAULT_RANGE_DAYS`] days, ending `today`.
     ///
@@ -297,8 +279,8 @@ impl<D: BackfillDataset> BackfillUi<D> {
     /// change every day.
     pub fn with_today(today: NaiveDate) -> Self {
         Self {
-            from: to_jiff(Self::preset_start(today, Some(DEFAULT_RANGE_DAYS))),
-            to: to_jiff(today),
+            from: civil_date::to_jiff(Self::preset_start(today, Some(DEFAULT_RANGE_DAYS))),
+            to: civil_date::to_jiff(today),
             outcome: None,
             dataset: PhantomData,
         }
@@ -316,7 +298,10 @@ impl<D: BackfillDataset> BackfillUi<D> {
     /// The selected range, or [`None`] when it runs backwards. The pickers
     /// only produce real dates, so that is the one unusable state.
     fn range(&self) -> Option<(NaiveDate, NaiveDate)> {
-        let (from, to) = (to_chrono(self.from)?, to_chrono(self.to)?);
+        let (from, to) = (
+            civil_date::to_chrono(self.from)?,
+            civil_date::to_chrono(self.to)?,
+        );
         (from <= to).then_some((from, to))
     }
 
@@ -370,8 +355,8 @@ impl<D: BackfillDataset> BackfillUi<D> {
                     .add_enabled(!running, Button::new(preset.label).small())
                     .clicked()
                 {
-                    self.from = to_jiff(Self::preset_start(today, preset.days_back));
-                    self.to = to_jiff(today);
+                    self.from = civil_date::to_jiff(Self::preset_start(today, preset.days_back));
+                    self.to = civil_date::to_jiff(today);
                 }
             }
         });
@@ -463,8 +448,8 @@ mod tests {
 
     fn state(from: NaiveDate, to: NaiveDate) -> TestBackfillUi {
         TestBackfillUi {
-            from: to_jiff(from),
-            to: to_jiff(to),
+            from: civil_date::to_jiff(from),
+            to: civil_date::to_jiff(to),
             outcome: None,
             dataset: PhantomData,
         }
@@ -477,7 +462,10 @@ mod tests {
     #[case::new_years_eve(date(2026, 12, 31))]
     #[case::the_first_of_a_month(date(2026, 8, 1))]
     fn dates_survive_the_round_trip_through_jiff(#[case] original: NaiveDate) {
-        assert_eq!(to_chrono(to_jiff(original)), Some(original));
+        assert_eq!(
+            civil_date::to_chrono(civil_date::to_jiff(original)),
+            Some(original)
+        );
     }
 
     #[rstest]

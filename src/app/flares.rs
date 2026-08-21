@@ -19,12 +19,13 @@ use egui::Context;
 
 use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
 use gt_flare::{ApiKey, DateWindow, MarkedFlare, SolarFlare, calendar, transport, wire};
-use gt_store::{FlareStore, FlareStoreError};
+use gt_store::{ArchiveUsage, FlareStore, FlareStoreError};
 use gt_types::{SunlitSide, TimeRange};
 use gt_ui_types::ArcIdentity;
 
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan};
 use super::day_fetch_queue::DayFetchQueue;
+use super::environment_storage::PrunedDays;
 use super::fix_positions::FixPositionTimeline;
 
 /// What one day's fetch produced.
@@ -153,6 +154,33 @@ impl SolarFlareScheduler {
     /// control when there is not.
     pub fn archive_available(&self) -> bool {
         self.store.is_some()
+    }
+
+    /// The archive, for the settings page to report and delete from.
+    pub fn archive(&self) -> Option<Arc<FlareStore>> {
+        self.store.as_ref().map(Arc::clone)
+    }
+
+    /// What the archive holds, as the environment storage rows show it.
+    pub fn archive_usage(&self) -> Option<ArchiveUsage> {
+        let store = self.store.as_ref()?;
+        Some(ArchiveUsage::measure(
+            store.path(),
+            self.archived_days.iter().copied(),
+        ))
+    }
+
+    /// How many archived days a delete of `pruned` would remove.
+    pub fn archived_days_covered(&self, pruned: PrunedDays) -> usize {
+        pruned.count_covered(self.archived_days.iter().copied())
+    }
+
+    /// Drop what this scheduler holds for the days a delete removed from the
+    /// archive.
+    pub fn forget_pruned_days(&mut self, pruned: PrunedDays) {
+        self.archived_days.retain(|day| !pruned.covers(*day));
+        self.markers.forget_pruned_days(pruned);
+        self.days.forget_pruned_days(pruned);
     }
 
     /// Whether a key has been entered. Grays every control that would send a

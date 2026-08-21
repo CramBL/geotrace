@@ -78,14 +78,16 @@ fn build_app(cc: &eframe::CreationContext<'_>, config_path: &std::path::Path, fa
     )
 }
 
-/// Fixes every download control's date range, or a snapshot of the settings
-/// window would redate every day.
-fn pin_backfill_ranges(app: &mut App) {
+/// Fixes every date the settings window seeds from today, or its snapshots
+/// would redate every day.
+fn pin_settings_dates(app: &mut App) {
     let today = chrono::NaiveDate::from_ymd_opt(2026, 8, 2).unwrap_or_default();
     app.interference_backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(today);
     app.geomagnetic_index_backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(today);
     app.tec_map_backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(today);
     app.solar_flare_backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(today);
+    app.environment_storage_ui =
+        crate::app::environment_storage_ui::EnvironmentStorageUi::with_today(today);
 }
 
 /// App constructor for the functional (non-snapshot) tests that don't touch a
@@ -2538,11 +2540,12 @@ impl SettingsPage {
             | Self::SolarFlares => crate::app::backfill_ui::DOWNLOAD_HISTORY_LABEL,
             Self::SnapToRoad => "GPS accuracy",
             Self::Interface => "Mapbox token",
-            #[cfg(feature = "self-update")]
-            Self::Application => "Confirm before pruning",
+            Self::Application => crate::app::environment_storage_ui::PRUNE_LABEL,
         }
     }
 
+    /// Gated with the snapshot test that uses it: without `self-update` the
+    /// Application page renders one row fewer and no baseline matches.
     #[cfg(feature = "self-update")]
     fn snapshot_file_stem(self) -> &'static str {
         match self {
@@ -2570,12 +2573,12 @@ fn harness_with_settings_window_open<'a>() -> (TestHarness<'a, App>, PathBuf) {
     // never hidden): the snap page shows both states of its optional rows.
     harness.inner.state_mut().snap_settings.search_radius_m = Some(25.0);
     harness.inner.state_mut().settings_open = true;
-    pin_backfill_ranges(harness.inner.state_mut());
+    pin_settings_dates(harness.inner.state_mut());
     (harness, config_path)
 }
 
-// The settings window renders a `self-update`-only page ("Application"), so its
-// appearance depends on that feature. Gating the snapshot on the feature means
+// The Application page renders a `self-update`-only row (the update check), so
+// the window's appearance depends on that feature. Gating the snapshot on it means
 // the reference image can only ever be generated and compared in the same
 // configuration CI uses (`just test` / `just test-snapshots` both enable it).
 // Without this, regenerating snapshots in a build that lacks the feature would

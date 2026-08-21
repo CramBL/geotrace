@@ -9,6 +9,8 @@ use chrono::NaiveDate;
 use egui::Ui;
 use gt_ui_theme::EM_DASH;
 
+use super::environment_storage::PrunedDays;
+
 /// What the archive holds for one UTC day a fetch worker counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DayArchiveState {
@@ -35,6 +37,16 @@ impl DayArchiveCoverage {
     pub fn mark_archived(&mut self, day: NaiveDate) {
         if let Some(state) = self.days.get_mut(&day) {
             *state = DayArchiveState::Archived;
+        }
+    }
+
+    /// Report every day `pruned` covers as still to be fetched, for an
+    /// archive those days have just left.
+    pub fn mark_pruned_days_awaited(&mut self, pruned: PrunedDays) {
+        for (day, state) in &mut self.days {
+            if pruned.covers(*day) {
+                *state = DayArchiveState::Awaited;
+            }
         }
     }
 

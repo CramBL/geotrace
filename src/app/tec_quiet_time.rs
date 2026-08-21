@@ -25,6 +25,7 @@ use gt_ionex::tec::TotalElectronContent;
 use gt_store::IonexStore;
 use gt_types::{FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef};
 
+use super::environment_storage::PrunedDays;
 use super::tec::read_archived_maps;
 
 /// One grid node and map epoch a track's fixes reach, which one deviation is
@@ -77,6 +78,13 @@ impl QuietTimeDeviationCache {
         self.samples.retain(|sample, _| sample.day != day);
         self.peaks
             .retain(|_, peak| !peak.resolved_from.contains(&day));
+    }
+
+    /// Drop what was read for every day a delete removed from the archive.
+    pub fn forget_pruned_days(&mut self, pruned: PrunedDays) {
+        self.samples.retain(|sample, _| !pruned.covers(sample.day));
+        self.peaks
+            .retain(|_, peak| !peak.resolved_from.iter().any(|day| pruned.covers(*day)));
     }
 
     /// Read every loaded track whose archived days moved, and report the peak

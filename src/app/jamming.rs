@@ -24,15 +24,16 @@ use gt_jam::day_selection::{DaySelection, EmptyReason};
 use gt_jam::transport::{self, FetchOutcome, REQUEST_INTERVAL};
 use gt_jam::wire::{self, ParseWarningReporter};
 use gt_query_run::JammingValues;
-use gt_store::JamStore;
 #[cfg(test)]
 use gt_store::Store;
+use gt_store::{ArchiveUsage, JamStore};
 use gt_types::TimeRange;
 use gt_types::{LoadedFile, TrackRef};
 use gt_ui_types::{ArcIdentity, JammingContextSample, JammingPoint, JammingSeries};
 
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
+use super::environment_storage::PrunedDays;
 use super::fix_positions::FixPositionTimeline;
 
 /// What one day's fetch produced.
@@ -200,6 +201,36 @@ impl JammingScheduler {
     /// control when there is not.
     pub fn archive_available(&self) -> bool {
         self.store.is_some()
+    }
+
+    /// The archive, for the settings page to report and delete from.
+    pub fn archive(&self) -> Option<Arc<JamStore>> {
+        self.store.as_ref().map(Arc::clone)
+    }
+
+    /// What the archive holds, as the environment storage rows show it.
+    pub fn archive_usage(&self) -> Option<ArchiveUsage> {
+        let store = self.store.as_ref()?;
+        Some(ArchiveUsage::measure(
+            store.path(),
+            self.archived_cells.keys().copied(),
+        ))
+    }
+
+    /// How many archived days a delete of `pruned` would remove.
+    pub fn archived_days_covered(&self, pruned: PrunedDays) -> usize {
+        pruned.count_covered(self.archived_cells.keys().copied())
+    }
+
+    /// Drop what this scheduler holds for the days a delete removed from the
+    /// archive.
+    pub fn forget_pruned_days(&mut self, pruned: PrunedDays) {
+        self.archived_cells.retain(|day, _| !pruned.covers(*day));
+        self.plot_points
+            .retain(|_, (days, _)| !days.iter().any(|day| pruned.covers(*day)));
+        self.refused.retain(|day| !pruned.covers(*day));
+        self.context.forget_pruned_days(pruned);
+        self.days.forget_pruned_days(pruned);
     }
 
     /// The queued, in-flight and failed days, as the settings page reports
@@ -986,6 +1017,33 @@ mod tests {
             .expect("insert");
         scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 20, 17)));
         assert_eq!(scheduler.days.queued(), 0);
+    }
+
+    /// A day the archive lost goes back on the queue for the recording that
+    /// spans it, which is what a delete leaves the scheduler to do.
+    #[test]
+    fn a_deleted_day_a_recording_spans_is_requested_again() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
+        store
+            .insert_day(archived, "host", Utc::now(), &[])
+            .expect("insert");
+        scheduler.archived_cells.insert(archived, 0);
+        let recording = range(at(2026, 7, 20, 8), at(2026, 7, 20, 17));
+        scheduler.request_days_for(recording);
+        assert_eq!(scheduler.days.queued(), 0, "an archived day is not fetched");
+        assert_eq!(scheduler.days.fetch_status().recording_days.archived, 1);
+
+        store.delete_all_days().expect("delete");
+        scheduler.forget_pruned_days(PrunedDays::All);
+        scheduler.request_days_for(recording);
+
+        assert_eq!(scheduler.archived_days_covered(PrunedDays::All), 0);
+        assert!(
+            scheduler.days.is_fetching() || scheduler.days.queued() == 1,
+            "the deleted day was not requested again"
+        );
+        assert_eq!(scheduler.days.fetch_status().recording_days.archived, 0);
     }
 
     /// A queued day is always dispatched, offline included: the transport

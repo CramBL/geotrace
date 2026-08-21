@@ -12,6 +12,8 @@ use std::sync::Arc;
 use chrono::{DateTime, Datelike as _, NaiveDate, NaiveTime, Utc};
 use gt_ui_types::ArcIdentity;
 
+use super::environment_storage::PrunedDays;
+
 /// How many buckets one visible span is divided into. The span is snapped
 /// out to bucket boundaries, so panning re-resolves the lines only once the
 /// view has moved by this fraction of what it shows.
@@ -134,6 +136,16 @@ impl<S: Clone> ContextSampleCache<S> {
     /// is read again.
     pub fn forget(&mut self, day: NaiveDate) {
         if self.days.remove(&day).is_some() {
+            self.resolved_from = None;
+        }
+    }
+
+    /// Drop what was read for every day a delete removed from the archive, so
+    /// a day it no longer holds leaves the line.
+    pub fn forget_pruned_days(&mut self, pruned: PrunedDays) {
+        let held = self.days.len();
+        self.days.retain(|day, _| !pruned.covers(*day));
+        if self.days.len() != held {
             self.resolved_from = None;
         }
     }
