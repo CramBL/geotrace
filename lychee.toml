@@ -51,4 +51,11 @@ exclude = [
     # eCFR returns 200 for an interstitial page here, not for the cited
     # section: it redirects a scraper to unblock.federalregister.gov.
     '^https://www\.ecfr\.gov/',
+    # EUR-Lex tarpits non-browser clients: requests hang or come back 502.
+    '^https://eur-lex\.europa\.eu/',
+    # The CDDIS archive sits behind Earthdata login: anonymous requests
+    # redirect to the auth gate and frequently hang from CI addresses, and
+    # a response never validates the archived file itself.
+    '^https://cddis\.nasa\.gov/',
+    '^https://urs\.earthdata\.nasa\.gov/',
 ]
