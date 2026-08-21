@@ -80,6 +80,8 @@ pub(super) struct AppSnapshot {
     pub auto_prune_enabled: bool,
     pub auto_prune_max_bytes: u64,
     pub auto_prune_confirm: bool,
+    /// Compared as the whole persisted struct, like [`Self::snap`].
+    pub environment_storage: crate::settings::EnvironmentStorageSettings,
     pub update_check_on_startup: bool,
     pub skipped_version: Option<String>,
     /// Query-history mutation counter. The history is a growing `Vec` that
@@ -144,6 +146,7 @@ impl Default for AppSnapshot {
             auto_prune_enabled: false,
             auto_prune_max_bytes: 10 * 1024 * 1024 * 1024,
             auto_prune_confirm: true,
+            environment_storage: crate::settings::EnvironmentStorageSettings::default(),
             update_check_on_startup: true,
             skipped_version: None,
             query_history_revision: 0,

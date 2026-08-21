@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, ops::RangeInclusive, path::PathBuf};
 
 /// All user settings that survive restarts.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -12,6 +12,7 @@ pub struct Settings {
     pub processing: ProcessingSettings,
     pub analysis: AnalysisSettings,
     pub storage: StorageSettings,
+    pub environment_storage: EnvironmentStorageSettings,
     pub update: UpdateSettings,
     pub query: QuerySettings,
     pub snap: SnapSettings,
@@ -31,6 +32,7 @@ impl Default for Settings {
             processing: ProcessingSettings::default(),
             analysis: AnalysisSettings::default(),
             storage: StorageSettings::default(),
+            environment_storage: EnvironmentStorageSettings::default(),
             update: UpdateSettings::default(),
             query: QuerySettings::default(),
             snap: SnapSettings::default(),
@@ -345,6 +347,47 @@ impl Default for StorageSettings {
             auto_prune_enabled: false,
             auto_prune_max_bytes: 10 * 1024 * 1024 * 1024,
             auto_prune_confirm: true,
+        }
+    }
+}
+
+/// How long the environment archives keep the days downloaded for the loaded
+/// recordings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct EnvironmentStorageSettings {
+    /// When `true`, days older than [`Self::auto_prune_max_age_months`] are
+    /// deleted from every environment archive at startup and after a recording
+    /// finishes loading. A day a loaded recording needs is kept whatever its
+    /// age.
+    pub auto_prune_enabled: bool,
+    /// Age in months an archived day reaches before an auto-prune deletes it.
+    pub auto_prune_max_age_months: u32,
+}
+
+impl EnvironmentStorageSettings {
+    /// What the settings control offers, and what a hand-edited config is
+    /// clamped to on load.
+    pub const AUTO_PRUNE_AGE_MONTHS_RANGE: RangeInclusive<u32> = 1..=120;
+
+    /// These settings as the control can reach them, for a config file edited
+    /// by hand.
+    pub fn clamped_to_offered_range(self) -> Self {
+        Self {
+            auto_prune_max_age_months: self.auto_prune_max_age_months.clamp(
+                *Self::AUTO_PRUNE_AGE_MONTHS_RANGE.start(),
+                *Self::AUTO_PRUNE_AGE_MONTHS_RANGE.end(),
+            ),
+            ..self
+        }
+    }
+}
+
+impl Default for EnvironmentStorageSettings {
+    fn default() -> Self {
+        Self {
+            auto_prune_enabled: false,
+            auto_prune_max_age_months: 12,
         }
     }
 }
@@ -886,6 +929,36 @@ mod snap_settings_tests {
         let parsed: Settings = toml::from_str(&text).expect("parse");
 
         assert_eq!(parsed.tec.earthdata_token, "entered-token");
+    }
+
+    /// An upgrade deletes no archived day: a settings file written before the
+    /// environment storage section existed loads with auto-pruning off.
+    #[test]
+    fn a_settings_file_without_the_environment_storage_section_loads() {
+        let settings: Settings = toml::from_str("version = 1\n").expect("parse");
+        assert!(!settings.environment_storage.auto_prune_enabled);
+        assert_eq!(settings.environment_storage.auto_prune_max_age_months, 12);
+    }
+
+    /// A hand-edited age loads clamped to what the control offers.
+    #[rstest]
+    #[case::under_the_range(0, 1)]
+    #[case::over_the_range(600, 120)]
+    fn an_environment_auto_prune_age_outside_the_offered_range_loads_clamped(
+        #[case] stored: u32,
+        #[case] expected: u32,
+    ) {
+        let settings = EnvironmentStorageSettings {
+            auto_prune_enabled: true,
+            auto_prune_max_age_months: stored,
+        };
+
+        assert_eq!(
+            settings
+                .clamped_to_offered_range()
+                .auto_prune_max_age_months,
+            expected
+        );
     }
 
     /// A settings file written before the solar flare section existed loads

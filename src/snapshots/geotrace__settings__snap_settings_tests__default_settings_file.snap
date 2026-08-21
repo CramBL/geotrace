@@ -60,6 +60,10 @@ auto_prune_enabled = false
 auto_prune_max_bytes = 10737418240
 auto_prune_confirm = true
 
+[environment_storage]
+auto_prune_enabled = false
+auto_prune_max_age_months = 12
+
 [update]
 check_on_startup = true
 

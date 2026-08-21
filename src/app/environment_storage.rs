@@ -8,12 +8,13 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
 
-use chrono::NaiveDate;
+use chrono::{Months, NaiveDate, Utc};
 use egui::Context;
 use gt_store::{ArchiveUsage, FlareStore, IonexStore, JamStore, SolarStore};
 use strum::{EnumIter, IntoEnumIterator as _};
 
 use super::App;
+use super::day_fetch_queue::DayFetchQueue;
 use super::modals::{
     EnvironmentPruneChoice, EnvironmentPrunePrompt, show_environment_prune_confirmation,
 };
@@ -34,6 +35,17 @@ impl EnvironmentArchive {
             Self::GeomagneticIndices => "Geomagnetic indices",
             Self::IonosphericTec => "Ionospheric TEC",
             Self::SolarFlares => gt_flare::text::LAYER_LABEL,
+        }
+    }
+
+    /// The label as it reads inside a sentence, where only an acronym keeps
+    /// its capitals.
+    pub const fn label_in_sentence(self) -> &'static str {
+        match self {
+            Self::AircraftInterference => "aircraft interference",
+            Self::GeomagneticIndices => "geomagnetic indices",
+            Self::IonosphericTec => "ionospheric TEC",
+            Self::SolarFlares => "solar flares",
         }
     }
 }
@@ -84,6 +96,20 @@ pub struct PruneRequest {
     pub days: PrunedDays,
 }
 
+/// The day an age-based auto-prune deletes everything before: the configured
+/// age, or `oldest_needed_day` where that is earlier.
+///
+/// Deleting a day the schedulers still need would put it straight back on
+/// their fetch queues.
+pub fn auto_prune_cutoff(
+    today: NaiveDate,
+    max_age_months: u32,
+    oldest_needed_day: Option<NaiveDate>,
+) -> Option<NaiveDate> {
+    let configured = today.checked_sub_months(Months::new(max_age_months))?;
+    Some(oldest_needed_day.map_or(configured, |needed| configured.min(needed)))
+}
+
 /// What one archive's delete reported.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArchivePruneReport {
@@ -100,6 +126,28 @@ pub struct PruneReport {
 }
 
 impl PruneReport {
+    /// What the delete removed, named per archive, or [`None`] where it
+    /// removed nothing.
+    pub fn removed_days_line(&self) -> Option<String> {
+        let total = self.days_removed();
+        if total == 0 {
+            return None;
+        }
+        let per_archive: Vec<String> = self
+            .archives
+            .iter()
+            .filter_map(|report| {
+                let removed = *report.outcome.as_ref().ok()?;
+                (removed > 0).then(|| format!("{removed} {}", report.archive.label_in_sentence()))
+            })
+            .collect();
+        Some(format!(
+            "Deleted {total} archived environment {}: {}",
+            gt_fmt::pluralize(total, "day", "days"),
+            per_archive.join(", ")
+        ))
+    }
+
     /// How many days went across the archives that succeeded.
     pub fn days_removed(&self) -> usize {
         self.archives
@@ -377,6 +425,48 @@ impl App {
             .collect()
     }
 
+    /// The earliest day the fetch schedulers still count for the recordings
+    /// loaded this session.
+    fn oldest_needed_environment_day(&self) -> Option<NaiveDate> {
+        [
+            self.jamming.fetch_queue(),
+            self.geomagnetic_indices.fetch_queue(),
+            self.tec_maps.fetch_queue(),
+            self.solar_flares.fetch_queue(),
+        ]
+        .into_iter()
+        .filter_map(DayFetchQueue::oldest_needed_day)
+        .min()
+    }
+
+    /// The delete the age-based auto-prune would start now, or [`None`] while
+    /// it is off, a delete is running, or no archive holds a day that old.
+    pub(super) fn environment_auto_prune_request(&self) -> Option<PruneRequest> {
+        let settings = self.environment_storage_settings;
+        if !settings.auto_prune_enabled || self.environment_prune.is_running() {
+            return None;
+        }
+        let days = PrunedDays::Before(auto_prune_cutoff(
+            Utc::now().date_naive(),
+            settings.auto_prune_max_age_months,
+            self.oldest_needed_environment_day(),
+        )?);
+        (self.environment_days_covered(days).total() > 0).then_some(PruneRequest {
+            scope: PruneScope::Every,
+            days,
+        })
+    }
+
+    /// Delete the archived days past the configured age, without a
+    /// confirmation: the age is the user's own standing choice.
+    pub(super) fn auto_prune_environment_days(&mut self) {
+        let Some(request) = self.environment_auto_prune_request() else {
+            return;
+        };
+        let ctx = self.ctx.clone();
+        self.start_environment_prune(&ctx, request);
+    }
+
     /// Whether a delete is running, which grays the controls that start one.
     pub(super) const fn environment_prune_running(&self) -> bool {
         self.environment_prune.is_running()
@@ -407,11 +497,10 @@ impl App {
         self.forget_pruned_environment_days(&report);
         self.request_environment_days_of_loaded_recordings();
 
-        let removed = report.days_removed();
-        if removed > 0 {
-            let days = gt_fmt::pluralize(removed, "day", "days");
+        if let Some(line) = report.removed_days_line() {
+            log::info!("{line}");
             self.toasts
-                .info(format!("Deleted {removed} archived {days}"))
+                .info(line)
                 .duration(Some(std::time::Duration::from_secs(4)));
         }
     }
@@ -513,6 +602,27 @@ mod tests {
         (dir, archives)
     }
 
+    fn ymd(year: i32, month: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
+    }
+
+    /// The configured age decides the cutoff, except where the schedulers
+    /// still need older days.
+    #[rstest]
+    #[case::nothing_loaded(None, ymd(2025, 8, 21))]
+    #[case::a_recording_older_than_the_age(Some(ymd(2024, 3, 2)), ymd(2024, 3, 2))]
+    #[case::a_recording_newer_than_the_age(Some(ymd(2026, 6, 4)), ymd(2025, 8, 21))]
+    #[case::a_quiet_time_window_reaching_past_the_age(Some(ymd(2025, 7, 26)), ymd(2025, 7, 26))]
+    fn the_auto_prune_cutoff_keeps_the_days_the_schedulers_need(
+        #[case] oldest_needed_day: Option<NaiveDate>,
+        #[case] expected: NaiveDate,
+    ) {
+        assert_eq!(
+            auto_prune_cutoff(ymd(2026, 8, 21), 12, oldest_needed_day),
+            Some(expected)
+        );
+    }
+
     #[rstest]
     #[case::before_the_cutoff(PrunedDays::Before(day(1)), day(0), true)]
     #[case::on_the_cutoff(PrunedDays::Before(day(1)), day(1), false)]
@@ -576,6 +686,81 @@ mod tests {
             3,
             "another archive's delete took days from the interference archive"
         );
+    }
+
+    fn removed(archive: EnvironmentArchive, days: usize) -> ArchivePruneReport {
+        ArchivePruneReport {
+            archive,
+            outcome: Ok(days),
+        }
+    }
+
+    fn failed(archive: EnvironmentArchive) -> ArchivePruneReport {
+        ArchivePruneReport {
+            archive,
+            outcome: Err("archive is inconsistent".to_owned()),
+        }
+    }
+
+    /// The line states the total and then every archive that lost days.
+    #[rstest]
+    #[case::one_archive(
+        vec![removed(EnvironmentArchive::AircraftInterference, 12)],
+        Some("Deleted 12 archived environment days: 12 aircraft interference")
+    )]
+    #[case::several_archives(
+        vec![
+            removed(EnvironmentArchive::AircraftInterference, 12),
+            removed(EnvironmentArchive::IonosphericTec, 14),
+            removed(EnvironmentArchive::SolarFlares, 14),
+        ],
+        Some(
+            "Deleted 40 archived environment days: 12 aircraft interference, \
+             14 ionospheric TEC, 14 solar flares"
+        )
+    )]
+    #[case::a_single_day(
+        vec![removed(EnvironmentArchive::AircraftInterference, 1)],
+        Some("Deleted 1 archived environment day: 1 aircraft interference")
+    )]
+    #[case::an_archive_that_lost_nothing(
+        vec![
+            removed(EnvironmentArchive::AircraftInterference, 3),
+            removed(EnvironmentArchive::GeomagneticIndices, 0),
+        ],
+        Some("Deleted 3 archived environment days: 3 aircraft interference")
+    )]
+    #[case::nothing_removed(
+        vec![
+            removed(EnvironmentArchive::AircraftInterference, 0),
+            failed(EnvironmentArchive::IonosphericTec),
+        ],
+        None
+    )]
+    fn the_removal_line_names_the_archives_that_lost_days(
+        #[case] archives: Vec<ArchivePruneReport>,
+        #[case] expected: Option<&str>,
+    ) {
+        let report = PruneReport {
+            request: PruneRequest {
+                scope: PruneScope::Every,
+                days: PrunedDays::All,
+            },
+            archives,
+        };
+
+        assert_eq!(report.removed_days_line().as_deref(), expected);
+    }
+
+    /// The sentence form names the same archive as the settings row.
+    #[test]
+    fn every_archive_reads_the_same_inside_a_sentence() {
+        for archive in EnvironmentArchive::iter() {
+            assert_eq!(
+                archive.label_in_sentence().to_lowercase(),
+                archive.label().to_lowercase()
+            );
+        }
     }
 
     #[test]

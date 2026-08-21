@@ -2584,7 +2584,7 @@ impl SettingsPage {
             | Self::SolarFlares => crate::app::backfill_ui::DOWNLOAD_HISTORY_LABEL,
             Self::SnapToRoad => "GPS accuracy",
             Self::Interface => "Mapbox token",
-            Self::Application => crate::app::environment_storage_ui::PRUNE_LABEL,
+            Self::Application => crate::app::environment_storage_ui::AUTO_PRUNE_LABEL,
         }
     }
 
@@ -3594,6 +3594,136 @@ fn the_test_harness_opens_no_user_databases() {
     assert!(
         harness.state().loader.db_path.is_none(),
         "nothing for the loader to store into"
+    );
+}
+
+/// Installs an interference scheduler whose archive holds `days`, and hands
+/// the archive back so a test can read what a delete left in it.
+fn install_interference_archive(
+    harness: &mut Harness<'_, App>,
+    days: &[chrono::NaiveDate],
+) -> (tempfile::TempDir, Arc<gt_store::JamStore>) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path())
+        .open_interference()
+        .expect("archive");
+    for day in days {
+        store
+            .insert_day(*day, "host", chrono::Utc::now(), &[])
+            .expect("insert");
+    }
+    let ctx = harness.ctx.clone();
+    harness.state_mut().jamming = crate::app::jamming::JammingScheduler::new(
+        ctx,
+        Some(Arc::clone(&store)),
+        gt_jam::DEFAULT_BASE_URL.to_owned(),
+        gt_fetch::TransportSource::Offline,
+    );
+    (dir, store)
+}
+
+fn archived_days(store: &gt_store::JamStore) -> Vec<chrono::NaiveDate> {
+    store
+        .days()
+        .expect("read the archive index")
+        .into_iter()
+        .map(|stored| stored.day)
+        .collect()
+}
+
+fn app_with_interference_days<'a>(
+    days: &[chrono::NaiveDate],
+) -> (Harness<'a, App>, tempfile::TempDir, Arc<gt_store::JamStore>) {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    let (dir, store) = install_interference_archive(&mut harness, days);
+    (harness, dir, store)
+}
+
+fn enable_environment_auto_prune(harness: &mut Harness<'_, App>, max_age_months: u32) {
+    let settings = &mut harness.state_mut().environment_storage_settings;
+    settings.auto_prune_enabled = true;
+    settings.auto_prune_max_age_months = max_age_months;
+}
+
+/// A day older than any age the control offers stays archived while
+/// auto-pruning is off, which is how a fresh install runs.
+#[test]
+fn environment_auto_pruning_is_off_until_it_is_ticked() {
+    let old = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap_or_default();
+    let (mut harness, _dir, store) = app_with_interference_days(&[old]);
+
+    assert!(harness.state().environment_auto_prune_request().is_none());
+
+    harness.state_mut().auto_prune_environment_days();
+    harness.run_steps(3);
+    assert_eq!(archived_days(&store), [old]);
+}
+
+/// With nothing loaded the archives lose every day past the configured age
+/// and keep the ones inside it.
+#[test]
+fn environment_auto_pruning_deletes_the_days_past_the_configured_age() {
+    let today = chrono::Utc::now().date_naive();
+    let recent = today - chrono::TimeDelta::days(2);
+    let old = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap_or_default();
+    let (mut harness, _dir, store) = app_with_interference_days(&[old, recent]);
+    enable_environment_auto_prune(&mut harness, 12);
+
+    harness.state_mut().auto_prune_environment_days();
+    assert!(
+        harness.step_until(|harness| !harness.state().environment_prune_running()),
+        "the delete did not finish"
+    );
+
+    assert_eq!(archived_days(&store), [recent]);
+}
+
+/// A day a loaded recording needs survives however old it is: the schedulers
+/// would fetch it again as soon as it went.
+#[test]
+fn environment_auto_pruning_keeps_the_days_the_loaded_recording_needs() {
+    let recorded = base_time().date_naive();
+    let before_the_recording = recorded - chrono::TimeDelta::days(1);
+    let (mut harness, _dir, store) = app_with_interference_days(&[before_the_recording, recorded]);
+    enable_environment_auto_prune(&mut harness, 1);
+
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(minimal_gtd_bytes().as_slice(), "ride.gtd"),
+    );
+    assert!(
+        harness.step_until(|harness| !harness.state().environment_prune_running()),
+        "the delete did not finish"
+    );
+
+    assert_eq!(
+        archived_days(&store),
+        [recorded],
+        "the recording's own day is older than the configured age and stays"
+    );
+}
+
+/// A second delete never starts underneath a running one: both would rewrite
+/// the same columns.
+#[test]
+fn environment_auto_pruning_waits_for_a_running_delete() {
+    let old = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap_or_default();
+    let (mut harness, _dir, _store) = app_with_interference_days(&[old]);
+    enable_environment_auto_prune(&mut harness, 12);
+    let request = harness
+        .state()
+        .environment_auto_prune_request()
+        .expect("the archive holds a day past the age");
+
+    let ctx = harness.ctx.clone();
+    harness.state_mut().start_environment_prune(&ctx, request);
+
+    assert!(
+        harness.state().environment_auto_prune_request().is_none(),
+        "a delete is already running"
     );
 }
 

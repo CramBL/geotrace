@@ -105,6 +105,7 @@ impl App {
         self.set_split_ratio(s.plot.split_ratio);
 
         self.storage_settings = s.storage;
+        self.environment_storage_settings = s.environment_storage.clamped_to_offered_range();
         self.update_check_on_startup = s.update.check_on_startup;
         self.skipped_version = s.update.skipped_version.clone();
         self.query_window.set_history(s.query.history.clone());
@@ -207,6 +208,7 @@ impl App {
                 clock_excursion_threshold_s: s.plot_state.analysis.clock_excursion_threshold_s,
             },
             storage: self.storage_settings,
+            environment_storage: self.environment_storage_settings,
             update: crate::settings::UpdateSettings {
                 check_on_startup: self.update_check_on_startup,
                 skipped_version: self.skipped_version.clone(),

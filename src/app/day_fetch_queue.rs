@@ -155,6 +155,19 @@ impl DayFetchQueue {
         self.background_days.counts()
     }
 
+    /// The earliest day this queue counted for a recording loaded this
+    /// session, including the days fetched around the recording days.
+    ///
+    /// An auto-prune keeps such a day until the session ends: it stays counted
+    /// after its recording is closed.
+    pub fn oldest_needed_day(&self) -> Option<NaiveDate> {
+        self.recording_days
+            .oldest_day()
+            .into_iter()
+            .chain(self.background_days.oldest_day())
+            .min()
+    }
+
     /// Days that could not be archived, in the order they were reported.
     pub fn failures(&self) -> &[DayFailure] {
         &self.failures
