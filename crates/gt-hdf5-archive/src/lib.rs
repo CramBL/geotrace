@@ -16,8 +16,11 @@ mod archive_file;
 pub mod attributes;
 pub mod dates;
 pub mod day_index;
+pub mod prune;
+mod usage;
 
 pub use archive_file::{ArchiveFile, OpenArchive};
+pub use usage::{ArchiveUsage, ArchivedDaySpan};
 
 /// Why an archive access failed. Each archive converts this into its own
 /// error type.
@@ -175,7 +178,21 @@ impl<'a> Column<'a> {
 
     /// Overwrites one row, for an entry the archive stores again.
     pub fn write_row(&self, row: usize, value: impl hdf5::H5Type) -> Result<(), ArchiveError> {
-        Ok(self.dataset()?.write_slice(&[value], row..row + 1)?)
+        self.write_rows(row, &[value])
+    }
+
+    /// Overwrites the rows from `start`, for entries the archive repoints.
+    pub fn write_rows(
+        &self,
+        start: usize,
+        values: &[impl hdf5::H5Type],
+    ) -> Result<(), ArchiveError> {
+        if values.is_empty() {
+            return Ok(());
+        }
+        Ok(self
+            .dataset()?
+            .write_slice(values, start..start + values.len())?)
     }
 
     pub fn truncate(&self, rows: usize) -> Result<(), ArchiveError> {

@@ -8,7 +8,13 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
+use hdf5::plist::file_create::FileSpaceStrategy;
+
 use crate::{ArchiveError, attributes};
+
+/// Smallest free block the file keeps track of. Every block is worth tracking:
+/// a day's rows free whole pages, and the pages are what later days reuse.
+const FREE_SPACE_THRESHOLD_BYTES: u64 = 1;
 
 /// One archive file, named but not held open.
 #[derive(Debug)]
@@ -30,11 +36,28 @@ impl ArchiveFile {
     }
 
     /// Create the file, and the directory it sits in.
+    ///
+    /// The file records where its free space is, in pages: the space a delete
+    /// frees is then what the days stored after it are written into. libhdf5
+    /// otherwise forgets the free space when it closes the file, and every
+    /// later day extends it. Measured over ten stored days of which five were
+    /// deleted and five stored again: 729 KB, the size the file had before the
+    /// delete, against 908 KB without the page record. Paged allocation costs
+    /// about a fifth of the file in padding.
     pub fn create(&mut self) -> Result<OpenArchive<'_>, ArchiveError> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        OpenArchive::of(hdf5::File::create(&self.path))
+        let mut builder = hdf5::FileBuilder::new();
+        builder.with_fcpl(|fcpl| {
+            fcpl.file_space_strategy(FileSpaceStrategy::FreeSpaceManager {
+                paged: true,
+                persist: true,
+                threshold: FREE_SPACE_THRESHOLD_BYTES,
+            });
+            fcpl
+        });
+        OpenArchive::of(builder.create(&self.path))
     }
 
     pub fn open_read_only(&mut self) -> Result<OpenArchive<'_>, ArchiveError> {
