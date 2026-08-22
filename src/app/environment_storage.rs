@@ -18,6 +18,7 @@ use strum::{EnumIter, IntoEnumIterator as _};
 
 use super::App;
 use super::day_fetch_queue::DayFetchQueue;
+use super::environment_storage_ui::DeleteBlocker;
 use super::modals::{
     EnvironmentPruneChoice, EnvironmentPrunePrompt, show_environment_prune_confirmation,
 };
@@ -597,6 +598,17 @@ impl App {
     /// Whether a delete is running, which grays the controls that start one.
     pub(super) const fn environment_prune_running(&self) -> bool {
         self.environment_prune.is_running()
+    }
+
+    /// What stops the delete controls from taking input, when something does.
+    pub(super) fn environment_deletes_blocked_by(&self) -> Option<DeleteBlocker> {
+        if self.storage_open.is_opening() {
+            Some(DeleteBlocker::ArchivesOpening)
+        } else if self.environment_prune_running() {
+            Some(DeleteBlocker::DeleteRunning)
+        } else {
+            None
+        }
     }
 
     /// Start the delete the user confirmed.

@@ -39,6 +39,7 @@ use super::panes::MainBehavior;
 use super::shutdown::FrameContents;
 use super::snap_state::PendingSnapRequest;
 use super::space_weather_warning::{self, RecordingSeries, RecordingUnderAssessment};
+use super::storage::{OPENING_DATABASES, QueuedLoad};
 #[cfg(feature = "self-update")]
 use super::update;
 use super::{App, SharedAppState, modals};
@@ -126,6 +127,10 @@ impl eframe::App for App {
 
 impl App {
     pub(in crate::app) fn apply_finished_background_work(&mut self, ui: &egui::Ui) {
+        // Adopt the databases first: what waited on them starts in the frame
+        // they arrive.
+        self.adopt_finished_storage_open();
+
         // Drain background load results first so newly loaded data is
         // visible in the same frame that it arrives.
         let completed_loads: Vec<CompletedLoad> = self.loader.drain();
@@ -207,6 +212,10 @@ impl App {
         });
         for text in pasted {
             if text.is_empty() {
+                continue;
+            }
+            if let Some(queued_loads) = self.storage_open.queued_loads_mut() {
+                queued_loads.push(QueuedLoad::PastedText(text));
                 continue;
             }
             self.loader.spawn_pasted_log_text(text);
@@ -886,9 +895,10 @@ impl App {
         // out over ~3 seconds so the user can see how long it took.
         let now = ui.ctx().input(|i| i.time);
         let any_finishing = !self.loader.finishing_jobs.is_empty();
+        let opening_databases = self.storage_open.is_opening();
         self.loader.expire_finished(now);
 
-        if !self.loader.loading_jobs.is_empty() || any_finishing {
+        if !self.loader.loading_jobs.is_empty() || any_finishing || opening_databases {
             // Keep repainting while jobs are active or fading.
             ui.ctx().request_repaint();
 
@@ -900,6 +910,14 @@ impl App {
                     ui.set_min_width(260.0);
                     // Cap the width so a long recording name truncates.
                     ui.set_max_width(340.0);
+
+                    if opening_databases {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(RichText::new(OPENING_DATABASES).strong());
+                        });
+                        ui.add_space(2.0);
+                    }
 
                     for job in &self.loader.loading_jobs {
                         let elapsed = job.started_at.elapsed().as_secs_f32();
@@ -1024,7 +1042,16 @@ impl App {
         }
     }
 
-    fn handle_dropped_bytes(&mut self, bytes: Arc<[u8]>, name: &str) {
+    /// Load a drop or a paste, once the databases it is stored in and
+    /// resolved against are open.
+    pub(in crate::app) fn handle_dropped_bytes(&mut self, bytes: Arc<[u8]>, name: &str) {
+        if let Some(queued_loads) = self.storage_open.queued_loads_mut() {
+            queued_loads.push(QueuedLoad::Bytes {
+                bytes,
+                name: name.to_owned(),
+            });
+            return;
+        }
         handle_dropped_bytes_dispatch(&mut self.loader, bytes, name, self.processing_config);
     }
 }

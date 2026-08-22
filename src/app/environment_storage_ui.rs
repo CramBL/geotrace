@@ -34,8 +34,24 @@ const DEFAULT_CUTOFF_DAYS: u64 = 30;
 /// Unix epoch.
 const EARLIEST_PICKABLE_YEAR: i16 = 1970;
 
-/// Hover text of every control a running delete grays.
-const PRUNE_RUNNING: &str = "Wait for the running delete to finish";
+/// Why the controls that delete archived days take no input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteBlocker {
+    /// The archives are still opening, so there is nothing to delete from
+    /// yet.
+    ArchivesOpening,
+    /// A delete is already rewriting the same columns.
+    DeleteRunning,
+}
+
+impl DeleteBlocker {
+    pub fn hover_text(self) -> &'static str {
+        match self {
+            Self::ArchivesOpening => "Wait for the archives to finish opening",
+            Self::DeleteRunning => "Wait for the running delete to finish",
+        }
+    }
+}
 
 /// Hover text of the age control while auto-pruning is off.
 const ENABLE_AUTO_PRUNE_FIRST: &str = "Tick 'Auto-prune days older than' to configure this";
@@ -137,20 +153,24 @@ impl EnvironmentStorageUi {
             let today = Utc::now().date_naive();
             let years = EARLIEST_PICKABLE_YEAR..=i16::try_from(today.year()).unwrap_or(i16::MAX);
             ui.add_enabled(
-                !state.prune_running,
+                state.deletes_blocked_by.is_none(),
                 DatePickerButton::new(&mut self.cutoff)
                     .id_salt("environment_prune_cutoff")
                     .start_end_years(years)
                     .highlight_weekends(false),
             )
-            .on_disabled_hover_text(PRUNE_RUNNING);
+            .on_disabled_hover_text(
+                state
+                    .deletes_blocked_by
+                    .map_or("", DeleteBlocker::hover_text),
+            );
 
             let request = self.cutoff().map(|cutoff| PruneRequest {
                 scope: PruneScope::Every,
                 days: PrunedDays::Before(cutoff),
             });
             let covered = state.days_before_cutoff.total();
-            let enabled = !state.prune_running && covered > 0;
+            let enabled = state.deletes_blocked_by.is_none() && covered > 0;
             let button = ui.add_enabled(
                 enabled,
                 Button::new(format!("{ICON_BROOM} {PRUNE_BUTTON_LABEL}")),
@@ -160,11 +180,10 @@ impl EnvironmentStorageUi {
                     "Delete the {} the archives hold before that day",
                     day_count(covered)
                 ))
-                .on_disabled_hover_text(if state.prune_running {
-                    PRUNE_RUNNING
-                } else {
-                    "No archive holds a day before the one picked"
-                })
+                .on_disabled_hover_text(state.deletes_blocked_by.map_or(
+                    "No archive holds a day before the one picked",
+                    DeleteBlocker::hover_text,
+                ))
                 .clicked()
             {
                 requested = request;
@@ -180,7 +199,8 @@ pub struct EnvironmentStorageState<'a> {
     pub usage: &'a EnvironmentUsage,
     /// How many days each archive holds before the cutoff the picker shows.
     pub days_before_cutoff: CoveredDayCounts,
-    pub prune_running: bool,
+    /// What stops the delete controls from taking input, when something does.
+    pub deletes_blocked_by: Option<DeleteBlocker>,
 }
 
 /// One archive's row: what it holds, and the button that empties it.
@@ -196,17 +216,20 @@ fn archive_row(
     ui.label(span_line(usage));
 
     let holds_days = usage.is_some_and(|usage| !usage.is_empty());
-    let enabled = holds_days && !state.prune_running;
+    let enabled = holds_days && state.deletes_blocked_by.is_none();
     let clicked = ui
         .add_enabled(enabled, Button::new(DELETE_ALL_LABEL).small())
         .on_hover_text("Delete every day this archive holds")
-        .on_disabled_hover_text(if state.prune_running {
-            PRUNE_RUNNING
-        } else if usage.is_none() {
-            "This archive could not be opened"
-        } else {
-            "This archive holds no day"
-        })
+        .on_disabled_hover_text(state.deletes_blocked_by.map_or_else(
+            || {
+                if usage.is_none() {
+                    "This archive could not be opened"
+                } else {
+                    "This archive holds no day"
+                }
+            },
+            DeleteBlocker::hover_text,
+        ))
         .clicked();
     ui.end_row();
 
@@ -253,7 +276,7 @@ mod tests {
     use egui::accesskit::Role;
     use egui_kittest::kittest::{NodeT as _, Queryable as _};
     use gt_store::ArchivedDaySpan;
-    use gt_test_utils::{By, TestHarness};
+    use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
     use rstest::rstest;
 
     use super::*;
@@ -288,7 +311,7 @@ mod tests {
         EnvironmentStorageState {
             usage,
             days_before_cutoff: CoveredDayCounts::default(),
-            prune_running: false,
+            deletes_blocked_by: None,
         }
     }
 
@@ -461,13 +484,15 @@ mod tests {
         );
     }
 
-    /// A running delete leaves every control grayed: a second one would rewrite
-    /// the same columns underneath it.
-    #[test]
-    fn a_running_delete_grays_every_control() {
+    /// Never hidden, per DESIGN.md: whatever blocks a delete grays every
+    /// control that starts one, and the hover says which it was.
+    #[rstest]
+    #[case::archives_opening(DeleteBlocker::ArchivesOpening)]
+    #[case::delete_running(DeleteBlocker::DeleteRunning)]
+    fn a_blocked_delete_grays_every_control(#[case] blocker: DeleteBlocker) {
         let usage = filled_usage();
         let mut state = state(&usage);
-        state.prune_running = true;
+        state.deletes_blocked_by = Some(blocker);
         state.days_before_cutoff = CoveredDayCounts {
             tec_maps: 27,
             ..CoveredDayCounts::default()
@@ -488,5 +513,10 @@ mod tests {
         for delete in harness.inner.query_all_by_label_contains(DELETE_ALL_LABEL) {
             assert!(delete.accesskit_node().is_disabled());
         }
+
+        harness
+            .inner
+            .hover_and_settle(By::new().label_contains(PRUNE_BUTTON_LABEL), 3);
+        harness.inner.get_by_label_contains(blocker.hover_text());
     }
 }

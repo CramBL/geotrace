@@ -14,6 +14,10 @@ use crate::app::history_db::{DeleteReason, HistoryWorker};
 use crate::app::storage_controls;
 use crate::settings::StorageSettings;
 
+/// Shown in place of the list while the startup open runs: the database is
+/// not unavailable, it is not open yet.
+pub(in crate::app) const OPENING_RECORDINGS_DATABASE: &str = "Opening the recordings database";
+
 mod table;
 
 /// Turn off label text-selection for a History window's contents.
@@ -512,6 +516,7 @@ impl HistoryWindow {
         worker: &HistoryWorker,
         loaded_metas: &[RecordingMeta],
         storage: &mut StorageSettings,
+        databases_opening: bool,
     ) {
         if !self.open {
             return;
@@ -555,6 +560,13 @@ impl HistoryWindow {
             .default_height(480.0)
             .show(ctx, |ui| {
                 use_plain_labels(ui);
+                if databases_opening {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(OPENING_RECORDINGS_DATABASE);
+                    });
+                    return;
+                }
                 if !worker.available() {
                     ui.label(
                         RichText::new("History database is unavailable.")

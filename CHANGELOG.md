@@ -19,6 +19,7 @@
 - **System:** Added a shutdown window that lists each write still finishing and its progress, with "Run in background" to close the window and let them finish, and "Force quit…" to end at once after a confirmation listing what each unfinished write discards.
 - **System:** The shutdown window follows an archive delete with a bar, advancing as it rewrites each column.
 - **System:** Ctrl+C and `kill` now finish the writes in progress before exiting, the same as closing the window. A second signal quits at once, discarding them.
+- **System:** The window now opens right away and the databases open behind it, so a large archive no longer delays the first frame. Files named on the command line or dropped in wait for them and are stored as usual.
 
 ### Changed
 

@@ -326,6 +326,9 @@ pub struct App {
     /// Set when the recordings database could not be opened. Drives the
     /// prompt for whichever failure it was.
     history_failure: Option<storage::HistoryFailure>,
+    /// The startup open of every database, until the app adopts what it
+    /// produced.
+    storage_open: storage::StorageOpen,
     /// "Keep a backup of the original database" tickbox state for the corruption
     /// recreate dialog.
     keep_db_backup: bool,
@@ -463,9 +466,9 @@ impl App {
         )));
         let tiles_tree = Tree::new("main_tiles", root_tile_id, tiles);
 
-        let opened_storage = options
+        let storage_open = options
             .storage
-            .open(&cc.egui_ctx, options.pending_writes.clone());
+            .open_in_background(&cc.egui_ctx, options.pending_writes.clone());
 
         let jamming = jamming::JammingScheduler::new(
             cc.egui_ctx.clone(),
@@ -577,6 +580,7 @@ impl App {
             assoc_config: AssociationConfig::default(),
             history: history_db::HistoryWorker::disabled(),
             history_failure: None,
+            storage_open,
             keep_db_backup: true,
             pending_resegment: None,
             storage_settings: crate::settings::StorageSettings::default(),
@@ -600,30 +604,24 @@ impl App {
             skipped_version: None,
         };
 
-        app.adopt_open_storage(opened_storage);
         app.apply_startup_settings(&loaded_settings);
-        app.auto_prune_environment_days();
         let initial_snapshot = app.collect_snapshot();
         app.config = SettingsAutosaver::new(initial_snapshot);
 
         for path in paths {
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_ascii_lowercase();
-            if ext == "gtd" {
-                app.loader
-                    .spawn_gtd_path(path.clone(), app.processing_config);
-            } else {
-                app.loader.spawn_log_path(path.clone());
-            }
+            app.spawn_load_path(path.clone());
         }
 
         app
     }
 
-    fn spawn_load_path(&mut self, path: PathBuf) {
+    /// Load `path`, once the databases it is stored in and resolved against
+    /// are open.
+    pub(in crate::app) fn spawn_load_path(&mut self, path: PathBuf) {
+        if let Some(queued_loads) = self.storage_open.queued_loads_mut() {
+            queued_loads.push(storage::QueuedLoad::Path(path));
+            return;
+        }
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
