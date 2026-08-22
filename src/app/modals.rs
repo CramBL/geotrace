@@ -997,6 +997,58 @@ fn prune_scope_line(request: PruneRequest) -> String {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForceQuitChoice {
+    Quit,
+    Cancel,
+}
+
+/// Confirm ending the process with the running writes unfinished, listing what
+/// each one costs.
+///
+/// Returns the choice in the frame the user makes it, and [`None`] while the
+/// dialog is still open.
+pub fn show_force_quit_confirmation(
+    ui: &egui::Ui,
+    interruption_costs: &[String],
+) -> Option<ForceQuitChoice> {
+    let mut choice = ui
+        .ctx()
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        .then_some(ForceQuitChoice::Cancel);
+
+    Window::new("Force quit?")
+        .resizable(false)
+        .collapsible(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .show(ui.ctx(), |ui| {
+            // Fits inside the window that shutdown sizes itself down to.
+            ui.set_max_width(360.0);
+            ui.label("GeoTrace ends now, with the work it is still doing unfinished");
+            ui.add_space(4.0);
+            for cost in interruption_costs {
+                ui.add(Label::new(cost.as_str()).wrap());
+            }
+            ui.add_space(6.0);
+            dialog_button_row(ui, |ui| {
+                if ui
+                    .button(
+                        RichText::new("Force quit").color(warning_amber(ui.visuals().dark_mode)),
+                    )
+                    .on_hover_text("This cannot be undone")
+                    .clicked()
+                {
+                    choice = Some(ForceQuitChoice::Quit);
+                }
+                if ui.button("Cancel").clicked() {
+                    choice = Some(ForceQuitChoice::Cancel);
+                }
+            });
+        });
+
+    choice
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -1008,12 +1060,14 @@ mod tests {
 
     use egui_kittest::kittest::Queryable as _;
     use gt_map::TileAccess;
+    use gt_pending_writes::WriteKind;
     use gt_test_utils::{HarnessInteraction as _, TestHarness};
 
     use super::{
         CoveredDayCounts, EnvironmentArchive, EnvironmentPruneChoice, EnvironmentPrunePrompt,
-        MapLayer, MapboxTokenField, NavMap, NodeKey, PruneRequest, PruneScope, PrunedDays,
-        TrackRef, files_fully_removed, prune_scope_line, show_environment_prune_confirmation,
+        ForceQuitChoice, MapLayer, MapboxTokenField, NavMap, NodeKey, PruneRequest, PruneScope,
+        PrunedDays, TrackRef, files_fully_removed, prune_scope_line,
+        show_environment_prune_confirmation, show_force_quit_confirmation,
         show_mapbox_token_dialog, track_removals,
     };
     use gt_loaded_files::{FileHistory, LoadedFiles};
@@ -1119,6 +1173,58 @@ mod tests {
             choice.into_inner(),
             Some(EnvironmentPruneChoice::Cancel)
         ));
+    }
+
+    /// Renders the force-quit confirmation and reports the choice it took.
+    fn force_quit_dialog<'a>(
+        interruption_costs: &'a [String],
+        choice: &'a std::cell::RefCell<Option<ForceQuitChoice>>,
+    ) -> TestHarness<'a, ()> {
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(520.0, 320.0))
+            .ui(|ui| {
+                if let Some(made) = show_force_quit_confirmation(ui, interruption_costs) {
+                    *choice.borrow_mut() = Some(made);
+                }
+            });
+        harness.run();
+        harness
+    }
+
+    #[test]
+    fn confirming_the_force_quit_dialog_reports_the_quit() {
+        let costs = [WriteKind::Settings.interruption_cost()];
+        let choice = std::cell::RefCell::new(None);
+        let mut harness = force_quit_dialog(&costs, &choice);
+        harness.inner.get_by_label("Force quit").click();
+        harness.run();
+        drop(harness);
+
+        assert!(matches!(choice.into_inner(), Some(ForceQuitChoice::Quit)));
+    }
+
+    #[test]
+    fn cancelling_the_force_quit_dialog_quits_nothing() {
+        let costs = [WriteKind::Settings.interruption_cost()];
+        let choice = std::cell::RefCell::new(None);
+        let mut harness = force_quit_dialog(&costs, &choice);
+        harness.inner.get_by_label("Cancel").click();
+        harness.run();
+        drop(harness);
+
+        assert!(matches!(choice.into_inner(), Some(ForceQuitChoice::Cancel)));
+    }
+
+    #[test]
+    fn escape_cancels_the_force_quit_dialog() {
+        let costs = [WriteKind::Settings.interruption_cost()];
+        let choice = std::cell::RefCell::new(None);
+        let mut harness = force_quit_dialog(&costs, &choice);
+        harness.inner.key_press(egui::Key::Escape);
+        harness.run();
+        drop(harness);
+
+        assert!(matches!(choice.into_inner(), Some(ForceQuitChoice::Cancel)));
     }
 
     #[rstest::rstest]
