@@ -7,6 +7,7 @@ pub mod terms;
 use std::time::Duration;
 use std::{path::PathBuf, process::ExitCode};
 
+use gt_instance_lock::DataDirectoryLock;
 use gt_pending_writes::PendingWrites;
 
 use crate::app::shutdown;
@@ -103,11 +104,18 @@ const TERMINATION_SIGNAL_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Waits for the writes still running once the window is gone, which is where
 /// "Run in background" leaves them, and reports the code to exit with.
-fn begin_shutdown_and_wait_for_pending_writes(pending_writes: &PendingWrites) -> ExitCode {
+///
+/// A second instance started meanwhile can tell what this one is doing: the
+/// instance lock keeps naming what is left to write while the wait runs.
+fn begin_shutdown_and_wait_for_pending_writes(
+    pending_writes: &PendingWrites,
+    instance_lock: &mut DataDirectoryLock,
+) -> ExitCode {
     pending_writes.begin_shutdown();
     for status in pending_writes.snapshot().running {
         log::info!("Waiting for background work to finish: {}", status.label);
     }
+    instance_lock.mark_shutting_down(pending_writes);
     while !pending_writes.wait_until_idle_for(TERMINATION_SIGNAL_CHECK_INTERVAL) {
         if TERMINATION_SIGNAL_FLAG.take_action()
             == TerminationSignalAction::QuitLeavingWritesUnfinished
@@ -118,6 +126,7 @@ fn begin_shutdown_and_wait_for_pending_writes(pending_writes: &PendingWrites) ->
             );
             return ExitCode::from(shutdown::FORCE_QUIT_EXIT_CODE);
         }
+        instance_lock.report_shutdown_progress(pending_writes);
     }
     log::info!("Shutdown complete");
     ExitCode::SUCCESS
@@ -232,6 +241,12 @@ fn main() -> ExitCode {
     };
     let pending_writes = PendingWrites::default();
     let app_pending_writes = pending_writes.clone();
+    let storage = app::Storage::DataDirectory;
+    // No archive is opened or repaired until this instance owns the data
+    // directory: the lock is taken before the window, and so before the
+    // storage-open thread the app spawns. It is dropped at the end of main,
+    // after the wait for the writes that outlive the window.
+    let mut instance_lock = DataDirectoryLock::acquire(storage.data_directory().as_deref());
     let result = eframe::run_native(
         concat!("GeoTrace v", env!("CARGO_PKG_VERSION")),
         native_options,
@@ -242,14 +257,15 @@ fn main() -> ExitCode {
                 app::StartupOptions {
                     fading_enabled: true,
                     offline,
-                    storage: app::Storage::DataDirectory,
+                    storage,
                     app_version: env!("CARGO_PKG_VERSION"),
                     pending_writes: app_pending_writes,
                 },
             )))
         }),
     );
-    let shutdown_exit_code = begin_shutdown_and_wait_for_pending_writes(&pending_writes);
+    let shutdown_exit_code =
+        begin_shutdown_and_wait_for_pending_writes(&pending_writes, &mut instance_lock);
     match result {
         Ok(()) => shutdown_exit_code,
         Err(error) => {
@@ -266,6 +282,7 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    use gt_instance_lock::{DataDirectoryLock, InstanceState, InstanceStatus};
     use gt_pending_writes::{PendingWrites, WriteKind};
     use rstest::rstest;
 
@@ -276,9 +293,56 @@ mod tests {
     #[test]
     fn a_wait_with_nothing_left_to_finish_exits_clean() {
         assert_eq!(
-            crate::begin_shutdown_and_wait_for_pending_writes(&PendingWrites::default()),
+            crate::begin_shutdown_and_wait_for_pending_writes(
+                &PendingWrites::default(),
+                &mut DataDirectoryLock::marking_nothing()
+            ),
             ExitCode::SUCCESS
         );
+    }
+
+    /// How long the write the shutdown wait finds still running is held.
+    const SHUTDOWN_HELD_WRITE_RELEASED_AFTER: Duration = Duration::from_millis(150);
+
+    /// An instance started meanwhile can read what this one is waiting for:
+    /// the wait after the window closes names it in the status file.
+    #[test]
+    fn the_wait_after_the_window_reports_what_it_is_writing() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let pending_writes = PendingWrites::default();
+        let compaction = pending_writes
+            .try_begin(
+                "Compacting the TEC archive",
+                WriteKind::ArchiveCompaction {
+                    archive: "ionospheric TEC",
+                },
+            )
+            .expect("the registry is running");
+        let holder = thread::Builder::new()
+            .name("pending-write-holder".to_owned())
+            .spawn(move || {
+                thread::sleep(SHUTDOWN_HELD_WRITE_RELEASED_AFTER);
+                drop(compaction);
+            })
+            .expect("spawn the holding thread");
+        let mut instance_lock = DataDirectoryLock::acquire(Some(directory.path()));
+
+        assert_eq!(
+            crate::begin_shutdown_and_wait_for_pending_writes(&pending_writes, &mut instance_lock),
+            ExitCode::SUCCESS
+        );
+
+        let status = InstanceStatus::read_from(directory.path()).expect("the status file");
+        assert_eq!(status.state, InstanceState::ShuttingDown);
+        assert_eq!(
+            status
+                .pending_writes
+                .iter()
+                .map(|write| write.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Compacting the TEC archive"]
+        );
+        holder.join().expect("the holding thread finished");
     }
 
     /// Longer than [`TERMINATION_SIGNAL_CHECK_INTERVAL`]: the second signal
@@ -318,7 +382,10 @@ mod tests {
         TERMINATION_SIGNAL_FLAG.raise();
 
         assert_eq!(
-            crate::begin_shutdown_and_wait_for_pending_writes(&pending_writes),
+            crate::begin_shutdown_and_wait_for_pending_writes(
+                &pending_writes,
+                &mut DataDirectoryLock::marking_nothing()
+            ),
             ExitCode::from(shutdown::FORCE_QUIT_EXIT_CODE)
         );
     }
