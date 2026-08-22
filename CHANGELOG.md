@@ -16,6 +16,7 @@
 - **Settings & Storage:** Added a storage manager to view disk usage for environment data, with options to manually delete old days or auto-prune them on startup.
 - **Settings & Storage:** Added a search field, a live preview for the recording name template, and consolidated reference links for atmospheric metrics.
 - **System:** Added the `--offline` flag to run without network access (replacing the `GEOTRACE_OFFLINE` environment variable).
+- **System:** Added a shutdown window that lists each write still finishing and its progress, with "Run in background" to close the window and let them finish, and "Force quit…" to end at once after a confirmation listing what each unfinished write discards.
 
 ### Changed
 
@@ -26,7 +27,7 @@
 
 ### Fixed
 
-- **File Operations:** Closing the app while data is writing now opens a shutdown progress window and safely waits for completion.
+- **File Operations:** Closing the app no longer freezes the window, and writes in progress finish instead of leaving a partially written file behind.
 - **File Operations:** Older environment archives are now automatically rebuilt on load so that deleting old days properly frees disk space.
 - **Map & Tracks:** Fixed snapped tracks improperly routing through nearby roads during dead-reckoning gaps (e.g., parking garages).
 - **Map & Tracks:** Fixed an issue where overlapping snapped tracks would flicker when redrawn.

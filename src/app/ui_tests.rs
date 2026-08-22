@@ -4412,6 +4412,73 @@ fn running_in_the_background_closes_the_window_while_the_write_runs() {
     drop(compaction);
 }
 
+/// A shutdown window whose force-quit confirmation the user has just opened,
+/// with the write it is waiting for still running.
+fn app_with_the_force_quit_confirmation_open<'a>()
+-> (Harness<'a, App>, gt_pending_writes::PendingWriteGuard) {
+    let (mut harness, compaction) = app_closing_over_a_running_write();
+    step_until_the_shutdown_window_is_up(&mut harness);
+    // The window has just shrunk: the button only takes a click at the place
+    // the harness reports once the new size is laid out.
+    harness.run_steps(2);
+    assert!(
+        harness
+            .query_by_label(&TEC_COMPACTION.interruption_cost())
+            .is_none(),
+        "the confirmation was up before anyone asked to quit"
+    );
+
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Force quit…")
+        .click();
+    harness.run_steps(2);
+    (harness, compaction)
+}
+
+/// "Force quit…" asks first, and the confirmation states what stopping the
+/// running write costs.
+#[test]
+fn force_quit_confirms_and_names_what_the_running_write_costs() {
+    let (harness, compaction) = app_with_the_force_quit_confirmation_open();
+
+    assert!(
+        harness
+            .query_by_label(&TEC_COMPACTION.interruption_cost())
+            .is_some(),
+        "the confirmation never named what quitting over the write costs"
+    );
+    drop(compaction);
+}
+
+/// Cancelling the confirmation goes back to the shutdown window, which is
+/// still up and still waiting for the write.
+#[test]
+fn cancelling_the_force_quit_confirmation_returns_to_the_shutdown_window() {
+    let (mut harness, compaction) = app_with_the_force_quit_confirmation_open();
+
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Cancel")
+        .click();
+    harness.run_steps(2);
+
+    assert!(
+        harness
+            .query_by_label(&TEC_COMPACTION.interruption_cost())
+            .is_none(),
+        "the confirmation stayed up after it was cancelled"
+    );
+    assert!(harness.query_by_label("Shutting down").is_some());
+    assert!(
+        harness
+            .query_by_label_contains("Compacting the TEC archive")
+            .is_some(),
+        "the shutdown window stopped listing the write it is waiting for"
+    );
+    assert!(!closed_the_window(&harness), "cancelling closed the window");
+    assert!(!harness.state().pending_writes.is_idle());
+    drop(compaction);
+}
+
 /// The window shrinks to the shutdown window's size as it comes up, and is
 /// left at whatever size the user drags it to from then on.
 #[test]
