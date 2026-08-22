@@ -443,7 +443,7 @@ fn deleting_days_before_a_cutoff_keeps_the_flares_of_the_rest() {
             .expect("store");
     }
 
-    let removed = store.delete_days_before(day(1)).expect("delete days");
+    let removed = store.delete_days_before(day(1), None).expect("delete days");
 
     assert_eq!(removed, 1);
     assert_eq!(store.flares(day(0)).expect("flares"), None);
@@ -462,7 +462,7 @@ fn deleting_every_day_empties_the_archive() {
         )
         .expect("store");
 
-    let removed = store.delete_all_days().expect("delete all");
+    let removed = store.delete_all_days(None).expect("delete all");
 
     assert_eq!(removed, 1);
     assert!(store.archived_days().expect("days").is_empty());

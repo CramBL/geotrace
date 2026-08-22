@@ -4,6 +4,7 @@ use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use rstest::rstest;
 use tempfile::TempDir;
 
+use gt_hdf5_archive::prune::PruneProgress;
 use gt_solar::GeomagneticIndex;
 use gt_solar::activity::GeomagneticActivity;
 use gt_solar::series::{Hp30Sample, Hp30Series, KpSample, KpSeries, KpStatus};
@@ -480,7 +481,7 @@ fn deleting_days_before_a_cutoff_covers_both_series() {
             .expect("store hp30");
     }
 
-    let removed = store.delete_days_before(day(2)).expect("delete days");
+    let removed = store.delete_days_before(day(2), None).expect("delete days");
 
     assert_eq!(removed, 2);
     assert_eq!(store.kp_series(day(0)).expect("kp"), None);
@@ -497,6 +498,52 @@ fn deleting_days_before_a_cutoff_covers_both_series() {
     );
 }
 
+/// Both indices are rewritten as one run: the Hp30 half carries on from where
+/// the Kp half stopped, and the total covers the columns of both.
+#[test]
+fn a_delete_counts_the_columns_of_both_indices_as_one_run() {
+    let (_dir, store) = store().expect("store");
+    for offset in 0..3 {
+        store
+            .insert_or_replace_kp_day(day(offset), HOST, fetched_at(), &kp_day(day(offset)))
+            .expect("store kp");
+        store
+            .insert_or_replace_hp30_day(day(offset), HOST, fetched_at(), &hp30_day(day(offset)))
+            .expect("store hp30");
+    }
+    let reported = std::cell::RefCell::new(Vec::new());
+
+    let report = |progress: PruneProgress| reported.borrow_mut().push(progress);
+    store
+        .delete_days_before(day(2), Some(&report))
+        .expect("delete days");
+
+    let reported = reported.into_inner();
+    let first = reported.first().expect("a delete reports before it starts");
+    assert_eq!(first.columns_rewritten, 0);
+    assert!(
+        reported
+            .windows(2)
+            .all(|pair| pair[1].columns_rewritten >= pair[0].columns_rewritten),
+        "progress went backwards across the two indices: {reported:?}"
+    );
+    assert!(
+        reported
+            .iter()
+            .all(|progress| progress.columns_total == first.columns_total),
+        "the total changed part way through: {reported:?}"
+    );
+    let last = reported.last().expect("a delete reports as it finishes");
+    assert_eq!(
+        last.columns_rewritten, last.columns_total,
+        "the delete ended short of the columns of both indices"
+    );
+    assert!(
+        last.columns_total > reported.len() / 2,
+        "the total looks like one index rather than both: {reported:?}"
+    );
+}
+
 #[test]
 fn deleting_every_day_empties_both_series() {
     let (_dir, store) = store().unwrap();
@@ -507,7 +554,7 @@ fn deleting_every_day_empties_both_series() {
         .insert_or_replace_hp30_day(day(0), HOST, fetched_at(), &hp30_day(day(0)))
         .expect("store hp30");
 
-    let removed = store.delete_all_days().expect("delete all");
+    let removed = store.delete_all_days(None).expect("delete all");
 
     assert_eq!(removed, 1, "the day both series held counts once");
     for index in [GeomagneticIndex::Kp, GeomagneticIndex::Hp30] {

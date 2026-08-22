@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use gt_hdf5_archive::day_index::{self, DayIndex, RowPlacement};
-use gt_hdf5_archive::prune::{ArchiveLayout, ExtentColumns, RowLevel};
+use gt_hdf5_archive::prune::{ArchiveLayout, ExtentColumns, PruneProgressSink, RowLevel};
 use gt_hdf5_archive::{
     ArchiveError, ArchiveFile, Column, OpenArchive, StoredPresence, attributes, dates,
 };
@@ -222,17 +222,21 @@ impl IonexStore {
     /// The maps and values the remaining days hold move down to close the
     /// gap. The file itself rarely shrinks: the space is what the days stored
     /// after the delete are written into.
-    pub fn delete_days_before(&self, cutoff: NaiveDate) -> Result<usize, IonexStoreError> {
+    pub fn delete_days_before(
+        &self,
+        cutoff: NaiveDate,
+        report: PruneProgressSink<'_>,
+    ) -> Result<usize, IonexStoreError> {
         let mut archive = self.archive.lock();
         let file = archive.open_read_write()?;
-        with_layout(&file, |layout| layout.delete_days_before(cutoff))
+        with_layout(&file, |layout| layout.delete_days_before(cutoff, report))
     }
 
     /// Remove every archived day, reporting how many went.
-    pub fn delete_all_days(&self) -> Result<usize, IonexStoreError> {
+    pub fn delete_all_days(&self, report: PruneProgressSink<'_>) -> Result<usize, IonexStoreError> {
         let mut archive = self.archive.lock();
         let file = archive.open_read_write()?;
-        with_layout(&file, |layout| layout.delete_all_days())
+        with_layout(&file, |layout| layout.delete_all_days(report))
     }
 
     /// Every day archived, oldest first.

@@ -17,6 +17,7 @@
 - **Settings & Storage:** Added a search field, a live preview for the recording name template, and consolidated reference links for atmospheric metrics.
 - **System:** Added the `--offline` flag to run without network access (replacing the `GEOTRACE_OFFLINE` environment variable).
 - **System:** Added a shutdown window that lists each write still finishing and its progress, with "Run in background" to close the window and let them finish, and "Force quit…" to end at once after a confirmation listing what each unfinished write discards.
+- **System:** The shutdown window follows an archive delete with a bar, advancing as it rewrites each column.
 - **System:** Ctrl+C and `kill` now finish the writes in progress before exiting, the same as closing the window. A second signal quits at once, discarding them.
 
 ### Changed

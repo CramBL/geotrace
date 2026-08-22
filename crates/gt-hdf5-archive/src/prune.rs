@@ -114,6 +114,68 @@ impl<'a> RowLevel<'a> {
     }
 }
 
+/// How far a delete has got, in the columns it writes again.
+///
+/// One unit is one column written again holding only the rows the surviving
+/// days name, which is where a delete spends its time. Every column counts as
+/// its own unit: a level's extent columns, and the day index's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PruneProgress {
+    pub columns_rewritten: usize,
+    pub columns_total: usize,
+}
+
+impl PruneProgress {
+    /// How far the delete has got, from 0 to 1. A delete with no column to
+    /// rewrite reads as finished.
+    pub fn fraction(self) -> f32 {
+        if self.columns_total == 0 {
+            return 1.0;
+        }
+        self.columns_rewritten as f32 / self.columns_total as f32
+    }
+}
+
+/// Where a delete reports how far it has got, or [`None`] for a delete nothing
+/// watches.
+///
+/// A trait object, not a generic parameter: callers reach a delete through a
+/// `dyn` trait of their own, whose methods cannot be generic.
+pub type PruneProgressSink<'a> = Option<&'a dyn Fn(PruneProgress)>;
+
+/// Counts the columns a delete has rewritten, reporting each one it finishes.
+struct ColumnRewriteProgress<'a> {
+    sink: PruneProgressSink<'a>,
+    progress: PruneProgress,
+}
+
+impl<'a> ColumnRewriteProgress<'a> {
+    /// Report a delete about to rewrite `columns_total` columns, which shows
+    /// how much there is to do before the first one is done.
+    fn starting(columns_total: usize, sink: PruneProgressSink<'a>) -> Self {
+        let counted = Self {
+            sink,
+            progress: PruneProgress {
+                columns_rewritten: 0,
+                columns_total,
+            },
+        };
+        counted.report();
+        counted
+    }
+
+    fn record_rewritten_column(&mut self) {
+        self.progress.columns_rewritten += 1;
+        self.report();
+    }
+
+    fn report(&self) {
+        if let Some(sink) = self.sink {
+            sink(self.progress);
+        }
+    }
+}
+
 /// Everything one day index owns, as the archive that keeps it lays it out.
 #[derive(Clone, Copy)]
 pub struct ArchiveLayout<'a> {
@@ -129,13 +191,39 @@ pub struct ArchiveLayout<'a> {
 
 impl ArchiveLayout<'_> {
     /// Remove every day before `cutoff`, reporting how many days went.
-    pub fn delete_days_before(&self, cutoff: NaiveDate) -> Result<usize, ArchiveError> {
-        self.retain_days(|day| day >= cutoff)
+    pub fn delete_days_before(
+        &self,
+        cutoff: NaiveDate,
+        report: PruneProgressSink<'_>,
+    ) -> Result<usize, ArchiveError> {
+        self.retain_days(|day| day >= cutoff, report)
     }
 
     /// Remove every archived day, reporting how many went.
-    pub fn delete_all_days(&self) -> Result<usize, ArchiveError> {
-        self.retain_days(|_| false)
+    pub fn delete_all_days(&self, report: PruneProgressSink<'_>) -> Result<usize, ArchiveError> {
+        self.retain_days(|_| false, report)
+    }
+
+    /// How many columns a delete of this layout writes again, which is what
+    /// it counts its progress in: every row level's columns, and the day
+    /// index's own.
+    pub fn columns_a_delete_rewrites(&self) -> usize {
+        // A level with no extent ends the rewrite, so one before the last
+        // would leave the levels after it both unrewritten and uncounted.
+        debug_assert!(
+            self.levels
+                .split_last()
+                .is_none_or(|(_, before_last)| before_last
+                    .iter()
+                    .all(|level| level.extent.is_some())),
+            "only the last row level may have no extent"
+        );
+        self.index_columns().len()
+            + self
+                .levels
+                .iter()
+                .map(|level| level.all_columns().len())
+                .sum::<usize>()
     }
 
     /// Bring an archive back to a state its index and rows agree on, after a
@@ -156,7 +244,11 @@ impl ArchiveLayout<'_> {
 
     /// Keep the days `keep` accepts and remove the rest, reporting how many
     /// went.
-    fn retain_days(&self, keep: impl Fn(NaiveDate) -> bool) -> Result<usize, ArchiveError> {
+    fn retain_days(
+        &self,
+        keep: impl Fn(NaiveDate) -> bool,
+        report: PruneProgressSink<'_>,
+    ) -> Result<usize, ArchiveError> {
         let index = self.parent.group(self.index_name)?;
         let stored: Vec<i32> = Column::new(&index, day_index::DAY).read()?;
         let mut kept_rows: Vec<Range<usize>> = Vec::with_capacity(stored.len());
@@ -177,8 +269,10 @@ impl ArchiveLayout<'_> {
             entries.push((name, kept));
         }
 
+        let mut progress =
+            ColumnRewriteProgress::starting(self.columns_a_delete_rewrites(), report);
         DeleteState::InFlight.write(&index)?;
-        let offsets = self.compact_rows(&index, &kept_rows)?;
+        let offsets = self.compact_rows(&index, &kept_rows, &mut progress)?;
         for (name, kept) in entries {
             let surviving = if name == day_index::OFFSET {
                 kept.row_numbers_like(&offsets)?
@@ -186,6 +280,7 @@ impl ArchiveLayout<'_> {
                 kept
             };
             surviving.overwrite(&Column::new(&index, name))?;
+            progress.record_rewritten_column();
         }
         DeleteState::Settled.write(&index)?;
         Ok(removed)
@@ -215,6 +310,7 @@ impl ArchiveLayout<'_> {
         &self,
         index: &Group,
         kept_rows: &[Range<usize>],
+        progress: &mut ColumnRewriteProgress<'_>,
     ) -> Result<Vec<u64>, ArchiveError> {
         let mut plans: Vec<RowPlan> = Vec::with_capacity(self.levels.len());
         let mut parent_group = index;
@@ -240,13 +336,16 @@ impl ArchiveLayout<'_> {
             };
             for name in level.columns {
                 rewrite_column(level.group, name, &plan.kept, None)?;
+                progress.record_rewritten_column();
             }
             if let Some(extent) = level.extent {
                 rewrite_column(level.group, extent.count, &plan.kept, None)?;
+                progress.record_rewritten_column();
                 let below = plans
                     .get(position + 1)
                     .map(|below| below.offsets.as_slice());
                 rewrite_column(level.group, extent.offset, &plan.kept, below)?;
+                progress.record_rewritten_column();
             }
         }
 

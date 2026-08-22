@@ -495,7 +495,7 @@ fn deleting_days_before_a_cutoff_keeps_the_maps_of_the_rest() {
             .expect("insert");
     }
 
-    let removed = store.delete_days_before(day(1)).expect("delete days");
+    let removed = store.delete_days_before(day(1), None).expect("delete days");
 
     assert_eq!(removed, 1);
     assert_eq!(store.day_maps(day(0)).expect("archive read"), None);
@@ -527,7 +527,7 @@ fn deleting_every_day_empties_the_archive() {
             .expect("insert");
     }
 
-    let removed = store.delete_all_days().expect("delete all");
+    let removed = store.delete_all_days(None).expect("delete all");
 
     assert_eq!(removed, 2);
     assert!(store.archived_days().expect("days").is_empty());
@@ -553,7 +553,7 @@ fn the_columns_beside_the_day_index_move_with_the_days_that_stay() {
         .insert_or_replace_day(day(1), HOST, fetched_at(), IonexProduct::Rapid, &kept)
         .expect("insert");
 
-    store.delete_days_before(day(1)).expect("delete days");
+    store.delete_days_before(day(1), None).expect("delete days");
 
     assert_eq!(
         store.archived_product(day(1)).expect("product"),

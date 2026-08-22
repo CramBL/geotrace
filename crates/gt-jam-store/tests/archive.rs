@@ -386,7 +386,7 @@ fn deleting_days_before_a_cutoff_keeps_the_rest(
     }
 
     let removed = store
-        .delete_days_before(day(cutoff_offset))
+        .delete_days_before(day(cutoff_offset), None)
         .expect("delete days");
 
     assert_eq!(removed, 3 - expected.len());
@@ -418,7 +418,7 @@ fn deleting_every_day_empties_the_archive() {
             .expect("insert");
     }
 
-    let removed = store.delete_all_days().expect("delete all");
+    let removed = store.delete_all_days(None).expect("delete all");
 
     assert_eq!(removed, 3);
     assert!(store.days().expect("days").is_empty());
@@ -437,7 +437,7 @@ fn a_day_can_be_stored_again_after_it_was_deleted() {
         .insert_day(day(1), HOST, fetched_at(), &observations(2))
         .expect("insert");
 
-    store.delete_days_before(day(1)).expect("delete days");
+    store.delete_days_before(day(1), None).expect("delete days");
     store
         .insert_day(day(0), HOST, fetched_at(), &observations(3))
         .expect("insert again");

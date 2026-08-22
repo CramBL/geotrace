@@ -1152,7 +1152,7 @@ mod tests {
         assert_eq!(scheduler.days.queued(), 0, "an archived day is not fetched");
         assert_eq!(scheduler.days.fetch_status().recording_days.archived, 1);
 
-        store.delete_all_days().expect("delete");
+        store.delete_all_days(None).expect("delete");
         scheduler.forget_pruned_days(PrunedDays::All);
         scheduler.request_days_for(recording);
 

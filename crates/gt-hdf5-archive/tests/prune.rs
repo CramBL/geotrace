@@ -9,7 +9,7 @@ use rstest::rstest;
 use tempfile::TempDir;
 
 use gt_hdf5_archive::day_index::{self, DayIndex, RowPlacement};
-use gt_hdf5_archive::prune::{ArchiveLayout, DeleteState, ExtentColumns, RowLevel};
+use gt_hdf5_archive::prune::{ArchiveLayout, DeleteState, ExtentColumns, PruneProgress, RowLevel};
 use gt_hdf5_archive::{ArchiveError, Column, ColumnFormat};
 
 const FORMAT: ColumnFormat = ColumnFormat {
@@ -310,7 +310,7 @@ fn deleting_days_before_a_cutoff_keeps_the_rest_whole(
     archive.insert_days(&STORED_DAYS).expect("insert");
 
     let removed = archive
-        .with_layout(|layout| layout.delete_days_before(cutoff))
+        .with_layout(|layout| layout.delete_days_before(cutoff, None))
         .expect("delete");
 
     assert_eq!(removed, STORED_DAYS.len() - expected.len());
@@ -334,13 +334,62 @@ fn deleting_days_before_a_cutoff_keeps_the_rest_whole(
     );
 }
 
+/// A delete reports its progress in the columns it rewrites: it starts before
+/// the first one, never goes backwards, and ends on the last.
+#[test]
+fn a_delete_reports_progress_up_to_every_column_it_rewrites() {
+    let archive = TestArchive::create().expect("archive");
+    archive.insert_days(&STORED_DAYS).expect("insert");
+    let reported = std::cell::RefCell::new(Vec::new());
+
+    archive
+        .with_layout(|layout| {
+            let report = |progress: PruneProgress| reported.borrow_mut().push(progress);
+            layout.delete_days_before(day(2), Some(&report))
+        })
+        .expect("delete");
+
+    assert_progress_ran_to_completion(&reported.into_inner());
+}
+
+/// A delete reports before it rewrites anything, never goes backwards or past
+/// what it counted, and ends on the last column.
+#[track_caller]
+fn assert_progress_ran_to_completion(reported: &[PruneProgress]) {
+    assert!(
+        matches!(reported, [first, ..] if first.columns_rewritten == 0),
+        "a delete reports before it rewrites a column: {reported:?}"
+    );
+    assert!(
+        reported.windows(2).all(|pair| matches!(
+            pair,
+            [before, after] if after.columns_rewritten >= before.columns_rewritten
+        )),
+        "progress went backwards: {reported:?}"
+    );
+    assert!(
+        reported
+            .iter()
+            .all(|progress| progress.columns_rewritten <= progress.columns_total),
+        "progress passed the columns it counts: {reported:?}"
+    );
+    assert!(
+        matches!(reported, [.., last] if last.columns_rewritten == last.columns_total),
+        "the delete ended short of the columns it counted: {reported:?}"
+    );
+    assert!(
+        matches!(reported, [.., last] if (last.fraction() - 1.0).abs() < f32::EPSILON),
+        "the delete ended on a bar short of full: {reported:?}"
+    );
+}
+
 #[test]
 fn deleting_every_day_empties_the_archive() {
     let archive = TestArchive::create().expect("archive");
     archive.insert_days(&STORED_DAYS).expect("insert");
 
     let removed = archive
-        .with_layout(|layout| layout.delete_all_days())
+        .with_layout(|layout| layout.delete_all_days(None))
         .expect("delete");
 
     assert_eq!(removed, STORED_DAYS.len());
@@ -359,7 +408,7 @@ fn rows_no_day_names_go_with_the_delete() {
     archive.insert_day(day(1), 7).expect("insert");
 
     archive
-        .with_layout(|layout| layout.delete_days_before(day(1)))
+        .with_layout(|layout| layout.delete_days_before(day(1), None))
         .expect("delete");
 
     assert_eq!(archive.archived_days().expect("days"), [day(1)]);
@@ -381,7 +430,7 @@ fn rows_stored_after_a_delete_reuse_the_space_it_freed() {
     let filled = archive.size_on_disk().expect("size");
 
     archive
-        .with_layout(|layout| layout.delete_days_before(day(6)))
+        .with_layout(|layout| layout.delete_days_before(day(6), None))
         .expect("delete");
     let pruned = archive.size_on_disk().expect("size");
     for offset in 12..18 {
@@ -407,7 +456,7 @@ fn a_delete_that_finished_leaves_the_index_settled() {
     archive.insert_days(&STORED_DAYS).expect("insert");
 
     archive
-        .with_layout(|layout| layout.delete_days_before(day(2)))
+        .with_layout(|layout| layout.delete_days_before(day(2), None))
         .expect("delete");
     assert_eq!(archive.delete_state().expect("state"), DeleteState::Settled);
     archive
@@ -441,7 +490,7 @@ fn a_delete_that_fails_leaves_the_index_marked() {
     };
 
     layout
-        .delete_days_before(day(2))
+        .delete_days_before(day(2), None)
         .expect_err("a column that is not there");
 
     assert_eq!(
@@ -486,7 +535,7 @@ fn overlapping_days_are_refused() {
     drop(days);
 
     let err = archive
-        .with_layout(|layout| layout.delete_days_before(day(1)))
+        .with_layout(|layout| layout.delete_days_before(day(1), None))
         .expect_err("overlapping days");
 
     assert!(err.contains("overlap the rows before them"), "{err}");
@@ -504,7 +553,7 @@ fn an_index_column_that_lost_rows_is_refused() {
     drop(days);
 
     let err = archive
-        .with_layout(|layout| layout.delete_days_before(day(1)))
+        .with_layout(|layout| layout.delete_days_before(day(1), None))
         .expect_err("an index that disagrees with itself");
 
     assert!(err.contains("count holds 2 rows, requested"), "{err}");
@@ -689,12 +738,17 @@ mod three_levels {
         archive.insert_day(day(0), 2).expect("insert");
         archive.insert_day(day(1), 3).expect("insert");
         archive.insert_day(day(2), 1).expect("insert");
+        let reported = std::cell::RefCell::new(Vec::new());
 
         let removed = archive
-            .with_layout(|layout| layout.delete_days_before(day(1)))
+            .with_layout(|layout| {
+                let report = |progress: PruneProgress| reported.borrow_mut().push(progress);
+                layout.delete_days_before(day(1), Some(&report))
+            })
             .expect("delete");
 
         assert_eq!(removed, 1);
+        assert_progress_ran_to_completion(&reported.into_inner());
         assert_eq!(
             archive.day_nodes(day(1)).expect("nodes"),
             Some((0..3).map(|map| nodes_of(day(1), map)).collect::<Vec<_>>())

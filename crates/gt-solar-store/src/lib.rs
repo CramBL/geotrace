@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, Utc};
 use gt_hdf5_archive::day_index::{DayIndex, RowPlacement};
-use gt_hdf5_archive::prune::{ArchiveLayout, RowLevel};
+use gt_hdf5_archive::prune::{ArchiveLayout, PruneProgress, PruneProgressSink, RowLevel};
 use gt_hdf5_archive::{
     ArchiveError, ArchiveFile, Column, OpenArchive, StoredPresence, attributes, dates,
 };
@@ -177,41 +177,66 @@ impl SolarStore {
     /// The samples the remaining days hold move down to close the gap. The
     /// file itself rarely shrinks: the space is what the days stored after the
     /// delete are written into.
-    pub fn delete_days_before(&self, cutoff: NaiveDate) -> Result<usize, SolarStoreError> {
+    pub fn delete_days_before(
+        &self,
+        cutoff: NaiveDate,
+        report: PruneProgressSink<'_>,
+    ) -> Result<usize, SolarStoreError> {
+        self.delete_from_both_indices(DeletedDays::Before(cutoff), report)
+    }
+
+    /// Remove every archived day from both indices, reporting how many went.
+    /// A day either index held counts once.
+    pub fn delete_all_days(&self, report: PruneProgressSink<'_>) -> Result<usize, SolarStoreError> {
+        self.delete_from_both_indices(DeletedDays::Every, report)
+    }
+
+    /// Delete `deleted` from each index in turn, counting the columns of both
+    /// as one run: the second index carries on where the first stopped rather
+    /// than starting the count again.
+    fn delete_from_both_indices(
+        &self,
+        deleted: DeletedDays,
+        report: PruneProgressSink<'_>,
+    ) -> Result<usize, SolarStoreError> {
         let mut archive = self.archive.lock();
         let file = archive.open_read_write()?;
-        let mut removed: BTreeSet<NaiveDate> = BTreeSet::new();
+        let mut columns_of_index: Vec<(GeomagneticIndex, usize)> = Vec::new();
         for index in GeomagneticIndex::iter() {
+            let columns =
+                with_layout(
+                    &file,
+                    index,
+                    |layout| Ok(layout.columns_a_delete_rewrites()),
+                )?;
+            columns_of_index.push((index, columns));
+        }
+        let columns_total: usize = columns_of_index.iter().map(|(_, columns)| columns).sum();
+
+        let mut columns_before = 0;
+        let mut removed: BTreeSet<NaiveDate> = BTreeSet::new();
+        for (index, columns) in columns_of_index {
             let days = file.group(&index.days_group_path())?;
             removed.extend(
                 DayIndex::new(&days)
                     .entries()?
                     .into_iter()
                     .map(|entry| entry.day)
-                    .filter(|day| *day < cutoff),
+                    .filter(|day| deleted.covers(*day)),
             );
             drop(days);
-            with_layout(&file, index, |layout| layout.delete_days_before(cutoff))?;
-        }
-        Ok(removed.len())
-    }
-
-    /// Remove every archived day from both indices, reporting how many went.
-    /// A day either index held counts once.
-    pub fn delete_all_days(&self) -> Result<usize, SolarStoreError> {
-        let mut archive = self.archive.lock();
-        let file = archive.open_read_write()?;
-        let mut removed: BTreeSet<NaiveDate> = BTreeSet::new();
-        for index in GeomagneticIndex::iter() {
-            let days = file.group(&index.days_group_path())?;
-            removed.extend(
-                DayIndex::new(&days)
-                    .entries()?
-                    .into_iter()
-                    .map(|entry| entry.day),
-            );
-            drop(days);
-            with_layout(&file, index, |layout| layout.delete_all_days())?;
+            let forwarded = |progress: PruneProgress| {
+                if let Some(report) = report {
+                    report(PruneProgress {
+                        columns_rewritten: columns_before + progress.columns_rewritten,
+                        columns_total,
+                    });
+                }
+            };
+            with_layout(&file, index, |layout| {
+                deleted.delete_from(layout, Some(&forwarded))
+            })?;
+            columns_before += columns;
         }
         Ok(removed.len())
     }
@@ -469,6 +494,33 @@ fn read_period_columns(
             })
         })
         .collect()
+}
+
+/// The days one delete removes from an index.
+#[derive(Debug, Clone, Copy)]
+enum DeletedDays {
+    Before(NaiveDate),
+    Every,
+}
+
+impl DeletedDays {
+    fn covers(self, day: NaiveDate) -> bool {
+        match self {
+            Self::Before(cutoff) => day < cutoff,
+            Self::Every => true,
+        }
+    }
+
+    fn delete_from(
+        self,
+        layout: &ArchiveLayout<'_>,
+        report: PruneProgressSink<'_>,
+    ) -> Result<usize, ArchiveError> {
+        match self {
+            Self::Before(cutoff) => layout.delete_days_before(cutoff, report),
+            Self::Every => layout.delete_all_days(report),
+        }
+    }
 }
 
 /// The index's archive, as messages about its columns name it.

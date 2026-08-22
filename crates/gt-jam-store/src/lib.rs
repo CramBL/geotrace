@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, Utc};
 use gt_hdf5_archive::day_index::{DayIndex, RowPlacement};
-use gt_hdf5_archive::prune::{ArchiveLayout, RowLevel};
+use gt_hdf5_archive::prune::{ArchiveLayout, PruneProgressSink, RowLevel};
 use gt_hdf5_archive::{ArchiveError, ArchiveFile, Column, OpenArchive, attributes};
 use gt_jam::dataset::JamDataset;
 use gt_jam::wire::HexObservation;
@@ -276,17 +276,21 @@ impl JamStore {
     /// The observations the remaining days hold move down to close the gap.
     /// The file itself rarely shrinks: the space is what the days stored
     /// after the delete are written into.
-    pub fn delete_days_before(&self, cutoff: NaiveDate) -> Result<usize, JamStoreError> {
+    pub fn delete_days_before(
+        &self,
+        cutoff: NaiveDate,
+        report: PruneProgressSink<'_>,
+    ) -> Result<usize, JamStoreError> {
         let mut archive = self.archive.lock();
         let file = archive.open_read_write()?;
-        with_layout(&file, |layout| layout.delete_days_before(cutoff))
+        with_layout(&file, |layout| layout.delete_days_before(cutoff, report))
     }
 
     /// Remove every stored day, reporting how many went.
-    pub fn delete_all_days(&self) -> Result<usize, JamStoreError> {
+    pub fn delete_all_days(&self, report: PruneProgressSink<'_>) -> Result<usize, JamStoreError> {
         let mut archive = self.archive.lock();
         let file = archive.open_read_write()?;
-        with_layout(&file, |layout| layout.delete_all_days())
+        with_layout(&file, |layout| layout.delete_all_days(report))
     }
 
     /// The stored day, indexed for lookup and drawing.
