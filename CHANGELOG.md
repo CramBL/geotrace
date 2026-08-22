@@ -4,50 +4,35 @@
 
 ### Added
 
-- Pick a mode under "Snap again as" for a track that already has snap to road data: Asks whether to replace it.
-- Right-click a recording to snap all of its tracks at once.
-- Tooltips and labels show which recording a map point belongs to when multiple files are loaded.
-- Editing the recording name template in Settings shows a preview as you type.
-- Support for Geomagnetic indices (Kp/Hp30) and global Ionosphere maps (TEC): Automatically downloaded for loaded recordings, viewable in the plot, and queryable (e.g., `where hp30 > 5` or `where tec > 100`). TEC is also drawn as a map heatmap under the tracks. Maps come from JPL, falling back to NASA's CDDIS archive once a free Earthdata token is set on Settings' "Ionospheric TEC" page.
-- Solar flare markers in the plot, from NASA's DONKI catalog: a vertical line at each flare's peak, coloured by class, with its class, times and active region on hover. Set a free api.nasa.gov key on Settings' "Solar flares" page to download them.
-- Settings' "Geomagnetic indices", "Ionospheric TEC" and "Solar flares" pages show cached history and allow downloading more.
-- The `--offline` flag runs the app without network access (replaces the `GEOTRACE_OFFLINE` environment variable).
-- A search field in Settings to easily filter pages and rows.
-- A log viewer window: a loaded log opens in it showing its lines, boot sessions and parse summary, and clicking a line centres the map where it was recorded.
-- The log viewer filters as you type, in plain terms or a regular expression, and "+ Add filter" keeps the filter.
-- Filtered log lines draw on the map as hexagons in their filter's colour: hovering one lists the lines behind it and marks them in the log viewer, and hovering a line in the viewer rings it on the map.
-- Loading a log opens a dialog choosing which recording it belongs to, and can attach it to that recording in history: the log comes back with its filters when that recording is opened again.
-- Paste log text straight into the app with Ctrl+V.
-- Settings' "Geomagnetic indices" page links to reference material on geomagnetic storms and what they do to satellite navigation.
-- Settings' "Ionospheric TEC" page links to reference material on the ionosphere, TEC and the delay it adds to satellite navigation signals.
-- Settings' "Solar flares" page links to reference material on solar flares, radio blackouts and what they do to satellite navigation, and a flare marker's hover states whether the receiver was on the sunlit side when the flare peaked.
-- Settings' "Aircraft interference" page links to reference material on what aircraft report, how a day's cells are computed and what the data does and does not show.
-- A warning when downloaded space weather or interference data overlaps a loaded recording at a level that can disturb reception: a toast on load, and a storm icon in the map corner that lists what was found and stays faintly visible while nothing warns. Clicking the icon states the level each metric warns at, with a link to that metric's reference material.
-- A finished query's match halos flare up and settle back on the map, so a new run's matches stand out among many tracks. "Show on map" in the results plays that again and zooms to the matches.
-- Settings' "Application" page lists what the downloaded aircraft interference, geomagnetic index, TEC and solar flare archives take up on disk, and deletes days older than a chosen date across all of them or everything one archive holds. The space a delete frees is what the days downloaded after it are written into.
-- Settings' "Application" page can auto-prune environment data: with "Auto-prune days older than" ticked, days past the chosen number of months are deleted from every archive on startup and after a recording loads, keeping the days the loaded recordings need.
-- TEC now warns too, from the moderate-storm grade of the planetary ionospheric storm index: at least 43 % above or 30 % below the median of the 27 days before the recording, read at the same location and time of day. Those days' maps are downloaded as well, about 3.4 MB per recording day.
+- **Environment Data:** Added support for Geomagnetic indices (Kp/Hp30) and Ionosphere maps (TEC), including auto-downloads, map heatmaps, and query support (e.g., `where tec > 100`).
+- **Environment Data:** Added solar flare markers from NASA's DONKI catalog to the plot, detailing peak times, class, and sunlit status.
+- **Environment Data:** Added warnings (via toast and map icon) when space weather or aircraft interference reaches levels that could disrupt satellite navigation.
+- **Log Viewer:** Added a dedicated log window to inspect loaded logs, view parse summaries, and center the map by clicking a line.
+- **Log Viewer:** Added plain text and regex filtering with the ability to save filters. Filtered lines now display on the map as color-coded hexagons with two-way hover sync.
+- **Log Viewer:** Added the ability to attach logs to specific recordings on load (retaining filters) and to paste log text directly using `Ctrl+V`.
+- **Map & Tracks:** Added a right-click option to snap all tracks in a recording to the road at once, and "Snap again as" now prompts before replacing existing data.
+- **Map & Tracks:** Added an animation to finished query matches so they flare up and settle on the map to stand out among tracks.
+- **Map & Tracks:** Added tooltips to identify which recording a map point belongs to when multiple files are loaded.
+- **Settings & Storage:** Added a storage manager to view disk usage for environment data, with options to manually delete old days or auto-prune them on startup.
+- **Settings & Storage:** Added a search field, a live preview for the recording name template, and consolidated reference links for atmospheric metrics.
+- **System:** Added the `--offline` flag to run without network access (replacing the `GEOTRACE_OFFLINE` environment variable).
 
 ### Changed
 
-- The query results show all of a query's matches in one table, a row per matched point: the columns line up across every match under one header, each column's unit is named once in that header, and every matched point is listed however many there are. The results, the query history and the examples sit in tabs below the editor, one on display at a time, and that tab is the only part of the window that scrolls. A match's name row states the span, the point count and how long it ran, folds its points away when clicked, and frames the map on that one match. Hovering a column header explains the metric, and hovering a row states its point index and position. The section header collapses every match at once, or copies the whole result as tab-separated values. A channel-source query (`@accel | …`) reads the same way: its matched stretches of samples get the same name rows, and every sample is listed under a column per channel component.
-- The plot's aircraft interference, Kp, Hp30, TEC and solar flare chips sit in a group of their own, and each hover states in three lines what the metric is, where it comes from and where to read more.
-- The aircraft interference plot line spans every archived day in view instead of breaking outside recordings.
-- The Settings window displays one category at a time using a left-side navigation rail.
-- Log files load even if some lines have unrecognised timestamps (those lines are kept, timed from their neighbours).
+- **Log Processing:** Log files now successfully load even if some lines have unrecognized timestamps by interpolating from neighboring data.
+- **Interface:** Redesigned query results into a unified, tabbed table below the editor with shared headers, collapsible stretches, and TSV export.
+- **Interface:** The Settings window now displays one category at a time using a left-side navigation rail.
+- **Plotting:** Grouped space weather and interference chips together with descriptive hover states, and made the aircraft interference line span all archived days in view.
 
 ### Fixed
 
-- Closing GeoTrace while a downloaded environment day, a recording, an edit to the recording history, or a delete of archived environment days is being written waits for that write to finish instead of leaving a partially written file behind.
-- Closing GeoTrace while a write is still running shows a shutdown window listing each write's progress, with a check for each one that finishes.
-- "Run in background" on the shutdown window closes the window and lets the writes finish without it.
-- Environment archives created by older versions are rebuilt when they are opened: deleting days from them then frees space for the days downloaded afterwards.
-- Links in dialogs and reference material now open in the browser (clicking them did nothing).
-- Hovering the plot highlights the recording and track rows in the side panel, matching what hovering the map already does.
-- Hover labels no longer overlap in the plot and map interference layer.
-- The plot's file legend no longer covers the settings and query windows.
-- Snapped tracks no longer improperly route through nearby roads during dead reckoning gaps (e.g., in parking garages).
-- Overlapping snapped tracks no longer flicker as they are redrawn.
+- **File Operations:** Closing the app while data is writing now opens a shutdown progress window and safely waits for completion.
+- **File Operations:** Older environment archives are now automatically rebuilt on load so that deleting old days properly frees disk space.
+- **Map & Tracks:** Fixed snapped tracks improperly routing through nearby roads during dead-reckoning gaps (e.g., parking garages).
+- **Map & Tracks:** Fixed an issue where overlapping snapped tracks would flicker when redrawn.
+- **UI:** Fixed external links in dialogs and reference materials so they correctly open in the web browser.
+- **UI:** Fixed hover states in the plot so they correctly highlight the side panel rows and prevented hover labels from overlapping.
+- **UI:** Fixed the plot's file legend so it no longer covers the settings and query windows.
 
 ## 0.12.0 - 2026-08-15
 
