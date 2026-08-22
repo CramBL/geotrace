@@ -10,7 +10,7 @@ use gt_ionex::tec::TotalElectronContent;
 /// published file dates to the next day's midnight.
 #[expect(
     clippy::expect_used,
-    reason = "The grid axis parameters here are fixed constants, so the maps cannot fail to build"
+    reason = "The maps cannot fail to build: the grid axis parameters are fixed constants"
 )]
 pub fn uniform_maps(day: NaiveDate, samples: &[(i64, f64)]) -> GlobalIonosphereMaps {
     let midnight = day.and_time(NaiveTime::MIN).and_utc();

@@ -194,8 +194,8 @@ fn open_in(store: &Store, ctx: &Context, pending_writes: PendingWrites) -> OpenS
 impl App {
     /// Install the databases a [`Storage::open`] produced.
     ///
-    /// The schedulers read their archived days here, so this runs before
-    /// anything asks them what they hold.
+    /// The schedulers read their archived days here: nothing may ask them what
+    /// they hold before this runs.
     pub(super) fn adopt_open_storage(&mut self, storage: OpenStorage) {
         let OpenStorage {
             history,
