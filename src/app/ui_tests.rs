@@ -3730,6 +3730,81 @@ fn snapshot_history_corrupt_dialog() {
     harness.snapshot("history_corrupt_dialog");
 }
 
+/// Startup hands the app the databases a completed open produced. The worker
+/// it carries replaces the one the app was holding, and the loader takes the
+/// path that worker stores under.
+#[test]
+fn adopting_an_open_storage_installs_its_history_worker() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path());
+    let recordings_path = store.recordings_path();
+
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    assert!(
+        harness.state().history.path().is_none(),
+        "the harness starts with storage disabled"
+    );
+
+    let opened = crate::app::storage::OpenStorage {
+        history: crate::app::history_db::HistoryWorker::spawn(
+            store.open_recordings().expect("recordings"),
+            harness.ctx.clone(),
+            gt_pending_writes::PendingWrites::default(),
+        ),
+        history_failure: None,
+        archive: None,
+        geomagnetic_indices: None,
+        tec_maps: None,
+        solar_flares: None,
+    };
+    harness.state_mut().adopt_open_storage(opened);
+
+    assert_eq!(
+        harness.state().history.path(),
+        Some(recordings_path.as_path()),
+        "the adopted worker is the one the app now stores through"
+    );
+    assert_eq!(
+        harness.state().loader.db_path.as_deref(),
+        Some(recordings_path.as_path()),
+        "the loader stores into the adopted database"
+    );
+}
+
+/// Adopting a storage-open failure has to raise its prompt itself: the open
+/// reports the failure, not the app.
+#[test]
+fn a_history_failure_in_the_adopted_storage_raises_its_prompt() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+
+    harness
+        .state_mut()
+        .adopt_open_storage(crate::app::storage::OpenStorage {
+            history: crate::app::history_db::HistoryWorker::disabled(),
+            history_failure: Some(crate::app::storage::HistoryFailure::Busy(PathBuf::from(
+                "recordings.h5",
+            ))),
+            archive: None,
+            geomagnetic_indices: None,
+            tec_maps: None,
+            solar_flares: None,
+        });
+    harness.step();
+
+    assert!(
+        harness
+            .query_by_label_contains("Another process has the recording history database open")
+            .is_some(),
+        "the busy prompt is up"
+    );
+}
+
 /// "Try again" on a database that still will not open puts the prompt back
 /// rather than leaving the user with no history and no explanation. Uses an
 /// unreadable file, since holding a real lock needs a second process.

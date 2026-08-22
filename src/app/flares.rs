@@ -96,24 +96,31 @@ impl SolarFlareScheduler {
         pending_writes: PendingWrites,
     ) -> Self {
         let (tx, rx) = mpsc::channel();
-        let archived_days = store
-            .as_ref()
-            .map(|store| archived_days_of(store))
-            .unwrap_or_default();
-        Self {
-            archived_days,
+        let mut scheduler = Self {
+            archived_days: BTreeSet::new(),
             markers: ContextSampleCache::default(),
             ctx,
             tx,
             rx,
             base_url,
             api_key,
-            store,
+            store: None,
             http: None,
             transport_source,
             days: DayFetchQueue::default(),
             pending_writes,
-        }
+        };
+        scheduler.adopt_store(store);
+        scheduler
+    }
+
+    /// Take an opened archive, reading the days it already holds.
+    pub fn adopt_store(&mut self, store: Option<Arc<FlareStore>>) {
+        self.archived_days = store
+            .as_ref()
+            .map(|store| archived_days_of(store))
+            .unwrap_or_default();
+        self.store = store;
     }
 
     /// Queue the days a recording spans.

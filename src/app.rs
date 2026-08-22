@@ -463,30 +463,20 @@ impl App {
         )));
         let tiles_tree = Tree::new("main_tiles", root_tile_id, tiles);
 
-        // `loader.db_path` starts `None` and is populated by `sync_db_path`
-        // (called from `apply_startup_settings`) once the history worker has
-        // a path.
-        let storage::OpenStorage {
-            history,
-            history_failure,
-            archive,
-            geomagnetic_indices,
-            tec_maps,
-            solar_flares,
-        } = options
+        let opened_storage = options
             .storage
             .open(&cc.egui_ctx, options.pending_writes.clone());
 
         let jamming = jamming::JammingScheduler::new(
             cc.egui_ctx.clone(),
-            archive,
+            None,
             gt_jam::DEFAULT_BASE_URL.to_owned(),
             transport_source(options.offline),
             options.pending_writes.clone(),
         );
         let geomagnetic_indices = solar::GeomagneticIndexScheduler::new(
             cc.egui_ctx.clone(),
-            geomagnetic_indices,
+            None,
             gt_solar::DEFAULT_BASE_URL.to_owned(),
             transport_source(options.offline),
             options.pending_writes.clone(),
@@ -494,7 +484,7 @@ impl App {
         let tec_settings = crate::settings::TecSettings::default();
         let tec_maps = tec::TecMapScheduler::new(
             cc.egui_ctx.clone(),
-            tec_maps,
+            None,
             tec_settings.mirrors.clone(),
             tec_settings.earthdata_token(),
             transport_source(options.offline),
@@ -503,7 +493,7 @@ impl App {
         let solar_flare_settings = crate::settings::SolarFlareSettings::default();
         let solar_flares = flares::SolarFlareScheduler::new(
             cc.egui_ctx.clone(),
-            solar_flares,
+            None,
             gt_flare::DEFAULT_BASE_URL.to_owned(),
             solar_flare_settings.api_key(),
             transport_source(options.offline),
@@ -585,8 +575,8 @@ impl App {
             app_version,
             processing_config: SegmentationConfig::default(),
             assoc_config: AssociationConfig::default(),
-            history,
-            history_failure,
+            history: history_db::HistoryWorker::disabled(),
+            history_failure: None,
             keep_db_backup: true,
             pending_resegment: None,
             storage_settings: crate::settings::StorageSettings::default(),
@@ -610,6 +600,7 @@ impl App {
             skipped_version: None,
         };
 
+        app.adopt_open_storage(opened_storage);
         app.apply_startup_settings(&loaded_settings);
         app.auto_prune_environment_days();
         let initial_snapshot = app.collect_snapshot();

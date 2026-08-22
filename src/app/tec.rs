@@ -124,28 +124,35 @@ impl TecMapScheduler {
         pending_writes: PendingWrites,
     ) -> Self {
         let (tx, rx) = mpsc::channel();
-        let archived_days = store
-            .as_ref()
-            .map(|store| archived_days_of(store))
-            .unwrap_or_default();
-        Self {
+        let mut scheduler = Self {
             ctx,
             tx,
             rx,
             mirrors,
             earthdata_token,
-            store,
+            store: None,
             http: None,
             transport_source,
             days: DayFetchQueue::default(),
-            archived_days,
+            archived_days: BTreeSet::new(),
             plot_points: HashMap::new(),
             context: ContextSampleCache::default(),
             quiet_time: QuietTimeDeviationCache::default(),
             selection: TecInstantSelection::new(None, Utc::now().date_naive()),
             shown: None,
             pending_writes,
-        }
+        };
+        scheduler.adopt_store(store);
+        scheduler
+    }
+
+    /// Take an opened archive, reading the days it already holds.
+    pub fn adopt_store(&mut self, store: Option<Arc<IonexStore>>) {
+        self.archived_days = store
+            .as_ref()
+            .map(|store| archived_days_of(store))
+            .unwrap_or_default();
+        self.store = store;
     }
 
     /// Queue the days a recording spans, and the quiet-time window before each
@@ -742,7 +749,7 @@ mod tests {
     use gt_ionex::quiet_time::IonosphericStormGrade;
     use gt_ionex::{DEFAULT_BASE_URL, MirrorLayout};
     use gt_store::Store;
-    use gt_test_utils::{ScriptedTransport, UrlPrefixAnswers};
+    use gt_test_utils::{ScriptedTransport, UrlPrefixAnswers, ionex_fixtures};
 
     use super::*;
 
@@ -1548,36 +1555,6 @@ mod tests {
         }]
     }
 
-    /// Maps of `day` whose every node carries one value, at the given whole
-    /// hours from that day's midnight. Hour 24 is the map at the end of the
-    /// day, which a published file dates to the next day's midnight.
-    fn uniform_maps(day: NaiveDate, samples: &[(i64, f64)]) -> GlobalIonosphereMaps {
-        let midnight = day.and_time(chrono::NaiveTime::MIN).and_utc();
-        let axis = |first_degrees: f64, last_degrees: f64, step_degrees: f64| {
-            gt_ionex::grid::GridAxis::new(gt_ionex::grid::AxisDeclaration {
-                first_degrees,
-                last_degrees,
-                step_degrees,
-            })
-            .expect("axis")
-        };
-        let grid = gt_ionex::grid::MapGrid {
-            latitudes: gt_ionex::grid::LatitudeAxis::new(axis(57.5, 52.5, -2.5)),
-            longitudes: gt_ionex::grid::LongitudeAxis::new(axis(10.0, 15.0, 5.0)),
-            shell_height_km: 450.0,
-        };
-        let maps = samples
-            .iter()
-            .map(|&(hours, tecu)| {
-                gt_ionex::maps::TecMap::new(
-                    midnight + TimeDelta::hours(hours),
-                    vec![vec![Some(TotalElectronContent::from_tecu(tecu)); 2]; 3],
-                )
-            })
-            .collect();
-        GlobalIonosphereMaps::new(grid, TimeDelta::hours(2), maps)
-    }
-
     /// Archive `archived` with the last two maps a published day carries: one
     /// at 22:00 and the one dated to the next day's midnight.
     fn archive_last_maps_of(store: &IonexStore, archived: NaiveDate) {
@@ -1587,7 +1564,7 @@ mod tests {
                 "host",
                 Utc::now(),
                 IonexProduct::Final,
-                &uniform_maps(archived, &[(22, 10.0), (24, 20.0)]),
+                &ionex_fixtures::uniform_maps(archived, &[(22, 10.0), (24, 20.0)]),
             )
             .expect("insert");
     }
@@ -1627,7 +1604,7 @@ mod tests {
                 (hours, scale * hours as f64)
             })
             .collect();
-        uniform_maps(archived, &samples)
+        ionex_fixtures::uniform_maps(archived, &samples)
     }
 
     /// Archive one day of `maps` and record it as archived in the scheduler.
@@ -1907,7 +1884,7 @@ mod tests {
                     "host",
                     Utc::now(),
                     IonexProduct::Final,
-                    &uniform_maps(archived, &[(0, tecu), (24, tecu)]),
+                    &ionex_fixtures::uniform_maps(archived, &[(0, tecu), (24, tecu)]),
                 )
                 .expect("insert");
             scheduler.archived_days.insert(archived);
@@ -1968,7 +1945,7 @@ mod tests {
                 "host",
                 Utc::now(),
                 IonexProduct::Rapid,
-                &uniform_maps(archived, &[(0, 10.0), (24, 10.0)]),
+                &ionex_fixtures::uniform_maps(archived, &[(0, 10.0), (24, 10.0)]),
             )
             .expect("insert");
         scheduler.archived_days.insert(archived);
@@ -1981,7 +1958,7 @@ mod tests {
                 "host",
                 Utc::now(),
                 IonexProduct::Final,
-                &uniform_maps(archived, &[(0, 55.0), (24, 55.0)]),
+                &ionex_fixtures::uniform_maps(archived, &[(0, 55.0), (24, 55.0)]),
             )
             .expect("insert");
         scheduler
@@ -2081,7 +2058,7 @@ mod tests {
                 "host",
                 Utc::now(),
                 IonexProduct::Final,
-                &uniform_maps(archived, &[(0, 5.0), (2, 10.0), (4, 20.0)]),
+                &ionex_fixtures::uniform_maps(archived, &[(0, 5.0), (2, 10.0), (4, 20.0)]),
             )
             .expect("insert");
         scheduler.archived_days.insert(archived);
@@ -2114,7 +2091,7 @@ mod tests {
                     "host",
                     Utc::now(),
                     IonexProduct::Final,
-                    &uniform_maps(archived, &[(0, 5.0)]),
+                    &ionex_fixtures::uniform_maps(archived, &[(0, 5.0)]),
                 )
                 .expect("insert");
             scheduler.archived_days.insert(archived);

@@ -3018,6 +3018,7 @@ dependencies = [
  "geo-types",
  "geotrace-sdk",
  "gt-fetch",
+ "gt-ionex",
  "gt-types",
  "gt-ui-theme",
  "image",

@@ -25,6 +25,17 @@ impl App {
         }
     }
 
+    /// Put `worker` behind the history window, ending the worker it replaces.
+    ///
+    /// The worker it replaces is ended on a thread of its own, so a database
+    /// edit still running does not hold the GUI thread.
+    pub(super) fn install_history_worker(&mut self, worker: history_db::HistoryWorker) {
+        let previous = std::mem::replace(&mut self.history, worker);
+        previous.shutdown();
+        self.sync_db_path();
+        self.history_window.invalidate();
+    }
+
     /// Put a freshly opened database behind the history worker.
     fn adopt_history_database(
         &mut self,
@@ -32,13 +43,11 @@ impl App {
         ctx: &egui::Context,
         toast: &str,
     ) {
-        let previous = std::mem::replace(
-            &mut self.history,
-            history_db::HistoryWorker::spawn(db, ctx.clone(), self.pending_writes.clone()),
-        );
-        previous.shutdown();
-        self.sync_db_path();
-        self.history_window.invalidate();
+        self.install_history_worker(history_db::HistoryWorker::spawn(
+            db,
+            ctx.clone(),
+            self.pending_writes.clone(),
+        ));
         self.toasts.info(toast);
     }
 
