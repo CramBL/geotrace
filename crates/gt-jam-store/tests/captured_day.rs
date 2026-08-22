@@ -96,7 +96,7 @@ fn days_stored_after_a_delete_reuse_the_space_it_freed() {
     let filled = fs::metadata(&path).expect("archive metadata").len();
 
     let cutoff = first + chrono::TimeDelta::days(STORED_DAYS / 2);
-    let removed = store.delete_days_before(cutoff).expect("delete days");
+    let removed = store.delete_days_before(cutoff, None).expect("delete days");
     let pruned = fs::metadata(&path).expect("archive metadata").len();
     store_days(STORED_DAYS..STORED_DAYS + STORED_DAYS / 2);
     let refilled = fs::metadata(&path).expect("archive metadata").len();

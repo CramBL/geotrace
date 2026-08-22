@@ -13,7 +13,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use gt_flare::SolarFlare;
 use gt_flare::class::{FlareClass, FlareClassification};
 use gt_hdf5_archive::day_index::{DayIndex, RowPlacement};
-use gt_hdf5_archive::prune::{ArchiveLayout, RowLevel};
+use gt_hdf5_archive::prune::{ArchiveLayout, PruneProgressSink, RowLevel};
 use gt_hdf5_archive::{
     ArchiveError, ArchiveFile, Column, OpenArchive, StoredPresence, attributes, dates,
 };
@@ -176,17 +176,21 @@ impl FlareStore {
     /// file itself does not shrink here at all: most of what a flare holds is
     /// text, whose bytes libhdf5 never hands back. The space the rest freed is
     /// what the days stored after the delete are written into.
-    pub fn delete_days_before(&self, cutoff: NaiveDate) -> Result<usize, FlareStoreError> {
+    pub fn delete_days_before(
+        &self,
+        cutoff: NaiveDate,
+        report: PruneProgressSink<'_>,
+    ) -> Result<usize, FlareStoreError> {
         let mut archive = self.archive.lock();
         let file = archive.open_read_write()?;
-        with_layout(&file, |layout| layout.delete_days_before(cutoff))
+        with_layout(&file, |layout| layout.delete_days_before(cutoff, report))
     }
 
     /// Remove every archived day, reporting how many went.
-    pub fn delete_all_days(&self) -> Result<usize, FlareStoreError> {
+    pub fn delete_all_days(&self, report: PruneProgressSink<'_>) -> Result<usize, FlareStoreError> {
         let mut archive = self.archive.lock();
         let file = archive.open_read_write()?;
-        with_layout(&file, |layout| layout.delete_all_days())
+        with_layout(&file, |layout| layout.delete_all_days(report))
     }
 
     /// Every day archived, oldest first.

@@ -137,7 +137,7 @@ impl TestArchive {
             day_columns: &[],
             levels: &levels,
         }
-        .delete_days_before(cutoff)
+        .delete_days_before(cutoff, None)
         .map_err(|err| format!("delete: {err}"))
     }
 

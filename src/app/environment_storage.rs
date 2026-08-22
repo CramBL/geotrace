@@ -11,7 +11,9 @@ use std::thread;
 use chrono::{Months, NaiveDate, Utc};
 use egui::Context;
 use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteKind};
-use gt_store::{ArchiveUsage, FlareStore, IonexStore, JamStore, SolarStore};
+use gt_store::{
+    ArchiveUsage, FlareStore, IonexStore, JamStore, PruneProgress, PruneProgressSink, SolarStore,
+};
 use strum::{EnumIter, IntoEnumIterator as _};
 
 use super::App;
@@ -269,44 +271,78 @@ impl OpenEnvironmentArchives {
 /// Deleting archived days, as each archive offers it. The errors differ per
 /// archive, and a delete only reports them.
 trait ArchivedDayDeletion {
-    fn delete_pruned_days(&self, pruned: PrunedDays) -> Result<usize, String>;
+    fn delete_pruned_days(
+        &self,
+        pruned: PrunedDays,
+        report: PruneProgressSink<'_>,
+    ) -> Result<usize, String>;
+
+    /// Delete `pruned`, moving the shutdown window's bar for `write` along as
+    /// the archive rewrites its columns.
+    fn delete_pruned_days_reporting_progress(
+        &self,
+        pruned: PrunedDays,
+        write: &PendingWriteGuard,
+    ) -> ArchivePruneOutcome {
+        let report = |progress: PruneProgress| write.set_progress(progress.fraction());
+        match self.delete_pruned_days(pruned, Some(&report)) {
+            Ok(removed) => ArchivePruneOutcome::Removed(removed),
+            Err(detail) => ArchivePruneOutcome::Failed(detail),
+        }
+    }
 }
 
 impl ArchivedDayDeletion for JamStore {
-    fn delete_pruned_days(&self, pruned: PrunedDays) -> Result<usize, String> {
+    fn delete_pruned_days(
+        &self,
+        pruned: PrunedDays,
+        report: PruneProgressSink<'_>,
+    ) -> Result<usize, String> {
         match pruned {
-            PrunedDays::Before(cutoff) => self.delete_days_before(cutoff),
-            PrunedDays::All => self.delete_all_days(),
+            PrunedDays::Before(cutoff) => self.delete_days_before(cutoff, report),
+            PrunedDays::All => self.delete_all_days(report),
         }
         .map_err(|err| err.to_string())
     }
 }
 
 impl ArchivedDayDeletion for SolarStore {
-    fn delete_pruned_days(&self, pruned: PrunedDays) -> Result<usize, String> {
+    fn delete_pruned_days(
+        &self,
+        pruned: PrunedDays,
+        report: PruneProgressSink<'_>,
+    ) -> Result<usize, String> {
         match pruned {
-            PrunedDays::Before(cutoff) => self.delete_days_before(cutoff),
-            PrunedDays::All => self.delete_all_days(),
+            PrunedDays::Before(cutoff) => self.delete_days_before(cutoff, report),
+            PrunedDays::All => self.delete_all_days(report),
         }
         .map_err(|err| err.to_string())
     }
 }
 
 impl ArchivedDayDeletion for IonexStore {
-    fn delete_pruned_days(&self, pruned: PrunedDays) -> Result<usize, String> {
+    fn delete_pruned_days(
+        &self,
+        pruned: PrunedDays,
+        report: PruneProgressSink<'_>,
+    ) -> Result<usize, String> {
         match pruned {
-            PrunedDays::Before(cutoff) => self.delete_days_before(cutoff),
-            PrunedDays::All => self.delete_all_days(),
+            PrunedDays::Before(cutoff) => self.delete_days_before(cutoff, report),
+            PrunedDays::All => self.delete_all_days(report),
         }
         .map_err(|err| err.to_string())
     }
 }
 
 impl ArchivedDayDeletion for FlareStore {
-    fn delete_pruned_days(&self, pruned: PrunedDays) -> Result<usize, String> {
+    fn delete_pruned_days(
+        &self,
+        pruned: PrunedDays,
+        report: PruneProgressSink<'_>,
+    ) -> Result<usize, String> {
         match pruned {
-            PrunedDays::Before(cutoff) => self.delete_days_before(cutoff),
-            PrunedDays::All => self.delete_all_days(),
+            PrunedDays::Before(cutoff) => self.delete_days_before(cutoff, report),
+            PrunedDays::All => self.delete_all_days(report),
         }
         .map_err(|err| err.to_string())
     }
@@ -379,7 +415,7 @@ fn prune(
     let covered = archives.covered_and_open(request.scope);
     let mut reports = Vec::with_capacity(covered.len());
     for (index, (archive, store)) in covered.iter().enumerate() {
-        let Some(_write) = archive.try_begin_day_delete(pending_writes) else {
+        let Some(write) = archive.try_begin_day_delete(pending_writes) else {
             reports.extend(
                 covered
                     .iter()
@@ -391,13 +427,9 @@ fn prune(
             );
             break;
         };
-        let outcome = match store.delete_pruned_days(request.days) {
-            Ok(removed) => ArchivePruneOutcome::Removed(removed),
-            Err(detail) => ArchivePruneOutcome::Failed(detail),
-        };
         reports.push(ArchivePruneReport {
             archive: *archive,
-            outcome,
+            outcome: store.delete_pruned_days_reporting_progress(request.days, &write),
         });
     }
     PruneReport {
@@ -815,6 +847,50 @@ mod tests {
             archived_interference_days(&archives),
             3,
             "another archive's delete took days from the interference archive"
+        );
+    }
+
+    /// An archive that reports its rewrite moves the bar the shutdown window
+    /// draws for that delete.
+    #[test]
+    fn a_reported_rewrite_moves_the_write_guard_along() {
+        struct ReportingArchive;
+
+        impl ArchivedDayDeletion for ReportingArchive {
+            fn delete_pruned_days(
+                &self,
+                _pruned: PrunedDays,
+                report: PruneProgressSink<'_>,
+            ) -> Result<usize, String> {
+                for columns_rewritten in 0..=4 {
+                    if let Some(report) = report {
+                        report(PruneProgress {
+                            columns_rewritten,
+                            columns_total: 4,
+                        });
+                    }
+                }
+                Ok(1)
+            }
+        }
+
+        let pending_writes = PendingWrites::default();
+        let write = EnvironmentArchive::IonosphericTec
+            .try_begin_day_delete(&pending_writes)
+            .expect("the registry is running");
+
+        let outcome =
+            ReportingArchive.delete_pruned_days_reporting_progress(PrunedDays::All, &write);
+
+        assert_eq!(outcome, ArchivePruneOutcome::Removed(1));
+        assert_eq!(
+            pending_writes
+                .snapshot()
+                .running
+                .first()
+                .and_then(|status| status.progress),
+            Some(1.0),
+            "the guard did not follow the rewrite"
         );
     }
 
