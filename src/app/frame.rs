@@ -36,6 +36,7 @@ use super::modals::{
     show_snap_consent_dialog, show_snap_replace_dialog, show_snap_scope_dialog,
 };
 use super::panes::MainBehavior;
+use super::shutdown::FrameContents;
 use super::snap_state::PendingSnapRequest;
 use super::space_weather_warning::{self, RecordingSeries, RecordingUnderAssessment};
 #[cfg(feature = "self-update")]
@@ -50,7 +51,7 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        if self.intercept_close_request(ui) {
+        if self.intercept_close_request(ui) == FrameContents::ShutdownWindow {
             return;
         }
 

@@ -3,6 +3,7 @@ use egui_phosphor::regular::ARROW_LINE_UP_LEFT as ICON_ARROW_LINE_UP_LEFT;
 use egui_phosphor::regular::ARROWS_IN as ICON_ARROWS_IN;
 use egui_phosphor::regular::ARROWS_OUT as ICON_ARROWS_OUT;
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
+use egui_phosphor::regular::CHECK as ICON_CHECK;
 use egui_phosphor::regular::COPY as ICON_COPY;
 use egui_phosphor::regular::DOTS_SIX as ICON_DOTS_SIX;
 use egui_phosphor::regular::FRAME_CORNERS as ICON_FRAME_CORNERS;
@@ -12,7 +13,10 @@ use egui_phosphor::regular::TERMINAL_WINDOW as ICON_TERMINAL_WINDOW;
 use egui_phosphor::regular::X as ICON_X;
 use std::collections::BTreeMap;
 use std::ops::Range;
+use std::panic;
 use std::path::PathBuf;
+use std::sync::mpsc;
+use std::thread;
 use std::{
     sync::Arc,
     time::{Duration as StdDuration, Instant},
@@ -4270,10 +4274,16 @@ fn closing_the_window_takes_the_close_over_and_writes_the_settings() {
     );
 }
 
-/// A write that was running when the close button was pressed holds the
-/// window open, and the panel names it once the grace elapses.
-#[test]
-fn a_running_write_holds_the_window_open_and_is_named_while_it_runs() {
+/// The write held running while the shutdown window is on screen.
+const TEC_COMPACTION: gt_pending_writes::WriteKind =
+    gt_pending_writes::WriteKind::ArchiveCompaction {
+        archive: "ionospheric TEC",
+    };
+
+/// An app that answered a close request while a write is still running, on the
+/// frame shutdown began: the grace has not elapsed yet.
+fn app_closing_over_a_running_write<'a>() -> (Harness<'a, App>, gt_pending_writes::PendingWriteGuard)
+{
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
@@ -4281,32 +4291,49 @@ fn a_running_write_holds_the_window_open_and_is_named_while_it_runs() {
     let compaction = harness
         .state()
         .pending_writes
-        .try_begin(
-            "Compacting the TEC archive",
-            gt_pending_writes::WriteKind::ArchiveCompaction {
-                archive: "ionospheric TEC",
-            },
-        )
+        .try_begin("Compacting the TEC archive", TEC_COMPACTION)
         .expect("the registry is running");
 
     request_window_close(&mut harness);
-    harness.run_steps(2);
+    harness.step();
+    (harness, compaction)
+}
+
+fn step_until_the_shutdown_window_is_up(harness: &mut Harness<'_, App>) {
+    assert!(
+        harness.step_until(|harness| harness.query_by_label("Shutting down").is_some()),
+        "the shutdown window never came up"
+    );
+}
+
+fn shrank_the_window(harness: &Harness<'_, App>) -> bool {
+    root_viewport_commands(harness)
+        .iter()
+        .any(|command| matches!(command, egui::ViewportCommand::InnerSize(_)))
+}
+
+/// A write that was running when the close button was pressed holds the window
+/// open. The normal UI keeps painting until the shutdown window replaces it,
+/// and the window closes once the write finishes.
+#[test]
+fn the_normal_ui_paints_until_the_shutdown_window_replaces_it() {
+    let (mut harness, compaction) = app_closing_over_a_running_write();
+
+    assert!(
+        harness.query_by_label("File").is_some(),
+        "the normal UI stopped painting during the grace"
+    );
+    assert!(harness.query_by_label("Shutting down").is_none());
     assert!(
         !closed_the_window(&harness),
         "the window closed over a running write"
     );
 
-    std::thread::sleep(crate::app::shutdown::PANEL_GRACE);
-    harness.step();
+    step_until_the_shutdown_window_is_up(&mut harness);
+
     assert!(
-        harness.query_by_label("Shutting down").is_some(),
-        "the panel is up once the grace elapsed"
-    );
-    assert!(
-        harness
-            .query_by_label_contains("Compacting the TEC archive")
-            .is_some(),
-        "the panel names the write it is waiting for"
+        harness.query_by_label("File").is_none(),
+        "the shutdown window paints alongside the normal UI"
     );
 
     drop(compaction);
@@ -4314,6 +4341,94 @@ fn a_running_write_holds_the_window_open_and_is_named_while_it_runs() {
         harness.step_until(closed_the_window),
         "the window never closed after the write finished"
     );
+}
+
+/// The shutdown window names the write it is waiting for, how far it has got
+/// and which step it is on.
+#[test]
+fn the_shutdown_window_shows_a_running_write_with_its_progress_and_stage() {
+    let (mut harness, compaction) = app_closing_over_a_running_write();
+    compaction.set_progress(0.25);
+    compaction.set_stage("Rewriting maps");
+
+    step_until_the_shutdown_window_is_up(&mut harness);
+
+    assert!(
+        harness
+            .query_by_label_contains("Compacting the TEC archive")
+            .is_some(),
+        "the shutdown window never named the write it is waiting for"
+    );
+    assert!(harness.query_by_label("Rewriting maps").is_some());
+    assert_eq!(
+        harness
+            .get_by_role(egui::accesskit::Role::ProgressIndicator)
+            .accesskit_node()
+            .numeric_value(),
+        Some(25.0)
+    );
+    drop(compaction);
+}
+
+/// The writes shutdown already got through are listed as done.
+#[test]
+fn the_shutdown_window_marks_the_writes_that_finished() {
+    let (mut harness, compaction) = app_closing_over_a_running_write();
+
+    step_until_the_shutdown_window_is_up(&mut harness);
+
+    assert!(
+        harness
+            .query_by_label(&format!("{ICON_CHECK} Saving settings"))
+            .is_some(),
+        "the settings flush that shutdown ran is not listed as done"
+    );
+    drop(compaction);
+}
+
+/// "Run in background" closes the window without waiting: the write keeps
+/// running, and the wait after `run_native` returns is what finishes it.
+#[test]
+fn running_in_the_background_closes_the_window_while_the_write_runs() {
+    let (mut harness, compaction) = app_closing_over_a_running_write();
+    step_until_the_shutdown_window_is_up(&mut harness);
+
+    // The window has just shrunk: the button only takes a click at the place
+    // the harness reports once the new size is laid out.
+    harness.run_steps(2);
+
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Run in background")
+        .click();
+
+    assert!(
+        harness.step_until(closed_the_window),
+        "the window stayed up after running in the background"
+    );
+    assert!(
+        !harness.state().pending_writes.is_idle(),
+        "the window closed only once the write had finished"
+    );
+    drop(compaction);
+}
+
+/// The window shrinks to the shutdown window's size as it comes up, and is
+/// left at whatever size the user drags it to from then on.
+#[test]
+fn the_shutdown_window_shrinks_the_window_once() {
+    let (mut harness, compaction) = app_closing_over_a_running_write();
+
+    step_until_the_shutdown_window_is_up(&mut harness);
+
+    assert!(
+        shrank_the_window(&harness),
+        "the window never shrank to the shutdown window's size"
+    );
+    for _ in 0..3 {
+        harness.step();
+        assert!(!shrank_the_window(&harness), "the window shrank again");
+    }
+    drop(compaction);
 }
 
 /// A close frame runs in well under this even on a loaded CI machine, while
@@ -4325,45 +4440,57 @@ const CLOSE_FRAME_BUDGET: StdDuration = StdDuration::from_secs(5);
 /// worker's thread ends.
 ///
 /// The test holds that worker's request channel open, so a close frame that
-/// joined the worker itself would never return.
+/// joined the worker itself would never return. The app therefore runs on a
+/// thread of its own and reports the close frame back over a channel: a
+/// receive that times out fails the test within the budget.
 #[test]
 fn closing_the_window_hands_the_history_worker_to_its_own_thread() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let mut harness = Harness::builder()
-        .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    harness.step();
-    let (worker, held_open) = crate::app::history_db::HistoryWorker::spawn_held_open(
-        open_temporary_history_database(&dir.path().join("geotrace.h5")),
-        harness.ctx.clone(),
-        harness.state().pending_writes.clone(),
-    );
-    harness.state_mut().history = worker;
+    let (close_frame_returned, close_frame_report) = mpsc::channel();
+    let closing_app = thread::Builder::new()
+        .name("shutdown-close-frame".to_owned())
+        .spawn(move || {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let mut harness = Harness::builder()
+                .with_wait_for_pending_images(false)
+                .build_eframe(transient_app);
+            harness.step();
+            let (worker, held_open) = crate::app::history_db::HistoryWorker::spawn_held_open(
+                open_temporary_history_database(&dir.path().join("geotrace.h5")),
+                harness.ctx.clone(),
+                harness.state().pending_writes.clone(),
+            );
+            harness.state_mut().history = worker;
 
-    request_window_close(&mut harness);
-    let started_at = Instant::now();
-    harness.step();
+            request_window_close(&mut harness);
+            harness.step();
+            close_frame_returned.send(()).ok();
+
+            assert!(
+                !harness.state().history.available(),
+                "the app kept a worker whose drop would join on the GUI thread"
+            );
+            harness.run_steps(3);
+            assert!(
+                !closed_the_window(&harness),
+                "the window closed while the worker's write was still registered"
+            );
+
+            held_open.release();
+
+            assert!(
+                harness.step_until(closed_the_window),
+                "the window never closed after the worker's thread ended"
+            );
+        })
+        .expect("spawn the thread the app runs on");
 
     assert!(
-        started_at.elapsed() < CLOSE_FRAME_BUDGET,
+        close_frame_report.recv_timeout(CLOSE_FRAME_BUDGET).is_ok(),
         "the close frame waited for the history worker on the GUI thread"
     );
-    assert!(
-        !harness.state().history.available(),
-        "the app kept a worker whose drop would join on the GUI thread"
-    );
-    harness.run_steps(3);
-    assert!(
-        !closed_the_window(&harness),
-        "the window closed while the worker's write was still registered"
-    );
-
-    held_open.release();
-
-    assert!(
-        harness.step_until(closed_the_window),
-        "the window never closed after the worker's thread ended"
-    );
+    if let Err(panic) = closing_app.join() {
+        panic::resume_unwind(panic);
+    }
 }
 
 /// A closing app sends no new snap request: the auto sweep a load armed is
