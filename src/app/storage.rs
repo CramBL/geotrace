@@ -155,6 +155,16 @@ impl StorageOpen {
 }
 
 impl Storage {
+    /// Where this run's databases live, and so what it locks against a
+    /// second instance. [`None`] for a run that stores nothing, and for one
+    /// with no platform data directory - [`Self::open`] reports why.
+    pub fn data_directory(self) -> Option<PathBuf> {
+        match self {
+            Self::Disabled => None,
+            Self::DataDirectory => Store::default_root().ok(),
+        }
+    }
+
     /// Open every database on a thread of its own, repainting when the result
     /// is ready for [`App::adopt_finished_storage_open`] to take.
     ///
@@ -423,6 +433,17 @@ mod tests {
         opened
             .try_recv()
             .expect("the disabled result is already in the channel");
+    }
+
+    /// A run that stores nothing has no directory to lock. One that stores
+    /// locks the very directory its databases are opened under.
+    #[test]
+    fn only_a_storing_run_has_a_data_directory_to_lock() {
+        assert_eq!(Storage::Disabled.data_directory(), None);
+        assert_eq!(
+            Storage::DataDirectory.data_directory(),
+            Store::default_root().ok()
+        );
     }
 
     /// Nothing is opened, so no test can reach the user's data directory

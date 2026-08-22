@@ -46,6 +46,7 @@ members = [
     "crates/gt-history-backend-sys",
     "crates/gt-history-types",
     "crates/gt-icon-tessellate",
+    "crates/gt-instance-lock",
     "crates/gt-ionex",
     "crates/gt-ionex-store",
     "crates/gt-jam",
@@ -103,6 +104,9 @@ egui_kittest = { version = "0.36", features = ["eframe", "wgpu", "snapshot"] }
 egui_plot = "0.37.0"
 egui_tiles = "0.17"
 env_logger = "0.11.10"
+# The advisory lock GeoTrace holds on its data directory while it runs. The OS
+# drops the lock when the process ends, however it ends.
+fd-lock = "4"
 # The IONEX archives serve their files gzipped without a transfer encoding,
 # so the client decompresses them itself.
 flate2 = "1"
@@ -306,6 +310,7 @@ gt-fetch = { path = "crates/gt-fetch" }
 gt-filter = { path = "crates/gt-filter" }
 gt-flare = { path = "crates/gt-flare" }
 gt-fmt = { path = "crates/gt-fmt" }
+gt-instance-lock = { path = "crates/gt-instance-lock" }
 gt-ionex = { path = "crates/gt-ionex" }
 gt-jam = { path = "crates/gt-jam" }
 gt-loaded-files = { path = "crates/gt-loaded-files" }

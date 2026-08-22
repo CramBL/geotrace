@@ -67,10 +67,15 @@ pub struct Store {
 impl Store {
     /// The store under the platform data directory.
     pub fn open_default() -> Result<Self, StoreError> {
-        let root = dirs::data_dir()
+        Ok(Self::open_in(Self::default_root()?))
+    }
+
+    /// Where [`Self::open_default`] puts the databases, without opening any
+    /// of them.
+    pub fn default_root() -> Result<PathBuf, StoreError> {
+        Ok(dirs::data_dir()
             .ok_or(StoreError::NoDataDir)?
-            .join(DIRECTORY);
-        Ok(Self::open_in(root))
+            .join(DIRECTORY))
     }
 
     /// The store under `root`, for tests and for a user-chosen location.

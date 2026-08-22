@@ -20,6 +20,7 @@
 - **System:** The shutdown window follows an archive delete with a bar, advancing as it rewrites each column.
 - **System:** Ctrl+C and `kill` now finish the writes in progress before exiting, the same as closing the window. A second signal quits at once, discarding them.
 - **System:** The window now opens right away and the databases open behind it, so a large archive no longer delays the first frame. Files named on the command line or dropped in wait for them and are stored as usual.
+- **System:** A second instance can no longer quietly work on the same archives: GeoTrace marks its data directory as in use while it runs.
 
 ### Changed
 
