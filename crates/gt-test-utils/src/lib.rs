@@ -1,6 +1,8 @@
 pub mod fixtures;
 #[cfg(feature = "snapshot")]
 pub mod interaction;
+#[cfg(feature = "ionex")]
+pub mod ionex_fixtures;
 pub mod log_fixtures;
 #[cfg(feature = "snapshot")]
 pub mod snapshot_harness;

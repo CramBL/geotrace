@@ -16,6 +16,7 @@ use gt_store::{
     DbError, FlareStore, HistoryDatabase as _, IonexStore, JamStore, Recordings, SolarStore, Store,
 };
 
+use super::App;
 use super::history_db::HistoryWorker;
 
 /// Where a run's databases live.
@@ -190,10 +191,43 @@ fn open_in(store: &Store, ctx: &Context, pending_writes: PendingWrites) -> OpenS
     }
 }
 
+impl App {
+    /// Install the databases a [`Storage::open`] produced.
+    ///
+    /// The schedulers read their archived days here, so this runs before
+    /// anything asks them what they hold.
+    pub(super) fn adopt_open_storage(&mut self, storage: OpenStorage) {
+        let OpenStorage {
+            history,
+            history_failure,
+            archive,
+            geomagnetic_indices,
+            tec_maps,
+            solar_flares,
+        } = storage;
+
+        self.install_history_worker(history);
+        self.history_failure = history_failure;
+
+        self.jamming.adopt_store(archive);
+        self.geomagnetic_indices.adopt_store(geomagnetic_indices);
+        self.tec_maps.adopt_store(tec_maps);
+        self.solar_flares.adopt_store(solar_flares);
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use chrono::{NaiveDate, Utc};
+    use gt_fetch::TransportSource;
+    use gt_ionex::IonexProduct;
+    use gt_solar::series::KpSeries;
+    use gt_test_utils::ionex_fixtures;
     use rstest::rstest;
     use tempfile::TempDir;
+
+    use crate::app::environment_storage::PrunedDays;
+    use crate::app::{flares, jamming, solar, tec};
 
     use super::*;
 
@@ -254,6 +288,122 @@ mod tests {
 
         assert_eq!(failure, expected);
         assert_eq!(failure.path(), db_path(), "the path is carried through");
+    }
+
+    /// Archive `day` in each of the four day archives `opened` holds, through
+    /// the handles it already has open.
+    fn archive_one_day_in_each(opened: &OpenStorage, day: NaiveDate) {
+        let fetched_at = Utc::now();
+        opened
+            .archive
+            .as_ref()
+            .expect("interference archive")
+            .insert_day(day, "host", fetched_at, &[])
+            .expect("insert interference");
+        opened
+            .geomagnetic_indices
+            .as_ref()
+            .expect("geomagnetic index archive")
+            .insert_or_replace_kp_day(
+                day,
+                "host",
+                fetched_at,
+                &KpSeries {
+                    samples: Vec::new(),
+                },
+            )
+            .expect("insert geomagnetic indices");
+        opened
+            .tec_maps
+            .as_ref()
+            .expect("TEC map archive")
+            .insert_or_replace_day(
+                day,
+                "host",
+                fetched_at,
+                IonexProduct::Final,
+                &ionex_fixtures::uniform_maps(day, &[(0, 10.0)]),
+            )
+            .expect("insert TEC maps");
+        opened
+            .solar_flares
+            .as_ref()
+            .expect("solar flare archive")
+            .insert_or_replace_day(day, "host", fetched_at, &[])
+            .expect("insert solar flares");
+    }
+
+    /// Each scheduler derives the days it holds from its archive's index, and
+    /// a scheduler that adopts an archive after construction has to read that
+    /// index too - otherwise it would re-download days it already has.
+    ///
+    /// Every constructor routes through its own `adopt_store`, so this covers
+    /// both ways a scheduler takes an archive.
+    #[test]
+    fn a_scheduler_adopting_an_archive_reports_the_days_it_holds() {
+        let (_dir, store) = store();
+        let archived = NaiveDate::from_ymd_opt(2026, 7, 20).expect("valid date");
+        let opened = open_in(&store, &Context::default(), PendingWrites::default());
+        archive_one_day_in_each(&opened, archived);
+
+        let mut jamming = jamming::JammingScheduler::new(
+            Context::default(),
+            None,
+            gt_jam::DEFAULT_BASE_URL.to_owned(),
+            TransportSource::Offline,
+            PendingWrites::default(),
+        );
+        jamming.adopt_store(opened.archive.clone());
+
+        let mut geomagnetic_indices = solar::GeomagneticIndexScheduler::new(
+            Context::default(),
+            None,
+            gt_solar::DEFAULT_BASE_URL.to_owned(),
+            TransportSource::Offline,
+            PendingWrites::default(),
+        );
+        geomagnetic_indices.adopt_store(opened.geomagnetic_indices.clone());
+
+        let mut tec_maps = tec::TecMapScheduler::new(
+            Context::default(),
+            None,
+            crate::settings::TecSettings::default().mirrors,
+            None,
+            TransportSource::Offline,
+            PendingWrites::default(),
+        );
+        tec_maps.adopt_store(opened.tec_maps.clone());
+
+        let mut solar_flares = flares::SolarFlareScheduler::new(
+            Context::default(),
+            None,
+            gt_flare::DEFAULT_BASE_URL.to_owned(),
+            None,
+            TransportSource::Offline,
+            PendingWrites::default(),
+        );
+        solar_flares.adopt_store(opened.solar_flares.clone());
+
+        assert_eq!(
+            jamming.archived_days_covered(PrunedDays::All),
+            1,
+            "interference"
+        );
+        assert_eq!(
+            geomagnetic_indices.archived_days_covered(PrunedDays::All),
+            1,
+            "geomagnetic indices"
+        );
+        assert_eq!(
+            tec_maps.archived_days_covered(PrunedDays::All),
+            1,
+            "TEC maps"
+        );
+        assert_eq!(
+            solar_flares.archived_days_covered(PrunedDays::All),
+            1,
+            "solar flares"
+        );
     }
 
     /// One database being unusable says nothing about the other, so the

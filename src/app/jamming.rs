@@ -199,19 +199,8 @@ impl JammingScheduler {
         pending_writes: PendingWrites,
     ) -> Self {
         let (tx, rx) = mpsc::channel();
-        let archived_cells = store
-            .as_ref()
-            .map(|store| store.days())
-            .transpose()
-            .inspect_err(|err| log::error!("Reading the interference archive index: {err}"))
-            .ok()
-            .flatten()
-            .into_iter()
-            .flatten()
-            .map(|stored| (stored.day, stored.cells))
-            .collect();
-        Self {
-            archived_cells,
+        let mut scheduler = Self {
+            archived_cells: BTreeMap::new(),
             shown: None,
             selection: DaySelection::new(None, calendar::today_utc()),
             refused: HashSet::new(),
@@ -221,13 +210,24 @@ impl JammingScheduler {
             tx,
             rx,
             base_url,
-            store,
+            store: None,
             http: None,
             transport_source,
             days: DayFetchQueue::default(),
             last_request: None,
             pending_writes,
-        }
+        };
+        scheduler.adopt_store(store);
+        scheduler
+    }
+
+    /// Take an opened archive, reading how many cells it holds for each day.
+    pub fn adopt_store(&mut self, store: Option<Arc<JamStore>>) {
+        self.archived_cells = store
+            .as_ref()
+            .map(|store| archived_cells_of(store))
+            .unwrap_or_default();
+        self.store = store;
     }
 
     /// A scheduler with no archive to write to, so it fetches nothing.
@@ -621,6 +621,17 @@ impl JammingScheduler {
             }
         }
     }
+}
+
+/// How many cells the archive holds for each day it holds.
+fn archived_cells_of(store: &JamStore) -> BTreeMap<NaiveDate, u32> {
+    store
+        .days()
+        .inspect_err(|err| log::error!("Reading the interference archive index: {err}"))
+        .into_iter()
+        .flatten()
+        .map(|stored| (stored.day, stored.cells))
+        .collect()
 }
 
 /// One archived day's sample of the context line: the share over the cell the

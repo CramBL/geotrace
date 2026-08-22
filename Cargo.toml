@@ -352,7 +352,7 @@ egui_kittest.workspace = true
 # Gzips an IONEX file for the TEC ingest tests, the way the archive serves one.
 flate2.workspace = true
 geotrace-sdk = { path = "sdk/rust/geotrace-sdk" }
-gt-test-utils = { path = "crates/gt-test-utils", features = ["snapshot"] }
+gt-test-utils = { path = "crates/gt-test-utils", features = ["ionex", "snapshot"] }
 insta.workspace = true
 rstest.workspace = true
 tempfile.workspace = true
