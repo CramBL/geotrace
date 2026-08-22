@@ -25,10 +25,10 @@ impl App {
         }
     }
 
-    /// Put `worker` behind the history window, ending the worker it replaces.
+    /// Put `worker` behind the app's history, ending the worker it replaces.
     ///
-    /// The worker it replaces is ended on a thread of its own, so a database
-    /// edit still running does not hold the GUI thread.
+    /// Ending the previous worker joins its thread, blocking until the request
+    /// it is on finishes.
     pub(super) fn install_history_worker(&mut self, worker: history_db::HistoryWorker) {
         let previous = std::mem::replace(&mut self.history, worker);
         previous.shutdown();
