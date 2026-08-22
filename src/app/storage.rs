@@ -6,18 +6,29 @@
 //! [`Storage::Disabled`] for a run that stores nothing. Tests pick the
 //! second, so no test reaches the user's recordings or interference
 //! archive.
+//!
+//! The open runs on a thread of its own, reporting over an mpsc channel and
+//! repainting when it lands, as [`super::jamming`] describes. The window is
+//! painted from the first frame, and [`App::adopt_finished_storage_open`]
+//! installs the databases in whichever frame they arrive.
 
+use std::mem;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
+use std::thread;
 
 use egui::Context;
-use gt_pending_writes::PendingWrites;
+use gt_pending_writes::{PendingWrites, WriteKind};
 use gt_store::{
     DbError, FlareStore, HistoryDatabase as _, IonexStore, JamStore, Recordings, SolarStore, Store,
 };
 
 use super::App;
 use super::history_db::HistoryWorker;
+
+/// What the open is called wherever it is shown: the loading overlay while it
+/// runs, and the shutdown window when a close waits for it.
+pub(in crate::app) const OPENING_DATABASES: &str = "Opening the databases";
 
 /// Where a run's databases live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,7 +91,110 @@ impl OpenStorage {
     }
 }
 
+/// A file load the app took before the databases landed, held until they do.
+///
+/// A recording loaded without them would not be stored, and its tracks would
+/// resolve against no archive and cache that they have no environment data.
+pub(in crate::app) enum QueuedLoad {
+    Path(PathBuf),
+    /// A drop or a paste, which carries the bytes themselves.
+    Bytes {
+        bytes: Arc<[u8]>,
+        name: String,
+    },
+    /// Log text pasted into the window.
+    PastedText(String),
+}
+
+/// How far the startup open has got.
+pub(in crate::app) enum StorageOpen {
+    Opening {
+        opened: mpsc::Receiver<OpenStorage>,
+        queued_loads: Vec<QueuedLoad>,
+    },
+    /// The open landed: its databases were adopted, or dropped because the
+    /// app was already closing.
+    Finished,
+}
+
+impl StorageOpen {
+    /// Whether the databases are still opening, which grays the controls that
+    /// need them.
+    pub(in crate::app) fn is_opening(&self) -> bool {
+        matches!(self, Self::Opening { .. })
+    }
+
+    /// The loads waiting on the databases, or [`None`] once they have landed
+    /// and a load can go straight to the loader.
+    pub(in crate::app) fn queued_loads_mut(&mut self) -> Option<&mut Vec<QueuedLoad>> {
+        match self {
+            Self::Opening { queued_loads, .. } => Some(queued_loads),
+            Self::Finished => None,
+        }
+    }
+
+    fn opening(opened: mpsc::Receiver<OpenStorage>) -> Self {
+        Self::Opening {
+            opened,
+            queued_loads: Vec::new(),
+        }
+    }
+
+    /// Hands the open to a test, which lands the databases itself through the
+    /// sender it gets back. What is already queued stays queued.
+    #[cfg(test)]
+    pub(in crate::app) fn take_over_for_test(&mut self) -> mpsc::Sender<OpenStorage> {
+        let (sender, opened) = mpsc::channel();
+        let queued_loads = self.queued_loads_mut().map(mem::take).unwrap_or_default();
+        *self = Self::Opening {
+            opened,
+            queued_loads,
+        };
+        sender
+    }
+}
+
 impl Storage {
+    /// Open every database on a thread of its own, repainting when the result
+    /// is ready for [`App::adopt_finished_storage_open`] to take.
+    ///
+    /// [`Self::Disabled`] opens nothing, so its result is in the channel
+    /// before the first frame and no thread is spawned.
+    #[expect(
+        clippy::expect_used,
+        reason = "thread spawn can only fail under extreme system resource exhaustion"
+    )]
+    pub(in crate::app) fn open_in_background(
+        self,
+        ctx: &Context,
+        pending_writes: PendingWrites,
+    ) -> StorageOpen {
+        let (sender, opened) = mpsc::channel();
+        match self {
+            Self::Disabled => {
+                sender.send(OpenStorage::disabled()).ok();
+            }
+            Self::DataDirectory => {
+                let open_write =
+                    pending_writes.try_begin(OPENING_DATABASES, WriteKind::DatabaseOpen);
+                let ctx = ctx.clone();
+                thread::Builder::new()
+                    .name("storage-open".to_owned())
+                    .spawn(move || {
+                        let storage = Self::DataDirectory.open(&ctx, pending_writes);
+                        sender.send(storage).ok();
+                        ctx.request_repaint();
+                        // Held until the result is in the channel: a close
+                        // during startup waits for the repair the open may be
+                        // part-way through.
+                        drop(open_write);
+                    })
+                    .expect("failed to spawn the storage-open thread");
+            }
+        }
+        StorageOpen::opening(opened)
+    }
+
     pub fn open(self, ctx: &Context, pending_writes: PendingWrites) -> OpenStorage {
         match self {
             Self::Disabled => OpenStorage::disabled(),
@@ -197,6 +311,10 @@ impl App {
     /// The schedulers read their archived days here: nothing may ask them what
     /// they hold before this runs.
     pub(super) fn adopt_open_storage(&mut self, storage: OpenStorage) {
+        debug_assert!(
+            !self.shutdown.has_begun(),
+            "a history worker is never installed once shutdown has ended one"
+        );
         let OpenStorage {
             history,
             history_failure,
@@ -213,6 +331,55 @@ impl App {
         self.geomagnetic_indices.adopt_store(geomagnetic_indices);
         self.tec_maps.adopt_store(tec_maps);
         self.solar_flares.adopt_store(solar_flares);
+    }
+
+    /// Install the databases in the frame the open lands them, and start what
+    /// waited on them.
+    ///
+    /// A storage that lands after the app began closing is dropped instead:
+    /// its recordings database is closed on a thread of its own, so the app
+    /// closes with nothing left open.
+    pub(in crate::app) fn adopt_finished_storage_open(&mut self) {
+        let StorageOpen::Opening {
+            opened,
+            queued_loads,
+        } = &mut self.storage_open
+        else {
+            return;
+        };
+        let storage = match opened.try_recv() {
+            Ok(storage) => storage,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                log::error!(
+                    "The storage-open thread ended without reporting: this run stores nothing"
+                );
+                self.toasts
+                    .error("The databases could not be opened: nothing is stored this run");
+                OpenStorage::disabled()
+            }
+        };
+        let queued_loads = mem::take(queued_loads);
+        self.storage_open = StorageOpen::Finished;
+
+        if self.shutdown.has_begun() {
+            self.end_history_worker_off_the_gui_thread(storage.history);
+            return;
+        }
+
+        debug_assert!(
+            self.loader.loading_jobs.is_empty(),
+            "a file is loaded only once the databases have been adopted"
+        );
+        self.adopt_open_storage(storage);
+        self.auto_prune_environment_days();
+        for load in queued_loads {
+            match load {
+                QueuedLoad::Path(path) => self.spawn_load_path(path),
+                QueuedLoad::Bytes { bytes, name } => self.handle_dropped_bytes(bytes, &name),
+                QueuedLoad::PastedText(text) => self.loader.spawn_pasted_log_text(text),
+            }
+        }
     }
 }
 
@@ -241,6 +408,21 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let store = Store::open_in(dir.path());
         (dir, store)
+    }
+
+    /// Opening nothing needs no thread: the result is in the channel before
+    /// the first frame polls for it.
+    #[test]
+    fn a_disabled_storage_lands_before_the_first_poll() {
+        let open =
+            Storage::Disabled.open_in_background(&Context::default(), PendingWrites::default());
+
+        let StorageOpen::Opening { opened, .. } = &open else {
+            panic!("the open is what the app starts with");
+        };
+        opened
+            .try_recv()
+            .expect("the disabled result is already in the channel");
     }
 
     /// Nothing is opened, so no test can reach the user's data directory

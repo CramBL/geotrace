@@ -240,6 +240,8 @@ impl BackfillDataset for SolarFlareBackfill {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackfillReadiness {
     Ready,
+    /// There is nowhere to download to yet: the archives are still opening.
+    ArchiveStillOpening,
     /// There is nowhere to download to: the archive could not be opened.
     WithoutArchive,
     /// No request may leave the machine: GeoTrace runs offline.
@@ -416,6 +418,9 @@ impl<D: BackfillDataset> BackfillUi<D> {
     fn blocked_hover(readiness: BackfillReadiness) -> String {
         match readiness {
             BackfillReadiness::Ready => "Pick an end date on or after the start date".to_owned(),
+            BackfillReadiness::ArchiveStillOpening => {
+                format!("The {} is still opening", D::ARCHIVE_NAME)
+            }
             BackfillReadiness::WithoutArchive => format!(
                 "There is nowhere to download to: the {} could not be opened",
                 D::ARCHIVE_NAME
@@ -623,6 +628,7 @@ mod tests {
     /// Never hidden, per DESIGN.md: what blocks a download grays the button
     /// and says so on hover.
     #[rstest]
+    #[case::while_the_archive_opens(BackfillReadiness::ArchiveStillOpening)]
     #[case::without_an_archive(BackfillReadiness::WithoutArchive)]
     #[case::offline(BackfillReadiness::Offline)]
     #[case::without_an_api_key(BackfillReadiness::WithoutApiKey)]
@@ -645,6 +651,10 @@ mod tests {
     #[case::ready(
         BackfillReadiness::Ready,
         "Pick an end date on or after the start date"
+    )]
+    #[case::while_the_archive_opens(
+        BackfillReadiness::ArchiveStillOpening,
+        "The interference archive is still opening"
     )]
     #[case::without_an_archive(
         BackfillReadiness::WithoutArchive,

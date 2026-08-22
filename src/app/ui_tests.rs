@@ -7,6 +7,7 @@ use egui_phosphor::regular::CHECK as ICON_CHECK;
 use egui_phosphor::regular::COPY as ICON_COPY;
 use egui_phosphor::regular::DOTS_SIX as ICON_DOTS_SIX;
 use egui_phosphor::regular::FRAME_CORNERS as ICON_FRAME_CORNERS;
+use egui_phosphor::regular::GEAR as ICON_GEAR;
 use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use egui_phosphor::regular::PUSH_PIN as ICON_PUSH_PIN;
 use egui_phosphor::regular::TERMINAL_WINDOW as ICON_TERMINAL_WINDOW;
@@ -25,6 +26,7 @@ use std::{
 use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
 use geotrace_sdk::{Channel, ChannelUnit, DateTime, Duration, Unit, Utc};
 use gt_jam::wire::HexObservation;
+use gt_store::{HistoryDatabase as _, Recordings};
 use gt_test_utils::{
     By, DEMO_BYTES, GOLD_BYTES, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec,
     SyntheticLogTimestamps, TestHarness, synthetic_gtd_bytes, synthetic_journald_log,
@@ -34,9 +36,12 @@ use gt_types::{FileIdx, LoadWarning, TrackIdx, TrackRef};
 use strum::IntoEnumIterator as _;
 
 use super::App;
+use super::backfill_ui::DOWNLOAD_HISTORY_LABEL;
+use super::environment_storage_ui::{DELETE_ALL_LABEL, DeleteBlocker, PRUNE_BUTTON_LABEL};
 use super::log_viewer;
 use super::query;
 use super::settings_ui::{self, SettingsPage};
+use super::storage::{OPENING_DATABASES, OpenStorage};
 use crate::termination_signal::TERMINATION_SIGNAL_FLAG;
 
 /// In-memory [`egui::DroppedFile`] for drag-drop tests. `bytes` drops carry a
@@ -107,9 +112,14 @@ fn pin_settings_dates(app: &mut App) {
 /// App constructor for the functional (non-snapshot) tests that don't touch a
 /// config file. Fading stays off so frame counts are deterministic.
 fn transient_app(cc: &mut eframe::CreationContext<'_>) -> App {
+    transient_app_with_paths(cc, &[])
+}
+
+/// [`transient_app`] started with the files a command line named.
+fn transient_app_with_paths(cc: &eframe::CreationContext<'_>, paths: &[PathBuf]) -> App {
     App::new_with_config(
         cc,
-        &[],
+        paths,
         None,
         super::StartupOptions {
             fading_enabled: false,
@@ -3802,6 +3812,321 @@ fn a_history_failure_in_the_adopted_storage_raises_its_prompt() {
             .query_by_label_contains("Another process has the recording history database open")
             .is_some(),
         "the busy prompt is up"
+    );
+}
+
+/// The app as it starts with its databases still opening, and the sender the
+/// test lands them through. `paths` are the ones a command line named.
+///
+/// The open is taken over before the harness's first frame, so nothing is
+/// adopted until the test says so.
+fn app_with_the_databases_still_opening<'a>(
+    paths: &[PathBuf],
+) -> (Harness<'a, App>, mpsc::Sender<OpenStorage>) {
+    let (sender_tx, sender_rx) = mpsc::channel();
+    let harness = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .with_wait_for_pending_images(false)
+        .build_eframe(|cc| {
+            let mut app = transient_app_with_paths(cc, paths);
+            sender_tx.send(app.storage_open.take_over_for_test()).ok();
+            app
+        });
+    let databases = sender_rx.recv().expect("the app was built");
+    (harness, databases)
+}
+
+/// Every database under `store`, as a finished open hands them over.
+fn storage_opened_in(
+    store: &gt_store::Store,
+    ctx: &egui::Context,
+    pending_writes: &gt_pending_writes::PendingWrites,
+) -> OpenStorage {
+    OpenStorage {
+        history: crate::app::history_db::HistoryWorker::spawn(
+            store
+                .open_recordings()
+                .expect("open the recordings database"),
+            ctx.clone(),
+            pending_writes.clone(),
+        ),
+        history_failure: None,
+        archive: store.open_interference().ok(),
+        geomagnetic_indices: store.open_geomagnetic_indices().ok(),
+        tec_maps: store.open_tec_maps().ok(),
+        solar_flares: store.open_solar_flares().ok(),
+    }
+}
+
+/// Lands `store` behind the app, as the open thread does when it finishes.
+fn land_the_databases(
+    harness: &mut Harness<'_, App>,
+    databases: &mpsc::Sender<OpenStorage>,
+    store: &gt_store::Store,
+) {
+    let pending_writes = harness.state().pending_writes.clone();
+    let opened = storage_opened_in(store, &harness.ctx, &pending_writes);
+    databases.send(opened).expect("the app holds the receiver");
+    harness.step();
+}
+
+/// The window is painted and takes input from the first frame, with the
+/// databases still opening behind it.
+#[test]
+fn the_window_takes_input_while_the_databases_open_and_adopts_them_when_they_land() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path());
+    let (mut harness, databases) = app_with_the_databases_still_opening(&[]);
+    harness.step();
+
+    assert!(harness.state().storage_open.is_opening());
+    harness.get_by_label_contains(OPENING_DATABASES);
+    harness.get_by_label_contains(ICON_GEAR).click();
+    harness.step();
+    assert!(
+        harness.state().settings_open,
+        "the window answered a click while the databases were opening"
+    );
+
+    land_the_databases(&mut harness, &databases, &store);
+
+    assert!(!harness.state().storage_open.is_opening());
+    assert_eq!(
+        harness.state().history.path(),
+        Some(store.recordings_path().as_path()),
+        "the app stores through the database the open landed"
+    );
+    assert!(
+        harness.query_by_label_contains(OPENING_DATABASES).is_none(),
+        "the overlay went once the databases landed"
+    );
+}
+
+/// A file named on the command line waits for the databases: loading it before
+/// they land would leave it unstored, with nothing to store it later.
+#[test]
+fn a_file_named_before_the_databases_land_is_loaded_and_stored_once_they_do() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path());
+    let gtd_path = dir.path().join("queued.gtd");
+    std::fs::write(&gtd_path, minimal_gtd_bytes()).expect("write the recording");
+
+    let (mut harness, databases) = app_with_the_databases_still_opening(&[gtd_path]);
+    harness.run_steps(3);
+
+    assert!(
+        harness.state().loader.loading_jobs.is_empty(),
+        "the load waits for the databases"
+    );
+    assert_eq!(harness.state().shared.borrow().loaded_files.len(), 0);
+
+    land_the_databases(&mut harness, &databases, &store);
+
+    assert!(
+        harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1),
+        "the file that waited for the databases did not load"
+    );
+    let stored = harness
+        .step_until_some(|_| {
+            let recordings = Recordings::open_or_create(&store.recordings_path()).ok()?;
+            let listed = recordings.list_recordings().ok()?;
+            (!listed.is_empty()).then_some(listed)
+        })
+        .expect("the recording was never stored");
+    assert_eq!(stored.len(), 1);
+}
+
+/// A drop that arrives before the databases waits for them the same way a
+/// command-line path does.
+#[test]
+fn a_file_dropped_before_the_databases_land_loads_once_they_do() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path());
+    let (mut harness, databases) = app_with_the_databases_still_opening(&[]);
+
+    harness
+        .input_mut()
+        .dropped_files
+        .push(Arc::new(TestDroppedFile::bytes(
+            minimal_gtd_bytes().as_slice(),
+            "dropped.gtd",
+        )));
+    harness.run_steps(3);
+    assert!(
+        harness.state().loader.loading_jobs.is_empty(),
+        "the drop waits for the databases"
+    );
+    assert_eq!(harness.state().shared.borrow().loaded_files.len(), 0);
+
+    land_the_databases(&mut harness, &databases, &store);
+
+    assert!(
+        harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1),
+        "the drop that waited for the databases did not load"
+    );
+}
+
+/// Pasted log text waits for the databases like any other load: a load that
+/// started before them would trip the invariant adoption asserts.
+#[test]
+fn log_text_pasted_before_the_databases_land_loads_once_they_do() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path());
+    let (mut harness, databases) = app_with_the_databases_still_opening(&[]);
+
+    harness.input_mut().events.push(egui::Event::Paste(
+        "2026-01-01 14:02:11 navsyncd: queue empty\n".to_owned(),
+    ));
+    harness.run_steps(3);
+    assert!(
+        harness.state().logs.is_empty(),
+        "the paste loaded before the databases landed"
+    );
+
+    land_the_databases(&mut harness, &databases, &store);
+
+    assert!(
+        harness.step_until(|harness| harness.state().logs.len() == 1),
+        "the paste that waited for the databases did not load"
+    );
+}
+
+/// A storage open that ends without reporting leaves the run storing nothing,
+/// and says so instead of failing quietly.
+#[test]
+fn a_storage_open_that_never_reports_still_runs_the_loads_that_waited() {
+    let (mut harness, databases) = app_with_the_databases_still_opening(&[]);
+
+    harness
+        .input_mut()
+        .dropped_files
+        .push(Arc::new(TestDroppedFile::bytes(
+            minimal_gtd_bytes().as_slice(),
+            "dropped.gtd",
+        )));
+    harness.run_steps(3);
+    drop(databases);
+
+    assert!(
+        harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1),
+        "the drop never loaded once the open gave up"
+    );
+    assert!(!harness.state().storage_open.is_opening());
+}
+
+/// Never hidden, per DESIGN.md: the controls that need an archive are grayed
+/// while the archives open, and say what they are waiting for.
+#[test]
+fn the_environment_controls_are_grayed_while_the_archives_open() {
+    let (mut harness, databases) = app_with_the_databases_still_opening(&[]);
+    harness.state_mut().settings_open = true;
+    harness.state_mut().settings_page = SettingsPage::Application;
+    harness.run_steps(3);
+
+    for delete in harness.query_all_by_label_contains(DELETE_ALL_LABEL) {
+        assert!(delete.accesskit_node().is_disabled());
+    }
+    let prune = harness.get_by_label_contains(PRUNE_BUTTON_LABEL);
+    assert!(prune.accesskit_node().is_disabled());
+
+    harness.hover_and_settle(By::new().label_contains(PRUNE_BUTTON_LABEL), 3);
+    harness.get_by_label_contains(DeleteBlocker::ArchivesOpening.hover_text());
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path());
+    // A day to delete, or the control stays grayed for having nothing to act on.
+    store
+        .open_interference()
+        .expect("open the archive")
+        .insert_day(
+            chrono::NaiveDate::from_ymd_opt(2026, 7, 20).expect("date"),
+            "host",
+            chrono::Utc::now(),
+            &[],
+        )
+        .expect("insert");
+    land_the_databases(&mut harness, &databases, &store);
+    harness.run_steps(3);
+
+    assert!(
+        !harness
+            .get_by_label_contains(PRUNE_BUTTON_LABEL)
+            .accesskit_node()
+            .is_disabled(),
+        "the archives landed, so the delete is live again"
+    );
+    assert!(
+        harness
+            .query_by_label_contains(DeleteBlocker::ArchivesOpening.hover_text())
+            .is_none(),
+        "the opening hover text outlived the open"
+    );
+}
+
+/// The download control on a source page is grayed the same way: there is
+/// nowhere to download to until the archive is open.
+#[test]
+fn the_download_control_is_grayed_while_the_archive_opens() {
+    let (mut harness, _databases) = app_with_the_databases_still_opening(&[]);
+    harness.state_mut().settings_open = true;
+    harness.state_mut().settings_page = SettingsPage::AircraftInterference;
+    harness.run_steps(3);
+
+    let download = harness.get_by_label_contains(DOWNLOAD_HISTORY_LABEL);
+    assert!(download.accesskit_node().is_disabled());
+
+    harness.hover_and_settle(By::new().label_contains(DOWNLOAD_HISTORY_LABEL), 3);
+    harness.get_by_label_contains("The interference archive is still opening");
+}
+
+/// The startup auto-prune acts on the archives, so it runs when they land -
+/// at construction there is nothing to delete from.
+#[test]
+fn the_environment_auto_prune_runs_when_the_archives_land() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path());
+    let old = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap_or_default();
+    let archive = store.open_interference().expect("the interference archive");
+    archive
+        .insert_day(old, "host", chrono::Utc::now(), &[])
+        .expect("archive a day past any offered age");
+
+    let (mut harness, databases) = app_with_the_databases_still_opening(&[]);
+    enable_environment_auto_prune(&mut harness, 12);
+
+    land_the_databases(&mut harness, &databases, &store);
+
+    assert!(
+        harness.step_until(|harness| !harness.state().environment_prune_running()),
+        "the delete did not finish"
+    );
+    assert_eq!(archived_days(&archive), []);
+}
+
+/// A storage that lands after the close began installs nothing: the worker
+/// shutdown already ended is not replaced by a live one, which would keep the
+/// database open past the close.
+#[test]
+fn a_storage_landing_after_the_close_began_installs_no_worker() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path());
+    let (mut harness, databases) = app_with_the_databases_still_opening(&[]);
+    harness.step();
+
+    harness.state_mut().begin_shutdown();
+    land_the_databases(&mut harness, &databases, &store);
+
+    assert!(
+        harness.state().history.path().is_none(),
+        "the close left the app with no worker"
+    );
+    assert!(
+        harness.state().loader.db_path.is_none(),
+        "nothing is stored while the app closes"
+    );
+    assert!(
+        harness.step_until(|harness| harness.state().shutdown.close_allowed()),
+        "the app did not close"
     );
 }
 

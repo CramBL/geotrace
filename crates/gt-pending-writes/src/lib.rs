@@ -28,6 +28,9 @@ pub enum WriteKind {
     ArchiveDayInsert {
         archive: &'static str,
     },
+    /// Opening the databases at startup, which finishes any delete or repair a
+    /// previous run left part-way through.
+    DatabaseOpen,
     RecordingDatabase,
     Settings,
 }
@@ -43,6 +46,7 @@ impl WriteKind {
             Self::ArchiveDayInsert { archive } => {
                 format!("The {archive} day is downloaded again next run")
             }
+            Self::DatabaseOpen => "The databases are repaired again next run".to_owned(),
             Self::RecordingDatabase => {
                 "The recording database needs repair before it opens again".to_owned()
             }
@@ -440,6 +444,7 @@ mod tests {
         },
         "The aircraft interference day is downloaded again next run"
     )]
+    #[case(WriteKind::DatabaseOpen, "The databases are repaired again next run")]
     #[case(
         WriteKind::RecordingDatabase,
         "The recording database needs repair before it opens again"

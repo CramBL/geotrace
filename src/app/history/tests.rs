@@ -24,6 +24,8 @@ struct HistoryHarness {
     window: HistoryWindow,
     worker: HistoryWorker,
     storage: crate::settings::StorageSettings,
+    /// What the app reports while its startup open runs.
+    databases_opening: bool,
     _dir: tempfile::TempDir,
 }
 
@@ -42,12 +44,19 @@ fn history_harness(entries: Vec<RecordingEntry>) -> HistoryHarness {
             auto_prune_max_bytes: 0,
             ..crate::settings::StorageSettings::default()
         },
+        databases_opening: false,
         _dir: dir,
     }
 }
 
 fn show_history(ui: &mut egui::Ui, s: &mut HistoryHarness) {
-    s.window.show(ui.ctx(), &s.worker, &[], &mut s.storage);
+    s.window.show(
+        ui.ctx(),
+        &s.worker,
+        &[],
+        &mut s.storage,
+        s.databases_opening,
+    );
 }
 
 /// A harness backed by a real database holding one recording, with no
@@ -82,6 +91,7 @@ fn history_harness_with_recording(identity: &str) -> HistoryHarness {
             auto_prune_max_bytes: 0,
             ..crate::settings::StorageSettings::default()
         },
+        databases_opening: false,
         _dir: dir,
     }
 }
@@ -140,6 +150,26 @@ fn rename_workflow_updates_the_listed_identity_end_to_end() {
         h.inner
             .step_until(|h| h.query_by_label_contains("ride.gtd v2").is_some()),
         "the renamed identity should appear in the refreshed list"
+    );
+}
+
+/// The window opened during startup says the database is opening: it is not
+/// unavailable, it is not open yet.
+#[test]
+fn the_window_reports_the_databases_still_opening() {
+    let mut harness = history_harness(vec![entry_with_identity("auto:ride.gtd")]);
+    harness.databases_opening = true;
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(show_history, harness);
+    // The spinner repaints every frame, so the harness is stepped.
+    h.inner.run_steps(2);
+
+    h.inner
+        .get_by_label_contains(crate::app::history::OPENING_RECORDINGS_DATABASE);
+    assert!(
+        h.inner.query_by_label_contains("ride.gtd").is_none(),
+        "the list waits for the database"
     );
 }
 

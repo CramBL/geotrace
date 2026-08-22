@@ -97,7 +97,7 @@ impl App {
         let state = EnvironmentStorageState {
             usage: &usage,
             days_before_cutoff,
-            prune_running: self.environment_prune_running(),
+            deletes_blocked_by: self.environment_deletes_blocked_by(),
         };
         if let Some(request) = self.environment_storage_ui.ui(ui, state) {
             self.pending_environment_prune = Some(request);

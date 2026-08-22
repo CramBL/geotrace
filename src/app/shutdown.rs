@@ -309,11 +309,21 @@ impl App {
         self.shutdown.begin(Instant::now());
     }
 
-    /// Hands the worker to a thread of its own, which joins its `history-db`
-    /// thread while the GUI thread carries on painting. The app is left with
-    /// a disabled worker, which has nothing to join.
+    /// Hands the app's worker to a thread of its own, which joins its
+    /// `history-db` thread while the GUI thread carries on painting. The app
+    /// is left with a disabled worker, which has nothing to join.
     fn shut_down_history_worker_off_the_gui_thread(&mut self) {
         let history = mem::replace(&mut self.history, history_db::HistoryWorker::disabled());
+        self.end_history_worker_off_the_gui_thread(history);
+    }
+
+    /// Closes `history`'s database on a thread of its own, which the close
+    /// waits for. Also takes the worker a storage open lands after the app
+    /// began closing, which nothing adopts.
+    pub(in crate::app) fn end_history_worker_off_the_gui_thread(
+        &self,
+        history: history_db::HistoryWorker,
+    ) {
         let history_write = self
             .pending_writes
             .begin_shutdown_write(HISTORY_SHUTDOWN_LABEL, WriteKind::RecordingDatabase);

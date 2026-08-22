@@ -117,10 +117,13 @@ const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(520.0, 380.0);
 const NO_MATCHES_TEXT: &str = "No matching settings";
 
 impl App {
-    /// What a download control may do right now. An archive that could not be
-    /// opened outranks offline mode: it is the permanent condition.
+    /// What a download control may do right now. An archive still opening or
+    /// one that could not be opened outranks offline mode: there is nowhere
+    /// to download to either way.
     fn backfill_readiness(&self, archive_available: bool) -> BackfillReadiness {
-        if !archive_available {
+        if self.storage_open.is_opening() {
+            BackfillReadiness::ArchiveStillOpening
+        } else if !archive_available {
             BackfillReadiness::WithoutArchive
         } else if self.offline {
             BackfillReadiness::Offline
