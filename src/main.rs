@@ -1,11 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 pub mod app;
 pub mod settings;
+mod termination_signal;
 pub mod terms;
 
+use std::time::Duration;
 use std::{path::PathBuf, process::ExitCode};
 
 use gt_pending_writes::PendingWrites;
+
+use crate::app::shutdown;
+use crate::termination_signal::{TERMINATION_SIGNAL_FLAG, TerminationSignalAction};
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -92,13 +97,30 @@ fn run_self_update_cli() -> ExitCode {
     ExitCode::FAILURE
 }
 
-fn begin_shutdown_and_wait_for_pending_writes(pending_writes: &PendingWrites) {
+/// How often the wait for the last writes stops to read the
+/// termination-signal flag.
+const TERMINATION_SIGNAL_CHECK_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Waits for the writes still running once the window is gone, which is where
+/// "Run in background" leaves them, and reports the code to exit with.
+fn begin_shutdown_and_wait_for_pending_writes(pending_writes: &PendingWrites) -> ExitCode {
     pending_writes.begin_shutdown();
     for status in pending_writes.snapshot().running {
         log::info!("Waiting for background work to finish: {}", status.label);
     }
-    pending_writes.wait_until_idle();
+    while !pending_writes.wait_until_idle_for(TERMINATION_SIGNAL_CHECK_INTERVAL) {
+        if TERMINATION_SIGNAL_FLAG.take_action()
+            == TerminationSignalAction::QuitLeavingWritesUnfinished
+        {
+            shutdown::log_writes_left_unfinished(
+                shutdown::SECOND_SIGNAL_QUIT_CAUSE,
+                pending_writes,
+            );
+            return ExitCode::from(shutdown::FORCE_QUIT_EXIT_CODE);
+        }
+    }
     log::info!("Shutdown complete");
+    ExitCode::SUCCESS
 }
 
 fn main() -> ExitCode {
@@ -161,6 +183,8 @@ fn main() -> ExitCode {
         log_builder.filter_module(module, log::LevelFilter::Warn);
     }
     log_builder.init();
+
+    termination_signal::install_handler();
 
     // Safety net for very large recordings: egui packs the whole frame into
     // one vertex buffer, and eframe's default device limits cap buffers at
@@ -225,9 +249,9 @@ fn main() -> ExitCode {
             )))
         }),
     );
-    begin_shutdown_and_wait_for_pending_writes(&pending_writes);
+    let shutdown_exit_code = begin_shutdown_and_wait_for_pending_writes(&pending_writes);
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => shutdown_exit_code,
         Err(error) => {
             eprintln!("geotrace exited with an error: {error}");
             ExitCode::FAILURE
@@ -238,10 +262,66 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::process::ExitCode;
+    use std::thread;
+    use std::time::Duration;
 
+    use gt_pending_writes::{PendingWrites, WriteKind};
     use rstest::rstest;
 
     use crate::CliAction;
+    use crate::app::shutdown;
+    use crate::termination_signal::{TERMINATION_SIGNAL_FLAG, TerminationSignalAction};
+
+    #[test]
+    fn a_wait_with_nothing_left_to_finish_exits_clean() {
+        assert_eq!(
+            crate::begin_shutdown_and_wait_for_pending_writes(&PendingWrites::default()),
+            ExitCode::SUCCESS
+        );
+    }
+
+    /// Longer than [`TERMINATION_SIGNAL_CHECK_INTERVAL`]: the second signal
+    /// always ends the wait first. Short enough that a wait that stopped
+    /// reading the flag fails instead of hanging.
+    const HELD_WRITE_RELEASED_AFTER: Duration = Duration::from_secs(5);
+
+    /// The wait after the window closes reads the flag too: a signal there,
+    /// with one already read, abandons the write still running.
+    ///
+    /// No other test sees the process-global flag this raises: every test
+    /// runs in its own process under `cargo nextest`.
+    #[test]
+    fn a_second_signal_ends_the_wait_with_the_force_quit_code() {
+        let pending_writes = PendingWrites::default();
+        let compaction = pending_writes
+            .try_begin(
+                "Compacting the TEC archive",
+                WriteKind::ArchiveCompaction {
+                    archive: "ionospheric TEC",
+                },
+            )
+            .expect("the registry is running");
+        thread::Builder::new()
+            .name("pending-write-holder".to_owned())
+            .spawn(move || {
+                thread::sleep(HELD_WRITE_RELEASED_AFTER);
+                drop(compaction);
+            })
+            .expect("spawn the holding thread");
+        TERMINATION_SIGNAL_FLAG.raise();
+        assert_eq!(
+            TERMINATION_SIGNAL_FLAG.take_action(),
+            TerminationSignalAction::BeginShutdown
+        );
+
+        TERMINATION_SIGNAL_FLAG.raise();
+
+        assert_eq!(
+            crate::begin_shutdown_and_wait_for_pending_writes(&pending_writes),
+            ExitCode::from(shutdown::FORCE_QUIT_EXIT_CODE)
+        );
+    }
 
     // Decodes independently of app startup so a corrupt embedded icon fails
     // CI instead of only surfacing when someone launches the GUI.

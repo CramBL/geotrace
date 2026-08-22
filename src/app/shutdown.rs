@@ -1,4 +1,5 @@
-//! Closing the window with background writes still running.
+//! Closing the window, or taking a termination signal, with background
+//! writes still running.
 //!
 //! The close request is intercepted, the app keeps painting, and the window
 //! closes once the pending-write registry is idle.
@@ -8,10 +9,11 @@ use std::{mem, process};
 
 use egui::{CentralPanel, Label, Panel, ProgressBar, RichText, ScrollArea, Sides};
 use egui_phosphor::regular::CHECK as ICON_CHECK;
-use gt_pending_writes::{PendingWriteStatus, PendingWritesSnapshot, WriteKind};
+use gt_pending_writes::{PendingWriteStatus, PendingWrites, PendingWritesSnapshot, WriteKind};
 
 use super::modals::{self, ForceQuitChoice};
 use super::{App, history_db};
+use crate::termination_signal::{TERMINATION_SIGNAL_FLAG, TerminationSignalAction};
 
 /// Under this a close with nothing pending never leaves the normal UI.
 pub(in crate::app) const SHUTDOWN_WINDOW_GRACE: Duration = Duration::from_millis(200);
@@ -24,10 +26,23 @@ const SHUTDOWN_WINDOW_INNER_SIZE: egui::Vec2 = egui::vec2(420.0, 260.0);
 
 /// Non-zero, so a shell or a supervisor sees that the writes still running
 /// were abandoned.
-const FORCE_QUIT_EXIT_CODE: i32 = 3;
+pub(crate) const FORCE_QUIT_EXIT_CODE: u8 = 3;
+
+/// Logged by both places a second signal can reach: the frame loop and the
+/// wait that outlives the window.
+pub(crate) const SECOND_SIGNAL_QUIT_CAUSE: &str = "Quitting on a second termination signal";
 
 const SETTINGS_FLUSH_LABEL: &str = "Saving settings";
 const HISTORY_SHUTDOWN_LABEL: &str = "Finishing recording history work";
+
+/// Reports the writes the process is about to abandon, wherever it ends
+/// before they finish.
+pub(crate) fn log_writes_left_unfinished(cause: &str, pending_writes: &PendingWrites) {
+    log::error!(
+        "{cause}: {} background writes are left unfinished",
+        pending_writes.snapshot().running.len()
+    );
+}
 
 /// What the app paints this frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,9 +163,16 @@ impl ForceQuitPrompt {
 }
 
 impl App {
-    /// Answers the window's close button and drives the shutdown it starts,
-    /// returning what the app paints this frame.
+    /// Answers the window's close button and any termination signal, drives
+    /// the shutdown they start, and returns what the app paints this frame.
     pub(in crate::app) fn intercept_close_request(&mut self, ui: &mut egui::Ui) -> FrameContents {
+        match TERMINATION_SIGNAL_FLAG.take_action() {
+            TerminationSignalAction::KeepRunning => {}
+            TerminationSignalAction::BeginShutdown => self.begin_shutdown(),
+            TerminationSignalAction::QuitLeavingWritesUnfinished => {
+                self.exit_leaving_writes_unfinished(SECOND_SIGNAL_QUIT_CAUSE)
+            }
+        }
         let close_requested = ui.ctx().input(|i| i.viewport().close_requested());
         if close_requested && !self.shutdown.close_allowed() {
             ui.ctx()
@@ -178,11 +200,7 @@ impl App {
             let snapshot = self.pending_writes.snapshot();
             self.show_shutdown_window(ui, now, &snapshot);
             if self.show_force_quit_prompt(ui, &snapshot).is_some() {
-                log::error!(
-                    "Force quit: {} background writes are left unfinished",
-                    snapshot.running.len()
-                );
-                process::exit(FORCE_QUIT_EXIT_CODE);
+                self.exit_leaving_writes_unfinished("Force quit");
             }
         }
         if self
@@ -266,6 +284,13 @@ impl App {
             .interruption_costs_to_list(snapshot)?;
         let choice = modals::show_force_quit_confirmation(ui, &costs)?;
         self.shutdown.force_quit_prompt.answer(choice)
+    }
+
+    /// Ends the process with the registered writes unfinished, as the
+    /// force-quit button and a second termination signal both do.
+    fn exit_leaving_writes_unfinished(&self, cause: &str) -> ! {
+        log_writes_left_unfinished(cause, &self.pending_writes);
+        process::exit(i32::from(FORCE_QUIT_EXIT_CODE))
     }
 
     pub(in crate::app) fn begin_shutdown(&mut self) {
