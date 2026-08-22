@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use parking_lot::{Condvar, Mutex};
 
@@ -120,7 +121,8 @@ impl PendingWrites {
     /// Register a write about to start, or [`None`] once shutdown has begun.
     ///
     /// The flag is read and the write registered under one lock, so a write
-    /// that got a guard is always one [`Self::wait_until_idle`] waits for.
+    /// that got a guard is always one [`Self::wait_until_idle_for`] waits
+    /// for.
     pub fn try_begin(
         &self,
         label: impl Into<String>,
@@ -181,11 +183,15 @@ impl PendingWrites {
         self.0.state.lock().running.is_empty()
     }
 
-    pub fn wait_until_idle(&self) {
+    /// Waits for every registered write to finish, reporting whether they
+    /// all did within `timeout`. The caller decides what to do about the
+    /// ones that did not.
+    pub fn wait_until_idle_for(&self, timeout: Duration) -> bool {
         let mut state = self.0.state.lock();
         self.0
             .idle
-            .wait_while(&mut state, |state| !state.running.is_empty());
+            .wait_while_for(&mut state, |state| !state.running.is_empty(), timeout);
+        state.running.is_empty()
     }
 
     pub fn snapshot(&self) -> PendingWritesSnapshot {
@@ -399,7 +405,7 @@ mod tests {
             .expect("spawn the holding thread");
 
         let started_at = Instant::now();
-        writes.wait_until_idle();
+        assert!(writes.wait_until_idle_for(held_for * 100));
 
         assert!(
             started_at.elapsed() >= held_for,
@@ -413,9 +419,17 @@ mod tests {
     fn waiting_returns_at_once_when_nothing_is_running() {
         let writes = PendingWrites::default();
 
-        writes.wait_until_idle();
+        assert!(writes.wait_until_idle_for(Duration::ZERO));
+    }
 
-        assert!(writes.is_idle());
+    #[test]
+    fn waiting_gives_up_on_a_write_that_is_still_running() {
+        let writes = PendingWrites::default();
+        let _guard = writes
+            .try_begin("Compacting the TEC archive", TEC)
+            .expect("the registry is running");
+
+        assert!(!writes.wait_until_idle_for(Duration::from_millis(10)));
     }
 
     #[rstest]

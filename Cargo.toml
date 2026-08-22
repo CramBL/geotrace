@@ -15,6 +15,10 @@ repository.workspace = true
 readme.workspace = true
 rust-version.workspace = true
 
+# Unix termination signals: the crate does not build on Windows.
+[target.'cfg(unix)'.dependencies]
+signal-hook.workspace = true
+
 # publish = false (above) hides this package from dist by default. Opt the binary
 # back in so dist still builds and releases the GUI app.
 [package.metadata.dist]
@@ -136,6 +140,7 @@ rstest = "0.26"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+signal-hook = "0.4.4"
 smallvec = { version = "1", features = ["union"] }
 strum = { version = "0.28", features = ["derive"] }
 syn = "2"

@@ -27,7 +27,7 @@ mod recording_name_template;
 mod reference_window;
 mod settings_autosave;
 mod settings_ui;
-mod shutdown;
+pub(crate) mod shutdown;
 mod snap;
 mod snap_persist;
 mod snap_state;
@@ -68,6 +68,8 @@ use settings_ui::SettingsPage;
 use settings_ui::search::SettingsSearch;
 use snap_state::{PendingSnapRequest, SnapErrorDerived, SnapReplacePrompt, SnapScopePrompt};
 use strum::IntoEnumIterator;
+
+use crate::termination_signal;
 
 struct SharedAppState {
     loaded_files: LoadedFiles,
@@ -396,6 +398,7 @@ impl App {
     ) -> Self {
         cc.egui_ctx
             .set_fonts(gt_ui_theme::fonts::font_definitions());
+        termination_signal::set_gui_context_to_wake(&cc.egui_ctx);
 
         // GPU-instanced icon rendering. Without a wgpu render state (or with
         // a corrupted embed, which NavMap reports) the map falls back to the

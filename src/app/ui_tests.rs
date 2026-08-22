@@ -37,6 +37,7 @@ use super::App;
 use super::log_viewer;
 use super::query;
 use super::settings_ui::{self, SettingsPage};
+use crate::termination_signal::TERMINATION_SIGNAL_FLAG;
 
 /// In-memory [`egui::DroppedFile`] for drag-drop tests. `bytes` drops carry a
 /// relative path holding the display name, matching how web drops expose only
@@ -4280,10 +4281,8 @@ const TEC_COMPACTION: gt_pending_writes::WriteKind =
         archive: "ionospheric TEC",
     };
 
-/// An app that answered a close request while a write is still running, on the
-/// frame shutdown began: the grace has not elapsed yet.
-fn app_closing_over_a_running_write<'a>() -> (Harness<'a, App>, gt_pending_writes::PendingWriteGuard)
-{
+/// An app with a write running and nothing asked of it yet.
+fn app_with_a_running_write<'a>() -> (Harness<'a, App>, gt_pending_writes::PendingWriteGuard) {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
@@ -4293,6 +4292,14 @@ fn app_closing_over_a_running_write<'a>() -> (Harness<'a, App>, gt_pending_write
         .pending_writes
         .try_begin("Compacting the TEC archive", TEC_COMPACTION)
         .expect("the registry is running");
+    (harness, compaction)
+}
+
+/// An app that answered a close request while a write is still running, on the
+/// frame shutdown began: the grace has not elapsed yet.
+fn app_closing_over_a_running_write<'a>() -> (Harness<'a, App>, gt_pending_writes::PendingWriteGuard)
+{
+    let (mut harness, compaction) = app_with_a_running_write();
 
     request_window_close(&mut harness);
     harness.step();
@@ -4334,6 +4341,59 @@ fn the_normal_ui_paints_until_the_shutdown_window_replaces_it() {
     assert!(
         harness.query_by_label("File").is_none(),
         "the shutdown window paints alongside the normal UI"
+    );
+
+    drop(compaction);
+    assert!(
+        harness.step_until(closed_the_window),
+        "the window never closed after the write finished"
+    );
+}
+
+/// A termination signal takes the same path as the close button: shutdown
+/// begins, the shutdown window comes up over the running write, and the
+/// window closes once that write finishes. There is no close event to cancel.
+///
+/// No other test sees the process-global flag this raises: every test runs
+/// in its own process under `cargo nextest`.
+#[test]
+fn a_termination_signal_begins_the_same_shutdown_without_a_close_to_cancel() {
+    let (mut harness, compaction) = app_with_a_running_write();
+
+    TERMINATION_SIGNAL_FLAG.raise();
+    harness.step();
+
+    assert!(
+        !root_viewport_commands(&harness).contains(&egui::ViewportCommand::CancelClose),
+        "a close that was never requested was cancelled"
+    );
+    step_until_the_shutdown_window_is_up(&mut harness);
+    assert!(
+        !closed_the_window(&harness),
+        "the window closed over a running write"
+    );
+
+    drop(compaction);
+    assert!(
+        harness.step_until(closed_the_window),
+        "the window never closed after the write finished"
+    );
+}
+
+/// A signal arriving after the close button started shutdown is still only
+/// the first one: the close button already promised the writes would finish.
+/// A force quit here would end this test's process.
+#[test]
+fn a_signal_after_the_close_button_leaves_the_writes_running() {
+    let (mut harness, compaction) = app_closing_over_a_running_write();
+
+    TERMINATION_SIGNAL_FLAG.raise();
+    harness.step();
+
+    step_until_the_shutdown_window_is_up(&mut harness);
+    assert!(
+        !closed_the_window(&harness),
+        "the window closed over a running write"
     );
 
     drop(compaction);
