@@ -113,12 +113,7 @@ pub fn format_distance(d: f64::Length) -> String {
 /// Negative durations (a position before the start) clamp to zero.
 pub fn format_timeline_offset(d: chrono::Duration) -> String {
     let secs = d.num_seconds().max(0);
-    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
-    if h > 0 {
-        format!("{h}:{m:02}:{s:02}")
-    } else {
-        format!("{m}:{s:02}")
-    }
+    DurationClockFormat::fitting_longest_duration(secs).format_seconds(secs)
 }
 
 /// Format a duration as a compact human-readable string.
@@ -281,6 +276,46 @@ pub fn format_match_duration(secs: i64) -> String {
     }
 }
 
+/// Seconds in one hour, the point a clock reading grows an hours field.
+const SECONDS_PER_HOUR: u64 = 3_600;
+
+/// How a duration prints as a clock reading. A table picks one format for a
+/// whole column: cells of different magnitudes then line up under each other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DurationClockFormat {
+    /// `1:01`. The minutes count on past 59 for a duration past an hour.
+    MinutesSeconds,
+    /// `1:23:45`.
+    HoursMinutesSeconds,
+}
+
+impl DurationClockFormat {
+    /// The narrowest format that gives a duration of `longest_secs` an hours
+    /// field, whichever way that duration runs.
+    pub fn fitting_longest_duration(longest_secs: i64) -> Self {
+        if longest_secs.unsigned_abs() >= SECONDS_PER_HOUR {
+            Self::HoursMinutesSeconds
+        } else {
+            Self::MinutesSeconds
+        }
+    }
+
+    /// `secs` as a clock reading, a negative duration led by [`MINUS_SIGN`].
+    pub fn format_seconds(self, secs: i64) -> String {
+        let sign = if secs < 0 { MINUS_SIGN } else { "" };
+        let magnitude = secs.unsigned_abs();
+        let seconds = magnitude % 60;
+        match self {
+            Self::MinutesSeconds => format!("{sign}{}:{seconds:02}", magnitude / 60),
+            Self::HoursMinutesSeconds => format!(
+                "{sign}{}:{:02}:{seconds:02}",
+                magnitude / SECONDS_PER_HOUR,
+                (magnitude % SECONDS_PER_HOUR) / 60
+            ),
+        }
+    }
+}
+
 pub fn pluralize<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
     if count == 1 { singular } else { plural }
 }
@@ -362,6 +397,47 @@ mod tests {
     #[case(754, "12:34 min")]
     fn a_match_duration_reads_in_seconds_below_a_minute(#[case] secs: i64, #[case] text: &str) {
         assert_eq!(format_match_duration(secs), text);
+    }
+
+    #[rstest::rstest]
+    #[case::zero(DurationClockFormat::MinutesSeconds, 0, "0:00")]
+    #[case::below_a_minute(DurationClockFormat::MinutesSeconds, 42, "0:42")]
+    #[case::a_minute(DurationClockFormat::MinutesSeconds, 60, "1:00")]
+    #[case::minutes_count_past_an_hour(DurationClockFormat::MinutesSeconds, 3_600, "60:00")]
+    #[case::widened_zero(DurationClockFormat::HoursMinutesSeconds, 0, "0:00:00")]
+    #[case::widened_below_an_hour(DurationClockFormat::HoursMinutesSeconds, 3_599, "0:59:59")]
+    #[case::an_hour(DurationClockFormat::HoursMinutesSeconds, 3_600, "1:00:00")]
+    #[case::hours(DurationClockFormat::HoursMinutesSeconds, 45_296, "12:34:56")]
+    fn a_clock_reading_prints_the_fields_of_its_format(
+        #[case] format: DurationClockFormat,
+        #[case] secs: i64,
+        #[case] text: &str,
+    ) {
+        assert_eq!(format.format_seconds(secs), text);
+    }
+
+    #[test]
+    fn a_negative_clock_reading_leads_with_the_minus_sign() {
+        assert_eq!(
+            DurationClockFormat::MinutesSeconds.format_seconds(-61),
+            format!("{MINUS_SIGN}1:01")
+        );
+    }
+
+    /// The hours field appears once a duration reaches an hour, and not for
+    /// the last second below one.
+    #[rstest::rstest]
+    #[case(0, DurationClockFormat::MinutesSeconds)]
+    #[case(3_599, DurationClockFormat::MinutesSeconds)]
+    #[case(3_600, DurationClockFormat::HoursMinutesSeconds)]
+    fn the_longest_duration_decides_the_clock_format(
+        #[case] longest_secs: i64,
+        #[case] expected: DurationClockFormat,
+    ) {
+        assert_eq!(
+            DurationClockFormat::fitting_longest_duration(longest_secs),
+            expected
+        );
     }
 
     #[rstest::rstest]

@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use egui::{Align, Layout};
 use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_phosphor::regular::CARET_UP as ICON_CARET_UP;
+use gt_fmt::DurationClockFormat;
 use gt_query_run::{ChannelResults, PointsResults};
 use gt_types::{LoadedFile, TrackRef};
 use strum::EnumIter;
@@ -53,7 +54,12 @@ impl MatchRow {
 
     /// What the `start`, `end` and `duration` columns state. A single-row match
     /// leaves the last two empty: it has no extent to state.
-    pub(super) fn cell_text(&self, column: MatchColumn, files: &[LoadedFile]) -> String {
+    pub(super) fn cell_text(
+        &self,
+        column: MatchColumn,
+        files: &[LoadedFile],
+        duration_clock_format: DurationClockFormat,
+    ) -> String {
         let time = |at: Option<DateTime<Utc>>| {
             at.map_or_else(String::new, |at| at.format("%H:%M:%S").to_string())
         };
@@ -63,18 +69,44 @@ impl MatchRow {
             MatchColumn::Start => time(self.start),
             MatchColumn::End => time(self.end),
             MatchColumn::Points => format!("{}", self.rows.len()),
-            MatchColumn::Duration => self
-                .duration_secs
-                .map_or_else(String::new, gt_fmt::format_match_duration),
+            MatchColumn::Duration => self.duration_secs.map_or_else(String::new, |secs| {
+                duration_clock_format.format_seconds(secs)
+            }),
         }
     }
 }
 
 /// The matches of one run, in the order the table lists them.
-#[derive(Debug, Default)]
-pub(super) struct MatchRows(Vec<MatchRow>);
+#[derive(Debug)]
+pub(super) struct MatchRows {
+    rows: Vec<MatchRow>,
+    duration_clock_format: DurationClockFormat,
+}
+
+impl Default for MatchRows {
+    fn default() -> Self {
+        Self::from_rows(Vec::new())
+    }
+}
 
 impl MatchRows {
+    /// The run's matches, with the clock format its longest one sets for every
+    /// duration cell: one shape for the whole column, whatever a row holds.
+    fn from_rows(rows: Vec<MatchRow>) -> Self {
+        let duration_clock_format = rows
+            .iter()
+            .filter_map(|row| row.duration_secs)
+            .max_by_key(|secs| secs.unsigned_abs())
+            .map_or(
+                DurationClockFormat::MinutesSeconds,
+                DurationClockFormat::fitting_longest_duration,
+            );
+        Self {
+            rows,
+            duration_clock_format,
+        }
+    }
+
     /// Every match of a points run, over all of its queries in editor order.
     pub(super) fn of_points(files: &[LoadedFile], results: &PointsResults) -> Self {
         let mut rows = Vec::new();
@@ -102,7 +134,7 @@ impl MatchRows {
                 }
             }
         }
-        Self(rows)
+        Self::from_rows(rows)
     }
 
     /// Every matched stretch of samples of a channel-source run, over its
@@ -127,7 +159,7 @@ impl MatchRows {
                 });
             }
         }
-        Self(rows)
+        Self::from_rows(rows)
     }
 
     /// The range one column's values span over every matched row of the query
@@ -141,7 +173,7 @@ impl MatchRows {
         value: impl Fn(TrackRef, usize) -> Option<f64>,
     ) -> Option<ColumnValueRange> {
         ColumnValueRange::of_values(
-            self.0
+            self.rows
                 .iter()
                 .filter(|row| row.query_index == query_index)
                 .flat_map(|row| row.rows.clone().map(|index| (row.track, index)))
@@ -150,23 +182,42 @@ impl MatchRows {
     }
 
     pub(super) fn rows(&self) -> &[MatchRow] {
-        &self.0
+        &self.rows
     }
 
     pub(super) fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.rows.is_empty()
+    }
+
+    pub(super) fn duration_clock_format(&self) -> DurationClockFormat {
+        self.duration_clock_format
+    }
+
+    /// The widest text a cell of `column` prints over this run's matches, which
+    /// sizes the column. A track label longer than this is clipped where its
+    /// column ends.
+    pub(super) fn widest_cell_text(&self, column: MatchColumn) -> &'static str {
+        match column {
+            MatchColumn::Number | MatchColumn::Points => "8888",
+            MatchColumn::Track => "#888",
+            MatchColumn::Start | MatchColumn::End => "88:88:88",
+            MatchColumn::Duration => match self.duration_clock_format {
+                DurationClockFormat::MinutesSeconds => "88:88",
+                DurationClockFormat::HoursMinutesSeconds => "88:88:88",
+            },
+        }
     }
 
     /// The match the points table lists: the selected one while the run still
     /// holds it, else the first row of the table.
     pub(super) fn selected(&self, selected: Option<MatchKey>) -> Option<&MatchRow> {
         selected
-            .and_then(|key| self.0.iter().find(|row| row.key() == key))
-            .or_else(|| self.0.first())
+            .and_then(|key| self.rows.iter().find(|row| row.key() == key))
+            .or_else(|| self.rows.first())
     }
 
     pub(super) fn sort(&mut self, sort: MatchSort) {
-        sort.apply(&mut self.0);
+        sort.apply(&mut self.rows);
     }
 }
 
@@ -202,18 +253,6 @@ impl MatchColumn {
         match self {
             Self::Number | Self::Points | Self::Duration => Layout::right_to_left(Align::Center),
             Self::Track | Self::Start | Self::End => Layout::left_to_right(Align::Center),
-        }
-    }
-
-    /// The widest text a cell of this column prints, for sizing the column once
-    /// instead of measuring every row. A track label longer than this is
-    /// clipped where its column ends.
-    pub(super) fn widest_cell_text(self) -> &'static str {
-        match self {
-            Self::Number | Self::Points => "8888",
-            Self::Track => "#888",
-            Self::Start | Self::End => "88:88:88",
-            Self::Duration => "88:88 min",
         }
     }
 
@@ -404,7 +443,7 @@ mod tests {
     /// Three matches: the first long and early on track 0, the second short and
     /// later on track 1, the third a single point on track 0.
     fn test_rows() -> MatchRows {
-        MatchRows(vec![
+        MatchRows::from_rows(vec![
             MatchRow {
                 query_index: 0,
                 number: 1,
@@ -433,6 +472,25 @@ mod tests {
                 duration_secs: None,
             },
         ])
+    }
+
+    /// One match per duration, all on the same track and in run order.
+    fn rows_with_durations(durations: &[i64]) -> MatchRows {
+        MatchRows::from_rows(
+            durations
+                .iter()
+                .enumerate()
+                .map(|(index, secs)| MatchRow {
+                    query_index: 0,
+                    number: index + 1,
+                    track: track(0),
+                    rows: index..index + 2,
+                    start: at(14, 0, 0),
+                    end: at(14, 0, 0),
+                    duration_secs: Some(*secs),
+                })
+                .collect(),
+        )
     }
 
     fn numbers(rows: &MatchRows) -> Vec<usize> {
@@ -509,7 +567,7 @@ mod tests {
     #[case(0, MatchColumn::Start, "14:00:18")]
     #[case(0, MatchColumn::End, "14:01:19")]
     #[case(0, MatchColumn::Points, "62")]
-    #[case(0, MatchColumn::Duration, "1:01 min")]
+    #[case(0, MatchColumn::Duration, "1:01")]
     #[case(2, MatchColumn::Number, "3")]
     #[case(2, MatchColumn::End, "")]
     #[case(2, MatchColumn::Points, "1")]
@@ -521,7 +579,45 @@ mod tests {
     ) {
         let rows = test_rows();
         let row = rows.rows().get(index).expect("the fixture lists the row");
-        assert_eq!(row.cell_text(column, &[]), expected);
+        assert_eq!(
+            row.cell_text(column, &[], rows.duration_clock_format()),
+            expected
+        );
+    }
+
+    /// The longest match of a run widens every duration cell of it to the same
+    /// fields, whatever the other matches hold.
+    #[test]
+    fn the_longest_match_widens_every_duration_cell_of_the_run() {
+        let duration_cells = |rows: &MatchRows| {
+            rows.rows()
+                .iter()
+                .map(|row| row.cell_text(MatchColumn::Duration, &[], rows.duration_clock_format()))
+                .collect::<Vec<_>>()
+        };
+
+        let below_an_hour = rows_with_durations(&[11, 3_599]);
+        assert_eq!(duration_cells(&below_an_hour), ["0:11", "59:59"]);
+        assert_eq!(
+            below_an_hour.widest_cell_text(MatchColumn::Duration),
+            "88:88"
+        );
+
+        let reaching_an_hour = rows_with_durations(&[11, 3_600]);
+        assert_eq!(duration_cells(&reaching_an_hour), ["0:00:11", "1:00:00"]);
+        assert_eq!(
+            reaching_an_hour.widest_cell_text(MatchColumn::Duration),
+            "88:88:88"
+        );
+    }
+
+    #[test]
+    fn a_backwards_match_widens_the_column_by_how_long_it_ran() {
+        let rows = rows_with_durations(&[-3_600, -10]);
+        assert_eq!(
+            rows.duration_clock_format(),
+            DurationClockFormat::HoursMinutesSeconds
+        );
     }
 
     /// Picking another match of a query leaves its bars where they are: they
