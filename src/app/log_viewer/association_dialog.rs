@@ -5,11 +5,13 @@ use egui::{Checkbox, Grid, RichText, ScrollArea, Window};
 use gt_fmt::MIDDLE_DOT;
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
 use gt_log_view::{AssociationCandidate, LoadedLog};
+use gt_pending_writes::WriteAccess;
 use gt_store::DatabaseRef;
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::LoadedLogId;
 
 use crate::app::modals;
+use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 
 #[cfg(test)]
 mod tests;
@@ -138,6 +140,7 @@ impl LogAssociationDialog {
         log: &LoadedLog,
         recordings: LoadedFilesView<'_>,
         recording_names: &RecordingNames,
+        write_access: WriteAccess,
     ) -> Option<LogAssociationChoice> {
         let escape_pressed =
             ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
@@ -145,10 +148,11 @@ impl LogAssociationDialog {
 
         let names = recording_names_by_id(recordings, recording_names);
         let candidates = log.rank_association_candidates(&recordings);
-        let attachable = self
-            .selected
-            .and_then(|id| recordings.entry_for_id(id))
-            .is_some_and(|entry| entry.history().db_ref().is_some());
+        let attachable = write_access.allows_writing()
+            && self
+                .selected
+                .and_then(|id| recordings.entry_for_id(id))
+                .is_some_and(|entry| entry.history().db_ref().is_some());
         self.attach &= attachable;
 
         let mut open = true;
@@ -179,7 +183,7 @@ impl LogAssociationDialog {
                             });
                     });
                 ui.add_space(8.0);
-                self.attach_ui(ui, attachable);
+                self.attach_ui(ui, attachable, write_access);
                 ui.add_space(4.0);
                 ui.checkbox(&mut self.dont_show_again, DONT_SHOW_AGAIN_LABEL)
                     .on_hover_text(DONT_SHOW_AGAIN_HOVER);
@@ -250,10 +254,12 @@ impl LogAssociationDialog {
 
     /// The attach tickbox, and the warning that the chosen recording already
     /// holds this exact log.
-    fn attach_ui(&mut self, ui: &mut egui::Ui, attachable: bool) {
+    fn attach_ui(&mut self, ui: &mut egui::Ui, attachable: bool, write_access: WriteAccess) {
         let attach = ui.add_enabled(attachable, Checkbox::new(&mut self.attach, ATTACH_LABEL));
         if attachable {
             attach.on_hover_text(ATTACH_HOVER);
+        } else if !write_access.allows_writing() {
+            attach.on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER);
         } else if self.selected.is_some() {
             attach.on_disabled_hover_text(ATTACH_UNSTORED_HOVER);
         } else {

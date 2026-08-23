@@ -1,4 +1,5 @@
-//! What a read-only session shows: the marker in the window's corner.
+//! What a read-only session shows: the marker in the window's corner, and the
+//! reason the controls that would write give while they are grayed out.
 //!
 //! A session becomes read-only when the user starts it beside the instance
 //! that owns the data directory, as [`super::instance_wait`] describes, and
@@ -16,6 +17,14 @@ pub(in crate::app) const READ_ONLY_MARKER_LABEL: &str = "read only";
 /// write the session leaves undone.
 const WRITES_NOTHING: &str = "GeoTrace writes nothing this session: no recording is stored, no \
                               day is downloaded, and no setting is saved.";
+
+/// What the controls that delete archived days or download new ones say.
+pub(in crate::app) const READ_ONLY_ARCHIVES_HOVER: &str =
+    "This session is read-only: it changes none of the archives";
+
+/// What the controls that store, delete, prune or rename recordings say.
+pub(in crate::app) const READ_ONLY_RECORDING_HISTORY_HOVER: &str =
+    "This session is read-only: it changes nothing in the recording history";
 
 impl App {
     /// The marker a read-only session keeps in the window's bottom-left

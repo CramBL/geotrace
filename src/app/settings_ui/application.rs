@@ -41,6 +41,7 @@ impl App {
     pub(super) fn show_application_page(&mut self, ui: &mut egui::Ui) {
         SettingsPage::Application.show_header(ui);
         let storage_before_edit = self.storage_settings;
+        let write_access = self.pending_writes.write_access();
         Grid::new("application_grid")
             .num_columns(2)
             .spacing([8.0, 6.0])
@@ -61,15 +62,23 @@ impl App {
                 }
 
                 ui.label(format!("{ICON_ARCHIVE} {RECORDING_STORAGE_LABEL}"));
-                storage_controls::show_auto_store_checkbox(ui, &mut self.storage_settings);
+                storage_controls::show_auto_store_checkbox(
+                    ui,
+                    &mut self.storage_settings,
+                    write_access,
+                );
                 ui.end_row();
 
                 ui.label(format!("{ICON_BROOM} {AUTO_PRUNE_LABEL}"));
-                storage_controls::show_auto_prune_limit(ui, &mut self.storage_settings);
+                storage_controls::show_auto_prune_limit(ui, &mut self.storage_settings, write_access);
                 ui.end_row();
 
                 ui.label(format!("{ICON_QUESTION} {CONFIRMATION_LABEL}"));
-                storage_controls::show_auto_prune_confirm_checkbox(ui, &mut self.storage_settings);
+                storage_controls::show_auto_prune_confirm_checkbox(
+                    ui,
+                    &mut self.storage_settings,
+                    write_access,
+                );
                 ui.end_row();
             });
         self.sync_db_path_if_auto_store_changed(storage_before_edit);
@@ -103,6 +112,10 @@ impl App {
         if let Some(request) = self.environment_storage_ui.ui(ui, state) {
             self.pending_environment_prune = Some(request);
         }
-        environment_storage_ui::show_auto_prune_age(ui, &mut self.environment_storage_settings);
+        environment_storage_ui::show_auto_prune_age(
+            ui,
+            &mut self.environment_storage_settings,
+            self.pending_writes.write_access(),
+        );
     }
 }

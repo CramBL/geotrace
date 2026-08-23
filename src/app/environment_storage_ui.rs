@@ -5,6 +5,7 @@ use chrono::{Datelike as _, Days, NaiveDate, Utc};
 use egui::{Button, Checkbox, DragValue, Grid, RichText, Ui};
 use egui_extras::DatePickerButton;
 use egui_phosphor::regular::BROOM as ICON_BROOM;
+use gt_pending_writes::WriteAccess;
 use gt_store::ArchiveUsage;
 use gt_ui_theme::EM_DASH;
 use jiff::civil::Date;
@@ -15,6 +16,7 @@ use super::civil_date;
 use super::environment_storage::{
     CoveredDayCounts, EnvironmentArchive, EnvironmentUsage, PruneRequest, PruneScope, PrunedDays,
 };
+use super::read_only_session::READ_ONLY_ARCHIVES_HOVER;
 use crate::settings::EnvironmentStorageSettings;
 
 pub const ENVIRONMENT_DATA_LABEL: &str = "Environment data";
@@ -38,6 +40,9 @@ const EARLIEST_PICKABLE_YEAR: i16 = 1970;
 /// Why the controls that delete archived days take no input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteBlocker {
+    /// This session reads the archives beside the instance that owns the data
+    /// directory, and changes none of them.
+    ReadOnlySession,
     /// This instance does not have the data directory, so it has opened no
     /// archive to delete from.
     WaitingForTheDataDirectory,
@@ -57,6 +62,7 @@ pub enum DeleteBlocker {
 impl DeleteBlocker {
     pub fn hover_text(self) -> String {
         match self {
+            Self::ReadOnlySession => READ_ONLY_ARCHIVES_HOVER.to_owned(),
             Self::WaitingForTheDataDirectory => {
                 "Wait for the data directory to become available".to_owned()
             }
@@ -79,26 +85,37 @@ const ENABLE_AUTO_PRUNE_FIRST: &str = "Tick 'Auto-prune days older than' to conf
 /// The auto-prune switch and the age past which it deletes archived days.
 ///
 /// This row starts nothing itself and stays live while a delete runs:
-/// auto-pruning acts at startup and after a recording finishes loading.
-pub fn show_auto_prune_age(ui: &mut Ui, settings: &mut EnvironmentStorageSettings) {
+/// auto-pruning acts at startup and after a recording finishes loading. The
+/// row takes no input in a read-only session: it prunes at neither point.
+pub fn show_auto_prune_age(
+    ui: &mut Ui,
+    settings: &mut EnvironmentStorageSettings,
+    write_access: WriteAccess,
+) {
+    let writes_archives = write_access.allows_writing();
     ui.horizontal(|ui| {
-        ui.add(Checkbox::new(
-            &mut settings.auto_prune_enabled,
-            AUTO_PRUNE_LABEL,
-        ))
+        ui.add_enabled(
+            writes_archives,
+            Checkbox::new(&mut settings.auto_prune_enabled, AUTO_PRUNE_LABEL),
+        )
         .on_hover_text(
             "Delete days past this age from every archive on startup and after a recording \
              loads. Days a loaded recording needs are kept.",
-        );
+        )
+        .on_disabled_hover_text(READ_ONLY_ARCHIVES_HOVER);
 
-        let auto_prune_on = settings.auto_prune_enabled;
+        let auto_prune_on = settings.auto_prune_enabled && writes_archives;
         ui.add_enabled(
             auto_prune_on,
             DragValue::new(&mut settings.auto_prune_max_age_months)
                 .range(EnvironmentStorageSettings::AUTO_PRUNE_AGE_MONTHS_RANGE),
         )
         .on_hover_text("Age an archived day reaches before it is deleted")
-        .on_disabled_hover_text(ENABLE_AUTO_PRUNE_FIRST);
+        .on_disabled_hover_text(if writes_archives {
+            ENABLE_AUTO_PRUNE_FIRST
+        } else {
+            READ_ONLY_ARCHIVES_HOVER
+        });
 
         ui.label("months");
     });
@@ -384,7 +401,8 @@ mod tests {
             auto_prune_enabled,
             ..EnvironmentStorageSettings::default()
         };
-        let mut harness = TestHarness::builder().ui(|ui| show_auto_prune_age(ui, &mut settings));
+        let mut harness = TestHarness::builder()
+            .ui(|ui| show_auto_prune_age(ui, &mut settings, WriteAccess::Owner));
         harness.run();
 
         let age = harness.inner.get(By::new().role(Role::SpinButton));

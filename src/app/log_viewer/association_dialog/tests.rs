@@ -8,6 +8,9 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use gt_loaded_files::{FileHistory, LoadedFileId, LoadedFiles, RecordingNames};
 use gt_log_view::LoadedLog;
+use gt_pending_writes::WriteAccess;
+
+use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use gt_store::{DatabaseRef, RecordingMeta};
 use gt_test_utils::{By, HarnessInteraction as _};
 use gt_track_builder::{FileMeta, SegmentationConfig};
@@ -44,6 +47,8 @@ struct DialogState {
     log: LoadedLog,
     recordings: LoadedFiles,
     choice: Option<LogAssociationChoice>,
+    /// What the session may write, which is what grays the attach tickbox.
+    write_access: WriteAccess,
 }
 
 /// A recording of `seconds` fixes starting `offset` after the log does.
@@ -109,6 +114,7 @@ fn harness_over(
         ),
         recordings: loaded_recordings,
         choice: None,
+        write_access: WriteAccess::Owner,
     };
     let mut harness = Harness::builder()
         .with_size(DIALOG_SIZE)
@@ -119,9 +125,13 @@ fn harness_over(
 
 fn dialog_ui(ui: &mut egui::Ui, state: &mut DialogState) {
     let names = RecordingNames::resolve(state.recordings.view(), "{filename}");
-    let choice = state
-        .dialog
-        .show(ui.ctx(), &state.log, state.recordings.view(), &names);
+    let choice = state.dialog.show(
+        ui.ctx(),
+        &state.log,
+        state.recordings.view(),
+        &names,
+        state.write_access,
+    );
     if choice.is_some() {
         state.choice = choice;
     }
@@ -275,6 +285,27 @@ fn attaching_is_offered_only_for_a_recording_the_history_database_holds() {
             attach: true,
         })
     );
+}
+
+/// A read-only session attaches nothing either: the tickbox for a recording
+/// the history database holds is grayed, saying what the session leaves
+/// alone.
+#[test]
+fn attaching_is_not_offered_in_a_read_only_session() {
+    let mut harness = harness_over(vec![(
+        recording("stored.gtd", Duration::zero(), 10),
+        stored_in_history("nav-devkit-mk2"),
+    )]);
+    harness.state_mut().write_access = WriteAccess::ReadOnly;
+    select(&mut harness, "stored.gtd");
+
+    let attach = harness.get_by_label(ATTACH_LABEL);
+    assert!(attach.accesskit_node().is_disabled());
+    let attach_center = attach.rect().center();
+
+    harness.hover_at_and_settle(attach_center, 3);
+
+    harness.get_by_label_contains(READ_ONLY_RECORDING_HISTORY_HOVER);
 }
 
 /// Selecting a recording outside history clears the attach tickbox, so

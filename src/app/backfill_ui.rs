@@ -241,6 +241,9 @@ impl BackfillDataset for SolarFlareBackfill {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackfillReadiness {
     Ready,
+    /// Nothing may be downloaded: this session reads the archives beside the
+    /// instance that owns the data directory, and writes to none of them.
+    ReadOnlySession,
     /// There is nowhere to download to: this instance does not have the data
     /// directory, so it has opened no archive.
     WaitingForTheDataDirectory,
@@ -428,6 +431,10 @@ impl<D: BackfillDataset> BackfillUi<D> {
     fn blocked_hover(readiness: BackfillReadiness) -> String {
         match readiness {
             BackfillReadiness::Ready => "Pick an end date on or after the start date".to_owned(),
+            BackfillReadiness::ReadOnlySession => format!(
+                "This session is read-only: nothing is downloaded into the {}",
+                D::ARCHIVE_NAME
+            ),
             BackfillReadiness::WaitingForTheDataDirectory => format!(
                 "GeoTrace is waiting for the data directory: the {} is not open here",
                 D::ARCHIVE_NAME
