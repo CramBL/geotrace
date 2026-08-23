@@ -341,6 +341,9 @@ pub struct App {
     /// The startup open of every database, until the app adopts what it
     /// produced.
     storage_open: storage::StorageOpen,
+    /// Set once the user took write access from the instance holding the data
+    /// directory: the mark is retried until this instance holds it too.
+    mark_retry_after_take_over: Option<instance_wait::MarkRetryAfterTakeOver>,
     /// "Keep a backup of the original database" tickbox state for the corruption
     /// recreate dialog.
     keep_db_backup: bool,
@@ -609,6 +612,7 @@ impl App {
             storage: options.storage,
             instance_lock: options.instance_lock,
             storage_open,
+            mark_retry_after_take_over: None,
             keep_db_backup: true,
             pending_resegment: None,
             storage_settings: crate::settings::StorageSettings::default(),

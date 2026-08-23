@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::panic;
 use std::path::{Path, PathBuf};
+use std::process;
 use std::sync::mpsc;
 use std::thread;
 use std::{
@@ -45,6 +46,7 @@ use super::backfill_ui::DOWNLOAD_HISTORY_LABEL;
 use super::environment_storage_ui::{DELETE_ALL_LABEL, DeleteBlocker, PRUNE_BUTTON_LABEL};
 use super::instance_wait::{
     DATA_DIRECTORY_HELD_TITLE, DATA_DIRECTORY_RETRY_INTERVAL, LOCK_FILE_UNUSABLE_TITLE,
+    TAKE_OVER_BUTTON_LABEL, TAKE_OVER_CONFIRMATION_TITLE, TAKE_OVER_WARNING,
 };
 use super::log_viewer;
 use super::query;
@@ -4098,16 +4100,7 @@ fn a_data_directory_another_instance_holds_is_waited_for_and_nothing_is_opened()
 fn an_instance_finishing_its_writes_is_named_with_what_it_is_writing() {
     let directory = tempfile::tempdir().expect("temp dir");
     let mut holder = DataDirectoryLock::acquire(Some(directory.path()));
-    let pending_writes = PendingWrites::default();
-    let _compaction = pending_writes
-        .try_begin(
-            "Compacting the TEC archive",
-            WriteKind::ArchiveCompaction {
-                archive: "ionospheric TEC",
-            },
-        )
-        .expect("the registry is running");
-    holder.mark_shutting_down(&pending_writes);
+    report_the_holder_as_compacting_an_archive(&mut holder);
     let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
 
     harness.step();
@@ -4305,6 +4298,205 @@ fn log_text_pasted_while_the_data_directory_is_held_loads_once_it_frees() {
     assert!(
         harness.step_until(|harness| harness.state().logs.len() == 1),
         "the paste that waited for the data directory did not load"
+    );
+}
+
+/// Reports `holder` as shutting down with one archive compaction left, which
+/// is what its status file then names.
+fn report_the_holder_as_compacting_an_archive(holder: &mut DataDirectoryLock) {
+    let pending_writes = PendingWrites::default();
+    let _compaction = pending_writes
+        .try_begin(
+            "Compacting the TEC archive",
+            WriteKind::ArchiveCompaction {
+                archive: "ionospheric TEC",
+            },
+        )
+        .expect("the registry is running");
+    holder.mark_shutting_down(&pending_writes);
+}
+
+/// Takes write access as the user does: the button in the wait dialog, then
+/// the confirmation it leads to.
+fn take_over_write_access(harness: &mut Harness<'_, App>) {
+    harness
+        .get_by_label_contains(TAKE_OVER_BUTTON_LABEL)
+        .click();
+    harness.run_steps(3);
+    harness.get_by_label("Take over").click();
+    harness.run_steps(3);
+}
+
+/// The wait is not a dead end: the button opens a confirmation naming what
+/// the instance holding the directory is doing, which it reads afresh for as
+/// long as the confirmation is up.
+#[test]
+fn the_take_over_confirmation_names_what_the_other_instance_is_doing() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let mut holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+    harness.step();
+
+    harness
+        .get_by_label_contains(TAKE_OVER_BUTTON_LABEL)
+        .click();
+    harness.run_steps(3);
+
+    harness.get_by_label_contains(TAKE_OVER_CONFIRMATION_TITLE);
+    harness.get_by_label_contains("window is open");
+    harness.get_by_label_contains(TAKE_OVER_WARNING);
+    assert!(
+        harness
+            .query_by_label_contains(DATA_DIRECTORY_HELD_TITLE)
+            .is_none(),
+        "the confirmation and the wait dialog are stacked on the same anchor"
+    );
+
+    report_the_holder_as_compacting_an_archive(&mut holder);
+
+    assert!(
+        harness.step_until(|harness| harness
+            .query_by_label_contains("Compacting the TEC archive")
+            .is_some()),
+        "the confirmation names a state the other instance has left"
+    );
+    harness.get_by_label_contains("still finishing these writes");
+    assert_eq!(
+        harness.state().storage_open.databases_pending(),
+        Some(DatabasesPending::WaitingForTheDataDirectory),
+        "the databases opened before the user answered the confirmation"
+    );
+}
+
+/// Cancelling leaves everything as it was: the wait dialog is back and
+/// nothing has been opened.
+#[test]
+fn cancelling_the_take_over_returns_to_the_wait() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+    harness.step();
+    harness
+        .get_by_label_contains(TAKE_OVER_BUTTON_LABEL)
+        .click();
+    harness.run_steps(3);
+
+    harness.get_by_label("Cancel").click();
+    harness.run_steps(3);
+
+    harness.get_by_label_contains(DATA_DIRECTORY_HELD_TITLE);
+    assert!(
+        harness
+            .query_by_label_contains(TAKE_OVER_CONFIRMATION_TITLE)
+            .is_none(),
+        "the confirmation outlived the cancel"
+    );
+    assert_eq!(
+        harness.state().storage_open.databases_pending(),
+        Some(DatabasesPending::WaitingForTheDataDirectory),
+        "a cancelled take-over opened the databases"
+    );
+}
+
+/// Escape answers the confirmation the way Cancel does, as it does for every
+/// other destructive confirmation.
+#[test]
+fn escape_cancels_the_take_over_confirmation() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+    harness.step();
+    harness
+        .get_by_label_contains(TAKE_OVER_BUTTON_LABEL)
+        .click();
+    harness.run_steps(3);
+
+    harness.key_press(egui::Key::Escape);
+    harness.run_steps(3);
+
+    harness.get_by_label_contains(DATA_DIRECTORY_HELD_TITLE);
+    assert_eq!(
+        harness.state().storage_open.databases_pending(),
+        Some(DatabasesPending::WaitingForTheDataDirectory),
+        "escape opened the databases"
+    );
+}
+
+/// Taking over opens the databases with the other instance still holding the
+/// lock, and the loads that waited run against them.
+#[test]
+fn taking_over_opens_the_databases_and_runs_the_loads_that_waited() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let gtd_path = directory.path().join("queued.gtd");
+    std::fs::write(&gtd_path, minimal_gtd_bytes()).expect("write the recording");
+    let mut harness = app_waiting_for_the_data_directory(&[gtd_path], directory.path());
+    harness.run_steps(3);
+    assert_eq!(harness.state().shared.borrow().loaded_files.len(), 0);
+
+    take_over_write_access(&mut harness);
+
+    assert!(
+        harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1),
+        "the file that waited for the data directory never loaded"
+    );
+    assert_eq!(
+        harness.state().storage_open.databases_pending(),
+        None,
+        "the take-over left the databases unopened"
+    );
+    assert_eq!(
+        harness.state().instance_lock.ownership(),
+        DataDirectoryOwnership::HeldByAnotherInstance,
+        "the take-over took the lock instead of proceeding without it"
+    );
+    assert_eq!(
+        harness.state().environment_deletes_blocked_by(),
+        None,
+        "the delete controls stayed grayed with the reason the wait gave"
+    );
+}
+
+/// Taking the lock late is a promotion and nothing more: the instance that
+/// took over becomes the marked owner without reopening anything.
+#[test]
+fn the_lock_freed_after_a_take_over_makes_this_instance_the_marked_owner() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+    harness.step();
+    take_over_write_access(&mut harness);
+    assert!(
+        harness.step_until(|harness| harness.state().storage_open.databases_pending().is_none()),
+        "the take-over never opened the databases"
+    );
+
+    drop(holder);
+
+    assert!(
+        harness.step_until(|harness| harness.state().instance_lock.ownership()
+            == DataDirectoryOwnership::MarkedByThisInstance),
+        "this instance never took the data directory the other one let go of"
+    );
+    assert_eq!(
+        InstanceStatus::read_from(directory.path()).map(|status| status.process_id),
+        Some(process::id()),
+        "the status file describes another instance than the one holding the directory"
+    );
+    assert_eq!(
+        harness.state().storage_open.databases_pending(),
+        None,
+        "the promotion opened the databases a second time"
+    );
+    assert!(
+        harness
+            .query_by_label_contains(DATA_DIRECTORY_HELD_TITLE)
+            .is_none(),
+        "the promotion put the app back in the wait"
+    );
+    assert!(
+        harness.state().mark_retry_after_take_over.is_none(),
+        "the retry goes on after this instance became the marked owner"
     );
 }
 
