@@ -36,6 +36,7 @@ use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnig
 use super::day_fetch_queue::DayFetchQueue;
 use super::environment_storage::{EnvironmentArchive, PrunedDays};
 use super::fix_positions::FixPositionTimeline;
+use super::track_day_values::TrackValuesByArchivedDays;
 
 /// What one day's fetch produced.
 enum JamMessage {
@@ -73,9 +74,6 @@ impl JamMessage {
 
 /// One track's interference, resolved from a set of archived days.
 struct ResolvedTrackInterference {
-    /// The archived days these values came from, as the cache key: a track's
-    /// values change exactly when this set does.
-    archived_days: Vec<NaiveDate>,
     plot_points: Arc<Vec<JammingPoint>>,
     /// Absent when the archive valued none of the track's fixes, which is
     /// also when the plot draws no line for the track.
@@ -93,7 +91,6 @@ impl ResolvedTrackInterference {
 
     /// One point per fix, valued from the dataset of the fix's own day.
     fn resolve(
-        archived_days: Vec<NaiveDate>,
         store: Option<&JamStore>,
         datasets: &mut HashMap<NaiveDate, Option<JamDataset>>,
         track: &gt_types::LoadedTrack,
@@ -140,7 +137,6 @@ impl ResolvedTrackInterference {
                 )
             });
         Self {
-            archived_days,
             plot_points: Arc::new(plot_points),
             query_values,
         }
@@ -176,10 +172,7 @@ pub struct JammingScheduler {
     /// Days the host has no dataset for, which the legend distinguishes from
     /// a day nothing was downloaded for.
     refused: HashSet<NaiveDate>,
-    /// Per-track resolved interference. The `Arc` identities the plot and the
-    /// query fingerprint cache on hold across frames: a track's values are
-    /// rebuilt only when the archive gains a day it spans.
-    interference_by_track: HashMap<TrackRef, ResolvedTrackInterference>,
+    interference_by_track: TrackValuesByArchivedDays<ResolvedTrackInterference>,
     /// The line drawn across the plot's whole span, one sample per archived
     /// day.
     context: ContextSampleCache<JammingContextSample>,
@@ -205,7 +198,7 @@ impl JammingScheduler {
             shown: None,
             selection: DaySelection::new(None, calendar::today_utc()),
             refused: HashSet::new(),
-            interference_by_track: HashMap::new(),
+            interference_by_track: TrackValuesByArchivedDays::default(),
             context: ContextSampleCache::default(),
             ctx,
             tx,
@@ -318,8 +311,7 @@ impl JammingScheduler {
     /// archive.
     pub fn forget_pruned_days(&mut self, pruned: PrunedDays) {
         self.archived_cells.retain(|day, _| !pruned.covers(*day));
-        self.interference_by_track
-            .retain(|_, resolved| !resolved.archived_days.iter().any(|day| pruned.covers(*day)));
+        self.interference_by_track.forget_pruned_days(pruned);
         self.refused.retain(|day| !pruned.covers(*day));
         self.context.forget_pruned_days(pruned);
         self.days.forget_pruned_days(pruned);
@@ -405,31 +397,21 @@ impl JammingScheduler {
                 live.insert(track_ref);
 
                 let archived_days = self.days_available_for(track);
-                let cached = self
+                let resolved = self
                     .interference_by_track
-                    .get(&track_ref)
-                    .filter(|resolved| resolved.archived_days == archived_days);
-                let points = match cached {
-                    Some(resolved) => resolved.valued_plot_points(),
-                    None => {
-                        let resolved = ResolvedTrackInterference::resolve(
-                            archived_days,
+                    .resolve(track_ref, archived_days, || {
+                        ResolvedTrackInterference::resolve(
                             self.store.as_deref(),
                             &mut datasets,
                             track,
-                        );
-                        let points = resolved.valued_plot_points();
-                        self.interference_by_track.insert(track_ref, resolved);
-                        points
-                    }
-                };
-                if let Some(points) = points {
+                        )
+                    });
+                if let Some(points) = resolved.valued_plot_points() {
                     series.points_by_track.insert(track_ref, points);
                 }
             }
         }
-        self.interference_by_track
-            .retain(|track, _| live.contains(track));
+        self.interference_by_track.retain_loaded_tracks(&live);
         series
     }
 
@@ -484,8 +466,8 @@ impl JammingScheduler {
     /// so both reach the provider the same way.
     pub fn query_values(&self) -> JammingValues {
         self.interference_by_track
-            .iter()
-            .filter_map(|(&track, resolved)| {
+            .iter_unsorted()
+            .filter_map(|(track, resolved)| {
                 Some((track, Arc::clone(resolved.query_values.as_ref()?)))
             })
             .collect()
