@@ -8,7 +8,7 @@ use std::time::Duration;
 use std::{path::PathBuf, process::ExitCode};
 
 use gt_instance_lock::SharedDataDirectoryLock;
-use gt_pending_writes::PendingWrites;
+use gt_pending_writes::{PendingWrites, WriteAccess};
 
 use crate::app::shutdown;
 use crate::termination_signal::{TERMINATION_SIGNAL_FLAG, TerminationSignalAction};
@@ -28,7 +28,7 @@ const OFFLINE_FLAG: &str = "--offline";
 /// that carry the updater. Empty otherwise so the flag is never advertised by a
 /// build that cannot honor it.
 #[cfg(feature = "self-update")]
-const SELF_UPDATE_HELP: &str = "\n      --update   Update in place and exit";
+const SELF_UPDATE_HELP: &str = "\n      --update     Update in place and exit";
 #[cfg(not(feature = "self-update"))]
 const SELF_UPDATE_HELP: &str = "";
 
@@ -152,9 +152,9 @@ fn main() -> ExitCode {
                  Arguments:\n  \
                  [FILES]...  .gtd recordings or .log files to open on startup\n\n\
                  Options:\n  \
-                 -V, --version  Print version and exit\n  \
-                 -h, --help     Print help and exit\n      \
-                 --offline  Run without network access: no map tiles, downloads, \
+                 -V, --version    Print version and exit\n  \
+                 -h, --help       Print help and exit\n      \
+                 --offline    Run without network access: no map tiles, downloads, \
                  snapping, or update check{}",
                 env!("CARGO_PKG_VERSION"),
                 SELF_UPDATE_HELP,
@@ -239,7 +239,7 @@ fn main() -> ExitCode {
         },
         ..Default::default()
     };
-    let pending_writes = PendingWrites::default();
+    let pending_writes = PendingWrites::new(WriteAccess::Owner);
     let app_pending_writes = pending_writes.clone();
     let storage = app::Storage::DataDirectory;
     // No archive is opened or repaired until this instance owns the data
@@ -247,7 +247,10 @@ fn main() -> ExitCode {
     // its own clone of it while another instance holds the directory. This
     // clone lives to the end of main, past the wait for the writes that
     // outlive the window.
-    let instance_lock = SharedDataDirectoryLock::acquire(storage.data_directory().as_deref());
+    let instance_lock = SharedDataDirectoryLock::acquire_if_owner(
+        WriteAccess::Owner,
+        storage.data_directory().as_deref(),
+    );
     let app_instance_lock = instance_lock.clone();
     let result = eframe::run_native(
         concat!("GeoTrace v", env!("CARGO_PKG_VERSION")),

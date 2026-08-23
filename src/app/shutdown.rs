@@ -301,7 +301,7 @@ impl App {
 
         let settings_write = self
             .pending_writes
-            .begin_shutdown_write(SETTINGS_FLUSH_LABEL, WriteKind::Settings);
+            .try_begin_shutdown_write(SETTINGS_FLUSH_LABEL, WriteKind::Settings);
         self.flush_settings();
         drop(settings_write);
 
@@ -326,7 +326,7 @@ impl App {
     ) {
         let history_write = self
             .pending_writes
-            .begin_shutdown_write(HISTORY_SHUTDOWN_LABEL, WriteKind::RecordingDatabase);
+            .try_begin_shutdown_write(HISTORY_SHUTDOWN_LABEL, WriteKind::RecordingDatabase);
         history.shutdown_on_a_thread_of_its_own(history_write);
     }
 }

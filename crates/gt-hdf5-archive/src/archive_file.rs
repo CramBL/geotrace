@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use hdf5::plist::file_create::FileSpaceStrategy;
 use hdf5::{Group, LocationType};
 
+use crate::prune::{DeclinedRecovery, InterruptedDelete};
 use crate::{ArchiveError, attributes};
 
 /// Smallest free block the file keeps track of. Every block is worth tracking:
@@ -107,6 +108,28 @@ impl ArchiveFile {
         self.copy_into_new_archive(&rebuilding)?;
         fs::rename(&rebuilding, &self.path)?;
         Ok(FileSpaceMigration::Rebuilt)
+    }
+
+    /// Refuse an archive that cannot be read as it stands, which is what an
+    /// open that may not write to the file checks before handing it over.
+    ///
+    /// An interrupted delete leaves the day index part-way through a move,
+    /// and closing that gap is a write: such an archive fails with
+    /// [`DeclinedRecovery`].
+    pub fn check_readable_without_writing<E>(
+        &mut self,
+        interrupted_delete: impl FnOnce(&mut Self) -> Result<Option<InterruptedDelete>, E>,
+        schema_attribute: &str,
+        supported_schema_version: i64,
+    ) -> Result<(), E>
+    where
+        E: From<ArchiveError> + From<DeclinedRecovery>,
+    {
+        if let Some(interrupted) = interrupted_delete(self)? {
+            return Err(DeclinedRecovery(interrupted).into());
+        }
+        self.validate_schema_version(schema_attribute, supported_schema_version)?;
+        Ok(())
     }
 
     /// Refuse an archive whose `attribute` names a schema newer than

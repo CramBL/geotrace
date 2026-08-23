@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use fd_lock::RwLock;
-use gt_pending_writes::{PendingWriteStatus, PendingWrites};
+use gt_pending_writes::{PendingWriteStatus, PendingWrites, WriteAccess};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
@@ -256,6 +256,16 @@ impl DataDirectoryLock {
         lock
     }
 
+    /// Marks `data_directory` as in use where this run owns it, and marks
+    /// nothing in a read-only session, which leaves the directory to the
+    /// instance holding it and writes nothing under it.
+    pub fn acquire_if_owner(write_access: WriteAccess, data_directory: Option<&Path>) -> Self {
+        match write_access {
+            WriteAccess::Owner => Self::acquire(data_directory),
+            WriteAccess::ReadOnly => Self::marking_nothing(),
+        }
+    }
+
     /// The lock of a run that marks nothing, whose reports write nothing.
     pub fn marking_nothing() -> Self {
         Self {
@@ -372,6 +382,14 @@ impl SharedDataDirectoryLock {
     /// [`DataDirectoryLock::acquire`], shared from the start.
     pub fn acquire(data_directory: Option<&Path>) -> Self {
         Self::new(DataDirectoryLock::acquire(data_directory))
+    }
+
+    /// See [`DataDirectoryLock::acquire_if_owner`].
+    pub fn acquire_if_owner(write_access: WriteAccess, data_directory: Option<&Path>) -> Self {
+        Self::new(DataDirectoryLock::acquire_if_owner(
+            write_access,
+            data_directory,
+        ))
     }
 
     /// The lock of a run that marks nothing, whose reports write nothing.
@@ -554,6 +572,25 @@ mod tests {
             InstanceStatus::read_from(directory.path()).map(|status| status.state),
             Some(InstanceState::Running),
             "the instance holding the directory owns the status file"
+        );
+    }
+
+    /// A second GeoTrace started read-only leaves the directory to the
+    /// instance that owns it: it marks nothing, and the mark it did not take
+    /// is still free.
+    #[test]
+    fn a_read_only_session_marks_nothing_and_leaves_the_directory_free() {
+        let directory = tempfile::tempdir().expect("temp dir");
+
+        let read_only =
+            DataDirectoryLock::acquire_if_owner(WriteAccess::ReadOnly, Some(directory.path()));
+
+        assert!(!read_only.marks_the_data_directory());
+        assert_eq!(file_names_in(directory.path()), Vec::<String>::new());
+        assert!(
+            DataDirectoryLock::acquire_if_owner(WriteAccess::Owner, Some(directory.path()))
+                .marks_the_data_directory(),
+            "the instance that owns the directory can still mark it"
         );
     }
 

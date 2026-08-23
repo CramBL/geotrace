@@ -23,7 +23,7 @@ use std::thread;
 
 use egui::Context;
 use gt_instance_lock::SharedDataDirectoryLock;
-use gt_pending_writes::{PendingWrites, WriteKind};
+use gt_pending_writes::{PendingWrites, WriteAccess, WriteKind};
 use gt_store::{
     DayArchiveError, DbError, FlareStore, FlareStoreError, HistoryDatabase as _,
     InterruptedDeleteRecovery, IonexStore, IonexStoreError, JamStore, JamStoreError, Recordings,
@@ -343,7 +343,9 @@ pub(in crate::app) fn open_in_background_under(
             sender.send(OpenStorage::disabled()).ok();
         }
         Some(root) => {
-            let open_write = pending_writes.try_begin(OPENING_DATABASES, WriteKind::DatabaseOpen);
+            let open_write = pending_writes
+                .try_begin(OPENING_DATABASES, WriteKind::DatabaseOpen)
+                .ok();
             let ctx = ctx.clone();
             spawn_named("storage-open", move || {
                 let storage = open_under(Some(root), recovery, &ctx, pending_writes);
@@ -431,20 +433,27 @@ pub(in crate::app) fn open_in(
     pending_writes: PendingWrites,
     recovery: ArchiveRecovery,
 ) -> OpenStorage {
-    let (history, history_failure) = match store.open_recordings() {
-        Ok(db) => (HistoryWorker::spawn(db, ctx.clone(), pending_writes), None),
-        Err(err) => (
-            HistoryWorker::disabled(),
-            Some(classify_failure(&err, store.recordings_path())),
-        ),
+    let write_access = pending_writes.write_access();
+    let (history, history_failure) = match write_access {
+        WriteAccess::Owner => match store.open_recordings() {
+            Ok(db) => (HistoryWorker::spawn(db, ctx.clone(), pending_writes), None),
+            Err(err) => (
+                HistoryWorker::disabled(),
+                Some(classify_failure(&err, store.recordings_path())),
+            ),
+        },
+        WriteAccess::ReadOnly => (open_recordings_read_only(store, ctx, pending_writes), None),
     };
 
     let mut unavailable_archives = UnavailableArchives::default();
-    let archive = open_archive::<JamStore>(store, recovery, &mut unavailable_archives);
+    let archive =
+        open_archive::<JamStore>(store, recovery, write_access, &mut unavailable_archives);
     let geomagnetic_indices =
-        open_archive::<SolarStore>(store, recovery, &mut unavailable_archives);
-    let tec_maps = open_archive::<IonexStore>(store, recovery, &mut unavailable_archives);
-    let solar_flares = open_archive::<FlareStore>(store, recovery, &mut unavailable_archives);
+        open_archive::<SolarStore>(store, recovery, write_access, &mut unavailable_archives);
+    let tec_maps =
+        open_archive::<IonexStore>(store, recovery, write_access, &mut unavailable_archives);
+    let solar_flares =
+        open_archive::<FlareStore>(store, recovery, write_access, &mut unavailable_archives);
 
     OpenStorage {
         history,
@@ -454,6 +463,35 @@ pub(in crate::app) fn open_in(
         tec_maps,
         solar_flares,
         unavailable_archives,
+    }
+}
+
+/// The recording history a read-only session reads, or a disabled worker
+/// where there is none to read.
+///
+/// No failure is reported for the user to answer: every answer the failure
+/// prompt offers writes to the database.
+fn open_recordings_read_only(
+    store: &Store,
+    ctx: &Context,
+    pending_writes: PendingWrites,
+) -> HistoryWorker {
+    match store.open_recordings_read_only() {
+        Ok(Some(db)) => HistoryWorker::spawn(db, ctx.clone(), pending_writes),
+        Ok(None) => {
+            log::info!(
+                "There is no recording history at {}, and this read-only session creates none",
+                store.recordings_path().display()
+            );
+            HistoryWorker::disabled()
+        }
+        Err(err) => {
+            log::warn!(
+                "This session does not read the recording history at {}: {err}",
+                store.recordings_path().display()
+            );
+            HistoryWorker::disabled()
+        }
     }
 }
 
@@ -469,6 +507,9 @@ trait DayArchive: Sized {
         store: &Store,
         recovery: InterruptedDeleteRecovery,
     ) -> Result<Arc<Self>, Self::Error>;
+
+    /// Open the archive without writing to it, as a read-only session does.
+    fn open_read_only(store: &Store) -> Result<Arc<Self>, Self::Error>;
 }
 
 impl DayArchive for JamStore {
@@ -481,6 +522,10 @@ impl DayArchive for JamStore {
         recovery: InterruptedDeleteRecovery,
     ) -> Result<Arc<Self>, Self::Error> {
         store.open_interference_with_recovery_choice(recovery)
+    }
+
+    fn open_read_only(store: &Store) -> Result<Arc<Self>, Self::Error> {
+        store.open_interference_read_only()
     }
 }
 
@@ -495,6 +540,10 @@ impl DayArchive for SolarStore {
     ) -> Result<Arc<Self>, Self::Error> {
         store.open_geomagnetic_indices_with_recovery_choice(recovery)
     }
+
+    fn open_read_only(store: &Store) -> Result<Arc<Self>, Self::Error> {
+        store.open_geomagnetic_indices_read_only()
+    }
 }
 
 impl DayArchive for IonexStore {
@@ -507,6 +556,10 @@ impl DayArchive for IonexStore {
         recovery: InterruptedDeleteRecovery,
     ) -> Result<Arc<Self>, Self::Error> {
         store.open_tec_maps_with_recovery_choice(recovery)
+    }
+
+    fn open_read_only(store: &Store) -> Result<Arc<Self>, Self::Error> {
+        store.open_tec_maps_read_only()
     }
 }
 
@@ -521,10 +574,15 @@ impl DayArchive for FlareStore {
     ) -> Result<Arc<Self>, Self::Error> {
         store.open_solar_flares_with_recovery_choice(recovery)
     }
+
+    fn open_read_only(store: &Store) -> Result<Arc<Self>, Self::Error> {
+        store.open_solar_flares_read_only()
+    }
 }
 
-/// Open one archive as `recovery` plans, recording why the app has no archive
-/// where it ends up with none.
+/// Open one archive, recording why the app has no archive where it ends up
+/// with none. A read-only session decides for itself, whatever `recovery`
+/// plans: it creates no archive and writes to none.
 ///
 /// An archive the user left as it is, and one another process holds, are both
 /// reported to the controls that need them. Anything else is logged and the
@@ -532,17 +590,23 @@ impl DayArchive for FlareStore {
 fn open_archive<A: DayArchive>(
     store: &Store,
     recovery: ArchiveRecovery,
+    write_access: WriteAccess,
     unavailable_archives: &mut UnavailableArchives,
 ) -> Option<Arc<A>> {
     let archive = A::ARCHIVE;
-    let choice = match recovery.plan_for(archive) {
+    let plan = match write_access {
+        WriteAccess::Owner => recovery.plan_for(archive),
+        WriteAccess::ReadOnly => archive.read_only_open_plan(store),
+    };
+    let opened = match plan {
         ArchiveOpenPlan::LeaveClosed(reason) => {
             unavailable_archives.record(archive, reason);
             return None;
         }
-        ArchiveOpenPlan::Open(choice) => choice,
+        ArchiveOpenPlan::Open(choice) => A::open_with_recovery_choice(store, choice),
+        ArchiveOpenPlan::OpenReadOnly => A::open_read_only(store),
     };
-    match A::open_with_recovery_choice(store, choice) {
+    match opened {
         Ok(opened) => Some(opened),
         Err(err) => {
             if let Some(interrupted) = err.interrupted_delete_left_unrecovered() {
@@ -663,6 +727,7 @@ mod tests {
     use gt_solar::series::KpSeries;
     use gt_test_utils::ionex_fixtures;
     use rstest::rstest;
+    use strum::IntoEnumIterator as _;
     use tempfile::TempDir;
 
     use gt_jam_store::schema;
@@ -821,6 +886,97 @@ mod tests {
         );
     }
 
+    /// A read-only session leaves a data directory it finds nothing in
+    /// exactly as it found it, and each control that needs an archive is told
+    /// why it has none.
+    #[test]
+    fn a_read_only_open_creates_no_database_and_no_archive() {
+        let (dir, store) = store();
+
+        let opened = open_in(
+            &store,
+            &Context::default(),
+            PendingWrites::new(WriteAccess::ReadOnly),
+            ArchiveRecovery::Automatic,
+        );
+
+        assert!(opened.history.path().is_none());
+        assert_eq!(opened.history_failure, None);
+        assert!(opened.archive.is_none());
+        assert!(opened.geomagnetic_indices.is_none());
+        assert!(opened.tec_maps.is_none());
+        assert!(opened.solar_flares.is_none());
+        for archive in EnvironmentArchive::iter() {
+            assert_eq!(
+                opened.unavailable_archives.of(archive),
+                Some(ArchiveUnavailable::MissingInAReadOnlySession),
+                "{archive:?} was reported as unavailable for the wrong reason"
+            );
+        }
+        assert_eq!(
+            std::fs::read_dir(dir.path())
+                .expect("read the data directory")
+                .count(),
+            0,
+            "the read-only session put a file in the data directory"
+        );
+    }
+
+    /// Recovering an interrupted delete rewrites the archive, which is the one
+    /// thing a read-only session may not do: it leaves the file as it is and
+    /// goes without that archive.
+    #[test]
+    fn a_read_only_open_leaves_an_interrupted_delete_unrecovered() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        interrupt_a_delete_in_the_interference_archive(dir.path());
+        let store = Store::open_in(dir.path());
+
+        let opened = open_in(
+            &store,
+            &Context::default(),
+            PendingWrites::new(WriteAccess::ReadOnly),
+            ArchiveRecovery::Automatic,
+        );
+
+        assert!(opened.archive.is_none());
+        assert_eq!(
+            opened
+                .unavailable_archives
+                .of(EnvironmentArchive::AircraftInterference),
+            Some(ArchiveUnavailable::InterruptedDeleteLeftUnrecovered)
+        );
+        assert_eq!(
+            JamStore::interrupted_delete_at(&store.interference_path())
+                .expect("read the archive")
+                .map(|interrupted| interrupted.archived_days),
+            Some(2),
+            "the read-only session recovered the delete"
+        );
+    }
+
+    /// The archives a read-only session finds are read: only writing to them
+    /// is off.
+    #[test]
+    fn a_read_only_open_reads_the_archives_that_are_already_there() {
+        let (_dir, store) = store();
+        store.open_interference().expect("create the archive");
+
+        let opened = open_in(
+            &store,
+            &Context::default(),
+            PendingWrites::new(WriteAccess::ReadOnly),
+            ArchiveRecovery::Automatic,
+        );
+
+        assert!(opened.archive.is_some());
+        assert_eq!(
+            opened
+                .unavailable_archives
+                .of(EnvironmentArchive::AircraftInterference),
+            None
+        );
+    }
+
     /// Archive `day` in each of the four day archives `opened` holds, through
     /// the handles it already has open.
     fn archive_one_day_in_each(opened: &OpenStorage, day: NaiveDate) {
@@ -966,5 +1122,27 @@ mod tests {
         assert!(opened.geomagnetic_indices.is_some());
         assert!(opened.tec_maps.is_some());
         assert!(opened.solar_flares.is_some());
+    }
+
+    /// A read-only session offers no remedy for an unreadable database - every
+    /// one of them writes - so it reports no failure and simply runs without
+    /// the recordings.
+    #[test]
+    fn a_broken_recordings_database_raises_no_prompt_in_a_read_only_session() {
+        let (_dir, store) = store();
+        std::fs::write(store.recordings_path(), b"not a database").expect("write");
+
+        let opened = open_in(
+            &store,
+            &Context::default(),
+            PendingWrites::new(WriteAccess::ReadOnly),
+            ArchiveRecovery::Automatic,
+        );
+
+        assert_eq!(
+            opened.history_failure, None,
+            "a read-only session raised a prompt whose every answer would write"
+        );
+        assert!(opened.history.path().is_none());
     }
 }

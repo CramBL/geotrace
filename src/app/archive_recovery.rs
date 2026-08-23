@@ -143,6 +143,16 @@ impl EnvironmentArchive {
         }
     }
 
+    /// What a read-only session does with this archive: it reads one that is
+    /// already there, and creates none that is not.
+    pub(in crate::app) fn read_only_open_plan(self, store: &Store) -> ArchiveOpenPlan {
+        if self.path_in(store).exists() {
+            ArchiveOpenPlan::OpenReadOnly
+        } else {
+            ArchiveOpenPlan::LeaveClosed(ArchiveUnavailable::MissingInAReadOnlySession)
+        }
+    }
+
     fn interrupted_delete_prompt_title(self) -> String {
         format!("Recover the {} archive?", self.label_in_sentence())
     }
@@ -161,6 +171,9 @@ pub enum ArchiveUnavailable {
     InterruptedDeleteLeftUnrecovered,
     /// The GeoTrace the user took write access from has the file open.
     HeldByTheOtherInstance,
+    /// The data directory holds no such archive, and a read-only session
+    /// creates none.
+    MissingInAReadOnlySession,
 }
 
 impl ArchiveUnavailable {
@@ -172,6 +185,9 @@ impl ArchiveUnavailable {
                 "an interrupted delete in it was left unrecovered, and nothing is written to it"
             }
             Self::HeldByTheOtherInstance => "the other GeoTrace has the file open",
+            Self::MissingInAReadOnlySession => {
+                "there is no such archive yet, and a read-only session creates none"
+            }
         }
     }
 }
@@ -214,7 +230,11 @@ impl UnavailableArchives {
 /// What an open does with one archive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::app) enum ArchiveOpenPlan {
+    /// Open it, creating it where it is not there, and recover an interrupted
+    /// delete as the choice says.
     Open(InterruptedDeleteRecovery),
+    /// Open the archive that is already there without writing to it.
+    OpenReadOnly,
     /// Left closed for this session, for the reason the user was given.
     LeaveClosed(ArchiveUnavailable),
 }

@@ -3,9 +3,11 @@
 //! A write registers itself through [`PendingWrites::try_begin`] and stays
 //! registered until its [`PendingWriteGuard`] drops. Shutdown calls
 //! [`PendingWrites::begin_shutdown`], which refuses every write that has not
-//! started, and then waits for the ones that have.
+//! started, and then waits for the ones that have. A registry built for
+//! [`WriteAccess::ReadOnly`] refuses every write for the whole run.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,6 +15,36 @@ use parking_lot::{Condvar, Mutex};
 
 /// How many finished labels are kept for the shutdown window to list as done.
 const RECENTLY_FINISHED_KEPT: usize = 8;
+
+/// Whether this run writes anything the user keeps: the data directory and
+/// the settings file.
+///
+/// A [`Self::ReadOnly`] session is one started beside the instance that owns
+/// the data directory: it takes no instance lock and writes nothing, so both
+/// windows can be open at once.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WriteAccess {
+    #[default]
+    Owner,
+    ReadOnly,
+}
+
+/// Why the registry turned a write away.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteRefusal {
+    ShuttingDown,
+    ReadOnlySession,
+}
+
+impl fmt::Display for WriteRefusal {
+    /// Reads as the reason clause a log line states after its colon.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ShuttingDown => f.write_str("shutting down"),
+            Self::ReadOnlySession => f.write_str("this session is read-only"),
+        }
+    }
+}
 
 /// What stopping the process before a write finishes costs.
 ///
@@ -96,6 +128,9 @@ pub struct PendingWrites(Arc<Registry>);
 
 #[derive(Debug, Default)]
 struct Registry {
+    /// Fixed for the whole run: a read-only session refuses writes from the
+    /// first frame, where shutdown starts refusing them part-way through.
+    write_access: WriteAccess,
     state: Mutex<RegistryState>,
     /// Notified whenever the last running write finishes.
     idle: Condvar,
@@ -122,7 +157,36 @@ struct RunningWrite {
 }
 
 impl PendingWrites {
-    /// Register a write about to start, or [`None`] once shutdown has begun.
+    pub fn new(write_access: WriteAccess) -> Self {
+        Self(Arc::new(Registry {
+            write_access,
+            ..Default::default()
+        }))
+    }
+
+    pub fn write_access(&self) -> WriteAccess {
+        self.0.write_access
+    }
+
+    /// Why a write starting now is turned away, or [`None`] while the
+    /// registry takes them.
+    ///
+    /// A read-only session names itself even once it is shutting down: the
+    /// write was never going to run in it.
+    pub fn refusal(&self) -> Option<WriteRefusal> {
+        match self.0.write_access {
+            WriteAccess::ReadOnly => Some(WriteRefusal::ReadOnlySession),
+            WriteAccess::Owner => self
+                .0
+                .state
+                .lock()
+                .shutting_down
+                .then_some(WriteRefusal::ShuttingDown),
+        }
+    }
+
+    /// Register a write about to start, or report why the registry turned it
+    /// away.
     ///
     /// The flag is read and the write registered under one lock, so a write
     /// that got a guard is always one [`Self::wait_until_idle_for`] waits
@@ -131,23 +195,30 @@ impl PendingWrites {
         &self,
         label: impl Into<String>,
         kind: WriteKind,
-    ) -> Option<PendingWriteGuard> {
+    ) -> Result<PendingWriteGuard, WriteRefusal> {
         let mut state = self.0.state.lock();
-        if state.shutting_down {
-            return None;
+        if self.0.write_access == WriteAccess::ReadOnly {
+            return Err(WriteRefusal::ReadOnlySession);
         }
-        Some(self.register(&mut state, label.into(), kind))
+        if state.shutting_down {
+            return Err(WriteRefusal::ShuttingDown);
+        }
+        Ok(self.register(&mut state, label.into(), kind))
     }
 
     /// Register a write shutdown itself performs, which [`Self::try_begin`]
-    /// refuses by design.
-    pub fn begin_shutdown_write(
+    /// refuses by design, or [`None`] in a read-only session, whose shutdown
+    /// writes nothing either.
+    pub fn try_begin_shutdown_write(
         &self,
         label: impl Into<String>,
         kind: WriteKind,
-    ) -> PendingWriteGuard {
+    ) -> Option<PendingWriteGuard> {
         let mut state = self.0.state.lock();
-        self.register(&mut state, label.into(), kind)
+        match self.0.write_access {
+            WriteAccess::ReadOnly => None,
+            WriteAccess::Owner => Some(self.register(&mut state, label.into(), kind)),
+        }
     }
 
     fn register(
@@ -176,10 +247,6 @@ impl PendingWrites {
     /// Refuse every write that has not started yet.
     pub fn begin_shutdown(&self) {
         self.0.state.lock().shutting_down = true;
-    }
-
-    pub fn is_shutting_down(&self) -> bool {
-        self.0.state.lock().shutting_down
     }
 
     /// Whether every registered write has finished.
@@ -287,7 +354,7 @@ mod tests {
 
         writes.begin_shutdown();
 
-        assert!(writes.is_shutting_down());
+        assert_eq!(writes.refusal(), Some(WriteRefusal::ShuttingDown));
         assert!(!writes.is_idle(), "the write that started is still running");
         drop(guard);
         assert!(writes.is_idle());
@@ -298,10 +365,9 @@ mod tests {
         let writes = PendingWrites::default();
         writes.begin_shutdown();
 
-        assert!(
-            writes
-                .try_begin("Compacting the TEC archive", TEC)
-                .is_none()
+        assert_eq!(
+            writes.try_begin("Compacting the TEC archive", TEC).err(),
+            Some(WriteRefusal::ShuttingDown)
         );
         assert!(writes.is_idle());
     }
@@ -311,11 +377,75 @@ mod tests {
         let writes = PendingWrites::default();
         writes.begin_shutdown();
 
-        let guard = writes.begin_shutdown_write("Saving settings", WriteKind::Settings);
+        let guard = writes.try_begin_shutdown_write("Saving settings", WriteKind::Settings);
 
         assert!(!writes.is_idle());
         drop(guard);
         assert!(writes.is_idle());
+    }
+
+    #[rstest]
+    #[case(TEC)]
+    #[case(WriteKind::ArchiveDayInsert {
+        archive: "aircraft interference"
+    })]
+    #[case(WriteKind::DatabaseOpen)]
+    #[case(WriteKind::RecordingDatabase)]
+    #[case(WriteKind::Settings)]
+    fn a_read_only_session_refuses_every_kind_of_write(#[case] kind: WriteKind) {
+        let writes = PendingWrites::new(WriteAccess::ReadOnly);
+
+        assert_eq!(
+            writes.try_begin("A write of some kind", kind).err(),
+            Some(WriteRefusal::ReadOnlySession)
+        );
+        assert!(
+            writes
+                .try_begin_shutdown_write("A write of some kind", kind)
+                .is_none(),
+            "the shutdown of a read-only session writes nothing either"
+        );
+        assert!(writes.is_idle());
+    }
+
+    /// The reason a read-only session gives never becomes "shutting down":
+    /// the write it turned away was never going to run.
+    #[test]
+    fn a_read_only_session_that_begins_shutting_down_still_names_itself() {
+        let writes = PendingWrites::new(WriteAccess::ReadOnly);
+
+        writes.begin_shutdown();
+
+        assert_eq!(writes.refusal(), Some(WriteRefusal::ReadOnlySession));
+        assert_eq!(
+            writes
+                .try_begin("Saving settings", WriteKind::Settings)
+                .err(),
+            Some(WriteRefusal::ReadOnlySession)
+        );
+    }
+
+    #[test]
+    fn a_session_that_owns_the_data_directory_takes_writes() {
+        let writes = PendingWrites::new(WriteAccess::Owner);
+
+        assert_eq!(writes.refusal(), None);
+        assert_eq!(
+            writes
+                .try_begin("Saving settings", WriteKind::Settings)
+                .err(),
+            None
+        );
+    }
+
+    #[rstest]
+    #[case(WriteRefusal::ShuttingDown, "shutting down")]
+    #[case(WriteRefusal::ReadOnlySession, "this session is read-only")]
+    fn each_refusal_reads_as_a_reason_clause(
+        #[case] refusal: WriteRefusal,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(refusal.to_string(), expected);
     }
 
     #[test]

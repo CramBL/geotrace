@@ -160,6 +160,14 @@ impl HistoryDatabase for SysDb {
         })
     }
 
+    fn open_existing_read_only(path: &Path) -> Result<Self, DbError> {
+        let _guard = DB_LOCK.lock();
+        Self::validate_existing(path)?;
+        Ok(Self {
+            path: path.to_owned(),
+        })
+    }
+
     fn clear_write_lock(path: &Path) -> Result<(), DbError> {
         let _guard = DB_LOCK.lock();
         if crate::copy::clear_write_lock(path)? {

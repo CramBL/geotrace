@@ -141,6 +141,26 @@ impl JamStore {
         })
     }
 
+    /// Open the archive at `path` without writing to it: it is not created
+    /// where it is missing, not rebuilt, and neither an interrupted insert nor
+    /// an interrupted delete in it is put right.
+    ///
+    /// An archive an interrupted delete left part-way through fails with
+    /// [`JamStoreError::DeclinedRecovery`]: its day index cannot be read as it
+    /// stands, and putting it right is a write.
+    pub fn open_existing_read_only(path: &Path) -> Result<Self, JamStoreError> {
+        let mut archive = ArchiveFile::new(path);
+        archive.check_readable_without_writing(
+            Self::interrupted_delete_in,
+            schema::SCHEMA_VERSION_ATTR,
+            schema::CURRENT_SCHEMA_VERSION,
+        )?;
+        Ok(Self {
+            archive: Mutex::new(archive),
+            path: path.to_owned(),
+        })
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }

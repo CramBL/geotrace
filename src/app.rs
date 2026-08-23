@@ -152,6 +152,9 @@ fn transport_source(offline: bool) -> TransportSource {
 #[derive(Debug, Clone)]
 pub struct StartupOptions {
     pub fading_enabled: bool,
+    /// Whether this run owns the data directory and writes to it, or was
+    /// started read-only beside the instance that owns it.
+    ///
     /// Whether the app runs without network access: no interference
     /// downloads, no snapping, no update check, no map tiles.
     ///

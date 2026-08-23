@@ -26,7 +26,7 @@ use gt_ionex::tec::TotalElectronContent;
 use gt_ionex::text;
 use gt_ionex::{IonexProduct, calendar, transport};
 use gt_map::{TecHeatmapSnapshot, TecLayer};
-use gt_pending_writes::PendingWrites;
+use gt_pending_writes::{PendingWrites, WriteRefusal};
 use gt_store::{ArchiveUsage, IonexStore, IonexStoreError};
 use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{ArcIdentity, TecContextSample, TecPoint, TecSeries};
@@ -53,19 +53,20 @@ enum MapDayMessage {
         day: NaiveDate,
         detail: String,
     },
-    /// The day was downloaded, then discarded unarchived because the process
-    /// is shutting down.
-    NotArchivedDuringShutdown {
+    /// The day was downloaded, then discarded unarchived because the write
+    /// registry turned it away.
+    NotArchived {
         day: NaiveDate,
+        refusal: WriteRefusal,
     },
 }
 
 impl MapDayMessage {
     fn day(&self) -> NaiveDate {
         match *self {
-            Self::Stored { day, .. }
-            | Self::Failed { day, .. }
-            | Self::NotArchivedDuringShutdown { day } => day,
+            Self::Stored { day, .. } | Self::Failed { day, .. } | Self::NotArchived { day, .. } => {
+                day
+            }
         }
     }
 }
@@ -324,8 +325,8 @@ impl TecMapScheduler {
                     log::error!("No TEC maps archived for {day}: {detail}");
                     self.days.report_failure(day, detail);
                 }
-                MapDayMessage::NotArchivedDuringShutdown { day } => {
-                    log::debug!("No TEC maps archived for {day}: shutting down");
+                MapDayMessage::NotArchived { day, refusal } => {
+                    log::debug!("No TEC maps archived for {day}: {refusal}");
                 }
             }
         }
@@ -539,7 +540,7 @@ impl TecMapScheduler {
         let Some(store) = self.store.as_ref().map(Arc::clone) else {
             return;
         };
-        if self.pending_writes.is_shutting_down() {
+        if self.pending_writes.refusal().is_some() {
             return;
         }
         let Some(day) = self.days.take_next_day() else {
@@ -713,9 +714,10 @@ fn ingest(
             }
         };
 
-    let Some(_write) = EnvironmentArchive::IonosphericTec.try_begin_day_insert(pending_writes, day)
-    else {
-        return MapDayMessage::NotArchivedDuringShutdown { day };
+    let _write = match EnvironmentArchive::IonosphericTec.try_begin_day_insert(pending_writes, day)
+    {
+        Ok(write) => write,
+        Err(refusal) => return MapDayMessage::NotArchived { day, refusal },
     };
     if let Err(err) = store.insert_or_replace_day(day, mirror.as_ref(), Utc::now(), product, &maps)
     {
@@ -748,8 +750,9 @@ mod tests {
     use gt_fetch::BytesResponse;
     use gt_ionex::quiet_time::IonosphericStormGrade;
     use gt_ionex::{DEFAULT_BASE_URL, MirrorLayout};
+    use gt_pending_writes::WriteAccess;
     use gt_store::Store;
-    use gt_test_utils::{ScriptedTransport, UrlPrefixAnswers, ionex_fixtures};
+    use gt_test_utils::{ScriptedTransport, UrlPrefixAnswers, ionex_fixtures, pending_writes};
 
     use super::*;
 
@@ -1096,7 +1099,7 @@ mod tests {
                 detail.contains(gt_ionex::text::MIRROR_SKIPPED_WITHOUT_TOKEN),
                 "{detail}"
             ),
-            MapDayMessage::Stored { .. } | MapDayMessage::NotArchivedDuringShutdown { .. } => {
+            MapDayMessage::Stored { .. } | MapDayMessage::NotArchived { .. } => {
                 panic!("the archive was never requested")
             }
         }
@@ -1246,6 +1249,58 @@ mod tests {
         assert_eq!(store.archived_days().expect("days").len(), 1);
     }
 
+    /// A day queued while the registry refuses writes stays queued: no worker
+    /// starts a download whose archive insert would be refused.
+    #[rstest]
+    #[case::shutting_down(pending_writes::shutting_down_registry())]
+    #[case::read_only_session(PendingWrites::new(WriteAccess::ReadOnly))]
+    fn no_day_is_dispatched_while_writes_are_refused(#[case] pending_writes: PendingWrites) {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        scheduler.pending_writes = pending_writes;
+
+        scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17)));
+
+        assert!(
+            scheduler.days.requested_days().contains(&day(2024, 5, 10)),
+            "the day left the queue"
+        );
+        assert!(!scheduler.days.is_fetching());
+    }
+
+    /// A download that finishes where the insert is refused is discarded, and
+    /// says which refusal discarded it.
+    #[rstest]
+    #[case::shutting_down(pending_writes::shutting_down_registry(), WriteRefusal::ShuttingDown)]
+    #[case::read_only_session(
+        PendingWrites::new(WriteAccess::ReadOnly),
+        WriteRefusal::ReadOnlySession
+    )]
+    fn a_day_downloaded_where_the_insert_is_refused_is_discarded(
+        #[case] pending_writes: PendingWrites,
+        #[case] expected: WriteRefusal,
+    ) {
+        let (_dir, store) = archive();
+        let transport = ScriptedTransport::always(Ok(BytesResponse {
+            status: 200,
+            body: gzipped(&published_file()),
+        }));
+
+        let message = ingest(
+            &transport,
+            &store,
+            &publishing_host(),
+            None,
+            day(2024, 5, 10),
+            &pending_writes,
+        );
+
+        let MapDayMessage::NotArchived { refusal, .. } = message else {
+            panic!("the day was archived where the insert is refused");
+        };
+        assert_eq!(refusal, expected);
+        assert!(store.archived_days().expect("days").is_empty());
+    }
+
     #[rstest]
     #[case::a_body_that_is_not_a_file(200, b"<html>captive portal</html>".to_vec())]
     #[case::a_server_error(500, Vec::new())]
@@ -1301,8 +1356,8 @@ mod tests {
                 assert_eq!(skipped.len(), 1, "the first mirror holds no file");
             }
             MapDayMessage::Failed { detail, .. } => panic!("{detail}"),
-            MapDayMessage::NotArchivedDuringShutdown { .. } => {
-                panic!("the run is not shutting down")
+            MapDayMessage::NotArchived { .. } => {
+                panic!("the day should have been archived, not refused")
             }
         }
         assert_eq!(
@@ -1341,7 +1396,7 @@ mod tests {
                      https://second.example: HTTP 500 Internal Server Error"
                 );
             }
-            MapDayMessage::Stored { .. } | MapDayMessage::NotArchivedDuringShutdown { .. } => {
+            MapDayMessage::Stored { .. } | MapDayMessage::NotArchived { .. } => {
                 panic!("no mirror served a file")
             }
         }
@@ -1415,7 +1470,10 @@ mod tests {
         day: day(2024, 5, 10),
         detail: "final: HTTP 500 Internal Server Error".to_owned(),
     })]
-    #[case::shutting_down(MapDayMessage::NotArchivedDuringShutdown { day: day(2024, 5, 10) })]
+    #[case::not_archived(MapDayMessage::NotArchived {
+        day: day(2024, 5, 10),
+        refusal: WriteRefusal::ShuttingDown,
+    })]
     fn progress_advances_on_every_outcome(#[case] message: MapDayMessage) {
         let mut scheduler = scheduler_without_archive();
         scheduler

@@ -9,8 +9,8 @@
 //! two paths safe.
 //!
 //! A request that writes runs under a [`PendingWrites`] guard, so the process
-//! waits for it on the way out. Once shutdown has begun such a request is
-//! refused and answered with [`Response::WriteRefusedDuringShutdown`].
+//! waits for it on the way out. A request the registry turns away is answered
+//! with [`Response::WriteRefused`], naming why.
 
 use std::collections::HashSet;
 use std::ops::Range;
@@ -21,7 +21,7 @@ use std::thread::JoinHandle;
 
 use egui::Context;
 use gt_log_view::LogAttachmentRef;
-use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteKind};
+use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteKind, WriteRefusal};
 use gt_store::{
     AttachedLog, DatabaseRef, DbError, HistoryDatabase, LogAttachmentError, LogAttachmentId,
     LogAttachments as _, LogContentHash, LogToAttach, PruneMode, RecordingEntry, Recordings,
@@ -221,10 +221,11 @@ pub enum Response {
         recording: DatabaseRef,
         existing: Result<Option<String>, DbError>,
     },
-    /// The worker refused a write that arrived after shutdown began, and
-    /// answered without touching the database.
-    WriteRefusedDuringShutdown {
+    /// The registry turned a write away, and the worker answered without
+    /// touching the database.
+    WriteRefused {
         label: &'static str,
+        refusal: WriteRefusal,
     },
 }
 
@@ -435,12 +436,13 @@ impl HistoryWorker {
 
     /// Ends the worker on a thread of its own, which holds `write` until the
     /// database is closed. The caller returns as soon as that thread is
-    /// spawned.
+    /// spawned. A read-only session has no write to hold: it closes a
+    /// database it never wrote to.
     ///
     /// Where the thread cannot be spawned the worker is left detached: its
     /// `history-db` thread ends by itself once the request sender drops, and
     /// `write` is released because nothing waits for it.
-    pub fn shutdown_on_a_thread_of_its_own(mut self, write: PendingWriteGuard) {
+    pub fn shutdown_on_a_thread_of_its_own(mut self, write: Option<PendingWriteGuard>) {
         let req_tx = self.req_tx.take();
         let handle = self.handle.take();
         let spawned = std::thread::Builder::new()
@@ -484,8 +486,8 @@ fn worker_loop(
         let resp = match req.database_write_label() {
             None => handle_request(&mut db, req),
             Some(label) => match pending_writes.try_begin(label, WriteKind::RecordingDatabase) {
-                Some(_write) => handle_request(&mut db, req),
-                None => Response::WriteRefusedDuringShutdown { label },
+                Ok(_write) => handle_request(&mut db, req),
+                Err(refusal) => Response::WriteRefused { label, refusal },
             },
         };
         // If the UI is gone the send fails, there is nothing left to repaint.
@@ -737,8 +739,9 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use chrono::DateTime;
+    use gt_pending_writes::WriteAccess;
     use gt_store::{StoredSegmentation, TrackRange};
-    use gt_test_utils::{SyntheticGtdSpec, synthetic_gtd_bytes};
+    use gt_test_utils::{SyntheticGtdSpec, pending_writes, synthetic_gtd_bytes};
     use rstest::rstest;
 
     use super::*;
@@ -975,22 +978,29 @@ mod tests {
         worker.shutdown();
     }
 
-    #[test]
-    fn a_mutation_requested_after_shutdown_began_is_refused_and_answered() {
+    #[rstest]
+    #[case::shutting_down(pending_writes::shutting_down_registry(), WriteRefusal::ShuttingDown)]
+    #[case::read_only_session(
+        PendingWrites::new(WriteAccess::ReadOnly),
+        WriteRefusal::ReadOnlySession
+    )]
+    fn a_refused_mutation_is_answered_with_its_reason_and_leaves_the_database_alone(
+        #[case] pending_writes: PendingWrites,
+        #[case] expected: WriteRefusal,
+    ) {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
         seed_two_track_recording(&path);
-        let pending_writes = PendingWrites::default();
         let db = Recordings::open_or_create(&path).expect("reopen");
         let worker = HistoryWorker::spawn(db, Context::default(), pending_writes.clone());
         let db_ref = only_recording_ref(&worker);
-        pending_writes.begin_shutdown();
 
         worker.set_tracks_hidden(db_ref, vec![0], true);
 
-        let Response::WriteRefusedDuringShutdown { label } = next_response(&worker) else {
+        let Response::WriteRefused { label, refusal } = next_response(&worker) else {
             panic!("expected the write to be refused");
         };
+        assert_eq!(refusal, expected);
         assert_eq!(label, "Hiding tracks in recording history");
         assert!(pending_writes.is_idle());
 
