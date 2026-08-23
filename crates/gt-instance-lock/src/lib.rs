@@ -470,8 +470,11 @@ fn open_lock_file(directory: &Path) -> io::Result<File> {
 }
 
 impl Drop for DataDirectoryLock {
-    /// No instance finds the directory free with a status still in it: the
-    /// status file goes before the lock that vouches for it.
+    /// Takes the status file with the lock that vouches for it, so a clean
+    /// exit leaves nothing behind. A force quit leaves its status in the
+    /// directory: the next instance to mark it replaces that status as it
+    /// writes its own, and nothing reads a status while the lock behind it
+    /// is free.
     fn drop(&mut self) {
         let DataDirectoryMark::MarkedByThisInstance(marked) = &self.mark else {
             return;
@@ -559,6 +562,30 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&InstanceState::Running).expect("serialize the state"),
             r#""running""#
+        );
+    }
+
+    /// A process that ends without unwinding - a force quit - leaves its
+    /// status file behind, and one that ends between a status write and its
+    /// rename leaves the temporary too. The instance that marks the directory
+    /// next replaces both, so neither outlives the lock they came with.
+    #[test]
+    fn marking_the_directory_replaces_the_status_files_the_previous_instance_left() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        fs::write(directory.path().join(STATUS_FILE_NAME), b"{}").expect("write a stale status");
+        fs::write(directory.path().join(STATUS_FILE_BEING_WRITTEN_NAME), b"{}")
+            .expect("write a status that never got renamed");
+
+        let lock = DataDirectoryLock::acquire(Some(directory.path()));
+
+        assert!(lock.marks_the_data_directory());
+        assert_eq!(
+            file_names_in(directory.path()),
+            vec![STATUS_FILE_NAME.to_owned(), LOCK_FILE_NAME.to_owned()]
+        );
+        assert_eq!(
+            InstanceStatus::read_from(directory.path()).map(|status| status.process_id),
+            Some(process::id())
         );
     }
 
