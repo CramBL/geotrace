@@ -27,11 +27,12 @@ use strum::{EnumIter, IntoEnumIterator as _};
 
 use crate::settings::QueryHistoryEntry;
 
-use self::results::{MatchListState, ResultsOutputs, ResultsTables};
+use self::results::{ResultsOutputs, ResultsState, ResultsTables};
 
 mod column_format;
 mod match_row;
 mod results;
+mod value_bar;
 
 /// Unpinned history entries kept before the oldest is evicted. Pinned
 /// entries never count against this cap.
@@ -179,9 +180,10 @@ pub struct QueryWindow {
     /// `None` while no doc shows. Keeps the doc up while the pointer moves
     /// within the token.
     hover_doc_span: Option<Range<usize>>,
-    /// How the results list the run's matches: the order of the matches table,
-    /// and the match whose rows the points table lists.
-    match_list: MatchListState,
+    /// What the results tab keeps between frames: the order of the matches
+    /// table, the match whose rows the points table lists, and the value ranges
+    /// the bars behind its cells scale to.
+    results_state: ResultsState,
     /// The tab on display, kept across frames. A finished run switches it back
     /// to the results.
     tab: QueryTab,
@@ -316,7 +318,7 @@ impl QueryWindow {
             last_edit_time: None,
             editor_had_focus: false,
             hover_doc_span: None,
-            match_list: MatchListState::default(),
+            results_state: ResultsState::default(),
             tab: QueryTab::default(),
         }
     }
@@ -1199,7 +1201,7 @@ impl QueryWindow {
         // is written.
         let Self {
             session,
-            match_list,
+            results_state,
             ..
         } = self;
         let files = inputs.loaded_files.files();
@@ -1228,7 +1230,7 @@ impl QueryWindow {
             requests,
             reveal: reveal_matches_request,
         };
-        ResultsTables::of_run(files, results).ui(ui, match_list, scope, &mut outputs);
+        ResultsTables::of_run(files, results).ui(ui, results_state, scope, &mut outputs);
     }
 
     /// The checks already ran. Prepare the run from the visible data and hand
