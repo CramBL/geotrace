@@ -102,6 +102,35 @@ fn run_self_update_cli() -> ExitCode {
 /// termination-signal flag.
 const TERMINATION_SIGNAL_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 
+/// What the wait for the last writes does about the termination-signal flag
+/// it just read.
+#[derive(Debug, PartialEq, Eq)]
+enum SignalDuringTheWait {
+    KeepWaiting,
+    /// A signal reached a shutdown that is already under way: the terminal
+    /// it came from is told so, and what quitting now would abandon.
+    ReportTheShutdownAlreadyUnderWay {
+        writes_still_running: usize,
+    },
+    /// The user signalled a second time: the process ends with the writes
+    /// still running.
+    QuitLeavingWritesUnfinished,
+}
+
+impl SignalDuringTheWait {
+    fn of(action: TerminationSignalAction, pending_writes: &PendingWrites) -> Self {
+        match action {
+            TerminationSignalAction::KeepRunning => Self::KeepWaiting,
+            TerminationSignalAction::BeginShutdown => Self::ReportTheShutdownAlreadyUnderWay {
+                writes_still_running: pending_writes.snapshot().running.len(),
+            },
+            TerminationSignalAction::QuitLeavingWritesUnfinished => {
+                Self::QuitLeavingWritesUnfinished
+            }
+        }
+    }
+}
+
 /// Waits for the writes still running once the window is gone, which is where
 /// "Run in background" leaves them, and reports the code to exit with.
 ///
@@ -117,14 +146,22 @@ fn begin_shutdown_and_wait_for_pending_writes(
     }
     instance_lock.mark_shutting_down(pending_writes);
     while !pending_writes.wait_until_idle_for(TERMINATION_SIGNAL_CHECK_INTERVAL) {
-        if TERMINATION_SIGNAL_FLAG.take_action()
-            == TerminationSignalAction::QuitLeavingWritesUnfinished
-        {
-            shutdown::log_writes_left_unfinished(
-                shutdown::SECOND_SIGNAL_QUIT_CAUSE,
-                pending_writes,
-            );
-            return ExitCode::from(shutdown::FORCE_QUIT_EXIT_CODE);
+        match SignalDuringTheWait::of(TERMINATION_SIGNAL_FLAG.take_action(), pending_writes) {
+            SignalDuringTheWait::KeepWaiting => {}
+            SignalDuringTheWait::ReportTheShutdownAlreadyUnderWay {
+                writes_still_running,
+            } => log::info!(
+                "Already shutting down: signal again to quit and abandon {writes_still_running} \
+                 background {}",
+                gt_fmt::pluralize(writes_still_running, "write", "writes")
+            ),
+            SignalDuringTheWait::QuitLeavingWritesUnfinished => {
+                shutdown::log_writes_left_unfinished(
+                    shutdown::SECOND_SIGNAL_QUIT_CAUSE,
+                    pending_writes,
+                );
+                return ExitCode::from(shutdown::FORCE_QUIT_EXIT_CODE);
+            }
         }
         instance_lock.report_shutdown_progress(pending_writes);
     }
@@ -292,9 +329,31 @@ mod tests {
     use gt_pending_writes::{PendingWrites, WriteKind};
     use rstest::rstest;
 
-    use crate::CliAction;
     use crate::app::shutdown;
     use crate::termination_signal::{TERMINATION_SIGNAL_FLAG, TerminationSignalAction};
+    use crate::{CliAction, SignalDuringTheWait};
+
+    const TEC_COMPACTION: WriteKind = WriteKind::ArchiveCompaction {
+        archive: "ionospheric TEC",
+    };
+
+    /// The first signal after the window closed reaches a shutdown that is
+    /// already under way: nothing changes, and the terminal it came from is
+    /// told what a second signal would cost.
+    #[test]
+    fn a_signal_reaching_the_shutdown_under_way_reports_what_quitting_would_abandon() {
+        let pending_writes = PendingWrites::default();
+        let _compaction = pending_writes
+            .try_begin("Compacting the TEC archive", TEC_COMPACTION)
+            .expect("the registry is running");
+
+        assert_eq!(
+            SignalDuringTheWait::of(TerminationSignalAction::BeginShutdown, &pending_writes),
+            SignalDuringTheWait::ReportTheShutdownAlreadyUnderWay {
+                writes_still_running: 1
+            }
+        );
+    }
 
     #[test]
     fn a_wait_with_nothing_left_to_finish_exits_clean() {
@@ -317,12 +376,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("temp dir");
         let pending_writes = PendingWrites::default();
         let compaction = pending_writes
-            .try_begin(
-                "Compacting the TEC archive",
-                WriteKind::ArchiveCompaction {
-                    archive: "ionospheric TEC",
-                },
-            )
+            .try_begin("Compacting the TEC archive", TEC_COMPACTION)
             .expect("the registry is running");
         let holder = thread::Builder::new()
             .name("pending-write-holder".to_owned())
@@ -365,12 +419,7 @@ mod tests {
     fn a_second_signal_ends_the_wait_with_the_force_quit_code() {
         let pending_writes = PendingWrites::default();
         let compaction = pending_writes
-            .try_begin(
-                "Compacting the TEC archive",
-                WriteKind::ArchiveCompaction {
-                    archive: "ionospheric TEC",
-                },
-            )
+            .try_begin("Compacting the TEC archive", TEC_COMPACTION)
             .expect("the registry is running");
         thread::Builder::new()
             .name("pending-write-holder".to_owned())
