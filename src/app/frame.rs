@@ -991,6 +991,7 @@ impl App {
         let mut dismiss = false;
         ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
             egui::warn_if_debug_build(ui);
+            self.show_read_only_marker(ui);
             if let Some(error) = &self.load_error {
                 ui.horizontal(|ui| {
                     ui.colored_label(

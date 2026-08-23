@@ -5,10 +5,11 @@
 //! holding the directory is part-way through rewriting. It retries the lock
 //! instead, and shows what that instance is doing until it lets go.
 //!
-//! The wait ends in one of two ways: this instance takes the lock, or the
-//! user takes write access from the instance holding it, after a confirmation
-//! naming what that costs. A lock file that will not open ends nothing by
-//! itself: it leaves the databases closed until one of those two happens.
+//! The wait ends in one of three ways: this instance takes the lock, the user
+//! takes write access from the instance holding it after a confirmation
+//! naming what that costs, or the user starts a read-only session beside it.
+//! A lock file that will not open ends nothing by itself: it leaves the
+//! databases closed until one of those three happens.
 
 use std::mem;
 use std::time::{Duration, Instant};
@@ -22,7 +23,7 @@ use gt_ui_theme::warning_amber;
 
 use super::App;
 use super::modals;
-use super::storage::StorageOpen;
+use super::storage::{QueuedLoad, StorageOpen};
 
 /// How often the wait tries the data directory again, and with it re-reads
 /// why it does not have it.
@@ -36,6 +37,10 @@ pub(in crate::app) const LOCK_FILE_UNUSABLE_TITLE: &str =
 
 pub(in crate::app) const TAKE_OVER_BUTTON_LABEL: &str = "Take over write access…";
 
+/// No suffix: the button needs no further input, because a read-only session
+/// destroys nothing and overrides nothing.
+pub(in crate::app) const START_READ_ONLY_BUTTON_LABEL: &str = "Start read-only";
+
 pub(in crate::app) const TAKE_OVER_CONFIRMATION_TITLE: &str = "Take over write access?";
 
 pub(in crate::app) const TAKE_OVER_WARNING: &str = "Writing to the recordings and archives while the other GeoTrace is still \
@@ -44,6 +49,10 @@ pub(in crate::app) const TAKE_OVER_WARNING: &str = "Writing to the recordings an
 
 const TAKE_OVER_BUTTON_HOVER: &str =
     "Open the recordings and archives here without waiting for the other GeoTrace";
+
+const START_READ_ONLY_BUTTON_HOVER: &str = "Read the recordings and archives here while the other GeoTrace keeps them: \
+     nothing is stored, downloaded, deleted or saved. The session stays read-only until \
+     GeoTrace is restarted.";
 
 const WAIT_DIALOG_MIN_WIDTH: f32 = 360.0;
 
@@ -68,12 +77,17 @@ enum DataDirectoryRetry {
     StillWaiting,
 }
 
-/// Whether the user took write access from the instance holding the data
-/// directory.
+/// How the user answered the wait dialog this frame.
 #[derive(Debug, PartialEq, Eq)]
-enum WriteAccessTakeOver {
-    Taken,
-    NotTaken,
+enum WaitAnswer {
+    /// The dialog is up and the wait goes on.
+    KeepWaiting,
+    /// Open the databases here, overriding the instance holding the data
+    /// directory.
+    TakeOverWriteAccess,
+    /// Read the databases beside the instance holding the data directory,
+    /// writing nothing.
+    StartReadOnly,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -142,23 +156,35 @@ impl DataDirectoryWait {
         DataDirectoryRetry::StillWaiting
     }
 
-    /// Shows the wait, and reports the frame the user takes write access.
+    /// The process id the instance holding the data directory wrote to its
+    /// status file. A read-only session names it as the owner.
+    fn owner_process_id(&self) -> Option<u32> {
+        match &self.unavailable {
+            DataDirectoryUnavailable::HeldByAnotherInstance(status) => {
+                status.as_ref().map(|status| status.process_id)
+            }
+            DataDirectoryUnavailable::UnusableLockFile(_) => None,
+        }
+    }
+
+    /// Shows the wait, and reports the frame the user answers it.
     ///
     /// The confirmation stands in for the wait dialog while it is up: both
     /// are anchored to the center of the window, and the confirmation names
     /// the same holder state the wait dialog does.
-    fn ui(&mut self, ui: &egui::Ui) -> WriteAccessTakeOver {
+    fn ui(&mut self, ui: &egui::Ui) -> WaitAnswer {
         if self.confirming_take_over {
             return match show_take_over_confirmation(ui, &self.unavailable) {
-                Some(TakeOverChoice::TakeOver) => WriteAccessTakeOver::Taken,
+                Some(TakeOverChoice::TakeOver) => WaitAnswer::TakeOverWriteAccess,
                 Some(TakeOverChoice::Cancel) => {
                     self.confirming_take_over = false;
-                    WriteAccessTakeOver::NotTaken
+                    WaitAnswer::KeepWaiting
                 }
-                None => WriteAccessTakeOver::NotTaken,
+                None => WaitAnswer::KeepWaiting,
             };
         }
 
+        let mut answer = WaitAnswer::KeepWaiting;
         Window::new(self.unavailable.dialog_title())
             .collapsible(false)
             .resizable(false)
@@ -178,9 +204,16 @@ impl DataDirectoryWait {
                     {
                         self.confirming_take_over = true;
                     }
+                    if ui
+                        .button(START_READ_ONLY_BUTTON_LABEL)
+                        .on_hover_text(START_READ_ONLY_BUTTON_HOVER)
+                        .clicked()
+                    {
+                        answer = WaitAnswer::StartReadOnly;
+                    }
                 });
             });
-        WriteAccessTakeOver::NotTaken
+        answer
     }
 }
 
@@ -351,11 +384,11 @@ impl App {
                 );
             }
             DataDirectoryRetry::StillWaiting => match wait.ui(ui) {
-                WriteAccessTakeOver::NotTaken => {
+                WaitAnswer::KeepWaiting => {
                     ui.ctx()
                         .request_repaint_after(DATA_DIRECTORY_RETRY_INTERVAL);
                 }
-                WriteAccessTakeOver::Taken => {
+                WaitAnswer::TakeOverWriteAccess => {
                     log::warn!(
                         "The user took write access: reading the archives for an interrupted \
                          delete while another instance still holds the data directory"
@@ -366,8 +399,39 @@ impl App {
                         .storage
                         .inspect_archives_in_background(ui.ctx(), queued_loads);
                 }
+                WaitAnswer::StartReadOnly => {
+                    let owner_process_id = wait.owner_process_id();
+                    let queued_loads = mem::take(queued_loads);
+                    self.start_read_only_session(ui.ctx(), owner_process_id, queued_loads);
+                }
             },
         }
+    }
+
+    /// Leaves the wait as a read-only session: the databases are opened
+    /// without writing to or creating any of them, and the data directory is
+    /// left to the instance that owns it.
+    ///
+    /// Giving up the mark keeps anything from promoting this session to the
+    /// owner later. It stays read-only until GeoTrace is restarted, as the
+    /// user chose.
+    fn start_read_only_session(
+        &mut self,
+        ctx: &egui::Context,
+        owner_process_id: Option<u32>,
+        queued_loads: Vec<QueuedLoad>,
+    ) {
+        log::info!(
+            "Starting read-only beside the GeoTrace that owns the data directory: this session \
+             opens the recordings and archives without writing to any of them"
+        );
+        self.data_directory_owner_process_id = owner_process_id;
+        self.pending_writes
+            .become_read_only_for_the_rest_of_the_run();
+        self.instance_lock.give_up_marking_the_data_directory();
+        self.storage_open =
+            self.storage
+                .open_in_background(ctx, self.pending_writes.clone(), queued_loads);
     }
 
     /// Goes on retrying the mark after the user took write access, so this

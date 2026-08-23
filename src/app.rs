@@ -25,6 +25,7 @@ mod mapbox_token_test;
 mod modals;
 mod panes;
 mod query;
+mod read_only_session;
 mod recording_name_template;
 mod reference_window;
 mod settings_autosave;
@@ -352,6 +353,10 @@ pub struct App {
     /// Set once the user took write access from the instance holding the data
     /// directory: the mark is retried until this instance holds it too.
     mark_retry_after_take_over: Option<instance_wait::MarkRetryAfterTakeOver>,
+    /// The instance that owns the data directory, as its status file named it
+    /// when the user started this session read-only beside it. The read-only
+    /// marker names it.
+    data_directory_owner_process_id: Option<u32>,
     /// "Keep a backup of the original database" tickbox state for the corruption
     /// recreate dialog.
     keep_db_backup: bool,
@@ -622,6 +627,7 @@ impl App {
             storage_open,
             unavailable_archives: archive_recovery::UnavailableArchives::default(),
             mark_retry_after_take_over: None,
+            data_directory_owner_process_id: None,
             keep_db_backup: true,
             pending_resegment: None,
             storage_settings: crate::settings::StorageSettings::default(),
