@@ -27,6 +27,7 @@ use egui_phosphor::regular::APP_WINDOW as ICON_APP_WINDOW;
 
 use super::App;
 use super::backfill_ui::BackfillReadiness;
+use super::storage::DatabasesPending;
 
 /// One category of the settings window, in the order the rail lists them.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug, EnumIter)]
@@ -121,14 +122,14 @@ impl App {
     /// one that could not be opened outranks offline mode: there is nowhere
     /// to download to either way.
     fn backfill_readiness(&self, archive_available: bool) -> BackfillReadiness {
-        if self.storage_open.is_opening() {
-            BackfillReadiness::ArchiveStillOpening
-        } else if !archive_available {
-            BackfillReadiness::WithoutArchive
-        } else if self.offline {
-            BackfillReadiness::Offline
-        } else {
-            BackfillReadiness::Ready
+        match self.storage_open.databases_pending() {
+            Some(DatabasesPending::WaitingForTheDataDirectory) => {
+                BackfillReadiness::WaitingForTheDataDirectory
+            }
+            Some(DatabasesPending::Opening) => BackfillReadiness::ArchiveStillOpening,
+            None if !archive_available => BackfillReadiness::WithoutArchive,
+            None if self.offline => BackfillReadiness::Offline,
+            None => BackfillReadiness::Ready,
         }
     }
 

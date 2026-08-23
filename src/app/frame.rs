@@ -39,7 +39,7 @@ use super::panes::MainBehavior;
 use super::shutdown::FrameContents;
 use super::snap_state::PendingSnapRequest;
 use super::space_weather_warning::{self, RecordingSeries, RecordingUnderAssessment};
-use super::storage::{OPENING_DATABASES, QueuedLoad};
+use super::storage::{DatabasesPending, OPENING_DATABASES, QueuedLoad};
 #[cfg(feature = "self-update")]
 use super::update;
 use super::{App, SharedAppState, modals};
@@ -64,6 +64,7 @@ impl eframe::App for App {
         }
 
         self.apply_finished_background_work(ui);
+        self.wait_for_the_data_directory(ui);
         self.load_files_from_dialog_drops_and_paste(ui);
         self.unload_selection_on_delete_key(ui);
         self.show_top_menu_bar(ui);
@@ -895,7 +896,8 @@ impl App {
         // out over ~3 seconds so the user can see how long it took.
         let now = ui.ctx().input(|i| i.time);
         let any_finishing = !self.loader.finishing_jobs.is_empty();
-        let opening_databases = self.storage_open.is_opening();
+        let opening_databases =
+            self.storage_open.databases_pending() == Some(DatabasesPending::Opening);
         self.loader.expire_finished(now);
 
         if !self.loader.loading_jobs.is_empty() || any_finishing || opening_databases {

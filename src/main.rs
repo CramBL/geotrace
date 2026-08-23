@@ -7,7 +7,7 @@ pub mod terms;
 use std::time::Duration;
 use std::{path::PathBuf, process::ExitCode};
 
-use gt_instance_lock::DataDirectoryLock;
+use gt_instance_lock::SharedDataDirectoryLock;
 use gt_pending_writes::PendingWrites;
 
 use crate::app::shutdown;
@@ -109,7 +109,7 @@ const TERMINATION_SIGNAL_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 /// instance lock keeps naming what is left to write while the wait runs.
 fn begin_shutdown_and_wait_for_pending_writes(
     pending_writes: &PendingWrites,
-    instance_lock: &mut DataDirectoryLock,
+    instance_lock: &SharedDataDirectoryLock,
 ) -> ExitCode {
     pending_writes.begin_shutdown();
     for status in pending_writes.snapshot().running {
@@ -243,10 +243,12 @@ fn main() -> ExitCode {
     let app_pending_writes = pending_writes.clone();
     let storage = app::Storage::DataDirectory;
     // No archive is opened or repaired until this instance owns the data
-    // directory: the lock is taken before the window, and so before the
-    // storage-open thread the app spawns. It is dropped at the end of main,
-    // after the wait for the writes that outlive the window.
-    let mut instance_lock = DataDirectoryLock::acquire(storage.data_directory().as_deref());
+    // directory: the lock is taken before the window, and the app waits on
+    // its own clone of it while another instance holds the directory. This
+    // clone lives to the end of main, past the wait for the writes that
+    // outlive the window.
+    let instance_lock = SharedDataDirectoryLock::acquire(storage.data_directory().as_deref());
+    let app_instance_lock = instance_lock.clone();
     let result = eframe::run_native(
         concat!("GeoTrace v", env!("CARGO_PKG_VERSION")),
         native_options,
@@ -260,12 +262,13 @@ fn main() -> ExitCode {
                     storage,
                     app_version: env!("CARGO_PKG_VERSION"),
                     pending_writes: app_pending_writes,
+                    instance_lock: app_instance_lock,
                 },
             )))
         }),
     );
     let shutdown_exit_code =
-        begin_shutdown_and_wait_for_pending_writes(&pending_writes, &mut instance_lock);
+        begin_shutdown_and_wait_for_pending_writes(&pending_writes, &instance_lock);
     match result {
         Ok(()) => shutdown_exit_code,
         Err(error) => {
@@ -282,7 +285,7 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    use gt_instance_lock::{DataDirectoryLock, InstanceState, InstanceStatus};
+    use gt_instance_lock::{InstanceState, InstanceStatus, SharedDataDirectoryLock};
     use gt_pending_writes::{PendingWrites, WriteKind};
     use rstest::rstest;
 
@@ -295,7 +298,7 @@ mod tests {
         assert_eq!(
             crate::begin_shutdown_and_wait_for_pending_writes(
                 &PendingWrites::default(),
-                &mut DataDirectoryLock::marking_nothing()
+                &SharedDataDirectoryLock::marking_nothing()
             ),
             ExitCode::SUCCESS
         );
@@ -325,10 +328,10 @@ mod tests {
                 drop(compaction);
             })
             .expect("spawn the holding thread");
-        let mut instance_lock = DataDirectoryLock::acquire(Some(directory.path()));
+        let instance_lock = SharedDataDirectoryLock::acquire(Some(directory.path()));
 
         assert_eq!(
-            crate::begin_shutdown_and_wait_for_pending_writes(&pending_writes, &mut instance_lock),
+            crate::begin_shutdown_and_wait_for_pending_writes(&pending_writes, &instance_lock),
             ExitCode::SUCCESS
         );
 
@@ -384,7 +387,7 @@ mod tests {
         assert_eq!(
             crate::begin_shutdown_and_wait_for_pending_writes(
                 &pending_writes,
-                &mut DataDirectoryLock::marking_nothing()
+                &SharedDataDirectoryLock::marking_nothing()
             ),
             ExitCode::from(shutdown::FORCE_QUIT_EXIT_CODE)
         );

@@ -37,6 +37,9 @@ const EARLIEST_PICKABLE_YEAR: i16 = 1970;
 /// Why the controls that delete archived days take no input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteBlocker {
+    /// This instance does not have the data directory, so it has opened no
+    /// archive to delete from.
+    WaitingForTheDataDirectory,
     /// The archives are still opening, so there is nothing to delete from
     /// yet.
     ArchivesOpening,
@@ -47,6 +50,7 @@ pub enum DeleteBlocker {
 impl DeleteBlocker {
     pub fn hover_text(self) -> &'static str {
         match self {
+            Self::WaitingForTheDataDirectory => "Wait for the data directory to become available",
             Self::ArchivesOpening => "Wait for the archives to finish opening",
             Self::DeleteRunning => "Wait for the running delete to finish",
         }
@@ -487,6 +491,7 @@ mod tests {
     /// Never hidden, per DESIGN.md: whatever blocks a delete grays every
     /// control that starts one, and the hover says which it was.
     #[rstest]
+    #[case::waiting_for_the_data_directory(DeleteBlocker::WaitingForTheDataDirectory)]
     #[case::archives_opening(DeleteBlocker::ArchivesOpening)]
     #[case::delete_running(DeleteBlocker::DeleteRunning)]
     fn a_blocked_delete_grays_every_control(#[case] blocker: DeleteBlocker) {

@@ -11,6 +11,10 @@
 //! repainting when it lands, as [`super::jamming`] describes. The window is
 //! painted from the first frame, and [`App::adopt_finished_storage_open`]
 //! installs the databases in whichever frame they arrive.
+//!
+//! A run that finds another instance holding the data directory opens
+//! nothing until it has the directory, as [`super::instance_wait`]
+//! describes.
 
 use std::mem;
 use std::path::{Path, PathBuf};
@@ -18,6 +22,7 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 
 use egui::Context;
+use gt_instance_lock::SharedDataDirectoryLock;
 use gt_pending_writes::{PendingWrites, WriteKind};
 use gt_store::{
     DbError, FlareStore, HistoryDatabase as _, IonexStore, JamStore, Recordings, SolarStore, Store,
@@ -25,6 +30,7 @@ use gt_store::{
 
 use super::App;
 use super::history_db::HistoryWorker;
+use super::instance_wait::DataDirectoryWait;
 
 /// What the open is called wherever it is shown: the loading overlay while it
 /// runs, and the shutdown window when a close waits for it.
@@ -106,8 +112,25 @@ pub(in crate::app) enum QueuedLoad {
     PastedText(String),
 }
 
+/// Why the databases are not open yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::app) enum DatabasesPending {
+    /// This instance does not have the data directory, so the open has not
+    /// started.
+    WaitingForTheDataDirectory,
+    /// The open is running.
+    Opening,
+}
+
 /// How far the startup open has got.
 pub(in crate::app) enum StorageOpen {
+    /// Another instance holds the data directory, so nothing has been opened
+    /// yet. [`App::wait_for_the_data_directory`] starts the open once this
+    /// instance takes the directory.
+    WaitingForTheDataDirectory {
+        wait: DataDirectoryWait,
+        queued_loads: Vec<QueuedLoad>,
+    },
     Opening {
         opened: mpsc::Receiver<OpenStorage>,
         queued_loads: Vec<QueuedLoad>,
@@ -118,25 +141,36 @@ pub(in crate::app) enum StorageOpen {
 }
 
 impl StorageOpen {
-    /// Whether the databases are still opening, which grays the controls that
-    /// need them.
-    pub(in crate::app) fn is_opening(&self) -> bool {
-        matches!(self, Self::Opening { .. })
+    /// The wait a run starts in when another instance holds the data
+    /// directory.
+    pub(in crate::app) fn waiting_for_the_data_directory(
+        instance_lock: &SharedDataDirectoryLock,
+    ) -> Self {
+        Self::WaitingForTheDataDirectory {
+            wait: DataDirectoryWait::new(instance_lock),
+            queued_loads: Vec::new(),
+        }
+    }
+
+    /// Why the databases are not open yet, which grays the controls that
+    /// need them and tells each one what to say.
+    pub(in crate::app) fn databases_pending(&self) -> Option<DatabasesPending> {
+        match self {
+            Self::WaitingForTheDataDirectory { .. } => {
+                Some(DatabasesPending::WaitingForTheDataDirectory)
+            }
+            Self::Opening { .. } => Some(DatabasesPending::Opening),
+            Self::Finished => None,
+        }
     }
 
     /// The loads waiting on the databases, or [`None`] once they have landed
     /// and a load can go straight to the loader.
     pub(in crate::app) fn queued_loads_mut(&mut self) -> Option<&mut Vec<QueuedLoad>> {
         match self {
-            Self::Opening { queued_loads, .. } => Some(queued_loads),
+            Self::WaitingForTheDataDirectory { queued_loads, .. }
+            | Self::Opening { queued_loads, .. } => Some(queued_loads),
             Self::Finished => None,
-        }
-    }
-
-    fn opening(opened: mpsc::Receiver<OpenStorage>) -> Self {
-        Self::Opening {
-            opened,
-            queued_loads: Vec::new(),
         }
     }
 
@@ -166,7 +200,8 @@ impl Storage {
     }
 
     /// Open every database on a thread of its own, repainting when the result
-    /// is ready for [`App::adopt_finished_storage_open`] to take.
+    /// is ready for [`App::adopt_finished_storage_open`] to take. Whatever is
+    /// in `queued_loads` runs when it lands.
     ///
     /// [`Self::Disabled`] opens nothing, so its result is in the channel
     /// before the first frame and no thread is spawned.
@@ -178,6 +213,7 @@ impl Storage {
         self,
         ctx: &Context,
         pending_writes: PendingWrites,
+        queued_loads: Vec<QueuedLoad>,
     ) -> StorageOpen {
         let (sender, opened) = mpsc::channel();
         match self {
@@ -202,7 +238,10 @@ impl Storage {
                     .expect("failed to spawn the storage-open thread");
             }
         }
-        StorageOpen::opening(opened)
+        StorageOpen::Opening {
+            opened,
+            queued_loads,
+        }
     }
 
     pub fn open(self, ctx: &Context, pending_writes: PendingWrites) -> OpenStorage {
@@ -424,8 +463,11 @@ mod tests {
     /// the first frame polls for it.
     #[test]
     fn a_disabled_storage_lands_before_the_first_poll() {
-        let open =
-            Storage::Disabled.open_in_background(&Context::default(), PendingWrites::default());
+        let open = Storage::Disabled.open_in_background(
+            &Context::default(),
+            PendingWrites::default(),
+            Vec::new(),
+        );
 
         let StorageOpen::Opening { opened, .. } = &open else {
             panic!("the open is what the app starts with");
