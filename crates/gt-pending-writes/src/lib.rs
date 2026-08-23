@@ -3,8 +3,8 @@
 //! A write registers itself through [`PendingWrites::try_begin`] and stays
 //! registered until its [`PendingWriteGuard`] drops. Shutdown calls
 //! [`PendingWrites::begin_shutdown`], which refuses every write that has not
-//! started, and then waits for the ones that have. A registry built for
-//! [`WriteAccess::ReadOnly`] refuses every write for the whole run.
+//! started, and then waits for the ones that have. A registry in
+//! [`WriteAccess::ReadOnly`] refuses every write for the rest of the run.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -27,6 +27,12 @@ pub enum WriteAccess {
     #[default]
     Owner,
     ReadOnly,
+}
+
+impl WriteAccess {
+    pub const fn allows_writing(self) -> bool {
+        matches!(self, Self::Owner)
+    }
 }
 
 /// Why the registry turned a write away.
@@ -128,9 +134,6 @@ pub struct PendingWrites(Arc<Registry>);
 
 #[derive(Debug, Default)]
 struct Registry {
-    /// Fixed for the whole run: a read-only session refuses writes from the
-    /// first frame, where shutdown starts refusing them part-way through.
-    write_access: WriteAccess,
     state: Mutex<RegistryState>,
     /// Notified whenever the last running write finishes.
     idle: Condvar,
@@ -138,6 +141,7 @@ struct Registry {
 
 #[derive(Debug, Default)]
 struct RegistryState {
+    write_access: WriteAccess,
     shutting_down: bool,
     running: BTreeMap<WriteId, RunningWrite>,
     recently_finished: Vec<String>,
@@ -159,13 +163,28 @@ struct RunningWrite {
 impl PendingWrites {
     pub fn new(write_access: WriteAccess) -> Self {
         Self(Arc::new(Registry {
-            write_access,
+            state: Mutex::new(RegistryState {
+                write_access,
+                ..Default::default()
+            }),
             ..Default::default()
         }))
     }
 
     pub fn write_access(&self) -> WriteAccess {
-        self.0.write_access
+        self.0.state.lock().write_access
+    }
+
+    /// Refuses every write from here to the end of the run.
+    ///
+    /// There is no way back, which is what the user chose: a session started
+    /// read-only beside the instance that owns the data directory stays
+    /// read-only until GeoTrace is restarted. Turning read-only part-way
+    /// through the run costs nothing where the user makes that choice - a
+    /// session still waiting for the data directory has opened no database
+    /// and written nothing.
+    pub fn become_read_only_for_the_rest_of_the_run(&self) {
+        self.0.state.lock().write_access = WriteAccess::ReadOnly;
     }
 
     /// Why a write starting now is turned away, or [`None`] while the
@@ -174,14 +193,10 @@ impl PendingWrites {
     /// A read-only session names itself even once it is shutting down: the
     /// write was never going to run in it.
     pub fn refusal(&self) -> Option<WriteRefusal> {
-        match self.0.write_access {
+        let state = self.0.state.lock();
+        match state.write_access {
             WriteAccess::ReadOnly => Some(WriteRefusal::ReadOnlySession),
-            WriteAccess::Owner => self
-                .0
-                .state
-                .lock()
-                .shutting_down
-                .then_some(WriteRefusal::ShuttingDown),
+            WriteAccess::Owner => state.shutting_down.then_some(WriteRefusal::ShuttingDown),
         }
     }
 
@@ -197,7 +212,7 @@ impl PendingWrites {
         kind: WriteKind,
     ) -> Result<PendingWriteGuard, WriteRefusal> {
         let mut state = self.0.state.lock();
-        if self.0.write_access == WriteAccess::ReadOnly {
+        if state.write_access == WriteAccess::ReadOnly {
             return Err(WriteRefusal::ReadOnlySession);
         }
         if state.shutting_down {
@@ -215,7 +230,8 @@ impl PendingWrites {
         kind: WriteKind,
     ) -> Option<PendingWriteGuard> {
         let mut state = self.0.state.lock();
-        match self.0.write_access {
+        let write_access = state.write_access;
+        match write_access {
             WriteAccess::ReadOnly => None,
             WriteAccess::Owner => Some(self.register(&mut state, label.into(), kind)),
         }
@@ -423,6 +439,30 @@ mod tests {
                 .err(),
             Some(WriteRefusal::ReadOnlySession)
         );
+    }
+
+    #[test]
+    fn a_session_that_turned_read_only_refuses_the_writes_it_took_before() {
+        let writes = PendingWrites::new(WriteAccess::Owner);
+        let started_as_owner =
+            writes.try_begin("Storing a recording", WriteKind::RecordingDatabase);
+
+        writes.become_read_only_for_the_rest_of_the_run();
+
+        assert_eq!(writes.write_access(), WriteAccess::ReadOnly);
+        assert_eq!(writes.refusal(), Some(WriteRefusal::ReadOnlySession));
+        assert_eq!(
+            writes
+                .try_begin("Storing a recording", WriteKind::RecordingDatabase)
+                .err(),
+            Some(WriteRefusal::ReadOnlySession)
+        );
+        assert!(
+            !writes.is_idle(),
+            "the write that started before the session turned read-only is still running"
+        );
+        drop(started_as_owner);
+        assert!(writes.is_idle());
     }
 
     #[test]
