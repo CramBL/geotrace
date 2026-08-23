@@ -7,8 +7,11 @@ use std::fmt::Write as _;
 use egui::text::LayoutJob;
 use egui::{
     Align, Button, CursorIcon, Label, Layout, RichText, Sense, TextFormat, TextStyle, TextWrapMode,
+    Window,
 };
 use egui_extras::{Column, TableBuilder, TableRow};
+use egui_phosphor::regular::ARROW_SQUARE_IN as ICON_ARROW_SQUARE_IN;
+use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_phosphor::regular::COPY as ICON_COPY;
 use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
@@ -29,14 +32,37 @@ use strum::IntoEnumIterator as _;
 
 use super::column_format::{self, ColumnFormat};
 use super::match_row::{MatchColumn, MatchKey, MatchRow, MatchRows, MatchSort, RowNoun};
+use super::results_split::{MIN_SPLIT_ROWS, ResultsSplit, SplitGeometry};
 use super::value_bar::{ColumnValueRange, RunColumnRanges, ValueBar};
 
 /// Vertical padding a row adds around its text.
 pub(super) const ROW_PADDING: f32 = 2.0;
 
 /// Matches listed before the matches table scrolls, so the points table below
-/// it keeps most of the window.
+/// it keeps most of the window. The splitter under the table moves the
+/// boundary from there.
 const VISIBLE_MATCH_ROWS: usize = 5;
+
+/// Height of the splitter band between the two tables: thin, and still wide
+/// enough to grab.
+const SPLITTER_HEIGHT: f32 = 8.0;
+
+/// The grip painted at the middle of that band, so it reads as draggable.
+const SPLITTER_GRIP_WIDTH: f32 = 40.0;
+const SPLITTER_GRIP_HEIGHT: f32 = 2.0;
+const SPLITTER_GRIP_CORNER_RADIUS: f32 = 1.0;
+
+/// What a screen reader announces the splitter as.
+pub(crate) const SPLITTER_LABEL: &str = "Resize the matches list";
+
+/// The window the matches list moves into when it is popped out of the results
+/// tab.
+pub(crate) const MATCH_LIST_WINDOW_TITLE: &str = "Query matches";
+
+/// Size that window opens at. Like the query window it grows only when the
+/// user drags it: the table inside scrolls.
+pub(crate) const MATCH_LIST_WINDOW_WIDTH: f32 = 460.0;
+pub(crate) const MATCH_LIST_WINDOW_HEIGHT: f32 = 320.0;
 
 /// Width the track column never falls below, however narrow the window is.
 const MIN_TRACK_COLUMN_WIDTH: f32 = 30.0;
@@ -58,7 +84,8 @@ pub(super) struct ResultsOutputs<'a, 'b> {
 }
 
 /// What the results tab keeps between frames: the order of the matches table,
-/// the match the points table follows, and the ranges its bars scale to.
+/// the match the points table follows, the ranges its bars scale to, and the
+/// share of the tab the matches table takes.
 #[derive(Debug, Default)]
 pub(super) struct ResultsState {
     sort: MatchSort,
@@ -66,6 +93,7 @@ pub(super) struct ResultsState {
     /// lists the first match.
     selected: Option<MatchKey>,
     column_ranges: RunColumnRanges,
+    split: ResultsSplit,
 }
 
 /// One query of the run: what it counted, the colour it draws in, and the
@@ -218,6 +246,53 @@ enum MatchAction {
     ShowOnMap(MatchRevealTarget),
 }
 
+/// Where the matches list is drawn, which is what gives its table a height.
+#[derive(Clone, Copy)]
+enum MatchListPlacement {
+    /// In the results tab, over the splitter that divides the tab between the
+    /// list and the picked match's rows below it.
+    ResultsTab,
+    /// In a window of its own, which it fills.
+    OwnWindow,
+}
+
+/// The heights the matches table lays its header and rows out at.
+#[derive(Clone, Copy)]
+struct MatchTableHeights {
+    row: f32,
+    /// Rows are separated by the item spacing, so a row on display takes that
+    /// much more than its own height.
+    stride: f32,
+    /// The header, which stays put while the rows scroll.
+    header: f32,
+    /// The header and the gap under it: what the table takes before its first
+    /// row.
+    above_rows: f32,
+}
+
+impl MatchTableHeights {
+    fn of(ui: &egui::Ui) -> Self {
+        let row = ui.text_style_height(&TextStyle::Body) + 2.0 * ROW_PADDING;
+        let spacing = ui.spacing().item_spacing.y;
+        Self {
+            row,
+            stride: row + spacing,
+            header: row,
+            above_rows: row + spacing,
+        }
+    }
+
+    /// What the table takes to list `rows`.
+    fn listing(self, rows: usize) -> f32 {
+        self.above_rows + self.stride * rows as f32
+    }
+
+    /// The height the rows scroll within when the whole table is `total` tall.
+    fn body(self, total: f32) -> f32 {
+        (total - self.above_rows).max(0.0)
+    }
+}
+
 /// One run's results as the two tables of the results tab: every match of the
 /// run to pick from, and the rows of the picked match under the columns its
 /// query tables.
@@ -349,12 +424,14 @@ impl<'a> ResultsTables<'a> {
         }
     }
 
-    /// The summary strip, the matches table, and the rows of the picked match
-    /// under it.
+    /// The matches list, the caption naming the picked match, and that match's
+    /// rows. While the list is popped out the tab holds only the last two, and
+    /// the list fills a window of its own.
     pub(super) fn ui(
         &mut self,
         ui: &mut egui::Ui,
         state: &mut ResultsState,
+        popped_out: &mut bool,
         scope: MapScope<'_>,
         out: &mut ResultsOutputs<'_, '_>,
     ) {
@@ -372,26 +449,147 @@ impl<'a> ResultsTables<'a> {
             if self.stale {
                 ui.disable();
             }
-            self.summary_strip_ui(ui, out.reveal);
-            let Some(selected) = selected else {
-                ui.label(RichText::new("No matches").weak());
+            if !*popped_out {
+                self.match_list_ui(
+                    ui,
+                    state,
+                    selected.as_ref(),
+                    popped_out,
+                    out,
+                    MatchListPlacement::ResultsTab,
+                );
+            }
+            let Some(selected) = &selected else {
                 return;
             };
-            ui.add_space(ui.spacing().item_spacing.y);
-            self.matches_table_ui(ui, state, &selected, out);
-            ui.add_space(ui.spacing().item_spacing.y);
-            self.caption_ui(ui, &selected);
-            self.points_table_ui(ui, &selected, &state.column_ranges, scope, out);
+            self.caption_ui(ui, selected);
+            self.points_table_ui(ui, selected, &state.column_ranges, scope, out);
         });
+        if *popped_out {
+            self.match_list_window_ui(ui.ctx(), state, selected.as_ref(), popped_out, out);
+        }
+    }
+
+    /// The matches list wherever it is drawn: the summary strip over every
+    /// match of the run, and in the results tab the splitter that divides the
+    /// tab between that table and the rows below it.
+    fn match_list_ui(
+        &self,
+        ui: &mut egui::Ui,
+        state: &mut ResultsState,
+        selected: Option<&MatchRow>,
+        popped_out: &mut bool,
+        out: &mut ResultsOutputs<'_, '_>,
+        placement: MatchListPlacement,
+    ) {
+        self.summary_strip_ui(ui, out.reveal, popped_out);
+        let Some(selected) = selected else {
+            ui.label(RichText::new("No matches").weak());
+            return;
+        };
+        ui.add_space(ui.spacing().item_spacing.y);
+        let heights = MatchTableHeights::of(ui);
+        match placement {
+            MatchListPlacement::OwnWindow => {
+                // The table takes what is left of the window under the summary
+                // strip and stops one item spacing short of its bottom edge.
+                // The window keeps that height whether or not the run fills
+                // it, so it does not resize itself around every run.
+                let available = ui.available_height();
+                ui.set_min_height(available);
+                let body_height = heights.body(available - ui.spacing().item_spacing.y);
+                self.matches_table_ui(ui, state, selected, out, body_height);
+            }
+            MatchListPlacement::ResultsTab => {
+                let geometry = self.split_geometry(ui);
+                let listed = state.split.matches_height(geometry);
+                let table = self.matches_table_ui(ui, state, selected, out, heights.body(listed));
+                let splitter = splitter_ui(ui);
+                if splitter.double_clicked() {
+                    state.split.reset();
+                } else if splitter.dragged() {
+                    // The table is as tall as it was laid out, which is where
+                    // the splitter sits: the drag moves on from there.
+                    state.split.set_matches_height(
+                        geometry,
+                        table.rect.height() + splitter.drag_delta().y,
+                    );
+                }
+            }
+        }
+    }
+
+    /// The matches list in a window of its own, leaving the results tab to the
+    /// picked match's rows. Closing that window puts the list back in the tab.
+    fn match_list_window_ui(
+        &self,
+        ctx: &egui::Context,
+        state: &mut ResultsState,
+        selected: Option<&MatchRow>,
+        popped_out: &mut bool,
+        out: &mut ResultsOutputs<'_, '_>,
+    ) {
+        let mut open = true;
+        Window::new(MATCH_LIST_WINDOW_TITLE)
+            .open(&mut open)
+            .default_width(MATCH_LIST_WINDOW_WIDTH)
+            .default_height(MATCH_LIST_WINDOW_HEIGHT)
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.scope(|ui| {
+                    if self.stale {
+                        ui.disable();
+                    }
+                    self.match_list_ui(
+                        ui,
+                        state,
+                        selected,
+                        popped_out,
+                        out,
+                        MatchListPlacement::OwnWindow,
+                    );
+                });
+            });
+        if !open {
+            *popped_out = false;
+        }
+    }
+
+    /// What the results tab has to divide between its two tables, measured
+    /// before either one is laid out. Each line of text counts as the whole
+    /// pixels egui lays it out in, so a minimum really holds the rows it
+    /// counts.
+    fn split_geometry(&self, ui: &egui::Ui) -> SplitGeometry {
+        let heights = MatchTableHeights::of(ui);
+        let spacing = ui.spacing().item_spacing.y;
+        let caption = ui.text_style_height(&TextStyle::Body).ceil() + spacing;
+        let point_row = ui.text_style_height(&TextStyle::Monospace).ceil() + ROW_PADDING + spacing;
+        SplitGeometry {
+            available: ui.available_height(),
+            matches_minimum: heights.listing(MIN_SPLIT_ROWS),
+            matches_content: heights.listing(self.matches.rows().len()),
+            matches_default: heights.listing(VISIBLE_MATCH_ROWS),
+            points_minimum: caption
+                + column_format::header_height(ui)
+                + spacing
+                + point_row * MIN_SPLIT_ROWS as f32,
+            splitter: SPLITTER_HEIGHT + 2.0 * spacing,
+        }
     }
 
     /// One line per query: what it matched, what it hides, and what it skipped,
     /// with the run-wide buttons on the first line.
-    fn summary_strip_ui(&self, ui: &mut egui::Ui, reveal: &mut Option<MatchRevealTarget>) {
+    fn summary_strip_ui(
+        &self,
+        ui: &mut egui::Ui,
+        reveal: &mut Option<MatchRevealTarget>,
+        popped_out: &mut bool,
+    ) {
         for (index, query) in self.queries.iter().enumerate() {
             ui.horizontal(|ui| {
                 if index == 0 {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        self.pop_out_button_ui(ui, popped_out);
                         self.copy_tsv_button_ui(ui);
                         self.show_run_on_map_button_ui(ui, reveal);
                         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
@@ -402,6 +600,32 @@ impl<'a> ResultsTables<'a> {
                     self.summary_counts_ui(ui, query);
                 }
             });
+        }
+    }
+
+    /// The button moving the matches list between the results tab and a window
+    /// of its own. A run that matched nothing has no list to move out, but one
+    /// already moved out always comes back.
+    fn pop_out_button_ui(&self, ui: &mut egui::Ui, popped_out: &mut bool) {
+        if *popped_out {
+            if ui
+                .add(Button::new(ICON_ARROW_SQUARE_IN).small())
+                .on_hover_text("Put the matches back in the query window")
+                .clicked()
+            {
+                *popped_out = false;
+            }
+            return;
+        }
+        let has_matches = !self.matches.is_empty();
+        let response = ui.add_enabled(has_matches, Button::new(ICON_ARROW_SQUARE_OUT).small());
+        if !has_matches {
+            response.on_disabled_hover_text("This run matched nothing");
+        } else if response
+            .on_hover_text("Show the matches in a window of their own")
+            .clicked()
+        {
+            *popped_out = true;
         }
     }
 
@@ -503,24 +727,22 @@ impl<'a> ResultsTables<'a> {
     }
 
     /// Every match of the run, one row each, ordered by the column the user
-    /// clicked. Clicking a row picks the match the points table follows.
+    /// clicked. Clicking a row picks the match the points table follows. The
+    /// rows scroll within `body_height`, under a header that stays put.
     fn matches_table_ui(
         &self,
         ui: &mut egui::Ui,
         state: &mut ResultsState,
         selected: &MatchRow,
         out: &mut ResultsOutputs<'_, '_>,
-    ) {
-        let row_height = ui.text_style_height(&TextStyle::Body) + 2.0 * ROW_PADDING;
-        let header_height = row_height;
-        // Rows are separated by the item spacing, so the rows on display take
-        // that much more than their own height.
-        let visible_height = (row_height + ui.spacing().item_spacing.y) * VISIBLE_MATCH_ROWS as f32;
+        body_height: f32,
+    ) -> egui::Response {
+        let heights = MatchTableHeights::of(ui);
         let widths = self.match_column_widths(ui);
         let swatch_width = swatch_side(ui);
         let mut action: Option<MatchAction> = None;
 
-        ui.scope(|ui| {
+        let table = ui.scope(|ui| {
             // A selectable label senses clicks and drags of its own, which would
             // take the pointer from the row it sits in.
             ui.style_mut().interaction.selectable_labels = false;
@@ -530,7 +752,7 @@ impl<'a> ResultsTables<'a> {
                 .sense(Sense::click())
                 .auto_shrink([false, true])
                 .min_scrolled_height(0.0)
-                .max_scroll_height(visible_height)
+                .max_scroll_height(body_height)
                 .cell_layout(Layout::left_to_right(Align::Center))
                 .column(Column::exact(swatch_width));
             for width in &widths {
@@ -541,7 +763,7 @@ impl<'a> ResultsTables<'a> {
             table = table.column(Column::remainder());
 
             table
-                .header(header_height, |mut header| {
+                .header(heights.header, |mut header| {
                     header.col(|_| {});
                     for column in MatchColumn::iter() {
                         header.col(|ui| sort_header_ui(ui, column, state, self.row_noun));
@@ -549,7 +771,7 @@ impl<'a> ResultsTables<'a> {
                     header.col(|_| {});
                 })
                 .body(|body| {
-                    body.rows(row_height, self.matches.rows().len(), |mut row| {
+                    body.rows(heights.row, self.matches.rows().len(), |mut row| {
                         let Some(match_row) = self.matches.rows().get(row.index()) else {
                             return;
                         };
@@ -568,6 +790,7 @@ impl<'a> ResultsTables<'a> {
             Some(MatchAction::ShowOnMap(target)) => *out.reveal = Some(target),
             None => {}
         }
+        table.response
     }
 
     /// One match's row: its query's colour, what it covers, and the button
@@ -985,6 +1208,39 @@ fn sort_header_ui(
     if clicked {
         state.sort.clicked(column);
     }
+}
+
+/// The band between the matches table and the points table below it. Dragging
+/// it gives one table the height of the other, double-clicking it puts the
+/// boundary back where it opened.
+fn splitter_ui(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), SPLITTER_HEIGHT),
+        Sense::click_and_drag(),
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::ResizeHandle,
+            ui.is_enabled(),
+            SPLITTER_LABEL,
+        )
+    });
+    ui.painter().hline(
+        rect.x_range(),
+        rect.center().y,
+        ui.visuals().widgets.noninteractive.bg_stroke,
+    );
+    ui.painter().rect_filled(
+        egui::Rect::from_center_size(
+            rect.center(),
+            egui::vec2(SPLITTER_GRIP_WIDTH, SPLITTER_GRIP_HEIGHT),
+        ),
+        SPLITTER_GRIP_CORNER_RADIUS,
+        ui.style().interact(&response).fg_stroke.color,
+    );
+    response
+        .on_hover_cursor(CursorIcon::ResizeVertical)
+        .on_hover_text("Drag to resize the matches list, double-click to reset")
 }
 
 /// The button framing the map on one match, at the right end of its row.

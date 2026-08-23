@@ -31,7 +31,8 @@ use self::results::{ResultsOutputs, ResultsState, ResultsTables};
 
 mod column_format;
 mod match_row;
-mod results;
+pub(crate) mod results;
+pub(crate) mod results_split;
 mod value_bar;
 
 /// Unpinned history entries kept before the oldest is evicted. Pinned
@@ -184,6 +185,8 @@ pub struct QueryWindow {
     /// table, the match whose rows the points table lists, and the value ranges
     /// the bars behind its cells scale to.
     results_state: ResultsState,
+    /// Whether the run's matches are listed in a window of their own.
+    matches_popped_out: bool,
     /// The tab on display, kept across frames. A finished run switches it back
     /// to the results.
     tab: QueryTab,
@@ -319,6 +322,7 @@ impl QueryWindow {
             editor_had_focus: false,
             hover_doc_span: None,
             results_state: ResultsState::default(),
+            matches_popped_out: false,
             tab: QueryTab::default(),
         }
     }
@@ -1202,6 +1206,7 @@ impl QueryWindow {
         let Self {
             session,
             results_state,
+            matches_popped_out,
             ..
         } = self;
         let files = inputs.loaded_files.files();
@@ -1230,7 +1235,13 @@ impl QueryWindow {
             requests,
             reveal: reveal_matches_request,
         };
-        ResultsTables::of_run(files, results).ui(ui, results_state, scope, &mut outputs);
+        ResultsTables::of_run(files, results).ui(
+            ui,
+            results_state,
+            matches_popped_out,
+            scope,
+            &mut outputs,
+        );
     }
 
     /// The checks already ran. Prepare the run from the visible data and hand

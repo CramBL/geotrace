@@ -43,6 +43,14 @@ pub trait HarnessInteraction {
 
     fn press_drag_release(&mut self, from: egui::Pos2, delta: egui::Vec2, move_frames: u16);
 
+    /// Presses and releases twice at `target` within one frame, which egui
+    /// reads as a double click.
+    ///
+    /// The harness gives every queued event a frame of its own, and its clock
+    /// ticks a quarter second per frame: two clicks queued one after the other
+    /// land further apart than egui's double-click window.
+    fn double_click_at(&mut self, target: egui::Pos2);
+
     /// Moves the pointer to `target`, sends one wheel scroll of `delta_points`
     /// there (negative scrolls towards the end of the content), and runs the
     /// frames the smooth scroll takes to come to rest.
@@ -112,6 +120,22 @@ impl<State> HarnessInteraction for Harness<'_, State> {
             self.step();
         }
         self.drop_at(from + delta);
+        self.step();
+    }
+
+    fn double_click_at(&mut self, target: egui::Pos2) {
+        self.hover_at(target);
+        self.step();
+        for _ in 0..2 {
+            for pressed in [true, false] {
+                self.input_mut().events.push(egui::Event::PointerButton {
+                    pos: target,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+        }
         self.step();
     }
 
