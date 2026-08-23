@@ -28,7 +28,7 @@
 ### Changed
 
 - **Log Processing:** Log files now successfully load even if some lines have unrecognized timestamps by interpolating from neighboring data.
-- **Interface:** Redesigned query results into a tabbed panel below the editor: a line per query stating what it matched, a sortable table of every match of the run with its duration as a clock reading, and the picked match's points under shared column headers, every number over a bar for its size against the whole run's matches, with TSV export.
+- **Interface:** Redesigned query results into a tabbed panel below the editor: a line per query stating what it matched, a sortable table of every match of the run with its duration as a clock reading, and the picked match's points under shared column headers, every number over a bar for its size against the whole run's matches, with TSV export. Drag the splitter between the two tables to divide the tab between them, or move the match list into a window of its own.
 - **Interface:** The Settings window now displays one category at a time using a left-side navigation rail.
 - **Plotting:** Grouped space weather and interference chips together with descriptive hover states, and made the aircraft interference line span all archived days in view.
 

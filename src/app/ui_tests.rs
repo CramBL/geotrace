@@ -1,5 +1,6 @@
 use egui::TextEdit;
 use egui_phosphor::regular::ARROW_LINE_UP_LEFT as ICON_ARROW_LINE_UP_LEFT;
+use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
 use egui_phosphor::regular::CHECK as ICON_CHECK;
 use egui_phosphor::regular::COPY as ICON_COPY;
@@ -560,7 +561,7 @@ fn a_run_leaves_the_query_window_at_its_default_width() {
     harness.run_steps(5);
 
     let width = harness
-        .window_rect("Query")
+        .window_rect(QUERY_WINDOW_TITLE)
         .expect("the query window is open")
         .width();
     assert!(
@@ -577,7 +578,7 @@ fn the_results_leave_the_query_window_at_its_default_height() {
     let mut harness = demo_app_with_query_run(TWO_MATCH_QUERY);
     let height_of = |harness: &Harness<'_, App>| {
         harness
-            .window_rect("Query")
+            .window_rect(QUERY_WINDOW_TITLE)
             .expect("the query window is open")
             .height()
     };
@@ -627,8 +628,13 @@ fn demo_app_with_query_run(query: &str) -> Harness<'static, App> {
 /// tests that pick, sort and frame one of them.
 const TWO_MATCH_QUERY: &str = "points | window 10 | where avg(velocity) > 25 km/h";
 
-/// A demo-trip query with more matches than the matches table lists at once.
-const MANY_MATCH_QUERY: &str = "points | where accel > 0.5 m/s2";
+/// A demo-trip query with more matches than the matches table lists at once,
+/// each of them holding rows for the points table below it.
+const MANY_MATCH_QUERY: &str = "points | where accel < -0.2 m/s2";
+
+/// The query window's title, which both its area and its accesskit node are
+/// addressed by.
+const QUERY_WINDOW_TITLE: &str = "Query";
 
 /// Wheel points sent over the results, past the rows one viewport holds.
 const RESULTS_WHEEL_POINTS: f32 = 200.0;
@@ -668,19 +674,42 @@ fn bare_time_labels<'a>() -> By<'a> {
 /// behind the swatch, number and track columns.
 fn time_rows(harness: &Harness<'_, App>, table: ResultsTable) -> Vec<(egui::Rect, String)> {
     let left_edge = harness.get_by_label_contains("Match ").rect().left();
-    let mut cells: Vec<(egui::Rect, String)> = harness
+    rows_in_reading_order(
+        time_cells_in_window(harness, QUERY_WINDOW_TITLE)
+            .into_iter()
+            .filter(|(rect, _)| {
+                let indented = rect.left() > left_edge + INDENT_TOLERANCE_PX;
+                match table {
+                    ResultsTable::Matches => indented,
+                    ResultsTable::Points => !indented,
+                }
+            })
+            .collect(),
+    )
+}
+
+/// The rows the matches table lists in the window it was popped out into, top
+/// row first. Every time that window states belongs to a match row.
+fn popped_out_match_rows(harness: &Harness<'_, App>) -> Vec<(egui::Rect, String)> {
+    rows_in_reading_order(time_cells_in_window(
+        harness,
+        query::results::MATCH_LIST_WINDOW_TITLE,
+    ))
+}
+
+/// Every bare wall-clock label the window titled `title` states, with the rect
+/// it was laid out in.
+fn time_cells_in_window(harness: &Harness<'_, App>, title: &str) -> Vec<(egui::Rect, String)> {
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Window, title)
         .query_all(bare_time_labels())
-        .filter(|node| {
-            let indented = node.rect().left() > left_edge + INDENT_TOLERANCE_PX;
-            match table {
-                ResultsTable::Matches => indented,
-                ResultsTable::Points => !indented,
-            }
-        })
         .filter_map(|node| Some((node.rect(), node.accesskit_node().value()?)))
-        .collect();
-    // Reading order: down the rows, and left to right within a row - a match
-    // row states a start and an end, of which the start is kept.
+        .collect()
+}
+
+/// `cells` in reading order: down the rows, and left to right within a row - a
+/// match row states a start and an end, of which the start is kept.
+fn rows_in_reading_order(mut cells: Vec<(egui::Rect, String)>) -> Vec<(egui::Rect, String)> {
     cells.sort_by(|(a, _), (b, _)| {
         a.top()
             .total_cmp(&b.top())
@@ -688,6 +717,15 @@ fn time_rows(harness: &Harness<'_, App>, table: ResultsTable) -> Vec<(egui::Rect
     });
     cells.dedup_by(|(a, _), (b, _)| (a.top() - b.top()).abs() < INDENT_TOLERANCE_PX);
     cells
+}
+
+/// The matches listed in the window titled `title`, counted by the button each
+/// row carries to frame the map on its match.
+fn listed_match_count(harness: &Harness<'_, App>, title: &str) -> usize {
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Window, title)
+        .query_all_by_role_and_label(egui::accesskit::Role::Button, ICON_FRAME_CORNERS)
+        .count()
 }
 
 /// How far a cell may sit from the tab's left edge and still count as starting
@@ -785,6 +823,247 @@ fn the_wheel_over_the_matches_scrolls_only_them() {
     );
 }
 
+/// Pixels the splitter is dragged to give the matches table the height of the
+/// points table below it, and the far longer drag that runs into either clamp.
+const SPLITTER_DRAG_PX: f32 = 120.0;
+const SPLITTER_DRAG_PAST_THE_CLAMP_PX: f32 = 400.0;
+
+/// The query window's button moving the matches list into a window of its own.
+/// The side panel offers the same icon, so this looks only in the query window.
+fn pop_out_button<'h>(harness: &'h Harness<'_, App>) -> egui_kittest::Node<'h> {
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Window, QUERY_WINDOW_TITLE)
+        .get_by_label(ICON_ARROW_SQUARE_OUT)
+}
+
+/// The centre of the splitter band, read again after every drag: it sits where
+/// the matches table now ends.
+fn splitter_center(harness: &Harness<'_, App>) -> egui::Pos2 {
+    harness
+        .get_by_label(query::results::SPLITTER_LABEL)
+        .rect()
+        .center()
+}
+
+/// Dragging the splitter down gives the matches table the height the points
+/// table had, listing the matches that were scrolled out of it. The window it
+/// is in keeps its size: the splitter only divides what the tab already has.
+#[test]
+fn dragging_the_splitter_lists_more_matches() {
+    let mut harness = demo_app_with_query_run(MANY_MATCH_QUERY);
+    let listed = |harness: &Harness<'_, App>| {
+        time_rows(harness, ResultsTable::Matches)
+            .into_iter()
+            .map(|(_, time)| time)
+            .collect::<Vec<_>>()
+    };
+    let before = listed(&harness);
+    let window_before = harness
+        .window_rect(QUERY_WINDOW_TITLE)
+        .expect("the query window is open")
+        .size();
+
+    harness.press_drag_release(
+        splitter_center(&harness),
+        egui::vec2(0.0, SPLITTER_DRAG_PX),
+        4,
+    );
+    harness.run_steps(3);
+
+    let after = listed(&harness);
+    assert!(
+        after.len() > before.len(),
+        "the drag listed more matches: {before:?} then {after:?}"
+    );
+    assert!(
+        after.starts_with(&before),
+        "the matches already listed stayed where they were: {before:?} then {after:?}"
+    );
+    let window_after = harness
+        .window_rect(QUERY_WINDOW_TITLE)
+        .expect("the query window is open")
+        .size();
+    assert!(
+        (window_after - window_before).length() < STATIONARY_TOLERANCE_PX,
+        "the drag resized the window from {window_before:?} to {window_after:?}"
+    );
+}
+
+/// A double-click on the splitter puts the boundary back where the tab opened
+/// it.
+#[test]
+fn double_clicking_the_splitter_puts_the_matches_table_back() {
+    let mut harness = demo_app_with_query_run(MANY_MATCH_QUERY);
+    let default_rows = time_rows(&harness, ResultsTable::Matches).len();
+
+    harness.press_drag_release(
+        splitter_center(&harness),
+        egui::vec2(0.0, SPLITTER_DRAG_PX),
+        4,
+    );
+    harness.run_steps(3);
+    let dragged_rows = time_rows(&harness, ResultsTable::Matches).len();
+    assert!(
+        dragged_rows > default_rows,
+        "the drag listed more matches: {default_rows} then {dragged_rows}"
+    );
+
+    let splitter = splitter_center(&harness);
+    harness.double_click_at(splitter);
+    harness.run_steps(3);
+
+    assert_eq!(
+        time_rows(&harness, ResultsTable::Matches).len(),
+        default_rows,
+        "the double-click listed the matches the tab opened with again"
+    );
+}
+
+/// However far the splitter is dragged, both tables keep rows on display:
+/// neither can be collapsed to its header.
+#[test]
+fn the_splitter_keeps_rows_of_both_tables_on_display() {
+    let mut harness = demo_app_with_query_run(MANY_MATCH_QUERY);
+
+    harness.press_drag_release(
+        splitter_center(&harness),
+        egui::vec2(0.0, -SPLITTER_DRAG_PAST_THE_CLAMP_PX),
+        4,
+    );
+    harness.run_steps(3);
+    let matches_left = time_rows(&harness, ResultsTable::Matches).len();
+    assert!(
+        matches_left >= query::results_split::MIN_SPLIT_ROWS,
+        "dragging to the top left {matches_left} matches on display"
+    );
+
+    harness.press_drag_release(
+        splitter_center(&harness),
+        egui::vec2(0.0, SPLITTER_DRAG_PAST_THE_CLAMP_PX),
+        4,
+    );
+    harness.run_steps(3);
+    let points_left = time_rows(&harness, ResultsTable::Points).len();
+    assert!(
+        points_left >= query::results_split::MIN_SPLIT_ROWS,
+        "dragging to the bottom left {points_left} point rows on display"
+    );
+}
+
+/// The pop-out button moves the matches into a window of their own, leaving the
+/// results tab to the picked match's rows. Closing that window puts them back.
+#[test]
+fn popping_the_matches_out_moves_them_into_their_own_window() {
+    let mut harness = demo_app_with_query_run(TWO_MATCH_QUERY);
+    let matches = listed_match_count(&harness, QUERY_WINDOW_TITLE);
+    assert_eq!(matches, 2, "the results tab lists the run's matches");
+
+    pop_out_button(&harness).click();
+    harness.run_steps(5);
+
+    assert_eq!(
+        listed_match_count(&harness, query::results::MATCH_LIST_WINDOW_TITLE),
+        matches,
+        "every match moved into the popped-out window"
+    );
+    assert_eq!(
+        listed_match_count(&harness, QUERY_WINDOW_TITLE),
+        0,
+        "the results tab lists none of them any more"
+    );
+    assert_eq!(
+        harness.query_all_by_label_contains("Match 1 ").count(),
+        1,
+        "the caption over the point rows stays in the results tab"
+    );
+
+    harness
+        .get_by_role_and_label(
+            egui::accesskit::Role::Window,
+            query::results::MATCH_LIST_WINDOW_TITLE,
+        )
+        .get_by_label("Close window")
+        .click();
+    harness.run_steps(5);
+
+    assert_eq!(
+        harness
+            .query_all_by_role_and_label(
+                egui::accesskit::Role::Window,
+                query::results::MATCH_LIST_WINDOW_TITLE
+            )
+            .count(),
+        0,
+        "closing the window took it off the screen"
+    );
+    assert_eq!(
+        listed_match_count(&harness, QUERY_WINDOW_TITLE),
+        matches,
+        "the matches are listed in the results tab again"
+    );
+}
+
+/// The popped-out window keeps the size it opened at however long it stays on
+/// screen: a table claiming the height it could have would grow it by one
+/// spacing every frame.
+#[test]
+fn the_popped_out_matches_window_keeps_its_default_size() {
+    // More matches than the window can list, so its table fills the height it
+    // was given rather than shrinking to its rows.
+    let mut harness = demo_app_with_query_run(MANY_MATCH_QUERY);
+    pop_out_button(&harness).click();
+    harness.run_steps(5);
+
+    let size_of = |harness: &Harness<'_, App>| {
+        harness
+            .window_rect(query::results::MATCH_LIST_WINDOW_TITLE)
+            .expect("the matches list opened its own window")
+            .size()
+    };
+    let opened = size_of(&harness);
+    assert!(
+        opened.x <= query::results::MATCH_LIST_WINDOW_WIDTH
+            && opened.y <= query::results::MATCH_LIST_WINDOW_HEIGHT,
+        "the matches window opened at {opened:?}"
+    );
+
+    harness.run_steps(30);
+    let settled = size_of(&harness);
+    assert!(
+        (settled - opened).length() < STATIONARY_TOLERANCE_PX,
+        "the matches window grew from {opened:?} to {settled:?}"
+    );
+}
+
+/// The popped-out window and the results tab share what the tab kept: a match
+/// picked in the window lists its rows in the query window.
+#[test]
+fn a_match_picked_in_the_popped_out_window_lists_its_points_in_the_query_window() {
+    let mut harness = demo_app_with_query_run(TWO_MATCH_QUERY);
+    let first_point = topmost_row_time(&harness);
+
+    pop_out_button(&harness).click();
+    harness.run_steps(5);
+
+    let second_match = popped_out_match_rows(&harness)
+        .get(1)
+        .map(|(rect, _)| rect.center())
+        .expect("the popped-out window lists a second match");
+    harness.press_drag_release(second_match, egui::Vec2::ZERO, 1);
+    harness.run_steps(3);
+
+    assert_eq!(
+        harness.query_all_by_label_contains("Match 2 ").count(),
+        1,
+        "the caption in the query window names the picked match"
+    );
+    let second_point = topmost_row_time(&harness);
+    assert!(
+        second_point > first_point,
+        "the query window lists the second match's points: {first_point} then {second_point}"
+    );
+}
+
 /// The tab strip shows one list at a time: the history tab replaces the
 /// results, and the results tab shows them again.
 #[test]
@@ -831,7 +1110,7 @@ fn scrolling_and_switching_tabs_leave_the_query_window_at_its_default_width() {
 
     let width_of = |harness: &Harness<'_, App>| {
         harness
-            .window_rect("Query")
+            .window_rect(QUERY_WINDOW_TITLE)
             .expect("the query window is open")
             .width()
     };
@@ -860,7 +1139,7 @@ const ROW_HEIGHT_ALLOWANCE: f32 = 40.0;
 fn the_results_fill_the_rest_of_the_window() {
     let harness = demo_app_with_query_run(TWO_MATCH_QUERY);
     let window = harness
-        .window_rect("Query")
+        .window_rect(QUERY_WINDOW_TITLE)
         .expect("the query window is open");
     let lowest_row = time_rows(&harness, ResultsTable::Points)
         .into_iter()
@@ -1791,6 +2070,37 @@ fn snapshot_app_query_window() {
     assert_eq!(history_len, 1, "the run above is recorded in history");
 
     harness.snapshot_loose("app_query_window");
+}
+
+/// The same run with its matches popped out: the list fills a window of its
+/// own and the results tab is left to the picked match's rows.
+#[test]
+fn snapshot_app_query_matches_window() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
+    );
+    let app = harness.inner.state_mut();
+    app.query_window.open = true;
+    app.query_window.set_text(TWO_MATCH_QUERY.to_owned());
+    harness.inner.run_steps(5);
+
+    harness
+        .inner
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
+        .click();
+    step_until_query_result(&mut harness.inner);
+    harness.inner.run_steps(60);
+
+    pop_out_button(&harness.inner).click();
+    harness.inner.run_steps(10);
+
+    harness.snapshot_loose("app_query_matches_window");
 }
 
 /// The query editor under the light theme, so the syntax-highlight colours
