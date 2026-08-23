@@ -22,6 +22,7 @@ use super::environment_storage_ui::DeleteBlocker;
 use super::modals::{
     EnvironmentPruneChoice, EnvironmentPrunePrompt, show_environment_prune_confirmation,
 };
+use super::storage::DatabasesPending;
 
 /// One of the archives, as the settings rows and the delete controls name it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter)]
@@ -602,12 +603,13 @@ impl App {
 
     /// What stops the delete controls from taking input, when something does.
     pub(super) fn environment_deletes_blocked_by(&self) -> Option<DeleteBlocker> {
-        if self.storage_open.is_opening() {
-            Some(DeleteBlocker::ArchivesOpening)
-        } else if self.environment_prune_running() {
-            Some(DeleteBlocker::DeleteRunning)
-        } else {
-            None
+        match self.storage_open.databases_pending() {
+            Some(DatabasesPending::WaitingForTheDataDirectory) => {
+                Some(DeleteBlocker::WaitingForTheDataDirectory)
+            }
+            Some(DatabasesPending::Opening) => Some(DeleteBlocker::ArchivesOpening),
+            None if self.environment_prune_running() => Some(DeleteBlocker::DeleteRunning),
+            None => None,
         }
     }
 

@@ -240,6 +240,9 @@ impl BackfillDataset for SolarFlareBackfill {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackfillReadiness {
     Ready,
+    /// There is nowhere to download to: this instance does not have the data
+    /// directory, so it has opened no archive.
+    WaitingForTheDataDirectory,
     /// There is nowhere to download to yet: the archives are still opening.
     ArchiveStillOpening,
     /// There is nowhere to download to: the archive could not be opened.
@@ -418,6 +421,10 @@ impl<D: BackfillDataset> BackfillUi<D> {
     fn blocked_hover(readiness: BackfillReadiness) -> String {
         match readiness {
             BackfillReadiness::Ready => "Pick an end date on or after the start date".to_owned(),
+            BackfillReadiness::WaitingForTheDataDirectory => format!(
+                "GeoTrace is waiting for the data directory: the {} is not open here",
+                D::ARCHIVE_NAME
+            ),
             BackfillReadiness::ArchiveStillOpening => {
                 format!("The {} is still opening", D::ARCHIVE_NAME)
             }
@@ -628,6 +635,7 @@ mod tests {
     /// Never hidden, per DESIGN.md: what blocks a download grays the button
     /// and says so on hover.
     #[rstest]
+    #[case::while_the_data_directory_is_waited_for(BackfillReadiness::WaitingForTheDataDirectory)]
     #[case::while_the_archive_opens(BackfillReadiness::ArchiveStillOpening)]
     #[case::without_an_archive(BackfillReadiness::WithoutArchive)]
     #[case::offline(BackfillReadiness::Offline)]
@@ -651,6 +659,10 @@ mod tests {
     #[case::ready(
         BackfillReadiness::Ready,
         "Pick an end date on or after the start date"
+    )]
+    #[case::while_the_data_directory_is_waited_for(
+        BackfillReadiness::WaitingForTheDataDirectory,
+        "GeoTrace is waiting for the data directory: the interference archive is not open here"
     )]
     #[case::while_the_archive_opens(
         BackfillReadiness::ArchiveStillOpening,

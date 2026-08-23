@@ -14,6 +14,7 @@ mod frame;
 mod history;
 mod history_db;
 mod history_open;
+mod instance_wait;
 mod jamming;
 mod loader;
 mod log_association;
@@ -48,6 +49,7 @@ use std::{cell::RefCell, env, path::PathBuf, rc::Rc};
 use egui_tiles::{Container, Linear, LinearDir, Tile, TileId, Tiles, Tree};
 use gt_fetch::TransportSource;
 use gt_filter::GlobalFilter;
+use gt_instance_lock::{DataDirectoryOwnership, SharedDataDirectoryLock};
 use gt_loaded_files::{LoadedFileId, LoadedFiles};
 use gt_log_view::{LoadedLog, LoadedLogs};
 use gt_map::NavMap;
@@ -164,6 +166,9 @@ pub struct StartupOptions {
     /// The registry every background write registers itself in, created by
     /// `main` so the process can wait for the writes that outlive the window.
     pub pending_writes: PendingWrites,
+    /// The mark on the data directory, shared with `main`. A run that finds
+    /// another instance holding it opens no database until it takes it.
+    pub instance_lock: SharedDataDirectoryLock,
 }
 
 /// The dense per-component color slots the plot reads, from the settings
@@ -326,6 +331,13 @@ pub struct App {
     /// Set when the recordings database could not be opened. Drives the
     /// prompt for whichever failure it was.
     history_failure: Option<storage::HistoryFailure>,
+    /// Which databases this run opens, and so what the wait for the data
+    /// directory opens once it has it.
+    storage: storage::Storage,
+    /// This instance's mark on the data directory, shared with `main`. The
+    /// wait retries it while another instance holds the directory, and the
+    /// shutdown reports what it is still writing through the same lock.
+    instance_lock: SharedDataDirectoryLock,
     /// The startup open of every database, until the app adopts what it
     /// produced.
     storage_open: storage::StorageOpen,
@@ -466,9 +478,23 @@ impl App {
         )));
         let tiles_tree = Tree::new("main_tiles", root_tile_id, tiles);
 
-        let storage_open = options
-            .storage
-            .open_in_background(&cc.egui_ctx, options.pending_writes.clone());
+        // Nothing is opened while another instance holds the data directory:
+        // recovery here would run against archives that instance is part-way
+        // through rewriting. A run whose lock file cannot be opened or locked
+        // at all opens the databases: it names no instance to wait for, and
+        // on a filesystem without file locking it never will.
+        let storage_open = match options.instance_lock.ownership() {
+            DataDirectoryOwnership::HeldByAnotherInstance => {
+                storage::StorageOpen::waiting_for_the_data_directory(&options.instance_lock)
+            }
+            DataDirectoryOwnership::MarkedByThisInstance
+            | DataDirectoryOwnership::LockFileUnavailable
+            | DataDirectoryOwnership::NoDataDirectory => options.storage.open_in_background(
+                &cc.egui_ctx,
+                options.pending_writes.clone(),
+                Vec::new(),
+            ),
+        };
 
         let jamming = jamming::JammingScheduler::new(
             cc.egui_ctx.clone(),
@@ -580,6 +606,8 @@ impl App {
             assoc_config: AssociationConfig::default(),
             history: history_db::HistoryWorker::disabled(),
             history_failure: None,
+            storage: options.storage,
+            instance_lock: options.instance_lock,
             storage_open,
             keep_db_backup: true,
             pending_resegment: None,

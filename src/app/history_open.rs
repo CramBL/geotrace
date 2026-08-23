@@ -327,7 +327,7 @@ impl App {
             &self.history,
             &loaded_metas,
             &mut self.storage_settings,
-            self.storage_open.is_opening(),
+            self.storage_open.databases_pending().is_some(),
         );
         self.sync_db_path_if_auto_store_changed(storage_before_edit);
     }

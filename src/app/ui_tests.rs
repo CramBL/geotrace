@@ -15,7 +15,7 @@ use egui_phosphor::regular::X as ICON_X;
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::panic;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
 use std::{
@@ -25,7 +25,12 @@ use std::{
 
 use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
 use geotrace_sdk::{Channel, ChannelUnit, DateTime, Duration, Unit, Utc};
+use gt_instance_lock::{
+    DataDirectoryLock, DataDirectoryOwnership, InstanceState, InstanceStatus,
+    SharedDataDirectoryLock,
+};
 use gt_jam::wire::HexObservation;
+use gt_pending_writes::{PendingWrites, WriteKind};
 use gt_store::{HistoryDatabase as _, Recordings};
 use gt_test_utils::{
     By, DEMO_BYTES, GOLD_BYTES, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec,
@@ -38,10 +43,13 @@ use strum::IntoEnumIterator as _;
 use super::App;
 use super::backfill_ui::DOWNLOAD_HISTORY_LABEL;
 use super::environment_storage_ui::{DELETE_ALL_LABEL, DeleteBlocker, PRUNE_BUTTON_LABEL};
+use super::instance_wait::{
+    DATA_DIRECTORY_HELD_TITLE, DATA_DIRECTORY_RETRY_INTERVAL, LOCK_FILE_UNUSABLE_TITLE,
+};
 use super::log_viewer;
 use super::query;
 use super::settings_ui::{self, SettingsPage};
-use super::storage::{OPENING_DATABASES, OpenStorage};
+use super::storage::{DatabasesPending, OPENING_DATABASES, OpenStorage};
 use crate::termination_signal::TERMINATION_SIGNAL_FLAG;
 
 /// In-memory [`egui::DroppedFile`] for drag-drop tests. `bytes` drops carry a
@@ -92,7 +100,8 @@ fn build_app(cc: &eframe::CreationContext<'_>, config_path: &std::path::Path, fa
             offline: true,
             storage: crate::app::Storage::Disabled,
             app_version: super::TEST_APP_VERSION,
-            pending_writes: gt_pending_writes::PendingWrites::default(),
+            pending_writes: PendingWrites::default(),
+            instance_lock: SharedDataDirectoryLock::marking_nothing(),
         },
     )
 }
@@ -117,6 +126,16 @@ fn transient_app(cc: &mut eframe::CreationContext<'_>) -> App {
 
 /// [`transient_app`] started with the files a command line named.
 fn transient_app_with_paths(cc: &eframe::CreationContext<'_>, paths: &[PathBuf]) -> App {
+    transient_app_with_the_instance_lock(cc, paths, SharedDataDirectoryLock::marking_nothing())
+}
+
+/// [`transient_app_with_paths`] on the data directory `instance_lock` was
+/// taken on, which is what decides whether the run opens anything.
+fn transient_app_with_the_instance_lock(
+    cc: &eframe::CreationContext<'_>,
+    paths: &[PathBuf],
+    instance_lock: SharedDataDirectoryLock,
+) -> App {
     App::new_with_config(
         cc,
         paths,
@@ -126,7 +145,8 @@ fn transient_app_with_paths(cc: &eframe::CreationContext<'_>, paths: &[PathBuf])
             offline: true,
             storage: crate::app::Storage::Disabled,
             app_version: super::TEST_APP_VERSION,
-            pending_writes: gt_pending_writes::PendingWrites::default(),
+            pending_writes: PendingWrites::default(),
+            instance_lock,
         },
     )
 }
@@ -3879,7 +3899,10 @@ fn the_window_takes_input_while_the_databases_open_and_adopts_them_when_they_lan
     let (mut harness, databases) = app_with_the_databases_still_opening(&[]);
     harness.step();
 
-    assert!(harness.state().storage_open.is_opening());
+    assert_eq!(
+        harness.state().storage_open.databases_pending(),
+        Some(DatabasesPending::Opening)
+    );
     harness.get_by_label_contains(OPENING_DATABASES);
     harness.get_by_label_contains(ICON_GEAR).click();
     harness.step();
@@ -3890,7 +3913,7 @@ fn the_window_takes_input_while_the_databases_open_and_adopts_them_when_they_lan
 
     land_the_databases(&mut harness, &databases, &store);
 
-    assert!(!harness.state().storage_open.is_opening());
+    assert_eq!(harness.state().storage_open.databases_pending(), None);
     assert_eq!(
         harness.state().history.path(),
         Some(store.recordings_path().as_path()),
@@ -4011,7 +4034,278 @@ fn a_storage_open_that_never_reports_still_runs_the_loads_that_waited() {
         harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1),
         "the drop never loaded once the open gave up"
     );
-    assert!(!harness.state().storage_open.is_opening());
+    assert_eq!(harness.state().storage_open.databases_pending(), None);
+}
+
+/// The app started on `data_directory`, which the caller's own
+/// [`DataDirectoryLock`] holds, with the files a command line named.
+///
+/// The app takes its own lock on that very directory, which is refused for as
+/// long as the caller keeps its lock - the same answer a second GeoTrace gets
+/// from the first.
+fn app_waiting_for_the_data_directory<'a>(
+    paths: &[PathBuf],
+    data_directory: &Path,
+) -> Harness<'a, App> {
+    let instance_lock = SharedDataDirectoryLock::acquire(Some(data_directory));
+    assert_eq!(
+        instance_lock.ownership(),
+        DataDirectoryOwnership::HeldByAnotherInstance,
+        "the app is meant to start out waiting"
+    );
+    let paths = paths.to_vec();
+    Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .with_wait_for_pending_images(false)
+        .build_eframe(move |cc| transient_app_with_the_instance_lock(cc, &paths, instance_lock))
+}
+
+/// A second GeoTrace on a data directory the first is using opens no database
+/// of its own: recovery here would run against archives the first is part-way
+/// through rewriting. Its window is up and takes input all the same.
+#[test]
+fn a_data_directory_another_instance_holds_is_waited_for_and_nothing_is_opened() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+
+    harness.step();
+
+    harness.get_by_label_contains(DATA_DIRECTORY_HELD_TITLE);
+    harness.get_by_label_contains("Its window is open");
+    assert_eq!(
+        harness.state().storage_open.databases_pending(),
+        Some(DatabasesPending::WaitingForTheDataDirectory),
+        "the databases were opened under the instance holding the directory"
+    );
+    assert!(
+        harness.query_by_label_contains(OPENING_DATABASES).is_none(),
+        "nothing is opening, so nothing says it is"
+    );
+
+    harness.get_by_label_contains(ICON_GEAR).click();
+    harness.step();
+
+    assert!(
+        harness.state().settings_open,
+        "the window answered a click while it waited for the data directory"
+    );
+}
+
+/// An instance whose window is gone is one there is nothing to switch to: the
+/// dialog names the writes it is finishing instead.
+#[test]
+fn an_instance_finishing_its_writes_is_named_with_what_it_is_writing() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let mut holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let pending_writes = PendingWrites::default();
+    let _compaction = pending_writes
+        .try_begin(
+            "Compacting the TEC archive",
+            WriteKind::ArchiveCompaction {
+                archive: "ionospheric TEC",
+            },
+        )
+        .expect("the registry is running");
+    holder.mark_shutting_down(&pending_writes);
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+
+    harness.step();
+
+    harness.get_by_label_contains(DATA_DIRECTORY_HELD_TITLE);
+    harness.get_by_label_contains("Its window is closed");
+    harness.get_by_label_contains("Compacting the TEC archive");
+}
+
+/// The lock is what says the directory is in use: a status file that is gone
+/// or unreadable leaves the dialog with nothing to name, and it says only
+/// what the lock proves.
+#[rstest::rstest]
+#[case::missing(None)]
+#[case::corrupt(Some(&b"{not json"[..]))]
+fn a_held_data_directory_without_a_readable_status_still_says_it_is_held(
+    #[case] status_file: Option<&[u8]>,
+) {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let status_path = directory.path().join(gt_instance_lock::STATUS_FILE_NAME);
+    match status_file {
+        None => std::fs::remove_file(&status_path).expect("remove the status file"),
+        Some(bytes) => std::fs::write(&status_path, bytes).expect("write the status file"),
+    }
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+
+    harness.step();
+
+    harness.get_by_label_contains(DATA_DIRECTORY_HELD_TITLE);
+    harness.get_by_label_contains("What it is doing is unknown");
+}
+
+/// The wait ends by itself: the app takes the directory the instance holding
+/// it let go of, and opens what it held back.
+#[test]
+fn the_wait_ends_when_the_instance_holding_the_data_directory_lets_go() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+    harness.step();
+    harness.get_by_label_contains(DATA_DIRECTORY_HELD_TITLE);
+
+    drop(holder);
+
+    assert!(
+        harness.step_until(|harness| harness.state().storage_open.databases_pending().is_none()),
+        "the app never opened its databases"
+    );
+    assert!(
+        harness
+            .query_by_label_contains(DATA_DIRECTORY_HELD_TITLE)
+            .is_none(),
+        "the dialog outlived the wait"
+    );
+    assert_eq!(
+        InstanceStatus::read_from(directory.path()).map(|status| status.state),
+        Some(InstanceState::Running),
+        "the app marks the data directory as its own once it takes it"
+    );
+}
+
+/// A lock file that will not open says nothing about who has the directory,
+/// so the wait goes on and opens nothing until the lock itself is taken.
+#[test]
+fn a_wait_whose_lock_file_cannot_be_opened_keeps_waiting() {
+    let parent = tempfile::tempdir().expect("temp dir");
+    let data_directory = parent.path().join("data");
+    let holder = DataDirectoryLock::acquire(Some(&data_directory));
+    let mut harness = app_waiting_for_the_data_directory(&[], &data_directory);
+    harness.step();
+    harness.get_by_label_contains(DATA_DIRECTORY_HELD_TITLE);
+
+    drop(holder);
+    std::fs::remove_dir_all(&data_directory).expect("remove the data directory");
+    std::fs::write(&data_directory, b"not a directory").expect("put a file in its place");
+    thread::sleep(DATA_DIRECTORY_RETRY_INTERVAL);
+    harness.run_steps(3);
+
+    assert_eq!(
+        harness.state().storage_open.databases_pending(),
+        Some(DatabasesPending::WaitingForTheDataDirectory),
+        "the databases opened on a directory this instance never locked"
+    );
+    harness.get_by_label_contains(LOCK_FILE_UNUSABLE_TITLE);
+
+    std::fs::remove_file(&data_directory).expect("clear the way");
+
+    assert!(
+        harness.step_until(|harness| harness.state().storage_open.databases_pending().is_none()),
+        "the wait never ended once the lock file could be opened"
+    );
+}
+
+/// Waiting is not a trap: the window closes on request, and an app on its way
+/// out takes no directory and opens no database.
+#[test]
+fn a_window_closed_while_it_waits_for_the_data_directory_opens_nothing() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+    harness.step();
+
+    request_window_close(&mut harness);
+    assert!(
+        harness.step_until(
+            |harness| root_viewport_commands(harness).contains(&egui::ViewportCommand::Close)
+        ),
+        "the window never closed"
+    );
+    drop(holder);
+    thread::sleep(DATA_DIRECTORY_RETRY_INTERVAL);
+    harness.run_steps(3);
+
+    assert_eq!(
+        harness.state().storage_open.databases_pending(),
+        Some(DatabasesPending::WaitingForTheDataDirectory),
+        "a closing app retried the directory and opened the databases on it"
+    );
+}
+
+/// A file named on the command line of a second GeoTrace waits for the data
+/// directory, and is loaded and stored once this instance owns it.
+#[test]
+fn a_file_named_while_the_data_directory_is_held_loads_once_it_frees() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let gtd_path = directory.path().join("queued.gtd");
+    std::fs::write(&gtd_path, minimal_gtd_bytes()).expect("write the recording");
+    let mut harness = app_waiting_for_the_data_directory(&[gtd_path], directory.path());
+    harness.run_steps(3);
+
+    assert!(
+        harness.state().loader.loading_jobs.is_empty(),
+        "the load ran while another instance held the data directory"
+    );
+    assert_eq!(harness.state().shared.borrow().loaded_files.len(), 0);
+
+    drop(holder);
+
+    assert!(
+        harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1),
+        "the file that waited for the data directory did not load"
+    );
+}
+
+/// A drop lands in the same queue, which the dialog being up does not stop.
+#[test]
+fn a_file_dropped_while_the_data_directory_is_held_loads_once_it_frees() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+
+    harness
+        .input_mut()
+        .dropped_files
+        .push(Arc::new(TestDroppedFile::bytes(
+            minimal_gtd_bytes().as_slice(),
+            "dropped.gtd",
+        )));
+    harness.run_steps(3);
+    assert!(
+        harness.state().loader.loading_jobs.is_empty(),
+        "the drop loaded while another instance held the data directory"
+    );
+    assert_eq!(harness.state().shared.borrow().loaded_files.len(), 0);
+
+    drop(holder);
+
+    assert!(
+        harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1),
+        "the drop that waited for the data directory did not load"
+    );
+}
+
+/// Pasted log text waits for the data directory like any other load: paste is
+/// its own surface, and has escaped this queue before.
+#[test]
+fn log_text_pasted_while_the_data_directory_is_held_loads_once_it_frees() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+
+    harness.input_mut().events.push(egui::Event::Paste(
+        "2026-01-01 14:02:11 navsyncd: queue empty\n".to_owned(),
+    ));
+    harness.run_steps(3);
+    assert!(
+        harness.state().logs.is_empty(),
+        "the paste loaded while another instance held the data directory"
+    );
+
+    drop(holder);
+
+    assert!(
+        harness.step_until(|harness| harness.state().logs.len() == 1),
+        "the paste that waited for the data directory did not load"
+    );
 }
 
 /// Never hidden, per DESIGN.md: the controls that need an archive are grayed
