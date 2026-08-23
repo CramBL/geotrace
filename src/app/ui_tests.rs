@@ -27,7 +27,7 @@ use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
 use geotrace_sdk::{Channel, ChannelUnit, DateTime, Duration, Unit, Utc};
 use gt_instance_lock::{
     DataDirectoryLock, DataDirectoryOwnership, InstanceState, InstanceStatus,
-    SharedDataDirectoryLock,
+    MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES, SharedDataDirectoryLock,
 };
 use gt_jam::wire::HexObservation;
 use gt_jam_store::schema;
@@ -4650,22 +4650,6 @@ fn a_data_directory_another_instance_holds_is_waited_for_and_nothing_is_opened()
     );
 }
 
-/// An instance whose window is gone is one there is nothing to switch to: the
-/// dialog names the writes it is finishing instead.
-#[test]
-fn an_instance_finishing_its_writes_is_named_with_what_it_is_writing() {
-    let directory = tempfile::tempdir().expect("temp dir");
-    let mut holder = DataDirectoryLock::acquire(Some(directory.path()));
-    report_the_holder_as_compacting_an_archive(&mut holder);
-    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
-
-    harness.step();
-
-    harness.get_by_label_contains(DATA_DIRECTORY_HELD_TITLE);
-    harness.get_by_label_contains("Its window is closed");
-    harness.get_by_label_contains("Compacting the TEC archive");
-}
-
 /// The lock is what says the directory is in use: a status file that is gone
 /// or unreadable leaves the dialog with nothing to name, and it says only
 /// what the lock proves.
@@ -6618,6 +6602,92 @@ fn the_shutdown_window_shrinks_the_window_once() {
         assert!(!shrank_the_window(&harness), "the window shrank again");
     }
     drop(compaction);
+}
+
+/// The instance that owns `data_directory`, with a write running that nothing
+/// finishes on its own. A close request there raises the shutdown window over
+/// that write, and the status this instance keeps is what a second one reads.
+fn app_holding_the_data_directory_over_a_running_write<'a>(
+    data_directory: &Path,
+) -> (Harness<'a, App>, gt_pending_writes::PendingWriteGuard) {
+    let instance_lock = SharedDataDirectoryLock::acquire(Some(data_directory));
+    assert_eq!(
+        instance_lock.ownership(),
+        DataDirectoryOwnership::MarkedByThisInstance,
+        "the holder is meant to own the data directory it reports on"
+    );
+    let pending_writes = PendingWrites::default();
+    let compaction = pending_writes
+        .try_begin("Compacting the TEC archive", TEC_COMPACTION)
+        .expect("the registry is running");
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(move |cc| {
+            transient_app_with_the_instance_lock(cc, &[], instance_lock, pending_writes)
+        });
+    harness.step();
+    (harness, compaction)
+}
+
+/// The window being up is no reason to switch to it once its shutdown has
+/// begun: the wait names the writes that instance is finishing instead.
+#[test]
+fn an_instance_shutting_down_with_its_window_up_is_named_with_what_it_is_writing() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let (mut holder, compaction) =
+        app_holding_the_data_directory_over_a_running_write(directory.path());
+    let mut waiting = app_waiting_for_the_data_directory(&[], directory.path());
+    waiting.step();
+    waiting.get_by_label_contains("Its window is open");
+
+    request_window_close(&mut holder);
+    step_until_the_shutdown_window_is_up(&mut holder);
+
+    assert!(
+        waiting.step_until(|waiting| waiting
+            .query_by_label_contains("Compacting the TEC archive")
+            .is_some()),
+        "the wait never named the write the shutting-down instance is finishing"
+    );
+    waiting.get_by_label_contains("It is shutting down");
+    drop(compaction);
+}
+
+/// The shutdown window keeps the status file current while it is up: a write
+/// that finishes there drops off what a second instance reads.
+#[test]
+fn the_shutdown_window_reports_the_writes_left_as_they_finish() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let (mut holder, compaction) =
+        app_holding_the_data_directory_over_a_running_write(directory.path());
+
+    request_window_close(&mut holder);
+    step_until_the_shutdown_window_is_up(&mut holder);
+
+    let status = InstanceStatus::read_from(directory.path()).expect("the status file");
+    assert_eq!(status.state, InstanceState::ShuttingDown);
+    assert!(
+        reports_the_compaction(&status),
+        "the shutdown window never reported the write it is waiting for"
+    );
+
+    drop(compaction);
+    thread::sleep(MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES);
+
+    assert!(
+        holder.step_until(|_| InstanceStatus::read_from(directory.path())
+            .is_some_and(|status| !reports_the_compaction(&status))),
+        "the shutdown window went on reporting a write that had finished"
+    );
+}
+
+/// Whether the compaction the shutdown is waiting for is among the writes
+/// `status` names.
+fn reports_the_compaction(status: &InstanceStatus) -> bool {
+    status
+        .pending_writes
+        .iter()
+        .any(|write| write.label == "Compacting the TEC archive")
 }
 
 /// A close frame runs in well under this even on a loaded CI machine, while

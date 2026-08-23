@@ -251,8 +251,8 @@ impl DataDirectoryUnavailable {
                 }
                 InstanceState::ShuttingDown => {
                     ui.label(
-                        "Its window is closed and it is finishing these writes, after which \
-                         GeoTrace opens the recordings and archives here.",
+                        "It is shutting down and finishing these writes, after which GeoTrace \
+                         opens the recordings and archives here.",
                     );
                     ui.add_space(4.0);
                     for write in &status.pending_writes {
@@ -288,8 +288,7 @@ impl DataDirectoryUnavailable {
                 }
                 InstanceState::ShuttingDown => {
                     ui.label(
-                        "The other GeoTrace's window is closed and it is still finishing these \
-                         writes",
+                        "The other GeoTrace is shutting down and is still finishing these writes",
                     );
                     ui.add_space(4.0);
                     for write in &status.pending_writes {
