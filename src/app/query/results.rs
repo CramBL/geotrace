@@ -29,6 +29,7 @@ use strum::IntoEnumIterator as _;
 
 use super::column_format::{self, ColumnFormat};
 use super::match_row::{MatchColumn, MatchKey, MatchRow, MatchRows, MatchSort, RowNoun};
+use super::value_bar::{ColumnValueRange, RunColumnRanges, ValueBar};
 
 /// Vertical padding a row adds around its text.
 pub(super) const ROW_PADDING: f32 = 2.0;
@@ -56,14 +57,15 @@ pub(super) struct ResultsOutputs<'a, 'b> {
     pub(super) reveal: &'a mut Option<MatchRevealTarget>,
 }
 
-/// How the results tab lists a run's matches: the order of the matches table,
-/// and the match the points table follows.
+/// What the results tab keeps between frames: the order of the matches table,
+/// the match the points table follows, and the ranges its bars scale to.
 #[derive(Debug, Default)]
-pub(super) struct MatchListState {
+pub(super) struct ResultsState {
     sort: MatchSort,
     /// The picked match, kept across reruns. `None` until one is picked, which
     /// lists the first match.
     selected: Option<MatchKey>,
+    column_ranges: RunColumnRanges,
 }
 
 /// One query of the run: what it counted, the colour it draws in, and the
@@ -221,6 +223,9 @@ enum MatchAction {
 /// query tables.
 pub(super) struct ResultsTables<'a> {
     files: &'a [LoadedFile],
+    /// The run these tables list, as the session numbered it. The value ranges
+    /// the bars scale to are computed once per number.
+    run: u64,
     /// One per query of the run, in editor order.
     queries: Vec<QuerySection<'a>>,
     matches: MatchRows,
@@ -269,6 +274,7 @@ impl<'a> ResultsTables<'a> {
             .collect();
         Self {
             files,
+            run: results.matches.run,
             queries,
             matches,
             source: RowSource::NavPoints {
@@ -323,6 +329,7 @@ impl<'a> ResultsTables<'a> {
         );
         Self {
             files,
+            run: channel.matches.run,
             queries: vec![QuerySection {
                 summary: &channel.summary,
                 color: channel
@@ -347,11 +354,14 @@ impl<'a> ResultsTables<'a> {
     pub(super) fn ui(
         &mut self,
         ui: &mut egui::Ui,
-        state: &mut MatchListState,
+        state: &mut ResultsState,
         scope: MapScope<'_>,
         out: &mut ResultsOutputs<'_, '_>,
     ) {
         self.matches.sort(state.sort);
+        state
+            .column_ranges
+            .refresh(self.run, || self.column_ranges());
         let selected = self.matches.selected(state.selected).cloned();
         if let Some(selected) = &selected {
             state.selected = Some(selected.key());
@@ -371,7 +381,7 @@ impl<'a> ResultsTables<'a> {
             self.matches_table_ui(ui, state, &selected, out);
             ui.add_space(ui.spacing().item_spacing.y);
             self.caption_ui(ui, &selected);
-            self.points_table_ui(ui, &selected, scope, out);
+            self.points_table_ui(ui, &selected, &state.column_ranges, scope, out);
         });
     }
 
@@ -497,7 +507,7 @@ impl<'a> ResultsTables<'a> {
     fn matches_table_ui(
         &self,
         ui: &mut egui::Ui,
-        state: &mut MatchListState,
+        state: &mut ResultsState,
         selected: &MatchRow,
         out: &mut ResultsOutputs<'_, '_>,
     ) {
@@ -703,15 +713,26 @@ impl<'a> ResultsTables<'a> {
         &self,
         ui: &mut egui::Ui,
         selected: &MatchRow,
+        ranges: &RunColumnRanges,
         scope: MapScope<'_>,
         out: &mut ResultsOutputs<'_, '_>,
     ) {
-        let Some(columns) = self
-            .queries
-            .get(selected.query_index)
-            .map(|query| query.columns.as_slice())
-        else {
+        let Some(query) = self.queries.get(selected.query_index) else {
             return;
+        };
+        let columns = query.columns.as_slice();
+        let cells = PointColumns {
+            columns,
+            // A stale run's rows read data that changed after it: their bars
+            // come back with the next run.
+            ranges: if self.stale {
+                &[]
+            } else {
+                ranges.of_query(selected.query_index)
+            },
+            bar_color: gt_ui_theme::query_value_bar_color(
+                query.color.unwrap_or_else(|| ui.visuals().text_color()),
+            ),
         };
         let widths: Vec<f32> = columns
             .iter()
@@ -768,7 +789,7 @@ impl<'a> ResultsTables<'a> {
                         };
                         if let Some(taken) = self.point_row_ui(
                             &mut row,
-                            columns,
+                            &cells,
                             selected.track,
                             source_index,
                             out.highlight,
@@ -794,12 +815,12 @@ impl<'a> ResultsTables<'a> {
         }
     }
 
-    /// One matched row: its value under each column the table shows, and the
-    /// click it took.
+    /// One matched row: its value under each column the table shows, the bar
+    /// behind it, and the click it took.
     fn point_row_ui(
         &self,
         row: &mut TableRow<'_, '_>,
-        columns: &[TableColumn<'_>],
+        cells: &PointColumns<'_>,
         track: TrackRef,
         source_index: usize,
         highlight: &mut MapHighlight,
@@ -808,9 +829,10 @@ impl<'a> ResultsTables<'a> {
         row.set_selected(
             point.is_some_and(|point| highlight.sticky.is_some_and(|sticky| sticky == point)),
         );
-        for column in columns {
+        for (index, column) in cells.columns.iter().enumerate() {
             let value = self.source.value(track, source_index, column.source);
-            row.col(|ui| column.format.value_ui(ui, value));
+            let bar = cells.bar(index, value);
+            row.col(|ui| column.format.value_ui(ui, value, bar));
         }
         row.col(|_| {});
 
@@ -831,6 +853,30 @@ impl<'a> ResultsTables<'a> {
             lat_lon: self.source.lat_lon(track, source_index)?,
             response,
         })
+    }
+
+    /// The value range every column of every query spans over all of the run's
+    /// matched rows, in editor order. A column of times or blanks holds none:
+    /// it states no magnitude to compare.
+    fn column_ranges(&self) -> Vec<Vec<Option<ColumnValueRange>>> {
+        self.queries
+            .iter()
+            .enumerate()
+            .map(|(query_index, query)| {
+                query
+                    .columns
+                    .iter()
+                    .map(|column| {
+                        if !column.format.holds_magnitudes() {
+                            return None;
+                        }
+                        self.matches.column_range(query_index, |track, index| {
+                            self.source.value(track, index, column.source)
+                        })
+                    })
+                    .collect()
+            })
+            .collect()
     }
 
     /// Every match of the run as tab-separated values, in the order the table
@@ -876,6 +922,30 @@ impl<'a> ResultsTables<'a> {
     }
 }
 
+/// What the points table lists one row under: the columns of its query, the
+/// range each of them spans over the run, and the colour of the bars behind
+/// their cells.
+struct PointColumns<'a> {
+    columns: &'a [TableColumn<'a>],
+    /// One entry per column of `columns`, in the same order. Empty where the
+    /// table paints no bars.
+    ranges: &'a [Option<ColumnValueRange>],
+    bar_color: egui::Color32,
+}
+
+impl PointColumns<'_> {
+    /// The bar behind the cell the column at `index` prints `value` in.
+    fn bar(&self, index: usize, value: Option<f64>) -> Option<ValueBar> {
+        let fraction = self
+            .ranges
+            .get(index)
+            .copied()
+            .flatten()?
+            .bar_fraction(value)?;
+        Some(ValueBar::new(fraction, self.bar_color))
+    }
+}
+
 /// A clickable matches-table header that orders the list by `column`.
 ///
 /// The active column shows a caret pointing the way its values run. Clicking it
@@ -883,7 +953,7 @@ impl<'a> ResultsTables<'a> {
 fn sort_header_ui(
     ui: &mut egui::Ui,
     column: MatchColumn,
-    state: &mut MatchListState,
+    state: &mut ResultsState,
     row_noun: RowNoun,
 ) {
     let active = state.sort.column == column;

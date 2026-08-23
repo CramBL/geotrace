@@ -13,6 +13,7 @@ use gt_types::{LoadedFile, TrackRef};
 use strum::EnumIter;
 
 use super::column_format;
+use super::value_bar::ColumnValueRange;
 
 /// A match's identity across reruns: the track it is on and the row it starts
 /// at. A rerun over unchanged data lists the same key, so the selection stays
@@ -127,6 +128,25 @@ impl MatchRows {
             }
         }
         Self(rows)
+    }
+
+    /// The range one column's values span over every matched row of the query
+    /// at `query_index`, valued by `value` from the row's track and its index
+    /// in that track's source. The bars behind that column's cells keep their
+    /// scale when another match is picked: the range covers all of the
+    /// query's matches.
+    pub(super) fn column_range(
+        &self,
+        query_index: usize,
+        value: impl Fn(TrackRef, usize) -> Option<f64>,
+    ) -> Option<ColumnValueRange> {
+        ColumnValueRange::of_values(
+            self.0
+                .iter()
+                .filter(|row| row.query_index == query_index)
+                .flat_map(|row| row.rows.clone().map(|index| (row.track, index)))
+                .filter_map(|(track, index)| value(track, index)),
+        )
     }
 
     pub(super) fn rows(&self) -> &[MatchRow] {
@@ -502,6 +522,37 @@ mod tests {
         let rows = test_rows();
         let row = rows.rows().get(index).expect("the fixture lists the row");
         assert_eq!(row.cell_text(column, &[]), expected);
+    }
+
+    /// Picking another match of a query leaves its bars where they are: they
+    /// scale to every match of that query. The matches of the run's other
+    /// queries stay out of it: each query tables its own columns.
+    #[test]
+    fn a_column_range_covers_every_match_of_its_query() {
+        let rows = test_rows();
+        // A range states which rows went into it: every row is valued by its
+        // index in the track. Query 0 matched rows 0..62 and 100..112, query 1
+        // the single row 200.
+        let value_of_index = |_track: TrackRef, index: usize| Some(index as f64);
+        let range = rows
+            .column_range(0, value_of_index)
+            .expect("the query matched rows");
+        assert_eq!(range.bar_fraction(Some(0.0)), Some(0.0));
+        assert_eq!(range.bar_fraction(Some(111.0)), Some(1.0));
+        assert_eq!(
+            range.bar_fraction(Some(55.5)),
+            Some(0.5),
+            "the range runs to the last row of the query's last match"
+        );
+
+        let single_row = rows
+            .column_range(1, value_of_index)
+            .expect("the query matched a row");
+        assert_eq!(
+            single_row.bar_fraction(Some(200.0)),
+            None,
+            "a query whose rows all read the same value spans nothing"
+        );
     }
 
     /// The track column names the recording as well once several are loaded:

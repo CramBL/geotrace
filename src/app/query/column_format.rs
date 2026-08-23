@@ -8,6 +8,8 @@ use gt_query::{Construct, Quantity, QueryMetric};
 use gt_query_run::MICROS_PER_SEC;
 use gt_ui_theme::{DEGREE_SIGN, EM_DASH};
 
+use super::value_bar::ValueBar;
+
 /// Decimals a channel sample prints, matching the plot's channel readout.
 const CHANNEL_DECIMALS: usize = 3;
 
@@ -173,9 +175,23 @@ impl<'a> ColumnFormat<'a> {
         }
     }
 
-    /// One value cell, aligned the way its column reads. Monospace, so the
-    /// digits of a column line up on their decimal point.
-    pub(super) fn value_ui(self, ui: &mut egui::Ui, value: Option<f64>) {
+    /// Whether this column's cells hold magnitudes to compare across the run,
+    /// which the bar behind a cell states. A time of day names an instant, and
+    /// a blank column holds nothing.
+    pub(super) fn holds_magnitudes(self) -> bool {
+        match self.kind {
+            ColumnKind::Number => true,
+            ColumnKind::TimeOfDay { .. } | ColumnKind::Blank => false,
+        }
+    }
+
+    /// One value cell, aligned the way its column reads. The digits of a
+    /// column line up on their decimal point: the text is monospace. The value
+    /// reads over its bar, which is painted first.
+    pub(super) fn value_ui(self, ui: &mut egui::Ui, value: Option<f64>, bar: Option<ValueBar>) {
+        if let Some(bar) = bar {
+            bar.paint(ui);
+        }
         ui.with_layout(self.cell_layout(), |ui| {
             ui.add(
                 Label::new(RichText::new(self.cell_text(value)).monospace())

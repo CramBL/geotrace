@@ -654,6 +654,20 @@ pub fn query_halo_color(index: usize, stale: bool) -> Color32 {
         .unwrap_or(QUERY_MATCH_HALO)
 }
 
+/// Alpha the query results table paints the magnitude bar behind a value cell
+/// at: enough tint for the bar's length to read at a glance, faint enough for
+/// the number over it to stay legible on either theme.
+pub const QUERY_VALUE_BAR_ALPHA: u8 = 64;
+
+/// `color` as the magnitude bar behind a value cell of the query results
+/// table. Two draw queries paint bars of different colours: the caller passes
+/// the halo colour of the query that matched, or the theme's text colour for a
+/// query that draws no halo.
+pub fn query_value_bar_color(color: Color32) -> Color32 {
+    let [red, green, blue, _] = color.to_srgba_unmultiplied();
+    Color32::from_rgba_unmultiplied(red, green, blue, QUERY_VALUE_BAR_ALPHA)
+}
+
 /// Query editor syntax highlighting: keywords (`points`, `where`, `and`, …).
 ///
 /// The code editor uses the theme's `extreme_bg_color` (near-black on dark,
@@ -871,6 +885,31 @@ mod tests {
             solar_flare_color(peak_flux_watts_per_square_meter),
             expected
         );
+    }
+
+    /// How far a channel may move as a colour round-trips through the
+    /// premultiplied storage [`Color32`] keeps: one step of the bar alpha,
+    /// which is a quarter of full opacity.
+    const BAR_TINT_ROUNDING: u8 = 4;
+
+    /// A value bar keeps the hue of the halo it was tinted from, at the alpha
+    /// the table paints its bars with.
+    #[test]
+    fn a_value_bar_keeps_its_halo_hue_at_the_bar_alpha() {
+        let halo = query_halo_color(0, false);
+        let [halo_red, halo_green, halo_blue, _] = halo.to_srgba_unmultiplied();
+        let [red, green, blue, alpha] = query_value_bar_color(halo).to_srgba_unmultiplied();
+        assert_eq!(alpha, QUERY_VALUE_BAR_ALPHA);
+        for (channel, bar, halo) in [
+            ("red", red, halo_red),
+            ("green", green, halo_green),
+            ("blue", blue, halo_blue),
+        ] {
+            assert!(
+                bar.abs_diff(halo) <= BAR_TINT_ROUNDING,
+                "{channel}: bar {bar}, halo {halo}"
+            );
+        }
     }
 
     /// Every legend tick is a stop of the ramp, so a label always sits on a
