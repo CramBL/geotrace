@@ -234,11 +234,11 @@ pub(super) fn header_height(ui: &egui::Ui) -> f32 {
     ui.text_style_height(&TextStyle::Body)
         + ui.spacing().item_spacing.y
         + ui.text_style_height(&TextStyle::Small)
-        + super::match_table::ROW_PADDING
+        + super::results::ROW_PADDING
 }
 
 /// The width one line of `text` lays out to in `style`.
-fn text_width(ui: &egui::Ui, text: &str, style: &TextStyle) -> f32 {
+pub(super) fn text_width(ui: &egui::Ui, text: &str, style: &TextStyle) -> f32 {
     let font = style.resolve(ui.style());
     ui.painter()
         .layout_no_wrap(text.to_owned(), font, egui::Color32::PLACEHOLDER)

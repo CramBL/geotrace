@@ -1,7 +1,5 @@
 use egui::TextEdit;
 use egui_phosphor::regular::ARROW_LINE_UP_LEFT as ICON_ARROW_LINE_UP_LEFT;
-use egui_phosphor::regular::ARROWS_IN as ICON_ARROWS_IN;
-use egui_phosphor::regular::ARROWS_OUT as ICON_ARROWS_OUT;
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
 use egui_phosphor::regular::CHECK as ICON_CHECK;
 use egui_phosphor::regular::COPY as ICON_COPY;
@@ -39,6 +37,7 @@ use gt_test_utils::{
     synthetic_log_start,
 };
 use gt_types::{FileIdx, LoadWarning, TrackIdx, TrackRef};
+use gt_ui_theme::MIDDLE_DOT;
 use strum::IntoEnumIterator as _;
 
 use super::App;
@@ -502,16 +501,13 @@ fn query_matches_on_snap_error_after_a_run() {
 /// Clicking a point row pins that point, like a point row in the side panel:
 /// the map then owns a pinned popup for it.
 #[test]
-fn query_match_row_click_pins_its_point() {
+fn query_point_row_click_pins_its_point() {
     let mut harness = app_with_query_window_open();
     run_query(&mut harness, "points | where velocity > 1 km/h");
     harness.run_steps(3);
 
-    // The first point row sits one row below the match's name: the height of
-    // the name's own label, plus the gap between two rows.
-    let header = harness.get_by_label_contains("#0 ·").rect();
-    let point_row = header.center() + egui::vec2(0.0, header.height() + 5.0);
-    harness.press_drag_release(point_row, egui::Vec2::ZERO, 1);
+    let first_row = topmost_point_row(&harness).0.center();
+    harness.press_drag_release(first_row, egui::Vec2::ZERO, 1);
     harness.run_steps(2);
 
     let sticky = harness
@@ -528,9 +524,9 @@ fn query_match_row_click_pins_its_point() {
     assert_eq!(sticky.category, gt_types::DataCategory::Tpv);
 }
 
-/// A match's name reads past the column it starts in, and the table stretches
-/// its striping across the window: neither may widen the window, which would
-/// cover the map beside it.
+/// The matches table lists a track, times and counts, and the points table
+/// stretches its striping across the window: neither may widen the window,
+/// which would cover the map beside it.
 #[test]
 fn a_run_leaves_the_query_window_at_its_default_width() {
     let mut harness = app_with_query_window_open();
@@ -544,6 +540,43 @@ fn a_run_leaves_the_query_window_at_its_default_width() {
     assert!(
         width <= query::DEFAULT_WINDOW_WIDTH,
         "the results widened the window to {width}"
+    );
+}
+
+/// Neither the results, a tab switch nor scrolling may make the window taller:
+/// a window that claimed the height it could have would cover the plot below
+/// it.
+#[test]
+fn the_results_leave_the_query_window_at_its_default_height() {
+    let mut harness = demo_app_with_query_run(TWO_MATCH_QUERY);
+    let height_of = |harness: &Harness<'_, App>| {
+        harness
+            .window_rect("Query")
+            .expect("the query window is open")
+            .height()
+    };
+    let with_results = height_of(&harness);
+    assert!(
+        with_results <= query::DEFAULT_WINDOW_HEIGHT,
+        "the results grew the window to {with_results}"
+    );
+
+    harness.get_by_label("Examples").click();
+    harness.run_steps(5);
+    harness.get_by_label("Results").click();
+    harness.run_steps(5);
+    let after_tabs = height_of(&harness);
+    assert!(
+        after_tabs <= query::DEFAULT_WINDOW_HEIGHT,
+        "switching tabs grew the window to {after_tabs}"
+    );
+
+    let rows = topmost_point_row(&harness).0.center();
+    harness.scroll_wheel_at(rows, -RESULTS_WHEEL_POINTS, WHEEL_SETTLE_FRAMES);
+    let after_scrolling = height_of(&harness);
+    assert!(
+        after_scrolling <= query::DEFAULT_WINDOW_HEIGHT,
+        "scrolling the rows grew the window to {after_scrolling}"
     );
 }
 
@@ -564,6 +597,13 @@ fn demo_app_with_query_run(query: &str) -> Harness<'static, App> {
     harness
 }
 
+/// A demo-trip query with two matches of clearly different length, for the
+/// tests that pick, sort and frame one of them.
+const TWO_MATCH_QUERY: &str = "points | window 10 | where avg(velocity) > 25 km/h";
+
+/// A demo-trip query with more matches than the matches table lists at once.
+const MANY_MATCH_QUERY: &str = "points | where accel > 0.5 m/s2";
+
 /// Wheel points sent over the results, past the rows one viewport holds.
 const RESULTS_WHEEL_POINTS: f32 = 200.0;
 
@@ -576,33 +616,92 @@ const STATIONARY_TOLERANCE_PX: f32 = 0.5;
 /// Length of the bare wall-clock label a point row's time column states.
 const ROW_TIME_LEN: usize = "14:00:19".len();
 
-/// Matches the point rows of the results by their time column, the only
-/// widget labeled with a bare wall-clock time: a match's name row states its
-/// times inside a longer line.
-fn point_row_times<'a>() -> By<'a> {
+/// Every widget labeled with a bare wall-clock time: the start and end columns
+/// of the matches table, and the time column of the points table. A channel
+/// run's samples are timed to the millisecond, so the time carries a fraction
+/// there.
+fn bare_time_labels<'a>() -> By<'a> {
     By::new().role(egui::accesskit::Role::Label).predicate(
         |node: &egui_kittest::kittest::AccessKitNode<'_>| {
             node.value().is_some_and(|value| {
-                value.len() == ROW_TIME_LEN && value.chars().all(|c| c.is_ascii_digit() || c == ':')
+                value.len() >= ROW_TIME_LEN
+                    && value.contains(':')
+                    && value
+                        .chars()
+                        .all(|c| c.is_ascii_digit() || c == ':' || c == '.')
             })
         },
     )
 }
 
-/// The time stated by the topmost point row on display.
-fn topmost_row_time(harness: &Harness<'_, App>) -> String {
-    harness
-        .query_all(point_row_times())
-        .min_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
-        .and_then(|node| node.accesskit_node().value())
+/// The rows one of the results tab's two tables lists, top row first: the rect
+/// of the row's first time cell and the time it states.
+///
+/// The caption naming the picked match starts at the left edge of the tab, and
+/// so does the points table's time column. The matches table indents its times
+/// behind the swatch, number and track columns.
+fn time_rows(harness: &Harness<'_, App>, table: ResultsTable) -> Vec<(egui::Rect, String)> {
+    let left_edge = harness.get_by_label_contains("Match ").rect().left();
+    let mut cells: Vec<(egui::Rect, String)> = harness
+        .query_all(bare_time_labels())
+        .filter(|node| {
+            let indented = node.rect().left() > left_edge + INDENT_TOLERANCE_PX;
+            match table {
+                ResultsTable::Matches => indented,
+                ResultsTable::Points => !indented,
+            }
+        })
+        .filter_map(|node| Some((node.rect(), node.accesskit_node().value()?)))
+        .collect();
+    // Reading order: down the rows, and left to right within a row - a match
+    // row states a start and an end, of which the start is kept.
+    cells.sort_by(|(a, _), (b, _)| {
+        a.top()
+            .total_cmp(&b.top())
+            .then_with(|| a.left().total_cmp(&b.left()))
+    });
+    cells.dedup_by(|(a, _), (b, _)| (a.top() - b.top()).abs() < INDENT_TOLERANCE_PX);
+    cells
+}
+
+/// How far a cell may sit from the tab's left edge and still count as starting
+/// there, and how far two cells' tops may differ and still be one row.
+const INDENT_TOLERANCE_PX: f32 = 2.0;
+
+/// Which of the results tab's two tables a test reads.
+#[derive(Clone, Copy)]
+enum ResultsTable {
+    Matches,
+    Points,
+}
+
+/// The topmost point row's time cell and the time it states.
+fn topmost_point_row(harness: &Harness<'_, App>) -> (egui::Rect, String) {
+    time_rows(harness, ResultsTable::Points)
+        .into_iter()
+        .next()
         .expect("the results list point rows")
 }
 
-/// The wheel over a match table scrolls its rows, and the editor above the tab
-/// strip stays where it is: the tab owns the only scroll level under it.
+/// The time stated by the topmost point row on display.
+fn topmost_row_time(harness: &Harness<'_, App>) -> String {
+    topmost_point_row(harness).1
+}
+
+/// The start time of the topmost match row on display.
+fn topmost_match_row(harness: &Harness<'_, App>) -> (egui::Rect, String) {
+    time_rows(harness, ResultsTable::Matches)
+        .into_iter()
+        .next()
+        .expect("the results list matches")
+}
+
+/// The wheel over the points table scrolls its rows, and neither the matches
+/// table above it nor the editor above the tab strip moves with them: the two
+/// tables scroll on their own.
 #[test]
 fn the_wheel_over_the_results_scrolls_its_rows() {
-    let mut harness = demo_app_with_query_run("points | where velocity > 1 km/h");
+    let mut harness = demo_app_with_query_run(TWO_MATCH_QUERY);
     let run_button_top = |harness: &Harness<'_, App>| {
         harness
             .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
@@ -611,11 +710,9 @@ fn the_wheel_over_the_results_scrolls_its_rows() {
     };
     let first_time = topmost_row_time(&harness);
     let run_button_before = run_button_top(&harness);
+    let first_match_before = topmost_match_row(&harness).0.top();
 
-    let rows = harness
-        .topmost_matching(By::new().label_contains(" points"))
-        .rect()
-        .center();
+    let rows = topmost_point_row(&harness).0.center();
     harness.scroll_wheel_at(rows, -RESULTS_WHEEL_POINTS, WHEEL_SETTLE_FRAMES);
 
     let scrolled_time = topmost_row_time(&harness);
@@ -627,6 +724,38 @@ fn the_wheel_over_the_results_scrolls_its_rows() {
     assert!(
         editor_shift < STATIONARY_TOLERANCE_PX,
         "the editor above the tabs moved {editor_shift} px with the rows"
+    );
+    let match_shift = (topmost_match_row(&harness).0.top() - first_match_before).abs();
+    assert!(
+        match_shift < STATIONARY_TOLERANCE_PX,
+        "the matches table moved {match_shift} px with the point rows"
+    );
+}
+
+/// A run with more matches than the matches table shows at once scrolls them
+/// under its own header, leaving the points table below it where it is.
+#[test]
+fn the_wheel_over_the_matches_scrolls_only_them() {
+    let mut harness = demo_app_with_query_run(MANY_MATCH_QUERY);
+    let first_match = topmost_match_row(&harness);
+    let first_point_before = topmost_point_row(&harness);
+
+    harness.scroll_wheel_at(
+        first_match.0.center(),
+        -RESULTS_WHEEL_POINTS,
+        WHEEL_SETTLE_FRAMES,
+    );
+
+    let scrolled_match = topmost_match_row(&harness).1;
+    assert!(
+        scrolled_match > first_match.1,
+        "the wheel scrolled to later matches: {} then {scrolled_match}",
+        first_match.1
+    );
+    assert_eq!(
+        topmost_point_row(&harness).1,
+        first_point_before.1,
+        "the points of the picked match stay where they are"
     );
 }
 
@@ -670,11 +799,8 @@ fn the_history_tab_replaces_the_results() {
 /// the map: a tab's scroll area uses the width the window has, never more.
 #[test]
 fn scrolling_and_switching_tabs_leave_the_query_window_at_its_default_width() {
-    let mut harness = demo_app_with_query_run("points | where velocity > 1 km/h");
-    let rows = harness
-        .topmost_matching(By::new().label_contains(" points"))
-        .rect()
-        .center();
+    let mut harness = demo_app_with_query_run(TWO_MATCH_QUERY);
+    let rows = topmost_point_row(&harness).0.center();
     harness.scroll_wheel_at(rows, -RESULTS_WHEEL_POINTS, WHEEL_SETTLE_FRAMES);
 
     let width_of = |harness: &Harness<'_, App>| {
@@ -702,17 +828,17 @@ fn scrolling_and_switching_tabs_leave_the_query_window_at_its_default_width() {
 /// listed row ends.
 const ROW_HEIGHT_ALLOWANCE: f32 = 40.0;
 
-/// The results reach down to the bottom of the window: the rows are laid out
-/// directly in the tab's own scroll area.
+/// The points table reaches down to the bottom of the window: it takes what
+/// the matches table above it leaves.
 #[test]
 fn the_results_fill_the_rest_of_the_window() {
-    let harness = demo_app_with_query_run("points | where velocity > 1 km/h");
+    let harness = demo_app_with_query_run(TWO_MATCH_QUERY);
     let window = harness
         .window_rect("Query")
         .expect("the query window is open");
-    let lowest_row = harness
-        .query_all(point_row_times())
-        .map(|node| node.rect().bottom())
+    let lowest_row = time_rows(&harness, ResultsTable::Points)
+        .into_iter()
+        .map(|(rect, _)| rect.bottom())
         .fold(f32::MIN, f32::max);
 
     assert!(
@@ -722,73 +848,75 @@ fn the_results_fill_the_rest_of_the_window() {
     );
 }
 
-/// Clicking a match's name row folds its point rows away, and clicking it
-/// again brings them back. The match below it moves up into the freed rows.
+/// Clicking a match lists its rows in the points table below, and the caption
+/// there names the match on display.
 #[test]
-fn clicking_a_match_name_row_folds_its_points() {
-    let mut harness = demo_app_with_query_run("points | window 10 | where avg(velocity) > 25 km/h");
-    let first_point_row =
-        |harness: &Harness<'_, App>| harness.query_all_by_label_contains("14:00:19").count();
-    let second_match_row =
-        |harness: &Harness<'_, App>| harness.query_all_by_label_contains("· 12 points").count();
-    assert_eq!(first_point_row(&harness), 1, "the match lists its points");
+fn clicking_a_match_lists_its_points() {
+    let mut harness = demo_app_with_query_run(TWO_MATCH_QUERY);
     assert_eq!(
-        second_match_row(&harness),
-        0,
-        "the second match is below the rows the first one fills"
-    );
-
-    harness.get_by_label_contains("· 62 points").click();
-    harness.run_steps(3);
-    assert_eq!(
-        first_point_row(&harness),
-        0,
-        "the folded match lists nothing"
-    );
-    assert_eq!(
-        second_match_row(&harness),
+        harness.query_all_by_label_contains("Match 1 ").count(),
         1,
-        "the second match moves up into the freed rows"
+        "the first match is picked until another one is"
     );
+    let first_point = topmost_row_time(&harness);
 
-    harness.get_by_label_contains("· 62 points").click();
+    let second_match = time_rows(&harness, ResultsTable::Matches)
+        .get(1)
+        .map(|(rect, _)| rect.center())
+        .expect("the run lists a second match");
+    harness.press_drag_release(second_match, egui::Vec2::ZERO, 1);
     harness.run_steps(3);
-    assert_eq!(first_point_row(&harness), 1, "unfolding lists them again");
+
+    assert_eq!(
+        harness.query_all_by_label_contains("Match 2 ").count(),
+        1,
+        "the caption names the picked match"
+    );
+    let second_point = topmost_row_time(&harness);
+    assert!(
+        second_point > first_point,
+        "the points table lists the second match: {first_point} then {second_point}"
+    );
 }
 
-/// "Collapse all" folds every match of the section at once, and turns into
-/// the "Expand all" that undoes it.
+/// Clicking a column header orders the matches by that column, and clicking it
+/// again reverses the order.
 #[test]
-fn collapse_all_folds_every_match_of_a_query() {
-    let mut harness = demo_app_with_query_run("points | window 10 | where avg(velocity) > 25 km/h");
-    let point_rows =
-        |harness: &Harness<'_, App>| harness.query_all_by_label_contains("14:00:19").count();
-    assert_eq!(point_rows(&harness), 1);
-
-    harness
-        .get_by_role_and_label(egui::accesskit::Role::Button, ICON_ARROWS_IN)
-        .click();
-    harness.run_steps(3);
-    assert_eq!(point_rows(&harness), 0, "every match folded");
-    assert_eq!(
-        harness.query_all_by_label_contains("· 12 points").count(),
-        1,
-        "both name rows are listed"
+fn a_column_header_click_sorts_the_matches() {
+    let mut harness = demo_app_with_query_run(TWO_MATCH_QUERY);
+    // The two matches of the run, told apart by how long each one ran.
+    let longest_first = |harness: &Harness<'_, App>| {
+        harness.get_by_label("1:01 min").rect().top() < harness.get_by_label("11 s").rect().top()
+    };
+    assert!(
+        longest_first(&harness),
+        "run order lists the long match first"
     );
 
     harness
-        .get_by_role_and_label(egui::accesskit::Role::Button, ICON_ARROWS_OUT)
+        .get_by_role_and_label(egui::accesskit::Role::Label, "points")
         .click();
     harness.run_steps(3);
-    assert_eq!(point_rows(&harness), 1, "expanding lists the points again");
+    assert!(
+        longest_first(&harness),
+        "the first click sorts largest first"
+    );
+
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Label, "points")
+        .click();
+    harness.run_steps(3);
+    assert!(
+        !longest_first(&harness),
+        "clicking the header again sorts smallest first"
+    );
 }
 
 /// A match's own "Show on map" frames the map on that one match, tighter than
 /// the run-wide button frames every match of the run.
 #[test]
 fn a_match_row_frames_the_map_on_that_match() {
-    let mut harness =
-        demo_app_with_query_run("points | window 10 | where avg(velocity) > 25 km/h | draw");
+    let mut harness = demo_app_with_query_run(TWO_MATCH_QUERY);
 
     harness.get_by_label_contains("Show on map").click();
     harness.run_steps(3);
@@ -798,9 +926,11 @@ fn a_match_row_frames_the_map_on_that_match() {
         .viewport_geo_bounds()
         .expect("the map framed the run's matches");
 
+    // The second match is the shorter of the two, so framing it narrows the
+    // viewport whichever way the first one framed.
     harness
         .get_all_by_role_and_label(egui::accesskit::Role::Button, ICON_FRAME_CORNERS)
-        .next()
+        .nth(1)
         .expect("every match row offers its own button")
         .click();
     harness.run_steps(3);
@@ -814,11 +944,6 @@ fn a_match_row_frames_the_map_on_that_match() {
         framed_match.lon_max - framed_match.lon_min < framed_run.lon_max - framed_run.lon_min,
         "one match frames tighter than the whole run: \
          {framed_match:?} against {framed_run:?}"
-    );
-    assert_eq!(
-        harness.query_all_by_label_contains("14:00:19").count(),
-        1,
-        "the row the button sits in stays unfolded"
     );
 }
 
@@ -870,6 +995,33 @@ fn copying_a_query_result_writes_a_tab_separated_table() {
     );
 }
 
+/// The copy follows the order the matches table lists: sorting the matches
+/// smallest first copies the smaller match's rows ahead of the larger one's.
+#[test]
+fn copying_after_sorting_writes_the_matches_in_the_listed_order() {
+    let mut harness = demo_app_with_query_run(TWO_MATCH_QUERY);
+    // The first click on the points header sorts largest first, the second
+    // smallest first.
+    for _ in 0..2 {
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Label, "points")
+            .click();
+        harness.run_steps(3);
+    }
+
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, ICON_COPY)
+        .click();
+    harness.run_steps(1);
+
+    let copied = copied_text(&harness);
+    let first_row = copied.lines().nth(1).expect("the copy lists rows");
+    assert!(
+        first_row.starts_with("2\t"),
+        "the smaller match is copied first: {first_row}"
+    );
+}
+
 /// The text the app last put on the clipboard.
 fn copied_text(harness: &Harness<'_, App>) -> String {
     harness
@@ -900,29 +1052,36 @@ fn channel_app_with_query_run() -> Harness<'static, App> {
     harness
 }
 
-/// A channel run's samples fold like a points query's matches: collapsing them
-/// all leaves one name row per matched stretch, listing no samples.
+/// A channel run lists a match per stretch of matched samples, and picking one
+/// lists its samples below.
 #[test]
-fn collapsing_a_channel_run_leaves_a_name_row_per_matched_stretch() {
+fn a_channel_run_lists_a_match_per_stretch_of_samples() {
     let mut harness = channel_app_with_query_run();
-    harness
-        .get_by_role_and_label(egui::accesskit::Role::Button, ICON_ARROWS_IN)
-        .click();
-    harness.run_steps(3);
-
     for stretch in ACCEL_HIGH_RANGES {
         assert_eq!(
             harness
-                .query_all_by_label_contains(&format!("{} samples", stretch.len()))
+                .query_all_by_role_and_label(
+                    egui::accesskit::Role::Label,
+                    &stretch.len().to_string()
+                )
                 .count(),
             1,
-            "every matched stretch is named"
+            "every matched stretch states how many samples it holds"
         );
     }
-    assert_eq!(
-        harness.query_all_by_label_contains("11:34:20.000").count(),
-        0,
-        "the folded stretches list no samples"
+    let first_sample = topmost_row_time(&harness);
+
+    let second_match = time_rows(&harness, ResultsTable::Matches)
+        .get(1)
+        .map(|(rect, _)| rect.center())
+        .expect("the run lists a second stretch");
+    harness.press_drag_release(second_match, egui::Vec2::ZERO, 1);
+    harness.run_steps(3);
+
+    let second_sample = topmost_row_time(&harness);
+    assert!(
+        second_sample > first_sample,
+        "the samples table lists the second stretch: {first_sample} then {second_sample}"
     );
 }
 
@@ -960,7 +1119,10 @@ fn copying_a_channel_result_writes_a_tab_separated_sample_table() {
 #[test]
 fn a_channel_match_states_why_it_cannot_frame_the_map() {
     let mut harness = channel_app_with_query_run();
-    let button = harness.get_by_role_and_label(egui::accesskit::Role::Button, ICON_FRAME_CORNERS);
+    let button = harness
+        .get_all_by_role_and_label(egui::accesskit::Role::Button, ICON_FRAME_CORNERS)
+        .next()
+        .expect("every matched stretch offers its own button");
     assert!(
         button.accesskit_node().is_disabled(),
         "a sample range cannot frame the map"
@@ -1004,11 +1166,11 @@ fn show_on_map_frames_the_query_matches() {
     );
 }
 
-/// Hovering a match header in the query results table cross-highlights the
-/// whole match: its range lands in `hover_match` (the map halo band and the
-/// plot time band read it) and the match's track gets hover focus.
+/// Hovering a row of the matches table cross-highlights the whole match: its
+/// range lands in `hover_match` (the map halo band and the plot time band read
+/// it) and the match's track gets hover focus.
 #[test]
-fn query_match_header_hover_highlights_the_match() {
+fn query_match_row_hover_highlights_the_match() {
     use gt_ui_types::HighlightScope;
 
     let gtd_bytes = minimal_gtd_bytes();
@@ -1033,14 +1195,13 @@ fn query_match_header_hover_highlights_the_match() {
     step_until_query_result(&mut harness);
     harness.run_steps(3);
 
-    // The match's name row reads "#0 · <time> → <time> · <count> points · <duration>".
-    let header_pos = harness.get_by_label_contains("#0 ·").rect().center();
-    harness.hover_at(header_pos);
+    let match_row = topmost_match_row(&harness).0.center();
+    harness.hover_at(match_row);
     harness.run_steps(2);
 
     let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
     let highlight = harness.state().shared.borrow().highlight;
-    let hover_match = highlight.hover_match.expect("header hover sets the match");
+    let hover_match = highlight.hover_match.expect("the row hover sets the match");
     assert_eq!(hover_match.track, track);
     assert!(
         hover_match.start < hover_match.end,
@@ -1052,7 +1213,7 @@ fn query_match_header_hover_highlights_the_match() {
         "the match's track gets hover focus"
     );
 
-    // Pointer off the header: the cross-highlight clears the next frame.
+    // Pointer off the row: the cross-highlight clears the next frame.
     harness.hover_at(egui::pos2(1.0, 1.0));
     harness.run_steps(2);
     assert!(
@@ -1063,7 +1224,7 @@ fn query_match_header_hover_highlights_the_match() {
             .highlight
             .hover_match
             .is_none(),
-        "the highlight clears when the pointer leaves the header"
+        "the highlight clears when the pointer leaves the row"
     );
 }
 
@@ -1668,14 +1829,10 @@ fn snapshot_app_query_match_hover() {
     step_until_query_result(&mut harness.inner);
     harness.inner.run_steps(60);
 
-    // Hover the larger match's header. The cross-highlight lands on the map
-    // and plot a frame later.
-    let header_pos = harness
-        .inner
-        .get_by_label_contains("62 points")
-        .rect()
-        .center();
-    harness.inner.hover_at(header_pos);
+    // Hover the larger match's row. The cross-highlight lands on the map and
+    // plot a frame later.
+    let match_row = topmost_match_row(&harness.inner).0.center();
+    harness.inner.hover_at(match_row);
     harness.inner.run_steps(10);
 
     let hover_match = harness.inner.state().shared.borrow().highlight.hover_match;
@@ -1833,13 +1990,14 @@ fn snapshot_app_query_channel_source() {
     step_until_query_result(&mut harness.inner);
     harness.inner.run_steps(60);
 
-    // The first crafted stretch is named over its sample rows, and the map
-    // draws halos over the segments those samples cover. The stretch after it
-    // starts below the rows the table scrolls at.
+    // The matches table lists a row per crafted stretch, the samples of the
+    // first one fill the table below it, and the map draws halos over the
+    // segments those samples cover.
     let first_stretch = ACCEL_HIGH_RANGES.first().expect("two crafted stretches");
-    harness
-        .inner
-        .get_by_label_contains(&format!("{} samples", first_stretch.len()));
+    harness.inner.get_by_label_contains(&format!(
+        "Match 1 {MIDDLE_DOT} {} samples",
+        first_stretch.len()
+    ));
 
     harness.snapshot_loose("app_query_channel_source");
 }
