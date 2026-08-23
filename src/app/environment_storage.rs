@@ -4,6 +4,7 @@
 //! A delete runs off the UI thread: it rewrites every column of an archive,
 //! which takes seconds on a filled TEC archive.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
@@ -13,6 +14,7 @@ use egui::Context;
 use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteKind};
 use gt_store::{
     ArchiveUsage, FlareStore, IonexStore, JamStore, PruneProgress, PruneProgressSink, SolarStore,
+    Store,
 };
 use strum::{EnumIter, IntoEnumIterator as _};
 
@@ -51,6 +53,16 @@ impl EnvironmentArchive {
             Self::GeomagneticIndices => "geomagnetic indices",
             Self::IonosphericTec => "ionospheric TEC",
             Self::SolarFlares => "solar flares",
+        }
+    }
+
+    /// Path of this archive's file under `store`.
+    pub fn path_in(self, store: &Store) -> PathBuf {
+        match self {
+            Self::AircraftInterference => store.interference_path(),
+            Self::GeomagneticIndices => store.geomagnetic_indices_path(),
+            Self::IonosphericTec => store.tec_maps_path(),
+            Self::SolarFlares => store.solar_flares_path(),
         }
     }
 
@@ -508,6 +520,17 @@ impl App {
         }
     }
 
+    /// Whether this run has the archive open, which the controls reading and
+    /// writing it need.
+    pub(super) fn environment_archive_available(&self, archive: EnvironmentArchive) -> bool {
+        match archive {
+            EnvironmentArchive::AircraftInterference => self.jamming.archive_available(),
+            EnvironmentArchive::GeomagneticIndices => self.geomagnetic_indices.archive_available(),
+            EnvironmentArchive::IonosphericTec => self.tec_maps.archive_available(),
+            EnvironmentArchive::SolarFlares => self.solar_flares.archive_available(),
+        }
+    }
+
     /// What every environment archive holds on disk.
     pub(super) fn environment_usage(&self) -> EnvironmentUsage {
         EnvironmentUsage {
@@ -606,6 +629,9 @@ impl App {
         match self.storage_open.databases_pending() {
             Some(DatabasesPending::WaitingForTheDataDirectory) => {
                 Some(DeleteBlocker::WaitingForTheDataDirectory)
+            }
+            Some(DatabasesPending::AwaitingAnInterruptedDeleteAnswer) => {
+                Some(DeleteBlocker::AwaitingAnInterruptedDeleteAnswer)
             }
             Some(DatabasesPending::Opening) => Some(DeleteBlocker::ArchivesOpening),
             None if self.environment_prune_running() => Some(DeleteBlocker::DeleteRunning),

@@ -27,6 +27,7 @@ use egui_phosphor::regular::APP_WINDOW as ICON_APP_WINDOW;
 
 use super::App;
 use super::backfill_ui::BackfillReadiness;
+use super::environment_storage::EnvironmentArchive;
 use super::storage::DatabasesPending;
 
 /// One category of the settings window, in the order the rail lists them.
@@ -121,22 +122,30 @@ impl App {
     /// What a download control may do right now. An archive still opening or
     /// one that could not be opened outranks offline mode: there is nowhere
     /// to download to either way.
-    fn backfill_readiness(&self, archive_available: bool) -> BackfillReadiness {
+    fn backfill_readiness(&self, archive: EnvironmentArchive) -> BackfillReadiness {
         match self.storage_open.databases_pending() {
             Some(DatabasesPending::WaitingForTheDataDirectory) => {
                 BackfillReadiness::WaitingForTheDataDirectory
             }
+            Some(DatabasesPending::AwaitingAnInterruptedDeleteAnswer) => {
+                BackfillReadiness::AwaitingAnInterruptedDeleteAnswer
+            }
             Some(DatabasesPending::Opening) => BackfillReadiness::ArchiveStillOpening,
-            None if !archive_available => BackfillReadiness::WithoutArchive,
-            None if self.offline => BackfillReadiness::Offline,
-            None => BackfillReadiness::Ready,
+            None => match self.unavailable_archives.of(archive) {
+                Some(reason) => BackfillReadiness::ArchiveUnavailable(reason),
+                None if !self.environment_archive_available(archive) => {
+                    BackfillReadiness::WithoutArchive
+                }
+                None if self.offline => BackfillReadiness::Offline,
+                None => BackfillReadiness::Ready,
+            },
         }
     }
 
     /// The flare download's readiness, which also depends on the key its
     /// endpoint needs.
     fn solar_flare_backfill_readiness(&self) -> BackfillReadiness {
-        let readiness = self.backfill_readiness(self.solar_flares.archive_available());
+        let readiness = self.backfill_readiness(EnvironmentArchive::SolarFlares);
         if readiness == BackfillReadiness::Ready && !self.solar_flares.has_api_key() {
             return BackfillReadiness::WithoutApiKey;
         }

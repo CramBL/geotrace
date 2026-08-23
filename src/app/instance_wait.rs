@@ -38,9 +38,9 @@ pub(in crate::app) const TAKE_OVER_BUTTON_LABEL: &str = "Take over write accessâ
 
 pub(in crate::app) const TAKE_OVER_CONFIRMATION_TITLE: &str = "Take over write access?";
 
-pub(in crate::app) const TAKE_OVER_WARNING: &str = "Opening the recordings and archives here can discard archived days: GeoTrace \
-     recovers any archive the other GeoTrace is part-way through deleting from, and \
-     that recovery drops every archived day the archive holds.";
+pub(in crate::app) const TAKE_OVER_WARNING: &str = "Writing to the recordings and archives while the other GeoTrace is still \
+     writing to them can leave either of them inconsistent. GeoTrace asks first about \
+     an archive the other GeoTrace is part-way through deleting from.";
 
 const TAKE_OVER_BUTTON_HOVER: &str =
     "Open the recordings and archives here without waiting for the other GeoTrace";
@@ -343,26 +343,31 @@ impl App {
         match wait.retry_when_the_interval_has_passed(Instant::now(), &self.instance_lock) {
             DataDirectoryRetry::Taken => {
                 log::info!("This instance now has the data directory: opening the databases");
+                let queued_loads = mem::take(queued_loads);
+                self.storage_open = self.storage.open_in_background(
+                    ui.ctx(),
+                    self.pending_writes.clone(),
+                    queued_loads,
+                );
             }
             DataDirectoryRetry::StillWaiting => match wait.ui(ui) {
                 WriteAccessTakeOver::NotTaken => {
                     ui.ctx()
                         .request_repaint_after(DATA_DIRECTORY_RETRY_INTERVAL);
-                    return;
                 }
                 WriteAccessTakeOver::Taken => {
                     log::warn!(
-                        "The user took write access: opening the databases while another \
-                         instance still holds the data directory"
+                        "The user took write access: reading the archives for an interrupted \
+                         delete while another instance still holds the data directory"
                     );
                     self.mark_retry_after_take_over = Some(MarkRetryAfterTakeOver::new());
+                    let queued_loads = mem::take(queued_loads);
+                    self.storage_open = self
+                        .storage
+                        .inspect_archives_in_background(ui.ctx(), queued_loads);
                 }
             },
         }
-        let queued_loads = mem::take(queued_loads);
-        self.storage_open =
-            self.storage
-                .open_in_background(ui.ctx(), self.pending_writes.clone(), queued_loads);
     }
 
     /// Goes on retrying the mark after the user took write access, so this

@@ -10,6 +10,7 @@ use gt_ui_theme::EM_DASH;
 use jiff::civil::Date;
 use strum::IntoEnumIterator as _;
 
+use super::archive_recovery::{ArchiveUnavailable, UnavailableArchives};
 use super::civil_date;
 use super::environment_storage::{
     CoveredDayCounts, EnvironmentArchive, EnvironmentUsage, PruneRequest, PruneScope, PrunedDays,
@@ -40,19 +41,34 @@ pub enum DeleteBlocker {
     /// This instance does not have the data directory, so it has opened no
     /// archive to delete from.
     WaitingForTheDataDirectory,
+    /// The open is waiting for the user to answer for an archive a delete was
+    /// interrupted in.
+    AwaitingAnInterruptedDeleteAnswer,
     /// The archives are still opening, so there is nothing to delete from
     /// yet.
     ArchivesOpening,
     /// A delete is already rewriting the same columns.
     DeleteRunning,
+    /// This one archive is closed for the session, on the answer the user
+    /// gave for it.
+    ArchiveUnavailable(ArchiveUnavailable),
 }
 
 impl DeleteBlocker {
-    pub fn hover_text(self) -> &'static str {
+    pub fn hover_text(self) -> String {
         match self {
-            Self::WaitingForTheDataDirectory => "Wait for the data directory to become available",
-            Self::ArchivesOpening => "Wait for the archives to finish opening",
-            Self::DeleteRunning => "Wait for the running delete to finish",
+            Self::WaitingForTheDataDirectory => {
+                "Wait for the data directory to become available".to_owned()
+            }
+            Self::AwaitingAnInterruptedDeleteAnswer => {
+                "Answer the question about the interrupted delete".to_owned()
+            }
+            Self::ArchivesOpening => "Wait for the archives to finish opening".to_owned(),
+            Self::DeleteRunning => "Wait for the running delete to finish".to_owned(),
+            Self::ArchiveUnavailable(reason) => format!(
+                "This archive is unavailable this session: {}",
+                reason.explanation()
+            ),
         }
     }
 }
@@ -166,7 +182,7 @@ impl EnvironmentStorageUi {
             .on_disabled_hover_text(
                 state
                     .deletes_blocked_by
-                    .map_or("", DeleteBlocker::hover_text),
+                    .map_or_else(String::new, DeleteBlocker::hover_text),
             );
 
             let request = self.cutoff().map(|cutoff| PruneRequest {
@@ -184,8 +200,8 @@ impl EnvironmentStorageUi {
                     "Delete the {} the archives hold before that day",
                     day_count(covered)
                 ))
-                .on_disabled_hover_text(state.deletes_blocked_by.map_or(
-                    "No archive holds a day before the one picked",
+                .on_disabled_hover_text(state.deletes_blocked_by.map_or_else(
+                    || "No archive holds a day before the one picked".to_owned(),
                     DeleteBlocker::hover_text,
                 ))
                 .clicked()
@@ -205,6 +221,20 @@ pub struct EnvironmentStorageState<'a> {
     pub days_before_cutoff: CoveredDayCounts,
     /// What stops the delete controls from taking input, when something does.
     pub deletes_blocked_by: Option<DeleteBlocker>,
+    /// Why the app has none of an archive this session, where it has none.
+    pub unavailable_archives: UnavailableArchives,
+}
+
+impl EnvironmentStorageState<'_> {
+    /// What stops one archive's delete from taking input: whatever blocks
+    /// every delete, or that archive being closed for the session.
+    fn delete_blocked_by(self, archive: EnvironmentArchive) -> Option<DeleteBlocker> {
+        self.deletes_blocked_by.or_else(|| {
+            self.unavailable_archives
+                .of(archive)
+                .map(DeleteBlocker::ArchiveUnavailable)
+        })
+    }
 }
 
 /// One archive's row: what it holds, and the button that empties it.
@@ -220,16 +250,19 @@ fn archive_row(
     ui.label(span_line(usage));
 
     let holds_days = usage.is_some_and(|usage| !usage.is_empty());
-    let enabled = holds_days && state.deletes_blocked_by.is_none();
+    let blocked_by = state.delete_blocked_by(archive);
     let clicked = ui
-        .add_enabled(enabled, Button::new(DELETE_ALL_LABEL).small())
+        .add_enabled(
+            holds_days && blocked_by.is_none(),
+            Button::new(DELETE_ALL_LABEL).small(),
+        )
         .on_hover_text("Delete every day this archive holds")
-        .on_disabled_hover_text(state.deletes_blocked_by.map_or_else(
+        .on_disabled_hover_text(blocked_by.map_or_else(
             || {
                 if usage.is_none() {
-                    "This archive could not be opened"
+                    "This archive could not be opened".to_owned()
                 } else {
-                    "This archive holds no day"
+                    "This archive holds no day".to_owned()
                 }
             },
             DeleteBlocker::hover_text,
@@ -316,6 +349,7 @@ mod tests {
             usage,
             days_before_cutoff: CoveredDayCounts::default(),
             deletes_blocked_by: None,
+            unavailable_archives: UnavailableArchives::default(),
         }
     }
 
@@ -522,6 +556,6 @@ mod tests {
         harness
             .inner
             .hover_and_settle(By::new().label_contains(PRUNE_BUTTON_LABEL), 3);
-        harness.inner.get_by_label_contains(blocker.hover_text());
+        harness.inner.get_by_label_contains(&blocker.hover_text());
     }
 }

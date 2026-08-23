@@ -25,10 +25,17 @@ use egui::Context;
 use gt_instance_lock::SharedDataDirectoryLock;
 use gt_pending_writes::{PendingWrites, WriteKind};
 use gt_store::{
-    DbError, FlareStore, HistoryDatabase as _, IonexStore, JamStore, Recordings, SolarStore, Store,
+    DayArchiveError, DbError, FlareStore, FlareStoreError, HistoryDatabase as _,
+    InterruptedDeleteRecovery, IonexStore, IonexStoreError, JamStore, JamStoreError, Recordings,
+    SolarStore, SolarStoreError, Store,
 };
 
 use super::App;
+use super::archive_recovery::{
+    self, ArchiveOpenPlan, ArchiveRecovery, ArchiveUnavailable, InspectedArchives,
+    InterruptedDeletePrompts, UnavailableArchives,
+};
+use super::environment_storage::EnvironmentArchive;
 use super::history_db::HistoryWorker;
 use super::instance_wait::DataDirectoryWait;
 
@@ -81,6 +88,9 @@ pub struct OpenStorage {
     pub tec_maps: Option<Arc<IonexStore>>,
     /// [`None`] disables solar flare fetching and nothing else.
     pub solar_flares: Option<Arc<FlareStore>>,
+    /// The archives this run opened nothing of on the user's answer, which
+    /// the controls that need them explain themselves with.
+    pub unavailable_archives: UnavailableArchives,
 }
 
 impl OpenStorage {
@@ -93,6 +103,7 @@ impl OpenStorage {
             geomagnetic_indices: None,
             tec_maps: None,
             solar_flares: None,
+            unavailable_archives: UnavailableArchives::default(),
         }
     }
 }
@@ -120,6 +131,9 @@ pub(in crate::app) enum DatabasesPending {
     WaitingForTheDataDirectory,
     /// The open is running.
     Opening,
+    /// The open is waiting for the user to answer for an archive a delete was
+    /// interrupted in.
+    AwaitingAnInterruptedDeleteAnswer,
 }
 
 /// How far the startup open has got.
@@ -129,6 +143,19 @@ pub(in crate::app) enum StorageOpen {
     /// instance takes the directory.
     WaitingForTheDataDirectory {
         wait: DataDirectoryWait,
+        queued_loads: Vec<QueuedLoad>,
+    },
+    /// The first step of an open after the user took write access: the
+    /// archives are read for interrupted deletes, and nothing is written or
+    /// opened.
+    InspectingArchives {
+        inspected: mpsc::Receiver<InspectedArchives>,
+        queued_loads: Vec<QueuedLoad>,
+    },
+    /// Asking about each archive the inspection found an interrupted delete
+    /// in. No write guard is held here: the open waits on a person.
+    AskingAboutInterruptedDeletes {
+        prompts: InterruptedDeletePrompts,
         queued_loads: Vec<QueuedLoad>,
     },
     Opening {
@@ -159,7 +186,12 @@ impl StorageOpen {
             Self::WaitingForTheDataDirectory { .. } => {
                 Some(DatabasesPending::WaitingForTheDataDirectory)
             }
-            Self::Opening { .. } => Some(DatabasesPending::Opening),
+            Self::AskingAboutInterruptedDeletes { .. } => {
+                Some(DatabasesPending::AwaitingAnInterruptedDeleteAnswer)
+            }
+            Self::InspectingArchives { .. } | Self::Opening { .. } => {
+                Some(DatabasesPending::Opening)
+            }
             Self::Finished => None,
         }
     }
@@ -169,9 +201,25 @@ impl StorageOpen {
     pub(in crate::app) fn queued_loads_mut(&mut self) -> Option<&mut Vec<QueuedLoad>> {
         match self {
             Self::WaitingForTheDataDirectory { queued_loads, .. }
+            | Self::InspectingArchives { queued_loads, .. }
+            | Self::AskingAboutInterruptedDeletes { queued_loads, .. }
             | Self::Opening { queued_loads, .. } => Some(queued_loads),
             Self::Finished => None,
         }
+    }
+
+    /// Puts the app on the open a take-over runs, with what a test read off
+    /// its own archives in place of the background step. What is already
+    /// queued stays queued.
+    #[cfg(test)]
+    pub(in crate::app) fn inspect_archives_for_test(&mut self, inspected: InspectedArchives) {
+        let (sender, receiver) = mpsc::channel();
+        sender.send(inspected).ok();
+        let queued_loads = self.queued_loads_mut().map(mem::take).unwrap_or_default();
+        *self = Self::InspectingArchives {
+            inspected: receiver,
+            queued_loads,
+        };
     }
 
     /// Hands the open to a test, which lands the databases itself through the
@@ -191,7 +239,7 @@ impl StorageOpen {
 impl Storage {
     /// Where this run's databases live, and so what it locks against a
     /// second instance. [`None`] for a run that stores nothing, and for one
-    /// with no platform data directory - [`Self::open`] reports why.
+    /// with no platform data directory - [`Self::root_to_open`] reports why.
     pub fn data_directory(self) -> Option<PathBuf> {
         match self {
             Self::Disabled => None,
@@ -199,63 +247,144 @@ impl Storage {
         }
     }
 
-    /// Open every database on a thread of its own, repainting when the result
-    /// is ready for [`App::adopt_finished_storage_open`] to take. Whatever is
-    /// in `queued_loads` runs when it lands.
+    /// The directory this run opens its databases under, or [`None`] where it
+    /// opens none: a run that stores nothing, and one with no platform data
+    /// directory.
+    pub(in crate::app) fn root_to_open(self) -> Option<PathBuf> {
+        match self {
+            Self::Disabled => None,
+            Self::DataDirectory => match Store::default_root() {
+                Ok(root) => Some(root),
+                Err(err) => {
+                    log::error!("Failed to locate the data directory: {err}");
+                    None
+                }
+            },
+        }
+    }
+
+    /// Open every database on a thread of its own, recovering whatever
+    /// interrupted delete an archive holds, and repainting when the result is
+    /// ready for [`App::adopt_finished_storage_open`] to take. Whatever is in
+    /// `queued_loads` runs when it lands.
     ///
-    /// [`Self::Disabled`] opens nothing, so its result is in the channel
-    /// before the first frame and no thread is spawned.
-    #[expect(
-        clippy::expect_used,
-        reason = "thread spawn can only fail under extreme system resource exhaustion"
-    )]
+    /// A run that opens nothing has its result in the channel before the
+    /// first frame, and no thread is spawned.
     pub(in crate::app) fn open_in_background(
         self,
         ctx: &Context,
         pending_writes: PendingWrites,
         queued_loads: Vec<QueuedLoad>,
     ) -> StorageOpen {
-        let (sender, opened) = mpsc::channel();
-        match self {
-            Self::Disabled => {
-                sender.send(OpenStorage::disabled()).ok();
+        open_in_background_under(
+            self.root_to_open(),
+            ArchiveRecovery::Automatic,
+            ctx,
+            pending_writes,
+            queued_loads,
+        )
+    }
+
+    /// Read the archives for interrupted deletes on a thread of its own,
+    /// after the user took write access from the instance holding the data
+    /// directory.
+    ///
+    /// This step writes nothing and opens no database: what it finds is put
+    /// to the user, and the answers start the open itself.
+    pub(in crate::app) fn inspect_archives_in_background(
+        self,
+        ctx: &Context,
+        queued_loads: Vec<QueuedLoad>,
+    ) -> StorageOpen {
+        let (sender, inspected) = mpsc::channel();
+        match self.root_to_open() {
+            None => {
+                sender.send(InspectedArchives::of_nothing()).ok();
             }
-            Self::DataDirectory => {
-                let open_write =
-                    pending_writes.try_begin(OPENING_DATABASES, WriteKind::DatabaseOpen);
+            Some(root) => {
                 let ctx = ctx.clone();
-                thread::Builder::new()
-                    .name("storage-open".to_owned())
-                    .spawn(move || {
-                        let storage = Self::DataDirectory.open(&ctx, pending_writes);
-                        sender.send(storage).ok();
-                        ctx.request_repaint();
-                        // Held until the result is in the channel: a close
-                        // during startup waits for the repair the open may be
-                        // part-way through.
-                        drop(open_write);
-                    })
-                    .expect("failed to spawn the storage-open thread");
+                spawn_named("archive-inspect", move || {
+                    sender
+                        .send(archive_recovery::inspect_archives_under(root))
+                        .ok();
+                    ctx.request_repaint();
+                });
             }
         }
-        StorageOpen::Opening {
-            opened,
+        StorageOpen::InspectingArchives {
+            inspected,
             queued_loads,
         }
     }
 
     pub fn open(self, ctx: &Context, pending_writes: PendingWrites) -> OpenStorage {
-        match self {
-            Self::Disabled => OpenStorage::disabled(),
-            Self::DataDirectory => match Store::open_default() {
-                Ok(store) => open_in(&store, ctx, pending_writes),
-                Err(err) => {
-                    log::error!("Failed to locate the data directory: {err}");
-                    OpenStorage::disabled()
-                }
-            },
+        open_under(
+            self.root_to_open(),
+            ArchiveRecovery::Automatic,
+            ctx,
+            pending_writes,
+        )
+    }
+}
+
+/// Open every database under `root` on a thread of its own, answering the
+/// interrupted deletes it meets as `recovery` says. A [`None`] root opens
+/// nothing, and its result is in the channel before the first frame.
+pub(in crate::app) fn open_in_background_under(
+    root: Option<PathBuf>,
+    recovery: ArchiveRecovery,
+    ctx: &Context,
+    pending_writes: PendingWrites,
+    queued_loads: Vec<QueuedLoad>,
+) -> StorageOpen {
+    let (sender, opened) = mpsc::channel();
+    match root {
+        None => {
+            sender.send(OpenStorage::disabled()).ok();
+        }
+        Some(root) => {
+            let open_write = pending_writes.try_begin(OPENING_DATABASES, WriteKind::DatabaseOpen);
+            let ctx = ctx.clone();
+            spawn_named("storage-open", move || {
+                let storage = open_under(Some(root), recovery, &ctx, pending_writes);
+                sender.send(storage).ok();
+                ctx.request_repaint();
+                // Held until the result is in the channel: a close during
+                // startup waits for the repair the open may be part-way
+                // through.
+                drop(open_write);
+            });
         }
     }
+    StorageOpen::Opening {
+        opened,
+        queued_loads,
+    }
+}
+
+/// Open every database under `root`, or none at all where there is no root.
+fn open_under(
+    root: Option<PathBuf>,
+    recovery: ArchiveRecovery,
+    ctx: &Context,
+    pending_writes: PendingWrites,
+) -> OpenStorage {
+    match root {
+        None => OpenStorage::disabled(),
+        Some(root) => open_in(&Store::open_in(root), ctx, pending_writes, recovery),
+    }
+}
+
+/// Run `work` on a thread named `name`.
+#[expect(
+    clippy::panic,
+    reason = "thread spawn can only fail under extreme system resource exhaustion"
+)]
+fn spawn_named(name: &'static str, work: impl FnOnce() + Send + 'static) {
+    thread::Builder::new()
+        .name(name.to_owned())
+        .spawn(work)
+        .unwrap_or_else(|err| panic!("failed to spawn the {name} thread: {err}"));
 }
 
 /// Which prompt a failed recordings open turns into.
@@ -291,11 +420,17 @@ pub(crate) fn reopen_recordings(path: &Path) -> Result<Recordings, HistoryFailur
     Recordings::open_or_create(path).map_err(|err| classify_failure(&err, path.to_owned()))
 }
 
-/// Open every database under `store`.
+/// Open every database under `store`, answering the interrupted deletes the
+/// archives hold as `recovery` says.
 ///
 /// Each archive is opened whatever the recordings database did: one being
 /// unusable says nothing about the others.
-fn open_in(store: &Store, ctx: &Context, pending_writes: PendingWrites) -> OpenStorage {
+pub(in crate::app) fn open_in(
+    store: &Store,
+    ctx: &Context,
+    pending_writes: PendingWrites,
+    recovery: ArchiveRecovery,
+) -> OpenStorage {
     let (history, history_failure) = match store.open_recordings() {
         Ok(db) => (HistoryWorker::spawn(db, ctx.clone(), pending_writes), None),
         Err(err) => (
@@ -304,45 +439,12 @@ fn open_in(store: &Store, ctx: &Context, pending_writes: PendingWrites) -> OpenS
         ),
     };
 
-    let archive = store
-        .open_interference()
-        .inspect_err(|err| {
-            log::error!(
-                "Interference archive at {} is unusable: {err}",
-                store.interference_path().display()
-            );
-        })
-        .ok();
-
-    let geomagnetic_indices = store
-        .open_geomagnetic_indices()
-        .inspect_err(|err| {
-            log::error!(
-                "Geomagnetic index archive at {} is unusable: {err}",
-                store.geomagnetic_indices_path().display()
-            );
-        })
-        .ok();
-
-    let tec_maps = store
-        .open_tec_maps()
-        .inspect_err(|err| {
-            log::error!(
-                "TEC map archive at {} is unusable: {err}",
-                store.tec_maps_path().display()
-            );
-        })
-        .ok();
-
-    let solar_flares = store
-        .open_solar_flares()
-        .inspect_err(|err| {
-            log::error!(
-                "Solar flare archive at {} is unusable: {err}",
-                store.solar_flares_path().display()
-            );
-        })
-        .ok();
+    let mut unavailable_archives = UnavailableArchives::default();
+    let archive = open_archive::<JamStore>(store, recovery, &mut unavailable_archives);
+    let geomagnetic_indices =
+        open_archive::<SolarStore>(store, recovery, &mut unavailable_archives);
+    let tec_maps = open_archive::<IonexStore>(store, recovery, &mut unavailable_archives);
+    let solar_flares = open_archive::<FlareStore>(store, recovery, &mut unavailable_archives);
 
     OpenStorage {
         history,
@@ -351,6 +453,124 @@ fn open_in(store: &Store, ctx: &Context, pending_writes: PendingWrites) -> OpenS
         geomagnetic_indices,
         tec_maps,
         solar_flares,
+        unavailable_archives,
+    }
+}
+
+/// One day archive, tying the store's opener for it to the archive the app
+/// plans and reports on, so no open can be planned as one archive and run
+/// against another.
+trait DayArchive: Sized {
+    const ARCHIVE: EnvironmentArchive;
+
+    type Error: DayArchiveError;
+
+    fn open_with_recovery_choice(
+        store: &Store,
+        recovery: InterruptedDeleteRecovery,
+    ) -> Result<Arc<Self>, Self::Error>;
+}
+
+impl DayArchive for JamStore {
+    const ARCHIVE: EnvironmentArchive = EnvironmentArchive::AircraftInterference;
+
+    type Error = JamStoreError;
+
+    fn open_with_recovery_choice(
+        store: &Store,
+        recovery: InterruptedDeleteRecovery,
+    ) -> Result<Arc<Self>, Self::Error> {
+        store.open_interference_with_recovery_choice(recovery)
+    }
+}
+
+impl DayArchive for SolarStore {
+    const ARCHIVE: EnvironmentArchive = EnvironmentArchive::GeomagneticIndices;
+
+    type Error = SolarStoreError;
+
+    fn open_with_recovery_choice(
+        store: &Store,
+        recovery: InterruptedDeleteRecovery,
+    ) -> Result<Arc<Self>, Self::Error> {
+        store.open_geomagnetic_indices_with_recovery_choice(recovery)
+    }
+}
+
+impl DayArchive for IonexStore {
+    const ARCHIVE: EnvironmentArchive = EnvironmentArchive::IonosphericTec;
+
+    type Error = IonexStoreError;
+
+    fn open_with_recovery_choice(
+        store: &Store,
+        recovery: InterruptedDeleteRecovery,
+    ) -> Result<Arc<Self>, Self::Error> {
+        store.open_tec_maps_with_recovery_choice(recovery)
+    }
+}
+
+impl DayArchive for FlareStore {
+    const ARCHIVE: EnvironmentArchive = EnvironmentArchive::SolarFlares;
+
+    type Error = FlareStoreError;
+
+    fn open_with_recovery_choice(
+        store: &Store,
+        recovery: InterruptedDeleteRecovery,
+    ) -> Result<Arc<Self>, Self::Error> {
+        store.open_solar_flares_with_recovery_choice(recovery)
+    }
+}
+
+/// Open one archive as `recovery` plans, recording why the app has no archive
+/// where it ends up with none.
+///
+/// An archive the user left as it is, and one another process holds, are both
+/// reported to the controls that need them. Anything else is logged and the
+/// app carries on without that archive, as it always has.
+fn open_archive<A: DayArchive>(
+    store: &Store,
+    recovery: ArchiveRecovery,
+    unavailable_archives: &mut UnavailableArchives,
+) -> Option<Arc<A>> {
+    let archive = A::ARCHIVE;
+    let choice = match recovery.plan_for(archive) {
+        ArchiveOpenPlan::LeaveClosed(reason) => {
+            unavailable_archives.record(archive, reason);
+            return None;
+        }
+        ArchiveOpenPlan::Open(choice) => choice,
+    };
+    match A::open_with_recovery_choice(store, choice) {
+        Ok(opened) => Some(opened),
+        Err(err) => {
+            if let Some(interrupted) = err.interrupted_delete_left_unrecovered() {
+                log::warn!(
+                    "The {} archive keeps the {} archived days its interrupted delete left, and \
+                     is not opened this session",
+                    archive.label_in_sentence(),
+                    interrupted.archived_days
+                );
+                unavailable_archives.record(
+                    archive,
+                    ArchiveUnavailable::InterruptedDeleteLeftUnrecovered,
+                );
+            } else if err.is_held_by_another_process() {
+                log::warn!(
+                    "The {} archive is open in another process, and is not opened this session",
+                    archive.label_in_sentence()
+                );
+                unavailable_archives.record(archive, ArchiveUnavailable::HeldByTheOtherInstance);
+            } else {
+                log::error!(
+                    "The {} archive at {} is unusable: {err}",
+                    archive.label_in_sentence(),
+                    archive.path_in(store).display()
+                );
+            }
+            None
+        }
     }
 }
 
@@ -371,10 +591,12 @@ impl App {
             geomagnetic_indices,
             tec_maps,
             solar_flares,
+            unavailable_archives,
         } = storage;
 
         self.install_history_worker(history);
         self.history_failure = history_failure;
+        self.unavailable_archives = unavailable_archives;
 
         self.jamming.adopt_store(archive);
         self.geomagnetic_indices.adopt_store(geomagnetic_indices);
@@ -434,6 +656,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
+
     use chrono::{NaiveDate, Utc};
     use gt_fetch::TransportSource;
     use gt_ionex::IonexProduct;
@@ -441,6 +664,9 @@ mod tests {
     use gt_test_utils::ionex_fixtures;
     use rstest::rstest;
     use tempfile::TempDir;
+
+    use gt_jam_store::schema;
+    use gt_test_utils::day_archive::{self, GroupPath};
 
     use crate::app::environment_storage::PrunedDays;
     use crate::app::{flares, jamming, solar, tec};
@@ -504,7 +730,12 @@ mod tests {
     #[test]
     fn a_usable_store_opens_every_database() {
         let (_dir, store) = store();
-        let opened = open_in(&store, &Context::default(), PendingWrites::default());
+        let opened = open_in(
+            &store,
+            &Context::default(),
+            PendingWrites::default(),
+            ArchiveRecovery::Automatic,
+        );
 
         assert!(opened.history.path().is_some(), "the worker has a database");
         assert!(opened.archive.is_some());
@@ -533,6 +764,61 @@ mod tests {
 
         assert_eq!(failure, expected);
         assert_eq!(failure.path(), db_path(), "the path is carried through");
+    }
+
+    /// An interference archive under `root` holding two days, with a delete
+    /// marked part-way through it as an interrupted one leaves it.
+    fn interrupt_a_delete_in_the_interference_archive(root: &Path) {
+        let store = Store::open_in(root);
+        let path = store.interference_path();
+        {
+            let archive = store.open_interference().expect("interference archive");
+            for offset in 0..2 {
+                archive
+                    .insert_day(
+                        NaiveDate::from_ymd_opt(2026, 7, 20).unwrap_or_default()
+                            + chrono::TimeDelta::days(offset),
+                        "host",
+                        Utc::now(),
+                        &[],
+                    )
+                    .expect("insert interference");
+            }
+        }
+        drop(store);
+        day_archive::mark_delete_in_flight(&path, GroupPath(schema::DAYS_GROUP))
+            .expect("mark the delete");
+    }
+
+    /// A run that has the data directory to itself answers to nobody: what an
+    /// instance that is gone left interrupted is recovered as the archive
+    /// opens, which discards the days it holds.
+    #[test]
+    fn the_normal_open_recovers_an_interrupted_delete_without_asking() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        interrupt_a_delete_in_the_interference_archive(dir.path());
+        let store = Store::open_in(dir.path());
+
+        let opened = open_in(
+            &store,
+            &Context::default(),
+            PendingWrites::default(),
+            ArchiveRecovery::Automatic,
+        );
+
+        let archive = opened.archive.expect("the recovered archive is open");
+        assert_eq!(archive.days().expect("read the archive index"), []);
+        assert_eq!(
+            JamStore::interrupted_delete_at(&store.interference_path()).expect("read the archive"),
+            None,
+            "the open left the delete interrupted"
+        );
+        assert_eq!(
+            opened
+                .unavailable_archives
+                .of(EnvironmentArchive::AircraftInterference),
+            None
+        );
     }
 
     /// Archive `day` in each of the four day archives `opened` holds, through
@@ -588,7 +874,12 @@ mod tests {
     fn a_scheduler_adopting_an_archive_reports_the_days_it_holds() {
         let (_dir, store) = store();
         let archived = NaiveDate::from_ymd_opt(2026, 7, 20).expect("valid date");
-        let opened = open_in(&store, &Context::default(), PendingWrites::default());
+        let opened = open_in(
+            &store,
+            &Context::default(),
+            PendingWrites::default(),
+            ArchiveRecovery::Automatic,
+        );
         archive_one_day_in_each(&opened, archived);
 
         let mut jamming = jamming::JammingScheduler::new(
@@ -658,7 +949,12 @@ mod tests {
         let (_dir, store) = store();
         std::fs::write(store.recordings_path(), b"not a database").expect("write");
 
-        let opened = open_in(&store, &Context::default(), PendingWrites::default());
+        let opened = open_in(
+            &store,
+            &Context::default(),
+            PendingWrites::default(),
+            ArchiveRecovery::Automatic,
+        );
 
         assert_eq!(
             opened.history_failure,

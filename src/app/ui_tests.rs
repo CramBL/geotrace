@@ -31,8 +31,10 @@ use gt_instance_lock::{
     SharedDataDirectoryLock,
 };
 use gt_jam::wire::HexObservation;
+use gt_jam_store::schema;
 use gt_pending_writes::{PendingWrites, WriteKind};
-use gt_store::{HistoryDatabase as _, Recordings};
+use gt_store::{HistoryDatabase as _, InterruptedDelete, JamStore, Recordings};
+use gt_test_utils::day_archive::{self, GroupPath};
 use gt_test_utils::{
     By, DEMO_BYTES, GOLD_BYTES, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec,
     SyntheticLogTimestamps, TestHarness, synthetic_gtd_bytes, synthetic_journald_log,
@@ -42,7 +44,13 @@ use gt_types::{FileIdx, LoadWarning, TrackIdx, TrackRef};
 use strum::IntoEnumIterator as _;
 
 use super::App;
+use super::archive_recovery::{
+    self, ARCHIVE_IN_USE_BUTTON_LABEL, ArchiveUnavailable, InspectedArchives,
+    InterruptedDeleteFinding, LEAVE_UNRECOVERED_BUTTON_LABEL, RECOVER_BUTTON_LABEL,
+    UnavailableArchives,
+};
 use super::backfill_ui::DOWNLOAD_HISTORY_LABEL;
+use super::environment_storage::EnvironmentArchive;
 use super::environment_storage_ui::{DELETE_ALL_LABEL, DeleteBlocker, PRUNE_BUTTON_LABEL};
 use super::instance_wait::{
     DATA_DIRECTORY_HELD_TITLE, DATA_DIRECTORY_RETRY_INTERVAL, LOCK_FILE_UNUSABLE_TITLE,
@@ -51,7 +59,7 @@ use super::instance_wait::{
 use super::log_viewer;
 use super::query;
 use super::settings_ui::{self, SettingsPage};
-use super::storage::{DatabasesPending, OPENING_DATABASES, OpenStorage};
+use super::storage::{DatabasesPending, OPENING_DATABASES, OpenStorage, StorageOpen};
 use crate::termination_signal::TERMINATION_SIGNAL_FLAG;
 
 /// In-memory [`egui::DroppedFile`] for drag-drop tests. `bytes` drops carry a
@@ -3791,6 +3799,7 @@ fn adopting_an_open_storage_installs_its_history_worker() {
         geomagnetic_indices: None,
         tec_maps: None,
         solar_flares: None,
+        unavailable_archives: UnavailableArchives::default(),
     };
     harness.state_mut().adopt_open_storage(opened);
 
@@ -3826,6 +3835,7 @@ fn a_history_failure_in_the_adopted_storage_raises_its_prompt() {
             geomagnetic_indices: None,
             tec_maps: None,
             solar_flares: None,
+            unavailable_archives: UnavailableArchives::default(),
         });
     harness.step();
 
@@ -3877,6 +3887,7 @@ fn storage_opened_in(
         geomagnetic_indices: store.open_geomagnetic_indices().ok(),
         tec_maps: store.open_tec_maps().ok(),
         solar_flares: store.open_solar_flares().ok(),
+        unavailable_archives: UnavailableArchives::default(),
     }
 }
 
@@ -4457,6 +4468,31 @@ fn taking_over_opens_the_databases_and_runs_the_loads_that_waited() {
     );
 }
 
+/// Taking over reads the archives before it opens any of them: the other
+/// instance may be part-way through a delete right now, and what that leaves
+/// is the user's to answer, not the open's to recover.
+#[test]
+fn taking_over_reads_the_archives_before_it_opens_them() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+    harness.step();
+    harness
+        .get_by_label_contains(TAKE_OVER_BUTTON_LABEL)
+        .click();
+    harness.run_steps(3);
+
+    harness.get_by_label("Take over").click();
+
+    assert!(
+        harness.step_until(|harness| matches!(
+            harness.state().storage_open,
+            StorageOpen::InspectingArchives { .. }
+        )),
+        "the take-over opened the archives without reading them for an interrupted delete"
+    );
+}
+
 /// Taking the lock late is a promotion and nothing more: the instance that
 /// took over becomes the marked owner without reopening anything.
 #[test]
@@ -4500,6 +4536,310 @@ fn the_lock_freed_after_a_take_over_makes_this_instance_the_marked_owner() {
     );
 }
 
+/// The interference archive's day index, which is where a delete records
+/// that it is part-way through.
+const INTERFERENCE_DAYS: GroupPath<'static> = GroupPath(schema::DAYS_GROUP);
+
+/// A data directory whose interference archive holds two days with a delete
+/// marked part-way through it, as an instance killed mid-delete leaves it.
+fn data_directory_with_an_interrupted_interference_delete() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path());
+    let path = store.interference_path();
+    {
+        let archive = store.open_interference().expect("the interference archive");
+        for offset in 0..2 {
+            archive
+                .insert_day(
+                    chrono::NaiveDate::from_ymd_opt(2026, 7, 20).unwrap_or_default()
+                        + chrono::TimeDelta::days(offset),
+                    "host",
+                    chrono::Utc::now(),
+                    &[],
+                )
+                .expect("archive a day");
+        }
+    }
+    drop(store);
+    day_archive::mark_delete_in_flight(&path, INTERFERENCE_DAYS).expect("mark the delete");
+    dir
+}
+
+/// The app part-way through the open a take-over runs: the archives under
+/// `root` have been read, and the prompts for what that found are up.
+fn app_asking_about_the_archives_under<'a>(root: &Path) -> Harness<'a, App> {
+    app_asking_about(archive_recovery::inspect_archives_under(root.to_owned()))
+}
+
+/// The same, for findings this process cannot produce on its own: libhdf5
+/// hands one process the same open file twice rather than refusing it.
+fn app_asking_about<'a>(inspected: InspectedArchives) -> Harness<'a, App> {
+    let (mut harness, _databases) = app_with_the_databases_still_opening(&[]);
+    harness
+        .state_mut()
+        .storage_open
+        .inspect_archives_for_test(inspected);
+    harness.run_steps(3);
+    harness
+}
+
+fn wait_for_the_archives_to_open(harness: &mut Harness<'_, App>) {
+    assert!(
+        harness.step_until(|harness| harness.state().storage_open.databases_pending().is_none()),
+        "the open the answers started never finished"
+    );
+}
+
+/// The recovery an instance that is gone left behind is the user's to make
+/// after a take-over: the prompt names the archive and what recovering costs,
+/// and recovering opens it with those days discarded.
+#[test]
+fn recovering_after_a_take_over_opens_the_archive_with_its_days_discarded() {
+    let dir = data_directory_with_an_interrupted_interference_delete();
+    let path = gt_store::Store::open_in(dir.path()).interference_path();
+    let mut harness = app_asking_about_the_archives_under(dir.path());
+
+    harness.get_by_label_contains("Recover the aircraft interference archive?");
+    harness.get_by_label_contains("discards the 2 archived days it holds");
+    harness.get_by_label(RECOVER_BUTTON_LABEL).click();
+    wait_for_the_archives_to_open(&mut harness);
+
+    let archive = harness
+        .state()
+        .jamming
+        .archive()
+        .expect("the recovered archive is open");
+    assert_eq!(archived_days(&archive), []);
+    assert_eq!(
+        JamStore::interrupted_delete_at(&path).expect("read the archive"),
+        None,
+        "the archive was opened with the interrupted delete still in it"
+    );
+    assert_eq!(
+        harness
+            .state()
+            .unavailable_archives
+            .of(EnvironmentArchive::AircraftInterference),
+        None
+    );
+}
+
+/// Leaving it alone costs the archive for the session and nothing on disk:
+/// the file is byte-for-byte what it was, and the archives nobody was asked
+/// about open beside it.
+#[test]
+fn leaving_an_interrupted_delete_unrecovered_writes_nothing_to_the_archive() {
+    let dir = data_directory_with_an_interrupted_interference_delete();
+    let path = gt_store::Store::open_in(dir.path()).interference_path();
+    let untouched = std::fs::read(&path).expect("the archive as the delete left it");
+    let mut harness = app_asking_about_the_archives_under(dir.path());
+
+    harness.get_by_label(LEAVE_UNRECOVERED_BUTTON_LABEL).click();
+    wait_for_the_archives_to_open(&mut harness);
+
+    assert_eq!(
+        std::fs::read(&path).expect("read the archive"),
+        untouched,
+        "the archive the user left alone was written to"
+    );
+    assert_eq!(
+        JamStore::interrupted_delete_at(&path).expect("read the archive"),
+        Some(InterruptedDelete { archived_days: 2 }),
+        "the days are gone, or the delete no longer reads as interrupted"
+    );
+    assert!(
+        !harness.state().jamming.archive_available(),
+        "the archive was opened after the user left it unrecovered"
+    );
+    assert_eq!(
+        harness
+            .state()
+            .unavailable_archives
+            .of(EnvironmentArchive::AircraftInterference),
+        Some(ArchiveUnavailable::InterruptedDeleteLeftUnrecovered)
+    );
+    assert!(
+        harness.state().tec_maps.archive_available(),
+        "one archive left closed closed the others too"
+    );
+}
+
+/// Escape answers the way the button that discards nothing does, as it does
+/// for every other destructive confirmation.
+#[test]
+fn escape_leaves_the_interrupted_delete_unrecovered() {
+    let dir = data_directory_with_an_interrupted_interference_delete();
+    let path = gt_store::Store::open_in(dir.path()).interference_path();
+    let mut harness = app_asking_about_the_archives_under(dir.path());
+
+    harness.key_press(egui::Key::Escape);
+    wait_for_the_archives_to_open(&mut harness);
+
+    assert_eq!(
+        JamStore::interrupted_delete_at(&path).expect("read the archive"),
+        Some(InterruptedDelete { archived_days: 2 }),
+        "escape recovered the interrupted delete"
+    );
+    assert_eq!(
+        harness
+            .state()
+            .unavailable_archives
+            .of(EnvironmentArchive::AircraftInterference),
+        Some(ArchiveUnavailable::InterruptedDeleteLeftUnrecovered)
+    );
+}
+
+/// An archive the other GeoTrace still has open cannot be recovered here, so
+/// no recovery is offered: the user is told what it costs and the open goes
+/// on without it.
+#[test]
+fn an_archive_the_other_instance_holds_is_reported_as_in_use() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut harness = app_asking_about(InspectedArchives::of_findings_under(
+        dir.path().to_owned(),
+        vec![(
+            EnvironmentArchive::AircraftInterference,
+            InterruptedDeleteFinding::HeldByTheOtherInstance,
+        )],
+    ));
+
+    harness.get_by_label_contains("The aircraft interference archive is in use");
+    assert!(
+        harness.query_by_label(RECOVER_BUTTON_LABEL).is_none(),
+        "a recovery was offered for an archive this instance cannot open"
+    );
+    harness.get_by_label(ARCHIVE_IN_USE_BUTTON_LABEL).click();
+    wait_for_the_archives_to_open(&mut harness);
+
+    assert_eq!(
+        harness
+            .state()
+            .unavailable_archives
+            .of(EnvironmentArchive::AircraftInterference),
+        Some(ArchiveUnavailable::HeldByTheOtherInstance)
+    );
+    assert!(
+        !harness.state().jamming.archive_available(),
+        "the archive the other instance holds was opened here"
+    );
+}
+
+/// Escape answers the in-use notice the way its one button does, so a stray
+/// keypress cannot open an archive the other GeoTrace holds.
+#[test]
+fn escape_leaves_the_archive_the_other_instance_holds_alone() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut harness = app_asking_about(InspectedArchives::of_findings_under(
+        dir.path().to_owned(),
+        vec![(
+            EnvironmentArchive::AircraftInterference,
+            InterruptedDeleteFinding::HeldByTheOtherInstance,
+        )],
+    ));
+
+    harness.key_press(egui::Key::Escape);
+    wait_for_the_archives_to_open(&mut harness);
+
+    assert_eq!(
+        harness
+            .state()
+            .unavailable_archives
+            .of(EnvironmentArchive::AircraftInterference),
+        Some(ArchiveUnavailable::HeldByTheOtherInstance)
+    );
+    assert!(
+        !harness.state().jamming.archive_available(),
+        "escape opened the archive the other instance holds"
+    );
+}
+
+/// A delete interrupted after the archives were read is not recovered behind
+/// the user's back: the open declines what nobody was asked about, and the
+/// archive keeps its days.
+#[test]
+fn an_interrupted_delete_nobody_was_asked_about_is_declined() {
+    let dir = data_directory_with_an_interrupted_interference_delete();
+    let path = gt_store::Store::open_in(dir.path()).interference_path();
+    let mut harness = app_asking_about(InspectedArchives::of_findings_under(
+        dir.path().to_owned(),
+        Vec::new(),
+    ));
+
+    wait_for_the_archives_to_open(&mut harness);
+
+    assert_eq!(
+        JamStore::interrupted_delete_at(&path).expect("read the archive"),
+        Some(InterruptedDelete { archived_days: 2 }),
+        "the open recovered a delete nobody was asked about"
+    );
+    assert_eq!(
+        harness
+            .state()
+            .unavailable_archives
+            .of(EnvironmentArchive::AircraftInterference),
+        Some(ArchiveUnavailable::InterruptedDeleteLeftUnrecovered)
+    );
+    assert!(harness.state().tec_maps.archive_available());
+}
+
+/// Never merely empty, per DESIGN.md: the controls that need an archive left
+/// unrecovered are grayed and say why it is not there.
+#[test]
+fn an_archive_left_unrecovered_says_why_on_the_controls_that_need_it() {
+    let dir = data_directory_with_an_interrupted_interference_delete();
+    let mut harness = app_asking_about_the_archives_under(dir.path());
+    harness.get_by_label(LEAVE_UNRECOVERED_BUTTON_LABEL).click();
+    wait_for_the_archives_to_open(&mut harness);
+
+    harness.state_mut().settings_open = true;
+    harness.state_mut().settings_page = SettingsPage::AircraftInterference;
+    harness.run_steps(3);
+    harness.hover_and_settle(By::new().label_contains(DOWNLOAD_HISTORY_LABEL), 3);
+    harness.get_by_label_contains(
+        "The interference archive is unavailable this session: an interrupted delete in it was \
+         left unrecovered",
+    );
+
+    harness.state_mut().settings_page = SettingsPage::Application;
+    harness.run_steps(3);
+    let interference_row = harness
+        .topmost_matching(By::new().label_contains(DELETE_ALL_LABEL))
+        .rect()
+        .center();
+    harness.hover_at_and_settle(interference_row, 3);
+    harness.get_by_label_contains(
+        &DeleteBlocker::ArchiveUnavailable(ArchiveUnavailable::InterruptedDeleteLeftUnrecovered)
+            .hover_text(),
+    );
+}
+
+/// The prompts are not a trap either: the window closes on request, and an
+/// app on its way out opens no archive.
+#[test]
+fn a_window_closed_while_an_interrupted_delete_is_asked_about_opens_nothing() {
+    let dir = data_directory_with_an_interrupted_interference_delete();
+    let path = gt_store::Store::open_in(dir.path()).interference_path();
+    let mut harness = app_asking_about_the_archives_under(dir.path());
+    harness.get_by_label_contains("Recover the aircraft interference archive?");
+    assert!(
+        harness.state().pending_writes.is_idle(),
+        "a write is registered while the open waits on a person, which a close would wait for"
+    );
+
+    request_window_close(&mut harness);
+
+    assert!(
+        harness.step_until(closed_the_window),
+        "the window never closed"
+    );
+    assert_eq!(
+        JamStore::interrupted_delete_at(&path).expect("read the archive"),
+        Some(InterruptedDelete { archived_days: 2 }),
+        "a closing app recovered the interrupted delete"
+    );
+    assert!(!harness.state().jamming.archive_available());
+}
+
 /// Never hidden, per DESIGN.md: the controls that need an archive are grayed
 /// while the archives open, and say what they are waiting for.
 #[test]
@@ -4516,7 +4856,7 @@ fn the_environment_controls_are_grayed_while_the_archives_open() {
     assert!(prune.accesskit_node().is_disabled());
 
     harness.hover_and_settle(By::new().label_contains(PRUNE_BUTTON_LABEL), 3);
-    harness.get_by_label_contains(DeleteBlocker::ArchivesOpening.hover_text());
+    harness.get_by_label_contains(&DeleteBlocker::ArchivesOpening.hover_text());
 
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path());
@@ -4543,7 +4883,7 @@ fn the_environment_controls_are_grayed_while_the_archives_open() {
     );
     assert!(
         harness
-            .query_by_label_contains(DeleteBlocker::ArchivesOpening.hover_text())
+            .query_by_label_contains(&DeleteBlocker::ArchivesOpening.hover_text())
             .is_none(),
         "the opening hover text outlived the open"
     );

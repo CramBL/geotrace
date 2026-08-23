@@ -1,3 +1,4 @@
+mod archive_recovery;
 mod auto_prune;
 mod backfill;
 mod backfill_ui;
@@ -341,6 +342,9 @@ pub struct App {
     /// The startup open of every database, until the app adopts what it
     /// produced.
     storage_open: storage::StorageOpen,
+    /// The archives this run opened none of, and what the controls needing
+    /// them say instead.
+    unavailable_archives: archive_recovery::UnavailableArchives,
     /// Set once the user took write access from the instance holding the data
     /// directory: the mark is retried until this instance holds it too.
     mark_retry_after_take_over: Option<instance_wait::MarkRetryAfterTakeOver>,
@@ -612,6 +616,7 @@ impl App {
             storage: options.storage,
             instance_lock: options.instance_lock,
             storage_open,
+            unavailable_archives: archive_recovery::UnavailableArchives::default(),
             mark_retry_after_take_over: None,
             keep_db_backup: true,
             pending_resegment: None,

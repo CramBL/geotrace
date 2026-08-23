@@ -3,6 +3,7 @@
 use crate::app::App;
 use crate::app::backfill_ui::{self, BackfillAction};
 use crate::app::day_fetch_status::{self, FetchRowHoverText};
+use crate::app::environment_storage::EnvironmentArchive;
 use crate::app::settings_ui::SettingsPage;
 use crate::app::settings_ui::source_page::{self, ReferenceLink, SourcePageSlots};
 
@@ -38,7 +39,7 @@ impl App {
         let mut base_url_changed = false;
         let fetch_status = self.geomagnetic_indices.fetch_queue().fetch_status();
         let progress = self.geomagnetic_indices.fetch_queue().backfill_progress();
-        let readiness = self.backfill_readiness(self.geomagnetic_indices.archive_available());
+        let readiness = self.backfill_readiness(EnvironmentArchive::GeomagneticIndices);
         let mut backfill_action = None;
 
         let opened_reference = source_page::show_source_page(

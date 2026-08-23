@@ -14,6 +14,7 @@ use egui_phosphor::regular::CLOUD_ARROW_DOWN as ICON_DOWNLOAD;
 use egui_phosphor::regular::X as ICON_CANCEL;
 use jiff::civil::Date;
 
+use super::archive_recovery::ArchiveUnavailable;
 use super::backfill::BackfillProgress;
 use super::civil_date;
 
@@ -245,6 +246,12 @@ pub enum BackfillReadiness {
     WaitingForTheDataDirectory,
     /// There is nowhere to download to yet: the archives are still opening.
     ArchiveStillOpening,
+    /// There is nowhere to download to yet: the open is waiting for the user
+    /// to answer for an archive a delete was interrupted in.
+    AwaitingAnInterruptedDeleteAnswer,
+    /// There is nowhere to download to: the archive is closed for the
+    /// session, on the answer the user gave for it.
+    ArchiveUnavailable(ArchiveUnavailable),
     /// There is nowhere to download to: the archive could not be opened.
     WithoutArchive,
     /// No request may leave the machine: GeoTrace runs offline.
@@ -428,6 +435,14 @@ impl<D: BackfillDataset> BackfillUi<D> {
             BackfillReadiness::ArchiveStillOpening => {
                 format!("The {} is still opening", D::ARCHIVE_NAME)
             }
+            BackfillReadiness::AwaitingAnInterruptedDeleteAnswer => {
+                "Answer the question about the interrupted delete".to_owned()
+            }
+            BackfillReadiness::ArchiveUnavailable(reason) => format!(
+                "The {} is unavailable this session: {}",
+                D::ARCHIVE_NAME,
+                reason.explanation()
+            ),
             BackfillReadiness::WithoutArchive => format!(
                 "There is nowhere to download to: the {} could not be opened",
                 D::ARCHIVE_NAME
