@@ -41,9 +41,11 @@ pub const MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES: Duration = Duration::from_mill
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InstanceState {
-    /// The window is up, whether or not it has begun closing.
+    /// The instance is running and has not begun shutting down.
     Running,
-    /// The window is gone and the writes that outlive it are finishing.
+    /// The shutdown has begun and the writes it is waiting for are listed.
+    /// Its window stays up until "Run in background" or the last of those
+    /// writes closes it.
     ShuttingDown,
 }
 

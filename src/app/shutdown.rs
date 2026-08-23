@@ -197,6 +197,8 @@ impl App {
             // Results still arrive while the writes finish: draining them is
             // what takes the registry to idle.
             self.apply_finished_background_work(ui);
+            self.instance_lock
+                .report_shutdown_progress(&self.pending_writes);
             let snapshot = self.pending_writes.snapshot();
             self.show_shutdown_window(ui, now, &snapshot);
             if self.show_force_quit_prompt(ui, &snapshot).is_some() {
@@ -307,6 +309,7 @@ impl App {
 
         self.shut_down_history_worker_off_the_gui_thread();
         self.shutdown.begin(Instant::now());
+        self.instance_lock.mark_shutting_down(&self.pending_writes);
     }
 
     /// Hands the app's worker to a thread of its own, which joins its
