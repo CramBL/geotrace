@@ -37,6 +37,7 @@ use super::day_fetch_status::ArchivedDayCount;
 use super::environment_storage::{EnvironmentArchive, PrunedDays};
 use super::fix_positions::FixPositionTimeline;
 use super::tec_quiet_time::QuietTimeDeviationCache;
+use super::track_day_values::TrackValuesByArchivedDays;
 
 /// What one day's fetch produced.
 enum MapDayMessage {
@@ -95,10 +96,7 @@ pub struct TecMapScheduler {
     /// frame. Ordered so the days a plot span holds are a range query.
     /// Assumes this process is the archive's only writer.
     archived_days: BTreeSet<NaiveDate>,
-    /// Per-track plot points, keyed by the days they were resolved from, so
-    /// the `Arc` identity the plot caches on only changes when the archive
-    /// gained a day the track needs.
-    plot_points: HashMap<TrackRef, (Vec<NaiveDate>, Arc<Vec<TecPoint>>)>,
+    plot_points: TrackValuesByArchivedDays<Vec<TecPoint>>,
     /// The line drawn across the plot's whole span, one sample per archived
     /// map epoch.
     context: ContextSampleCache<TecContextSample>,
@@ -136,7 +134,7 @@ impl TecMapScheduler {
             transport_source,
             days: DayFetchQueue::default(),
             archived_days: BTreeSet::new(),
-            plot_points: HashMap::new(),
+            plot_points: TrackValuesByArchivedDays::default(),
             context: ContextSampleCache::default(),
             quiet_time: QuietTimeDeviationCache::default(),
             selection: TecInstantSelection::new(None, Utc::now().date_naive()),
@@ -256,8 +254,7 @@ impl TecMapScheduler {
     /// archive.
     pub fn forget_pruned_days(&mut self, pruned: PrunedDays) {
         self.archived_days.retain(|day| !pruned.covers(*day));
-        self.plot_points
-            .retain(|_, (days, _)| !days.iter().any(|day| pruned.covers(*day)));
+        self.plot_points.forget_pruned_days(pruned);
         self.context.forget_pruned_days(pruned);
         self.quiet_time.forget_pruned_days(pruned);
         if self
@@ -424,30 +421,16 @@ impl TecMapScheduler {
                     TrackRef::new(gt_types::FileIdx::new(fi), gt_types::TrackIdx::new(ti));
                 live.insert(track_ref);
 
-                let resolved_from = self.archived_days_spanned_by(track);
-                let cached = self
-                    .plot_points
-                    .get(&track_ref)
-                    .filter(|(days, _)| *days == resolved_from);
-                let points = match cached {
-                    Some((_, points)) => Arc::clone(points),
-                    None => {
-                        let points = Arc::new(Self::resolve_points(
-                            self.store.as_deref(),
-                            &mut archived,
-                            track,
-                        ));
-                        self.plot_points
-                            .insert(track_ref, (resolved_from, Arc::clone(&points)));
-                        points
-                    }
-                };
+                let archived_days = self.archived_days_spanned_by(track);
+                let points = self.plot_points.resolve(track_ref, archived_days, || {
+                    Self::resolve_points(self.store.as_deref(), &mut archived, track)
+                });
                 if points.iter().any(|point| point.tecu.is_some()) {
                     series.points_by_track.insert(track_ref, points);
                 }
             }
         }
-        self.plot_points.retain(|track, _| live.contains(track));
+        self.plot_points.retain_loaded_tracks(&live);
         series
     }
 

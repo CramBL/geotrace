@@ -40,6 +40,7 @@ mod storage_controls;
 mod tec;
 mod tec_mirrors_ui;
 mod tec_quiet_time;
+mod track_day_values;
 pub use storage::Storage;
 #[cfg(feature = "self-update")]
 pub mod update;

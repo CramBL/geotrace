@@ -32,6 +32,7 @@ use strum::IntoEnumIterator as _;
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
 use super::environment_storage::{EnvironmentArchive, PrunedDays};
+use super::track_day_values::TrackValuesByArchivedDays;
 
 /// What one day's fetch produced.
 enum IndexDayMessage {
@@ -83,10 +84,7 @@ pub struct GeomagneticIndexScheduler {
     /// index per frame. Ordered so the days a plot span holds are a range
     /// query. Assumes this process is the archive's only writer.
     archived_days: BTreeSet<NaiveDate>,
-    /// Per-track plot points, keyed by the days they were resolved from, so
-    /// the `Arc` identity the plot caches on only changes when the archive
-    /// gained a day the track needs.
-    plot_points: HashMap<TrackRef, (Vec<NaiveDate>, Arc<Vec<GeomagneticPoint>>)>,
+    plot_points: TrackValuesByArchivedDays<Vec<GeomagneticPoint>>,
     /// The Hp30 line drawn across the plot's whole span, one sample per
     /// archived period.
     hp30_context: ContextSampleCache<IndexContextSample>,
@@ -108,7 +106,7 @@ impl GeomagneticIndexScheduler {
         let (tx, rx) = mpsc::channel();
         let mut scheduler = Self {
             archived_days: BTreeSet::new(),
-            plot_points: HashMap::new(),
+            plot_points: TrackValuesByArchivedDays::default(),
             hp30_context: ContextSampleCache::default(),
             kp_context: ContextSampleCache::default(),
             ctx,
@@ -209,8 +207,7 @@ impl GeomagneticIndexScheduler {
     /// archive.
     pub fn forget_pruned_days(&mut self, pruned: PrunedDays) {
         self.archived_days.retain(|day| !pruned.covers(*day));
-        self.plot_points
-            .retain(|_, (days, _)| !days.iter().any(|day| pruned.covers(*day)));
+        self.plot_points.forget_pruned_days(pruned);
         self.hp30_context.forget_pruned_days(pruned);
         self.kp_context.forget_pruned_days(pruned);
         self.days.forget_pruned_days(pruned);
@@ -293,24 +290,10 @@ impl GeomagneticIndexScheduler {
                     TrackRef::new(gt_types::FileIdx::new(fi), gt_types::TrackIdx::new(ti));
                 live.insert(track_ref);
 
-                let resolved_from = self.archived_days_spanned_by(track);
-                let cached = self
-                    .plot_points
-                    .get(&track_ref)
-                    .filter(|(days, _)| *days == resolved_from);
-                let points = match cached {
-                    Some((_, points)) => Arc::clone(points),
-                    None => {
-                        let points = Arc::new(Self::resolve_points(
-                            self.store.as_deref(),
-                            &mut archived,
-                            track,
-                        ));
-                        self.plot_points
-                            .insert(track_ref, (resolved_from, Arc::clone(&points)));
-                        points
-                    }
-                };
+                let archived_days = self.archived_days_spanned_by(track);
+                let points = self.plot_points.resolve(track_ref, archived_days, || {
+                    Self::resolve_points(self.store.as_deref(), &mut archived, track)
+                });
                 if points
                     .iter()
                     .any(|point| point.hp30.is_some() || point.kp.is_some())
@@ -319,7 +302,7 @@ impl GeomagneticIndexScheduler {
                 }
             }
         }
-        self.plot_points.retain(|track, _| live.contains(track));
+        self.plot_points.retain_loaded_tracks(&live);
         series
     }
 
