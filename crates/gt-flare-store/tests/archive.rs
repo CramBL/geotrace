@@ -7,6 +7,11 @@ use tempfile::TempDir;
 use gt_flare::SolarFlare;
 use gt_flare::class::FlareClassification;
 use gt_flare_store::{FILE_NAME, FlareStore, FlareStoreError, schema};
+use gt_hdf5_archive::day_index;
+use gt_hdf5_archive::prune::{
+    DeclinedRecovery, DeleteState, InterruptedDelete, InterruptedDeleteRecovery,
+};
+use gt_test_utils::day_archive::{self, ColumnName, GroupPath};
 
 /// The base URL the archive records. The API key is never part of it.
 const HOST: &str = "https://api.nasa.gov";
@@ -467,4 +472,88 @@ fn deleting_every_day_empties_the_archive() {
     assert_eq!(removed, 1);
     assert!(store.archived_days().expect("days").is_empty());
     assert_eq!(store.flares(day(0)).expect("flares"), None);
+}
+
+/// The archive's day index, which is where a delete records that it is
+/// part-way through.
+const DAYS: GroupPath<'static> = GroupPath(schema::DAYS_GROUP);
+
+/// Write access taken from an instance part-way through a delete must not
+/// discard its days behind the user's back. The archive reports what
+/// recovering costs, a declined recovery leaves every day where it is, and an
+/// open that accepts the recovery still discards them.
+#[test]
+fn declining_recovery_leaves_the_interrupted_archive_as_it_was() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(FILE_NAME);
+    let store = FlareStore::open_or_create(&path).expect("open");
+    for offset in 0..2 {
+        store
+            .insert_or_replace_day(
+                day(offset),
+                HOST,
+                fetched_at(),
+                &flare_day(day(offset)).expect("a day of flares"),
+            )
+            .expect("store");
+    }
+    drop(store);
+    day_archive::mark_delete_in_flight(&path, DAYS).expect("mark the delete");
+
+    let interrupted = FlareStore::interrupted_delete_at(&path).expect("inspect");
+    let declined =
+        FlareStore::open_or_create_with_recovery_choice(&path, InterruptedDeleteRecovery::Decline)
+            .expect_err("the archive is unavailable until the recovery is accepted");
+
+    assert_eq!(interrupted, Some(InterruptedDelete { archived_days: 2 }));
+    assert!(
+        matches!(
+            declined,
+            FlareStoreError::DeclinedRecovery(DeclinedRecovery(InterruptedDelete {
+                archived_days: 2
+            }))
+        ),
+        "{declined:#}"
+    );
+    assert_eq!(
+        day_archive::delete_state(&path, DAYS).expect("state"),
+        DeleteState::InFlight
+    );
+    assert_eq!(
+        day_archive::column_rows(&path, DAYS, ColumnName(day_index::DAY)).expect("indexed days"),
+        2
+    );
+    assert_eq!(
+        day_archive::column_rows(
+            &path,
+            GroupPath(schema::EVENTS_GROUP),
+            ColumnName(schema::EVENT_BEGIN)
+        )
+        .expect("events"),
+        4
+    );
+
+    let store = FlareStore::open_or_create(&path).expect("open accepting the recovery");
+    assert!(store.archived_days().expect("days").is_empty());
+}
+
+/// Nothing to recover, so the choice does not matter and inspection reports
+/// none.
+#[test]
+fn a_settled_archive_reports_no_interrupted_delete() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(FILE_NAME);
+
+    assert_eq!(
+        FlareStore::interrupted_delete_at(&path).expect("before the archive exists"),
+        None
+    );
+    FlareStore::open_or_create(&path).expect("create");
+
+    assert_eq!(
+        FlareStore::interrupted_delete_at(&path).expect("a settled archive"),
+        None
+    );
+    FlareStore::open_or_create_with_recovery_choice(&path, InterruptedDeleteRecovery::Decline)
+        .expect("a settled archive opens whatever the choice");
 }

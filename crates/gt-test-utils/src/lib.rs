@@ -1,3 +1,5 @@
+#[cfg(feature = "archive")]
+pub mod day_archive;
 pub mod fixtures;
 #[cfg(feature = "snapshot")]
 pub mod interaction;
@@ -8,6 +10,8 @@ pub mod log_fixtures;
 pub mod snapshot_harness;
 pub mod transport;
 
+#[cfg(feature = "archive")]
+pub use day_archive::{ColumnName, GroupPath};
 pub use fixtures::{
     SyntheticGtdSpec, empty_file_metadata, empty_track_metadata, latlon_at_meters,
     loaded_track_with_points, marker_test_data, nav_data_with_gap, nav_point_at_meters,

@@ -1,5 +1,6 @@
 //! Round-trip days through a real archive file in a temp directory.
 
+use std::fs;
 use std::str::FromStr as _;
 
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
@@ -7,9 +8,13 @@ use h3o::CellIndex;
 use rstest::rstest;
 use tempfile::TempDir;
 
-use gt_hdf5_archive::prune::DeleteState;
+use gt_hdf5_archive::day_index;
+use gt_hdf5_archive::prune::{
+    DeclinedRecovery, DeleteState, InterruptedDelete, InterruptedDeleteRecovery,
+};
 use gt_jam::wire::HexObservation;
 use gt_jam_store::{FILE_NAME, JamStore, JamStoreError, schema};
+use gt_test_utils::day_archive::{self, ColumnName, GroupPath};
 
 /// Cells copied from the captured fixture day.
 const CELLS: [&str; 4] = [
@@ -53,6 +58,10 @@ fn observations(count: usize) -> Vec<HexObservation> {
         })
         .collect()
 }
+
+/// The archive's day index, which is where a delete records that it is
+/// part-way through.
+const DAYS: GroupPath<'static> = GroupPath(schema::DAYS_GROUP);
 
 #[test]
 fn a_new_archive_is_empty() {
@@ -465,14 +474,93 @@ fn an_interrupted_delete_is_dropped_when_the_archive_is_opened_again() {
             .expect("insert");
     }
     drop(store);
-    {
-        let file = hdf5::File::open_rw(&path).expect("open");
-        let days = file.group(schema::DAYS_GROUP).expect("days group");
-        DeleteState::InFlight.write(&days).expect("mark the delete");
-    }
+    day_archive::mark_delete_in_flight(&path, DAYS).expect("mark the delete");
 
     let store = JamStore::open_or_create(&path).expect("open after the interruption");
 
     assert!(store.days().expect("days").is_empty());
     assert_eq!(store.observations(day(0)).expect("observations"), None);
+}
+
+/// Write access taken from an instance part-way through a delete must not
+/// discard its days behind the user's back. The archive reports what
+/// recovering costs, and a declined recovery leaves every day where it is.
+#[test]
+fn declining_recovery_leaves_the_interrupted_archive_as_it_was() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(FILE_NAME);
+    let store = JamStore::open_or_create(&path).expect("open");
+    for offset in 0..2 {
+        store
+            .insert_day(day(offset), HOST, fetched_at(), &observations(2))
+            .expect("insert");
+    }
+    drop(store);
+    day_archive::mark_delete_in_flight(&path, DAYS).expect("mark the delete");
+    let interrupted_bytes = fs::read(&path).expect("archive bytes");
+
+    let interrupted = JamStore::interrupted_delete_at(&path).expect("inspect");
+    let declined =
+        JamStore::open_or_create_with_recovery_choice(&path, InterruptedDeleteRecovery::Decline)
+            .expect_err("the archive is unavailable until the recovery is accepted");
+
+    assert_eq!(interrupted, Some(InterruptedDelete { archived_days: 2 }));
+    assert!(
+        fs::read(&path).expect("archive bytes") == interrupted_bytes,
+        "inspecting and declining wrote to the archive"
+    );
+    assert!(
+        matches!(
+            declined,
+            JamStoreError::DeclinedRecovery(DeclinedRecovery(InterruptedDelete {
+                archived_days: 2
+            }))
+        ),
+        "{declined:#}"
+    );
+    assert_eq!(
+        day_archive::delete_state(&path, DAYS).expect("state"),
+        DeleteState::InFlight
+    );
+    assert_eq!(
+        day_archive::column_rows(&path, DAYS, ColumnName(day_index::DAY)).expect("indexed days"),
+        2
+    );
+    assert_eq!(
+        day_archive::column_rows(
+            &path,
+            GroupPath(schema::OBSERVATIONS_GROUP),
+            ColumnName(schema::OBS_CELL)
+        )
+        .expect("observations"),
+        4
+    );
+}
+
+/// An archive no delete was interrupted in has nothing to offer a choice
+/// about, and opens whichever choice it is given. Neither does one that has
+/// yet to be created.
+#[test]
+fn a_settled_archive_reports_no_interrupted_delete() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(FILE_NAME);
+
+    assert_eq!(
+        JamStore::interrupted_delete_at(&path).expect("before the archive exists"),
+        None
+    );
+    let store = JamStore::open_or_create(&path).expect("open");
+    store
+        .insert_day(day(0), HOST, fetched_at(), &observations(2))
+        .expect("insert");
+    drop(store);
+
+    assert_eq!(
+        JamStore::interrupted_delete_at(&path).expect("a settled archive"),
+        None
+    );
+    let store =
+        JamStore::open_or_create_with_recovery_choice(&path, InterruptedDeleteRecovery::Decline)
+            .expect("a settled archive opens whatever the choice");
+    assert_eq!(store.days().expect("days").len(), 1);
 }

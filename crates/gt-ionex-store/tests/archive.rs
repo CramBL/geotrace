@@ -6,11 +6,16 @@ use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use rstest::rstest;
 use tempfile::TempDir;
 
+use gt_hdf5_archive::day_index;
+use gt_hdf5_archive::prune::{
+    DeclinedRecovery, DeleteState, InterruptedDelete, InterruptedDeleteRecovery,
+};
 use gt_ionex::IonexProduct;
 use gt_ionex::grid::{AxisDeclaration, GridAxis, GridPoint, LatitudeAxis, LongitudeAxis, MapGrid};
 use gt_ionex::maps::{GlobalIonosphereMaps, TecMap};
 use gt_ionex::tec::TotalElectronContent;
 use gt_ionex_store::{FILE_NAME, IonexStore, IonexStoreError, schema};
+use gt_test_utils::day_archive::{self, ColumnName, GroupPath};
 use gt_types::{Latitude, Longitude};
 
 const HOST: &str = "https://sideshow.jpl.nasa.gov/pub/iono_daily";
@@ -390,17 +395,6 @@ fn append_unindexed_rows(path: &Path, rows: usize) -> Result<(), String> {
     Ok(())
 }
 
-fn column_rows(path: &Path, group: &str, name: &str) -> Result<usize, String> {
-    Ok(hdf5::File::open(path)
-        .and_then(|file| file.group(group))
-        .and_then(|group| group.dataset(name))
-        .map_err(|err| format!("{group}/{name}: {err}"))?
-        .shape()
-        .first()
-        .copied()
-        .unwrap_or_default())
-}
-
 /// Rows appended without a day entry, which is what an interrupted store
 /// leaves at every level, are cut when the archive is reopened.
 #[test]
@@ -425,17 +419,28 @@ fn unindexed_rows_are_dropped_on_open() {
     drop(reopened);
 
     assert_eq!(
-        column_rows(&path, schema::DAYS_GROUP, schema::DAY_PRODUCT).expect("column rows"),
+        day_archive::column_rows(&path, DAYS, ColumnName(schema::DAY_PRODUCT))
+            .expect("column rows"),
         1,
         "one row per indexed day"
     );
     assert_eq!(
-        column_rows(&path, schema::MAPS_GROUP, schema::MAP_EPOCH).expect("column rows"),
+        day_archive::column_rows(
+            &path,
+            GroupPath(schema::MAPS_GROUP),
+            ColumnName(schema::MAP_EPOCH)
+        )
+        .expect("column rows"),
         2,
         "one row per map of the indexed day"
     );
     assert_eq!(
-        column_rows(&path, schema::VALUES_GROUP, schema::VALUE_TECU).expect("column rows"),
+        day_archive::column_rows(
+            &path,
+            GroupPath(schema::VALUES_GROUP),
+            ColumnName(schema::VALUE_TECU)
+        )
+        .expect("column rows"),
         12,
         "two maps of six nodes"
     );
@@ -560,4 +565,89 @@ fn the_columns_beside_the_day_index_move_with_the_days_that_stay() {
         Some(IonexProduct::Rapid)
     );
     assert_eq!(store.day_maps(day(1)).expect("archive read"), Some(kept));
+}
+
+/// The archive's day index, which is where a delete records that it is
+/// part-way through.
+const DAYS: GroupPath<'static> = GroupPath(schema::DAYS_GROUP);
+
+/// Write access taken from an instance part-way through a delete must not
+/// discard its days behind the user's back. The archive reports what
+/// recovering costs, a declined recovery leaves every day where it is, and an
+/// open that accepts the recovery still discards them.
+#[test]
+fn declining_recovery_leaves_the_interrupted_archive_as_it_was() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(FILE_NAME);
+    let store = IonexStore::open_or_create(&path).expect("open");
+    for offset in 0..2 {
+        store
+            .insert_or_replace_day(
+                day(offset),
+                HOST,
+                fetched_at(),
+                IonexProduct::Final,
+                &day_with_a_gap(day(offset)).expect("a day with a gap"),
+            )
+            .expect("insert");
+    }
+    drop(store);
+    day_archive::mark_delete_in_flight(&path, DAYS).expect("mark the delete");
+
+    let interrupted = IonexStore::interrupted_delete_at(&path).expect("inspect");
+    let declined =
+        IonexStore::open_or_create_with_recovery_choice(&path, InterruptedDeleteRecovery::Decline)
+            .expect_err("the archive is unavailable until the recovery is accepted");
+
+    assert_eq!(interrupted, Some(InterruptedDelete { archived_days: 2 }));
+    assert!(
+        matches!(
+            declined,
+            IonexStoreError::DeclinedRecovery(DeclinedRecovery(InterruptedDelete {
+                archived_days: 2
+            }))
+        ),
+        "{declined:#}"
+    );
+    assert_eq!(
+        day_archive::delete_state(&path, DAYS).expect("state"),
+        DeleteState::InFlight
+    );
+    assert_eq!(
+        day_archive::column_rows(&path, DAYS, ColumnName(day_index::DAY)).expect("indexed days"),
+        2
+    );
+    assert_eq!(
+        day_archive::column_rows(
+            &path,
+            GroupPath(schema::MAPS_GROUP),
+            ColumnName(schema::MAP_EPOCH)
+        )
+        .expect("maps"),
+        4
+    );
+
+    let store = IonexStore::open_or_create(&path).expect("open accepting the recovery");
+    assert!(store.archived_days().expect("days").is_empty());
+}
+
+/// Nothing to recover, so the choice does not matter and inspection reports
+/// none.
+#[test]
+fn a_settled_archive_reports_no_interrupted_delete() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(FILE_NAME);
+
+    assert_eq!(
+        IonexStore::interrupted_delete_at(&path).expect("before the archive exists"),
+        None
+    );
+    IonexStore::open_or_create(&path).expect("create");
+
+    assert_eq!(
+        IonexStore::interrupted_delete_at(&path).expect("a settled archive"),
+        None
+    );
+    IonexStore::open_or_create_with_recovery_choice(&path, InterruptedDeleteRecovery::Decline)
+        .expect("a settled archive opens whatever the choice");
 }
