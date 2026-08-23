@@ -30,7 +30,7 @@ use gt_instance_lock::{
 };
 use gt_jam::wire::HexObservation;
 use gt_jam_store::schema;
-use gt_pending_writes::{PendingWrites, WriteKind};
+use gt_pending_writes::{PendingWrites, WriteAccess, WriteKind};
 use gt_store::{HistoryDatabase as _, InterruptedDelete, JamStore, Recordings};
 use gt_test_utils::day_archive::{self, GroupPath};
 use gt_test_utils::{
@@ -100,6 +100,17 @@ impl egui::DroppedFile for TestDroppedFile {
 /// temp config path. `fading` is supplied by the harness (off by default) so
 /// snapshots don't capture mid-animation hover fades.
 fn build_app(cc: &eframe::CreationContext<'_>, config_path: &std::path::Path, fading: bool) -> App {
+    build_app_with_write_access(cc, config_path, fading, WriteAccess::Owner)
+}
+
+/// [`build_app`] for a session with the given write access, which is what
+/// decides whether the settings are persisted at all.
+fn build_app_with_write_access(
+    cc: &eframe::CreationContext<'_>,
+    config_path: &std::path::Path,
+    fading: bool,
+    write_access: WriteAccess,
+) -> App {
     App::new_with_config(
         cc,
         &[],
@@ -109,7 +120,7 @@ fn build_app(cc: &eframe::CreationContext<'_>, config_path: &std::path::Path, fa
             offline: true,
             storage: crate::app::Storage::Disabled,
             app_version: super::TEST_APP_VERSION,
-            pending_writes: PendingWrites::default(),
+            pending_writes: PendingWrites::new(write_access),
             instance_lock: SharedDataDirectoryLock::marking_nothing(),
         },
     )
@@ -135,15 +146,22 @@ fn transient_app(cc: &mut eframe::CreationContext<'_>) -> App {
 
 /// [`transient_app`] started with the files a command line named.
 fn transient_app_with_paths(cc: &eframe::CreationContext<'_>, paths: &[PathBuf]) -> App {
-    transient_app_with_the_instance_lock(cc, paths, SharedDataDirectoryLock::marking_nothing())
+    transient_app_with_the_instance_lock(
+        cc,
+        paths,
+        SharedDataDirectoryLock::marking_nothing(),
+        PendingWrites::default(),
+    )
 }
 
 /// [`transient_app_with_paths`] on the data directory `instance_lock` was
-/// taken on, which is what decides whether the run opens anything.
+/// taken on, which is what decides whether the run opens anything, with
+/// `pending_writes` deciding whether it writes to it at all.
 fn transient_app_with_the_instance_lock(
     cc: &eframe::CreationContext<'_>,
     paths: &[PathBuf],
     instance_lock: SharedDataDirectoryLock,
+    pending_writes: PendingWrites,
 ) -> App {
     App::new_with_config(
         cc,
@@ -154,7 +172,7 @@ fn transient_app_with_the_instance_lock(
             offline: true,
             storage: crate::app::Storage::Disabled,
             app_version: super::TEST_APP_VERSION,
-            pending_writes: PendingWrites::default(),
+            pending_writes,
             instance_lock,
         },
     )
@@ -4013,12 +4031,26 @@ fn a_history_failure_in_the_adopted_storage_raises_its_prompt() {
 fn app_with_the_databases_still_opening<'a>(
     paths: &[PathBuf],
 ) -> (Harness<'a, App>, mpsc::Sender<OpenStorage>) {
+    app_with_the_databases_still_opening_for(paths, WriteAccess::Owner)
+}
+
+/// [`app_with_the_databases_still_opening`] for a session with the given
+/// write access, which is what decides whether anything it loads is stored.
+fn app_with_the_databases_still_opening_for<'a>(
+    paths: &[PathBuf],
+    write_access: WriteAccess,
+) -> (Harness<'a, App>, mpsc::Sender<OpenStorage>) {
     let (sender_tx, sender_rx) = mpsc::channel();
     let harness = Harness::builder()
         .with_size(egui::vec2(1280.0, 800.0))
         .with_wait_for_pending_images(false)
         .build_eframe(|cc| {
-            let mut app = transient_app_with_paths(cc, paths);
+            let mut app = transient_app_with_the_instance_lock(
+                cc,
+                paths,
+                SharedDataDirectoryLock::marking_nothing(),
+                PendingWrites::new(write_access),
+            );
             sender_tx.send(app.storage_open.take_over_for_test()).ok();
             app
         });
@@ -4130,6 +4162,38 @@ fn a_file_named_before_the_databases_land_is_loaded_and_stored_once_they_do() {
     assert_eq!(stored.len(), 1);
 }
 
+/// A read-only session stores nothing it opens: the recording is loaded into
+/// the window, and the recording history beside it is left as it was.
+#[test]
+fn a_recording_loaded_in_a_read_only_session_is_not_stored() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path());
+    let gtd_path = dir.path().join("read-only.gtd");
+    std::fs::write(&gtd_path, minimal_gtd_bytes()).expect("write the recording");
+    let (mut harness, databases) =
+        app_with_the_databases_still_opening_for(&[gtd_path], WriteAccess::ReadOnly);
+    harness.run_steps(3);
+
+    land_the_databases(&mut harness, &databases, &store);
+
+    assert!(
+        harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1),
+        "the recording did not load"
+    );
+    let recordings =
+        Recordings::open_or_create(&store.recordings_path()).expect("open the recording history");
+    assert_eq!(
+        recordings.list_recordings().expect("list").len(),
+        0,
+        "the read-only session stored the recording it loaded"
+    );
+    assert_eq!(
+        harness.state().pending_writes.snapshot().recently_finished,
+        Vec::<String>::new(),
+        "the read-only session registered a write"
+    );
+}
+
 /// A drop that arrives before the databases waits for them the same way a
 /// command-line path does.
 #[test]
@@ -4228,7 +4292,14 @@ fn app_waiting_for_the_data_directory<'a>(
     Harness::builder()
         .with_size(egui::vec2(1280.0, 800.0))
         .with_wait_for_pending_images(false)
-        .build_eframe(move |cc| transient_app_with_the_instance_lock(cc, &paths, instance_lock))
+        .build_eframe(move |cc| {
+            transient_app_with_the_instance_lock(
+                cc,
+                &paths,
+                instance_lock,
+                PendingWrites::default(),
+            )
+        })
 }
 
 /// A second GeoTrace on a data directory the first is using opens no database
@@ -5653,6 +5724,34 @@ fn closing_the_window_takes_the_close_over_and_writes_the_settings() {
         "the close was cancelled instead of tearing the app down"
     );
     assert!(config_path.exists(), "shutdown wrote the settings");
+    assert!(
+        harness.inner.step_until(closed_the_window),
+        "the window never closed"
+    );
+}
+
+/// A read-only session persists nothing, on the way out as much as during
+/// the run: neither flush creates the settings file.
+#[test]
+fn closing_a_read_only_session_writes_no_settings() {
+    let (mut harness, config_path) = TestHarness::builder().eframe(|cc, path, fading| {
+        build_app_with_write_access(cc, path, fading, WriteAccess::ReadOnly)
+    });
+    harness.inner.step();
+
+    harness.inner.state_mut().flush_settings();
+    assert!(
+        !config_path.exists(),
+        "a settings change wrote the settings file"
+    );
+
+    request_window_close(&mut harness.inner);
+    harness.inner.step();
+
+    assert!(
+        !config_path.exists(),
+        "the flush the shutdown performs wrote the settings file"
+    );
     assert!(
         harness.inner.step_until(closed_the_window),
         "the window never closed"

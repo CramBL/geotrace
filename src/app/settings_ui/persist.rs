@@ -1,5 +1,6 @@
 //! Loading the persisted settings into the app and writing them back out.
 
+use gt_pending_writes::WriteAccess;
 use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig};
 use gt_types::AssociationConfig;
 use strum::IntoEnumIterator;
@@ -225,6 +226,10 @@ impl App {
     }
 
     pub(in crate::app) fn flush_settings(&self) {
+        if self.pending_writes.write_access() == WriteAccess::ReadOnly {
+            log::debug!("Settings are not saved: this session is read-only");
+            return;
+        }
         let Some(path) = self.config_path.as_ref() else {
             log::warn!("Config directory unavailable - settings not saved");
             return;

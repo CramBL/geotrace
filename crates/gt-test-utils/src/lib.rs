@@ -6,6 +6,7 @@ pub mod interaction;
 #[cfg(feature = "ionex")]
 pub mod ionex_fixtures;
 pub mod log_fixtures;
+pub mod pending_writes;
 #[cfg(feature = "snapshot")]
 pub mod snapshot_harness;
 pub mod transport;

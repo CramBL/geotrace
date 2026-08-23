@@ -45,6 +45,14 @@ impl HistoryDatabase for PureDb {
         })
     }
 
+    fn open_existing_read_only(path: &Path) -> Result<Self, DbError> {
+        let _guard = DB_LOCK.lock();
+        Self::schema_version_of(path)?;
+        Ok(Self {
+            path: path.to_owned(),
+        })
+    }
+
     fn clear_write_lock(path: &Path) -> Result<(), DbError> {
         let _guard = DB_LOCK.lock();
         hdf5_pure::File::clear_swmr_flag(path).map_err(classify_hdf5_error)?;
@@ -263,7 +271,10 @@ impl PureDb {
         Ok(())
     }
 
-    fn validate_existing(path: &Path) -> Result<(), DbError> {
+    /// The schema version the database at `path` records, reading nothing
+    /// else and writing nothing. A database written before the attribute
+    /// existed reports 0.
+    fn schema_version_of(path: &Path) -> Result<i64, DbError> {
         let file = hdf5_pure::File::open(path).map_err(classify_hdf5_error)?;
         let root = file.root();
         let attrs = root.attrs().map_err(classify_hdf5_error)?;
@@ -279,13 +290,17 @@ impl PureDb {
                 supported: CURRENT_SCHEMA_VERSION,
             });
         }
+        Ok(schema_version)
+    }
+
+    fn validate_existing(path: &Path) -> Result<(), DbError> {
+        let schema_version = Self::schema_version_of(path)?;
 
         if schema_version < CURRENT_SCHEMA_VERSION {
             log::info!(
                 "Migrating history database from schema_version={schema_version} to {}",
                 CURRENT_SCHEMA_VERSION
             );
-            drop(file);
             Self::migrate(path, schema_version)?;
         }
 

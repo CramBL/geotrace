@@ -23,7 +23,7 @@ use gt_jam::dataset::JamDataset;
 use gt_jam::day_selection::{DaySelection, EmptyReason};
 use gt_jam::transport::{self, FetchOutcome, REQUEST_INTERVAL};
 use gt_jam::wire::{self, ParseWarningReporter};
-use gt_pending_writes::PendingWrites;
+use gt_pending_writes::{PendingWrites, WriteRefusal};
 use gt_query_run::JammingValues;
 #[cfg(test)]
 use gt_store::Store;
@@ -52,10 +52,11 @@ enum JamMessage {
         day: NaiveDate,
         detail: String,
     },
-    /// The day was downloaded, then discarded unarchived because the process
-    /// is shutting down.
-    NotArchivedDuringShutdown {
+    /// The day was downloaded, then discarded unarchived because the write
+    /// registry turned it away.
+    NotArchived {
         day: NaiveDate,
+        refusal: WriteRefusal,
     },
 }
 
@@ -65,7 +66,7 @@ impl JamMessage {
             Self::Stored { day, .. }
             | Self::Missing { day, .. }
             | Self::Failed { day, .. }
-            | Self::NotArchivedDuringShutdown { day } => day,
+            | Self::NotArchived { day, .. } => day,
         }
     }
 }
@@ -357,8 +358,8 @@ impl JammingScheduler {
                     log::error!("No interference data archived for {day}: {detail}");
                     self.days.report_failure(day, detail);
                 }
-                JamMessage::NotArchivedDuringShutdown { day } => {
-                    log::debug!("No interference data archived for {day}: shutting down");
+                JamMessage::NotArchived { day, refusal } => {
+                    log::debug!("No interference data archived for {day}: {refusal}");
                 }
             }
         }
@@ -557,7 +558,7 @@ impl JammingScheduler {
         let Some(store) = self.store.as_ref().map(Arc::clone) else {
             return;
         };
-        if self.pending_writes.is_shutting_down() {
+        if self.pending_writes.refusal().is_some() {
             return;
         }
         let Some(day) = self.days.take_next_day() else {
@@ -707,10 +708,11 @@ fn ingest(
                     reporter.warnings()
                 );
             }
-            let Some(_write) =
-                EnvironmentArchive::AircraftInterference.try_begin_day_insert(pending_writes, day)
-            else {
-                return JamMessage::NotArchivedDuringShutdown { day };
+            let _write = match EnvironmentArchive::AircraftInterference
+                .try_begin_day_insert(pending_writes, day)
+            {
+                Ok(write) => write,
+                Err(refusal) => return JamMessage::NotArchived { day, refusal },
             };
             match store.insert_day(day, base_url, Utc::now(), &observations) {
                 Ok(()) => JamMessage::Stored {
@@ -739,7 +741,9 @@ mod tests {
 
     use gt_fetch::HttpResponse;
     use gt_jam::DEFAULT_BASE_URL;
+    use gt_pending_writes::WriteAccess;
     use gt_test_utils::ScriptedTransport;
+    use gt_test_utils::pending_writes;
 
     use crate::app::backfill::BackfillProgress;
     use crate::app::day_failures::DayFailure;
@@ -846,7 +850,10 @@ mod tests {
     #[case::stored(JamMessage::Stored { day: day(2026, 7, 20), cells: 1 })]
     #[case::missing(JamMessage::Missing { day: day(2026, 7, 20), pending: false })]
     #[case::failed(JamMessage::Failed { day: day(2026, 7, 20), detail: "boom".to_owned() })]
-    #[case::shutting_down(JamMessage::NotArchivedDuringShutdown { day: day(2026, 7, 20) })]
+    #[case::not_archived(JamMessage::NotArchived {
+        day: day(2026, 7, 20),
+        refusal: WriteRefusal::ShuttingDown,
+    })]
     fn progress_advances_on_every_outcome(#[case] message: JamMessage) {
         let mut scheduler = scheduler();
         let days = [day(2026, 7, 20), day(2026, 7, 21)];
@@ -1011,15 +1018,16 @@ mod tests {
         );
     }
 
-    /// Shutting down is not a fetch failure: the day was downloaded and
+    /// A refused insert is not a fetch failure: the day was downloaded and
     /// discarded, and the settings page has nothing to report about it.
     #[test]
-    fn a_day_discarded_during_shutdown_is_not_reported_as_a_failure() {
+    fn a_day_discarded_unarchived_is_not_reported_as_a_failure() {
         let mut scheduler = scheduler();
         scheduler
             .tx
-            .send(JamMessage::NotArchivedDuringShutdown {
+            .send(JamMessage::NotArchived {
                 day: day(2026, 7, 20),
+                refusal: WriteRefusal::ReadOnlySession,
             })
             .expect("send");
 
@@ -1028,12 +1036,14 @@ mod tests {
         assert!(scheduler.days.failures().is_empty());
     }
 
-    /// A day queued once shutdown began stays queued: no worker starts a
-    /// download whose archive insert would be refused.
-    #[test]
-    fn no_day_is_dispatched_once_shutting_down() {
+    /// A day queued while the registry refuses writes stays queued: no worker
+    /// starts a download whose archive insert would be refused.
+    #[rstest]
+    #[case::shutting_down(pending_writes::shutting_down_registry())]
+    #[case::read_only_session(PendingWrites::new(WriteAccess::ReadOnly))]
+    fn no_day_is_dispatched_while_writes_are_refused(#[case] pending_writes: PendingWrites) {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        scheduler.pending_writes.begin_shutdown();
+        scheduler.pending_writes = pending_writes;
 
         scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 20, 17)));
 
@@ -1041,25 +1051,31 @@ mod tests {
         assert!(!scheduler.days.is_fetching());
     }
 
-    /// A download that finishes after shutdown began is discarded, not
-    /// archived.
-    #[test]
-    fn a_day_downloaded_during_shutdown_is_not_archived() {
+    /// A download that finishes where the insert is refused is discarded, and
+    /// says which refusal discarded it.
+    #[rstest]
+    #[case::shutting_down(pending_writes::shutting_down_registry(), WriteRefusal::ShuttingDown)]
+    #[case::read_only_session(
+        PendingWrites::new(WriteAccess::ReadOnly),
+        WriteRefusal::ReadOnlySession
+    )]
+    fn a_day_downloaded_where_the_insert_is_refused_is_discarded(
+        #[case] pending_writes: PendingWrites,
+        #[case] expected: WriteRefusal,
+    ) {
         let (_dir, store) = archive();
         let day = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
         let transport = ScriptedTransport::always(Ok(HttpResponse {
             status: 200,
             body: "hex,count_good_aircraft,count_bad_aircraft\n84005c7ffffffff,412,3\n".to_owned(),
         }));
-        let pending_writes = PendingWrites::default();
-        pending_writes.begin_shutdown();
 
         let message = ingest(&transport, &store, DEFAULT_BASE_URL, day, &pending_writes);
 
-        assert!(matches!(
-            message,
-            JamMessage::NotArchivedDuringShutdown { .. }
-        ));
+        let JamMessage::NotArchived { refusal, .. } = message else {
+            panic!("the day was archived where the insert is refused");
+        };
+        assert_eq!(refusal, expected);
         assert!(store.days().expect("days").is_empty());
     }
 

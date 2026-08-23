@@ -140,6 +140,17 @@ impl Store {
         Recordings::open_or_create(&self.recordings_path())
     }
 
+    /// Open the recording history without writing to it, or [`None`] where
+    /// there is none to open: a read-only session creates no database and
+    /// repairs none.
+    pub fn open_recordings_read_only(&self) -> Result<Option<Recordings>, DbError> {
+        let path = self.recordings_path();
+        if !path.exists() {
+            return Ok(None);
+        }
+        Recordings::open_existing_read_only(&path).map(Some)
+    }
+
     /// The interference archive, creating it if it does not exist.
     ///
     /// Opened on the first call that succeeds and shared from then on.
@@ -156,6 +167,13 @@ impl Store {
         self.interference.get_or_open(|| {
             JamStore::open_or_create_with_recovery_choice(&self.interference_path(), recovery)
         })
+    }
+
+    /// The interference archive as a read-only session opens it, without
+    /// writing to it.
+    pub fn open_interference_read_only(&self) -> Result<Arc<JamStore>, JamStoreError> {
+        self.interference
+            .get_or_open(|| JamStore::open_existing_read_only(&self.interference_path()))
     }
 
     /// The geomagnetic index archive, creating it if it does not exist.
@@ -179,6 +197,13 @@ impl Store {
         })
     }
 
+    /// The geomagnetic index archive as a read-only session opens it, without
+    /// writing to it.
+    pub fn open_geomagnetic_indices_read_only(&self) -> Result<Arc<SolarStore>, SolarStoreError> {
+        self.geomagnetic_indices
+            .get_or_open(|| SolarStore::open_existing_read_only(&self.geomagnetic_indices_path()))
+    }
+
     /// The TEC map archive, creating it if it does not exist.
     ///
     /// Shared the same way as [`Self::open_interference`].
@@ -197,6 +222,13 @@ impl Store {
         })
     }
 
+    /// The TEC map archive as a read-only session opens it, without writing to
+    /// it.
+    pub fn open_tec_maps_read_only(&self) -> Result<Arc<IonexStore>, IonexStoreError> {
+        self.tec_maps
+            .get_or_open(|| IonexStore::open_existing_read_only(&self.tec_maps_path()))
+    }
+
     /// The solar flare archive, creating it if it does not exist.
     ///
     /// Shared the same way as [`Self::open_interference`].
@@ -213,6 +245,13 @@ impl Store {
         self.solar_flares.get_or_open(|| {
             FlareStore::open_or_create_with_recovery_choice(&self.solar_flares_path(), recovery)
         })
+    }
+
+    /// The solar flare archive as a read-only session opens it, without
+    /// writing to it.
+    pub fn open_solar_flares_read_only(&self) -> Result<Arc<FlareStore>, FlareStoreError> {
+        self.solar_flares
+            .get_or_open(|| FlareStore::open_existing_read_only(&self.solar_flares_path()))
     }
 }
 
@@ -399,6 +438,96 @@ mod tests {
         assert!(!store.geomagnetic_indices_path().exists());
         assert!(!store.tec_maps_path().exists());
         assert!(!store.solar_flares_path().exists());
+    }
+
+    /// A read-only session leaves a data directory without a recording
+    /// history exactly as it found it.
+    #[test]
+    fn a_read_only_open_creates_no_recording_history() {
+        let (_dir, store) = store();
+
+        let opened = store
+            .open_recordings_read_only()
+            .expect("a missing database is not a failure");
+
+        assert!(opened.is_none());
+        assert!(!store.recordings_path().exists());
+    }
+
+    #[test]
+    fn a_read_only_open_reads_an_existing_recording_history() {
+        let (_dir, store) = store();
+        store.open_recordings().expect("create the database");
+
+        let opened = store
+            .open_recordings_read_only()
+            .expect("open the database")
+            .expect("the database is there");
+
+        assert_eq!(opened.list_recordings().expect("list").len(), 0);
+    }
+
+    /// A read-only session opens every archive without writing to any of
+    /// them.
+    ///
+    /// The file a rebuild fills stands in for the writes an open would make:
+    /// an open that creates, rebuilds or repairs removes it before rebuilding
+    /// again, and a read-only one leaves it where it is.
+    #[test]
+    fn a_read_only_open_writes_to_no_archive() {
+        let (_dir, store) = store();
+        store.open_interference().expect("interference");
+        store
+            .open_geomagnetic_indices()
+            .expect("geomagnetic indices");
+        store.open_tec_maps().expect("tec maps");
+        store.open_solar_flares().expect("solar flares");
+        let archives = [
+            store.interference_path(),
+            store.geomagnetic_indices_path(),
+            store.tec_maps_path(),
+            store.solar_flares_path(),
+        ];
+        let rebuilding: Vec<PathBuf> = archives
+            .iter()
+            .map(|path| {
+                let rebuilding = gt_hdf5_archive::ArchiveFile::new(path).rebuilding_path();
+                std::fs::write(&rebuilding, b"an interrupted rebuild").expect("write");
+                rebuilding
+            })
+            .collect();
+        let before: Vec<Vec<u8>> = archives
+            .iter()
+            .map(|path| std::fs::read(path).expect("read the archive"))
+            .collect();
+        let read_only = Store::open_in(store.root());
+
+        read_only
+            .open_interference_read_only()
+            .expect("interference");
+        read_only
+            .open_geomagnetic_indices_read_only()
+            .expect("geomagnetic indices");
+        read_only.open_tec_maps_read_only().expect("tec maps");
+        read_only
+            .open_solar_flares_read_only()
+            .expect("solar flares");
+
+        for (path, before) in archives.iter().zip(before) {
+            assert_eq!(
+                std::fs::read(path).expect("read the archive"),
+                before,
+                "the read-only open changed {}",
+                path.display()
+            );
+        }
+        for path in rebuilding {
+            assert!(
+                path.exists(),
+                "the read-only open removed {}",
+                path.display()
+            );
+        }
     }
 
     /// The database's own error reaches the caller undisguised, which is what

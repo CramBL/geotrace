@@ -18,7 +18,7 @@ use chrono::{NaiveDate, Utc};
 use egui::Context;
 
 use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
-use gt_pending_writes::PendingWrites;
+use gt_pending_writes::{PendingWrites, WriteRefusal};
 use gt_solar::activity::GeomagneticActivity;
 use gt_solar::series::{Hp30Series, IndexSample, IndexSeries, KpSeries};
 use gt_solar::{GeomagneticIndex, TimeWindow, calendar, transport, wire};
@@ -46,19 +46,20 @@ enum IndexDayMessage {
         day: NaiveDate,
         detail: String,
     },
-    /// The day was downloaded, then discarded unarchived because the process
-    /// is shutting down.
-    NotArchivedDuringShutdown {
+    /// The day was downloaded, then discarded unarchived because the write
+    /// registry turned it away.
+    NotArchived {
         day: NaiveDate,
+        refusal: WriteRefusal,
     },
 }
 
 impl IndexDayMessage {
     fn day(&self) -> NaiveDate {
         match *self {
-            Self::Stored { day, .. }
-            | Self::Failed { day, .. }
-            | Self::NotArchivedDuringShutdown { day } => day,
+            Self::Stored { day, .. } | Self::Failed { day, .. } | Self::NotArchived { day, .. } => {
+                day
+            }
         }
     }
 }
@@ -251,8 +252,8 @@ impl GeomagneticIndexScheduler {
                     log::error!("No geomagnetic indices archived for {day}: {detail}");
                     self.days.report_failure(day, detail);
                 }
-                IndexDayMessage::NotArchivedDuringShutdown { day } => {
-                    log::debug!("No geomagnetic indices archived for {day}: shutting down");
+                IndexDayMessage::NotArchived { day, refusal } => {
+                    log::debug!("No geomagnetic indices archived for {day}: {refusal}");
                 }
             }
         }
@@ -411,7 +412,7 @@ impl GeomagneticIndexScheduler {
         let Some(store) = self.store.as_ref().map(Arc::clone) else {
             return;
         };
-        if self.pending_writes.is_shutting_down() {
+        if self.pending_writes.refusal().is_some() {
             return;
         }
         let Some(day) = self.days.take_next_day() else {
@@ -606,11 +607,11 @@ fn ingest(
         }
     }
 
-    let Some(_write) =
-        EnvironmentArchive::GeomagneticIndices.try_begin_day_insert(pending_writes, day)
-    else {
-        return IndexDayMessage::NotArchivedDuringShutdown { day };
-    };
+    let _write =
+        match EnvironmentArchive::GeomagneticIndices.try_begin_day_insert(pending_writes, day) {
+            Ok(write) => write,
+            Err(refusal) => return IndexDayMessage::NotArchived { day, refusal },
+        };
     let fetched_at = Utc::now();
     let mut kp_samples = 0;
     let mut hp30_samples = 0;
@@ -646,10 +647,11 @@ mod tests {
     use tempfile::TempDir;
 
     use gt_fetch::HttpResponse;
+    use gt_pending_writes::WriteAccess;
     use gt_solar::DEFAULT_BASE_URL;
     use gt_solar::series::{Hp30Sample, KpSample, KpStatus};
     use gt_store::Store;
-    use gt_test_utils::ScriptedTransport;
+    use gt_test_utils::{ScriptedTransport, pending_writes};
 
     use crate::app::backfill::BackfillProgress;
     use crate::app::day_failures::DayFailure;
@@ -1005,7 +1007,10 @@ mod tests {
     #[rstest]
     #[case::stored(IndexDayMessage::Stored { day: day(2026, 7, 20), kp_samples: 8, hp30_samples: 48 })]
     #[case::failed(IndexDayMessage::Failed { day: day(2026, 7, 20), detail: "boom".to_owned() })]
-    #[case::shutting_down(IndexDayMessage::NotArchivedDuringShutdown { day: day(2026, 7, 20) })]
+    #[case::not_archived(IndexDayMessage::NotArchived {
+        day: day(2026, 7, 20),
+        refusal: WriteRefusal::ShuttingDown,
+    })]
     fn progress_advances_on_every_outcome(#[case] message: IndexDayMessage) {
         let mut scheduler = scheduler_without_archive();
         scheduler
@@ -1187,15 +1192,37 @@ mod tests {
         }
     }
 
-    /// One guard covers both index inserts, so a day downloaded after
-    /// shutdown began archives neither.
-    #[test]
-    fn a_day_downloaded_during_shutdown_archives_no_index() {
+    /// A day queued while the registry refuses writes stays queued: no worker
+    /// starts a download whose archive insert would be refused.
+    #[rstest]
+    #[case::shutting_down(pending_writes::shutting_down_registry())]
+    #[case::read_only_session(PendingWrites::new(WriteAccess::ReadOnly))]
+    fn no_day_is_dispatched_while_writes_are_refused(#[case] pending_writes: PendingWrites) {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        scheduler.pending_writes = pending_writes;
+
+        scheduler.request_days_for(TimeRange::new(at(2026, 7, 20, 8), at(2026, 7, 20, 17)));
+
+        assert_eq!(scheduler.days.queued(), 1);
+        assert!(!scheduler.days.is_fetching());
+    }
+
+    /// One guard covers both index inserts, so a day downloaded where the
+    /// insert is refused archives neither, and says which refusal discarded
+    /// it.
+    #[rstest]
+    #[case::shutting_down(pending_writes::shutting_down_registry(), WriteRefusal::ShuttingDown)]
+    #[case::read_only_session(
+        PendingWrites::new(WriteAccess::ReadOnly),
+        WriteRefusal::ReadOnlySession
+    )]
+    fn a_day_downloaded_where_the_insert_is_refused_archives_no_index(
+        #[case] pending_writes: PendingWrites,
+        #[case] expected: WriteRefusal,
+    ) {
         let (_dir, store) = archive();
         let ingested = day(2026, 7, 20);
         let transport = serving(ONE_PERIOD_OF_BOTH_INDICES);
-        let pending_writes = PendingWrites::default();
-        pending_writes.begin_shutdown();
 
         let message = ingest(
             &transport,
@@ -1205,10 +1232,10 @@ mod tests {
             &pending_writes,
         );
 
-        assert!(matches!(
-            message,
-            IndexDayMessage::NotArchivedDuringShutdown { .. }
-        ));
+        let IndexDayMessage::NotArchived { refusal, .. } = message else {
+            panic!("the day was archived where the insert is refused");
+        };
+        assert_eq!(refusal, expected);
         for index in [GeomagneticIndex::Kp, GeomagneticIndex::Hp30] {
             assert!(
                 store.archived_days(index).expect("days").is_empty(),

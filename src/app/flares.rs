@@ -19,7 +19,7 @@ use egui::Context;
 
 use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
 use gt_flare::{ApiKey, DateWindow, MarkedFlare, SolarFlare, calendar, transport, wire};
-use gt_pending_writes::PendingWrites;
+use gt_pending_writes::{PendingWrites, WriteRefusal};
 use gt_store::{ArchiveUsage, FlareStore, FlareStoreError};
 use gt_types::{SunlitSide, TimeRange};
 use gt_ui_types::ArcIdentity;
@@ -41,19 +41,20 @@ enum FlareDayMessage {
         day: NaiveDate,
         detail: String,
     },
-    /// The day was downloaded, then discarded unarchived because the process
-    /// is shutting down.
-    NotArchivedDuringShutdown {
+    /// The day was downloaded, then discarded unarchived because the write
+    /// registry turned it away.
+    NotArchived {
         day: NaiveDate,
+        refusal: WriteRefusal,
     },
 }
 
 impl FlareDayMessage {
     fn day(&self) -> NaiveDate {
         match *self {
-            Self::Stored { day, .. }
-            | Self::Failed { day, .. }
-            | Self::NotArchivedDuringShutdown { day } => day,
+            Self::Stored { day, .. } | Self::Failed { day, .. } | Self::NotArchived { day, .. } => {
+                day
+            }
         }
     }
 }
@@ -237,8 +238,8 @@ impl SolarFlareScheduler {
                     log::error!("No solar flares archived for {day}: {detail}");
                     self.days.report_failure(day, detail);
                 }
-                FlareDayMessage::NotArchivedDuringShutdown { day } => {
-                    log::debug!("No solar flares archived for {day}: shutting down");
+                FlareDayMessage::NotArchived { day, refusal } => {
+                    log::debug!("No solar flares archived for {day}: {refusal}");
                 }
             }
         }
@@ -350,7 +351,7 @@ impl SolarFlareScheduler {
         let Some(key) = self.api_key.clone() else {
             return;
         };
-        if self.pending_writes.is_shutting_down() {
+        if self.pending_writes.refusal().is_some() {
             return;
         }
         let Some(day) = self.days.take_next_day() else {
@@ -506,9 +507,9 @@ fn ingest(
         }
     };
 
-    let Some(_write) = EnvironmentArchive::SolarFlares.try_begin_day_insert(pending_writes, day)
-    else {
-        return FlareDayMessage::NotArchivedDuringShutdown { day };
+    let _write = match EnvironmentArchive::SolarFlares.try_begin_day_insert(pending_writes, day) {
+        Ok(write) => write,
+        Err(refusal) => return FlareDayMessage::NotArchived { day, refusal },
     };
     // The key is never part of what the archive records.
     match store.insert_or_replace_day(day, &endpoint.base_url, Utc::now(), &flares) {
@@ -531,8 +532,9 @@ mod tests {
 
     use gt_fetch::HttpResponse;
     use gt_flare::DEFAULT_BASE_URL;
+    use gt_pending_writes::WriteAccess;
     use gt_store::Store;
-    use gt_test_utils::ScriptedTransport;
+    use gt_test_utils::{ScriptedTransport, pending_writes};
     use gt_types::{Latitude, Longitude};
 
     use crate::app::day_failures::DayFailure;
@@ -839,6 +841,51 @@ mod tests {
                 },
             }
         );
+    }
+
+    /// A day queued while the registry refuses writes stays queued: no worker
+    /// starts a download whose archive insert would be refused.
+    #[rstest]
+    #[case::shutting_down(pending_writes::shutting_down_registry())]
+    #[case::read_only_session(PendingWrites::new(WriteAccess::ReadOnly))]
+    fn no_day_is_dispatched_while_writes_are_refused(#[case] pending_writes: PendingWrites) {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        scheduler.pending_writes = pending_writes;
+
+        scheduler.request_days_for(a_recording_day());
+
+        assert_eq!(scheduler.days.queued(), 1);
+        assert!(!scheduler.days.is_fetching());
+    }
+
+    /// A download that finishes where the insert is refused is discarded, and
+    /// says which refusal discarded it.
+    #[rstest]
+    #[case::shutting_down(pending_writes::shutting_down_registry(), WriteRefusal::ShuttingDown)]
+    #[case::read_only_session(
+        PendingWrites::new(WriteAccess::ReadOnly),
+        WriteRefusal::ReadOnlySession
+    )]
+    fn a_day_downloaded_where_the_insert_is_refused_is_discarded(
+        #[case] pending_writes: PendingWrites,
+        #[case] expected: WriteRefusal,
+    ) {
+        let (_dir, store) = archive();
+        let transport = serving(ONE_FLARE);
+
+        let message = ingest(
+            &transport,
+            &store,
+            &endpoint(),
+            day(2024, 5, 9),
+            &pending_writes,
+        );
+
+        let FlareDayMessage::NotArchived { refusal, .. } = message else {
+            panic!("the day was archived where the insert is refused");
+        };
+        assert_eq!(refusal, expected);
+        assert!(store.archived_days().expect("days").is_empty());
     }
 
     /// A day is archived with the flares the catalog listed, under the host

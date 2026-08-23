@@ -826,12 +826,15 @@ fn recalculate_stored_tracks(
     pending_writes: &PendingWrites,
 ) {
     use gt_store::HistoryDatabase;
-    let Some(_write) = pending_writes.try_begin(
+    let _write = match pending_writes.try_begin(
         format!("Recalculating the stored tracks of {filename}"),
         WriteKind::RecordingDatabase,
-    ) else {
-        log::debug!("Not recalculating the stored tracks of '{filename}': shutting down");
-        return;
+    ) {
+        Ok(write) => write,
+        Err(refusal) => {
+            log::debug!("Not recalculating the stored tracks of '{filename}': {refusal}");
+            return;
+        }
     };
     let tracks = track_ranges_from_file(file);
     let settings = stored_segmentation_from_config(config);
@@ -870,8 +873,8 @@ struct HistoryInsert<'a> {
 impl HistoryInsert<'_> {
     /// Insert the recording into the history database, logging the outcome at
     /// each branch. Returns the stored reference, or `None` when storage is
-    /// disabled, metadata is missing, the process is shutting down, or the
-    /// insert failed.
+    /// disabled, metadata is missing, the write registry turned the insert
+    /// away, or the insert failed.
     fn store(self) -> Option<gt_store::DatabaseRef> {
         use gt_store::HistoryDatabase;
 
@@ -894,12 +897,15 @@ impl HistoryInsert<'_> {
             log::warn!("No recording metadata for '{filename}'; not storing in history");
             return None;
         };
-        let Some(_write) = pending_writes.try_begin(
+        let _write = match pending_writes.try_begin(
             format!("Storing {filename} in recording history"),
             WriteKind::RecordingDatabase,
-        ) else {
-            log::debug!("Not storing '{filename}' in history: shutting down");
-            return None;
+        ) {
+            Ok(write) => write,
+            Err(refusal) => {
+                log::debug!("Not storing '{filename}' in history: {refusal}");
+                return None;
+            }
         };
 
         let tracks = track_ranges_from_file(file);

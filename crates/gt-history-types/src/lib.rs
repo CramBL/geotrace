@@ -416,6 +416,13 @@ pub trait HistoryDatabase {
     where
         Self: Sized;
 
+    /// Open the existing database at `path` without writing to it: it is
+    /// neither created, migrated, nor repaired. A session that does not own
+    /// the data directory opens it this way.
+    fn open_existing_read_only(path: &Path) -> Result<Self, DbError>
+    where
+        Self: Sized;
+
     /// Forcibly clear a stale "open for write" lock left by an unclean shutdown
     /// so the database can be opened again.
     ///

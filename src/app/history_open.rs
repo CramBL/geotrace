@@ -310,8 +310,8 @@ impl App {
                 recording,
                 existing,
             } => self.set_duplicate_log_attachment(log, &recording, existing),
-            Response::WriteRefusedDuringShutdown { label } => {
-                log::debug!("Did not run {label:?}: shutting down");
+            Response::WriteRefused { label, refusal } => {
+                log::debug!("Did not run {label:?}: {refusal}");
             }
         }
     }

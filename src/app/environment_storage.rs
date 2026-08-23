@@ -11,7 +11,7 @@ use std::thread;
 
 use chrono::{Months, NaiveDate, Utc};
 use egui::Context;
-use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteKind};
+use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteKind, WriteRefusal};
 use gt_store::{
     ArchiveUsage, FlareStore, IonexStore, JamStore, PruneProgress, PruneProgressSink, SolarStore,
     Store,
@@ -66,13 +66,13 @@ impl EnvironmentArchive {
         }
     }
 
-    /// Register the insert of one downloaded day, or [`None`] once shutdown
-    /// has begun and the day is to be discarded.
+    /// Register the insert of one downloaded day, or report why the day is
+    /// to be discarded unarchived.
     pub fn try_begin_day_insert(
         self,
         pending_writes: &PendingWrites,
         day: NaiveDate,
-    ) -> Option<PendingWriteGuard> {
+    ) -> Result<PendingWriteGuard, WriteRefusal> {
         pending_writes.try_begin(
             format!("Archiving {} for {day}", self.label_in_sentence()),
             WriteKind::ArchiveDayInsert {
@@ -81,9 +81,12 @@ impl EnvironmentArchive {
         )
     }
 
-    /// Register the rewrite that deletes this archive's days, or [`None`]
-    /// once shutdown has begun and the days stay archived.
-    pub fn try_begin_day_delete(self, pending_writes: &PendingWrites) -> Option<PendingWriteGuard> {
+    /// Register the rewrite that deletes this archive's days, or report why
+    /// the days stay archived.
+    pub fn try_begin_day_delete(
+        self,
+        pending_writes: &PendingWrites,
+    ) -> Result<PendingWriteGuard, WriteRefusal> {
         pending_writes.try_begin(
             format!("Deleting {} days", self.label_in_sentence()),
             WriteKind::ArchiveCompaction {
@@ -159,8 +162,9 @@ pub enum ArchivePruneOutcome {
     Removed(usize),
     /// What the archive said when its rewrite failed.
     Failed(String),
-    /// The archive kept its days: shutdown began before the rewrite started.
-    SkippedDuringShutdown,
+    /// The archive kept its days: the registry refused the rewrite before it
+    /// started.
+    Skipped(WriteRefusal),
 }
 
 impl ArchivePruneOutcome {
@@ -168,7 +172,7 @@ impl ArchivePruneOutcome {
     pub const fn days_removed(&self) -> Option<usize> {
         match self {
             Self::Removed(days) => Some(*days),
-            Self::Failed(_) | Self::SkippedDuringShutdown => None,
+            Self::Failed(_) | Self::Skipped(_) => None,
         }
     }
 }
@@ -210,21 +214,30 @@ impl PruneReport {
         ))
     }
 
-    /// The archives shutdown stopped the delete from reaching, or [`None`]
-    /// where it reached every one of them.
-    pub fn skipped_during_shutdown_line(&self) -> Option<String> {
-        let skipped: Vec<&str> = self
+    /// The archives the delete was refused on, and why, or [`None`] where it
+    /// reached every one of them.
+    pub fn skipped_line(&self) -> Option<String> {
+        let skipped: Vec<(&str, WriteRefusal)> = self
             .archives
             .iter()
-            .filter(|report| report.outcome == ArchivePruneOutcome::SkippedDuringShutdown)
-            .map(|report| report.archive.label_in_sentence())
+            .filter_map(|report| match report.outcome {
+                ArchivePruneOutcome::Skipped(refusal) => {
+                    Some((report.archive.label_in_sentence(), refusal))
+                }
+                ArchivePruneOutcome::Removed(_) | ArchivePruneOutcome::Failed(_) => None,
+            })
             .collect();
-        (!skipped.is_empty()).then(|| {
-            format!(
-                "Not deleting archived days from {}: shutting down",
-                skipped.join(", ")
-            )
-        })
+        let (_, refusal) = *skipped.first()?;
+        debug_assert!(
+            skipped.iter().all(|(_, one)| *one == refusal),
+            "a delete stops at the first refusal, and every archive it did not reach keeps that \
+             one reason"
+        );
+        let archives: Vec<&str> = skipped.iter().map(|(archive, _)| *archive).collect();
+        Some(format!(
+            "Not deleting archived days from {}: {refusal}",
+            archives.join(", ")
+        ))
     }
 
     /// How many days went across the archives that succeeded.
@@ -241,9 +254,7 @@ impl PruneReport {
             .iter()
             .filter_map(|report| match &report.outcome {
                 ArchivePruneOutcome::Failed(detail) => Some((report.archive, detail.as_str())),
-                ArchivePruneOutcome::Removed(_) | ArchivePruneOutcome::SkippedDuringShutdown => {
-                    None
-                }
+                ArchivePruneOutcome::Removed(_) | ArchivePruneOutcome::Skipped(_) => None,
             })
     }
 }
@@ -429,18 +440,19 @@ fn prune(
     let covered = archives.covered_and_open(request.scope);
     let mut reports = Vec::with_capacity(covered.len());
     for (index, (archive, store)) in covered.iter().enumerate() {
-        let Some(write) = archive.try_begin_day_delete(pending_writes) else {
-            reports.extend(
-                covered
-                    .iter()
-                    .skip(index)
-                    .map(|(archive, _)| ArchivePruneReport {
-                        archive: *archive,
-                        outcome: ArchivePruneOutcome::SkippedDuringShutdown,
-                    }),
-            );
-            break;
-        };
+        let write =
+            match archive.try_begin_day_delete(pending_writes) {
+                Ok(write) => write,
+                Err(refusal) => {
+                    reports.extend(covered.iter().skip(index).map(|(archive, _)| {
+                        ArchivePruneReport {
+                            archive: *archive,
+                            outcome: ArchivePruneOutcome::Skipped(refusal),
+                        }
+                    }));
+                    break;
+                }
+            };
         reports.push(ArchivePruneReport {
             archive: *archive,
             outcome: store.delete_pruned_days_reporting_progress(request.days, &write),
@@ -644,8 +656,8 @@ impl App {
         if self.environment_prune.is_running() {
             return;
         }
-        if self.pending_writes.is_shutting_down() {
-            log::debug!("Not deleting archived environment days: shutting down");
+        if let Some(refusal) = self.pending_writes.refusal() {
+            log::debug!("Not deleting archived environment days: {refusal}");
             return;
         }
         let archives = self.open_environment_archives();
@@ -666,7 +678,7 @@ impl App {
             );
             self.toasts.error(format!("{}: {detail}", archive.label()));
         }
-        if let Some(line) = report.skipped_during_shutdown_line() {
+        if let Some(line) = report.skipped_line() {
             log::info!("{line}");
         }
         self.forget_pruned_environment_days(&report);
@@ -756,6 +768,8 @@ impl App {
 mod tests {
     use chrono::{TimeDelta, Utc};
     use rstest::rstest;
+
+    use gt_pending_writes::WriteAccess;
 
     use super::*;
 
@@ -954,12 +968,47 @@ mod tests {
         assert_eq!(
             report.archives,
             vec![
-                skipped(EnvironmentArchive::AircraftInterference),
-                skipped(EnvironmentArchive::SolarFlares),
+                skipped(
+                    EnvironmentArchive::AircraftInterference,
+                    WriteRefusal::ShuttingDown
+                ),
+                skipped(EnvironmentArchive::SolarFlares, WriteRefusal::ShuttingDown),
             ]
         );
         assert_eq!(report.days_removed(), 0);
         assert_eq!(report.failures().count(), 0);
+        assert_eq!(archived_interference_days(&archives), 3);
+    }
+
+    /// A read-only session never rewrites an archive: the delete stops before
+    /// the first one, and says why.
+    #[test]
+    fn a_delete_in_a_read_only_session_leaves_every_archive_alone() {
+        let (_dir, archives) = archives_with_interference_and_solar_flares();
+        let pending_writes = PendingWrites::new(WriteAccess::ReadOnly);
+
+        let report = prune(
+            &archives,
+            &pending_writes,
+            PruneRequest {
+                scope: PruneScope::Every,
+                days: PrunedDays::All,
+            },
+        );
+
+        assert_eq!(
+            report.archives,
+            vec![
+                skipped(
+                    EnvironmentArchive::AircraftInterference,
+                    WriteRefusal::ReadOnlySession
+                ),
+                skipped(
+                    EnvironmentArchive::SolarFlares,
+                    WriteRefusal::ReadOnlySession
+                ),
+            ]
+        );
         assert_eq!(archived_interference_days(&archives), 3);
     }
 
@@ -1000,10 +1049,10 @@ mod tests {
         }
     }
 
-    fn skipped(archive: EnvironmentArchive) -> ArchivePruneReport {
+    fn skipped(archive: EnvironmentArchive, refusal: WriteRefusal) -> ArchivePruneReport {
         ArchivePruneReport {
             archive,
-            outcome: ArchivePruneOutcome::SkippedDuringShutdown,
+            outcome: ArchivePruneOutcome::Skipped(refusal),
         }
     }
 
@@ -1064,13 +1113,20 @@ mod tests {
     #[case::two_archives_skipped(
         vec![
             removed(EnvironmentArchive::AircraftInterference, 3),
-            skipped(EnvironmentArchive::GeomagneticIndices),
-            skipped(EnvironmentArchive::IonosphericTec),
+            skipped(EnvironmentArchive::GeomagneticIndices, WriteRefusal::ShuttingDown),
+            skipped(EnvironmentArchive::IonosphericTec, WriteRefusal::ShuttingDown),
         ],
         Some(
             "Not deleting archived days from geomagnetic indices, ionospheric TEC: \
              shutting down"
         )
+    )]
+    #[case::read_only_session(
+        vec![skipped(
+            EnvironmentArchive::AircraftInterference,
+            WriteRefusal::ReadOnlySession,
+        )],
+        Some("Not deleting archived days from aircraft interference: this session is read-only")
     )]
     fn the_skipped_line_names_the_archives_that_kept_their_days(
         #[case] archives: Vec<ArchivePruneReport>,
@@ -1084,7 +1140,7 @@ mod tests {
             archives,
         };
 
-        assert_eq!(report.skipped_during_shutdown_line().as_deref(), expected);
+        assert_eq!(report.skipped_line().as_deref(), expected);
     }
 
     /// The sentence form names the same archive as the settings row.
@@ -1108,7 +1164,7 @@ mod tests {
             archives: vec![
                 removed(EnvironmentArchive::AircraftInterference, 4),
                 failed(EnvironmentArchive::IonosphericTec),
-                skipped(EnvironmentArchive::SolarFlares),
+                skipped(EnvironmentArchive::SolarFlares, WriteRefusal::ShuttingDown),
             ],
         };
 
