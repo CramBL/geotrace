@@ -7,6 +7,7 @@ license.workspace = true
 authors.workspace = true
 
 [features]
+archive = ["dep:gt-hdf5-archive", "dep:hdf5"]
 ionex = ["dep:gt-ionex"]
 snapshot = [
     "dep:egui",
@@ -28,9 +29,11 @@ geo.workspace = true
 geo-types.workspace = true
 geotrace-sdk = { path = "../../sdk/rust/geotrace-sdk" }
 gt-fetch = { path = "../gt-fetch" }
+gt-hdf5-archive = { path = "../gt-hdf5-archive", optional = true }
 gt-ionex = { path = "../gt-ionex", optional = true }
 gt-types = { path = "../gt-types" }
 gt-ui-theme = { path = "../gt-ui-theme", optional = true }
+hdf5 = { workspace = true, optional = true }
 # Compares rendered frames in `snapshot_harness`. The same `image` version
 # `egui_kittest`'s `Harness::render` returns. No codec features: the frames
 # never leave memory.

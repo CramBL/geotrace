@@ -9,7 +9,9 @@ use rstest::rstest;
 use tempfile::TempDir;
 
 use gt_hdf5_archive::day_index::{self, DayIndex, RowPlacement};
-use gt_hdf5_archive::prune::{ArchiveLayout, DeleteState, ExtentColumns, PruneProgress, RowLevel};
+use gt_hdf5_archive::prune::{
+    ArchiveLayout, DeleteState, ExtentColumns, InterruptedDelete, PruneProgress, RowLevel,
+};
 use gt_hdf5_archive::{ArchiveError, Column, ColumnFormat};
 
 const FORMAT: ColumnFormat = ColumnFormat {
@@ -501,6 +503,53 @@ fn a_delete_that_fails_leaves_the_index_marked() {
         .with_layout(|layout| layout.recover_interrupted_delete("test archive"))
         .expect("recover");
     assert_eq!(archive.archived_days().expect("days"), []);
+}
+
+/// What recovering costs is reported before it happens, for a caller that
+/// offers the choice: the days the archive holds, all of which recovery
+/// discards. The archive is left exactly as it was found.
+#[test]
+fn an_interrupted_delete_is_reported_without_touching_the_archive() {
+    let archive = TestArchive::create().expect("archive");
+    archive.insert_days(&STORED_DAYS).expect("insert");
+    archive.mark_delete_in_flight().expect("mark");
+
+    let interrupted = archive
+        .with_layout(|layout| layout.interrupted_delete())
+        .expect("inspect");
+
+    assert_eq!(
+        interrupted,
+        Some(InterruptedDelete {
+            archived_days: STORED_DAYS.len()
+        })
+    );
+    assert_eq!(
+        archive.archived_days().expect("days"),
+        [day(0), day(1), day(2), day(3)]
+    );
+    assert_eq!(
+        archive.day_rows(day(2)).expect("rows"),
+        Some(StoredRows::of(day(2), rows_of(day(2))))
+    );
+    assert_eq!(
+        archive.delete_state().expect("state"),
+        DeleteState::InFlight
+    );
+}
+
+/// An archive no delete was interrupted in has nothing to recover.
+#[test]
+fn a_settled_archive_reports_no_interrupted_delete() {
+    let archive = TestArchive::create().expect("archive");
+    archive.insert_days(&STORED_DAYS).expect("insert");
+
+    assert_eq!(
+        archive
+            .with_layout(|layout| layout.interrupted_delete())
+            .expect("inspect"),
+        None
+    );
 }
 
 /// A delete interrupted while the rows were moving leaves rows of two layouts

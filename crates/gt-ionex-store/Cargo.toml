@@ -22,6 +22,7 @@ parking_lot.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+gt-test-utils = { path = "../gt-test-utils", features = ["archive"] }
 gt-types = { path = "../gt-types" }
 rstest.workspace = true
 tempfile.workspace = true

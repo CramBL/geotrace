@@ -37,12 +37,21 @@ pub enum ArchiveError {
 
     #[error("archive is inconsistent: {0}")]
     Corrupt(String),
+
+    /// Another process has the file open. libhdf5 takes an OS lock for the
+    /// duration of an open, readers included.
+    #[error("another process has the archive open")]
+    HeldByAnotherProcess,
 }
 
-/// An HDF5 error arrives as its message: the hdf5 crate reports no structured
-/// detail.
+/// A lock conflict is the one failure the hdf5 crate reports structurally, as
+/// [`hdf5::MinorErrorCode::CantLockFile`]. Every other one arrives as its
+/// message.
 impl From<hdf5::Error> for ArchiveError {
     fn from(err: hdf5::Error) -> Self {
+        if err.contains_minor(hdf5::MinorErrorCode::CantLockFile) {
+            return Self::HeldByAnotherProcess;
+        }
         Self::Backend(err.to_string())
     }
 }

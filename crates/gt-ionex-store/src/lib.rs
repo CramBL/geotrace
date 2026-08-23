@@ -16,7 +16,10 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use gt_hdf5_archive::day_index::{self, DayIndex, RowPlacement};
-use gt_hdf5_archive::prune::{ArchiveLayout, ExtentColumns, PruneProgressSink, RowLevel};
+use gt_hdf5_archive::prune::{
+    ArchiveLayout, DeclinedRecovery, ExtentColumns, InterruptedDelete, InterruptedDeleteRecovery,
+    PruneProgressSink, RowLevel,
+};
 use gt_hdf5_archive::{
     ArchiveError, ArchiveFile, Column, OpenArchive, StoredPresence, attributes, dates,
 };
@@ -50,6 +53,12 @@ pub enum IonexStoreError {
 
     #[error("archive is inconsistent: {0}")]
     Corrupt(String),
+
+    #[error("another process has the archive open")]
+    HeldByAnotherProcess,
+
+    #[error(transparent)]
+    DeclinedRecovery(#[from] DeclinedRecovery),
 }
 
 impl From<ArchiveError> for IonexStoreError {
@@ -61,6 +70,7 @@ impl From<ArchiveError> for IonexStoreError {
                 Self::SchemaTooNew { found, supported }
             }
             ArchiveError::Corrupt(message) => Self::Corrupt(message),
+            ArchiveError::HeldByAnotherProcess => Self::HeldByAnotherProcess,
         }
     }
 }
@@ -108,8 +118,26 @@ impl IonexStore {
     /// the days an interrupted [`Self::delete_days_before`] left in an unknown
     /// layout.
     pub fn open_or_create(path: &Path) -> Result<Self, IonexStoreError> {
+        Self::open_or_create_with_recovery_choice(path, InterruptedDeleteRecovery::Recover)
+    }
+
+    /// Open the archive at `path` as [`Self::open_or_create`] does, recovering
+    /// an interrupted delete only when `recovery` asks for it.
+    ///
+    /// A declined recovery leaves the file exactly as it was found and fails
+    /// with [`IonexStoreError::DeclinedRecovery`], which is checked before anything
+    /// else the open would write.
+    pub fn open_or_create_with_recovery_choice(
+        path: &Path,
+        recovery: InterruptedDeleteRecovery,
+    ) -> Result<Self, IonexStoreError> {
         let mut archive = ArchiveFile::new(path);
         if archive.exists() {
+            if recovery == InterruptedDeleteRecovery::Decline
+                && let Some(interrupted) = Self::interrupted_delete_in(&mut archive)?
+            {
+                return Err(DeclinedRecovery(interrupted).into());
+            }
             archive.migrate_file_space_if_needed()?;
             archive.validate_schema_version(
                 schema::SCHEMA_VERSION_ATTR,
@@ -128,6 +156,28 @@ impl IonexStore {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// What an interrupted delete left in the archive at `path`, or [`None`]
+    /// when there is nothing to recover. An archive that does not exist yet
+    /// has nothing to recover either.
+    ///
+    /// The file is opened read-only and nothing in it changes.
+    pub fn interrupted_delete_at(
+        path: &Path,
+    ) -> Result<Option<InterruptedDelete>, IonexStoreError> {
+        let mut archive = ArchiveFile::new(path);
+        if !archive.exists() {
+            return Ok(None);
+        }
+        Self::interrupted_delete_in(&mut archive)
+    }
+
+    fn interrupted_delete_in(
+        archive: &mut ArchiveFile,
+    ) -> Result<Option<InterruptedDelete>, IonexStoreError> {
+        let file = archive.open_read_only()?;
+        with_layout(&file, |layout| layout.interrupted_delete())
     }
 
     fn create(archive: &mut ArchiveFile) -> Result<(), IonexStoreError> {

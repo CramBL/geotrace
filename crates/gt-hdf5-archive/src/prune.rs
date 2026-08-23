@@ -25,6 +25,10 @@
 //! columns hold rows of two layouts and the index may name either. Recovery
 //! therefore drops every day of that index, which is downloaded again as it is
 //! needed. What an entry never does is name rows that are not its own.
+//!
+//! [`ArchiveLayout::interrupted_delete`] reads the same attribute and reports
+//! what recovering it would discard, without writing to the file, for a caller
+//! that offers the choice before opening.
 
 use std::ops::Range;
 
@@ -43,6 +47,32 @@ use crate::{ArchiveError, Column, attributes, dates};
 /// later costs the file a header block past the rows a delete is about to
 /// free, which pins the file's length.
 pub const DELETE_IN_FLIGHT_ATTR: &str = "delete_in_flight";
+
+/// An interrupted delete found in an index, and what recovering it costs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterruptedDelete {
+    /// Archived days recovering discards, every one of which is downloaded
+    /// again as it is needed.
+    pub archived_days: usize,
+}
+
+/// Whether an open recovers an interrupted delete it finds, or leaves the
+/// archive as it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterruptedDeleteRecovery {
+    Recover,
+    Decline,
+}
+
+/// An archive left unopened because the caller declined to recover the
+/// interrupted delete it holds. The file is untouched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "an interrupted delete was left unrecovered: the archive is unavailable until the {} \
+     archived days it holds are discarded",
+    .0.archived_days
+)]
+pub struct DeclinedRecovery(pub InterruptedDelete);
 
 /// Whether a delete is part-way through the index it is read from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,6 +254,19 @@ impl ArchiveLayout<'_> {
                 .iter()
                 .map(|level| level.all_columns().len())
                 .sum::<usize>()
+    }
+
+    /// What an interrupted delete left in this index, or [`None`] when the
+    /// index is settled. A caller can weigh the recovery before it happens:
+    /// this reads the index and writes nothing.
+    pub fn interrupted_delete(&self) -> Result<Option<InterruptedDelete>, ArchiveError> {
+        let index = self.parent.group(self.index_name)?;
+        if DeleteState::of(&index) == DeleteState::Settled {
+            return Ok(None);
+        }
+        Ok(Some(InterruptedDelete {
+            archived_days: Column::new(&index, day_index::DAY).rows()?,
+        }))
     }
 
     /// Bring an archive back to a state its index and rows agree on, after a

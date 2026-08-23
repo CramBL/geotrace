@@ -1,15 +1,21 @@
 //! Round-trip index days through a real archive file in a temp directory.
 
+use std::path::Path;
+
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use rstest::rstest;
 use tempfile::TempDir;
 
-use gt_hdf5_archive::prune::PruneProgress;
+use gt_hdf5_archive::day_index;
+use gt_hdf5_archive::prune::{
+    DeclinedRecovery, DeleteState, InterruptedDelete, InterruptedDeleteRecovery, PruneProgress,
+};
 use gt_solar::GeomagneticIndex;
 use gt_solar::activity::GeomagneticActivity;
 use gt_solar::series::{Hp30Sample, Hp30Series, KpSample, KpSeries, KpStatus};
 use gt_solar_store::schema::IndexArchiveLayout as _;
 use gt_solar_store::{FILE_NAME, SolarStore, SolarStoreError, schema};
+use gt_test_utils::day_archive::{self, ColumnName, GroupPath};
 
 const HOST: &str = "https://kp.gfz.de";
 
@@ -562,4 +568,140 @@ fn deleting_every_day_empties_both_series() {
     }
     assert_eq!(store.kp_series(day(0)).expect("kp"), None);
     assert_eq!(store.hp30_series(day(0)).expect("hp30"), None);
+}
+
+/// Two Kp days and two Hp30 days, one day archived for both indices.
+fn archive_with_both_indices(path: &Path) -> Result<(), String> {
+    let store = SolarStore::open_or_create(path).map_err(|err| format!("open: {err}"))?;
+    for offset in 0..2 {
+        store
+            .insert_or_replace_kp_day(day(offset), HOST, fetched_at(), &kp_day(day(offset)))
+            .map_err(|err| format!("store Kp: {err}"))?;
+        store
+            .insert_or_replace_hp30_day(
+                day(offset + 1),
+                HOST,
+                fetched_at(),
+                &hp30_day(day(offset + 1)),
+            )
+            .map_err(|err| format!("store Hp30: {err}"))?;
+    }
+    Ok(())
+}
+
+/// The days recovering discards are those of the index the delete was
+/// interrupted in: a delete runs through the Kp index and the Hp30 index in
+/// turn. The settled index keeps its days, the day both hold included.
+#[test]
+fn an_interrupted_index_reports_its_own_days_alone() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(FILE_NAME);
+    archive_with_both_indices(&path).expect("archive");
+    day_archive::mark_delete_in_flight(&path, GroupPath(&GeomagneticIndex::Kp.days_group_path()))
+        .expect("mark the delete");
+
+    let interrupted = SolarStore::interrupted_delete_at(&path).expect("inspect");
+
+    assert_eq!(interrupted, Some(InterruptedDelete { archived_days: 2 }));
+    let store = SolarStore::open_or_create(&path).expect("open accepting the recovery");
+    assert!(
+        store
+            .archived_days(GeomagneticIndex::Kp)
+            .expect("Kp days")
+            .is_empty()
+    );
+    assert_eq!(
+        store
+            .archived_days(GeomagneticIndex::Hp30)
+            .expect("Hp30 days")
+            .into_iter()
+            .map(|archived| archived.day)
+            .collect::<Vec<NaiveDate>>(),
+        [day(1), day(2)]
+    );
+}
+
+/// A delete interrupted after it reached the second index leaves both marked.
+/// A day archived for both counts once: it is one day the user loses.
+#[test]
+fn a_day_both_interrupted_indices_hold_counts_once() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(FILE_NAME);
+    archive_with_both_indices(&path).expect("archive");
+    for index in [GeomagneticIndex::Kp, GeomagneticIndex::Hp30] {
+        day_archive::mark_delete_in_flight(&path, GroupPath(&index.days_group_path()))
+            .expect("mark the delete");
+    }
+
+    let interrupted = SolarStore::interrupted_delete_at(&path).expect("inspect");
+
+    assert_eq!(interrupted, Some(InterruptedDelete { archived_days: 3 }));
+}
+
+/// Write access taken from an instance part-way through a delete must not
+/// discard its days behind the user's back. One interrupted index declines the
+/// whole archive, and both indices are left exactly as they were.
+#[test]
+fn declining_recovery_leaves_the_interrupted_archive_as_it_was() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(FILE_NAME);
+    archive_with_both_indices(&path).expect("archive");
+    day_archive::mark_delete_in_flight(&path, GroupPath(&GeomagneticIndex::Hp30.days_group_path()))
+        .expect("mark the delete");
+
+    let declined =
+        SolarStore::open_or_create_with_recovery_choice(&path, InterruptedDeleteRecovery::Decline)
+            .expect_err("the archive is unavailable until the recovery is accepted");
+
+    assert!(
+        matches!(
+            declined,
+            SolarStoreError::DeclinedRecovery(DeclinedRecovery(InterruptedDelete {
+                archived_days: 2
+            }))
+        ),
+        "{declined:#}"
+    );
+    assert_eq!(
+        day_archive::delete_state(&path, GroupPath(&GeomagneticIndex::Hp30.days_group_path()))
+            .expect("state"),
+        DeleteState::InFlight
+    );
+    assert_eq!(
+        day_archive::delete_state(&path, GroupPath(&GeomagneticIndex::Kp.days_group_path()))
+            .expect("state"),
+        DeleteState::Settled
+    );
+    for index in [GeomagneticIndex::Kp, GeomagneticIndex::Hp30] {
+        assert_eq!(
+            day_archive::column_rows(
+                &path,
+                GroupPath(&index.days_group_path()),
+                ColumnName(day_index::DAY)
+            )
+            .expect("indexed days"),
+            2
+        );
+    }
+}
+
+/// Nothing to recover, so the choice does not matter and inspection reports
+/// none.
+#[test]
+fn a_settled_archive_reports_no_interrupted_delete() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(FILE_NAME);
+
+    assert_eq!(
+        SolarStore::interrupted_delete_at(&path).expect("before the archive exists"),
+        None
+    );
+    SolarStore::open_or_create(&path).expect("create");
+
+    assert_eq!(
+        SolarStore::interrupted_delete_at(&path).expect("a settled archive"),
+        None
+    );
+    SolarStore::open_or_create_with_recovery_choice(&path, InterruptedDeleteRecovery::Decline)
+        .expect("a settled archive opens whatever the choice");
 }
