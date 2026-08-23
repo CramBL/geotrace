@@ -43,7 +43,10 @@ mod test_fixtures;
 pub use check::{QueryChunk, analysis_context, check_all, check_text, split_queries};
 pub use fingerprint::{JammingValues, RunFingerprint, RunInputs, SnapErrorValues};
 pub use provider::{SliceProvider, TrackProvider, TrackQueryData};
-pub use results::{ChannelResults, ChannelTrackResult, PanelQuery, PointsResults, RunResults};
+pub use results::{
+    ChannelResults, ChannelTrackResult, HiddenPoints, PanelQuery, PointsResults, QuerySummary,
+    RunResults,
+};
 pub use run::{PreparedRun, RunHandle, RunKind, RunOutcome};
 pub use schema::schema_from_files;
 pub use session::{CheckRefresh, QueryProgress, QuerySession};

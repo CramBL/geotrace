@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::ops::Range;
 
 use geotrace_sdk_units::ChannelUnit;
@@ -127,7 +128,7 @@ impl PointsResults {
             .enumerate()
             .map(|(qi, q)| PanelQuery {
                 color: draw_color.get(&qi).copied(),
-                summary: summary_line(&q.summary, q.mode),
+                summary: QuerySummary::of_points(&q.summary, q.mode),
                 columns: q.columns.clone(),
                 matches: q
                     .matches
@@ -165,7 +166,7 @@ pub struct ChannelResults {
     pub channel: String,
     /// Component labels for a vector channel, empty for a scalar.
     pub components: Vec<String>,
-    pub summary: String,
+    pub summary: QuerySummary,
     pub tracks: Vec<ChannelTrackResult>,
     /// The map effect: halos over the matched track segments, honoring the
     /// query mode. Carries its own `stale` flag for the map.
@@ -187,7 +188,7 @@ impl ChannelResults {
         Self {
             channel,
             components,
-            summary: channel_summary_line(&summary),
+            summary: QuerySummary::of_channel(&summary),
             tracks,
             matches,
         }
@@ -210,7 +211,7 @@ pub struct PanelQuery {
     /// Palette color index when this query draws, for the swatch; `None`
     /// otherwise.
     pub color: Option<usize>,
-    pub summary: String,
+    pub summary: QuerySummary,
     pub columns: Vec<QueryMetric>,
     /// Absolute point-index ranges this query matched.
     pub matches: Vec<TrackMatches>,
@@ -311,80 +312,120 @@ pub(crate) fn channel_query_matches(
     }
 }
 
-/// A channel-source run's summary line: match count over tracks, plus any
-/// skipped-window reporting. Matches are samples, so it never mentions the
-/// points/keep/hide accounting the [`summary_line`] points path uses.
-fn channel_summary_line(summary: &RunSummary) -> String {
-    let mut parts = vec![format!(
-        "{} {} on {} {}",
-        summary.match_count,
-        gt_fmt::pluralize(summary.match_count, "match", "matches"),
-        summary.tracks_with_matches,
-        gt_fmt::pluralize(summary.tracks_with_matches, "track", "tracks"),
-    )];
-    for (channel, count) in &summary.skipped_channels {
-        parts.push(format!("{count} skipped (missing @{channel})"));
-    }
-    if summary.skipped_non_finite > 0 {
-        parts.push(format!(
-            "{} skipped (undefined arithmetic)",
-            summary.skipped_non_finite
-        ));
-    }
-    parts.join(&format!(" {EM_DASH} "))
+/// One query's counts for the results summary strip, and the lines behind them
+/// stating what the run left out.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct QuerySummary {
+    pub match_count: usize,
+    pub tracks_with_matches: usize,
+    /// Points `keep` and `hide` remove from the map, of the total the query
+    /// counted them against. `draw` removes none.
+    pub hidden_points: Option<HiddenPoints>,
+    /// Rows the run could not value, over every reason it could not.
+    pub skipped: usize,
+    /// One line per reason rows or tracks were left out.
+    pub notes: Vec<String>,
 }
 
-/// One query's panel summary: match count over tracks, how many points it
-/// hides, and everything it skipped.
-fn summary_line(summary: &RunSummary, mode: DisplayMode) -> String {
-    let mut parts = vec![format!(
-        "{} {} on {} {}",
-        summary.match_count,
-        gt_fmt::pluralize(summary.match_count, "match", "matches"),
-        summary.tracks_with_matches,
-        gt_fmt::pluralize(summary.tracks_with_matches, "track", "tracks"),
-    )];
-    // keep/hide remove points from the map. Always say how many, so hidden
-    // data stays accounted for.
-    let hidden = match mode {
-        DisplayMode::Draw => None,
-        DisplayMode::Keep => Some(summary.total_points - summary.matched_points),
-        DisplayMode::Hide => Some(summary.matched_points),
-    };
-    if let Some(hidden) = hidden {
-        parts.push(format!(
-            "{hidden} of {} points hidden",
-            summary.total_points
+/// Points a query removes from the map, of the total it counted them against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HiddenPoints {
+    pub hidden: usize,
+    pub total: usize,
+}
+
+impl QuerySummary {
+    /// One points query's summary: how much it matched, how many points it
+    /// removes from the map, and everything it skipped.
+    fn of_points(summary: &RunSummary, mode: DisplayMode) -> Self {
+        let mut notes = Vec::new();
+        for (metric, count) in &summary.skipped {
+            notes.push(format!("{count} skipped (missing {metric})"));
+        }
+        // "without <metric> values", not "never ran <feature>": a track whose
+        // snap run left every point unsnapped also carries no values.
+        for (metric, count) in &summary.tracks_without {
+            notes.push(format!(
+                "{count} {} without {metric} values",
+                gt_fmt::pluralize(*count, "track", "tracks"),
+            ));
+        }
+        push_non_finite_note(&mut notes, summary.skipped_non_finite);
+        if summary.tracks_shorter_than_window > 0 {
+            notes.push(format!(
+                "{} {} shorter than window",
+                summary.tracks_shorter_than_window,
+                gt_fmt::pluralize(summary.tracks_shorter_than_window, "track", "tracks"),
+            ));
+        }
+        for param in &summary.unused_params {
+            notes.push(format!("{param} declared but unused"));
+        }
+        // keep/hide remove points from the map. Always say how many, so hidden
+        // data stays accounted for.
+        let hidden = match mode {
+            DisplayMode::Draw => None,
+            DisplayMode::Keep => Some(summary.total_points.saturating_sub(summary.matched_points)),
+            DisplayMode::Hide => Some(summary.matched_points),
+        };
+        Self {
+            match_count: summary.match_count,
+            tracks_with_matches: summary.tracks_with_matches,
+            hidden_points: hidden.map(|hidden| HiddenPoints {
+                hidden,
+                total: summary.total_points,
+            }),
+            skipped: summary.skipped.values().sum::<usize>() + summary.skipped_non_finite,
+            notes,
+        }
+    }
+
+    /// A channel-source run's summary: never carries the points/keep/hide
+    /// accounting [`Self::of_points`] states, since its matches are samples.
+    fn of_channel(summary: &RunSummary) -> Self {
+        let mut notes = Vec::new();
+        for (channel, count) in &summary.skipped_channels {
+            notes.push(format!("{count} skipped (missing @{channel})"));
+        }
+        push_non_finite_note(&mut notes, summary.skipped_non_finite);
+        Self {
+            match_count: summary.match_count,
+            tracks_with_matches: summary.tracks_with_matches,
+            hidden_points: None,
+            skipped: summary.skipped_channels.values().sum::<usize>() + summary.skipped_non_finite,
+            notes,
+        }
+    }
+}
+
+/// The note for the rows non-finite arithmetic (e.g. a division by zero) left
+/// without a value. Kept apart from the per-metric skips: there is no metric to
+/// blame for them.
+fn push_non_finite_note(notes: &mut Vec<String>, skipped_non_finite: usize) {
+    if skipped_non_finite > 0 {
+        notes.push(format!(
+            "{skipped_non_finite} skipped (undefined arithmetic)"
         ));
     }
-    for (metric, count) in &summary.skipped {
-        parts.push(format!("{count} skipped (missing {metric})"));
+}
+
+impl fmt::Display for QuerySummary {
+    /// The whole summary as one line, for the hover naming the query a match
+    /// came from.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut parts = vec![format!(
+            "{} {} on {} {}",
+            self.match_count,
+            gt_fmt::pluralize(self.match_count, "match", "matches"),
+            self.tracks_with_matches,
+            gt_fmt::pluralize(self.tracks_with_matches, "track", "tracks"),
+        )];
+        if let Some(HiddenPoints { hidden, total }) = self.hidden_points {
+            parts.push(format!("{hidden} of {total} points hidden"));
+        }
+        parts.extend(self.notes.iter().cloned());
+        write!(f, "{}", parts.join(&format!(" {EM_DASH} ")))
     }
-    // "without <metric> values", not "never ran <feature>": a track whose
-    // snap run left every point unsnapped also carries no values.
-    for (metric, count) in &summary.tracks_without {
-        parts.push(format!(
-            "{count} {} without {metric} values",
-            gt_fmt::pluralize(*count, "track", "tracks"),
-        ));
-    }
-    if summary.skipped_non_finite > 0 {
-        parts.push(format!(
-            "{} skipped (undefined arithmetic)",
-            summary.skipped_non_finite
-        ));
-    }
-    if summary.tracks_shorter_than_window > 0 {
-        parts.push(format!(
-            "{} {} shorter than window",
-            summary.tracks_shorter_than_window,
-            gt_fmt::pluralize(summary.tracks_shorter_than_window, "track", "tracks"),
-        ));
-    }
-    for param in &summary.unused_params {
-        parts.push(format!("{param} declared but unused"));
-    }
-    parts.join(&format!(" {EM_DASH} "))
 }
 
 #[cfg(test)]
@@ -398,7 +439,7 @@ mod tests {
     use crate::test_fixtures::{TEST_EPOCH, rng, test_points};
 
     #[test]
-    fn summary_reports_skips_and_unused_params() {
+    fn summary_notes_every_skip_and_unused_param() {
         let query = check_text(
             "points | with mask 15 deg, snr_drop 10 | where util_all < 50 %",
             &gt_query::ChannelSchema::new(),
@@ -412,18 +453,27 @@ mod tests {
                 provider: &provider,
             }],
         );
-        let line = summary_line(&output.summary, DisplayMode::Draw);
+        let summary = QuerySummary::of_points(&output.summary, DisplayMode::Draw);
         assert_eq!(
-            line,
+            summary.to_string(),
             format!(
                 "0 matches on 0 tracks {EM_DASH} 3 skipped (missing util_all) \
                  {EM_DASH} 1 track without util_all values {EM_DASH} snr_drop declared but unused"
             )
         );
+        assert_eq!(summary.skipped, 3);
+        assert_eq!(
+            summary.notes,
+            [
+                "3 skipped (missing util_all)",
+                "1 track without util_all values",
+                "snr_drop declared but unused",
+            ]
+        );
     }
 
     #[test]
-    fn summary_reports_hidden_count_for_keep_and_hide() {
+    fn summary_counts_the_points_keep_and_hide_remove() {
         // 5 points, 2 matched.
         let query = check_text(
             "points | where velocity > 30 km/h",
@@ -444,10 +494,23 @@ mod tests {
                 provider: &provider,
             }],
         );
+        let hidden = |mode| QuerySummary::of_points(&output.summary, mode).hidden_points;
         // keep hides the 3 non-matching points. hide hides the 2 matching.
-        assert!(summary_line(&output.summary, DisplayMode::Keep).contains("3 of 5 points hidden"));
-        assert!(summary_line(&output.summary, DisplayMode::Hide).contains("2 of 5 points hidden"));
-        assert!(!summary_line(&output.summary, DisplayMode::Draw).contains("hidden"));
+        assert_eq!(
+            hidden(DisplayMode::Keep),
+            Some(HiddenPoints {
+                hidden: 3,
+                total: 5
+            })
+        );
+        assert_eq!(
+            hidden(DisplayMode::Hide),
+            Some(HiddenPoints {
+                hidden: 2,
+                total: 5
+            })
+        );
+        assert_eq!(hidden(DisplayMode::Draw), None);
     }
 
     /// Velocity in m/s per point, everything else missing.

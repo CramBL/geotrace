@@ -3,12 +3,8 @@
 //! visible tracks, and a results area whose matches also draw on the map as
 //! halos.
 
-use egui::{Area, Button, Frame, Grid, Label, RichText, ScrollArea, TextEdit, Window};
-use egui_phosphor::regular::ARROWS_IN as ICON_ARROWS_IN;
-use egui_phosphor::regular::ARROWS_OUT as ICON_ARROWS_OUT;
+use egui::{Area, Button, Frame, Grid, RichText, ScrollArea, TextEdit, Window};
 use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
-use egui_phosphor::regular::COPY as ICON_COPY;
-use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
 use egui_phosphor::regular::PUSH_PIN as ICON_PUSH_PIN;
 use egui_phosphor::regular::TRASH as ICON_TRASH;
 use egui_phosphor::regular::WARNING_OCTAGON as ICON_WARNING_OCTAGON;
@@ -23,22 +19,19 @@ use chrono::{DateTime, Utc};
 use egui::text::{CCursor, CCursorRange, LayoutJob};
 use gt_query::lexer::{self, TokenClass};
 use gt_query::{ChannelSchema, CompletionTrigger, Construct, ConstructKind, Diagnostic, Span};
-use gt_query_run::{
-    ChannelResults, CheckRefresh, PointsResults, QuerySession, RunInputs, RunKind, RunOutcome,
-    RunResults, schema_from_files,
-};
+use gt_query_run::{CheckRefresh, QuerySession, RunInputs, RunKind, RunOutcome, schema_from_files};
 use gt_side_panel::widgets::PointClickRequests;
-use gt_types::{LoadedFile, NavPoint, TrackRef};
-use gt_ui_theme::{EM_DASH, MIDDLE_DOT, RIGHTWARDS_ARROW};
+use gt_ui_theme::EM_DASH;
 use gt_ui_types::{DisplayMask, MapHighlight, MapScope, MatchRevealTarget, QueryMatches};
 use strum::{EnumIter, IntoEnumIterator as _};
 
 use crate::settings::QueryHistoryEntry;
 
-use self::match_table::{FoldedMatches, MatchTable, MatchTableOutputs, RowGroup};
+use self::results::{MatchListState, ResultsOutputs, ResultsTables};
 
 mod column_format;
-mod match_table;
+mod match_row;
+mod results;
 
 /// Unpinned history entries kept before the oldest is evicted. Pinned
 /// entries never count against this cap.
@@ -53,6 +46,12 @@ const HISTORY_LINE_MAX_CHARS: NonZeroUsize = match NonZeroUsize::new(48) {
 /// Width the query window opens at. It grows only when the user drags it
 /// wider: nothing inside it may widen it, or the window covers the map.
 pub(crate) const DEFAULT_WINDOW_WIDTH: f32 = 460.0;
+
+/// Height the query window opens at, title bar and frame included. Like its
+/// width, it grows only when the user drags it: nothing inside the window may
+/// claim more height than the window has, or the window covers the plot below
+/// it.
+pub(crate) const DEFAULT_WINDOW_HEIGHT: f32 = 520.0;
 
 /// Max width of an editor hover tooltip, shared by the construct and channel
 /// tooltips so they stay the same size.
@@ -180,10 +179,9 @@ pub struct QueryWindow {
     /// `None` while no doc shows. Keeps the doc up while the pointer moves
     /// within the token.
     hover_doc_span: Option<Range<usize>>,
-    /// The matches whose point rows are folded away in the results. Keyed by
-    /// track and first point, so a rerun over unchanged data folds the same
-    /// matches it folded before.
-    folded_matches: FoldedMatches,
+    /// How the results list the run's matches: the order of the matches table,
+    /// and the match whose rows the points table lists.
+    match_list: MatchListState,
     /// The tab on display, kept across frames. A finished run switches it back
     /// to the results.
     tab: QueryTab,
@@ -318,7 +316,7 @@ impl QueryWindow {
             last_edit_time: None,
             editor_had_focus: false,
             hover_doc_span: None,
-            folded_matches: FoldedMatches::default(),
+            match_list: MatchListState::default(),
             tab: QueryTab::default(),
         }
     }
@@ -466,7 +464,7 @@ impl QueryWindow {
         Window::new("Query")
             .open(&mut open)
             .default_width(DEFAULT_WINDOW_WIDTH)
-            .default_height(520.0)
+            .default_height(DEFAULT_WINDOW_HEIGHT)
             .resizable(true)
             .show(ctx, |ui| {
                 self.editor_ui(ui, &schema);
@@ -475,16 +473,18 @@ impl QueryWindow {
                 ui.separator();
                 match self.tab {
                     QueryTab::Results => {
-                        tab_scroll_area("query_results_tab").show(ui, |ui| {
-                            self.results_ui(
-                                ui,
-                                inputs,
-                                display_mask,
-                                highlight,
-                                requests,
-                                reveal_matches_request,
-                            );
-                        });
+                        // The tab takes the height the window has, whether or
+                        // not the run filled it: a window that resized itself
+                        // around its results would jump on every run.
+                        ui.set_min_height(ui.available_height());
+                        self.results_ui(
+                            ui,
+                            inputs,
+                            display_mask,
+                            highlight,
+                            requests,
+                            reveal_matches_request,
+                        );
                     }
                     QueryTab::History => {
                         tab_scroll_area("query_history_tab").show(ui, |ui| self.history_ui(ui));
@@ -1195,15 +1195,15 @@ impl QueryWindow {
         requests: &mut PointClickRequests<'_>,
         reveal_matches_request: &mut Option<MatchRevealTarget>,
     ) {
-        // Split borrows: the results are read while the fold state they drive
+        // Split borrows: the results are read while the list state they drive
         // is written.
         let Self {
             session,
-            folded_matches,
+            match_list,
             ..
         } = self;
         let files = inputs.loaded_files.files();
-        // What the map draws right now: a match row can only pin a point that
+        // What the map draws right now: a point row can only pin a point that
         // is on it.
         let scope = MapScope {
             files,
@@ -1216,21 +1216,6 @@ impl QueryWindow {
             ui.label(RichText::new("No runs yet").weak());
             return;
         };
-        show_on_map_ui(ui, results.matches(), reveal_matches_request);
-        let mut outputs = MatchTableOutputs {
-            highlight,
-            requests,
-            folds: folded_matches,
-            reveal: reveal_matches_request,
-        };
-        match results {
-            RunResults::Points(points) => {
-                points_results_ui(ui, points, files, scope, &mut outputs);
-            }
-            RunResults::Channel(channel) => {
-                channel_results_ui(ui, channel, files, scope, &mut outputs);
-            }
-        }
         if results.stale() {
             ui.label(
                 RichText::new(format!("Data changed since this run {EM_DASH} run again"))
@@ -1238,6 +1223,12 @@ impl QueryWindow {
                     .italics(),
             );
         }
+        let mut outputs = ResultsOutputs {
+            highlight,
+            requests,
+            reveal: reveal_matches_request,
+        };
+        ResultsTables::of_run(files, results).ui(ui, match_list, scope, &mut outputs);
     }
 
     /// The checks already ran. Prepare the run from the visible data and hand
@@ -1267,260 +1258,12 @@ impl QueryWindow {
     }
 }
 
-/// Nothing below the tab strip scrolls on its own: the tab fills what the
-/// window has left, so the wheel over a match table reaches its rows.
+/// The scroll area of a tab whose list is one flat column of widgets. The
+/// results tab has none: its two tables scroll on their own.
 fn tab_scroll_area(id_salt: &'static str) -> ScrollArea {
     ScrollArea::vertical()
         .id_salt(id_salt)
         .auto_shrink([false, false])
-}
-
-/// The button that frames the map on this run's matches and plays their
-/// reveal animation again. Disabled with the reason in its hover text when the
-/// run drew no halos, or when the data changed after it.
-fn show_on_map_ui(
-    ui: &mut egui::Ui,
-    matches: &QueryMatches,
-    reveal_matches_request: &mut Option<MatchRevealTarget>,
-) {
-    let disabled_reason = if matches.stale {
-        Some(format!(
-            "Data changed since this run {EM_DASH} run again to show its matches"
-        ))
-    } else if !matches.has_halos() {
-        Some("This run drew no matches on the map".to_owned())
-    } else {
-        None
-    };
-    let button = Button::new(format!("{ICON_CROSSHAIR} Show on map")).small();
-    let response = ui.add_enabled(disabled_reason.is_none(), button);
-    if let Some(reason) = disabled_reason {
-        response.on_disabled_hover_text(reason);
-    } else if response
-        .on_hover_text("Zoom the map to the matches and highlight them")
-        .clicked()
-    {
-        *reveal_matches_request = Some(MatchRevealTarget::WholeRun);
-    }
-}
-
-/// Paints a small filled square in a draw query's halo `color`, tying its
-/// results section to the matching halos on the map. Painted rather than a
-/// text glyph, which the editor font does not carry.
-fn query_swatch(ui: &mut egui::Ui, color: egui::Color32) {
-    let side = egui::TextStyle::Body.resolve(ui.style()).size;
-    let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(side), egui::Sense::hover());
-    ui.painter().rect_filled(rect.shrink(1.0), 2.0, color);
-    // Space between the swatch and the summary the caller appends next.
-    ui.add_space(ui.spacing().item_spacing.x);
-}
-
-/// The wall-clock times a name row states: the first row's, with the last
-/// row's where the group covers more than one row.
-struct NameRowSpan {
-    start: String,
-    end: Option<String>,
-}
-
-/// What a name row states, in the order it reads: the track the group is on,
-/// the wall-clock span it covers, how many rows it holds and how long it ran.
-struct NameRowLine {
-    track: String,
-    span: Option<NameRowSpan>,
-    count: String,
-    duration: Option<String>,
-}
-
-impl NameRowLine {
-    /// The fields as one line, separated the way every name row separates them.
-    fn text(self) -> String {
-        let Self {
-            track,
-            span,
-            count,
-            duration,
-        } = self;
-        let mut fields = vec![track];
-        if let Some(NameRowSpan { start, end }) = span {
-            fields.push(match end {
-                Some(end) => format!("{start} {RIGHTWARDS_ARROW} {end}"),
-                None => start,
-            });
-        }
-        fields.push(count);
-        fields.extend(duration);
-        fields.join(&format!(" {MIDDLE_DOT} "))
-    }
-}
-
-/// The line naming one match: the track it is on, the wall-clock span it
-/// covers, how many points it holds and how long it ran.
-pub(super) fn match_name_text(
-    files: &[LoadedFile],
-    track_ref: TrackRef,
-    range: &Range<usize>,
-) -> String {
-    let time_of = |index: usize| {
-        points_of(files, track_ref)
-            .and_then(|points| points.get(index))
-            .map(|p| p.tpv.time().utc().format("%H:%M:%S").to_string())
-    };
-    let count = range.len();
-    NameRowLine {
-        track: track_label(files, track_ref),
-        span: time_of(range.start).map(|start| NameRowSpan {
-            start,
-            end: gt_fmt::last_index_of_span(range).and_then(time_of),
-        }),
-        count: format!("{count} {}", gt_fmt::pluralize(count, "point", "points")),
-        duration: track_ref
-            .resolve(files)
-            .and_then(|track| gt_fmt::match_duration_seconds(track, range))
-            .map(gt_fmt::format_match_duration),
-    }
-    .text()
-}
-
-/// The line naming one track's matched channel samples, reading like the
-/// [`match_name_text`] line above the sample rows it names.
-pub(super) fn sample_span_name_text(
-    files: &[LoadedFile],
-    track_ref: TrackRef,
-    times: &[f64],
-    samples: &Range<usize>,
-) -> String {
-    let time_of = |unix_secs: f64| {
-        column_format::wall_clock(unix_secs).map(|time| time.format("%H:%M:%S").to_string())
-    };
-    let first = times.get(samples.start).copied();
-    let last = gt_fmt::last_index_of_span(samples).and_then(|last| times.get(last).copied());
-    let count = samples.len();
-    NameRowLine {
-        track: track_label(files, track_ref),
-        span: first.and_then(time_of).map(|start| NameRowSpan {
-            start,
-            end: last.and_then(time_of),
-        }),
-        count: format!("{count} {}", gt_fmt::pluralize(count, "sample", "samples")),
-        duration: first
-            .zip(last)
-            .map(|(first, last)| gt_fmt::format_match_duration((last - first) as i64)),
-    }
-    .text()
-}
-
-/// Which track a name row is on: its number, led by the recording's filename
-/// while several files are loaded, where the number alone would not say which
-/// recording is meant.
-fn track_label(files: &[LoadedFile], track_ref: TrackRef) -> String {
-    match files.len() {
-        0 | 1 => format!("#{}", track_ref.index),
-        _ => {
-            let file = track_ref.fi.get(files).map_or_else(
-                || format!("file {}", track_ref.fi),
-                |f| f.metadata.filename.clone(),
-            );
-            format!("{file} #{}", track_ref.index)
-        }
-    }
-}
-
-/// Render a points pipeline's per-query sections with their point match tables.
-fn points_results_ui(
-    ui: &mut egui::Ui,
-    points: &PointsResults,
-    files: &[LoadedFile],
-    scope: MapScope<'_>,
-    out: &mut MatchTableOutputs<'_, '_>,
-) {
-    // One collapsible section per query, in editor order: its summary is the
-    // header (with a color swatch for draw queries), its match table the body.
-    // Stable ids keep the open/closed state across reruns.
-    for (qi, query) in points.queries.iter().enumerate() {
-        let table = MatchTable::of_query_matches(files, points, query, qi);
-        let id = ui.make_persistent_id(("query_result", qi));
-        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
-            .show_header(ui, |ui| {
-                if let Some(color) = query.color {
-                    query_swatch(ui, gt_ui_theme::query_halo_color(color, false));
-                }
-                section_header_ui(ui, &table, &query.summary, out.folds);
-            })
-            .body(|ui| table.ui(ui, scope, out));
-    }
-}
-
-/// Render a channel-source run: one section for the channel, holding the table
-/// of every track's matched samples.
-fn channel_results_ui(
-    ui: &mut egui::Ui,
-    channel: &ChannelResults,
-    files: &[LoadedFile],
-    scope: MapScope<'_>,
-    out: &mut MatchTableOutputs<'_, '_>,
-) {
-    let table = MatchTable::of_channel_samples(files, channel);
-    let id = ui.make_persistent_id(("channel_result", channel.channel.as_str()));
-    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
-        .show_header(ui, |ui| {
-            if let Some(layer) = channel.matches.draws.first() {
-                query_swatch(ui, gt_ui_theme::query_halo_color(layer.color, false));
-            }
-            section_header_ui(ui, &table, &channel.summary, out.folds);
-        })
-        .body(|ui| table.ui(ui, scope, out));
-}
-
-/// One results section's header: the two buttons acting on the whole table,
-/// then the run summary that fills what is left of the row.
-fn section_header_ui(
-    ui: &mut egui::Ui,
-    table: &MatchTable<'_>,
-    summary: &str,
-    folds: &mut FoldedMatches,
-) {
-    // Ahead of the summary, whose length varies with the run: the two buttons
-    // then sit in the same place in every section.
-    fold_all_button_ui(ui, table.groups(), folds);
-    copy_tsv_button_ui(ui, table);
-    // Truncated to the width that is left, and stated in full on hover: a
-    // summary that extends would push the window over the map beside it.
-    ui.add(Label::new(summary).truncate())
-        .on_hover_text(summary);
-}
-
-/// Folds every group of one table away, or expands them all again. The icon
-/// and its hover text state which of the two the press performs.
-fn fold_all_button_ui(ui: &mut egui::Ui, groups: &[RowGroup], folds: &mut FoldedMatches) {
-    let all_folded = folds.all_folded(groups);
-    let (icon, tooltip) = if all_folded {
-        (ICON_ARROWS_OUT, "Expand all matches")
-    } else {
-        (ICON_ARROWS_IN, "Collapse all matches")
-    };
-    let has_matches = !groups.is_empty();
-    let response = ui.add_enabled(has_matches, Button::new(icon).small());
-    if !has_matches {
-        response.on_disabled_hover_text("This query matched nothing");
-    } else if response.on_hover_text(tooltip).clicked() {
-        if all_folded {
-            folds.expand_all(groups);
-        } else {
-            folds.fold_all(groups);
-        }
-    }
-}
-
-/// Copies one query's whole result to the clipboard as tab-separated values,
-/// for a spreadsheet.
-fn copy_tsv_button_ui(ui: &mut egui::Ui, table: &MatchTable<'_>) {
-    let has_matches = !table.groups().is_empty();
-    let response = ui.add_enabled(has_matches, Button::new(ICON_COPY).small());
-    if !has_matches {
-        response.on_disabled_hover_text("This query matched nothing");
-    } else if response.on_hover_text(table.copy_tooltip()).clicked() {
-        ui.ctx().copy_text(table.as_tsv());
-    }
 }
 
 /// Coarse age for a history entry, at minute granularity or coarser.
@@ -1566,10 +1309,6 @@ fn query_one_line(text: &str) -> String {
 
     let flat = kept.split_whitespace().collect::<Vec<_>>().join(" ");
     gt_fmt::truncate_with_ellipsis(&flat, HISTORY_LINE_MAX_CHARS).into_owned()
-}
-
-fn points_of(files: &[LoadedFile], track_ref: TrackRef) -> Option<&[NavPoint]> {
-    track_ref.resolve(files).map(|t| t.points.as_slice())
 }
 
 /// Byte offset of the `char_index`-th character, or the text length when the
@@ -1929,7 +1668,7 @@ fn segments(range: Range<usize>, underlines: &[(usize, usize)]) -> Vec<Range<usi
 mod tests {
     use gt_query::TrackInput;
     use gt_query_run::TrackProvider;
-    use gt_types::{FileIdx, TrackIdx};
+    use gt_types::{FileIdx, TrackIdx, TrackRef};
     use gt_ui_theme::ELLIPSIS;
     use rstest::rstest;
 
@@ -2149,54 +1888,5 @@ mod tests {
         assert_eq!(func.caret_back, 1);
         let unit = Candidate::from_construct(find("km/h").expect("km/h is catalogued"));
         assert!(unit.pad_after_digit);
-    }
-
-    /// One loaded file named `filename`, holding one track of `points` fixes a
-    /// second apart from noon.
-    fn file_of(filename: &str, points: usize) -> LoadedFile {
-        let noon = DateTime::<Utc>::from_timestamp(12 * 3600, 0).unwrap_or_default();
-        LoadedFile {
-            metadata: gt_types::FileMetadata {
-                filename: filename.to_owned(),
-                ..gt_test_utils::empty_file_metadata()
-            },
-            tracks: vec![gt_test_utils::loaded_track_with_points(
-                gt_test_utils::nav_points_from(noon, points, 1),
-            )],
-            event_marker_styles: std::collections::HashMap::new(),
-            orphaned_event_markers: Vec::new(),
-            source: gt_types::FileSource::GtdBytes(std::sync::Arc::from(Vec::<u8>::new())),
-            load_warnings: Vec::new(),
-        }
-    }
-
-    /// A match's name states which track it is on, the span it covers, how many
-    /// points it holds and how long it ran. The filename leads only where
-    /// several recordings are loaded.
-    #[rstest]
-    #[case::one_file(1, rng(0, 5), "#0 · 12:00:00 → 12:00:04 · 5 points · 4 s")]
-    #[case::several_files(2, rng(0, 5), "one.gtd #0 · 12:00:00 → 12:00:04 · 5 points · 4 s")]
-    #[case::single_point(1, rng(3, 4), "#0 · 12:00:03 · 1 point")]
-    #[case::over_a_minute(1, rng(0, 61), "#0 · 12:00:00 → 12:01:00 · 61 points · 1:00 min")]
-    fn a_match_name_states_its_track_span_and_duration(
-        #[case] file_count: usize,
-        #[case] range: Range<usize>,
-        #[case] expected: &str,
-    ) {
-        let files: Vec<LoadedFile> = ["one.gtd", "two.gtd"]
-            .into_iter()
-            .take(file_count)
-            .map(|name| file_of(name, 61))
-            .collect();
-        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
-        assert_eq!(match_name_text(&files, track, &range), expected);
-    }
-
-    /// A track that is no longer loaded has no times to state: the name is
-    /// left with the match's own point count.
-    #[test]
-    fn a_match_on_an_unloaded_track_states_only_its_size() {
-        let track = TrackRef::new(FileIdx::new(3), TrackIdx::new(1));
-        assert_eq!(match_name_text(&[], track, &rng(0, 3)), "#1 · 3 points");
     }
 }

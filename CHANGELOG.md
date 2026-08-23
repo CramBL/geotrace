@@ -28,7 +28,7 @@
 ### Changed
 
 - **Log Processing:** Log files now successfully load even if some lines have unrecognized timestamps by interpolating from neighboring data.
-- **Interface:** Redesigned query results into a unified, tabbed table below the editor with shared headers, collapsible stretches, and TSV export.
+- **Interface:** Redesigned query results into a tabbed panel below the editor: a line per query stating what it matched, a sortable table of every match of the run, and the picked match's points under shared column headers, with TSV export.
 - **Interface:** The Settings window now displays one category at a time using a left-side navigation rail.
 - **Plotting:** Grouped space weather and interference chips together with descriptive hover states, and made the aircraft interference line span all archived days in view.
 
