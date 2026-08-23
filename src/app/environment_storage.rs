@@ -638,6 +638,9 @@ impl App {
 
     /// What stops the delete controls from taking input, when something does.
     pub(super) fn environment_deletes_blocked_by(&self) -> Option<DeleteBlocker> {
+        if !self.pending_writes.write_access().allows_writing() {
+            return Some(DeleteBlocker::ReadOnlySession);
+        }
         match self.storage_open.databases_pending() {
             Some(DatabasesPending::WaitingForTheDataDirectory) => {
                 Some(DeleteBlocker::WaitingForTheDataDirectory)

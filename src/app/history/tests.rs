@@ -1,9 +1,11 @@
-use egui_kittest::kittest::Queryable as _;
-use gt_pending_writes::PendingWrites;
+use egui_kittest::kittest::{NodeT as _, Queryable as _};
+use gt_pending_writes::{PendingWrites, WriteAccess};
 use gt_store::HistoryDatabase as _;
 use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
 
 use crate::app::history_db::Response;
+use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
+use crate::app::storage_controls::AUTO_STORE_LABEL;
 
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use gt_store::ChannelSummary;
@@ -26,6 +28,8 @@ struct HistoryHarness {
     storage: crate::settings::StorageSettings,
     /// What the app reports while its startup open runs.
     databases_opening: bool,
+    /// What the session may write, which is what grays the controls that do.
+    write_access: WriteAccess,
     _dir: tempfile::TempDir,
 }
 
@@ -45,6 +49,7 @@ fn history_harness(entries: Vec<RecordingEntry>) -> HistoryHarness {
             ..crate::settings::StorageSettings::default()
         },
         databases_opening: false,
+        write_access: WriteAccess::Owner,
         _dir: dir,
     }
 }
@@ -56,6 +61,7 @@ fn show_history(ui: &mut egui::Ui, s: &mut HistoryHarness) {
         &[],
         &mut s.storage,
         s.databases_opening,
+        s.write_access,
     );
 }
 
@@ -92,6 +98,7 @@ fn history_harness_with_recording(identity: &str) -> HistoryHarness {
             ..crate::settings::StorageSettings::default()
         },
         databases_opening: false,
+        write_access: WriteAccess::Owner,
         _dir: dir,
     }
 }
@@ -150,6 +157,72 @@ fn rename_workflow_updates_the_listed_identity_end_to_end() {
         h.inner
             .step_until(|h| h.query_by_label_contains("ride.gtd v2").is_some()),
         "the renamed identity should appear in the refreshed list"
+    );
+}
+
+/// Never hidden, per DESIGN.md: in a read-only session the row's actions that
+/// write are grayed and say the recording history is left as it is, while
+/// opening a recording - which writes nothing - stays live.
+#[test]
+fn the_row_actions_that_write_are_grayed_in_a_read_only_session() {
+    let mut harness = history_harness(vec![entry_with_identity("auto:ride.gtd")]);
+    harness.write_access = WriteAccess::ReadOnly;
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(show_history, harness);
+    h.step();
+
+    let delete = h.inner.get_by_label("Delete");
+    assert!(delete.accesskit_node().is_disabled());
+    let delete_center = delete.rect().center();
+    assert!(
+        !h.inner.get_by_label("Open").accesskit_node().is_disabled(),
+        "opening a stored recording stays live: it writes nothing"
+    );
+    assert!(
+        h.inner
+            .get_by_label_contains("Prune…")
+            .accesskit_node()
+            .is_disabled()
+    );
+
+    h.inner.hover_at_and_settle(delete_center, 3);
+
+    h.inner
+        .get_by_label_contains(READ_ONLY_RECORDING_HISTORY_HOVER);
+}
+
+/// The rename a double click opens is a write too: a read-only session opens
+/// no editor, and the context menu's Rename is grayed.
+#[test]
+fn no_rename_editor_opens_in_a_read_only_session() {
+    let mut harness = history_harness(vec![entry_with_identity("auto:ride.gtd")]);
+    harness.write_access = WriteAccess::ReadOnly;
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .step_dt(1.0 / 60.0)
+        .ui_state(show_history, harness);
+    h.run();
+
+    h.inner.get_by_label_contains("ride.gtd").click();
+    h.inner.get_by_label_contains("ride.gtd").click();
+    h.run();
+    h.inner.event(egui::Event::Text(" v2".to_owned()));
+    h.step();
+    h.step();
+
+    assert!(
+        h.inner.query_all_by_value("ride.gtd v2").next().is_none(),
+        "the read-only session opened the rename editor and typing reached it"
+    );
+    h.inner.get_by_label_contains("ride.gtd").click_secondary();
+    h.step();
+    assert!(
+        h.inner
+            .get_by_label("Rename")
+            .accesskit_node()
+            .is_disabled(),
+        "the read-only session offers a rename that would be refused"
     );
 }
 
@@ -506,7 +579,7 @@ fn filter_field_does_not_overlap_the_toolbar_controls() {
         h.step();
     }
 
-    let checkbox_left = h.inner.get_by_label("Auto-store recordings").rect().left();
+    let checkbox_left = h.inner.get_by_label(AUTO_STORE_LABEL).rect().left();
     // The first text input in the window is the identity filter field.
     let filter_right = h
         .inner
@@ -898,7 +971,7 @@ fn cursor_icon(h: &TestHarness<HistoryHarness>) -> egui::CursorIcon {
 #[case::points_cell(point_at_widget, "8.9k", egui::CursorIcon::Default)]
 #[case::static_caption(point_at_widget, "GB", egui::CursorIcon::Default)]
 #[case::button(point_at_widget, "Prune…", egui::CursorIcon::Default)]
-#[case::checkbox(point_at_widget, "Auto-store recordings", egui::CursorIcon::Default)]
+#[case::checkbox(point_at_widget, AUTO_STORE_LABEL, egui::CursorIcon::Default)]
 fn elements_request_a_cursor_that_matches_what_they_do(
     #[case] hover: fn(&mut TestHarness<HistoryHarness>, &str),
     #[case] label: &str,

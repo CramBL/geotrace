@@ -30,7 +30,13 @@ impl App {
             return;
         };
         let names = RecordingNames::resolve(recordings, &shared.recording_name_template);
-        let choice = dialog.show(ui.ctx(), log, recordings, &names);
+        let choice = dialog.show(
+            ui.ctx(),
+            log,
+            recordings,
+            &names,
+            self.pending_writes.write_access(),
+        );
         let duplicate_query = dialog
             .duplicate_query_to_send(recordings)
             .map(|db_ref| (db_ref, Arc::clone(log.parsed().text())));

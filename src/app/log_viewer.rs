@@ -18,6 +18,7 @@ use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
 use egui_phosphor::regular::X as ICON_X;
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
 use gt_log_view::{LoadedLog, LoadedLogs};
+use gt_pending_writes::WriteAccess;
 use gt_types::FileIdx;
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::{LoadedLogId, LogMatchHover};
@@ -25,6 +26,8 @@ use strum::IntoEnumIterator as _;
 
 use association_window::AssociationWindowUnit;
 use line_table::LineTableRequests;
+
+use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 
 /// The three ways a log gets in, shown by the viewer's empty state and by the
 /// drag-and-drop overlay alike.
@@ -95,6 +98,10 @@ pub(super) struct LogViewerContext<'a> {
     pub log_hover: &'a mut LogMatchHover,
     pub requests: &'a mut LogViewerRequests,
 
+    /// Whether this session writes to the recording history, which is what
+    /// attaching a log to a recording and taking it back out do.
+    pub write_access: WriteAccess,
+
     /// Whether the association dialog is over the viewer, which then takes the
     /// Escape press for itself.
     pub dialog_open: bool,
@@ -154,6 +161,7 @@ impl LogViewerWindow {
             map_center_request,
             log_hover,
             requests,
+            write_access,
             dialog_open,
         }: LogViewerContext<'_>,
     ) {
@@ -194,7 +202,14 @@ impl LogViewerWindow {
                 egui::Panel::bottom("log_viewer_footer")
                     .show_separator_line(false)
                     .show(ui, |ui| {
-                        self.footer_ui(ui, logs, recordings, recording_names, requests);
+                        self.footer_ui(
+                            ui,
+                            logs,
+                            recordings,
+                            recording_names,
+                            requests,
+                            write_access,
+                        );
                     });
                 if let Some((log_id, log)) = logs.get_with_id(self.selected) {
                     self.line_table_ui(
@@ -323,6 +338,7 @@ impl LogViewerWindow {
         recordings: LoadedFilesView<'_>,
         recording_names: &RecordingNames,
         requests: &mut LogViewerRequests,
+        write_access: WriteAccess,
     ) {
         let selected = self.selected;
         let Some((log_id, log)) = logs.get_with_id(selected) else {
@@ -403,20 +419,32 @@ impl LogViewerWindow {
                 });
 
             ui.separator();
-            let attach = ui.add_enabled(!recordings.is_empty(), Button::new(ATTACH_LABEL));
+            let writes_recordings = write_access.allows_writing();
+            let attach = ui.add_enabled(
+                !recordings.is_empty() && writes_recordings,
+                Button::new(ATTACH_LABEL),
+            );
             if attach.clicked() {
                 requests.open_association_dialog = Some(log_id);
             }
             attach
                 .on_hover_text(ATTACH_HOVER)
-                .on_disabled_hover_text(ATTACH_NO_RECORDING_HOVER);
-            let detach = ui.add_enabled(attached, Button::new(DETACH_LABEL));
+                .on_disabled_hover_text(if writes_recordings {
+                    ATTACH_NO_RECORDING_HOVER
+                } else {
+                    READ_ONLY_RECORDING_HISTORY_HOVER
+                });
+            let detach = ui.add_enabled(attached && writes_recordings, Button::new(DETACH_LABEL));
             if detach.clicked() {
                 requests.detach = Some(log_id);
             }
             detach
                 .on_hover_text(DETACH_HOVER)
-                .on_disabled_hover_text(DETACH_UNATTACHED_HOVER);
+                .on_disabled_hover_text(if writes_recordings {
+                    DETACH_UNATTACHED_HOVER
+                } else {
+                    READ_ONLY_RECORDING_HISTORY_HOVER
+                });
         });
 
         self.association_window_unit = unit;

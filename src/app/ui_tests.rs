@@ -50,15 +50,21 @@ use super::archive_recovery::{
 };
 use super::backfill_ui::DOWNLOAD_HISTORY_LABEL;
 use super::environment_storage::EnvironmentArchive;
-use super::environment_storage_ui::{DELETE_ALL_LABEL, DeleteBlocker, PRUNE_BUTTON_LABEL};
+use super::environment_storage_ui::{
+    AUTO_PRUNE_LABEL as ENVIRONMENT_AUTO_PRUNE_LABEL, DELETE_ALL_LABEL, DeleteBlocker,
+    PRUNE_BUTTON_LABEL,
+};
 use super::instance_wait::{
     DATA_DIRECTORY_HELD_TITLE, DATA_DIRECTORY_RETRY_INTERVAL, LOCK_FILE_UNUSABLE_TITLE,
-    TAKE_OVER_BUTTON_LABEL, TAKE_OVER_CONFIRMATION_TITLE, TAKE_OVER_WARNING,
+    START_READ_ONLY_BUTTON_LABEL, TAKE_OVER_BUTTON_LABEL, TAKE_OVER_CONFIRMATION_TITLE,
+    TAKE_OVER_WARNING,
 };
 use super::log_viewer;
 use super::query;
+use super::read_only_session::{READ_ONLY_MARKER_LABEL, READ_ONLY_RECORDING_HISTORY_HOVER};
 use super::settings_ui::{self, SettingsPage};
 use super::storage::{DatabasesPending, OPENING_DATABASES, OpenStorage, StorageOpen};
+use super::storage_controls::AUTO_STORE_LABEL;
 use crate::termination_signal::TERMINATION_SIGNAL_FLAG;
 
 /// In-memory [`egui::DroppedFile`] for drag-drop tests. `bytes` drops carry a
@@ -3897,7 +3903,7 @@ fn storage_controls_drive_one_setting_from_both_windows() {
 
     // Auto-storing off in the History window empties the loader's database
     // path, the same live effect the Application page has.
-    click_settled(&mut harness, "Auto-store recordings");
+    click_settled(&mut harness, AUTO_STORE_LABEL);
     assert!(
         !harness.state().storage_settings.enabled,
         "the History window's auto-store checkbox writes the setting"
@@ -3909,10 +3915,10 @@ fn storage_controls_drive_one_setting_from_both_windows() {
     harness.state_mut().history_window.open = false;
     harness.state_mut().settings_open = true;
     assert!(
-        harness.step_until(|h| h.query_by_label("Auto-store recordings").is_some()),
+        harness.step_until(|h| h.query_by_label(AUTO_STORE_LABEL).is_some()),
         "the Application page shows the auto-store checkbox"
     );
-    click_settled(&mut harness, "Auto-store recordings");
+    click_settled(&mut harness, AUTO_STORE_LABEL);
     assert!(
         harness.state().storage_settings.enabled,
         "the Application page's auto-store checkbox writes the setting"
@@ -4765,6 +4771,175 @@ fn the_lock_freed_after_a_take_over_makes_this_instance_the_marked_owner() {
     );
 }
 
+/// Starts the session read-only as the user does: the wait dialog's button,
+/// which leads to no confirmation.
+fn start_the_session_read_only(harness: &mut Harness<'_, App>) {
+    harness
+        .get_by_label_contains(START_READ_ONLY_BUTTON_LABEL)
+        .click();
+    harness.run_steps(3);
+}
+
+/// The wait offers a second way out: reading the recordings and archives
+/// beside the instance that owns the data directory, which leaves that
+/// instance's mark where it is.
+#[test]
+fn starting_read_only_leaves_the_wait_and_opens_the_databases_without_the_lock() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+    harness.step();
+    harness.get_by_label_contains(DATA_DIRECTORY_HELD_TITLE);
+
+    start_the_session_read_only(&mut harness);
+
+    assert_eq!(
+        harness.state().pending_writes.write_access(),
+        WriteAccess::ReadOnly,
+        "the session went on writing after the user chose to read"
+    );
+    assert_eq!(
+        harness.state().storage_open.databases_pending(),
+        None,
+        "the read-only choice left the databases unopened"
+    );
+    assert_eq!(
+        harness.state().instance_lock.ownership(),
+        DataDirectoryOwnership::NoDataDirectory,
+        "the read-only session kept a claim on the data directory"
+    );
+    assert!(
+        harness
+            .query_by_label_contains(DATA_DIRECTORY_HELD_TITLE)
+            .is_none(),
+        "the wait dialog outlived the read-only choice"
+    );
+}
+
+/// No promotion, ever: the instance that owns the data directory letting go
+/// leaves the read-only session as it is, and the directory free for whoever
+/// starts next.
+#[test]
+fn a_read_only_session_does_not_become_the_owner_when_the_other_instance_exits() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+    harness.step();
+    start_the_session_read_only(&mut harness);
+
+    drop(holder);
+    thread::sleep(DATA_DIRECTORY_RETRY_INTERVAL);
+    harness.run_steps(3);
+
+    assert!(
+        DataDirectoryLock::acquire(Some(directory.path())).marks_the_data_directory(),
+        "the read-only session holds the lock the next instance needs"
+    );
+    assert_eq!(
+        harness.state().instance_lock.ownership(),
+        DataDirectoryOwnership::NoDataDirectory,
+        "the read-only session took the data directory the other instance let go of"
+    );
+    assert_eq!(
+        harness.state().pending_writes.write_access(),
+        WriteAccess::ReadOnly,
+        "the read-only session started writing once the directory was free"
+    );
+}
+
+/// The marker states what the session is, as the debug-build warning does,
+/// and a session that owns the data directory shows none.
+#[test]
+fn only_a_read_only_session_shows_the_read_only_marker() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+    harness.step();
+    assert!(
+        harness
+            .query_by_label_contains(READ_ONLY_MARKER_LABEL)
+            .is_none(),
+        "a session that has yet to choose is marked as read-only"
+    );
+
+    start_the_session_read_only(&mut harness);
+
+    let marker = harness.get_by_label_contains(READ_ONLY_MARKER_LABEL).rect();
+    harness.hover_at_and_settle(marker.center(), 3);
+    harness.get_by_label_contains(&format!(
+        "Another GeoTrace (process {}) owns the data directory",
+        process::id()
+    ));
+    drop(holder);
+}
+
+/// The file a command line named waits through the choice: it loads once the
+/// databases are open, and the read-only session stores none of it.
+#[test]
+fn a_file_queued_while_waiting_loads_read_only_and_is_not_stored() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let store = gt_store::Store::open_in(directory.path());
+    let gtd_path = directory.path().join("queued.gtd");
+    std::fs::write(&gtd_path, minimal_gtd_bytes()).expect("write the recording");
+    let mut harness = app_waiting_for_the_data_directory(&[gtd_path], directory.path());
+    harness.run_steps(3);
+    assert_eq!(harness.state().shared.borrow().loaded_files.len(), 0);
+
+    harness
+        .get_by_label_contains(START_READ_ONLY_BUTTON_LABEL)
+        .click();
+    // The load runs against a real recording history from here on: a test
+    // run opens no database of its own, and this is the one frame the choice
+    // takes before that lands.
+    harness.step();
+    let databases = harness.state_mut().storage_open.take_over_for_test();
+    land_the_databases(&mut harness, &databases, &store);
+
+    assert!(
+        harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1),
+        "the file that waited for the data directory never loaded"
+    );
+    let recordings =
+        Recordings::open_or_create(&store.recordings_path()).expect("open the recording history");
+    assert_eq!(
+        recordings.list_recordings().expect("list").len(),
+        0,
+        "the read-only session stored the recording that waited for it"
+    );
+}
+
+/// Paste is its own load surface and has escaped this queue before, so the
+/// read-only exit from the wait carries it too.
+#[test]
+fn log_text_pasted_while_waiting_loads_in_the_read_only_session_it_starts() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let store = gt_store::Store::open_in(directory.path());
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+
+    harness.input_mut().events.push(egui::Event::Paste(
+        "2026-01-01 14:02:11 navsyncd: queue empty\n".to_owned(),
+    ));
+    harness.run_steps(3);
+    assert!(
+        harness.state().logs.is_empty(),
+        "the paste loaded while another instance held the data directory"
+    );
+
+    harness
+        .get_by_label_contains(START_READ_ONLY_BUTTON_LABEL)
+        .click();
+    harness.step();
+    let databases = harness.state_mut().storage_open.take_over_for_test();
+    land_the_databases(&mut harness, &databases, &store);
+
+    assert!(
+        harness.step_until(|harness| harness.state().logs.len() == 1),
+        "the paste that waited for the data directory never loaded"
+    );
+}
+
 /// The interference archive's day index, which is where a delete records
 /// that it is part-way through.
 const INTERFERENCE_DAYS: GroupPath<'static> = GroupPath(schema::DAYS_GROUP);
@@ -5116,6 +5291,100 @@ fn the_environment_controls_are_grayed_while_the_archives_open() {
             .is_none(),
         "the opening hover text outlived the open"
     );
+}
+
+/// Never hidden, per DESIGN.md: in a read-only session every control that
+/// would write to an archive is grayed and says the session changes none.
+#[test]
+fn the_environment_controls_are_grayed_in_a_read_only_session() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path());
+    // A day to delete, or the controls stay grayed for having nothing to act
+    // on, whatever the session may write.
+    store
+        .open_interference()
+        .expect("open the archive")
+        .insert_day(
+            chrono::NaiveDate::from_ymd_opt(2026, 7, 20).expect("date"),
+            "host",
+            chrono::Utc::now(),
+            &[],
+        )
+        .expect("insert");
+    let (mut harness, databases) =
+        app_with_the_databases_still_opening_for(&[], WriteAccess::ReadOnly);
+    land_the_databases(&mut harness, &databases, &store);
+    harness.state_mut().settings_open = true;
+    harness.state_mut().settings_page = SettingsPage::Application;
+    harness.run_steps(3);
+
+    assert_eq!(
+        harness.state().environment_deletes_blocked_by(),
+        Some(DeleteBlocker::ReadOnlySession)
+    );
+    for delete in harness.query_all_by_label_contains(DELETE_ALL_LABEL) {
+        assert!(delete.accesskit_node().is_disabled());
+    }
+    assert!(
+        harness
+            .get_by_label_contains(PRUNE_BUTTON_LABEL)
+            .accesskit_node()
+            .is_disabled()
+    );
+    assert!(
+        harness
+            .get_by_label_contains(ENVIRONMENT_AUTO_PRUNE_LABEL)
+            .accesskit_node()
+            .is_disabled(),
+        "the setting takes no input: a read-only session auto-prunes nothing"
+    );
+    harness.hover_and_settle(By::new().label_contains(PRUNE_BUTTON_LABEL), 3);
+    harness.get_by_label_contains(&DeleteBlocker::ReadOnlySession.hover_text());
+
+    harness.state_mut().settings_page = SettingsPage::AircraftInterference;
+    harness.run_steps(3);
+
+    assert!(
+        harness
+            .get_by_label_contains(DOWNLOAD_HISTORY_LABEL)
+            .accesskit_node()
+            .is_disabled()
+    );
+    harness.hover_and_settle(By::new().label_contains(DOWNLOAD_HISTORY_LABEL), 3);
+    harness.get_by_label_contains("This session is read-only: nothing is downloaded into the");
+}
+
+/// The recording storage controls are grayed the same way: a read-only
+/// session stores no recording and prunes none.
+#[test]
+fn the_recording_storage_controls_are_grayed_in_a_read_only_session() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path());
+    let (mut harness, databases) =
+        app_with_the_databases_still_opening_for(&[], WriteAccess::ReadOnly);
+    land_the_databases(&mut harness, &databases, &store);
+    harness.state_mut().settings_open = true;
+    harness.state_mut().settings_page = SettingsPage::Application;
+    harness.run_steps(3);
+
+    assert!(
+        harness
+            .get_by_label_contains(AUTO_STORE_LABEL)
+            .accesskit_node()
+            .is_disabled()
+    );
+    harness.hover_and_settle(By::new().label_contains(AUTO_STORE_LABEL), 3);
+    harness.get_by_label_contains(READ_ONLY_RECORDING_HISTORY_HOVER);
+
+    for auto_prune in ["Auto-prune when over", "Confirm before pruning"] {
+        assert!(
+            harness
+                .get_by_label_contains(auto_prune)
+                .accesskit_node()
+                .is_disabled(),
+            "{auto_prune} is live in a session that stores no recording"
+        );
+    }
 }
 
 /// The download control on a source page is grayed the same way: there is

@@ -1,10 +1,11 @@
-use egui::{Button, Grid, Label, RichText, ScrollArea, Window};
+use egui::{Button, Checkbox, Grid, Label, RichText, ScrollArea, Window};
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use gt_jam::text::{ATTRIBUTION, PUBLISHER_URL, UPSTREAM_URL};
 use gt_map::{MapLayer, NavMap};
+use gt_pending_writes::WriteAccess;
 use gt_side_panel::{NodeKey, RecordingDetails, TreeState};
 use gt_store::DatabaseRef;
 use gt_types::{LoadWarning, TrackRef};
@@ -18,6 +19,9 @@ use crate::app::environment_storage::{
 };
 use crate::app::mapbox_token;
 use crate::app::mapbox_token::{MapboxTokenCommit, MapboxTokenField};
+use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
+
+const PERMANENT_DELETE_LABEL: &str = "Also delete permanently from history";
 
 /// The tracks of one stored recording that a remove acts on.
 pub struct RecordingTrackRemoval {
@@ -62,6 +66,7 @@ pub fn show_delete_confirmation(
     tree: &mut TreeState,
     loaded_files: &mut LoadedFiles,
     recording_names: &RecordingNames,
+    write_access: WriteAccess,
 ) -> Option<RemoveOutcome> {
     let Some(confirm) = &tree.delete_confirm else {
         return None;
@@ -137,8 +142,23 @@ pub fn show_delete_confirmation(
                         .weak()
                         .small(),
                 );
+            } else if !write_access.allows_writing() {
+                permanent = false;
+                ui.add_enabled(
+                    false,
+                    Checkbox::new(&mut permanent, PERMANENT_DELETE_LABEL),
+                )
+                .on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER);
+                ui.label(
+                    RichText::new(
+                        "This only removes them from the current view: the session is read-only \
+                         and leaves every recording in history as it is.",
+                    )
+                    .weak()
+                    .small(),
+                );
             } else {
-                ui.checkbox(&mut permanent, "Also delete permanently from history");
+                ui.checkbox(&mut permanent, PERMANENT_DELETE_LABEL);
                 let track_label = gt_fmt::pluralize(affected_tracks, "track", "tracks");
                 let rec_label = gt_fmt::pluralize(affected_recordings, "recording", "recordings");
                 let detail = if permanent {
@@ -1058,19 +1078,20 @@ mod tests {
         FileIdx, FileSource, LoadedFile, LoadedTrack, TrackIdx, TrackLod, TrackMetadata,
     };
 
-    use egui_kittest::kittest::Queryable as _;
+    use egui_kittest::kittest::{NodeT as _, Queryable as _};
     use gt_map::TileAccess;
-    use gt_pending_writes::WriteKind;
+    use gt_pending_writes::{WriteAccess, WriteKind};
     use gt_test_utils::{HarnessInteraction as _, TestHarness};
 
     use super::{
         CoveredDayCounts, EnvironmentArchive, EnvironmentPruneChoice, EnvironmentPrunePrompt,
-        ForceQuitChoice, MapLayer, MapboxTokenField, NavMap, NodeKey, PruneRequest, PruneScope,
-        PrunedDays, TrackRef, files_fully_removed, prune_scope_line,
-        show_environment_prune_confirmation, show_force_quit_confirmation,
-        show_mapbox_token_dialog, track_removals,
+        ForceQuitChoice, MapLayer, MapboxTokenField, NavMap, NodeKey, PERMANENT_DELETE_LABEL,
+        PruneRequest, PruneScope, PrunedDays, TrackRef, files_fully_removed, prune_scope_line,
+        show_delete_confirmation, show_environment_prune_confirmation,
+        show_force_quit_confirmation, show_mapbox_token_dialog, track_removals,
     };
-    use gt_loaded_files::{FileHistory, LoadedFiles};
+    use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
+    use gt_side_panel::{DeleteConfirmState, TreeState};
 
     fn day(offset: i64) -> chrono::NaiveDate {
         chrono::NaiveDate::from_ymd_opt(2026, 7, 5).unwrap_or_default()
@@ -1386,6 +1407,57 @@ mod tests {
             loaded.push(make_file(track_count), history);
         }
         loaded
+    }
+
+    /// The remove confirmation over one stored recording, with its first
+    /// track selected for removal.
+    struct DeleteConfirmationState {
+        tree: TreeState,
+        loaded_files: LoadedFiles,
+        write_access: WriteAccess,
+    }
+
+    fn delete_confirmation_ui(ui: &mut egui::Ui, state: &mut DeleteConfirmationState) {
+        let names = RecordingNames::resolve(state.loaded_files.view(), "{filename}");
+        show_delete_confirmation(
+            ui,
+            &mut state.tree,
+            &mut state.loaded_files,
+            &names,
+            state.write_access,
+        );
+    }
+
+    /// Removing tracks of a stored recording writes to the recording history,
+    /// which a read-only session does not: the permanent-delete tickbox is
+    /// grayed, and the dialog names the view as all the remove changes.
+    #[test]
+    fn the_remove_confirmation_touches_no_recording_in_a_read_only_session() {
+        let mut tree = TreeState::default();
+        tree.delete_confirm = Some(DeleteConfirmState {
+            items: vec![track_key(0, 0)],
+            delete_permanently: true,
+        });
+        let mut harness = TestHarness::builder().ui_state(
+            delete_confirmation_ui,
+            DeleteConfirmationState {
+                tree,
+                loaded_files: make_loaded_files(&[(2, true)]),
+                write_access: WriteAccess::ReadOnly,
+            },
+        );
+        harness.inner.run_steps(3);
+
+        assert!(
+            harness
+                .inner
+                .get_by_label_contains(PERMANENT_DELETE_LABEL)
+                .accesskit_node()
+                .is_disabled()
+        );
+        harness
+            .inner
+            .get_by_label_contains("the session is read-only");
     }
 
     fn track_key(fi: usize, ti: usize) -> NodeKey {

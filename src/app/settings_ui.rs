@@ -123,6 +123,9 @@ impl App {
     /// one that could not be opened outranks offline mode: there is nowhere
     /// to download to either way.
     fn backfill_readiness(&self, archive: EnvironmentArchive) -> BackfillReadiness {
+        if !self.pending_writes.write_access().allows_writing() {
+            return BackfillReadiness::ReadOnlySession;
+        }
         match self.storage_open.databases_pending() {
             Some(DatabasesPending::WaitingForTheDataDirectory) => {
                 BackfillReadiness::WaitingForTheDataDirectory

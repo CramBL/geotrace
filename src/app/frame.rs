@@ -812,6 +812,7 @@ impl App {
                     map_center_request,
                     log_hover,
                     requests: &mut self.log_viewer_requests,
+                    write_access: self.pending_writes.write_access(),
                     dialog_open: self.association_dialog.is_some(),
                 },
             );
@@ -1027,6 +1028,7 @@ impl App {
         }
 
         let remove_outcome = {
+            let write_access = self.pending_writes.write_access();
             let mut refmut = self.shared.borrow_mut();
             let s = &mut *refmut;
             // Resolved only while the dialog is up. The map and plot resolve
@@ -1034,7 +1036,13 @@ impl App {
             let outcome = s.tree.delete_confirm.is_some().then(|| {
                 let recording_names =
                     RecordingNames::resolve(s.loaded_files.view(), &s.recording_name_template);
-                show_delete_confirmation(ui, &mut s.tree, &mut s.loaded_files, &recording_names)
+                show_delete_confirmation(
+                    ui,
+                    &mut s.tree,
+                    &mut s.loaded_files,
+                    &recording_names,
+                    write_access,
+                )
             });
             let outcome = outcome.flatten();
             if outcome.is_some() {

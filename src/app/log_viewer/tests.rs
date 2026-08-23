@@ -11,6 +11,9 @@ use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
 use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
 use gt_log_view::{FilterChipMode, LayerColorSlot, LoadedLog, LoadedLogs};
+use gt_pending_writes::WriteAccess;
+
+use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use gt_test_utils::{By, HarnessInteraction as _, TestHarness, snapshot_harness};
 use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::{FileSource, Latitude, Longitude};
@@ -71,6 +74,9 @@ struct ViewerState {
     map_center: Option<(f64, f64)>,
     log_hover: LogMatchHover,
     requests: LogViewerRequests,
+    /// What the session may write, which is what grays the attachment
+    /// controls.
+    write_access: WriteAccess,
 }
 
 impl ViewerState {
@@ -142,6 +148,7 @@ fn viewer_ui(ui: &mut egui::Ui, state: &mut ViewerState) {
         ui.ctx(),
         &mut state.logs,
         LogViewerContext {
+            write_access: state.write_access,
             recordings: state.recordings.view(),
             recording_names: &names,
             map_center_request: &mut state.map_center,
@@ -186,6 +193,7 @@ fn viewer_state(recordings: Vec<gt_types::LoadedFile>, logs: &[(&str, &str)]) ->
         map_center: None,
         log_hover: LogMatchHover::default(),
         requests: LogViewerRequests::default(),
+        write_access: WriteAccess::Owner,
     }
 }
 
@@ -508,6 +516,39 @@ fn an_attachment_is_shown_and_removable_only_while_the_log_has_one() {
     harness.run_steps(2);
 
     assert_eq!(harness.state().requests.detach, Some(shown));
+}
+
+/// Attaching a log to a recording and taking it back out both write to the
+/// recording history: a read-only session offers neither, and says why.
+#[test]
+fn the_attachment_controls_are_grayed_in_a_read_only_session() {
+    let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
+    let shown = harness
+        .state()
+        .logs
+        .get_with_id(0)
+        .map(|(id, _)| id)
+        .expect("the fixture log is loaded");
+    if let Some(log) = harness.state_mut().logs.get_mut_by_id(shown) {
+        log.record_attachment(attachment_ref(), Vec::new());
+    }
+    harness.state_mut().write_access = WriteAccess::ReadOnly;
+    harness.run_steps(2);
+
+    let attach = harness.get_by_label(super::ATTACH_LABEL);
+    assert!(attach.accesskit_node().is_disabled());
+    let attach_center = attach.rect().center();
+    assert!(
+        harness
+            .get_by_label(super::DETACH_LABEL)
+            .accesskit_node()
+            .is_disabled(),
+        "a read-only session takes no attachment out of the recording history"
+    );
+
+    harness.hover_at_and_settle(attach_center, 3);
+
+    harness.get_by_label_contains(READ_ONLY_RECORDING_HISTORY_HOVER);
 }
 
 #[test]

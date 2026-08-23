@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use egui::{Button, Grid, Label, RichText, TextEdit};
 use egui_extras::{Column, TableBuilder, TableRow};
 use egui_phosphor::regular::NOTE as ICON_NOTE;
+use gt_pending_writes::WriteAccess;
 use gt_side_panel::widgets::{MetadataView, has_metadata_details, metadata_detail_rows};
 use gt_store::{ChannelSummary, RecordingEntry};
 use gt_ui_theme::EM_DASH;
@@ -11,6 +12,7 @@ use strum::{EnumCount as _, IntoEnumIterator as _};
 
 use super::{HistorySort, RenameEdit, SortColumn};
 use crate::app::history_db::{DeleteReason, HistoryWorker};
+use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 
 /// The scrolling recordings table, laid out like a file manager's list: the
 /// metadata columns (date, duration, points, size, actions) size to their
@@ -25,12 +27,15 @@ use crate::app::history_db::{DeleteReason, HistoryWorker};
 /// it creep wider.
 pub(super) fn history_table(
     ui: &mut egui::Ui,
-    list_height: f32,
-    visible: &[&RecordingEntry],
-    loaded_metas: &[gt_store::RecordingMeta],
-    worker: &HistoryWorker,
-    rename: &mut Option<RenameEdit>,
-    sort: &mut HistorySort,
+    HistoryTable {
+        list_height,
+        visible,
+        loaded_metas,
+        worker,
+        rename,
+        sort,
+        write_access,
+    }: HistoryTable<'_>,
 ) {
     let row_height = ui.text_style_height(&egui::TextStyle::Body) + 6.0;
 
@@ -98,7 +103,14 @@ pub(super) fn history_table(
                     return;
                 };
                 let already_loaded = loaded_metas.iter().any(|m| m.same_recording(&entry.meta));
-                render_row(&mut row, entry, already_loaded, worker, rename);
+                render_row(
+                    &mut row,
+                    entry,
+                    already_loaded,
+                    worker,
+                    rename,
+                    write_access,
+                );
             });
         });
 
@@ -162,6 +174,21 @@ fn sort_header(ui: &mut egui::Ui, column: SortColumn, sort: &mut HistorySort, te
     }
 }
 
+/// What one render of the recordings table draws, and what it edits while the
+/// user works in it.
+pub(super) struct HistoryTable<'a> {
+    pub list_height: f32,
+    /// The rows the filters left, in the order the sort put them.
+    pub visible: &'a [&'a RecordingEntry],
+    /// The recordings already in the window, whose rows cannot be opened
+    /// again.
+    pub loaded_metas: &'a [gt_store::RecordingMeta],
+    pub worker: &'a HistoryWorker,
+    pub rename: &'a mut Option<RenameEdit>,
+    pub sort: &'a mut HistorySort,
+    pub write_access: WriteAccess,
+}
+
 /// Identity never collapses below a readable width, even in a narrow window.
 const IDENTITY_MIN_WIDTH: f32 = 160.0;
 
@@ -177,6 +204,7 @@ fn render_row(
     already_loaded: bool,
     worker: &HistoryWorker,
     rename: &mut Option<RenameEdit>,
+    write_access: WriteAccess,
 ) {
     // Identity column: the inline editor when this row is being renamed,
     // otherwise the normal cell.
@@ -187,7 +215,7 @@ fn render_row(
         {
             render_rename_editor(ui, rename, worker);
         } else {
-            identity_cell(ui, entry, worker, rename);
+            identity_cell(ui, entry, worker, rename, write_access);
         }
     });
 
@@ -225,7 +253,12 @@ fn render_row(
         } else if open.clicked() {
             worker.open(entry.db_ref.clone());
         }
-        if ui.small_button("Delete").clicked() {
+        if ui
+            .add_enabled(write_access.allows_writing(), Button::new("Delete").small())
+            .on_hover_text("Permanently delete this recording from history")
+            .on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER)
+            .clicked()
+        {
             worker.delete_recordings(vec![entry.db_ref.clone()], DeleteReason::Manual);
         }
     });
@@ -452,7 +485,9 @@ fn identity_cell(
     entry: &RecordingEntry,
     worker: &HistoryWorker,
     rename: &mut Option<RenameEdit>,
+    write_access: WriteAccess,
 ) {
+    let writes_recordings = write_access.allows_writing();
     let identity = entry.db_ref.identity.as_str();
     let (display_name, is_auto) = super::identity_display_parts(identity);
     // The full identity is the hover's first line, so leave it out of the view:
@@ -493,9 +528,13 @@ fn identity_cell(
             )
         })
         .inner
-        // Double-click renames and right-click offers the menu, so the cell
-        // reads as interactive.
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        // Right-click always offers the menu, and a session that may write
+        // also renames on a double-click, so the cell reads as interactive.
+        .on_hover_cursor(if writes_recordings {
+            egui::CursorIcon::PointingHand
+        } else {
+            egui::CursorIcon::Default
+        })
         .on_hover_ui(|ui| {
             ui.label(identity);
             metadata_detail_rows(ui, &meta);
@@ -504,20 +543,32 @@ fn identity_cell(
             data_breakdown_ui(ui, entry);
             ui.separator();
             ui.label(
-                RichText::new("Double-click to rename")
-                    .small()
-                    .color(ui.visuals().weak_text_color()),
+                RichText::new(if writes_recordings {
+                    "Double-click to rename"
+                } else {
+                    READ_ONLY_RECORDING_HISTORY_HOVER
+                })
+                .small()
+                .color(ui.visuals().weak_text_color()),
             );
         });
-    if label.double_clicked() {
+    if label.double_clicked() && writes_recordings {
         begin_rename(rename, entry);
     }
     label.context_menu(|ui| {
-        if ui.button("Rename").clicked() {
+        if ui
+            .add_enabled(writes_recordings, Button::new("Rename"))
+            .on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER)
+            .clicked()
+        {
             begin_rename(rename, entry);
             ui.close();
         }
-        if ui.button("Delete").clicked() {
+        if ui
+            .add_enabled(writes_recordings, Button::new("Delete"))
+            .on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER)
+            .clicked()
+        {
             worker.delete_recordings(vec![entry.db_ref.clone()], DeleteReason::Manual);
             ui.close();
         }

@@ -5,12 +5,14 @@ use egui::{Button, DragValue, Label, RichText, ScrollArea, TextEdit, Window};
 use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_phosphor::regular::CARET_UP as ICON_CARET_UP;
 use egui_phosphor::regular::X as ICON_X;
+use gt_pending_writes::WriteAccess;
 use gt_store::{DatabaseRef, PruneMode, RecordingEntry, RecordingMeta};
 use gt_types::TravelMode;
 use gt_ui_theme::warning_amber;
 use strum::{EnumCount, EnumIter};
 
 use crate::app::history_db::{DeleteReason, HistoryWorker};
+use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use crate::app::storage_controls;
 use crate::settings::StorageSettings;
 
@@ -517,6 +519,7 @@ impl HistoryWindow {
         loaded_metas: &[RecordingMeta],
         storage: &mut StorageSettings,
         databases_opening: bool,
+        write_access: WriteAccess,
     ) {
         if !self.open {
             return;
@@ -604,21 +607,33 @@ impl HistoryWindow {
                         } else {
                             "Delete hidden data…".to_owned()
                         };
+                        let writes_recordings = write_access.allows_writing();
                         let delete_hidden = ui
-                            .add_enabled(hidden_count > 0, Button::new(delete_hidden_label))
-                            .on_hover_text(if hidden_count > 0 {
-                                "Permanently delete every hidden track from the original recordings"
-                            } else {
+                            .add_enabled(
+                                hidden_count > 0 && writes_recordings,
+                                Button::new(delete_hidden_label),
+                            )
+                            .on_hover_text(
+                                "Permanently delete every hidden track from the original recordings",
+                            )
+                            .on_disabled_hover_text(if writes_recordings {
                                 "No hidden tracks to delete"
+                            } else {
+                                READ_ONLY_RECORDING_HISTORY_HOVER
                             });
                         if delete_hidden.clicked() {
                             self.delete_hidden_confirm_open = true;
                         }
-                        if ui.button("Prune…").clicked() {
+                        if ui
+                            .add_enabled(writes_recordings, Button::new("Prune…"))
+                            .on_hover_text("Delete stored recordings by age, total size or count")
+                            .on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER)
+                            .clicked()
+                        {
                             self.prune.open = true;
                             self.prune.reset();
                         }
-                        storage_controls::show_auto_store_checkbox(ui, storage);
+                        storage_controls::show_auto_store_checkbox(ui, storage, write_access);
                         ui.add(
                             TextEdit::singleline(&mut self.filter_text)
                                 .desired_width(ui.available_width()),
@@ -658,9 +673,9 @@ impl HistoryWindow {
                 // setting, not a filter or list entry.
                 ui.separator();
                 ui.horizontal(|ui| {
-                    storage_controls::show_auto_prune_limit(ui, storage);
+                    storage_controls::show_auto_prune_limit(ui, storage, write_access);
                     ui.separator();
-                    storage_controls::show_auto_prune_confirm_checkbox(ui, storage);
+                    storage_controls::show_auto_prune_confirm_checkbox(ui, storage, write_access);
                 });
                 ui.add_space(4.0);
 
@@ -717,12 +732,15 @@ impl HistoryWindow {
 
                 table::history_table(
                     ui,
-                    list_height,
-                    &visible,
-                    loaded_metas,
-                    worker,
-                    &mut rename,
-                    &mut self.sort,
+                    table::HistoryTable {
+                        list_height,
+                        visible: &visible,
+                        loaded_metas,
+                        worker,
+                        rename: &mut rename,
+                        sort: &mut self.sort,
+                        write_access,
+                    },
                 );
 
                 ui.separator();
