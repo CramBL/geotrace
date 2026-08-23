@@ -912,7 +912,7 @@ fn a_column_header_click_sorts_the_matches() {
     let mut harness = demo_app_with_query_run(TWO_MATCH_QUERY);
     // The two matches of the run, told apart by how long each one ran.
     let longest_first = |harness: &Harness<'_, App>| {
-        harness.get_by_label("1:01 min").rect().top() < harness.get_by_label("11 s").rect().top()
+        harness.get_by_label("1:01").rect().top() < harness.get_by_label("0:11").rect().top()
     };
     assert!(
         longest_first(&harness),

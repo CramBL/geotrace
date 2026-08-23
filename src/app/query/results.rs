@@ -588,7 +588,8 @@ impl<'a> ResultsTables<'a> {
             query_swatch_ui(ui, query.color, &query.summary.to_string());
         });
         for column in MatchColumn::iter() {
-            let text = match_row.cell_text(column, self.files);
+            let text =
+                match_row.cell_text(column, self.files, self.matches.duration_clock_format());
             row.col(|ui| {
                 ui.with_layout(column.cell_layout(), |ui| {
                     ui.add(
@@ -662,8 +663,11 @@ impl<'a> ResultsTables<'a> {
             let header =
                 column_format::text_width(ui, column.title(self.row_noun), &TextStyle::Body)
                     + caret;
-            let cells =
-                column_format::text_width(ui, column.widest_cell_text(), &TextStyle::Monospace);
+            let cells = column_format::text_width(
+                ui,
+                self.matches.widest_cell_text(column),
+                &TextStyle::Monospace,
+            );
             header.max(cells)
         };
         // What the track column has to share the row with: every other column,
@@ -693,7 +697,7 @@ impl<'a> ResultsTables<'a> {
     fn widest_track_label_width(&self, ui: &egui::Ui) -> f32 {
         let number = column_format::text_width(
             ui,
-            MatchColumn::Track.widest_cell_text(),
+            self.matches.widest_cell_text(MatchColumn::Track),
             &TextStyle::Monospace,
         );
         if self.files.len() < 2 {
