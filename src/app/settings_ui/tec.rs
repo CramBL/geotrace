@@ -4,6 +4,7 @@ use egui::{RichText, Ui};
 
 use crate::app::backfill_ui::{self, BackfillAction};
 use crate::app::day_fetch_status::{self, FetchRowHoverText};
+use crate::app::environment_storage::EnvironmentArchive;
 use crate::app::settings_ui::SettingsPage;
 use crate::app::settings_ui::source_page::{self, ReferenceLink, SourcePageSlots};
 use crate::app::tec_mirrors_ui::EarthdataToken;
@@ -54,7 +55,7 @@ impl App {
         let fetch_status = self.tec_maps.fetch_queue().fetch_status();
         let background_days = self.tec_maps.background_day_coverage();
         let progress = self.tec_maps.fetch_queue().backfill_progress();
-        let readiness = self.backfill_readiness(self.tec_maps.archive_available());
+        let readiness = self.backfill_readiness(EnvironmentArchive::IonosphericTec);
         let mut backfill_action = None;
 
         let opened_reference = source_page::show_source_page(

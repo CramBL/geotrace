@@ -34,8 +34,10 @@ pub use gt_ionex_store::{ArchivedMapDay, IonexStore, IonexStoreError};
 pub use gt_jam_store::{JamStore, JamStoreError, StoredDay};
 pub use gt_solar_store::{ArchivedIndexDay, SolarStore, SolarStoreError};
 
+mod day_archive;
 pub mod log_attachments;
 
+pub use day_archive::DayArchiveError;
 pub use log_attachments::{AttachedLog, LogAttachmentError, LogAttachments, LogToAttach};
 
 /// The recording history database. Named for what it holds, since the store
@@ -142,32 +144,75 @@ impl Store {
     ///
     /// Opened on the first call that succeeds and shared from then on.
     pub fn open_interference(&self) -> Result<Arc<JamStore>, JamStoreError> {
-        self.interference
-            .get_or_open(|| JamStore::open_or_create(&self.interference_path()))
+        self.open_interference_with_recovery_choice(InterruptedDeleteRecovery::Recover)
+    }
+
+    /// The interference archive, recovering an interrupted delete only when
+    /// `recovery` asks for it.
+    pub fn open_interference_with_recovery_choice(
+        &self,
+        recovery: InterruptedDeleteRecovery,
+    ) -> Result<Arc<JamStore>, JamStoreError> {
+        self.interference.get_or_open(|| {
+            JamStore::open_or_create_with_recovery_choice(&self.interference_path(), recovery)
+        })
     }
 
     /// The geomagnetic index archive, creating it if it does not exist.
     ///
     /// Shared the same way as [`Self::open_interference`].
     pub fn open_geomagnetic_indices(&self) -> Result<Arc<SolarStore>, SolarStoreError> {
-        self.geomagnetic_indices
-            .get_or_open(|| SolarStore::open_or_create(&self.geomagnetic_indices_path()))
+        self.open_geomagnetic_indices_with_recovery_choice(InterruptedDeleteRecovery::Recover)
+    }
+
+    /// The geomagnetic index archive, recovering an interrupted delete only
+    /// when `recovery` asks for it.
+    pub fn open_geomagnetic_indices_with_recovery_choice(
+        &self,
+        recovery: InterruptedDeleteRecovery,
+    ) -> Result<Arc<SolarStore>, SolarStoreError> {
+        self.geomagnetic_indices.get_or_open(|| {
+            SolarStore::open_or_create_with_recovery_choice(
+                &self.geomagnetic_indices_path(),
+                recovery,
+            )
+        })
     }
 
     /// The TEC map archive, creating it if it does not exist.
     ///
     /// Shared the same way as [`Self::open_interference`].
     pub fn open_tec_maps(&self) -> Result<Arc<IonexStore>, IonexStoreError> {
-        self.tec_maps
-            .get_or_open(|| IonexStore::open_or_create(&self.tec_maps_path()))
+        self.open_tec_maps_with_recovery_choice(InterruptedDeleteRecovery::Recover)
+    }
+
+    /// The TEC map archive, recovering an interrupted delete only when
+    /// `recovery` asks for it.
+    pub fn open_tec_maps_with_recovery_choice(
+        &self,
+        recovery: InterruptedDeleteRecovery,
+    ) -> Result<Arc<IonexStore>, IonexStoreError> {
+        self.tec_maps.get_or_open(|| {
+            IonexStore::open_or_create_with_recovery_choice(&self.tec_maps_path(), recovery)
+        })
     }
 
     /// The solar flare archive, creating it if it does not exist.
     ///
     /// Shared the same way as [`Self::open_interference`].
     pub fn open_solar_flares(&self) -> Result<Arc<FlareStore>, FlareStoreError> {
-        self.solar_flares
-            .get_or_open(|| FlareStore::open_or_create(&self.solar_flares_path()))
+        self.open_solar_flares_with_recovery_choice(InterruptedDeleteRecovery::Recover)
+    }
+
+    /// The solar flare archive, recovering an interrupted delete only when
+    /// `recovery` asks for it.
+    pub fn open_solar_flares_with_recovery_choice(
+        &self,
+        recovery: InterruptedDeleteRecovery,
+    ) -> Result<Arc<FlareStore>, FlareStoreError> {
+        self.solar_flares.get_or_open(|| {
+            FlareStore::open_or_create_with_recovery_choice(&self.solar_flares_path(), recovery)
+        })
     }
 }
 

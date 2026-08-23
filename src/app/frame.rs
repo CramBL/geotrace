@@ -65,6 +65,7 @@ impl eframe::App for App {
 
         self.apply_finished_background_work(ui);
         self.wait_for_the_data_directory(ui);
+        self.show_interrupted_delete_prompts(ui);
         self.retry_marking_the_data_directory_after_take_over(ui.ctx());
         self.load_files_from_dialog_drops_and_paste(ui);
         self.unload_selection_on_delete_key(ui);
@@ -131,6 +132,7 @@ impl App {
     pub(in crate::app) fn apply_finished_background_work(&mut self, ui: &egui::Ui) {
         // Adopt the databases first: what waited on them starts in the frame
         // they arrive.
+        self.adopt_finished_archive_inspection();
         self.adopt_finished_storage_open();
 
         // Drain background load results first so newly loaded data is
