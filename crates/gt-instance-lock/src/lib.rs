@@ -284,6 +284,20 @@ impl DataDirectoryLock {
         self.ownership() == DataDirectoryOwnership::MarkedByThisInstance
     }
 
+    /// Gives up on marking the data directory for the rest of the run,
+    /// leaving it to the instance that owns it.
+    ///
+    /// A read-only session gives it up as it starts: with no directory left
+    /// to retry, nothing promotes that session to the owner later.
+    pub fn give_up_marking_the_data_directory(&mut self) {
+        debug_assert!(
+            !self.marks_the_data_directory(),
+            "the mark is given up before it is taken: dropping it here would leave the status \
+             file behind the lock it vouches for"
+        );
+        self.mark = DataDirectoryMark::NoDataDirectory;
+    }
+
     /// Tries the mark again on the directory this run has yet to take, and
     /// reports what it owns afterwards.
     ///
@@ -400,6 +414,11 @@ impl SharedDataDirectoryLock {
     /// What this run owns of the data directory.
     pub fn ownership(&self) -> DataDirectoryOwnership {
         self.0.lock().ownership()
+    }
+
+    /// See [`DataDirectoryLock::give_up_marking_the_data_directory`].
+    pub fn give_up_marking_the_data_directory(&self) {
+        self.0.lock().give_up_marking_the_data_directory();
     }
 
     /// See [`DataDirectoryLock::retry_marking_the_data_directory`].
@@ -591,6 +610,33 @@ mod tests {
             DataDirectoryLock::acquire_if_owner(WriteAccess::Owner, Some(directory.path()))
                 .marks_the_data_directory(),
             "the instance that owns the directory can still mark it"
+        );
+    }
+
+    /// A session that gave up on the mark never takes it: the retry the wait
+    /// ran has nothing left to try, whoever lets go of the directory.
+    #[test]
+    fn a_run_that_gave_up_the_mark_never_takes_the_directory_again() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let holder = DataDirectoryLock::acquire(Some(directory.path()));
+        let mut waiting = DataDirectoryLock::acquire(Some(directory.path()));
+        assert_eq!(
+            waiting.ownership(),
+            DataDirectoryOwnership::HeldByAnotherInstance
+        );
+
+        waiting.give_up_marking_the_data_directory();
+        drop(holder);
+
+        assert_eq!(
+            waiting.retry_marking_the_data_directory(),
+            DataDirectoryOwnership::NoDataDirectory
+        );
+        assert!(!waiting.marks_the_data_directory());
+        assert_eq!(
+            InstanceStatus::read_from(directory.path()),
+            None,
+            "the run that gave up the mark wrote a status file"
         );
     }
 
