@@ -31,6 +31,7 @@ use gt_track_builder::SegmentationConfig;
 use gt_ui_types::LoadedLogId;
 
 use crate::app::auto_prune::{self, AutoPruneOutcome};
+use crate::app::background_thread;
 use crate::app::loader::stored_segmentation_from_config;
 
 /// Why recordings are being deleted - selects the completion toast.
@@ -266,18 +267,13 @@ impl HistoryWorker {
     }
 
     /// Spawn the worker thread, moving `db` onto it.
-    #[expect(
-        clippy::expect_used,
-        reason = "thread spawn can only fail under extreme system resource exhaustion"
-    )]
     pub fn spawn(db: Recordings, ctx: Context, pending_writes: PendingWrites) -> Self {
         let path = Some(db.path().to_owned());
         let (req_tx, req_rx) = mpsc::channel::<Request>();
         let (resp_tx, resp_rx) = mpsc::channel::<Response>();
-        let handle = std::thread::Builder::new()
-            .name("history-db".to_owned())
-            .spawn(move || worker_loop(db, &req_rx, &resp_tx, &ctx, &pending_writes))
-            .expect("failed to spawn history-db worker thread");
+        let handle = background_thread::spawn_or_panic("history-db", move || {
+            worker_loop(db, &req_rx, &resp_tx, &ctx, &pending_writes);
+        });
         Self {
             req_tx: Some(req_tx),
             resp_rx,

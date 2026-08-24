@@ -32,6 +32,7 @@ use gt_types::TimeRange;
 use gt_types::{LoadedFile, TrackRef};
 use gt_ui_types::{ArcIdentity, JammingContextSample, JammingPoint, JammingSeries};
 
+use super::background_thread;
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
 use super::day_index_read_retry::DayIndexReadRetry;
@@ -577,10 +578,6 @@ impl JammingScheduler {
         self.spawn_fetch(transport, store, day, delay);
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "thread spawn can only fail under extreme system resource exhaustion"
-    )]
     fn spawn_fetch(
         &self,
         transport: Arc<Connection>,
@@ -592,15 +589,12 @@ impl JammingScheduler {
         let tx = self.tx.clone();
         let base_url = self.base_url.clone();
         let pending_writes = self.pending_writes.clone();
-        thread::Builder::new()
-            .name(format!("jam-{day}"))
-            .spawn(move || {
-                thread::sleep(delay);
-                let message = ingest(transport.as_ref(), &store, &base_url, day, &pending_writes);
-                tx.send(message).ok();
-                ctx.request_repaint();
-            })
-            .expect("failed to spawn interference worker thread");
+        background_thread::spawn_or_panic(format!("jam-{day}"), move || {
+            thread::sleep(delay);
+            let message = ingest(transport.as_ref(), &store, &base_url, day, &pending_writes);
+            tx.send(message).ok();
+            ctx.request_repaint();
+        });
     }
 
     /// The transport to fetch on, opened once and kept until the host

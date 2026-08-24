@@ -12,7 +12,6 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::sync::mpsc;
-use std::thread;
 use std::time::Instant;
 
 use chrono::{NaiveDate, Utc};
@@ -25,6 +24,7 @@ use gt_store::{ArchiveUsage, FlareStore, FlareStoreError};
 use gt_types::{SunlitSide, TimeRange};
 use gt_ui_types::ArcIdentity;
 
+use super::background_thread;
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan};
 use super::day_fetch_queue::DayFetchQueue;
 use super::day_index_read_retry::DayIndexReadRetry;
@@ -389,10 +389,6 @@ impl SolarFlareScheduler {
         self.spawn_fetch(transport, store, endpoint, day);
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "thread spawn can only fail under extreme system resource exhaustion"
-    )]
     fn spawn_fetch(
         &self,
         transport: Arc<Connection>,
@@ -403,14 +399,11 @@ impl SolarFlareScheduler {
         let ctx = self.ctx.clone();
         let tx = self.tx.clone();
         let pending_writes = self.pending_writes.clone();
-        thread::Builder::new()
-            .name(format!("flares-{day}"))
-            .spawn(move || {
-                let message = ingest(transport.as_ref(), &store, &endpoint, day, &pending_writes);
-                tx.send(message).ok();
-                ctx.request_repaint();
-            })
-            .expect("failed to spawn solar flare worker thread");
+        background_thread::spawn_or_panic(format!("flares-{day}"), move || {
+            let message = ingest(transport.as_ref(), &store, &endpoint, day, &pending_writes);
+            tx.send(message).ok();
+            ctx.request_repaint();
+        });
     }
 
     /// The transport to fetch on, opened once and kept until the endpoint

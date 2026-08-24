@@ -2,6 +2,7 @@ mod archive_recovery;
 mod auto_prune;
 mod backfill;
 mod backfill_ui;
+mod background_thread;
 mod civil_date;
 mod context_line;
 mod day_failures;
