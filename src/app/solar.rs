@@ -12,7 +12,6 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc;
-use std::thread;
 use std::time::Instant;
 
 use chrono::{NaiveDate, Utc};
@@ -30,6 +29,7 @@ use gt_ui_types::{
 };
 use strum::IntoEnumIterator as _;
 
+use super::background_thread;
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
 use super::day_index_read_retry::DayIndexReadRetry;
@@ -429,23 +429,16 @@ impl GeomagneticIndexScheduler {
         self.spawn_fetch(transport, store, day);
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "thread spawn can only fail under extreme system resource exhaustion"
-    )]
     fn spawn_fetch(&self, transport: Arc<Connection>, store: Arc<SolarStore>, day: NaiveDate) {
         let ctx = self.ctx.clone();
         let tx = self.tx.clone();
         let base_url = self.base_url.clone();
         let pending_writes = self.pending_writes.clone();
-        thread::Builder::new()
-            .name(format!("solar-{day}"))
-            .spawn(move || {
-                let message = ingest(transport.as_ref(), &store, &base_url, day, &pending_writes);
-                tx.send(message).ok();
-                ctx.request_repaint();
-            })
-            .expect("failed to spawn geomagnetic index worker thread");
+        background_thread::spawn_or_panic(format!("solar-{day}"), move || {
+            let message = ingest(transport.as_ref(), &store, &base_url, day, &pending_writes);
+            tx.send(message).ok();
+            ctx.request_repaint();
+        });
     }
 
     /// The transport to fetch on, opened once and kept until the host changes.

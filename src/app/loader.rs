@@ -2,7 +2,6 @@ use std::{
     fs,
     path::PathBuf,
     sync::{Arc, mpsc},
-    thread,
 };
 
 use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig};
@@ -16,6 +15,8 @@ use gt_pending_writes::{PendingWrites, WriteKind};
 use gt_plot::{AnalysisConfig, PreparedSeries};
 use gt_store::{AttachedLog, StoredLogFilter};
 use gt_types::LoadedFile;
+
+use crate::app::background_thread;
 
 /// A finished load stays fully opaque in the status list this long before its
 /// entry starts fading.
@@ -198,10 +199,6 @@ impl LoadJobs {
         id
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "thread spawn can only fail under extreme system resource exhaustion"
-    )]
     pub fn spawn_gtd_path(&mut self, path: PathBuf, config: SegmentationConfig) {
         let id = self.alloc_id();
         let filename = path
@@ -223,82 +220,77 @@ impl LoadJobs {
         let pending_writes = self.pending_writes.clone();
         let log_name = filename.clone();
         log::info!("Loading file '{filename}'");
-        thread::Builder::new()
-            .name(format!("load-{filename}"))
-            .spawn(move || {
-                let r_tx = tx.clone();
-                let r_ctx = ctx.clone();
-                let r_name = log_name.clone();
-                let report = move |fraction: f32, stage: &'static str| {
-                    log::debug!("'{r_name}': {stage} ({:.0}%)", fraction * 100.0);
-                    r_tx.send(LoadMessage::Progress {
+        background_thread::spawn_or_panic(format!("load-{filename}"), move || {
+            let r_tx = tx.clone();
+            let r_ctx = ctx.clone();
+            let r_name = log_name.clone();
+            let report = move |fraction: f32, stage: &'static str| {
+                log::debug!("'{r_name}': {stage} ({:.0}%)", fraction * 100.0);
+                r_tx.send(LoadMessage::Progress {
+                    id,
+                    fraction,
+                    stage,
+                })
+                .ok();
+                r_ctx.request_repaint();
+            };
+            let outcome = gt_loader::load_gtd_file_with_progress(&path, report, &config)
+                .map(|loaded| {
+                    let file = loaded.file;
+                    tx.send(LoadMessage::Progress {
                         id,
-                        fraction,
-                        stage,
+                        fraction: 0.95,
+                        stage: STAGE_PLOTTING,
                     })
                     .ok();
-                    r_ctx.request_repaint();
-                };
-                let outcome = gt_loader::load_gtd_file_with_progress(&path, report, &config)
-                    .map(|loaded| {
-                        let file = loaded.file;
-                        tx.send(LoadMessage::Progress {
-                            id,
-                            fraction: 0.95,
-                            stage: STAGE_PLOTTING,
-                        })
-                        .ok();
-                        ctx.request_repaint();
-                        let series = gt_plot::prepare_file_series(&file, analysis);
-                        // Read the bytes once for both the content fingerprint
-                        // and the optional history insert.
-                        let bytes = match std::fs::read(&path) {
-                            Ok(bytes) => Some(bytes),
-                            Err(e) => {
-                                log::warn!(
-                                    "Could not reread '{log_name}' for history storage from {}: {e}",
-                                    path.display()
-                                );
-                                None
-                            }
-                        };
-                        let meta = match bytes.as_deref().map(gt_store::extract_meta) {
-                            Some(Ok(meta)) => Some(meta),
-                            Some(Err(e)) => {
-                                log::warn!(
-                                    "Could not extract history metadata from '{log_name}': {e}"
-                                );
-                                None
-                            }
-                            None => None,
-                        };
-                        log::debug!("Parsed '{log_name}': {} track(s)", file.tracks.len());
-                        let db_ref = HistoryInsert {
-                            db_path: db_path.as_deref(),
-                            file: &file,
-                            identity: &loaded.identity,
-                            meta: meta.as_ref(),
-                            config: &config,
-                            bytes: bytes.as_deref(),
-                            filename: &log_name,
-                            pending_writes: &pending_writes,
+                    ctx.request_repaint();
+                    let series = gt_plot::prepare_file_series(&file, analysis);
+                    // Read the bytes once for both the content fingerprint
+                    // and the optional history insert.
+                    let bytes = match std::fs::read(&path) {
+                        Ok(bytes) => Some(bytes),
+                        Err(e) => {
+                            log::warn!(
+                                "Could not reread '{log_name}' for history storage from {}: {e}",
+                                path.display()
+                            );
+                            None
                         }
-                        .store();
-                        let history = meta.map_or(FileHistory::None, |meta| {
-                            FileHistory::recording(loaded.identity, meta, db_ref)
-                        });
-                        LoadOutcome::GtdFile {
-                            file,
-                            series,
-                            history,
-                            applied_current_marker_settings: false,
+                    };
+                    let meta = match bytes.as_deref().map(gt_store::extract_meta) {
+                        Some(Ok(meta)) => Some(meta),
+                        Some(Err(e)) => {
+                            log::warn!("Could not extract history metadata from '{log_name}': {e}");
+                            None
                         }
-                    })
-                    .map_err(|e| e.to_string());
-                tx.send(LoadMessage::Completed { id, outcome }).ok();
-                ctx.request_repaint();
-            })
-            .expect("failed to spawn gtd-path loader thread");
+                        None => None,
+                    };
+                    log::debug!("Parsed '{log_name}': {} track(s)", file.tracks.len());
+                    let db_ref = HistoryInsert {
+                        db_path: db_path.as_deref(),
+                        file: &file,
+                        identity: &loaded.identity,
+                        meta: meta.as_ref(),
+                        config: &config,
+                        bytes: bytes.as_deref(),
+                        filename: &log_name,
+                        pending_writes: &pending_writes,
+                    }
+                    .store();
+                    let history = meta.map_or(FileHistory::None, |meta| {
+                        FileHistory::recording(loaded.identity, meta, db_ref)
+                    });
+                    LoadOutcome::GtdFile {
+                        file,
+                        series,
+                        history,
+                        applied_current_marker_settings: false,
+                    }
+                })
+                .map_err(|e| e.to_string());
+            tx.send(LoadMessage::Completed { id, outcome }).ok();
+            ctx.request_repaint();
+        });
     }
 
     pub fn spawn_gtd_bytes(
@@ -323,10 +315,6 @@ impl LoadJobs {
         self.spawn_bytes_job(bytes, filename, config, Some(open));
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "thread spawn can only fail under extreme system resource exhaustion"
-    )]
     fn spawn_bytes_job(
         &mut self,
         bytes: Arc<[u8]>,
@@ -349,104 +337,97 @@ impl LoadJobs {
         let pending_writes = self.pending_writes.clone();
         let log_name = filename.clone();
         log::info!("Loading file '{filename}'");
-        thread::Builder::new()
-            .name(format!("load-{filename}"))
-            .spawn(move || {
-                let r_tx = tx.clone();
-                let r_ctx = ctx.clone();
-                let r_name = log_name.clone();
-                let report = move |frac: f32, stage: &'static str| {
-                    log::debug!("'{r_name}': {stage} ({:.0}%)", frac * 100.0);
-                    r_tx.send(LoadMessage::Progress {
-                        id,
-                        fraction: frac,
-                        stage,
-                    })
-                    .ok();
-                    r_ctx.request_repaint();
-                };
-                let outcome =
-                    gt_loader::load_gtd_bytes_with_progress(&bytes, filename, report, &config)
-                        .map(|loaded| {
-                            let mut file = loaded.file;
-                            let applied_current_marker_settings = open
-                                .as_ref()
-                                .is_some_and(HistoryOpen::applied_current_marker_settings);
-                            let meta = match gt_store::extract_meta(&bytes) {
-                                Ok(meta) => Some(meta),
-                                Err(e) => {
-                                    log::warn!(
-                                        "Could not extract history metadata from '{log_name}': {e}"
+        background_thread::spawn_or_panic(format!("load-{filename}"), move || {
+            let r_tx = tx.clone();
+            let r_ctx = ctx.clone();
+            let r_name = log_name.clone();
+            let report = move |frac: f32, stage: &'static str| {
+                log::debug!("'{r_name}': {stage} ({:.0}%)", frac * 100.0);
+                r_tx.send(LoadMessage::Progress {
+                    id,
+                    fraction: frac,
+                    stage,
+                })
+                .ok();
+                r_ctx.request_repaint();
+            };
+            let outcome =
+                gt_loader::load_gtd_bytes_with_progress(&bytes, filename, report, &config)
+                    .map(|loaded| {
+                        let mut file = loaded.file;
+                        let applied_current_marker_settings = open
+                            .as_ref()
+                            .is_some_and(HistoryOpen::applied_current_marker_settings);
+                        let meta = match gt_store::extract_meta(&bytes) {
+                            Ok(meta) => Some(meta),
+                            Err(e) => {
+                                log::warn!(
+                                    "Could not extract history metadata from '{log_name}': {e}"
+                                );
+                                None
+                            }
+                        };
+                        log::debug!("Parsed '{log_name}': {} track(s)", file.tracks.len());
+                        // Store first (de-duplicates against the existing
+                        // recording, keeping its stored track table) while the
+                        // freshly segmented tracks are still in stored order.
+                        let db_ref = HistoryInsert {
+                            db_path: db_path.as_deref(),
+                            file: &file,
+                            identity: &loaded.identity,
+                            meta: meta.as_ref(),
+                            config: &config,
+                            bytes: Some(&bytes),
+                            filename: &log_name,
+                            pending_writes: &pending_writes,
+                        }
+                        .store();
+                        let open_db_ref = open.as_ref().map(HistoryOpen::db_ref).cloned();
+                        let history_db_ref = db_ref.or(open_db_ref);
+                        match &open {
+                            Some(HistoryOpen::Recalculate { db_ref, .. }) => {
+                                if let Some(path) = db_path.as_deref() {
+                                    recalculate_stored_tracks(
+                                        path,
+                                        db_ref,
+                                        &file,
+                                        &config,
+                                        &log_name,
+                                        &pending_writes,
                                     );
-                                    None
                                 }
-                            };
-                            log::debug!("Parsed '{log_name}': {} track(s)", file.tracks.len());
-                            // Store first (de-duplicates against the existing
-                            // recording, keeping its stored track table) while the
-                            // freshly segmented tracks are still in stored order.
-                            let db_ref = HistoryInsert {
-                                db_path: db_path.as_deref(),
-                                file: &file,
-                                identity: &loaded.identity,
-                                meta: meta.as_ref(),
-                                config: &config,
-                                bytes: Some(&bytes),
-                                filename: &log_name,
-                                pending_writes: &pending_writes,
                             }
-                            .store();
-                            let open_db_ref = open.as_ref().map(HistoryOpen::db_ref).cloned();
-                            let history_db_ref = db_ref.or(open_db_ref);
-                            match &open {
-                                Some(HistoryOpen::Recalculate { db_ref, .. }) => {
-                                    if let Some(path) = db_path.as_deref() {
-                                        recalculate_stored_tracks(
-                                            path,
-                                            db_ref,
-                                            &file,
-                                            &config,
-                                            &log_name,
-                                            &pending_writes,
-                                        );
-                                    }
-                                }
-                                Some(HistoryOpen::ApplyHidden { positions, .. }) => {
-                                    drop_tracks(&mut file, positions);
-                                }
-                                None => {}
+                            Some(HistoryOpen::ApplyHidden { positions, .. }) => {
+                                drop_tracks(&mut file, positions);
                             }
-                            // Build the plot series after any hidden-track removal
-                            // so the series matches the visible tracks.
-                            tx.send(LoadMessage::Progress {
-                                id,
-                                fraction: 0.95,
-                                stage: STAGE_PLOTTING,
-                            })
-                            .ok();
-                            ctx.request_repaint();
-                            let series = gt_plot::prepare_file_series(&file, analysis);
-                            let history = meta.map_or(FileHistory::None, |meta| {
-                                FileHistory::recording(loaded.identity, meta, history_db_ref)
-                            });
-                            LoadOutcome::GtdFile {
-                                file,
-                                series,
-                                history,
-                                applied_current_marker_settings,
-                            }
+                            None => {}
+                        }
+                        // Build the plot series after any hidden-track removal
+                        // so the series matches the visible tracks.
+                        tx.send(LoadMessage::Progress {
+                            id,
+                            fraction: 0.95,
+                            stage: STAGE_PLOTTING,
                         })
-                        .map_err(|e| e.to_string());
-                tx.send(LoadMessage::Completed { id, outcome }).ok();
-                ctx.request_repaint();
-            })
-            .expect("failed to spawn gtd-bytes loader thread");
+                        .ok();
+                        ctx.request_repaint();
+                        let series = gt_plot::prepare_file_series(&file, analysis);
+                        let history = meta.map_or(FileHistory::None, |meta| {
+                            FileHistory::recording(loaded.identity, meta, history_db_ref)
+                        });
+                        LoadOutcome::GtdFile {
+                            file,
+                            series,
+                            history,
+                            applied_current_marker_settings,
+                        }
+                    })
+                    .map_err(|e| e.to_string());
+            tx.send(LoadMessage::Completed { id, outcome }).ok();
+            ctx.request_repaint();
+        });
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "thread spawn can only fail under extreme system resource exhaustion"
-    )]
     pub fn spawn_log_path(&mut self, path: PathBuf) {
         let id = self.alloc_id();
         let filename = path
@@ -463,27 +444,24 @@ impl LoadJobs {
         });
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
-        thread::Builder::new()
-            .name(format!("load-log-{filename}"))
-            .spawn(move || {
-                let report = progress_reporter(id, tx.clone(), ctx.clone());
-                report(0.20, STAGE_READING);
-                let bytes = match fs::read(&path) {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        tx.send(LoadMessage::Completed {
-                            id,
-                            outcome: Err(format!("Failed to read {filename}: {e}")),
-                        })
-                        .ok();
-                        ctx.request_repaint();
-                        return;
-                    }
-                };
-                let text = LogText::decode_lossy(&bytes);
-                finish_log_load(id, Some(filename), text, None, &tx, &ctx, report);
-            })
-            .expect("failed to spawn log-path loader thread");
+        background_thread::spawn_or_panic(format!("load-log-{filename}"), move || {
+            let report = progress_reporter(id, tx.clone(), ctx.clone());
+            report(0.20, STAGE_READING);
+            let bytes = match fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    tx.send(LoadMessage::Completed {
+                        id,
+                        outcome: Err(format!("Failed to read {filename}: {e}")),
+                    })
+                    .ok();
+                    ctx.request_repaint();
+                    return;
+                }
+            };
+            let text = LogText::decode_lossy(&bytes);
+            finish_log_load(id, Some(filename), text, None, &tx, &ctx, report);
+        });
     }
 
     /// Loads the bytes of a dropped log, which need not be valid UTF-8.
@@ -501,10 +479,6 @@ impl LoadJobs {
 
     /// Runs `decode` on a loader thread and parses what it yields, under a job
     /// named after `filename`.
-    #[expect(
-        clippy::expect_used,
-        reason = "thread spawn can only fail under extreme system resource exhaustion"
-    )]
     fn spawn_log_load(
         &mut self,
         filename: Option<String>,
@@ -521,23 +495,16 @@ impl LoadJobs {
         });
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
-        thread::Builder::new()
-            .name(format!("load-log-{job_name}"))
-            .spawn(move || {
-                let report = progress_reporter(id, tx.clone(), ctx.clone());
-                report(0.20, STAGE_READING);
-                let text = decode();
-                finish_log_load(id, filename, text, None, &tx, &ctx, report);
-            })
-            .expect("failed to spawn log-text loader thread");
+        background_thread::spawn_or_panic(format!("load-log-{job_name}"), move || {
+            let report = progress_reporter(id, tx.clone(), ctx.clone());
+            report(0.20, STAGE_READING);
+            let text = decode();
+            finish_log_load(id, filename, text, None, &tx, &ctx, report);
+        });
     }
 
     /// Parses a log a recording carries as an attachment, so it comes back
     /// with that recording.
-    #[expect(
-        clippy::expect_used,
-        reason = "thread spawn can only fail under extreme system resource exhaustion"
-    )]
     pub fn spawn_attached_log(&mut self, log: AttachedLog, attachment: LogAttachmentRef) {
         let id = self.alloc_id();
         let AttachedLog {
@@ -560,13 +527,10 @@ impl LoadJobs {
             filters,
         };
         log::info!("Loading the log {name:?} attached to a recording opened from history");
-        thread::Builder::new()
-            .name(format!("load-log-{name}"))
-            .spawn(move || {
-                let report = progress_reporter(id, tx.clone(), ctx.clone());
-                finish_log_load(id, Some(name), text, Some(restored), &tx, &ctx, report);
-            })
-            .expect("failed to spawn attached-log loader thread");
+        background_thread::spawn_or_panic(format!("load-log-{name}"), move || {
+            let report = progress_reporter(id, tx.clone(), ctx.clone());
+            finish_log_load(id, Some(name), text, Some(restored), &tx, &ctx, report);
+        });
     }
 
     /// Spawn a background thread that shows the OS file-picker dialog.
@@ -576,25 +540,18 @@ impl LoadJobs {
     /// then stops delivering events, making the window appear unresponsive.
     /// The dialog runs on a dedicated thread instead. The chosen path arrives
     /// via `drain_file_dialog` each frame.
-    #[expect(
-        clippy::expect_used,
-        reason = "thread spawn can only fail under extreme system resource exhaustion"
-    )]
     pub fn open_file_dialog(&mut self) {
         let (tx, rx) = mpsc::channel();
         self.file_dialog_rx = Some(rx);
         let ctx = self.ctx.clone();
-        thread::Builder::new()
-            .name("file-dialog".to_owned())
-            .spawn(move || {
-                let path = rfd::FileDialog::new()
-                    .add_filter("GeoTrace Data", &["gtd"])
-                    .add_filter("Log Files", &["log", "txt"])
-                    .pick_file();
-                tx.send(path).ok();
-                ctx.request_repaint();
-            })
-            .expect("failed to spawn file-dialog thread");
+        background_thread::spawn_or_panic("file-dialog", move || {
+            let path = rfd::FileDialog::new()
+                .add_filter("GeoTrace Data", &["gtd"])
+                .add_filter("Log Files", &["log", "txt"])
+                .pick_file();
+            tx.send(path).ok();
+            ctx.request_repaint();
+        });
     }
 
     pub fn drain_file_dialog(&mut self) -> Option<PathBuf> {

@@ -19,7 +19,6 @@
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
-use std::thread;
 
 use egui::Context;
 use gt_instance_lock::SharedDataDirectoryLock;
@@ -35,6 +34,7 @@ use super::archive_recovery::{
     self, ArchiveOpenPlan, ArchiveRecovery, ArchiveUnavailable, InspectedArchives,
     InterruptedDeletePrompts, UnavailableArchives,
 };
+use super::background_thread;
 use super::environment_storage::EnvironmentArchive;
 use super::history_db::HistoryWorker;
 use super::instance_wait::DataDirectoryWait;
@@ -303,7 +303,7 @@ impl Storage {
             }
             Some(root) => {
                 let ctx = ctx.clone();
-                spawn_named("archive-inspect", move || {
+                background_thread::spawn_or_panic("archive-inspect", move || {
                     sender
                         .send(archive_recovery::inspect_archives_under(root))
                         .ok();
@@ -347,7 +347,7 @@ pub(in crate::app) fn open_in_background_under(
                 .try_begin(OPENING_DATABASES, WriteKind::DatabaseOpen)
                 .ok();
             let ctx = ctx.clone();
-            spawn_named("storage-open", move || {
+            background_thread::spawn_or_panic("storage-open", move || {
                 let storage = open_under(Some(root), recovery, &ctx, pending_writes);
                 sender.send(storage).ok();
                 ctx.request_repaint();
@@ -375,18 +375,6 @@ fn open_under(
         None => OpenStorage::disabled(),
         Some(root) => open_in(&Store::open_in(root), ctx, pending_writes, recovery),
     }
-}
-
-/// Run `work` on a thread named `name`.
-#[expect(
-    clippy::panic,
-    reason = "thread spawn can only fail under extreme system resource exhaustion"
-)]
-fn spawn_named(name: &'static str, work: impl FnOnce() + Send + 'static) {
-    thread::Builder::new()
-        .name(name.to_owned())
-        .spawn(work)
-        .unwrap_or_else(|err| panic!("failed to spawn the {name} thread: {err}"));
 }
 
 /// Which prompt a failed recordings open turns into.

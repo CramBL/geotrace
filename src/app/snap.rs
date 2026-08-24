@@ -29,7 +29,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::mpsc;
-use std::thread;
 
 use egui::Context;
 
@@ -44,6 +43,8 @@ use gt_ui_types::{
     SnappedEdgeInfo, SnappedEdgeSpan, SnappedSegment, SnappedTrackGeometry, TrackDataVisibility,
     WhiskerAnchor,
 };
+
+use crate::app::background_thread;
 
 /// The costing a track snaps with: the file's declared travel mode beats the
 /// configured default costing, and declarations without a road-network
@@ -757,10 +758,6 @@ fn next_eligible(queue: &VecDeque<PendingRun>, visible: &HashSet<TrackRef>) -> O
 }
 
 /// Run one snap on a worker thread, reporting progress and the final result.
-#[expect(
-    clippy::expect_used,
-    reason = "thread spawn can only fail under extreme system resource exhaustion"
-)]
 fn spawn_run(
     ctx: Context,
     tx: mpsc::Sender<SnapMessage>,
@@ -776,13 +773,9 @@ fn spawn_run(
         plan,
         server_host,
     } = pending;
-    thread::Builder::new()
-        .name(format!(
-            "snap-{}-{}",
-            track.fi.as_usize(),
-            track.index.as_usize()
-        ))
-        .spawn(move || {
+    background_thread::spawn_or_panic(
+        format!("snap-{}-{}", track.fi.as_usize(), track.index.as_usize()),
+        move || {
             let progress_tx = tx.clone();
             let progress_ctx = ctx.clone();
             let outcomes = transport::send_plan(
@@ -818,8 +811,8 @@ fn spawn_run(
             };
             tx.send(message).ok();
             ctx.request_repaint();
-        })
-        .expect("failed to spawn snap worker thread");
+        },
+    );
 }
 
 /// A one-line failure summary from the run's warnings.

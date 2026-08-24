@@ -12,7 +12,6 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc;
-use std::thread;
 use std::time::Instant;
 
 use chrono::{DateTime, NaiveDate, Utc};
@@ -32,6 +31,7 @@ use gt_store::{ArchiveUsage, IonexStore, IonexStoreError};
 use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{ArcIdentity, TecContextSample, TecPoint, TecSeries};
 
+use super::background_thread;
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
 use super::day_fetch_status::ArchivedDayCount;
@@ -557,31 +557,24 @@ impl TecMapScheduler {
         self.spawn_fetch(transport, store, day);
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "thread spawn can only fail under extreme system resource exhaustion"
-    )]
     fn spawn_fetch(&self, transport: Arc<Connection>, store: Arc<IonexStore>, day: NaiveDate) {
         let ctx = self.ctx.clone();
         let tx = self.tx.clone();
         let mirrors = self.mirrors.clone();
         let earthdata_token = self.earthdata_token.clone();
         let pending_writes = self.pending_writes.clone();
-        thread::Builder::new()
-            .name(format!("tec-{day}"))
-            .spawn(move || {
-                let message = ingest(
-                    transport.as_ref(),
-                    &store,
-                    &mirrors,
-                    earthdata_token.as_ref(),
-                    day,
-                    &pending_writes,
-                );
-                tx.send(message).ok();
-                ctx.request_repaint();
-            })
-            .expect("failed to spawn TEC map worker thread");
+        background_thread::spawn_or_panic(format!("tec-{day}"), move || {
+            let message = ingest(
+                transport.as_ref(),
+                &store,
+                &mirrors,
+                earthdata_token.as_ref(),
+                day,
+                &pending_writes,
+            );
+            tx.send(message).ok();
+            ctx.request_repaint();
+        });
     }
 
     /// The transport to fetch on, opened once and kept until the mirror list

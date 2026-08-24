@@ -12,7 +12,6 @@ use egui_phosphor::regular::X as ICON_X;
 use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::sync::mpsc;
-use std::thread;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -25,6 +24,7 @@ use gt_ui_theme::EM_DASH;
 use gt_ui_types::{DisplayMask, MapHighlight, MapScope, MatchRevealTarget, QueryMatches};
 use strum::{EnumIter, IntoEnumIterator as _};
 
+use crate::app::background_thread;
 use crate::settings::QueryHistoryEntry;
 
 use self::results::{ResultsOutputs, ResultsState, ResultsTables};
@@ -1246,26 +1246,19 @@ impl QueryWindow {
 
     /// The checks already ran. Prepare the run from the visible data and hand
     /// its evaluation to a worker thread.
-    #[expect(
-        clippy::expect_used,
-        reason = "thread spawn can only fail under extreme system resource exhaustion"
-    )]
     fn spawn_run(&mut self, ctx: &egui::Context, inputs: RunInputs<'_>) {
         let Some(prepared) = self.session.start_run(inputs) else {
             return;
         };
         let (tx, rx) = mpsc::channel();
         let worker_ctx = ctx.clone();
-        thread::Builder::new()
-            .name("query-run".to_owned())
-            .spawn(move || {
-                let outcome = prepared.execute();
-                // A send failure means the window dropped the receiver, so
-                // there is nothing left to notify.
-                tx.send(outcome).ok();
-                worker_ctx.request_repaint();
-            })
-            .expect("failed to spawn query worker thread");
+        background_thread::spawn_or_panic("query-run", move || {
+            let outcome = prepared.execute();
+            // A send failure means the window dropped the receiver, so
+            // there is nothing left to notify.
+            tx.send(outcome).ok();
+            worker_ctx.request_repaint();
+        });
 
         self.worker = Some(rx);
     }

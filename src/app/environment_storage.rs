@@ -7,7 +7,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc;
-use std::thread;
 
 use chrono::{Months, NaiveDate, Utc};
 use egui::Context;
@@ -19,6 +18,7 @@ use gt_store::{
 use strum::{EnumIter, IntoEnumIterator as _};
 
 use super::App;
+use super::background_thread;
 use super::day_fetch_queue::DayFetchQueue;
 use super::environment_storage_ui::DeleteBlocker;
 use super::modals::{
@@ -386,10 +386,6 @@ impl EnvironmentPruneRun {
 
     /// Start `request` against `archives`, replacing nothing: a caller starts
     /// one only while none is running.
-    #[expect(
-        clippy::expect_used,
-        reason = "thread spawn can only fail under extreme system resource exhaustion"
-    )]
     pub fn start(
         &mut self,
         ctx: Context,
@@ -399,13 +395,10 @@ impl EnvironmentPruneRun {
     ) {
         let (tx, rx) = mpsc::channel();
         self.running = Some(rx);
-        thread::Builder::new()
-            .name("environment-prune".to_owned())
-            .spawn(move || {
-                tx.send(prune(&archives, &pending_writes, request)).ok();
-                ctx.request_repaint();
-            })
-            .expect("failed to spawn the environment prune thread");
+        background_thread::spawn_or_panic("environment-prune", move || {
+            tx.send(prune(&archives, &pending_writes, request)).ok();
+            ctx.request_repaint();
+        });
     }
 
     /// What the running delete reported, once it has finished.
