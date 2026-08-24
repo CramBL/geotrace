@@ -152,13 +152,6 @@ impl DataDirectoryWait {
 
     /// Tries the data directory again once the interval has passed, reading
     /// afresh why this instance does not have it.
-    ///
-    /// A lock file that would not open is retried for as long as whatever
-    /// stopped it may pass. Past
-    /// [`UNUSABLE_LOCK_FILE_RETRIES_BEFORE_THE_WAIT_ENDS`] the wait gives up
-    /// on it: an attempt that never reaches the lock names no instance to
-    /// wait for, and a wait that cannot end is worse than the open a fresh
-    /// run would make here.
     fn retry_when_the_interval_has_passed(
         &mut self,
         now: Instant,
@@ -173,11 +166,23 @@ impl DataDirectoryWait {
         {
             return DataDirectoryRetry::Taken;
         }
+        self.outcome_of_a_fresh_read(DataDirectoryUnavailable::read_from(instance_lock))
+    }
+
+    /// Where a retry that did not take the data directory leaves the wait.
+    ///
+    /// A lock file that would not open is retried for as long as whatever
+    /// stopped it may pass. Past
+    /// [`UNUSABLE_LOCK_FILE_RETRIES_BEFORE_THE_WAIT_ENDS`] in a row the wait
+    /// gives up on it: an attempt that never reaches the lock names no
+    /// instance to wait for, and a wait that cannot end is worse than the open
+    /// a fresh run would make here.
+    fn outcome_of_a_fresh_read(&mut self, fresh: DataDirectoryUnavailable) -> DataDirectoryRetry {
         let was_held_by_another_instance = matches!(
             self.unavailable,
             DataDirectoryUnavailable::HeldByAnotherInstance(_)
         );
-        self.unavailable = DataDirectoryUnavailable::read_from(instance_lock);
+        self.unavailable = fresh;
         let DataDirectoryUnavailable::UnusableLockFile(cause) = &self.unavailable else {
             self.consecutive_unusable_lock_file_retries = 0;
             return DataDirectoryRetry::StillWaiting;
@@ -553,74 +558,18 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::path::PathBuf;
-
-    use gt_instance_lock::DataDirectoryLock;
-
     use super::*;
 
-    /// A wait, on a directory another instance holds, whose lock file this
-    /// instance can still reach.
-    struct WaitOnAHeldDirectory {
-        parent: tempfile::TempDir,
-        directory: PathBuf,
-        /// The instance holding the directory, which lives as long as the
-        /// wait on it does.
-        _holder: DataDirectoryLock,
-        instance_lock: SharedDataDirectoryLock,
-        wait: DataDirectoryWait,
-        started: Instant,
-    }
+    const UNUSABLE_LOCK_FILE_CAUSE: &str = "the lock file cannot be opened";
 
-    impl WaitOnAHeldDirectory {
-        fn new() -> Self {
-            let parent = tempfile::tempdir().expect("temp dir");
-            let directory = parent.path().join("data");
-            let _holder = DataDirectoryLock::acquire(Some(&directory));
-            let instance_lock = SharedDataDirectoryLock::acquire(Some(&directory));
-            assert_eq!(
-                instance_lock.ownership(),
-                DataDirectoryOwnership::HeldByAnotherInstance,
-                "the wait is meant to start out with another instance holding the directory"
-            );
-            let wait = DataDirectoryWait::new(&instance_lock);
-            Self {
-                parent,
-                directory,
-                _holder,
-                instance_lock,
-                wait,
-                started: Instant::now(),
-            }
-        }
-
-        /// Puts a file where the data directory was, which is what every
-        /// later attempt to open the lock file under it runs into. The
-        /// directory itself is moved aside, keeping the lock the holder has
-        /// open in it, and [`Self::let_the_lock_file_open_again`] puts it
-        /// back.
-        fn make_the_lock_file_unusable(&self) {
-            fs::rename(&self.directory, self.moved_directory()).expect("move the data directory");
-            fs::write(&self.directory, b"not a directory").expect("put a file in its place");
-        }
-
-        fn let_the_lock_file_open_again(&self) {
-            fs::remove_file(&self.directory).expect("clear the way");
-            fs::rename(self.moved_directory(), &self.directory).expect("put the directory back");
-        }
-
-        fn moved_directory(&self) -> PathBuf {
-            self.parent.path().join("moved")
-        }
-
-        /// The outcome of the `attempt`th retry of the wait, each one an
-        /// interval after the last.
-        fn retry(&mut self, attempt: u32) -> DataDirectoryRetry {
-            self.wait.retry_when_the_interval_has_passed(
-                self.started + DATA_DIRECTORY_RETRY_INTERVAL * attempt,
-                &self.instance_lock,
-            )
+    /// A wait as it stands the moment another instance is found holding the
+    /// data directory, with nothing readable about that instance yet.
+    fn wait_on_a_directory_held_by_another_instance() -> DataDirectoryWait {
+        DataDirectoryWait {
+            unavailable: DataDirectoryUnavailable::HeldByAnotherInstance(None),
+            last_retry: Instant::now(),
+            consecutive_unusable_lock_file_retries: 0,
+            confirming_take_over: false,
         }
     }
 
@@ -629,22 +578,25 @@ mod tests {
     /// naming an instance to wait for.
     #[test]
     fn a_lock_file_that_stops_opening_mid_wait_ends_the_wait() {
-        let mut wait = WaitOnAHeldDirectory::new();
-        wait.make_the_lock_file_unusable();
+        let mut wait = wait_on_a_directory_held_by_another_instance();
 
         for attempt in 1..UNUSABLE_LOCK_FILE_RETRIES_BEFORE_THE_WAIT_ENDS {
             assert_eq!(
-                wait.retry(attempt),
+                wait.outcome_of_a_fresh_read(DataDirectoryUnavailable::UnusableLockFile(
+                    UNUSABLE_LOCK_FILE_CAUSE.to_owned()
+                )),
                 DataDirectoryRetry::StillWaiting,
                 "the wait gave up on attempt {attempt}, before the lock file had its retries"
             );
         }
 
-        let outcome = wait.retry(UNUSABLE_LOCK_FILE_RETRIES_BEFORE_THE_WAIT_ENDS);
-
-        assert!(
-            matches!(outcome, DataDirectoryRetry::GaveUpOnTheLockFile { .. }),
-            "a lock file that never opened left the wait at {outcome:?}"
+        assert_eq!(
+            wait.outcome_of_a_fresh_read(DataDirectoryUnavailable::UnusableLockFile(
+                UNUSABLE_LOCK_FILE_CAUSE.to_owned()
+            )),
+            DataDirectoryRetry::GaveUpOnTheLockFile {
+                cause: UNUSABLE_LOCK_FILE_CAUSE.to_owned()
+            }
         );
     }
 
@@ -695,22 +647,25 @@ mod tests {
     /// unusable attempts starts over.
     #[test]
     fn a_directory_that_reads_as_held_again_gives_the_lock_file_its_retries_afresh() {
-        let mut wait = WaitOnAHeldDirectory::new();
-        wait.make_the_lock_file_unusable();
-        for attempt in 1..UNUSABLE_LOCK_FILE_RETRIES_BEFORE_THE_WAIT_ENDS {
-            assert_eq!(wait.retry(attempt), DataDirectoryRetry::StillWaiting);
+        let mut wait = wait_on_a_directory_held_by_another_instance();
+        for _ in 1..UNUSABLE_LOCK_FILE_RETRIES_BEFORE_THE_WAIT_ENDS {
+            assert_eq!(
+                wait.outcome_of_a_fresh_read(DataDirectoryUnavailable::UnusableLockFile(
+                    UNUSABLE_LOCK_FILE_CAUSE.to_owned()
+                )),
+                DataDirectoryRetry::StillWaiting
+            );
         }
-        wait.let_the_lock_file_open_again();
         assert_eq!(
-            wait.retry(UNUSABLE_LOCK_FILE_RETRIES_BEFORE_THE_WAIT_ENDS),
+            wait.outcome_of_a_fresh_read(DataDirectoryUnavailable::HeldByAnotherInstance(None)),
             DataDirectoryRetry::StillWaiting,
             "the instance holding the directory is there to be waited for"
         );
 
-        wait.make_the_lock_file_unusable();
-
         assert_eq!(
-            wait.retry(UNUSABLE_LOCK_FILE_RETRIES_BEFORE_THE_WAIT_ENDS + 1),
+            wait.outcome_of_a_fresh_read(DataDirectoryUnavailable::UnusableLockFile(
+                UNUSABLE_LOCK_FILE_CAUSE.to_owned()
+            )),
             DataDirectoryRetry::StillWaiting,
             "one unusable attempt after the directory was held ended the wait"
         );
