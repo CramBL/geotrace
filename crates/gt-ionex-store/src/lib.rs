@@ -17,11 +17,11 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use gt_hdf5_archive::day_index::{self, DayIndex, RowPlacement};
 use gt_hdf5_archive::prune::{
-    ArchiveLayout, DeclinedRecovery, ExtentColumns, InterruptedDelete, InterruptedDeleteRecovery,
-    PruneProgressSink, RowLevel,
+    ArchiveLayout, DeclinedRecovery, ExtentColumns, InterruptedDelete, PruneProgressSink, RowLevel,
 };
 use gt_hdf5_archive::{
-    ArchiveError, ArchiveFile, Column, OpenArchive, StoredPresence, attributes, dates,
+    ArchiveError, ArchiveFile, ArchiveFileBeingOpened, Column, OpenArchive, ReadOnlyDayArchive,
+    StoredPresence, WritableDayArchive, attributes, dates,
 };
 use gt_ionex::IonexProduct;
 use gt_ionex::grid::{AxisDeclaration, GridAxis, LatitudeAxis, LongitudeAxis, MapGrid};
@@ -109,27 +109,29 @@ pub struct ReadOnlyIonexStore {
     path: PathBuf,
 }
 
-impl ReadOnlyIonexStore {
-    /// Open the archive at `path` without writing to it: it is not created
-    /// where it is missing, not rebuilt, and neither an interrupted insert nor
-    /// an interrupted delete in it is put right.
-    ///
-    /// An archive an interrupted delete left part-way through fails with
-    /// [`IonexStoreError::DeclinedRecovery`]: its day index cannot be read as it
-    /// stands, and putting it right is a write.
-    pub fn open_existing_read_only(path: &Path) -> Result<Self, IonexStoreError> {
-        let mut archive = ArchiveFile::new(path);
-        archive.check_readable_without_writing(
-            interrupted_delete_in,
-            schema::SCHEMA_VERSION_ATTR,
-            schema::CURRENT_SCHEMA_VERSION,
-        )?;
-        Ok(Self {
+impl ReadOnlyDayArchive for ReadOnlyIonexStore {
+    type Error = IonexStoreError;
+
+    const SCHEMA_VERSION_ATTR: &'static str = schema::SCHEMA_VERSION_ATTR;
+    const CURRENT_SCHEMA_VERSION: i64 = schema::CURRENT_SCHEMA_VERSION;
+
+    fn from_archive_file(archive: ArchiveFileBeingOpened) -> Self {
+        let archive = archive.into_archive_file();
+        Self {
+            path: archive.path().to_owned(),
             archive: Mutex::new(archive),
-            path: path.to_owned(),
-        })
+        }
     }
 
+    fn interrupted_delete_in(
+        archive: &mut ArchiveFile,
+    ) -> Result<Option<InterruptedDelete>, IonexStoreError> {
+        let file = archive.open_read_only()?;
+        with_layout(&file, |layout| layout.interrupted_delete())
+    }
+}
+
+impl ReadOnlyIonexStore {
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -258,71 +260,21 @@ impl Deref for IonexStore {
     }
 }
 
-impl IonexStore {
-    /// Open the archive at `path`, creating it if it does not exist.
-    ///
-    /// An archive created before archives recorded their free space in pages
-    /// is rebuilt first, see [`ArchiveFile::migrate_file_space_if_needed`].
-    ///
-    /// Rows left behind by an interrupted store are dropped here, and so are
-    /// the days an interrupted [`Self::delete_days_before`] left in an unknown
-    /// layout.
-    pub fn open_or_create(path: &Path) -> Result<Self, IonexStoreError> {
-        Self::open_or_create_with_recovery_choice(path, InterruptedDeleteRecovery::Recover)
-    }
+impl WritableDayArchive for IonexStore {
+    type Error = IonexStoreError;
 
-    /// Open the archive at `path` as [`Self::open_or_create`] does, recovering
-    /// an interrupted delete only when `recovery` asks for it.
-    ///
-    /// A declined recovery leaves the file exactly as it was found and fails
-    /// with [`IonexStoreError::DeclinedRecovery`], which is checked before anything
-    /// else the open would write.
-    pub fn open_or_create_with_recovery_choice(
-        path: &Path,
-        recovery: InterruptedDeleteRecovery,
-    ) -> Result<Self, IonexStoreError> {
-        let mut archive = ArchiveFile::new(path);
-        if archive.exists() {
-            if recovery == InterruptedDeleteRecovery::Decline
-                && let Some(interrupted) = interrupted_delete_in(&mut archive)?
-            {
-                return Err(DeclinedRecovery(interrupted).into());
-            }
-            archive.migrate_file_space_if_needed()?;
-            archive.validate_schema_version(
-                schema::SCHEMA_VERSION_ATTR,
-                schema::CURRENT_SCHEMA_VERSION,
-            )?;
-            Self::recover_interrupted_delete(&mut archive)?;
-            Self::drop_unindexed_rows(&mut archive)?;
-        } else {
-            Self::create(&mut archive)?;
+    type ReadOnly = ReadOnlyIonexStore;
+
+    fn from_archive_file(archive: ArchiveFileBeingOpened) -> Self {
+        Self {
+            inner: ReadOnlyIonexStore::from_archive_file(archive),
         }
-        Ok(Self {
-            inner: ReadOnlyIonexStore {
-                archive: Mutex::new(archive),
-                path: path.to_owned(),
-            },
-        })
     }
 
-    /// What an interrupted delete left in the archive at `path`, or [`None`]
-    /// when there is nothing to recover. An archive that does not exist yet
-    /// has nothing to recover either.
-    ///
-    /// The file is opened read-only and nothing in it changes.
-    pub fn interrupted_delete_at(
-        path: &Path,
-    ) -> Result<Option<InterruptedDelete>, IonexStoreError> {
-        let mut archive = ArchiveFile::new(path);
-        if !archive.exists() {
-            return Ok(None);
-        }
-        interrupted_delete_in(&mut archive)
-    }
-
-    fn create(archive: &mut ArchiveFile) -> Result<(), IonexStoreError> {
-        let file = archive.create()?;
+    fn create_with_empty_columns(
+        archive: &mut ArchiveFileBeingOpened,
+    ) -> Result<(), IonexStoreError> {
+        let file = archive.archive_file_mut().create()?;
         attributes::write_i64(
             &file,
             schema::SCHEMA_VERSION_ATTR,
@@ -356,8 +308,10 @@ impl IonexStore {
         Ok(())
     }
 
-    fn recover_interrupted_delete(archive: &mut ArchiveFile) -> Result<(), IonexStoreError> {
-        let file = archive.open_read_write()?;
+    fn recover_interrupted_delete(
+        archive: &mut ArchiveFileBeingOpened,
+    ) -> Result<(), IonexStoreError> {
+        let file = archive.archive_file_mut().open_read_write()?;
         with_layout(&file, |layout| {
             layout.recover_interrupted_delete(ARCHIVE_NAME)
         })
@@ -366,8 +320,8 @@ impl IonexStore {
     /// Cut the rows an interrupted store left behind, outermost group first:
     /// map rows no day names, then value rows no surviving map names, then the
     /// per-day columns down to the day index.
-    fn drop_unindexed_rows(archive: &mut ArchiveFile) -> Result<(), IonexStoreError> {
-        let file = archive.open_read_write()?;
+    fn drop_unindexed_rows(archive: &mut ArchiveFileBeingOpened) -> Result<(), IonexStoreError> {
+        let file = archive.archive_file_mut().open_read_write()?;
         let days = file.group(schema::DAYS_GROUP)?;
         let maps = file.group(schema::MAPS_GROUP)?;
         let values = file.group(schema::VALUES_GROUP)?;
@@ -407,7 +361,9 @@ impl IonexStore {
         }
         Ok(())
     }
+}
 
+impl IonexStore {
     /// Remove every day before `cutoff`, reporting how many days went.
     ///
     /// The maps and values the remaining days hold move down to close the
@@ -514,13 +470,6 @@ impl IonexStore {
         index.insert_or_replace(day, placement, fetched_at, host)?;
         Ok(())
     }
-}
-
-fn interrupted_delete_in(
-    archive: &mut ArchiveFile,
-) -> Result<Option<InterruptedDelete>, IonexStoreError> {
-    let file = archive.open_read_only()?;
-    with_layout(&file, |layout| layout.interrupted_delete())
 }
 
 /// Run `act` against the archive's layout: a day index over the map columns

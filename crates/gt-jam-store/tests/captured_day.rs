@@ -4,6 +4,7 @@ use std::fs;
 
 use chrono::{DateTime, Utc};
 
+use gt_hdf5_archive::WritableDayArchive as _;
 use gt_jam::wire::{self, ParseWarningReporter};
 use gt_jam::{FIXTURE_DAYS, dataset_file_name, fixtures_dir, parse_day};
 use gt_jam_store::{FILE_NAME, JamStore};

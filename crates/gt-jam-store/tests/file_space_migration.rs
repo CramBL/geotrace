@@ -8,6 +8,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use hdf5::File;
 use hdf5::plist::file_create::FileSpaceStrategy;
 
+use gt_hdf5_archive::WritableDayArchive as _;
 use gt_hdf5_archive::{ArchiveFile, attributes};
 use gt_jam::wire::{self, HexObservation, ParseWarningReporter};
 use gt_jam::{FIXTURE_DAYS, dataset_file_name, fixtures_dir, parse_day};

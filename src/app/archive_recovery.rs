@@ -23,8 +23,8 @@ use egui::{RichText, Window};
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use gt_instance_lock::TakeOverRecord;
 use gt_store::{
-    DayArchiveError, FlareStore, InterruptedDelete, InterruptedDeleteRecovery, IonexStore,
-    JamStore, SolarStore, Store,
+    DayArchiveError, InterruptedDelete, InterruptedDeleteRecovery, ReadOnlyDayArchive as _,
+    ReadOnlyFlareStore, ReadOnlyIonexStore, ReadOnlyJamStore, ReadOnlySolarStore, Store,
 };
 use gt_ui_theme::warning_amber;
 use strum::IntoEnumIterator as _;
@@ -190,16 +190,16 @@ impl EnvironmentArchive {
         });
         match self {
             Self::AircraftInterference => {
-                self.finding_of(JamStore::interrupted_delete_at(&path), take_over)
+                self.finding_of(ReadOnlyJamStore::interrupted_delete_at(&path), take_over)
             }
             Self::GeomagneticIndices => {
-                self.finding_of(SolarStore::interrupted_delete_at(&path), take_over)
+                self.finding_of(ReadOnlySolarStore::interrupted_delete_at(&path), take_over)
             }
             Self::IonosphericTec => {
-                self.finding_of(IonexStore::interrupted_delete_at(&path), take_over)
+                self.finding_of(ReadOnlyIonexStore::interrupted_delete_at(&path), take_over)
             }
             Self::SolarFlares => {
-                self.finding_of(FlareStore::interrupted_delete_at(&path), take_over)
+                self.finding_of(ReadOnlyFlareStore::interrupted_delete_at(&path), take_over)
             }
         }
     }

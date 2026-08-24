@@ -14,11 +14,11 @@ use gt_flare::SolarFlare;
 use gt_flare::class::{FlareClass, FlareClassification};
 use gt_hdf5_archive::day_index::{DayIndex, RowPlacement};
 use gt_hdf5_archive::prune::{
-    ArchiveLayout, DeclinedRecovery, InterruptedDelete, InterruptedDeleteRecovery,
-    PruneProgressSink, RowLevel,
+    ArchiveLayout, DeclinedRecovery, InterruptedDelete, PruneProgressSink, RowLevel,
 };
 use gt_hdf5_archive::{
-    ArchiveError, ArchiveFile, Column, OpenArchive, StoredPresence, attributes, dates,
+    ArchiveError, ArchiveFile, ArchiveFileBeingOpened, Column, OpenArchive, ReadOnlyDayArchive,
+    StoredPresence, WritableDayArchive, attributes, dates,
 };
 use hdf5::Group;
 use hdf5::types::VarLenUnicode;
@@ -100,27 +100,29 @@ pub struct ReadOnlyFlareStore {
     path: PathBuf,
 }
 
-impl ReadOnlyFlareStore {
-    /// Open the archive at `path` without writing to it: it is not created
-    /// where it is missing, not rebuilt, and neither an interrupted insert nor
-    /// an interrupted delete in it is put right.
-    ///
-    /// An archive an interrupted delete left part-way through fails with
-    /// [`FlareStoreError::DeclinedRecovery`]: its day index cannot be read as it
-    /// stands, and putting it right is a write.
-    pub fn open_existing_read_only(path: &Path) -> Result<Self, FlareStoreError> {
-        let mut archive = ArchiveFile::new(path);
-        archive.check_readable_without_writing(
-            interrupted_delete_in,
-            schema::SCHEMA_VERSION_ATTR,
-            schema::CURRENT_SCHEMA_VERSION,
-        )?;
-        Ok(Self {
+impl ReadOnlyDayArchive for ReadOnlyFlareStore {
+    type Error = FlareStoreError;
+
+    const SCHEMA_VERSION_ATTR: &'static str = schema::SCHEMA_VERSION_ATTR;
+    const CURRENT_SCHEMA_VERSION: i64 = schema::CURRENT_SCHEMA_VERSION;
+
+    fn from_archive_file(archive: ArchiveFileBeingOpened) -> Self {
+        let archive = archive.into_archive_file();
+        Self {
+            path: archive.path().to_owned(),
             archive: Mutex::new(archive),
-            path: path.to_owned(),
-        })
+        }
     }
 
+    fn interrupted_delete_in(
+        archive: &mut ArchiveFile,
+    ) -> Result<Option<InterruptedDelete>, FlareStoreError> {
+        let file = archive.open_read_only()?;
+        with_layout(&file, |layout| layout.interrupted_delete())
+    }
+}
+
+impl ReadOnlyFlareStore {
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -179,71 +181,21 @@ impl Deref for FlareStore {
     }
 }
 
-impl FlareStore {
-    /// Open the archive at `path`, creating it if it does not exist.
-    ///
-    /// An archive created before archives recorded their free space in pages
-    /// is rebuilt first, see [`ArchiveFile::migrate_file_space_if_needed`].
-    ///
-    /// Events left behind by an interrupted store are dropped here, and so
-    /// are the days an interrupted [`Self::delete_days_before`] left in an
-    /// unknown layout.
-    pub fn open_or_create(path: &Path) -> Result<Self, FlareStoreError> {
-        Self::open_or_create_with_recovery_choice(path, InterruptedDeleteRecovery::Recover)
-    }
+impl WritableDayArchive for FlareStore {
+    type Error = FlareStoreError;
 
-    /// Open the archive at `path` as [`Self::open_or_create`] does, recovering
-    /// an interrupted delete only when `recovery` asks for it.
-    ///
-    /// A declined recovery leaves the file exactly as it was found and fails
-    /// with [`FlareStoreError::DeclinedRecovery`], which is checked before anything
-    /// else the open would write.
-    pub fn open_or_create_with_recovery_choice(
-        path: &Path,
-        recovery: InterruptedDeleteRecovery,
-    ) -> Result<Self, FlareStoreError> {
-        let mut archive = ArchiveFile::new(path);
-        if archive.exists() {
-            if recovery == InterruptedDeleteRecovery::Decline
-                && let Some(interrupted) = interrupted_delete_in(&mut archive)?
-            {
-                return Err(DeclinedRecovery(interrupted).into());
-            }
-            archive.migrate_file_space_if_needed()?;
-            archive.validate_schema_version(
-                schema::SCHEMA_VERSION_ATTR,
-                schema::CURRENT_SCHEMA_VERSION,
-            )?;
-            Self::recover_interrupted_delete(&mut archive)?;
-            Self::drop_unindexed_events(&mut archive)?;
-        } else {
-            Self::create(&mut archive)?;
+    type ReadOnly = ReadOnlyFlareStore;
+
+    fn from_archive_file(archive: ArchiveFileBeingOpened) -> Self {
+        Self {
+            inner: ReadOnlyFlareStore::from_archive_file(archive),
         }
-        Ok(Self {
-            inner: ReadOnlyFlareStore {
-                archive: Mutex::new(archive),
-                path: path.to_owned(),
-            },
-        })
     }
 
-    /// What an interrupted delete left in the archive at `path`, or [`None`]
-    /// when there is nothing to recover. An archive that does not exist yet
-    /// has nothing to recover either.
-    ///
-    /// The file is opened read-only and nothing in it changes.
-    pub fn interrupted_delete_at(
-        path: &Path,
-    ) -> Result<Option<InterruptedDelete>, FlareStoreError> {
-        let mut archive = ArchiveFile::new(path);
-        if !archive.exists() {
-            return Ok(None);
-        }
-        interrupted_delete_in(&mut archive)
-    }
-
-    fn create(archive: &mut ArchiveFile) -> Result<(), FlareStoreError> {
-        let file = archive.create()?;
+    fn create_with_empty_columns(
+        archive: &mut ArchiveFileBeingOpened,
+    ) -> Result<(), FlareStoreError> {
+        let file = archive.archive_file_mut().create()?;
         attributes::write_i64(
             &file,
             schema::SCHEMA_VERSION_ATTR,
@@ -276,21 +228,25 @@ impl FlareStore {
         Ok(())
     }
 
-    fn recover_interrupted_delete(archive: &mut ArchiveFile) -> Result<(), FlareStoreError> {
-        let file = archive.open_read_write()?;
+    fn recover_interrupted_delete(
+        archive: &mut ArchiveFileBeingOpened,
+    ) -> Result<(), FlareStoreError> {
+        let file = archive.archive_file_mut().open_read_write()?;
         with_layout(&file, |layout| {
             layout.recover_interrupted_delete(ARCHIVE_NAME)
         })
     }
 
-    fn drop_unindexed_events(archive: &mut ArchiveFile) -> Result<(), FlareStoreError> {
-        let file = archive.open_read_write()?;
+    fn drop_unindexed_rows(archive: &mut ArchiveFileBeingOpened) -> Result<(), FlareStoreError> {
+        let file = archive.archive_file_mut().open_read_write()?;
         let days = file.group(schema::DAYS_GROUP)?;
         let events = file.group(schema::EVENTS_GROUP)?;
         DayIndex::new(&days).drop_unindexed_rows(&events, &schema::EVENT_COLUMNS, ARCHIVE_NAME)?;
         Ok(())
     }
+}
 
+impl FlareStore {
     /// Remove every day before `cutoff`, reporting how many days went.
     ///
     /// The events the remaining days hold move down to close the gap. The
@@ -344,13 +300,6 @@ impl FlareStore {
         DayIndex::new(&days).insert_or_replace(day, placement, fetched_at, host)?;
         Ok(())
     }
-}
-
-fn interrupted_delete_in(
-    archive: &mut ArchiveFile,
-) -> Result<Option<InterruptedDelete>, FlareStoreError> {
-    let file = archive.open_read_only()?;
-    with_layout(&file, |layout| layout.interrupted_delete())
 }
 
 fn append_events(group: &Group, flares: &[SolarFlare]) -> Result<(), FlareStoreError> {

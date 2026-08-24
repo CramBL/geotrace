@@ -13,11 +13,11 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, NaiveDate, Utc};
 use gt_hdf5_archive::day_index::{self, DayIndex, RowPlacement};
 use gt_hdf5_archive::prune::{
-    ArchiveLayout, DeclinedRecovery, InterruptedDelete, InterruptedDeleteRecovery, PruneProgress,
-    PruneProgressSink, RowLevel,
+    ArchiveLayout, DeclinedRecovery, InterruptedDelete, PruneProgress, PruneProgressSink, RowLevel,
 };
 use gt_hdf5_archive::{
-    ArchiveError, ArchiveFile, Column, OpenArchive, StoredPresence, attributes, dates,
+    ArchiveError, ArchiveFile, ArchiveFileBeingOpened, Column, OpenArchive, ReadOnlyDayArchive,
+    StoredPresence, WritableDayArchive, attributes, dates,
 };
 use gt_solar::GeomagneticIndex;
 use gt_solar::activity::GeomagneticActivity;
@@ -99,27 +99,47 @@ pub struct ReadOnlySolarStore {
     path: PathBuf,
 }
 
-impl ReadOnlySolarStore {
-    /// Open the archive at `path` without writing to it: it is not created
-    /// where it is missing, not rebuilt, and neither an interrupted insert nor
-    /// an interrupted delete in it is put right.
-    ///
-    /// An archive an interrupted delete left part-way through fails with
-    /// [`SolarStoreError::DeclinedRecovery`]: its day index cannot be read as it
-    /// stands, and putting it right is a write.
-    pub fn open_existing_read_only(path: &Path) -> Result<Self, SolarStoreError> {
-        let mut archive = ArchiveFile::new(path);
-        archive.check_readable_without_writing(
-            interrupted_delete_in,
-            schema::SCHEMA_VERSION_ATTR,
-            schema::CURRENT_SCHEMA_VERSION,
-        )?;
-        Ok(Self {
+impl ReadOnlyDayArchive for ReadOnlySolarStore {
+    type Error = SolarStoreError;
+
+    const SCHEMA_VERSION_ATTR: &'static str = schema::SCHEMA_VERSION_ATTR;
+    const CURRENT_SCHEMA_VERSION: i64 = schema::CURRENT_SCHEMA_VERSION;
+
+    fn from_archive_file(archive: ArchiveFileBeingOpened) -> Self {
+        let archive = archive.into_archive_file();
+        Self {
+            path: archive.path().to_owned(),
             archive: Mutex::new(archive),
-            path: path.to_owned(),
-        })
+        }
     }
 
+    /// An interrupted delete in either index is reported for the archive: the
+    /// two indices share the file, and a delete runs through both.
+    ///
+    /// The count covers the days of the interrupted indices alone, a day both
+    /// of them hold counting once: recovery discards the interrupted indices
+    /// whole while a settled index keeps its days.
+    fn interrupted_delete_in(
+        archive: &mut ArchiveFile,
+    ) -> Result<Option<InterruptedDelete>, SolarStoreError> {
+        let file = archive.open_read_only()?;
+        let mut interrupted = false;
+        let mut discarded_epoch_days: BTreeSet<i32> = BTreeSet::new();
+        for index in GeomagneticIndex::iter() {
+            if with_layout(&file, index, |layout| layout.interrupted_delete())?.is_none() {
+                continue;
+            }
+            interrupted = true;
+            let days = file.group(&index.days_group_path())?;
+            discarded_epoch_days.extend(Column::new(&days, day_index::DAY).read::<i32>()?);
+        }
+        Ok(interrupted.then_some(InterruptedDelete {
+            archived_days: discarded_epoch_days.len(),
+        }))
+    }
+}
+
+impl ReadOnlySolarStore {
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -200,78 +220,21 @@ impl Deref for SolarStore {
     }
 }
 
-impl SolarStore {
-    /// Open the archive at `path`, creating it if it does not exist.
-    ///
-    /// An archive created before archives recorded their free space in pages
-    /// is rebuilt first, see [`ArchiveFile::migrate_file_space_if_needed`].
-    ///
-    /// Samples left behind by an interrupted store are dropped here, and so
-    /// are the days an interrupted [`Self::delete_days_before`] left in an
-    /// unknown layout.
-    pub fn open_or_create(path: &Path) -> Result<Self, SolarStoreError> {
-        Self::open_or_create_with_recovery_choice(path, InterruptedDeleteRecovery::Recover)
-    }
+impl WritableDayArchive for SolarStore {
+    type Error = SolarStoreError;
 
-    /// Open the archive at `path` as [`Self::open_or_create`] does, recovering
-    /// an interrupted delete only when `recovery` asks for it.
-    ///
-    /// One interrupted index declines the whole archive: the two indices share
-    /// the file, and a delete runs through both. A declined recovery leaves the
-    /// file exactly as it was found and fails with
-    /// [`SolarStoreError::DeclinedRecovery`], which is checked before anything
-    /// else the open would write.
-    pub fn open_or_create_with_recovery_choice(
-        path: &Path,
-        recovery: InterruptedDeleteRecovery,
-    ) -> Result<Self, SolarStoreError> {
-        let mut archive = ArchiveFile::new(path);
-        if archive.exists() {
-            if recovery == InterruptedDeleteRecovery::Decline
-                && let Some(interrupted) = interrupted_delete_in(&mut archive)?
-            {
-                return Err(DeclinedRecovery(interrupted).into());
-            }
-            archive.migrate_file_space_if_needed()?;
-            archive.validate_schema_version(
-                schema::SCHEMA_VERSION_ATTR,
-                schema::CURRENT_SCHEMA_VERSION,
-            )?;
-            Self::recover_interrupted_delete(&mut archive)?;
-            Self::drop_unindexed_samples(&mut archive)?;
-        } else {
-            Self::create(&mut archive)?;
+    type ReadOnly = ReadOnlySolarStore;
+
+    fn from_archive_file(archive: ArchiveFileBeingOpened) -> Self {
+        Self {
+            inner: ReadOnlySolarStore::from_archive_file(archive),
         }
-        Ok(Self {
-            inner: ReadOnlySolarStore {
-                archive: Mutex::new(archive),
-                path: path.to_owned(),
-            },
-        })
     }
 
-    /// What an interrupted delete left in the archive at `path`, or [`None`]
-    /// when there is nothing to recover. An archive that does not exist yet
-    /// has nothing to recover either.
-    ///
-    /// The count covers the days of the interrupted indices alone, a day both
-    /// of them hold counting once: a delete runs through the Kp index and the
-    /// Hp30 index in turn, and recovery discards the interrupted ones whole
-    /// while a settled index keeps its days.
-    ///
-    /// The file is opened read-only and nothing in it changes.
-    pub fn interrupted_delete_at(
-        path: &Path,
-    ) -> Result<Option<InterruptedDelete>, SolarStoreError> {
-        let mut archive = ArchiveFile::new(path);
-        if !archive.exists() {
-            return Ok(None);
-        }
-        interrupted_delete_in(&mut archive)
-    }
-
-    fn create(archive: &mut ArchiveFile) -> Result<(), SolarStoreError> {
-        let file = archive.create()?;
+    fn create_with_empty_columns(
+        archive: &mut ArchiveFileBeingOpened,
+    ) -> Result<(), SolarStoreError> {
+        let file = archive.archive_file_mut().create()?;
         attributes::write_i64(
             &file,
             schema::SCHEMA_VERSION_ATTR,
@@ -297,8 +260,10 @@ impl SolarStore {
         Ok(())
     }
 
-    fn recover_interrupted_delete(archive: &mut ArchiveFile) -> Result<(), SolarStoreError> {
-        let file = archive.open_read_write()?;
+    fn recover_interrupted_delete(
+        archive: &mut ArchiveFileBeingOpened,
+    ) -> Result<(), SolarStoreError> {
+        let file = archive.archive_file_mut().open_read_write()?;
         for index in GeomagneticIndex::iter() {
             with_layout(&file, index, |layout| {
                 layout.recover_interrupted_delete(&archive_name(index))
@@ -307,8 +272,8 @@ impl SolarStore {
         Ok(())
     }
 
-    fn drop_unindexed_samples(archive: &mut ArchiveFile) -> Result<(), SolarStoreError> {
-        let file = archive.open_read_write()?;
+    fn drop_unindexed_rows(archive: &mut ArchiveFileBeingOpened) -> Result<(), SolarStoreError> {
+        let file = archive.archive_file_mut().open_read_write()?;
         for index in GeomagneticIndex::iter() {
             let days = file.group(&index.days_group_path())?;
             let samples = file.group(&index.samples_group_path())?;
@@ -320,7 +285,9 @@ impl SolarStore {
         }
         Ok(())
     }
+}
 
+impl SolarStore {
     /// Remove every day before `cutoff` from both indices, reporting how many
     /// days went. A day either index held counts once.
     ///
@@ -449,25 +416,6 @@ impl SolarStore {
         DayIndex::new(&days).insert_or_replace(day, placement, fetched_at, host)?;
         Ok(())
     }
-}
-
-fn interrupted_delete_in(
-    archive: &mut ArchiveFile,
-) -> Result<Option<InterruptedDelete>, SolarStoreError> {
-    let file = archive.open_read_only()?;
-    let mut interrupted = false;
-    let mut discarded_epoch_days: BTreeSet<i32> = BTreeSet::new();
-    for index in GeomagneticIndex::iter() {
-        if with_layout(&file, index, |layout| layout.interrupted_delete())?.is_none() {
-            continue;
-        }
-        interrupted = true;
-        let days = file.group(&index.days_group_path())?;
-        discarded_epoch_days.extend(Column::new(&days, day_index::DAY).read::<i32>()?);
-    }
-    Ok(interrupted.then_some(InterruptedDelete {
-        archived_days: discarded_epoch_days.len(),
-    }))
 }
 
 /// One index's sample type, and the columns the archive writes it to.

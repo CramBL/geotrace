@@ -10,11 +10,12 @@ use gt_hdf5_archive::day_index;
 use gt_hdf5_archive::prune::{
     DeclinedRecovery, DeleteState, InterruptedDelete, InterruptedDeleteRecovery,
 };
+use gt_hdf5_archive::{ReadOnlyDayArchive as _, WritableDayArchive as _};
 use gt_ionex::IonexProduct;
 use gt_ionex::grid::{AxisDeclaration, GridAxis, GridPoint, LatitudeAxis, LongitudeAxis, MapGrid};
 use gt_ionex::maps::{GlobalIonosphereMaps, TecMap};
 use gt_ionex::tec::TotalElectronContent;
-use gt_ionex_store::{FILE_NAME, IonexStore, IonexStoreError, schema};
+use gt_ionex_store::{FILE_NAME, IonexStore, IonexStoreError, ReadOnlyIonexStore, schema};
 use gt_test_utils::day_archive::{self, ColumnName, GroupPath};
 use gt_types::{Latitude, Longitude};
 
@@ -594,7 +595,7 @@ fn declining_recovery_leaves_the_interrupted_archive_as_it_was() {
     drop(store);
     day_archive::mark_delete_in_flight(&path, DAYS).expect("mark the delete");
 
-    let interrupted = IonexStore::interrupted_delete_at(&path).expect("inspect");
+    let interrupted = ReadOnlyIonexStore::interrupted_delete_at(&path).expect("inspect");
     let declined =
         IonexStore::open_or_create_with_recovery_choice(&path, InterruptedDeleteRecovery::Decline)
             .expect_err("the archive is unavailable until the recovery is accepted");
@@ -639,13 +640,13 @@ fn a_settled_archive_reports_no_interrupted_delete() {
     let path = dir.path().join(FILE_NAME);
 
     assert_eq!(
-        IonexStore::interrupted_delete_at(&path).expect("before the archive exists"),
+        ReadOnlyIonexStore::interrupted_delete_at(&path).expect("before the archive exists"),
         None
     );
     IonexStore::open_or_create(&path).expect("create");
 
     assert_eq!(
-        IonexStore::interrupted_delete_at(&path).expect("a settled archive"),
+        ReadOnlyIonexStore::interrupted_delete_at(&path).expect("a settled archive"),
         None
     );
     IonexStore::open_or_create_with_recovery_choice(&path, InterruptedDeleteRecovery::Decline)

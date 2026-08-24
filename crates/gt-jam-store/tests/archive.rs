@@ -12,8 +12,9 @@ use gt_hdf5_archive::day_index;
 use gt_hdf5_archive::prune::{
     DeclinedRecovery, DeleteState, InterruptedDelete, InterruptedDeleteRecovery,
 };
+use gt_hdf5_archive::{ReadOnlyDayArchive as _, WritableDayArchive as _};
 use gt_jam::wire::HexObservation;
-use gt_jam_store::{FILE_NAME, JamStore, JamStoreError, schema};
+use gt_jam_store::{FILE_NAME, JamStore, JamStoreError, ReadOnlyJamStore, schema};
 use gt_test_utils::day_archive::{self, ColumnName, GroupPath};
 
 /// Cells copied from the captured fixture day.
@@ -499,7 +500,7 @@ fn declining_recovery_leaves_the_interrupted_archive_as_it_was() {
     day_archive::mark_delete_in_flight(&path, DAYS).expect("mark the delete");
     let interrupted_bytes = fs::read(&path).expect("archive bytes");
 
-    let interrupted = JamStore::interrupted_delete_at(&path).expect("inspect");
+    let interrupted = ReadOnlyJamStore::interrupted_delete_at(&path).expect("inspect");
     let declined =
         JamStore::open_or_create_with_recovery_choice(&path, InterruptedDeleteRecovery::Decline)
             .expect_err("the archive is unavailable until the recovery is accepted");
@@ -546,7 +547,7 @@ fn a_settled_archive_reports_no_interrupted_delete() {
     let path = dir.path().join(FILE_NAME);
 
     assert_eq!(
-        JamStore::interrupted_delete_at(&path).expect("before the archive exists"),
+        ReadOnlyJamStore::interrupted_delete_at(&path).expect("before the archive exists"),
         None
     );
     let store = JamStore::open_or_create(&path).expect("open");
@@ -556,7 +557,7 @@ fn a_settled_archive_reports_no_interrupted_delete() {
     drop(store);
 
     assert_eq!(
-        JamStore::interrupted_delete_at(&path).expect("a settled archive"),
+        ReadOnlyJamStore::interrupted_delete_at(&path).expect("a settled archive"),
         None
     );
     let store =

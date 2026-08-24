@@ -15,12 +15,14 @@ use hdf5::{Dataset, Extents, Group, SimpleExtents};
 mod archive_file;
 pub mod attributes;
 pub mod dates;
+pub mod day_archive;
 pub mod day_index;
 mod open_retry;
 pub mod prune;
 mod usage;
 
 pub use archive_file::{ArchiveFile, FileSpaceMigration, OpenArchive};
+pub use day_archive::{ArchiveFileBeingOpened, ReadOnlyDayArchive, WritableDayArchive};
 pub use usage::{ArchiveUsage, ArchivedDaySpan};
 
 /// Why an archive access failed. Each archive converts this into its own
