@@ -13,12 +13,15 @@
 //! [`super::storage::open_in`] follows with the answers.
 
 use std::collections::VecDeque;
+use std::fs;
 use std::mem;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
+use chrono::DateTime;
 use egui::{RichText, Window};
 use egui_phosphor::regular::WARNING as ICON_WARNING;
+use gt_instance_lock::TakeOverRecord;
 use gt_store::{
     DayArchiveError, FlareStore, InterruptedDelete, InterruptedDeleteRecovery, IonexStore,
     JamStore, SolarStore, Store,
@@ -38,15 +41,67 @@ pub(in crate::app) const ARCHIVE_IN_USE_BUTTON_LABEL: &str = "Continue";
 
 const PROMPT_MAX_WIDTH: f32 = 460.0;
 
+/// Starts the line an interrupted-delete prompt states a take-over on.
+pub(in crate::app) const WRITE_ACCESS_TAKEN_FROM: &str =
+    "Write access to this data directory was taken from";
+
 /// What reading one archive found, where it is something the user has to
 /// answer for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::app) enum InterruptedDeleteFinding {
     /// A delete was interrupted part-way through the archive, leaving the
     /// days recovering it would discard.
-    Interrupted(InterruptedDelete),
+    Interrupted {
+        interrupted: InterruptedDelete,
+        take_over: Option<TakeOverAfterTheArchiveWasLastWritten>,
+    },
     /// Nothing here can read the file: the other GeoTrace has it open.
     HeldByTheOtherInstance,
+}
+
+/// A take-over recorded in the data directory, where the archive was last
+/// written no later than the take-over. The interrupted-delete prompt for
+/// that archive states it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::app) struct TakeOverAfterTheArchiveWasLastWritten(TakeOverRecord);
+
+impl TakeOverAfterTheArchiveWasLastWritten {
+    /// `record` where the archive at `path` was last written at or before
+    /// the take-over, and [`None`] where a write followed it.
+    ///
+    /// A record without `written_at`, and an archive whose modification time
+    /// `fs::metadata` does not give, are both stated: withholding the
+    /// take-over costs more than stating one a later write may explain.
+    fn of_the_archive_at(path: &Path, record: TakeOverRecord) -> Option<Self> {
+        let Some(written_at) = record.written_at else {
+            return Some(Self(record));
+        };
+        let last_written_at = fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(gt_instance_lock::seconds_since_the_epoch);
+        match last_written_at {
+            Some(last_written_at) if written_at < last_written_at => None,
+            Some(_) | None => Some(Self(record)),
+        }
+    }
+
+    /// The line the prompt states: which process write access was taken
+    /// from, and when. Either is left out where the record has none.
+    fn prompt_sentence(self) -> String {
+        let taken_from = match self.0.taken_from_process_id {
+            Some(process_id) => format!("another GeoTrace (process {process_id})"),
+            None => "another GeoTrace".to_owned(),
+        };
+        let when = self
+            .0
+            .written_at
+            .and_then(|written_at| i64::try_from(written_at).ok())
+            .and_then(|seconds| DateTime::from_timestamp(seconds, 0))
+            .map(|written_at| format!(" on {}", written_at.format("%Y-%m-%d %H:%M UTC")))
+            .unwrap_or_default();
+        format!("{WRITE_ACCESS_TAKEN_FROM} {taken_from}{when}.")
+    }
 }
 
 /// What the first step of a taken-over open read off the archives.
@@ -94,10 +149,22 @@ impl InspectedArchives {
 
 /// Read every day archive under `root` for an interrupted delete, which
 /// writes nothing and leaves every file closed.
-pub(in crate::app) fn inspect_archives_under(root: PathBuf) -> InspectedArchives {
+///
+/// `previous_take_over` is the take-over recorded in the data directory
+/// before the one this open follows, which the prompt for an archive written
+/// no later than it states.
+pub(in crate::app) fn inspect_archives_under(
+    root: PathBuf,
+    previous_take_over: Option<TakeOverRecord>,
+) -> InspectedArchives {
     let store = Store::open_in(&root);
     let findings = EnvironmentArchive::iter()
-        .filter_map(|archive| Some((archive, archive.interrupted_delete_finding(&store)?)))
+        .filter_map(|archive| {
+            Some((
+                archive,
+                archive.interrupted_delete_finding(&store, previous_take_over)?,
+            ))
+        })
         .collect();
     InspectedArchives {
         root: Some(root),
@@ -112,23 +179,42 @@ impl EnvironmentArchive {
     /// A failure that is neither an interrupted delete nor another process
     /// holding the file is left to the open to report: it fails there the
     /// same way it does on the normal path.
-    fn interrupted_delete_finding(self, store: &Store) -> Option<InterruptedDeleteFinding> {
+    fn interrupted_delete_finding(
+        self,
+        store: &Store,
+        previous_take_over: Option<TakeOverRecord>,
+    ) -> Option<InterruptedDeleteFinding> {
         let path = self.path_in(store);
+        let take_over = previous_take_over.and_then(|record| {
+            TakeOverAfterTheArchiveWasLastWritten::of_the_archive_at(&path, record)
+        });
         match self {
-            Self::AircraftInterference => self.finding_of(JamStore::interrupted_delete_at(&path)),
-            Self::GeomagneticIndices => self.finding_of(SolarStore::interrupted_delete_at(&path)),
-            Self::IonosphericTec => self.finding_of(IonexStore::interrupted_delete_at(&path)),
-            Self::SolarFlares => self.finding_of(FlareStore::interrupted_delete_at(&path)),
+            Self::AircraftInterference => {
+                self.finding_of(JamStore::interrupted_delete_at(&path), take_over)
+            }
+            Self::GeomagneticIndices => {
+                self.finding_of(SolarStore::interrupted_delete_at(&path), take_over)
+            }
+            Self::IonosphericTec => {
+                self.finding_of(IonexStore::interrupted_delete_at(&path), take_over)
+            }
+            Self::SolarFlares => {
+                self.finding_of(FlareStore::interrupted_delete_at(&path), take_over)
+            }
         }
     }
 
     fn finding_of<E: DayArchiveError>(
         self,
         inspected: Result<Option<InterruptedDelete>, E>,
+        take_over: Option<TakeOverAfterTheArchiveWasLastWritten>,
     ) -> Option<InterruptedDeleteFinding> {
         match inspected {
             Ok(None) => None,
-            Ok(Some(interrupted)) => Some(InterruptedDeleteFinding::Interrupted(interrupted)),
+            Ok(Some(interrupted)) => Some(InterruptedDeleteFinding::Interrupted {
+                interrupted,
+                take_over,
+            }),
             Err(err) if err.is_held_by_another_process() => {
                 Some(InterruptedDeleteFinding::HeldByTheOtherInstance)
             }
@@ -381,6 +467,7 @@ fn show_interrupted_delete_prompt(
     ui: &egui::Ui,
     archive: EnvironmentArchive,
     interrupted: InterruptedDelete,
+    take_over: Option<TakeOverAfterTheArchiveWasLastWritten>,
 ) -> Option<InterruptedDeleteAnswer> {
     let mut answer = ui
         .ctx()
@@ -397,6 +484,10 @@ fn show_interrupted_delete_prompt(
                 "A delete was interrupted part-way through this archive, and GeoTrace cannot \
                  open it as it stands.",
             );
+            if let Some(take_over) = take_over {
+                ui.add_space(4.0);
+                ui.label(take_over.prompt_sentence());
+            }
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(ICON_WARNING).color(warning_amber(ui.visuals().dark_mode)));
@@ -522,9 +613,10 @@ impl App {
             return;
         };
         let answer = match finding {
-            InterruptedDeleteFinding::Interrupted(interrupted) => {
-                show_interrupted_delete_prompt(ui, archive, interrupted)
-            }
+            InterruptedDeleteFinding::Interrupted {
+                interrupted,
+                take_over,
+            } => show_interrupted_delete_prompt(ui, archive, interrupted, take_over),
             InterruptedDeleteFinding::HeldByTheOtherInstance => {
                 show_archive_held_by_the_other_instance(ui, archive)
             }
@@ -563,6 +655,101 @@ impl App {
             ctx,
             self.pending_writes.clone(),
             queued_loads,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use rstest::rstest;
+
+    use super::*;
+
+    const TAKEN_FROM_PROCESS_ID: u32 = 4321;
+
+    /// A take-over of a data directory, stamped as the case says.
+    const fn take_over_recorded_at(written_at: Option<u64>) -> TakeOverRecord {
+        TakeOverRecord {
+            taken_by_process_id: 1234,
+            taken_from_process_id: Some(TAKEN_FROM_PROCESS_ID),
+            written_at,
+        }
+    }
+
+    /// When `path` was last written, in the unit a [`TakeOverRecord`] is
+    /// stamped in.
+    fn last_written_at(path: &Path) -> u64 {
+        let modified = fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .expect("the file's modification time");
+        gt_instance_lock::seconds_since_the_epoch(modified)
+            .expect("a modification time after the Unix epoch")
+    }
+
+    /// A take-over the archive was written after explains nothing about the
+    /// state that write left. A record without a timestamp cannot be
+    /// compared with the modification time at all.
+    #[rstest]
+    #[case::recorded_after_the_last_write(Some(60), true)]
+    #[case::recorded_before_the_last_write(Some(-60), false)]
+    #[case::recorded_without_a_timestamp(None, true)]
+    fn a_take_over_is_stated_unless_the_archive_was_written_after_it(
+        #[case] seconds_after_the_last_write: Option<i64>,
+        #[case] stated: bool,
+    ) {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("interference.h5");
+        fs::write(&path, b"an archive").expect("write the archive");
+        let written_at = seconds_after_the_last_write
+            .map(|offset| last_written_at(&path).saturating_add_signed(offset));
+
+        let take_over = TakeOverAfterTheArchiveWasLastWritten::of_the_archive_at(
+            &path,
+            take_over_recorded_at(written_at),
+        );
+
+        assert_eq!(take_over.is_some(), stated);
+    }
+
+    /// `fs::metadata` reports no modification time for a file that is not
+    /// there, which [`TakeOverAfterTheArchiveWasLastWritten::of_the_archive_at`]
+    /// states the take-over for.
+    #[test]
+    fn a_take_over_is_stated_where_the_archive_has_no_modification_time() {
+        let directory = tempfile::tempdir().expect("temp dir");
+
+        let take_over = TakeOverAfterTheArchiveWasLastWritten::of_the_archive_at(
+            &directory.path().join("interference.h5"),
+            take_over_recorded_at(Some(1_700_000_000)),
+        );
+
+        assert!(take_over.is_some());
+    }
+
+    #[rstest]
+    #[case::with_a_process_id_and_a_time(
+        take_over_recorded_at(Some(1_700_000_000)),
+        "Write access to this data directory was taken from another GeoTrace (process 4321) on \
+         2023-11-14 22:13 UTC."
+    )]
+    #[case::without_a_time(
+        take_over_recorded_at(None),
+        "Write access to this data directory was taken from another GeoTrace (process 4321)."
+    )]
+    #[case::without_a_process_id(
+        TakeOverRecord { taken_from_process_id: None, ..take_over_recorded_at(Some(1_700_000_000)) },
+        "Write access to this data directory was taken from another GeoTrace on 2023-11-14 22:13 \
+         UTC."
+    )]
+    fn the_prompt_states_the_take_over_with_what_the_record_holds(
+        #[case] record: TakeOverRecord,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(
+            TakeOverAfterTheArchiveWasLastWritten(record).prompt_sentence(),
+            expected
         );
     }
 }

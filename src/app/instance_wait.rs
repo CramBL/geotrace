@@ -20,8 +20,9 @@ use egui::{RichText, Window};
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use gt_instance_lock::{
     DataDirectoryOwnership, InstanceState, InstanceStatusRead, SharedDataDirectoryLock,
-    StatusFreshness,
+    StatusFreshness, TakeOverRecord,
 };
+use gt_pending_writes::WriteKind;
 use gt_ui_theme::warning_amber;
 
 use super::App;
@@ -75,6 +76,9 @@ const START_READ_ONLY_BUTTON_HOVER: &str = "Read the recordings and archives her
 /// Ends every wait dialog line about a status file that produced no status.
 const OPENS_HERE_ONCE_THE_HOLDER_LETS_GO: &str =
     "GeoTrace opens the recordings and archives here as soon as it lets go.";
+
+/// What the write recording a take-over registers under.
+const RECORDING_THE_TAKE_OVER: &str = "Recording the take-over";
 
 const WAIT_DIALOG_MIN_WIDTH: f32 = 360.0;
 
@@ -597,17 +601,38 @@ impl App {
     ///
     /// `taken_over` is [`None`] where the wait ended because the lock file
     /// stopped opening, which leaves the holder of the directory unknown.
+    /// A take-over is recorded in the data directory first, and the record it
+    /// replaces is passed to the archive inspection.
     fn open_the_databases_without_the_mark(
         &mut self,
         ctx: &egui::Context,
         taken_over: Option<TakenOverInstance>,
         queued_loads: Vec<QueuedLoad>,
     ) {
+        let previous_take_over =
+            taken_over.and_then(|taken_over| self.record_take_over(taken_over));
         self.instance_taken_over_from = taken_over;
         self.background_mark_retry = Some(BackgroundMarkRetry::new());
-        self.storage_open = self
-            .storage
-            .inspect_archives_in_background(ctx, queued_loads);
+        self.storage_open =
+            self.storage
+                .inspect_archives_in_background(ctx, previous_take_over, queued_loads);
+    }
+
+    /// Records this take-over in the data directory, and reports the
+    /// take-over recorded there before it.
+    ///
+    /// A read-only session records nothing: the registry refuses the write.
+    fn record_take_over(&self, taken_over: TakenOverInstance) -> Option<TakeOverRecord> {
+        match self
+            .pending_writes
+            .try_begin(RECORDING_THE_TAKE_OVER, WriteKind::TakeOverRecord)
+        {
+            Ok(_write) => self.instance_lock.record_take_over(taken_over.process_id),
+            Err(refusal) => {
+                log::warn!("The take-over is not recorded in the data directory: {refusal}");
+                None
+            }
+        }
     }
 
     /// Leaves the wait as a read-only session: the databases are opened
