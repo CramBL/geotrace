@@ -350,9 +350,9 @@ pub struct App {
     /// The archives this run opened none of, and what the controls needing
     /// them say instead.
     unavailable_archives: archive_recovery::UnavailableArchives,
-    /// Set once the user took write access from the instance holding the data
-    /// directory: the mark is retried until this instance holds it too.
-    mark_retry_after_take_over: Option<instance_wait::MarkRetryAfterTakeOver>,
+    /// Set once the databases were opened without the mark: the mark is
+    /// retried behind the window until this instance holds it too.
+    background_mark_retry: Option<instance_wait::BackgroundMarkRetry>,
     /// The instance that owns the data directory, as its status file named it
     /// when the user started this session read-only beside it. The read-only
     /// marker names it.
@@ -497,8 +497,9 @@ impl App {
         // Nothing is opened while another instance holds the data directory:
         // recovery here would run against archives that instance is part-way
         // through rewriting. A run whose lock file cannot be opened or locked
-        // at all opens the databases: it names no instance to wait for, and
-        // on a filesystem without file locking it never will.
+        // at all opens the databases: it names no instance to wait for, which
+        // is what `instance_wait` settles on once a wait's lock file stays
+        // unusable.
         let storage_open = match options.instance_lock.ownership() {
             DataDirectoryOwnership::HeldByAnotherInstance => {
                 storage::StorageOpen::waiting_for_the_data_directory(&options.instance_lock)
@@ -626,7 +627,7 @@ impl App {
             instance_lock: options.instance_lock,
             storage_open,
             unavailable_archives: archive_recovery::UnavailableArchives::default(),
-            mark_retry_after_take_over: None,
+            background_mark_retry: None,
             data_directory_owner_process_id: None,
             keep_db_backup: true,
             pending_resegment: None,

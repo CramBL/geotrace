@@ -4703,10 +4703,11 @@ fn the_wait_ends_when_the_instance_holding_the_data_directory_lets_go() {
     );
 }
 
-/// A lock file that will not open says nothing about who has the directory,
-/// so the wait goes on and opens nothing until the lock itself is taken.
+/// A lock file that stops opening says nothing about who has the directory,
+/// and whatever stopped it may pass: the wait goes on through the retries
+/// that lock file is given, and ends by taking the lock once it opens again.
 #[test]
-fn a_wait_whose_lock_file_cannot_be_opened_keeps_waiting() {
+fn a_lock_file_that_briefly_cannot_be_opened_leaves_the_wait_running() {
     let parent = tempfile::tempdir().expect("temp dir");
     let data_directory = parent.path().join("data");
     let holder = DataDirectoryLock::acquire(Some(&data_directory));
@@ -5060,7 +5061,7 @@ fn the_lock_freed_after_a_take_over_makes_this_instance_the_marked_owner() {
         "the promotion put the app back in the wait"
     );
     assert!(
-        harness.state().mark_retry_after_take_over.is_none(),
+        harness.state().background_mark_retry.is_none(),
         "the retry goes on after this instance became the marked owner"
     );
 }

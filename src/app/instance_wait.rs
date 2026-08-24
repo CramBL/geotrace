@@ -5,11 +5,13 @@
 //! holding the directory is part-way through rewriting. It retries the lock
 //! instead, and shows what that instance is doing until it lets go.
 //!
-//! The wait ends in one of three ways: this instance takes the lock, the user
+//! The wait ends in one of four ways: this instance takes the lock, the user
 //! takes write access from the instance holding it after a confirmation
-//! naming what that costs, or the user starts a read-only session beside it.
-//! A lock file that will not open ends nothing by itself: it leaves the
-//! databases closed until one of those three happens.
+//! naming what that costs, the user starts a read-only session beside it, or
+//! the lock file stops opening for long enough that there is no instance left
+//! to wait for. The last of those is the rule a run that starts on an
+//! unusable lock file follows as well: the databases open here, since an
+//! attempt that never reached the lock names no owner.
 
 use std::mem;
 use std::time::{Duration, Instant};
@@ -28,6 +30,21 @@ use super::storage::{QueuedLoad, StorageOpen};
 /// How often the wait tries the data directory again, and with it re-reads
 /// why it does not have it.
 pub(in crate::app) const DATA_DIRECTORY_RETRY_INTERVAL: Duration = Duration::from_millis(250);
+
+/// How many attempts the background retry makes at
+/// [`DATA_DIRECTORY_RETRY_INTERVAL`] before it starts spreading them out. The
+/// instance it waits for is usually on its way out when the retry starts.
+const BACKGROUND_MARK_ATTEMPTS_AT_THE_WAIT_RATE: u32 = 20;
+
+/// The longest the background retry leaves between two attempts. Nothing the
+/// user sees waits on the mark it is after.
+const SLOWEST_BACKGROUND_MARK_RETRY_INTERVAL: Duration = Duration::from_secs(30);
+
+/// How many retries in a row may find the lock file unusable before the wait
+/// ends and the databases open without the mark. Five seconds of them rides
+/// out a remount or a lock daemon restart, and nothing longer than that names
+/// an instance to keep waiting for.
+const UNUSABLE_LOCK_FILE_RETRIES_BEFORE_THE_WAIT_ENDS: u32 = 20;
 
 pub(in crate::app) const DATA_DIRECTORY_HELD_TITLE: &str =
     "Another GeoTrace is using this data directory";
@@ -75,6 +92,12 @@ enum DataDirectoryUnavailable {
 enum DataDirectoryRetry {
     Taken,
     StillWaiting,
+    /// The lock file has not opened for
+    /// [`UNUSABLE_LOCK_FILE_RETRIES_BEFORE_THE_WAIT_ENDS`] retries in a row,
+    /// with the cause of the last one. What has the directory is unknown.
+    GaveUpOnTheLockFile {
+        cause: String,
+    },
 }
 
 /// How the user answered the wait dialog this frame.
@@ -101,17 +124,20 @@ enum TakeOverChoice {
 pub(in crate::app) struct DataDirectoryWait {
     unavailable: DataDirectoryUnavailable,
     last_retry: Instant,
+    consecutive_unusable_lock_file_retries: u32,
     confirming_take_over: bool,
 }
 
-/// The retry that goes on after the user took write access, until the data
-/// directory is marked as in use by this instance.
+/// The retry that goes on once the databases are open without the mark,
+/// until the data directory is marked as in use by this instance.
 ///
 /// Taking the mark then is a promotion and nothing else: the databases are
-/// already open and the wait is over.
+/// already open and the wait is over. The attempts spread out as they pile
+/// up, since nobody is waiting on this one.
 #[derive(Debug)]
-pub(in crate::app) struct MarkRetryAfterTakeOver {
-    last_retry: Instant,
+pub(in crate::app) struct BackgroundMarkRetry {
+    last_attempt: Instant,
+    attempts: u32,
 }
 
 impl DataDirectoryWait {
@@ -119,16 +145,13 @@ impl DataDirectoryWait {
         Self {
             unavailable: DataDirectoryUnavailable::read_from(instance_lock),
             last_retry: Instant::now(),
+            consecutive_unusable_lock_file_retries: 0,
             confirming_take_over: false,
         }
     }
 
     /// Tries the data directory again once the interval has passed, reading
     /// afresh why this instance does not have it.
-    ///
-    /// A lock file that would not open says nothing about who has the
-    /// directory, so the wait goes on: an attempt that never reached the lock
-    /// is no ground for opening a database here.
     fn retry_when_the_interval_has_passed(
         &mut self,
         now: Instant,
@@ -143,17 +166,41 @@ impl DataDirectoryWait {
         {
             return DataDirectoryRetry::Taken;
         }
+        self.outcome_of_a_fresh_read(DataDirectoryUnavailable::read_from(instance_lock))
+    }
+
+    /// Where a retry that did not take the data directory leaves the wait.
+    ///
+    /// A lock file that would not open is retried for as long as whatever
+    /// stopped it may pass. Past
+    /// [`UNUSABLE_LOCK_FILE_RETRIES_BEFORE_THE_WAIT_ENDS`] in a row the wait
+    /// gives up on it: an attempt that never reaches the lock names no
+    /// instance to wait for, and a wait that cannot end is worse than the open
+    /// a fresh run would make here.
+    fn outcome_of_a_fresh_read(&mut self, fresh: DataDirectoryUnavailable) -> DataDirectoryRetry {
         let was_held_by_another_instance = matches!(
             self.unavailable,
             DataDirectoryUnavailable::HeldByAnotherInstance(_)
         );
-        self.unavailable = DataDirectoryUnavailable::read_from(instance_lock);
-        if let DataDirectoryUnavailable::UnusableLockFile(cause) = &self.unavailable
-            && was_held_by_another_instance
-        {
+        self.unavailable = fresh;
+        let DataDirectoryUnavailable::UnusableLockFile(cause) = &self.unavailable else {
+            self.consecutive_unusable_lock_file_retries = 0;
+            return DataDirectoryRetry::StillWaiting;
+        };
+        if was_held_by_another_instance {
             log::warn!("Cannot lock the data directory: {cause}");
         }
-        DataDirectoryRetry::StillWaiting
+        self.consecutive_unusable_lock_file_retries = self
+            .consecutive_unusable_lock_file_retries
+            .saturating_add(1);
+        if self.consecutive_unusable_lock_file_retries
+            < UNUSABLE_LOCK_FILE_RETRIES_BEFORE_THE_WAIT_ENDS
+        {
+            return DataDirectoryRetry::StillWaiting;
+        }
+        DataDirectoryRetry::GaveUpOnTheLockFile {
+            cause: cause.clone(),
+        }
     }
 
     /// The process id the instance holding the data directory wrote to its
@@ -217,11 +264,34 @@ impl DataDirectoryWait {
     }
 }
 
-impl MarkRetryAfterTakeOver {
+impl BackgroundMarkRetry {
     fn new() -> Self {
         Self {
-            last_retry: Instant::now(),
+            last_attempt: Instant::now(),
+            attempts: 0,
         }
+    }
+
+    /// The wait before the next attempt: the first
+    /// [`BACKGROUND_MARK_ATTEMPTS_AT_THE_WAIT_RATE`] run at
+    /// [`DATA_DIRECTORY_RETRY_INTERVAL`], and each one after that doubles up
+    /// to [`SLOWEST_BACKGROUND_MARK_RETRY_INTERVAL`].
+    fn interval_before_the_next_attempt(&self) -> Duration {
+        let next_attempt = self.attempts.saturating_add(1);
+        let doublings = next_attempt.saturating_sub(BACKGROUND_MARK_ATTEMPTS_AT_THE_WAIT_RATE);
+        DATA_DIRECTORY_RETRY_INTERVAL
+            .saturating_mul(2u32.saturating_pow(doublings))
+            .min(SLOWEST_BACKGROUND_MARK_RETRY_INTERVAL)
+    }
+
+    fn time_until_the_next_attempt(&self, now: Instant) -> Duration {
+        self.interval_before_the_next_attempt()
+            .saturating_sub(now.saturating_duration_since(self.last_attempt))
+    }
+
+    fn record_attempt(&mut self, now: Instant) {
+        self.last_attempt = now;
+        self.attempts = self.attempts.saturating_add(1);
     }
 }
 
@@ -268,8 +338,9 @@ impl DataDirectoryUnavailable {
             }
             Self::UnusableLockFile(cause) => {
                 ui.label(format!(
-                    "The lock file cannot be used: {cause}. GeoTrace opens no recordings or \
-                     archives here until that clears.",
+                    "The lock file cannot be used: {cause}. GeoTrace opens the recordings and \
+                     archives here if it stays that way, since nothing names another GeoTrace to \
+                     wait for.",
                 ));
             }
         }
@@ -382,6 +453,16 @@ impl App {
                     queued_loads,
                 );
             }
+            DataDirectoryRetry::GaveUpOnTheLockFile { cause } => {
+                log::warn!(
+                    "The data directory's lock file has not opened for \
+                     {UNUSABLE_LOCK_FILE_RETRIES_BEFORE_THE_WAIT_ENDS} attempts ({cause}): \
+                     opening the recordings and archives here, since no instance is known to hold \
+                     the data directory"
+                );
+                let queued_loads = mem::take(queued_loads);
+                self.open_the_databases_without_the_mark(ui.ctx(), queued_loads);
+            }
             DataDirectoryRetry::StillWaiting => match wait.ui(ui) {
                 WaitAnswer::KeepWaiting => {
                     ui.ctx()
@@ -392,11 +473,8 @@ impl App {
                         "The user took write access: reading the archives for an interrupted \
                          delete while another instance still holds the data directory"
                     );
-                    self.mark_retry_after_take_over = Some(MarkRetryAfterTakeOver::new());
                     let queued_loads = mem::take(queued_loads);
-                    self.storage_open = self
-                        .storage
-                        .inspect_archives_in_background(ui.ctx(), queued_loads);
+                    self.open_the_databases_without_the_mark(ui.ctx(), queued_loads);
                 }
                 WaitAnswer::StartReadOnly => {
                     let owner_process_id = wait.owner_process_id();
@@ -405,6 +483,21 @@ impl App {
                 }
             },
         }
+    }
+
+    /// Leaves the wait with the databases open while another instance may
+    /// still hold the data directory: the archives are read for a delete that
+    /// instance left part-way through, which is the user's to answer, and the
+    /// mark is retried in the background until this instance holds it.
+    fn open_the_databases_without_the_mark(
+        &mut self,
+        ctx: &egui::Context,
+        queued_loads: Vec<QueuedLoad>,
+    ) {
+        self.background_mark_retry = Some(BackgroundMarkRetry::new());
+        self.storage_open = self
+            .storage
+            .inspect_archives_in_background(ctx, queued_loads);
     }
 
     /// Leaves the wait as a read-only session: the databases are opened
@@ -433,35 +526,148 @@ impl App {
                 .open_in_background(ctx, self.pending_writes.clone(), queued_loads);
     }
 
-    /// Goes on retrying the mark after the user took write access, so this
-    /// instance is the one the data directory names as soon as the other one
-    /// exits.
+    /// Goes on retrying the mark behind an open window, so this instance is
+    /// the one the data directory names as soon as it can be.
     ///
     /// Nothing else follows from taking the mark here: the databases opened
-    /// when the user took write access, and they stay as they are.
-    pub(in crate::app) fn retry_marking_the_data_directory_after_take_over(
+    /// when the wait ended, and they stay as they are.
+    pub(in crate::app) fn retry_marking_the_data_directory_in_the_background(
         &mut self,
         ctx: &egui::Context,
     ) {
         if self.shutdown.has_begun() {
             return;
         }
-        let Some(retry) = &mut self.mark_retry_after_take_over else {
+        let Some(retry) = &mut self.background_mark_retry else {
             return;
         };
-        if retry.last_retry.elapsed() >= DATA_DIRECTORY_RETRY_INTERVAL {
-            retry.last_retry = Instant::now();
+        let now = Instant::now();
+        if retry.time_until_the_next_attempt(now).is_zero() {
+            retry.record_attempt(now);
             if self.instance_lock.retry_marking_the_data_directory()
                 == DataDirectoryOwnership::MarkedByThisInstance
             {
-                log::info!(
-                    "The other instance let go of the data directory: this instance now marks it \
-                     as in use"
-                );
-                self.mark_retry_after_take_over = None;
+                log::info!("This instance now marks the data directory as in use");
+                self.background_mark_retry = None;
                 return;
             }
         }
-        ctx.request_repaint_after(DATA_DIRECTORY_RETRY_INTERVAL);
+        ctx.request_repaint_after(retry.time_until_the_next_attempt(now));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const UNUSABLE_LOCK_FILE_CAUSE: &str = "the lock file cannot be opened";
+
+    /// A wait as it stands the moment another instance is found holding the
+    /// data directory, with nothing readable about that instance yet.
+    fn wait_on_a_directory_held_by_another_instance() -> DataDirectoryWait {
+        DataDirectoryWait {
+            unavailable: DataDirectoryUnavailable::HeldByAnotherInstance(None),
+            last_retry: Instant::now(),
+            consecutive_unusable_lock_file_retries: 0,
+            confirming_take_over: false,
+        }
+    }
+
+    /// The wait ends and the databases open: a lock file that stops opening
+    /// at all - a mount turned read-only, a lock daemon gone - leaves nothing
+    /// naming an instance to wait for.
+    #[test]
+    fn a_lock_file_that_stops_opening_mid_wait_ends_the_wait() {
+        let mut wait = wait_on_a_directory_held_by_another_instance();
+
+        for attempt in 1..UNUSABLE_LOCK_FILE_RETRIES_BEFORE_THE_WAIT_ENDS {
+            assert_eq!(
+                wait.outcome_of_a_fresh_read(DataDirectoryUnavailable::UnusableLockFile(
+                    UNUSABLE_LOCK_FILE_CAUSE.to_owned()
+                )),
+                DataDirectoryRetry::StillWaiting,
+                "the wait gave up on attempt {attempt}, before the lock file had its retries"
+            );
+        }
+
+        assert_eq!(
+            wait.outcome_of_a_fresh_read(DataDirectoryUnavailable::UnusableLockFile(
+                UNUSABLE_LOCK_FILE_CAUSE.to_owned()
+            )),
+            DataDirectoryRetry::GaveUpOnTheLockFile {
+                cause: UNUSABLE_LOCK_FILE_CAUSE.to_owned()
+            }
+        );
+    }
+
+    /// A session that spends the rest of its run beside the instance holding
+    /// the directory attempts the mark ever more rarely, and the window it
+    /// paints behind goes idle between attempts.
+    #[test]
+    fn the_background_mark_retry_spreads_its_attempts_out_until_they_settle() {
+        let mut retry = BackgroundMarkRetry::new();
+        let mut now = retry.last_attempt;
+
+        let intervals: Vec<Duration> = (0..30)
+            .map(|_| {
+                let interval = retry.time_until_the_next_attempt(now);
+                now += interval;
+                retry.record_attempt(now);
+                interval
+            })
+            .collect();
+
+        let (at_the_wait_rate, spread_out) =
+            intervals.split_at(BACKGROUND_MARK_ATTEMPTS_AT_THE_WAIT_RATE as usize);
+        assert!(
+            at_the_wait_rate
+                .iter()
+                .all(|interval| *interval == DATA_DIRECTORY_RETRY_INTERVAL),
+            "the first attempts run at the wait's rate: {at_the_wait_rate:?}"
+        );
+        assert_eq!(
+            spread_out,
+            [
+                Duration::from_millis(500),
+                Duration::from_secs(1),
+                Duration::from_secs(2),
+                Duration::from_secs(4),
+                Duration::from_secs(8),
+                Duration::from_secs(16),
+                SLOWEST_BACKGROUND_MARK_RETRY_INTERVAL,
+                SLOWEST_BACKGROUND_MARK_RETRY_INTERVAL,
+                SLOWEST_BACKGROUND_MARK_RETRY_INTERVAL,
+                SLOWEST_BACKGROUND_MARK_RETRY_INTERVAL,
+            ]
+        );
+    }
+
+    /// The retries the lock file gets are consecutive ones: a directory that
+    /// reads as held again is an instance to wait for, and the count of
+    /// unusable attempts starts over.
+    #[test]
+    fn a_directory_that_reads_as_held_again_gives_the_lock_file_its_retries_afresh() {
+        let mut wait = wait_on_a_directory_held_by_another_instance();
+        for _ in 1..UNUSABLE_LOCK_FILE_RETRIES_BEFORE_THE_WAIT_ENDS {
+            assert_eq!(
+                wait.outcome_of_a_fresh_read(DataDirectoryUnavailable::UnusableLockFile(
+                    UNUSABLE_LOCK_FILE_CAUSE.to_owned()
+                )),
+                DataDirectoryRetry::StillWaiting
+            );
+        }
+        assert_eq!(
+            wait.outcome_of_a_fresh_read(DataDirectoryUnavailable::HeldByAnotherInstance(None)),
+            DataDirectoryRetry::StillWaiting,
+            "the instance holding the directory is there to be waited for"
+        );
+
+        assert_eq!(
+            wait.outcome_of_a_fresh_read(DataDirectoryUnavailable::UnusableLockFile(
+                UNUSABLE_LOCK_FILE_CAUSE.to_owned()
+            )),
+            DataDirectoryRetry::StillWaiting,
+            "one unusable attempt after the directory was held ended the wait"
+        );
     }
 }
