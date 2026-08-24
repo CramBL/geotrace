@@ -9,7 +9,8 @@ mod tests;
 
 use std::collections::HashMap;
 
-use egui::{CursorIcon, Grid, Label, RichText, ScrollArea, Window};
+use egui::{Grid, Label, RichText, ScrollArea, Window};
+use gt_ui_theme::labels::LabelWithHover;
 use gt_ui_types::reference::{
     Abbreviation, Citation, ColumnWidth, IllustrationFrame, ProseSpan, ReferenceBlock,
     ReferenceDocument, ReferenceEquation, ReferenceIllustration, ReferenceImage, ReferenceTable,
@@ -334,11 +335,9 @@ fn prose_spans_ui(
 /// An abbreviation under a dotted underline, the conventional mark for a word
 /// whose definition is a hover away.
 fn abbreviation_ui(ui: &mut egui::Ui, abbreviation: Abbreviation, style: ProseStyle) {
-    let response = ui.label(style.rich_text(abbreviation.short_form));
+    let response = LabelWithHover::plain(style.rich_text(abbreviation.short_form))
+        .explanation_ui(ui, abbreviation.full_form);
     paint_dotted_underline(ui.painter(), response.rect, ui.visuals().weak_text_color());
-    response
-        .on_hover_cursor(CursorIcon::Help)
-        .on_hover_text(abbreviation.full_form);
 }
 
 /// The raised number the source carries in the sources footer, linking to the

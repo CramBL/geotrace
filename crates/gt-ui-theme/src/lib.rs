@@ -1,4 +1,5 @@
 pub mod fonts;
+pub mod labels;
 
 use egui::Color32;
 

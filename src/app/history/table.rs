@@ -128,7 +128,8 @@ pub(super) fn history_table(
 /// The active column shows a caret pointing the way its values run. Clicking
 /// it reverses that, clicking any other column switches to it. `term`, when
 /// given, is the column's glossary explanation: it underlines the title and
-/// leads the hover, matching [`crate::terms::term_label`].
+/// leads the hover, the way
+/// [`gt_ui_theme::labels::LabelWithHover::underlined_term`] marks a term.
 fn sort_header(ui: &mut egui::Ui, column: SortColumn, sort: &mut HistorySort, term: Option<&str>) {
     let active = sort.column == column;
     let mut title = RichText::new(column.title()).strong();

@@ -5,8 +5,9 @@
 //! reads is the same whichever host it came from.
 
 use chrono::NaiveDate;
-use egui::{Label, RichText, Ui};
+use egui::{RichText, Ui};
 use egui_phosphor::regular::WARNING as ICON_WARNING;
+use gt_ui_theme::labels::LabelWithHover;
 
 /// The failure list stops after this many entries, newest first: a host that
 /// refuses every request cannot fill the dialog.
@@ -43,8 +44,9 @@ pub fn show_failures(ui: &mut Ui, list_id: &str, failures: &[DayFailure]) {
     ui.indent(list_id, |ui| {
         for failure in failures.iter().rev().take(MAX_LISTED_FAILURES) {
             let line = failure.to_string();
-            ui.add(Label::new(RichText::new(&line).weak()).truncate())
-                .on_hover_text(&line);
+            LabelWithHover::plain(RichText::new(&line).weak())
+                .truncate()
+                .stated_in_full_ui(ui, &line);
         }
     });
 }
@@ -52,7 +54,7 @@ pub fn show_failures(ui: &mut Ui, list_id: &str, failures: &[DayFailure]) {
 #[cfg(test)]
 mod tests {
     use egui_kittest::kittest::Queryable as _;
-    use gt_test_utils::TestHarness;
+    use gt_test_utils::{HarnessInteraction as _, TestHarness};
 
     use super::*;
 
@@ -111,6 +113,34 @@ mod tests {
                 .query_by_label_contains("2026-07-15 -")
                 .is_none(),
             "the sixth-newest failure is past the cap"
+        );
+    }
+
+    /// The line states itself in full on hover, under the arrow cursor.
+    #[test]
+    fn a_failed_day_states_itself_in_full_on_hover() {
+        let failures = [failure(21)];
+        let mut harness = TestHarness::builder().ui(|ui| show_failures(ui, "failures", &failures));
+        harness.run();
+        let line = harness
+            .inner
+            .get_by_label_contains("2026-07-21 -")
+            .rect()
+            .center();
+
+        harness.inner.hover_at_and_settle(line, 5);
+
+        assert_eq!(
+            harness
+                .inner
+                .query_all_by_label_contains("2026-07-21 -")
+                .count(),
+            2,
+            "the hover states the line beside the line itself"
+        );
+        assert_eq!(
+            harness.inner.output().platform_output.cursor_icon,
+            egui::CursorIcon::Default
         );
     }
 

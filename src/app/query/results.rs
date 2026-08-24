@@ -4,10 +4,8 @@
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
-use egui::text::LayoutJob;
 use egui::{
-    Align, Button, CursorIcon, Label, Layout, RichText, Sense, TextFormat, TextStyle, TextWrapMode,
-    Window,
+    Align, Button, CursorIcon, Label, Layout, RichText, Sense, TextStyle, TextWrapMode, Window,
 };
 use egui_extras::{Column, TableBuilder, TableRow};
 use egui_phosphor::regular::ARROW_SQUARE_IN as ICON_ARROW_SQUARE_IN;
@@ -23,9 +21,10 @@ use gt_query_run::{
 };
 use gt_side_panel::widgets::{PointClickRequests, apply_point_click};
 use gt_types::{DataCategory, LoadedFile, NavPoint, PointIdx, TrackRef};
-use gt_ui_theme::{EM_DASH, MIDDLE_DOT};
+use gt_ui_theme::labels::{CountLine, LabelWithHover};
 use gt_ui_types::{
     DataPointRef, HighlightScope, MapHighlight, MapScope, MatchHighlight, MatchRevealTarget,
+    StaleRunNote,
 };
 use strum::IntoEnumIterator as _;
 
@@ -632,8 +631,8 @@ impl<'a> ResultsTables<'a> {
     /// they count dimmed, with everything the run left out on hover.
     fn summary_counts_ui(&self, ui: &mut egui::Ui, query: &QuerySection<'_>) {
         let summary = query.summary;
-        let stated_in_full = summary.to_string();
-        query_swatch_ui(ui, query.color, &stated_in_full);
+        let summary_with_notes = summary.to_string();
+        query_swatch_ui(ui, query.color, &summary_with_notes);
         let mut line = CountLine::new(ui)
             .count(
                 summary.match_count,
@@ -657,11 +656,13 @@ impl<'a> ResultsTables<'a> {
         if !summary.notes.is_empty() {
             line = line.words(&format!(" {ICON_INFO}"));
         }
-        // Truncated to the width that is left, and stated in full on hover: a
-        // line that extends would push the window over the map beside it.
-        ui.add(Label::new(line.into_job()).truncate())
-            .on_hover_cursor(CursorIcon::Help)
-            .on_hover_text(stated_in_full);
+        // Truncated to the width that is left: a line that extends would push
+        // the window over the map beside it. The hover explains the line, so
+        // it takes the Help cursor: it spells out the notes the line reduces
+        // to an icon.
+        LabelWithHover::plain(line.into_job())
+            .truncate()
+            .explanation_ui(ui, &summary_with_notes);
     }
 
     /// The button framing the map on every match of this run and playing their
@@ -673,9 +674,7 @@ impl<'a> ResultsTables<'a> {
         reveal: &mut Option<MatchRevealTarget>,
     ) {
         let disabled_reason = if self.stale {
-            Some(format!(
-                "Data changed since this run {EM_DASH} run again to frame its matches"
-            ))
+            Some(StaleRunNote::RunAgainToFrameItsMatches.to_string())
         } else if !self.draws_halos {
             Some("This run drew no matches on the map".to_owned())
         } else {
@@ -848,9 +847,7 @@ impl<'a> ResultsTables<'a> {
     /// reason it cannot.
     fn reveal_target(&self, match_row: &MatchRow) -> Result<MatchRevealTarget, String> {
         if self.stale {
-            return Err(format!(
-                "Data changed since this run {EM_DASH} run again to frame this match"
-            ));
+            return Err(StaleRunNote::RunAgainToFrameThisMatch.to_string());
         }
         match self.source {
             RowSource::NavPoints { .. } => Ok(MatchRevealTarget::OneMatch {
@@ -1260,60 +1257,6 @@ fn frame_match_on_map_button_ui(
         },
     )
     .inner
-}
-
-/// A line stating what a run counted, as the summary strip and the caption
-/// below the matches table state it: the numbers in the text colour, the words
-/// around them dimmed. One line is one label, so it reads as one line rather
-/// than as the widgets it is built from.
-struct CountLine {
-    job: LayoutJob,
-    number_format: TextFormat,
-    words_format: TextFormat,
-}
-
-impl CountLine {
-    fn new(ui: &egui::Ui) -> Self {
-        let font = TextStyle::Body.resolve(ui.style());
-        Self {
-            job: LayoutJob::default(),
-            number_format: TextFormat {
-                font_id: font.clone(),
-                color: ui.visuals().text_color(),
-                ..Default::default()
-            },
-            words_format: TextFormat {
-                font_id: font,
-                color: ui.visuals().weak_text_color(),
-                ..Default::default()
-            },
-        }
-    }
-
-    fn number(mut self, number: usize) -> Self {
-        self.job
-            .append(&number.to_string(), 0.0, self.number_format.clone());
-        self
-    }
-
-    fn words(mut self, words: &str) -> Self {
-        self.job.append(words, 0.0, self.words_format.clone());
-        self
-    }
-
-    /// A number and what it counts.
-    fn count(self, count: usize, noun: &str) -> Self {
-        self.number(count).words(&format!(" {noun}"))
-    }
-
-    /// The dot between two counts.
-    fn dot(self) -> Self {
-        self.words(&format!(" {MIDDLE_DOT} "))
-    }
-
-    fn into_job(self) -> LayoutJob {
-        self.job
-    }
 }
 
 /// The side of the square painted in a draw query's halo colour.

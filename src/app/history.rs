@@ -8,6 +8,7 @@ use egui_phosphor::regular::X as ICON_X;
 use gt_pending_writes::WriteAccess;
 use gt_store::{DatabaseRef, PruneMode, RecordingEntry, RecordingMeta};
 use gt_types::TravelMode;
+use gt_ui_theme::labels::LabelWithHover;
 use gt_ui_theme::warning_amber;
 use strum::{EnumCount, EnumIter};
 
@@ -590,7 +591,8 @@ impl HistoryWindow {
                 // outer left-to-right layout instead lets it grow into the
                 // right-side controls and overlap them once the window narrows.
                 ui.horizontal(|ui| {
-                    crate::terms::term_label(ui, RichText::new("Identity"), crate::terms::IDENTITY);
+                    LabelWithHover::underlined_term(RichText::new("Identity"))
+                        .explanation_ui(ui, crate::terms::IDENTITY);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let delete_hidden_label = if hidden_count > 0 {
                             format!("Delete hidden data ({hidden_count})…")
