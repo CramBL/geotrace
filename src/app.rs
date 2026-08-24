@@ -353,6 +353,10 @@ pub struct App {
     /// Set once the databases were opened without the mark: the mark is
     /// retried behind the window until this instance holds it too.
     background_mark_retry: Option<instance_wait::BackgroundMarkRetry>,
+    /// Set only where the user took write access from the instance holding
+    /// the data directory. A wait that ended because the lock file stopped
+    /// opening leaves this [`None`], having found no other instance.
+    instance_taken_over_from: Option<instance_wait::TakenOverInstance>,
     /// The instance that owns the data directory, as its status file named it
     /// when the user started this session read-only beside it. The read-only
     /// marker names it.
@@ -496,10 +500,10 @@ impl App {
 
         // Nothing is opened while another instance holds the data directory:
         // recovery here would run against archives that instance is part-way
-        // through rewriting. A run whose lock file cannot be opened or locked
-        // at all opens the databases: it names no instance to wait for, which
-        // is what `instance_wait` settles on once a wait's lock file stays
-        // unusable.
+        // through rewriting. A lock file that cannot be opened or locked at
+        // all opens the databases, since the failure reports nothing about
+        // which process holds the lock. `instance_wait` applies the same rule
+        // when a wait's lock file keeps failing to open.
         let storage_open = match options.instance_lock.ownership() {
             DataDirectoryOwnership::HeldByAnotherInstance => {
                 storage::StorageOpen::waiting_for_the_data_directory(&options.instance_lock)
@@ -628,6 +632,7 @@ impl App {
             storage_open,
             unavailable_archives: archive_recovery::UnavailableArchives::default(),
             background_mark_retry: None,
+            instance_taken_over_from: None,
             data_directory_owner_process_id: None,
             keep_db_backup: true,
             pending_resegment: None,

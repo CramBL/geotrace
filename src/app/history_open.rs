@@ -1,9 +1,18 @@
 use std::path::PathBuf;
 
-use egui::{Grid, Label, RichText, ScrollArea, Window};
+use egui::{Button, Grid, Label, RichText, ScrollArea, Window};
+use gt_pending_writes::{PendingWriteGuard, WriteKind};
 use gt_store::DbError;
 
 use super::{App, ResegmentPrompt, auto_prune, history_db, loader, storage};
+
+const OPENING_THE_DATABASE: &str = "Opening the recording history database";
+
+const CLEARING_THE_WRITE_LOCK: &str = "Clearing the recording history database's write lock";
+
+const RECREATING_THE_DATABASE: &str = "Recreating the recording history database";
+
+pub(in crate::app) const CLEAR_LOCK_BUTTON_LABEL: &str = "Clear lock and open";
 
 impl App {
     pub(super) fn sync_db_path(&mut self) {
@@ -51,9 +60,27 @@ impl App {
         self.toasts.info(toast);
     }
 
+    /// Registers a write to the recordings database, logging a refusal at
+    /// debug level.
+    fn try_begin_recording_history_write(&self, label: &'static str) -> Option<PendingWriteGuard> {
+        match self
+            .pending_writes
+            .try_begin(label, WriteKind::RecordingDatabase)
+        {
+            Ok(write) => Some(write),
+            Err(refusal) => {
+                log::debug!("Did not run {label:?}: {refusal}");
+                None
+            }
+        }
+    }
+
     /// Retry opening after a transient failure, e.g. another process released
     /// the file.
     pub(super) fn reopen_history_database(&mut self, path: &std::path::Path, ctx: &egui::Context) {
+        let Some(_write) = self.try_begin_recording_history_write(OPENING_THE_DATABASE) else {
+            return;
+        };
         match storage::reopen_recordings(path) {
             Ok(db) => self.adopt_history_database(db, ctx, "Opened the history database"),
             Err(failure) => {
@@ -70,6 +97,9 @@ impl App {
     /// user confirmed no other process is using it.
     pub(super) fn recover_history_database(&mut self, path: &std::path::Path, ctx: &egui::Context) {
         use gt_store::HistoryDatabase;
+        let Some(_write) = self.try_begin_recording_history_write(CLEARING_THE_WRITE_LOCK) else {
+            return;
+        };
         let result = gt_store::Recordings::clear_write_lock(path)
             .and_then(|()| gt_store::Recordings::open_or_create(path));
         match result {
@@ -93,6 +123,9 @@ impl App {
         ctx: &egui::Context,
     ) {
         use gt_store::HistoryDatabase;
+        let Some(_write) = self.try_begin_recording_history_write(RECREATING_THE_DATABASE) else {
+            return;
+        };
         if keep_backup {
             let backup = corrupt_backup_path(path);
             if let Err(e) = std::fs::rename(path, &backup) {
@@ -339,6 +372,7 @@ impl App {
         // a destructive lock clear, or a recreate.
         if let Some(failure) = self.history_failure.clone() {
             let path = failure.path().to_owned();
+            let taken_over = self.instance_taken_over_from;
             let mut resolve = None;
             let dismissed = ui
                 .ctx()
@@ -350,12 +384,25 @@ impl App {
                         .resizable(false)
                         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                         .show(ui.ctx(), |ui| {
-                            ui.label(
-                                "Another process has the recording history database open, most likely a second GeoTrace instance.",
-                            );
-                            ui.label(
-                                "Close it and try again. Recordings still load in the meantime, they are just not stored.",
-                            );
+                            match taken_over {
+                                Some(instance) => {
+                                    ui.label(format!(
+                                        "{} still has the recording history database open.",
+                                        instance.sentence_subject()
+                                    ));
+                                    ui.label(
+                                        "Recordings load here, but are not stored until it exits.",
+                                    );
+                                }
+                                None => {
+                                    ui.label(
+                                        "Another process has the recording history database open, most likely a second GeoTrace instance.",
+                                    );
+                                    ui.label(
+                                        "Close it and try again. Recordings still load in the meantime, they are just not stored.",
+                                    );
+                                }
+                            }
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
                                 if ui.button("Try again").clicked() {
@@ -389,15 +436,20 @@ impl App {
                             );
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
-                                if ui
-                                    .button(
-                                        RichText::new("Clear lock and open").color(
-                                            gt_ui_theme::warning_amber(ui.visuals().dark_mode),
-                                        ),
-                                    )
-                                    .clicked()
-                                {
+                                let clear = ui.add_enabled(
+                                    taken_over.is_none(),
+                                    Button::new(RichText::new(CLEAR_LOCK_BUTTON_LABEL).color(
+                                        gt_ui_theme::warning_amber(ui.visuals().dark_mode),
+                                    )),
+                                );
+                                if clear.clicked() {
                                     resolve = Some(true);
+                                }
+                                if let Some(instance) = taken_over {
+                                    clear.on_disabled_hover_text(format!(
+                                        "{} still has the recording history database open: clearing the write lock while it writes can corrupt the database.",
+                                        instance.sentence_subject()
+                                    ));
                                 }
                                 if ui.button("Cancel").clicked() {
                                     resolve = Some(false);

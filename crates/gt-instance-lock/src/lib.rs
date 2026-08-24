@@ -470,11 +470,13 @@ fn open_lock_file(directory: &Path) -> io::Result<File> {
 }
 
 impl Drop for DataDirectoryLock {
-    /// Takes the status file with the lock that vouches for it, so a clean
-    /// exit leaves nothing behind. A force quit leaves its status in the
-    /// directory: the next instance to mark it replaces that status as it
-    /// writes its own, and nothing reads a status while the lock behind it
-    /// is free.
+    /// Removes the status file, so a clean exit leaves nothing behind.
+    ///
+    /// `process::exit` skips this, so a force quit leaves the status file in
+    /// the directory. `DataDirectoryMark::of` overwrites it when the next
+    /// instance takes the lock, and `status_of_the_holding_instance` only
+    /// reads it while another instance holds the lock, so a leftover one is
+    /// never read.
     fn drop(&mut self) {
         let DataDirectoryMark::MarkedByThisInstance(marked) = &self.mark else {
             return;
@@ -565,10 +567,10 @@ mod tests {
         );
     }
 
-    /// A process that ends without unwinding - a force quit - leaves its
-    /// status file behind, and one that ends between a status write and its
-    /// rename leaves the temporary too. The instance that marks the directory
-    /// next replaces both, so neither outlives the lock they came with.
+    /// A force quit skips `Drop` and leaves the status file behind, and a
+    /// process that ends between the write and the rename in
+    /// `replace_status_file` leaves the temporary too. Taking the lock
+    /// replaces both.
     #[test]
     fn marking_the_directory_replaces_the_status_files_the_previous_instance_left() {
         let directory = tempfile::tempdir().expect("temp dir");
