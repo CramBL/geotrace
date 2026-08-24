@@ -783,7 +783,7 @@ mod tests {
     fn archive() -> (TempDir, InterferenceArchive) {
         let dir = tempfile::tempdir().expect("temp dir");
         let store = Store::open_in(dir.path())
-            .open_interference()
+            .open_or_create_archive::<JamStore>()
             .expect("archive");
         (dir, store)
     }
@@ -1086,7 +1086,7 @@ mod tests {
     fn no_day_is_dispatched_from_a_read_only_archive() {
         let (dir, _store) = archive();
         let read_only = Store::open_in(dir.path())
-            .open_interference_read_only()
+            .open_existing_archive_read_only::<JamStore>()
             .expect("read the archive");
         let mut scheduler = JammingScheduler::new(
             Context::default(),

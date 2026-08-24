@@ -40,7 +40,7 @@ mod recordings_handle;
 mod writable_archive;
 
 pub use archive_handle::ArchiveHandle;
-pub use day_archive::DayArchiveError;
+pub use day_archive::{DayArchiveError, StoredDayArchive};
 pub use log_attachments::{
     AttachedLog, LogAttachmentError, LogAttachments, LogToAttach, ReadOnlyLogAttachments,
 };
@@ -133,24 +133,9 @@ impl Store {
         self.root.join(LOGS_DIRECTORY)
     }
 
-    /// Path of the interference archive.
-    pub fn interference_path(&self) -> PathBuf {
-        self.root.join(gt_jam_store::FILE_NAME)
-    }
-
-    /// Path of the geomagnetic index archive.
-    pub fn geomagnetic_indices_path(&self) -> PathBuf {
-        self.root.join(gt_solar_store::FILE_NAME)
-    }
-
-    /// Path of the TEC map archive.
-    pub fn tec_maps_path(&self) -> PathBuf {
-        self.root.join(gt_ionex_store::FILE_NAME)
-    }
-
-    /// Path of the solar flare archive.
-    pub fn solar_flares_path(&self) -> PathBuf {
-        self.root.join(gt_flare_store::FILE_NAME)
+    /// Path of `A`'s file under [`Self::root`].
+    pub fn archive_path<A: StoredDayArchive>(&self) -> PathBuf {
+        self.root.join(A::FILE_NAME)
     }
 
     /// Open the recording history, creating it if it does not exist.
@@ -173,119 +158,34 @@ impl Store {
         ReadOnlyRecordings::open_existing_read_only(&path).map(Some)
     }
 
-    /// The interference archive, creating it if it does not exist.
+    /// The archive `A`, creating it if it does not exist.
     ///
     /// Opened on the first call that succeeds and shared from then on.
-    pub fn open_interference(&self) -> Result<InterferenceArchive, JamStoreError> {
-        self.open_interference_with_recovery_choice(InterruptedDeleteRecovery::Recover)
+    pub fn open_or_create_archive<A: StoredDayArchive>(
+        &self,
+    ) -> Result<ArchiveHandle<A, A::ReadOnly>, A::Error> {
+        self.open_or_create_archive_with_recovery_choice::<A>(InterruptedDeleteRecovery::Recover)
     }
 
-    /// The interference archive, recovering an interrupted delete only when
-    /// `recovery` asks for it.
-    pub fn open_interference_with_recovery_choice(
+    /// The archive `A`, recovering an interrupted delete only when `recovery`
+    /// asks for it.
+    pub fn open_or_create_archive_with_recovery_choice<A: StoredDayArchive>(
         &self,
         recovery: InterruptedDeleteRecovery,
-    ) -> Result<InterferenceArchive, JamStoreError> {
-        self.interference.get_or_open(|| {
-            JamStore::open_or_create_with_recovery_choice(&self.interference_path(), recovery)
+    ) -> Result<ArchiveHandle<A, A::ReadOnly>, A::Error> {
+        A::shared_in(self).get_or_open(|| {
+            A::open_or_create_with_recovery_choice(&self.archive_path::<A>(), recovery)
                 .map(ArchiveHandle::owner)
         })
     }
 
-    /// The interference archive as a read-only session opens it, without
-    /// writing to it.
-    pub fn open_interference_read_only(&self) -> Result<InterferenceArchive, JamStoreError> {
-        self.interference.get_or_open(|| {
-            ReadOnlyJamStore::open_existing_read_only(&self.interference_path())
-                .map(ArchiveHandle::read_only)
-        })
-    }
-
-    /// The geomagnetic index archive, creating it if it does not exist.
-    ///
-    /// Shared the same way as [`Self::open_interference`].
-    pub fn open_geomagnetic_indices(&self) -> Result<GeomagneticIndexArchive, SolarStoreError> {
-        self.open_geomagnetic_indices_with_recovery_choice(InterruptedDeleteRecovery::Recover)
-    }
-
-    /// The geomagnetic index archive, recovering an interrupted delete only
-    /// when `recovery` asks for it.
-    pub fn open_geomagnetic_indices_with_recovery_choice(
-        &self,
-        recovery: InterruptedDeleteRecovery,
-    ) -> Result<GeomagneticIndexArchive, SolarStoreError> {
-        self.geomagnetic_indices.get_or_open(|| {
-            SolarStore::open_or_create_with_recovery_choice(
-                &self.geomagnetic_indices_path(),
-                recovery,
-            )
-            .map(ArchiveHandle::owner)
-        })
-    }
-
-    /// The geomagnetic index archive as a read-only session opens it, without
-    /// writing to it.
-    pub fn open_geomagnetic_indices_read_only(
-        &self,
-    ) -> Result<GeomagneticIndexArchive, SolarStoreError> {
-        self.geomagnetic_indices.get_or_open(|| {
-            ReadOnlySolarStore::open_existing_read_only(&self.geomagnetic_indices_path())
-                .map(ArchiveHandle::read_only)
-        })
-    }
-
-    /// The TEC map archive, creating it if it does not exist.
-    ///
-    /// Shared the same way as [`Self::open_interference`].
-    pub fn open_tec_maps(&self) -> Result<TecMapArchive, IonexStoreError> {
-        self.open_tec_maps_with_recovery_choice(InterruptedDeleteRecovery::Recover)
-    }
-
-    /// The TEC map archive, recovering an interrupted delete only when
-    /// `recovery` asks for it.
-    pub fn open_tec_maps_with_recovery_choice(
-        &self,
-        recovery: InterruptedDeleteRecovery,
-    ) -> Result<TecMapArchive, IonexStoreError> {
-        self.tec_maps.get_or_open(|| {
-            IonexStore::open_or_create_with_recovery_choice(&self.tec_maps_path(), recovery)
-                .map(ArchiveHandle::owner)
-        })
-    }
-
-    /// The TEC map archive as a read-only session opens it, without writing to
+    /// The archive `A` as a read-only session opens it, without writing to
     /// it.
-    pub fn open_tec_maps_read_only(&self) -> Result<TecMapArchive, IonexStoreError> {
-        self.tec_maps.get_or_open(|| {
-            ReadOnlyIonexStore::open_existing_read_only(&self.tec_maps_path())
-                .map(ArchiveHandle::read_only)
-        })
-    }
-
-    /// The solar flare archive, creating it if it does not exist.
-    ///
-    /// Shared the same way as [`Self::open_interference`].
-    pub fn open_solar_flares(&self) -> Result<SolarFlareArchive, FlareStoreError> {
-        self.open_solar_flares_with_recovery_choice(InterruptedDeleteRecovery::Recover)
-    }
-
-    /// The solar flare archive, recovering an interrupted delete only when
-    /// `recovery` asks for it.
-    pub fn open_solar_flares_with_recovery_choice(
+    pub fn open_existing_archive_read_only<A: StoredDayArchive>(
         &self,
-        recovery: InterruptedDeleteRecovery,
-    ) -> Result<SolarFlareArchive, FlareStoreError> {
-        self.solar_flares.get_or_open(|| {
-            FlareStore::open_or_create_with_recovery_choice(&self.solar_flares_path(), recovery)
-                .map(ArchiveHandle::owner)
-        })
-    }
-
-    /// The solar flare archive as a read-only session opens it, without
-    /// writing to it.
-    pub fn open_solar_flares_read_only(&self) -> Result<SolarFlareArchive, FlareStoreError> {
-        self.solar_flares.get_or_open(|| {
-            ReadOnlyFlareStore::open_existing_read_only(&self.solar_flares_path())
+    ) -> Result<ArchiveHandle<A, A::ReadOnly>, A::Error> {
+        A::shared_in(self).get_or_open(|| {
+            <A::ReadOnly as ReadOnlyDayArchive>::open_existing_read_only(&self.archive_path::<A>())
                 .map(ArchiveHandle::read_only)
         })
     }
@@ -297,7 +197,7 @@ impl Store {
 /// Only a successful open is kept: a failed one leaves the slot empty, so the
 /// next caller opens again.
 #[derive(Debug)]
-struct SharedArchive<W, R>(Mutex<Option<ArchiveHandle<W, R>>>);
+pub struct SharedArchive<W, R>(Mutex<Option<ArchiveHandle<W, R>>>);
 
 impl<W, R> SharedArchive<W, R> {
     fn empty() -> Self {
@@ -337,10 +237,10 @@ mod tests {
         assert_eq!(store.root(), dir.path());
         let paths = [
             store.recordings_path(),
-            store.interference_path(),
-            store.geomagnetic_indices_path(),
-            store.tec_maps_path(),
-            store.solar_flares_path(),
+            store.archive_path::<JamStore>(),
+            store.archive_path::<SolarStore>(),
+            store.archive_path::<IonexStore>(),
+            store.archive_path::<FlareStore>(),
         ];
         for path in &paths {
             assert_eq!(path.parent(), Some(dir.path()));
@@ -375,17 +275,23 @@ mod tests {
     fn opening_creates_each_database_under_the_root() {
         let (_dir, store) = store();
         store.open_recordings().expect("recordings");
-        store.open_interference().expect("interference");
         store
-            .open_geomagnetic_indices()
+            .open_or_create_archive::<JamStore>()
+            .expect("interference");
+        store
+            .open_or_create_archive::<SolarStore>()
             .expect("geomagnetic indices");
-        store.open_tec_maps().expect("tec maps");
-        store.open_solar_flares().expect("solar flares");
+        store
+            .open_or_create_archive::<IonexStore>()
+            .expect("tec maps");
+        store
+            .open_or_create_archive::<FlareStore>()
+            .expect("solar flares");
         assert!(store.recordings_path().exists());
-        assert!(store.interference_path().exists());
-        assert!(store.geomagnetic_indices_path().exists());
-        assert!(store.tec_maps_path().exists());
-        assert!(store.solar_flares_path().exists());
+        assert!(store.archive_path::<JamStore>().exists());
+        assert!(store.archive_path::<SolarStore>().exists());
+        assert!(store.archive_path::<IonexStore>().exists());
+        assert!(store.archive_path::<FlareStore>().exists());
     }
 
     /// One instance per store: two callers share the archive, and so share
@@ -394,37 +300,46 @@ mod tests {
     fn each_archive_is_opened_once_and_shared() {
         let (_dir, store) = store();
 
-        let interference = store.open_interference().expect("interference");
+        let interference = store
+            .open_or_create_archive::<JamStore>()
+            .expect("interference");
         let indices = store
-            .open_geomagnetic_indices()
+            .open_or_create_archive::<SolarStore>()
             .expect("geomagnetic indices");
 
         assert!(ptr::eq(
             interference.read(),
             store
-                .open_interference()
+                .open_or_create_archive::<JamStore>()
                 .expect("interference again")
                 .read()
         ));
         assert!(ptr::eq(
             indices.read(),
             store
-                .open_geomagnetic_indices()
+                .open_or_create_archive::<SolarStore>()
                 .expect("geomagnetic indices again")
                 .read()
         ));
 
-        let maps = store.open_tec_maps().expect("tec maps");
+        let maps = store
+            .open_or_create_archive::<IonexStore>()
+            .expect("tec maps");
         assert!(ptr::eq(
             maps.read(),
-            store.open_tec_maps().expect("tec maps again").read()
+            store
+                .open_or_create_archive::<IonexStore>()
+                .expect("tec maps again")
+                .read()
         ));
 
-        let flares = store.open_solar_flares().expect("solar flares");
+        let flares = store
+            .open_or_create_archive::<FlareStore>()
+            .expect("solar flares");
         assert!(ptr::eq(
             flares.read(),
             store
-                .open_solar_flares()
+                .open_or_create_archive::<FlareStore>()
                 .expect("solar flares again")
                 .read()
         ));
@@ -435,45 +350,51 @@ mod tests {
     #[test]
     fn a_read_only_open_hands_out_no_writer() {
         let (_dir, store) = store();
-        store.open_interference().expect("interference");
         store
-            .open_geomagnetic_indices()
+            .open_or_create_archive::<JamStore>()
+            .expect("interference");
+        store
+            .open_or_create_archive::<SolarStore>()
             .expect("geomagnetic indices");
-        store.open_tec_maps().expect("tec maps");
-        store.open_solar_flares().expect("solar flares");
+        store
+            .open_or_create_archive::<IonexStore>()
+            .expect("tec maps");
+        store
+            .open_or_create_archive::<FlareStore>()
+            .expect("solar flares");
         let read_only = Store::open_in(store.root());
 
         assert!(
             read_only
-                .open_interference_read_only()
+                .open_existing_archive_read_only::<JamStore>()
                 .expect("interference")
                 .writer(&PendingWrites::default())
                 .is_none()
         );
         assert!(
             read_only
-                .open_geomagnetic_indices_read_only()
+                .open_existing_archive_read_only::<SolarStore>()
                 .expect("geomagnetic indices")
                 .writer(&PendingWrites::default())
                 .is_none()
         );
         assert!(
             read_only
-                .open_tec_maps_read_only()
+                .open_existing_archive_read_only::<IonexStore>()
                 .expect("tec maps")
                 .writer(&PendingWrites::default())
                 .is_none()
         );
         assert!(
             read_only
-                .open_solar_flares_read_only()
+                .open_existing_archive_read_only::<FlareStore>()
                 .expect("solar flares")
                 .writer(&PendingWrites::default())
                 .is_none()
         );
         assert!(
             store
-                .open_interference()
+                .open_or_create_archive::<JamStore>()
                 .expect("interference")
                 .writer(&PendingWrites::default())
                 .is_some()
@@ -485,48 +406,56 @@ mod tests {
     #[test]
     fn a_failed_open_is_retried_on_the_next_call() {
         let (_dir, store) = store();
-        std::fs::write(store.interference_path(), b"not an archive").expect("write");
+        std::fs::write(store.archive_path::<JamStore>(), b"not an archive").expect("write");
 
-        store.open_interference().expect_err("garbage");
-        std::fs::remove_file(store.interference_path()).expect("remove");
+        store
+            .open_or_create_archive::<JamStore>()
+            .expect_err("garbage");
+        std::fs::remove_file(store.archive_path::<JamStore>()).expect("remove");
 
-        store.open_interference().expect("retried after the repair");
-        assert!(store.interference_path().exists());
+        store
+            .open_or_create_archive::<JamStore>()
+            .expect("retried after the repair");
+        assert!(store.archive_path::<JamStore>().exists());
     }
 
     #[test]
     fn the_interference_archive_opens_without_the_recording_history() {
         let (_dir, store) = store();
-        store.open_interference().expect("interference");
-        assert!(store.interference_path().exists());
+        store
+            .open_or_create_archive::<JamStore>()
+            .expect("interference");
+        assert!(store.archive_path::<JamStore>().exists());
         assert!(!store.recordings_path().exists());
-        assert!(!store.geomagnetic_indices_path().exists());
-        assert!(!store.tec_maps_path().exists());
-        assert!(!store.solar_flares_path().exists());
+        assert!(!store.archive_path::<SolarStore>().exists());
+        assert!(!store.archive_path::<IonexStore>().exists());
+        assert!(!store.archive_path::<FlareStore>().exists());
     }
 
     #[test]
     fn the_geomagnetic_index_archive_opens_without_the_recording_history() {
         let (_dir, store) = store();
         store
-            .open_geomagnetic_indices()
+            .open_or_create_archive::<SolarStore>()
             .expect("geomagnetic indices");
-        assert!(store.geomagnetic_indices_path().exists());
+        assert!(store.archive_path::<SolarStore>().exists());
         assert!(!store.recordings_path().exists());
-        assert!(!store.interference_path().exists());
-        assert!(!store.tec_maps_path().exists());
-        assert!(!store.solar_flares_path().exists());
+        assert!(!store.archive_path::<JamStore>().exists());
+        assert!(!store.archive_path::<IonexStore>().exists());
+        assert!(!store.archive_path::<FlareStore>().exists());
     }
 
     #[test]
     fn the_tec_map_archive_opens_without_the_recording_history() {
         let (_dir, store) = store();
-        store.open_tec_maps().expect("tec maps");
-        assert!(store.tec_maps_path().exists());
+        store
+            .open_or_create_archive::<IonexStore>()
+            .expect("tec maps");
+        assert!(store.archive_path::<IonexStore>().exists());
         assert!(!store.recordings_path().exists());
-        assert!(!store.interference_path().exists());
-        assert!(!store.geomagnetic_indices_path().exists());
-        assert!(!store.solar_flares_path().exists());
+        assert!(!store.archive_path::<JamStore>().exists());
+        assert!(!store.archive_path::<SolarStore>().exists());
+        assert!(!store.archive_path::<FlareStore>().exists());
     }
 
     #[test]
@@ -534,10 +463,10 @@ mod tests {
         let (_dir, store) = store();
         store.open_recordings().expect("recordings");
         assert!(store.recordings_path().exists());
-        assert!(!store.interference_path().exists());
-        assert!(!store.geomagnetic_indices_path().exists());
-        assert!(!store.tec_maps_path().exists());
-        assert!(!store.solar_flares_path().exists());
+        assert!(!store.archive_path::<JamStore>().exists());
+        assert!(!store.archive_path::<SolarStore>().exists());
+        assert!(!store.archive_path::<IonexStore>().exists());
+        assert!(!store.archive_path::<FlareStore>().exists());
     }
 
     /// A read-only session leaves a data directory without a recording
@@ -584,17 +513,23 @@ mod tests {
     #[test]
     fn a_read_only_open_writes_to_no_archive() {
         let (_dir, store) = store();
-        store.open_interference().expect("interference");
         store
-            .open_geomagnetic_indices()
+            .open_or_create_archive::<JamStore>()
+            .expect("interference");
+        store
+            .open_or_create_archive::<SolarStore>()
             .expect("geomagnetic indices");
-        store.open_tec_maps().expect("tec maps");
-        store.open_solar_flares().expect("solar flares");
+        store
+            .open_or_create_archive::<IonexStore>()
+            .expect("tec maps");
+        store
+            .open_or_create_archive::<FlareStore>()
+            .expect("solar flares");
         let archives = [
-            store.interference_path(),
-            store.geomagnetic_indices_path(),
-            store.tec_maps_path(),
-            store.solar_flares_path(),
+            store.archive_path::<JamStore>(),
+            store.archive_path::<SolarStore>(),
+            store.archive_path::<IonexStore>(),
+            store.archive_path::<FlareStore>(),
         ];
         let rebuilding: Vec<PathBuf> = archives
             .iter()
@@ -611,14 +546,16 @@ mod tests {
         let read_only = Store::open_in(store.root());
 
         read_only
-            .open_interference_read_only()
+            .open_existing_archive_read_only::<JamStore>()
             .expect("interference");
         read_only
-            .open_geomagnetic_indices_read_only()
+            .open_existing_archive_read_only::<SolarStore>()
             .expect("geomagnetic indices");
-        read_only.open_tec_maps_read_only().expect("tec maps");
         read_only
-            .open_solar_flares_read_only()
+            .open_existing_archive_read_only::<IonexStore>()
+            .expect("tec maps");
+        read_only
+            .open_existing_archive_read_only::<FlareStore>()
             .expect("solar flares");
 
         for (path, before) in archives.iter().zip(before) {

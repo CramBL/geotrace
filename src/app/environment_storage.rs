@@ -58,10 +58,10 @@ impl EnvironmentArchive {
     /// Path of this archive's file under `store`.
     pub fn path_in(self, store: &Store) -> PathBuf {
         match self {
-            Self::AircraftInterference => store.interference_path(),
-            Self::GeomagneticIndices => store.geomagnetic_indices_path(),
-            Self::IonosphericTec => store.tec_maps_path(),
-            Self::SolarFlares => store.solar_flares_path(),
+            Self::AircraftInterference => store.archive_path::<JamStore>(),
+            Self::GeomagneticIndices => store.archive_path::<SolarStore>(),
+            Self::IonosphericTec => store.archive_path::<IonexStore>(),
+            Self::SolarFlares => store.archive_path::<FlareStore>(),
         }
     }
 
@@ -817,7 +817,7 @@ mod tests {
     fn archives_with_interference(pending_writes: &PendingWrites) -> TestArchives {
         let dir = tempfile::tempdir().expect("temp dir");
         let interference = gt_store::Store::open_in(dir.path())
-            .open_interference()
+            .open_or_create_archive::<JamStore>()
             .expect("open the archive");
         for offset in 0..3 {
             archive_one_day(
@@ -841,7 +841,7 @@ mod tests {
     fn archives_with_interference_and_solar_flares(pending_writes: &PendingWrites) -> TestArchives {
         let mut archives = archives_with_interference(pending_writes);
         let solar_flares = gt_store::Store::open_in(archives._dir.path())
-            .open_solar_flares()
+            .open_or_create_archive::<FlareStore>()
             .expect("open the archive");
         for offset in 0..3 {
             archive_one_day(

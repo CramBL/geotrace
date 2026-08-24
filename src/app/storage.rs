@@ -530,11 +530,11 @@ impl DayArchive for JamStore {
         store: &Store,
         recovery: InterruptedDeleteRecovery,
     ) -> Result<Self::Handle, Self::Error> {
-        store.open_interference_with_recovery_choice(recovery)
+        store.open_or_create_archive_with_recovery_choice::<Self>(recovery)
     }
 
     fn open_read_only(store: &Store) -> Result<Self::Handle, Self::Error> {
-        store.open_interference_read_only()
+        store.open_existing_archive_read_only::<Self>()
     }
 }
 
@@ -549,11 +549,11 @@ impl DayArchive for SolarStore {
         store: &Store,
         recovery: InterruptedDeleteRecovery,
     ) -> Result<Self::Handle, Self::Error> {
-        store.open_geomagnetic_indices_with_recovery_choice(recovery)
+        store.open_or_create_archive_with_recovery_choice::<Self>(recovery)
     }
 
     fn open_read_only(store: &Store) -> Result<Self::Handle, Self::Error> {
-        store.open_geomagnetic_indices_read_only()
+        store.open_existing_archive_read_only::<Self>()
     }
 }
 
@@ -568,11 +568,11 @@ impl DayArchive for IonexStore {
         store: &Store,
         recovery: InterruptedDeleteRecovery,
     ) -> Result<Self::Handle, Self::Error> {
-        store.open_tec_maps_with_recovery_choice(recovery)
+        store.open_or_create_archive_with_recovery_choice::<Self>(recovery)
     }
 
     fn open_read_only(store: &Store) -> Result<Self::Handle, Self::Error> {
-        store.open_tec_maps_read_only()
+        store.open_existing_archive_read_only::<Self>()
     }
 }
 
@@ -587,11 +587,11 @@ impl DayArchive for FlareStore {
         store: &Store,
         recovery: InterruptedDeleteRecovery,
     ) -> Result<Self::Handle, Self::Error> {
-        store.open_solar_flares_with_recovery_choice(recovery)
+        store.open_or_create_archive_with_recovery_choice::<Self>(recovery)
     }
 
     fn open_read_only(store: &Store) -> Result<Self::Handle, Self::Error> {
-        store.open_solar_flares_read_only()
+        store.open_existing_archive_read_only::<Self>()
     }
 }
 
@@ -850,10 +850,10 @@ mod tests {
     /// marked part-way through it as an interrupted one leaves it.
     fn interrupt_a_delete_in_the_interference_archive(root: &Path) {
         let store = Store::open_in(root);
-        let path = store.interference_path();
+        let path = store.archive_path::<JamStore>();
         {
             let archive = store
-                .open_interference()
+                .open_or_create_archive::<JamStore>()
                 .expect("interference archive")
                 .writer(&PendingWrites::default())
                 .expect("an owner session opens the archive writable");
@@ -893,7 +893,7 @@ mod tests {
         let archive = opened.archive.expect("the recovered archive is open");
         assert_eq!(archive.read().days().expect("read the archive index"), []);
         assert_eq!(
-            ReadOnlyJamStore::interrupted_delete_at(&store.interference_path())
+            ReadOnlyJamStore::interrupted_delete_at(&store.archive_path::<JamStore>())
                 .expect("read the archive"),
             None,
             "the open left the delete interrupted"
@@ -966,7 +966,7 @@ mod tests {
             Some(ArchiveUnavailable::InterruptedDeleteLeftUnrecovered)
         );
         assert_eq!(
-            ReadOnlyJamStore::interrupted_delete_at(&store.interference_path())
+            ReadOnlyJamStore::interrupted_delete_at(&store.archive_path::<JamStore>())
                 .expect("read the archive")
                 .map(|interrupted| interrupted.archived_days),
             Some(2),
@@ -982,7 +982,9 @@ mod tests {
     #[test]
     fn a_read_only_open_reads_the_archives_that_are_already_there() {
         let (_dir, store) = store();
-        store.open_interference().expect("create the archive");
+        store
+            .open_or_create_archive::<JamStore>()
+            .expect("create the archive");
 
         let opened = open_in(
             &Store::open_in(store.root()),
