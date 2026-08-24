@@ -19,7 +19,7 @@ use std::process;
 use std::sync::mpsc;
 use std::thread;
 use std::{
-    sync::Arc,
+    sync::{Arc, Barrier},
     time::{Duration as StdDuration, Instant},
 };
 
@@ -31,6 +31,7 @@ use gt_instance_lock::{
 };
 use gt_jam::wire::HexObservation;
 use gt_jam_store::schema;
+use gt_log_view::LoadedLog;
 use gt_pending_writes::{PendingWrites, WriteAccess, WriteKind};
 use gt_store::{HistoryDatabase as _, InterruptedDelete, JamStore, Recordings};
 use gt_test_utils::day_archive::{self, GroupPath};
@@ -8453,11 +8454,16 @@ fn app_with_a_log_loaded() -> Harness<'static, App> {
     harness
 }
 
+impl App {
+    fn shown_log(&self) -> Option<&LoadedLog> {
+        self.logs.get(self.log_viewer.selected_log_index())
+    }
+}
+
 fn parse_summary_of_the_shown_log(harness: &Harness<App>) -> String {
     harness
         .state()
-        .logs
-        .get(harness.state().log_viewer.selected_log_index())
+        .shown_log()
         .map(|log| log.parse_summary_line())
         .unwrap_or_default()
 }
@@ -8699,15 +8705,36 @@ fn type_into_log_filter(harness: &mut TestHarness<'_, App>, text: &str) {
 }
 
 fn type_into_log_filter_of(harness: &mut Harness<'_, App>, text: &str) {
-    harness.ctx.memory_mut(|memory| {
-        memory.request_focus(egui::Id::new(log_viewer::filters::LIVE_FILTER_FIELD_ID));
-    });
-    harness.run_steps(2);
+    focus_the_live_log_filter(harness);
     harness
         .input_mut()
         .events
         .push(egui::Event::Text(text.to_owned()));
-    harness.run_steps(6);
+    run_until_the_log_filter_scans_land(harness);
+}
+
+fn focus_the_live_log_filter(harness: &mut Harness<'_, App>) {
+    harness.ctx.memory_mut(|memory| {
+        memory.request_focus(egui::Id::new(log_viewer::filters::LIVE_FILTER_FIELD_ID));
+    });
+    harness.run_steps(2);
+}
+
+/// Runs until every scan the shown log's filters started has landed. The scans
+/// run on worker threads, and the filter row draws
+/// [`log_viewer::filters::PENDING_NOTE`] until they do.
+fn run_until_the_log_filter_scans_land(harness: &mut Harness<'_, App>) {
+    // The frame that reads the keystroke or the click is the one that starts
+    // the scan: the wait below is only meaningful after it.
+    harness.run_steps(1);
+    let landed = harness.step_until(|harness| {
+        harness
+            .state()
+            .shown_log()
+            .is_some_and(|log| !log.filters().is_query_pending())
+    });
+    assert!(landed, "the filter scans landed");
+    harness.run_steps(2);
 }
 
 /// Writes `text` into the live filter and keeps it as a chip.
@@ -8720,7 +8747,92 @@ fn add_log_filter_in(harness: &mut Harness<'_, App>, text: &str) {
     harness
         .get_by_label(log_viewer::filters::ADD_FILTER_LABEL)
         .click();
-    harness.run_steps(5);
+    run_until_the_log_filter_scans_land(harness);
+}
+
+const PASSES_THE_POOL_HOLDS_A_FILTER_SCAN_QUEUED: u64 = 20;
+
+/// Holds every thread of [`gt_logfile::log_worker_pool`] busy, leaving the
+/// filter scans spawned onto it queued until the pool is released.
+struct OccupiedLogWorkerPool {
+    release: Arc<Barrier>,
+}
+
+impl OccupiedLogWorkerPool {
+    fn occupy() -> Self {
+        let pool = gt_logfile::log_worker_pool().expect("the log worker pool builds");
+        let workers = pool.current_num_threads();
+        let occupied = Arc::new(Barrier::new(workers + 1));
+        let release = Arc::new(Barrier::new(workers + 1));
+        for _ in 0..workers {
+            let occupied = Arc::clone(&occupied);
+            let release = Arc::clone(&release);
+            pool.spawn(move || {
+                occupied.wait();
+                release.wait();
+            });
+        }
+        occupied.wait();
+        Self { release }
+    }
+
+    /// Releases the pool once `ctx` has run `passes` further passes, holding a
+    /// queued scan for the same number of frames on every machine.
+    fn release_after_passes(self, ctx: &egui::Context, passes: u64) {
+        let ctx = ctx.clone();
+        let release_at = ctx.cumulative_pass_nr().saturating_add(passes);
+        thread::Builder::new()
+            .name("release-log-worker-pool".to_owned())
+            .spawn(move || {
+                while ctx.cumulative_pass_nr() < release_at {
+                    thread::sleep(StdDuration::from_millis(1));
+                }
+                self.release.wait();
+            })
+            .expect("the releasing thread spawns");
+    }
+}
+
+/// The scan a keystroke starts stays pending until the worker pool runs it,
+/// and the filter row draws [`log_viewer::filters::PENDING_NOTE`] until it
+/// lands.
+#[test]
+fn the_log_filter_wait_runs_until_the_scan_the_keystroke_started_lands() {
+    let mut harness = app_with_a_log_loaded();
+    OccupiedLogWorkerPool::occupy()
+        .release_after_passes(&harness.ctx, PASSES_THE_POOL_HOLDS_A_FILTER_SCAN_QUEUED);
+
+    focus_the_live_log_filter(&mut harness);
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text("kernel".to_owned()));
+    harness.run_steps(1);
+    assert!(
+        harness
+            .state()
+            .shown_log()
+            .is_some_and(|log| log.filters().is_query_pending()),
+        "the keystroke frame started a scan"
+    );
+    harness.run_steps(2);
+    harness.get_by_label(log_viewer::filters::PENDING_NOTE);
+
+    run_until_the_log_filter_scans_land(&mut harness);
+
+    assert!(
+        harness
+            .state()
+            .shown_log()
+            .is_some_and(|log| !log.filters().is_query_pending()),
+        "the wait ran until the scan landed"
+    );
+    assert!(
+        harness
+            .query_by_label(log_viewer::filters::PENDING_NOTE)
+            .is_none(),
+        "the note goes with the scan"
+    );
 }
 
 /// The viewer filtering a journald-shaped log: the live filter with its match
@@ -8753,7 +8865,7 @@ fn snapshot_app_log_viewer_filters() {
         .inner
         .nth_matching(By::new().label(ICON_PLUS_CIRCLE), 2)
         .click();
-    harness.inner.run_steps(5);
+    run_until_the_log_filter_scans_land(&mut harness.inner);
     type_into_log_filter(&mut harness, "retries");
 
     harness.snapshot_loose("app_log_viewer_filters");
