@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use egui::{Button, CentralPanel, Label, MenuBar, ProgressBar, RichText, Sides, Window};
@@ -22,6 +21,7 @@ use gt_ui_types::{
     ArcIdentity, ContextLines, GeomagneticSeries, HighlightScope, JammingSeries, MapHighlight,
     TecSeries,
 };
+use rustc_hash::FxHashMap;
 
 use super::context_line::ContextSpan;
 use super::fix_positions::FixPositionTimeline;
@@ -552,7 +552,7 @@ impl App {
         jamming: &JammingSeries,
         geomagnetic: &GeomagneticSeries,
         tec: &TecSeries,
-        tec_deviations: &HashMap<TrackRef, QuietTimeDeviation>,
+        tec_deviations: &FxHashMap<TrackRef, QuietTimeDeviation>,
         positions: &Arc<FixPositionTimeline>,
     ) {
         let newly_warned = {

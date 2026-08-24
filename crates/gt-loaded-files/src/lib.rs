@@ -386,6 +386,8 @@ impl<'a> IntoIterator for &'a mut LoadedFiles {
 mod tests {
     use rstest::rstest;
 
+    use rustc_hash::FxHashMap;
+
     use super::{DatabaseRef, FileHistory, LoadedFiles, RecordingMeta, display_identity};
     use gt_types::LoadedFile;
 
@@ -421,7 +423,7 @@ mod tests {
         LoadedFile {
             metadata: gt_test_utils::empty_file_metadata(),
             tracks: Vec::new(),
-            event_marker_styles: std::collections::HashMap::new(),
+            event_marker_styles: FxHashMap::default(),
             orphaned_event_markers: Vec::new(),
             source: gt_types::FileSource::GtdPath(std::path::PathBuf::new()),
             load_warnings: Vec::new(),

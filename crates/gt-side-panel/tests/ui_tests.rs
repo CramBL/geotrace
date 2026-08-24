@@ -7,7 +7,6 @@ use egui::CentralPanel;
 use egui_phosphor::regular::LINE_SEGMENTS as ICON_LINE_SEGMENTS;
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use egui_phosphor::regular::PATH as ICON_PATH;
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use egui_kittest::kittest::Queryable as _;
@@ -21,6 +20,7 @@ use gt_side_panel::{
 use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
 use gt_types::{FileIdx, FixStats, LoadWarning, PointIdx, TrackIdx, TrackRef};
 use gt_ui_types::{DisplayCategory, DisplayMask, MapHighlight, SnapCosting};
+use rustc_hash::FxHashMap;
 
 struct State {
     files: LoadedFiles,
@@ -36,7 +36,7 @@ struct State {
     display_mask: DisplayMask,
     recording_name_template: String,
     metadata_request: Option<gt_side_panel::RecordingDetails>,
-    snap_rows: HashMap<TrackRef, SnapRowView>,
+    snap_rows: FxHashMap<TrackRef, SnapRowView>,
     snap_progress: gt_side_panel::SnapProgressView,
     snap_offline: bool,
     snap_consent_pending: bool,
@@ -94,7 +94,7 @@ fn make_state_with_warnings_on(
         display_mask: DisplayMask::default(),
         recording_name_template: "{filename}".to_owned(),
         metadata_request: None,
-        snap_rows: HashMap::new(),
+        snap_rows: FxHashMap::default(),
         snap_progress: gt_side_panel::SnapProgressView::default(),
         snap_offline: false,
         snap_consent_pending: false,
@@ -798,7 +798,7 @@ fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
         display_mask: DisplayMask::default(),
         recording_name_template: "{filename}".to_owned(),
         metadata_request: None,
-        snap_rows: HashMap::new(),
+        snap_rows: FxHashMap::default(),
         snap_progress: gt_side_panel::SnapProgressView::default(),
         snap_offline: false,
         snap_consent_pending: false,
@@ -925,7 +925,7 @@ fn snapshot_track_channels() {
         display_mask: DisplayMask::default(),
         recording_name_template: "{filename}".to_owned(),
         metadata_request: None,
-        snap_rows: HashMap::new(),
+        snap_rows: FxHashMap::default(),
         snap_progress: gt_side_panel::SnapProgressView::default(),
         snap_offline: false,
         snap_consent_pending: false,
@@ -980,7 +980,7 @@ fn make_state_with_shared_prefix() -> State {
         display_mask: DisplayMask::default(),
         recording_name_template: "{filename}".to_owned(),
         metadata_request: None,
-        snap_rows: HashMap::new(),
+        snap_rows: FxHashMap::default(),
         snap_progress: gt_side_panel::SnapProgressView::default(),
         snap_offline: false,
         snap_consent_pending: false,
@@ -1032,7 +1032,7 @@ fn make_state_with_long_name() -> State {
         display_mask: DisplayMask::default(),
         recording_name_template: "{filename}".to_owned(),
         metadata_request: None,
-        snap_rows: HashMap::new(),
+        snap_rows: FxHashMap::default(),
         snap_progress: gt_side_panel::SnapProgressView::default(),
         snap_offline: false,
         snap_consent_pending: false,
@@ -1103,7 +1103,7 @@ fn make_state_with_metadata() -> State {
         display_mask: DisplayMask::default(),
         recording_name_template: "{title} — {device}".to_owned(),
         metadata_request: None,
-        snap_rows: HashMap::new(),
+        snap_rows: FxHashMap::default(),
         snap_progress: gt_side_panel::SnapProgressView::default(),
         snap_offline: false,
         snap_consent_pending: false,
@@ -1200,7 +1200,7 @@ fn clicking_note_icon_requests_recording_details() {
         display_mask: DisplayMask::default(),
         recording_name_template: "{filename}".to_owned(),
         metadata_request: None,
-        snap_rows: HashMap::new(),
+        snap_rows: FxHashMap::default(),
         snap_progress: gt_side_panel::SnapProgressView::default(),
         snap_offline: false,
         snap_consent_pending: false,

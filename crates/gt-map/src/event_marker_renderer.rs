@@ -6,7 +6,7 @@ use gt_ui_types::{
     DataPointRef, EventMarkerVisibility, HighlightScope, MapHighlight, TrackDataVisibility,
     visibility,
 };
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::icon_mesh::{IconInstance, IconMeshBatch, IconMeshLibrary};
@@ -113,7 +113,7 @@ impl Plugin for EventMarkerRenderer<'_> {
 
 fn resolve_color(
     marker: &gt_types::EventMarker,
-    style_map: &HashMap<String, EventMarkerStyle>,
+    style_map: &FxHashMap<String, EventMarkerStyle>,
 ) -> Color32 {
     let c = if let Some(style) = style_map.get(marker.variant_path.as_str()) {
         style.color
@@ -123,7 +123,7 @@ fn resolve_color(
     Color32::from_rgb(c.r, c.g, c.b)
 }
 
-fn resolve_icon(variant_path: &str, style_map: &HashMap<String, EventMarkerStyle>) -> MarkerIcon {
+fn resolve_icon(variant_path: &str, style_map: &FxHashMap<String, EventMarkerStyle>) -> MarkerIcon {
     style_map
         .get(variant_path)
         .map_or(MarkerIcon::Pin, |s| s.icon)
@@ -145,13 +145,13 @@ mod tests {
     #[test]
     fn resolve_icon_returns_icon_from_style_map() {
         let s = style("power/turn_on", MarkerIcon::Lightning);
-        let map = HashMap::from([(s.variant_path.clone(), s)]);
+        let map = FxHashMap::from_iter([(s.variant_path.clone(), s)]);
         assert_eq!(resolve_icon("power/turn_on", &map), MarkerIcon::Lightning);
     }
 
     #[test]
     fn resolve_icon_falls_back_to_pin_when_path_not_in_map() {
-        let map: HashMap<String, EventMarkerStyle> = HashMap::new();
+        let map = FxHashMap::default();
         assert_eq!(resolve_icon("unknown/path", &map), MarkerIcon::Pin);
     }
 
@@ -175,7 +175,7 @@ mod tests {
         ];
         for icon in icons {
             let s = style("p", icon);
-            let map = HashMap::from([(s.variant_path.clone(), s)]);
+            let map = FxHashMap::from_iter([(s.variant_path.clone(), s)]);
             assert_eq!(resolve_icon("p", &map), icon);
         }
     }

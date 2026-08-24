@@ -1,13 +1,12 @@
 //! The snap error series: per-run mipmap cascades, the snapped-point
 //! anchor markers, the unsnapped crosses, and their caches.
 
-use std::collections::HashMap;
-
 use chrono::DateTime;
 use egui_plot::{MarkerShape, PlotPoint, PlotPoints, Points};
 use gt_egui_mipmap::{LevelSelection, MipMap};
 use gt_types::{MetricKind, TrackRef};
 use gt_ui_types::{ArcIdentity, SnapErrorKind, SnapErrorPoint, SnapErrorSeries};
+use rustc_hash::FxHashMap;
 
 use super::chips::MetricKindUi;
 use super::levels::LineViewport;
@@ -59,7 +58,7 @@ pub(crate) struct SnapErrorPlotCache {
 /// Bring the per-track snap caches in line with the frame's series: drop
 /// tracks that left the series, (re)build entries whose source changed.
 pub(super) fn sync_snap_error_cache(
-    cache: &mut HashMap<TrackRef, SnapErrorPlotCache>,
+    cache: &mut FxHashMap<TrackRef, SnapErrorPlotCache>,
     series: &SnapErrorSeries,
 ) {
     cache.retain(|track, _| series.points_by_track.contains_key(track));
@@ -329,7 +328,7 @@ mod tests {
         let mut series = SnapErrorSeries::default();
         series.points_by_track.insert(track, Arc::clone(&points));
 
-        let mut cache = HashMap::new();
+        let mut cache = FxHashMap::default();
         sync_snap_error_cache(&mut cache, &series);
         let entry = cache.get(&track).expect("entry built");
         assert_eq!(entry.runs.len(), 2, "one cascade per line run");

@@ -149,10 +149,8 @@ impl HaloStyle {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use gt_types::{FileIdx, TrackIdx, TrackRef};
-    use gt_ui_types::DrawLayer;
+    use gt_ui_types::{DrawLayer, TrackRanges};
     use rstest::rstest;
 
     use super::*;
@@ -170,7 +168,7 @@ mod tests {
         QueryMatches {
             draws: vec![DrawLayer {
                 color: 0,
-                ranges: HashMap::from([(track, vec![rng(0, 3)])]),
+                ranges: TrackRanges::from_iter([(track, vec![rng(0, 3)])]),
             }],
             stale,
             run,

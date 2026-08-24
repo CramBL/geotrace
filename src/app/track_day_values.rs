@@ -6,11 +6,11 @@
 //! resolved back. Downstream caches key on that identity: the plot's mipmap
 //! cache, the query run's fingerprint.
 
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::NaiveDate;
 use gt_types::TrackRef;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::environment_storage::PrunedDays;
 
@@ -22,13 +22,13 @@ struct ResolvedTrackValues<T> {
 /// One scheduler's per-track values, each keyed by the archived days it was
 /// resolved from.
 pub struct TrackValuesByArchivedDays<T> {
-    by_track: HashMap<TrackRef, ResolvedTrackValues<T>>,
+    by_track: FxHashMap<TrackRef, ResolvedTrackValues<T>>,
 }
 
 impl<T> Default for TrackValuesByArchivedDays<T> {
     fn default() -> Self {
         Self {
-            by_track: HashMap::new(),
+            by_track: FxHashMap::default(),
         }
     }
 }
@@ -63,7 +63,7 @@ impl<T> TrackValuesByArchivedDays<T> {
         values
     }
 
-    pub fn retain_loaded_tracks(&mut self, loaded: &HashSet<TrackRef>) {
+    pub fn retain_loaded_tracks(&mut self, loaded: &FxHashSet<TrackRef>) {
         self.by_track.retain(|track, _| loaded.contains(track));
     }
 
@@ -135,7 +135,7 @@ mod tests {
         cache.resolve(track(0), vec![day(20)], || 1);
         cache.resolve(track(1), vec![day(20)], || 2);
 
-        cache.retain_loaded_tracks(&HashSet::from([track(1)]));
+        cache.retain_loaded_tracks(&FxHashSet::from_iter([track(1)]));
 
         let held: Vec<TrackRef> = cache.iter_unsorted().map(|(track, _)| track).collect();
         assert_eq!(held, vec![track(1)]);

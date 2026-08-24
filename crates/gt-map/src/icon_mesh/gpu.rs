@@ -11,13 +11,13 @@
 //! group, uploading 32 bytes per instance instead of kilobytes of
 //! transformed vertices.
 
-use std::collections::HashMap;
 use std::num::NonZeroU64;
 use std::sync::OnceLock;
 
 use egui::epaint::PaintCallbackInfo;
 use egui_wgpu::{CallbackResources, CallbackTrait, RenderState, ScreenDescriptor, wgpu};
 use gt_icon_tessellate::TemplateVertex;
+use rustc_hash::FxHashMap;
 use wgpu::util::DeviceExt as _;
 
 use crate::icon_mesh::{IconId, IconMeshLibrary};
@@ -85,7 +85,7 @@ struct IconGpuResources {
     bind_group: wgpu::BindGroup,
     template_vertices: wgpu::Buffer,
     template_indices: wgpu::Buffer,
-    ranges: HashMap<(IconId, usize), TemplateRange>,
+    ranges: FxHashMap<(IconId, usize), TemplateRange>,
     dithering: bool,
 }
 
@@ -117,7 +117,7 @@ pub fn install(
 
     let mut vertices: Vec<GpuTemplateVertex> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
-    let mut ranges = HashMap::new();
+    let mut ranges = FxHashMap::default();
     for icon in <IconId as strum::IntoEnumIterator>::iter() {
         let tessellation = library.tessellation(icon);
         for (bucket, mesh) in tessellation.buckets().iter().enumerate() {

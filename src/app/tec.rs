@@ -9,7 +9,7 @@
 //! is in flight at a time, and the transport spaces requests
 //! [`transport::REQUEST_INTERVAL`] apart.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Instant;
@@ -30,6 +30,7 @@ use gt_pending_writes::{PendingWrites, WriteRefusal};
 use gt_store::{ArchiveUsage, IonexStore, IonexStoreError};
 use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{ArcIdentity, TecContextSample, TecPoint, TecSeries};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::background_thread;
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
@@ -434,10 +435,10 @@ impl TecMapScheduler {
     /// days it spans, so the `Arc` the plot caches on stays stable.
     pub fn plot_series(&mut self, files: &[LoadedFile]) -> TecSeries {
         let mut series = TecSeries::default();
-        let mut live: HashSet<TrackRef> = HashSet::new();
+        let mut live: FxHashSet<TrackRef> = FxHashSet::default();
         // Shared across tracks: a batch of recordings from one drive all read
         // the same day.
-        let mut archived: HashMap<NaiveDate, Option<GlobalIonosphereMaps>> = HashMap::new();
+        let mut archived: FxHashMap<NaiveDate, Option<GlobalIonosphereMaps>> = FxHashMap::default();
 
         for (fi, file) in files.iter().enumerate() {
             for (ti, track) in file.tracks.iter().enumerate() {
@@ -466,7 +467,7 @@ impl TecMapScheduler {
     pub fn quiet_time_deviations(
         &mut self,
         files: &[LoadedFile],
-    ) -> HashMap<TrackRef, QuietTimeDeviation> {
+    ) -> FxHashMap<TrackRef, QuietTimeDeviation> {
         self.quiet_time
             .resolve(self.store.as_deref(), &self.archived_days, files)
     }
@@ -518,7 +519,7 @@ impl TecMapScheduler {
     /// falls outside the epochs its day was archived with has no value.
     fn resolve_points(
         store: Option<&IonexStore>,
-        archived: &mut HashMap<NaiveDate, Option<GlobalIonosphereMaps>>,
+        archived: &mut FxHashMap<NaiveDate, Option<GlobalIonosphereMaps>>,
         track: &LoadedTrack,
     ) -> Vec<TecPoint> {
         track
@@ -1625,7 +1626,7 @@ mod tests {
         vec![gt_types::LoadedFile {
             metadata: gt_test_utils::empty_file_metadata(),
             tracks: vec![track],
-            event_marker_styles: std::collections::HashMap::new(),
+            event_marker_styles: FxHashMap::default(),
             orphaned_event_markers: vec![],
             load_warnings: vec![],
             source: gt_types::FileSource::GtdBytes(Arc::from(Vec::<u8>::new())),

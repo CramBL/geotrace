@@ -553,6 +553,7 @@ mod tests {
     use gt_store::Store;
     use gt_test_utils::{ScriptedTransport, pending_writes};
     use gt_types::{Latitude, Longitude};
+    use rustc_hash::FxHashMap;
 
     use crate::app::day_failures::DayFailure;
     use crate::app::day_fetch_status::{ArchivedDayCount, DayFetchStatus};
@@ -1123,7 +1124,7 @@ mod tests {
         let files = vec![gt_types::LoadedFile {
             metadata: gt_test_utils::empty_file_metadata(),
             tracks: vec![track],
-            event_marker_styles: std::collections::HashMap::new(),
+            event_marker_styles: FxHashMap::default(),
             orphaned_event_markers: vec![],
             load_warnings: vec![],
             source: gt_types::FileSource::GtdBytes(Arc::from(Vec::<u8>::new())),

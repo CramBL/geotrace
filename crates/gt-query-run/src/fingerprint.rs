@@ -1,19 +1,19 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use gt_filter::GlobalFilter;
 use gt_loaded_files::LoadedFilesView;
 use gt_types::{FileIdx, TrackIdx, TrackRef};
 use gt_ui_types::{ArcIdentity, GeomagneticSeries, TecSeries, TrackDataVisibility};
+use rustc_hash::FxHashMap;
 
 /// Per-track dense snap error values, one entry per track with a completed
 /// snap run - handed in by the app each frame, shared with its per-run cache
 /// (so the `Arc` identities are stable and change exactly when a run does).
-pub type SnapErrorValues = HashMap<TrackRef, Arc<Vec<Option<f64>>>>;
+pub type SnapErrorValues = FxHashMap<TrackRef, Arc<Vec<Option<f64>>>>;
 
 /// Per-track interference percentages, one entry per fix. Shaped like
 /// [`SnapErrorValues`] so both reach the provider the same way.
-pub type JammingValues = HashMap<TrackRef, Arc<Vec<Option<f64>>>>;
+pub type JammingValues = FxHashMap<TrackRef, Arc<Vec<Option<f64>>>>;
 
 /// The state a query run depends on, handed in by the app each frame - the
 /// inputs [`RunFingerprint`] snapshots to gray out outdated results.
@@ -175,10 +175,10 @@ mod tests {
         };
 
         let no_run = fingerprint(&SnapErrorValues::default());
-        let run = SnapErrorValues::from([(track, Arc::new(vec![Some(1.0)]))]);
+        let run = SnapErrorValues::from_iter([(track, Arc::new(vec![Some(1.0)]))]);
         assert_ne!(no_run, fingerprint(&run), "a first run changes the input");
         assert_eq!(fingerprint(&run), fingerprint(&run), "same run, stable");
-        let re_run = SnapErrorValues::from([(track, Arc::new(vec![Some(2.0)]))]);
+        let re_run = SnapErrorValues::from_iter([(track, Arc::new(vec![Some(2.0)]))]);
         assert_ne!(
             fingerprint(&run),
             fingerprint(&re_run),

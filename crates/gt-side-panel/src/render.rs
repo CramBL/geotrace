@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use egui::{Button, Label, RichText, ScrollArea, Sides, TextEdit};
 use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::CLOCK as ICON_CLOCK;
@@ -21,6 +19,7 @@ use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, HighlightScope, MapHighlight, MapScope,
     QueryMatches, SnapCosting,
 };
+use rustc_hash::FxHashMap;
 
 use crate::filter::{FilterPanelState, render_filter_panel};
 use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TreeState};
@@ -51,7 +50,7 @@ pub struct SnapPanelView<'a> {
     /// the trigger carries the `…` suffix - a click opens the consent dialog.
     pub consent_pending: bool,
     /// Per-track snap state. Tracks without an entry are [`SnapRowView::Idle`].
-    pub rows: &'a HashMap<TrackRef, SnapRowView>,
+    pub rows: &'a FxHashMap<TrackRef, SnapRowView>,
     /// The costing choices of the re-run submenu, labels pre-rendered by
     /// the app from the wire type's canonical spelling.
     pub costing_choices: &'a [(SnapCosting, String)],
@@ -1748,8 +1747,6 @@ fn file_bounding_center(file: Option<&LoadedFile>) -> Option<(f64, f64)> {
 
 #[cfg(test)]
 mod snap_action_tests {
-    use std::collections::HashMap;
-
     use rstest::rstest;
 
     use super::*;
@@ -1757,13 +1754,13 @@ mod snap_action_tests {
     fn view(offline: bool, consent_pending: bool) -> SnapPanelView<'static> {
         // The rows map is irrelevant to snap_action. A `static` empty map keeps
         // the borrow 'static for the test helper.
-        static EMPTY: std::sync::OnceLock<HashMap<TrackRef, SnapRowView>> =
+        static EMPTY: std::sync::OnceLock<FxHashMap<TrackRef, SnapRowView>> =
             std::sync::OnceLock::new();
         static IDLE: std::sync::OnceLock<SnapProgressView> = std::sync::OnceLock::new();
         SnapPanelView {
             offline,
             consent_pending,
-            rows: EMPTY.get_or_init(HashMap::new),
+            rows: EMPTY.get_or_init(FxHashMap::default),
             costing_choices: &[],
             progress: IDLE.get_or_init(SnapProgressView::default),
         }

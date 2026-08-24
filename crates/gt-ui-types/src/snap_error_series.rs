@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use gt_types::TrackRef;
+use rustc_hash::FxHashMap;
 
 /// Per-point match kind of a snap run, as the plot shows it. A plain mirror
 /// of gt-snap's wire enum so the plot stays decoupled from the snap machinery
@@ -38,7 +38,7 @@ pub struct SnapErrorPoint {
 /// is shared, not rebuilt per frame.
 #[derive(Debug, Clone, Default)]
 pub struct SnapErrorSeries {
-    pub points_by_track: HashMap<TrackRef, Arc<Vec<SnapErrorPoint>>>,
+    pub points_by_track: FxHashMap<TrackRef, Arc<Vec<SnapErrorPoint>>>,
 }
 
 impl SnapErrorSeries {

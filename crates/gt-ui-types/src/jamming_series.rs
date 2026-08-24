@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use gt_types::TrackRef;
+use rustc_hash::FxHashMap;
 
 /// One fix's interference value, resolved for plotting.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -27,7 +27,7 @@ pub struct JammingPoint {
 /// identity drives the plot's cache invalidation.
 #[derive(Debug, Clone, Default)]
 pub struct JammingSeries {
-    pub points_by_track: HashMap<TrackRef, Arc<Vec<JammingPoint>>>,
+    pub points_by_track: FxHashMap<TrackRef, Arc<Vec<JammingPoint>>>,
 }
 
 impl JammingSeries {

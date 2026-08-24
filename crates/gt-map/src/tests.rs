@@ -8,7 +8,8 @@ use gt_types::{
     Coord, DataCategory, FileIdx, FileMetadata, LoadedFile, LoadedTrack, MercPoint, PointIdx, Rect,
     SpatialPoint, TimeRange, TrackIdx, TrackMetadata, merc_bounds_for_rect,
 };
-use gt_ui_types::{DrawLayer, FileVisibility, TrackVisibility};
+use gt_ui_types::{DrawLayer, FileVisibility, TrackRanges, TrackVisibility};
+use rustc_hash::FxHashMap;
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
 
@@ -59,7 +60,7 @@ fn make_file_from_points(points: Vec<gt_types::NavPoint>) -> LoadedFile {
             ..gt_test_utils::empty_file_metadata()
         },
         tracks: vec![track],
-        event_marker_styles: std::collections::HashMap::new(),
+        event_marker_styles: FxHashMap::default(),
         orphaned_event_markers: vec![],
         source: gt_types::FileSource::GtdPath(PathBuf::from(format!("test_{n}.gtd"))),
         load_warnings: vec![],
@@ -162,7 +163,7 @@ fn file_with_tracks(tracks: Vec<LoadedTrack>) -> LoadedFile {
     LoadedFile {
         metadata: gt_test_utils::empty_file_metadata(),
         tracks,
-        event_marker_styles: std::collections::HashMap::new(),
+        event_marker_styles: FxHashMap::default(),
         orphaned_event_markers: vec![],
         source: gt_types::FileSource::GtdPath(PathBuf::from("test.gtd")),
         load_warnings: vec![],
@@ -379,7 +380,7 @@ fn query_hidden_point_is_not_hoverable() {
     // clippy's `single_range_in_vec_init`.
     let rng = |start: usize, end: usize| start..end;
     let matches = QueryMatches {
-        hidden: std::collections::HashMap::from([(
+        hidden: TrackRanges::from_iter([(
             TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
             vec![rng(0, 1)],
         )]),
@@ -669,7 +670,7 @@ fn candidate_label_generated_marker_matches_header() {
             ..gt_test_utils::empty_file_metadata()
         },
         tracks: vec![track],
-        event_marker_styles: std::collections::HashMap::new(),
+        event_marker_styles: FxHashMap::default(),
         orphaned_event_markers: vec![],
         source: gt_types::FileSource::GtdPath(PathBuf::from("test.gtd")),
         load_warnings: vec![],
@@ -700,7 +701,7 @@ fn matches_of_run(run: u64, track: TrackRef) -> QueryMatches {
     QueryMatches {
         draws: vec![DrawLayer {
             color: 0,
-            ranges: std::collections::HashMap::from([(track, vec![rng(0, 1)])]),
+            ranges: TrackRanges::from_iter([(track, vec![rng(0, 1)])]),
         }],
         run,
         ..QueryMatches::default()

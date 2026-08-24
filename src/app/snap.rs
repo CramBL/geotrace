@@ -26,7 +26,7 @@
 //! silently dropped), but marked, with the difference spelled out and a
 //! re-run offered ([`stale_reasons`]).
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::mpsc;
 
@@ -43,6 +43,7 @@ use gt_ui_types::{
     SnappedEdgeInfo, SnappedEdgeSpan, SnappedSegment, SnappedTrackGeometry, TrackDataVisibility,
     WhiskerAnchor,
 };
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::app::background_thread;
 
@@ -411,15 +412,15 @@ pub struct SnapScheduler {
     /// [`Self::set_visibility`]. Gates which [`SnapPriority::Auto`] entries
     /// may dequeue. Scoped to the queue so frame-to-frame comparison stays
     /// proportional to pending work, not to the loaded data.
-    visible: HashSet<TrackRef>,
+    visible: FxHashSet<TrackRef>,
     in_flight: Option<TrackRef>,
-    activity: HashMap<TrackRef, SnapActivity>,
+    activity: FxHashMap<TrackRef, SnapActivity>,
     /// Dedupe store: every completed run this session, by content +
     /// parameters + host. Never displayed from directly.
-    cache: HashMap<SnapCacheKey, Arc<SnapRun>>,
+    cache: FxHashMap<SnapCacheKey, Arc<SnapRun>>,
     /// Display store: the run each track currently shows. Content-keyed,
     /// so it survives index shifts like the cache does.
-    latest: HashMap<TrackContentKey, Arc<SnapRun>>,
+    latest: FxHashMap<TrackContentKey, Arc<SnapRun>>,
 }
 
 impl SnapScheduler {
@@ -434,11 +435,11 @@ impl SnapScheduler {
             transport_source,
             offline,
             queue: VecDeque::new(),
-            visible: HashSet::new(),
+            visible: FxHashSet::default(),
             in_flight: None,
-            activity: HashMap::new(),
-            cache: HashMap::new(),
-            latest: HashMap::new(),
+            activity: FxHashMap::default(),
+            cache: FxHashMap::default(),
+            latest: FxHashMap::default(),
         }
     }
 
@@ -572,7 +573,7 @@ impl SnapScheduler {
     /// the set changes, a parked automatic entry may have become eligible,
     /// so the worker gets a start poke.
     pub fn set_visibility(&mut self, visibility: &TrackDataVisibility) {
-        let visible: HashSet<TrackRef> = self
+        let visible: FxHashSet<TrackRef> = self
             .queue
             .iter()
             .map(|p| p.track)
@@ -742,7 +743,7 @@ impl SnapScheduler {
 /// oldest automatic entry whose track is currently shown. Automatic
 /// entries of hidden tracks stay parked - they neither run nor block the
 /// entries behind them.
-fn next_eligible(queue: &VecDeque<PendingRun>, visible: &HashSet<TrackRef>) -> Option<usize> {
+fn next_eligible(queue: &VecDeque<PendingRun>, visible: &FxHashSet<TrackRef>) -> Option<usize> {
     let mut first_shown_auto = None;
     for (position, pending) in queue.iter().enumerate() {
         match pending.priority {
@@ -1203,7 +1204,7 @@ mod tests {
     ) {
         let track = track(10);
         let mut queue = VecDeque::new();
-        let mut visible = HashSet::new();
+        let mut visible = FxHashSet::default();
         for (n, &(priority, shown)) in entries.iter().enumerate() {
             let track_ref = nth_track_ref(n);
             if shown {

@@ -346,7 +346,6 @@ impl DisplayCountsCache {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -358,7 +357,8 @@ mod tests {
         GeneratedMarkerKindTag, Latitude, LoadedFile, LoadedTrack, Longitude, MarkerIcon, NavPoint,
         PointIdx, TimeRange, TrackLod, TrackMetadata, mercator,
     };
-    use gt_ui_types::{DrawLayer, FileVisibility, TrackVisibility};
+    use gt_ui_types::{DrawLayer, FileVisibility, TrackRanges, TrackVisibility};
+    use rustc_hash::FxHashMap;
     use strum::IntoEnumIterator;
 
     use super::*;
@@ -427,7 +427,7 @@ mod tests {
         LoadedFile {
             metadata: gt_test_utils::empty_file_metadata(),
             tracks: vec![track],
-            event_marker_styles: HashMap::new(),
+            event_marker_styles: FxHashMap::default(),
             orphaned_event_markers: Vec::new(),
             source: FileSource::GtdPath(PathBuf::from("counts.gtd")),
             load_warnings: Vec::new(),
@@ -565,10 +565,10 @@ mod tests {
         let matches = QueryMatches {
             // Points 0 and 1 removed by a `hide` query, which drops them from
             // the point count and drops the point-0 anchor.
-            hidden: HashMap::from([(track_ref, vec![0..1, 1..2])]),
+            hidden: TrackRanges::from_iter([(track_ref, vec![0..1, 1..2])]),
             draws: vec![DrawLayer {
                 color: 0,
-                ranges: HashMap::from([(track_ref, vec![2..3, 3..4])]),
+                ranges: TrackRanges::from_iter([(track_ref, vec![2..3, 3..4])]),
             }],
             ..QueryMatches::default()
         };
@@ -587,7 +587,7 @@ mod tests {
         let matches = QueryMatches {
             draws: vec![DrawLayer {
                 color: 0,
-                ranges: HashMap::from([(track_ref, vec![0..2, 2..4])]),
+                ranges: TrackRanges::from_iter([(track_ref, vec![0..2, 2..4])]),
             }],
             ..QueryMatches::default()
         };
@@ -646,7 +646,7 @@ mod tests {
             Arc::new(gt_ui_types::SnappedTrackGeometry::default()),
         );
         let query = QueryMatches {
-            hidden: HashMap::from([(track_ref, std::iter::once(0..1).collect())]),
+            hidden: TrackRanges::from_iter([(track_ref, std::iter::once(0..1).collect())]),
             ..QueryMatches::default()
         };
 

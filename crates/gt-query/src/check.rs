@@ -5,9 +5,8 @@
 //! arithmetic. Several error messages here are user-facing UX pinned verbatim
 //! by tests - change them deliberately.
 
-use std::collections::HashMap;
-
 use gt_types::DisplayMode;
+use rustc_hash::FxHashMap;
 
 use crate::Diagnostic;
 use geotrace_sdk_units::ChannelUnit;
@@ -57,7 +56,7 @@ pub enum ChannelConflict {
 /// the loaded files; [`check`] resolves each `@name` against it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ChannelSchema {
-    channels: HashMap<String, ChannelInfo>,
+    channels: FxHashMap<String, ChannelInfo>,
 }
 
 impl ChannelSchema {

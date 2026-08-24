@@ -347,6 +347,7 @@ mod tests {
     use std::path::PathBuf;
 
     use gt_types::TimeRange;
+    use rustc_hash::FxHashMap;
 
     use super::*;
 
@@ -422,7 +423,7 @@ mod tests {
                 ..gt_test_utils::empty_file_metadata()
             },
             tracks: vec![],
-            event_marker_styles: std::collections::HashMap::new(),
+            event_marker_styles: FxHashMap::default(),
             orphaned_event_markers: vec![],
             source: gt_types::FileSource::GtdPath(PathBuf::from("test.gtd")),
             load_warnings: vec![],

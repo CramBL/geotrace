@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -6,13 +5,14 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use gt_query::{CheckedQuery, Params, PipelineOutput, RunSummary, TrackInput};
 use gt_types::{Channel, LoadedFile, NavPoint, TrackRef};
 use gt_ui_types::QueryMatches;
+use rustc_hash::FxHashMap;
 
 use crate::fingerprint::RunInputs;
 use crate::provider::{CapturedTrackValues, SliceProvider, TrackProvider, TrackQueryData};
 use crate::results::{ChannelTrackResult, channel_query_matches, matched_point_ranges};
 
 /// Per-track derived series of one run, keyed by the track they came from.
-pub(crate) type RunTrackData = HashMap<TrackRef, TrackQueryData>;
+pub(crate) type RunTrackData = FxHashMap<TrackRef, TrackQueryData>;
 
 /// How a run dispatches, determined from the checked queries' sources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,7 +172,7 @@ impl PreparedRun {
             .any(|q| q.referenced_metrics().iter().any(|m| m.is_slip()));
         let params = merge_params(&self.queries);
 
-        let mut track_data = RunTrackData::new();
+        let mut track_data = RunTrackData::default();
         for snapshot in &self.tracks {
             if cancelled() {
                 return RunOutcome::cancelled();
@@ -261,7 +261,7 @@ impl PreparedRun {
 
         // Project each track's matched sample spans onto its nav points, for the
         // map halos: a matched span bands the track segments it covers.
-        let per_track: HashMap<TrackRef, (Vec<Range<usize>>, usize)> = track_results
+        let per_track: FxHashMap<TrackRef, (Vec<Range<usize>>, usize)> = track_results
             .iter()
             .filter_map(|result| {
                 let snapshot = self.tracks.iter().find(|s| s.track_ref == result.track)?;
@@ -281,7 +281,7 @@ impl PreparedRun {
                 tracks: track_results,
                 matches,
             })),
-            RunTrackData::new(),
+            RunTrackData::default(),
         )
     }
 }

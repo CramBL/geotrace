@@ -7,6 +7,7 @@ use super::*;
 use gt_types::mercator::MercPoint;
 use gt_types::{DataCategory, DisplayMode, FileIdx, NavPoint, PointIdx, TrackIdx, TrackRef};
 use gt_ui_types::{DataPointRef, DisplayCategory, DisplayMask};
+use rustc_hash::FxHashMap;
 
 fn tpv_ref_in(file: FileIdx) -> DataPointRef {
     DataPointRef {
@@ -119,7 +120,7 @@ fn make_snapshot_file() -> gt_types::LoadedFile {
             ..gt_test_utils::empty_file_metadata()
         },
         tracks: vec![track],
-        event_marker_styles: std::collections::HashMap::new(),
+        event_marker_styles: FxHashMap::default(),
         orphaned_event_markers: vec![],
         source: gt_types::FileSource::GtdPath(PathBuf::from("snapshot_test.gtd")),
         load_warnings: vec![],
@@ -303,9 +304,7 @@ fn snapshot_nav_map_with_matches(
     stale: bool,
     capture: MatchCapture,
 ) {
-    use std::collections::HashMap;
-
-    use gt_ui_types::{DrawLayer, QueryMatches, TrackDataVisibility};
+    use gt_ui_types::{DrawLayer, QueryMatches, TrackDataVisibility, TrackRanges};
 
     let files = vec![make_snapshot_file()];
     let visibility = TrackDataVisibility::from_loaded(&files);
@@ -317,7 +316,7 @@ fn snapshot_nav_map_with_matches(
     // Two multi-point stretches on different legs of the fixture loop,
     // plus a single-point match that must render as a ring.
     let ranges = vec![150..300, 700..701, 900..1000];
-    let per_track = |rs: Vec<std::ops::Range<usize>>| HashMap::from([(track, rs)]);
+    let per_track = |rs: Vec<std::ops::Range<usize>>| TrackRanges::from_iter([(track, rs)]);
     let run = match capture {
         MatchCapture::Settled => 0,
         MatchCapture::RevealStart => 1,
@@ -973,7 +972,7 @@ fn make_short_walk_file() -> gt_types::LoadedFile {
             ..gt_test_utils::empty_file_metadata()
         },
         tracks: vec![track],
-        event_marker_styles: std::collections::HashMap::new(),
+        event_marker_styles: FxHashMap::default(),
         orphaned_event_markers: vec![],
         source: gt_types::FileSource::GtdPath(PathBuf::from("short_walk.gtd")),
         load_warnings: vec![],

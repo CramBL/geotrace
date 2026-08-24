@@ -9,7 +9,7 @@
 //! flight at a time, and the transport spaces requests
 //! [`transport::REQUEST_INTERVAL`] apart.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Instant;
@@ -27,6 +27,7 @@ use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{
     GeomagneticContextLines, GeomagneticPoint, GeomagneticSeries, IndexContextSample,
 };
+use rustc_hash::{FxHashMap, FxHashSet};
 use strum::IntoEnumIterator as _;
 
 use super::background_thread;
@@ -303,10 +304,10 @@ impl GeomagneticIndexScheduler {
     /// days it spans, so the `Arc` the plot caches on stays stable.
     pub fn plot_series(&mut self, files: &[LoadedFile]) -> GeomagneticSeries {
         let mut series = GeomagneticSeries::default();
-        let mut live: HashSet<TrackRef> = HashSet::new();
+        let mut live: FxHashSet<TrackRef> = FxHashSet::default();
         // Shared across tracks: a batch of recordings from one drive all read
         // the same day.
-        let mut archived: HashMap<NaiveDate, ArchivedDay> = HashMap::new();
+        let mut archived: FxHashMap<NaiveDate, ArchivedDay> = FxHashMap::default();
 
         for (fi, file) in files.iter().enumerate() {
             for (ti, track) in file.tracks.iter().enumerate() {
@@ -386,7 +387,7 @@ impl GeomagneticIndexScheduler {
     /// half hour, so no period a fix falls in begins on the day before.
     fn resolve_points(
         store: Option<&SolarStore>,
-        archived: &mut HashMap<NaiveDate, ArchivedDay>,
+        archived: &mut FxHashMap<NaiveDate, ArchivedDay>,
         track: &LoadedTrack,
     ) -> Vec<GeomagneticPoint> {
         track
@@ -1413,7 +1414,7 @@ mod tests {
         vec![LoadedFile {
             metadata: gt_test_utils::empty_file_metadata(),
             tracks: vec![track],
-            event_marker_styles: HashMap::new(),
+            event_marker_styles: FxHashMap::default(),
             orphaned_event_markers: vec![],
             load_warnings: vec![],
             source: gt_types::FileSource::GtdBytes(Arc::from(Vec::<u8>::new())),

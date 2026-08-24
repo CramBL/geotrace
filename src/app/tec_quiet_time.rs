@@ -14,7 +14,7 @@
 //! clock time a day's own epochs do not name is interpolated between the two
 //! that bracket it.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 
@@ -24,6 +24,7 @@ use gt_ionex::quiet_time::{self, QuietTimeDeviation};
 use gt_ionex::tec::TotalElectronContent;
 use gt_store::IonexStore;
 use gt_types::{FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::environment_storage::PrunedDays;
 use super::tec::read_archived_maps;
@@ -67,8 +68,8 @@ struct PendingTrack<'a> {
 /// day's read.
 #[derive(Default)]
 pub struct QuietTimeDeviationCache {
-    peaks: HashMap<TrackRef, TrackPeak>,
-    samples: HashMap<NodeSample, Option<TotalElectronContent>>,
+    peaks: FxHashMap<TrackRef, TrackPeak>,
+    samples: FxHashMap<NodeSample, Option<TotalElectronContent>>,
 }
 
 impl QuietTimeDeviationCache {
@@ -94,9 +95,9 @@ impl QuietTimeDeviationCache {
         store: Option<&IonexStore>,
         archived_days: &BTreeSet<NaiveDate>,
         files: &[LoadedFile],
-    ) -> HashMap<TrackRef, QuietTimeDeviation> {
-        let mut live: HashSet<TrackRef> = HashSet::new();
-        let mut assessed_days: HashSet<NaiveDate> = HashSet::new();
+    ) -> FxHashMap<TrackRef, QuietTimeDeviation> {
+        let mut live: FxHashSet<TrackRef> = FxHashSet::default();
+        let mut assessed_days: FxHashSet<NaiveDate> = FxHashSet::default();
         let mut pending: Vec<PendingTrack<'_>> = Vec::new();
 
         for (file_index, file) in files.iter().enumerate() {
@@ -139,8 +140,8 @@ impl QuietTimeDeviationCache {
 
     /// Assess `pending`, reading each day of their windows once.
     fn read_pending_tracks(&mut self, store: Option<&IonexStore>, pending: Vec<PendingTrack<'_>>) {
-        let mut own_days: HashMap<NaiveDate, Option<GlobalIonosphereMaps>> = HashMap::new();
-        let assessed: Vec<(PendingTrack<'_>, HashSet<AssessmentPoint>)> = pending
+        let mut own_days: FxHashMap<NaiveDate, Option<GlobalIonosphereMaps>> = FxHashMap::default();
+        let assessed: Vec<(PendingTrack<'_>, FxHashSet<AssessmentPoint>)> = pending
             .into_iter()
             .map(|pending| {
                 let points = assessment_points(store, &mut own_days, pending.track);
@@ -149,7 +150,7 @@ impl QuietTimeDeviationCache {
             .collect();
         drop(own_days);
 
-        let points: HashSet<AssessmentPoint> = assessed
+        let points: FxHashSet<AssessmentPoint> = assessed
             .iter()
             .flat_map(|(_, points)| points.iter().copied())
             .collect();
@@ -172,7 +173,7 @@ impl QuietTimeDeviationCache {
     fn read_missing_samples(
         &mut self,
         store: Option<&IonexStore>,
-        points: &HashSet<AssessmentPoint>,
+        points: &FxHashSet<AssessmentPoint>,
     ) {
         let mut missing: BTreeMap<NaiveDate, Vec<NodeSample>> = BTreeMap::new();
         for point in points {
@@ -200,7 +201,7 @@ impl QuietTimeDeviationCache {
     }
 
     /// The point standing furthest from its own quiet-time median.
-    fn peak_deviation_of(&self, points: &HashSet<AssessmentPoint>) -> Option<QuietTimeDeviation> {
+    fn peak_deviation_of(&self, points: &FxHashSet<AssessmentPoint>) -> Option<QuietTimeDeviation> {
         points
             .iter()
             .filter_map(|point| self.deviation_at(*point))
@@ -251,9 +252,9 @@ fn days_read_for_day(day: NaiveDate) -> Vec<NaiveDate> {
 /// epochs both come from that day's own published file.
 fn assessment_points(
     store: Option<&IonexStore>,
-    own_days: &mut HashMap<NaiveDate, Option<GlobalIonosphereMaps>>,
+    own_days: &mut FxHashMap<NaiveDate, Option<GlobalIonosphereMaps>>,
     track: &LoadedTrack,
-) -> HashSet<AssessmentPoint> {
+) -> FxHashSet<AssessmentPoint> {
     track
         .points
         .iter()

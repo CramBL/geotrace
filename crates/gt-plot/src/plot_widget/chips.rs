@@ -1,7 +1,6 @@
 //! The filter row above the plot: metric and channel chips, their
 //! visibility state, hover metadata, and the channel color pickers.
 
-use std::collections::HashMap;
 use std::num::NonZeroUsize;
 
 use egui::{Button, Color32, RichText, Slider};
@@ -16,6 +15,7 @@ use gt_solar::GeomagneticIndex;
 use gt_types::MetricKind;
 use gt_types::satellites::{Constellation, ConstellationSet};
 use gt_ui_types::MetricChipHover;
+use rustc_hash::FxHashMap;
 use strum::IntoEnumIterator;
 
 use super::style::{channel_color, effective_component_color};
@@ -325,7 +325,7 @@ pub(super) fn metric_is_shown(
 /// Names persist across loads: an `accel` hidden once stays hidden in the next
 /// recording that carries an `accel`.
 #[derive(Debug, Clone, Default)]
-pub struct ChannelVisibility(HashMap<String, bool>);
+pub struct ChannelVisibility(FxHashMap<String, bool>);
 
 impl ChannelVisibility {
     pub fn is_visible(&self, name: &str) -> bool {
@@ -658,7 +658,7 @@ fn channel_chip_group(
     ui: &mut egui::Ui,
     channels: &[LoadedChannel],
     channel_vis: &mut ChannelVisibility,
-    component_colors: &mut HashMap<String, Vec<Option<Color32>>>,
+    component_colors: &mut FxHashMap<String, Vec<Option<Color32>>>,
     show_only: &mut Option<String>,
     hovered: &mut Option<HoveredChip>,
 ) {
@@ -706,7 +706,7 @@ pub(super) fn metric_filter_row(
     present: ConstellationSet,
     channels: &[LoadedChannel],
     channel_vis: &mut ChannelVisibility,
-    component_colors: &mut HashMap<String, Vec<Option<Color32>>>,
+    component_colors: &mut FxHashMap<String, Vec<Option<Color32>>>,
     show_grid: &mut bool,
     line_width: &mut f32,
     sync_to_map: &mut bool,
@@ -969,7 +969,7 @@ fn channel_chip(
     name: &str,
     color: Color32,
     channel: &LoadedChannel,
-    component_colors: &mut HashMap<String, Vec<Option<Color32>>>,
+    component_colors: &mut FxHashMap<String, Vec<Option<Color32>>>,
 ) -> (bool, bool) {
     // The color pickers live in the right-click menu (a menu stays open
     // while its submenus are used; a hover tooltip closes the moment the

@@ -1071,7 +1071,6 @@ pub fn show_force_quit_confirmation(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::path::PathBuf;
 
     use gt_types::{
@@ -1082,6 +1081,7 @@ mod tests {
     use gt_map::TileAccess;
     use gt_pending_writes::{WriteAccess, WriteKind};
     use gt_test_utils::{HarnessInteraction as _, TestHarness};
+    use rustc_hash::FxHashMap;
 
     use super::{
         CoveredDayCounts, EnvironmentArchive, EnvironmentPruneChoice, EnvironmentPrunePrompt,
@@ -1374,7 +1374,7 @@ mod tests {
                     channels: Vec::new(),
                 })
                 .collect(),
-            event_marker_styles: HashMap::new(),
+            event_marker_styles: FxHashMap::default(),
             orphaned_event_markers: Vec::new(),
             source: FileSource::GtdPath(PathBuf::new()),
             load_warnings: Vec::new(),

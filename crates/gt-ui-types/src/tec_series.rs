@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use gt_types::TrackRef;
+use rustc_hash::FxHashMap;
 
 /// One fix's ionospheric total electron content, resolved for plotting.
 ///
@@ -24,7 +24,7 @@ pub struct TecPoint {
 /// identity drives the plot's cache invalidation.
 #[derive(Debug, Clone, Default)]
 pub struct TecSeries {
-    pub points_by_track: HashMap<TrackRef, Arc<Vec<TecPoint>>>,
+    pub points_by_track: FxHashMap<TrackRef, Arc<Vec<TecPoint>>>,
 }
 
 impl TecSeries {

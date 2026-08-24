@@ -2,11 +2,10 @@
 //! its per-component hue ladder and user overrides, and the per-file
 //! lightness/line-style differentiation.
 
-use std::collections::HashMap;
-
 use egui::Color32;
 use egui_plot::LineStyle;
 use gt_types::MetricKind;
+use rustc_hash::FxHashMap;
 
 /// Per-file shade offsets applied to each metric's base colour.
 ///
@@ -63,7 +62,7 @@ const COMPONENT_HUE_STEP: f32 = 60.0 / 360.0;
 /// The `component`-th color of a channel, honoring a user override from
 /// the chip's right-click menu before falling back to the derived hue ladder.
 pub(super) fn effective_component_color(
-    overrides: &HashMap<String, Vec<Option<Color32>>>,
+    overrides: &FxHashMap<String, Vec<Option<Color32>>>,
     channel: &str,
     base: Color32,
     component: usize,
@@ -146,7 +145,7 @@ mod tests {
     fn effective_component_color_falls_back_without_an_override() {
         let base = CHANNEL_PALETTE[0];
         let red = Color32::from_rgb(255, 0, 0);
-        let overrides = HashMap::from([("accel".to_owned(), vec![None, Some(red)])]);
+        let overrides = FxHashMap::from_iter([("accel".to_owned(), vec![None, Some(red)])]);
         assert_eq!(
             effective_component_color(&overrides, "accel", base, 1),
             red,

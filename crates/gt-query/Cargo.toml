@@ -17,6 +17,7 @@ gt-solar = { path = "../gt-solar" }
 gt-types = { path = "../gt-types" }
 logos.workspace = true
 nalgebra.workspace = true
+rustc-hash.workspace = true
 strum.workspace = true
 
 [dev-dependencies]

@@ -42,6 +42,7 @@ use gt_test_utils::{
 };
 use gt_types::{FileIdx, LoadWarning, TrackIdx, TrackRef};
 use gt_ui_theme::MIDDLE_DOT;
+use rustc_hash::FxHashMap;
 use strum::IntoEnumIterator as _;
 
 use super::App;
@@ -3405,7 +3406,7 @@ fn push_file_with_channel(harness: &mut Harness<App>, name: &str, unit: &str) {
             event_markers: vec![],
             channels: vec![channel],
         }],
-        event_marker_styles: std::collections::HashMap::new(),
+        event_marker_styles: FxHashMap::default(),
         orphaned_event_markers: vec![],
         source: FileSource::GtdBytes(Arc::from(Vec::<u8>::new())),
         load_warnings: vec![],

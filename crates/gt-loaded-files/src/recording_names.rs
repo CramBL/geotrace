@@ -110,6 +110,8 @@ fn common_path_prefix_len(names: &[&str]) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use rustc_hash::FxHashMap;
+
     use gt_types::{FileIdx, FileMetadata, LoadedFile};
 
     use super::{RecordingNames, common_path_prefix_len};
@@ -123,7 +125,7 @@ mod tests {
                 ..gt_test_utils::empty_file_metadata()
             },
             tracks: Vec::new(),
-            event_marker_styles: std::collections::HashMap::new(),
+            event_marker_styles: FxHashMap::default(),
             orphaned_event_markers: Vec::new(),
             source: gt_types::FileSource::GtdPath(std::path::PathBuf::new()),
             load_warnings: Vec::new(),

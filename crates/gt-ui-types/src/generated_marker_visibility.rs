@@ -1,6 +1,5 @@
-use std::collections::HashMap;
-
 use gt_types::{GeneratedMarkerKindSet, GeneratedMarkerKindTag, TrackRef};
+use rustc_hash::FxHashMap;
 
 /// Per-track visibility of generated-marker event types.
 ///
@@ -10,7 +9,7 @@ use gt_types::{GeneratedMarkerKindSet, GeneratedMarkerKindTag, TrackRef};
 /// [`crate::EventMarkerVisibility`] refines event markers by variant path.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct GeneratedMarkerVisibility {
-    hidden: HashMap<TrackRef, GeneratedMarkerKindSet>,
+    hidden: FxHashMap<TrackRef, GeneratedMarkerKindSet>,
 }
 
 impl GeneratedMarkerVisibility {
