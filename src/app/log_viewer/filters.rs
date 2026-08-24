@@ -48,7 +48,7 @@ const MATCH_COUNT_HOVER: &str = "Lines the filters show, of the log's entries";
 
 /// What the viewer says while a scan of the log is still running. U+2026
 /// HORIZONTAL ELLIPSIS marks the work in flight.
-pub(super) const PENDING_NOTE: &str = "Filtering…";
+pub(in crate::app) const PENDING_NOTE: &str = "Filtering…";
 
 /// How long a scan has to run before the viewer says it is running. Below this
 /// the note would only flicker.
