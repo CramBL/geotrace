@@ -500,10 +500,10 @@ impl App {
 
         // Nothing is opened while another instance holds the data directory:
         // recovery here would run against archives that instance is part-way
-        // through rewriting. A run whose lock file cannot be opened or locked
-        // at all opens the databases: it names no instance to wait for, which
-        // is what `instance_wait` settles on once a wait's lock file stays
-        // unusable.
+        // through rewriting. A lock file that cannot be opened or locked at
+        // all opens the databases, since the failure reports nothing about
+        // which process holds the lock. `instance_wait` applies the same rule
+        // when a wait's lock file keeps failing to open.
         let storage_open = match options.instance_lock.ownership() {
             DataDirectoryOwnership::HeldByAnotherInstance => {
                 storage::StorageOpen::waiting_for_the_data_directory(&options.instance_lock)
