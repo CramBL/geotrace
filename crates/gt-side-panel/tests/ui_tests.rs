@@ -7,6 +7,7 @@ use egui::CentralPanel;
 use egui_phosphor::regular::LINE_SEGMENTS as ICON_LINE_SEGMENTS;
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use egui_phosphor::regular::PATH as ICON_PATH;
+use egui_phosphor::regular::WARNING as ICON_WARNING;
 use std::path::PathBuf;
 
 use egui_kittest::kittest::Queryable as _;
@@ -1300,6 +1301,41 @@ fn clicking_note_icon_requests_recording_details() {
     assert_eq!(
         request.identity.as_deref(),
         Some("auto:Morning ride::uBlox F9P")
+    );
+}
+
+#[test]
+fn the_warning_icon_shows_the_pointing_hand_and_requests_the_files_warnings() {
+    let warnings = [LoadWarning {
+        count: 3,
+        issue: "satellite(s) with PRN 0".to_owned(),
+        description: "PRN 0 is reserved and undefined in NMEA".to_owned(),
+    }];
+    // One file, so the WARNING glyph is unambiguous.
+    let mut harness = make_harness(make_state_with_warnings_on(1, 0, &warnings));
+    harness.run();
+
+    let icon = harness.inner.get_by_label(ICON_WARNING).rect().center();
+    harness.inner.hover_at_and_settle(icon, 3);
+    assert_eq!(
+        harness.inner.output().platform_output.cursor_icon,
+        egui::CursorIcon::PointingHand
+    );
+
+    harness.inner.get_by_label(ICON_WARNING).click();
+    harness.run();
+    let (filename, requested) = harness
+        .state()
+        .warnings_request
+        .as_ref()
+        .expect("clicking the warning icon sets the warnings request");
+    assert_eq!(filename, "ride_0.gtd");
+    assert_eq!(
+        requested
+            .iter()
+            .map(|w| w.issue.as_str())
+            .collect::<Vec<_>>(),
+        ["satellite(s) with PRN 0"]
     );
 }
 
