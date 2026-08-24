@@ -10,6 +10,7 @@ use gt_history_types::{
     ATTR_GTD_SIZE_BYTES, ATTR_NAV_POINT_COUNT, ATTR_START_US, TRACK_END_DATASET,
     TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP,
 };
+use gt_history_types::{CURRENT_SCHEMA_VERSION, SCHEMA_VERSION_ATTR};
 
 /// Default segmentation settings for tests (mirrors `SegmentationConfig::default`).
 fn test_settings() -> StoredSegmentation {
@@ -2730,4 +2731,34 @@ fn attachment_attributes_stay_out_of_the_reconstructed_gtd() {
         baseline.len(),
         "attaching a log must not add anything to the reconstructed GTD file"
     );
+}
+
+/// `open_existing_read_only` returns [`DbError::SchemaTooNew`] when the root
+/// `schema_version` attribute is above [`CURRENT_SCHEMA_VERSION`].
+///
+/// The file is built here because neither backend writes a `schema_version`
+/// it does not support. Its shape is the one both `create_new`s write: the
+/// attribute plus the `by_identity` and `meta` groups.
+#[test_log::test]
+fn a_read_only_open_refuses_a_schema_newer_than_supported() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("recordings.h5");
+    let newer = CURRENT_SCHEMA_VERSION + 1;
+
+    let mut fb = hdf5_pure::FileBuilder::new();
+    fb.set_attr(SCHEMA_VERSION_ATTR, hdf5_pure::AttrValue::I64(newer));
+    let by_identity = fb.create_group("by_identity");
+    fb.add_group(by_identity.finish());
+    let meta = fb.create_group("meta");
+    fb.add_group(meta.finish());
+    fb.write(&path).expect("write the database");
+
+    match Database::open_existing_read_only(&path) {
+        Err(DbError::SchemaTooNew { found, supported }) => {
+            assert_eq!(found, newer);
+            assert_eq!(supported, CURRENT_SCHEMA_VERSION);
+        }
+        Err(other) => panic!("the read-only open failed with {other:?}"),
+        Ok(_) => panic!("the read-only open accepted schema_version {newer}"),
+    }
 }
