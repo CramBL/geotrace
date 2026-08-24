@@ -15,7 +15,7 @@ use std::{
 
 use gt_history::{
     DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentId, LogContentHash,
-    StoredLogFilter, log_attachment,
+    ReadOnlyHistoryDatabase, StoredLogFilter, log_attachment,
 };
 use thiserror::Error;
 
@@ -77,48 +77,11 @@ pub enum LogAttachmentError {
     },
 }
 
-/// The logs stored with the recordings of a history database.
+/// Reading the logs stored with the recordings of a history database.
 ///
-/// Implemented for every [`HistoryDatabase`]. The database holds the
-/// attributes, and these operations pair each one with its compressed log.
-pub trait LogAttachments: HistoryDatabase {
-    /// Store `log` with a recording and return the id it was stored under.
-    ///
-    /// A failure to write the attribute removes the log again: an attachment
-    /// the database does not name is one nothing could delete later.
-    fn attach_log(
-        &mut self,
-        db_ref: &DatabaseRef,
-        log: &LogToAttach<'_>,
-    ) -> Result<LogAttachmentId, LogAttachmentError> {
-        let directory = log_attachment::logs_directory_for_database(self.path());
-        let id = LogAttachmentId::new_random();
-        let path = id.file_path(&directory);
-        write_compressed_log(&path, log.text.as_bytes()).map_err(|source| {
-            LogAttachmentError::Io {
-                path: path.clone(),
-                source,
-            }
-        })?;
-
-        let attachment = LogAttachment::new(
-            log.name.to_owned(),
-            LogContentHash::of_log_bytes(log.text.as_bytes()),
-            log.filters.clone(),
-        );
-        if let Err(err) = self.write_log_attachment_attribute(db_ref, id, &attachment) {
-            log_attachment::delete_files(&directory, &[id]);
-            return Err(err.into());
-        }
-
-        log::info!(
-            "Attached the log {:?} to the recording {:?} as {id}",
-            log.name,
-            db_ref.group_name
-        );
-        Ok(id)
-    }
-
+/// Implemented for every [`ReadOnlyHistoryDatabase`], so a read-only session
+/// reads the logs of the recordings it lists.
+pub trait ReadOnlyLogAttachments: ReadOnlyHistoryDatabase {
     /// Read an attachment back, checking the log against the hash it was
     /// stored under.
     fn load_attached_log(
@@ -160,6 +123,51 @@ pub trait LogAttachments: HistoryDatabase {
                 .map_err(|source| LogAttachmentError::NotUtf8 { id, source })?,
             filters: attachment.filters,
         })
+    }
+}
+
+impl<T: ReadOnlyHistoryDatabase + ?Sized> ReadOnlyLogAttachments for T {}
+
+/// Storing and removing the logs of a history database's recordings.
+///
+/// Implemented for every [`HistoryDatabase`]. The database holds the
+/// attributes, and these operations pair each one with its compressed log.
+pub trait LogAttachments: HistoryDatabase {
+    /// Store `log` with a recording and return the id it was stored under.
+    ///
+    /// A failure to write the attribute removes the log again: an attachment
+    /// the database does not name is one nothing could delete later.
+    fn attach_log(
+        &mut self,
+        db_ref: &DatabaseRef,
+        log: &LogToAttach<'_>,
+    ) -> Result<LogAttachmentId, LogAttachmentError> {
+        let directory = log_attachment::logs_directory_for_database(self.path());
+        let id = LogAttachmentId::new_random();
+        let path = id.file_path(&directory);
+        write_compressed_log(&path, log.text.as_bytes()).map_err(|source| {
+            LogAttachmentError::Io {
+                path: path.clone(),
+                source,
+            }
+        })?;
+
+        let attachment = LogAttachment::new(
+            log.name.to_owned(),
+            LogContentHash::of_log_bytes(log.text.as_bytes()),
+            log.filters.clone(),
+        );
+        if let Err(err) = self.write_log_attachment_attribute(db_ref, id, &attachment) {
+            log_attachment::delete_files(&directory, &[id]);
+            return Err(err.into());
+        }
+
+        log::info!(
+            "Attached the log {:?} to the recording {:?} as {id}",
+            log.name,
+            db_ref.group_name
+        );
+        Ok(id)
     }
 
     /// Remove one attachment: its attribute, and the log stored with it.

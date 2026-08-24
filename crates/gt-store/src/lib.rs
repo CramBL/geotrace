@@ -24,10 +24,10 @@ pub use gt_hdf5_archive::prune::{
 pub use gt_hdf5_archive::{ArchiveUsage, ArchivedDaySpan};
 pub use gt_history::{
     ChannelSummary, DatabaseRef, DbError, HistoryDatabase, LOGS_DIRECTORY, LogAttachment,
-    LogAttachmentEntry, LogAttachmentId, LogContentHash, PruneMode, RecordingEntry, RecordingMeta,
-    StoredLogFilter, StoredLogFilterMode, StoredRecording, StoredSegmentation, TrackRange,
-    extract_meta, format_count_suffix, identity_from_group_name, identity_group_name,
-    make_group_name,
+    LogAttachmentEntry, LogAttachmentId, LogContentHash, PruneMode, ReadOnlyHistoryDatabase,
+    RecordingEntry, RecordingMeta, StoredLogFilter, StoredLogFilterMode, StoredRecording,
+    StoredSegmentation, TrackRange, extract_meta, format_count_suffix, identity_from_group_name,
+    identity_group_name, make_group_name,
 };
 pub use gt_ionex_store::{ArchivedMapDay, IonexStore, IonexStoreError, ReadOnlyIonexStore};
 pub use gt_jam_store::{JamStore, JamStoreError, ReadOnlyJamStore, StoredDay};
@@ -36,16 +36,23 @@ pub use gt_solar_store::{ArchivedIndexDay, ReadOnlySolarStore, SolarStore, Solar
 mod archive_handle;
 mod day_archive;
 pub mod log_attachments;
+mod recordings_handle;
 mod writable_archive;
 
 pub use archive_handle::ArchiveHandle;
 pub use day_archive::DayArchiveError;
-pub use log_attachments::{AttachedLog, LogAttachmentError, LogAttachments, LogToAttach};
+pub use log_attachments::{
+    AttachedLog, LogAttachmentError, LogAttachments, LogToAttach, ReadOnlyLogAttachments,
+};
+pub use recordings_handle::RecordingsHandle;
 pub use writable_archive::WritableArchive;
 
 /// The recording history database. Named for what it holds, since the store
 /// fronts more than one.
 pub type Recordings = gt_history::Database;
+
+/// The recording history database as a read-only session opens it.
+pub type ReadOnlyRecordings = gt_history::ReadOnlyDatabase;
 
 /// The interference archive as this session opened it.
 pub type InterferenceArchive = ArchiveHandle<JamStore, ReadOnlyJamStore>;
@@ -158,12 +165,12 @@ impl Store {
     /// Open the recording history without writing to it, or [`None`] where
     /// there is none to open: a read-only session creates no database and
     /// repairs none.
-    pub fn open_recordings_read_only(&self) -> Result<Option<Recordings>, DbError> {
+    pub fn open_recordings_read_only(&self) -> Result<Option<ReadOnlyRecordings>, DbError> {
         let path = self.recordings_path();
         if !path.exists() {
             return Ok(None);
         }
-        Recordings::open_existing_read_only(&path).map(Some)
+        ReadOnlyRecordings::open_existing_read_only(&path).map(Some)
     }
 
     /// The interference archive, creating it if it does not exist.
@@ -547,10 +554,13 @@ mod tests {
         assert!(!store.recordings_path().exists());
     }
 
+    /// A read-only session lists what the owning instance stored and leaves
+    /// the database file byte for byte as it found it.
     #[test]
-    fn a_read_only_open_reads_an_existing_recording_history() {
+    fn a_read_only_open_reads_an_existing_recording_history_without_writing_to_it() {
         let (_dir, store) = store();
         store.open_recordings().expect("create the database");
+        let before = std::fs::read(store.recordings_path()).expect("read the database");
 
         let opened = store
             .open_recordings_read_only()
@@ -558,6 +568,11 @@ mod tests {
             .expect("the database is there");
 
         assert_eq!(opened.list_recordings().expect("list").len(), 0);
+        assert_eq!(
+            std::fs::read(store.recordings_path()).expect("read the database"),
+            before,
+            "the read-only open changed the recording history"
+        );
     }
 
     /// A read-only session opens every archive without writing to any of

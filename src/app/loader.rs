@@ -833,7 +833,7 @@ impl HistoryInsert<'_> {
     /// disabled, metadata is missing, the write registry turned the insert
     /// away, or the insert failed.
     fn store(self) -> Option<gt_store::DatabaseRef> {
-        use gt_store::HistoryDatabase;
+        use gt_store::{HistoryDatabase, ReadOnlyHistoryDatabase};
 
         let Self {
             db_path,
@@ -934,7 +934,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use chrono::DateTime;
-    use gt_store::{HistoryDatabase, Recordings};
+    use gt_store::{HistoryDatabase, ReadOnlyHistoryDatabase, Recordings};
     use gt_test_utils::{SyntheticGtdSpec, synthetic_gtd_bytes};
 
     use super::*;

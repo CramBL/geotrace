@@ -26,8 +26,8 @@ use gt_pending_writes::{PendingWrites, WriteAccess, WriteKind};
 use gt_store::{
     DayArchiveError, DbError, FlareStore, FlareStoreError, GeomagneticIndexArchive,
     HistoryDatabase as _, InterferenceArchive, InterruptedDeleteRecovery, IonexStore,
-    IonexStoreError, JamStore, JamStoreError, Recordings, SolarFlareArchive, SolarStore,
-    SolarStoreError, Store, TecMapArchive,
+    IonexStoreError, JamStore, JamStoreError, Recordings, RecordingsHandle, SolarFlareArchive,
+    SolarStore, SolarStoreError, Store, TecMapArchive,
 };
 
 use super::App;
@@ -427,7 +427,10 @@ pub(in crate::app) fn open_in(
     let write_access = pending_writes.write_access();
     let (history, history_failure) = match write_access {
         WriteAccess::Owner => match store.open_recordings() {
-            Ok(db) => (HistoryWorker::spawn(db, ctx.clone(), pending_writes), None),
+            Ok(db) => (
+                HistoryWorker::spawn(RecordingsHandle::Owner(db), ctx.clone(), pending_writes),
+                None,
+            ),
             Err(err) => (
                 HistoryWorker::disabled(),
                 Some(classify_failure(&err, store.recordings_path())),
@@ -468,7 +471,9 @@ fn open_recordings_read_only(
     pending_writes: PendingWrites,
 ) -> HistoryWorker {
     match store.open_recordings_read_only() {
-        Ok(Some(db)) => HistoryWorker::spawn(db, ctx.clone(), pending_writes),
+        Ok(Some(db)) => {
+            HistoryWorker::spawn(RecordingsHandle::ReadOnly(db), ctx.clone(), pending_writes)
+        }
         Ok(None) => {
             log::info!(
                 "There is no recording history at {}, and this read-only session creates none",

@@ -53,7 +53,7 @@ impl App {
         toast: &str,
     ) {
         self.install_history_worker(history_db::HistoryWorker::spawn(
-            db,
+            gt_store::RecordingsHandle::Owner(db),
             ctx.clone(),
             self.pending_writes.clone(),
         ));

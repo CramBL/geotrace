@@ -411,15 +411,58 @@ impl PruneMode {
     }
 }
 
-pub trait HistoryDatabase {
-    fn open_or_create(path: &Path) -> Result<Self, DbError>
-    where
-        Self: Sized;
+/// The methods that read a history database and write nothing to it.
+///
+/// [`HistoryDatabase`] requires this trait, so these are callable on a
+/// writable database as well.
+pub trait ReadOnlyHistoryDatabase {
+    fn path(&self) -> &Path;
 
-    /// Open the existing database at `path` without writing to it: it is
-    /// neither created, migrated, nor repaired. A session that does not own
-    /// the data directory opens it this way.
-    fn open_existing_read_only(path: &Path) -> Result<Self, DbError>
+    /// Read a recording back: reconstructed GTD bytes plus its stored tracks and
+    /// segmentation settings.
+    fn load(&self, db_ref: &DatabaseRef) -> Result<StoredRecording, DbError>;
+
+    /// The stored snap run bytes for a recording, or `None` when it carries
+    /// none (never snapped, or stored before snap persistence existed).
+    fn snap_blob(&self, db_ref: &DatabaseRef) -> Result<Option<Vec<u8>>, DbError>;
+
+    /// Every log attached to a recording, sorted by id.
+    ///
+    /// An attribute this build cannot decode is skipped with a warning. The
+    /// recording's other attachments are still listed.
+    fn log_attachments(&self, db_ref: &DatabaseRef) -> Result<Vec<LogAttachmentEntry>, DbError>;
+
+    /// The recording's attachment holding this exact log, for warning about a
+    /// duplicate before attaching one.
+    fn log_attachment_with_content(
+        &self,
+        db_ref: &DatabaseRef,
+        content_hash: LogContentHash,
+    ) -> Result<Option<LogAttachmentEntry>, DbError> {
+        Ok(self
+            .log_attachments(db_ref)?
+            .into_iter()
+            .find(|entry| entry.attachment.content_hash == content_hash))
+    }
+
+    fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError>;
+
+    /// Whether a recording with the same content already exists (content-addressed
+    /// across all identities).
+    fn is_duplicate(&self, meta: &RecordingMeta) -> Result<bool, DbError>;
+
+    /// Compute which recordings would be removed by a given prune mode.
+    fn prune_candidates(&self, mode: &PruneMode) -> Result<Vec<DatabaseRef>, DbError> {
+        let entries = self.list_recordings()?;
+        Ok(mode.select(&entries))
+    }
+}
+
+/// The methods that change a history database. Each backend's read-only type
+/// implements [`ReadOnlyHistoryDatabase`] alone, so none of these can be called
+/// on it.
+pub trait HistoryDatabase: ReadOnlyHistoryDatabase {
+    fn open_or_create(path: &Path) -> Result<Self, DbError>
     where
         Self: Sized;
 
@@ -432,6 +475,7 @@ pub trait HistoryDatabase {
     fn clear_write_lock(path: &Path) -> Result<(), DbError>
     where
         Self: Sized;
+
     /// Store a recording: the original GTD `bytes`, the segmentation `settings`,
     /// and the resulting `tracks` (index ranges, none hidden initially).
     fn insert(
@@ -442,10 +486,6 @@ pub trait HistoryDatabase {
         settings: StoredSegmentation,
         bytes: &[u8],
     ) -> Result<DatabaseRef, DbError>;
-
-    /// Read a recording back: reconstructed GTD bytes plus its stored tracks and
-    /// segmentation settings.
-    fn load(&self, db_ref: &DatabaseRef) -> Result<StoredRecording, DbError>;
 
     /// Replace a recording's stored tracks and segmentation settings (e.g. after
     /// recalculating from the original with new settings). Discards prior hidden
@@ -471,16 +511,6 @@ pub trait HistoryDatabase {
     /// recording so they prune with it.
     fn set_snap_blob(&mut self, db_ref: &DatabaseRef, blob: &[u8]) -> Result<(), DbError>;
 
-    /// The stored snap run bytes for a recording, or `None` when it carries
-    /// none (never snapped, or stored before snap persistence existed).
-    fn snap_blob(&self, db_ref: &DatabaseRef) -> Result<Option<Vec<u8>>, DbError>;
-
-    /// Every log attached to a recording, sorted by id.
-    ///
-    /// An attribute this build cannot decode is skipped with a warning. The
-    /// recording's other attachments are still listed.
-    fn log_attachments(&self, db_ref: &DatabaseRef) -> Result<Vec<LogAttachmentEntry>, DbError>;
-
     /// Write one attachment's attribute, replacing whatever was stored under
     /// its id.
     ///
@@ -501,27 +531,8 @@ pub trait HistoryDatabase {
         id: LogAttachmentId,
     ) -> Result<(), DbError>;
 
-    /// The recording's attachment holding this exact log, for warning about a
-    /// duplicate before attaching one.
-    fn log_attachment_with_content(
-        &self,
-        db_ref: &DatabaseRef,
-        content_hash: LogContentHash,
-    ) -> Result<Option<LogAttachmentEntry>, DbError> {
-        Ok(self
-            .log_attachments(db_ref)?
-            .into_iter()
-            .find(|entry| entry.attachment.content_hash == content_hash))
-    }
-
-    fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError>;
-    /// Whether a recording with the same content already exists (content-addressed
-    /// across all identities).
-    fn is_duplicate(&self, meta: &RecordingMeta) -> Result<bool, DbError>;
-
     /// Delete whole recordings (used by pruning).
     fn delete_batch(&mut self, refs: &[DatabaseRef]) -> Result<(), DbError>;
-    fn path(&self) -> &Path;
 
     /// Rename an identity, moving all its recordings under `new`.
     ///
@@ -532,12 +543,6 @@ pub trait HistoryDatabase {
     /// recordings under `old` keep a stale [`DatabaseRef`] until the caller
     /// refreshes them.
     fn rename_identity(&mut self, old: &str, new: &str) -> Result<(), DbError>;
-
-    /// Compute which recordings would be removed by a given prune mode.
-    fn prune_candidates(&self, mode: &PruneMode) -> Result<Vec<DatabaseRef>, DbError> {
-        let entries = self.list_recordings()?;
-        Ok(mode.select(&entries))
-    }
 }
 
 /// Format a count as a human-readable short string: `230`, `1.3k`, `100k`, `1m`.

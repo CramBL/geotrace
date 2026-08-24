@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use gt_store::{
     DatabaseRef, HistoryDatabase as _, LogAttachmentError, LogAttachmentId, LogAttachments as _,
-    LogToAttach, RecordingMeta, Recordings, Store, StoredLogFilter, StoredLogFilterMode,
-    StoredSegmentation, TrackRange,
+    LogToAttach, ReadOnlyHistoryDatabase as _, ReadOnlyLogAttachments as _, RecordingMeta,
+    Recordings, Store, StoredLogFilter, StoredLogFilterMode, StoredSegmentation, TrackRange,
 };
 
 /// A journald-shaped log, long enough that its stored copy is visibly

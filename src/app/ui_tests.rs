@@ -33,7 +33,10 @@ use gt_jam::wire::HexObservation;
 use gt_jam_store::schema;
 use gt_log_view::LoadedLog;
 use gt_pending_writes::{PendingWrites, WriteAccess, WriteKind};
-use gt_store::{HistoryDatabase as _, InterruptedDelete, JamStore, Recordings};
+use gt_store::{
+    HistoryDatabase as _, InterruptedDelete, JamStore, ReadOnlyHistoryDatabase as _, Recordings,
+    RecordingsHandle,
+};
 use gt_test_utils::day_archive::{self, GroupPath};
 use gt_test_utils::{
     By, DEMO_BYTES, GOLD_BYTES, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec,
@@ -4375,7 +4378,7 @@ fn adopting_an_open_storage_installs_its_history_worker() {
 
     let opened = crate::app::storage::OpenStorage {
         history: crate::app::history_db::HistoryWorker::spawn(
-            store.open_recordings().expect("recordings"),
+            RecordingsHandle::Owner(store.open_recordings().expect("recordings")),
             harness.ctx.clone(),
             gt_pending_writes::PendingWrites::default(),
         ),
@@ -4475,9 +4478,11 @@ fn storage_opened_in(
 ) -> OpenStorage {
     OpenStorage {
         history: crate::app::history_db::HistoryWorker::spawn(
-            store
-                .open_recordings()
-                .expect("open the recordings database"),
+            RecordingsHandle::Owner(
+                store
+                    .open_recordings()
+                    .expect("open the recordings database"),
+            ),
             ctx.clone(),
             pending_writes.clone(),
         ),
@@ -7185,7 +7190,9 @@ fn closing_the_window_hands_the_history_worker_to_its_own_thread() {
                 .build_eframe(transient_app);
             harness.step();
             let (worker, held_open) = crate::app::history_db::HistoryWorker::spawn_held_open(
-                open_temporary_history_database(&dir.path().join("geotrace.h5")),
+                RecordingsHandle::Owner(open_temporary_history_database(
+                    &dir.path().join("geotrace.h5"),
+                )),
                 harness.ctx.clone(),
                 harness.state().pending_writes.clone(),
             );
@@ -7918,7 +7925,7 @@ fn snap_runs_persist_and_restore_through_the_app() {
         .build_eframe(transient_app);
     harness.step();
     harness.state_mut().history = crate::app::history_db::HistoryWorker::spawn(
-        Recordings::open_or_create(&db_path).expect("reopen"),
+        RecordingsHandle::Owner(Recordings::open_or_create(&db_path).expect("reopen")),
         egui::Context::default(),
         gt_pending_writes::PendingWrites::default(),
     );
@@ -9271,7 +9278,9 @@ fn snapshot_log_association_dialog() {
         .eframe(build_app);
     harness.inner.step();
     harness.inner.state_mut().history = crate::app::history_db::HistoryWorker::spawn(
-        open_temporary_history_database(&dir.path().join("geotrace.h5")),
+        RecordingsHandle::Owner(open_temporary_history_database(
+            &dir.path().join("geotrace.h5"),
+        )),
         egui::Context::default(),
         gt_pending_writes::PendingWrites::default(),
     );
@@ -9463,7 +9472,7 @@ mod log_association {
             .build_eframe(transient_app);
         harness.step();
         harness.state_mut().history = HistoryWorker::spawn(
-            open_temporary_history_database(db_path),
+            RecordingsHandle::Owner(open_temporary_history_database(db_path)),
             egui::Context::default(),
             gt_pending_writes::PendingWrites::default(),
         );

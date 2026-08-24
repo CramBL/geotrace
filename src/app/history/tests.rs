@@ -1,6 +1,6 @@
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use gt_pending_writes::{PendingWrites, WriteAccess};
-use gt_store::HistoryDatabase as _;
+use gt_store::{HistoryDatabase as _, RecordingsHandle};
 use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
 
 use crate::app::history_db::Response;
@@ -36,7 +36,11 @@ struct HistoryHarness {
 fn history_harness(entries: Vec<RecordingEntry>) -> HistoryHarness {
     let dir = tempfile::tempdir().expect("temp dir");
     let db = gt_store::Recordings::open_or_create(&dir.path().join("history.h5")).expect("open db");
-    let worker = HistoryWorker::spawn(db, egui::Context::default(), PendingWrites::default());
+    let worker = HistoryWorker::spawn(
+        RecordingsHandle::Owner(db),
+        egui::Context::default(),
+        PendingWrites::default(),
+    );
     let mut window = HistoryWindow::new();
     window.open = true;
     // Populate directly so the list renders without a worker round-trip.
@@ -87,7 +91,11 @@ fn history_harness_with_recording(identity: &str) -> HistoryHarness {
     };
     db.insert(identity, &meta, &tracks, settings, bytes)
         .expect("insert recording");
-    let worker = HistoryWorker::spawn(db, egui::Context::default(), PendingWrites::default());
+    let worker = HistoryWorker::spawn(
+        RecordingsHandle::Owner(db),
+        egui::Context::default(),
+        PendingWrites::default(),
+    );
     let mut window = HistoryWindow::new();
     window.open = true;
     HistoryHarness {

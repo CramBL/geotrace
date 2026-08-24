@@ -1,11 +1,12 @@
 use crate::copy::list_recordings;
 use gt_history_types::{
     CURRENT_SCHEMA_VERSION, DatabaseRef, DbError, HistoryDatabase, LogAttachment,
-    LogAttachmentEntry, LogAttachmentId, RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR,
-    StoredRecording, StoredSegmentation, TrackRange, log_attachment,
+    LogAttachmentEntry, LogAttachmentId, ReadOnlyHistoryDatabase, RecordingEntry, RecordingMeta,
+    SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation, TrackRange, log_attachment,
 };
 
 use parking_lot::Mutex;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
 static DB_LOCK: Mutex<()> = Mutex::new(());
@@ -86,8 +87,77 @@ fn classify_open_error(err: hdf5::Error) -> DbError {
     DbError::Backend(msg)
 }
 
-pub struct SysDb {
+/// The history database with no method that writes to the file, as
+/// [`Self::open_existing_read_only`] opens it.
+pub struct ReadOnlySysDb {
     path: PathBuf,
+}
+
+impl ReadOnlySysDb {
+    /// Open the database at `path` without writing to it: it is not created
+    /// where it is missing, not migrated to the native HDF5 format, and its
+    /// unindexed recordings are not repaired.
+    pub fn open_existing_read_only(path: &Path) -> Result<Self, DbError> {
+        let _guard = DB_LOCK.lock();
+        Self::validate_existing(path)?;
+        Ok(Self {
+            path: path.to_owned(),
+        })
+    }
+
+    fn validate_existing(path: &Path) -> Result<(), DbError> {
+        let file = hdf5::File::open(path).map_err(classify_open_error)?;
+        let schema_version = file
+            .attr(SCHEMA_VERSION_ATTR)
+            .and_then(|a| a.read_scalar::<i64>())
+            .unwrap_or(0);
+        if schema_version > CURRENT_SCHEMA_VERSION {
+            return Err(DbError::SchemaTooNew {
+                found: schema_version,
+                supported: CURRENT_SCHEMA_VERSION,
+            });
+        }
+        Ok(())
+    }
+}
+
+impl ReadOnlyHistoryDatabase for ReadOnlySysDb {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn load(&self, db_ref: &DatabaseRef) -> Result<StoredRecording, DbError> {
+        let _guard = DB_LOCK.lock();
+        crate::copy::load_recording(&self.path, &db_ref.identity, &db_ref.group_name)
+            .map_err(Into::into)
+    }
+
+    fn snap_blob(&self, db_ref: &DatabaseRef) -> Result<Option<Vec<u8>>, DbError> {
+        let _guard = DB_LOCK.lock();
+        crate::copy::snap_blob(&self.path, &db_ref.identity, &db_ref.group_name).map_err(Into::into)
+    }
+
+    fn log_attachments(&self, db_ref: &DatabaseRef) -> Result<Vec<LogAttachmentEntry>, DbError> {
+        let _guard = DB_LOCK.lock();
+        crate::copy::log_attachments(&self.path, &db_ref.identity, &db_ref.group_name)
+            .map_err(Into::into)
+    }
+
+    fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError> {
+        let _guard = DB_LOCK.lock();
+        list_recordings(&self.path).map_err(Into::into)
+    }
+
+    fn is_duplicate(&self, meta: &RecordingMeta) -> Result<bool, DbError> {
+        let _guard = DB_LOCK.lock();
+        crate::copy::is_duplicate(&self.path, meta).map_err(Into::into)
+    }
+}
+
+/// The history database with the methods that write to the file, as
+/// [`HistoryDatabase::open_or_create`] opens it.
+pub struct SysDb {
+    read_only: ReadOnlySysDb,
 }
 
 impl SysDb {
@@ -119,20 +189,39 @@ impl SysDb {
             .map_err(|e| DbError::Backend(e.to_string()))?;
         Ok(())
     }
+}
 
-    fn validate_existing(path: &Path) -> Result<(), DbError> {
-        let file = hdf5::File::open(path).map_err(classify_open_error)?;
-        let schema_version = file
-            .attr(SCHEMA_VERSION_ATTR)
-            .and_then(|a| a.read_scalar::<i64>())
-            .unwrap_or(0);
-        if schema_version > CURRENT_SCHEMA_VERSION {
-            return Err(DbError::SchemaTooNew {
-                found: schema_version,
-                supported: CURRENT_SCHEMA_VERSION,
-            });
-        }
-        Ok(())
+impl Deref for SysDb {
+    type Target = ReadOnlySysDb;
+
+    fn deref(&self) -> &Self::Target {
+        &self.read_only
+    }
+}
+
+impl ReadOnlyHistoryDatabase for SysDb {
+    fn path(&self) -> &Path {
+        self.read_only.path()
+    }
+
+    fn load(&self, db_ref: &DatabaseRef) -> Result<StoredRecording, DbError> {
+        self.read_only.load(db_ref)
+    }
+
+    fn snap_blob(&self, db_ref: &DatabaseRef) -> Result<Option<Vec<u8>>, DbError> {
+        self.read_only.snap_blob(db_ref)
+    }
+
+    fn log_attachments(&self, db_ref: &DatabaseRef) -> Result<Vec<LogAttachmentEntry>, DbError> {
+        self.read_only.log_attachments(db_ref)
+    }
+
+    fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError> {
+        self.read_only.list_recordings()
+    }
+
+    fn is_duplicate(&self, meta: &RecordingMeta) -> Result<bool, DbError> {
+        self.read_only.is_duplicate(meta)
     }
 }
 
@@ -140,7 +229,7 @@ impl HistoryDatabase for SysDb {
     fn open_or_create(path: &Path) -> Result<Self, DbError> {
         let _guard = DB_LOCK.lock();
         if path.exists() {
-            Self::validate_existing(path)?;
+            ReadOnlySysDb::validate_existing(path)?;
             // A database written by the pure-Rust backend can be read but not
             // extended by libhdf5. Migrate it to a native file once so inserts
             // and deletes work.
@@ -156,15 +245,9 @@ impl HistoryDatabase for SysDb {
             Self::create_new(path)?;
         }
         Ok(Self {
-            path: path.to_owned(),
-        })
-    }
-
-    fn open_existing_read_only(path: &Path) -> Result<Self, DbError> {
-        let _guard = DB_LOCK.lock();
-        Self::validate_existing(path)?;
-        Ok(Self {
-            path: path.to_owned(),
+            read_only: ReadOnlySysDb {
+                path: path.to_owned(),
+            },
         })
     }
 
@@ -189,12 +272,6 @@ impl HistoryDatabase for SysDb {
     ) -> Result<DatabaseRef, DbError> {
         let _guard = DB_LOCK.lock();
         crate::copy::insert_recording(&self.path, identity, meta, tracks, settings, gtd_bytes)
-            .map_err(Into::into)
-    }
-
-    fn load(&self, db_ref: &DatabaseRef) -> Result<StoredRecording, DbError> {
-        let _guard = DB_LOCK.lock();
-        crate::copy::load_recording(&self.path, &db_ref.identity, &db_ref.group_name)
             .map_err(Into::into)
     }
 
@@ -238,17 +315,6 @@ impl HistoryDatabase for SysDb {
             .map_err(Into::into)
     }
 
-    fn snap_blob(&self, db_ref: &DatabaseRef) -> Result<Option<Vec<u8>>, DbError> {
-        let _guard = DB_LOCK.lock();
-        crate::copy::snap_blob(&self.path, &db_ref.identity, &db_ref.group_name).map_err(Into::into)
-    }
-
-    fn log_attachments(&self, db_ref: &DatabaseRef) -> Result<Vec<LogAttachmentEntry>, DbError> {
-        let _guard = DB_LOCK.lock();
-        crate::copy::log_attachments(&self.path, &db_ref.identity, &db_ref.group_name)
-            .map_err(Into::into)
-    }
-
     fn write_log_attachment_attribute(
         &mut self,
         db_ref: &DatabaseRef,
@@ -280,16 +346,6 @@ impl HistoryDatabase for SysDb {
             id,
         )
         .map_err(Into::into)
-    }
-
-    fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError> {
-        let _guard = DB_LOCK.lock();
-        list_recordings(&self.path).map_err(Into::into)
-    }
-
-    fn is_duplicate(&self, meta: &RecordingMeta) -> Result<bool, DbError> {
-        let _guard = DB_LOCK.lock();
-        crate::copy::is_duplicate(&self.path, meta).map_err(Into::into)
     }
 
     fn delete_batch(&mut self, refs: &[DatabaseRef]) -> Result<(), DbError> {
@@ -351,10 +407,6 @@ impl HistoryDatabase for SysDb {
     fn rename_identity(&mut self, old: &str, new: &str) -> Result<(), DbError> {
         let _guard = DB_LOCK.lock();
         crate::copy::rename_identity(&self.path, old, new).map_err(Into::into)
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
     }
 }
 

@@ -3,11 +3,12 @@ use gt_history_types::{
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US, CURRENT_SCHEMA_VERSION,
     DatabaseRef, DbError, GTD_META_DEVICE_ATTR, GTD_META_NOTES_ATTR, GTD_META_TITLE_ATTR,
     GTD_META_TRAVEL_MODE_ATTR, HistoryDatabase, LogAttachment, LogAttachmentEntry, LogAttachmentId,
-    RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation,
-    TrackRange, identity_from_group_name,
+    ReadOnlyHistoryDatabase, RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR, StoredRecording,
+    StoredSegmentation, TrackRange, identity_from_group_name,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 use parking_lot::Mutex;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
 static DB_LOCK: Mutex<()> = Mutex::new(());
@@ -28,24 +29,17 @@ pub(crate) fn classify_hdf5_error(err: hdf5_pure::Error) -> DbError {
     }
 }
 
-pub struct PureDb {
+/// The history database with no method that writes to the file, as
+/// [`Self::open_existing_read_only`] opens it.
+pub struct ReadOnlyPureDb {
     path: PathBuf,
 }
 
-impl HistoryDatabase for PureDb {
-    fn open_or_create(path: &Path) -> Result<Self, DbError> {
-        let _guard = DB_LOCK.lock();
-        if path.exists() {
-            Self::validate_existing(path)?;
-        } else {
-            Self::create_new(path)?;
-        }
-        Ok(Self {
-            path: path.to_owned(),
-        })
-    }
-
-    fn open_existing_read_only(path: &Path) -> Result<Self, DbError> {
+impl ReadOnlyPureDb {
+    /// Open the database at `path` without writing to it: it is not created
+    /// where it is missing, not migrated to the current schema, and not
+    /// repaired.
+    pub fn open_existing_read_only(path: &Path) -> Result<Self, DbError> {
         let _guard = DB_LOCK.lock();
         Self::schema_version_of(path)?;
         Ok(Self {
@@ -53,72 +47,37 @@ impl HistoryDatabase for PureDb {
         })
     }
 
-    fn clear_write_lock(path: &Path) -> Result<(), DbError> {
-        let _guard = DB_LOCK.lock();
-        hdf5_pure::File::clear_swmr_flag(path).map_err(classify_hdf5_error)?;
-        log::debug!(
-            "Cleared the write lock on history database at {}",
-            path.display()
-        );
-        Ok(())
-    }
+    /// The schema version the database at `path` records, reading nothing
+    /// else and writing nothing. A database written before the attribute
+    /// existed reports 0.
+    fn schema_version_of(path: &Path) -> Result<i64, DbError> {
+        let file = hdf5_pure::File::open(path).map_err(classify_hdf5_error)?;
+        let root = file.root();
+        let attrs = root.attrs().map_err(classify_hdf5_error)?;
 
-    fn insert(
-        &mut self,
-        identity: &str,
-        meta: &RecordingMeta,
-        tracks: &[TrackRange],
-        settings: StoredSegmentation,
-        gtd_bytes: &[u8],
-    ) -> Result<DatabaseRef, DbError> {
-        let _guard = DB_LOCK.lock();
-        copy::insert_recording(&self.path, identity, meta, tracks, settings, gtd_bytes)
-            .map_err(Into::into)
+        let schema_version = match attrs.get(SCHEMA_VERSION_ATTR) {
+            Some(AttrValue::I64(v)) => *v,
+            _ => 0,
+        };
+
+        if schema_version > CURRENT_SCHEMA_VERSION {
+            return Err(DbError::SchemaTooNew {
+                found: schema_version,
+                supported: CURRENT_SCHEMA_VERSION,
+            });
+        }
+        Ok(schema_version)
+    }
+}
+
+impl ReadOnlyHistoryDatabase for ReadOnlyPureDb {
+    fn path(&self) -> &Path {
+        &self.path
     }
 
     fn load(&self, db_ref: &DatabaseRef) -> Result<StoredRecording, DbError> {
         let _guard = DB_LOCK.lock();
         copy::load_recording(&self.path, &db_ref.identity, &db_ref.group_name).map_err(Into::into)
-    }
-
-    fn set_tracks(
-        &mut self,
-        db_ref: &DatabaseRef,
-        tracks: &[TrackRange],
-        settings: StoredSegmentation,
-    ) -> Result<(), DbError> {
-        let _guard = DB_LOCK.lock();
-        copy::set_tracks(
-            &self.path,
-            &db_ref.identity,
-            &db_ref.group_name,
-            tracks,
-            settings,
-        )
-        .map_err(Into::into)
-    }
-
-    fn set_tracks_hidden(
-        &mut self,
-        db_ref: &DatabaseRef,
-        track_indices: &[usize],
-        hidden: bool,
-    ) -> Result<(), DbError> {
-        let _guard = DB_LOCK.lock();
-        copy::set_tracks_hidden(
-            &self.path,
-            &db_ref.identity,
-            &db_ref.group_name,
-            track_indices,
-            hidden,
-        )
-        .map_err(Into::into)
-    }
-
-    fn set_snap_blob(&mut self, db_ref: &DatabaseRef, blob: &[u8]) -> Result<(), DbError> {
-        let _guard = DB_LOCK.lock();
-        copy::set_snap_blob(&self.path, &db_ref.identity, &db_ref.group_name, blob)
-            .map_err(Into::into)
     }
 
     fn snap_blob(&self, db_ref: &DatabaseRef) -> Result<Option<Vec<u8>>, DbError> {
@@ -129,34 +88,6 @@ impl HistoryDatabase for PureDb {
     fn log_attachments(&self, db_ref: &DatabaseRef) -> Result<Vec<LogAttachmentEntry>, DbError> {
         let _guard = DB_LOCK.lock();
         copy::log_attachments(&self.path, &db_ref.identity, &db_ref.group_name).map_err(Into::into)
-    }
-
-    fn write_log_attachment_attribute(
-        &mut self,
-        db_ref: &DatabaseRef,
-        id: LogAttachmentId,
-        attachment: &LogAttachment,
-    ) -> Result<(), DbError> {
-        let attribute_json = attachment.to_attribute_json()?;
-        let _guard = DB_LOCK.lock();
-        copy::set_log_attachment_attribute(
-            &self.path,
-            &db_ref.identity,
-            &db_ref.group_name,
-            id,
-            &attribute_json,
-        )
-        .map_err(Into::into)
-    }
-
-    fn delete_log_attachment_attribute(
-        &mut self,
-        db_ref: &DatabaseRef,
-        id: LogAttachmentId,
-    ) -> Result<(), DbError> {
-        let _guard = DB_LOCK.lock();
-        copy::delete_log_attachment_attribute(&self.path, &db_ref.identity, &db_ref.group_name, id)
-            .map_err(Into::into)
     }
 
     fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError> {
@@ -231,6 +162,153 @@ impl HistoryDatabase for PureDb {
         }
         Ok(false)
     }
+}
+
+/// The history database with the methods that write to the file, as
+/// [`HistoryDatabase::open_or_create`] opens it.
+pub struct PureDb {
+    read_only: ReadOnlyPureDb,
+}
+
+impl Deref for PureDb {
+    type Target = ReadOnlyPureDb;
+
+    fn deref(&self) -> &Self::Target {
+        &self.read_only
+    }
+}
+
+impl ReadOnlyHistoryDatabase for PureDb {
+    fn path(&self) -> &Path {
+        self.read_only.path()
+    }
+
+    fn load(&self, db_ref: &DatabaseRef) -> Result<StoredRecording, DbError> {
+        self.read_only.load(db_ref)
+    }
+
+    fn snap_blob(&self, db_ref: &DatabaseRef) -> Result<Option<Vec<u8>>, DbError> {
+        self.read_only.snap_blob(db_ref)
+    }
+
+    fn log_attachments(&self, db_ref: &DatabaseRef) -> Result<Vec<LogAttachmentEntry>, DbError> {
+        self.read_only.log_attachments(db_ref)
+    }
+
+    fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError> {
+        self.read_only.list_recordings()
+    }
+
+    fn is_duplicate(&self, meta: &RecordingMeta) -> Result<bool, DbError> {
+        self.read_only.is_duplicate(meta)
+    }
+}
+
+impl HistoryDatabase for PureDb {
+    fn open_or_create(path: &Path) -> Result<Self, DbError> {
+        let _guard = DB_LOCK.lock();
+        if path.exists() {
+            Self::validate_existing(path)?;
+        } else {
+            Self::create_new(path)?;
+        }
+        Ok(Self {
+            read_only: ReadOnlyPureDb {
+                path: path.to_owned(),
+            },
+        })
+    }
+
+    fn clear_write_lock(path: &Path) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        hdf5_pure::File::clear_swmr_flag(path).map_err(classify_hdf5_error)?;
+        log::debug!(
+            "Cleared the write lock on history database at {}",
+            path.display()
+        );
+        Ok(())
+    }
+
+    fn insert(
+        &mut self,
+        identity: &str,
+        meta: &RecordingMeta,
+        tracks: &[TrackRange],
+        settings: StoredSegmentation,
+        gtd_bytes: &[u8],
+    ) -> Result<DatabaseRef, DbError> {
+        let _guard = DB_LOCK.lock();
+        copy::insert_recording(&self.path, identity, meta, tracks, settings, gtd_bytes)
+            .map_err(Into::into)
+    }
+
+    fn set_tracks(
+        &mut self,
+        db_ref: &DatabaseRef,
+        tracks: &[TrackRange],
+        settings: StoredSegmentation,
+    ) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        copy::set_tracks(
+            &self.path,
+            &db_ref.identity,
+            &db_ref.group_name,
+            tracks,
+            settings,
+        )
+        .map_err(Into::into)
+    }
+
+    fn set_tracks_hidden(
+        &mut self,
+        db_ref: &DatabaseRef,
+        track_indices: &[usize],
+        hidden: bool,
+    ) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        copy::set_tracks_hidden(
+            &self.path,
+            &db_ref.identity,
+            &db_ref.group_name,
+            track_indices,
+            hidden,
+        )
+        .map_err(Into::into)
+    }
+
+    fn set_snap_blob(&mut self, db_ref: &DatabaseRef, blob: &[u8]) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        copy::set_snap_blob(&self.path, &db_ref.identity, &db_ref.group_name, blob)
+            .map_err(Into::into)
+    }
+
+    fn write_log_attachment_attribute(
+        &mut self,
+        db_ref: &DatabaseRef,
+        id: LogAttachmentId,
+        attachment: &LogAttachment,
+    ) -> Result<(), DbError> {
+        let attribute_json = attachment.to_attribute_json()?;
+        let _guard = DB_LOCK.lock();
+        copy::set_log_attachment_attribute(
+            &self.path,
+            &db_ref.identity,
+            &db_ref.group_name,
+            id,
+            &attribute_json,
+        )
+        .map_err(Into::into)
+    }
+
+    fn delete_log_attachment_attribute(
+        &mut self,
+        db_ref: &DatabaseRef,
+        id: LogAttachmentId,
+    ) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        copy::delete_log_attachment_attribute(&self.path, &db_ref.identity, &db_ref.group_name, id)
+            .map_err(Into::into)
+    }
 
     fn delete_batch(&mut self, refs: &[DatabaseRef]) -> Result<(), DbError> {
         let _guard = DB_LOCK.lock();
@@ -243,10 +321,6 @@ impl HistoryDatabase for PureDb {
     fn rename_identity(&mut self, old: &str, new: &str) -> Result<(), DbError> {
         let _guard = DB_LOCK.lock();
         copy::rename_identity(&self.path, old, new).map_err(Into::into)
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
     }
 }
 
@@ -271,30 +345,8 @@ impl PureDb {
         Ok(())
     }
 
-    /// The schema version the database at `path` records, reading nothing
-    /// else and writing nothing. A database written before the attribute
-    /// existed reports 0.
-    fn schema_version_of(path: &Path) -> Result<i64, DbError> {
-        let file = hdf5_pure::File::open(path).map_err(classify_hdf5_error)?;
-        let root = file.root();
-        let attrs = root.attrs().map_err(classify_hdf5_error)?;
-
-        let schema_version = match attrs.get(SCHEMA_VERSION_ATTR) {
-            Some(AttrValue::I64(v)) => *v,
-            _ => 0,
-        };
-
-        if schema_version > CURRENT_SCHEMA_VERSION {
-            return Err(DbError::SchemaTooNew {
-                found: schema_version,
-                supported: CURRENT_SCHEMA_VERSION,
-            });
-        }
-        Ok(schema_version)
-    }
-
     fn validate_existing(path: &Path) -> Result<(), DbError> {
-        let schema_version = Self::schema_version_of(path)?;
+        let schema_version = ReadOnlyPureDb::schema_version_of(path)?;
 
         if schema_version < CURRENT_SCHEMA_VERSION {
             log::info!(
