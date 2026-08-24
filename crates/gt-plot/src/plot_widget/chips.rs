@@ -505,23 +505,40 @@ impl MetricAvailability {
     }
 }
 
-/// The solar flare markers' chip: whether they draw, and whether the archive
-/// holds a flare over the span the plot shows.
+/// The solar flare markers' chip: whether they draw, whether every flare's
+/// span is shaded without hovering it, and whether the archive holds a flare
+/// over the span the plot shows.
 pub(super) struct FlareChipState<'a> {
     pub(super) visible: &'a mut bool,
+    pub(super) always_show_spans: &'a mut bool,
     pub(super) available: bool,
 }
 
 /// Why the flare chip is disabled. Never hidden, per DESIGN.md.
 const NO_ARCHIVED_FLARES: &str = "No solar flares are archived for the days in view";
 
-/// The flare markers' toggle: the metric chip's look, without the "show only
-/// this" menu that belongs to a line.
-fn flare_chip(ui: &mut egui::Ui, visible: &mut bool, available: bool) {
+/// The span-shading toggle in the flare chip's context menu.
+const ALWAYS_SHOW_SPANS: &str = "Always show each flare's span";
+const ALWAYS_SHOW_SPANS_HOVER: &str = "Shade every flare's active time";
+
+/// The flare markers' toggle: the metric chip's look, with a context menu
+/// holding the span-shading setting instead of the "show only this" that
+/// belongs to a line.
+///
+/// Returns whether the pointer is over the chip, which shades every visible
+/// flare's span.
+fn flare_chip(
+    ui: &mut egui::Ui,
+    FlareChipState {
+        visible,
+        always_show_spans,
+        available,
+    }: FlareChipState<'_>,
+) -> bool {
     let color = gt_ui_theme::FLARE_M_CLASS.resolve(ui.visuals().dark_mode);
     if !available {
         disabled_chip(ui, gt_flare::text::LAYER_LABEL, color, NO_ARCHIVED_FLARES);
-        return;
+        return false;
     }
     let (fill, text_color) = if *visible {
         (color.gamma_multiply(0.75), Color32::WHITE)
@@ -535,12 +552,19 @@ fn flare_chip(ui: &mut egui::Ui, visible: &mut bool, available: bool) {
     )
     .fill(fill)
     .corner_radius(4.0);
+    let response = ui.add(chip);
+    let hovered = response.hovered();
+    response.context_menu(|ui| {
+        ui.checkbox(always_show_spans, ALWAYS_SHOW_SPANS)
+            .on_hover_text(ALWAYS_SHOW_SPANS_HOVER);
+    });
     if ChipHover::Structured(&gt_flare::text::PLOT_HOVER)
-        .attach(ui.add(chip))
+        .attach(response)
         .clicked()
     {
         *visible = !*visible;
     }
+    hovered
 }
 
 /// Which optional chip sections are revealed, gating their lines exactly as
@@ -551,12 +575,14 @@ pub(super) struct SectionGates {
     pub(super) show_channels: bool,
 }
 
-/// A chip the pointer can rest on: a metric's, or a loaded channel's (by
-/// name). Drives the hover highlight that dims every other line.
+/// A chip the pointer can rest on: a metric's, a loaded channel's (by name),
+/// or the solar flares'. Drives the hover highlight that dims every other
+/// line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum HoveredChip {
     Metric(MetricKind),
     Channel(String),
+    SolarFlare,
 }
 /// Render one separator-delimited group of metric chips, folding any
 /// "show only this" choice into `show_only` and the hovered metric into `hovered`.
@@ -692,10 +718,10 @@ fn channel_chip_group(
 /// All controls and metric chips share a single `horizontal_wrapped` row so they
 /// fill available horizontal space before wrapping.
 ///
-/// Returns the chip currently being hovered (a metric's or a channel's), or
-/// `None`. The caller passes this to `add_series_lines` to highlight the
-/// hovered line and dim the rest, matching the standard egui-plot legend
-/// hover behaviour.
+/// Returns the chip currently being hovered (a metric's, a channel's or the
+/// solar flares'), or `None`. The caller passes this to `add_series_lines` to
+/// highlight the hovered line and dim the rest, matching the standard
+/// egui-plot legend hover behaviour.
 #[expect(
     clippy::too_many_arguments,
     reason = "the filter row owns every plot toggle: grid/sync, the metric, channel and flare visibility, and both section gates"
@@ -713,10 +739,7 @@ pub(super) fn metric_filter_row(
     show_advanced: &mut bool,
     show_channels: &mut bool,
     available: MetricAvailability,
-    FlareChipState {
-        visible: flares_visible,
-        available: flares_available,
-    }: FlareChipState<'_>,
+    flares: FlareChipState<'_>,
 ) -> Option<HoveredChip> {
     let all_on = vis.all_enabled(present, *show_advanced);
     let mut show_only = None;
@@ -792,7 +815,9 @@ pub(super) fn metric_filter_row(
             &mut show_only,
             &mut hovered_chip,
         );
-        flare_chip(ui, flares_visible, flares_available);
+        if flare_chip(ui, flares) {
+            hovered_chip = Some(HoveredChip::SolarFlare);
+        }
 
         // Advanced groups, shown only when revealed.  Every kind here must report
         // `MetricKindUi::is_advanced() == true` so line drawing and the

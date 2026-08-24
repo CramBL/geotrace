@@ -763,6 +763,7 @@ impl App {
             channels: s.plot_state.channel_vis.entries(),
             show_channels: s.plot_state.show_channels,
             show_solar_flares: s.plot_state.show_solar_flares,
+            always_show_solar_flare_spans: s.plot_state.always_show_solar_flare_spans,
             layer: settings_ui::map_layer_to_setting(self.map.layer()),
             mapbox_token: self.map.mapbox_token().to_owned(),
             sync_to_map: s.plot_state.sync_to_map,

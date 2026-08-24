@@ -79,6 +79,7 @@ impl App {
             shared.plot_state.show_advanced_metrics = s.plot.show_advanced_metrics;
             shared.plot_state.show_channels = s.plot.show_channels;
             shared.plot_state.show_solar_flares = s.plot.show_solar_flares;
+            shared.plot_state.always_show_solar_flare_spans = s.plot.always_show_solar_flare_spans;
             shared.plot_state.analysis = analysis;
             shared.plot_state.mark_masked_fix = s.analysis.mark_masked_fix;
             let vis = &mut shared.plot_state.metric_vis;
@@ -151,6 +152,7 @@ impl App {
                 show_advanced_metrics: s.plot_state.show_advanced_metrics,
                 show_channels: s.plot_state.show_channels,
                 show_solar_flares: s.plot_state.show_solar_flares,
+                always_show_solar_flare_spans: s.plot_state.always_show_solar_flare_spans,
                 channel_colors: s
                     .plot_state
                     .channel_component_colors

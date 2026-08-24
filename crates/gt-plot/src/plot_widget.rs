@@ -23,7 +23,7 @@ use chips::{
 };
 use clock_excursion::{ExcursionViewport, add_clock_excursions};
 use context::{ContextLineGates, ContextPlotCaches, add_context_lines};
-use flares::{FlareViewport, add_flare_markers};
+use flares::{FlareSpanMarking, FlareViewport, add_flare_markers};
 use geomagnetic::geomagnetic_availability;
 use jamming::jamming_available;
 use legend::show_file_legend_overlay;
@@ -155,6 +155,10 @@ pub struct PlotState {
     /// Whether the solar flare markers are drawn - toggled via their chip in
     /// the row above the plot.
     pub show_solar_flares: bool,
+    /// Whether every flare's span is shaded without hovering it - toggled via
+    /// the flare chip's context menu. Off by default: the spans are context
+    /// for the peaks, and shading them all at once crowds the plot.
+    pub always_show_solar_flare_spans: bool,
     /// Stroke width of the metric and channel lines, adjusted via the plot
     /// display popup (the gear button in the chip row).
     pub line_width: f32,
@@ -231,6 +235,7 @@ impl Default for PlotState {
             metric_vis: MetricVisibility::default(),
             show_grid: true,
             show_solar_flares: true,
+            always_show_solar_flare_spans: false,
             line_width: DEFAULT_PLOT_LINE_WIDTH,
             sync_to_map: true,
             mark_masked_fix: true,
@@ -477,6 +482,7 @@ pub fn show_track_plot(
         available,
         FlareChipState {
             visible: &mut state.show_solar_flares,
+            always_show_spans: &mut state.always_show_solar_flare_spans,
             available: !archive.solar_flares.is_empty(),
         },
     );
@@ -530,6 +536,12 @@ pub fn show_track_plot(
     let channel_vis = &state.channel_vis;
     let show_channels = state.show_channels;
     let show_solar_flares = state.show_solar_flares;
+    let flare_span_marking =
+        if state.always_show_solar_flare_spans || hovered_chip == Some(HoveredChip::SolarFlare) {
+            FlareSpanMarking::EveryFlareInView
+        } else {
+            FlareSpanMarking::OnlyTheHoveredFlare
+        };
     let line_width = state.line_width;
     // Anomaly markers are drawn on the "Util all" line.
     let show_advanced = state.show_advanced_metrics;
@@ -726,6 +738,7 @@ pub fn show_track_plot(
                 FlareViewport {
                     x_min: eff_x_min,
                     x_max: eff_x_max,
+                    span_marking: flare_span_marking,
                     dark_mode,
                 },
                 series_pointer,
