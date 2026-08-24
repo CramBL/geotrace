@@ -235,8 +235,17 @@ impl App {
     /// The registry refuses the write in a read-only session and once
     /// `PendingWrites::begin_shutdown` has run, which leaves
     /// [`App::flush_settings_during_shutdown`] as the last settings write of
-    /// the run.
+    /// the run. A session that took write access from an instance still
+    /// holding the mark writes nothing here either, leaving `config.toml` to
+    /// that instance until it exits.
     pub(in crate::app) fn flush_settings(&self) {
+        if self.took_write_access_from_an_instance_that_still_holds_the_mark() {
+            log::debug!(
+                "Settings are not saved until this instance holds the data directory: the \
+                 GeoTrace it took write access from writes the same settings file"
+            );
+            return;
+        }
         match self
             .pending_writes
             .try_begin(SETTINGS_FLUSH_LABEL, WriteKind::Settings)
