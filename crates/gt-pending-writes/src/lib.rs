@@ -69,6 +69,9 @@ pub enum WriteKind {
     /// Opening the databases at startup, which finishes any delete or repair a
     /// previous run left part-way through.
     DatabaseOpen,
+    /// Recording in the data directory that this instance took write access
+    /// from the instance holding it.
+    TakeOverRecord,
     RecordingDatabase,
     Settings,
 }
@@ -85,6 +88,9 @@ impl WriteKind {
                 format!("The {archive} day is downloaded again next run")
             }
             Self::DatabaseOpen => "The databases are repaired again next run".to_owned(),
+            Self::TakeOverRecord => {
+                "The data directory holds no record of this take-over".to_owned()
+            }
             Self::RecordingDatabase => {
                 "The recording database needs repair before it opens again".to_owned()
             }

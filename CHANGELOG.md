@@ -26,6 +26,7 @@
 - **System:** After taking over write access, an archive a delete was interrupted in is offered as a choice: recover it and lose its archived days, or leave it alone and without it for the session.
 - **System:** That wait can also be left with "Start read-only", which reads the recordings and archives beside the other GeoTrace so both windows can be open at once. A read-only session is marked in the window's corner, stores, downloads, deletes and saves nothing, and grays every control that would write with the reason. It stays read-only until GeoTrace is restarted.
 - **System:** That wait now says which of an absent, an unreadable and a damaged status file it found for the other GeoTrace, and marks a report that GeoTrace stopped refreshing with how old it is.
+- **System:** A take-over is now recorded in the data directory, and a later take-over that finds an interrupted delete in an archive nothing has written since states when write access was taken and from which process.
 
 ### Changed
 

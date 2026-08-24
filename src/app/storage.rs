@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
 
 use egui::Context;
-use gt_instance_lock::SharedDataDirectoryLock;
+use gt_instance_lock::{SharedDataDirectoryLock, TakeOverRecord};
 use gt_pending_writes::{PendingWrites, WriteAccess, WriteKind};
 use gt_store::{
     DayArchiveError, DbError, FlareStore, FlareStoreError, GeomagneticIndexArchive,
@@ -294,9 +294,13 @@ impl Storage {
     ///
     /// This step writes nothing and opens no database: what it finds is put
     /// to the user, and the answers start the open itself.
+    ///
+    /// `previous_take_over` is the take-over recorded in the data directory
+    /// before this one, which the prompts state.
     pub(in crate::app) fn inspect_archives_in_background(
         self,
         ctx: &Context,
+        previous_take_over: Option<TakeOverRecord>,
         queued_loads: Vec<QueuedLoad>,
     ) -> StorageOpen {
         let (sender, inspected) = mpsc::channel();
@@ -308,7 +312,10 @@ impl Storage {
                 let ctx = ctx.clone();
                 background_thread::spawn_or_panic("archive-inspect", move || {
                     sender
-                        .send(archive_recovery::inspect_archives_under(root))
+                        .send(archive_recovery::inspect_archives_under(
+                            root,
+                            previous_take_over,
+                        ))
                         .ok();
                     ctx.request_repaint();
                 });

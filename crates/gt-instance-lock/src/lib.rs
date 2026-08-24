@@ -33,6 +33,13 @@ pub const STATUS_FILE_NAME: &str = "instance-status.json";
 /// over [`STATUS_FILE_NAME`].
 const STATUS_FILE_BEING_WRITTEN_NAME: &str = "instance-status.json.new";
 
+/// The file the last take-over of the data directory is written to.
+pub const TAKE_OVER_FILE_NAME: &str = "take-over.json";
+
+/// A reader never finds half a take-over record: each one is written here and
+/// renamed over [`TAKE_OVER_FILE_NAME`].
+const TAKE_OVER_FILE_BEING_WRITTEN_NAME: &str = "take-over.json.new";
+
 /// Shortest time between two status writes, well above the interval the
 /// shutdown wait reads the registry at.
 pub const MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES: Duration = Duration::from_millis(500);
@@ -197,6 +204,57 @@ impl InstanceStatusRead {
     }
 }
 
+/// What a take-over left in the data directory: one instance opened the
+/// databases while another instance held the lock.
+///
+/// [`DataDirectoryLock::record_take_over`] writes the file and the next
+/// take-over replaces it. It outlives the session that took write access:
+/// nothing deletes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TakeOverRecord {
+    /// The process that took write access.
+    pub taken_by_process_id: u32,
+    /// The `process_id` read from [`STATUS_FILE_NAME`] at the take-over, and
+    /// [`None`] where that file could not be read.
+    pub taken_from_process_id: Option<u32>,
+    /// Seconds since the Unix epoch on the taking instance's clock. [`None`]
+    /// in a take-over file from a GeoTrace before this field, and where that
+    /// clock reads before the epoch.
+    pub written_at: Option<u64>,
+}
+
+impl TakeOverRecord {
+    /// Reads [`TAKE_OVER_FILE_NAME`] in `data_directory`, and reports
+    /// [`None`] where that file is absent, unreadable or not a record.
+    pub fn read_from(data_directory: &Path) -> Option<Self> {
+        let path = data_directory.join(TAKE_OVER_FILE_NAME);
+        let json = match fs::read(&path) {
+            Ok(json) => json,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
+            Err(error) => {
+                log::warn!("Cannot read the take-over file {}: {error}", path.display());
+                return None;
+            }
+        };
+        match serde_json::from_slice(&json) {
+            Ok(record) => Some(record),
+            Err(error) => {
+                log::warn!(
+                    "The take-over file {} is not a take-over record: {error}",
+                    path.display()
+                );
+                None
+            }
+        }
+    }
+
+    fn replace_in(&self, directory: &Path) -> io::Result<()> {
+        let being_written = directory.join(TAKE_OVER_FILE_BEING_WRITTEN_NAME);
+        fs::write(&being_written, serde_json::to_vec(self)?)?;
+        fs::rename(being_written, directory.join(TAKE_OVER_FILE_NAME))
+    }
+}
+
 /// What this run found when it went to mark the data directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataDirectoryOwnership {
@@ -270,12 +328,24 @@ impl DataDirectoryMark {
         }
     }
 
+    /// The data directory this run marked or has yet to take, and [`None`]
+    /// for a run with none.
+    fn directory(&self) -> Option<&Path> {
+        match self {
+            Self::MarkedByThisInstance(marked) => Some(&marked.directory),
+            Self::HeldByAnotherInstance { directory }
+            | Self::LockFileUnavailable { directory, .. } => Some(directory),
+            Self::NoDataDirectory => None,
+        }
+    }
+
     /// The directory to retry on the next attempt, kept by every outcome
     /// except a run with no data directory at all.
     fn directory_to_retry(&self) -> Option<PathBuf> {
         match self {
-            Self::HeldByAnotherInstance { directory }
-            | Self::LockFileUnavailable { directory, .. } => Some(directory.clone()),
+            Self::HeldByAnotherInstance { .. } | Self::LockFileUnavailable { .. } => {
+                self.directory().map(Path::to_owned)
+            }
             Self::MarkedByThisInstance(_) | Self::NoDataDirectory => None,
         }
     }
@@ -420,6 +490,29 @@ impl DataDirectoryLock {
         }
     }
 
+    /// Records in the data directory that this process took write access
+    /// from the instance holding it, and reports the take-over the record
+    /// replaces.
+    ///
+    /// A run that marks no data directory - a read-only session, and a run
+    /// without one at all - writes nothing here.
+    pub fn record_take_over(&self, taken_from_process_id: Option<u32>) -> Option<TakeOverRecord> {
+        let directory = self.mark.directory()?;
+        let replaced = TakeOverRecord::read_from(directory);
+        let record = TakeOverRecord {
+            taken_by_process_id: process::id(),
+            taken_from_process_id,
+            written_at: seconds_since_the_epoch(SystemTime::now()),
+        };
+        if let Err(error) = record.replace_in(directory) {
+            log::warn!(
+                "Cannot write the take-over file {}: {error}",
+                directory.join(TAKE_OVER_FILE_NAME).display()
+            );
+        }
+        replaced
+    }
+
     /// Report that this instance has begun shutting down, and what it is
     /// still writing.
     pub fn mark_shutting_down(&mut self, pending_writes: &PendingWrites) {
@@ -453,10 +546,7 @@ impl DataDirectoryLock {
             process_id: process::id(),
             state,
             pending_writes,
-            written_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .ok()
-                .map(|since_the_epoch| since_the_epoch.as_secs()),
+            written_at: seconds_since_the_epoch(SystemTime::now()),
         };
         if let Err(error) = marked.replace_status_file(&status) {
             log::warn!(
@@ -522,6 +612,11 @@ impl SharedDataDirectoryLock {
         self.0.lock().lock_file_failure()
     }
 
+    /// See [`DataDirectoryLock::record_take_over`].
+    pub fn record_take_over(&self, taken_from_process_id: Option<u32>) -> Option<TakeOverRecord> {
+        self.0.lock().record_take_over(taken_from_process_id)
+    }
+
     /// See [`DataDirectoryLock::mark_shutting_down`].
     pub fn mark_shutting_down(&self, pending_writes: &PendingWrites) {
         self.0.lock().mark_shutting_down(pending_writes);
@@ -531,6 +626,15 @@ impl SharedDataDirectoryLock {
     pub fn report_shutdown_progress(&self, pending_writes: &PendingWrites) {
         self.0.lock().report_shutdown_progress(pending_writes);
     }
+}
+
+/// `time` in the unit [`InstanceStatus::written_at`] and
+/// [`TakeOverRecord::written_at`] hold, and [`None`] for a reading before the
+/// Unix epoch.
+pub fn seconds_since_the_epoch(time: SystemTime) -> Option<u64> {
+    time.duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|since_the_epoch| since_the_epoch.as_secs())
 }
 
 /// Takes the exclusive lock on `lock_file`, leaving it taken for as long as
@@ -1076,6 +1180,126 @@ mod tests {
             InstanceStatusRead::read_from(directory.path()),
             InstanceStatusRead::Malformed(_)
         ));
+    }
+
+    /// The instance the take-over in these cases took write access from.
+    const TAKEN_FROM_PROCESS_ID: u32 = 4321;
+
+    /// A wait that found `directory` held by another instance, which is the
+    /// state a take-over starts from.
+    fn lock_waiting_for(directory: &Path) -> DataDirectoryLock {
+        let lock = DataDirectoryLock::acquire(Some(directory));
+        assert_eq!(
+            lock.ownership(),
+            DataDirectoryOwnership::HeldByAnotherInstance
+        );
+        lock
+    }
+
+    #[test]
+    fn a_take_over_records_this_process_and_the_one_it_took_write_access_from() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+        let taking_over = lock_waiting_for(directory.path());
+        let clock_before_the_take_over = seconds_since_the_epoch(SystemTime::now())
+            .expect("a clock reading after the Unix epoch");
+
+        let replaced = taking_over.record_take_over(Some(TAKEN_FROM_PROCESS_ID));
+
+        assert_eq!(
+            replaced, None,
+            "a directory with no take-over file replaced one"
+        );
+        let record = TakeOverRecord::read_from(directory.path()).expect("the take-over file");
+        assert_eq!(record.taken_by_process_id, process::id());
+        assert_eq!(record.taken_from_process_id, Some(TAKEN_FROM_PROCESS_ID));
+        assert!(
+            record
+                .written_at
+                .is_some_and(|written_at| written_at >= clock_before_the_take_over),
+            "the record is stamped {:?}, before the take-over",
+            record.written_at
+        );
+    }
+
+    /// Each take-over replaces the file the one before it wrote, and the
+    /// instance recording this one reads what it replaced.
+    #[test]
+    fn a_take_over_reports_the_take_over_recorded_before_it() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+        let taking_over = lock_waiting_for(directory.path());
+        taking_over.record_take_over(Some(TAKEN_FROM_PROCESS_ID));
+
+        let replaced = taking_over.record_take_over(Some(8765));
+
+        assert_eq!(
+            replaced.and_then(|record| record.taken_from_process_id),
+            Some(TAKEN_FROM_PROCESS_ID)
+        );
+        assert_eq!(
+            TakeOverRecord::read_from(directory.path())
+                .and_then(|record| record.taken_from_process_id),
+            Some(8765),
+            "the second take-over left the first one's record in place"
+        );
+    }
+
+    /// A run that marks no directory writes no record: the record goes into
+    /// the directory this run marks or waits for.
+    #[test]
+    fn a_run_that_marks_no_directory_records_no_take_over() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let read_only =
+            DataDirectoryLock::acquire_if_owner(WriteAccess::ReadOnly, Some(directory.path()));
+
+        assert_eq!(
+            read_only.record_take_over(Some(TAKEN_FROM_PROCESS_ID)),
+            None
+        );
+        assert_eq!(file_names_in(directory.path()), Vec::<String>::new());
+    }
+
+    /// The take-over file's field names are part of the interface, not an
+    /// implementation detail of [`TakeOverRecord`]: it is read across
+    /// processes and across versions.
+    #[test]
+    fn the_take_over_file_holds_the_names_a_reader_looks_for() {
+        let record = TakeOverRecord {
+            taken_by_process_id: 1234,
+            taken_from_process_id: Some(TAKEN_FROM_PROCESS_ID),
+            written_at: Some(READING_CLOCK_SECONDS_SINCE_THE_EPOCH),
+        };
+
+        assert_eq!(
+            serde_json::to_string(&record).expect("serialize the record"),
+            r#"{"taken_by_process_id":1234,"taken_from_process_id":4321,"written_at":1700000000}"#
+        );
+    }
+
+    /// A take-over file from a GeoTrace before the `written_at` field has
+    /// none: serde reads the missing field as [`None`].
+    #[test]
+    fn a_take_over_file_without_a_written_at_parses_without_one() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        fs::write(
+            directory.path().join(TAKE_OVER_FILE_NAME),
+            br#"{"taken_by_process_id":1234,"taken_from_process_id":4321}"#,
+        )
+        .expect("write");
+
+        assert_eq!(
+            TakeOverRecord::read_from(directory.path()).map(|record| record.written_at),
+            Some(None)
+        );
+    }
+
+    #[test]
+    fn a_take_over_file_serde_json_rejects_reads_as_no_take_over() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        fs::write(directory.path().join(TAKE_OVER_FILE_NAME), b"{not json").expect("write");
+
+        assert_eq!(TakeOverRecord::read_from(directory.path()), None);
     }
 
     /// A status file from a GeoTrace before the `written_at` field existed

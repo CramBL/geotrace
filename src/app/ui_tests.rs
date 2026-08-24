@@ -27,7 +27,7 @@ use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
 use geotrace_sdk::{Channel, ChannelUnit, DateTime, Duration, Unit, Utc};
 use gt_instance_lock::{
     DataDirectoryLock, DataDirectoryOwnership, InstanceState, InstanceStatus, InstanceStatusRead,
-    MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES, SharedDataDirectoryLock,
+    MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES, SharedDataDirectoryLock, TakeOverRecord,
 };
 use gt_jam::wire::HexObservation;
 use gt_jam_store::schema;
@@ -51,7 +51,7 @@ use strum::IntoEnumIterator as _;
 use super::archive_recovery::{
     self, ARCHIVE_IN_USE_BUTTON_LABEL, ArchiveUnavailable, InspectedArchives,
     InterruptedDeleteFinding, LEAVE_UNRECOVERED_BUTTON_LABEL, RECOVER_BUTTON_LABEL,
-    UnavailableArchives,
+    UnavailableArchives, WRITE_ACCESS_TAKEN_FROM,
 };
 use super::backfill_ui::DOWNLOAD_HISTORY_LABEL;
 use super::environment_storage;
@@ -4721,6 +4721,21 @@ fn app_waiting_for_the_data_directory<'a>(
         })
 }
 
+/// The same wait, with the registry every write of the run goes through left
+/// to the case.
+fn app_waiting_for_the_data_directory_registering_writes_in<'a>(
+    data_directory: &Path,
+    pending_writes: PendingWrites,
+) -> Harness<'a, App> {
+    let instance_lock = lock_on_a_directory_another_instance_holds(data_directory);
+    Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .with_wait_for_pending_images(false)
+        .build_eframe(move |cc| {
+            transient_app_with_the_instance_lock(cc, &[], instance_lock, pending_writes)
+        })
+}
+
 /// A second GeoTrace on a data directory the first is using opens no database
 /// of its own: recovery here would run against archives the first is part-way
 /// through rewriting. Its window is up and takes input all the same.
@@ -5225,6 +5240,51 @@ fn taking_over_opens_the_databases_and_runs_the_loads_that_waited() {
     );
 }
 
+/// The take-over writes a record into the data directory: which process took
+/// write access, which process it took it from, and when.
+#[test]
+fn taking_over_records_the_take_over_in_the_data_directory() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+    harness.step();
+
+    take_over_write_access(&mut harness);
+
+    let record = TakeOverRecord::read_from(directory.path()).expect("the take-over record");
+    assert_eq!(record.taken_by_process_id, process::id());
+    assert_eq!(
+        record.taken_from_process_id,
+        Some(process::id()),
+        "the record holds no process id from the status file the wait read"
+    );
+    assert!(
+        record.written_at.is_some(),
+        "the record is stamped with no time"
+    );
+    assert!(
+        harness.state().pending_writes.is_idle(),
+        "the write the record was made under is still registered"
+    );
+}
+
+/// A read-only session never reaches the wait's take-over: the registry
+/// refusing the write is the guard this exercises.
+#[test]
+fn a_take_over_in_a_read_only_session_records_nothing() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let pending_writes = PendingWrites::default();
+    pending_writes.become_read_only_for_the_rest_of_the_run();
+    let mut harness =
+        app_waiting_for_the_data_directory_registering_writes_in(directory.path(), pending_writes);
+    harness.step();
+
+    take_over_write_access(&mut harness);
+
+    assert_eq!(TakeOverRecord::read_from(directory.path()), None);
+}
+
 /// Taking over reads the archives before it opens any of them: the other
 /// instance may be part-way through a delete right now, and what that leaves
 /// is the user's to answer, not the open's to recover.
@@ -5541,6 +5601,14 @@ fn log_text_pasted_while_waiting_loads_in_the_read_only_session_it_starts() {
 /// that it is part-way through.
 const INTERFERENCE_DAYS: GroupPath<'static> = GroupPath(schema::DAYS_GROUP);
 
+/// The instance a recorded take-over in these cases took write access from.
+const TAKEN_FROM_PROCESS_ID: u32 = 4321;
+
+/// Stamps the take-over these cases record as one the archive was not written
+/// after: it is later than the modification time of any archive written during
+/// the test.
+const TAKE_OVER_STAMPED_AHEAD_OF_THIS_MACHINES_CLOCK: u64 = 2_000_000_000;
+
 /// A data directory whose interference archive holds two days with a delete
 /// marked part-way through it, as an instance killed mid-delete leaves it.
 fn data_directory_with_an_interrupted_interference_delete() -> tempfile::TempDir {
@@ -5565,9 +5633,16 @@ fn data_directory_with_an_interrupted_interference_delete() -> tempfile::TempDir
 }
 
 /// The app part-way through the open a take-over runs: the archives under
-/// `root` have been read, and the prompts for what that found are up.
-fn app_asking_about_the_archives_under<'a>(root: &Path) -> Harness<'a, App> {
-    app_asking_about(archive_recovery::inspect_archives_under(root.to_owned()))
+/// `root` have been read against the take-over the data directory recorded
+/// before this one, and the prompts for what that found are up.
+fn app_asking_about_the_archives_under<'a>(
+    root: &Path,
+    previous_take_over: Option<TakeOverRecord>,
+) -> Harness<'a, App> {
+    app_asking_about(archive_recovery::inspect_archives_under(
+        root.to_owned(),
+        previous_take_over,
+    ))
 }
 
 /// The same, for findings this process cannot produce on its own: libhdf5
@@ -5596,7 +5671,7 @@ fn wait_for_the_archives_to_open(harness: &mut Harness<'_, App>) {
 fn recovering_after_a_take_over_opens_the_archive_with_its_days_discarded() {
     let dir = data_directory_with_an_interrupted_interference_delete();
     let path = gt_store::Store::open_in(dir.path()).interference_path();
-    let mut harness = app_asking_about_the_archives_under(dir.path());
+    let mut harness = app_asking_about_the_archives_under(dir.path(), None);
 
     harness.get_by_label_contains("Recover the aircraft interference archive?");
     harness.get_by_label_contains("discards the 2 archived days it holds");
@@ -5629,6 +5704,54 @@ fn recovering_after_a_take_over_opens_the_archive_with_its_days_discarded() {
     );
 }
 
+/// A delete interrupted in an archive nothing has written since a take-over
+/// is put to the user with when write access was taken and from which
+/// process.
+#[test]
+fn the_recovery_prompt_states_the_take_over_the_archive_was_not_written_since() {
+    let dir = data_directory_with_an_interrupted_interference_delete();
+
+    let harness = app_asking_about_the_archives_under(
+        dir.path(),
+        Some(TakeOverRecord {
+            taken_by_process_id: 1234,
+            taken_from_process_id: Some(TAKEN_FROM_PROCESS_ID),
+            written_at: Some(TAKE_OVER_STAMPED_AHEAD_OF_THIS_MACHINES_CLOCK),
+        }),
+    );
+
+    harness.get_by_label_contains("Recover the aircraft interference archive?");
+    harness.get_by_label_contains(
+        "Write access to this data directory was taken from another GeoTrace (process 4321) on \
+         2033-05-18 03:33 UTC.",
+    );
+}
+
+/// A take-over the archive was written after says nothing about the state
+/// that write left, and a data directory may record no take-over at all.
+#[rstest::rstest]
+#[case::no_take_over_recorded(None)]
+#[case::a_take_over_the_archive_was_written_after(Some(TakeOverRecord {
+    taken_by_process_id: 1234,
+    taken_from_process_id: Some(TAKEN_FROM_PROCESS_ID),
+    written_at: Some(1_700_000_000),
+}))]
+fn the_recovery_prompt_states_no_take_over_that_leaves_the_archive_unexplained(
+    #[case] previous_take_over: Option<TakeOverRecord>,
+) {
+    let dir = data_directory_with_an_interrupted_interference_delete();
+
+    let harness = app_asking_about_the_archives_under(dir.path(), previous_take_over);
+
+    harness.get_by_label_contains("Recover the aircraft interference archive?");
+    assert!(
+        harness
+            .query_by_label_contains(WRITE_ACCESS_TAKEN_FROM)
+            .is_none(),
+        "the prompt states a take-over that does not explain the interrupted delete"
+    );
+}
+
 /// Leaving it alone costs the archive for the session and nothing on disk:
 /// the file is byte-for-byte what it was, and the archives nobody was asked
 /// about open beside it.
@@ -5637,7 +5760,7 @@ fn leaving_an_interrupted_delete_unrecovered_writes_nothing_to_the_archive() {
     let dir = data_directory_with_an_interrupted_interference_delete();
     let path = gt_store::Store::open_in(dir.path()).interference_path();
     let untouched = std::fs::read(&path).expect("the archive as the delete left it");
-    let mut harness = app_asking_about_the_archives_under(dir.path());
+    let mut harness = app_asking_about_the_archives_under(dir.path(), None);
 
     harness.get_by_label(LEAVE_UNRECOVERED_BUTTON_LABEL).click();
     wait_for_the_archives_to_open(&mut harness);
@@ -5675,7 +5798,7 @@ fn leaving_an_interrupted_delete_unrecovered_writes_nothing_to_the_archive() {
 fn escape_leaves_the_interrupted_delete_unrecovered() {
     let dir = data_directory_with_an_interrupted_interference_delete();
     let path = gt_store::Store::open_in(dir.path()).interference_path();
-    let mut harness = app_asking_about_the_archives_under(dir.path());
+    let mut harness = app_asking_about_the_archives_under(dir.path(), None);
 
     harness.key_press(egui::Key::Escape);
     wait_for_the_archives_to_open(&mut harness);
@@ -5792,7 +5915,7 @@ fn an_interrupted_delete_nobody_was_asked_about_is_declined() {
 #[test]
 fn an_archive_left_unrecovered_says_why_on_the_controls_that_need_it() {
     let dir = data_directory_with_an_interrupted_interference_delete();
-    let mut harness = app_asking_about_the_archives_under(dir.path());
+    let mut harness = app_asking_about_the_archives_under(dir.path(), None);
     harness.get_by_label(LEAVE_UNRECOVERED_BUTTON_LABEL).click();
     wait_for_the_archives_to_open(&mut harness);
 
@@ -5824,7 +5947,7 @@ fn an_archive_left_unrecovered_says_why_on_the_controls_that_need_it() {
 fn a_window_closed_while_an_interrupted_delete_is_asked_about_opens_nothing() {
     let dir = data_directory_with_an_interrupted_interference_delete();
     let path = gt_store::Store::open_in(dir.path()).interference_path();
-    let mut harness = app_asking_about_the_archives_under(dir.path());
+    let mut harness = app_asking_about_the_archives_under(dir.path(), None);
     harness.get_by_label_contains("Recover the aircraft interference archive?");
     assert!(
         harness.state().pending_writes.is_idle(),
