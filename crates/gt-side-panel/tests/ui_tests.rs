@@ -1148,6 +1148,82 @@ fn snapshot_metadata_detail_rows_content() {
     h.snapshot("metadata_detail_rows_content");
 }
 
+/// One drag covers several values: selection runs across labels, and the
+/// captions between them stay out of what it copies.
+#[test]
+fn a_drag_down_the_metadata_grid_copies_every_value_it_covered() {
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(480.0, 150.0))
+        .ui(move |ui| {
+            gt_side_panel::widgets::metadata_detail_rows(
+                ui,
+                &gt_side_panel::widgets::MetadataView {
+                    device: Some("uBlox F9P"),
+                    notes: Some("cross-town commute"),
+                    ..gt_side_panel::widgets::MetadataView::default()
+                },
+            );
+        });
+    h.run();
+
+    let device = h.inner.get_by_label("uBlox F9P").rect();
+    let notes = h.inner.get_by_label("cross-town commute").rect();
+    let from = device.left_center() + egui::vec2(2.0, 0.0);
+    let to = notes.right_center() - egui::vec2(2.0, 0.0);
+    h.inner.press_drag_release(from, to - from, 4);
+    h.inner.input_mut().events.push(egui::Event::Copy);
+    h.inner.step();
+
+    let copied = h
+        .inner
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            egui::OutputCommand::CopyText(text) => Some(text.clone()),
+            egui::OutputCommand::OpenUrl(_) | egui::OutputCommand::CopyImage(_) => None,
+        })
+        .expect("the drag selected text to copy");
+
+    // Blank lines between the values vary with the grid's row spacing: egui
+    // spaces copied galleys by how far apart they sat.
+    let copied_values: Vec<&str> = copied.lines().filter(|line| !line.is_empty()).collect();
+    assert_eq!(copied_values, ["uBlox F9P", "cross-town commute"]);
+}
+
+/// The values are the recorder's own strings, which a reader copies out of the
+/// details dialog. The captions naming them are not.
+#[rstest::rstest]
+#[case::caption("Device", egui::CursorIcon::Default)]
+#[case::value("uBlox F9P", egui::CursorIcon::Text)]
+fn the_metadata_values_select_and_their_captions_do_not(
+    #[case] label: &str,
+    #[case] expected: egui::CursorIcon,
+) {
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(480.0, 150.0))
+        .ui(move |ui| {
+            gt_side_panel::widgets::metadata_detail_rows(
+                ui,
+                &gt_side_panel::widgets::MetadataView {
+                    device: Some("uBlox F9P"),
+                    ..gt_side_panel::widgets::MetadataView::default()
+                },
+            );
+        });
+    h.run();
+
+    let row = h.inner.get_by_label(label).rect().center();
+    h.inner.hover_at_and_settle(row, 3);
+
+    assert_eq!(
+        h.inner.output().platform_output.cursor_icon,
+        expected,
+        "hovering {label:?} should request {expected:?}"
+    );
+}
+
 #[test]
 fn clicking_note_icon_requests_recording_details() {
     // Clicking the note icon must populate `metadata_request` with the file's

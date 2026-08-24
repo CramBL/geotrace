@@ -54,3 +54,10 @@ We do not use a colon suffix for labels in front of a value.
 
 Good: `Color 🔴`
 Bad: `Color: 🔴`
+
+### Text selection
+
+Labels do not select: `gt_ui_theme::install_app_style` turns egui's default off for the whole app, so no readout, caption or header shows a text I-beam.
+Text a user copies out - an identity, a path, a version - opts back in with `Label::new(…).selectable(true)`.
+Never opt in a label that senses clicks or sits in a clickable row: the selection drag takes the pointer from it.
+Offer a copy button (as the query results do) where such a value is worth copying.

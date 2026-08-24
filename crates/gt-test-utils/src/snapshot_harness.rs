@@ -15,13 +15,6 @@ fn snapshot_options() -> SnapshotOptions {
 /// small allowance keeps those tests stable without masking real regressions.
 const LOOSE_PIXEL_COUNT_TOLERANCE: usize = 32;
 
-/// Installs the font stack `App::new_with_config` installs, so snapshots
-/// render the faces the app does. (Marker icons need no setup: they draw from
-/// meshes embedded in `gt-map` at build time.)
-fn install_font_stack(ctx: &egui::Context) {
-    ctx.set_fonts(gt_ui_theme::fonts::font_definitions());
-}
-
 /// Snapshot comparison runs locally, on macOS CI (Metal), and on Linux CI
 /// (Mesa's software rasterizer via `WGPU_BACKEND=gl`, deterministic across
 /// runs). Windows CI is the only skip: its D3D output has no baseline
@@ -248,7 +241,7 @@ impl<'a> TestHarnessBuilder<'a> {
             builder = builder.with_step_dt(dt);
         }
         let mut inner = builder.build_ui(f);
-        install_font_stack(&inner.ctx);
+        gt_ui_theme::install_app_style(&inner.ctx);
         if let Some(hook) = self.render_state_hook {
             hook(&inner.ctx, &render_state);
         }
@@ -281,7 +274,7 @@ impl<'a> TestHarnessBuilder<'a> {
             builder = builder.with_step_dt(dt);
         }
         let mut inner = builder.build_ui_state(f, state);
-        install_font_stack(&inner.ctx);
+        gt_ui_theme::install_app_style(&inner.ctx);
         if let Some(hook) = self.render_state_hook {
             hook(&inner.ctx, &render_state);
         }

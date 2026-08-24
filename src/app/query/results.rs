@@ -659,7 +659,7 @@ impl<'a> ResultsTables<'a> {
         }
         // Truncated to the width that is left, and stated in full on hover: a
         // line that extends would push the window over the map beside it.
-        ui.add(Label::new(line.into_job()).truncate().selectable(false))
+        ui.add(Label::new(line.into_job()).truncate())
             .on_hover_cursor(CursorIcon::Help)
             .on_hover_text(stated_in_full);
     }
@@ -717,19 +717,16 @@ impl<'a> ResultsTables<'a> {
     /// The line naming the match the points table lists below it.
     fn caption_ui(&self, ui: &mut egui::Ui, selected: &MatchRow) {
         let rows = selected.rows.len();
-        ui.add(
-            Label::new(
-                CountLine::new(ui)
-                    .words("Match ")
-                    .number(selected.number)
-                    .dot()
-                    .count(
-                        rows,
-                        gt_fmt::pluralize(rows, self.row_noun.singular(), self.row_noun.plural()),
-                    )
-                    .into_job(),
-            )
-            .selectable(false),
+        ui.label(
+            CountLine::new(ui)
+                .words("Match ")
+                .number(selected.number)
+                .dot()
+                .count(
+                    rows,
+                    gt_fmt::pluralize(rows, self.row_noun.singular(), self.row_noun.plural()),
+                )
+                .into_job(),
         );
     }
 
@@ -750,9 +747,6 @@ impl<'a> ResultsTables<'a> {
         let mut action: Option<MatchAction> = None;
 
         let table = ui.scope(|ui| {
-            // A selectable label senses clicks and drags of its own, which would
-            // take the pointer from the row it sits in.
-            ui.style_mut().interaction.selectable_labels = false;
             let mut table = TableBuilder::new(ui)
                 .id_salt("query_match_list")
                 .striped(true)
@@ -977,9 +971,6 @@ impl<'a> ResultsTables<'a> {
         let mut click: Option<PointClick> = None;
 
         ui.scope(|ui| {
-            // A selectable label senses clicks and drags of its own, which would
-            // take the pointer from the row it sits in.
-            ui.style_mut().interaction.selectable_labels = false;
             // What is left of the window under the sticky header, which is
             // drawn above the scrolling body. The item spacing comes off as
             // well: egui places a widget after that spacing, so a table sized
@@ -1195,7 +1186,6 @@ fn sort_header_ui(
         .with_layout(column.cell_layout(), |ui| {
             let title = ui.add(
                 Label::new(RichText::new(column.title(row_noun)).strong())
-                    .selectable(false)
                     .wrap_mode(TextWrapMode::Extend)
                     .sense(Sense::click()),
             );

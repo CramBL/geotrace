@@ -13,11 +13,7 @@ pub const IDENTITY: &str = "Groups related recordings together in the database. 
 ///
 /// Help cursor on hover: the term is neither a control nor selectable text.
 pub fn term_label(ui: &mut egui::Ui, text: RichText, explanation: &str) {
-    ui.add(
-        Label::new(text.underline())
-            .selectable(false)
-            .sense(egui::Sense::hover()),
-    )
-    .on_hover_cursor(egui::CursorIcon::Help)
-    .on_hover_text(explanation);
+    ui.add(Label::new(text.underline()).sense(egui::Sense::hover()))
+        .on_hover_cursor(egui::CursorIcon::Help)
+        .on_hover_text(explanation);
 }

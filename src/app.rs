@@ -433,8 +433,7 @@ impl App {
         config_path: Option<PathBuf>,
         options: StartupOptions,
     ) -> Self {
-        cc.egui_ctx
-            .set_fonts(gt_ui_theme::fonts::font_definitions());
+        gt_ui_theme::install_app_style(&cc.egui_ctx);
         termination_signal::set_gui_context_to_wake(&cc.egui_ctx);
 
         // GPU-instanced icon rendering. Without a wgpu render state (or with
