@@ -36,10 +36,12 @@ pub use gt_solar_store::{ArchivedIndexDay, ReadOnlySolarStore, SolarStore, Solar
 mod archive_handle;
 mod day_archive;
 pub mod log_attachments;
+mod writable_archive;
 
 pub use archive_handle::ArchiveHandle;
 pub use day_archive::DayArchiveError;
 pub use log_attachments::{AttachedLog, LogAttachmentError, LogAttachments, LogToAttach};
+pub use writable_archive::WritableArchive;
 
 /// The recording history database. Named for what it holds, since the store
 /// fronts more than one.
@@ -312,6 +314,8 @@ mod tests {
     use std::collections::BTreeSet;
     use std::ptr;
 
+    use gt_pending_writes::PendingWrites;
+
     use super::*;
 
     fn store() -> (tempfile::TempDir, Store) {
@@ -436,35 +440,35 @@ mod tests {
             read_only
                 .open_interference_read_only()
                 .expect("interference")
-                .writer()
+                .writer(&PendingWrites::default())
                 .is_none()
         );
         assert!(
             read_only
                 .open_geomagnetic_indices_read_only()
                 .expect("geomagnetic indices")
-                .writer()
+                .writer(&PendingWrites::default())
                 .is_none()
         );
         assert!(
             read_only
                 .open_tec_maps_read_only()
                 .expect("tec maps")
-                .writer()
+                .writer(&PendingWrites::default())
                 .is_none()
         );
         assert!(
             read_only
                 .open_solar_flares_read_only()
                 .expect("solar flares")
-                .writer()
+                .writer(&PendingWrites::default())
                 .is_none()
         );
         assert!(
             store
                 .open_interference()
                 .expect("interference")
-                .writer()
+                .writer(&PendingWrites::default())
                 .is_some()
         );
     }

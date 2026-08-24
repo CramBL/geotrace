@@ -36,6 +36,8 @@ use super::archive_recovery::{
     InterruptedDeletePrompts, UnavailableArchives,
 };
 use super::background_thread;
+#[cfg(test)]
+use super::environment_storage;
 use super::environment_storage::EnvironmentArchive;
 use super::history_db::HistoryWorker;
 use super::instance_wait::DataDirectoryWait;
@@ -721,7 +723,6 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-
     use chrono::{NaiveDate, Utc};
     use gt_fetch::TransportSource;
     use gt_ionex::IonexProduct;
@@ -841,17 +842,17 @@ mod tests {
             let archive = store
                 .open_interference()
                 .expect("interference archive")
-                .writer()
+                .writer(&PendingWrites::default())
                 .expect("an owner session opens the archive writable");
             for offset in 0..2 {
+                let day = NaiveDate::from_ymd_opt(2026, 7, 20).unwrap_or_default()
+                    + chrono::TimeDelta::days(offset);
                 archive
-                    .insert_day(
-                        NaiveDate::from_ymd_opt(2026, 7, 20).unwrap_or_default()
-                            + chrono::TimeDelta::days(offset),
-                        "host",
-                        Utc::now(),
-                        &[],
+                    .write(
+                        EnvironmentArchive::AircraftInterference.day_insert_registration(day),
+                        |interference| interference.insert_day(day, "host", Utc::now(), &[]),
                     )
+                    .expect("the registry takes the write")
                     .expect("insert interference");
             }
         }
@@ -978,7 +979,7 @@ mod tests {
 
         let archive = opened.archive.expect("the archive is open for reading");
         assert!(
-            archive.writer().is_none(),
+            archive.writer(&PendingWrites::default()).is_none(),
             "a read-only session holds the archive without its mutators"
         );
         assert_eq!(archive.read().days().expect("read the day index"), []);
@@ -994,51 +995,46 @@ mod tests {
     /// the handles it already has open.
     fn archive_one_day_in_each(opened: &OpenStorage, day: NaiveDate) {
         let fetched_at = Utc::now();
-        opened
-            .archive
-            .as_ref()
-            .expect("interference archive")
-            .writer()
-            .expect("an owner session opens the archive writable")
-            .insert_day(day, "host", fetched_at, &[])
-            .expect("insert interference");
-        opened
-            .geomagnetic_indices
-            .as_ref()
-            .expect("geomagnetic index archive")
-            .writer()
-            .expect("an owner session opens the archive writable")
-            .insert_or_replace_kp_day(
-                day,
-                "host",
-                fetched_at,
-                &KpSeries {
-                    samples: Vec::new(),
-                },
-            )
-            .expect("insert geomagnetic indices");
-        opened
-            .tec_maps
-            .as_ref()
-            .expect("TEC map archive")
-            .writer()
-            .expect("an owner session opens the archive writable")
-            .insert_or_replace_day(
-                day,
-                "host",
-                fetched_at,
-                IonexProduct::Final,
-                &ionex_fixtures::uniform_maps(day, &[(0, 10.0)]),
-            )
-            .expect("insert TEC maps");
-        opened
-            .solar_flares
-            .as_ref()
-            .expect("solar flare archive")
-            .writer()
-            .expect("an owner session opens the archive writable")
-            .insert_or_replace_day(day, "host", fetched_at, &[])
-            .expect("insert solar flares");
+        environment_storage::archive_one_day(
+            opened.archive.as_ref().expect("interference archive"),
+            EnvironmentArchive::AircraftInterference.day_insert_registration(day),
+            |interference| interference.insert_day(day, "host", fetched_at, &[]),
+        );
+        environment_storage::archive_one_day(
+            opened
+                .geomagnetic_indices
+                .as_ref()
+                .expect("geomagnetic index archive"),
+            EnvironmentArchive::GeomagneticIndices.day_insert_registration(day),
+            |indices| {
+                indices.insert_or_replace_kp_day(
+                    day,
+                    "host",
+                    fetched_at,
+                    &KpSeries {
+                        samples: Vec::new(),
+                    },
+                )
+            },
+        );
+        environment_storage::archive_one_day(
+            opened.tec_maps.as_ref().expect("TEC map archive"),
+            EnvironmentArchive::IonosphericTec.day_insert_registration(day),
+            |maps| {
+                maps.insert_or_replace_day(
+                    day,
+                    "host",
+                    fetched_at,
+                    IonexProduct::Final,
+                    &ionex_fixtures::uniform_maps(day, &[(0, 10.0)]),
+                )
+            },
+        );
+        environment_storage::archive_one_day(
+            opened.solar_flares.as_ref().expect("solar flare archive"),
+            EnvironmentArchive::SolarFlares.day_insert_registration(day),
+            |flares| flares.insert_or_replace_day(day, "host", fetched_at, &[]),
+        );
     }
 
     /// Each scheduler derives the days it holds from its archive's index, and

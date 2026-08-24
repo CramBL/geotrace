@@ -5,15 +5,14 @@
 //! which takes seconds on a filled TEC archive.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::mpsc;
 
 use chrono::{Months, NaiveDate, Utc};
 use egui::Context;
-use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteKind, WriteRefusal};
+use gt_pending_writes::{WriteKind, WriteRefusal, WriteRegistration};
 use gt_store::{
     ArchiveUsage, FlareStore, IonexStore, JamStore, PruneProgress, PruneProgressSink, SolarStore,
-    Store,
+    Store, WritableArchive,
 };
 use strum::{EnumIter, IntoEnumIterator as _};
 
@@ -66,34 +65,41 @@ impl EnvironmentArchive {
         }
     }
 
-    /// Register the insert of one downloaded day, or report why the day is
-    /// to be discarded unarchived.
-    pub fn try_begin_day_insert(
-        self,
-        pending_writes: &PendingWrites,
-        day: NaiveDate,
-    ) -> Result<PendingWriteGuard, WriteRefusal> {
-        pending_writes.try_begin(
-            format!("Archiving {} for {day}", self.label_in_sentence()),
-            WriteKind::ArchiveDayInsert {
+    /// What the insert of one downloaded day registers under.
+    pub fn day_insert_registration(self, day: NaiveDate) -> WriteRegistration {
+        WriteRegistration {
+            label: format!("Archiving {} for {day}", self.label_in_sentence()),
+            kind: WriteKind::ArchiveDayInsert {
                 archive: self.label_in_sentence(),
             },
-        )
+        }
     }
 
-    /// Register the rewrite that deletes this archive's days, or report why
-    /// the days stay archived.
-    pub fn try_begin_day_delete(
-        self,
-        pending_writes: &PendingWrites,
-    ) -> Result<PendingWriteGuard, WriteRefusal> {
-        pending_writes.try_begin(
-            format!("Deleting {} days", self.label_in_sentence()),
-            WriteKind::ArchiveCompaction {
+    /// What the rewrite that deletes this archive's days registers under.
+    pub fn day_delete_registration(self) -> WriteRegistration {
+        WriteRegistration {
+            label: format!("Deleting {} days", self.label_in_sentence()),
+            kind: WriteKind::ArchiveCompaction {
                 archive: self.label_in_sentence(),
             },
-        )
+        }
     }
+}
+
+/// Archive one day through `handle` with the write registered, as a fetch
+/// worker archives one.
+#[cfg(test)]
+pub(super) fn archive_one_day<W: std::ops::Deref<Target = R>, R, E: std::fmt::Debug>(
+    handle: &gt_store::ArchiveHandle<W, R>,
+    registration: WriteRegistration,
+    write: impl FnOnce(&W) -> Result<(), E>,
+) {
+    handle
+        .writer(&gt_pending_writes::PendingWrites::default())
+        .expect("an owner session opens the archive writable")
+        .write(registration, write)
+        .expect("the registry takes the write")
+        .expect("archive the day");
 }
 
 /// The days a delete removed from an archive.
@@ -265,10 +271,10 @@ impl PruneReport {
 /// are both [`None`]: a delete skips them.
 #[derive(Default, Clone)]
 pub struct OpenEnvironmentArchives {
-    pub interference: Option<Arc<JamStore>>,
-    pub geomagnetic_indices: Option<Arc<SolarStore>>,
-    pub tec_maps: Option<Arc<IonexStore>>,
-    pub solar_flares: Option<Arc<FlareStore>>,
+    pub interference: Option<WritableArchive<JamStore>>,
+    pub geomagnetic_indices: Option<WritableArchive<SolarStore>>,
+    pub tec_maps: Option<WritableArchive<IonexStore>>,
+    pub solar_flares: Option<WritableArchive<FlareStore>>,
 }
 
 impl OpenEnvironmentArchives {
@@ -277,19 +283,19 @@ impl OpenEnvironmentArchives {
     fn covered_and_open(
         &self,
         scope: PruneScope,
-    ) -> Vec<(EnvironmentArchive, &dyn ArchivedDayDeletion)> {
+    ) -> Vec<(EnvironmentArchive, &dyn RegisteredDayDeletion)> {
         EnvironmentArchive::iter()
             .filter(|archive| scope.covers(*archive))
             .filter_map(|archive| Some((archive, self.opened(archive)?)))
             .collect()
     }
 
-    fn opened(&self, archive: EnvironmentArchive) -> Option<&dyn ArchivedDayDeletion> {
+    fn opened(&self, archive: EnvironmentArchive) -> Option<&dyn RegisteredDayDeletion> {
         match archive {
-            EnvironmentArchive::AircraftInterference => Some(self.interference.as_deref()?),
-            EnvironmentArchive::GeomagneticIndices => Some(self.geomagnetic_indices.as_deref()?),
-            EnvironmentArchive::IonosphericTec => Some(self.tec_maps.as_deref()?),
-            EnvironmentArchive::SolarFlares => Some(self.solar_flares.as_deref()?),
+            EnvironmentArchive::AircraftInterference => Some(self.interference.as_ref()?),
+            EnvironmentArchive::GeomagneticIndices => Some(self.geomagnetic_indices.as_ref()?),
+            EnvironmentArchive::IonosphericTec => Some(self.tec_maps.as_ref()?),
+            EnvironmentArchive::SolarFlares => Some(self.solar_flares.as_ref()?),
         }
     }
 }
@@ -302,19 +308,34 @@ trait ArchivedDayDeletion {
         pruned: PrunedDays,
         report: PruneProgressSink<'_>,
     ) -> Result<usize, String>;
+}
 
-    /// Delete `pruned`, moving the shutdown window's bar for `write` along as
-    /// the archive rewrites its columns.
-    fn delete_pruned_days_reporting_progress(
+/// Deleting archived days as one registered write, which is how a delete
+/// reaches [`ArchivedDayDeletion`] on an archive opened writable.
+trait RegisteredDayDeletion {
+    /// Register `registration` and delete `pruned` under it, moving the
+    /// shutdown window's bar along as the archive rewrites its columns, or
+    /// report why the days stay archived.
+    fn register_and_delete_pruned_days(
         &self,
         pruned: PrunedDays,
-        write: &PendingWriteGuard,
-    ) -> ArchivePruneOutcome {
-        let report = |progress: PruneProgress| write.set_progress(progress.fraction());
-        match self.delete_pruned_days(pruned, Some(&report)) {
-            Ok(removed) => ArchivePruneOutcome::Removed(removed),
-            Err(detail) => ArchivePruneOutcome::Failed(detail),
-        }
+        registration: WriteRegistration,
+    ) -> Result<ArchivePruneOutcome, WriteRefusal>;
+}
+
+impl<W: ArchivedDayDeletion> RegisteredDayDeletion for WritableArchive<W> {
+    fn register_and_delete_pruned_days(
+        &self,
+        pruned: PrunedDays,
+        registration: WriteRegistration,
+    ) -> Result<ArchivePruneOutcome, WriteRefusal> {
+        self.write_reporting_progress(registration, |archive, write| {
+            let report = |progress: PruneProgress| write.set_progress(progress.fraction());
+            match archive.delete_pruned_days(pruned, Some(&report)) {
+                Ok(removed) => ArchivePruneOutcome::Removed(removed),
+                Err(detail) => ArchivePruneOutcome::Failed(detail),
+            }
+        })
     }
 }
 
@@ -391,13 +412,12 @@ impl EnvironmentPruneRun {
         &mut self,
         ctx: Context,
         archives: OpenEnvironmentArchives,
-        pending_writes: PendingWrites,
         request: PruneRequest,
     ) {
         let (tx, rx) = mpsc::channel();
         self.running = Some(rx);
         background_thread::spawn_or_panic("environment-prune", move || {
-            tx.send(prune(&archives, &pending_writes, request)).ok();
+            tx.send(prune(&archives, request)).ok();
             ctx.request_repaint();
         });
     }
@@ -426,31 +446,29 @@ impl EnvironmentPruneRun {
 ///
 /// A rewrite that has begun runs to its end even once shutdown starts: the
 /// archive is unreadable until it finishes.
-fn prune(
-    archives: &OpenEnvironmentArchives,
-    pending_writes: &PendingWrites,
-    request: PruneRequest,
-) -> PruneReport {
+fn prune(archives: &OpenEnvironmentArchives, request: PruneRequest) -> PruneReport {
     let covered = archives.covered_and_open(request.scope);
     let mut reports = Vec::with_capacity(covered.len());
     for (index, (archive, store)) in covered.iter().enumerate() {
-        let write =
-            match archive.try_begin_day_delete(pending_writes) {
-                Ok(write) => write,
-                Err(refusal) => {
-                    reports.extend(covered.iter().skip(index).map(|(archive, _)| {
-                        ArchivePruneReport {
+        match store.register_and_delete_pruned_days(request.days, archive.day_delete_registration())
+        {
+            Ok(outcome) => reports.push(ArchivePruneReport {
+                archive: *archive,
+                outcome,
+            }),
+            Err(refusal) => {
+                reports.extend(
+                    covered
+                        .iter()
+                        .skip(index)
+                        .map(|(archive, _)| ArchivePruneReport {
                             archive: *archive,
                             outcome: ArchivePruneOutcome::Skipped(refusal),
-                        }
-                    }));
-                    break;
-                }
-            };
-        reports.push(ArchivePruneReport {
-            archive: *archive,
-            outcome: store.delete_pruned_days_reporting_progress(request.days, &write),
-        });
+                        }),
+                );
+                break;
+            }
+        }
     }
     PruneReport {
         request,
@@ -658,8 +676,7 @@ impl App {
             return;
         }
         let archives = self.open_environment_archives();
-        self.environment_prune
-            .start(ctx.clone(), archives, self.pending_writes.clone(), request);
+        self.environment_prune.start(ctx.clone(), archives, request);
     }
 
     /// Apply a finished delete: report it, and put the schedulers back on the
@@ -763,10 +780,14 @@ impl App {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use parking_lot::Mutex;
+
     use chrono::{TimeDelta, Utc};
     use rstest::rstest;
 
-    use gt_pending_writes::WriteAccess;
+    use gt_pending_writes::{PendingWrites, WriteAccess};
 
     use super::*;
 
@@ -774,53 +795,63 @@ mod tests {
         NaiveDate::from_ymd_opt(2026, 7, 20).unwrap_or_default() + TimeDelta::days(offset)
     }
 
-    /// An interference archive holding three days, and nothing else opened.
-    fn archives_with_interference() -> (tempfile::TempDir, OpenEnvironmentArchives) {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let store = gt_store::Store::open_in(dir.path())
-            .open_interference()
-            .expect("open the archive")
-            .writer()
-            .expect("an owner session opens the archive writable");
-        for offset in 0..3 {
-            store
-                .insert_day(day(offset), "host", Utc::now(), &[])
-                .expect("insert");
+    /// The archives a delete acts on, beside the handle its remaining days
+    /// are read through.
+    struct TestArchives {
+        _dir: tempfile::TempDir,
+        interference: gt_store::InterferenceArchive,
+        open: OpenEnvironmentArchives,
+    }
+
+    impl TestArchives {
+        fn archived_interference_days(&self) -> usize {
+            self.interference.read().days().expect("days").len()
         }
-        let archives = OpenEnvironmentArchives {
-            interference: Some(store),
-            ..OpenEnvironmentArchives::default()
-        };
-        (dir, archives)
+    }
+
+    /// An interference archive holding three days, opened for deletes
+    /// registered in `pending_writes`, and nothing else opened.
+    ///
+    /// The three days are archived through a registry of their own, so a
+    /// `pending_writes` that refuses writes still gets days to delete.
+    fn archives_with_interference(pending_writes: &PendingWrites) -> TestArchives {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let interference = gt_store::Store::open_in(dir.path())
+            .open_interference()
+            .expect("open the archive");
+        for offset in 0..3 {
+            archive_one_day(
+                &interference,
+                EnvironmentArchive::AircraftInterference.day_insert_registration(day(offset)),
+                |store| store.insert_day(day(offset), "host", Utc::now(), &[]),
+            );
+        }
+        TestArchives {
+            open: OpenEnvironmentArchives {
+                interference: interference.writer(pending_writes),
+                ..OpenEnvironmentArchives::default()
+            },
+            _dir: dir,
+            interference,
+        }
     }
 
     /// The archives of [`archives_with_interference`], with a solar flare
     /// archive holding three days beside them.
-    fn archives_with_interference_and_solar_flares() -> (tempfile::TempDir, OpenEnvironmentArchives)
-    {
-        let (dir, mut archives) = archives_with_interference();
-        let store = gt_store::Store::open_in(dir.path())
+    fn archives_with_interference_and_solar_flares(pending_writes: &PendingWrites) -> TestArchives {
+        let mut archives = archives_with_interference(pending_writes);
+        let solar_flares = gt_store::Store::open_in(archives._dir.path())
             .open_solar_flares()
-            .expect("open the archive")
-            .writer()
-            .expect("an owner session opens the archive writable");
+            .expect("open the archive");
         for offset in 0..3 {
-            store
-                .insert_or_replace_day(day(offset), "host", Utc::now(), &[])
-                .expect("insert");
+            archive_one_day(
+                &solar_flares,
+                EnvironmentArchive::SolarFlares.day_insert_registration(day(offset)),
+                |store| store.insert_or_replace_day(day(offset), "host", Utc::now(), &[]),
+            );
         }
-        archives.solar_flares = Some(store);
-        (dir, archives)
-    }
-
-    fn archived_interference_days(archives: &OpenEnvironmentArchives) -> usize {
+        archives.open.solar_flares = solar_flares.writer(pending_writes);
         archives
-            .interference
-            .as_ref()
-            .expect("the archive is open")
-            .days()
-            .expect("days")
-            .len()
     }
 
     fn ymd(year: i32, month: u32, day: u32) -> NaiveDate {
@@ -861,11 +892,10 @@ mod tests {
     /// archive that could not be opened has no days to lose.
     #[test]
     fn a_delete_reports_the_archives_it_reached() {
-        let (_dir, archives) = archives_with_interference();
+        let archives = archives_with_interference(&PendingWrites::default());
 
         let report = prune(
-            &archives,
-            &PendingWrites::default(),
+            &archives.open,
             PruneRequest {
                 scope: PruneScope::Every,
                 days: PrunedDays::Before(day(2)),
@@ -885,11 +915,10 @@ mod tests {
     /// open.
     #[test]
     fn a_delete_of_one_archive_reaches_no_other() {
-        let (_dir, archives) = archives_with_interference();
+        let archives = archives_with_interference(&PendingWrites::default());
 
         let report = prune(
-            &archives,
-            &PendingWrites::default(),
+            &archives.open,
             PruneRequest {
                 scope: PruneScope::One(EnvironmentArchive::SolarFlares),
                 days: PrunedDays::All,
@@ -899,7 +928,7 @@ mod tests {
         assert!(report.archives.is_empty());
         assert_eq!(report.days_removed(), 0);
         assert_eq!(
-            archived_interference_days(&archives),
+            archives.archived_interference_days(),
             3,
             "another archive's delete took days from the interference archive"
         );
@@ -909,7 +938,12 @@ mod tests {
     /// draws for that delete.
     #[test]
     fn a_reported_rewrite_moves_the_write_guard_along() {
-        struct ReportingArchive;
+        /// Reports four rewritten columns, then records the progress the
+        /// shutdown window would draw at that point.
+        struct ReportingArchive {
+            pending_writes: PendingWrites,
+            progress_drawn: Mutex<Option<f32>>,
+        }
 
         impl ArchivedDayDeletion for ReportingArchive {
             fn delete_pruned_days(
@@ -925,25 +959,31 @@ mod tests {
                         });
                     }
                 }
+                *self.progress_drawn.lock() = self
+                    .pending_writes
+                    .snapshot()
+                    .running
+                    .first()
+                    .and_then(|status| status.progress);
                 Ok(1)
             }
         }
 
         let pending_writes = PendingWrites::default();
-        let write = EnvironmentArchive::IonosphericTec
-            .try_begin_day_delete(&pending_writes)
-            .expect("the registry is running");
+        let reporting = Arc::new(ReportingArchive {
+            pending_writes: pending_writes.clone(),
+            progress_drawn: Mutex::new(None),
+        });
+        let archive = WritableArchive::new(Arc::clone(&reporting), pending_writes);
 
-        let outcome =
-            ReportingArchive.delete_pruned_days_reporting_progress(PrunedDays::All, &write);
+        let outcome = archive.register_and_delete_pruned_days(
+            PrunedDays::All,
+            EnvironmentArchive::IonosphericTec.day_delete_registration(),
+        );
 
-        assert_eq!(outcome, ArchivePruneOutcome::Removed(1));
+        assert_eq!(outcome, Ok(ArchivePruneOutcome::Removed(1)));
         assert_eq!(
-            pending_writes
-                .snapshot()
-                .running
-                .first()
-                .and_then(|status| status.progress),
+            *reporting.progress_drawn.lock(),
             Some(1.0),
             "the guard did not follow the rewrite"
         );
@@ -953,13 +993,12 @@ mod tests {
     /// archive it would have reached is reported as skipped.
     #[test]
     fn a_delete_started_during_shutdown_leaves_every_archive_alone() {
-        let (_dir, archives) = archives_with_interference_and_solar_flares();
         let pending_writes = PendingWrites::default();
+        let archives = archives_with_interference_and_solar_flares(&pending_writes);
         pending_writes.begin_shutdown();
 
         let report = prune(
-            &archives,
-            &pending_writes,
+            &archives.open,
             PruneRequest {
                 scope: PruneScope::Every,
                 days: PrunedDays::All,
@@ -978,19 +1017,18 @@ mod tests {
         );
         assert_eq!(report.days_removed(), 0);
         assert_eq!(report.failures().count(), 0);
-        assert_eq!(archived_interference_days(&archives), 3);
+        assert_eq!(archives.archived_interference_days(), 3);
     }
 
     /// A read-only session never rewrites an archive: the delete stops before
     /// the first one, and says why.
     #[test]
     fn a_delete_in_a_read_only_session_leaves_every_archive_alone() {
-        let (_dir, archives) = archives_with_interference_and_solar_flares();
-        let pending_writes = PendingWrites::new(WriteAccess::ReadOnly);
+        let archives =
+            archives_with_interference_and_solar_flares(&PendingWrites::new(WriteAccess::ReadOnly));
 
         let report = prune(
-            &archives,
-            &pending_writes,
+            &archives.open,
             PruneRequest {
                 scope: PruneScope::Every,
                 days: PrunedDays::All,
@@ -1010,19 +1048,18 @@ mod tests {
                 ),
             ]
         );
-        assert_eq!(archived_interference_days(&archives), 3);
+        assert_eq!(archives.archived_interference_days(), 3);
     }
 
     /// A delete keeps the process from closing underneath it, and lets go of
     /// it once the archive is rewritten.
     #[test]
     fn a_finished_delete_is_registered_while_it_runs() {
-        let (_dir, archives) = archives_with_interference();
         let pending_writes = PendingWrites::default();
+        let archives = archives_with_interference(&pending_writes);
 
         prune(
-            &archives,
-            &pending_writes,
+            &archives.open,
             PruneRequest {
                 scope: PruneScope::Every,
                 days: PrunedDays::All,
