@@ -20,7 +20,10 @@ use egui::Context;
 use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
 use gt_flare::{ApiKey, DateWindow, MarkedFlare, SolarFlare, calendar, transport, wire};
 use gt_pending_writes::{PendingWrites, WriteRefusal};
-use gt_store::{ArchiveUsage, FlareStore, FlareStoreError, ReadOnlyFlareStore, SolarFlareArchive};
+use gt_store::{
+    ArchiveUsage, FlareStore, FlareStoreError, ReadOnlyFlareStore, SolarFlareArchive,
+    WritableArchive,
+};
 use gt_types::{SunlitSide, TimeRange};
 use gt_ui_types::ArcIdentity;
 
@@ -172,7 +175,7 @@ impl SolarFlareScheduler {
                 continue;
             }
             self.days
-                .request_recording_day(day, day_needs_fetch(&store, day, today));
+                .request_recording_day(day, day_needs_fetch(store.read(), day, today));
         }
         self.start_next();
     }
@@ -188,7 +191,7 @@ impl SolarFlareScheduler {
         let total = self
             .days
             .start_backfill(calendar::fetchable_days(from, to, today), |day| {
-                day_needs_fetch(&store, day, today)
+                day_needs_fetch(store.read(), day, today)
             });
         log::info!("Backfilling solar flares for {total} days between {from} and {to}");
         self.start_next();
@@ -201,10 +204,11 @@ impl SolarFlareScheduler {
         self.store.is_some()
     }
 
-    /// The archive to delete days from, for the settings page. [`None`] in a
-    /// read-only session, where the delete controls are grayed.
-    pub fn writable_archive(&self) -> Option<Arc<FlareStore>> {
-        self.store.as_ref()?.writer()
+    /// The archive to write to, for the settings page's delete and for the
+    /// fetch workers. [`None`] in a read-only session, where the delete
+    /// controls are grayed.
+    pub fn writable_archive(&self) -> Option<WritableArchive<FlareStore>> {
+        self.store.as_ref()?.writer(&self.pending_writes)
     }
 
     /// What the archive holds, as the environment storage rows show it.
@@ -364,15 +368,22 @@ impl SolarFlareScheduler {
             .collect()
     }
 
-    /// The archive to fetch into, or [`None`] when nothing may be requested:
+    /// The archive a day may be fetched into, or [`None`] when none may be:
     /// no key, no archive, or a read-only session's archive.
-    fn fetchable_archive(&self) -> Option<Arc<FlareStore>> {
+    fn fetchable_archive(&self) -> Option<SolarFlareArchive> {
         self.api_key.as_ref()?;
-        self.store.as_ref()?.writer()
+        let archive = self.store.clone()?;
+        archive
+            .writer(&self.pending_writes)
+            .is_some()
+            .then_some(archive)
     }
 
     fn start_next(&mut self) {
-        let Some(store) = self.fetchable_archive() else {
+        let Some(archive) = self
+            .fetchable_archive()
+            .and_then(|archive| archive.writer(&self.pending_writes))
+        else {
             return;
         };
         let Some(key) = self.api_key.clone() else {
@@ -389,21 +400,20 @@ impl SolarFlareScheduler {
             base_url: self.base_url.clone(),
             key,
         };
-        self.spawn_fetch(transport, store, endpoint, day);
+        self.spawn_fetch(transport, archive, endpoint, day);
     }
 
     fn spawn_fetch(
         &self,
         transport: Arc<Connection>,
-        store: Arc<FlareStore>,
+        archive: WritableArchive<FlareStore>,
         endpoint: Endpoint,
         day: NaiveDate,
     ) {
         let ctx = self.ctx.clone();
         let tx = self.tx.clone();
-        let pending_writes = self.pending_writes.clone();
         background_thread::spawn_or_panic(format!("flares-{day}"), move || {
-            let message = ingest(transport.as_ref(), &store, &endpoint, day, &pending_writes);
+            let message = ingest(transport.as_ref(), &archive, &endpoint, day);
             tx.send(message).ok();
             ctx.request_repaint();
         });
@@ -496,10 +506,9 @@ fn archived_days_of(store: &ReadOnlyFlareStore) -> Result<BTreeSet<NaiveDate>, F
 /// would be archived twice once its own day is fetched.
 fn ingest(
     transport: &impl Transport,
-    store: &FlareStore,
+    archive: &WritableArchive<FlareStore>,
     endpoint: &Endpoint,
     day: NaiveDate,
-    pending_writes: &PendingWrites,
 ) -> FlareDayMessage {
     let window = DateWindow::covering_utc_day(day);
     let body =
@@ -525,21 +534,24 @@ fn ingest(
         }
     };
 
-    let _write = match EnvironmentArchive::SolarFlares.try_begin_day_insert(pending_writes, day) {
-        Ok(write) => write,
-        Err(refusal) => return FlareDayMessage::NotArchived { day, refusal },
-    };
-    // The key is never part of what the archive records.
-    match store.insert_or_replace_day(day, &endpoint.base_url, Utc::now(), &flares) {
-        Ok(()) => FlareDayMessage::Stored {
-            day,
-            flares: flares.len(),
-        },
-        Err(err) => FlareDayMessage::Failed {
-            day,
-            detail: err.to_string(),
-        },
-    }
+    archive
+        .write(
+            EnvironmentArchive::SolarFlares.day_insert_registration(day),
+            |store| {
+                // The key is never part of what the archive records.
+                match store.insert_or_replace_day(day, &endpoint.base_url, Utc::now(), &flares) {
+                    Ok(()) => FlareDayMessage::Stored {
+                        day,
+                        flares: flares.len(),
+                    },
+                    Err(err) => FlareDayMessage::Failed {
+                        day,
+                        detail: err.to_string(),
+                    },
+                }
+            },
+        )
+        .unwrap_or_else(|refusal| FlareDayMessage::NotArchived { day, refusal })
 }
 
 #[cfg(test)]
@@ -553,7 +565,7 @@ mod tests {
     use gt_fetch::HttpResponse;
     use gt_flare::DEFAULT_BASE_URL;
     use gt_pending_writes::WriteAccess;
-    use gt_store::{ArchiveHandle, Store};
+    use gt_store::Store;
     use gt_test_utils::{ScriptedTransport, pending_writes};
     use gt_types::{Latitude, Longitude};
     use rustc_hash::FxHashMap;
@@ -590,22 +602,39 @@ mod tests {
         NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
     }
 
-    fn archive() -> (TempDir, Arc<FlareStore>) {
+    fn archive() -> (TempDir, SolarFlareArchive) {
         let dir = tempfile::tempdir().expect("temp dir");
         let store = Store::open_in(dir.path())
             .open_solar_flares()
-            .expect("archive")
-            .writer()
-            .expect("an owner session opens the archive writable");
+            .expect("archive");
         (dir, store)
     }
 
+    /// The archive's writable side, registering its writes in a registry that
+    /// takes them.
+    fn writable(store: &SolarFlareArchive) -> WritableArchive<FlareStore> {
+        store
+            .writer(&PendingWrites::default())
+            .expect("an owner session opens the archive writable")
+    }
+
+    /// Archive `day` as the fetch worker does, with the write registered.
+    fn archive_day(store: &SolarFlareArchive, day: NaiveDate, flares: &[SolarFlare]) {
+        writable(store)
+            .write(
+                EnvironmentArchive::SolarFlares.day_insert_registration(day),
+                |archive| archive.insert_or_replace_day(day, "host", Utc::now(), flares),
+            )
+            .expect("the registry takes the write")
+            .expect("archive the day");
+    }
+
     /// Archive-backed and keyed, and wired so no request leaves the machine.
-    fn scheduler_with_archive() -> (TempDir, Arc<FlareStore>, SolarFlareScheduler) {
+    fn scheduler_with_archive() -> (TempDir, SolarFlareArchive, SolarFlareScheduler) {
         let (dir, store) = archive();
         let scheduler = SolarFlareScheduler::new(
             Context::default(),
-            Some(ArchiveHandle::Owner(Arc::clone(&store))),
+            Some(store.clone()),
             DEFAULT_BASE_URL.to_owned(),
             key(),
             TransportSource::Offline,
@@ -651,7 +680,7 @@ mod tests {
         let (_dir, store) = archive();
         let mut scheduler = SolarFlareScheduler::new(
             Context::default(),
-            Some(ArchiveHandle::Owner(store)),
+            Some(store),
             DEFAULT_BASE_URL.to_owned(),
             None,
             TransportSource::Offline,
@@ -674,7 +703,7 @@ mod tests {
         let (_dir, store) = archive();
         let mut scheduler = SolarFlareScheduler::new(
             Context::default(),
-            Some(ArchiveHandle::Owner(store)),
+            Some(store),
             DEFAULT_BASE_URL.to_owned(),
             None,
             TransportSource::Offline,
@@ -719,9 +748,7 @@ mod tests {
     #[test]
     fn an_archived_day_is_not_requested_again() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        store
-            .insert_or_replace_day(day(2024, 5, 9), "host", Utc::now(), &[])
-            .expect("archive the day");
+        archive_day(&store, day(2024, 5, 9), &[]);
 
         scheduler.request_days_for(a_recording_day());
 
@@ -738,9 +765,7 @@ mod tests {
     fn the_current_day_is_requested_even_when_archived() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         let today = Utc::now().date_naive();
-        store
-            .insert_or_replace_day(today, "host", Utc::now(), &[])
-            .expect("archive today");
+        archive_day(&store, today, &[]);
 
         scheduler.request_days_for(TimeRange::new(Utc::now(), Utc::now()));
         assert!(scheduler.days.is_fetching());
@@ -824,9 +849,7 @@ mod tests {
     #[test]
     fn a_day_index_read_that_failed_on_another_process_is_run_again_and_finds_the_days() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        store
-            .insert_or_replace_day(day(2024, 5, 10), "host", Utc::now(), &[])
-            .expect("archive");
+        archive_day(&store, day(2024, 5, 10), &[]);
         let failed = scheduler.day_index_read.record_read(
             &scheduler.ctx,
             Err::<BTreeSet<NaiveDate>, _>(FlareStoreError::HeldByAnotherProcess),
@@ -844,9 +867,7 @@ mod tests {
     fn a_backfill_queues_only_the_days_the_archive_lacks() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         for archived in [day(2024, 5, 10), day(2024, 5, 11)] {
-            store
-                .insert_or_replace_day(archived, "host", Utc::now(), &[])
-                .expect("archive");
+            archive_day(&store, archived, &[]);
         }
 
         let queued = scheduler.backfill(day(2024, 5, 9), day(2024, 5, 15));
@@ -869,9 +890,7 @@ mod tests {
     #[test]
     fn the_status_reports_the_queue_and_the_archived_recording_days() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        store
-            .insert_or_replace_day(day(2024, 5, 9), "host", Utc::now(), &[])
-            .expect("archive");
+        archive_day(&store, day(2024, 5, 9), &[]);
 
         scheduler.request_days_for(TimeRange::new(at(2024, 5, 9, 8), at(2024, 5, 10, 17)));
 
@@ -920,17 +939,18 @@ mod tests {
 
         let message = ingest(
             &transport,
-            &store,
+            &store
+                .writer(&pending_writes)
+                .expect("an owner session opens the archive writable"),
             &endpoint(),
             day(2024, 5, 9),
-            &pending_writes,
         );
 
         let FlareDayMessage::NotArchived { refusal, .. } = message else {
             panic!("the day was archived where the insert is refused");
         };
         assert_eq!(refusal, expected);
-        assert!(store.archived_days().expect("days").is_empty());
+        assert!(store.read().archived_days().expect("days").is_empty());
     }
 
     /// A day is archived with the flares the catalog listed, under the host
@@ -941,22 +961,17 @@ mod tests {
         let ingested = day(2024, 5, 9);
         let transport = serving(ONE_FLARE);
 
-        let message = ingest(
-            &transport,
-            &store,
-            &endpoint(),
-            ingested,
-            &PendingWrites::default(),
-        );
+        let message = ingest(&transport, &writable(&store), &endpoint(), ingested);
 
         assert!(matches!(message, FlareDayMessage::Stored { flares: 1, .. }));
-        let archived = store.archived_days().expect("days");
+        let archived = store.read().archived_days().expect("days");
         assert_eq!(
             archived.first().map(|entry| entry.host.as_str()),
             Some(DEFAULT_BASE_URL)
         );
         assert_eq!(
             store
+                .read()
                 .flares(ingested)
                 .expect("flares")
                 .and_then(|flares| flares.first().map(|flare| flare.classification.to_string())),
@@ -971,13 +986,7 @@ mod tests {
         let (_dir, store) = archive();
         let transport = serving(NO_FLARES);
 
-        ingest(
-            &transport,
-            &store,
-            &endpoint(),
-            day(2024, 5, 9),
-            &PendingWrites::default(),
-        );
+        ingest(&transport, &writable(&store), &endpoint(), day(2024, 5, 9));
 
         assert!(
             transport
@@ -988,6 +997,7 @@ mod tests {
         );
         assert!(
             store
+                .read()
                 .archived_days()
                 .expect("days")
                 .iter()
@@ -1004,16 +1014,10 @@ mod tests {
         let ingested = day(2024, 5, 9);
         let transport = serving(NO_FLARES);
 
-        let message = ingest(
-            &transport,
-            &store,
-            &endpoint(),
-            ingested,
-            &PendingWrites::default(),
-        );
+        let message = ingest(&transport, &writable(&store), &endpoint(), ingested);
 
         assert!(matches!(message, FlareDayMessage::Stored { flares: 0, .. }));
-        assert_eq!(store.flares(ingested).expect("flares"), Some(vec![]));
+        assert_eq!(store.read().flares(ingested).expect("flares"), Some(vec![]));
     }
 
     /// The catalog answers a window, and a window's ends can hold events of
@@ -1028,17 +1032,12 @@ mod tests {
                 "classType":"M1.3"}]"#,
         );
 
-        let message = ingest(
-            &transport,
-            &store,
-            &endpoint(),
-            day(2024, 5, 9),
-            &PendingWrites::default(),
-        );
+        let message = ingest(&transport, &writable(&store), &endpoint(), day(2024, 5, 9));
 
         assert!(matches!(message, FlareDayMessage::Stored { flares: 1, .. }));
         assert_eq!(
             store
+                .read()
                 .flares(day(2024, 5, 9))
                 .expect("flares")
                 .map(|flares| flares.iter().map(|flare| flare.id.clone()).collect()),
@@ -1057,16 +1056,10 @@ mod tests {
             body: body.to_owned(),
         }));
 
-        let message = ingest(
-            &transport,
-            &store,
-            &endpoint(),
-            day(2024, 5, 9),
-            &PendingWrites::default(),
-        );
+        let message = ingest(&transport, &writable(&store), &endpoint(), day(2024, 5, 9));
 
         assert!(matches!(message, FlareDayMessage::Failed { .. }));
-        assert!(store.archived_days().expect("days").is_empty());
+        assert!(store.read().archived_days().expect("days").is_empty());
     }
 
     /// A failure a rejected key produced must not carry the key into the
@@ -1085,13 +1078,7 @@ mod tests {
             ),
         }));
 
-        let message = ingest(
-            &transport,
-            &store,
-            &endpoint(),
-            day(2024, 5, 9),
-            &PendingWrites::default(),
-        );
+        let message = ingest(&transport, &writable(&store), &endpoint(), day(2024, 5, 9));
 
         let FlareDayMessage::Failed { detail, .. } = message else {
             panic!("the transport refused every attempt");
@@ -1138,7 +1125,7 @@ mod tests {
         Arc::clone(positions.timeline(&files))
     }
 
-    fn archive_one_flare(store: &FlareStore, day: NaiveDate, class_type: &str) {
+    fn archive_one_flare(store: &SolarFlareArchive, day: NaiveDate, class_type: &str) {
         let flare = SolarFlare {
             id: format!("{day}-FLR-001"),
             begin: day.and_hms_opt(8, 45, 0).unwrap_or_default().and_utc(),
@@ -1148,9 +1135,7 @@ mod tests {
             source_location: None,
             active_region: None,
         };
-        store
-            .insert_or_replace_day(day, "host", Utc::now(), &[flare])
-            .expect("archive");
+        archive_day(store, day, &[flare]);
     }
 
     /// The side is read at the position of the fix nearest the peak, and stays

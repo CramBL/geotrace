@@ -3,50 +3,63 @@
 use std::ops::Deref;
 use std::sync::Arc;
 
+use gt_pending_writes::PendingWrites;
+
+use crate::writable_archive::WritableArchive;
+
 /// One day archive, opened writable for the instance that owns the data
 /// directory and read-only for a session beside it.
 ///
-/// [`Self::ReadOnly`] holds a type with no insert and no delete method, so a
-/// write in a read-only session fails to compile.
+/// A read-only session holds a type with no insert and no delete method, so a
+/// write in one fails to compile. The only path to an owner session's mutators
+/// is [`Self::writer`], which returns a [`WritableArchive`]: every write
+/// through it is registered in [`PendingWrites`].
 #[derive(Debug)]
-pub enum ArchiveHandle<W, R> {
+pub struct ArchiveHandle<W, R>(Opened<W, R>);
+
+#[derive(Debug)]
+enum Opened<W, R> {
     Owner(Arc<W>),
     ReadOnly(Arc<R>),
 }
 
 impl<W, R> Clone for ArchiveHandle<W, R> {
     fn clone(&self) -> Self {
-        match self {
-            Self::Owner(archive) => Self::Owner(Arc::clone(archive)),
-            Self::ReadOnly(archive) => Self::ReadOnly(Arc::clone(archive)),
-        }
+        Self(match &self.0 {
+            Opened::Owner(archive) => Opened::Owner(Arc::clone(archive)),
+            Opened::ReadOnly(archive) => Opened::ReadOnly(Arc::clone(archive)),
+        })
     }
 }
 
 impl<W, R> ArchiveHandle<W, R> {
     pub(crate) fn owner(archive: W) -> Self {
-        Self::Owner(Arc::new(archive))
+        Self(Opened::Owner(Arc::new(archive)))
     }
 
     pub(crate) fn read_only(archive: R) -> Self {
-        Self::ReadOnly(Arc::new(archive))
+        Self(Opened::ReadOnly(Arc::new(archive)))
     }
 }
 
 impl<W: Deref<Target = R>, R> ArchiveHandle<W, R> {
-    /// The archive's read methods, which both variants have.
+    /// The archive's read methods, which both kinds of session have.
     pub fn read(&self) -> &R {
-        match self {
-            Self::Owner(archive) => archive,
-            Self::ReadOnly(archive) => archive,
+        match &self.0 {
+            Opened::Owner(archive) => archive,
+            Opened::ReadOnly(archive) => archive,
         }
     }
 
-    /// The archive to write to, or [`None`] in a read-only session.
-    pub fn writer(&self) -> Option<Arc<W>> {
-        match self {
-            Self::Owner(archive) => Some(Arc::clone(archive)),
-            Self::ReadOnly(_) => None,
+    /// The archive to write to, registering every write in `pending_writes`,
+    /// or [`None`] in a read-only session.
+    pub fn writer(&self, pending_writes: &PendingWrites) -> Option<WritableArchive<W>> {
+        match &self.0 {
+            Opened::Owner(archive) => Some(WritableArchive::new(
+                Arc::clone(archive),
+                pending_writes.clone(),
+            )),
+            Opened::ReadOnly(_) => None,
         }
     }
 }

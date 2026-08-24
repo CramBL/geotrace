@@ -27,7 +27,9 @@ use gt_pending_writes::{PendingWrites, WriteRefusal};
 use gt_query_run::JammingValues;
 #[cfg(test)]
 use gt_store::Store;
-use gt_store::{ArchiveUsage, InterferenceArchive, JamStore, JamStoreError, ReadOnlyJamStore};
+use gt_store::{
+    ArchiveUsage, InterferenceArchive, JamStore, JamStoreError, ReadOnlyJamStore, WritableArchive,
+};
 use gt_types::TimeRange;
 use gt_types::{LoadedFile, TrackRef};
 use gt_ui_types::{ArcIdentity, JammingContextSample, JammingPoint, JammingSeries};
@@ -315,10 +317,11 @@ impl JammingScheduler {
         self.store.is_some()
     }
 
-    /// The archive to delete days from, for the settings page. [`None`] in a
-    /// read-only session, where the delete controls are grayed.
-    pub fn writable_archive(&self) -> Option<Arc<JamStore>> {
-        self.store.as_ref()?.writer()
+    /// The archive to write to, for the settings page's delete and for the
+    /// fetch workers. [`None`] in a read-only session, where the delete
+    /// controls are grayed.
+    pub fn writable_archive(&self) -> Option<WritableArchive<JamStore>> {
+        self.store.as_ref()?.writer(&self.pending_writes)
     }
 
     /// What the archive holds, as the environment storage rows show it.
@@ -573,7 +576,7 @@ impl JammingScheduler {
     }
 
     fn start_next(&mut self) {
-        let Some(store) = self.writable_archive() else {
+        let Some(archive) = self.writable_archive() else {
             return;
         };
         if self.pending_writes.refusal().is_some() {
@@ -585,23 +588,22 @@ impl JammingScheduler {
         let transport = self.transport();
         let delay = dispatch_delay(self.last_request, Instant::now());
         self.last_request = Some(Instant::now() + delay);
-        self.spawn_fetch(transport, store, day, delay);
+        self.spawn_fetch(transport, archive, day, delay);
     }
 
     fn spawn_fetch(
         &self,
         transport: Arc<Connection>,
-        store: Arc<JamStore>,
+        archive: WritableArchive<JamStore>,
         day: NaiveDate,
         delay: Duration,
     ) {
         let ctx = self.ctx.clone();
         let tx = self.tx.clone();
         let base_url = self.base_url.clone();
-        let pending_writes = self.pending_writes.clone();
         background_thread::spawn_or_panic(format!("jam-{day}"), move || {
             thread::sleep(delay);
-            let message = ingest(transport.as_ref(), &store, &base_url, day, &pending_writes);
+            let message = ingest(transport.as_ref(), &archive, &base_url, day);
             tx.send(message).ok();
             ctx.request_repaint();
         });
@@ -693,10 +695,9 @@ fn dispatch_delay(last_request: Option<Instant>, now: Instant) -> Duration {
 /// Fetch `day`, parse it, and add it to the archive.
 fn ingest(
     transport: &impl Transport,
-    store: &JamStore,
+    archive: &WritableArchive<JamStore>,
     base_url: &str,
     day: NaiveDate,
-    pending_writes: &PendingWrites,
 ) -> JamMessage {
     match transport::fetch_day(transport, base_url, day) {
         FetchOutcome::Served(csv) => {
@@ -717,22 +718,21 @@ fn ingest(
                     reporter.warnings()
                 );
             }
-            let _write = match EnvironmentArchive::AircraftInterference
-                .try_begin_day_insert(pending_writes, day)
-            {
-                Ok(write) => write,
-                Err(refusal) => return JamMessage::NotArchived { day, refusal },
-            };
-            match store.insert_day(day, base_url, Utc::now(), &observations) {
-                Ok(()) => JamMessage::Stored {
-                    day,
-                    cells: observations.len(),
-                },
-                Err(err) => JamMessage::Failed {
-                    day,
-                    detail: err.to_string(),
-                },
-            }
+            archive
+                .write(
+                    EnvironmentArchive::AircraftInterference.day_insert_registration(day),
+                    |store| match store.insert_day(day, base_url, Utc::now(), &observations) {
+                        Ok(()) => JamMessage::Stored {
+                            day,
+                            cells: observations.len(),
+                        },
+                        Err(err) => JamMessage::Failed {
+                            day,
+                            detail: err.to_string(),
+                        },
+                    },
+                )
+                .unwrap_or_else(|refusal| JamMessage::NotArchived { day, refusal })
         }
         FetchOutcome::Missing => JamMessage::Missing {
             day,
@@ -751,7 +751,6 @@ mod tests {
     use gt_fetch::HttpResponse;
     use gt_jam::DEFAULT_BASE_URL;
     use gt_pending_writes::WriteAccess;
-    use gt_store::ArchiveHandle;
     use gt_test_utils::ScriptedTransport;
     use gt_test_utils::pending_writes;
 
@@ -781,22 +780,43 @@ mod tests {
         JammingScheduler::disabled(Context::default())
     }
 
-    fn archive() -> (TempDir, Arc<JamStore>) {
+    fn archive() -> (TempDir, InterferenceArchive) {
         let dir = tempfile::tempdir().expect("temp dir");
         let store = Store::open_in(dir.path())
             .open_interference()
-            .expect("archive")
-            .writer()
-            .expect("an owner session opens the archive writable");
+            .expect("archive");
         (dir, store)
     }
 
+    /// The archive's writable side, registering its writes in a registry that
+    /// takes them.
+    fn writable(store: &InterferenceArchive) -> WritableArchive<JamStore> {
+        store
+            .writer(&PendingWrites::default())
+            .expect("an owner session opens the archive writable")
+    }
+
+    /// Archive `day` as the fetch worker does, with the write registered.
+    fn archive_day(
+        store: &InterferenceArchive,
+        day: NaiveDate,
+        observations: &[gt_jam::wire::HexObservation],
+    ) {
+        writable(store)
+            .write(
+                EnvironmentArchive::AircraftInterference.day_insert_registration(day),
+                |archive| archive.insert_day(day, "host", Utc::now(), observations),
+            )
+            .expect("the registry takes the write")
+            .expect("insert");
+    }
+
     /// Archive-backed, and wired so no request leaves the machine.
-    fn scheduler_with_archive() -> (TempDir, Arc<JamStore>, JammingScheduler) {
+    fn scheduler_with_archive() -> (TempDir, InterferenceArchive, JammingScheduler) {
         let (dir, store) = archive();
         let scheduler = JammingScheduler::new(
             Context::default(),
-            Some(ArchiveHandle::Owner(Arc::clone(&store))),
+            Some(store.clone()),
             DEFAULT_BASE_URL.to_owned(),
             TransportSource::Offline,
             PendingWrites::default(),
@@ -809,9 +829,7 @@ mod tests {
     fn a_backfill_queues_only_the_unarchived_days_in_range() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         for archived in [day(2026, 7, 21), day(2026, 7, 22)] {
-            store
-                .insert_day(archived, "host", Utc::now(), &[])
-                .expect("insert");
+            archive_day(&store, archived, &[]);
         }
 
         let queued = scheduler.backfill(day(2026, 7, 20), day(2026, 7, 26));
@@ -823,9 +841,7 @@ mod tests {
     fn a_fully_archived_range_queues_nothing() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         for offset in 20..=26 {
-            store
-                .insert_day(day(2026, 7, offset), "host", Utc::now(), &[])
-                .expect("insert");
+            archive_day(&store, day(2026, 7, offset), &[]);
         }
 
         assert_eq!(
@@ -1105,13 +1121,20 @@ mod tests {
             body: "hex,count_good_aircraft,count_bad_aircraft\n84005c7ffffffff,412,3\n".to_owned(),
         }));
 
-        let message = ingest(&transport, &store, DEFAULT_BASE_URL, day, &pending_writes);
+        let message = ingest(
+            &transport,
+            &store
+                .writer(&pending_writes)
+                .expect("an owner session opens the archive writable"),
+            DEFAULT_BASE_URL,
+            day,
+        );
 
         let JamMessage::NotArchived { refusal, .. } = message else {
             panic!("the day was archived where the insert is refused");
         };
         assert_eq!(refusal, expected);
-        assert!(store.days().expect("days").is_empty());
+        assert!(store.read().days().expect("days").is_empty());
     }
 
     /// The status reports the day in flight, the queue behind it, and how much
@@ -1119,9 +1142,7 @@ mod tests {
     #[test]
     fn the_status_reports_the_queue_and_the_archived_recording_days() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        store
-            .insert_day(day(2026, 7, 20), "host", Utc::now(), &[])
-            .expect("insert");
+        archive_day(&store, day(2026, 7, 20), &[]);
 
         scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 21, 17)));
 
@@ -1192,9 +1213,7 @@ mod tests {
 
         // Already archived: skipped.
         let archived = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
-        store
-            .insert_day(archived, "host", Utc::now(), &[])
-            .expect("insert");
+        archive_day(&store, archived, &[]);
         scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 20, 17)));
         assert_eq!(scheduler.days.queued(), 0);
     }
@@ -1207,9 +1226,7 @@ mod tests {
     fn a_day_index_read_that_failed_on_another_process_is_run_again_and_finds_the_days() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         let archived = day(2026, 7, 20);
-        store
-            .insert_day(archived, "host", Utc::now(), &[])
-            .expect("insert");
+        archive_day(&store, archived, &[]);
         let failed = scheduler.day_index_read.record_read(
             &scheduler.ctx,
             Err::<BTreeMap<NaiveDate, u32>, _>(JamStoreError::HeldByAnotherProcess),
@@ -1228,16 +1245,20 @@ mod tests {
     fn a_deleted_day_a_recording_spans_is_requested_again() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         let archived = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
-        store
-            .insert_day(archived, "host", Utc::now(), &[])
-            .expect("insert");
+        archive_day(&store, archived, &[]);
         scheduler.archived_cells.insert(archived, 0);
         let recording = range(at(2026, 7, 20, 8), at(2026, 7, 20, 17));
         scheduler.request_days_for(recording);
         assert_eq!(scheduler.days.queued(), 0, "an archived day is not fetched");
         assert_eq!(scheduler.days.fetch_status().recording_days.archived, 1);
 
-        store.delete_all_days(None).expect("delete");
+        writable(&store)
+            .write(
+                EnvironmentArchive::AircraftInterference.day_delete_registration(),
+                |archive| archive.delete_all_days(None),
+            )
+            .expect("the registry takes the write")
+            .expect("delete");
         scheduler.forget_pruned_days(PrunedDays::All);
         scheduler.request_days_for(recording);
 
@@ -1292,16 +1313,10 @@ mod tests {
             body: "hex,count_good_aircraft,count_bad_aircraft\n84005c7ffffffff,412,3\n".to_owned(),
         }));
 
-        let message = ingest(
-            &transport,
-            &store,
-            DEFAULT_BASE_URL,
-            day,
-            &PendingWrites::default(),
-        );
+        let message = ingest(&transport, &writable(&store), DEFAULT_BASE_URL, day);
         assert!(matches!(message, JamMessage::Stored { cells: 1, .. }));
 
-        let stored = store.days().expect("days");
+        let stored = store.read().days().expect("days");
         assert_eq!(
             stored.first().map(|entry| entry.host.as_str()),
             Some(DEFAULT_BASE_URL)
@@ -1317,15 +1332,9 @@ mod tests {
             body: r#"{"message":"File not found"}"#.to_owned(),
         }));
 
-        let message = ingest(
-            &transport,
-            &store,
-            DEFAULT_BASE_URL,
-            day,
-            &PendingWrites::default(),
-        );
+        let message = ingest(&transport, &writable(&store), DEFAULT_BASE_URL, day);
         assert!(matches!(message, JamMessage::Missing { .. }));
-        assert!(store.days().expect("days").is_empty());
+        assert!(store.read().days().expect("days").is_empty());
     }
 
     /// A body that is not a dataset is reported, not archived.
@@ -1338,15 +1347,9 @@ mod tests {
             body: "<html>captive portal</html>".to_owned(),
         }));
 
-        let message = ingest(
-            &transport,
-            &store,
-            DEFAULT_BASE_URL,
-            day,
-            &PendingWrites::default(),
-        );
+        let message = ingest(&transport, &writable(&store), DEFAULT_BASE_URL, day);
         assert!(matches!(message, JamMessage::Failed { .. }));
-        assert!(store.days().expect("days").is_empty());
+        assert!(store.read().days().expect("days").is_empty());
     }
 
     /// The overlay adopts the earliest day of the loaded tracks, whichever
@@ -1431,18 +1434,15 @@ mod tests {
         let day = track.metadata.time_range.start.date_naive();
         let first = track.points.first().expect("a fix");
         let cell = gt_jam::dataset::cell_at(first.tpv.lat(), first.tpv.lon()).expect("cell");
-        store
-            .insert_day(
-                day,
-                "host",
-                Utc::now(),
-                &[gt_jam::wire::HexObservation {
-                    cell,
-                    good: 90,
-                    bad: 10,
-                }],
-            )
-            .expect("insert");
+        archive_day(
+            &store,
+            day,
+            &[gt_jam::wire::HexObservation {
+                cell,
+                good: 90,
+                bad: 10,
+            }],
+        );
         scheduler.archived_cells.insert(day, 1);
 
         let files = files_holding(track);
@@ -1491,9 +1491,7 @@ mod tests {
             good: 90,
             bad: 10,
         }];
-        store
-            .insert_day(recorded, "host", Utc::now(), &observations)
-            .expect("insert");
+        archive_day(&store, recorded, &observations);
         scheduler.archived_cells.insert(recorded, 1);
         let files = files_holding(track);
         let track_ref = TrackRef::new(gt_types::FileIdx::new(0), gt_types::TrackIdx::new(0));
@@ -1514,9 +1512,7 @@ mod tests {
             "an unchanged archive hands out the values it already resolved"
         );
 
-        store
-            .insert_day(next, "host", Utc::now(), &observations)
-            .expect("insert");
+        archive_day(&store, next, &observations);
         scheduler.archived_cells.insert(next, 1);
         scheduler.plot_series(&files);
         let after_archiving = values_of(&scheduler.query_values());
@@ -1553,18 +1549,15 @@ mod tests {
             .checked_add_days(chrono::Days::new(3))
             .expect("a later day");
         for archived in [recorded, later] {
-            store
-                .insert_day(
-                    archived,
-                    "host",
-                    Utc::now(),
-                    &[gt_jam::wire::HexObservation {
-                        cell,
-                        good: 90,
-                        bad: 10,
-                    }],
-                )
-                .expect("insert");
+            archive_day(
+                &store,
+                archived,
+                &[gt_jam::wire::HexObservation {
+                    cell,
+                    good: 90,
+                    bad: 10,
+                }],
+            );
             scheduler.archived_cells.insert(archived, 1);
         }
         let mut positions = FixPositions::default();
@@ -1600,9 +1593,7 @@ mod tests {
     fn the_context_line_needs_a_recording_to_place_a_day_at() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         let archived = day(2026, 7, 20);
-        store
-            .insert_day(archived, "host", Utc::now(), &[])
-            .expect("insert");
+        archive_day(&store, archived, &[]);
         scheduler.archived_cells.insert(archived, 1);
 
         let timeline = Arc::new(FixPositionTimeline::default());

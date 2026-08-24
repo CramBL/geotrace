@@ -24,7 +24,7 @@ use gt_solar::series::{Hp30Series, IndexSample, IndexSeries, KpSeries};
 use gt_solar::{GeomagneticIndex, TimeWindow, calendar, transport, wire};
 use gt_store::{
     ArchiveUsage, DayArchiveError as _, GeomagneticIndexArchive, ReadOnlySolarStore, SolarStore,
-    SolarStoreError,
+    SolarStoreError, WritableArchive,
 };
 use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{
@@ -212,10 +212,11 @@ impl GeomagneticIndexScheduler {
         self.store.is_some()
     }
 
-    /// The archive to delete days from, for the settings page. [`None`] in a
-    /// read-only session, where the delete controls are grayed.
-    pub fn writable_archive(&self) -> Option<Arc<SolarStore>> {
-        self.store.as_ref()?.writer()
+    /// The archive to write to, for the settings page's delete and for the
+    /// fetch workers. [`None`] in a read-only session, where the delete
+    /// controls are grayed.
+    pub fn writable_archive(&self) -> Option<WritableArchive<SolarStore>> {
+        self.store.as_ref()?.writer(&self.pending_writes)
     }
 
     /// What the archive holds, as the environment storage rows show it.
@@ -430,7 +431,7 @@ impl GeomagneticIndexScheduler {
     }
 
     fn start_next(&mut self) {
-        let Some(store) = self.writable_archive() else {
+        let Some(archive) = self.writable_archive() else {
             return;
         };
         if self.pending_writes.refusal().is_some() {
@@ -440,16 +441,20 @@ impl GeomagneticIndexScheduler {
             return;
         };
         let transport = self.transport();
-        self.spawn_fetch(transport, store, day);
+        self.spawn_fetch(transport, archive, day);
     }
 
-    fn spawn_fetch(&self, transport: Arc<Connection>, store: Arc<SolarStore>, day: NaiveDate) {
+    fn spawn_fetch(
+        &self,
+        transport: Arc<Connection>,
+        archive: WritableArchive<SolarStore>,
+        day: NaiveDate,
+    ) {
         let ctx = self.ctx.clone();
         let tx = self.tx.clone();
         let base_url = self.base_url.clone();
-        let pending_writes = self.pending_writes.clone();
         background_thread::spawn_or_panic(format!("solar-{day}"), move || {
-            let message = ingest(transport.as_ref(), &store, &base_url, day, &pending_writes);
+            let message = ingest(transport.as_ref(), &archive, &base_url, day);
             tx.send(message).ok();
             ctx.request_repaint();
         });
@@ -583,10 +588,9 @@ struct FetchedDay {
 /// whole day, and a later session requests it again.
 fn ingest(
     transport: &impl Transport,
-    store: &SolarStore,
+    archive: &WritableArchive<SolarStore>,
     base_url: &str,
     day: NaiveDate,
-    pending_writes: &PendingWrites,
 ) -> IndexDayMessage {
     let window = TimeWindow::covering_utc_day(day);
     let mut fetched = FetchedDay::default();
@@ -623,11 +627,22 @@ fn ingest(
         }
     }
 
-    let _write =
-        match EnvironmentArchive::GeomagneticIndices.try_begin_day_insert(pending_writes, day) {
-            Ok(write) => write,
-            Err(refusal) => return IndexDayMessage::NotArchived { day, refusal },
-        };
+    archive
+        .write(
+            EnvironmentArchive::GeomagneticIndices.day_insert_registration(day),
+            |store| archive_fetched_indices(store, base_url, day, &fetched),
+        )
+        .unwrap_or_else(|refusal| IndexDayMessage::NotArchived { day, refusal })
+}
+
+/// Insert every index `fetched` holds, which [`ingest`] runs as one
+/// registered write.
+fn archive_fetched_indices(
+    store: &SolarStore,
+    base_url: &str,
+    day: NaiveDate,
+    fetched: &FetchedDay,
+) -> IndexDayMessage {
     let fetched_at = Utc::now();
     let mut kp_samples = 0;
     let mut hp30_samples = 0;
@@ -668,7 +683,7 @@ mod tests {
     use gt_pending_writes::WriteAccess;
     use gt_solar::DEFAULT_BASE_URL;
     use gt_solar::series::{Hp30Sample, KpSample, KpStatus};
-    use gt_store::{ArchiveHandle, Store};
+    use gt_store::Store;
     use gt_test_utils::{ScriptedTransport, pending_writes};
 
     use crate::app::backfill::BackfillProgress;
@@ -695,22 +710,43 @@ mod tests {
         NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
     }
 
-    fn archive() -> (TempDir, Arc<SolarStore>) {
+    fn archive() -> (TempDir, GeomagneticIndexArchive) {
         let dir = tempfile::tempdir().expect("temp dir");
         let store = Store::open_in(dir.path())
             .open_geomagnetic_indices()
-            .expect("archive")
-            .writer()
-            .expect("an owner session opens the archive writable");
+            .expect("archive");
         (dir, store)
     }
 
+    /// The archive's writable side, registering its writes in a registry that
+    /// takes them.
+    fn writable(store: &GeomagneticIndexArchive) -> WritableArchive<SolarStore> {
+        store
+            .writer(&PendingWrites::default())
+            .expect("an owner session opens the archive writable")
+    }
+
+    /// Archive `day` as the fetch worker does, with the write registered.
+    fn archive_day(
+        store: &GeomagneticIndexArchive,
+        day: NaiveDate,
+        write: impl FnOnce(&SolarStore) -> Result<(), SolarStoreError>,
+    ) {
+        writable(store)
+            .write(
+                EnvironmentArchive::GeomagneticIndices.day_insert_registration(day),
+                write,
+            )
+            .expect("the registry takes the write")
+            .expect("archive the day");
+    }
+
     /// Archive-backed, and wired so no request leaves the machine.
-    fn scheduler_with_archive() -> (TempDir, Arc<SolarStore>, GeomagneticIndexScheduler) {
+    fn scheduler_with_archive() -> (TempDir, GeomagneticIndexArchive, GeomagneticIndexScheduler) {
         let (dir, store) = archive();
         let scheduler = GeomagneticIndexScheduler::new(
             Context::default(),
-            Some(ArchiveHandle::Owner(Arc::clone(&store))),
+            Some(store.clone()),
             DEFAULT_BASE_URL.to_owned(),
             TransportSource::Offline,
             PendingWrites::default(),
@@ -765,18 +801,21 @@ mod tests {
 
     /// Archive `day` as a whole definitive day, the way a finished ingest
     /// leaves it.
-    fn archive_definitive_day(store: &SolarStore, archived: NaiveDate) {
-        store
-            .insert_or_replace_kp_day(archived, "host", Utc::now(), &kp_day(KpStatus::Definitive))
-            .expect("insert kp");
-        store
-            .insert_or_replace_hp30_day(
+    fn archive_definitive_day(store: &GeomagneticIndexArchive, archived: NaiveDate) {
+        archive_day(store, archived, |archive| {
+            archive.insert_or_replace_kp_day(
+                archived,
+                "host",
+                Utc::now(),
+                &kp_day(KpStatus::Definitive),
+            )?;
+            archive.insert_or_replace_hp30_day(
                 archived,
                 "host",
                 Utc::now(),
                 &Hp30Series { samples: vec![] },
             )
-            .expect("insert hp30");
+        });
     }
 
     /// A read-only session reads the day index beside the instance that owns
@@ -844,17 +883,20 @@ mod tests {
     fn an_archived_day_without_values_is_not_requested_again() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         let archived = day(2026, 7, 20);
-        store
-            .insert_or_replace_kp_day(archived, "host", Utc::now(), &KpSeries { samples: vec![] })
-            .expect("insert kp");
-        store
-            .insert_or_replace_hp30_day(
+        archive_day(&store, archived, |archive| {
+            archive.insert_or_replace_kp_day(
+                archived,
+                "host",
+                Utc::now(),
+                &KpSeries { samples: vec![] },
+            )?;
+            archive.insert_or_replace_hp30_day(
                 archived,
                 "host",
                 Utc::now(),
                 &Hp30Series { samples: vec![] },
             )
-            .expect("insert hp30");
+        });
 
         scheduler.request_days_for(TimeRange::new(at(2026, 7, 20, 8), at(2026, 7, 20, 17)));
         assert_eq!(scheduler.days.queued(), 0);
@@ -866,17 +908,20 @@ mod tests {
     fn a_day_archived_from_nowcast_values_is_requested_again() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         let archived = day(2026, 7, 20);
-        store
-            .insert_or_replace_kp_day(archived, "host", Utc::now(), &kp_day(KpStatus::Nowcast))
-            .expect("insert kp");
-        store
-            .insert_or_replace_hp30_day(
+        archive_day(&store, archived, |archive| {
+            archive.insert_or_replace_kp_day(
+                archived,
+                "host",
+                Utc::now(),
+                &kp_day(KpStatus::Nowcast),
+            )?;
+            archive.insert_or_replace_hp30_day(
                 archived,
                 "host",
                 Utc::now(),
                 &Hp30Series { samples: vec![] },
             )
-            .expect("insert hp30");
+        });
 
         scheduler.request_days_for(TimeRange::new(at(2026, 7, 20, 8), at(2026, 7, 20, 17)));
         assert!(
@@ -902,14 +947,14 @@ mod tests {
     #[test]
     fn a_day_missing_one_index_is_requested_again() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        store
-            .insert_or_replace_kp_day(
+        archive_day(&store, day(2026, 7, 20), |archive| {
+            archive.insert_or_replace_kp_day(
                 day(2026, 7, 20),
                 "host",
                 Utc::now(),
                 &kp_day(KpStatus::Definitive),
             )
-            .expect("insert kp");
+        });
 
         scheduler.request_days_for(TimeRange::new(at(2026, 7, 20, 8), at(2026, 7, 20, 17)));
         assert!(scheduler.days.is_fetching());
@@ -1206,13 +1251,7 @@ mod tests {
         let ingested = day(2026, 7, 20);
         let transport = serving(ONE_PERIOD_OF_BOTH_INDICES);
 
-        let message = ingest(
-            &transport,
-            &store,
-            DEFAULT_BASE_URL,
-            ingested,
-            &PendingWrites::default(),
-        );
+        let message = ingest(&transport, &writable(&store), DEFAULT_BASE_URL, ingested);
 
         assert!(matches!(
             message,
@@ -1224,7 +1263,7 @@ mod tests {
         ));
         assert_eq!(requested_indices(&transport), ["Kp", "Hp30"]);
         for index in [GeomagneticIndex::Kp, GeomagneticIndex::Hp30] {
-            let archived = store.archived_days(index).expect("days");
+            let archived = store.read().archived_days(index).expect("days");
             assert_eq!(
                 archived.first().map(|entry| entry.host.as_str()),
                 Some(DEFAULT_BASE_URL),
@@ -1267,10 +1306,11 @@ mod tests {
 
         let message = ingest(
             &transport,
-            &store,
+            &store
+                .writer(&pending_writes)
+                .expect("an owner session opens the archive writable"),
             DEFAULT_BASE_URL,
             ingested,
-            &pending_writes,
         );
 
         let IndexDayMessage::NotArchived { refusal, .. } = message else {
@@ -1279,7 +1319,7 @@ mod tests {
         assert_eq!(refusal, expected);
         for index in [GeomagneticIndex::Kp, GeomagneticIndex::Hp30] {
             assert!(
-                store.archived_days(index).expect("days").is_empty(),
+                store.read().archived_days(index).expect("days").is_empty(),
                 "{index}"
             );
         }
@@ -1294,13 +1334,7 @@ mod tests {
         let transport =
             serving(r#"{"Kp":[2.667],"datetime":["1970-01-01T00:00:00Z"],"status":["def"]}"#);
 
-        let message = ingest(
-            &transport,
-            &store,
-            DEFAULT_BASE_URL,
-            ingested,
-            &PendingWrites::default(),
-        );
+        let message = ingest(&transport, &writable(&store), DEFAULT_BASE_URL, ingested);
 
         assert!(matches!(
             message,
@@ -1313,6 +1347,7 @@ mod tests {
         assert_eq!(requested_indices(&transport), ["Kp"]);
         assert!(
             store
+                .read()
                 .archived_days(GeomagneticIndex::Hp30)
                 .expect("days")
                 .is_empty()
@@ -1327,13 +1362,7 @@ mod tests {
         let ingested = day(2026, 7, 20);
         let transport = serving(NO_VALUES);
 
-        let message = ingest(
-            &transport,
-            &store,
-            DEFAULT_BASE_URL,
-            ingested,
-            &PendingWrites::default(),
-        );
+        let message = ingest(&transport, &writable(&store), DEFAULT_BASE_URL, ingested);
 
         assert!(matches!(
             message,
@@ -1344,11 +1373,11 @@ mod tests {
             }
         ));
         assert_eq!(
-            store.kp_series(ingested).expect("kp"),
+            store.read().kp_series(ingested).expect("kp"),
             Some(KpSeries { samples: vec![] })
         );
         assert_eq!(
-            store.hp30_series(ingested).expect("hp30"),
+            store.read().hp30_series(ingested).expect("hp30"),
             Some(Hp30Series { samples: vec![] })
         );
     }
@@ -1360,23 +1389,12 @@ mod tests {
         let ingested = day(2026, 7, 20);
         let transport = serving(ONE_PERIOD_OF_BOTH_INDICES);
 
-        ingest(
-            &transport,
-            &store,
-            DEFAULT_BASE_URL,
-            ingested,
-            &PendingWrites::default(),
-        );
-        ingest(
-            &transport,
-            &store,
-            DEFAULT_BASE_URL,
-            ingested,
-            &PendingWrites::default(),
-        );
+        ingest(&transport, &writable(&store), DEFAULT_BASE_URL, ingested);
+        ingest(&transport, &writable(&store), DEFAULT_BASE_URL, ingested);
 
         assert_eq!(
             store
+                .read()
                 .kp_series(ingested)
                 .expect("kp")
                 .map(|series| series.samples.len()),
@@ -1397,16 +1415,15 @@ mod tests {
 
         let message = ingest(
             &transport,
-            &store,
+            &writable(&store),
             DEFAULT_BASE_URL,
             day(2026, 7, 20),
-            &PendingWrites::default(),
         );
 
         assert!(matches!(message, IndexDayMessage::Failed { .. }));
         for index in [GeomagneticIndex::Kp, GeomagneticIndex::Hp30] {
             assert!(
-                store.archived_days(index).expect("days").is_empty(),
+                store.read().archived_days(index).expect("days").is_empty(),
                 "{index}"
             );
         }
@@ -1445,10 +1462,10 @@ mod tests {
 
     /// The first two Hp30 periods and the first Kp period of `day`, archived
     /// as the scheduler's own ingest leaves them.
-    fn archive_first_periods_of(store: &SolarStore, day: NaiveDate) {
+    fn archive_first_periods_of(store: &GeomagneticIndexArchive, day: NaiveDate) {
         let midnight = day.and_time(chrono::NaiveTime::MIN).and_utc();
-        store
-            .insert_or_replace_hp30_day(
+        archive_day(store, day, |archive| {
+            archive.insert_or_replace_hp30_day(
                 day,
                 "host",
                 Utc::now(),
@@ -1458,10 +1475,8 @@ mod tests {
                         hp30_sample(midnight + chrono::TimeDelta::minutes(30), 6.333),
                     ],
                 },
-            )
-            .expect("insert hp30");
-        store
-            .insert_or_replace_kp_day(
+            )?;
+            archive.insert_or_replace_kp_day(
                 day,
                 "host",
                 Utc::now(),
@@ -1469,7 +1484,7 @@ mod tests {
                     samples: vec![kp_sample(midnight, 5.0)],
                 },
             )
-            .expect("insert kp");
+        });
     }
 
     /// The value of the period a fix falls in holds for the whole period, so
@@ -1523,8 +1538,8 @@ mod tests {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         let archived = day(1970, 1, 1);
         let midnight = archived.and_time(chrono::NaiveTime::MIN).and_utc();
-        store
-            .insert_or_replace_kp_day(
+        archive_day(&store, archived, |archive| {
+            archive.insert_or_replace_kp_day(
                 archived,
                 "host",
                 Utc::now(),
@@ -1532,7 +1547,7 @@ mod tests {
                     samples: vec![kp_sample(midnight, 2.667)],
                 },
             )
-            .expect("insert kp");
+        });
         scheduler.archived_days.insert(archived);
         let files = loaded_files_of(track_over(midnight, 2, 30));
 
@@ -1664,8 +1679,8 @@ mod tests {
             Some(5.0)
         );
 
-        store
-            .insert_or_replace_kp_day(
+        archive_day(&store, archived, |archive| {
+            archive.insert_or_replace_kp_day(
                 archived,
                 "host",
                 Utc::now(),
@@ -1673,7 +1688,7 @@ mod tests {
                     samples: vec![kp_sample(at(2026, 7, 20, 0), 7.667)],
                 },
             )
-            .expect("insert kp");
+        });
         scheduler
             .tx
             .send(IndexDayMessage::Stored {
@@ -1703,10 +1718,9 @@ mod tests {
 
         let message = ingest(
             &transport,
-            &store,
+            &writable(&store),
             DEFAULT_BASE_URL,
             day(2026, 7, 20),
-            &PendingWrites::default(),
         );
 
         assert!(
@@ -1715,6 +1729,7 @@ mod tests {
         );
         assert!(
             store
+                .read()
                 .archived_days(GeomagneticIndex::Kp)
                 .expect("days")
                 .is_empty()

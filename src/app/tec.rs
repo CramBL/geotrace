@@ -27,7 +27,9 @@ use gt_ionex::text;
 use gt_ionex::{IonexProduct, calendar, transport};
 use gt_map::{TecHeatmapSnapshot, TecLayer};
 use gt_pending_writes::{PendingWrites, WriteRefusal};
-use gt_store::{ArchiveUsage, IonexStore, IonexStoreError, ReadOnlyIonexStore, TecMapArchive};
+use gt_store::{
+    ArchiveUsage, IonexStore, IonexStoreError, ReadOnlyIonexStore, TecMapArchive, WritableArchive,
+};
 use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{ArcIdentity, TecContextSample, TecPoint, TecSeries};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -256,10 +258,11 @@ impl TecMapScheduler {
         self.store.is_some()
     }
 
-    /// The archive to delete days from, for the settings page. [`None`] in a
-    /// read-only session, where the delete controls are grayed.
-    pub fn writable_archive(&self) -> Option<Arc<IonexStore>> {
-        self.store.as_ref()?.writer()
+    /// The archive to write to, for the settings page's delete and for the
+    /// fetch workers. [`None`] in a read-only session, where the delete
+    /// controls are grayed.
+    pub fn writable_archive(&self) -> Option<WritableArchive<IonexStore>> {
+        self.store.as_ref()?.writer(&self.pending_writes)
     }
 
     /// What the archive holds, as the environment storage rows show it.
@@ -555,7 +558,7 @@ impl TecMapScheduler {
     }
 
     fn start_next(&mut self) {
-        let Some(store) = self.writable_archive() else {
+        let Some(archive) = self.writable_archive() else {
             return;
         };
         if self.pending_writes.refusal().is_some() {
@@ -565,23 +568,26 @@ impl TecMapScheduler {
             return;
         };
         let transport = self.transport();
-        self.spawn_fetch(transport, store, day);
+        self.spawn_fetch(transport, archive, day);
     }
 
-    fn spawn_fetch(&self, transport: Arc<Connection>, store: Arc<IonexStore>, day: NaiveDate) {
+    fn spawn_fetch(
+        &self,
+        transport: Arc<Connection>,
+        archive: WritableArchive<IonexStore>,
+        day: NaiveDate,
+    ) {
         let ctx = self.ctx.clone();
         let tx = self.tx.clone();
         let mirrors = self.mirrors.clone();
         let earthdata_token = self.earthdata_token.clone();
-        let pending_writes = self.pending_writes.clone();
         background_thread::spawn_or_panic(format!("tec-{day}"), move || {
             let message = ingest(
                 transport.as_ref(),
-                &store,
+                &archive,
                 &mirrors,
                 earthdata_token.as_ref(),
                 day,
-                &pending_writes,
             );
             tx.send(message).ok();
             ctx.request_repaint();
@@ -694,11 +700,10 @@ fn archived_days_of(store: &ReadOnlyIonexStore) -> Result<BTreeSet<NaiveDate>, I
 /// nothing is known about it, so a later session requests it again.
 fn ingest(
     transport: &impl Transport<Vec<u8>>,
-    store: &IonexStore,
+    archive: &WritableArchive<IonexStore>,
     mirrors: &MirrorList,
     earthdata_token: Option<&SecretToken>,
     day: NaiveDate,
-    pending_writes: &PendingWrites,
 ) -> MapDayMessage {
     let today = Utc::now().date_naive();
     let (mirror, product, maps, skipped) =
@@ -723,25 +728,30 @@ fn ingest(
             }
         };
 
-    let _write = match EnvironmentArchive::IonosphericTec.try_begin_day_insert(pending_writes, day)
-    {
-        Ok(write) => write,
-        Err(refusal) => return MapDayMessage::NotArchived { day, refusal },
-    };
-    if let Err(err) = store.insert_or_replace_day(day, mirror.as_ref(), Utc::now(), product, &maps)
-    {
-        return MapDayMessage::Failed {
-            day,
-            detail: err.to_string(),
-        };
-    }
-    MapDayMessage::Stored {
-        day,
-        mirror,
-        product,
-        map_count: maps.maps().len(),
-        skipped,
-    }
+    archive
+        .write(
+            EnvironmentArchive::IonosphericTec.day_insert_registration(day),
+            |store| match store.insert_or_replace_day(
+                day,
+                mirror.as_ref(),
+                Utc::now(),
+                product,
+                &maps,
+            ) {
+                Ok(()) => MapDayMessage::Stored {
+                    day,
+                    mirror,
+                    product,
+                    map_count: maps.maps().len(),
+                    skipped,
+                },
+                Err(err) => MapDayMessage::Failed {
+                    day,
+                    detail: err.to_string(),
+                },
+            },
+        )
+        .unwrap_or_else(|refusal| MapDayMessage::NotArchived { day, refusal })
 }
 
 #[cfg(test)]
@@ -761,7 +771,7 @@ mod tests {
     use gt_ionex::quiet_time::IonosphericStormGrade;
     use gt_ionex::{DEFAULT_BASE_URL, MirrorLayout};
     use gt_pending_writes::WriteAccess;
-    use gt_store::{ArchiveHandle, Store};
+    use gt_store::Store;
     use gt_test_utils::{ScriptedTransport, UrlPrefixAnswers, ionex_fixtures, pending_writes};
 
     use super::*;
@@ -820,22 +830,42 @@ mod tests {
         encoder.finish().expect("finish")
     }
 
-    fn archive() -> (TempDir, Arc<IonexStore>) {
+    fn archive() -> (TempDir, TecMapArchive) {
         let dir = tempfile::tempdir().expect("temp dir");
-        let store = Store::open_in(dir.path())
-            .open_tec_maps()
-            .expect("archive")
-            .writer()
-            .expect("an owner session opens the archive writable");
+        let store = Store::open_in(dir.path()).open_tec_maps().expect("archive");
         (dir, store)
     }
 
+    /// The archive's writable side, registering its writes in a registry that
+    /// takes them.
+    fn writable(store: &TecMapArchive) -> WritableArchive<IonexStore> {
+        store
+            .writer(&PendingWrites::default())
+            .expect("an owner session opens the archive writable")
+    }
+
+    /// Write to the archive as the fetch worker does, with the write
+    /// registered.
+    fn write_to_archive(
+        store: &TecMapArchive,
+        day: NaiveDate,
+        write: impl FnOnce(&IonexStore) -> Result<(), IonexStoreError>,
+    ) {
+        writable(store)
+            .write(
+                EnvironmentArchive::IonosphericTec.day_insert_registration(day),
+                write,
+            )
+            .expect("the registry takes the write")
+            .expect("insert");
+    }
+
     /// Archive-backed, and wired so no request leaves the machine.
-    fn scheduler_with_archive() -> (TempDir, Arc<IonexStore>, TecMapScheduler) {
+    fn scheduler_with_archive() -> (TempDir, TecMapArchive, TecMapScheduler) {
         let (dir, store) = archive();
         let scheduler = TecMapScheduler::new(
             Context::default(),
-            Some(ArchiveHandle::Owner(Arc::clone(&store))),
+            Some(store.clone()),
             MirrorList::default(),
             None,
             TransportSource::Offline,
@@ -873,11 +903,11 @@ mod tests {
 
     /// Archive `archived` as a whole day from `product`, the way a finished
     /// ingest leaves it.
-    fn archive_day(store: &IonexStore, archived: NaiveDate, product: IonexProduct) {
+    fn archive_day(store: &TecMapArchive, archived: NaiveDate, product: IonexProduct) {
         let maps = gt_ionex::parse::global_ionosphere_maps(&published_file()).expect("parse");
-        store
-            .insert_or_replace_day(archived, "host", Utc::now(), product, &maps)
-            .expect("insert");
+        write_to_archive(store, archived, |archive| {
+            archive.insert_or_replace_day(archived, "host", Utc::now(), product, &maps)
+        });
     }
 
     /// A read-only session reads the day index beside the instance that owns
@@ -1121,11 +1151,10 @@ mod tests {
 
         let message = ingest(
             &transport,
-            &store,
+            &writable(&store),
             &MirrorList::single(gt_ionex::Mirror::publishing(MirrorLayout::Cddis)),
             None,
             day(2024, 5, 10),
-            &PendingWrites::default(),
         );
 
         match message {
@@ -1138,7 +1167,7 @@ mod tests {
             }
         }
         assert!(transport.requested_urls().is_empty());
-        assert!(store.archived_days().expect("days").is_empty());
+        assert!(store.read().archived_days().expect("days").is_empty());
     }
 
     #[test]
@@ -1187,11 +1216,10 @@ mod tests {
 
         let message = ingest(
             &transport,
-            &store,
+            &writable(&store),
             &publishing_host(),
             None,
             ingested,
-            &PendingWrites::default(),
         );
 
         assert!(matches!(
@@ -1206,7 +1234,7 @@ mod tests {
             transport.requested_urls(),
             ["https://sideshow.jpl.nasa.gov/pub/iono_daily/IONEX_final/y2024/JPLG1310.24I.gz"]
         );
-        let archived = store.archived_days().expect("days");
+        let archived = store.read().archived_days().expect("days");
         assert_eq!(
             archived.first().map(|entry| entry.host.as_str()),
             Some(DEFAULT_BASE_URL)
@@ -1230,14 +1258,14 @@ mod tests {
 
         ingest(
             &transport,
-            &store,
+            &writable(&store),
             &publishing_host(),
             None,
             ingested,
-            &PendingWrites::default(),
         );
 
         let maps = store
+            .read()
             .day_maps(ingested)
             .expect("read")
             .expect("the day is archived");
@@ -1265,22 +1293,20 @@ mod tests {
 
         ingest(
             &transport,
-            &store,
+            &writable(&store),
             &publishing_host(),
             None,
             ingested,
-            &PendingWrites::default(),
         );
         ingest(
             &transport,
-            &store,
+            &writable(&store),
             &publishing_host(),
             None,
             ingested,
-            &PendingWrites::default(),
         );
 
-        assert_eq!(store.archived_days().expect("days").len(), 1);
+        assert_eq!(store.read().archived_days().expect("days").len(), 1);
     }
 
     /// A day queued while the registry refuses writes stays queued: no worker
@@ -1321,18 +1347,19 @@ mod tests {
 
         let message = ingest(
             &transport,
-            &store,
+            &store
+                .writer(&pending_writes)
+                .expect("an owner session opens the archive writable"),
             &publishing_host(),
             None,
             day(2024, 5, 10),
-            &pending_writes,
         );
 
         let MapDayMessage::NotArchived { refusal, .. } = message else {
             panic!("the day was archived where the insert is refused");
         };
         assert_eq!(refusal, expected);
-        assert!(store.archived_days().expect("days").is_empty());
+        assert!(store.read().archived_days().expect("days").is_empty());
     }
 
     #[rstest]
@@ -1346,15 +1373,14 @@ mod tests {
 
         let message = ingest(
             &transport,
-            &store,
+            &writable(&store),
             &publishing_host(),
             None,
             day(2024, 5, 10),
-            &PendingWrites::default(),
         );
 
         assert!(matches!(message, MapDayMessage::Failed { .. }));
-        assert!(store.archived_days().expect("days").is_empty());
+        assert!(store.read().archived_days().expect("days").is_empty());
     }
 
     #[test]
@@ -1375,11 +1401,10 @@ mod tests {
 
         let message = ingest(
             &transport,
-            &store,
+            &writable(&store),
             &mirrors(&["https://first.example", "https://second.example"]),
             None,
             ingested,
-            &PendingWrites::default(),
         );
 
         match message {
@@ -1396,6 +1421,7 @@ mod tests {
         }
         assert_eq!(
             store
+                .read()
                 .archived_days()
                 .expect("days")
                 .first()
@@ -1415,11 +1441,10 @@ mod tests {
 
         let message = ingest(
             &transport,
-            &store,
+            &writable(&store),
             &mirrors(&["https://first.example", "https://second.example"]),
             None,
             day(2024, 5, 10),
-            &PendingWrites::default(),
         );
 
         match message {
@@ -1649,16 +1674,16 @@ mod tests {
 
     /// Archive `archived` with the last two maps a published day carries: one
     /// at 22:00 and the one dated to the next day's midnight.
-    fn archive_last_maps_of(store: &IonexStore, archived: NaiveDate) {
-        store
-            .insert_or_replace_day(
+    fn archive_last_maps_of(store: &TecMapArchive, archived: NaiveDate) {
+        write_to_archive(store, archived, |archive| {
+            archive.insert_or_replace_day(
                 archived,
                 "host",
                 Utc::now(),
                 IonexProduct::Final,
                 &ionex_fixtures::uniform_maps(archived, &[(22, 10.0), (24, 20.0)]),
             )
-            .expect("insert");
+        });
     }
 
     /// A fix takes the value interpolated at its own time, and one after the
@@ -1702,13 +1727,13 @@ mod tests {
     /// Archive one day of `maps` and record it as archived in the scheduler.
     fn archive_maps(
         scheduler: &mut TecMapScheduler,
-        store: &IonexStore,
+        store: &TecMapArchive,
         archived: NaiveDate,
         maps: &GlobalIonosphereMaps,
     ) {
-        store
-            .insert_or_replace_day(archived, "host", Utc::now(), IonexProduct::Final, maps)
-            .expect("insert");
+        write_to_archive(store, archived, |archive| {
+            archive.insert_or_replace_day(archived, "host", Utc::now(), IonexProduct::Final, maps)
+        });
         scheduler.archived_days.insert(archived);
     }
 
@@ -1735,7 +1760,7 @@ mod tests {
     /// itself rising at `recorded_scale` and every background day at one.
     fn archive_whole_window(
         scheduler: &mut TecMapScheduler,
-        store: &IonexStore,
+        store: &TecMapArchive,
         recorded_scale: f64,
     ) {
         let recorded = recorded_day();
@@ -1866,15 +1891,15 @@ mod tests {
         );
 
         let recorded = recorded_day();
-        store
-            .insert_or_replace_day(
+        write_to_archive(&store, recorded, |archive| {
+            archive.insert_or_replace_day(
                 recorded,
                 "host",
                 Utc::now(),
                 IonexProduct::Final,
                 &rising_maps(recorded, 2, 3.0),
             )
-            .expect("insert");
+        });
         scheduler
             .tx
             .send(MapDayMessage::Stored {
@@ -1970,15 +1995,15 @@ mod tests {
     fn following_a_fix_on_another_day_reads_that_days_maps() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         for (archived, tecu) in [(day(2024, 5, 10), 10.0), (day(2024, 5, 11), 40.0)] {
-            store
-                .insert_or_replace_day(
+            write_to_archive(&store, archived, |archive| {
+                archive.insert_or_replace_day(
                     archived,
                     "host",
                     Utc::now(),
                     IonexProduct::Final,
                     &ionex_fixtures::uniform_maps(archived, &[(0, tecu), (24, tecu)]),
                 )
-                .expect("insert");
+            });
             scheduler.archived_days.insert(archived);
         }
         scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 12), at(2024, 5, 10, 13)));
@@ -2031,28 +2056,28 @@ mod tests {
     fn archiving_a_day_again_redraws_it() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         let archived = day(2024, 5, 10);
-        store
-            .insert_or_replace_day(
+        write_to_archive(&store, archived, |archive| {
+            archive.insert_or_replace_day(
                 archived,
                 "host",
                 Utc::now(),
                 IonexProduct::Rapid,
                 &ionex_fixtures::uniform_maps(archived, &[(0, 10.0), (24, 10.0)]),
             )
-            .expect("insert");
+        });
         scheduler.archived_days.insert(archived);
         scheduler.follow_instant(Some(at(2024, 5, 10, 12)));
         assert!(scheduler.overlay_layer().snapshot.is_some());
 
-        store
-            .insert_or_replace_day(
+        write_to_archive(&store, archived, |archive| {
+            archive.insert_or_replace_day(
                 archived,
                 "host",
                 Utc::now(),
                 IonexProduct::Final,
                 &ionex_fixtures::uniform_maps(archived, &[(0, 55.0), (24, 55.0)]),
             )
-            .expect("insert");
+        });
         scheduler
             .tx
             .send(MapDayMessage::Stored {
@@ -2144,15 +2169,15 @@ mod tests {
     fn the_context_line_samples_every_archived_epoch() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         let archived = day(2024, 5, 10);
-        store
-            .insert_or_replace_day(
+        write_to_archive(&store, archived, |archive| {
+            archive.insert_or_replace_day(
                 archived,
                 "host",
                 Utc::now(),
                 IonexProduct::Final,
                 &ionex_fixtures::uniform_maps(archived, &[(0, 5.0), (2, 10.0), (4, 20.0)]),
             )
-            .expect("insert");
+        });
         scheduler.archived_days.insert(archived);
         let timeline = timeline_of(track_over(at(2024, 5, 10, 22), 4, 1800));
 
@@ -2177,15 +2202,15 @@ mod tests {
     fn an_unarchived_day_breaks_the_context_line() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         for archived in [day(2024, 5, 10), day(2024, 5, 12)] {
-            store
-                .insert_or_replace_day(
+            write_to_archive(&store, archived, |archive| {
+                archive.insert_or_replace_day(
                     archived,
                     "host",
                     Utc::now(),
                     IonexProduct::Final,
                     &ionex_fixtures::uniform_maps(archived, &[(0, 5.0)]),
                 )
-                .expect("insert");
+            });
             scheduler.archived_days.insert(archived);
         }
         let timeline = timeline_of(track_over(at(2024, 5, 10, 22), 4, 1800));

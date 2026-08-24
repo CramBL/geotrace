@@ -93,6 +93,13 @@ impl WriteKind {
     }
 }
 
+/// The label and kind one write registers under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteRegistration {
+    pub label: String,
+    pub kind: WriteKind,
+}
+
 /// One running write, as the shutdown window shows it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingWriteStatus {
