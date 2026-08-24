@@ -23,13 +23,13 @@ use egui::{RichText, Window};
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use gt_instance_lock::TakeOverRecord;
 use gt_store::{
-    DayArchiveError, InterruptedDelete, InterruptedDeleteRecovery, ReadOnlyDayArchive as _,
-    ReadOnlyFlareStore, ReadOnlyIonexStore, ReadOnlyJamStore, ReadOnlySolarStore, Store,
+    DayArchiveError, EnvironmentArchive, InterruptedDelete, InterruptedDeleteRecovery,
+    ReadOnlyDayArchive as _, ReadOnlyFlareStore, ReadOnlyIonexStore, ReadOnlyJamStore,
+    ReadOnlySolarStore, Store,
 };
 use gt_ui_theme::warning_amber;
 use strum::IntoEnumIterator as _;
 
-use super::environment_storage::EnvironmentArchive;
 use super::storage::StorageOpen;
 use super::{App, modals, storage};
 
@@ -162,7 +162,11 @@ pub(in crate::app) fn inspect_archives_under(
         .filter_map(|archive| {
             Some((
                 archive,
-                archive.interrupted_delete_finding(&store, previous_take_over)?,
+                InterruptedDeleteFinding::read_from_the_archive(
+                    archive,
+                    &store,
+                    previous_take_over,
+                )?,
             ))
         })
         .collect();
@@ -172,79 +176,67 @@ pub(in crate::app) fn inspect_archives_under(
     }
 }
 
-impl EnvironmentArchive {
-    /// What this archive holds for the user to answer, or [`None`] where the
+impl InterruptedDeleteFinding {
+    /// What `archive` holds for the user to answer, or [`None`] where the
     /// open needs no answer.
     ///
     /// A failure that is neither an interrupted delete nor another process
     /// holding the file is left to the open to report: it fails there the
     /// same way it does on the normal path.
-    fn interrupted_delete_finding(
-        self,
+    fn read_from_the_archive(
+        archive: EnvironmentArchive,
         store: &Store,
         previous_take_over: Option<TakeOverRecord>,
-    ) -> Option<InterruptedDeleteFinding> {
-        let path = self.path_in(store);
+    ) -> Option<Self> {
+        let path = archive.path_in(store);
         let take_over = previous_take_over.and_then(|record| {
             TakeOverAfterTheArchiveWasLastWritten::of_the_archive_at(&path, record)
         });
-        match self {
-            Self::AircraftInterference => {
-                self.finding_of(ReadOnlyJamStore::interrupted_delete_at(&path), take_over)
-            }
-            Self::GeomagneticIndices => {
-                self.finding_of(ReadOnlySolarStore::interrupted_delete_at(&path), take_over)
-            }
-            Self::IonosphericTec => {
-                self.finding_of(ReadOnlyIonexStore::interrupted_delete_at(&path), take_over)
-            }
-            Self::SolarFlares => {
-                self.finding_of(ReadOnlyFlareStore::interrupted_delete_at(&path), take_over)
-            }
+        match archive {
+            EnvironmentArchive::AircraftInterference => Self::from_inspection(
+                archive,
+                ReadOnlyJamStore::interrupted_delete_at(&path),
+                take_over,
+            ),
+            EnvironmentArchive::GeomagneticIndices => Self::from_inspection(
+                archive,
+                ReadOnlySolarStore::interrupted_delete_at(&path),
+                take_over,
+            ),
+            EnvironmentArchive::IonosphericTec => Self::from_inspection(
+                archive,
+                ReadOnlyIonexStore::interrupted_delete_at(&path),
+                take_over,
+            ),
+            EnvironmentArchive::SolarFlares => Self::from_inspection(
+                archive,
+                ReadOnlyFlareStore::interrupted_delete_at(&path),
+                take_over,
+            ),
         }
     }
 
-    fn finding_of<E: DayArchiveError>(
-        self,
+    fn from_inspection<E: DayArchiveError>(
+        archive: EnvironmentArchive,
         inspected: Result<Option<InterruptedDelete>, E>,
         take_over: Option<TakeOverAfterTheArchiveWasLastWritten>,
-    ) -> Option<InterruptedDeleteFinding> {
+    ) -> Option<Self> {
         match inspected {
             Ok(None) => None,
-            Ok(Some(interrupted)) => Some(InterruptedDeleteFinding::Interrupted {
+            Ok(Some(interrupted)) => Some(Self::Interrupted {
                 interrupted,
                 take_over,
             }),
-            Err(err) if err.is_held_by_another_process() => {
-                Some(InterruptedDeleteFinding::HeldByTheOtherInstance)
-            }
+            Err(err) if err.is_held_by_another_process() => Some(Self::HeldByTheOtherInstance),
             Err(err) => {
                 log::debug!(
                     "Reading the {} archive for an interrupted delete failed, which the open \
                      reports: {err}",
-                    self.label_in_sentence()
+                    archive.label_in_sentence()
                 );
                 None
             }
         }
-    }
-
-    /// What a read-only session does with this archive: it reads one that is
-    /// already there, and creates none that is not.
-    pub(in crate::app) fn read_only_open_plan(self, store: &Store) -> ArchiveOpenPlan {
-        if self.path_in(store).exists() {
-            ArchiveOpenPlan::OpenReadOnly
-        } else {
-            ArchiveOpenPlan::LeaveClosed(ArchiveUnavailable::MissingInAReadOnlySession)
-        }
-    }
-
-    fn interrupted_delete_prompt_title(self) -> String {
-        format!("Recover the {} archive?", self.label_in_sentence())
-    }
-
-    fn held_by_the_other_instance_title(self) -> String {
-        format!("The {} archive is in use", self.label_in_sentence())
     }
 }
 
@@ -323,6 +315,21 @@ pub(in crate::app) enum ArchiveOpenPlan {
     OpenReadOnly,
     /// Left closed for this session, for the reason the user was given.
     LeaveClosed(ArchiveUnavailable),
+}
+
+impl ArchiveOpenPlan {
+    /// What a read-only session does with `archive`: it reads one that is
+    /// already there, and creates none that is not.
+    pub(in crate::app) fn in_a_read_only_session(
+        archive: EnvironmentArchive,
+        store: &Store,
+    ) -> Self {
+        if archive.path_in(store).exists() {
+            Self::OpenReadOnly
+        } else {
+            Self::LeaveClosed(ArchiveUnavailable::MissingInAReadOnlySession)
+        }
+    }
 }
 
 /// How an open answers the interrupted deletes it meets.
@@ -474,7 +481,8 @@ fn show_interrupted_delete_prompt(
         .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         .then_some(InterruptedDeleteAnswer::LeaveUnrecovered);
 
-    Window::new(archive.interrupted_delete_prompt_title())
+    let title = format!("Recover the {} archive?", archive.label_in_sentence());
+    Window::new(title)
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -542,7 +550,8 @@ fn show_archive_held_by_the_other_instance(
         .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         .then_some(InterruptedDeleteAnswer::LeaveToTheOtherInstance);
 
-    Window::new(archive.held_by_the_other_instance_title())
+    let title = format!("The {} archive is in use", archive.label_in_sentence());
+    Window::new(title)
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)

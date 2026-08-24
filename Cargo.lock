@@ -3027,11 +3027,14 @@ dependencies = [
 name = "gt-store"
 version = "0.12.0"
 dependencies = [
+ "chrono",
  "dirs",
+ "gt-flare",
  "gt-flare-store",
  "gt-hdf5-archive",
  "gt-history",
  "gt-ionex-store",
+ "gt-jam",
  "gt-jam-store",
  "gt-pending-writes",
  "gt-solar-store",
@@ -3039,6 +3042,7 @@ dependencies = [
  "log",
  "parking_lot",
  "rstest",
+ "strum",
  "tempfile",
  "test-log",
  "thiserror 2.0.20",

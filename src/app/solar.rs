@@ -23,8 +23,8 @@ use gt_solar::activity::GeomagneticActivity;
 use gt_solar::series::{Hp30Series, IndexSample, IndexSeries, KpSeries};
 use gt_solar::{GeomagneticIndex, TimeWindow, calendar, transport, wire};
 use gt_store::{
-    ArchiveUsage, DayArchiveError as _, GeomagneticIndexArchive, ReadOnlySolarStore, SolarStore,
-    SolarStoreError, WritableArchive,
+    ArchiveUsage, DayArchiveError as _, EnvironmentArchive, GeomagneticIndexArchive,
+    ReadOnlySolarStore, SolarStore, SolarStoreError, WritableArchive,
 };
 use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{
@@ -37,7 +37,7 @@ use super::background_thread;
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
 use super::day_index_read_retry::DayIndexReadRetry;
-use super::environment_storage::{EnvironmentArchive, PrunedDays};
+use super::environment_storage::PrunedDays;
 use super::track_day_values::TrackValuesByArchivedDays;
 
 /// What one day's fetch produced.

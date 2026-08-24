@@ -11,9 +11,7 @@
 use std::time::{Duration, Instant};
 
 use egui::Context;
-use gt_store::DayArchiveError;
-
-use super::environment_storage::EnvironmentArchive;
+use gt_store::{DayArchiveError, EnvironmentArchive};
 
 /// Interval before the first re-read, and the interval every further one
 /// doubles from.

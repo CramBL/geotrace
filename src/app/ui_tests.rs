@@ -34,7 +34,7 @@ use gt_jam_store::schema;
 use gt_log_view::LoadedLog;
 use gt_pending_writes::{PendingWrites, WriteAccess, WriteKind};
 use gt_store::{
-    FlareStore, HistoryDatabase as _, InterruptedDelete, IonexStore, JamStore,
+    EnvironmentArchive, FlareStore, HistoryDatabase as _, InterruptedDelete, IonexStore, JamStore,
     ReadOnlyDayArchive as _, ReadOnlyHistoryDatabase as _, ReadOnlyJamStore, Recordings,
     RecordingsHandle, SolarStore,
 };
@@ -56,7 +56,7 @@ use super::archive_recovery::{
 };
 use super::backfill_ui::DOWNLOAD_HISTORY_LABEL;
 use super::environment_storage;
-use super::environment_storage::{EnvironmentArchive, PrunedDays};
+use super::environment_storage::PrunedDays;
 use super::environment_storage_ui::{
     AUTO_PRUNE_LABEL as ENVIRONMENT_AUTO_PRUNE_LABEL, DELETE_ALL_LABEL, DeleteBlocker,
     PRUNE_BUTTON_LABEL,

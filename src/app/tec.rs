@@ -28,7 +28,8 @@ use gt_ionex::{IonexProduct, calendar, transport};
 use gt_map::{TecHeatmapSnapshot, TecLayer};
 use gt_pending_writes::{PendingWrites, WriteRefusal};
 use gt_store::{
-    ArchiveUsage, IonexStore, IonexStoreError, ReadOnlyIonexStore, TecMapArchive, WritableArchive,
+    ArchiveUsage, EnvironmentArchive, IonexStore, IonexStoreError, ReadOnlyIonexStore,
+    TecMapArchive, WritableArchive,
 };
 use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{ArcIdentity, TecContextSample, TecPoint, TecSeries};
@@ -39,7 +40,7 @@ use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnig
 use super::day_fetch_queue::DayFetchQueue;
 use super::day_fetch_status::ArchivedDayCount;
 use super::day_index_read_retry::DayIndexReadRetry;
-use super::environment_storage::{EnvironmentArchive, PrunedDays};
+use super::environment_storage::PrunedDays;
 use super::fix_positions::FixPositionTimeline;
 use super::tec_quiet_time::QuietTimeDeviationCache;
 use super::track_day_values::TrackValuesByArchivedDays;

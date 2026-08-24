@@ -1,9 +1,10 @@
 //! Settings for the Kp and Hp30 geomagnetic index downloads.
 
+use gt_store::EnvironmentArchive;
+
 use crate::app::App;
 use crate::app::backfill_ui::{self, BackfillAction};
 use crate::app::day_fetch_status::{self, FetchRowHoverText};
-use crate::app::environment_storage::EnvironmentArchive;
 use crate::app::settings_ui::SettingsPage;
 use crate::app::settings_ui::source_page::{self, ReferenceLink, SourcePageSlots};
 

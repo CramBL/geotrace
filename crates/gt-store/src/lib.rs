@@ -40,7 +40,7 @@ mod recordings_handle;
 mod writable_archive;
 
 pub use archive_handle::ArchiveHandle;
-pub use day_archive::{DayArchiveError, StoredDayArchive};
+pub use day_archive::{DayArchiveError, EnvironmentArchive, StoredDayArchive};
 pub use log_attachments::{
     AttachedLog, LogAttachmentError, LogAttachments, LogToAttach, ReadOnlyLogAttachments,
 };
@@ -135,7 +135,7 @@ impl Store {
 
     /// Path of `A`'s file under [`Self::root`].
     pub fn archive_path<A: StoredDayArchive>(&self) -> PathBuf {
-        self.root.join(A::FILE_NAME)
+        A::ARCHIVE.path_in(self)
     }
 
     /// Open the recording history, creating it if it does not exist.
@@ -247,6 +247,40 @@ mod tests {
         }
         let named: BTreeSet<&PathBuf> = paths.iter().collect();
         assert_eq!(named.len(), paths.len());
+    }
+
+    /// A transposed line in the `stored_day_archives!` list would give one
+    /// archive another archive's identity or file name, and still compile.
+    #[test]
+    fn every_archive_type_states_its_own_identity_and_file() {
+        let (dir, store) = store();
+
+        assert_eq!(
+            [
+                (JamStore::ARCHIVE, store.archive_path::<JamStore>()),
+                (SolarStore::ARCHIVE, store.archive_path::<SolarStore>()),
+                (IonexStore::ARCHIVE, store.archive_path::<IonexStore>()),
+                (FlareStore::ARCHIVE, store.archive_path::<FlareStore>()),
+            ],
+            [
+                (
+                    EnvironmentArchive::AircraftInterference,
+                    dir.path().join("jamming.h5")
+                ),
+                (
+                    EnvironmentArchive::GeomagneticIndices,
+                    dir.path().join("geomagnetic.h5")
+                ),
+                (
+                    EnvironmentArchive::IonosphericTec,
+                    dir.path().join("tec.h5")
+                ),
+                (
+                    EnvironmentArchive::SolarFlares,
+                    dir.path().join("solar_flares.h5")
+                ),
+            ]
+        );
     }
 
     /// The store's logs directory and the history database's own derivation
