@@ -3,7 +3,7 @@
 //! visible tracks, and a results area whose matches also draw on the map as
 //! halos.
 
-use egui::{Area, Button, Frame, Grid, RichText, ScrollArea, TextEdit, Window};
+use egui::{Area, Button, Frame, Grid, Label, RichText, ScrollArea, TextEdit, Window};
 use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_phosphor::regular::PUSH_PIN as ICON_PUSH_PIN;
 use egui_phosphor::regular::TRASH as ICON_TRASH;
@@ -1224,10 +1224,13 @@ impl QueryWindow {
             return;
         };
         if results.stale() {
-            ui.label(
-                RichText::new(format!("Data changed since this run {EM_DASH} run again"))
-                    .weak()
-                    .italics(),
+            ui.add(
+                Label::new(
+                    RichText::new(format!("Data changed since this run {EM_DASH} run again"))
+                        .weak()
+                        .italics(),
+                )
+                .selectable(false),
             );
         }
         let mut outputs = ResultsOutputs {
