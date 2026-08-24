@@ -25,6 +25,7 @@
 - **System:** That wait can now be ended with "Take over write access…", after a confirmation naming what the other instance is doing.
 - **System:** After taking over write access, an archive a delete was interrupted in is offered as a choice: recover it and lose its archived days, or leave it alone and without it for the session.
 - **System:** That wait can also be left with "Start read-only", which reads the recordings and archives beside the other GeoTrace so both windows can be open at once. A read-only session is marked in the window's corner, stores, downloads, deletes and saves nothing, and grays every control that would write with the reason. It stays read-only until GeoTrace is restarted.
+- **System:** That wait now says which of an absent, an unreadable and a damaged status file it found for the other GeoTrace, and marks a report that GeoTrace stopped refreshing with how old it is.
 
 ### Changed
 

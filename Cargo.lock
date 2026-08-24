@@ -2644,6 +2644,7 @@ dependencies = [
  "gt-pending-writes",
  "log",
  "parking_lot",
+ "rstest",
  "serde",
  "serde_json",
  "tempfile",

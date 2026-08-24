@@ -15,7 +15,7 @@ use std::mem;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use fd_lock::RwLock;
 use gt_pending_writes::{PendingWriteStatus, PendingWrites, WriteAccess};
@@ -36,6 +36,11 @@ const STATUS_FILE_BEING_WRITTEN_NAME: &str = "instance-status.json.new";
 /// Shortest time between two status writes, well above the interval the
 /// shutdown wait reads the registry at.
 pub const MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES: Duration = Duration::from_millis(500);
+
+/// A status this old counts as [`StatusFreshness::Stale`]: ten status writes
+/// at [`MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES`], five seconds.
+pub const AGE_AT_WHICH_A_STATUS_COUNTS_AS_STALE: Duration =
+    MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES.saturating_mul(10);
 
 /// What the instance holding the data directory is doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,32 +93,107 @@ pub struct InstanceStatus {
     pub state: InstanceState,
     /// The writes still running, listed once the instance is shutting down.
     pub pending_writes: Vec<PendingWriteReport>,
+    /// Seconds since the Unix epoch on the writing instance's clock.
+    /// [`None`] in a status file from a GeoTrace before this field, and
+    /// where the writing clock reads before the epoch.
+    pub written_at: Option<u64>,
+}
+
+/// The age of an [`InstanceStatus`], as the reading clock measures it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusFreshness {
+    /// The status is younger than [`AGE_AT_WHICH_A_STATUS_COUNTS_AS_STALE`].
+    Current,
+    /// The status is `age` old, at or past
+    /// [`AGE_AT_WHICH_A_STATUS_COUNTS_AS_STALE`].
+    Stale { age: Duration },
+    /// The status has no `written_at`.
+    UnknownAge,
+    /// An [`InstanceState::Running`] status, written once when this instance
+    /// takes the mark, and not rewritten until the shutdown begins.
+    NotRefreshedWhileRunning,
 }
 
 impl InstanceStatus {
-    /// The status the instance holding `data_directory` last wrote, or
-    /// [`None`] when there is none to read.
-    pub fn read_from(data_directory: &Path) -> Option<Self> {
+    /// [`Self::freshness_at`] against [`SystemTime::now`].
+    pub fn freshness(&self) -> StatusFreshness {
+        self.freshness_at(SystemTime::now())
+    }
+
+    /// How old this status is against `now`.
+    ///
+    /// Only an [`InstanceState::ShuttingDown`] status is measured:
+    /// [`DataDirectoryLock::report_shutdown_progress`] rewrites it every
+    /// [`MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES`], so its age is how long
+    /// the instance has gone without reporting.
+    ///
+    /// Clock skew never makes a status stale: a `written_at` past `now`
+    /// gives an age of zero.
+    pub fn freshness_at(&self, now: SystemTime) -> StatusFreshness {
+        if self.state == InstanceState::Running {
+            return StatusFreshness::NotRefreshedWhileRunning;
+        }
+        let Some(written_at) = self.written_at else {
+            return StatusFreshness::UnknownAge;
+        };
+        let now = now
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_secs();
+        let age = Duration::from_secs(now.saturating_sub(written_at));
+        if age >= AGE_AT_WHICH_A_STATUS_COUNTS_AS_STALE {
+            StatusFreshness::Stale { age }
+        } else {
+            StatusFreshness::Current
+        }
+    }
+}
+
+/// What a read of [`STATUS_FILE_NAME`] in a data directory found.
+#[derive(Debug, Clone, PartialEq)]
+pub enum InstanceStatusRead {
+    Status(InstanceStatus),
+    Absent,
+    /// `fs::read` failed with something other than
+    /// [`io::ErrorKind::NotFound`], with the error it reported.
+    Unreadable(String),
+    /// `serde_json` rejected the file, with the error it reported.
+    Malformed(String),
+}
+
+impl InstanceStatusRead {
+    /// Reads [`STATUS_FILE_NAME`] in `data_directory`.
+    pub fn read_from(data_directory: &Path) -> Self {
         let path = data_directory.join(STATUS_FILE_NAME);
         let json = match fs::read(&path) {
             Ok(json) => json,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Self::Absent,
             Err(error) => {
                 log::warn!(
                     "Cannot read the instance status file {}: {error}",
                     path.display()
                 );
-                return None;
+                return Self::Unreadable(error.to_string());
             }
         };
-        serde_json::from_slice(&json)
-            .inspect_err(|error| {
+        match serde_json::from_slice(&json) {
+            Ok(status) => Self::Status(status),
+            Err(error) => {
                 log::warn!(
-                    "The instance status file {} is unreadable: {error}",
+                    "The instance status file {} is not a status: {error}",
                     path.display()
                 );
-            })
-            .ok()
+                Self::Malformed(error.to_string())
+            }
+        }
+    }
+
+    /// The status the read parsed, and [`None`] for the three failures.
+    pub fn status(&self) -> Option<&InstanceStatus> {
+        match self {
+            Self::Status(status) => Some(status),
+            Self::Absent | Self::Unreadable(_) | Self::Malformed(_) => None,
+        }
     }
 }
 
@@ -320,13 +400,13 @@ impl DataDirectoryLock {
         self.ownership()
     }
 
-    /// What the instance holding the data directory last wrote about itself,
+    /// A read of the status file of the instance holding the data directory,
     /// and [`None`] unless another instance holds it.
-    pub fn status_of_the_holding_instance(&self) -> Option<InstanceStatus> {
+    pub fn status_of_the_holding_instance(&self) -> Option<InstanceStatusRead> {
         let DataDirectoryMark::HeldByAnotherInstance { directory } = &self.mark else {
             return None;
         };
-        InstanceStatus::read_from(directory)
+        Some(InstanceStatusRead::read_from(directory))
     }
 
     /// Why the lock file could not be opened or locked, and [`None`] unless
@@ -373,6 +453,10 @@ impl DataDirectoryLock {
             process_id: process::id(),
             state,
             pending_writes,
+            written_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .ok()
+                .map(|since_the_epoch| since_the_epoch.as_secs()),
         };
         if let Err(error) = marked.replace_status_file(&status) {
             log::warn!(
@@ -429,7 +513,7 @@ impl SharedDataDirectoryLock {
     }
 
     /// See [`DataDirectoryLock::status_of_the_holding_instance`].
-    pub fn status_of_the_holding_instance(&self) -> Option<InstanceStatus> {
+    pub fn status_of_the_holding_instance(&self) -> Option<InstanceStatusRead> {
         self.0.lock().status_of_the_holding_instance()
     }
 
@@ -498,12 +582,33 @@ mod tests {
     use std::thread;
 
     use gt_pending_writes::WriteKind;
+    use rstest::rstest;
 
     use super::*;
 
     const TEC_COMPACTION: WriteKind = WriteKind::ArchiveCompaction {
         archive: "ionospheric TEC",
     };
+
+    /// The clock the freshness cases read the status against.
+    const READING_CLOCK_SECONDS_SINCE_THE_EPOCH: u64 = 1_700_000_000;
+
+    /// The status the instance holding `directory` wrote, where the read
+    /// found and parsed one.
+    fn status_file_in(directory: &Path) -> Option<InstanceStatus> {
+        InstanceStatusRead::read_from(directory).status().cloned()
+    }
+
+    /// A status file as an instance writes it, with the state and
+    /// `written_at` left to the case.
+    fn status_written_at(state: InstanceState, written_at: Option<u64>) -> InstanceStatus {
+        InstanceStatus {
+            process_id: 4321,
+            state,
+            pending_writes: Vec::new(),
+            written_at,
+        }
+    }
 
     /// The file names in `directory`, sorted.
     fn file_names_in(directory: &Path) -> Vec<String> {
@@ -528,13 +633,13 @@ mod tests {
         let lock = DataDirectoryLock::acquire(Some(directory.path()));
 
         assert!(lock.marks_the_data_directory());
+        let status = status_file_in(directory.path()).expect("the status file");
+        assert_eq!(status.process_id, process::id());
+        assert_eq!(status.state, InstanceState::Running);
+        assert_eq!(status.pending_writes, Vec::new());
         assert_eq!(
-            InstanceStatus::read_from(directory.path()),
-            Some(InstanceStatus {
-                process_id: process::id(),
-                state: InstanceState::Running,
-                pending_writes: Vec::new(),
-            })
+            status.freshness(),
+            StatusFreshness::NotRefreshedWhileRunning
         );
         assert_eq!(
             file_names_in(directory.path()),
@@ -555,11 +660,12 @@ mod tests {
                 progress: Some(0.5),
                 stage: None,
             }],
+            written_at: Some(READING_CLOCK_SECONDS_SINCE_THE_EPOCH),
         };
 
         assert_eq!(
             serde_json::to_string(&status).expect("serialize the status"),
-            r#"{"process_id":4321,"state":"shutting_down","pending_writes":[{"label":"Compacting the TEC archive","progress":0.5,"stage":null}]}"#
+            r#"{"process_id":4321,"state":"shutting_down","pending_writes":[{"label":"Compacting the TEC archive","progress":0.5,"stage":null}],"written_at":1700000000}"#
         );
         assert_eq!(
             serde_json::to_string(&InstanceState::Running).expect("serialize the state"),
@@ -586,7 +692,7 @@ mod tests {
             vec![STATUS_FILE_NAME.to_owned(), LOCK_FILE_NAME.to_owned()]
         );
         assert_eq!(
-            InstanceStatus::read_from(directory.path()).map(|status| status.process_id),
+            status_file_in(directory.path()).map(|status| status.process_id),
             Some(process::id())
         );
     }
@@ -619,7 +725,7 @@ mod tests {
         );
         second.mark_shutting_down(&PendingWrites::default());
         assert_eq!(
-            InstanceStatus::read_from(directory.path()).map(|status| status.state),
+            status_file_in(directory.path()).map(|status| status.state),
             Some(InstanceState::Running),
             "the instance holding the directory owns the status file"
         );
@@ -665,8 +771,8 @@ mod tests {
         );
         assert!(!waiting.marks_the_data_directory());
         assert_eq!(
-            InstanceStatus::read_from(directory.path()),
-            None,
+            InstanceStatusRead::read_from(directory.path()),
+            InstanceStatusRead::Absent,
             "the run that gave up the mark wrote a status file"
         );
     }
@@ -677,7 +783,10 @@ mod tests {
 
         drop(DataDirectoryLock::acquire(Some(directory.path())));
 
-        assert_eq!(InstanceStatus::read_from(directory.path()), None);
+        assert_eq!(
+            InstanceStatusRead::read_from(directory.path()),
+            InstanceStatusRead::Absent
+        );
         assert_eq!(file_names_in(directory.path()), vec![LOCK_FILE_NAME]);
         assert!(
             DataDirectoryLock::acquire(Some(directory.path())).marks_the_data_directory(),
@@ -698,18 +807,17 @@ mod tests {
 
         lock.mark_shutting_down(&pending_writes);
 
+        let status = status_file_in(directory.path()).expect("the status file");
+        assert_eq!(status.state, InstanceState::ShuttingDown);
         assert_eq!(
-            InstanceStatus::read_from(directory.path()),
-            Some(InstanceStatus {
-                process_id: process::id(),
-                state: InstanceState::ShuttingDown,
-                pending_writes: vec![PendingWriteReport {
-                    label: "Compacting the TEC archive".to_owned(),
-                    progress: Some(0.25),
-                    stage: Some("Rewriting maps".to_owned()),
-                }],
-            })
+            status.pending_writes,
+            vec![PendingWriteReport {
+                label: "Compacting the TEC archive".to_owned(),
+                progress: Some(0.25),
+                stage: Some("Rewriting maps".to_owned()),
+            }]
         );
+        assert_eq!(status.freshness(), StatusFreshness::Current);
     }
 
     /// JSON has no number for a NaN, which `f32::clamp` passes through to a
@@ -728,7 +836,7 @@ mod tests {
         lock.mark_shutting_down(&pending_writes);
 
         assert_eq!(
-            InstanceStatus::read_from(directory.path())
+            status_file_in(directory.path())
                 .expect("the status file")
                 .pending_writes,
             vec![PendingWriteReport {
@@ -753,7 +861,7 @@ mod tests {
         lock.report_shutdown_progress(&pending_writes);
 
         assert_eq!(
-            InstanceStatus::read_from(directory.path())
+            status_file_in(directory.path())
                 .expect("the status file")
                 .pending_writes
                 .len(),
@@ -765,7 +873,7 @@ mod tests {
         lock.report_shutdown_progress(&pending_writes);
 
         assert_eq!(
-            InstanceStatus::read_from(directory.path())
+            status_file_in(directory.path())
                 .expect("the status file")
                 .pending_writes,
             Vec::new(),
@@ -829,7 +937,7 @@ mod tests {
         );
         assert_eq!(lock.lock_file_failure(), None);
         assert_eq!(
-            InstanceStatus::read_from(&directory).map(|status| status.state),
+            status_file_in(&directory).map(|status| status.state),
             Some(InstanceState::Running),
             "the instance that took it reports itself as running"
         );
@@ -855,7 +963,7 @@ mod tests {
             DataDirectoryOwnership::MarkedByThisInstance
         );
         assert_eq!(
-            InstanceStatus::read_from(directory.path()).map(|status| status.state),
+            status_file_in(directory.path()).map(|status| status.state),
             Some(InstanceState::Running),
             "the instance that took it reports itself as running"
         );
@@ -888,13 +996,14 @@ mod tests {
         assert_eq!(
             waiting
                 .status_of_the_holding_instance()
-                .map(|status| status.state),
+                .and_then(|read| read.status().map(|status| status.state)),
             Some(InstanceState::Running)
         );
         holder.mark_shutting_down(&pending_writes);
 
         let status = waiting
             .status_of_the_holding_instance()
+            .and_then(|read| read.status().cloned())
             .expect("the status file");
 
         assert_eq!(status.state, InstanceState::ShuttingDown);
@@ -925,7 +1034,7 @@ mod tests {
         held_by_main.mark_shutting_down(&PendingWrites::default());
 
         assert_eq!(
-            InstanceStatus::read_from(directory.path()).map(|status| status.state),
+            status_file_in(directory.path()).map(|status| status.state),
             Some(InstanceState::ShuttingDown)
         );
         assert_eq!(
@@ -935,10 +1044,93 @@ mod tests {
     }
 
     #[test]
-    fn a_status_file_that_is_not_a_status_reads_as_nothing() {
+    fn a_directory_without_a_status_file_reads_as_absent() {
+        let directory = tempfile::tempdir().expect("temp dir");
+
+        assert_eq!(
+            InstanceStatusRead::read_from(directory.path()),
+            InstanceStatusRead::Absent
+        );
+    }
+
+    /// A directory in place of the status file fails `fs::read` with an error
+    /// other than `NotFound`.
+    #[test]
+    fn a_status_file_that_cannot_be_read_reads_as_unreadable() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        fs::create_dir(directory.path().join(STATUS_FILE_NAME))
+            .expect("create a directory where the status file goes");
+
+        assert!(matches!(
+            InstanceStatusRead::read_from(directory.path()),
+            InstanceStatusRead::Unreadable(_)
+        ));
+    }
+
+    #[test]
+    fn a_status_file_serde_json_rejects_reads_as_malformed() {
         let directory = tempfile::tempdir().expect("temp dir");
         fs::write(directory.path().join(STATUS_FILE_NAME), b"{not json").expect("write");
 
-        assert_eq!(InstanceStatus::read_from(directory.path()), None);
+        assert!(matches!(
+            InstanceStatusRead::read_from(directory.path()),
+            InstanceStatusRead::Malformed(_)
+        ));
+    }
+
+    /// A status file from a GeoTrace before the `written_at` field existed
+    /// has none: serde reads the missing field as [`None`], so the file
+    /// parses and reads as [`StatusFreshness::UnknownAge`].
+    #[test]
+    fn a_status_file_without_a_written_at_parses_and_has_an_unknown_age() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        fs::write(
+            directory.path().join(STATUS_FILE_NAME),
+            br#"{"process_id":4321,"state":"shutting_down","pending_writes":[]}"#,
+        )
+        .expect("write");
+
+        assert_eq!(
+            status_file_in(directory.path()).map(|status| status.freshness()),
+            Some(StatusFreshness::UnknownAge)
+        );
+    }
+
+    /// The reading clock may be ahead of or behind the writing one, a status
+    /// file from a GeoTrace before `written_at` has none to measure, and a
+    /// running instance rewrites its status only once its shutdown begins.
+    #[rstest]
+    #[case::a_second_under_the_stale_age(
+        InstanceState::ShuttingDown,
+        Some(READING_CLOCK_SECONDS_SINCE_THE_EPOCH - AGE_AT_WHICH_A_STATUS_COUNTS_AS_STALE.as_secs() + 1),
+        StatusFreshness::Current
+    )]
+    #[case::at_the_stale_age(
+        InstanceState::ShuttingDown,
+        Some(READING_CLOCK_SECONDS_SINCE_THE_EPOCH - AGE_AT_WHICH_A_STATUS_COUNTS_AS_STALE.as_secs()),
+        StatusFreshness::Stale { age: AGE_AT_WHICH_A_STATUS_COUNTS_AS_STALE }
+    )]
+    #[case::stamped_an_hour_in_the_future(
+        InstanceState::ShuttingDown,
+        Some(READING_CLOCK_SECONDS_SINCE_THE_EPOCH + 3600),
+        StatusFreshness::Current
+    )]
+    #[case::without_a_written_at(InstanceState::ShuttingDown, None, StatusFreshness::UnknownAge)]
+    #[case::running_since_before_the_stale_age(
+        InstanceState::Running,
+        Some(READING_CLOCK_SECONDS_SINCE_THE_EPOCH - 86_400),
+        StatusFreshness::NotRefreshedWhileRunning
+    )]
+    fn a_status_is_current_until_it_reaches_the_stale_age(
+        #[case] state: InstanceState,
+        #[case] written_at: Option<u64>,
+        #[case] expected: StatusFreshness,
+    ) {
+        let now = UNIX_EPOCH + Duration::from_secs(READING_CLOCK_SECONDS_SINCE_THE_EPOCH);
+
+        assert_eq!(
+            status_written_at(state, written_at).freshness_at(now),
+            expected
+        );
     }
 }

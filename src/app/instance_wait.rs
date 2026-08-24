@@ -19,7 +19,8 @@ use std::time::{Duration, Instant};
 use egui::{RichText, Window};
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use gt_instance_lock::{
-    DataDirectoryOwnership, InstanceState, InstanceStatus, SharedDataDirectoryLock,
+    DataDirectoryOwnership, InstanceState, InstanceStatusRead, SharedDataDirectoryLock,
+    StatusFreshness,
 };
 use gt_ui_theme::warning_amber;
 
@@ -71,6 +72,10 @@ const START_READ_ONLY_BUTTON_HOVER: &str = "Read the recordings and archives her
      nothing is stored, downloaded, deleted or saved. The session stays read-only until \
      GeoTrace is restarted.";
 
+/// Ends every wait dialog line about a status file that produced no status.
+const OPENS_HERE_ONCE_THE_HOLDER_LETS_GO: &str =
+    "GeoTrace opens the recordings and archives here as soon as it lets go.";
+
 const WAIT_DIALOG_MIN_WIDTH: f32 = 360.0;
 
 const TAKE_OVER_CONFIRMATION_MAX_WIDTH: f32 = 460.0;
@@ -79,9 +84,9 @@ const TAKE_OVER_CONFIRMATION_MAX_WIDTH: f32 = 460.0;
 /// found it.
 #[derive(Debug)]
 enum DataDirectoryUnavailable {
-    /// Another instance holds the lock, with what it last wrote about
-    /// itself and [`None`] where that is unreadable.
-    HeldByAnotherInstance(Option<InstanceStatus>),
+    /// Another instance holds the lock, with the read of what it last wrote
+    /// about itself.
+    HeldByAnotherInstance(InstanceStatusRead),
     /// The lock file could not be opened or locked, with the cause of the
     /// last attempt. What has the directory is unknown.
     UnusableLockFile(String),
@@ -227,8 +232,8 @@ impl DataDirectoryWait {
     /// status file. A read-only session names it as the owner.
     fn owner_process_id(&self) -> Option<u32> {
         match &self.unavailable {
-            DataDirectoryUnavailable::HeldByAnotherInstance(status) => {
-                status.as_ref().map(|status| status.process_id)
+            DataDirectoryUnavailable::HeldByAnotherInstance(read) => {
+                read.status().map(|status| status.process_id)
             }
             DataDirectoryUnavailable::UnusableLockFile(_) => None,
         }
@@ -251,6 +256,10 @@ impl DataDirectoryWait {
             };
         }
 
+        let take_over_hover = match self.unavailable.freshness_note() {
+            Some(note) => format!("{TAKE_OVER_BUTTON_HOVER}. {note}."),
+            None => TAKE_OVER_BUTTON_HOVER.to_owned(),
+        };
         let mut answer = WaitAnswer::KeepWaiting;
         Window::new(self.unavailable.dialog_title())
             .collapsible(false)
@@ -266,7 +275,7 @@ impl DataDirectoryWait {
                     ui.add_space(8.0);
                     if ui
                         .button(TAKE_OVER_BUTTON_LABEL)
-                        .on_hover_text(TAKE_OVER_BUTTON_HOVER)
+                        .on_hover_text(&take_over_hover)
                         .clicked()
                     {
                         self.confirming_take_over = true;
@@ -316,10 +325,17 @@ impl BackgroundMarkRetry {
 }
 
 impl DataDirectoryUnavailable {
+    /// `status_of_the_holding_instance` returns [`None`] unless another
+    /// instance holds the data directory, which is the only state the wait
+    /// this feeds runs in.
     fn read_from(instance_lock: &SharedDataDirectoryLock) -> Self {
         match instance_lock.lock_file_failure() {
             Some(cause) => Self::UnusableLockFile(cause),
-            None => Self::HeldByAnotherInstance(instance_lock.status_of_the_holding_instance()),
+            None => Self::HeldByAnotherInstance(
+                instance_lock
+                    .status_of_the_holding_instance()
+                    .unwrap_or(InstanceStatusRead::Absent),
+            ),
         }
     }
 
@@ -332,7 +348,7 @@ impl DataDirectoryUnavailable {
 
     fn wait_dialog_ui(&self, ui: &mut egui::Ui) {
         match self {
-            Self::HeldByAnotherInstance(Some(status)) => match status.state {
+            Self::HeldByAnotherInstance(InstanceStatusRead::Status(status)) => match status.state {
                 InstanceState::Running => {
                     ui.label(
                         "Its window is open: switch to it to keep working there. GeoTrace opens \
@@ -350,11 +366,23 @@ impl DataDirectoryUnavailable {
                     }
                 }
             },
-            Self::HeldByAnotherInstance(None) => {
-                ui.label(
-                    "What it is doing is unknown. GeoTrace opens the recordings and archives \
-                     here as soon as it lets go.",
-                );
+            Self::HeldByAnotherInstance(InstanceStatusRead::Absent) => {
+                ui.label(format!(
+                    "It has not reported what it is doing yet. \
+                     {OPENS_HERE_ONCE_THE_HOLDER_LETS_GO}"
+                ));
+            }
+            Self::HeldByAnotherInstance(InstanceStatusRead::Unreadable(error)) => {
+                ui.label(format!(
+                    "Its status file cannot be read: {error}. \
+                     {OPENS_HERE_ONCE_THE_HOLDER_LETS_GO}"
+                ));
+            }
+            Self::HeldByAnotherInstance(InstanceStatusRead::Malformed(error)) => {
+                ui.label(format!(
+                    "Its status file is damaged: {error}. \
+                     {OPENS_HERE_ONCE_THE_HOLDER_LETS_GO}"
+                ));
             }
             Self::UnusableLockFile(cause) => {
                 ui.label(format!(
@@ -364,13 +392,14 @@ impl DataDirectoryUnavailable {
                 ));
             }
         }
+        self.freshness_note_ui(ui);
     }
 
     /// What taking write access overrides, as the instance holding the data
     /// directory last reported it.
     fn take_over_confirmation_ui(&self, ui: &mut egui::Ui) {
         match self {
-            Self::HeldByAnotherInstance(Some(status)) => match status.state {
+            Self::HeldByAnotherInstance(InstanceStatusRead::Status(status)) => match status.state {
                 InstanceState::Running => {
                     ui.label(
                         "The other GeoTrace's window is open, and it may be writing to the \
@@ -387,11 +416,23 @@ impl DataDirectoryUnavailable {
                     }
                 }
             },
-            Self::HeldByAnotherInstance(None) => {
+            Self::HeldByAnotherInstance(InstanceStatusRead::Absent) => {
                 ui.label(
-                    "What the other GeoTrace is doing is unknown, and it may be writing to the \
-                     recordings and archives right now",
+                    "The other GeoTrace has not reported what it is doing, and it may be writing \
+                     to the recordings and archives right now",
                 );
+            }
+            Self::HeldByAnotherInstance(InstanceStatusRead::Unreadable(error)) => {
+                ui.label(format!(
+                    "The other GeoTrace's status file cannot be read: {error}. It may be writing \
+                     to the recordings and archives right now."
+                ));
+            }
+            Self::HeldByAnotherInstance(InstanceStatusRead::Malformed(error)) => {
+                ui.label(format!(
+                    "The other GeoTrace's status file is damaged: {error}. It may be writing to \
+                     the recordings and archives right now."
+                ));
             }
             Self::UnusableLockFile(cause) => {
                 ui.label(format!(
@@ -400,6 +441,43 @@ impl DataDirectoryUnavailable {
                 ));
             }
         }
+        self.freshness_note_ui(ui);
+    }
+
+    /// The line marking a [`StatusFreshness::Stale`] or
+    /// [`StatusFreshness::UnknownAge`] report, and [`None`] for a report
+    /// whose age says nothing.
+    fn freshness_note(&self) -> Option<String> {
+        let status = match self {
+            Self::HeldByAnotherInstance(read) => read.status()?,
+            Self::UnusableLockFile(_) => return None,
+        };
+        match status.freshness() {
+            StatusFreshness::Current | StatusFreshness::NotRefreshedWhileRunning => None,
+            StatusFreshness::Stale { age } => {
+                let age_in_words = match age.as_secs() / 60 {
+                    0 => format!("{} seconds", age.as_secs()),
+                    1 => "a minute".to_owned(),
+                    minutes => format!("{minutes} minutes"),
+                };
+                Some(format!(
+                    "What it is doing now may differ from this: its last report is \
+                     {age_in_words} old"
+                ))
+            }
+            StatusFreshness::UnknownAge => Some(
+                "The age of this report is unknown: the other GeoTrace stamped no time on it"
+                    .to_owned(),
+            ),
+        }
+    }
+
+    fn freshness_note_ui(&self, ui: &mut egui::Ui) {
+        let Some(note) = self.freshness_note() else {
+            return;
+        };
+        ui.add_space(4.0);
+        ui.label(RichText::new(note).color(warning_amber(ui.visuals().dark_mode)));
     }
 }
 
@@ -606,7 +684,9 @@ mod tests {
     /// data directory, with nothing readable about that instance yet.
     fn wait_on_a_directory_held_by_another_instance() -> DataDirectoryWait {
         DataDirectoryWait {
-            unavailable: DataDirectoryUnavailable::HeldByAnotherInstance(None),
+            unavailable: DataDirectoryUnavailable::HeldByAnotherInstance(
+                InstanceStatusRead::Absent,
+            ),
             last_retry: Instant::now(),
             consecutive_unusable_lock_file_retries: 0,
             confirming_take_over: false,
@@ -697,7 +777,9 @@ mod tests {
             );
         }
         assert_eq!(
-            wait.outcome_of_a_fresh_read(DataDirectoryUnavailable::HeldByAnotherInstance(None)),
+            wait.outcome_of_a_fresh_read(DataDirectoryUnavailable::HeldByAnotherInstance(
+                InstanceStatusRead::Absent
+            )),
             DataDirectoryRetry::StillWaiting,
             "the instance holding the directory is there to be waited for"
         );
