@@ -5,6 +5,7 @@
 //!
 //! Days are immutable once stored: the host does not republish a settled day.
 
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, Utc};
@@ -82,17 +83,123 @@ pub struct StoredDay {
     pub host: String,
 }
 
-/// The interference archive.
+/// The interference archive with no method that writes to the file, as
+/// [`Self::open_existing_read_only`] opens it.
 #[derive(Debug)]
-pub struct JamStore {
-    /// Every operation holds the lock for its whole sequence: [`Self::insert_day`]
-    /// reads a column length, resizes, appends, and writes the day index
-    /// last, and a caller reading between those steps sees rows that no index
-    /// entry names.
+pub struct ReadOnlyJamStore {
+    /// Every operation holds the lock for its whole sequence:
+    /// [`JamStore::insert_day`] reads a column length, resizes, appends, and
+    /// writes the day index last, and a caller reading between those steps
+    /// sees rows that no index entry names.
     archive: Mutex<ArchiveFile>,
     /// Held beside the lock: a caller reading the archive's path never waits
     /// for a delete rewriting it.
     path: PathBuf,
+}
+
+impl ReadOnlyJamStore {
+    /// Open the archive at `path` without writing to it: it is not created
+    /// where it is missing, not rebuilt, and neither an interrupted insert nor
+    /// an interrupted delete in it is put right.
+    ///
+    /// An archive an interrupted delete left part-way through fails with
+    /// [`JamStoreError::DeclinedRecovery`]: its day index cannot be read as it
+    /// stands, and putting it right is a write.
+    pub fn open_existing_read_only(path: &Path) -> Result<Self, JamStoreError> {
+        let mut archive = ArchiveFile::new(path);
+        archive.check_readable_without_writing(
+            interrupted_delete_in,
+            schema::SCHEMA_VERSION_ATTR,
+            schema::CURRENT_SCHEMA_VERSION,
+        )?;
+        Ok(Self {
+            archive: Mutex::new(archive),
+            path: path.to_owned(),
+        })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Every stored day, oldest first.
+    pub fn days(&self) -> Result<Vec<StoredDay>, JamStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_only()?;
+        let days = file.group(schema::DAYS_GROUP)?;
+        Ok(DayIndex::new(&days)
+            .entries()?
+            .into_iter()
+            .map(|entry| StoredDay {
+                day: entry.day,
+                cells: entry.rows,
+                fetched_at: entry.fetched_at,
+                host: entry.host,
+            })
+            .collect())
+    }
+
+    /// Whether `day` has already been stored.
+    pub fn contains(&self, day: NaiveDate) -> Result<bool, JamStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_only()?;
+        let days = file.group(schema::DAYS_GROUP)?;
+        Ok(DayIndex::new(&days).row_of(day)?.is_some())
+    }
+
+    /// The observations stored for `day`, or [`None`] if it is not stored.
+    pub fn observations(
+        &self,
+        day: NaiveDate,
+    ) -> Result<Option<Vec<HexObservation>>, JamStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_only()?;
+        let days = file.group(schema::DAYS_GROUP)?;
+        let Some(rows) = DayIndex::new(&days).extent_of(day)? else {
+            return Ok(None);
+        };
+        let group = file.group(schema::OBSERVATIONS_GROUP)?;
+
+        let cells: Vec<u64> = Column::new(&group, schema::OBS_CELL).read_slice(rows.clone())?;
+        let good: Vec<u32> = Column::new(&group, schema::OBS_GOOD).read_slice(rows.clone())?;
+        let bad: Vec<u32> = Column::new(&group, schema::OBS_BAD).read_slice(rows)?;
+
+        let mut observations = Vec::with_capacity(cells.len());
+        for (index, &raw) in cells.iter().enumerate() {
+            let (Some(&good), Some(&bad)) = (good.get(index), bad.get(index)) else {
+                return Err(JamStoreError::Corrupt(format!(
+                    "{day} row {index} has no counts"
+                )));
+            };
+            let cell = CellIndex::try_from(raw)
+                .map_err(|err| JamStoreError::Corrupt(format!("{day} row {index}: {err}")))?;
+            observations.push(HexObservation { cell, good, bad });
+        }
+        Ok(Some(observations))
+    }
+
+    /// The stored day, indexed for lookup and drawing.
+    pub fn dataset(&self, day: NaiveDate) -> Result<Option<JamDataset>, JamStoreError> {
+        Ok(self
+            .observations(day)?
+            .map(|observations| JamDataset::new(day, observations)))
+    }
+}
+
+/// The interference archive, which reads through [`ReadOnlyJamStore`] and
+/// adds [`Self::insert_day`], [`Self::delete_days_before`] and
+/// [`Self::delete_all_days`].
+#[derive(Debug)]
+pub struct JamStore {
+    inner: ReadOnlyJamStore,
+}
+
+impl Deref for JamStore {
+    type Target = ReadOnlyJamStore;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }
 
 impl JamStore {
@@ -121,7 +228,7 @@ impl JamStore {
         let mut archive = ArchiveFile::new(path);
         if archive.exists() {
             if recovery == InterruptedDeleteRecovery::Decline
-                && let Some(interrupted) = Self::interrupted_delete_in(&mut archive)?
+                && let Some(interrupted) = interrupted_delete_in(&mut archive)?
             {
                 return Err(DeclinedRecovery(interrupted).into());
             }
@@ -136,33 +243,11 @@ impl JamStore {
             Self::create(&mut archive)?;
         }
         Ok(Self {
-            archive: Mutex::new(archive),
-            path: path.to_owned(),
+            inner: ReadOnlyJamStore {
+                archive: Mutex::new(archive),
+                path: path.to_owned(),
+            },
         })
-    }
-
-    /// Open the archive at `path` without writing to it: it is not created
-    /// where it is missing, not rebuilt, and neither an interrupted insert nor
-    /// an interrupted delete in it is put right.
-    ///
-    /// An archive an interrupted delete left part-way through fails with
-    /// [`JamStoreError::DeclinedRecovery`]: its day index cannot be read as it
-    /// stands, and putting it right is a write.
-    pub fn open_existing_read_only(path: &Path) -> Result<Self, JamStoreError> {
-        let mut archive = ArchiveFile::new(path);
-        archive.check_readable_without_writing(
-            Self::interrupted_delete_in,
-            schema::SCHEMA_VERSION_ATTR,
-            schema::CURRENT_SCHEMA_VERSION,
-        )?;
-        Ok(Self {
-            archive: Mutex::new(archive),
-            path: path.to_owned(),
-        })
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
     }
 
     /// What an interrupted delete left in the archive at `path`, or [`None`]
@@ -175,14 +260,7 @@ impl JamStore {
         if !archive.exists() {
             return Ok(None);
         }
-        Self::interrupted_delete_in(&mut archive)
-    }
-
-    fn interrupted_delete_in(
-        archive: &mut ArchiveFile,
-    ) -> Result<Option<InterruptedDelete>, JamStoreError> {
-        let file = archive.open_read_only()?;
-        with_layout(&file, |layout| layout.interrupted_delete())
+        interrupted_delete_in(&mut archive)
     }
 
     fn create(archive: &mut ArchiveFile) -> Result<(), JamStoreError> {
@@ -228,31 +306,6 @@ impl JamStore {
         Ok(())
     }
 
-    /// Every stored day, oldest first.
-    pub fn days(&self) -> Result<Vec<StoredDay>, JamStoreError> {
-        let mut archive = self.archive.lock();
-        let file = archive.open_read_only()?;
-        let days = file.group(schema::DAYS_GROUP)?;
-        Ok(DayIndex::new(&days)
-            .entries()?
-            .into_iter()
-            .map(|entry| StoredDay {
-                day: entry.day,
-                cells: entry.rows,
-                fetched_at: entry.fetched_at,
-                host: entry.host,
-            })
-            .collect())
-    }
-
-    /// Whether `day` has already been stored.
-    pub fn contains(&self, day: NaiveDate) -> Result<bool, JamStoreError> {
-        let mut archive = self.archive.lock();
-        let file = archive.open_read_only()?;
-        let days = file.group(schema::DAYS_GROUP)?;
-        Ok(DayIndex::new(&days).row_of(day)?.is_some())
-    }
-
     /// Append `observations` as `day`, served by `host`.
     ///
     /// Fails with [`JamStoreError::DayAlreadyStored`] if the day is present.
@@ -263,7 +316,7 @@ impl JamStore {
         fetched_at: DateTime<Utc>,
         observations: &[HexObservation],
     ) -> Result<(), JamStoreError> {
-        let mut archive = self.archive.lock();
+        let mut archive = self.inner.archive.lock();
         let file = archive.open_read_write()?;
         let days = file.group(schema::DAYS_GROUP)?;
         let index = DayIndex::new(&days);
@@ -308,37 +361,6 @@ impl JamStore {
         Ok(())
     }
 
-    /// The observations stored for `day`, or [`None`] if it is not stored.
-    pub fn observations(
-        &self,
-        day: NaiveDate,
-    ) -> Result<Option<Vec<HexObservation>>, JamStoreError> {
-        let mut archive = self.archive.lock();
-        let file = archive.open_read_only()?;
-        let days = file.group(schema::DAYS_GROUP)?;
-        let Some(rows) = DayIndex::new(&days).extent_of(day)? else {
-            return Ok(None);
-        };
-        let group = file.group(schema::OBSERVATIONS_GROUP)?;
-
-        let cells: Vec<u64> = Column::new(&group, schema::OBS_CELL).read_slice(rows.clone())?;
-        let good: Vec<u32> = Column::new(&group, schema::OBS_GOOD).read_slice(rows.clone())?;
-        let bad: Vec<u32> = Column::new(&group, schema::OBS_BAD).read_slice(rows)?;
-
-        let mut observations = Vec::with_capacity(cells.len());
-        for (index, &raw) in cells.iter().enumerate() {
-            let (Some(&good), Some(&bad)) = (good.get(index), bad.get(index)) else {
-                return Err(JamStoreError::Corrupt(format!(
-                    "{day} row {index} has no counts"
-                )));
-            };
-            let cell = CellIndex::try_from(raw)
-                .map_err(|err| JamStoreError::Corrupt(format!("{day} row {index}: {err}")))?;
-            observations.push(HexObservation { cell, good, bad });
-        }
-        Ok(Some(observations))
-    }
-
     /// Remove every day before `cutoff`, reporting how many days went.
     ///
     /// The observations the remaining days hold move down to close the gap.
@@ -349,24 +371,24 @@ impl JamStore {
         cutoff: NaiveDate,
         report: PruneProgressSink<'_>,
     ) -> Result<usize, JamStoreError> {
-        let mut archive = self.archive.lock();
+        let mut archive = self.inner.archive.lock();
         let file = archive.open_read_write()?;
         with_layout(&file, |layout| layout.delete_days_before(cutoff, report))
     }
 
     /// Remove every stored day, reporting how many went.
     pub fn delete_all_days(&self, report: PruneProgressSink<'_>) -> Result<usize, JamStoreError> {
-        let mut archive = self.archive.lock();
+        let mut archive = self.inner.archive.lock();
         let file = archive.open_read_write()?;
         with_layout(&file, |layout| layout.delete_all_days(report))
     }
+}
 
-    /// The stored day, indexed for lookup and drawing.
-    pub fn dataset(&self, day: NaiveDate) -> Result<Option<JamDataset>, JamStoreError> {
-        Ok(self
-            .observations(day)?
-            .map(|observations| JamDataset::new(day, observations)))
-    }
+fn interrupted_delete_in(
+    archive: &mut ArchiveFile,
+) -> Result<Option<InterruptedDelete>, JamStoreError> {
+    let file = archive.open_read_only()?;
+    with_layout(&file, |layout| layout.interrupted_delete())
 }
 
 /// Run `act` against the archive's layout: one day index over one group of

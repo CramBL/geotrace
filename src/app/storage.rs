@@ -24,9 +24,10 @@ use egui::Context;
 use gt_instance_lock::SharedDataDirectoryLock;
 use gt_pending_writes::{PendingWrites, WriteAccess, WriteKind};
 use gt_store::{
-    DayArchiveError, DbError, FlareStore, FlareStoreError, HistoryDatabase as _,
-    InterruptedDeleteRecovery, IonexStore, IonexStoreError, JamStore, JamStoreError, Recordings,
-    SolarStore, SolarStoreError, Store,
+    DayArchiveError, DbError, FlareStore, FlareStoreError, GeomagneticIndexArchive,
+    HistoryDatabase as _, InterferenceArchive, InterruptedDeleteRecovery, IonexStore,
+    IonexStoreError, JamStore, JamStoreError, Recordings, SolarFlareArchive, SolarStore,
+    SolarStoreError, Store, TecMapArchive,
 };
 
 use super::App;
@@ -81,13 +82,13 @@ pub struct OpenStorage {
     /// Set when the recordings database could not be opened.
     pub history_failure: Option<HistoryFailure>,
     /// [`None`] disables interference fetching and nothing else.
-    pub archive: Option<Arc<JamStore>>,
+    pub archive: Option<InterferenceArchive>,
     /// [`None`] disables geomagnetic index fetching and nothing else.
-    pub geomagnetic_indices: Option<Arc<SolarStore>>,
+    pub geomagnetic_indices: Option<GeomagneticIndexArchive>,
     /// [`None`] disables TEC map fetching and nothing else.
-    pub tec_maps: Option<Arc<IonexStore>>,
+    pub tec_maps: Option<TecMapArchive>,
     /// [`None`] disables solar flare fetching and nothing else.
-    pub solar_flares: Option<Arc<FlareStore>>,
+    pub solar_flares: Option<SolarFlareArchive>,
     /// The archives this run opened nothing of on the user's answer, which
     /// the controls that need them explain themselves with.
     pub unavailable_archives: UnavailableArchives,
@@ -491,13 +492,17 @@ trait DayArchive: Sized {
 
     type Error: DayArchiveError;
 
+    /// This archive's [`gt_store::ArchiveHandle`], writable or read-only by
+    /// which opener ran.
+    type Handle;
+
     fn open_with_recovery_choice(
         store: &Store,
         recovery: InterruptedDeleteRecovery,
-    ) -> Result<Arc<Self>, Self::Error>;
+    ) -> Result<Self::Handle, Self::Error>;
 
     /// Open the archive without writing to it, as a read-only session does.
-    fn open_read_only(store: &Store) -> Result<Arc<Self>, Self::Error>;
+    fn open_read_only(store: &Store) -> Result<Self::Handle, Self::Error>;
 }
 
 impl DayArchive for JamStore {
@@ -505,14 +510,16 @@ impl DayArchive for JamStore {
 
     type Error = JamStoreError;
 
+    type Handle = InterferenceArchive;
+
     fn open_with_recovery_choice(
         store: &Store,
         recovery: InterruptedDeleteRecovery,
-    ) -> Result<Arc<Self>, Self::Error> {
+    ) -> Result<Self::Handle, Self::Error> {
         store.open_interference_with_recovery_choice(recovery)
     }
 
-    fn open_read_only(store: &Store) -> Result<Arc<Self>, Self::Error> {
+    fn open_read_only(store: &Store) -> Result<Self::Handle, Self::Error> {
         store.open_interference_read_only()
     }
 }
@@ -522,14 +529,16 @@ impl DayArchive for SolarStore {
 
     type Error = SolarStoreError;
 
+    type Handle = GeomagneticIndexArchive;
+
     fn open_with_recovery_choice(
         store: &Store,
         recovery: InterruptedDeleteRecovery,
-    ) -> Result<Arc<Self>, Self::Error> {
+    ) -> Result<Self::Handle, Self::Error> {
         store.open_geomagnetic_indices_with_recovery_choice(recovery)
     }
 
-    fn open_read_only(store: &Store) -> Result<Arc<Self>, Self::Error> {
+    fn open_read_only(store: &Store) -> Result<Self::Handle, Self::Error> {
         store.open_geomagnetic_indices_read_only()
     }
 }
@@ -539,14 +548,16 @@ impl DayArchive for IonexStore {
 
     type Error = IonexStoreError;
 
+    type Handle = TecMapArchive;
+
     fn open_with_recovery_choice(
         store: &Store,
         recovery: InterruptedDeleteRecovery,
-    ) -> Result<Arc<Self>, Self::Error> {
+    ) -> Result<Self::Handle, Self::Error> {
         store.open_tec_maps_with_recovery_choice(recovery)
     }
 
-    fn open_read_only(store: &Store) -> Result<Arc<Self>, Self::Error> {
+    fn open_read_only(store: &Store) -> Result<Self::Handle, Self::Error> {
         store.open_tec_maps_read_only()
     }
 }
@@ -556,14 +567,16 @@ impl DayArchive for FlareStore {
 
     type Error = FlareStoreError;
 
+    type Handle = SolarFlareArchive;
+
     fn open_with_recovery_choice(
         store: &Store,
         recovery: InterruptedDeleteRecovery,
-    ) -> Result<Arc<Self>, Self::Error> {
+    ) -> Result<Self::Handle, Self::Error> {
         store.open_solar_flares_with_recovery_choice(recovery)
     }
 
-    fn open_read_only(store: &Store) -> Result<Arc<Self>, Self::Error> {
+    fn open_read_only(store: &Store) -> Result<Self::Handle, Self::Error> {
         store.open_solar_flares_read_only()
     }
 }
@@ -580,7 +593,7 @@ fn open_archive<A: DayArchive>(
     recovery: ArchiveRecovery,
     write_access: WriteAccess,
     unavailable_archives: &mut UnavailableArchives,
-) -> Option<Arc<A>> {
+) -> Option<A::Handle> {
     let archive = A::ARCHIVE;
     let plan = match write_access {
         WriteAccess::Owner => recovery.plan_for(archive),
@@ -825,7 +838,11 @@ mod tests {
         let store = Store::open_in(root);
         let path = store.interference_path();
         {
-            let archive = store.open_interference().expect("interference archive");
+            let archive = store
+                .open_interference()
+                .expect("interference archive")
+                .writer()
+                .expect("an owner session opens the archive writable");
             for offset in 0..2 {
                 archive
                     .insert_day(
@@ -860,7 +877,7 @@ mod tests {
         );
 
         let archive = opened.archive.expect("the recovered archive is open");
-        assert_eq!(archive.days().expect("read the archive index"), []);
+        assert_eq!(archive.read().days().expect("read the archive index"), []);
         assert_eq!(
             JamStore::interrupted_delete_at(&store.interference_path()).expect("read the archive"),
             None,
@@ -944,19 +961,27 @@ mod tests {
 
     /// The archives a read-only session finds are read: only writing to them
     /// is off.
+    ///
+    /// The session opens through a [`Store`] of its own, as it does beside
+    /// the instance that created the archive.
     #[test]
     fn a_read_only_open_reads_the_archives_that_are_already_there() {
         let (_dir, store) = store();
         store.open_interference().expect("create the archive");
 
         let opened = open_in(
-            &store,
+            &Store::open_in(store.root()),
             &Context::default(),
             PendingWrites::new(WriteAccess::ReadOnly),
             ArchiveRecovery::Automatic,
         );
 
-        assert!(opened.archive.is_some());
+        let archive = opened.archive.expect("the archive is open for reading");
+        assert!(
+            archive.writer().is_none(),
+            "a read-only session holds the archive without its mutators"
+        );
+        assert_eq!(archive.read().days().expect("read the day index"), []);
         assert_eq!(
             opened
                 .unavailable_archives
@@ -973,12 +998,16 @@ mod tests {
             .archive
             .as_ref()
             .expect("interference archive")
+            .writer()
+            .expect("an owner session opens the archive writable")
             .insert_day(day, "host", fetched_at, &[])
             .expect("insert interference");
         opened
             .geomagnetic_indices
             .as_ref()
             .expect("geomagnetic index archive")
+            .writer()
+            .expect("an owner session opens the archive writable")
             .insert_or_replace_kp_day(
                 day,
                 "host",
@@ -992,6 +1021,8 @@ mod tests {
             .tec_maps
             .as_ref()
             .expect("TEC map archive")
+            .writer()
+            .expect("an owner session opens the archive writable")
             .insert_or_replace_day(
                 day,
                 "host",
@@ -1004,6 +1035,8 @@ mod tests {
             .solar_flares
             .as_ref()
             .expect("solar flare archive")
+            .writer()
+            .expect("an owner session opens the archive writable")
             .insert_or_replace_day(day, "host", fetched_at, &[])
             .expect("insert solar flares");
     }

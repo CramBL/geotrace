@@ -20,7 +20,7 @@ use egui::Context;
 use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
 use gt_flare::{ApiKey, DateWindow, MarkedFlare, SolarFlare, calendar, transport, wire};
 use gt_pending_writes::{PendingWrites, WriteRefusal};
-use gt_store::{ArchiveUsage, FlareStore, FlareStoreError};
+use gt_store::{ArchiveUsage, FlareStore, FlareStoreError, ReadOnlyFlareStore, SolarFlareArchive};
 use gt_types::{SunlitSide, TimeRange};
 use gt_ui_types::ArcIdentity;
 
@@ -70,8 +70,9 @@ pub struct SolarFlareScheduler {
     /// `None` disables fetching: the endpoint answers no request without a
     /// key.
     api_key: Option<ApiKey>,
-    /// `None` disables fetching: no archive to write to.
-    store: Option<Arc<FlareStore>>,
+    /// `None` disables fetching: no archive was opened. A read-only session
+    /// has one here, and [`Self::writable_archive`] is [`None`].
+    store: Option<SolarFlareArchive>,
     /// Connected on the first request, and dropped when the endpoint changes.
     http: Option<Arc<Connection>>,
     /// Where that transport comes from. Supplied by the application, so
@@ -93,7 +94,7 @@ pub struct SolarFlareScheduler {
 impl SolarFlareScheduler {
     pub fn new(
         ctx: Context,
-        store: Option<Arc<FlareStore>>,
+        store: Option<SolarFlareArchive>,
         base_url: String,
         api_key: Option<ApiKey>,
         transport_source: TransportSource,
@@ -120,7 +121,7 @@ impl SolarFlareScheduler {
     }
 
     /// Take an opened archive, reading the days it already holds.
-    pub fn adopt_store(&mut self, store: Option<Arc<FlareStore>>) {
+    pub fn adopt_store(&mut self, store: Option<SolarFlareArchive>) {
         self.store = store;
         self.archived_days = BTreeSet::new();
         self.read_the_day_index();
@@ -135,7 +136,7 @@ impl SolarFlareScheduler {
         };
         if let Some(days) = self
             .day_index_read
-            .record_read(&self.ctx, archived_days_of(&store))
+            .record_read(&self.ctx, archived_days_of(store.read()))
         {
             self.archived_days = days;
         }
@@ -200,16 +201,17 @@ impl SolarFlareScheduler {
         self.store.is_some()
     }
 
-    /// The archive, for the settings page to report and delete from.
-    pub fn archive(&self) -> Option<Arc<FlareStore>> {
-        self.store.as_ref().map(Arc::clone)
+    /// The archive to delete days from, for the settings page. [`None`] in a
+    /// read-only session, where the delete controls are grayed.
+    pub fn writable_archive(&self) -> Option<Arc<FlareStore>> {
+        self.store.as_ref()?.writer()
     }
 
     /// What the archive holds, as the environment storage rows show it.
     pub fn archive_usage(&self) -> Option<ArchiveUsage> {
         let store = self.store.as_ref()?;
         Some(ArchiveUsage::measure(
-            store.path(),
+            store.read().path(),
             self.archived_days.iter().copied(),
         ))
     }
@@ -309,14 +311,14 @@ impl SolarFlareScheduler {
             archived_days: self.archived_days.range(span.days()).copied().collect(),
             positions: Some(ArcIdentity::of(positions)),
         };
-        let store = self.store.as_ref().map(Arc::clone);
+        let store = self.store.clone();
         let positions = Arc::clone(positions);
         self.markers.resolve(
             source,
             |day| {
                 store
-                    .as_deref()
-                    .and_then(|store| read_archived_flares(store, day))
+                    .as_ref()
+                    .and_then(|store| read_archived_flares(store.read(), day))
                     .unwrap_or_default()
                     .into_iter()
                     .map(|flare| mark_with_receiver_side(flare, &positions))
@@ -350,7 +352,7 @@ impl SolarFlareScheduler {
         range: TimeRange,
         positions: &FixPositionTimeline,
     ) -> Vec<MarkedFlare> {
-        let Some(store) = self.store.as_deref() else {
+        let Some(store) = self.store.as_ref().map(SolarFlareArchive::read) else {
             return Vec::new();
         };
         self.archived_days_for(range)
@@ -362,10 +364,11 @@ impl SolarFlareScheduler {
             .collect()
     }
 
-    /// The archive to fetch into, or [`None`] when nothing may be requested.
+    /// The archive to fetch into, or [`None`] when nothing may be requested:
+    /// no key, no archive, or a read-only session's archive.
     fn fetchable_archive(&self) -> Option<Arc<FlareStore>> {
         self.api_key.as_ref()?;
-        self.store.as_ref().map(Arc::clone)
+        self.store.as_ref()?.writer()
     }
 
     fn start_next(&mut self) {
@@ -447,7 +450,7 @@ struct Endpoint {
 /// day without flares included: DONKI back-publishes rarely enough that a
 /// second request for a settled day costs more than it finds.
 fn day_needs_fetch(
-    store: &FlareStore,
+    store: &ReadOnlyFlareStore,
     day: NaiveDate,
     today_utc: NaiveDate,
 ) -> Result<bool, FlareStoreError> {
@@ -469,7 +472,7 @@ fn mark_with_receiver_side(flare: SolarFlare, positions: &FixPositionTimeline) -
 
 /// The archived flares of one day, reporting a read that failed and treating
 /// it as an unarchived day.
-fn read_archived_flares(store: &FlareStore, day: NaiveDate) -> Option<Vec<SolarFlare>> {
+fn read_archived_flares(store: &ReadOnlyFlareStore, day: NaiveDate) -> Option<Vec<SolarFlare>> {
     store
         .flares(day)
         .inspect_err(|err| log::error!("Reading archived solar flares for {day}: {err}"))
@@ -478,7 +481,7 @@ fn read_archived_flares(store: &FlareStore, day: NaiveDate) -> Option<Vec<SolarF
 }
 
 /// Every day the archive holds a fetched catalog day for.
-fn archived_days_of(store: &FlareStore) -> Result<BTreeSet<NaiveDate>, FlareStoreError> {
+fn archived_days_of(store: &ReadOnlyFlareStore) -> Result<BTreeSet<NaiveDate>, FlareStoreError> {
     Ok(store
         .archived_days()?
         .into_iter()
@@ -550,7 +553,7 @@ mod tests {
     use gt_fetch::HttpResponse;
     use gt_flare::DEFAULT_BASE_URL;
     use gt_pending_writes::WriteAccess;
-    use gt_store::Store;
+    use gt_store::{ArchiveHandle, Store};
     use gt_test_utils::{ScriptedTransport, pending_writes};
     use gt_types::{Latitude, Longitude};
     use rustc_hash::FxHashMap;
@@ -591,7 +594,9 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let store = Store::open_in(dir.path())
             .open_solar_flares()
-            .expect("archive");
+            .expect("archive")
+            .writer()
+            .expect("an owner session opens the archive writable");
         (dir, store)
     }
 
@@ -600,7 +605,7 @@ mod tests {
         let (dir, store) = archive();
         let scheduler = SolarFlareScheduler::new(
             Context::default(),
-            Some(Arc::clone(&store)),
+            Some(ArchiveHandle::Owner(Arc::clone(&store))),
             DEFAULT_BASE_URL.to_owned(),
             key(),
             TransportSource::Offline,
@@ -646,7 +651,7 @@ mod tests {
         let (_dir, store) = archive();
         let mut scheduler = SolarFlareScheduler::new(
             Context::default(),
-            Some(store),
+            Some(ArchiveHandle::Owner(store)),
             DEFAULT_BASE_URL.to_owned(),
             None,
             TransportSource::Offline,
@@ -669,7 +674,7 @@ mod tests {
         let (_dir, store) = archive();
         let mut scheduler = SolarFlareScheduler::new(
             Context::default(),
-            Some(store),
+            Some(ArchiveHandle::Owner(store)),
             DEFAULT_BASE_URL.to_owned(),
             None,
             TransportSource::Offline,

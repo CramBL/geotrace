@@ -7,7 +7,7 @@
 //! replaces them with definitive ones once every station has reported.
 
 use std::collections::BTreeSet;
-use std::ops::Range;
+use std::ops::{Deref, Range};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, Utc};
@@ -85,17 +85,119 @@ pub struct ArchivedIndexDay {
     pub host: String,
 }
 
-/// The geomagnetic index archive.
+/// The geomagnetic index archive with no method that writes to the file, as
+/// [`Self::open_existing_read_only`] opens it.
 #[derive(Debug)]
-pub struct SolarStore {
+pub struct ReadOnlySolarStore {
     /// Every operation holds the lock for its whole sequence:
-    /// [`Self::insert_or_replace_kp_day`] reads a column length, resizes,
-    /// appends, and writes the day index last, and a caller reading between
-    /// those steps sees samples that no index entry names.
+    /// [`SolarStore::insert_or_replace_kp_day`] reads a column length,
+    /// resizes, appends, and writes the day index last, and a caller reading
+    /// between those steps sees samples that no index entry names.
     archive: Mutex<ArchiveFile>,
     /// Held beside the lock: a caller reading the archive's path never waits
     /// for a delete rewriting it.
     path: PathBuf,
+}
+
+impl ReadOnlySolarStore {
+    /// Open the archive at `path` without writing to it: it is not created
+    /// where it is missing, not rebuilt, and neither an interrupted insert nor
+    /// an interrupted delete in it is put right.
+    ///
+    /// An archive an interrupted delete left part-way through fails with
+    /// [`SolarStoreError::DeclinedRecovery`]: its day index cannot be read as it
+    /// stands, and putting it right is a write.
+    pub fn open_existing_read_only(path: &Path) -> Result<Self, SolarStoreError> {
+        let mut archive = ArchiveFile::new(path);
+        archive.check_readable_without_writing(
+            interrupted_delete_in,
+            schema::SCHEMA_VERSION_ATTR,
+            schema::CURRENT_SCHEMA_VERSION,
+        )?;
+        Ok(Self {
+            archive: Mutex::new(archive),
+            path: path.to_owned(),
+        })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Every day archived for `index`, oldest first.
+    pub fn archived_days(
+        &self,
+        index: GeomagneticIndex,
+    ) -> Result<Vec<ArchivedIndexDay>, SolarStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_only()?;
+        let days = file.group(&index.days_group_path())?;
+        Ok(DayIndex::new(&days)
+            .entries()?
+            .into_iter()
+            .map(|entry| ArchivedIndexDay {
+                day: entry.day,
+                samples: entry.rows,
+                fetched_at: entry.fetched_at,
+                host: entry.host,
+            })
+            .collect())
+    }
+
+    /// Whether `day` is archived for `index`.
+    pub fn contains(
+        &self,
+        index: GeomagneticIndex,
+        day: NaiveDate,
+    ) -> Result<bool, SolarStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_only()?;
+        let days = file.group(&index.days_group_path())?;
+        Ok(DayIndex::new(&days).row_of(day)?.is_some())
+    }
+
+    /// The Kp archived for `day`, or [`None`] if the day is not archived.
+    pub fn kp_series(&self, day: NaiveDate) -> Result<Option<KpSeries>, SolarStoreError> {
+        self.day_series(day)
+    }
+
+    /// The Hp30 archived for `day`, or [`None`] if the day is not archived.
+    pub fn hp30_series(&self, day: NaiveDate) -> Result<Option<Hp30Series>, SolarStoreError> {
+        self.day_series(day)
+    }
+
+    fn day_series<S: ArchivedSample>(
+        &self,
+        day: NaiveDate,
+    ) -> Result<Option<IndexSeries<S>>, SolarStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_only()?;
+        let days = file.group(&S::INDEX.days_group_path())?;
+        let Some(rows) = DayIndex::new(&days).extent_of(day)? else {
+            return Ok(None);
+        };
+        let group = file.group(&S::INDEX.samples_group_path())?;
+        Ok(Some(IndexSeries {
+            samples: S::read_samples(&group, rows)?,
+        }))
+    }
+}
+
+/// The geomagnetic index archive, which reads through [`ReadOnlySolarStore`]
+/// and adds [`Self::insert_or_replace_kp_day`],
+/// [`Self::insert_or_replace_hp30_day`], [`Self::delete_days_before`] and
+/// [`Self::delete_all_days`].
+#[derive(Debug)]
+pub struct SolarStore {
+    inner: ReadOnlySolarStore,
+}
+
+impl Deref for SolarStore {
+    type Target = ReadOnlySolarStore;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }
 
 impl SolarStore {
@@ -126,7 +228,7 @@ impl SolarStore {
         let mut archive = ArchiveFile::new(path);
         if archive.exists() {
             if recovery == InterruptedDeleteRecovery::Decline
-                && let Some(interrupted) = Self::interrupted_delete_in(&mut archive)?
+                && let Some(interrupted) = interrupted_delete_in(&mut archive)?
             {
                 return Err(DeclinedRecovery(interrupted).into());
             }
@@ -141,33 +243,11 @@ impl SolarStore {
             Self::create(&mut archive)?;
         }
         Ok(Self {
-            archive: Mutex::new(archive),
-            path: path.to_owned(),
+            inner: ReadOnlySolarStore {
+                archive: Mutex::new(archive),
+                path: path.to_owned(),
+            },
         })
-    }
-
-    /// Open the archive at `path` without writing to it: it is not created
-    /// where it is missing, not rebuilt, and neither an interrupted insert nor
-    /// an interrupted delete in it is put right.
-    ///
-    /// An archive an interrupted delete left part-way through fails with
-    /// [`SolarStoreError::DeclinedRecovery`]: its day index cannot be read as it
-    /// stands, and putting it right is a write.
-    pub fn open_existing_read_only(path: &Path) -> Result<Self, SolarStoreError> {
-        let mut archive = ArchiveFile::new(path);
-        archive.check_readable_without_writing(
-            Self::interrupted_delete_in,
-            schema::SCHEMA_VERSION_ATTR,
-            schema::CURRENT_SCHEMA_VERSION,
-        )?;
-        Ok(Self {
-            archive: Mutex::new(archive),
-            path: path.to_owned(),
-        })
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
     }
 
     /// What an interrupted delete left in the archive at `path`, or [`None`]
@@ -187,26 +267,7 @@ impl SolarStore {
         if !archive.exists() {
             return Ok(None);
         }
-        Self::interrupted_delete_in(&mut archive)
-    }
-
-    fn interrupted_delete_in(
-        archive: &mut ArchiveFile,
-    ) -> Result<Option<InterruptedDelete>, SolarStoreError> {
-        let file = archive.open_read_only()?;
-        let mut interrupted = false;
-        let mut discarded_epoch_days: BTreeSet<i32> = BTreeSet::new();
-        for index in GeomagneticIndex::iter() {
-            if with_layout(&file, index, |layout| layout.interrupted_delete())?.is_none() {
-                continue;
-            }
-            interrupted = true;
-            let days = file.group(&index.days_group_path())?;
-            discarded_epoch_days.extend(Column::new(&days, day_index::DAY).read::<i32>()?);
-        }
-        Ok(interrupted.then_some(InterruptedDelete {
-            archived_days: discarded_epoch_days.len(),
-        }))
+        interrupted_delete_in(&mut archive)
     }
 
     fn create(archive: &mut ArchiveFile) -> Result<(), SolarStoreError> {
@@ -288,7 +349,7 @@ impl SolarStore {
         deleted: DeletedDays,
         report: PruneProgressSink<'_>,
     ) -> Result<usize, SolarStoreError> {
-        let mut archive = self.archive.lock();
+        let mut archive = self.inner.archive.lock();
         let file = archive.open_read_write()?;
         let mut columns_of_index: Vec<(GeomagneticIndex, usize)> = Vec::new();
         for index in GeomagneticIndex::iter() {
@@ -330,38 +391,6 @@ impl SolarStore {
         Ok(removed.len())
     }
 
-    /// Every day archived for `index`, oldest first.
-    pub fn archived_days(
-        &self,
-        index: GeomagneticIndex,
-    ) -> Result<Vec<ArchivedIndexDay>, SolarStoreError> {
-        let mut archive = self.archive.lock();
-        let file = archive.open_read_only()?;
-        let days = file.group(&index.days_group_path())?;
-        Ok(DayIndex::new(&days)
-            .entries()?
-            .into_iter()
-            .map(|entry| ArchivedIndexDay {
-                day: entry.day,
-                samples: entry.rows,
-                fetched_at: entry.fetched_at,
-                host: entry.host,
-            })
-            .collect())
-    }
-
-    /// Whether `day` is archived for `index`.
-    pub fn contains(
-        &self,
-        index: GeomagneticIndex,
-        day: NaiveDate,
-    ) -> Result<bool, SolarStoreError> {
-        let mut archive = self.archive.lock();
-        let file = archive.open_read_only()?;
-        let days = file.group(&index.days_group_path())?;
-        Ok(DayIndex::new(&days).row_of(day)?.is_some())
-    }
-
     /// Store `series` as the Kp of `day`, served by `host`, replacing whatever
     /// was archived for that day.
     ///
@@ -390,16 +419,6 @@ impl SolarStore {
         self.insert_or_replace_day(day, host, fetched_at, &series.samples)
     }
 
-    /// The Kp archived for `day`, or [`None`] if the day is not archived.
-    pub fn kp_series(&self, day: NaiveDate) -> Result<Option<KpSeries>, SolarStoreError> {
-        self.day_series(day)
-    }
-
-    /// The Hp30 archived for `day`, or [`None`] if the day is not archived.
-    pub fn hp30_series(&self, day: NaiveDate) -> Result<Option<Hp30Series>, SolarStoreError> {
-        self.day_series(day)
-    }
-
     fn insert_or_replace_day<S: ArchivedSample>(
         &self,
         day: NaiveDate,
@@ -408,7 +427,7 @@ impl SolarStore {
         samples: &[S],
     ) -> Result<(), SolarStoreError> {
         let index = S::INDEX;
-        let mut archive = self.archive.lock();
+        let mut archive = self.inner.archive.lock();
         let file = archive.open_read_write()?;
         let group = file.group(&index.samples_group_path())?;
 
@@ -430,22 +449,25 @@ impl SolarStore {
         DayIndex::new(&days).insert_or_replace(day, placement, fetched_at, host)?;
         Ok(())
     }
+}
 
-    fn day_series<S: ArchivedSample>(
-        &self,
-        day: NaiveDate,
-    ) -> Result<Option<IndexSeries<S>>, SolarStoreError> {
-        let mut archive = self.archive.lock();
-        let file = archive.open_read_only()?;
-        let days = file.group(&S::INDEX.days_group_path())?;
-        let Some(rows) = DayIndex::new(&days).extent_of(day)? else {
-            return Ok(None);
-        };
-        let group = file.group(&S::INDEX.samples_group_path())?;
-        Ok(Some(IndexSeries {
-            samples: S::read_samples(&group, rows)?,
-        }))
+fn interrupted_delete_in(
+    archive: &mut ArchiveFile,
+) -> Result<Option<InterruptedDelete>, SolarStoreError> {
+    let file = archive.open_read_only()?;
+    let mut interrupted = false;
+    let mut discarded_epoch_days: BTreeSet<i32> = BTreeSet::new();
+    for index in GeomagneticIndex::iter() {
+        if with_layout(&file, index, |layout| layout.interrupted_delete())?.is_none() {
+            continue;
+        }
+        interrupted = true;
+        let days = file.group(&index.days_group_path())?;
+        discarded_epoch_days.extend(Column::new(&days, day_index::DAY).read::<i32>()?);
     }
+    Ok(interrupted.then_some(InterruptedDelete {
+        archived_days: discarded_epoch_days.len(),
+    }))
 }
 
 /// One index's sample type, and the columns the archive writes it to.

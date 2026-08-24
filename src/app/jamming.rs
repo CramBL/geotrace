@@ -27,7 +27,7 @@ use gt_pending_writes::{PendingWrites, WriteRefusal};
 use gt_query_run::JammingValues;
 #[cfg(test)]
 use gt_store::Store;
-use gt_store::{ArchiveUsage, JamStore, JamStoreError};
+use gt_store::{ArchiveUsage, InterferenceArchive, JamStore, JamStoreError, ReadOnlyJamStore};
 use gt_types::TimeRange;
 use gt_types::{LoadedFile, TrackRef};
 use gt_ui_types::{ArcIdentity, JammingContextSample, JammingPoint, JammingSeries};
@@ -94,7 +94,7 @@ impl ResolvedTrackInterference {
 
     /// One point per fix, valued from the dataset of the fix's own day.
     fn resolve(
-        store: Option<&JamStore>,
+        store: Option<&ReadOnlyJamStore>,
         datasets: &mut FxHashMap<NaiveDate, Option<JamDataset>>,
         track: &gt_types::LoadedTrack,
     ) -> Self {
@@ -152,8 +152,9 @@ pub struct JammingScheduler {
     tx: mpsc::Sender<JamMessage>,
     rx: mpsc::Receiver<JamMessage>,
     base_url: String,
-    /// `None` disables fetching: no archive to write to.
-    store: Option<Arc<JamStore>>,
+    /// `None` disables fetching: no archive was opened. A read-only session
+    /// has one here, and [`Self::writable_archive`] is [`None`].
+    store: Option<InterferenceArchive>,
     /// Connected on the first request, and dropped when the host changes.
     http: Option<Arc<Connection>>,
     /// Where that transport comes from. Supplied by the application, so
@@ -191,7 +192,7 @@ pub struct JammingScheduler {
 impl JammingScheduler {
     pub fn new(
         ctx: Context,
-        store: Option<Arc<JamStore>>,
+        store: Option<InterferenceArchive>,
         base_url: String,
         transport_source: TransportSource,
         pending_writes: PendingWrites,
@@ -223,7 +224,7 @@ impl JammingScheduler {
     }
 
     /// Take an opened archive, reading how many cells it holds for each day.
-    pub fn adopt_store(&mut self, store: Option<Arc<JamStore>>) {
+    pub fn adopt_store(&mut self, store: Option<InterferenceArchive>) {
         self.store = store;
         self.archived_cells = BTreeMap::new();
         self.read_the_day_index();
@@ -238,7 +239,7 @@ impl JammingScheduler {
         };
         if let Some(cells) = self
             .day_index_read
-            .record_read(&self.ctx, archived_cells_of(&store))
+            .record_read(&self.ctx, archived_cells_of(store.read()))
         {
             self.archived_cells = cells;
         }
@@ -268,7 +269,7 @@ impl JammingScheduler {
     /// queued are dropped. A recording spanning more than
     /// [`calendar::MAX_DAYS_PER_TRACK`] queues nothing.
     pub fn request_days_for(&mut self, range: TimeRange) {
-        let Some(store) = self.store.as_ref().map(Arc::clone) else {
+        let Some(store) = self.store.clone() else {
             return;
         };
         let Some(days) = calendar::days_spanned(range.start, range.end) else {
@@ -287,7 +288,7 @@ impl JammingScheduler {
             if calendar::day_outlook(day, today) != DayOutlook::Fetchable {
                 continue;
             }
-            let needs_fetch = store.contains(day).map(|archived| !archived);
+            let needs_fetch = store.read().contains(day).map(|archived| !archived);
             self.days.request_recording_day(day, needs_fetch);
         }
         self.start_next();
@@ -298,10 +299,10 @@ impl JammingScheduler {
     /// Returns how many days were queued, or [`None`] when there is no
     /// archive to write them to.
     pub fn backfill(&mut self, from: NaiveDate, to: NaiveDate) -> Option<usize> {
-        let store = self.store.as_ref().map(Arc::clone)?;
+        let store = self.store.clone()?;
         let total = self.days.start_backfill(
             calendar::fetchable_days(from, to, calendar::today_utc()),
-            |day| store.contains(day).map(|archived| !archived),
+            |day| store.read().contains(day).map(|archived| !archived),
         );
         log::info!("Backfilling interference for {total} days between {from} and {to}");
         self.start_next();
@@ -314,16 +315,17 @@ impl JammingScheduler {
         self.store.is_some()
     }
 
-    /// The archive, for the settings page to report and delete from.
-    pub fn archive(&self) -> Option<Arc<JamStore>> {
-        self.store.as_ref().map(Arc::clone)
+    /// The archive to delete days from, for the settings page. [`None`] in a
+    /// read-only session, where the delete controls are grayed.
+    pub fn writable_archive(&self) -> Option<Arc<JamStore>> {
+        self.store.as_ref()?.writer()
     }
 
     /// What the archive holds, as the environment storage rows show it.
     pub fn archive_usage(&self) -> Option<ArchiveUsage> {
         let store = self.store.as_ref()?;
         Some(ArchiveUsage::measure(
-            store.path(),
+            store.read().path(),
             self.archived_cells.keys().copied(),
         ))
     }
@@ -428,7 +430,7 @@ impl JammingScheduler {
                     .interference_by_track
                     .resolve(track_ref, archived_days, || {
                         ResolvedTrackInterference::resolve(
-                            self.store.as_deref(),
+                            self.store.as_ref().map(InterferenceArchive::read),
                             &mut datasets,
                             track,
                         )
@@ -458,11 +460,17 @@ impl JammingScheduler {
             archived_days: self.archived_days_in(span),
             positions: Some(ArcIdentity::of(positions)),
         };
-        let store = self.store.as_ref().map(Arc::clone);
+        let store = self.store.clone();
         let positions = Arc::clone(positions);
         self.context.resolve(
             source,
-            |day| context_day(store.as_deref(), &positions, day),
+            |day| {
+                context_day(
+                    store.as_ref().map(InterferenceArchive::read),
+                    &positions,
+                    day,
+                )
+            },
             |day| {
                 Some(JammingContextSample {
                     start_secs: midnight_secs(day),
@@ -540,7 +548,8 @@ impl JammingScheduler {
             return None;
         }
         self.store
-            .as_deref()?
+            .as_ref()?
+            .read()
             .dataset(day)
             .inspect_err(|err| log::error!("Reading interference cells for {day}: {err}"))
             .ok()
@@ -564,7 +573,7 @@ impl JammingScheduler {
     }
 
     fn start_next(&mut self) {
-        let Some(store) = self.store.as_ref().map(Arc::clone) else {
+        let Some(store) = self.writable_archive() else {
             return;
         };
         if self.pending_writes.refusal().is_some() {
@@ -627,7 +636,7 @@ impl JammingScheduler {
 }
 
 /// How many cells the archive holds for each day it holds.
-fn archived_cells_of(store: &JamStore) -> Result<BTreeMap<NaiveDate, u32>, JamStoreError> {
+fn archived_cells_of(store: &ReadOnlyJamStore) -> Result<BTreeMap<NaiveDate, u32>, JamStoreError> {
     Ok(store
         .days()?
         .into_iter()
@@ -641,7 +650,7 @@ fn archived_cells_of(store: &JamStore) -> Result<BTreeMap<NaiveDate, u32>, JamSt
 /// A day with no recording to place it at contributes nothing, and so breaks
 /// the line like a day the archive does not hold.
 fn context_day(
-    store: Option<&JamStore>,
+    store: Option<&ReadOnlyJamStore>,
     positions: &FixPositionTimeline,
     day: NaiveDate,
 ) -> Vec<JammingContextSample> {
@@ -742,6 +751,7 @@ mod tests {
     use gt_fetch::HttpResponse;
     use gt_jam::DEFAULT_BASE_URL;
     use gt_pending_writes::WriteAccess;
+    use gt_store::ArchiveHandle;
     use gt_test_utils::ScriptedTransport;
     use gt_test_utils::pending_writes;
 
@@ -775,7 +785,9 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let store = Store::open_in(dir.path())
             .open_interference()
-            .expect("archive");
+            .expect("archive")
+            .writer()
+            .expect("an owner session opens the archive writable");
         (dir, store)
     }
 
@@ -784,7 +796,7 @@ mod tests {
         let (dir, store) = archive();
         let scheduler = JammingScheduler::new(
             Context::default(),
-            Some(Arc::clone(&store)),
+            Some(ArchiveHandle::Owner(Arc::clone(&store))),
             DEFAULT_BASE_URL.to_owned(),
             TransportSource::Offline,
             PendingWrites::default(),
@@ -1044,6 +1056,29 @@ mod tests {
     fn no_day_is_dispatched_while_writes_are_refused(#[case] pending_writes: PendingWrites) {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.pending_writes = pending_writes;
+
+        scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 20, 17)));
+
+        assert_eq!(scheduler.days.queued(), 1);
+        assert!(!scheduler.days.is_fetching());
+    }
+
+    /// A read-only session holds a [`ReadOnlyJamStore`], which has no
+    /// `insert_day`, so its days stay queued whatever the write registry
+    /// allows.
+    #[test]
+    fn no_day_is_dispatched_from_a_read_only_archive() {
+        let (dir, _store) = archive();
+        let read_only = Store::open_in(dir.path())
+            .open_interference_read_only()
+            .expect("read the archive");
+        let mut scheduler = JammingScheduler::new(
+            Context::default(),
+            Some(read_only),
+            DEFAULT_BASE_URL.to_owned(),
+            TransportSource::Offline,
+            PendingWrites::default(),
+        );
 
         scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 20, 17)));
 

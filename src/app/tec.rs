@@ -27,7 +27,7 @@ use gt_ionex::text;
 use gt_ionex::{IonexProduct, calendar, transport};
 use gt_map::{TecHeatmapSnapshot, TecLayer};
 use gt_pending_writes::{PendingWrites, WriteRefusal};
-use gt_store::{ArchiveUsage, IonexStore, IonexStoreError};
+use gt_store::{ArchiveUsage, IonexStore, IonexStoreError, ReadOnlyIonexStore, TecMapArchive};
 use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{ArcIdentity, TecContextSample, TecPoint, TecSeries};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -85,8 +85,9 @@ pub struct TecMapScheduler {
     /// Authenticates the mirrors serving an archive that needs it. [`None`]
     /// leaves those mirrors unrequested.
     earthdata_token: Option<SecretToken>,
-    /// `None` disables fetching: no archive to write to.
-    store: Option<Arc<IonexStore>>,
+    /// `None` disables fetching: no archive was opened. A read-only session
+    /// has one here, and [`Self::writable_archive`] is [`None`].
+    store: Option<TecMapArchive>,
     /// Connected on the first request, and dropped when the mirror list
     /// changes.
     http: Option<Arc<Connection>>,
@@ -120,7 +121,7 @@ pub struct TecMapScheduler {
 impl TecMapScheduler {
     pub fn new(
         ctx: Context,
-        store: Option<Arc<IonexStore>>,
+        store: Option<TecMapArchive>,
         mirrors: MirrorList,
         earthdata_token: Option<SecretToken>,
         transport_source: TransportSource,
@@ -151,7 +152,7 @@ impl TecMapScheduler {
     }
 
     /// Take an opened archive, reading the days it already holds.
-    pub fn adopt_store(&mut self, store: Option<Arc<IonexStore>>) {
+    pub fn adopt_store(&mut self, store: Option<TecMapArchive>) {
         self.store = store;
         self.archived_days = BTreeSet::new();
         self.read_the_day_index();
@@ -166,7 +167,7 @@ impl TecMapScheduler {
         };
         if let Some(days) = self
             .day_index_read
-            .record_read(&self.ctx, archived_days_of(&store))
+            .record_read(&self.ctx, archived_days_of(store.read()))
         {
             self.archived_days = days;
         }
@@ -189,7 +190,7 @@ impl TecMapScheduler {
     /// recording day pulls in the 27 days before it as well: about 3.4 MB per
     /// recording day at the 125 KiB a day's file costs.
     pub fn request_days_for(&mut self, range: TimeRange) {
-        let Some(store) = self.store.as_ref().map(Arc::clone) else {
+        let Some(store) = self.store.clone() else {
             return;
         };
         let Some(days) = range.utc_days(calendar::MAX_DAYS_PER_TRACK) else {
@@ -213,14 +214,14 @@ impl TecMapScheduler {
         for day in &recording_days {
             background.remove(day);
             self.days
-                .request_recording_day(*day, day_needs_fetch(&store, *day, today));
+                .request_recording_day(*day, day_needs_fetch(store.read(), *day, today));
         }
         for day in background {
             if calendar::fetchable_products(day, today).is_empty() {
                 continue;
             }
             self.days
-                .request_background_day(day, day_needs_fetch(&store, day, today));
+                .request_background_day(day, day_needs_fetch(store.read(), day, today));
         }
         self.start_next();
     }
@@ -237,12 +238,12 @@ impl TecMapScheduler {
     /// Returns how many days were queued, or [`None`] when there is no archive
     /// to write them to.
     pub fn backfill(&mut self, from: NaiveDate, to: NaiveDate) -> Option<usize> {
-        let store = self.store.as_ref().map(Arc::clone)?;
+        let store = self.store.clone()?;
         let today = Utc::now().date_naive();
         let total = self
             .days
             .start_backfill(calendar::fetchable_days(from, to, today), |day| {
-                day_needs_fetch(&store, day, today)
+                day_needs_fetch(store.read(), day, today)
             });
         log::info!("Backfilling TEC maps for {total} days between {from} and {to}");
         self.start_next();
@@ -255,16 +256,17 @@ impl TecMapScheduler {
         self.store.is_some()
     }
 
-    /// The archive, for the settings page to report and delete from.
-    pub fn archive(&self) -> Option<Arc<IonexStore>> {
-        self.store.as_ref().map(Arc::clone)
+    /// The archive to delete days from, for the settings page. [`None`] in a
+    /// read-only session, where the delete controls are grayed.
+    pub fn writable_archive(&self) -> Option<Arc<IonexStore>> {
+        self.store.as_ref()?.writer()
     }
 
     /// What the archive holds, as the environment storage rows show it.
     pub fn archive_usage(&self) -> Option<ArchiveUsage> {
         let store = self.store.as_ref()?;
         Some(ArchiveUsage::measure(
-            store.path(),
+            store.read().path(),
             self.archived_days.iter().copied(),
         ))
     }
@@ -404,7 +406,8 @@ impl TecMapScheduler {
             self.shown = day
                 .filter(|day| self.archived_days.contains(day))
                 .and_then(|day| {
-                    read_archived_maps(self.store.as_deref(), day).map(|maps| (day, maps))
+                    read_archived_maps(self.store.as_ref().map(TecMapArchive::read), day)
+                        .map(|maps| (day, maps))
                 });
         }
         if let Some((_, maps)) = self.shown.as_ref() {
@@ -448,7 +451,11 @@ impl TecMapScheduler {
 
                 let archived_days = self.archived_days_spanned_by(track);
                 let points = self.plot_points.resolve(track_ref, archived_days, || {
-                    Self::resolve_points(self.store.as_deref(), &mut archived, track)
+                    Self::resolve_points(
+                        self.store.as_ref().map(TecMapArchive::read),
+                        &mut archived,
+                        track,
+                    )
                 });
                 if points.iter().any(|point| point.tecu.is_some()) {
                     series.points_by_track.insert(track_ref, points);
@@ -468,8 +475,11 @@ impl TecMapScheduler {
         &mut self,
         files: &[LoadedFile],
     ) -> FxHashMap<TrackRef, QuietTimeDeviation> {
-        self.quiet_time
-            .resolve(self.store.as_deref(), &self.archived_days, files)
+        self.quiet_time.resolve(
+            self.store.as_ref().map(TecMapArchive::read),
+            &self.archived_days,
+            files,
+        )
     }
 
     /// The TEC line across `span`: one sample per archived map epoch, read at
@@ -488,11 +498,11 @@ impl TecMapScheduler {
             archived_days: self.archived_days.range(span.days()).copied().collect(),
             positions: Some(ArcIdentity::of(positions)),
         };
-        let store = self.store.as_ref().map(Arc::clone);
+        let store = self.store.clone();
         let positions = Arc::clone(positions);
         self.context.resolve(
             source,
-            |day| context_day(store.as_deref(), &positions, day),
+            |day| context_day(store.as_ref().map(TecMapArchive::read), &positions, day),
             |day| {
                 Some(TecContextSample {
                     x_secs: midnight_secs(day),
@@ -518,7 +528,7 @@ impl TecMapScheduler {
     /// its day (the last epoch is the next day's midnight). A fix whose time
     /// falls outside the epochs its day was archived with has no value.
     fn resolve_points(
-        store: Option<&IonexStore>,
+        store: Option<&ReadOnlyIonexStore>,
         archived: &mut FxHashMap<NaiveDate, Option<GlobalIonosphereMaps>>,
         track: &LoadedTrack,
     ) -> Vec<TecPoint> {
@@ -545,7 +555,7 @@ impl TecMapScheduler {
     }
 
     fn start_next(&mut self) {
-        let Some(store) = self.store.as_ref().map(Arc::clone) else {
+        let Some(store) = self.writable_archive() else {
             return;
         };
         if self.pending_writes.refusal().is_some() {
@@ -614,7 +624,7 @@ impl TecMapScheduler {
 /// settled maps yet. A past day archived from [`IonexProduct::Final`] is never
 /// requested again.
 fn day_needs_fetch(
-    store: &IonexStore,
+    store: &ReadOnlyIonexStore,
     day: NaiveDate,
     today_utc: NaiveDate,
 ) -> Result<bool, IonexStoreError> {
@@ -631,7 +641,7 @@ fn day_needs_fetch(
 /// A day with no recording to place its epochs at contributes nothing, and so
 /// breaks the line like a day the archive does not hold.
 fn context_day(
-    store: Option<&IonexStore>,
+    store: Option<&ReadOnlyIonexStore>,
     positions: &FixPositionTimeline,
     day: NaiveDate,
 ) -> Vec<TecContextSample> {
@@ -658,7 +668,7 @@ fn context_day(
 /// The maps archived for `day`, reporting a read that failed and treating it
 /// as an unarchived day.
 pub(super) fn read_archived_maps(
-    store: Option<&IonexStore>,
+    store: Option<&ReadOnlyIonexStore>,
     day: NaiveDate,
 ) -> Option<GlobalIonosphereMaps> {
     store?
@@ -669,7 +679,7 @@ pub(super) fn read_archived_maps(
 }
 
 /// Every day the archive holds maps for.
-fn archived_days_of(store: &IonexStore) -> Result<BTreeSet<NaiveDate>, IonexStoreError> {
+fn archived_days_of(store: &ReadOnlyIonexStore) -> Result<BTreeSet<NaiveDate>, IonexStoreError> {
     Ok(store
         .archived_days()?
         .into_iter()
@@ -751,7 +761,7 @@ mod tests {
     use gt_ionex::quiet_time::IonosphericStormGrade;
     use gt_ionex::{DEFAULT_BASE_URL, MirrorLayout};
     use gt_pending_writes::WriteAccess;
-    use gt_store::Store;
+    use gt_store::{ArchiveHandle, Store};
     use gt_test_utils::{ScriptedTransport, UrlPrefixAnswers, ionex_fixtures, pending_writes};
 
     use super::*;
@@ -812,7 +822,11 @@ mod tests {
 
     fn archive() -> (TempDir, Arc<IonexStore>) {
         let dir = tempfile::tempdir().expect("temp dir");
-        let store = Store::open_in(dir.path()).open_tec_maps().expect("archive");
+        let store = Store::open_in(dir.path())
+            .open_tec_maps()
+            .expect("archive")
+            .writer()
+            .expect("an owner session opens the archive writable");
         (dir, store)
     }
 
@@ -821,7 +835,7 @@ mod tests {
         let (dir, store) = archive();
         let scheduler = TecMapScheduler::new(
             Context::default(),
-            Some(Arc::clone(&store)),
+            Some(ArchiveHandle::Owner(Arc::clone(&store))),
             MirrorList::default(),
             None,
             TransportSource::Offline,

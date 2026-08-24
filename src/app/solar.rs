@@ -22,7 +22,10 @@ use gt_pending_writes::{PendingWrites, WriteRefusal};
 use gt_solar::activity::GeomagneticActivity;
 use gt_solar::series::{Hp30Series, IndexSample, IndexSeries, KpSeries};
 use gt_solar::{GeomagneticIndex, TimeWindow, calendar, transport, wire};
-use gt_store::{ArchiveUsage, DayArchiveError as _, SolarStore, SolarStoreError};
+use gt_store::{
+    ArchiveUsage, DayArchiveError as _, GeomagneticIndexArchive, ReadOnlySolarStore, SolarStore,
+    SolarStoreError,
+};
 use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{
     GeomagneticContextLines, GeomagneticPoint, GeomagneticSeries, IndexContextSample,
@@ -74,8 +77,9 @@ pub struct GeomagneticIndexScheduler {
     tx: mpsc::Sender<IndexDayMessage>,
     rx: mpsc::Receiver<IndexDayMessage>,
     base_url: String,
-    /// `None` disables fetching: no archive to write to.
-    store: Option<Arc<SolarStore>>,
+    /// `None` disables fetching: no archive was opened. A read-only session
+    /// has one here, and [`Self::writable_archive`] is [`None`].
+    store: Option<GeomagneticIndexArchive>,
     /// Connected on the first request, and dropped when the host changes.
     http: Option<Arc<Connection>>,
     /// Where that transport comes from. Supplied by the application, so
@@ -102,7 +106,7 @@ pub struct GeomagneticIndexScheduler {
 impl GeomagneticIndexScheduler {
     pub fn new(
         ctx: Context,
-        store: Option<Arc<SolarStore>>,
+        store: Option<GeomagneticIndexArchive>,
         base_url: String,
         transport_source: TransportSource,
         pending_writes: PendingWrites,
@@ -129,7 +133,7 @@ impl GeomagneticIndexScheduler {
     }
 
     /// Take an opened archive, reading the days it already holds.
-    pub fn adopt_store(&mut self, store: Option<Arc<SolarStore>>) {
+    pub fn adopt_store(&mut self, store: Option<GeomagneticIndexArchive>) {
         self.store = store;
         self.archived_days = BTreeSet::new();
         self.read_the_day_index();
@@ -144,7 +148,7 @@ impl GeomagneticIndexScheduler {
         };
         if let Some(days) = self
             .day_index_read
-            .record_read(&self.ctx, archived_days_of(&store))
+            .record_read(&self.ctx, archived_days_of(store.read()))
         {
             self.archived_days = days;
         }
@@ -162,7 +166,7 @@ impl GeomagneticIndexScheduler {
     /// already queued are dropped. A recording spanning more than
     /// [`calendar::MAX_DAYS_PER_TRACK`] queues nothing.
     pub fn request_days_for(&mut self, range: TimeRange) {
-        let Some(store) = self.store.as_ref().map(Arc::clone) else {
+        let Some(store) = self.store.clone() else {
             return;
         };
         let Some(days) = range.utc_days(calendar::MAX_DAYS_PER_TRACK) else {
@@ -179,7 +183,7 @@ impl GeomagneticIndexScheduler {
                 continue;
             }
             self.days
-                .request_recording_day(day, day_needs_fetch(&store, day, today));
+                .request_recording_day(day, day_needs_fetch(store.read(), day, today));
         }
         self.start_next();
     }
@@ -190,12 +194,12 @@ impl GeomagneticIndexScheduler {
     /// Returns how many days were queued, or [`None`] when there is no archive
     /// to write them to.
     pub fn backfill(&mut self, from: NaiveDate, to: NaiveDate) -> Option<usize> {
-        let store = self.store.as_ref().map(Arc::clone)?;
+        let store = self.store.clone()?;
         let today = Utc::now().date_naive();
         let total = self
             .days
             .start_backfill(calendar::fetchable_days(from, to, today), |day| {
-                day_needs_fetch(&store, day, today)
+                day_needs_fetch(store.read(), day, today)
             });
         log::info!("Backfilling geomagnetic indices for {total} days between {from} and {to}");
         self.start_next();
@@ -208,16 +212,17 @@ impl GeomagneticIndexScheduler {
         self.store.is_some()
     }
 
-    /// The archive, for the settings page to report and delete from.
-    pub fn archive(&self) -> Option<Arc<SolarStore>> {
-        self.store.as_ref().map(Arc::clone)
+    /// The archive to delete days from, for the settings page. [`None`] in a
+    /// read-only session, where the delete controls are grayed.
+    pub fn writable_archive(&self) -> Option<Arc<SolarStore>> {
+        self.store.as_ref()?.writer()
     }
 
     /// What the archive holds, as the environment storage rows show it.
     pub fn archive_usage(&self) -> Option<ArchiveUsage> {
         let store = self.store.as_ref()?;
         Some(ArchiveUsage::measure(
-            store.path(),
+            store.read().path(),
             self.archived_days.iter().copied(),
         ))
     }
@@ -317,7 +322,11 @@ impl GeomagneticIndexScheduler {
 
                 let archived_days = self.archived_days_spanned_by(track);
                 let points = self.plot_points.resolve(track_ref, archived_days, || {
-                    Self::resolve_points(self.store.as_deref(), &mut archived, track)
+                    Self::resolve_points(
+                        self.store.as_ref().map(GeomagneticIndexArchive::read),
+                        &mut archived,
+                        track,
+                    )
                 });
                 if points
                     .iter()
@@ -343,7 +352,7 @@ impl GeomagneticIndexScheduler {
             archived_days: self.archived_days.range(span.days()).copied().collect(),
             positions: None,
         };
-        let store = self.store.as_ref().map(Arc::clone);
+        let store = self.store.clone();
         let gap_at = |day| {
             Some(IndexContextSample {
                 start_secs: midnight_secs(day),
@@ -354,8 +363,12 @@ impl GeomagneticIndexScheduler {
             hp30: self.hp30_context.resolve(
                 source.clone(),
                 |day| {
-                    context_periods(store.as_deref().and_then(|store| {
-                        read_archived_series(store.hp30_series(day), GeomagneticIndex::Hp30, day)
+                    context_periods(store.as_ref().and_then(|store| {
+                        read_archived_series(
+                            store.read().hp30_series(day),
+                            GeomagneticIndex::Hp30,
+                            day,
+                        )
                     }))
                 },
                 gap_at,
@@ -363,8 +376,8 @@ impl GeomagneticIndexScheduler {
             kp: self.kp_context.resolve(
                 source,
                 |day| {
-                    context_periods(store.as_deref().and_then(|store| {
-                        read_archived_series(store.kp_series(day), GeomagneticIndex::Kp, day)
+                    context_periods(store.as_ref().and_then(|store| {
+                        read_archived_series(store.read().kp_series(day), GeomagneticIndex::Kp, day)
                     }))
                 },
                 gap_at,
@@ -386,7 +399,7 @@ impl GeomagneticIndexScheduler {
     /// UTC day. Both indices publish periods that start on the hour or the
     /// half hour, so no period a fix falls in begins on the day before.
     fn resolve_points(
-        store: Option<&SolarStore>,
+        store: Option<&ReadOnlySolarStore>,
         archived: &mut FxHashMap<NaiveDate, ArchivedDay>,
         track: &LoadedTrack,
     ) -> Vec<GeomagneticPoint> {
@@ -417,7 +430,7 @@ impl GeomagneticIndexScheduler {
     }
 
     fn start_next(&mut self) {
-        let Some(store) = self.store.as_ref().map(Arc::clone) else {
+        let Some(store) = self.writable_archive() else {
             return;
         };
         if self.pending_writes.refusal().is_some() {
@@ -478,7 +491,7 @@ impl GeomagneticIndexScheduler {
 /// values is never requested again, an empty one included: the service
 /// published nothing for it and will not start.
 fn day_needs_fetch(
-    store: &SolarStore,
+    store: &ReadOnlySolarStore,
     day: NaiveDate,
     today_utc: NaiveDate,
 ) -> Result<bool, SolarStoreError> {
@@ -504,7 +517,7 @@ struct ArchivedDay {
 }
 
 impl ArchivedDay {
-    fn read(store: Option<&SolarStore>, day: NaiveDate) -> Self {
+    fn read(store: Option<&ReadOnlySolarStore>, day: NaiveDate) -> Self {
         let Some(store) = store else {
             return Self::default();
         };
@@ -545,7 +558,7 @@ fn read_archived_series<S>(
 /// read failed: that failure is reported and its index left out. A failure
 /// reporting that another process has the file open is handed to
 /// [`DayIndexReadRetry`] instead, which reads every index again.
-fn archived_days_of(store: &SolarStore) -> Result<BTreeSet<NaiveDate>, SolarStoreError> {
+fn archived_days_of(store: &ReadOnlySolarStore) -> Result<BTreeSet<NaiveDate>, SolarStoreError> {
     let mut days = BTreeSet::new();
     for index in GeomagneticIndex::iter() {
         match store.archived_days(index) {
@@ -655,7 +668,7 @@ mod tests {
     use gt_pending_writes::WriteAccess;
     use gt_solar::DEFAULT_BASE_URL;
     use gt_solar::series::{Hp30Sample, KpSample, KpStatus};
-    use gt_store::Store;
+    use gt_store::{ArchiveHandle, Store};
     use gt_test_utils::{ScriptedTransport, pending_writes};
 
     use crate::app::backfill::BackfillProgress;
@@ -686,7 +699,9 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let store = Store::open_in(dir.path())
             .open_geomagnetic_indices()
-            .expect("archive");
+            .expect("archive")
+            .writer()
+            .expect("an owner session opens the archive writable");
         (dir, store)
     }
 
@@ -695,7 +710,7 @@ mod tests {
         let (dir, store) = archive();
         let scheduler = GeomagneticIndexScheduler::new(
             Context::default(),
-            Some(Arc::clone(&store)),
+            Some(ArchiveHandle::Owner(Arc::clone(&store))),
             DEFAULT_BASE_URL.to_owned(),
             TransportSource::Offline,
             PendingWrites::default(),
