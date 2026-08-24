@@ -21,6 +21,7 @@ use gt_query_run::{
 };
 use gt_side_panel::widgets::{PointClickRequests, apply_point_click};
 use gt_types::{DataCategory, LoadedFile, NavPoint, PointIdx, TrackRef};
+use gt_ui_theme::buttons::SortHeaderButton;
 use gt_ui_theme::labels::{CountLine, LabelWithHover};
 use gt_ui_types::{
     DataPointRef, HighlightScope, MapHighlight, MapScope, MatchHighlight, MatchRevealTarget,
@@ -1178,27 +1179,19 @@ fn sort_header_ui(
     state: &mut ResultsState,
     row_noun: RowNoun,
 ) {
-    let active = state.sort.column == column;
-    let clicked = ui
-        .with_layout(column.cell_layout(), |ui| {
-            let title = ui.add(
-                Label::new(RichText::new(column.title(row_noun)).strong())
-                    .wrap_mode(TextWrapMode::Extend)
-                    .sense(Sense::click()),
-            );
-            if active {
-                ui.label(RichText::new(state.sort.direction.caret()).small().weak());
-            }
-            title
-        })
-        .inner
-        // Pointer cursor, not the text I-beam.
-        .on_hover_cursor(CursorIcon::PointingHand)
-        .on_hover_text(format!(
-            "Click to sort {}",
-            column.order_hint(state.sort.next_direction(column))
-        ))
+    let mut header = SortHeaderButton::new(column.title(row_noun)).wrap_mode(TextWrapMode::Extend);
+    if state.sort.column == column {
+        header = header.active_direction_caret(state.sort.direction.caret());
+    }
+
+    let clicked = header
+        .show(
+            ui,
+            column.cell_layout(),
+            column.order_hint(state.sort.next_direction(column)),
+        )
         .clicked();
+
     if clicked {
         state.sort.clicked(column);
     }
