@@ -1258,22 +1258,60 @@ fn a_column_header_click_sorts_the_matches() {
         "run order lists the long match first"
     );
 
-    harness
-        .get_by_role_and_label(egui::accesskit::Role::Label, "points")
-        .click();
+    matches_sort_header(&harness, "points").click();
     harness.run_steps(3);
     assert!(
         longest_first(&harness),
         "the first click sorts largest first"
     );
 
-    harness
-        .get_by_role_and_label(egui::accesskit::Role::Label, "points")
-        .click();
+    matches_sort_header(&harness, "points").click();
     harness.run_steps(3);
     assert!(
         !longest_first(&harness),
         "clicking the header again sorts smallest first"
+    );
+}
+
+/// The header of the matches table that sorts the list by `title`'s column.
+fn matches_sort_header<'h>(
+    harness: &'h Harness<'_, App>,
+    title: &'h str,
+) -> egui_kittest::Node<'h> {
+    harness.get_by_role_and_label(egui::accesskit::Role::Button, title)
+}
+
+/// Space activates the focused sort header the way a click on it does.
+#[test]
+fn space_on_a_focused_column_header_sorts_the_matches() {
+    let mut harness = demo_app_with_query_run(TWO_MATCH_QUERY);
+    matches_sort_header(&harness, "points").focus();
+    harness.run_steps(1);
+
+    // The first activation sorts largest first, the order the run already
+    // lists in, and the second reverses it.
+    for _ in 0..2 {
+        harness.input_mut().events.push(key_press(egui::Key::Space));
+        harness.run_steps(3);
+    }
+
+    assert!(
+        harness.get_by_label("0:11").rect().top() < harness.get_by_label("1:01").rect().top(),
+        "the short match is listed above the long one"
+    );
+}
+
+/// A sort header requests the pointing hand on hover.
+#[test]
+fn a_column_header_requests_the_pointing_hand() {
+    let mut harness = demo_app_with_query_run(TWO_MATCH_QUERY);
+
+    let header = matches_sort_header(&harness, "points").rect().center();
+    harness.hover_at_and_settle(header, 5);
+
+    assert_eq!(
+        harness.output().platform_output.cursor_icon,
+        egui::CursorIcon::PointingHand
     );
 }
 
@@ -1413,9 +1451,7 @@ fn copying_after_sorting_writes_the_matches_in_the_listed_order() {
     // The first click on the points header sorts largest first, the second
     // smallest first.
     for _ in 0..2 {
-        harness
-            .get_by_role_and_label(egui::accesskit::Role::Label, "points")
-            .click();
+        matches_sort_header(&harness, "points").click();
         harness.run_steps(3);
     }
 

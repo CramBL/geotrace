@@ -15,6 +15,7 @@ use gt_types::{
     TrackIdx, TrackRef,
 };
 use gt_ui_theme::ELLIPSIS;
+use gt_ui_theme::buttons::FramelessIconButton;
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, HighlightScope, MapHighlight, MapScope,
     QueryMatches, SnapCosting,
@@ -470,12 +471,7 @@ fn render_file_row(
         // row. Only shown when there is something to reveal.
         let identity = ctx.identity(fi);
         if has_metadata_details(&MetadataView::from_file_metadata(&file.metadata, identity)) {
-            // A frameless button so the pointer reads as clickable and the icon
-            // highlights on hover.
-            let icon = ui
-                .add(Button::new(ICON_NOTE).frame(false))
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text("Recording details");
+            let icon = FramelessIconButton::new(ICON_NOTE).hover_text_ui(ui, "Recording details");
             if icon.clicked() {
                 *ctx.metadata_request = Some(RecordingDetails {
                     metadata: file.metadata.clone(),
@@ -801,27 +797,24 @@ fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'
         };
         let stale = stale.clone();
         let warnings = warnings.clone();
-        let glyph = ui
-            .add(Button::new(text).frame(false))
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_ui(|ui| {
-                snap_status_rows(
-                    ui,
-                    snapped,
-                    interpolated,
-                    unsnapped,
-                    confidence_score,
-                    partial,
-                    &warnings,
+        let glyph = FramelessIconButton::new(text).hover_tooltip_ui(ui, |ui| {
+            snap_status_rows(
+                ui,
+                snapped,
+                interpolated,
+                unsnapped,
+                confidence_score,
+                partial,
+                &warnings,
+            );
+            if let Some(reasons) = &stale {
+                ui.label(
+                    RichText::new(format!("Stale - {}", reasons.join(", ")))
+                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
                 );
-                if let Some(reasons) = &stale {
-                    ui.label(
-                        RichText::new(format!("Stale - {}", reasons.join(", ")))
-                            .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
-                    );
-                }
-                ui.label(RichText::new(snapped_track_toggle_label(shown)).weak());
-            });
+            }
+            ui.label(RichText::new(snapped_track_toggle_label(shown)).weak());
+        });
         if glyph.clicked() {
             *ctx.snap_visibility_request = Some(track_ref);
         }
@@ -839,15 +832,10 @@ fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'
     if failed {
         text = text.color(gt_ui_theme::warning_amber(ui.visuals().dark_mode));
     }
-    let button = ui.add_enabled(action.enabled, Button::new(text).frame(false));
+    let button = FramelessIconButton::new(text)
+        .enabled(action.enabled)
+        .hover_text_ui(ui, &action.hover);
     snap_trigger_overlay(ui, row, button.rect);
-    let button = if action.enabled {
-        button
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text(&action.hover)
-    } else {
-        button.on_disabled_hover_text(&action.hover)
-    };
     if button.clicked() {
         *ctx.snap_request = Some(track_ref);
     }

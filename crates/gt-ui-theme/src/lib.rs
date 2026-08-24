@@ -1,3 +1,4 @@
+pub mod buttons;
 pub mod fonts;
 pub mod labels;
 

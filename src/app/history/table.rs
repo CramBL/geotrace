@@ -8,6 +8,7 @@ use gt_pending_writes::WriteAccess;
 use gt_side_panel::widgets::{MetadataView, has_metadata_details, metadata_detail_rows};
 use gt_store::{ChannelSummary, RecordingEntry};
 use gt_ui_theme::EM_DASH;
+use gt_ui_theme::buttons::SortHeaderButton;
 use strum::{EnumCount as _, IntoEnumIterator as _};
 
 use super::{HistorySort, RenameEdit, SortColumn};
@@ -127,43 +128,29 @@ pub(super) fn history_table(
 ///
 /// The active column shows a caret pointing the way its values run. Clicking
 /// it reverses that, clicking any other column switches to it. `term`, when
-/// given, is the column's glossary explanation: it underlines the title and
-/// leads the hover, the way
-/// [`gt_ui_theme::labels::LabelWithHover::underlined_term`] marks a term.
+/// given, is the column's glossary explanation.
 fn sort_header(ui: &mut egui::Ui, column: SortColumn, sort: &mut HistorySort, term: Option<&str>) {
     let active = sort.column == column;
-    let mut title = RichText::new(column.title()).strong();
-    if term.is_some() {
-        title = title.underline();
+    let next = if active {
+        sort.direction.reversed()
+    } else {
+        column.initial_direction()
+    };
+
+    let mut header = SortHeaderButton::new(column.title());
+    if active {
+        header = header.active_direction_caret(sort.direction.caret());
+    }
+    if let Some(term) = term {
+        header = header.term_explanation(term);
     }
 
-    let clicked = ui
-        .horizontal(|ui| {
-            let title = ui.add(Label::new(title).sense(egui::Sense::click()));
-            if active {
-                ui.label(RichText::new(sort.direction.caret()).small().weak());
-            }
-            title
-        })
-        .inner
-        // Pointer cursor, not the text I-beam.
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_ui(|ui| {
-            if let Some(term) = term {
-                ui.label(term);
-            }
-            // The hint names the order a click produces.
-            let next = if active {
-                sort.direction.reversed()
-            } else {
-                column.initial_direction()
-            };
-            ui.label(
-                RichText::new(format!("Click to sort {}", column.order_hint(next)))
-                    .small()
-                    .color(ui.visuals().weak_text_color()),
-            );
-        })
+    let clicked = header
+        .show(
+            ui,
+            egui::Layout::left_to_right(egui::Align::Center),
+            column.order_hint(next),
+        )
         .clicked();
 
     if clicked {
