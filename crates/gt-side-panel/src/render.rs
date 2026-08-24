@@ -498,9 +498,8 @@ fn render_file_row(
                 if !file.load_warnings.is_empty() {
                     let icon = RichText::new(ICON_WARNING)
                         .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode));
-                    if ui
-                        .add(Label::new(icon).sense(egui::Sense::click()))
-                        .on_hover_text("Data quality warnings - click for details")
+                    if FramelessIconButton::new(icon)
+                        .hover_text_ui(ui, "Data quality warnings - click for details")
                         .clicked()
                     {
                         *ctx.warnings_request =
