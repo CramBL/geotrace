@@ -120,6 +120,25 @@ fn build_app_with_write_access(
     fading: bool,
     write_access: WriteAccess,
 ) -> App {
+    build_app_with_the_instance_lock(
+        cc,
+        config_path,
+        fading,
+        PendingWrites::new(write_access),
+        SharedDataDirectoryLock::marking_nothing(),
+    )
+}
+
+/// [`build_app`] on the data directory `instance_lock` was taken on, which is
+/// what decides whether the run opens anything, with `pending_writes`
+/// deciding whether it writes to it at all.
+fn build_app_with_the_instance_lock(
+    cc: &eframe::CreationContext<'_>,
+    config_path: &std::path::Path,
+    fading: bool,
+    pending_writes: PendingWrites,
+    instance_lock: SharedDataDirectoryLock,
+) -> App {
     App::new_with_config(
         cc,
         &[],
@@ -129,8 +148,8 @@ fn build_app_with_write_access(
             offline: true,
             storage: crate::app::Storage::Disabled,
             app_version: super::TEST_APP_VERSION,
-            pending_writes: PendingWrites::new(write_access),
-            instance_lock: SharedDataDirectoryLock::marking_nothing(),
+            pending_writes,
+            instance_lock,
         },
     )
 }
@@ -4596,16 +4615,21 @@ fn a_storage_open_that_never_reports_still_runs_the_loads_that_waited() {
 /// The app takes its own lock on that very directory, which is refused for as
 /// long as the caller keeps its lock - the same answer a second GeoTrace gets
 /// from the first.
-fn app_waiting_for_the_data_directory<'a>(
-    paths: &[PathBuf],
-    data_directory: &Path,
-) -> Harness<'a, App> {
+fn lock_on_a_directory_another_instance_holds(data_directory: &Path) -> SharedDataDirectoryLock {
     let instance_lock = SharedDataDirectoryLock::acquire(Some(data_directory));
     assert_eq!(
         instance_lock.ownership(),
         DataDirectoryOwnership::HeldByAnotherInstance,
         "the app is meant to start out waiting"
     );
+    instance_lock
+}
+
+fn app_waiting_for_the_data_directory<'a>(
+    paths: &[PathBuf],
+    data_directory: &Path,
+) -> Harness<'a, App> {
+    let instance_lock = lock_on_a_directory_another_instance_holds(data_directory);
     let paths = paths.to_vec();
     Harness::builder()
         .with_size(egui::vec2(1280.0, 800.0))
@@ -5073,6 +5097,79 @@ fn the_lock_freed_after_a_take_over_makes_this_instance_the_marked_owner() {
         harness.state().background_mark_retry.is_none(),
         "the retry goes on after this instance became the marked owner"
     );
+}
+
+/// A second GeoTrace waiting for the data directory the caller holds, saving
+/// its settings at the returned path.
+fn app_waiting_for_the_data_directory_that_saves_settings<'a>(
+    data_directory: &Path,
+) -> (TestHarness<'a, App>, PathBuf) {
+    let instance_lock = lock_on_a_directory_another_instance_holds(data_directory);
+    TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(move |cc, config_path, fading| {
+            build_app_with_the_instance_lock(
+                cc,
+                config_path,
+                fading,
+                PendingWrites::default(),
+                instance_lock,
+            )
+        })
+}
+
+/// Both instances write the same `config.toml` after a take-over. The
+/// settings the other instance saves stand for as long as it runs: this one
+/// holds its debounced flush back until the other lets go of the mark.
+#[test]
+fn a_settings_flush_during_the_run_waits_for_the_mark_after_a_take_over() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let (mut harness, config_path) =
+        app_waiting_for_the_data_directory_that_saves_settings(directory.path());
+    harness.inner.step();
+    take_over_write_access(&mut harness.inner);
+
+    harness.inner.state_mut().flush_settings();
+    assert!(
+        !config_path.exists(),
+        "the flush overwrote the settings of the GeoTrace still holding the mark"
+    );
+
+    drop(holder);
+    assert!(
+        harness
+            .inner
+            .step_until(|harness| harness.state().background_mark_retry.is_none()),
+        "this instance never took the mark the other one let go of"
+    );
+    harness.inner.state_mut().flush_settings();
+
+    assert!(
+        config_path.exists(),
+        "the flush stayed held back after this instance took the mark"
+    );
+}
+
+/// The flush `App::begin_shutdown` performs is not held back, because the
+/// GeoTrace this session took write access from may never exit.
+#[test]
+fn closing_after_a_take_over_writes_the_settings_while_the_other_instance_holds_the_mark() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let (mut harness, config_path) =
+        app_waiting_for_the_data_directory_that_saves_settings(directory.path());
+    harness.inner.step();
+    take_over_write_access(&mut harness.inner);
+
+    request_window_close(&mut harness.inner);
+    harness.inner.step();
+
+    assert!(
+        harness.inner.state().background_mark_retry.is_some(),
+        "the other GeoTrace let go of the mark before the close"
+    );
+    assert!(config_path.exists(), "the shutdown wrote no settings");
 }
 
 /// Starts the session read-only as the user does: the wait dialog's button,
@@ -6440,6 +6537,58 @@ fn closing_a_read_only_session_writes_no_settings() {
     assert!(
         harness.inner.step_until(closed_the_window),
         "the window never closed"
+    );
+}
+
+#[test]
+fn a_settings_flush_during_the_run_registers_a_pending_write() {
+    let (mut harness, config_path) = TestHarness::builder().eframe(build_app);
+    harness.inner.step();
+
+    harness.inner.state_mut().flush_settings();
+
+    assert!(config_path.exists(), "the flush wrote no settings file");
+    assert_eq!(
+        harness
+            .inner
+            .state()
+            .pending_writes
+            .snapshot()
+            .recently_finished,
+        vec!["Saving settings"]
+    );
+}
+
+/// The debounced flush writes nothing once the shutdown has begun:
+/// `App::begin_shutdown` already wrote the settings through
+/// `PendingWrites::try_begin_shutdown_write`.
+#[test]
+fn a_settings_flush_after_the_shutdown_flush_writes_nothing() {
+    let (mut harness, config_path) = TestHarness::builder().eframe(build_app);
+    harness.inner.step();
+    harness.inner.state().pending_writes.begin_shutdown();
+
+    harness.inner.state_mut().flush_settings();
+
+    assert!(
+        !config_path.exists(),
+        "the debounced flush wrote after the shutdown flush"
+    );
+}
+
+/// A `config.toml` that cannot be replaced leaves no `config.toml.tmp` for
+/// the next run to find.
+#[test]
+fn a_settings_flush_that_cannot_replace_the_settings_file_removes_its_temporary() {
+    let (mut harness, config_path) = TestHarness::builder().eframe(build_app);
+    harness.inner.step();
+    std::fs::create_dir(&config_path).expect("occupy the settings path with a directory");
+
+    harness.inner.state_mut().flush_settings();
+
+    assert!(
+        !config_path.with_extension("toml.tmp").exists(),
+        "the failed flush left its temporary behind"
     );
 }
 

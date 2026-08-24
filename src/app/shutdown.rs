@@ -32,7 +32,6 @@ pub(crate) const FORCE_QUIT_EXIT_CODE: u8 = 3;
 /// wait that outlives the window.
 pub(crate) const SECOND_SIGNAL_QUIT_CAUSE: &str = "Quitting on a second termination signal";
 
-const SETTINGS_FLUSH_LABEL: &str = "Saving settings";
 const HISTORY_SHUTDOWN_LABEL: &str = "Finishing recording history work";
 
 /// Reports the writes the process is about to abandon, wherever it ends
@@ -300,13 +299,7 @@ impl App {
             return;
         }
         self.pending_writes.begin_shutdown();
-
-        let settings_write = self
-            .pending_writes
-            .try_begin_shutdown_write(SETTINGS_FLUSH_LABEL, WriteKind::Settings);
-        self.flush_settings();
-        drop(settings_write);
-
+        self.flush_settings_during_shutdown();
         self.shut_down_history_worker_off_the_gui_thread();
         self.shutdown.begin(Instant::now());
         self.instance_lock.mark_shutting_down(&self.pending_writes);

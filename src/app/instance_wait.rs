@@ -60,7 +60,9 @@ pub(in crate::app) const TAKE_OVER_CONFIRMATION_TITLE: &str = "Take over write a
 
 pub(in crate::app) const TAKE_OVER_WARNING: &str = "Writing to the recordings and archives while the other GeoTrace is still \
      writing to them can leave either of them inconsistent. GeoTrace asks first about \
-     an archive the other GeoTrace is part-way through deleting from.";
+     an archive the other GeoTrace is part-way through deleting from. Both windows also \
+     write the same settings file, and the settings of whichever closes last are the \
+     ones kept.";
 
 const TAKE_OVER_BUTTON_HOVER: &str =
     "Open the recordings and archives here without waiting for the other GeoTrace";
@@ -554,6 +556,14 @@ impl App {
         self.storage_open =
             self.storage
                 .open_in_background(ctx, self.pending_writes.clone(), queued_loads);
+    }
+
+    /// Both instances are [`gt_pending_writes::WriteAccess::Owner`] until
+    /// this one takes the mark, and both write the same `config.toml`.
+    pub(in crate::app) fn took_write_access_from_an_instance_that_still_holds_the_mark(
+        &self,
+    ) -> bool {
+        self.instance_taken_over_from.is_some() && self.background_mark_retry.is_some()
     }
 
     /// Retries the mark behind an open window, so the data directory's status
