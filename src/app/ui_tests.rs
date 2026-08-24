@@ -20,13 +20,13 @@ use std::sync::mpsc;
 use std::thread;
 use std::{
     sync::{Arc, Barrier},
-    time::{Duration as StdDuration, Instant},
+    time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
 use geotrace_sdk::{Channel, ChannelUnit, DateTime, Duration, Unit, Utc};
 use gt_instance_lock::{
-    DataDirectoryLock, DataDirectoryOwnership, InstanceState, InstanceStatus,
+    DataDirectoryLock, DataDirectoryOwnership, InstanceState, InstanceStatus, InstanceStatusRead,
     MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES, SharedDataDirectoryLock,
 };
 use gt_jam::wire::HexObservation;
@@ -4676,28 +4676,143 @@ fn a_data_directory_another_instance_holds_is_waited_for_and_nothing_is_opened()
     );
 }
 
-/// The lock is what says the directory is in use: a status file that is gone
-/// or unreadable leaves the dialog with nothing to name, and it says only
-/// what the lock proves.
+/// What the wait finds where the instance holding the data directory keeps
+/// its status file.
+#[derive(Debug, Clone, Copy)]
+enum StatusFileOnDisk {
+    Removed,
+    /// A directory in its place, which `fs::read` fails on with an error
+    /// other than `NotFound`.
+    ADirectory,
+    NotJson,
+}
+
+/// The lock is what says the directory is in use: the dialog says so however
+/// the status file reads, and names which of the three reads it got.
 #[rstest::rstest]
-#[case::missing(None)]
-#[case::corrupt(Some(&b"{not json"[..]))]
+#[case::absent(StatusFileOnDisk::Removed, "It has not reported what it is doing yet")]
+#[case::unreadable(StatusFileOnDisk::ADirectory, "Its status file cannot be read")]
+#[case::malformed(StatusFileOnDisk::NotJson, "Its status file is damaged")]
 fn a_held_data_directory_without_a_readable_status_still_says_it_is_held(
-    #[case] status_file: Option<&[u8]>,
+    #[case] status_file: StatusFileOnDisk,
+    #[case] expected_label: &str,
 ) {
     let directory = tempfile::tempdir().expect("temp dir");
     let _holder = DataDirectoryLock::acquire(Some(directory.path()));
     let status_path = directory.path().join(gt_instance_lock::STATUS_FILE_NAME);
+    std::fs::remove_file(&status_path).expect("remove the status file");
     match status_file {
-        None => std::fs::remove_file(&status_path).expect("remove the status file"),
-        Some(bytes) => std::fs::write(&status_path, bytes).expect("write the status file"),
+        StatusFileOnDisk::Removed => {}
+        StatusFileOnDisk::ADirectory => {
+            std::fs::create_dir(&status_path)
+                .expect("create a directory where the status file goes");
+        }
+        StatusFileOnDisk::NotJson => {
+            std::fs::write(&status_path, b"{not json").expect("write the status file");
+        }
     }
     let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
 
     harness.step();
 
     harness.get_by_label_contains(DATA_DIRECTORY_HELD_TITLE);
-    harness.get_by_label_contains("What it is doing is unknown");
+    harness.get_by_label_contains(expected_label);
+}
+
+const STALE_STATUS_WRITTEN_SECONDS_AGO: u64 = 60;
+
+/// Puts a shutting-down status in `directory`, with `written_at` left to the
+/// caller, over the one `DataDirectoryLock::acquire` wrote.
+fn write_a_shutting_down_status(directory: &Path, written_at: Option<u64>) {
+    std::fs::write(
+        directory.join(gt_instance_lock::STATUS_FILE_NAME),
+        serde_json::to_vec(&InstanceStatus {
+            process_id: process::id(),
+            state: InstanceState::ShuttingDown,
+            pending_writes: vec![gt_instance_lock::PendingWriteReport {
+                label: "Compacting the TEC archive".to_owned(),
+                progress: None,
+                stage: None,
+            }],
+            written_at,
+        })
+        .expect("serialize the status"),
+    )
+    .expect("write the status file");
+}
+
+/// A shutdown that stopped reporting - a `write_status` that failed, or an
+/// instance stuck before its next `report_shutdown_progress` - still names
+/// the writes it had running, and the dialog states how old that is.
+#[test]
+fn a_status_the_holding_instance_stopped_refreshing_is_marked_as_out_of_date() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let written_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("the clock is past the Unix epoch")
+        .as_secs()
+        - STALE_STATUS_WRITTEN_SECONDS_AGO;
+    write_a_shutting_down_status(directory.path(), Some(written_at));
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+
+    harness.step();
+
+    harness.get_by_label_contains("It is shutting down");
+    harness.get_by_label_contains("Compacting the TEC archive");
+    harness.get_by_label_contains("its last report is a minute old");
+}
+
+/// A status file from a GeoTrace before the `written_at` field existed: what
+/// it reports is shown, and the dialog states that its age cannot be
+/// measured.
+#[test]
+fn a_status_without_a_written_at_is_marked_as_being_of_unknown_age() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    write_a_shutting_down_status(directory.path(), None);
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+
+    harness.step();
+
+    harness.get_by_label_contains("It is shutting down");
+    harness.get_by_label_contains("The age of this report is unknown");
+}
+
+/// The instance holding the directory writes an `InstanceState::Running`
+/// status once, when it takes the mark, so the dialog states nothing about
+/// the age of one however long that instance stays open.
+#[test]
+fn a_running_instance_is_never_reported_as_out_of_date() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let written_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("the clock is past the Unix epoch")
+        .as_secs()
+        - STALE_STATUS_WRITTEN_SECONDS_AGO;
+    std::fs::write(
+        directory.path().join(gt_instance_lock::STATUS_FILE_NAME),
+        serde_json::to_vec(&InstanceStatus {
+            process_id: process::id(),
+            state: InstanceState::Running,
+            pending_writes: Vec::new(),
+            written_at: Some(written_at),
+        })
+        .expect("serialize the status"),
+    )
+    .expect("write the status file");
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+
+    harness.step();
+
+    harness.get_by_label_contains("Its window is open");
+    assert!(
+        harness
+            .query_by_label_contains("its last report is")
+            .is_none(),
+        "the dialog reported the age of a status the instance rewrites only once it shuts down"
+    );
 }
 
 /// The wait ends by itself: the app takes the directory the instance holding
@@ -4723,7 +4838,9 @@ fn the_wait_ends_when_the_instance_holding_the_data_directory_lets_go() {
         "the dialog outlived the wait"
     );
     assert_eq!(
-        InstanceStatus::read_from(directory.path()).map(|status| status.state),
+        InstanceStatusRead::read_from(directory.path())
+            .status()
+            .map(|status| status.state),
         Some(InstanceState::Running),
         "the app marks the data directory as its own once it takes it"
     );
@@ -5078,7 +5195,9 @@ fn the_lock_freed_after_a_take_over_makes_this_instance_the_marked_owner() {
         "this instance never took the data directory the other one let go of"
     );
     assert_eq!(
-        InstanceStatus::read_from(directory.path()).map(|status| status.process_id),
+        InstanceStatusRead::read_from(directory.path())
+            .status()
+            .map(|status| status.process_id),
         Some(process::id()),
         "the status file describes another instance than the one holding the directory"
     );
@@ -6935,10 +7054,11 @@ fn the_shutdown_window_reports_the_writes_left_as_they_finish() {
     request_window_close(&mut holder);
     step_until_the_shutdown_window_is_up(&mut holder);
 
-    let status = InstanceStatus::read_from(directory.path()).expect("the status file");
+    let read = InstanceStatusRead::read_from(directory.path());
+    let status = read.status().expect("the status file");
     assert_eq!(status.state, InstanceState::ShuttingDown);
     assert!(
-        reports_the_compaction(&status),
+        reports_the_compaction(status),
         "the shutdown window never reported the write it is waiting for"
     );
 
@@ -6946,8 +7066,9 @@ fn the_shutdown_window_reports_the_writes_left_as_they_finish() {
     thread::sleep(MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES);
 
     assert!(
-        holder.step_until(|_| InstanceStatus::read_from(directory.path())
-            .is_some_and(|status| !reports_the_compaction(&status))),
+        holder.step_until(|_| InstanceStatusRead::read_from(directory.path())
+            .status()
+            .is_some_and(|status| !reports_the_compaction(status))),
         "the shutdown window went on reporting a write that had finished"
     );
 }

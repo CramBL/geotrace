@@ -325,7 +325,7 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    use gt_instance_lock::{InstanceState, InstanceStatus, SharedDataDirectoryLock};
+    use gt_instance_lock::{InstanceState, InstanceStatusRead, SharedDataDirectoryLock};
     use gt_pending_writes::{PendingWrites, WriteKind};
     use rstest::rstest;
 
@@ -392,7 +392,8 @@ mod tests {
             ExitCode::SUCCESS
         );
 
-        let status = InstanceStatus::read_from(directory.path()).expect("the status file");
+        let read = InstanceStatusRead::read_from(directory.path());
+        let status = read.status().expect("the status file");
         assert_eq!(status.state, InstanceState::ShuttingDown);
         assert_eq!(
             status
