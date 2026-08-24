@@ -11,7 +11,7 @@
 //! An archived day can be stored again: JPL publishes a rapid map about a day
 //! after the day ends and replaces it with a final one about two days later.
 
-use std::ops::Range;
+use std::ops::{Deref, Range};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
@@ -95,17 +95,167 @@ pub struct ArchivedMapDay {
     pub host: String,
 }
 
-/// The TEC map archive.
+/// The TEC map archive with no method that writes to the file, as
+/// [`Self::open_existing_read_only`] opens it.
 #[derive(Debug)]
-pub struct IonexStore {
+pub struct ReadOnlyIonexStore {
     /// Every operation holds the lock for its whole sequence:
-    /// [`Self::insert_or_replace_day`] appends values, appends maps, writes
-    /// the day's own columns and indexes the day last, and a caller reading
-    /// between those steps sees rows that no day entry names.
+    /// [`IonexStore::insert_or_replace_day`] appends values, appends maps,
+    /// writes the day's own columns and indexes the day last, and a caller
+    /// reading between those steps sees rows that no day entry names.
     archive: Mutex<ArchiveFile>,
     /// Held beside the lock: a caller reading the archive's path never waits
     /// for a delete rewriting it.
     path: PathBuf,
+}
+
+impl ReadOnlyIonexStore {
+    /// Open the archive at `path` without writing to it: it is not created
+    /// where it is missing, not rebuilt, and neither an interrupted insert nor
+    /// an interrupted delete in it is put right.
+    ///
+    /// An archive an interrupted delete left part-way through fails with
+    /// [`IonexStoreError::DeclinedRecovery`]: its day index cannot be read as it
+    /// stands, and putting it right is a write.
+    pub fn open_existing_read_only(path: &Path) -> Result<Self, IonexStoreError> {
+        let mut archive = ArchiveFile::new(path);
+        archive.check_readable_without_writing(
+            interrupted_delete_in,
+            schema::SCHEMA_VERSION_ATTR,
+            schema::CURRENT_SCHEMA_VERSION,
+        )?;
+        Ok(Self {
+            archive: Mutex::new(archive),
+            path: path.to_owned(),
+        })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Every day archived, oldest first.
+    pub fn archived_days(&self) -> Result<Vec<ArchivedMapDay>, IonexStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_only()?;
+        let days = file.group(schema::DAYS_GROUP)?;
+        let index = DayIndex::new(&days);
+        let products: Vec<u8> = Column::new(&days, schema::DAY_PRODUCT).read()?;
+
+        index
+            .entries()?
+            .into_iter()
+            .map(|entry| {
+                let row = index.row_of(entry.day)?.ok_or_else(|| {
+                    IonexStoreError::Corrupt(format!("{} left the day index", entry.day))
+                })?;
+                let &code = products.get(row).ok_or_else(|| {
+                    IonexStoreError::Corrupt(format!("{} has no product", entry.day))
+                })?;
+                let product = StoredProduct::from_code(code).ok_or_else(|| {
+                    IonexStoreError::Corrupt(format!("{} has product code {code}", entry.day))
+                })?;
+                Ok(ArchivedMapDay {
+                    day: entry.day,
+                    map_count: entry.rows,
+                    product: product.into(),
+                    fetched_at: entry.fetched_at,
+                    host: entry.host,
+                })
+            })
+            .collect()
+    }
+
+    /// Whether `day` is archived.
+    pub fn contains(&self, day: NaiveDate) -> Result<bool, IonexStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_only()?;
+        let days = file.group(schema::DAYS_GROUP)?;
+        Ok(DayIndex::new(&days).row_of(day)?.is_some())
+    }
+
+    /// Which product `day` was archived from, or [`None`] if it is not
+    /// archived.
+    pub fn archived_product(
+        &self,
+        day: NaiveDate,
+    ) -> Result<Option<IonexProduct>, IonexStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_only()?;
+        let days = file.group(schema::DAYS_GROUP)?;
+        let Some(row) = DayIndex::new(&days).row_of(day)? else {
+            return Ok(None);
+        };
+        let products: Vec<u8> = Column::new(&days, schema::DAY_PRODUCT).read()?;
+        let &code = products
+            .get(row)
+            .ok_or_else(|| IonexStoreError::Corrupt(format!("{day} has no product")))?;
+        StoredProduct::from_code(code)
+            .map(|product| Some(product.into()))
+            .ok_or_else(|| IonexStoreError::Corrupt(format!("{day} has product code {code}")))
+    }
+
+    /// The maps archived for `day`, or [`None`] if the day is not archived.
+    pub fn day_maps(
+        &self,
+        day: NaiveDate,
+    ) -> Result<Option<GlobalIonosphereMaps>, IonexStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_only()?;
+        let days = file.group(schema::DAYS_GROUP)?;
+        let index = DayIndex::new(&days);
+        let (Some(map_rows), Some(row)) = (index.extent_of(day)?, index.row_of(day)?) else {
+            return Ok(None);
+        };
+
+        let grid = read_day_grid(&days, row, day)?;
+        let interval = read_day_scalar::<i64>(&days, row, schema::DAY_INTERVAL_SECONDS, day)?;
+        let map_group = file.group(schema::MAPS_GROUP)?;
+        let value_group = file.group(schema::VALUES_GROUP)?;
+
+        let epochs: Vec<i64> =
+            Column::new(&map_group, schema::MAP_EPOCH).read_slice(map_rows.clone())?;
+        let offsets: Vec<u64> =
+            Column::new(&map_group, schema::MAP_VALUE_OFFSET).read_slice(map_rows.clone())?;
+        let counts: Vec<u64> =
+            Column::new(&map_group, schema::MAP_VALUE_COUNT).read_slice(map_rows)?;
+
+        let mut maps = Vec::with_capacity(epochs.len());
+        for (position, &epoch) in epochs.iter().enumerate() {
+            let (Some(&offset), Some(&count)) = (offsets.get(position), counts.get(position))
+            else {
+                return Err(IonexStoreError::Corrupt(format!(
+                    "{day} map {position} has no values"
+                )));
+            };
+            let rows = StoredValueExtent { offset, count }.rows(day, position)?;
+            maps.push(TecMap::new(
+                dates::timestamp_from_seconds(epoch)?,
+                read_latitude_bands(&value_group, rows, grid, day, position)?,
+            ));
+        }
+        Ok(Some(GlobalIonosphereMaps::new(
+            grid,
+            TimeDelta::seconds(interval),
+            maps,
+        )))
+    }
+}
+
+/// The TEC map archive, which reads through [`ReadOnlyIonexStore`] and adds
+/// [`Self::insert_or_replace_day`], [`Self::delete_days_before`] and
+/// [`Self::delete_all_days`].
+#[derive(Debug)]
+pub struct IonexStore {
+    inner: ReadOnlyIonexStore,
+}
+
+impl Deref for IonexStore {
+    type Target = ReadOnlyIonexStore;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }
 
 impl IonexStore {
@@ -134,7 +284,7 @@ impl IonexStore {
         let mut archive = ArchiveFile::new(path);
         if archive.exists() {
             if recovery == InterruptedDeleteRecovery::Decline
-                && let Some(interrupted) = Self::interrupted_delete_in(&mut archive)?
+                && let Some(interrupted) = interrupted_delete_in(&mut archive)?
             {
                 return Err(DeclinedRecovery(interrupted).into());
             }
@@ -149,33 +299,11 @@ impl IonexStore {
             Self::create(&mut archive)?;
         }
         Ok(Self {
-            archive: Mutex::new(archive),
-            path: path.to_owned(),
+            inner: ReadOnlyIonexStore {
+                archive: Mutex::new(archive),
+                path: path.to_owned(),
+            },
         })
-    }
-
-    /// Open the archive at `path` without writing to it: it is not created
-    /// where it is missing, not rebuilt, and neither an interrupted insert nor
-    /// an interrupted delete in it is put right.
-    ///
-    /// An archive an interrupted delete left part-way through fails with
-    /// [`IonexStoreError::DeclinedRecovery`]: its day index cannot be read as it
-    /// stands, and putting it right is a write.
-    pub fn open_existing_read_only(path: &Path) -> Result<Self, IonexStoreError> {
-        let mut archive = ArchiveFile::new(path);
-        archive.check_readable_without_writing(
-            Self::interrupted_delete_in,
-            schema::SCHEMA_VERSION_ATTR,
-            schema::CURRENT_SCHEMA_VERSION,
-        )?;
-        Ok(Self {
-            archive: Mutex::new(archive),
-            path: path.to_owned(),
-        })
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
     }
 
     /// What an interrupted delete left in the archive at `path`, or [`None`]
@@ -190,14 +318,7 @@ impl IonexStore {
         if !archive.exists() {
             return Ok(None);
         }
-        Self::interrupted_delete_in(&mut archive)
-    }
-
-    fn interrupted_delete_in(
-        archive: &mut ArchiveFile,
-    ) -> Result<Option<InterruptedDelete>, IonexStoreError> {
-        let file = archive.open_read_only()?;
-        with_layout(&file, |layout| layout.interrupted_delete())
+        interrupted_delete_in(&mut archive)
     }
 
     fn create(archive: &mut ArchiveFile) -> Result<(), IonexStoreError> {
@@ -297,77 +418,16 @@ impl IonexStore {
         cutoff: NaiveDate,
         report: PruneProgressSink<'_>,
     ) -> Result<usize, IonexStoreError> {
-        let mut archive = self.archive.lock();
+        let mut archive = self.inner.archive.lock();
         let file = archive.open_read_write()?;
         with_layout(&file, |layout| layout.delete_days_before(cutoff, report))
     }
 
     /// Remove every archived day, reporting how many went.
     pub fn delete_all_days(&self, report: PruneProgressSink<'_>) -> Result<usize, IonexStoreError> {
-        let mut archive = self.archive.lock();
+        let mut archive = self.inner.archive.lock();
         let file = archive.open_read_write()?;
         with_layout(&file, |layout| layout.delete_all_days(report))
-    }
-
-    /// Every day archived, oldest first.
-    pub fn archived_days(&self) -> Result<Vec<ArchivedMapDay>, IonexStoreError> {
-        let mut archive = self.archive.lock();
-        let file = archive.open_read_only()?;
-        let days = file.group(schema::DAYS_GROUP)?;
-        let index = DayIndex::new(&days);
-        let products: Vec<u8> = Column::new(&days, schema::DAY_PRODUCT).read()?;
-
-        index
-            .entries()?
-            .into_iter()
-            .map(|entry| {
-                let row = index.row_of(entry.day)?.ok_or_else(|| {
-                    IonexStoreError::Corrupt(format!("{} left the day index", entry.day))
-                })?;
-                let &code = products.get(row).ok_or_else(|| {
-                    IonexStoreError::Corrupt(format!("{} has no product", entry.day))
-                })?;
-                let product = StoredProduct::from_code(code).ok_or_else(|| {
-                    IonexStoreError::Corrupt(format!("{} has product code {code}", entry.day))
-                })?;
-                Ok(ArchivedMapDay {
-                    day: entry.day,
-                    map_count: entry.rows,
-                    product: product.into(),
-                    fetched_at: entry.fetched_at,
-                    host: entry.host,
-                })
-            })
-            .collect()
-    }
-
-    /// Whether `day` is archived.
-    pub fn contains(&self, day: NaiveDate) -> Result<bool, IonexStoreError> {
-        let mut archive = self.archive.lock();
-        let file = archive.open_read_only()?;
-        let days = file.group(schema::DAYS_GROUP)?;
-        Ok(DayIndex::new(&days).row_of(day)?.is_some())
-    }
-
-    /// Which product `day` was archived from, or [`None`] if it is not
-    /// archived.
-    pub fn archived_product(
-        &self,
-        day: NaiveDate,
-    ) -> Result<Option<IonexProduct>, IonexStoreError> {
-        let mut archive = self.archive.lock();
-        let file = archive.open_read_only()?;
-        let days = file.group(schema::DAYS_GROUP)?;
-        let Some(row) = DayIndex::new(&days).row_of(day)? else {
-            return Ok(None);
-        };
-        let products: Vec<u8> = Column::new(&days, schema::DAY_PRODUCT).read()?;
-        let &code = products
-            .get(row)
-            .ok_or_else(|| IonexStoreError::Corrupt(format!("{day} has no product")))?;
-        StoredProduct::from_code(code)
-            .map(|product| Some(product.into()))
-            .ok_or_else(|| IonexStoreError::Corrupt(format!("{day} has product code {code}")))
     }
 
     /// Store `maps` as the maps of `day`, served by `host` from `product`,
@@ -380,7 +440,7 @@ impl IonexStore {
         product: IonexProduct,
         maps: &GlobalIonosphereMaps,
     ) -> Result<(), IonexStoreError> {
-        let mut archive = self.archive.lock();
+        let mut archive = self.inner.archive.lock();
         let file = archive.open_read_write()?;
         let days = file.group(schema::DAYS_GROUP)?;
         let map_group = file.group(schema::MAPS_GROUP)?;
@@ -454,52 +514,13 @@ impl IonexStore {
         index.insert_or_replace(day, placement, fetched_at, host)?;
         Ok(())
     }
+}
 
-    /// The maps archived for `day`, or [`None`] if the day is not archived.
-    pub fn day_maps(
-        &self,
-        day: NaiveDate,
-    ) -> Result<Option<GlobalIonosphereMaps>, IonexStoreError> {
-        let mut archive = self.archive.lock();
-        let file = archive.open_read_only()?;
-        let days = file.group(schema::DAYS_GROUP)?;
-        let index = DayIndex::new(&days);
-        let (Some(map_rows), Some(row)) = (index.extent_of(day)?, index.row_of(day)?) else {
-            return Ok(None);
-        };
-
-        let grid = read_day_grid(&days, row, day)?;
-        let interval = read_day_scalar::<i64>(&days, row, schema::DAY_INTERVAL_SECONDS, day)?;
-        let map_group = file.group(schema::MAPS_GROUP)?;
-        let value_group = file.group(schema::VALUES_GROUP)?;
-
-        let epochs: Vec<i64> =
-            Column::new(&map_group, schema::MAP_EPOCH).read_slice(map_rows.clone())?;
-        let offsets: Vec<u64> =
-            Column::new(&map_group, schema::MAP_VALUE_OFFSET).read_slice(map_rows.clone())?;
-        let counts: Vec<u64> =
-            Column::new(&map_group, schema::MAP_VALUE_COUNT).read_slice(map_rows)?;
-
-        let mut maps = Vec::with_capacity(epochs.len());
-        for (position, &epoch) in epochs.iter().enumerate() {
-            let (Some(&offset), Some(&count)) = (offsets.get(position), counts.get(position))
-            else {
-                return Err(IonexStoreError::Corrupt(format!(
-                    "{day} map {position} has no values"
-                )));
-            };
-            let rows = StoredValueExtent { offset, count }.rows(day, position)?;
-            maps.push(TecMap::new(
-                dates::timestamp_from_seconds(epoch)?,
-                read_latitude_bands(&value_group, rows, grid, day, position)?,
-            ));
-        }
-        Ok(Some(GlobalIonosphereMaps::new(
-            grid,
-            TimeDelta::seconds(interval),
-            maps,
-        )))
-    }
+fn interrupted_delete_in(
+    archive: &mut ArchiveFile,
+) -> Result<Option<InterruptedDelete>, IonexStoreError> {
+    let file = archive.open_read_only()?;
+    with_layout(&file, |layout| layout.interrupted_delete())
 }
 
 /// Run `act` against the archive's layout: a day index over the map columns

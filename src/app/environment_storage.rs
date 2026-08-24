@@ -259,9 +259,10 @@ impl PruneReport {
     }
 }
 
-/// The archives a delete acts on, taken from the schedulers that own them.
+/// The archives a delete acts on.
 ///
-/// An archive that could not be opened is [`None`], and a delete skips it.
+/// An archive that could not be opened, and one a read-only session opened,
+/// are both [`None`]: a delete skips them.
 #[derive(Default, Clone)]
 pub struct OpenEnvironmentArchives {
     pub interference: Option<Arc<JamStore>>,
@@ -514,14 +515,14 @@ impl EnvironmentUsage {
 }
 
 impl App {
-    /// The archives the environment storage rows report on and the delete acts
-    /// on, taken from the schedulers that own them.
+    /// The archives a delete acts on, taken from the schedulers that own
+    /// them. A read-only session has none of them: the delete is a write.
     fn open_environment_archives(&self) -> OpenEnvironmentArchives {
         OpenEnvironmentArchives {
-            interference: self.jamming.archive(),
-            geomagnetic_indices: self.geomagnetic_indices.archive(),
-            tec_maps: self.tec_maps.archive(),
-            solar_flares: self.solar_flares.archive(),
+            interference: self.jamming.writable_archive(),
+            geomagnetic_indices: self.geomagnetic_indices.writable_archive(),
+            tec_maps: self.tec_maps.writable_archive(),
+            solar_flares: self.solar_flares.writable_archive(),
         }
     }
 
@@ -778,7 +779,9 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let store = gt_store::Store::open_in(dir.path())
             .open_interference()
-            .expect("open the archive");
+            .expect("open the archive")
+            .writer()
+            .expect("an owner session opens the archive writable");
         for offset in 0..3 {
             store
                 .insert_day(day(offset), "host", Utc::now(), &[])
@@ -798,7 +801,9 @@ mod tests {
         let (dir, mut archives) = archives_with_interference();
         let store = gt_store::Store::open_in(dir.path())
             .open_solar_flares()
-            .expect("open the archive");
+            .expect("open the archive")
+            .writer()
+            .expect("an owner session opens the archive writable");
         for offset in 0..3 {
             store
                 .insert_or_replace_day(day(offset), "host", Utc::now(), &[])

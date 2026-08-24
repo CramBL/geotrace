@@ -6,7 +6,7 @@
 //! A day the catalog lists no flare for is archived with no events, which is
 //! what keeps it from being requested again.
 
-use std::ops::Range;
+use std::ops::{Deref, Range};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, Utc};
@@ -86,17 +86,97 @@ pub struct ArchivedFlareDay {
     pub host: String,
 }
 
-/// The solar flare archive.
+/// The solar flare archive with no method that writes to the file, as
+/// [`Self::open_existing_read_only`] opens it.
 #[derive(Debug)]
-pub struct FlareStore {
+pub struct ReadOnlyFlareStore {
     /// Every operation holds the lock for its whole sequence:
-    /// [`Self::insert_or_replace_day`] reads a column length, resizes, appends
-    /// and writes the day index last, and a caller reading between those steps
-    /// sees events that no index entry names.
+    /// [`FlareStore::insert_or_replace_day`] reads a column length, resizes,
+    /// appends and writes the day index last, and a caller reading between
+    /// those steps sees events that no index entry names.
     archive: Mutex<ArchiveFile>,
     /// Held beside the lock: a caller reading the archive's path never waits
     /// for a delete rewriting it.
     path: PathBuf,
+}
+
+impl ReadOnlyFlareStore {
+    /// Open the archive at `path` without writing to it: it is not created
+    /// where it is missing, not rebuilt, and neither an interrupted insert nor
+    /// an interrupted delete in it is put right.
+    ///
+    /// An archive an interrupted delete left part-way through fails with
+    /// [`FlareStoreError::DeclinedRecovery`]: its day index cannot be read as it
+    /// stands, and putting it right is a write.
+    pub fn open_existing_read_only(path: &Path) -> Result<Self, FlareStoreError> {
+        let mut archive = ArchiveFile::new(path);
+        archive.check_readable_without_writing(
+            interrupted_delete_in,
+            schema::SCHEMA_VERSION_ATTR,
+            schema::CURRENT_SCHEMA_VERSION,
+        )?;
+        Ok(Self {
+            archive: Mutex::new(archive),
+            path: path.to_owned(),
+        })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Every day archived, oldest first.
+    pub fn archived_days(&self) -> Result<Vec<ArchivedFlareDay>, FlareStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_only()?;
+        let days = file.group(schema::DAYS_GROUP)?;
+        Ok(DayIndex::new(&days)
+            .entries()?
+            .into_iter()
+            .map(|entry| ArchivedFlareDay {
+                day: entry.day,
+                flares: entry.rows,
+                fetched_at: entry.fetched_at,
+                host: entry.host,
+            })
+            .collect())
+    }
+
+    /// Whether `day` is archived.
+    pub fn contains(&self, day: NaiveDate) -> Result<bool, FlareStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_only()?;
+        let days = file.group(schema::DAYS_GROUP)?;
+        Ok(DayIndex::new(&days).row_of(day)?.is_some())
+    }
+
+    /// The flares archived for `day`, or [`None`] if the day is not archived.
+    pub fn flares(&self, day: NaiveDate) -> Result<Option<Vec<SolarFlare>>, FlareStoreError> {
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_only()?;
+        let days = file.group(schema::DAYS_GROUP)?;
+        let Some(rows) = DayIndex::new(&days).extent_of(day)? else {
+            return Ok(None);
+        };
+        let events = file.group(schema::EVENTS_GROUP)?;
+        Ok(Some(read_events(&events, rows)?))
+    }
+}
+
+/// The solar flare archive, which reads through [`ReadOnlyFlareStore`] and
+/// adds [`Self::insert_or_replace_day`], [`Self::delete_days_before`] and
+/// [`Self::delete_all_days`].
+#[derive(Debug)]
+pub struct FlareStore {
+    inner: ReadOnlyFlareStore,
+}
+
+impl Deref for FlareStore {
+    type Target = ReadOnlyFlareStore;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }
 
 impl FlareStore {
@@ -125,7 +205,7 @@ impl FlareStore {
         let mut archive = ArchiveFile::new(path);
         if archive.exists() {
             if recovery == InterruptedDeleteRecovery::Decline
-                && let Some(interrupted) = Self::interrupted_delete_in(&mut archive)?
+                && let Some(interrupted) = interrupted_delete_in(&mut archive)?
             {
                 return Err(DeclinedRecovery(interrupted).into());
             }
@@ -140,33 +220,11 @@ impl FlareStore {
             Self::create(&mut archive)?;
         }
         Ok(Self {
-            archive: Mutex::new(archive),
-            path: path.to_owned(),
+            inner: ReadOnlyFlareStore {
+                archive: Mutex::new(archive),
+                path: path.to_owned(),
+            },
         })
-    }
-
-    /// Open the archive at `path` without writing to it: it is not created
-    /// where it is missing, not rebuilt, and neither an interrupted insert nor
-    /// an interrupted delete in it is put right.
-    ///
-    /// An archive an interrupted delete left part-way through fails with
-    /// [`FlareStoreError::DeclinedRecovery`]: its day index cannot be read as it
-    /// stands, and putting it right is a write.
-    pub fn open_existing_read_only(path: &Path) -> Result<Self, FlareStoreError> {
-        let mut archive = ArchiveFile::new(path);
-        archive.check_readable_without_writing(
-            Self::interrupted_delete_in,
-            schema::SCHEMA_VERSION_ATTR,
-            schema::CURRENT_SCHEMA_VERSION,
-        )?;
-        Ok(Self {
-            archive: Mutex::new(archive),
-            path: path.to_owned(),
-        })
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
     }
 
     /// What an interrupted delete left in the archive at `path`, or [`None`]
@@ -181,14 +239,7 @@ impl FlareStore {
         if !archive.exists() {
             return Ok(None);
         }
-        Self::interrupted_delete_in(&mut archive)
-    }
-
-    fn interrupted_delete_in(
-        archive: &mut ArchiveFile,
-    ) -> Result<Option<InterruptedDelete>, FlareStoreError> {
-        let file = archive.open_read_only()?;
-        with_layout(&file, |layout| layout.interrupted_delete())
+        interrupted_delete_in(&mut archive)
     }
 
     fn create(archive: &mut ArchiveFile) -> Result<(), FlareStoreError> {
@@ -251,41 +302,16 @@ impl FlareStore {
         cutoff: NaiveDate,
         report: PruneProgressSink<'_>,
     ) -> Result<usize, FlareStoreError> {
-        let mut archive = self.archive.lock();
+        let mut archive = self.inner.archive.lock();
         let file = archive.open_read_write()?;
         with_layout(&file, |layout| layout.delete_days_before(cutoff, report))
     }
 
     /// Remove every archived day, reporting how many went.
     pub fn delete_all_days(&self, report: PruneProgressSink<'_>) -> Result<usize, FlareStoreError> {
-        let mut archive = self.archive.lock();
+        let mut archive = self.inner.archive.lock();
         let file = archive.open_read_write()?;
         with_layout(&file, |layout| layout.delete_all_days(report))
-    }
-
-    /// Every day archived, oldest first.
-    pub fn archived_days(&self) -> Result<Vec<ArchivedFlareDay>, FlareStoreError> {
-        let mut archive = self.archive.lock();
-        let file = archive.open_read_only()?;
-        let days = file.group(schema::DAYS_GROUP)?;
-        Ok(DayIndex::new(&days)
-            .entries()?
-            .into_iter()
-            .map(|entry| ArchivedFlareDay {
-                day: entry.day,
-                flares: entry.rows,
-                fetched_at: entry.fetched_at,
-                host: entry.host,
-            })
-            .collect())
-    }
-
-    /// Whether `day` is archived.
-    pub fn contains(&self, day: NaiveDate) -> Result<bool, FlareStoreError> {
-        let mut archive = self.archive.lock();
-        let file = archive.open_read_only()?;
-        let days = file.group(schema::DAYS_GROUP)?;
-        Ok(DayIndex::new(&days).row_of(day)?.is_some())
     }
 
     /// Store `flares` as the events of `day`, served by `host`, replacing
@@ -297,7 +323,7 @@ impl FlareStore {
         fetched_at: DateTime<Utc>,
         flares: &[SolarFlare],
     ) -> Result<(), FlareStoreError> {
-        let mut archive = self.archive.lock();
+        let mut archive = self.inner.archive.lock();
         let file = archive.open_read_write()?;
         let events = file.group(schema::EVENTS_GROUP)?;
 
@@ -318,18 +344,13 @@ impl FlareStore {
         DayIndex::new(&days).insert_or_replace(day, placement, fetched_at, host)?;
         Ok(())
     }
+}
 
-    /// The flares archived for `day`, or [`None`] if the day is not archived.
-    pub fn flares(&self, day: NaiveDate) -> Result<Option<Vec<SolarFlare>>, FlareStoreError> {
-        let mut archive = self.archive.lock();
-        let file = archive.open_read_only()?;
-        let days = file.group(schema::DAYS_GROUP)?;
-        let Some(rows) = DayIndex::new(&days).extent_of(day)? else {
-            return Ok(None);
-        };
-        let events = file.group(schema::EVENTS_GROUP)?;
-        Ok(Some(read_events(&events, rows)?))
-    }
+fn interrupted_delete_in(
+    archive: &mut ArchiveFile,
+) -> Result<Option<InterruptedDelete>, FlareStoreError> {
+    let file = archive.open_read_only()?;
+    with_layout(&file, |layout| layout.interrupted_delete())
 }
 
 fn append_events(group: &Group, flares: &[SolarFlare]) -> Result<(), FlareStoreError> {

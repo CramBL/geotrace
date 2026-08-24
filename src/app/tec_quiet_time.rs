@@ -22,7 +22,7 @@ use gt_ionex::grid::GridPoint;
 use gt_ionex::maps::GlobalIonosphereMaps;
 use gt_ionex::quiet_time::{self, QuietTimeDeviation};
 use gt_ionex::tec::TotalElectronContent;
-use gt_store::IonexStore;
+use gt_store::ReadOnlyIonexStore;
 use gt_types::{FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -92,7 +92,7 @@ impl QuietTimeDeviationCache {
     /// deviation of each track that has one.
     pub fn resolve(
         &mut self,
-        store: Option<&IonexStore>,
+        store: Option<&ReadOnlyIonexStore>,
         archived_days: &BTreeSet<NaiveDate>,
         files: &[LoadedFile],
     ) -> FxHashMap<TrackRef, QuietTimeDeviation> {
@@ -139,7 +139,11 @@ impl QuietTimeDeviationCache {
     }
 
     /// Assess `pending`, reading each day of their windows once.
-    fn read_pending_tracks(&mut self, store: Option<&IonexStore>, pending: Vec<PendingTrack<'_>>) {
+    fn read_pending_tracks(
+        &mut self,
+        store: Option<&ReadOnlyIonexStore>,
+        pending: Vec<PendingTrack<'_>>,
+    ) {
         let mut own_days: FxHashMap<NaiveDate, Option<GlobalIonosphereMaps>> = FxHashMap::default();
         let assessed: Vec<(PendingTrack<'_>, FxHashSet<AssessmentPoint>)> = pending
             .into_iter()
@@ -172,7 +176,7 @@ impl QuietTimeDeviationCache {
     /// maps at a time.
     fn read_missing_samples(
         &mut self,
-        store: Option<&IonexStore>,
+        store: Option<&ReadOnlyIonexStore>,
         points: &FxHashSet<AssessmentPoint>,
     ) {
         let mut missing: BTreeMap<NaiveDate, Vec<NodeSample>> = BTreeMap::new();
@@ -251,7 +255,7 @@ fn days_read_for_day(day: NaiveDate) -> Vec<NaiveDate> {
 /// A fix whose day the archive does not hold places no point: the grid and the
 /// epochs both come from that day's own published file.
 fn assessment_points(
-    store: Option<&IonexStore>,
+    store: Option<&ReadOnlyIonexStore>,
     own_days: &mut FxHashMap<NaiveDate, Option<GlobalIonosphereMaps>>,
     track: &LoadedTrack,
 ) -> FxHashSet<AssessmentPoint> {
