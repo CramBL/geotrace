@@ -16,6 +16,7 @@ mod archive_file;
 pub mod attributes;
 pub mod dates;
 pub mod day_index;
+mod open_retry;
 pub mod prune;
 mod usage;
 

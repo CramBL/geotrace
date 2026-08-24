@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use hdf5::plist::file_create::FileSpaceStrategy;
 use hdf5::{Group, LocationType};
 
+use crate::open_retry::OpenRetry;
 use crate::prune::{DeclinedRecovery, InterruptedDelete};
 use crate::{ArchiveError, attributes};
 
@@ -36,6 +37,7 @@ pub enum FileSpaceMigration {
 #[derive(Debug)]
 pub struct ArchiveFile {
     path: PathBuf,
+    open_retry: OpenRetry,
 }
 
 impl ArchiveFile {
@@ -50,7 +52,10 @@ impl ArchiveFile {
     };
 
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: path.into(),
+            open_retry: OpenRetry::default(),
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -74,8 +79,13 @@ impl ArchiveFile {
         Ok(OpenArchive::of(create_file(&self.path)?))
     }
 
+    /// Opens the file for reading, blocking the calling thread to retry while
+    /// another process holds the archive open.
     pub fn open_read_only(&mut self) -> Result<OpenArchive<'_>, ArchiveError> {
-        Ok(OpenArchive::of(hdf5::File::open(&self.path)?))
+        let Self { path, open_retry } = self;
+        let file =
+            open_retry.open(|| hdf5::File::open(path.as_path()).map_err(ArchiveError::from))?;
+        Ok(OpenArchive::of(file))
     }
 
     pub fn open_read_write(&mut self) -> Result<OpenArchive<'_>, ArchiveError> {
