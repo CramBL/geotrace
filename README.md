@@ -34,6 +34,7 @@ Days are archived locally as they are fetched, so they stay available offline.
 Days are archived locally as they are fetched.
 
 **Solar flares** - flares from NASA's DONKI catalog marked on the plot at their peak, coloured by class.
+Hovering a marker shades how long that flare lasted, and hovering the chip shades every flare the view reaches into.
 Needs a free [api.nasa.gov](https://api.nasa.gov) key, set in Settings.
 
 **Environment warnings** - a toast when a loaded recording overlaps archived interference, geomagnetic activity, solar flare or TEC deviation values that reach a level known to disturb reception.

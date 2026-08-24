@@ -52,6 +52,7 @@ pub(super) struct AppSnapshot {
     pub channels: Vec<(String, bool)>,
     pub show_channels: bool,
     pub show_solar_flares: bool,
+    pub always_show_solar_flare_spans: bool,
     pub layer: crate::settings::MapLayerSetting,
     pub mapbox_token: String,
     pub sync_to_map: bool,
@@ -118,6 +119,8 @@ impl Default for AppSnapshot {
             channels: Vec::new(),
             show_channels: false,
             show_solar_flares: crate::settings::PlotSettings::default().show_solar_flares,
+            always_show_solar_flare_spans: crate::settings::PlotSettings::default()
+                .always_show_solar_flare_spans,
             layer: crate::settings::MapLayerSetting::Osm,
             mapbox_token: String::new(),
             sync_to_map: true,

@@ -417,6 +417,9 @@ pub struct PlotSettings {
     pub show_channels: bool,
     /// Whether the solar flare markers are drawn.
     pub show_solar_flares: bool,
+    /// Whether every flare's span is shaded without hovering it. Toggled
+    /// through the flare chip's right-click menu.
+    pub always_show_solar_flare_spans: bool,
     /// User-chosen channel component colors, keyed by channel name: a
     /// sparse list of recolored components (TOML cannot hold `None` array
     /// slots). Anything absent keeps the derived hue. Edited through the
@@ -444,6 +447,7 @@ impl Default for PlotSettings {
             show_advanced_metrics: false,
             show_channels: false,
             show_solar_flares: true,
+            always_show_solar_flare_spans: false,
             channel_colors: HashMap::new(),
         }
     }

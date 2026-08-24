@@ -54,6 +54,22 @@ pub(super) const ANOMALY_HOVER_RADIUS_PX: f32 = 7.0;
 /// Pixel radius within which a fix of a per-fix line is a hover target.
 pub(super) const HOVER_RADIUS_PX: f32 = 12.0;
 
+/// The item of `items` the pointer is closest to within `radius_px`, and that
+/// distance for [`NearestCandidate::offer`]. `distance_px` measures one item
+/// against the pointer, which lets a hover target be measured along one axis
+/// where the shape spans the other one.
+pub(super) fn nearest_under_pointer<T>(
+    items: &[T],
+    distance_px: impl Fn(&T) -> f32,
+    radius_px: f32,
+) -> Option<(f32, &T)> {
+    items
+        .iter()
+        .map(|item| (distance_px(item), item))
+        .filter(|&(distance, _)| distance <= radius_px)
+        .min_by(|(left, _), (right, _)| left.total_cmp(right))
+}
+
 /// The item of `fixes` closest to `pointer` within `radius_px`, and its pixel
 /// distance for [`NearestCandidate::offer`]. `at` places one item in plot
 /// space.
@@ -64,11 +80,11 @@ pub(super) fn nearest_fix_under_pointer<'a, T>(
     pointer: egui::Pos2,
     radius_px: f32,
 ) -> Option<(f32, &'a T)> {
-    fixes
-        .iter()
-        .map(|fix| (plot_ui.screen_from_plot(at(fix)).distance(pointer), fix))
-        .filter(|&(distance, _)| distance <= radius_px)
-        .min_by(|(left, _), (right, _)| left.total_cmp(right))
+    nearest_under_pointer(
+        fixes,
+        |fix| plot_ui.screen_from_plot(at(fix)).distance(pointer),
+        radius_px,
+    )
 }
 /// On-plot radius of the anomaly cross marker.
 pub(super) const ANOMALY_MARKER_RADIUS: f32 = 4.0;

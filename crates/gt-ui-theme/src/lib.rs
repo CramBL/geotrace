@@ -288,6 +288,21 @@ pub const fn solar_flare_color(peak_flux_watts_per_square_meter: f64) -> ThemedC
     }
 }
 
+/// Opacity of the band marking how long a flare lasted, as a multiplier on
+/// its class colour. Low enough that the metric lines stay readable through
+/// a band covering a whole zoomed-in view.
+const FLARE_SPAN_FILL_OPACITY: f32 = 0.22;
+
+/// The themed fill of the band marking a solar flare's span: the marker
+/// colour [`solar_flare_color`] gives its class, at the band's own opacity.
+pub fn solar_flare_span_fill(peak_flux_watts_per_square_meter: f64) -> ThemedColor {
+    let marker = solar_flare_color(peak_flux_watts_per_square_meter);
+    ThemedColor::new(
+        marker.dark().gamma_multiply(FLARE_SPAN_FILL_OPACITY),
+        marker.light().gamma_multiply(FLARE_SPAN_FILL_OPACITY),
+    )
+}
+
 /// Colour of a node holding no measurable content, and the bottom of the
 /// scale.
 const TEC_SCALE_BOTTOM: ThemedColor = ThemedColor::new(
