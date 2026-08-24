@@ -27,13 +27,14 @@ use gt_pending_writes::{PendingWrites, WriteRefusal};
 use gt_query_run::JammingValues;
 #[cfg(test)]
 use gt_store::Store;
-use gt_store::{ArchiveUsage, JamStore};
+use gt_store::{ArchiveUsage, JamStore, JamStoreError};
 use gt_types::TimeRange;
 use gt_types::{LoadedFile, TrackRef};
 use gt_ui_types::{ArcIdentity, JammingContextSample, JammingPoint, JammingSeries};
 
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
+use super::day_index_read_retry::DayIndexReadRetry;
 use super::environment_storage::{EnvironmentArchive, PrunedDays};
 use super::fix_positions::FixPositionTimeline;
 use super::track_day_values::TrackValuesByArchivedDays;
@@ -157,11 +158,12 @@ pub struct JammingScheduler {
     /// nothing here determines whether requests may leave the machine.
     transport_source: TransportSource,
     days: DayFetchQueue,
-    /// Cells archived per day, read once at startup and updated on ingest,
-    /// so the display toggle does not open the archive per frame. Ordered so
-    /// the days a plot span holds are a range query. Assumes this process is
-    /// the archive's only writer.
+    /// Cells archived per day, read from the archive's day index and updated
+    /// on ingest, so the display toggle does not open the archive per frame.
+    /// Ordered so the days a plot span holds are a range query. Assumes this
+    /// process is the archive's only writer.
     archived_cells: BTreeMap<NaiveDate, u32>,
+    day_index_read: DayIndexReadRetry,
     /// The day the overlay draws, and its cells, loaded from the archive on
     /// demand and kept until the shown day changes. A day is never
     /// re-ingested - `insert_day` refuses one already stored - so a loaded
@@ -195,6 +197,9 @@ impl JammingScheduler {
         let (tx, rx) = mpsc::channel();
         let mut scheduler = Self {
             archived_cells: BTreeMap::new(),
+            day_index_read: DayIndexReadRetry::for_archive(
+                EnvironmentArchive::AircraftInterference,
+            ),
             shown: None,
             selection: DaySelection::new(None, calendar::today_utc()),
             refused: HashSet::new(),
@@ -217,11 +222,30 @@ impl JammingScheduler {
 
     /// Take an opened archive, reading how many cells it holds for each day.
     pub fn adopt_store(&mut self, store: Option<Arc<JamStore>>) {
-        self.archived_cells = store
-            .as_ref()
-            .map(|store| archived_cells_of(store))
-            .unwrap_or_default();
         self.store = store;
+        self.archived_cells = BTreeMap::new();
+        self.read_the_day_index();
+    }
+
+    /// Reads how many cells the archive holds for each day it holds, keeping
+    /// the counts already read when another process has the file open.
+    fn read_the_day_index(&mut self) {
+        let Some(store) = self.store.clone() else {
+            self.day_index_read.forget_the_due_reread();
+            return;
+        };
+        if let Some(cells) = self
+            .day_index_read
+            .record_read(&self.ctx, archived_cells_of(&store))
+        {
+            self.archived_cells = cells;
+        }
+    }
+
+    fn reread_the_day_index_when_due(&mut self, now: Instant) {
+        if self.day_index_read.is_due(now) {
+            self.read_the_day_index();
+        }
     }
 
     /// A scheduler with no archive to write to, so it fetches nothing.
@@ -329,6 +353,7 @@ impl JammingScheduler {
 
     /// Apply finished fetches and start the next queued day.
     pub fn poll(&mut self) {
+        self.reread_the_day_index_when_due(Instant::now());
         while let Ok(message) = self.rx.try_recv() {
             self.days.finish_day(message.day());
             match message {
@@ -607,14 +632,12 @@ impl JammingScheduler {
 }
 
 /// How many cells the archive holds for each day it holds.
-fn archived_cells_of(store: &JamStore) -> BTreeMap<NaiveDate, u32> {
-    store
-        .days()
-        .inspect_err(|err| log::error!("Reading the interference archive index: {err}"))
+fn archived_cells_of(store: &JamStore) -> Result<BTreeMap<NaiveDate, u32>, JamStoreError> {
+    Ok(store
+        .days()?
         .into_iter()
-        .flatten()
         .map(|stored| (stored.day, stored.cells))
-        .collect()
+        .collect())
 }
 
 /// One archived day's sample of the context line: the share over the cell the
@@ -1144,6 +1167,29 @@ mod tests {
             .expect("insert");
         scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 20, 17)));
         assert_eq!(scheduler.days.queued(), 0);
+    }
+
+    /// A read-only session reads the day index beside the instance that owns
+    /// the data directory, so the read at [`JammingScheduler::adopt_store`]
+    /// can fail on that instance's open. Without a re-read the session draws
+    /// no interference for the rest of its run.
+    #[test]
+    fn a_day_index_read_that_failed_on_another_process_is_run_again_and_finds_the_days() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived = day(2026, 7, 20);
+        store
+            .insert_day(archived, "host", Utc::now(), &[])
+            .expect("insert");
+        let failed = scheduler.day_index_read.record_read(
+            &scheduler.ctx,
+            Err::<BTreeMap<NaiveDate, u32>, _>(JamStoreError::HeldByAnotherProcess),
+        );
+        assert_eq!(failed, None);
+        assert_eq!(scheduler.archived_days_covered(PrunedDays::All), 0);
+
+        scheduler.reread_the_day_index_when_due(Instant::now() + Duration::from_secs(60));
+
+        assert_eq!(scheduler.archived_days_covered(PrunedDays::All), 1);
     }
 
     /// A day the archive lost goes back on the queue for the recording that

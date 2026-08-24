@@ -35,6 +35,7 @@
 
 ### Fixed
 
+- **Environment Data:** A read-only session no longer runs without interference, geomagnetic, TEC or flare data when the other GeoTrace had an archive open at startup: it reads that archive's day index again.
 - **File Operations:** Closing the app no longer freezes the window, and writes in progress finish instead of leaving a partially written file behind.
 - **File Operations:** Older environment archives are now automatically rebuilt on load so that deleting old days properly frees disk space.
 - **Map & Tracks:** Fixed snapped tracks improperly routing through nearby roads during dead-reckoning gaps (e.g., parking garages).
