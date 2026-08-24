@@ -40,6 +40,7 @@
 - **File Operations:** Older environment archives are now automatically rebuilt on load so that deleting old days properly frees disk space.
 - **Map & Tracks:** Fixed snapped tracks improperly routing through nearby roads during dead-reckoning gaps (e.g., parking garages).
 - **Map & Tracks:** Fixed an issue where overlapping snapped tracks would flicker when redrawn.
+- **Settings & Storage:** A settings save in progress is now listed in the shutdown window and in the force-quit confirmation, and a save that cannot replace `config.toml` no longer leaves a `config.toml.tmp` behind.
 - **UI:** Fixed external links in dialogs and reference materials so they correctly open in the web browser.
 - **UI:** Fixed hover states in the plot so they correctly highlight the side panel rows and prevented hover labels from overlapping.
 - **UI:** Fixed the plot's file legend so it no longer covers the settings and query windows.

@@ -6443,6 +6443,58 @@ fn closing_a_read_only_session_writes_no_settings() {
     );
 }
 
+#[test]
+fn a_settings_flush_during_the_run_registers_a_pending_write() {
+    let (mut harness, config_path) = TestHarness::builder().eframe(build_app);
+    harness.inner.step();
+
+    harness.inner.state_mut().flush_settings();
+
+    assert!(config_path.exists(), "the flush wrote no settings file");
+    assert_eq!(
+        harness
+            .inner
+            .state()
+            .pending_writes
+            .snapshot()
+            .recently_finished,
+        vec!["Saving settings"]
+    );
+}
+
+/// The debounced flush writes nothing once the shutdown has begun:
+/// `App::begin_shutdown` already wrote the settings through
+/// `PendingWrites::try_begin_shutdown_write`.
+#[test]
+fn a_settings_flush_after_the_shutdown_flush_writes_nothing() {
+    let (mut harness, config_path) = TestHarness::builder().eframe(build_app);
+    harness.inner.step();
+    harness.inner.state().pending_writes.begin_shutdown();
+
+    harness.inner.state_mut().flush_settings();
+
+    assert!(
+        !config_path.exists(),
+        "the debounced flush wrote after the shutdown flush"
+    );
+}
+
+/// A `config.toml` that cannot be replaced leaves no `config.toml.tmp` for
+/// the next run to find.
+#[test]
+fn a_settings_flush_that_cannot_replace_the_settings_file_removes_its_temporary() {
+    let (mut harness, config_path) = TestHarness::builder().eframe(build_app);
+    harness.inner.step();
+    std::fs::create_dir(&config_path).expect("occupy the settings path with a directory");
+
+    harness.inner.state_mut().flush_settings();
+
+    assert!(
+        !config_path.with_extension("toml.tmp").exists(),
+        "the failed flush left its temporary behind"
+    );
+}
+
 /// The write held running while the shutdown window is on screen.
 const TEC_COMPACTION: gt_pending_writes::WriteKind =
     gt_pending_writes::WriteKind::ArchiveCompaction {

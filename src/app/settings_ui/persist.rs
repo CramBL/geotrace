@@ -1,11 +1,15 @@
 //! Loading the persisted settings into the app and writing them back out.
 
-use gt_pending_writes::WriteAccess;
+use gt_pending_writes::{WriteKind, WriteRefusal};
 use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig};
 use gt_types::AssociationConfig;
 use strum::IntoEnumIterator;
 
 use crate::app::App;
+
+/// The label the shutdown window and the force-quit confirmation list the
+/// settings write under.
+const SETTINGS_FLUSH_LABEL: &str = "Saving settings";
 
 impl App {
     /// Apply loaded settings on startup.
@@ -225,11 +229,38 @@ impl App {
         }
     }
 
+    /// Writes the settings file with the write registered for as long as it
+    /// runs.
+    ///
+    /// The registry refuses the write in a read-only session and once
+    /// `PendingWrites::begin_shutdown` has run, which leaves
+    /// [`App::flush_settings_during_shutdown`] as the last settings write of
+    /// the run.
     pub(in crate::app) fn flush_settings(&self) {
-        if self.pending_writes.write_access() == WriteAccess::ReadOnly {
-            log::debug!("Settings are not saved: this session is read-only");
-            return;
+        match self
+            .pending_writes
+            .try_begin(SETTINGS_FLUSH_LABEL, WriteKind::Settings)
+        {
+            Ok(_settings_write) => self.write_settings_file(),
+            Err(refusal) => log::debug!("Settings are not saved: {refusal}"),
         }
+    }
+
+    /// Writes the settings file as part of the shutdown, which
+    /// [`App::flush_settings`] cannot do: `try_begin` refuses every write
+    /// once the shutdown has begun.
+    pub(in crate::app) fn flush_settings_during_shutdown(&self) {
+        let Some(_settings_write) = self
+            .pending_writes
+            .try_begin_shutdown_write(SETTINGS_FLUSH_LABEL, WriteKind::Settings)
+        else {
+            log::debug!("Settings are not saved: {}", WriteRefusal::ReadOnlySession);
+            return;
+        };
+        self.write_settings_file();
+    }
+
+    fn write_settings_file(&self) {
         let Some(path) = self.config_path.as_ref() else {
             log::warn!("Config directory unavailable - settings not saved");
             return;
@@ -258,6 +289,9 @@ impl App {
         }
         if let Err(e) = std::fs::rename(&tmp, path) {
             log::warn!("Failed to rename config file: {e:#}");
+            if let Err(e) = std::fs::remove_file(&tmp) {
+                log::warn!("Failed to remove {tmp:?}: {e:#}");
+            }
         }
     }
 }
