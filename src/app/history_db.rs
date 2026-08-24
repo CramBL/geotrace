@@ -2,15 +2,16 @@
 //!
 //! Every history operation - listing, loading a recording, hiding tracks,
 //! deleting recordings, prune previews, auto-prune - runs on a dedicated thread
-//! that owns the [`Recordings`]. The UI thread sends [`Request`]s and drains
+//! that owns the [`RecordingsHandle`]. The UI thread sends [`Request`]s and drains
 //! [`Response`]s once per frame (see [`HistoryWorker::poll`]), so a slow disk
 //! or a large recording never stalls a render. Inserts still happen on the load
 //! threads, which open the database by path. The global database lock keeps the
 //! two paths safe.
 //!
-//! A request that writes runs under a [`PendingWrites`] guard, so the process
-//! waits for it on the way out. A request the registry turns away is answered
-//! with [`Response::WriteRefused`], naming why.
+//! A [`WriteRequest`] runs on [`RecordingsHandle::writer`] and under a
+//! [`PendingWrites`] guard, so the process waits for it on the way out. A
+//! read-only session has no writer, and a refused write is answered with
+//! [`Response::WriteRefused`] holding the [`WriteRefusal`].
 
 use std::collections::HashSet;
 use std::ops::Range;
@@ -24,7 +25,8 @@ use gt_log_view::LogAttachmentRef;
 use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteKind, WriteRefusal};
 use gt_store::{
     AttachedLog, DatabaseRef, DbError, HistoryDatabase, LogAttachmentError, LogAttachmentId,
-    LogAttachments as _, LogContentHash, LogToAttach, PruneMode, RecordingEntry, Recordings,
+    LogAttachments as _, LogContentHash, LogToAttach, PruneMode, ReadOnlyHistoryDatabase,
+    ReadOnlyLogAttachments as _, ReadOnlyRecordings, RecordingEntry, Recordings, RecordingsHandle,
     StoredLogFilter, StoredRecording, TrackRange,
 };
 use gt_track_builder::SegmentationConfig;
@@ -67,8 +69,31 @@ pub enum DbOp {
 
 /// A unit of work for the worker thread.
 enum Request {
+    Read(ReadRequest),
+    Write(WriteRequest),
+}
+
+/// A request answered from the read methods, which [`RecordingsHandle::read`]
+/// gives for either variant.
+enum ReadRequest {
     List,
     Open(DatabaseRef),
+    PrunePreview(PruneMode),
+    /// Fetch a recording's stored snap runs, if any.
+    LoadSnapRuns(DatabaseRef),
+    /// Read back every log attached to a recording that just opened.
+    LoadAttachedLogs(DatabaseRef),
+    /// Whether a recording already holds this exact log.
+    FindDuplicateAttachment {
+        db_ref: DatabaseRef,
+        log: LoadedLogId,
+        text: Arc<str>,
+    },
+}
+
+/// A request that changes the database, which only [`RecordingsHandle::writer`]
+/// can run.
+enum WriteRequest {
     SetTracksHidden {
         db_ref: DatabaseRef,
         indices: Vec<usize>,
@@ -89,7 +114,6 @@ enum Request {
         old: String,
         new: String,
     },
-    PrunePreview(PruneMode),
     AutoPrune {
         max_bytes: u64,
         confirm: bool,
@@ -99,8 +123,6 @@ enum Request {
         db_ref: DatabaseRef,
         blob: Vec<u8>,
     },
-    /// Fetch a recording's stored snap runs, if any.
-    LoadSnapRuns(DatabaseRef),
     /// Store a log with a recording, log bytes and all.
     AttachLog {
         db_ref: DatabaseRef,
@@ -109,8 +131,6 @@ enum Request {
         text: Arc<str>,
         filters: Vec<StoredLogFilter>,
     },
-    /// Read back every log attached to a recording that just opened.
-    LoadAttachedLogs(DatabaseRef),
     /// Rewrite one attachment's stored filter stack.
     SetAttachedLogFilters {
         attachment: LogAttachmentRef,
@@ -122,40 +142,23 @@ enum Request {
         log: LoadedLogId,
         name: String,
     },
-    /// Whether a recording already holds this exact log.
-    FindDuplicateAttachment {
-        db_ref: DatabaseRef,
-        log: LoadedLogId,
-        text: Arc<str>,
-    },
 }
 
-impl Request {
-    /// The label the write registry lists this request under, or [`None`] for
-    /// a request that only reads.
-    fn database_write_label(&self) -> Option<&'static str> {
+impl WriteRequest {
+    /// The label the write registry lists this request under.
+    fn database_write_label(&self) -> &'static str {
         match self {
-            Self::List
-            | Self::Open(_)
-            | Self::PrunePreview(_)
-            | Self::LoadSnapRuns(_)
-            | Self::LoadAttachedLogs(_)
-            | Self::FindDuplicateAttachment { .. } => None,
-            Self::SetTracksHidden { hidden: true, .. } => {
-                Some("Hiding tracks in recording history")
-            }
-            Self::SetTracksHidden { hidden: false, .. } => {
-                Some("Showing tracks in recording history")
-            }
-            Self::DeleteTracks { .. } => Some("Deleting tracks from recording history"),
-            Self::DeleteHiddenTracks => Some("Deleting hidden tracks from recording history"),
-            Self::DeleteRecordings { .. } => Some("Deleting recordings from recording history"),
-            Self::RenameIdentity { .. } => Some("Renaming an identity in recording history"),
-            Self::AutoPrune { .. } => Some("Auto-pruning recording history"),
-            Self::StoreSnapRuns { .. } => Some("Storing snap runs in recording history"),
-            Self::AttachLog { .. } => Some("Storing a log with a recording"),
-            Self::SetAttachedLogFilters { .. } => Some("Storing an attached log's filters"),
-            Self::DetachLog { .. } => Some("Removing an attached log from a recording"),
+            Self::SetTracksHidden { hidden: true, .. } => "Hiding tracks in recording history",
+            Self::SetTracksHidden { hidden: false, .. } => "Showing tracks in recording history",
+            Self::DeleteTracks { .. } => "Deleting tracks from recording history",
+            Self::DeleteHiddenTracks => "Deleting hidden tracks from recording history",
+            Self::DeleteRecordings { .. } => "Deleting recordings from recording history",
+            Self::RenameIdentity { .. } => "Renaming an identity in recording history",
+            Self::AutoPrune { .. } => "Auto-pruning recording history",
+            Self::StoreSnapRuns { .. } => "Storing snap runs in recording history",
+            Self::AttachLog { .. } => "Storing a log with a recording",
+            Self::SetAttachedLogFilters { .. } => "Storing an attached log's filters",
+            Self::DetachLog { .. } => "Removing an attached log from a recording",
         }
     }
 }
@@ -267,8 +270,8 @@ impl HistoryWorker {
     }
 
     /// Spawn the worker thread, moving `db` onto it.
-    pub fn spawn(db: Recordings, ctx: Context, pending_writes: PendingWrites) -> Self {
-        let path = Some(db.path().to_owned());
+    pub fn spawn(db: RecordingsHandle, ctx: Context, pending_writes: PendingWrites) -> Self {
+        let path = Some(db.read().path().to_owned());
         let (req_tx, req_rx) = mpsc::channel::<Request>();
         let (resp_tx, resp_rx) = mpsc::channel::<Response>();
         let handle = background_thread::spawn_or_panic("history-db", move || {
@@ -287,7 +290,7 @@ impl HistoryWorker {
     /// join returns.
     #[cfg(test)]
     pub fn spawn_held_open(
-        db: Recordings,
+        db: RecordingsHandle,
         ctx: Context,
         pending_writes: PendingWrites,
     ) -> (Self, HeldOpenWorkerThread) {
@@ -323,16 +326,24 @@ impl HistoryWorker {
         }
     }
 
+    fn send_read(&self, req: ReadRequest) {
+        self.send(Request::Read(req));
+    }
+
+    fn send_write(&self, req: WriteRequest) {
+        self.send(Request::Write(req));
+    }
+
     pub fn list(&self) {
-        self.send(Request::List);
+        self.send_read(ReadRequest::List);
     }
 
     pub fn open(&self, db_ref: DatabaseRef) {
-        self.send(Request::Open(db_ref));
+        self.send_read(ReadRequest::Open(db_ref));
     }
 
     pub fn set_tracks_hidden(&self, db_ref: DatabaseRef, indices: Vec<usize>, hidden: bool) {
-        self.send(Request::SetTracksHidden {
+        self.send_write(WriteRequest::SetTracksHidden {
             db_ref,
             indices,
             hidden,
@@ -340,31 +351,31 @@ impl HistoryWorker {
     }
 
     pub fn delete_tracks(&self, db_ref: DatabaseRef, indices: Vec<usize>) {
-        self.send(Request::DeleteTracks { db_ref, indices });
+        self.send_write(WriteRequest::DeleteTracks { db_ref, indices });
     }
 
     pub fn delete_hidden_tracks(&self) {
-        self.send(Request::DeleteHiddenTracks);
+        self.send_write(WriteRequest::DeleteHiddenTracks);
     }
 
     pub fn delete_recordings(&self, refs: Vec<DatabaseRef>, reason: DeleteReason) {
-        self.send(Request::DeleteRecordings { refs, reason });
+        self.send_write(WriteRequest::DeleteRecordings { refs, reason });
     }
 
     pub fn rename_identity(&self, old: String, new: String) {
-        self.send(Request::RenameIdentity { old, new });
+        self.send_write(WriteRequest::RenameIdentity { old, new });
     }
 
     pub fn prune_preview(&self, mode: PruneMode) {
-        self.send(Request::PrunePreview(mode));
+        self.send_read(ReadRequest::PrunePreview(mode));
     }
 
     pub fn store_snap_runs(&self, db_ref: DatabaseRef, blob: Vec<u8>) {
-        self.send(Request::StoreSnapRuns { db_ref, blob });
+        self.send_write(WriteRequest::StoreSnapRuns { db_ref, blob });
     }
 
     pub fn load_snap_runs(&self, db_ref: DatabaseRef) {
-        self.send(Request::LoadSnapRuns(db_ref));
+        self.send_read(ReadRequest::LoadSnapRuns(db_ref));
     }
 
     pub fn attach_log(
@@ -375,7 +386,7 @@ impl HistoryWorker {
         text: Arc<str>,
         filters: Vec<StoredLogFilter>,
     ) {
-        self.send(Request::AttachLog {
+        self.send_write(WriteRequest::AttachLog {
             db_ref,
             log,
             name,
@@ -385,7 +396,7 @@ impl HistoryWorker {
     }
 
     pub fn load_attached_logs(&self, db_ref: DatabaseRef) {
-        self.send(Request::LoadAttachedLogs(db_ref));
+        self.send_read(ReadRequest::LoadAttachedLogs(db_ref));
     }
 
     pub fn set_attached_log_filters(
@@ -393,14 +404,14 @@ impl HistoryWorker {
         attachment: LogAttachmentRef,
         filters: Vec<StoredLogFilter>,
     ) {
-        self.send(Request::SetAttachedLogFilters {
+        self.send_write(WriteRequest::SetAttachedLogFilters {
             attachment,
             filters,
         });
     }
 
     pub fn detach_log(&self, attachment: LogAttachmentRef, log: LoadedLogId, name: String) {
-        self.send(Request::DetachLog {
+        self.send_write(WriteRequest::DetachLog {
             attachment,
             log,
             name,
@@ -408,11 +419,11 @@ impl HistoryWorker {
     }
 
     pub fn find_duplicate_attachment(&self, db_ref: DatabaseRef, log: LoadedLogId, text: Arc<str>) {
-        self.send(Request::FindDuplicateAttachment { db_ref, log, text });
+        self.send_read(ReadRequest::FindDuplicateAttachment { db_ref, log, text });
     }
 
     pub fn auto_prune(&self, max_bytes: u64, confirm: bool) {
-        self.send(Request::AutoPrune { max_bytes, confirm });
+        self.send_write(WriteRequest::AutoPrune { max_bytes, confirm });
     }
 
     /// Drain every response that has arrived since the last call.
@@ -472,19 +483,16 @@ impl Drop for HistoryWorker {
 }
 
 fn worker_loop(
-    mut db: Recordings,
+    mut db: RecordingsHandle,
     req_rx: &Receiver<Request>,
     resp_tx: &Sender<Response>,
     ctx: &Context,
     pending_writes: &PendingWrites,
 ) {
     while let Ok(req) = req_rx.recv() {
-        let resp = match req.database_write_label() {
-            None => handle_request(&mut db, req),
-            Some(label) => match pending_writes.try_begin(label, WriteKind::RecordingDatabase) {
-                Ok(_write) => handle_request(&mut db, req),
-                Err(refusal) => Response::WriteRefused { label, refusal },
-            },
+        let resp = match req {
+            Request::Read(req) => handle_read_request(db.read(), req),
+            Request::Write(req) => run_write_request(&mut db, req, pending_writes),
         };
         // If the UI is gone the send fails, there is nothing left to repaint.
         if resp_tx.send(resp).is_err() {
@@ -494,14 +502,74 @@ fn worker_loop(
     }
 }
 
-fn handle_request(db: &mut Recordings, req: Request) -> Response {
+/// Run a write request on the writable database, under a
+/// [`PendingWriteGuard`].
+///
+/// A read-only session has no [`RecordingsHandle::writer`]: its writes are
+/// answered with [`WriteRefusal::ReadOnlySession`], which is what the write
+/// registry answers them with in such a session.
+fn run_write_request(
+    db: &mut RecordingsHandle,
+    req: WriteRequest,
+    pending_writes: &PendingWrites,
+) -> Response {
+    let label = req.database_write_label();
+    let Some(db) = db.writer() else {
+        return Response::WriteRefused {
+            label,
+            refusal: WriteRefusal::ReadOnlySession,
+        };
+    };
+    match pending_writes.try_begin(label, WriteKind::RecordingDatabase) {
+        Ok(_write) => handle_write_request(db, req),
+        Err(refusal) => Response::WriteRefused { label, refusal },
+    }
+}
+
+fn handle_read_request(db: &ReadOnlyRecordings, req: ReadRequest) -> Response {
     match req {
-        Request::List => Response::Listed(db.list_recordings()),
-        Request::Open(db_ref) => {
+        ReadRequest::List => Response::Listed(db.list_recordings()),
+        ReadRequest::Open(db_ref) => {
             let result = db.load(&db_ref);
             Response::Opened { db_ref, result }
         }
-        Request::SetTracksHidden {
+        ReadRequest::PrunePreview(mode) => Response::PrunePreview(db.prune_candidates(&mode)),
+        ReadRequest::LoadSnapRuns(db_ref) => {
+            let blob = db.snap_blob(&db_ref);
+            Response::SnapRunsLoaded { db_ref, blob }
+        }
+        ReadRequest::LoadAttachedLogs(db_ref) => {
+            let attachments = db.log_attachments(&db_ref).map(|entries| {
+                entries
+                    .into_iter()
+                    .map(|entry| RestoredLogAttachment {
+                        id: entry.id,
+                        name: entry.attachment.name,
+                        log: db.load_attached_log(&db_ref, entry.id),
+                    })
+                    .collect()
+            });
+            Response::AttachedLogsLoaded {
+                db_ref,
+                attachments,
+            }
+        }
+        ReadRequest::FindDuplicateAttachment { db_ref, log, text } => {
+            let existing = db
+                .log_attachment_with_content(&db_ref, LogContentHash::of_log_bytes(text.as_bytes()))
+                .map(|entry| entry.map(|entry| entry.attachment.name));
+            Response::DuplicateAttachmentFound {
+                log,
+                recording: db_ref,
+                existing,
+            }
+        }
+    }
+}
+
+fn handle_write_request(db: &mut Recordings, req: WriteRequest) -> Response {
+    match req {
+        WriteRequest::SetTracksHidden {
             db_ref,
             indices,
             hidden,
@@ -513,7 +581,7 @@ fn handle_request(db: &mut Recordings, req: Request) -> Response {
                 result,
             }
         }
-        Request::DeleteTracks { db_ref, indices } => {
+        WriteRequest::DeleteTracks { db_ref, indices } => {
             let count = indices.len();
             let result = purge_tracks(db, &db_ref, &indices);
             Response::Mutated {
@@ -521,7 +589,7 @@ fn handle_request(db: &mut Recordings, req: Request) -> Response {
                 result,
             }
         }
-        Request::DeleteHiddenTracks => match purge_all_hidden(db) {
+        WriteRequest::DeleteHiddenTracks => match purge_all_hidden(db) {
             Ok(count) => Response::Mutated {
                 op: DbOp::TracksDeleted { count },
                 result: Ok(()),
@@ -531,7 +599,7 @@ fn handle_request(db: &mut Recordings, req: Request) -> Response {
                 result: Err(e),
             },
         },
-        Request::DeleteRecordings { refs, reason } => {
+        WriteRequest::DeleteRecordings { refs, reason } => {
             let count = refs.len();
             let result = db.delete_batch(&refs);
             Response::Mutated {
@@ -539,25 +607,20 @@ fn handle_request(db: &mut Recordings, req: Request) -> Response {
                 result,
             }
         }
-        Request::RenameIdentity { old, new } => {
+        WriteRequest::RenameIdentity { old, new } => {
             let result = db.rename_identity(&old, &new);
             Response::Mutated {
                 op: DbOp::IdentityRenamed { old, new },
                 result,
             }
         }
-        Request::PrunePreview(mode) => Response::PrunePreview(db.prune_candidates(&mode)),
-        Request::StoreSnapRuns { db_ref, blob } => {
-            Response::SnapRunsStored(db.set_snap_blob(&db_ref, &blob))
-        }
-        Request::LoadSnapRuns(db_ref) => {
-            let blob = db.snap_blob(&db_ref);
-            Response::SnapRunsLoaded { db_ref, blob }
-        }
-        Request::AutoPrune { max_bytes, confirm } => {
+        WriteRequest::AutoPrune { max_bytes, confirm } => {
             Response::AutoPruned(auto_prune::run(db, max_bytes, confirm))
         }
-        Request::AttachLog {
+        WriteRequest::StoreSnapRuns { db_ref, blob } => {
+            Response::SnapRunsStored(db.set_snap_blob(&db_ref, &blob))
+        }
+        WriteRequest::AttachLog {
             db_ref,
             log,
             name,
@@ -582,23 +645,7 @@ fn handle_request(db: &mut Recordings, req: Request) -> Response {
                 });
             Response::LogAttached { log, name, result }
         }
-        Request::LoadAttachedLogs(db_ref) => {
-            let attachments = db.log_attachments(&db_ref).map(|entries| {
-                entries
-                    .into_iter()
-                    .map(|entry| RestoredLogAttachment {
-                        id: entry.id,
-                        name: entry.attachment.name,
-                        log: db.load_attached_log(&db_ref, entry.id),
-                    })
-                    .collect()
-            });
-            Response::AttachedLogsLoaded {
-                db_ref,
-                attachments,
-            }
-        }
-        Request::SetAttachedLogFilters {
+        WriteRequest::SetAttachedLogFilters {
             attachment,
             filters,
         } => Response::AttachedLogFiltersStored(db.set_attached_log_filters(
@@ -606,23 +653,13 @@ fn handle_request(db: &mut Recordings, req: Request) -> Response {
             attachment.id,
             filters,
         )),
-        Request::DetachLog {
+        WriteRequest::DetachLog {
             attachment,
             log,
             name,
         } => {
             let result = db.detach_log(&attachment.recording, attachment.id);
             Response::LogDetached { log, name, result }
-        }
-        Request::FindDuplicateAttachment { db_ref, log, text } => {
-            let existing = db
-                .log_attachment_with_content(&db_ref, LogContentHash::of_log_bytes(text.as_bytes()))
-                .map(|entry| entry.map(|entry| entry.attachment.name));
-            Response::DuplicateAttachmentFound {
-                log,
-                recording: db_ref,
-                existing,
-            }
         }
     }
 }
@@ -821,7 +858,11 @@ mod tests {
         seed_two_track_recording(&path);
 
         let db = Recordings::open_or_create(&path).expect("reopen");
-        let worker = HistoryWorker::spawn(db, Context::default(), PendingWrites::default());
+        let worker = HistoryWorker::spawn(
+            RecordingsHandle::Owner(db),
+            Context::default(),
+            PendingWrites::default(),
+        );
         assert!(worker.available());
         assert_eq!(worker.path(), Some(path.as_path()));
 
@@ -895,7 +936,11 @@ mod tests {
         seed_two_track_recording(&path);
 
         let db = Recordings::open_or_create(&path).expect("reopen");
-        let worker = HistoryWorker::spawn(db, Context::default(), PendingWrites::default());
+        let worker = HistoryWorker::spawn(
+            RecordingsHandle::Owner(db),
+            Context::default(),
+            PendingWrites::default(),
+        );
 
         // Hide the first track, then permanently delete all hidden tracks.
         let db_ref = only_recording_ref(&worker);
@@ -956,7 +1001,11 @@ mod tests {
         seed_two_track_recording(&path);
         let pending_writes = PendingWrites::default();
         let db = Recordings::open_or_create(&path).expect("reopen");
-        let worker = HistoryWorker::spawn(db, Context::default(), pending_writes.clone());
+        let worker = HistoryWorker::spawn(
+            RecordingsHandle::Owner(db),
+            Context::default(),
+            pending_writes.clone(),
+        );
         let db_ref = only_recording_ref(&worker);
 
         worker.set_tracks_hidden(db_ref, vec![0], true);
@@ -988,7 +1037,11 @@ mod tests {
         let path = dir.path().join("history.h5");
         seed_two_track_recording(&path);
         let db = Recordings::open_or_create(&path).expect("reopen");
-        let worker = HistoryWorker::spawn(db, Context::default(), pending_writes.clone());
+        let worker = HistoryWorker::spawn(
+            RecordingsHandle::Owner(db),
+            Context::default(),
+            pending_writes.clone(),
+        );
         let db_ref = only_recording_ref(&worker);
 
         worker.set_tracks_hidden(db_ref, vec![0], true);
@@ -999,6 +1052,44 @@ mod tests {
         assert_eq!(refusal, expected);
         assert_eq!(label, "Hiding tracks in recording history");
         assert!(pending_writes.is_idle());
+
+        // Reads still answer, and report a database the refused write left alone.
+        worker.list();
+        let Response::Listed(Ok(entries)) = next_response(&worker) else {
+            panic!("expected a Listed response");
+        };
+        assert_eq!(entries.first().map(|entry| entry.hidden_tracks), Some(0));
+        worker.shutdown();
+    }
+
+    /// The write registry allows this session's writes, and the read-only
+    /// handle still has no [`RecordingsHandle::writer`] to run one on.
+    #[test]
+    fn a_write_on_a_read_only_handle_is_refused_where_the_registry_allows_it() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        seed_two_track_recording(&path);
+        let pending_writes = PendingWrites::default();
+        let db = ReadOnlyRecordings::open_existing_read_only(&path).expect("open read-only");
+        let worker = HistoryWorker::spawn(
+            RecordingsHandle::ReadOnly(db),
+            Context::default(),
+            pending_writes.clone(),
+        );
+        let db_ref = only_recording_ref(&worker);
+
+        worker.set_tracks_hidden(db_ref, vec![0], true);
+
+        let Response::WriteRefused { label, refusal } = next_response(&worker) else {
+            panic!("expected the write to be refused");
+        };
+        assert_eq!(refusal, WriteRefusal::ReadOnlySession);
+        assert_eq!(label, "Hiding tracks in recording history");
+        assert_eq!(
+            pending_writes.snapshot().recently_finished,
+            Vec::<String>::new(),
+            "the refused write registered with the write registry"
+        );
 
         // Reads still answer, and report a database the refused write left alone.
         worker.list();
@@ -1024,102 +1115,89 @@ mod tests {
     }
 
     #[rstest]
-    #[case(Request::List, None)]
-    #[case(Request::Open(db_ref()), None)]
-    #[case(Request::PrunePreview(PruneMode::ByCount { keep: 0 }), None)]
-    #[case(Request::LoadSnapRuns(db_ref()), None)]
-    #[case(Request::LoadAttachedLogs(db_ref()), None)]
     #[case(
-        Request::FindDuplicateAttachment {
-            db_ref: db_ref(),
-            log: LoadedLogId::new(1),
-            text: "boot".into(),
-        },
-        None
-    )]
-    #[case(
-        Request::SetTracksHidden {
+        WriteRequest::SetTracksHidden {
             db_ref: db_ref(),
             indices: vec![0],
             hidden: true,
         },
-        Some("Hiding tracks in recording history")
+        "Hiding tracks in recording history"
     )]
     #[case(
-        Request::SetTracksHidden {
+        WriteRequest::SetTracksHidden {
             db_ref: db_ref(),
             indices: vec![0],
             hidden: false,
         },
-        Some("Showing tracks in recording history")
+        "Showing tracks in recording history"
     )]
     #[case(
-        Request::DeleteTracks {
+        WriteRequest::DeleteTracks {
             db_ref: db_ref(),
             indices: vec![0],
         },
-        Some("Deleting tracks from recording history")
+        "Deleting tracks from recording history"
     )]
     #[case(
-        Request::DeleteHiddenTracks,
-        Some("Deleting hidden tracks from recording history")
+        WriteRequest::DeleteHiddenTracks,
+        "Deleting hidden tracks from recording history"
     )]
     #[case(
-        Request::DeleteRecordings {
+        WriteRequest::DeleteRecordings {
             refs: vec![db_ref()],
             reason: DeleteReason::Manual,
         },
-        Some("Deleting recordings from recording history")
+        "Deleting recordings from recording history"
     )]
     #[case(
-        Request::RenameIdentity {
+        WriteRequest::RenameIdentity {
             old: "dev".to_owned(),
             new: "rover".to_owned(),
         },
-        Some("Renaming an identity in recording history")
+        "Renaming an identity in recording history"
     )]
     #[case(
-        Request::AutoPrune {
+        WriteRequest::AutoPrune {
             max_bytes: 0,
             confirm: false,
         },
-        Some("Auto-pruning recording history")
+        "Auto-pruning recording history"
     )]
     #[case(
-        Request::StoreSnapRuns {
+        WriteRequest::StoreSnapRuns {
             db_ref: db_ref(),
             blob: Vec::new(),
         },
-        Some("Storing snap runs in recording history")
+        "Storing snap runs in recording history"
     )]
     #[case(
-        Request::AttachLog {
+        WriteRequest::AttachLog {
             db_ref: db_ref(),
             log: LoadedLogId::new(1),
             name: "navsyncd.log".to_owned(),
             text: "boot".into(),
             filters: Vec::new(),
         },
-        Some("Storing a log with a recording")
+        "Storing a log with a recording"
     )]
     #[case(
-        Request::SetAttachedLogFilters {
+        WriteRequest::SetAttachedLogFilters {
             attachment: attachment_ref(),
             filters: Vec::new(),
         },
-        Some("Storing an attached log's filters")
+        "Storing an attached log's filters"
     )]
     #[case(
-        Request::DetachLog {
+        WriteRequest::DetachLog {
             attachment: attachment_ref(),
             log: LoadedLogId::new(1),
             name: "navsyncd.log".to_owned(),
         },
-        Some("Removing an attached log from a recording")
+        "Removing an attached log from a recording"
     )]
-    fn only_a_request_that_writes_carries_a_write_label(
-        #[case] request: Request,
-        #[case] label: Option<&str>,
+    fn each_write_request_carries_the_label_the_registry_lists_it_under(
+        #[case] request: WriteRequest,
+        #[case] label: &str,
     ) {
         assert_eq!(request.database_write_label(), label);
     }

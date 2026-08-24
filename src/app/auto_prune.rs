@@ -1,4 +1,6 @@
-use gt_store::{DatabaseRef, DbError, PruneMode, Recordings};
+use gt_store::{
+    DatabaseRef, DbError, HistoryDatabase, PruneMode, ReadOnlyHistoryDatabase, Recordings,
+};
 
 pub enum AutoPruneOutcome {
     /// Total stored size is within the limit, nothing to delete.
@@ -19,7 +21,6 @@ pub fn run(
     max_bytes: u64,
     confirm: bool,
 ) -> Result<AutoPruneOutcome, DbError> {
-    use gt_store::HistoryDatabase;
     let candidates = db.prune_candidates(&PruneMode::ByTotalSize { max_bytes })?;
     if candidates.is_empty() {
         return Ok(AutoPruneOutcome::NotNeeded);
@@ -36,7 +37,6 @@ pub fn run(
 mod tests {
     use super::*;
     use geotrace_sdk::{Angle, DateTime, Duration as SdkDuration, NavFileBuilder, NavFix};
-    use gt_store::{HistoryDatabase, Recordings};
 
     fn make_gtd(start_secs: i64, n: u32) -> Vec<u8> {
         let t0 = DateTime::from_timestamp(start_secs, 0).expect("valid timestamp");

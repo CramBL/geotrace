@@ -1,26 +1,30 @@
 pub use gt_history_types::{
     ChannelSummary, DatabaseRef, DbError, HistoryDatabase, LOGS_DIRECTORY, LogAttachment,
-    LogAttachmentEntry, LogAttachmentId, LogContentHash, PruneMode, RecordingEntry, RecordingMeta,
-    StoredLogFilter, StoredLogFilterMode, StoredRecording, StoredSegmentation, TrackRange,
-    format_count_suffix, identity_from_group_name, identity_group_name, log_attachment,
-    logs_directory_for_database, make_group_name,
+    LogAttachmentEntry, LogAttachmentId, LogContentHash, PruneMode, ReadOnlyHistoryDatabase,
+    RecordingEntry, RecordingMeta, StoredLogFilter, StoredLogFilterMode, StoredRecording,
+    StoredSegmentation, TrackRange, format_count_suffix, identity_from_group_name,
+    identity_group_name, log_attachment, logs_directory_for_database, make_group_name,
 };
 
 // Pure-Rust backend
 #[cfg(feature = "backend-pure")]
 pub mod pure_impl {
-    pub use gt_history_backend_pure::{PureDb, extract_meta};
+    pub use gt_history_backend_pure::{PureDb, ReadOnlyPureDb, extract_meta};
 }
 #[cfg(feature = "backend-pure")]
 pub type ActiveDb = pure_impl::PureDb;
+#[cfg(feature = "backend-pure")]
+pub type ActiveReadOnlyDb = pure_impl::ReadOnlyPureDb;
 
 // C-backed (libhdf5) backend
 #[cfg(feature = "backend-sys")]
 pub mod sys_impl {
-    pub use gt_history_backend_sys::SysDb;
+    pub use gt_history_backend_sys::{ReadOnlySysDb, SysDb};
 }
 #[cfg(feature = "backend-sys")]
 pub type ActiveDb = sys_impl::SysDb;
+#[cfg(feature = "backend-sys")]
+pub type ActiveReadOnlyDb = sys_impl::ReadOnlySysDb;
 
 #[cfg(all(feature = "backend-sys", feature = "backend-pure"))]
 compile_error!("Features 'backend-sys' and 'backend-pure' are mutually exclusive.");
@@ -29,6 +33,10 @@ compile_error!("Features 'backend-sys' and 'backend-pure' are mutually exclusive
 compile_error!("Either 'backend-sys' or 'backend-pure' must be enabled.");
 
 pub type Database = ActiveDb;
+
+/// The database as a read-only session opens it. [`Database`] derefs to this,
+/// which has no write method.
+pub type ReadOnlyDatabase = ActiveReadOnlyDb;
 
 /// Name of the database file. Where it sits is `gt-store`'s decision.
 pub const FILE_NAME: &str = "geotrace.h5";

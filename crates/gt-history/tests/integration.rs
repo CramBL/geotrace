@@ -2,8 +2,8 @@
 use geotrace_sdk::NavFile;
 use gt_history::{
     Database, DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentId,
-    LogContentHash, RecordingMeta, StoredLogFilter, StoredLogFilterMode, StoredRecording,
-    StoredSegmentation, TrackRange, extract_meta,
+    LogContentHash, ReadOnlyDatabase, ReadOnlyHistoryDatabase, RecordingMeta, StoredLogFilter,
+    StoredLogFilterMode, StoredRecording, StoredSegmentation, TrackRange, extract_meta,
 };
 #[cfg(feature = "backend-pure")]
 use gt_history_types::{
@@ -2753,7 +2753,7 @@ fn a_read_only_open_refuses_a_schema_newer_than_supported() {
     fb.add_group(meta.finish());
     fb.write(&path).expect("write the database");
 
-    match Database::open_existing_read_only(&path) {
+    match ReadOnlyDatabase::open_existing_read_only(&path) {
         Err(DbError::SchemaTooNew { found, supported }) => {
             assert_eq!(found, newer);
             assert_eq!(supported, CURRENT_SCHEMA_VERSION);
