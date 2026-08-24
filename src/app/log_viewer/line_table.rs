@@ -245,8 +245,6 @@ impl LogViewerWindow {
             // Rows sit directly on top of each other, so the table reads as one
             // block of text and a row's index times its height is its offset.
             ui.spacing_mut().item_spacing.y = 0.0;
-            // Selectable labels would swallow the click that pans the map.
-            ui.style_mut().interaction.selectable_labels = false;
             let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
             let mut scroll_area = ScrollArea::vertical()
                 .id_salt("log_viewer_line_table")

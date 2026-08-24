@@ -951,12 +951,9 @@ fn cursor_icon(h: &TestHarness<HistoryHarness>) -> egui::CursorIcon {
     h.inner.output().platform_output.cursor_icon
 }
 
-/// Each part of the window requests the cursor that matches what it does.
-///
-/// egui makes labels selectable by default, which puts a text-editing
-/// I-beam over every one of them - so a column header that sorts on click
-/// looked exactly like a text field. Only real text entry should show the
-/// I-beam here.
+/// Each part of the window requests the cursor that matches what it does:
+/// only real text entry shows the I-beam, so a column header that sorts on
+/// click never reads as a text field.
 #[rstest::rstest]
 // Sortable headers act on click.
 #[case::points_header(point_at_header, "Points", egui::CursorIcon::PointingHand)]

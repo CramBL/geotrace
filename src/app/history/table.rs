@@ -138,11 +138,7 @@ fn sort_header(ui: &mut egui::Ui, column: SortColumn, sort: &mut HistorySort, te
 
     let clicked = ui
         .horizontal(|ui| {
-            let title = ui.add(
-                Label::new(title)
-                    .selectable(false)
-                    .sense(egui::Sense::click()),
-            );
+            let title = ui.add(Label::new(title).sense(egui::Sense::click()));
             if active {
                 ui.label(RichText::new(sort.direction.caret()).small().weak());
             }
@@ -514,15 +510,12 @@ fn identity_cell(
             if has_metadata {
                 ui.label(RichText::new(ICON_NOTE).weak());
             }
-            // The label itself senses clicks: it is the rename target. Text
-            // selection stays off so a double click opens the editor rather
-            // than selecting a word under the pointer. The cell's hover leads
-            // with the full identity, so egui's elided-text tooltip would open
-            // a second tooltip saying the same thing.
+            // The label itself senses clicks: it is the rename target. Its
+            // elided-text tooltip is off: the cell's hover already leads with
+            // the full identity.
             ui.add(
                 Label::new(display_name)
                     .truncate()
-                    .selectable(false)
                     .show_tooltip_when_elided(false)
                     .sense(egui::Sense::click()),
             )

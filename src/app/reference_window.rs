@@ -144,7 +144,6 @@ impl ReferenceWindow {
     }
 
     fn document_ui(&mut self, ui: &mut egui::Ui, document: ReferenceDocument) {
-        ui.style_mut().interaction.selectable_labels = false;
         // Hovers here open without egui's default delay: the abbreviations and
         // the citations are what the reader points at.
         ui.style_mut().interaction.tooltip_delay = 0.0;

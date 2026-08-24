@@ -87,10 +87,6 @@ pub(super) fn show_file_legend_overlay(
         .movable(false)
         .current_pos(plot_rect.min + state.file_legend_offset)
         .show(ui.ctx(), |ui| {
-            // Selectable labels also sense drag (for text selection) and
-            // would win the hit-test over `drag_response` below.
-            ui.style_mut().interaction.selectable_labels = false;
-
             // Drag-sense the whole body first (bottom z-order) so buttons
             // on top still get their clicks.
             let drag_rect = egui::Rect::from_min_size(ui.cursor().min, drag_bg_size);

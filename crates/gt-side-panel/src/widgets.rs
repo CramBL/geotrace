@@ -61,7 +61,10 @@ pub fn metadata_detail_rows(ui: &mut egui::Ui, view: &MetadataView<'_>) {
                 // No colon after the label, per DESIGN.md. The weak label and
                 // normal value weighting separate the two.
                 ui.label(RichText::new(label).weak());
-                ui.add(Label::new(value).wrap());
+                // The values are the recorder's own strings - an identity, a
+                // device name, a note - which the reader copies out of the
+                // details dialog.
+                ui.add(Label::new(value).wrap().selectable(true));
                 ui.end_row();
             };
             if let Some(title) = view.title {

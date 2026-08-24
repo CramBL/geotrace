@@ -492,7 +492,10 @@ pub fn show_about_dialog(ui: &egui::Ui, open: &mut bool, version: &str) {
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .show(ui.ctx(), |ui| {
-            ui.label(RichText::new(format!("GeoTrace {version}")).strong());
+            // Selectable: the version is what a bug report quotes.
+            ui.add(
+                Label::new(RichText::new(format!("GeoTrace {version}")).strong()).selectable(true),
+            );
             ui.label("GPS/GNSS navigation data visualizer");
             ui.separator();
             ui.label("Map tiles and road-network matching build on OpenStreetMap data");

@@ -25,6 +25,14 @@ pub const DELTA: &str = "Δ";
 /// U+00B0 DEGREE SIGN.
 pub const DEGREE_SIGN: &str = "°";
 
+/// Installs the font stack and the interaction defaults every GeoTrace window,
+/// popup and modal inherits: labels do not select, and text worth copying opts
+/// back in with [`egui::Label::selectable`] (DESIGN.md, "Text selection").
+pub fn install_app_style(ctx: &egui::Context) {
+    ctx.set_fonts(fonts::font_definitions());
+    ctx.all_styles_mut(|style| style.interaction.selectable_labels = false);
+}
+
 /// A colour with a dark-surface and a light-surface variant, so callers stay
 /// legible on both themes. Themed foregrounds are contrast-checked against both
 /// backgrounds by the crate's tests (see [`THEMED_FOREGROUNDS`]).

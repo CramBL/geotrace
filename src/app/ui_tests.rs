@@ -45,7 +45,6 @@ use gt_ui_theme::MIDDLE_DOT;
 use rustc_hash::FxHashMap;
 use strum::IntoEnumIterator as _;
 
-use super::App;
 use super::archive_recovery::{
     self, ARCHIVE_IN_USE_BUTTON_LABEL, ArchiveUnavailable, InspectedArchives,
     InterruptedDeleteFinding, LEAVE_UNRECOVERED_BUTTON_LABEL, RECOVER_BUTTON_LABEL,
@@ -69,6 +68,7 @@ use super::read_only_session::{READ_ONLY_MARKER_LABEL, READ_ONLY_RECORDING_HISTO
 use super::settings_ui::{self, SettingsPage};
 use super::storage::{DatabasesPending, OPENING_DATABASES, OpenStorage, StorageOpen};
 use super::storage_controls::AUTO_STORE_LABEL;
+use super::{App, TEST_APP_VERSION};
 use crate::termination_signal::TERMINATION_SIGNAL_FLAG;
 
 /// In-memory [`egui::DroppedFile`] for drag-drop tests. `bytes` drops carry a
@@ -148,7 +148,7 @@ fn build_app_with_the_instance_lock(
             fading_enabled: fading,
             offline: true,
             storage: crate::app::Storage::Disabled,
-            app_version: super::TEST_APP_VERSION,
+            app_version: TEST_APP_VERSION,
             pending_writes,
             instance_lock,
         },
@@ -200,7 +200,7 @@ fn transient_app_with_the_instance_lock(
             fading_enabled: false,
             offline: true,
             storage: crate::app::Storage::Disabled,
-            app_version: super::TEST_APP_VERSION,
+            app_version: TEST_APP_VERSION,
             pending_writes,
             instance_lock,
         },
@@ -1322,8 +1322,7 @@ fn hovering_a_column_header_explains_its_metric() {
 }
 
 /// Every line of the results strip requests the cursor that matches what it
-/// does. egui makes labels selectable by default, which puts a text-editing
-/// I-beam over a line that is neither text entry nor a control.
+/// does: a line that is neither text entry nor a control shows no I-beam.
 #[rstest::rstest]
 // The summary states what the run left out on hover.
 #[case::run_summary(demo_query_run, "2 matches", egui::CursorIcon::Help)]
@@ -8675,7 +8674,7 @@ fn snapshot_about_dialog() {
     assert!(
         harness
             .inner
-            .query_by_label_contains(super::TEST_APP_VERSION)
+            .query_by_label_contains(TEST_APP_VERSION)
             .is_some(),
         "the dialog must render the injected placeholder version"
     );
@@ -8715,6 +8714,33 @@ fn file_menu_opens_about_dialog() {
     harness.run_steps(2);
 
     assert!(harness.state().about_open, "the menu entry must open About");
+}
+
+/// A line that only states something shows the ordinary cursor: labels do not
+/// select anywhere in the app. Text a reader copies out opts back in, and
+/// shows the I-beam over it.
+#[rstest::rstest]
+#[case::tagline("GPS/GNSS navigation data visualizer", egui::CursorIcon::Default)]
+#[case::version(TEST_APP_VERSION, egui::CursorIcon::Text)]
+fn the_about_dialog_shows_the_text_cursor_only_over_the_version(
+    #[case] label: &str,
+    #[case] expected: egui::CursorIcon,
+) {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    harness.state_mut().about_open = true;
+    harness.run_steps(2);
+
+    let line = harness.get_by_label_contains(label).rect().center();
+    harness.hover_at_and_settle(line, 5);
+
+    assert_eq!(
+        harness.output().platform_output.cursor_icon,
+        expected,
+        "hovering {label:?} should request {expected:?}"
+    );
 }
 
 #[test]

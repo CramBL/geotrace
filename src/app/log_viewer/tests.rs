@@ -124,6 +124,8 @@ fn harness_of(
     let mut harness = Harness::builder()
         .with_size(VIEWER_SIZE)
         .build_ui_state(viewer_ui, viewer_state(recordings, logs));
+    // Matches the app's context setup: the clickable rows depend on it.
+    gt_ui_theme::install_app_style(&harness.ctx);
     harness.run_steps(3);
     harness
 }

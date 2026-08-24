@@ -22,14 +22,6 @@ pub(in crate::app) const OPENING_RECORDINGS_DATABASE: &str = "Opening the record
 
 mod table;
 
-/// Turn off label text-selection for a History window's contents.
-///
-/// egui labels default to selectable. Anything worth copying opts back in
-/// with [`Label::selectable`].
-fn use_plain_labels(ui: &mut egui::Ui) {
-    ui.style_mut().interaction.selectable_labels = false;
-}
-
 /// Which pruning mode is selected in the Prune dialog.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PruneKind {
@@ -113,7 +105,6 @@ impl PruneDialog {
             .collapsible(false)
             .default_width(420.0)
             .show(ctx, |ui| {
-                use_plain_labels(ui);
                 ui.horizontal(|ui| {
                     ui.label("Mode");
                     let old = self.mode;
@@ -562,7 +553,6 @@ impl HistoryWindow {
             .default_width(640.0)
             .default_height(480.0)
             .show(ctx, |ui| {
-                use_plain_labels(ui);
                 if databases_opening {
                     ui.horizontal(|ui| {
                         ui.spinner();
@@ -787,7 +777,6 @@ impl HistoryWindow {
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                     .show(ctx, |ui| {
-                        use_plain_labels(ui);
                         let track_label = gt_fmt::pluralize(hidden_count, "track", "tracks");
                         ui.label(format!(
                             "{hidden_count} hidden {track_label} will be permanently removed from their recordings."
