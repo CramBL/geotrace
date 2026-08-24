@@ -25,57 +25,33 @@ pub trait DayArchiveError: std::error::Error {
     fn interrupted_delete_left_unrecovered(&self) -> Option<InterruptedDelete>;
 }
 
-impl DayArchiveError for JamStoreError {
-    fn is_held_by_another_process(&self) -> bool {
-        matches!(self, Self::HeldByAnotherProcess)
-    }
+/// Implements [`DayArchiveError`] for an error type with a
+/// `HeldByAnotherProcess` and a `DeclinedRecovery` variant.
+macro_rules! impl_day_archive_error {
+    ($($error:ty),+ $(,)?) => {
+        $(
+            impl DayArchiveError for $error {
+                fn is_held_by_another_process(&self) -> bool {
+                    matches!(self, Self::HeldByAnotherProcess)
+                }
 
-    fn interrupted_delete_left_unrecovered(&self) -> Option<InterruptedDelete> {
-        match self {
-            Self::DeclinedRecovery(DeclinedRecovery(interrupted)) => Some(*interrupted),
-            _ => None,
-        }
-    }
+                fn interrupted_delete_left_unrecovered(&self) -> Option<InterruptedDelete> {
+                    match self {
+                        Self::DeclinedRecovery(DeclinedRecovery(interrupted)) => Some(*interrupted),
+                        _ => None,
+                    }
+                }
+            }
+        )+
+    };
 }
 
-impl DayArchiveError for SolarStoreError {
-    fn is_held_by_another_process(&self) -> bool {
-        matches!(self, Self::HeldByAnotherProcess)
-    }
-
-    fn interrupted_delete_left_unrecovered(&self) -> Option<InterruptedDelete> {
-        match self {
-            Self::DeclinedRecovery(DeclinedRecovery(interrupted)) => Some(*interrupted),
-            _ => None,
-        }
-    }
-}
-
-impl DayArchiveError for IonexStoreError {
-    fn is_held_by_another_process(&self) -> bool {
-        matches!(self, Self::HeldByAnotherProcess)
-    }
-
-    fn interrupted_delete_left_unrecovered(&self) -> Option<InterruptedDelete> {
-        match self {
-            Self::DeclinedRecovery(DeclinedRecovery(interrupted)) => Some(*interrupted),
-            _ => None,
-        }
-    }
-}
-
-impl DayArchiveError for FlareStoreError {
-    fn is_held_by_another_process(&self) -> bool {
-        matches!(self, Self::HeldByAnotherProcess)
-    }
-
-    fn interrupted_delete_left_unrecovered(&self) -> Option<InterruptedDelete> {
-        match self {
-            Self::DeclinedRecovery(DeclinedRecovery(interrupted)) => Some(*interrupted),
-            _ => None,
-        }
-    }
-}
+impl_day_archive_error!(
+    JamStoreError,
+    SolarStoreError,
+    IonexStoreError,
+    FlareStoreError,
+);
 
 #[cfg(test)]
 mod tests {
@@ -83,8 +59,6 @@ mod tests {
 
     const INTERRUPTED: InterruptedDelete = InterruptedDelete { archived_days: 3 };
 
-    /// Both answers for one error, so each archive's own impl is read the
-    /// same way.
     fn answers<E: DayArchiveError>(err: &E) -> (bool, Option<InterruptedDelete>) {
         (
             err.is_held_by_another_process(),
@@ -92,9 +66,6 @@ mod tests {
         )
     }
 
-    /// Four hand-written impls of the same two questions, one of which no
-    /// test reaches through a real file: libhdf5 hands one process the same
-    /// open file twice rather than refusing it.
     #[test]
     fn every_archive_answers_both_questions_through_its_own_error() {
         let held = (true, None);
