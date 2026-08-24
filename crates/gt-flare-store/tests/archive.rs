@@ -6,11 +6,12 @@ use tempfile::TempDir;
 
 use gt_flare::SolarFlare;
 use gt_flare::class::FlareClassification;
-use gt_flare_store::{FILE_NAME, FlareStore, FlareStoreError, schema};
+use gt_flare_store::{FILE_NAME, FlareStore, FlareStoreError, ReadOnlyFlareStore, schema};
 use gt_hdf5_archive::day_index;
 use gt_hdf5_archive::prune::{
     DeclinedRecovery, DeleteState, InterruptedDelete, InterruptedDeleteRecovery,
 };
+use gt_hdf5_archive::{ReadOnlyDayArchive as _, WritableDayArchive as _};
 use gt_test_utils::day_archive::{self, ColumnName, GroupPath};
 
 /// The base URL the archive records. The API key is never part of it.
@@ -500,7 +501,7 @@ fn declining_recovery_leaves_the_interrupted_archive_as_it_was() {
     drop(store);
     day_archive::mark_delete_in_flight(&path, DAYS).expect("mark the delete");
 
-    let interrupted = FlareStore::interrupted_delete_at(&path).expect("inspect");
+    let interrupted = ReadOnlyFlareStore::interrupted_delete_at(&path).expect("inspect");
     let declined =
         FlareStore::open_or_create_with_recovery_choice(&path, InterruptedDeleteRecovery::Decline)
             .expect_err("the archive is unavailable until the recovery is accepted");
@@ -545,13 +546,13 @@ fn a_settled_archive_reports_no_interrupted_delete() {
     let path = dir.path().join(FILE_NAME);
 
     assert_eq!(
-        FlareStore::interrupted_delete_at(&path).expect("before the archive exists"),
+        ReadOnlyFlareStore::interrupted_delete_at(&path).expect("before the archive exists"),
         None
     );
     FlareStore::open_or_create(&path).expect("create");
 
     assert_eq!(
-        FlareStore::interrupted_delete_at(&path).expect("a settled archive"),
+        ReadOnlyFlareStore::interrupted_delete_at(&path).expect("a settled archive"),
         None
     );
     FlareStore::open_or_create_with_recovery_choice(&path, InterruptedDeleteRecovery::Decline)

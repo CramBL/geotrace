@@ -21,7 +21,7 @@ pub use gt_hdf5_archive::prune::{
     DeclinedRecovery, InterruptedDelete, InterruptedDeleteRecovery, PruneProgress,
     PruneProgressSink,
 };
-pub use gt_hdf5_archive::{ArchiveUsage, ArchivedDaySpan};
+pub use gt_hdf5_archive::{ArchiveUsage, ArchivedDaySpan, ReadOnlyDayArchive, WritableDayArchive};
 pub use gt_history::{
     ChannelSummary, DatabaseRef, DbError, HistoryDatabase, LOGS_DIRECTORY, LogAttachment,
     LogAttachmentEntry, LogAttachmentId, LogContentHash, PruneMode, ReadOnlyHistoryDatabase,

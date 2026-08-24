@@ -34,8 +34,8 @@ use gt_jam_store::schema;
 use gt_log_view::LoadedLog;
 use gt_pending_writes::{PendingWrites, WriteAccess, WriteKind};
 use gt_store::{
-    HistoryDatabase as _, InterruptedDelete, JamStore, ReadOnlyHistoryDatabase as _, Recordings,
-    RecordingsHandle,
+    HistoryDatabase as _, InterruptedDelete, ReadOnlyDayArchive as _, ReadOnlyHistoryDatabase as _,
+    ReadOnlyJamStore, Recordings, RecordingsHandle,
 };
 use gt_test_utils::day_archive::{self, GroupPath};
 use gt_test_utils::{
@@ -5691,7 +5691,7 @@ fn recovering_after_a_take_over_opens_the_archive_with_its_days_discarded() {
         "the recovery discarded the days the archive held"
     );
     assert_eq!(
-        JamStore::interrupted_delete_at(&path).expect("read the archive"),
+        ReadOnlyJamStore::interrupted_delete_at(&path).expect("read the archive"),
         None,
         "the archive was opened with the interrupted delete still in it"
     );
@@ -5771,7 +5771,7 @@ fn leaving_an_interrupted_delete_unrecovered_writes_nothing_to_the_archive() {
         "the archive the user left alone was written to"
     );
     assert_eq!(
-        JamStore::interrupted_delete_at(&path).expect("read the archive"),
+        ReadOnlyJamStore::interrupted_delete_at(&path).expect("read the archive"),
         Some(InterruptedDelete { archived_days: 2 }),
         "the days are gone, or the delete no longer reads as interrupted"
     );
@@ -5804,7 +5804,7 @@ fn escape_leaves_the_interrupted_delete_unrecovered() {
     wait_for_the_archives_to_open(&mut harness);
 
     assert_eq!(
-        JamStore::interrupted_delete_at(&path).expect("read the archive"),
+        ReadOnlyJamStore::interrupted_delete_at(&path).expect("read the archive"),
         Some(InterruptedDelete { archived_days: 2 }),
         "escape recovered the interrupted delete"
     );
@@ -5896,7 +5896,7 @@ fn an_interrupted_delete_nobody_was_asked_about_is_declined() {
     wait_for_the_archives_to_open(&mut harness);
 
     assert_eq!(
-        JamStore::interrupted_delete_at(&path).expect("read the archive"),
+        ReadOnlyJamStore::interrupted_delete_at(&path).expect("read the archive"),
         Some(InterruptedDelete { archived_days: 2 }),
         "the open recovered a delete nobody was asked about"
     );
@@ -5961,7 +5961,7 @@ fn a_window_closed_while_an_interrupted_delete_is_asked_about_opens_nothing() {
         "the window never closed"
     );
     assert_eq!(
-        JamStore::interrupted_delete_at(&path).expect("read the archive"),
+        ReadOnlyJamStore::interrupted_delete_at(&path).expect("read the archive"),
         Some(InterruptedDelete { archived_days: 2 }),
         "a closing app recovered the interrupted delete"
     );

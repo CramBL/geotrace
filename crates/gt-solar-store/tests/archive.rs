@@ -10,11 +10,12 @@ use gt_hdf5_archive::day_index;
 use gt_hdf5_archive::prune::{
     DeclinedRecovery, DeleteState, InterruptedDelete, InterruptedDeleteRecovery, PruneProgress,
 };
+use gt_hdf5_archive::{ReadOnlyDayArchive as _, WritableDayArchive as _};
 use gt_solar::GeomagneticIndex;
 use gt_solar::activity::GeomagneticActivity;
 use gt_solar::series::{Hp30Sample, Hp30Series, KpSample, KpSeries, KpStatus};
 use gt_solar_store::schema::IndexArchiveLayout as _;
-use gt_solar_store::{FILE_NAME, SolarStore, SolarStoreError, schema};
+use gt_solar_store::{FILE_NAME, ReadOnlySolarStore, SolarStore, SolarStoreError, schema};
 use gt_test_utils::day_archive::{self, ColumnName, GroupPath};
 
 const HOST: &str = "https://kp.gfz.de";
@@ -600,7 +601,7 @@ fn an_interrupted_index_reports_its_own_days_alone() {
     day_archive::mark_delete_in_flight(&path, GroupPath(&GeomagneticIndex::Kp.days_group_path()))
         .expect("mark the delete");
 
-    let interrupted = SolarStore::interrupted_delete_at(&path).expect("inspect");
+    let interrupted = ReadOnlySolarStore::interrupted_delete_at(&path).expect("inspect");
 
     assert_eq!(interrupted, Some(InterruptedDelete { archived_days: 2 }));
     let store = SolarStore::open_or_create(&path).expect("open accepting the recovery");
@@ -633,7 +634,7 @@ fn a_day_both_interrupted_indices_hold_counts_once() {
             .expect("mark the delete");
     }
 
-    let interrupted = SolarStore::interrupted_delete_at(&path).expect("inspect");
+    let interrupted = ReadOnlySolarStore::interrupted_delete_at(&path).expect("inspect");
 
     assert_eq!(interrupted, Some(InterruptedDelete { archived_days: 3 }));
 }
@@ -693,13 +694,13 @@ fn a_settled_archive_reports_no_interrupted_delete() {
     let path = dir.path().join(FILE_NAME);
 
     assert_eq!(
-        SolarStore::interrupted_delete_at(&path).expect("before the archive exists"),
+        ReadOnlySolarStore::interrupted_delete_at(&path).expect("before the archive exists"),
         None
     );
     SolarStore::open_or_create(&path).expect("create");
 
     assert_eq!(
-        SolarStore::interrupted_delete_at(&path).expect("a settled archive"),
+        ReadOnlySolarStore::interrupted_delete_at(&path).expect("a settled archive"),
         None
     );
     SolarStore::open_or_create_with_recovery_choice(&path, InterruptedDeleteRecovery::Decline)

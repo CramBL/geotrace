@@ -5,6 +5,7 @@ use std::fs;
 use chrono::{DateTime, NaiveDate, Utc};
 use tempfile::TempDir;
 
+use gt_hdf5_archive::WritableDayArchive as _;
 use gt_solar::series::{Hp30Series, IndexSample as _, KpSeries};
 use gt_solar::{FIXTURE_WINDOWS, FixtureWindow, wire};
 use gt_solar_store::{FILE_NAME, SolarStore};

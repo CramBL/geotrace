@@ -11,10 +11,12 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, NaiveDate, Utc};
 use gt_hdf5_archive::day_index::{DayIndex, RowPlacement};
 use gt_hdf5_archive::prune::{
-    ArchiveLayout, DeclinedRecovery, InterruptedDelete, InterruptedDeleteRecovery,
-    PruneProgressSink, RowLevel,
+    ArchiveLayout, DeclinedRecovery, InterruptedDelete, PruneProgressSink, RowLevel,
 };
-use gt_hdf5_archive::{ArchiveError, ArchiveFile, Column, OpenArchive, attributes};
+use gt_hdf5_archive::{
+    ArchiveError, ArchiveFile, ArchiveFileBeingOpened, Column, OpenArchive, ReadOnlyDayArchive,
+    WritableDayArchive, attributes,
+};
 use gt_jam::dataset::JamDataset;
 use gt_jam::wire::HexObservation;
 use h3o::CellIndex;
@@ -97,27 +99,29 @@ pub struct ReadOnlyJamStore {
     path: PathBuf,
 }
 
-impl ReadOnlyJamStore {
-    /// Open the archive at `path` without writing to it: it is not created
-    /// where it is missing, not rebuilt, and neither an interrupted insert nor
-    /// an interrupted delete in it is put right.
-    ///
-    /// An archive an interrupted delete left part-way through fails with
-    /// [`JamStoreError::DeclinedRecovery`]: its day index cannot be read as it
-    /// stands, and putting it right is a write.
-    pub fn open_existing_read_only(path: &Path) -> Result<Self, JamStoreError> {
-        let mut archive = ArchiveFile::new(path);
-        archive.check_readable_without_writing(
-            interrupted_delete_in,
-            schema::SCHEMA_VERSION_ATTR,
-            schema::CURRENT_SCHEMA_VERSION,
-        )?;
-        Ok(Self {
+impl ReadOnlyDayArchive for ReadOnlyJamStore {
+    type Error = JamStoreError;
+
+    const SCHEMA_VERSION_ATTR: &'static str = schema::SCHEMA_VERSION_ATTR;
+    const CURRENT_SCHEMA_VERSION: i64 = schema::CURRENT_SCHEMA_VERSION;
+
+    fn from_archive_file(archive: ArchiveFileBeingOpened) -> Self {
+        let archive = archive.into_archive_file();
+        Self {
+            path: archive.path().to_owned(),
             archive: Mutex::new(archive),
-            path: path.to_owned(),
-        })
+        }
     }
 
+    fn interrupted_delete_in(
+        archive: &mut ArchiveFile,
+    ) -> Result<Option<InterruptedDelete>, JamStoreError> {
+        let file = archive.open_read_only()?;
+        with_layout(&file, |layout| layout.interrupted_delete())
+    }
+}
+
+impl ReadOnlyJamStore {
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -202,69 +206,21 @@ impl Deref for JamStore {
     }
 }
 
-impl JamStore {
-    /// Open the archive at `path`, creating it if it does not exist.
-    ///
-    /// An archive created before archives recorded their free space in pages
-    /// is rebuilt first, see [`ArchiveFile::migrate_file_space_if_needed`].
-    ///
-    /// Rows left behind by an interrupted [`Self::insert_day`] are dropped
-    /// here, and so are the days an interrupted
-    /// [`Self::delete_days_before`] left in an unknown layout.
-    pub fn open_or_create(path: &Path) -> Result<Self, JamStoreError> {
-        Self::open_or_create_with_recovery_choice(path, InterruptedDeleteRecovery::Recover)
-    }
+impl WritableDayArchive for JamStore {
+    type Error = JamStoreError;
 
-    /// Open the archive at `path` as [`Self::open_or_create`] does, recovering
-    /// an interrupted delete only when `recovery` asks for it.
-    ///
-    /// A declined recovery leaves the file exactly as it was found and fails
-    /// with [`JamStoreError::DeclinedRecovery`], which is checked before
-    /// anything else the open would write.
-    pub fn open_or_create_with_recovery_choice(
-        path: &Path,
-        recovery: InterruptedDeleteRecovery,
-    ) -> Result<Self, JamStoreError> {
-        let mut archive = ArchiveFile::new(path);
-        if archive.exists() {
-            if recovery == InterruptedDeleteRecovery::Decline
-                && let Some(interrupted) = interrupted_delete_in(&mut archive)?
-            {
-                return Err(DeclinedRecovery(interrupted).into());
-            }
-            archive.migrate_file_space_if_needed()?;
-            archive.validate_schema_version(
-                schema::SCHEMA_VERSION_ATTR,
-                schema::CURRENT_SCHEMA_VERSION,
-            )?;
-            Self::recover_interrupted_delete(&mut archive)?;
-            Self::drop_unindexed_rows(&mut archive)?;
-        } else {
-            Self::create(&mut archive)?;
+    type ReadOnly = ReadOnlyJamStore;
+
+    fn from_archive_file(archive: ArchiveFileBeingOpened) -> Self {
+        Self {
+            inner: ReadOnlyJamStore::from_archive_file(archive),
         }
-        Ok(Self {
-            inner: ReadOnlyJamStore {
-                archive: Mutex::new(archive),
-                path: path.to_owned(),
-            },
-        })
     }
 
-    /// What an interrupted delete left in the archive at `path`, or [`None`]
-    /// when there is nothing to recover. An archive that does not exist yet
-    /// has nothing to recover either.
-    ///
-    /// The file is opened read-only and nothing in it changes.
-    pub fn interrupted_delete_at(path: &Path) -> Result<Option<InterruptedDelete>, JamStoreError> {
-        let mut archive = ArchiveFile::new(path);
-        if !archive.exists() {
-            return Ok(None);
-        }
-        interrupted_delete_in(&mut archive)
-    }
-
-    fn create(archive: &mut ArchiveFile) -> Result<(), JamStoreError> {
-        let file = archive.create()?;
+    fn create_with_empty_columns(
+        archive: &mut ArchiveFileBeingOpened,
+    ) -> Result<(), JamStoreError> {
+        let file = archive.archive_file_mut().create()?;
         attributes::write_i64(
             &file,
             schema::SCHEMA_VERSION_ATTR,
@@ -287,15 +243,17 @@ impl JamStore {
         Ok(())
     }
 
-    fn recover_interrupted_delete(archive: &mut ArchiveFile) -> Result<(), JamStoreError> {
-        let file = archive.open_read_write()?;
+    fn recover_interrupted_delete(
+        archive: &mut ArchiveFileBeingOpened,
+    ) -> Result<(), JamStoreError> {
+        let file = archive.archive_file_mut().open_read_write()?;
         with_layout(&file, |layout| {
             layout.recover_interrupted_delete(ARCHIVE_NAME)
         })
     }
 
-    fn drop_unindexed_rows(archive: &mut ArchiveFile) -> Result<(), JamStoreError> {
-        let file = archive.open_read_write()?;
+    fn drop_unindexed_rows(archive: &mut ArchiveFileBeingOpened) -> Result<(), JamStoreError> {
+        let file = archive.archive_file_mut().open_read_write()?;
         let days = file.group(schema::DAYS_GROUP)?;
         let observations = file.group(schema::OBSERVATIONS_GROUP)?;
         DayIndex::new(&days).drop_unindexed_rows(
@@ -305,7 +263,9 @@ impl JamStore {
         )?;
         Ok(())
     }
+}
 
+impl JamStore {
     /// Append `observations` as `day`, served by `host`.
     ///
     /// Fails with [`JamStoreError::DayAlreadyStored`] if the day is present.
@@ -382,13 +342,6 @@ impl JamStore {
         let file = archive.open_read_write()?;
         with_layout(&file, |layout| layout.delete_all_days(report))
     }
-}
-
-fn interrupted_delete_in(
-    archive: &mut ArchiveFile,
-) -> Result<Option<InterruptedDelete>, JamStoreError> {
-    let file = archive.open_read_only()?;
-    with_layout(&file, |layout| layout.interrupted_delete())
 }
 
 /// Run `act` against the archive's layout: one day index over one group of

@@ -745,6 +745,7 @@ mod tests {
     use tempfile::TempDir;
 
     use gt_jam_store::schema;
+    use gt_store::{ReadOnlyDayArchive as _, ReadOnlyJamStore};
     use gt_test_utils::day_archive::{self, GroupPath};
 
     use crate::app::environment_storage::PrunedDays;
@@ -892,7 +893,8 @@ mod tests {
         let archive = opened.archive.expect("the recovered archive is open");
         assert_eq!(archive.read().days().expect("read the archive index"), []);
         assert_eq!(
-            JamStore::interrupted_delete_at(&store.interference_path()).expect("read the archive"),
+            ReadOnlyJamStore::interrupted_delete_at(&store.interference_path())
+                .expect("read the archive"),
             None,
             "the open left the delete interrupted"
         );
@@ -964,7 +966,7 @@ mod tests {
             Some(ArchiveUnavailable::InterruptedDeleteLeftUnrecovered)
         );
         assert_eq!(
-            JamStore::interrupted_delete_at(&store.interference_path())
+            ReadOnlyJamStore::interrupted_delete_at(&store.interference_path())
                 .expect("read the archive")
                 .map(|interrupted| interrupted.archived_days),
             Some(2),
