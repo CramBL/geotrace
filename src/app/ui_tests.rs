@@ -4,8 +4,8 @@ use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
 use egui_phosphor::regular::CHECK as ICON_CHECK;
 use egui_phosphor::regular::COPY as ICON_COPY;
+use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
 use egui_phosphor::regular::DOTS_SIX as ICON_DOTS_SIX;
-use egui_phosphor::regular::FRAME_CORNERS as ICON_FRAME_CORNERS;
 use egui_phosphor::regular::GEAR as ICON_GEAR;
 use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use egui_phosphor::regular::PUSH_PIN as ICON_PUSH_PIN;
@@ -746,13 +746,42 @@ fn rows_in_reading_order(mut cells: Vec<(egui::Rect, String)>) -> Vec<(egui::Rec
     cells
 }
 
-/// The matches listed in the window titled `title`, counted by the button each
-/// row carries to frame the map on its match.
-fn listed_match_count(harness: &Harness<'_, App>, title: &str) -> usize {
-    harness
+/// Every button framing the map that the window titled `title` shows, top to
+/// bottom: the run-wide button first, then one button per listed match. The
+/// summary strip leads whichever window holds the matches list.
+fn map_buttons_in_window<'h>(
+    harness: &'h Harness<'_, App>,
+    title: &'h str,
+) -> Vec<egui_kittest::Node<'h>> {
+    let mut buttons: Vec<_> = harness
         .get_by_role_and_label(egui::accesskit::Role::Window, title)
-        .query_all_by_role_and_label(egui::accesskit::Role::Button, ICON_FRAME_CORNERS)
-        .count()
+        .query_all_by_role_and_label(egui::accesskit::Role::Button, ICON_CROSSHAIR)
+        .collect();
+    buttons.sort_by(|a, b| a.rect().top().total_cmp(&b.rect().top()));
+    buttons
+}
+
+/// The matches listed in the window titled `title`, counted by the button each
+/// row carries to frame the map on its match. A window without the list shows
+/// neither those buttons nor the strip's run-wide one.
+fn listed_match_count(harness: &Harness<'_, App>, title: &str) -> usize {
+    map_buttons_in_window(harness, title)
+        .len()
+        .saturating_sub(1)
+}
+
+/// The summary strip's button, which frames the map on every match of the run.
+fn run_wide_map_button<'h>(harness: &'h Harness<'_, App>) -> egui_kittest::Node<'h> {
+    *map_buttons_in_window(harness, QUERY_WINDOW_TITLE)
+        .first()
+        .expect("the results tab states what the run matched")
+}
+
+/// The button match row `index` carries to frame the map on that one match.
+fn match_row_map_button<'h>(harness: &'h Harness<'_, App>, index: usize) -> egui_kittest::Node<'h> {
+    *map_buttons_in_window(harness, QUERY_WINDOW_TITLE)
+        .get(index + 1)
+        .expect("the results tab lists that match")
 }
 
 /// How far a cell may sit from the tab's left edge and still count as starting
@@ -1097,17 +1126,15 @@ fn a_match_picked_in_the_popped_out_window_lists_its_points_in_the_query_window(
 fn the_history_tab_replaces_the_results() {
     let mut harness = app_with_query_window_open();
     run_query(&mut harness, "points | where velocity > 1 km/h");
-    assert_eq!(
-        harness.query_all_by_label_contains("Show on map").count(),
-        1,
+    assert!(
+        !map_buttons_in_window(&harness, QUERY_WINDOW_TITLE).is_empty(),
         "the results tab opens on the run"
     );
 
     harness.get_by_label("Query history").click();
     harness.run_steps(3);
-    assert_eq!(
-        harness.query_all_by_label_contains("Show on map").count(),
-        0,
+    assert!(
+        map_buttons_in_window(&harness, QUERY_WINDOW_TITLE).is_empty(),
         "the history tab replaces the results"
     );
     assert_eq!(
@@ -1120,9 +1147,8 @@ fn the_history_tab_replaces_the_results() {
 
     harness.get_by_label("Results").click();
     harness.run_steps(3);
-    assert_eq!(
-        harness.query_all_by_label_contains("Show on map").count(),
-        1,
+    assert!(
+        !map_buttons_in_window(&harness, QUERY_WINDOW_TITLE).is_empty(),
         "the results tab shows them again"
     );
 }
@@ -1244,13 +1270,13 @@ fn a_column_header_click_sorts_the_matches() {
     );
 }
 
-/// A match's own "Show on map" frames the map on that one match, tighter than
-/// the run-wide button frames every match of the run.
+/// A match's own map button frames the map on that one match, tighter than the
+/// run-wide button frames every match of the run.
 #[test]
 fn a_match_row_frames_the_map_on_that_match() {
     let mut harness = demo_app_with_query_run(TWO_MATCH_QUERY);
 
-    harness.get_by_label_contains("Show on map").click();
+    run_wide_map_button(&harness).click();
     harness.run_steps(3);
     let framed_run = harness
         .state()
@@ -1260,11 +1286,7 @@ fn a_match_row_frames_the_map_on_that_match() {
 
     // The second match is the shorter of the two, so framing it narrows the
     // viewport whichever way the first one framed.
-    harness
-        .get_all_by_role_and_label(egui::accesskit::Role::Button, ICON_FRAME_CORNERS)
-        .nth(1)
-        .expect("every match row offers its own button")
-        .click();
+    match_row_map_button(&harness, 1).click();
     harness.run_steps(3);
     let framed_match = harness
         .state()
@@ -1446,15 +1468,12 @@ fn copying_a_channel_result_writes_a_tab_separated_sample_table() {
     );
 }
 
-/// A channel match's "Show on map" button is grayed out, stating on hover that
-/// a sample has no position of its own.
+/// A channel match's map button is grayed out, stating on hover that a sample
+/// has no position of its own.
 #[test]
 fn a_channel_match_states_why_it_cannot_frame_the_map() {
     let mut harness = channel_app_with_query_run();
-    let button = harness
-        .get_all_by_role_and_label(egui::accesskit::Role::Button, ICON_FRAME_CORNERS)
-        .next()
-        .expect("every matched stretch offers its own button");
+    let button = match_row_map_button(&harness, 0);
     assert!(
         button.accesskit_node().is_disabled(),
         "a sample range cannot frame the map"
@@ -1471,10 +1490,10 @@ fn a_channel_match_states_why_it_cannot_frame_the_map() {
     );
 }
 
-/// The query results' "Show on map" frames the map on what the run drew: the
-/// viewport narrows from the whole recording to the matched stretches.
+/// The query results' run-wide map button frames the map on what the run drew:
+/// the viewport narrows from the whole recording to the matched stretches.
 #[test]
-fn show_on_map_frames_the_query_matches() {
+fn the_run_wide_map_button_frames_the_query_matches() {
     let mut harness = demo_app_with_query_run("points | where velocity > 25 km/h");
 
     let whole_trip = harness
@@ -1483,7 +1502,7 @@ fn show_on_map_frames_the_query_matches() {
         .viewport_geo_bounds()
         .expect("the map framed the loaded recording");
 
-    harness.get_by_label_contains("Show on map").click();
+    run_wide_map_button(&harness).click();
     harness.run_steps(3);
 
     let framed_matches = harness

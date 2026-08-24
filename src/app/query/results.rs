@@ -15,7 +15,6 @@ use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_phosphor::regular::COPY as ICON_COPY;
 use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
-use egui_phosphor::regular::FRAME_CORNERS as ICON_FRAME_CORNERS;
 use egui_phosphor::regular::INFO as ICON_INFO;
 use gt_query::{ChannelTimeline, Construct, MetricProvider as _, QueryMetric};
 use gt_query_run::{
@@ -243,7 +242,7 @@ struct PointClick {
 /// What a click in the matches table selects.
 enum MatchAction {
     Select(MatchKey),
-    ShowOnMap(MatchRevealTarget),
+    FrameOnMap(MatchRevealTarget),
 }
 
 /// Where the matches list is drawn, which is what gives its table a height.
@@ -591,7 +590,7 @@ impl<'a> ResultsTables<'a> {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         self.pop_out_button_ui(ui, popped_out);
                         self.copy_tsv_button_ui(ui);
-                        self.show_run_on_map_button_ui(ui, reveal);
+                        self.frame_run_on_map_button_ui(ui, reveal);
                         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                             self.summary_counts_ui(ui, query);
                         });
@@ -667,22 +666,26 @@ impl<'a> ResultsTables<'a> {
     /// The button framing the map on every match of this run and playing their
     /// reveal animation again. Disabled with the reason in its hover text when
     /// the run drew no halos, or when the data changed after it.
-    fn show_run_on_map_button_ui(&self, ui: &mut egui::Ui, reveal: &mut Option<MatchRevealTarget>) {
+    fn frame_run_on_map_button_ui(
+        &self,
+        ui: &mut egui::Ui,
+        reveal: &mut Option<MatchRevealTarget>,
+    ) {
         let disabled_reason = if self.stale {
             Some(format!(
-                "Data changed since this run {EM_DASH} run again to show its matches"
+                "Data changed since this run {EM_DASH} run again to frame its matches"
             ))
         } else if !self.draws_halos {
             Some("This run drew no matches on the map".to_owned())
         } else {
             None
         };
-        let button = Button::new(format!("{ICON_CROSSHAIR} Show on map")).small();
+        let button = Button::new(ICON_CROSSHAIR).small();
         let response = ui.add_enabled(disabled_reason.is_none(), button);
         if let Some(reason) = disabled_reason {
             response.on_disabled_hover_text(reason);
         } else if response
-            .on_hover_text("Zoom the map to the matches and highlight them")
+            .on_hover_text("Frame the map on every match of this run and highlight them")
             .clicked()
         {
             *reveal = Some(MatchRevealTarget::WholeRun);
@@ -787,7 +790,7 @@ impl<'a> ResultsTables<'a> {
 
         match action {
             Some(MatchAction::Select(key)) => state.selected = Some(key),
-            Some(MatchAction::ShowOnMap(target)) => *out.reveal = Some(target),
+            Some(MatchAction::FrameOnMap(target)) => *out.reveal = Some(target),
             None => {}
         }
         table.response
@@ -825,7 +828,7 @@ impl<'a> ResultsTables<'a> {
         let target = self.reveal_target(match_row);
         let mut reveal = None;
         row.col(|ui| {
-            if show_match_on_map_button_ui(ui, target.as_ref().err().map(String::as_str)).clicked()
+            if frame_match_on_map_button_ui(ui, target.as_ref().err().map(String::as_str)).clicked()
             {
                 reveal = target.as_ref().ok().cloned();
             }
@@ -836,7 +839,7 @@ impl<'a> ResultsTables<'a> {
             self.hover_match(match_row, highlight);
         }
         if let Some(target) = reveal {
-            return Some(MatchAction::ShowOnMap(target));
+            return Some(MatchAction::FrameOnMap(target));
         }
         response
             .clicked()
@@ -848,7 +851,7 @@ impl<'a> ResultsTables<'a> {
     fn reveal_target(&self, match_row: &MatchRow) -> Result<MatchRevealTarget, String> {
         if self.stale {
             return Err(format!(
-                "Data changed since this run {EM_DASH} run again to show this match"
+                "Data changed since this run {EM_DASH} run again to frame this match"
             ));
         }
         match self.source {
@@ -857,7 +860,7 @@ impl<'a> ResultsTables<'a> {
                 points: match_row.rows.clone(),
             }),
             RowSource::ChannelSamples { .. } => Err("Channel samples have no position of their \
-                 own: \"Show on map\" above frames the whole run"
+                 own: the button above frames the whole run"
                 .to_owned()),
         }
     }
@@ -901,7 +904,7 @@ impl<'a> ResultsTables<'a> {
             .map(natural)
             .sum::<f32>()
             + swatch_side(ui)
-            + column_format::text_width(ui, ICON_FRAME_CORNERS, &TextStyle::Body)
+            + column_format::text_width(ui, ICON_CROSSHAIR, &TextStyle::Body)
             + 2.0 * ui.spacing().button_padding.x
             + ui.spacing().item_spacing.x * (MatchColumn::iter().count() + 1) as f32
             + ui.spacing().scroll.allocated_width();
@@ -1245,17 +1248,20 @@ fn splitter_ui(ui: &mut egui::Ui) -> egui::Response {
 
 /// The button framing the map on one match, at the right end of its row.
 /// Disabled with the reason on hover where it cannot answer.
-fn show_match_on_map_button_ui(ui: &mut egui::Ui, disabled_reason: Option<&str>) -> egui::Response {
+fn frame_match_on_map_button_ui(
+    ui: &mut egui::Ui,
+    disabled_reason: Option<&str>,
+) -> egui::Response {
     // A right-to-left scope: the button is drawn at its own size at the end of
     // the row.
     ui.scope_builder(
         egui::UiBuilder::new().layout(Layout::right_to_left(Align::Center)),
         |ui| {
             let enabled = disabled_reason.is_none();
-            let response = ui.add_enabled(enabled, Button::new(ICON_FRAME_CORNERS).small());
+            let response = ui.add_enabled(enabled, Button::new(ICON_CROSSHAIR).small());
             match disabled_reason {
                 Some(reason) => response.on_disabled_hover_text(reason),
-                None => response.on_hover_text("Show on map"),
+                None => response.on_hover_text("Frame the map on this match alone"),
             }
         },
     )

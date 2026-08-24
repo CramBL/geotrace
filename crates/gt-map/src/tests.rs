@@ -707,8 +707,8 @@ fn matches_of_run(run: u64, track: TrackRef) -> QueryMatches {
     }
 }
 
-/// "Show on map" frames the matched points alone, not every recording the
-/// query ran over.
+/// The run-wide map button frames the matched points alone, not every
+/// recording the query ran over.
 #[test]
 fn matched_bounding_box_covers_only_the_drawn_matches() {
     let files = vec![file_with_tracks(vec![
@@ -723,7 +723,7 @@ fn matched_bounding_box_covers_only_the_drawn_matches() {
     assert_eq!(matched_bounding_box(&files, &QueryMatches::default()), None);
 }
 
-/// A match row's own "Show on map" frames that match's points, not every match
+/// A match row's own map button frames that match's points, not every match
 /// the run drew.
 #[test]
 fn match_bounding_box_covers_one_match() {
@@ -739,7 +739,7 @@ fn match_bounding_box_covers_one_match() {
     assert_eq!(match_bounding_box(&files, missing_file, &(0..1)), None);
 }
 
-/// The map answers the query window's "Show on map" by framing the matches,
+/// The map answers the query window's map button by framing the matches,
 /// wherever the camera stood before.
 #[test]
 fn revealing_matches_frames_the_map_on_them() {
