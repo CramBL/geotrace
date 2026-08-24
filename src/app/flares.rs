@@ -605,7 +605,7 @@ mod tests {
     fn archive() -> (TempDir, SolarFlareArchive) {
         let dir = tempfile::tempdir().expect("temp dir");
         let store = Store::open_in(dir.path())
-            .open_solar_flares()
+            .open_or_create_archive::<FlareStore>()
             .expect("archive");
         (dir, store)
     }

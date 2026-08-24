@@ -34,8 +34,9 @@ use gt_jam_store::schema;
 use gt_log_view::LoadedLog;
 use gt_pending_writes::{PendingWrites, WriteAccess, WriteKind};
 use gt_store::{
-    HistoryDatabase as _, InterruptedDelete, ReadOnlyDayArchive as _, ReadOnlyHistoryDatabase as _,
-    ReadOnlyJamStore, Recordings, RecordingsHandle,
+    FlareStore, HistoryDatabase as _, InterruptedDelete, IonexStore, JamStore,
+    ReadOnlyDayArchive as _, ReadOnlyHistoryDatabase as _, ReadOnlyJamStore, Recordings,
+    RecordingsHandle, SolarStore,
 };
 use gt_test_utils::day_archive::{self, GroupPath};
 use gt_test_utils::{
@@ -419,7 +420,7 @@ fn install_interference_archive_covering_loaded_fixes(
 ) -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path())
-        .open_interference()
+        .open_or_create_archive::<JamStore>()
         .expect("archive");
     let mut observations_by_day: BTreeMap<chrono::NaiveDate, Vec<HexObservation>> = BTreeMap::new();
     {
@@ -4523,10 +4524,10 @@ fn storage_opened_in(
             pending_writes.clone(),
         ),
         history_failure: None,
-        archive: store.open_interference().ok(),
-        geomagnetic_indices: store.open_geomagnetic_indices().ok(),
-        tec_maps: store.open_tec_maps().ok(),
-        solar_flares: store.open_solar_flares().ok(),
+        archive: store.open_or_create_archive::<JamStore>().ok(),
+        geomagnetic_indices: store.open_or_create_archive::<SolarStore>().ok(),
+        tec_maps: store.open_or_create_archive::<IonexStore>().ok(),
+        solar_flares: store.open_or_create_archive::<FlareStore>().ok(),
         unavailable_archives: UnavailableArchives::default(),
     }
 }
@@ -5650,9 +5651,11 @@ const TAKE_OVER_STAMPED_AHEAD_OF_THIS_MACHINES_CLOCK: u64 = 2_000_000_000;
 fn data_directory_with_an_interrupted_interference_delete() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path());
-    let path = store.interference_path();
+    let path = store.archive_path::<JamStore>();
     {
-        let archive = store.open_interference().expect("the interference archive");
+        let archive = store
+            .open_or_create_archive::<JamStore>()
+            .expect("the interference archive");
         for offset in 0..2 {
             let day = chrono::NaiveDate::from_ymd_opt(2026, 7, 20).unwrap_or_default()
                 + chrono::TimeDelta::days(offset);
@@ -5706,7 +5709,7 @@ fn wait_for_the_archives_to_open(harness: &mut Harness<'_, App>) {
 #[test]
 fn recovering_after_a_take_over_opens_the_archive_with_its_days_discarded() {
     let dir = data_directory_with_an_interrupted_interference_delete();
-    let path = gt_store::Store::open_in(dir.path()).interference_path();
+    let path = gt_store::Store::open_in(dir.path()).archive_path::<JamStore>();
     let mut harness = app_asking_about_the_archives_under(dir.path(), None);
 
     harness.get_by_label_contains("Recover the aircraft interference archive?");
@@ -5794,7 +5797,7 @@ fn the_recovery_prompt_states_no_take_over_that_leaves_the_archive_unexplained(
 #[test]
 fn leaving_an_interrupted_delete_unrecovered_writes_nothing_to_the_archive() {
     let dir = data_directory_with_an_interrupted_interference_delete();
-    let path = gt_store::Store::open_in(dir.path()).interference_path();
+    let path = gt_store::Store::open_in(dir.path()).archive_path::<JamStore>();
     let untouched = std::fs::read(&path).expect("the archive as the delete left it");
     let mut harness = app_asking_about_the_archives_under(dir.path(), None);
 
@@ -5833,7 +5836,7 @@ fn leaving_an_interrupted_delete_unrecovered_writes_nothing_to_the_archive() {
 #[test]
 fn escape_leaves_the_interrupted_delete_unrecovered() {
     let dir = data_directory_with_an_interrupted_interference_delete();
-    let path = gt_store::Store::open_in(dir.path()).interference_path();
+    let path = gt_store::Store::open_in(dir.path()).archive_path::<JamStore>();
     let mut harness = app_asking_about_the_archives_under(dir.path(), None);
 
     harness.key_press(egui::Key::Escape);
@@ -5923,7 +5926,7 @@ fn escape_leaves_the_archive_the_other_instance_holds_alone() {
 #[test]
 fn an_interrupted_delete_nobody_was_asked_about_is_declined() {
     let dir = data_directory_with_an_interrupted_interference_delete();
-    let path = gt_store::Store::open_in(dir.path()).interference_path();
+    let path = gt_store::Store::open_in(dir.path()).archive_path::<JamStore>();
     let mut harness = app_asking_about(InspectedArchives::of_findings_under(
         dir.path().to_owned(),
         Vec::new(),
@@ -5982,7 +5985,7 @@ fn an_archive_left_unrecovered_says_why_on_the_controls_that_need_it() {
 #[test]
 fn a_window_closed_while_an_interrupted_delete_is_asked_about_opens_nothing() {
     let dir = data_directory_with_an_interrupted_interference_delete();
-    let path = gt_store::Store::open_in(dir.path()).interference_path();
+    let path = gt_store::Store::open_in(dir.path()).archive_path::<JamStore>();
     let mut harness = app_asking_about_the_archives_under(dir.path(), None);
     harness.get_by_label_contains("Recover the aircraft interference archive?");
     assert!(
@@ -6027,7 +6030,9 @@ fn the_environment_controls_are_grayed_while_the_archives_open() {
     // A day to delete, or the control stays grayed for having nothing to act on.
     let day = chrono::NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
     environment_storage::archive_one_day(
-        &store.open_interference().expect("open the archive"),
+        &store
+            .open_or_create_archive::<JamStore>()
+            .expect("open the archive"),
         EnvironmentArchive::AircraftInterference.day_insert_registration(day),
         |archive| archive.insert_day(day, "host", chrono::Utc::now(), &[]),
     );
@@ -6059,7 +6064,9 @@ fn the_environment_controls_are_grayed_in_a_read_only_session() {
     // on, whatever the session may write.
     let day = chrono::NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
     environment_storage::archive_one_day(
-        &store.open_interference().expect("open the archive"),
+        &store
+            .open_or_create_archive::<JamStore>()
+            .expect("open the archive"),
         EnvironmentArchive::AircraftInterference.day_insert_registration(day),
         |archive| archive.insert_day(day, "host", chrono::Utc::now(), &[]),
     );
@@ -6162,7 +6169,9 @@ fn the_environment_auto_prune_runs_when_the_archives_land() {
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path());
     let old = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap_or_default();
-    let archive = store.open_interference().expect("the interference archive");
+    let archive = store
+        .open_or_create_archive::<JamStore>()
+        .expect("the interference archive");
     environment_storage::archive_one_day(
         &archive,
         EnvironmentArchive::AircraftInterference.day_insert_registration(old),
@@ -6693,7 +6702,7 @@ fn install_interference_archive(
 ) -> (tempfile::TempDir, gt_store::InterferenceArchive) {
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path())
-        .open_interference()
+        .open_or_create_archive::<JamStore>()
         .expect("archive");
     for day in days {
         environment_storage::archive_one_day(
@@ -8421,7 +8430,7 @@ fn snapshot_app_plot_context_line_spans_the_archived_days() {
     // and the days either side of the recording carry the margins.
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path())
-        .open_geomagnetic_indices()
+        .open_or_create_archive::<SolarStore>()
         .expect("archive");
     let recorded = base_time().date_naive();
     for offset in [-1_i64, 0, 2, 3, 4] {
@@ -8476,7 +8485,7 @@ fn a_storm_day_archived_after_the_load_warns_on_the_map() {
 
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path())
-        .open_geomagnetic_indices()
+        .open_or_create_archive::<SolarStore>()
         .expect("archive");
     archive_kp_day(&store, base_time().date_naive());
     let ctx = harness.ctx.clone();
@@ -8571,7 +8580,7 @@ fn a_tec_window_archived_after_the_load_warns_on_the_map() {
 
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path())
-        .open_tec_maps()
+        .open_or_create_archive::<IonexStore>()
         .expect("archive");
     let recorded = base_time().date_naive();
     archive_tec_day(&store, recorded, 35.0);
@@ -8675,7 +8684,7 @@ fn harness_with_archived_flares<'a>(
 
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path())
-        .open_solar_flares()
+        .open_or_create_archive::<FlareStore>()
         .expect("archive");
     let recorded = base_time().date_naive();
     for &(offset, peaks) in archived {

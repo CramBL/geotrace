@@ -832,7 +832,9 @@ mod tests {
 
     fn archive() -> (TempDir, TecMapArchive) {
         let dir = tempfile::tempdir().expect("temp dir");
-        let store = Store::open_in(dir.path()).open_tec_maps().expect("archive");
+        let store = Store::open_in(dir.path())
+            .open_or_create_archive::<IonexStore>()
+            .expect("archive");
         (dir, store)
     }
 
