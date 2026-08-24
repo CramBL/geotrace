@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use egui::{Grid, Label, RichText, ScrollArea, Window};
+use egui::{Button, Grid, Label, RichText, ScrollArea, Window};
 use gt_pending_writes::{PendingWriteGuard, WriteKind};
 use gt_store::DbError;
 
@@ -11,6 +11,8 @@ const OPENING_THE_DATABASE: &str = "Opening the recording history database";
 const CLEARING_THE_WRITE_LOCK: &str = "Clearing the recording history database's write lock";
 
 const RECREATING_THE_DATABASE: &str = "Recreating the recording history database";
+
+pub(in crate::app) const CLEAR_LOCK_BUTTON_LABEL: &str = "Clear lock and open";
 
 impl App {
     pub(super) fn sync_db_path(&mut self) {
@@ -58,8 +60,8 @@ impl App {
         self.toasts.info(toast);
     }
 
-    /// Register a write to the recordings database, logging the registry's
-    /// refusal where it turns the write away.
+    /// Registers a write to the recordings database, logging a refusal at
+    /// debug level.
     fn try_begin_recording_history_write(&self, label: &'static str) -> Option<PendingWriteGuard> {
         match self
             .pending_writes
@@ -370,6 +372,7 @@ impl App {
         // a destructive lock clear, or a recreate.
         if let Some(failure) = self.history_failure.clone() {
             let path = failure.path().to_owned();
+            let taken_over = self.instance_taken_over_from;
             let mut resolve = None;
             let dismissed = ui
                 .ctx()
@@ -381,12 +384,25 @@ impl App {
                         .resizable(false)
                         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                         .show(ui.ctx(), |ui| {
-                            ui.label(
-                                "Another process has the recording history database open, most likely a second GeoTrace instance.",
-                            );
-                            ui.label(
-                                "Close it and try again. Recordings still load in the meantime, they are just not stored.",
-                            );
+                            match taken_over {
+                                Some(instance) => {
+                                    ui.label(format!(
+                                        "{} still has the recording history database open.",
+                                        instance.sentence_subject()
+                                    ));
+                                    ui.label(
+                                        "Recordings load here, but are not stored until it exits.",
+                                    );
+                                }
+                                None => {
+                                    ui.label(
+                                        "Another process has the recording history database open, most likely a second GeoTrace instance.",
+                                    );
+                                    ui.label(
+                                        "Close it and try again. Recordings still load in the meantime, they are just not stored.",
+                                    );
+                                }
+                            }
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
                                 if ui.button("Try again").clicked() {
@@ -420,15 +436,20 @@ impl App {
                             );
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
-                                if ui
-                                    .button(
-                                        RichText::new("Clear lock and open").color(
-                                            gt_ui_theme::warning_amber(ui.visuals().dark_mode),
-                                        ),
-                                    )
-                                    .clicked()
-                                {
+                                let clear = ui.add_enabled(
+                                    taken_over.is_none(),
+                                    Button::new(RichText::new(CLEAR_LOCK_BUTTON_LABEL).color(
+                                        gt_ui_theme::warning_amber(ui.visuals().dark_mode),
+                                    )),
+                                );
+                                if clear.clicked() {
                                     resolve = Some(true);
+                                }
+                                if let Some(instance) = taken_over {
+                                    clear.on_disabled_hover_text(format!(
+                                        "{} still has the recording history database open: clearing the write lock while it writes can corrupt the database.",
+                                        instance.sentence_subject()
+                                    ));
                                 }
                                 if ui.button("Cancel").clicked() {
                                     resolve = Some(false);

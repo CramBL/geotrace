@@ -140,6 +140,26 @@ pub(in crate::app) struct BackgroundMarkRetry {
     attempts: u32,
 }
 
+/// The instance the user took write access from, as its status file named it
+/// at that moment. It may still have the recordings database and the archives
+/// open for the rest of this run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::app) struct TakenOverInstance {
+    /// [`None`] where the status file could not be read.
+    pub(in crate::app) process_id: Option<u32>,
+}
+
+impl TakenOverInstance {
+    /// Names the instance as the subject of a sentence, e.g.
+    /// `"Another GeoTrace (process 4210)"`.
+    pub(in crate::app) fn sentence_subject(self) -> String {
+        match self.process_id {
+            Some(process_id) => format!("Another GeoTrace (process {process_id})"),
+            None => "The other GeoTrace".to_owned(),
+        }
+    }
+}
+
 impl DataDirectoryWait {
     pub(in crate::app) fn new(instance_lock: &SharedDataDirectoryLock) -> Self {
         Self {
@@ -461,7 +481,7 @@ impl App {
                      the data directory"
                 );
                 let queued_loads = mem::take(queued_loads);
-                self.open_the_databases_without_the_mark(ui.ctx(), queued_loads);
+                self.open_the_databases_without_the_mark(ui.ctx(), None, queued_loads);
             }
             DataDirectoryRetry::StillWaiting => match wait.ui(ui) {
                 WaitAnswer::KeepWaiting => {
@@ -473,8 +493,15 @@ impl App {
                         "The user took write access: reading the archives for an interrupted \
                          delete while another instance still holds the data directory"
                     );
+                    let taken_over = TakenOverInstance {
+                        process_id: wait.owner_process_id(),
+                    };
                     let queued_loads = mem::take(queued_loads);
-                    self.open_the_databases_without_the_mark(ui.ctx(), queued_loads);
+                    self.open_the_databases_without_the_mark(
+                        ui.ctx(),
+                        Some(taken_over),
+                        queued_loads,
+                    );
                 }
                 WaitAnswer::StartReadOnly => {
                     let owner_process_id = wait.owner_process_id();
@@ -489,11 +516,16 @@ impl App {
     /// still hold the data directory: the archives are read for a delete that
     /// instance left part-way through, which is the user's to answer, and the
     /// mark is retried in the background until this instance holds it.
+    ///
+    /// `taken_over` is [`None`] where the wait ended because the lock file
+    /// stopped opening, which leaves the holder of the directory unknown.
     fn open_the_databases_without_the_mark(
         &mut self,
         ctx: &egui::Context,
+        taken_over: Option<TakenOverInstance>,
         queued_loads: Vec<QueuedLoad>,
     ) {
+        self.instance_taken_over_from = taken_over;
         self.background_mark_retry = Some(BackgroundMarkRetry::new());
         self.storage_open = self
             .storage

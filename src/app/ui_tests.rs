@@ -55,10 +55,11 @@ use super::environment_storage_ui::{
     AUTO_PRUNE_LABEL as ENVIRONMENT_AUTO_PRUNE_LABEL, DELETE_ALL_LABEL, DeleteBlocker,
     PRUNE_BUTTON_LABEL,
 };
+use super::history_open::CLEAR_LOCK_BUTTON_LABEL;
 use super::instance_wait::{
     DATA_DIRECTORY_HELD_TITLE, DATA_DIRECTORY_RETRY_INTERVAL, LOCK_FILE_UNUSABLE_TITLE,
     START_READ_ONLY_BUTTON_LABEL, TAKE_OVER_BUTTON_LABEL, TAKE_OVER_CONFIRMATION_TITLE,
-    TAKE_OVER_WARNING,
+    TAKE_OVER_WARNING, TakenOverInstance,
 };
 use super::log_viewer;
 use super::query;
@@ -4992,6 +4993,13 @@ fn taking_over_opens_the_databases_and_runs_the_loads_that_waited() {
         "the take-over took the lock instead of proceeding without it"
     );
     assert_eq!(
+        harness.state().instance_taken_over_from,
+        Some(TakenOverInstance {
+            process_id: Some(process::id())
+        }),
+        "the take-over left no record of the instance it took write access from"
+    );
+    assert_eq!(
         harness.state().environment_deletes_blocked_by(),
         None,
         "the delete controls stayed grayed with the reason the wait gave"
@@ -5776,9 +5784,9 @@ fn a_failed_retry_restores_the_prompt() {
     assert!(harness.state().history.path().is_none());
 }
 
-/// All three recovery paths write to the recordings database, so a shutdown
-/// that has begun refuses them. `recreate_history_database` renames the file
-/// before it reopens it, and a quit in between leaves no database.
+/// A shutdown that has begun refuses all three recovery paths: each writes to
+/// the recordings database. `recreate_history_database` renames the file before
+/// it reopens it, and a quit in between leaves no database.
 #[rstest::rstest]
 #[case::reopen(|app: &mut App, path: &Path, ctx: &egui::Context| {
     app.reopen_history_database(path, ctx);
@@ -5827,6 +5835,64 @@ fn a_history_database_recovery_is_refused_once_shutdown_has_begun(
         files_in_the_data_directory(),
         before,
         "the refused recovery renamed, removed or created a file"
+    );
+}
+
+/// An app that took write access from another instance, with `failure` set as
+/// the recordings database's open would have set it.
+fn app_after_a_take_over_with<'a>(
+    failure: crate::app::storage::HistoryFailure,
+) -> Harness<'a, App> {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    harness.state_mut().instance_taken_over_from = Some(TakenOverInstance {
+        process_id: Some(4210),
+    });
+    harness.state_mut().history_failure = Some(failure);
+    harness.run_steps(2);
+    harness
+}
+
+/// The busy prompt names the GeoTrace the user took write access from: they
+/// chose to keep it running.
+#[test]
+fn the_busy_prompt_after_a_take_over_names_the_instance_that_still_has_the_database() {
+    let harness = app_after_a_take_over_with(crate::app::storage::HistoryFailure::Busy(
+        PathBuf::from("recordings.h5"),
+    ));
+
+    harness.get_by_label_contains(
+        "Another GeoTrace (process 4210) still has the recording history database open",
+    );
+    harness.get_by_label_contains("not stored until it exits");
+    assert!(
+        harness
+            .query_by_label_contains("Close it and try again")
+            .is_none(),
+        "the prompt asks for the GeoTrace the user chose to keep running to be closed"
+    );
+    harness.get_by_label("Try again");
+}
+
+/// The lock clear is grayed after a take-over: clearing it while the other
+/// GeoTrace writes can corrupt the database.
+#[test]
+fn the_locked_prompt_after_a_take_over_grays_the_lock_clear() {
+    let mut harness = app_after_a_take_over_with(crate::app::storage::HistoryFailure::Locked(
+        PathBuf::from("recordings.h5"),
+    ));
+
+    let clear = harness.get_by_label_contains(CLEAR_LOCK_BUTTON_LABEL);
+    assert!(
+        clear.accesskit_node().is_disabled(),
+        "the clear is live while another GeoTrace has the database open"
+    );
+    let center = clear.rect().center();
+    harness.hover_at_and_settle(center, 5);
+    harness.get_by_label_contains(
+        "Another GeoTrace (process 4210) still has the recording history database open",
     );
 }
 

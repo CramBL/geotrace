@@ -353,6 +353,10 @@ pub struct App {
     /// Set once the databases were opened without the mark: the mark is
     /// retried behind the window until this instance holds it too.
     background_mark_retry: Option<instance_wait::BackgroundMarkRetry>,
+    /// Set only where the user took write access from the instance holding
+    /// the data directory. A wait that ended because the lock file stopped
+    /// opening leaves this [`None`], having found no other instance.
+    instance_taken_over_from: Option<instance_wait::TakenOverInstance>,
     /// The instance that owns the data directory, as its status file named it
     /// when the user started this session read-only beside it. The read-only
     /// marker names it.
@@ -628,6 +632,7 @@ impl App {
             storage_open,
             unavailable_archives: archive_recovery::UnavailableArchives::default(),
             background_mark_retry: None,
+            instance_taken_over_from: None,
             data_directory_owner_process_id: None,
             keep_db_backup: true,
             pending_resegment: None,
