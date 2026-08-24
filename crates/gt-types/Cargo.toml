@@ -15,6 +15,7 @@ chrono.workspace = true
 geo-types.workspace = true
 geotrace-sdk-units = { path = "../../sdk/rust/geotrace-sdk-units" }
 rstar.workspace = true
+rustc-hash.workspace = true
 serde.workspace = true
 strum.workspace = true
 uom.workspace = true

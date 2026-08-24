@@ -51,8 +51,9 @@ use gt_ui_types::{
     TrackDataVisibility,
 };
 use rayon::prelude::*;
+use rustc_hash::FxHashMap;
 use std::cell::Cell;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 
 /// Grid base-color intensity, as a multiplier on the theme text color.
 /// egui_plot fixes the grid stroke width at 1.0, so brightness is the only way
@@ -201,7 +202,7 @@ pub struct PlotState {
     applied_map_x_range: Option<(u64, u64)>,
     /// Per-track snap error mipmaps and marker lists, rebuilt only when a
     /// track's series `Arc` changes (see [`sync_snap_error_cache`]).
-    snap_error_cache: HashMap<TrackRef, SnapErrorPlotCache>,
+    snap_error_cache: FxHashMap<TrackRef, SnapErrorPlotCache>,
     /// The context metric lines, rebuilt when the app resolves new samples
     /// for them (see [`ContextPlotCaches::sync`]).
     context_caches: ContextPlotCaches,
@@ -211,7 +212,7 @@ pub struct PlotState {
     /// User-chosen component colors, keyed by channel name: one optional
     /// override per component, `None` = the derived hue. Edited through the
     /// chip's right-click menu; persisted with the plot settings.
-    pub channel_component_colors: HashMap<String, Vec<Option<Color32>>>,
+    pub channel_component_colors: FxHashMap<String, Vec<Option<Color32>>>,
     /// Whether the plot cursor was snapped close to a data point on the most
     /// recently rendered frame.
     ///
@@ -245,10 +246,10 @@ impl Default for PlotState {
             level_cache: Vec::new(),
             last_computed_bounds: None,
             applied_map_x_range: None,
-            snap_error_cache: HashMap::new(),
+            snap_error_cache: FxHashMap::default(),
             context_caches: ContextPlotCaches::default(),
             last_visible_x_range: None,
-            channel_component_colors: HashMap::new(),
+            channel_component_colors: FxHashMap::default(),
             plot_cursor_snapped: false,
         }
     }

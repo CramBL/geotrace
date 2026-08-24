@@ -1,9 +1,12 @@
 //! Query-match data handed from a query run to the map renderer.
 
-use std::collections::HashMap;
 use std::ops::Range;
 
 use gt_types::TrackRef;
+use rustc_hash::FxHashMap;
+
+/// Point-index ranges per track, each track's ranges sorted and disjoint.
+pub type TrackRanges = FxHashMap<TrackRef, Vec<Range<usize>>>;
 
 /// The composed display effect of a query pipeline, as point-index ranges per
 /// track.
@@ -15,7 +18,7 @@ use gt_types::TrackRef;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QueryMatches {
     /// Per track: point ranges removed from the map (sorted, disjoint).
-    pub hidden: HashMap<TrackRef, Vec<Range<usize>>>,
+    pub hidden: TrackRanges,
     /// One layer per `draw` query, in draw order.
     pub draws: Vec<DrawLayer>,
     /// True when the visible data changed after the run - the display grays
@@ -84,7 +87,7 @@ pub struct DrawLayer {
     /// Palette index the renderer maps to a color (see `gt_ui_theme`).
     pub color: usize,
     /// Per track: sorted, disjoint, non-empty point-index ranges.
-    pub ranges: HashMap<TrackRef, Vec<Range<usize>>>,
+    pub ranges: TrackRanges,
 }
 
 impl QueryMatches {
@@ -156,7 +159,7 @@ impl DrawLayer {
 }
 
 /// Look up a track's ranges, asserting the sorted-disjoint invariant in debug.
-fn track_ranges(map: &HashMap<TrackRef, Vec<Range<usize>>>, track: TrackRef) -> &[Range<usize>] {
+fn track_ranges(map: &TrackRanges, track: TrackRef) -> &[Range<usize>] {
     let ranges: &[Range<usize>] = map.get(&track).map_or(&[], Vec::as_slice);
     debug_assert!(
         ranges_are_sorted_disjoint(ranges),
@@ -192,7 +195,7 @@ mod tests {
     fn layer(color: usize, ranges: Vec<Range<usize>>) -> DrawLayer {
         DrawLayer {
             color,
-            ranges: HashMap::from([(track(), ranges)]),
+            ranges: TrackRanges::from_iter([(track(), ranges)]),
         }
     }
 
@@ -218,7 +221,7 @@ mod tests {
     #[test]
     fn hidden_and_header_lookups() {
         let matches = QueryMatches {
-            hidden: HashMap::from([(track(), vec![rng(2, 5), rng(9, 10)])]),
+            hidden: TrackRanges::from_iter([(track(), vec![rng(2, 5), rng(9, 10)])]),
             draws: vec![layer(0, vec![rng(0, 3), rng(14, 20)])],
             ..QueryMatches::default()
         };
@@ -243,7 +246,7 @@ mod tests {
     #[should_panic(expected = "sorted and disjoint")]
     fn unsorted_ranges_fail_loudly_in_debug() {
         let matches = QueryMatches {
-            hidden: HashMap::from([(track(), vec![rng(9, 10), rng(2, 5)])]),
+            hidden: TrackRanges::from_iter([(track(), vec![rng(9, 10), rng(2, 5)])]),
             ..QueryMatches::default()
         };
         let _ = matches.hidden_ranges(track());

@@ -244,8 +244,8 @@ impl Dataset {
     /// A dataset of several files, in load order.
     pub fn of_files(specs: &[FileSpec]) -> Self {
         let mut files = LoadedFiles::new();
-        let mut snap_errors = SnapErrorValues::new();
-        let mut jamming = JammingValues::new();
+        let mut snap_errors = SnapErrorValues::default();
+        let mut jamming = JammingValues::default();
         let mut geomagnetic = GeomagneticSeries::default();
         let mut tec = TecSeries::default();
         for (fi, spec) in specs.iter().enumerate() {

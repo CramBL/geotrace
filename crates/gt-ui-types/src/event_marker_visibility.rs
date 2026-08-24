@@ -1,6 +1,7 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 
 use gt_types::TrackRef;
+use rustc_hash::FxHashMap;
 
 /// Per-track visibility state for event marker variant paths.
 ///
@@ -9,7 +10,7 @@ use gt_types::TrackRef;
 /// This lets a single toggle on a parent node hide all its descendants.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct EventMarkerVisibility {
-    hidden: HashMap<TrackRef, BTreeSet<String>>,
+    hidden: FxHashMap<TrackRef, BTreeSet<String>>,
 }
 
 impl EventMarkerVisibility {

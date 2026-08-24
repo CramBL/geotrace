@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt;
 use std::ops::Range;
 
@@ -6,10 +5,11 @@ use geotrace_sdk_units::ChannelUnit;
 use gt_fmt::EM_DASH;
 use gt_query::{ChannelTimeline, PipelineOutput, QueryMetric, RunSummary, TrackMatches};
 use gt_types::{DisplayMode, NavPoint, TrackRef};
-use gt_ui_types::{DrawLayer, DrawLayerMask, QueryMatches};
+use gt_ui_types::{DrawLayer, DrawLayerMask, QueryMatches, TrackRanges};
+use rustc_hash::FxHashMap;
 
 use crate::provider::TrackQueryData;
-use crate::run::ChannelRun;
+use crate::run::{ChannelRun, RunTrackData};
 
 /// What one run produced, dispatched on the source of its queries: either a
 /// points pipeline (map halos plus point match tables) or a channel-source run
@@ -59,18 +59,15 @@ pub struct PointsResults {
     pub queries: Vec<PanelQuery>,
     /// Per-track derived series (only for metrics some query referenced),
     /// kept so match tables show the exact values the run used.
-    track_data: HashMap<TrackRef, TrackQueryData>,
+    track_data: RunTrackData,
 }
 
 impl PointsResults {
     /// Project a points [`PipelineOutput`] into the panel/map result. Evaluation
     /// ran on each track's time-filtered slice, so point indices shift back to
     /// absolute positions here.
-    pub(crate) fn project(
-        output: &PipelineOutput,
-        track_data: HashMap<TrackRef, TrackQueryData>,
-    ) -> Self {
-        let absolute = |tms: &[TrackMatches]| -> HashMap<TrackRef, Vec<Range<usize>>> {
+    pub(crate) fn project(output: &PipelineOutput, track_data: RunTrackData) -> Self {
+        let absolute = |tms: &[TrackMatches]| -> TrackRanges {
             tms.iter()
                 .filter(|tm| !tm.ranges.is_empty())
                 .map(|tm| {
@@ -99,7 +96,7 @@ impl PointsResults {
 
         // The i-th draw query gets palette color i. The map keys its halo layer
         // to the same order.
-        let draw_color: HashMap<usize, usize> = output
+        let draw_color: FxHashMap<usize, usize> = output
             .draws
             .iter()
             .take(DrawLayerMask::MAX_LAYERS)
@@ -283,9 +280,9 @@ pub(crate) fn complement_ranges(ranges: &[Range<usize>], len: usize) -> Vec<Rang
 /// `keep` breaks it everywhere else.
 pub(crate) fn channel_query_matches(
     mode: DisplayMode,
-    per_track: &HashMap<TrackRef, (Vec<Range<usize>>, usize)>,
+    per_track: &FxHashMap<TrackRef, (Vec<Range<usize>>, usize)>,
 ) -> QueryMatches {
-    let matched: HashMap<TrackRef, Vec<Range<usize>>> = per_track
+    let matched: TrackRanges = per_track
         .iter()
         .map(|(track, (ranges, _))| (*track, ranges.clone()))
         .collect();
@@ -582,7 +579,7 @@ mod tests {
     #[case(DisplayMode::Keep)]
     fn channel_query_matches_honors_the_mode(#[case] mode: DisplayMode) {
         let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
-        let per_track = HashMap::from([(track, (vec![rng(1, 3)], 5usize))]);
+        let per_track = FxHashMap::from_iter([(track, (vec![rng(1, 3)], 5usize))]);
         let matches = channel_query_matches(mode, &per_track);
         match mode {
             // Draw halos the matched segments.

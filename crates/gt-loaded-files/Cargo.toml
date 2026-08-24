@@ -19,6 +19,7 @@ gt-types = { path = "../gt-types" }
 chrono.workspace = true
 gt-test-utils = { path = "../gt-test-utils" }
 rstest.workspace = true
+rustc-hash.workspace = true
 
 [lints]
 workspace = true

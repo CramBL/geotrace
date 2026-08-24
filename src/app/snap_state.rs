@@ -1,10 +1,10 @@
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use gt_query_run::SnapErrorValues;
 use gt_side_panel::{SnapCostingTarget, SnapRowView};
 use gt_snap::wire::Costing;
 use gt_types::{FileIdx, LoadedTrack, TrackIdx, TrackRef};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::modals::{SnapScope, SnapScopeCount, SnapScopeCounts};
 use super::{App, snap, snap_persist};
@@ -227,9 +227,9 @@ impl App {
     /// The side panel's per-track snap view: scheduler activity and cached
     /// runs resolved against each file's declared travel mode and the
     /// configured costing. Tracks in the default idle state get no entry.
-    pub(super) fn snap_row_views(&self) -> HashMap<TrackRef, SnapRowView> {
+    pub(super) fn snap_row_views(&self) -> FxHashMap<TrackRef, SnapRowView> {
         let shared = self.shared.borrow();
-        let mut rows = HashMap::new();
+        let mut rows = FxHashMap::default();
         for (fi, file) in shared.loaded_files.files().iter().enumerate() {
             let declared = file.metadata.travel_mode.as_ref();
             for (ti, track) in file.tracks.iter().enumerate() {
@@ -328,7 +328,7 @@ impl App {
     /// Per-track dense snap error values for the query providers, one entry
     /// per track with a completed run.
     pub(super) fn snap_error_values(&mut self) -> SnapErrorValues {
-        let mut values = SnapErrorValues::new();
+        let mut values = SnapErrorValues::default();
         self.with_snap_error_derived(&mut values, |track_ref, derived, values| {
             values.insert(track_ref, Arc::clone(&derived.values));
         });
@@ -347,7 +347,7 @@ impl App {
         mut f: impl FnMut(TrackRef, &SnapErrorDerived, &mut T),
     ) {
         let shared = self.shared.borrow();
-        let mut seen: HashSet<snap::TrackContentKey> = HashSet::new();
+        let mut seen: FxHashSet<snap::TrackContentKey> = FxHashSet::default();
         for (fi, file) in shared.loaded_files.files().iter().enumerate() {
             for (ti, track) in file.tracks.iter().enumerate() {
                 let track_ref = TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti));

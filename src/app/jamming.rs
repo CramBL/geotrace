@@ -8,7 +8,7 @@
 //! archive is never requested, so the queue shrinks to nothing as the
 //! archive fills. One request is in flight at a time.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
@@ -31,6 +31,7 @@ use gt_store::{ArchiveUsage, JamStore, JamStoreError};
 use gt_types::TimeRange;
 use gt_types::{LoadedFile, TrackRef};
 use gt_ui_types::{ArcIdentity, JammingContextSample, JammingPoint, JammingSeries};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::background_thread;
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
@@ -94,7 +95,7 @@ impl ResolvedTrackInterference {
     /// One point per fix, valued from the dataset of the fix's own day.
     fn resolve(
         store: Option<&JamStore>,
-        datasets: &mut HashMap<NaiveDate, Option<JamDataset>>,
+        datasets: &mut FxHashMap<NaiveDate, Option<JamDataset>>,
         track: &gt_types::LoadedTrack,
     ) -> Self {
         let plot_points: Vec<JammingPoint> = track
@@ -174,7 +175,7 @@ pub struct JammingScheduler {
     selection: DaySelection,
     /// Days the host has no dataset for, which the legend distinguishes from
     /// a day nothing was downloaded for.
-    refused: HashSet<NaiveDate>,
+    refused: FxHashSet<NaiveDate>,
     interference_by_track: TrackValuesByArchivedDays<ResolvedTrackInterference>,
     /// The line drawn across the plot's whole span, one sample per archived
     /// day.
@@ -203,7 +204,7 @@ impl JammingScheduler {
             ),
             shown: None,
             selection: DaySelection::new(None, calendar::today_utc()),
-            refused: HashSet::new(),
+            refused: FxHashSet::default(),
             interference_by_track: TrackValuesByArchivedDays::default(),
             context: ContextSampleCache::default(),
             ctx,
@@ -411,10 +412,10 @@ impl JammingScheduler {
     /// days it spans, so the `Arc` the plot caches on stays stable.
     pub fn plot_series(&mut self, files: &[LoadedFile]) -> JammingSeries {
         let mut series = JammingSeries::default();
-        let mut live: HashSet<TrackRef> = HashSet::new();
+        let mut live: FxHashSet<TrackRef> = FxHashSet::default();
         // Shared across tracks: a batch of recordings from one trip all read
         // the same day.
-        let mut datasets: HashMap<NaiveDate, Option<JamDataset>> = HashMap::new();
+        let mut datasets: FxHashMap<NaiveDate, Option<JamDataset>> = FxHashMap::default();
 
         for (fi, file) in files.iter().enumerate() {
             for (ti, track) in file.tracks.iter().enumerate() {
@@ -1379,7 +1380,7 @@ mod tests {
         vec![gt_types::LoadedFile {
             metadata: gt_test_utils::empty_file_metadata(),
             tracks: vec![track],
-            event_marker_styles: std::collections::HashMap::new(),
+            event_marker_styles: FxHashMap::default(),
             orphaned_event_markers: vec![],
             load_warnings: vec![],
             source: gt_types::FileSource::GtdBytes(std::sync::Arc::from(Vec::<u8>::new())),

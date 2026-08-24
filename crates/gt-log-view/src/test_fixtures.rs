@@ -1,12 +1,11 @@
 //! Logs and recordings the crate's tests associate against each other.
 
-use std::collections::HashMap;
-
 use chrono::{DateTime, Duration, TimeZone as _, Utc};
 use gt_loaded_files::{FileHistory, LoadedFileId, LoadedFiles};
 use gt_logfile::ParsedLog;
 use gt_test_utils::{empty_file_metadata, loaded_track_with_points, nav_points_walking_from};
 use gt_types::{FileMetadata, FileSource, Latitude, LoadedFile, Longitude, NavPoint, TimeRange};
+use rustc_hash::FxHashMap;
 
 use crate::LoadedLog;
 
@@ -86,7 +85,7 @@ fn recording_of(points: Vec<NavPoint>) -> LoadedFile {
             ..empty_file_metadata()
         },
         tracks: vec![loaded_track_with_points(points)],
-        event_marker_styles: HashMap::new(),
+        event_marker_styles: FxHashMap::default(),
         orphaned_event_markers: Vec::new(),
         source: FileSource::GtdPath(std::path::PathBuf::new()),
         load_warnings: Vec::new(),

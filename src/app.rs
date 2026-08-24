@@ -48,7 +48,6 @@ pub use storage::Storage;
 #[cfg(feature = "self-update")]
 pub mod update;
 
-use std::collections::HashMap;
 use std::{cell::RefCell, env, path::PathBuf, rc::Rc};
 
 use egui_tiles::{Container, Linear, LinearDir, Tile, TileId, Tiles, Tree};
@@ -70,6 +69,7 @@ use log_viewer::LogViewerRequests;
 use log_viewer::association_dialog::LogAssociationDialog;
 use panes::MainPane;
 use recording_name_template::TemplatePreviewRecording;
+use rustc_hash::{FxHashMap, FxHashSet};
 use settings_autosave::{AppSnapshot, SettingsAutosaver};
 use settings_ui::SettingsPage;
 use settings_ui::search::SettingsSearch;
@@ -254,13 +254,13 @@ pub struct App {
     /// invalidated by the run's `Arc` identity. Downstream caches (the
     /// plot's mipmaps, the query fingerprint) key off the `Arc`s, so they
     /// must stay stable across frames and change exactly when the run does.
-    snap_error_cache: HashMap<snap::TrackContentKey, SnapErrorDerived>,
+    snap_error_cache: FxHashMap<snap::TrackContentKey, SnapErrorDerived>,
     /// Session-only per-track costing overrides ("Snap again as…"). The
     /// override beats the declared travel mode and the configured default.
     /// Content-keyed so it survives index shifts like the run stores. Not
     /// persisted: after a restart the stored run goes stale against the
     /// resolved default again.
-    snap_costing_overrides: HashMap<snap::TrackContentKey, Costing>,
+    snap_costing_overrides: FxHashMap<snap::TrackContentKey, Costing>,
     /// The snap trigger that raised the consent dialog. Run when the
     /// dialog is accepted, dropped when it is declined.
     pending_snap: PendingSnapRequest,
@@ -271,7 +271,7 @@ pub struct App {
     /// Tracks whose completed snapped track is toggled off the map. Session
     /// state, like the snap cache. Cleared with the other per-track snap
     /// state when indices shift.
-    hidden_snapped: std::collections::HashSet<TrackRef>,
+    hidden_snapped: FxHashSet<TrackRef>,
 
     /// Tiles tree for the central area - map (top) and plot (bottom).
     tiles_tree: Tree<MainPane>,
@@ -609,12 +609,12 @@ impl App {
             snap_settings: crate::settings::SnapSettings::default(),
             snap_consent_prompt: false,
             snap_auto_sweep: false,
-            snap_error_cache: HashMap::new(),
-            snap_costing_overrides: HashMap::new(),
+            snap_error_cache: FxHashMap::default(),
+            snap_costing_overrides: FxHashMap::default(),
             pending_snap: PendingSnapRequest::default(),
             snap_replace_prompt: None,
             snap_scope_prompt: None,
-            hidden_snapped: std::collections::HashSet::new(),
+            hidden_snapped: FxHashSet::default(),
             tiles_tree,
             map_tile_id,
             plot_tile_id,

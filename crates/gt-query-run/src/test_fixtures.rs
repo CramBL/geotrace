@@ -1,7 +1,6 @@
 //! Shared fixtures for this crate's tests: two nav points, channels over their
 //! time span, and the loaded files carrying them.
 
-use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,6 +13,7 @@ use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::GpsTime;
 use gt_types::tpv::TimePositionVelocity;
 use gt_types::{Channel, FileSource, LoadedFile, LoadedTrack, NavPoint, TrackLod};
+use rustc_hash::FxHashMap;
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Velocity};
 use uom::si::velocity::kilometer_per_hour;
@@ -118,7 +118,7 @@ pub(crate) fn file_with_channels(channels: Vec<Channel>) -> LoadedFile {
             event_markers: vec![],
             channels,
         }],
-        event_marker_styles: HashMap::new(),
+        event_marker_styles: FxHashMap::default(),
         orphaned_event_markers: vec![],
         source: FileSource::GtdBytes(Arc::from(Vec::<u8>::new())),
         load_warnings: vec![],

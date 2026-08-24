@@ -29,6 +29,7 @@ criterion.workspace = true
 gt-test-utils = { path = "../gt-test-utils" }
 proptest.workspace = true
 rstest.workspace = true
+rustc-hash.workspace = true
 
 [[bench]]
 name = "filter_log"

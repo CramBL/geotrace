@@ -1,8 +1,6 @@
 //! The metric and channel line pass: one line per enabled metric and
 //! channel component, plus the anomaly markers and the custom hover labels.
 
-use std::collections::HashMap;
-
 use chrono::DateTime;
 use egui::{Color32, Tooltip};
 use egui_plot::{Line, LineStyle, MarkerShape, PlotPoint, PlotPoints, Points};
@@ -10,6 +8,7 @@ use gt_analysis::satellite_utilization::UtilAnomaly;
 use gt_types::MetricKind;
 use gt_types::satellites::ConstellationSet;
 use gt_ui_types::HighlightScope;
+use rustc_hash::FxHashMap;
 use strum::IntoEnumIterator;
 
 use super::chips::{
@@ -97,7 +96,7 @@ pub(super) fn add_series_lines<'a>(
     cache: &TrackLevelCache,
     metric_vis: &MetricVisibility,
     channel_vis: &ChannelVisibility,
-    component_colors: &HashMap<String, Vec<Option<Color32>>>,
+    component_colors: &FxHashMap<String, Vec<Option<Color32>>>,
     present: ConstellationSet,
     channels: &[LoadedChannel],
     hovered_chip: Option<&HoveredChip>,

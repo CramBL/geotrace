@@ -426,6 +426,7 @@ fn track_label(files: &[LoadedFile], track_ref: TrackRef) -> String {
 mod tests {
     use gt_types::{FileIdx, TrackIdx};
     use rstest::rstest;
+    use rustc_hash::FxHashMap;
 
     use super::*;
 
@@ -663,7 +664,7 @@ mod tests {
                     ..gt_test_utils::empty_file_metadata()
                 },
                 tracks: Vec::new(),
-                event_marker_styles: std::collections::HashMap::new(),
+                event_marker_styles: FxHashMap::default(),
                 orphaned_event_markers: Vec::new(),
                 source: gt_types::FileSource::GtdBytes(std::sync::Arc::from(Vec::<u8>::new())),
                 load_warnings: Vec::new(),

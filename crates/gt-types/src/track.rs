@@ -8,7 +8,7 @@ use crate::satellites::Satellites;
 use crate::time_types::GpsTime;
 use chrono::{DateTime, Days, Duration, NaiveDate, Utc};
 use geo_types::Rect;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use uom::si::f64::Length;
@@ -521,7 +521,7 @@ pub struct LoadedFile {
     pub metadata: FileMetadata,
     pub tracks: Vec<LoadedTrack>,
     /// Icon/color overrides keyed by variant path. File-level (shared across tracks).
-    pub event_marker_styles: HashMap<String, EventMarkerStyle>,
+    pub event_marker_styles: FxHashMap<String, EventMarkerStyle>,
     /// Event markers whose timestamp did not fall within any track's time window.
     pub orphaned_event_markers: Vec<EventMarker>,
     /// Where this file was loaded from. Used to re-process when settings change.

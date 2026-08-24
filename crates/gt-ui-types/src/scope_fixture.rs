@@ -4,7 +4,6 @@
 //! hand-writes a [`LoadedFile`] and a field added to a loaded recording never
 //! reaches here.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use chrono::{DateTime, TimeDelta, Utc};
@@ -16,7 +15,7 @@ use gt_types::{
 
 use crate::display_mask::DisplayMask;
 use crate::highlight::DataPointRef;
-use crate::query_matches::QueryMatches;
+use crate::query_matches::{QueryMatches, TrackRanges};
 use crate::visibility::{MapScope, TrackDataVisibility};
 
 /// Points in the one fixture track.
@@ -98,7 +97,7 @@ impl ScopeFixture {
     pub fn hide_point(&mut self, index: usize) {
         let hidden: Vec<_> = std::iter::once(index..index + 1).collect();
         self.query_matches = Some(QueryMatches {
-            hidden: HashMap::from([(track0(), hidden)]),
+            hidden: TrackRanges::from_iter([(track0(), hidden)]),
             ..QueryMatches::default()
         });
     }

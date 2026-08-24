@@ -21,6 +21,7 @@ gt-query = { path = "../gt-query" }
 gt-types = { path = "../gt-types" }
 gt-ui-types = { path = "../gt-ui-types" }
 log.workspace = true
+rustc-hash.workspace = true
 uom.workspace = true
 
 [dev-dependencies]

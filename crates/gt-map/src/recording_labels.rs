@@ -36,6 +36,7 @@ impl<'a> RecordingLabels<'a> {
 mod tests {
     use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
     use gt_types::{FileIdx, FileMetadata, FileSource, LoadedFile};
+    use rustc_hash::FxHashMap;
 
     use super::RecordingLabels;
 
@@ -47,7 +48,7 @@ mod tests {
                 ..gt_test_utils::empty_file_metadata()
             },
             tracks: Vec::new(),
-            event_marker_styles: std::collections::HashMap::new(),
+            event_marker_styles: FxHashMap::default(),
             orphaned_event_markers: Vec::new(),
             source: FileSource::GtdPath(std::path::PathBuf::new()),
             load_warnings: Vec::new(),

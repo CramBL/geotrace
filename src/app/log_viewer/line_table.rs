@@ -1,7 +1,6 @@
 //! The virtualized line table: the entries of a log its filters leave visible,
 //! in file order, with a divider row opening each boot session.
 
-use std::collections::HashMap;
 use std::ops::Range;
 
 use chrono::Duration;
@@ -12,6 +11,7 @@ use gt_logfile::{BootSession, LogEntry, ParsedLog, TimestampKind};
 use gt_types::{Latitude, Longitude, mercator};
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::{HoveredLogGlyph, LoadedLogId, LogMatchHover};
+use rustc_hash::FxHashMap;
 
 use super::{AssociationWindowUnit, LogViewerWindow, TIMESTAMP_FORMAT};
 
@@ -220,7 +220,7 @@ impl LogViewerWindow {
         let parsed = log.parsed();
         let filters = log.filters();
         let rows = LineTableRows::of(parsed, filters.visible_entries());
-        let anomaly_steps: HashMap<usize, Duration> = parsed
+        let anomaly_steps: FxHashMap<usize, Duration> = parsed
             .order_anomalies()
             .iter()
             .map(|anomaly| {

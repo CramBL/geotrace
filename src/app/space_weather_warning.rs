@@ -5,7 +5,6 @@
 //! days were downloaded is assessed again as each day is stored, and a
 //! recording no archived day overlaps warns about nothing.
 
-use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock};
 
 use chrono::{DateTime, NaiveDate, Utc};
@@ -19,6 +18,7 @@ use gt_ui_types::{
     ArcIdentity, GeomagneticPoint, GeomagneticSeries, JammingPoint, JammingSeries, TecPoint,
     TecSeries, WarningLevelExplanation,
 };
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Shown as a toast the first time a loaded recording is found to overlap an
 /// archived value that can disturb reception.
@@ -404,7 +404,7 @@ impl<'a> RecordingSeries<'a> {
         jamming: &'a JammingSeries,
         geomagnetic: &'a GeomagneticSeries,
         tec: &'a TecSeries,
-        tec_deviations: &HashMap<TrackRef, QuietTimeDeviation>,
+        tec_deviations: &FxHashMap<TrackRef, QuietTimeDeviation>,
     ) -> Self {
         Self {
             interference: tracks
@@ -482,10 +482,10 @@ struct AssessedRecording {
 /// already been raised for.
 #[derive(Default)]
 pub struct SpaceWeatherWarning {
-    assessed: HashMap<LoadedFileId, AssessedRecording>,
+    assessed: FxHashMap<LoadedFileId, AssessedRecording>,
     /// Recordings the toast has been shown for, so a day archived later never
     /// repeats it.
-    toasted: HashSet<LoadedFileId>,
+    toasted: FxHashSet<LoadedFileId>,
     lines: Vec<String>,
 }
 
@@ -522,7 +522,7 @@ impl SpaceWeatherWarning {
             changed = true;
         }
 
-        let loaded: HashSet<LoadedFileId> = recordings.iter().map(|r| r.id).collect();
+        let loaded: FxHashSet<LoadedFileId> = recordings.iter().map(|r| r.id).collect();
         let assessed_before = self.assessed.len();
         self.assessed.retain(|id, _| loaded.contains(id));
         self.toasted.retain(|id| loaded.contains(id));
@@ -557,8 +557,6 @@ impl SpaceWeatherWarning {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use gt_flare::SolarFlare;
     use gt_ionex::tec::TotalElectronContent;
     use gt_loaded_files::{FileHistory, LoadedFiles};
@@ -676,7 +674,7 @@ mod tests {
                 LoadedFile {
                     metadata: gt_test_utils::empty_file_metadata(),
                     tracks: Vec::new(),
-                    event_marker_styles: HashMap::new(),
+                    event_marker_styles: FxHashMap::default(),
                     orphaned_event_markers: Vec::new(),
                     load_warnings: Vec::new(),
                     source: FileSource::GtdBytes(Arc::from(Vec::<u8>::new())),

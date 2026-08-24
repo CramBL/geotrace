@@ -9,8 +9,6 @@ mod summary_panel;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
-
 use egui::{Button, ComboBox, DragValue, Label, RichText, Sides, Window};
 use egui_phosphor::regular::EYE as ICON_EYE;
 use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
@@ -22,6 +20,7 @@ use gt_pending_writes::WriteAccess;
 use gt_types::FileIdx;
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::{LoadedLogId, LogMatchHover};
+use rustc_hash::FxHashMap;
 use strum::IntoEnumIterator as _;
 
 use association_window::AssociationWindowUnit;
@@ -465,7 +464,7 @@ impl LogViewerWindow {
 fn recording_names_by_id<'a>(
     recordings: LoadedFilesView<'a>,
     recording_names: &'a RecordingNames,
-) -> HashMap<LoadedFileId, &'a str> {
+) -> FxHashMap<LoadedFileId, &'a str> {
     recordings
         .entries()
         .enumerate()

@@ -28,6 +28,7 @@ gt-types = { path = "../gt-types" }
 gt-ui-theme = { path = "../gt-ui-theme" }
 gt-ui-types = { path = "../gt-ui-types" }
 rayon.workspace = true
+rustc-hash.workspace = true
 strum.workspace = true
 uom.workspace = true
 
