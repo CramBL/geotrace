@@ -1318,6 +1318,56 @@ fn hovering_a_column_header_explains_its_metric() {
     );
 }
 
+/// Every line of the results strip requests the cursor that matches what it
+/// does. egui makes labels selectable by default, which puts a text-editing
+/// I-beam over a line that is neither text entry nor a control.
+#[rstest::rstest]
+// The summary states what the run left out on hover.
+#[case::run_summary(demo_query_run, "2 matches", egui::CursorIcon::Help)]
+// The caption and the stale note explain nothing and do nothing on click.
+#[case::match_caption(demo_query_run, "Match 1 ", egui::CursorIcon::Default)]
+#[case::stale_note(
+    stale_demo_query_run,
+    "Data changed since this run",
+    egui::CursorIcon::Default
+)]
+fn the_results_strip_requests_a_cursor_that_matches_what_each_line_does(
+    #[case] harness_with_run: fn() -> Harness<'static, App>,
+    #[case] label: &str,
+    #[case] expected: egui::CursorIcon,
+) {
+    let mut harness = harness_with_run();
+
+    let line = harness.get_by_label_contains(label).rect().center();
+    harness.hover_at_and_settle(line, 5);
+
+    assert_eq!(
+        harness.output().platform_output.cursor_icon,
+        expected,
+        "hovering {label:?} should request {expected:?}"
+    );
+}
+
+/// The demo recording with a two-match run over it, and a minimum-distance
+/// filter set after that run to leave its results stale.
+fn stale_demo_query_run() -> Harness<'static, App> {
+    let mut harness = demo_query_run();
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .filter
+        .min_distance_km = Some(uom::si::f64::Length::new::<uom::si::length::kilometer>(
+        999.0,
+    ));
+    harness.run_steps(3);
+    harness
+}
+
+fn demo_query_run() -> Harness<'static, App> {
+    demo_app_with_query_run(TWO_MATCH_QUERY)
+}
+
 /// "Copy as TSV" writes the whole run to the clipboard: a header line naming
 /// each column in its unit, then one line per matched point.
 #[test]

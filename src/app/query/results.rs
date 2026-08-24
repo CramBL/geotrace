@@ -659,7 +659,8 @@ impl<'a> ResultsTables<'a> {
         }
         // Truncated to the width that is left, and stated in full on hover: a
         // line that extends would push the window over the map beside it.
-        ui.add(Label::new(line.into_job()).truncate())
+        ui.add(Label::new(line.into_job()).truncate().selectable(false))
+            .on_hover_cursor(CursorIcon::Help)
             .on_hover_text(stated_in_full);
     }
 
@@ -716,16 +717,19 @@ impl<'a> ResultsTables<'a> {
     /// The line naming the match the points table lists below it.
     fn caption_ui(&self, ui: &mut egui::Ui, selected: &MatchRow) {
         let rows = selected.rows.len();
-        ui.label(
-            CountLine::new(ui)
-                .words("Match ")
-                .number(selected.number)
-                .dot()
-                .count(
-                    rows,
-                    gt_fmt::pluralize(rows, self.row_noun.singular(), self.row_noun.plural()),
-                )
-                .into_job(),
+        ui.add(
+            Label::new(
+                CountLine::new(ui)
+                    .words("Match ")
+                    .number(selected.number)
+                    .dot()
+                    .count(
+                        rows,
+                        gt_fmt::pluralize(rows, self.row_noun.singular(), self.row_noun.plural()),
+                    )
+                    .into_job(),
+            )
+            .selectable(false),
         );
     }
 
