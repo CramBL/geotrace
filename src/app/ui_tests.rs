@@ -5776,6 +5776,60 @@ fn a_failed_retry_restores_the_prompt() {
     assert!(harness.state().history.path().is_none());
 }
 
+/// All three recovery paths write to the recordings database, so a shutdown
+/// that has begun refuses them. `recreate_history_database` renames the file
+/// before it reopens it, and a quit in between leaves no database.
+#[rstest::rstest]
+#[case::reopen(|app: &mut App, path: &Path, ctx: &egui::Context| {
+    app.reopen_history_database(path, ctx);
+})]
+#[case::recover(|app: &mut App, path: &Path, ctx: &egui::Context| {
+    app.recover_history_database(path, ctx);
+})]
+#[case::recreate(|app: &mut App, path: &Path, ctx: &egui::Context| {
+    app.recreate_history_database(path, true, ctx);
+})]
+fn a_history_database_recovery_is_refused_once_shutdown_has_begun(
+    #[case] recover: fn(&mut App, &Path, &egui::Context),
+) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path());
+    let path = store.recordings_path();
+    drop(
+        store
+            .open_recordings()
+            .expect("create the recordings database"),
+    );
+    let files_in_the_data_directory = || {
+        let mut names: Vec<std::ffi::OsString> = std::fs::read_dir(dir.path())
+            .expect("read the data directory")
+            .filter_map(|entry| Some(entry.ok()?.file_name()))
+            .collect();
+        names.sort();
+        names
+    };
+    let before = files_in_the_data_directory();
+
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    harness.state().pending_writes.begin_shutdown();
+    let ctx = harness.ctx.clone();
+
+    recover(harness.state_mut(), &path, &ctx);
+
+    assert!(
+        harness.state().history.path().is_none(),
+        "the refused recovery opened the recordings database"
+    );
+    assert_eq!(
+        files_in_the_data_directory(),
+        before,
+        "the refused recovery renamed, removed or created a file"
+    );
+}
+
 /// A database held by another instance is a wait, not a repair, so this
 /// prompt offers neither the lock clear nor the recreate.
 #[test]
