@@ -290,8 +290,8 @@ pub struct MapDrawContext<'a> {
     pub point_window_folds: &'a mut PointWindowFolds,
     pub center_request: Option<(f64, f64)>,
     pub zoom_to_visible: bool,
-    /// Set for one frame by a "Show on map" in the query window: frames the map
-    /// on what the request names and plays the reveal animation again.
+    /// Set for one frame by a map button in the query window: frames the map on
+    /// what the request names and plays the reveal animation again.
     pub reveal_query_matches: Option<MatchRevealTarget>,
     pub sticky_pos_override: Option<egui::Pos2>,
 }

@@ -27,7 +27,7 @@ pub struct QueryMatches {
     pub run: u64,
 }
 
-/// What the map frames and re-reveals for a "Show on map" press in the query
+/// What the map frames and re-reveals for a map button press in the query
 /// window: every match the run drew, or the one match on a name row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MatchRevealTarget {

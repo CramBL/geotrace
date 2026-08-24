@@ -99,7 +99,7 @@ struct SharedAppState {
     popup_pos_request: Option<egui::Pos2>,
     /// When `true`, `NavMap::draw` zooms the map to fit all currently visible data.
     zoom_to_visible_request: bool,
-    /// Set by a "Show on map" in the query window, consumed by `NavMap::draw`
+    /// Set by a map button in the query window, consumed by `NavMap::draw`
     /// to frame what it names and play the reveal animation again.
     reveal_query_matches_request: Option<gt_ui_types::MatchRevealTarget>,
     /// Filename and warnings for the currently open data quality warnings dialog, if any.
