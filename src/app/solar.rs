@@ -13,6 +13,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
+use std::time::Instant;
 
 use chrono::{NaiveDate, Utc};
 use egui::Context;
@@ -22,7 +23,7 @@ use gt_pending_writes::{PendingWrites, WriteRefusal};
 use gt_solar::activity::GeomagneticActivity;
 use gt_solar::series::{Hp30Series, IndexSample, IndexSeries, KpSeries};
 use gt_solar::{GeomagneticIndex, TimeWindow, calendar, transport, wire};
-use gt_store::{ArchiveUsage, SolarStore, SolarStoreError};
+use gt_store::{ArchiveUsage, DayArchiveError as _, SolarStore, SolarStoreError};
 use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{
     GeomagneticContextLines, GeomagneticPoint, GeomagneticSeries, IndexContextSample,
@@ -31,6 +32,7 @@ use strum::IntoEnumIterator as _;
 
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
+use super::day_index_read_retry::DayIndexReadRetry;
 use super::environment_storage::{EnvironmentArchive, PrunedDays};
 use super::track_day_values::TrackValuesByArchivedDays;
 
@@ -79,11 +81,12 @@ pub struct GeomagneticIndexScheduler {
     /// nothing here determines whether requests may leave the machine.
     transport_source: TransportSource,
     days: DayFetchQueue,
-    /// UTC days the archive holds samples for, read once at startup and
+    /// UTC days the archive holds samples for, read from its day index and
     /// extended on ingest, so resolving a fix's value never reads the day
     /// index per frame. Ordered so the days a plot span holds are a range
     /// query. Assumes this process is the archive's only writer.
     archived_days: BTreeSet<NaiveDate>,
+    day_index_read: DayIndexReadRetry,
     plot_points: TrackValuesByArchivedDays<Vec<GeomagneticPoint>>,
     /// The Hp30 line drawn across the plot's whole span, one sample per
     /// archived period.
@@ -106,6 +109,7 @@ impl GeomagneticIndexScheduler {
         let (tx, rx) = mpsc::channel();
         let mut scheduler = Self {
             archived_days: BTreeSet::new(),
+            day_index_read: DayIndexReadRetry::for_archive(EnvironmentArchive::GeomagneticIndices),
             plot_points: TrackValuesByArchivedDays::default(),
             hp30_context: ContextSampleCache::default(),
             kp_context: ContextSampleCache::default(),
@@ -125,11 +129,30 @@ impl GeomagneticIndexScheduler {
 
     /// Take an opened archive, reading the days it already holds.
     pub fn adopt_store(&mut self, store: Option<Arc<SolarStore>>) {
-        self.archived_days = store
-            .as_ref()
-            .map(|store| archived_days_of(store))
-            .unwrap_or_default();
         self.store = store;
+        self.archived_days = BTreeSet::new();
+        self.read_the_day_index();
+    }
+
+    /// Reads the days the archive holds, keeping the days already read when
+    /// another process has the file open.
+    fn read_the_day_index(&mut self) {
+        let Some(store) = self.store.clone() else {
+            self.day_index_read.forget_the_due_reread();
+            return;
+        };
+        if let Some(days) = self
+            .day_index_read
+            .record_read(&self.ctx, archived_days_of(&store))
+        {
+            self.archived_days = days;
+        }
+    }
+
+    fn reread_the_day_index_when_due(&mut self, now: Instant) {
+        if self.day_index_read.is_due(now) {
+            self.read_the_day_index();
+        }
     }
 
     /// Queue the days a recording spans.
@@ -225,6 +248,7 @@ impl GeomagneticIndexScheduler {
 
     /// Apply finished fetches and start the next queued day.
     pub fn poll(&mut self) {
+        self.reread_the_day_index_when_due(Instant::now());
         while let Ok(message) = self.rx.try_recv() {
             self.days.finish_day(message.day());
             match message {
@@ -522,19 +546,21 @@ fn read_archived_series<S>(
 }
 
 /// Every day the archive holds samples of any index for.
-fn archived_days_of(store: &SolarStore) -> BTreeSet<NaiveDate> {
-    GeomagneticIndex::iter()
-        .filter_map(|index| {
-            store
-                .archived_days(index)
-                .inspect_err(|err| {
-                    log::error!("Reading the {index} archive index: {err}");
-                })
-                .ok()
-        })
-        .flatten()
-        .map(|archived| archived.day)
-        .collect()
+///
+/// The days of the indices that were read still resolve when one index's own
+/// read failed: that failure is reported and its index left out. A failure
+/// reporting that another process has the file open is handed to
+/// [`DayIndexReadRetry`] instead, which reads every index again.
+fn archived_days_of(store: &SolarStore) -> Result<BTreeSet<NaiveDate>, SolarStoreError> {
+    let mut days = BTreeSet::new();
+    for index in GeomagneticIndex::iter() {
+        match store.archived_days(index) {
+            Ok(archived) => days.extend(archived.into_iter().map(|archived| archived.day)),
+            Err(err) if err.is_held_by_another_process() => return Err(err),
+            Err(err) => log::error!("Reading the {index} archive index: {err}"),
+        }
+    }
+    Ok(days)
 }
 
 /// The series of one day, as far as the fetch got.
@@ -625,6 +651,8 @@ fn ingest(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use chrono::{DateTime, TimeDelta};
     use rstest::rstest;
     use tempfile::TempDir;
@@ -740,6 +768,27 @@ mod tests {
                 &Hp30Series { samples: vec![] },
             )
             .expect("insert hp30");
+    }
+
+    /// A read-only session reads the day index beside the instance that owns
+    /// the data directory, so the read at
+    /// [`GeomagneticIndexScheduler::adopt_store`] can fail on that instance's
+    /// open. Without a re-read the session plots no Kp or Hp30 for the rest of
+    /// its run.
+    #[test]
+    fn a_day_index_read_that_failed_on_another_process_is_run_again_and_finds_the_days() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        archive_definitive_day(&store, day(2026, 7, 20));
+        let failed = scheduler.day_index_read.record_read(
+            &scheduler.ctx,
+            Err::<BTreeSet<NaiveDate>, _>(SolarStoreError::HeldByAnotherProcess),
+        );
+        assert_eq!(failed, None);
+        assert_eq!(scheduler.archived_days_covered(PrunedDays::All), 0);
+
+        scheduler.reread_the_day_index_when_due(Instant::now() + Duration::from_secs(60));
+
+        assert_eq!(scheduler.archived_days_covered(PrunedDays::All), 1);
     }
 
     #[test]

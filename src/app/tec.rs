@@ -13,6 +13,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
+use std::time::Instant;
 
 use chrono::{DateTime, NaiveDate, Utc};
 use egui::Context;
@@ -34,6 +35,7 @@ use gt_ui_types::{ArcIdentity, TecContextSample, TecPoint, TecSeries};
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
 use super::day_fetch_status::ArchivedDayCount;
+use super::day_index_read_retry::DayIndexReadRetry;
 use super::environment_storage::{EnvironmentArchive, PrunedDays};
 use super::fix_positions::FixPositionTimeline;
 use super::tec_quiet_time::QuietTimeDeviationCache;
@@ -91,11 +93,12 @@ pub struct TecMapScheduler {
     /// nothing here determines whether requests may leave the machine.
     transport_source: TransportSource,
     days: DayFetchQueue,
-    /// UTC days the archive holds maps for, read once at startup and extended
-    /// on ingest, so resolving a fix's value never reads the day index per
-    /// frame. Ordered so the days a plot span holds are a range query.
-    /// Assumes this process is the archive's only writer.
+    /// UTC days the archive holds maps for, read from its day index and
+    /// extended on ingest, so resolving a fix's value never reads the day
+    /// index per frame. Ordered so the days a plot span holds are a range
+    /// query. Assumes this process is the archive's only writer.
     archived_days: BTreeSet<NaiveDate>,
+    day_index_read: DayIndexReadRetry,
     plot_points: TrackValuesByArchivedDays<Vec<TecPoint>>,
     /// The line drawn across the plot's whole span, one sample per archived
     /// map epoch.
@@ -134,6 +137,7 @@ impl TecMapScheduler {
             transport_source,
             days: DayFetchQueue::default(),
             archived_days: BTreeSet::new(),
+            day_index_read: DayIndexReadRetry::for_archive(EnvironmentArchive::IonosphericTec),
             plot_points: TrackValuesByArchivedDays::default(),
             context: ContextSampleCache::default(),
             quiet_time: QuietTimeDeviationCache::default(),
@@ -147,11 +151,30 @@ impl TecMapScheduler {
 
     /// Take an opened archive, reading the days it already holds.
     pub fn adopt_store(&mut self, store: Option<Arc<IonexStore>>) {
-        self.archived_days = store
-            .as_ref()
-            .map(|store| archived_days_of(store))
-            .unwrap_or_default();
         self.store = store;
+        self.archived_days = BTreeSet::new();
+        self.read_the_day_index();
+    }
+
+    /// Reads the days the archive holds, keeping the days already read when
+    /// another process has the file open.
+    fn read_the_day_index(&mut self) {
+        let Some(store) = self.store.clone() else {
+            self.day_index_read.forget_the_due_reread();
+            return;
+        };
+        if let Some(days) = self
+            .day_index_read
+            .record_read(&self.ctx, archived_days_of(&store))
+        {
+            self.archived_days = days;
+        }
+    }
+
+    fn reread_the_day_index_when_due(&mut self, now: Instant) {
+        if self.day_index_read.is_due(now) {
+            self.read_the_day_index();
+        }
     }
 
     /// Queue the days a recording spans, and the quiet-time window before each
@@ -279,6 +302,7 @@ impl TecMapScheduler {
 
     /// Apply finished fetches and start the next queued day.
     pub fn poll(&mut self) {
+        self.reread_the_day_index_when_due(Instant::now());
         while let Ok(message) = self.rx.try_recv() {
             self.days.finish_day(message.day());
             match message {
@@ -651,14 +675,12 @@ pub(super) fn read_archived_maps(
 }
 
 /// Every day the archive holds maps for.
-fn archived_days_of(store: &IonexStore) -> BTreeSet<NaiveDate> {
-    store
-        .archived_days()
-        .inspect_err(|err| log::error!("Reading the TEC map archive index: {err}"))
-        .unwrap_or_default()
+fn archived_days_of(store: &IonexStore) -> Result<BTreeSet<NaiveDate>, IonexStoreError> {
+    Ok(store
+        .archived_days()?
         .into_iter()
         .map(|archived| archived.day)
-        .collect()
+        .collect())
 }
 
 /// Fetch `day` from the first mirror that has it, parse the file, and add its
@@ -721,6 +743,7 @@ fn ingest(
 #[cfg(test)]
 mod tests {
     use std::io::Write as _;
+    use std::time::Duration;
 
     use chrono::{DateTime, Datelike as _, TimeDelta};
     use rstest::rstest;
@@ -847,6 +870,26 @@ mod tests {
         store
             .insert_or_replace_day(archived, "host", Utc::now(), product, &maps)
             .expect("insert");
+    }
+
+    /// A read-only session reads the day index beside the instance that owns
+    /// the data directory, so the read at [`TecMapScheduler::adopt_store`] can
+    /// fail on that instance's open. Without a re-read the session draws no
+    /// TEC for the rest of its run.
+    #[test]
+    fn a_day_index_read_that_failed_on_another_process_is_run_again_and_finds_the_days() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        archive_day(&store, day(2024, 5, 10), IonexProduct::Final);
+        let failed = scheduler.day_index_read.record_read(
+            &scheduler.ctx,
+            Err::<BTreeSet<NaiveDate>, _>(IonexStoreError::HeldByAnotherProcess),
+        );
+        assert_eq!(failed, None);
+        assert_eq!(scheduler.archived_days_covered(PrunedDays::All), 0);
+
+        scheduler.reread_the_day_index_when_due(Instant::now() + Duration::from_secs(60));
+
+        assert_eq!(scheduler.archived_days_covered(PrunedDays::All), 1);
     }
 
     #[test]

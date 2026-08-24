@@ -13,6 +13,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
+use std::time::Instant;
 
 use chrono::{NaiveDate, Utc};
 use egui::Context;
@@ -26,6 +27,7 @@ use gt_ui_types::ArcIdentity;
 
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan};
 use super::day_fetch_queue::DayFetchQueue;
+use super::day_index_read_retry::DayIndexReadRetry;
 use super::environment_storage::{EnvironmentArchive, PrunedDays};
 use super::fix_positions::FixPositionTimeline;
 
@@ -76,10 +78,11 @@ pub struct SolarFlareScheduler {
     /// nothing here determines whether requests may leave the machine.
     transport_source: TransportSource,
     days: DayFetchQueue,
-    /// UTC days the archive holds events for, read once at startup and
+    /// UTC days the archive holds events for, read from its day index and
     /// extended on ingest, so resolving the markers never reads the day index
     /// per frame. Assumes this process is the archive's only writer.
     archived_days: BTreeSet<NaiveDate>,
+    day_index_read: DayIndexReadRetry,
     /// The flares of the archived days the plot shows, read once per day.
     markers: ContextSampleCache<MarkedFlare>,
     /// Registers every archive insert, and refuses the ones that would start
@@ -99,6 +102,7 @@ impl SolarFlareScheduler {
         let (tx, rx) = mpsc::channel();
         let mut scheduler = Self {
             archived_days: BTreeSet::new(),
+            day_index_read: DayIndexReadRetry::for_archive(EnvironmentArchive::SolarFlares),
             markers: ContextSampleCache::default(),
             ctx,
             tx,
@@ -117,11 +121,30 @@ impl SolarFlareScheduler {
 
     /// Take an opened archive, reading the days it already holds.
     pub fn adopt_store(&mut self, store: Option<Arc<FlareStore>>) {
-        self.archived_days = store
-            .as_ref()
-            .map(|store| archived_days_of(store))
-            .unwrap_or_default();
         self.store = store;
+        self.archived_days = BTreeSet::new();
+        self.read_the_day_index();
+    }
+
+    /// Reads the days the archive holds, keeping the days already read when
+    /// another process has the file open.
+    fn read_the_day_index(&mut self) {
+        let Some(store) = self.store.clone() else {
+            self.day_index_read.forget_the_due_reread();
+            return;
+        };
+        if let Some(days) = self
+            .day_index_read
+            .record_read(&self.ctx, archived_days_of(&store))
+        {
+            self.archived_days = days;
+        }
+    }
+
+    fn reread_the_day_index_when_due(&mut self, now: Instant) {
+        if self.day_index_read.is_due(now) {
+            self.read_the_day_index();
+        }
     }
 
     /// Queue the days a recording spans.
@@ -222,6 +245,7 @@ impl SolarFlareScheduler {
 
     /// Apply finished fetches and start the next queued day.
     pub fn poll(&mut self) {
+        self.reread_the_day_index_when_due(Instant::now());
         while let Ok(message) = self.rx.try_recv() {
             self.days.finish_day(message.day());
             match message {
@@ -461,14 +485,12 @@ fn read_archived_flares(store: &FlareStore, day: NaiveDate) -> Option<Vec<SolarF
 }
 
 /// Every day the archive holds a fetched catalog day for.
-fn archived_days_of(store: &FlareStore) -> BTreeSet<NaiveDate> {
-    store
-        .archived_days()
-        .inspect_err(|err| log::error!("Reading the solar flare archive index: {err}"))
+fn archived_days_of(store: &FlareStore) -> Result<BTreeSet<NaiveDate>, FlareStoreError> {
+    Ok(store
+        .archived_days()?
         .into_iter()
-        .flatten()
         .map(|archived| archived.day)
-        .collect()
+        .collect())
 }
 
 /// Fetch `day`, parse it, and add it to the archive.
@@ -526,6 +548,8 @@ fn ingest(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use chrono::{DateTime, TimeDelta};
     use rstest::rstest;
     use tempfile::TempDir;
@@ -792,6 +816,28 @@ mod tests {
                 detail: "HTTP 403 Forbidden".to_owned(),
             }]
         );
+    }
+
+    /// A read-only session reads the day index beside the instance that owns
+    /// the data directory, so the read at
+    /// [`SolarFlareScheduler::adopt_store`] can fail on that instance's open.
+    /// Without a re-read the session marks no flares for the rest of its run.
+    #[test]
+    fn a_day_index_read_that_failed_on_another_process_is_run_again_and_finds_the_days() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        store
+            .insert_or_replace_day(day(2024, 5, 10), "host", Utc::now(), &[])
+            .expect("archive");
+        let failed = scheduler.day_index_read.record_read(
+            &scheduler.ctx,
+            Err::<BTreeSet<NaiveDate>, _>(FlareStoreError::HeldByAnotherProcess),
+        );
+        assert_eq!(failed, None);
+        assert_eq!(scheduler.archived_days_covered(PrunedDays::All), 0);
+
+        scheduler.reread_the_day_index_when_due(Instant::now() + Duration::from_secs(60));
+
+        assert_eq!(scheduler.archived_days_covered(PrunedDays::All), 1);
     }
 
     /// Days the archive already holds are not queued.
