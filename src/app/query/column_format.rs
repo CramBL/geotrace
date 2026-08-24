@@ -2,10 +2,11 @@
 //! decimals its cells line up on.
 
 use chrono::{DateTime, Utc};
-use egui::{Align, CursorIcon, Label, Layout, RichText, Sense, TextStyle, TextWrapMode};
+use egui::{Align, Label, Layout, RichText, TextStyle, TextWrapMode};
 use geotrace_sdk_units::{ChannelUnit, Unit};
 use gt_query::{Construct, Quantity, QueryMetric};
 use gt_query_run::MICROS_PER_SEC;
+use gt_ui_theme::labels::LabelWithHover;
 use gt_ui_theme::{DEGREE_SIGN, EM_DASH};
 
 use super::value_bar::ValueBar;
@@ -223,13 +224,11 @@ impl<'a> ColumnFormat<'a> {
             let name = RichText::new(name).strong();
             match doc {
                 Some(construct) => {
-                    ui.add(
-                        Label::new(name.underline())
-                            .wrap_mode(TextWrapMode::Extend)
-                            .sense(Sense::hover()),
-                    )
-                    .on_hover_cursor(CursorIcon::Help)
-                    .on_hover_ui(|ui| super::construct_tooltip_ui(ui, construct));
+                    LabelWithHover::underlined_term(name)
+                        .wrap_mode(TextWrapMode::Extend)
+                        .explanation_tooltip_ui(ui, |ui| {
+                            super::construct_tooltip_ui(ui, construct);
+                        });
                 }
                 None => {
                     ui.add(Label::new(name).wrap_mode(TextWrapMode::Extend));

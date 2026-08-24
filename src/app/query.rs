@@ -20,8 +20,9 @@ use gt_query::lexer::{self, TokenClass};
 use gt_query::{ChannelSchema, CompletionTrigger, Construct, ConstructKind, Diagnostic, Span};
 use gt_query_run::{CheckRefresh, QuerySession, RunInputs, RunKind, RunOutcome, schema_from_files};
 use gt_side_panel::widgets::PointClickRequests;
-use gt_ui_theme::EM_DASH;
-use gt_ui_types::{DisplayMask, MapHighlight, MapScope, MatchRevealTarget, QueryMatches};
+use gt_ui_types::{
+    DisplayMask, MapHighlight, MapScope, MatchRevealTarget, QueryMatches, StaleRunNote,
+};
 use strum::{EnumIter, IntoEnumIterator as _};
 
 use crate::app::background_thread;
@@ -1225,7 +1226,7 @@ impl QueryWindow {
         };
         if results.stale() {
             ui.label(
-                RichText::new(format!("Data changed since this run {EM_DASH} run again"))
+                RichText::new(StaleRunNote::RunAgain.to_string())
                     .weak()
                     .italics(),
             );

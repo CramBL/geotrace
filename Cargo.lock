@@ -3121,6 +3121,7 @@ version = "0.12.0"
 dependencies = [
  "chrono",
  "gt-filter",
+ "gt-fmt",
  "gt-logfile",
  "gt-track-builder",
  "gt-types",

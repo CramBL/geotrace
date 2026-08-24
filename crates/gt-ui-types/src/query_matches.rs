@@ -1,7 +1,9 @@
 //! Query-match data handed from a query run to the map renderer.
 
+use std::fmt;
 use std::ops::Range;
 
+use gt_fmt::EM_DASH;
 use gt_types::TrackRef;
 use rustc_hash::FxHashMap;
 
@@ -28,6 +30,30 @@ pub struct QueryMatches {
     /// means no run produced them - a synthetic or hand-built value, which the
     /// map never animates.
     pub run: u64,
+}
+
+/// What every surface tells the user about a stale run, in one wording: the
+/// note itself, and the reason a button disabled by the staleness gives, which
+/// is the note plus what running again would let the button do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StaleRunNote {
+    /// The note on its own, as the query window and the map tooltip show it.
+    RunAgain,
+    /// The reason the button framing the map on the whole run gives.
+    RunAgainToFrameItsMatches,
+    /// The reason the button framing the map on one match row gives.
+    RunAgainToFrameThisMatch,
+}
+
+impl fmt::Display for StaleRunNote {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Data changed since this run {EM_DASH} run again")?;
+        f.write_str(match self {
+            Self::RunAgain => "",
+            Self::RunAgainToFrameItsMatches => " to frame its matches",
+            Self::RunAgainToFrameThisMatch => " to frame this match",
+        })
+    }
 }
 
 /// What the map frames and re-reveals for a map button press in the query
@@ -269,5 +295,23 @@ mod tests {
             matches.draw_mask(track(), 0).count() as usize,
             DrawLayerMask::MAX_LAYERS
         );
+    }
+
+    /// Every button reason is the shared note plus its own suffix.
+    #[rstest::rstest]
+    #[case(StaleRunNote::RunAgain, "Data changed since this run — run again")]
+    #[case(
+        StaleRunNote::RunAgainToFrameItsMatches,
+        "Data changed since this run — run again to frame its matches"
+    )]
+    #[case(
+        StaleRunNote::RunAgainToFrameThisMatch,
+        "Data changed since this run — run again to frame this match"
+    )]
+    fn a_stale_run_states_the_same_note_before_every_suffix(
+        #[case] note: StaleRunNote,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(note.to_string(), expected);
     }
 }

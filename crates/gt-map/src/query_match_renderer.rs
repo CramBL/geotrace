@@ -5,6 +5,7 @@
 use egui::RichText;
 use egui::{Color32, Pos2, Stroke, Ui};
 use gt_types::{LoadedFile, TrackRef};
+use gt_ui_types::StaleRunNote;
 
 use crate::match_reveal::HaloStyle;
 
@@ -84,7 +85,7 @@ pub(crate) fn match_header_ui(
     ui.strong(heading);
     if stale {
         ui.label(
-            RichText::new(format!("Data changed since this run {em_dash} run again"))
+            RichText::new(StaleRunNote::RunAgain.to_string())
                 .weak()
                 .italics(),
         );

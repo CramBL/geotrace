@@ -12,6 +12,7 @@ doctest = false
 [dependencies]
 chrono.workspace = true
 gt-filter = { path = "../gt-filter" }
+gt-fmt = { path = "../gt-fmt" }
 gt-logfile = { path = "../gt-logfile" }
 gt-types = { path = "../gt-types" }
 rustc-hash.workspace = true

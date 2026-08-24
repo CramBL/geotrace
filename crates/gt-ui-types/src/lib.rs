@@ -42,7 +42,9 @@ pub use log_matches::{
 };
 pub use metric_chip_hover::MetricChipHover;
 pub use point_window::PointWindowFolds;
-pub use query_matches::{DrawLayer, DrawLayerMask, MatchRevealTarget, QueryMatches, TrackRanges};
+pub use query_matches::{
+    DrawLayer, DrawLayerMask, MatchRevealTarget, QueryMatches, StaleRunNote, TrackRanges,
+};
 pub use reference::{
     Abbreviation, ColumnWidth, ProseSpan, ReferenceBlock, ReferenceDocument, ReferenceIllustration,
     ReferenceTable, SourceLink, TableCell, TableColumn,
