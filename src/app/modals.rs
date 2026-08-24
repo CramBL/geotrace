@@ -7,16 +7,14 @@ use gt_jam::text::{ATTRIBUTION, PUBLISHER_URL, UPSTREAM_URL};
 use gt_map::{MapLayer, NavMap};
 use gt_pending_writes::WriteAccess;
 use gt_side_panel::{NodeKey, RecordingDetails, TreeState};
-use gt_store::DatabaseRef;
+use gt_store::{DatabaseRef, EnvironmentArchive};
 use gt_types::{LoadWarning, TrackRef};
 use gt_ui_theme::warning_amber;
 use strum::IntoEnumIterator as _;
 
 use gt_loaded_files::{LoadedFiles, LoadedFilesView, RecordingNames};
 
-use crate::app::environment_storage::{
-    CoveredDayCounts, EnvironmentArchive, PruneRequest, PruneScope, PrunedDays,
-};
+use crate::app::environment_storage::{CoveredDayCounts, PruneRequest, PruneScope, PrunedDays};
 use crate::app::mapbox_token;
 use crate::app::mapbox_token::{MapboxTokenCommit, MapboxTokenField};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;

@@ -18,16 +18,20 @@ backend-pure = ["gt-history/backend-pure"]
 backend-sys = ["gt-history/backend-sys"]
 
 [dependencies]
+chrono.workspace = true
 dirs.workspace = true
+gt-flare = { path = "../gt-flare" }
 gt-flare-store = { path = "../gt-flare-store" }
 gt-hdf5-archive = { path = "../gt-hdf5-archive" }
 gt-history = { path = "../gt-history", default-features = false }
 gt-ionex-store = { path = "../gt-ionex-store" }
+gt-jam = { path = "../gt-jam" }
 gt-jam-store = { path = "../gt-jam-store" }
 gt-pending-writes = { path = "../gt-pending-writes" }
 gt-solar-store = { path = "../gt-solar-store" }
 log.workspace = true
 parking_lot.workspace = true
+strum.workspace = true
 thiserror.workspace = true
 zstd.workspace = true
 

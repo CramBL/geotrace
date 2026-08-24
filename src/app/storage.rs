@@ -24,10 +24,9 @@ use egui::Context;
 use gt_instance_lock::{SharedDataDirectoryLock, TakeOverRecord};
 use gt_pending_writes::{PendingWrites, WriteAccess, WriteKind};
 use gt_store::{
-    DayArchiveError, DbError, FlareStore, FlareStoreError, GeomagneticIndexArchive,
-    HistoryDatabase as _, InterferenceArchive, InterruptedDeleteRecovery, IonexStore,
-    IonexStoreError, JamStore, JamStoreError, Recordings, RecordingsHandle, SolarFlareArchive,
-    SolarStore, SolarStoreError, Store, TecMapArchive,
+    ArchiveHandle, DayArchiveError, DbError, FlareStore, GeomagneticIndexArchive,
+    HistoryDatabase as _, InterferenceArchive, IonexStore, JamStore, Recordings, RecordingsHandle,
+    SolarFlareArchive, SolarStore, Store, StoredDayArchive, TecMapArchive,
 };
 
 use super::App;
@@ -38,7 +37,6 @@ use super::archive_recovery::{
 use super::background_thread;
 #[cfg(test)]
 use super::environment_storage;
-use super::environment_storage::EnvironmentArchive;
 use super::history_db::HistoryWorker;
 use super::instance_wait::DataDirectoryWait;
 
@@ -498,103 +496,6 @@ fn open_recordings_read_only(
     }
 }
 
-/// One day archive, tying the store's opener for it to the archive the app
-/// plans and reports on, so no open can be planned as one archive and run
-/// against another.
-trait DayArchive: Sized {
-    const ARCHIVE: EnvironmentArchive;
-
-    type Error: DayArchiveError;
-
-    /// This archive's [`gt_store::ArchiveHandle`], writable or read-only by
-    /// which opener ran.
-    type Handle;
-
-    fn open_with_recovery_choice(
-        store: &Store,
-        recovery: InterruptedDeleteRecovery,
-    ) -> Result<Self::Handle, Self::Error>;
-
-    /// Open the archive without writing to it, as a read-only session does.
-    fn open_read_only(store: &Store) -> Result<Self::Handle, Self::Error>;
-}
-
-impl DayArchive for JamStore {
-    const ARCHIVE: EnvironmentArchive = EnvironmentArchive::AircraftInterference;
-
-    type Error = JamStoreError;
-
-    type Handle = InterferenceArchive;
-
-    fn open_with_recovery_choice(
-        store: &Store,
-        recovery: InterruptedDeleteRecovery,
-    ) -> Result<Self::Handle, Self::Error> {
-        store.open_or_create_archive_with_recovery_choice::<Self>(recovery)
-    }
-
-    fn open_read_only(store: &Store) -> Result<Self::Handle, Self::Error> {
-        store.open_existing_archive_read_only::<Self>()
-    }
-}
-
-impl DayArchive for SolarStore {
-    const ARCHIVE: EnvironmentArchive = EnvironmentArchive::GeomagneticIndices;
-
-    type Error = SolarStoreError;
-
-    type Handle = GeomagneticIndexArchive;
-
-    fn open_with_recovery_choice(
-        store: &Store,
-        recovery: InterruptedDeleteRecovery,
-    ) -> Result<Self::Handle, Self::Error> {
-        store.open_or_create_archive_with_recovery_choice::<Self>(recovery)
-    }
-
-    fn open_read_only(store: &Store) -> Result<Self::Handle, Self::Error> {
-        store.open_existing_archive_read_only::<Self>()
-    }
-}
-
-impl DayArchive for IonexStore {
-    const ARCHIVE: EnvironmentArchive = EnvironmentArchive::IonosphericTec;
-
-    type Error = IonexStoreError;
-
-    type Handle = TecMapArchive;
-
-    fn open_with_recovery_choice(
-        store: &Store,
-        recovery: InterruptedDeleteRecovery,
-    ) -> Result<Self::Handle, Self::Error> {
-        store.open_or_create_archive_with_recovery_choice::<Self>(recovery)
-    }
-
-    fn open_read_only(store: &Store) -> Result<Self::Handle, Self::Error> {
-        store.open_existing_archive_read_only::<Self>()
-    }
-}
-
-impl DayArchive for FlareStore {
-    const ARCHIVE: EnvironmentArchive = EnvironmentArchive::SolarFlares;
-
-    type Error = FlareStoreError;
-
-    type Handle = SolarFlareArchive;
-
-    fn open_with_recovery_choice(
-        store: &Store,
-        recovery: InterruptedDeleteRecovery,
-    ) -> Result<Self::Handle, Self::Error> {
-        store.open_or_create_archive_with_recovery_choice::<Self>(recovery)
-    }
-
-    fn open_read_only(store: &Store) -> Result<Self::Handle, Self::Error> {
-        store.open_existing_archive_read_only::<Self>()
-    }
-}
-
 /// Open one archive, recording why the app has no archive where it ends up
 /// with none. A read-only session decides for itself, whatever `recovery`
 /// plans: it creates no archive and writes to none.
@@ -602,24 +503,29 @@ impl DayArchive for FlareStore {
 /// An archive the user left as it is, and one another process holds, are both
 /// reported to the controls that need them. Anything else is logged and the
 /// app carries on without that archive, as it always has.
-fn open_archive<A: DayArchive>(
+///
+/// The plan and the report both come from `A::ARCHIVE`, so an open cannot be
+/// planned as one archive and run against another.
+fn open_archive<A: StoredDayArchive>(
     store: &Store,
     recovery: ArchiveRecovery,
     write_access: WriteAccess,
     unavailable_archives: &mut UnavailableArchives,
-) -> Option<A::Handle> {
+) -> Option<ArchiveHandle<A, A::ReadOnly>> {
     let archive = A::ARCHIVE;
     let plan = match write_access {
         WriteAccess::Owner => recovery.plan_for(archive),
-        WriteAccess::ReadOnly => archive.read_only_open_plan(store),
+        WriteAccess::ReadOnly => ArchiveOpenPlan::in_a_read_only_session(archive, store),
     };
     let opened = match plan {
         ArchiveOpenPlan::LeaveClosed(reason) => {
             unavailable_archives.record(archive, reason);
             return None;
         }
-        ArchiveOpenPlan::Open(choice) => A::open_with_recovery_choice(store, choice),
-        ArchiveOpenPlan::OpenReadOnly => A::open_read_only(store),
+        ArchiveOpenPlan::Open(choice) => {
+            store.open_or_create_archive_with_recovery_choice::<A>(choice)
+        }
+        ArchiveOpenPlan::OpenReadOnly => store.open_existing_archive_read_only::<A>(),
     };
     match opened {
         Ok(opened) => Some(opened),
@@ -745,7 +651,7 @@ mod tests {
     use tempfile::TempDir;
 
     use gt_jam_store::schema;
-    use gt_store::{ReadOnlyDayArchive as _, ReadOnlyJamStore};
+    use gt_store::{EnvironmentArchive, ReadOnlyDayArchive as _, ReadOnlyJamStore};
     use gt_test_utils::day_archive::{self, GroupPath};
 
     use crate::app::environment_storage::PrunedDays;

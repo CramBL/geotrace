@@ -28,7 +28,8 @@ use gt_query_run::JammingValues;
 #[cfg(test)]
 use gt_store::Store;
 use gt_store::{
-    ArchiveUsage, InterferenceArchive, JamStore, JamStoreError, ReadOnlyJamStore, WritableArchive,
+    ArchiveUsage, EnvironmentArchive, InterferenceArchive, JamStore, JamStoreError,
+    ReadOnlyJamStore, WritableArchive,
 };
 use gt_types::TimeRange;
 use gt_types::{LoadedFile, TrackRef};
@@ -39,7 +40,7 @@ use super::background_thread;
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
 use super::day_index_read_retry::DayIndexReadRetry;
-use super::environment_storage::{EnvironmentArchive, PrunedDays};
+use super::environment_storage::PrunedDays;
 use super::fix_positions::FixPositionTimeline;
 use super::track_day_values::TrackValuesByArchivedDays;
 

@@ -6,7 +6,7 @@ use egui::{Button, Checkbox, DragValue, Grid, RichText, Ui};
 use egui_extras::DatePickerButton;
 use egui_phosphor::regular::BROOM as ICON_BROOM;
 use gt_pending_writes::WriteAccess;
-use gt_store::ArchiveUsage;
+use gt_store::{ArchiveUsage, EnvironmentArchive};
 use gt_ui_theme::EM_DASH;
 use jiff::civil::Date;
 use strum::IntoEnumIterator as _;
@@ -14,7 +14,7 @@ use strum::IntoEnumIterator as _;
 use super::archive_recovery::{ArchiveUnavailable, UnavailableArchives};
 use super::civil_date;
 use super::environment_storage::{
-    CoveredDayCounts, EnvironmentArchive, EnvironmentUsage, PruneRequest, PruneScope, PrunedDays,
+    CoveredDayCounts, EnvironmentUsage, PruneRequest, PruneScope, PrunedDays,
 };
 use super::read_only_session::READ_ONLY_ARCHIVES_HOVER;
 use crate::settings::EnvironmentStorageSettings;

@@ -21,8 +21,8 @@ use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
 use gt_flare::{ApiKey, DateWindow, MarkedFlare, SolarFlare, calendar, transport, wire};
 use gt_pending_writes::{PendingWrites, WriteRefusal};
 use gt_store::{
-    ArchiveUsage, FlareStore, FlareStoreError, ReadOnlyFlareStore, SolarFlareArchive,
-    WritableArchive,
+    ArchiveUsage, EnvironmentArchive, FlareStore, FlareStoreError, ReadOnlyFlareStore,
+    SolarFlareArchive, WritableArchive,
 };
 use gt_types::{SunlitSide, TimeRange};
 use gt_ui_types::ArcIdentity;
@@ -31,7 +31,7 @@ use super::background_thread;
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan};
 use super::day_fetch_queue::DayFetchQueue;
 use super::day_index_read_retry::DayIndexReadRetry;
-use super::environment_storage::{EnvironmentArchive, PrunedDays};
+use super::environment_storage::PrunedDays;
 use super::fix_positions::FixPositionTimeline;
 
 /// What one day's fetch produced.

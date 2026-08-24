@@ -21,13 +21,13 @@ use egui_phosphor::regular::SLIDERS_HORIZONTAL as ICON_SLIDERS_HORIZONTAL;
 use egui_phosphor::regular::SUN as ICON_SUN;
 use egui_phosphor::regular::WAVES as ICON_WAVES;
 use gt_map::MapLayer;
+use gt_store::EnvironmentArchive;
 use strum::{EnumIter, IntoEnumIterator};
 
 use egui_phosphor::regular::APP_WINDOW as ICON_APP_WINDOW;
 
 use super::App;
 use super::backfill_ui::BackfillReadiness;
-use super::environment_storage::EnvironmentArchive;
 use super::storage::DatabasesPending;
 
 /// One category of the settings window, in the order the rail lists them.

@@ -4,17 +4,16 @@
 //! A delete runs off the UI thread: it rewrites every column of an archive,
 //! which takes seconds on a filled TEC archive.
 
-use std::path::PathBuf;
 use std::sync::mpsc;
 
 use chrono::{Months, NaiveDate, Utc};
 use egui::Context;
-use gt_pending_writes::{WriteKind, WriteRefusal, WriteRegistration};
+use gt_pending_writes::{WriteRefusal, WriteRegistration};
 use gt_store::{
-    ArchiveUsage, FlareStore, IonexStore, JamStore, PruneProgress, PruneProgressSink, SolarStore,
-    Store, WritableArchive,
+    ArchiveUsage, EnvironmentArchive, FlareStore, IonexStore, JamStore, PruneProgress,
+    PruneProgressSink, SolarStore, WritableArchive,
 };
-use strum::{EnumIter, IntoEnumIterator as _};
+use strum::IntoEnumIterator as _;
 
 use super::App;
 use super::background_thread;
@@ -24,67 +23,6 @@ use super::modals::{
     EnvironmentPruneChoice, EnvironmentPrunePrompt, show_environment_prune_confirmation,
 };
 use super::storage::DatabasesPending;
-
-/// One of the archives, as the settings rows and the delete controls name it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter)]
-pub enum EnvironmentArchive {
-    AircraftInterference,
-    GeomagneticIndices,
-    IonosphericTec,
-    SolarFlares,
-}
-
-impl EnvironmentArchive {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::AircraftInterference => gt_jam::text::LAYER_LABEL,
-            Self::GeomagneticIndices => "Geomagnetic indices",
-            Self::IonosphericTec => "Ionospheric TEC",
-            Self::SolarFlares => gt_flare::text::LAYER_LABEL,
-        }
-    }
-
-    /// The label as it reads inside a sentence, where only an acronym keeps
-    /// its capitals.
-    pub const fn label_in_sentence(self) -> &'static str {
-        match self {
-            Self::AircraftInterference => "aircraft interference",
-            Self::GeomagneticIndices => "geomagnetic indices",
-            Self::IonosphericTec => "ionospheric TEC",
-            Self::SolarFlares => "solar flares",
-        }
-    }
-
-    /// Path of this archive's file under `store`.
-    pub fn path_in(self, store: &Store) -> PathBuf {
-        match self {
-            Self::AircraftInterference => store.archive_path::<JamStore>(),
-            Self::GeomagneticIndices => store.archive_path::<SolarStore>(),
-            Self::IonosphericTec => store.archive_path::<IonexStore>(),
-            Self::SolarFlares => store.archive_path::<FlareStore>(),
-        }
-    }
-
-    /// What the insert of one downloaded day registers under.
-    pub fn day_insert_registration(self, day: NaiveDate) -> WriteRegistration {
-        WriteRegistration {
-            label: format!("Archiving {} for {day}", self.label_in_sentence()),
-            kind: WriteKind::ArchiveDayInsert {
-                archive: self.label_in_sentence(),
-            },
-        }
-    }
-
-    /// What the rewrite that deletes this archive's days registers under.
-    pub fn day_delete_registration(self) -> WriteRegistration {
-        WriteRegistration {
-            label: format!("Deleting {} days", self.label_in_sentence()),
-            kind: WriteKind::ArchiveCompaction {
-                archive: self.label_in_sentence(),
-            },
-        }
-    }
-}
 
 /// Archive one day through `handle` with the write registered, as a fetch
 /// worker archives one.
