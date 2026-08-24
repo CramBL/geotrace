@@ -10,8 +10,8 @@
 //! naming what that costs, the user starts a read-only session beside it, or
 //! the lock file stops opening for long enough that there is no instance left
 //! to wait for. The last of those is the rule a run that starts on an
-//! unusable lock file follows as well: an attempt that never reached the lock
-//! names no owner, so the databases open here.
+//! unusable lock file follows as well: the databases open here, since an
+//! attempt that never reached the lock names no owner.
 
 use std::mem;
 use std::time::{Duration, Instant};
@@ -30,6 +30,15 @@ use super::storage::{QueuedLoad, StorageOpen};
 /// How often the wait tries the data directory again, and with it re-reads
 /// why it does not have it.
 pub(in crate::app) const DATA_DIRECTORY_RETRY_INTERVAL: Duration = Duration::from_millis(250);
+
+/// How many attempts the background retry makes at
+/// [`DATA_DIRECTORY_RETRY_INTERVAL`] before it starts spreading them out. The
+/// instance it waits for is usually on its way out when the retry starts.
+const BACKGROUND_MARK_ATTEMPTS_AT_THE_WAIT_RATE: u32 = 20;
+
+/// The longest the background retry leaves between two attempts. Nothing the
+/// user sees waits on the mark it is after.
+const SLOWEST_BACKGROUND_MARK_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 
 /// How many retries in a row may find the lock file unusable before the wait
 /// ends and the databases open without the mark. Five seconds of them rides
@@ -123,7 +132,8 @@ pub(in crate::app) struct DataDirectoryWait {
 /// until the data directory is marked as in use by this instance.
 ///
 /// Taking the mark then is a promotion and nothing else: the databases are
-/// already open and the wait is over.
+/// already open and the wait is over. The attempts spread out as they pile
+/// up, since nobody is waiting on this one.
 #[derive(Debug)]
 pub(in crate::app) struct BackgroundMarkRetry {
     last_attempt: Instant,
@@ -257,8 +267,16 @@ impl BackgroundMarkRetry {
         }
     }
 
+    /// The wait before the next attempt: the first
+    /// [`BACKGROUND_MARK_ATTEMPTS_AT_THE_WAIT_RATE`] run at
+    /// [`DATA_DIRECTORY_RETRY_INTERVAL`], and each one after that doubles up
+    /// to [`SLOWEST_BACKGROUND_MARK_RETRY_INTERVAL`].
     fn interval_before_the_next_attempt(&self) -> Duration {
+        let next_attempt = self.attempts.saturating_add(1);
+        let doublings = next_attempt.saturating_sub(BACKGROUND_MARK_ATTEMPTS_AT_THE_WAIT_RATE);
         DATA_DIRECTORY_RETRY_INTERVAL
+            .saturating_mul(2u32.saturating_pow(doublings))
+            .min(SLOWEST_BACKGROUND_MARK_RETRY_INTERVAL)
     }
 
     fn time_until_the_next_attempt(&self, now: Instant) -> Duration {
@@ -529,7 +547,7 @@ impl App {
                 return;
             }
         }
-        ctx.request_repaint_after(DATA_DIRECTORY_RETRY_INTERVAL);
+        ctx.request_repaint_after(retry.time_until_the_next_attempt(now));
     }
 }
 
@@ -579,8 +597,8 @@ mod tests {
 
         /// Puts a file where the data directory was, which is what every
         /// later attempt to open the lock file under it runs into. The
-        /// directory itself is moved aside with the lock the holder still has
-        /// open in it, so [`Self::let_the_lock_file_open_again`] can put it
+        /// directory itself is moved aside, keeping the lock the holder has
+        /// open in it, and [`Self::let_the_lock_file_open_again`] puts it
         /// back.
         fn make_the_lock_file_unusable(&self) {
             fs::rename(&self.directory, self.moved_directory()).expect("move the data directory");
@@ -606,10 +624,9 @@ mod tests {
         }
     }
 
-    /// Another instance holds the directory and this one waits, and then the
-    /// lock file stops opening at all - a mount turned read-only, a lock
-    /// daemon gone. Nothing names an instance to wait for any more, so the
-    /// wait ends and the databases open.
+    /// The wait ends and the databases open: a lock file that stops opening
+    /// at all - a mount turned read-only, a lock daemon gone - leaves nothing
+    /// naming an instance to wait for.
     #[test]
     fn a_lock_file_that_stops_opening_mid_wait_ends_the_wait() {
         let mut wait = WaitOnAHeldDirectory::new();
@@ -628,6 +645,48 @@ mod tests {
         assert!(
             matches!(outcome, DataDirectoryRetry::GaveUpOnTheLockFile { .. }),
             "a lock file that never opened left the wait at {outcome:?}"
+        );
+    }
+
+    /// A session that spends the rest of its run beside the instance holding
+    /// the directory attempts the mark ever more rarely, and the window it
+    /// paints behind goes idle between attempts.
+    #[test]
+    fn the_background_mark_retry_spreads_its_attempts_out_until_they_settle() {
+        let mut retry = BackgroundMarkRetry::new();
+        let mut now = retry.last_attempt;
+
+        let intervals: Vec<Duration> = (0..30)
+            .map(|_| {
+                let interval = retry.time_until_the_next_attempt(now);
+                now += interval;
+                retry.record_attempt(now);
+                interval
+            })
+            .collect();
+
+        let (at_the_wait_rate, spread_out) =
+            intervals.split_at(BACKGROUND_MARK_ATTEMPTS_AT_THE_WAIT_RATE as usize);
+        assert!(
+            at_the_wait_rate
+                .iter()
+                .all(|interval| *interval == DATA_DIRECTORY_RETRY_INTERVAL),
+            "the first attempts run at the wait's rate: {at_the_wait_rate:?}"
+        );
+        assert_eq!(
+            spread_out,
+            [
+                Duration::from_millis(500),
+                Duration::from_secs(1),
+                Duration::from_secs(2),
+                Duration::from_secs(4),
+                Duration::from_secs(8),
+                Duration::from_secs(16),
+                SLOWEST_BACKGROUND_MARK_RETRY_INTERVAL,
+                SLOWEST_BACKGROUND_MARK_RETRY_INTERVAL,
+                SLOWEST_BACKGROUND_MARK_RETRY_INTERVAL,
+                SLOWEST_BACKGROUND_MARK_RETRY_INTERVAL,
+            ]
         );
     }
 
