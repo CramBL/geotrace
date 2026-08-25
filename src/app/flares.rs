@@ -17,7 +17,7 @@ use std::time::Instant;
 use chrono::{NaiveDate, Utc};
 use egui::Context;
 
-use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
+use gt_fetch::{Connection, Transport, TransportSource};
 use gt_flare::{ApiKey, DateWindow, MarkedFlare, SolarFlare, calendar, transport, wire};
 use gt_pending_writes::{PendingWrites, WriteRefusal};
 use gt_store::{
@@ -30,6 +30,7 @@ use gt_ui_types::ArcIdentity;
 use super::background_thread;
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan};
 use super::day_fetch_queue::DayFetchQueue;
+use super::day_fetch_transport::DayFetchTransport;
 use super::day_index_read_retry::DayIndexReadRetry;
 use super::environment_storage::PrunedDays;
 use super::fix_positions::FixPositionTimeline;
@@ -76,11 +77,7 @@ pub struct SolarFlareScheduler {
     /// `None` disables fetching: no archive was opened. A read-only session
     /// has one here, and [`Self::writable_archive`] is [`None`].
     store: Option<SolarFlareArchive>,
-    /// Connected on the first request, and dropped when the endpoint changes.
-    http: Option<Arc<Connection>>,
-    /// Where that transport comes from. Supplied by the application, so
-    /// nothing here determines whether requests may leave the machine.
-    transport_source: TransportSource,
+    transport: DayFetchTransport,
     days: DayFetchQueue,
     /// UTC days the archive holds events for, read from its day index and
     /// extended on ingest, so resolving the markers never reads the day index
@@ -114,8 +111,11 @@ impl SolarFlareScheduler {
             base_url,
             api_key,
             store: None,
-            http: None,
-            transport_source,
+            transport: DayFetchTransport::paced(
+                transport_source,
+                transport::REQUEST_INTERVAL,
+                "Solar flare",
+            ),
             days: DayFetchQueue::default(),
             pending_writes,
         };
@@ -133,14 +133,11 @@ impl SolarFlareScheduler {
     /// Reads the days the archive holds, keeping the days already read when
     /// another process has the file open.
     fn read_the_day_index(&mut self) {
-        let Some(store) = self.store.clone() else {
-            self.day_index_read.forget_the_due_reread();
-            return;
-        };
-        if let Some(days) = self
-            .day_index_read
-            .record_read(&self.ctx, archived_days_of(store.read()))
-        {
+        if let Some(days) = self.day_index_read.read_the_day_index_of(
+            &self.ctx,
+            self.store.as_ref(),
+            archived_days_of,
+        ) {
             self.archived_days = days;
         }
     }
@@ -286,7 +283,7 @@ impl SolarFlareScheduler {
             return;
         }
         base_url.clone_into(&mut self.base_url);
-        self.http = None;
+        self.transport.drop_the_connection();
         self.days.forget_host();
     }
 
@@ -395,7 +392,7 @@ impl SolarFlareScheduler {
         let Some(day) = self.days.take_next_day() else {
             return;
         };
-        let transport = self.transport();
+        let transport = self.transport.connect_or_offline();
         let endpoint = Endpoint {
             base_url: self.base_url.clone(),
             key,
@@ -417,33 +414,6 @@ impl SolarFlareScheduler {
             tx.send(message).ok();
             ctx.request_repaint();
         });
-    }
-
-    /// The transport to fetch on, opened once and kept until the endpoint
-    /// changes.
-    ///
-    /// A transport that cannot be opened stands in as the offline one for this
-    /// dispatch only, and the day fails through the worker like any other
-    /// failure. The stand-in is not cached, so the next dispatch tries to open
-    /// a real one again.
-    fn transport(&mut self) -> Arc<Connection> {
-        if let Some(http) = self.http.as_ref() {
-            return Arc::clone(http);
-        }
-        match self
-            .transport_source
-            .connect(Some(transport::REQUEST_INTERVAL))
-        {
-            Ok(connection) => {
-                let http = Arc::new(connection);
-                self.http = Some(Arc::clone(&http));
-                http
-            }
-            Err(err) => {
-                log::error!("Solar flare transport unavailable: {err}");
-                Arc::new(Connection::Offline(OfflineTransport))
-            }
-        }
     }
 }
 

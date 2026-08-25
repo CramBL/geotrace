@@ -8,10 +8,11 @@
 //! archives open their file for the duration of each operation, and libhdf5
 //! takes an OS lock over that open, readers included.
 
+use std::ops::Deref;
 use std::time::{Duration, Instant};
 
 use egui::Context;
-use gt_store::{DayArchiveError, EnvironmentArchive};
+use gt_store::{ArchiveHandle, DayArchiveError, EnvironmentArchive};
 
 /// Interval before the first re-read, and the interval every further one
 /// doubles from.
@@ -93,6 +94,23 @@ impl DayIndexReadRetry {
                 None
             }
         }
+    }
+
+    /// Reads `store`'s day index with `read_index`, returning the days it read.
+    ///
+    /// [`None`] for `store` is a session with no archive open: that leaves no
+    /// re-read due. A failed read returns [`None`] per [`Self::record_read`].
+    pub fn read_the_day_index_of<W: Deref<Target = R>, R, Days, E: DayArchiveError>(
+        &mut self,
+        ctx: &Context,
+        store: Option<&ArchiveHandle<W, R>>,
+        read_index: impl FnOnce(&R) -> Result<Days, E>,
+    ) -> Option<Days> {
+        let Some(store) = store else {
+            self.forget_the_due_reread();
+            return None;
+        };
+        self.record_read(ctx, read_index(store.read()))
     }
 
     pub fn forget_the_due_reread(&mut self) {

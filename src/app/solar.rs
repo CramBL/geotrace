@@ -17,7 +17,7 @@ use std::time::Instant;
 use chrono::{NaiveDate, Utc};
 use egui::Context;
 
-use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
+use gt_fetch::{Connection, Transport, TransportSource};
 use gt_pending_writes::{PendingWrites, WriteRefusal};
 use gt_solar::activity::GeomagneticActivity;
 use gt_solar::series::{Hp30Series, IndexSample, IndexSeries, KpSeries};
@@ -36,6 +36,7 @@ use strum::IntoEnumIterator as _;
 use super::background_thread;
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
+use super::day_fetch_transport::DayFetchTransport;
 use super::day_index_read_retry::DayIndexReadRetry;
 use super::environment_storage::PrunedDays;
 use super::track_day_values::TrackValuesByArchivedDays;
@@ -80,11 +81,7 @@ pub struct GeomagneticIndexScheduler {
     /// `None` disables fetching: no archive was opened. A read-only session
     /// has one here, and [`Self::writable_archive`] is [`None`].
     store: Option<GeomagneticIndexArchive>,
-    /// Connected on the first request, and dropped when the host changes.
-    http: Option<Arc<Connection>>,
-    /// Where that transport comes from. Supplied by the application, so
-    /// nothing here determines whether requests may leave the machine.
-    transport_source: TransportSource,
+    transport: DayFetchTransport,
     days: DayFetchQueue,
     /// UTC days the archive holds samples for, read from its day index and
     /// extended on ingest, so resolving a fix's value never reads the day
@@ -123,8 +120,11 @@ impl GeomagneticIndexScheduler {
             rx,
             base_url,
             store: None,
-            http: None,
-            transport_source,
+            transport: DayFetchTransport::paced(
+                transport_source,
+                transport::REQUEST_INTERVAL,
+                "Geomagnetic index",
+            ),
             days: DayFetchQueue::default(),
             pending_writes,
         };
@@ -142,14 +142,11 @@ impl GeomagneticIndexScheduler {
     /// Reads the days the archive holds, keeping the days already read when
     /// another process has the file open.
     fn read_the_day_index(&mut self) {
-        let Some(store) = self.store.clone() else {
-            self.day_index_read.forget_the_due_reread();
-            return;
-        };
-        if let Some(days) = self
-            .day_index_read
-            .record_read(&self.ctx, archived_days_of(store.read()))
-        {
+        if let Some(days) = self.day_index_read.read_the_day_index_of(
+            &self.ctx,
+            self.store.as_ref(),
+            archived_days_of,
+        ) {
             self.archived_days = days;
         }
     }
@@ -298,7 +295,7 @@ impl GeomagneticIndexScheduler {
             return;
         }
         base_url.clone_into(&mut self.base_url);
-        self.http = None;
+        self.transport.drop_the_connection();
         self.days.forget_host();
     }
 
@@ -440,7 +437,7 @@ impl GeomagneticIndexScheduler {
         let Some(day) = self.days.take_next_day() else {
             return;
         };
-        let transport = self.transport();
+        let transport = self.transport.connect_or_offline();
         self.spawn_fetch(transport, archive, day);
     }
 
@@ -458,32 +455,6 @@ impl GeomagneticIndexScheduler {
             tx.send(message).ok();
             ctx.request_repaint();
         });
-    }
-
-    /// The transport to fetch on, opened once and kept until the host changes.
-    ///
-    /// A transport that cannot be opened stands in as the offline one for this
-    /// dispatch only, and the day fails through the worker like any other
-    /// failure. The stand-in is not cached, so the next dispatch tries to open
-    /// a real one again.
-    fn transport(&mut self) -> Arc<Connection> {
-        if let Some(http) = self.http.as_ref() {
-            return Arc::clone(http);
-        }
-        match self
-            .transport_source
-            .connect(Some(transport::REQUEST_INTERVAL))
-        {
-            Ok(connection) => {
-                let http = Arc::new(connection);
-                self.http = Some(Arc::clone(&http));
-                http
-            }
-            Err(err) => {
-                log::error!("Geomagnetic index transport unavailable: {err}");
-                Arc::new(Connection::Offline(OfflineTransport))
-            }
-        }
     }
 }
 

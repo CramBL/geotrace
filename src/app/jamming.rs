@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use chrono::{NaiveDate, NaiveTime, TimeDelta, Utc};
 use egui::Context;
 
-use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
+use gt_fetch::{Connection, Transport, TransportSource};
 use gt_jam::calendar::{self, DayOutlook};
 use gt_jam::dataset::JamDataset;
 use gt_jam::day_selection::{DaySelection, EmptyReason};
@@ -39,6 +39,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::background_thread;
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
+use super::day_fetch_transport::DayFetchTransport;
 use super::day_index_read_retry::DayIndexReadRetry;
 use super::environment_storage::PrunedDays;
 use super::fix_positions::FixPositionTimeline;
@@ -158,11 +159,8 @@ pub struct JammingScheduler {
     /// `None` disables fetching: no archive was opened. A read-only session
     /// has one here, and [`Self::writable_archive`] is [`None`].
     store: Option<InterferenceArchive>,
-    /// Connected on the first request, and dropped when the host changes.
-    http: Option<Arc<Connection>>,
-    /// Where that transport comes from. Supplied by the application, so
-    /// nothing here determines whether requests may leave the machine.
-    transport_source: TransportSource,
+    /// Unpaced: [`dispatch_delay`] spaces this scheduler's requests.
+    transport: DayFetchTransport,
     days: DayFetchQueue,
     /// Cells archived per day, read from the archive's day index and updated
     /// on ingest, so the display toggle does not open the archive per frame.
@@ -216,8 +214,7 @@ impl JammingScheduler {
             rx,
             base_url,
             store: None,
-            http: None,
-            transport_source,
+            transport: DayFetchTransport::unpaced(transport_source, "Interference"),
             days: DayFetchQueue::default(),
             last_request: None,
             pending_writes,
@@ -236,14 +233,11 @@ impl JammingScheduler {
     /// Reads how many cells the archive holds for each day it holds, keeping
     /// the counts already read when another process has the file open.
     fn read_the_day_index(&mut self) {
-        let Some(store) = self.store.clone() else {
-            self.day_index_read.forget_the_due_reread();
-            return;
-        };
-        if let Some(cells) = self
-            .day_index_read
-            .record_read(&self.ctx, archived_cells_of(store.read()))
-        {
+        if let Some(cells) = self.day_index_read.read_the_day_index_of(
+            &self.ctx,
+            self.store.as_ref(),
+            archived_cells_of,
+        ) {
             self.archived_cells = cells;
         }
     }
@@ -571,7 +565,7 @@ impl JammingScheduler {
             return;
         }
         base_url.clone_into(&mut self.base_url);
-        self.http = None;
+        self.transport.drop_the_connection();
         self.refused.clear();
         self.days.forget_host();
     }
@@ -586,7 +580,7 @@ impl JammingScheduler {
         let Some(day) = self.days.take_next_day() else {
             return;
         };
-        let transport = self.transport();
+        let transport = self.transport.connect_or_offline();
         let delay = dispatch_delay(self.last_request, Instant::now());
         self.last_request = Some(Instant::now() + delay);
         self.spawn_fetch(transport, archive, day, delay);
@@ -608,33 +602,6 @@ impl JammingScheduler {
             tx.send(message).ok();
             ctx.request_repaint();
         });
-    }
-
-    /// The transport to fetch on, opened once and kept until the host
-    /// changes.
-    ///
-    /// A transport that cannot be opened stands in as the offline one for
-    /// this dispatch only, and the day fails through the worker like any
-    /// other failure. The stand-in is not cached, so the next dispatch tries
-    /// to open a real one again.
-    ///
-    /// [`super::snap::SnapScheduler`] reports its equivalent failure per
-    /// track instead, because a snap run has a place in the UI to show it.
-    fn transport(&mut self) -> Arc<Connection> {
-        if let Some(http) = self.http.as_ref() {
-            return Arc::clone(http);
-        }
-        match self.transport_source.connect(None) {
-            Ok(connection) => {
-                let http = Arc::new(connection);
-                self.http = Some(Arc::clone(&http));
-                http
-            }
-            Err(err) => {
-                log::error!("Interference transport unavailable: {err}");
-                Arc::new(Connection::Offline(OfflineTransport))
-            }
-        }
     }
 }
 
