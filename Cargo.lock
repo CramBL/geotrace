@@ -2554,6 +2554,7 @@ dependencies = [
  "geo",
  "geo-types",
  "gt-types",
+ "nalgebra",
  "smallvec",
 ]
 

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Map & Tracks:** Fixed the min spread filter understating how far tracks that cross the antimeridian or circle a pole ranged.
+
 ## 0.13.0 - 2026-08-25
 
 ### Added
