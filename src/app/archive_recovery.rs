@@ -23,12 +23,11 @@ use egui::{RichText, Window};
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use gt_instance_lock::TakeOverRecord;
 use gt_store::{
-    DayArchiveError, EnvironmentArchive, InterruptedDelete, InterruptedDeleteRecovery,
-    ReadOnlyDayArchive as _, ReadOnlyFlareStore, ReadOnlyIonexStore, ReadOnlyJamStore,
-    ReadOnlySolarStore, Store,
+    DayArchiveError as _, EnvironmentArchive, FlareStore, InterruptedDelete,
+    InterruptedDeleteRecovery, IonexStore, JamStore, PerArchive, ReadOnlyDayArchive as _,
+    SolarStore, Store, StoredDayArchive,
 };
 use gt_ui_theme::warning_amber;
-use strum::IntoEnumIterator as _;
 
 use super::storage::StorageOpen;
 use super::{App, modals, storage};
@@ -158,18 +157,15 @@ pub(in crate::app) fn inspect_archives_under(
     previous_take_over: Option<TakeOverRecord>,
 ) -> InspectedArchives {
     let store = Store::open_in(&root);
-    let findings = EnvironmentArchive::iter()
-        .filter_map(|archive| {
-            Some((
-                archive,
-                InterruptedDeleteFinding::read_from_the_archive(
-                    archive,
-                    &store,
-                    previous_take_over,
-                )?,
-            ))
-        })
-        .collect();
+    let findings = [
+        InterruptedDeleteFinding::read_from_the_archive::<JamStore>(&store, previous_take_over),
+        InterruptedDeleteFinding::read_from_the_archive::<SolarStore>(&store, previous_take_over),
+        InterruptedDeleteFinding::read_from_the_archive::<IonexStore>(&store, previous_take_over),
+        InterruptedDeleteFinding::read_from_the_archive::<FlareStore>(&store, previous_take_over),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     InspectedArchives {
         root: Some(root),
         findings,
@@ -177,66 +173,37 @@ pub(in crate::app) fn inspect_archives_under(
 }
 
 impl InterruptedDeleteFinding {
-    /// What `archive` holds for the user to answer, or [`None`] where the
+    /// What archive `A` holds for the user to answer, or [`None`] where the
     /// open needs no answer.
     ///
     /// A failure that is neither an interrupted delete nor another process
     /// holding the file is left to the open to report: it fails there the
     /// same way it does on the normal path.
-    fn read_from_the_archive(
-        archive: EnvironmentArchive,
+    fn read_from_the_archive<A: StoredDayArchive>(
         store: &Store,
         previous_take_over: Option<TakeOverRecord>,
-    ) -> Option<Self> {
-        let path = archive.path_in(store);
+    ) -> Option<(EnvironmentArchive, Self)> {
+        let path = store.archive_path::<A>();
         let take_over = previous_take_over.and_then(|record| {
             TakeOverAfterTheArchiveWasLastWritten::of_the_archive_at(&path, record)
         });
-        match archive {
-            EnvironmentArchive::AircraftInterference => Self::from_inspection(
-                archive,
-                ReadOnlyJamStore::interrupted_delete_at(&path),
-                take_over,
-            ),
-            EnvironmentArchive::GeomagneticIndices => Self::from_inspection(
-                archive,
-                ReadOnlySolarStore::interrupted_delete_at(&path),
-                take_over,
-            ),
-            EnvironmentArchive::IonosphericTec => Self::from_inspection(
-                archive,
-                ReadOnlyIonexStore::interrupted_delete_at(&path),
-                take_over,
-            ),
-            EnvironmentArchive::SolarFlares => Self::from_inspection(
-                archive,
-                ReadOnlyFlareStore::interrupted_delete_at(&path),
-                take_over,
-            ),
-        }
-    }
-
-    fn from_inspection<E: DayArchiveError>(
-        archive: EnvironmentArchive,
-        inspected: Result<Option<InterruptedDelete>, E>,
-        take_over: Option<TakeOverAfterTheArchiveWasLastWritten>,
-    ) -> Option<Self> {
-        match inspected {
-            Ok(None) => None,
-            Ok(Some(interrupted)) => Some(Self::Interrupted {
+        let finding = match A::ReadOnly::interrupted_delete_at(&path) {
+            Ok(None) => return None,
+            Ok(Some(interrupted)) => Self::Interrupted {
                 interrupted,
                 take_over,
-            }),
-            Err(err) if err.is_held_by_another_process() => Some(Self::HeldByTheOtherInstance),
+            },
+            Err(err) if err.is_held_by_another_process() => Self::HeldByTheOtherInstance,
             Err(err) => {
                 log::debug!(
                     "Reading the {} archive for an interrupted delete failed, which the open \
                      reports: {err}",
-                    archive.label_in_sentence()
+                    A::ARCHIVE.label_in_sentence()
                 );
-                None
+                return None;
             }
-        }
+        };
+        Some((A::ARCHIVE, finding))
     }
 }
 
@@ -270,40 +237,9 @@ impl ArchiveUnavailable {
     }
 }
 
-/// Why the app has none of an archive this run, where it has none.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct UnavailableArchives {
-    interference: Option<ArchiveUnavailable>,
-    geomagnetic_indices: Option<ArchiveUnavailable>,
-    tec_maps: Option<ArchiveUnavailable>,
-    solar_flares: Option<ArchiveUnavailable>,
-}
-
-impl UnavailableArchives {
-    /// Why one archive is closed this session, or [`None`] where it is open
-    /// or failed for a reason the user was never asked about.
-    pub const fn of(self, archive: EnvironmentArchive) -> Option<ArchiveUnavailable> {
-        match archive {
-            EnvironmentArchive::AircraftInterference => self.interference,
-            EnvironmentArchive::GeomagneticIndices => self.geomagnetic_indices,
-            EnvironmentArchive::IonosphericTec => self.tec_maps,
-            EnvironmentArchive::SolarFlares => self.solar_flares,
-        }
-    }
-
-    pub(in crate::app) const fn record(
-        &mut self,
-        archive: EnvironmentArchive,
-        reason: ArchiveUnavailable,
-    ) {
-        match archive {
-            EnvironmentArchive::AircraftInterference => self.interference = Some(reason),
-            EnvironmentArchive::GeomagneticIndices => self.geomagnetic_indices = Some(reason),
-            EnvironmentArchive::IonosphericTec => self.tec_maps = Some(reason),
-            EnvironmentArchive::SolarFlares => self.solar_flares = Some(reason),
-        }
-    }
-}
+/// Why the app has none of an archive this run. [`None`] where the archive is
+/// open, or where it failed for a reason the user was never asked about.
+pub type UnavailableArchives = PerArchive<Option<ArchiveUnavailable>>;
 
 /// What an open does with one archive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -343,57 +279,16 @@ pub(in crate::app) enum ArchiveRecovery {
 }
 
 impl ArchiveRecovery {
-    pub(in crate::app) const fn plan_for(self, archive: EnvironmentArchive) -> ArchiveOpenPlan {
+    pub(in crate::app) fn plan_for(self, archive: EnvironmentArchive) -> ArchiveOpenPlan {
         match self {
             Self::Automatic => ArchiveOpenPlan::Open(InterruptedDeleteRecovery::Recover),
-            Self::AsTheUserChose(answers) => answers.plan_for(archive),
+            Self::AsTheUserChose(answers) => answers[archive],
         }
     }
 }
 
 /// What the user answered for each archive a taken-over open asked about.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::app) struct ArchiveRecoveryAnswers {
-    interference: ArchiveOpenPlan,
-    geomagnetic_indices: ArchiveOpenPlan,
-    tec_maps: ArchiveOpenPlan,
-    solar_flares: ArchiveOpenPlan,
-}
-
-impl Default for ArchiveRecoveryAnswers {
-    /// An archive nobody was asked about opens declining whatever interrupted
-    /// delete it turns out to hold: one that appeared since the inspection
-    /// read the archives is not recovered behind the user's back.
-    fn default() -> Self {
-        let unasked = ArchiveOpenPlan::Open(InterruptedDeleteRecovery::Decline);
-        Self {
-            interference: unasked,
-            geomagnetic_indices: unasked,
-            tec_maps: unasked,
-            solar_flares: unasked,
-        }
-    }
-}
-
-impl ArchiveRecoveryAnswers {
-    const fn plan_for(self, archive: EnvironmentArchive) -> ArchiveOpenPlan {
-        match archive {
-            EnvironmentArchive::AircraftInterference => self.interference,
-            EnvironmentArchive::GeomagneticIndices => self.geomagnetic_indices,
-            EnvironmentArchive::IonosphericTec => self.tec_maps,
-            EnvironmentArchive::SolarFlares => self.solar_flares,
-        }
-    }
-
-    const fn record(&mut self, archive: EnvironmentArchive, plan: ArchiveOpenPlan) {
-        match archive {
-            EnvironmentArchive::AircraftInterference => self.interference = plan,
-            EnvironmentArchive::GeomagneticIndices => self.geomagnetic_indices = plan,
-            EnvironmentArchive::IonosphericTec => self.tec_maps = plan,
-            EnvironmentArchive::SolarFlares => self.solar_flares = plan,
-        }
-    }
-}
+pub(in crate::app) type ArchiveRecoveryAnswers = PerArchive<ArchiveOpenPlan>;
 
 /// The archives a taken-over open has yet to ask about, and the answers it
 /// has so far.
@@ -405,12 +300,17 @@ pub(in crate::app) struct InterruptedDeletePrompts {
 }
 
 impl InterruptedDeletePrompts {
+    /// Every archive starts out declining whatever interrupted delete it turns
+    /// out to hold: one that appeared since the inspection read the archives
+    /// is not recovered without the user answering for it.
     pub(in crate::app) fn asking_about(inspected: InspectedArchives) -> Self {
         let InspectedArchives { root, findings } = inspected;
         Self {
             root,
             unanswered: findings.into(),
-            answers: ArchiveRecoveryAnswers::default(),
+            answers: ArchiveRecoveryAnswers::filled_with(ArchiveOpenPlan::Open(
+                InterruptedDeleteRecovery::Decline,
+            )),
         }
     }
 
@@ -421,7 +321,7 @@ impl InterruptedDeletePrompts {
     }
 
     fn record(&mut self, archive: EnvironmentArchive, answer: InterruptedDeleteAnswer) {
-        self.answers.record(archive, answer.open_plan());
+        self.answers[archive] = answer.open_plan();
         self.unanswered.pop_front();
     }
 }

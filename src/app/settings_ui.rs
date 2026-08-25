@@ -134,7 +134,7 @@ impl App {
                 BackfillReadiness::AwaitingAnInterruptedDeleteAnswer
             }
             Some(DatabasesPending::Opening) => BackfillReadiness::ArchiveStillOpening,
-            None => match self.unavailable_archives.of(archive) {
+            None => match self.unavailable_archives[archive] {
                 Some(reason) => BackfillReadiness::ArchiveUnavailable(reason),
                 None if !self.environment_archive_available(archive) => {
                     BackfillReadiness::WithoutArchive

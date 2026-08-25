@@ -14,12 +14,12 @@ use gt_ionex_store::{IonexStore, IonexStoreError};
 use gt_jam_store::{JamStore, JamStoreError};
 use gt_pending_writes::{WriteKind, WriteRegistration};
 use gt_solar_store::{SolarStore, SolarStoreError};
-use strum::EnumIter;
+use strum::{EnumCount, EnumIter};
 
 use crate::{DeclinedRecovery, InterruptedDelete, SharedArchive, Store, WritableDayArchive};
 
 /// One of the archives, as the settings rows and the delete controls name it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumCount, EnumIter)]
 pub enum EnvironmentArchive {
     AircraftInterference,
     GeomagneticIndices,

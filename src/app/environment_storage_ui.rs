@@ -246,11 +246,8 @@ impl EnvironmentStorageState<'_> {
     /// What stops one archive's delete from taking input: whatever blocks
     /// every delete, or that archive being closed for the session.
     fn delete_blocked_by(self, archive: EnvironmentArchive) -> Option<DeleteBlocker> {
-        self.deletes_blocked_by.or_else(|| {
-            self.unavailable_archives
-                .of(archive)
-                .map(DeleteBlocker::ArchiveUnavailable)
-        })
+        self.deletes_blocked_by
+            .or_else(|| self.unavailable_archives[archive].map(DeleteBlocker::ArchiveUnavailable))
     }
 }
 
@@ -260,7 +257,7 @@ fn archive_row(
     archive: EnvironmentArchive,
     state: EnvironmentStorageState<'_>,
 ) -> Option<PruneRequest> {
-    let usage = state.usage.of(archive);
+    let usage = state.usage[archive];
     ui.label(archive.label());
     ui.label(size_line(usage));
     ui.label(day_line(usage));
@@ -353,12 +350,12 @@ mod tests {
     /// Every archive open and holding days, which is the state the user sees
     /// after a session with recordings loaded.
     fn filled_usage() -> EnvironmentUsage {
-        EnvironmentUsage {
-            interference: Some(usage(24_576, 2, Some((0, 1)))),
-            geomagnetic_indices: Some(usage(12_288, 3, Some((0, 2)))),
-            tec_maps: Some(usage(3_670_016, 29, Some((-27, 1)))),
-            solar_flares: Some(usage(8_192, 1, Some((1, 1)))),
-        }
+        let mut filled = EnvironmentUsage::default();
+        filled[EnvironmentArchive::AircraftInterference] = Some(usage(24_576, 2, Some((0, 1))));
+        filled[EnvironmentArchive::GeomagneticIndices] = Some(usage(12_288, 3, Some((0, 2))));
+        filled[EnvironmentArchive::IonosphericTec] = Some(usage(3_670_016, 29, Some((-27, 1))));
+        filled[EnvironmentArchive::SolarFlares] = Some(usage(8_192, 1, Some((1, 1))));
+        filled
     }
 
     fn state(usage: &EnvironmentUsage) -> EnvironmentStorageState<'_> {
@@ -451,10 +448,8 @@ mod tests {
         #[case] archive: Option<ArchiveUsage>,
         #[case] enabled: bool,
     ) {
-        let usage = EnvironmentUsage {
-            interference: archive,
-            ..EnvironmentUsage::default()
-        };
+        let mut usage = EnvironmentUsage::default();
+        usage[EnvironmentArchive::AircraftInterference] = archive;
         let mut ui_state = EnvironmentStorageUi::with_today(day(2));
         let mut harness = TestHarness::builder().ui(|ui| {
             ui_state.ui(ui, state(&usage));
@@ -495,10 +490,7 @@ mod tests {
     fn pruning_requests_the_days_before_the_cutoff() {
         let usage = filled_usage();
         let mut state = state(&usage);
-        state.days_before_cutoff = CoveredDayCounts {
-            tec_maps: 27,
-            ..CoveredDayCounts::default()
-        };
+        state.days_before_cutoff[EnvironmentArchive::IonosphericTec] = 27;
 
         let request = section(state, |harness| {
             harness
@@ -550,10 +542,7 @@ mod tests {
         let usage = filled_usage();
         let mut state = state(&usage);
         state.deletes_blocked_by = Some(blocker);
-        state.days_before_cutoff = CoveredDayCounts {
-            tec_maps: 27,
-            ..CoveredDayCounts::default()
-        };
+        state.days_before_cutoff[EnvironmentArchive::IonosphericTec] = 27;
         let mut ui_state = EnvironmentStorageUi::with_today(day(2));
         let mut harness = TestHarness::builder().ui(|ui| {
             ui_state.ui(ui, state);
