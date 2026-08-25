@@ -1,9 +1,24 @@
 //! Canonical units used by GeoTrace channels and queries.
 //!
-//! [`ChannelUnit`] separates units GeoTrace understands from deliberate custom
-//! labels. Recognized units carry dimensional and scaling information. A
-//! [`CustomUnit`] is preserved and displayed verbatim, but its values are
-//! dimensionless because GeoTrace cannot safely infer conversions for it.
+//! A channel declares an optional [`ChannelUnit`], which is one of three kinds
+//! ([`ChannelUnitKind`]):
+//!
+//! - Recognized: a [`Unit`] from the catalog in this crate. It has a
+//!   [`PhysicalQuantity`] and a factor to that quantity's base unit, so a query
+//!   can compare the channel against a literal written in any unit of the same
+//!   quantity.
+//! - Custom: a [`CustomUnit`], a label GeoTrace stores and displays verbatim.
+//!   Its values stay dimensionless in queries, because a conversion cannot be
+//!   inferred from a label alone.
+//! - Legacy: a label read from a file that is neither of those, kept byte for
+//!   byte and never accepted as writer input.
+//!
+//! # Attaching a unit to a channel you write
+//!
+//! Name a catalog unit through one of the [`Unit`] constants, or call
+//! [`ChannelUnit::custom`] for a label the catalog does not cover. Both are
+//! writable metadata and both are accepted wherever a channel builder takes a
+//! unit.
 //!
 //! ```
 //! use geotrace_sdk_units::{ChannelUnit, Unit};
@@ -15,6 +30,36 @@
 //! assert!(score.as_recognized().is_none());
 //! # Ok::<(), geotrace_sdk_units::UnitParseError>(())
 //! ```
+//!
+//! Parsing a string yields a recognized unit and nothing else:
+//! `"rpm".parse::<ChannelUnit>()` fails with
+//! [`UnitParseError::Unrecognized`], the signal to call
+//! [`ChannelUnit::custom`] when a display-only label is what you meant.
+//!
+//! # Reading a unit back
+//!
+//! A reader turns file metadata into a [`ChannelUnit`] with
+//! [`ChannelUnit::from_file_label`], which accepts every label. It resolves
+//! aliases such as `degrees`, `kph`, `m/s²` and `µg` to catalog units, keeps
+//! any other single-line label as custom, and preserves the rest as legacy.
+//! [`ChannelUnit::is_writable`] is false for exactly the legacy case, so a tool
+//! that rewrites a file learns which labels it cannot declare again.
+//!
+//! ```
+//! use geotrace_sdk_units::{ChannelUnit, ChannelUnitKind, Unit};
+//!
+//! assert_eq!(ChannelUnit::from_file_label("m/s²").as_recognized(), Some(Unit::M_PER_S2));
+//! assert_eq!(ChannelUnit::from_file_label("rpm").kind(), ChannelUnitKind::Custom);
+//! assert_eq!(ChannelUnit::from_file_label("bad\nunit").kind(), ChannelUnitKind::Legacy);
+//! ```
+//!
+//! # What queries do with each kind
+//!
+//! A query converts a recognized channel to its quantity's base unit with
+//! [`Unit::to_base`], compares it there, and formats each result back to the
+//! declared scale with [`Unit::from_base`]. Custom and legacy values are read
+//! as plain numbers, so a unit literal cannot be compared against them. Stored
+//! and plotted values always stay in the scale the recorder declared.
 
 use std::{fmt, str::FromStr};
 
@@ -28,6 +73,13 @@ const PERCENT: f64 = 100.0;
 const PER_S_TO_PER_MIN: f64 = 60.0;
 
 /// The physical quantity represented by a recognized [`Unit`].
+///
+/// Every quantity has one base unit, which is what [`Unit::to_base`] converts
+/// to: degrees for [`Angle`](Self::Angle), meters for [`Length`](Self::Length),
+/// meters per second for [`Speed`](Self::Speed), meters per second squared for
+/// [`Acceleration`](Self::Acceleration), seconds for
+/// [`Duration`](Self::Duration), the unit fraction for [`Ratio`](Self::Ratio)
+/// (`100 %` is `1.0`), and per minute for [`Rate`](Self::Rate).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PhysicalQuantity {
     Angle,
@@ -40,6 +92,9 @@ pub enum PhysicalQuantity {
 }
 
 /// An SI prefix scaling a [`BaseUnit`].
+///
+/// A prefix and a base form a unit only where [`BaseUnit::accepts_prefix`]
+/// pairs them, so the catalog holds `mm` and `mg` but no `kg` or `cs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::EnumIter, strum::EnumCount)]
 pub enum SiPrefix {
     Nano,
@@ -62,6 +117,8 @@ impl SiPrefix {
     }
 
     /// Canonical spelling before the base unit.
+    ///
+    /// Micro is written `u`; parsing also accepts `µ` and `μ`.
     pub const fn text(self) -> &'static str {
         match self {
             Self::Nano => "n",
@@ -93,6 +150,8 @@ impl SiPrefix {
 }
 
 /// An unprefixed recognized unit.
+///
+/// A [`Unit`] is one of these, optionally scaled by an [`SiPrefix`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::EnumIter, strum::EnumCount)]
 pub enum BaseUnit {
     Deg,
@@ -126,7 +185,9 @@ impl BaseUnit {
         }
     }
 
-    /// Factor converting one value to the evaluator's base unit.
+    /// Factor converting one value of this unit to its quantity's base unit.
+    ///
+    /// [`PhysicalQuantity`] lists the base unit of each quantity.
     pub fn to_base(self) -> f64 {
         match self {
             Self::Deg | Self::M | Self::MPerS | Self::MPerS2 | Self::S | Self::PerMin => 1.0,
@@ -144,6 +205,9 @@ impl BaseUnit {
     }
 
     /// Canonical wire spelling.
+    ///
+    /// A squared unit uses an ASCII `2` (`m/s2`) and a rate is spelled out
+    /// (`per min`), so every catalog spelling is ASCII.
     pub const fn text(self) -> &'static str {
         match self {
             Self::Deg => "deg",
@@ -165,6 +229,12 @@ impl BaseUnit {
     }
 
     /// Whether this base accepts the given prefix.
+    ///
+    /// The pairs are curated to spellings sensors report and readers cannot
+    /// misread: meters take every prefix, seconds take `n`/`u`/`m`, standard
+    /// gravity takes `u`/`m`, and `m/s` and `m/s2` take `m`/`c`. Neither `kg`
+    /// nor `cs` parses: `kg` reads as a kilogram, and `cs` is a scale nobody
+    /// writes.
     pub fn accepts_prefix(self, prefix: SiPrefix) -> bool {
         match self {
             Self::M => true,
@@ -200,6 +270,42 @@ impl BaseUnit {
 }
 
 /// A recognized unit, optionally scaled by an SI prefix.
+///
+/// The catalog is fixed: a value comes from an associated constant, from one of
+/// the parsing entry points, or from [`Unit::recognized`]. A constant is named
+/// after the canonical spelling with `/` written as `_PER_`, so [`Unit::KM_PER_H`]
+/// is `km/h` and [`Unit::PER_MIN`] is `per min`.
+///
+/// # Parsing
+///
+/// [`Unit::from_label`] and the [`FromStr`] impl take a whole label as a file or
+/// a person writes it: they trim it, resolve aliases such as `degrees`, `°`,
+/// `kph`, `mps2` and `mG`, rewrite `²` and `^2` to `2`, and split a compound
+/// spelling on `/`. [`FromStr`] reports a [`UnitParseError`] where
+/// [`Unit::from_label`] returns [`None`].
+///
+/// [`Unit::from_ident`], [`Unit::from_pair`] and [`Unit::from_triple`] take one,
+/// two or three identifiers a lexer has already split apart (`m` and `s2`, or
+/// `km`, `h` and `s`) and match them as written, without trimming or alias
+/// rewriting. The query parser reads unit literals through them because its
+/// lexer has already cut `km/h` into three tokens.
+///
+/// ```
+/// use geotrace_sdk_units::Unit;
+///
+/// assert_eq!(Unit::from_label(" degrees "), Some(Unit::DEG));
+/// assert_eq!(Unit::from_label("m/s²"), Some(Unit::M_PER_S2));
+/// assert_eq!(Unit::from_ident("degrees"), None);
+/// assert_eq!(Unit::from_pair("m", "s2"), Some(Unit::M_PER_S2));
+/// ```
+///
+/// # Spelling
+///
+/// [`Unit::label`] returns the canonical spelling as a `&'static str`, which is
+/// what a `.gtd` file stores. [`Unit::text`] and the [`fmt::Display`] impl write
+/// that same spelling into a formatter. [`Unit::canonical_text`] returns it only
+/// for the units in [`Unit::CANONICAL`], which is how the query editor holds its
+/// suggestions to one unit per scale.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Unit {
     prefix: Option<SiPrefix>,
@@ -221,6 +327,10 @@ impl fmt::Debug for Unit {
 }
 
 /// Stable language-binding names for a recognized [Unit].
+///
+/// `examples/generate_bindings.rs` renders the C++ `RecognizedUnit` enumerators
+/// and the Python `Unit` class attributes from [`Unit::BINDINGS`], so a unit
+/// added to the catalog needs a binding here and a regenerated catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnitBinding {
     pub unit: Unit,
@@ -245,8 +355,11 @@ impl Unit {
     pub const M_PER_S2: Self = Self::base(BaseUnit::MPerS2);
     pub const MM_PER_S2: Self = Self::with_label(SiPrefix::Milli, BaseUnit::MPerS2, "mm/s2");
     pub const CM_PER_S2: Self = Self::with_label(SiPrefix::Centi, BaseUnit::MPerS2, "cm/s2");
+    /// Standard gravity, 9.80665 m/s².
     pub const G: Self = Self::base(BaseUnit::G);
+    /// A millionth of standard gravity.
     pub const UG: Self = Self::with_label(SiPrefix::Micro, BaseUnit::G, "ug");
+    /// A thousandth of standard gravity.
     pub const MG: Self = Self::with_label(SiPrefix::Milli, BaseUnit::G, "mg");
     pub const KM_PER_H_PER_S: Self = Self::base(BaseUnit::KmPerHPerS);
     pub const NS: Self = Self::with_label(SiPrefix::Nano, BaseUnit::S, "ns");
@@ -260,7 +373,12 @@ impl Unit {
     pub const PER_MIN: Self = Self::base(BaseUnit::PerMin);
     pub const PER_H: Self = Self::base(BaseUnit::PerH);
 
-    /// Compact unit catalog suitable for query suggestions.
+    /// The units the query editor suggests, one per scale, in catalog order.
+    ///
+    /// A query accepts every unit in [`Unit::recognized`]. This subset is what
+    /// completions and diagnostics list, which keeps the prefixed sensor scales
+    /// (`mm`, `ug`, `cm/s`) out of a list a person reads.
+    /// [`Unit::canonical_text`] returns [`Some`] for exactly these units.
     pub const CANONICAL: [Self; 17] = [
         Self::DEG,
         Self::M,
@@ -282,6 +400,8 @@ impl Unit {
     ];
 
     /// Canonical catalog used to generate the C++ and Python bindings.
+    ///
+    /// This table also fixes the order [`Unit::recognized`] iterates in.
     pub const BINDINGS: [UnitBinding; 29] = [
         UnitBinding {
             unit: Self::DEG,
@@ -459,7 +579,8 @@ impl Unit {
         },
     ];
 
-    /// Canonical metadata spelling for a recognized unit.
+    /// Canonical metadata spelling for a recognized unit, as stored in a
+    /// `.gtd` file.
     pub fn label(self) -> &'static str {
         self.label
     }
@@ -489,23 +610,46 @@ impl Unit {
         Self::recognized().find(|unit| unit.prefix == Some(prefix) && unit.base == base)
     }
 
+    /// The quantity this unit measures, which decides what a query may compare
+    /// it against.
     pub fn quantity(self) -> PhysicalQuantity {
         self.base.quantity()
     }
 
+    /// Factor from a value in this unit to its quantity's base unit.
+    ///
+    /// [`PhysicalQuantity`] lists the base unit of each quantity. A rate is
+    /// based on per minute and a ratio on the unit fraction:
+    ///
+    /// ```
+    /// use geotrace_sdk_units::Unit;
+    ///
+    /// assert_eq!(Unit::PER_S.to_base(), 60.0);
+    /// assert_eq!(Unit::PERCENT.to_base(), 0.01);
+    /// ```
     pub fn to_base(self) -> f64 {
         self.prefix.map_or(1.0, SiPrefix::factor) * self.base.to_base()
     }
 
+    /// Factor from a value in the quantity's base unit to this unit, the
+    /// reciprocal of [`Unit::to_base`].
     pub fn from_base(self) -> f64 {
         1.0 / self.to_base()
     }
 
     /// Canonical spelling as a lightweight display value.
+    ///
+    /// Formats exactly like the [`fmt::Display`] impl. [`Unit::label`] gives
+    /// the same spelling as a `&'static str`.
     pub fn text(self) -> UnitText {
         UnitText(self)
     }
 
+    /// The suggestion spelling of this unit, or [`None`] for a unit outside
+    /// [`Unit::CANONICAL`].
+    ///
+    /// The query editor filters its unit completions through this, which leaves
+    /// out the prefixed sensor scales it still parses.
     pub fn canonical_text(self) -> Option<&'static str> {
         match (self.prefix, self.base) {
             (None, base) => Some(base.text()),
@@ -515,6 +659,11 @@ impl Unit {
         }
     }
 
+    /// Parse one already-lexed identifier: a base spelling (`deg`, `kn`,
+    /// `kmh`), or an SI prefix on a base that accepts it (`mm`, `ug`, `µs`).
+    ///
+    /// The identifier is matched as written. [`Unit::from_label`] handles
+    /// trimming, aliases, and compound spellings.
     pub fn from_ident(ident: &str) -> Option<Self> {
         if let Some(base) = BaseUnit::from_ident(ident) {
             return Some(Self::base(base));
@@ -526,6 +675,9 @@ impl Unit {
             .flatten()
     }
 
+    /// Parse a compound spelling from two already-lexed identifiers: `km` and
+    /// `h`, `m` and `s`, `m` and `s2`, or an SI prefix on the first where the
+    /// catalog has that scale (`mm` and `s`, `cm` and `s2`).
     pub fn from_pair(first: &str, second: &str) -> Option<Self> {
         let exact = match (first, second) {
             ("km", "h") => Some(BaseUnit::KmPerH),
@@ -547,6 +699,8 @@ impl Unit {
             .flatten()
     }
 
+    /// Parse the one three-identifier spelling in the catalog: `km`, `h` and
+    /// `s`, which is [`Unit::KM_PER_H_PER_S`].
     pub fn from_triple(first: &str, second: &str, third: &str) -> Option<Self> {
         match (first, second, third) {
             ("km", "h", "s") => Some(Self::base(BaseUnit::KmPerHPerS)),
@@ -554,7 +708,13 @@ impl Unit {
         }
     }
 
-    /// Parse a canonical channel label or a supported legacy spelling.
+    /// Parse a whole channel label: a canonical spelling or an accepted alias.
+    ///
+    /// Trims the label, maps aliases (`degree`, `metres`, `sec`, `kph`, `mps2`,
+    /// `°`, `mG`) to their catalog unit, rewrites `²` and `^2` to `2`, and
+    /// splits a compound spelling on `/`. A file reader parses through this
+    /// entry point. The [`FromStr`] impl is the same parse with a
+    /// [`UnitParseError`] in place of [`None`].
     pub fn from_label(label: &str) -> Option<Self> {
         let normalized = normalize_label(label);
         let exact = match normalized.as_str() {
@@ -583,6 +743,7 @@ impl fmt::Display for Unit {
     }
 }
 
+/// The canonical spelling of a [`Unit`], returned by [`Unit::text`].
 #[derive(Debug, Clone, Copy)]
 pub struct UnitText(Unit);
 
@@ -592,6 +753,8 @@ impl fmt::Display for UnitText {
     }
 }
 
+/// Parses with [`Unit::from_label`], reporting
+/// [`UnitParseError::Unrecognized`] for a label outside the catalog.
 impl FromStr for Unit {
     type Err = UnitParseError;
 
@@ -603,10 +766,31 @@ impl FromStr for Unit {
 }
 
 /// A deliberate display-only unit label GeoTrace does not understand.
+///
+/// It is written and read like any unit, but it has no quantity and no
+/// conversion factor, so a query reads its channel's values as plain numbers.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CustomUnit(String);
 
 impl CustomUnit {
+    /// Validate a label as a custom unit, storing it with surrounding
+    /// whitespace trimmed.
+    ///
+    /// ```
+    /// use geotrace_sdk_units::CustomUnit;
+    ///
+    /// let score = CustomUnit::new("  vendor score  ")?;
+    /// assert_eq!(score.as_str(), "vendor score");
+    /// # Ok::<(), geotrace_sdk_units::UnitParseError>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`UnitParseError::EmptyCustom`] when nothing is left after trimming,
+    /// [`UnitParseError::CustomControlCharacter`] when the label holds a
+    /// control character, and [`UnitParseError::CustomIsRecognized`] when the
+    /// label spells a catalog unit through any accepted alias: `m/s²` has to be
+    /// declared as [`Unit::M_PER_S2`].
     pub fn new(label: impl Into<String>) -> Result<Self, UnitParseError> {
         let label = label.into();
         let trimmed = label.trim();
@@ -624,6 +808,7 @@ impl CustomUnit {
         Ok(Self(trimmed.to_owned()))
     }
 
+    /// The label as stored, already trimmed.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -645,13 +830,33 @@ enum ChannelUnitValue {
 /// The classification of a channel unit read from a file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChannelUnitKind {
+    /// A [`Unit`] from the catalog, with a quantity and a conversion factor.
     Recognized,
+    /// A [`CustomUnit`], displayed verbatim and dimensionless in queries.
     Custom,
     /// Losslessly preserved metadata that is not valid writer input.
     Legacy,
 }
 
 /// A recognized, convertible unit or an explicit display-only custom label.
+///
+/// The write path has three constructors: [`ChannelUnit::recognized`] (and the
+/// equivalent `From<Unit>`), [`ChannelUnit::custom`], and the [`FromStr`] impl,
+/// which yields a recognized unit only. The read path adds
+/// [`ChannelUnit::from_file_label`], the one constructor that accepts every
+/// label and the only source of [`ChannelUnitKind::Legacy`].
+///
+/// ```
+/// use geotrace_sdk_units::{ChannelUnit, ChannelUnitKind, Unit};
+///
+/// assert_eq!(ChannelUnit::from(Unit::KM_PER_H).label(), "km/h");
+/// assert_eq!(ChannelUnit::from_file_label("kph").kind(), ChannelUnitKind::Recognized);
+///
+/// let legacy = ChannelUnit::from_file_label(" trailing ");
+/// assert_eq!(legacy.kind(), ChannelUnitKind::Legacy);
+/// assert_eq!(legacy.label(), " trailing ");
+/// assert!(!legacy.is_writable());
+/// ```
 ///
 /// Malformed legacy metadata can only be produced by [ChannelUnit::from_file_label].
 /// Its private representation cannot be constructed as writable metadata.
@@ -664,20 +869,31 @@ pub enum ChannelUnitKind {
 pub struct ChannelUnit(ChannelUnitValue);
 
 impl ChannelUnit {
+    /// A catalog unit, which a query converts and compares.
     pub fn recognized(unit: Unit) -> Self {
         Self(ChannelUnitValue::Recognized(unit))
     }
-}
 
-impl ChannelUnit {
+    /// A display-only label for a unit the catalog does not cover.
+    ///
+    /// # Errors
+    ///
+    /// The [`CustomUnit::new`] errors, including
+    /// [`UnitParseError::CustomIsRecognized`] for a label that names a catalog
+    /// unit once aliases are resolved.
     pub fn custom(label: impl Into<String>) -> Result<Self, UnitParseError> {
         CustomUnit::new(label)
             .map(ChannelUnitValue::Custom)
             .map(Self)
     }
 
-    /// Parse existing file metadata as far as possible, preserving unsupported
-    /// labels as custom units.
+    /// Read existing file metadata, keeping every label.
+    ///
+    /// A label naming a catalog unit through any accepted alias becomes
+    /// [`ChannelUnitKind::Recognized`], another label that survives
+    /// [`CustomUnit::new`] unchanged becomes [`ChannelUnitKind::Custom`], and
+    /// the rest - untrimmed, empty, or holding a control character - becomes
+    /// [`ChannelUnitKind::Legacy`] with its bytes intact.
     pub fn from_file_label(label: impl Into<String>) -> Self {
         let label = label.into();
         match Unit::from_label(&label) {
@@ -689,6 +905,7 @@ impl ChannelUnit {
         }
     }
 
+    /// Which of the three kinds this unit is.
     pub fn kind(&self) -> ChannelUnitKind {
         match self.0 {
             ChannelUnitValue::Recognized(_) => ChannelUnitKind::Recognized,
@@ -697,6 +914,7 @@ impl ChannelUnit {
         }
     }
 
+    /// The spelling stored in file metadata, whatever the kind.
     pub fn label(&self) -> &str {
         match &self.0 {
             ChannelUnitValue::Recognized(unit) => unit.label(),
@@ -705,10 +923,15 @@ impl ChannelUnit {
         }
     }
 
+    /// Whether this unit may be attached to a channel being written.
+    ///
+    /// False for exactly [`ChannelUnitKind::Legacy`], which a channel builder
+    /// rejects.
     pub fn is_writable(&self) -> bool {
         self.kind() != ChannelUnitKind::Legacy
     }
 
+    /// The catalog unit behind this, or [`None`] for a custom or legacy label.
     pub fn as_recognized(&self) -> Option<Unit> {
         match self.0 {
             ChannelUnitValue::Recognized(unit) => Some(unit),
@@ -723,12 +946,16 @@ impl fmt::Display for ChannelUnit {
     }
 }
 
+/// Equivalent to [`ChannelUnit::recognized`].
 impl From<Unit> for ChannelUnit {
     fn from(unit: Unit) -> Self {
         Self::recognized(unit)
     }
 }
 
+/// Parses a recognized unit label only. A label outside the catalog is a
+/// [`UnitParseError::Unrecognized`]: pass it to [`ChannelUnit::custom`] to
+/// store it verbatim.
 impl FromStr for ChannelUnit {
     type Err = UnitParseError;
 
@@ -737,6 +964,11 @@ impl FromStr for ChannelUnit {
     }
 }
 
+/// Why a label cannot be used as a channel unit.
+///
+/// [`Unit::from_str`] and [`ChannelUnit::from_str`] report
+/// [`Unrecognized`](Self::Unrecognized). The other three come from
+/// [`CustomUnit::new`] and [`ChannelUnit::custom`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum UnitParseError {
     #[error("unrecognized channel unit {label:?}; use ChannelUnit::custom for a display-only unit")]
@@ -854,6 +1086,14 @@ mod tests {
             let text = unit.to_string();
             assert_eq!(Unit::from_label(&text), Some(unit), "{text}");
         }
+    }
+
+    #[test]
+    fn canonical_catalog_holds_exactly_the_units_with_a_suggestion_spelling() {
+        let with_suggestion: Vec<Unit> = Unit::recognized()
+            .filter(|unit| unit.canonical_text().is_some())
+            .collect();
+        assert_eq!(with_suggestion, Unit::CANONICAL.to_vec());
     }
 
     #[test]
