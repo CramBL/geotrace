@@ -175,7 +175,7 @@ impl UpdateChecker {
         Window::new("Update available")
             .collapsible(false)
             .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.label(format!(
