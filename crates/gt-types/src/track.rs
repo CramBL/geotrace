@@ -47,6 +47,14 @@ impl TimeRange {
         Self { start, end }
     }
 
+    /// The span from the earliest to the latest of `first` and `rest`, in
+    /// whatever order they arrive.
+    pub fn spanning(first: DateTime<Utc>, rest: impl IntoIterator<Item = DateTime<Utc>>) -> Self {
+        rest.into_iter().fold(Self::new(first, first), |span, at| {
+            Self::new(span.start.min(at), span.end.max(at))
+        })
+    }
+
     pub fn duration(&self) -> Duration {
         self.end - self.start
     }
@@ -596,6 +604,32 @@ mod time_range_tests {
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
+    }
+
+    #[rstest]
+    #[case::in_order(8, &[12, 17], 8, 17)]
+    #[case::reversed(17, &[12, 8], 8, 17)]
+    #[case::a_step_backwards_between_two_earlier_ones(8, &[17, 12], 8, 17)]
+    #[case::the_same_instant_twice(8, &[8], 8, 8)]
+    #[case::a_single_instant(8, &[], 8, 8)]
+    fn spanning_covers_every_instant(
+        #[case] first_hour: u32,
+        #[case] rest_hours: &[u32],
+        #[case] expected_start_hour: u32,
+        #[case] expected_end_hour: u32,
+    ) {
+        let span = TimeRange::spanning(
+            at(2026, 7, 20, first_hour),
+            rest_hours.iter().map(|&hour| at(2026, 7, 20, hour)),
+        );
+
+        assert_eq!(
+            span,
+            TimeRange::new(
+                at(2026, 7, 20, expected_start_hour),
+                at(2026, 7, 20, expected_end_hour)
+            )
+        );
     }
 
     #[rstest]

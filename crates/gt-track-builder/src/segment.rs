@@ -503,6 +503,16 @@ pub fn compute_fix_stats(points: &[NavPoint]) -> Option<FixStats> {
     })
 }
 
+/// The span from the earliest to the latest fix time. A fix stamped before its
+/// predecessor still falls inside it: nothing sorts the points a recording is
+/// read from.
+fn time_range_spanning_every_fix(points: &vec1::Vec1<NavPoint>) -> TimeRange {
+    TimeRange::spanning(
+        points.first().tpv.time().utc(),
+        points.iter().map(|p| p.tpv.time().utc()),
+    )
+}
+
 /// Computes `TrackMetadata` from a non-empty slice of points.
 pub fn compute_track_metadata(
     index: usize,
@@ -511,7 +521,6 @@ pub fn compute_track_metadata(
     generated_markers: &[GeneratedMarker],
 ) -> TrackMetadata {
     let first = points.first();
-    let last = points.last();
 
     let first_lat = first.tpv.lat().as_degrees();
     let first_lon = first.tpv.lon().as_degrees();
@@ -550,12 +559,8 @@ pub fn compute_track_metadata(
             max: Length::new::<meter>(max_m),
         });
 
-    let time_range = TimeRange::new(first.tpv.time().utc(), last.tpv.time().utc());
-    let duration = if points.len() >= 2 {
-        last.tpv.time() - first.tpv.time()
-    } else {
-        Duration::zero()
-    };
+    let time_range = time_range_spanning_every_fix(points);
+    let duration = time_range.duration();
 
     TrackMetadata {
         index,
@@ -634,12 +639,11 @@ pub fn build_loaded_file(
                 vec1::Vec1::try_from_vec(track_points_slice.to_vec())
                     .expect("segment_tracks produces only non-empty ranges");
 
-            let track_start = track_points.first().tpv.time().utc();
-            let track_end = track_points.last().tpv.time().utc();
+            let track_time_range = time_range_spanning_every_fix(&track_points);
 
             let track_custom: Vec<CustomMarker> = custom_markers
                 .iter()
-                .filter(|m| m.time >= track_start && m.time <= track_end)
+                .filter(|m| track_time_range.contains(m.time))
                 .cloned()
                 .collect();
 
@@ -649,7 +653,7 @@ pub fn build_loaded_file(
             // track.
             let track_channels: Vec<Channel> = channels
                 .iter()
-                .map(|c| c.slice_time_range(track_start, track_end))
+                .map(|c| c.slice_time_range(track_time_range.start, track_time_range.end))
                 .filter(|c| !c.times.is_empty())
                 .collect();
 
