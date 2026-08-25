@@ -19,8 +19,8 @@ use std::time::{Duration, Instant};
 use egui::{RichText, Window};
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use gt_instance_lock::{
-    DataDirectoryOwnership, InstanceState, InstanceStatusRead, SharedDataDirectoryLock,
-    StatusFreshness, TakeOverRecord,
+    DataDirectoryLock, DataDirectoryOwnership, InstanceState, InstanceStatusRead, StatusFreshness,
+    TakeOverRecord,
 };
 use gt_pending_writes::WriteKind;
 use gt_ui_theme::warning_amber;
@@ -172,7 +172,7 @@ impl TakenOverInstance {
 }
 
 impl DataDirectoryWait {
-    pub(in crate::app) fn new(instance_lock: &SharedDataDirectoryLock) -> Self {
+    pub(in crate::app) fn new(instance_lock: &DataDirectoryLock) -> Self {
         Self {
             unavailable: DataDirectoryUnavailable::read_from(instance_lock),
             last_retry: Instant::now(),
@@ -186,7 +186,7 @@ impl DataDirectoryWait {
     fn retry_when_the_interval_has_passed(
         &mut self,
         now: Instant,
-        instance_lock: &SharedDataDirectoryLock,
+        instance_lock: &DataDirectoryLock,
     ) -> DataDirectoryRetry {
         if now.saturating_duration_since(self.last_retry) < DATA_DIRECTORY_RETRY_INTERVAL {
             return DataDirectoryRetry::StillWaiting;
@@ -332,7 +332,7 @@ impl DataDirectoryUnavailable {
     /// `status_of_the_holding_instance` returns [`None`] unless another
     /// instance holds the data directory, which is the only state the wait
     /// this feeds runs in.
-    fn read_from(instance_lock: &SharedDataDirectoryLock) -> Self {
+    fn read_from(instance_lock: &DataDirectoryLock) -> Self {
         match instance_lock.lock_file_failure() {
             Some(cause) => Self::UnusableLockFile(cause),
             None => Self::HeldByAnotherInstance(

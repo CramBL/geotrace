@@ -272,10 +272,13 @@ pub enum DataDirectoryOwnership {
 
 /// This process's mark on the data directory, and the status file it keeps
 /// there while the mark stands.
-#[derive(Debug)]
-pub struct DataDirectoryLock {
-    mark: DataDirectoryMark,
-}
+///
+/// Clones share one mark: the app retries it through its clone while
+/// another instance holds the directory, and `main` reports the shutdown
+/// through the clone it kept. Dropping the last clone closes the lock file
+/// and removes the status file.
+#[derive(Debug, Clone)]
+pub struct DataDirectoryLock(Arc<Mutex<DataDirectoryMark>>);
 
 /// The mark, with what each outcome leaves this run holding.
 #[derive(Debug)]
@@ -358,6 +361,42 @@ impl DataDirectoryMark {
             Self::NoDataDirectory => DataDirectoryOwnership::NoDataDirectory,
         }
     }
+
+    fn record_take_over(&self, taken_from_process_id: Option<u32>) -> Option<TakeOverRecord> {
+        let directory = self.directory()?;
+        let replaced = TakeOverRecord::read_from(directory);
+        let record = TakeOverRecord {
+            taken_by_process_id: process::id(),
+            taken_from_process_id,
+            written_at: seconds_since_the_epoch(SystemTime::now()),
+        };
+        if let Err(error) = record.replace_in(directory) {
+            log::warn!(
+                "Cannot write the take-over file {}: {error}",
+                directory.join(TAKE_OVER_FILE_NAME).display()
+            );
+        }
+        replaced
+    }
+
+    fn write_status(&mut self, state: InstanceState, pending_writes: Vec<PendingWriteReport>) {
+        let Self::MarkedByThisInstance(marked) = self else {
+            return;
+        };
+        marked.last_status_write = Instant::now();
+        let status = InstanceStatus {
+            process_id: process::id(),
+            state,
+            pending_writes,
+            written_at: seconds_since_the_epoch(SystemTime::now()),
+        };
+        if let Err(error) = marked.replace_status_file(&status) {
+            log::warn!(
+                "Cannot write the instance status file {}: {error}",
+                marked.directory.join(STATUS_FILE_NAME).display()
+            );
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -377,6 +416,30 @@ impl MarkedDataDirectory {
     }
 }
 
+impl Drop for MarkedDataDirectory {
+    /// Removes the status file, so a clean exit leaves nothing behind. This
+    /// runs before `_lock_file` closes, so the next instance cannot take the
+    /// lock while this status file is still there.
+    ///
+    /// `process::exit` skips this, so a force quit leaves the status file in
+    /// the directory. [`DataDirectoryMark::of`] overwrites it when the next
+    /// instance takes the lock, and
+    /// [`DataDirectoryLock::status_of_the_holding_instance`] only reads it
+    /// while another instance holds the lock, so a leftover one is never
+    /// read.
+    fn drop(&mut self) {
+        let path = self.directory.join(STATUS_FILE_NAME);
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => log::warn!(
+                "Cannot remove the instance status file {}: {error}",
+                path.display()
+            ),
+        }
+    }
+}
+
 impl DataDirectoryLock {
     /// Marks `data_directory` as in use by this process for as long as the
     /// lock lives, and reports this instance as running.
@@ -391,11 +454,10 @@ impl DataDirectoryLock {
         let Some(directory) = data_directory else {
             return Self::marking_nothing();
         };
-        let mark = DataDirectoryMark::of(directory);
-        let mut lock = Self { mark };
-        match &lock.mark {
+        let mut mark = DataDirectoryMark::of(directory);
+        match &mark {
             DataDirectoryMark::MarkedByThisInstance(_) => {
-                lock.write_status(InstanceState::Running, Vec::new());
+                mark.write_status(InstanceState::Running, Vec::new());
             }
             DataDirectoryMark::HeldByAnotherInstance { .. } => {
                 log::info!("Another GeoTrace instance is using {}", directory.display());
@@ -405,19 +467,17 @@ impl DataDirectoryLock {
             }
             DataDirectoryMark::NoDataDirectory => {}
         }
-        lock
+        Self(Arc::new(Mutex::new(mark)))
     }
 
     /// The lock of a run that marks nothing, whose reports write nothing.
     pub fn marking_nothing() -> Self {
-        Self {
-            mark: DataDirectoryMark::NoDataDirectory,
-        }
+        Self(Arc::new(Mutex::new(DataDirectoryMark::NoDataDirectory)))
     }
 
     /// What this run owns of the data directory.
     pub fn ownership(&self) -> DataDirectoryOwnership {
-        self.mark.ownership()
+        self.0.lock().ownership()
     }
 
     /// Gives up on marking the data directory for the rest of the run,
@@ -425,13 +485,14 @@ impl DataDirectoryLock {
     ///
     /// A read-only session gives it up as it starts: with no directory left
     /// to retry, nothing promotes that session to the owner later.
-    pub fn give_up_marking_the_data_directory(&mut self) {
+    pub fn give_up_marking_the_data_directory(&self) {
+        let mut mark = self.0.lock();
         debug_assert!(
-            self.ownership() != DataDirectoryOwnership::MarkedByThisInstance,
-            "the mark is given up before it is taken: dropping it here would leave the status \
-             file behind the lock it vouches for"
+            mark.ownership() != DataDirectoryOwnership::MarkedByThisInstance,
+            "the mark is given up before it is taken: assigning over a mark this instance holds \
+             releases the lock and removes the status file mid-run"
         );
-        self.mark = DataDirectoryMark::NoDataDirectory;
+        *mark = DataDirectoryMark::NoDataDirectory;
     }
 
     /// Tries the mark again on the directory this run has yet to take, and
@@ -441,23 +502,23 @@ impl DataDirectoryLock {
     /// stopped it may have passed, and until it succeeds this run owns
     /// nothing. Only a run with no data directory at all has nothing to
     /// retry.
-    pub fn retry_marking_the_data_directory(&mut self) -> DataDirectoryOwnership {
-        let Some(directory) = self.mark.directory_to_retry() else {
-            return self.ownership();
+    pub fn retry_marking_the_data_directory(&self) -> DataDirectoryOwnership {
+        let mut mark = self.0.lock();
+        let Some(directory) = mark.directory_to_retry() else {
+            return mark.ownership();
         };
-        let mark = DataDirectoryMark::of(&directory);
-        let took_it = matches!(mark, DataDirectoryMark::MarkedByThisInstance(_));
-        self.mark = mark;
-        if took_it {
-            self.write_status(InstanceState::Running, Vec::new());
+        *mark = DataDirectoryMark::of(&directory);
+        if matches!(*mark, DataDirectoryMark::MarkedByThisInstance(_)) {
+            mark.write_status(InstanceState::Running, Vec::new());
         }
-        self.ownership()
+        mark.ownership()
     }
 
     /// A read of the status file of the instance holding the data directory,
     /// and [`None`] unless another instance holds it.
     pub fn status_of_the_holding_instance(&self) -> Option<InstanceStatusRead> {
-        let DataDirectoryMark::HeldByAnotherInstance { directory } = &self.mark else {
+        let mark = self.0.lock();
+        let DataDirectoryMark::HeldByAnotherInstance { directory } = &*mark else {
             return None;
         };
         Some(InstanceStatusRead::read_from(directory))
@@ -466,7 +527,7 @@ impl DataDirectoryLock {
     /// Why the lock file could not be opened or locked, and [`None`] unless
     /// that is what stopped this run.
     pub fn lock_file_failure(&self) -> Option<String> {
-        match &self.mark {
+        match &*self.0.lock() {
             DataDirectoryMark::LockFileUnavailable { cause, .. } => Some(cause.clone()),
             DataDirectoryMark::MarkedByThisInstance(_)
             | DataDirectoryMark::HeldByAnotherInstance { .. }
@@ -481,26 +542,13 @@ impl DataDirectoryLock {
     /// A run that marks no data directory - a read-only session, and a run
     /// without one at all - writes nothing here.
     pub fn record_take_over(&self, taken_from_process_id: Option<u32>) -> Option<TakeOverRecord> {
-        let directory = self.mark.directory()?;
-        let replaced = TakeOverRecord::read_from(directory);
-        let record = TakeOverRecord {
-            taken_by_process_id: process::id(),
-            taken_from_process_id,
-            written_at: seconds_since_the_epoch(SystemTime::now()),
-        };
-        if let Err(error) = record.replace_in(directory) {
-            log::warn!(
-                "Cannot write the take-over file {}: {error}",
-                directory.join(TAKE_OVER_FILE_NAME).display()
-            );
-        }
-        replaced
+        self.0.lock().record_take_over(taken_from_process_id)
     }
 
     /// Report that this instance has begun shutting down, and what it is
     /// still writing.
-    pub fn mark_shutting_down(&mut self, pending_writes: &PendingWrites) {
-        self.write_status(
+    pub fn mark_shutting_down(&self, pending_writes: &PendingWrites) {
+        self.0.lock().write_status(
             InstanceState::ShuttingDown,
             PendingWriteReport::of_running_writes(pending_writes),
         );
@@ -508,99 +556,18 @@ impl DataDirectoryLock {
 
     /// Report what the shutdown is still writing, no more often than
     /// [`MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES`].
-    pub fn report_shutdown_progress(&mut self, pending_writes: &PendingWrites) {
-        let DataDirectoryMark::MarkedByThisInstance(marked) = &self.mark else {
+    pub fn report_shutdown_progress(&self, pending_writes: &PendingWrites) {
+        let mut mark = self.0.lock();
+        let DataDirectoryMark::MarkedByThisInstance(marked) = &*mark else {
             return;
         };
         if marked.last_status_write.elapsed() < MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES {
             return;
         }
-        self.write_status(
+        mark.write_status(
             InstanceState::ShuttingDown,
             PendingWriteReport::of_running_writes(pending_writes),
         );
-    }
-
-    fn write_status(&mut self, state: InstanceState, pending_writes: Vec<PendingWriteReport>) {
-        let DataDirectoryMark::MarkedByThisInstance(marked) = &mut self.mark else {
-            return;
-        };
-        marked.last_status_write = Instant::now();
-        let status = InstanceStatus {
-            process_id: process::id(),
-            state,
-            pending_writes,
-            written_at: seconds_since_the_epoch(SystemTime::now()),
-        };
-        if let Err(error) = marked.replace_status_file(&status) {
-            log::warn!(
-                "Cannot write the instance status file {}: {error}",
-                marked.directory.join(STATUS_FILE_NAME).display()
-            );
-        }
-    }
-}
-
-/// A [`DataDirectoryLock`] the window and the wait for the last writes share.
-///
-/// The app retries the mark through it while another instance holds the
-/// directory, and `main` reports the shutdown through the same lock.
-#[derive(Debug, Clone)]
-pub struct SharedDataDirectoryLock(Arc<Mutex<DataDirectoryLock>>);
-
-impl SharedDataDirectoryLock {
-    pub fn new(lock: DataDirectoryLock) -> Self {
-        Self(Arc::new(Mutex::new(lock)))
-    }
-
-    /// [`DataDirectoryLock::acquire`], shared from the start.
-    pub fn acquire(data_directory: Option<&Path>) -> Self {
-        Self::new(DataDirectoryLock::acquire(data_directory))
-    }
-
-    /// The lock of a run that marks nothing, whose reports write nothing.
-    pub fn marking_nothing() -> Self {
-        Self::new(DataDirectoryLock::marking_nothing())
-    }
-
-    /// What this run owns of the data directory.
-    pub fn ownership(&self) -> DataDirectoryOwnership {
-        self.0.lock().ownership()
-    }
-
-    /// See [`DataDirectoryLock::give_up_marking_the_data_directory`].
-    pub fn give_up_marking_the_data_directory(&self) {
-        self.0.lock().give_up_marking_the_data_directory();
-    }
-
-    /// See [`DataDirectoryLock::retry_marking_the_data_directory`].
-    pub fn retry_marking_the_data_directory(&self) -> DataDirectoryOwnership {
-        self.0.lock().retry_marking_the_data_directory()
-    }
-
-    /// See [`DataDirectoryLock::status_of_the_holding_instance`].
-    pub fn status_of_the_holding_instance(&self) -> Option<InstanceStatusRead> {
-        self.0.lock().status_of_the_holding_instance()
-    }
-
-    /// See [`DataDirectoryLock::lock_file_failure`].
-    pub fn lock_file_failure(&self) -> Option<String> {
-        self.0.lock().lock_file_failure()
-    }
-
-    /// See [`DataDirectoryLock::record_take_over`].
-    pub fn record_take_over(&self, taken_from_process_id: Option<u32>) -> Option<TakeOverRecord> {
-        self.0.lock().record_take_over(taken_from_process_id)
-    }
-
-    /// See [`DataDirectoryLock::mark_shutting_down`].
-    pub fn mark_shutting_down(&self, pending_writes: &PendingWrites) {
-        self.0.lock().mark_shutting_down(pending_writes);
-    }
-
-    /// See [`DataDirectoryLock::report_shutdown_progress`].
-    pub fn report_shutdown_progress(&self, pending_writes: &PendingWrites) {
-        self.0.lock().report_shutdown_progress(pending_writes);
     }
 }
 
@@ -631,30 +598,6 @@ fn open_lock_file(directory: &Path) -> io::Result<File> {
         .create(true)
         .truncate(false)
         .open(directory.join(LOCK_FILE_NAME))
-}
-
-impl Drop for DataDirectoryLock {
-    /// Removes the status file, so a clean exit leaves nothing behind.
-    ///
-    /// `process::exit` skips this, so a force quit leaves the status file in
-    /// the directory. `DataDirectoryMark::of` overwrites it when the next
-    /// instance takes the lock, and `status_of_the_holding_instance` only
-    /// reads it while another instance holds the lock, so a leftover one is
-    /// never read.
-    fn drop(&mut self) {
-        let DataDirectoryMark::MarkedByThisInstance(marked) = &self.mark else {
-            return;
-        };
-        let path = marked.directory.join(STATUS_FILE_NAME);
-        match fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => log::warn!(
-                "Cannot remove the instance status file {}: {error}",
-                path.display()
-            ),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -805,7 +748,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("temp dir");
         let _holder = DataDirectoryLock::acquire(Some(directory.path()));
 
-        let mut second = DataDirectoryLock::acquire(Some(directory.path()));
+        let second = DataDirectoryLock::acquire(Some(directory.path()));
 
         assert_eq!(
             second.ownership(),
@@ -825,7 +768,7 @@ mod tests {
     fn a_run_that_gave_up_the_mark_never_takes_the_directory_again() {
         let directory = tempfile::tempdir().expect("temp dir");
         let holder = DataDirectoryLock::acquire(Some(directory.path()));
-        let mut waiting = DataDirectoryLock::acquire(Some(directory.path()));
+        let waiting = DataDirectoryLock::acquire(Some(directory.path()));
         assert_eq!(
             waiting.ownership(),
             DataDirectoryOwnership::HeldByAnotherInstance
@@ -877,7 +820,7 @@ mod tests {
             .expect("the registry is running");
         compaction.set_progress(0.25);
         compaction.set_stage("Rewriting maps");
-        let mut lock = DataDirectoryLock::acquire(Some(directory.path()));
+        let lock = DataDirectoryLock::acquire(Some(directory.path()));
 
         lock.mark_shutting_down(&pending_writes);
 
@@ -905,7 +848,7 @@ mod tests {
             .try_begin("Compacting the TEC archive", TEC_COMPACTION)
             .expect("the registry is running");
         compaction.set_progress(f32::NAN);
-        let mut lock = DataDirectoryLock::acquire(Some(directory.path()));
+        let lock = DataDirectoryLock::acquire(Some(directory.path()));
 
         lock.mark_shutting_down(&pending_writes);
 
@@ -928,7 +871,7 @@ mod tests {
         let compaction = pending_writes
             .try_begin("Compacting the TEC archive", TEC_COMPACTION)
             .expect("the registry is running");
-        let mut lock = DataDirectoryLock::acquire(Some(directory.path()));
+        let lock = DataDirectoryLock::acquire(Some(directory.path()));
         lock.mark_shutting_down(&pending_writes);
         drop(compaction);
 
@@ -957,7 +900,7 @@ mod tests {
 
     #[test]
     fn a_run_without_a_data_directory_marks_nothing() {
-        let mut lock = DataDirectoryLock::acquire(None);
+        let lock = DataDirectoryLock::acquire(None);
 
         lock.mark_shutting_down(&PendingWrites::default());
 
@@ -995,7 +938,7 @@ mod tests {
         let file_in_the_way = parent.path().join("geotrace");
         fs::write(&file_in_the_way, b"not a directory").expect("write");
         let directory = file_in_the_way.join("data");
-        let mut lock = DataDirectoryLock::acquire(Some(&directory));
+        let lock = DataDirectoryLock::acquire(Some(&directory));
 
         assert_eq!(
             lock.retry_marking_the_data_directory(),
@@ -1022,7 +965,7 @@ mod tests {
     fn a_retry_takes_the_directory_the_instance_holding_it_let_go() {
         let directory = tempfile::tempdir().expect("temp dir");
         let holder = DataDirectoryLock::acquire(Some(directory.path()));
-        let mut waiting = DataDirectoryLock::acquire(Some(directory.path()));
+        let waiting = DataDirectoryLock::acquire(Some(directory.path()));
 
         assert_eq!(
             waiting.retry_marking_the_data_directory(),
@@ -1046,7 +989,7 @@ mod tests {
     /// retry: every attempt would open a lock file of its own.
     #[test]
     fn a_retry_without_a_data_directory_marks_nothing() {
-        let mut lock = DataDirectoryLock::marking_nothing();
+        let lock = DataDirectoryLock::marking_nothing();
 
         assert_eq!(
             lock.retry_marking_the_data_directory(),
@@ -1063,7 +1006,7 @@ mod tests {
         let _compaction = pending_writes
             .try_begin("Compacting the TEC archive", TEC_COMPACTION)
             .expect("the registry is running");
-        let mut holder = DataDirectoryLock::acquire(Some(directory.path()));
+        let holder = DataDirectoryLock::acquire(Some(directory.path()));
         let waiting = DataDirectoryLock::acquire(Some(directory.path()));
 
         assert_eq!(
@@ -1095,12 +1038,12 @@ mod tests {
         );
     }
 
-    /// Both ends of the shutdown wait hold the same lock: `main` reports
-    /// through its clone while the window's clone is gone.
+    /// Both ends of the shutdown wait hold the same mark: `main` reports
+    /// through its clone once the window's clone is gone.
     #[test]
-    fn a_shared_lock_reports_through_every_clone() {
+    fn a_lock_keeps_its_mark_until_the_last_clone_drops() {
         let directory = tempfile::tempdir().expect("temp dir");
-        let lock = SharedDataDirectoryLock::acquire(Some(directory.path()));
+        let lock = DataDirectoryLock::acquire(Some(directory.path()));
         let held_by_main = lock.clone();
         drop(lock);
 
@@ -1113,6 +1056,13 @@ mod tests {
         assert_eq!(
             held_by_main.ownership(),
             DataDirectoryOwnership::MarkedByThisInstance
+        );
+        drop(held_by_main);
+
+        assert_eq!(
+            InstanceStatusRead::read_from(directory.path()),
+            InstanceStatusRead::Absent,
+            "the status file outlived the last clone"
         );
     }
 
@@ -1220,7 +1170,7 @@ mod tests {
     fn a_run_that_marks_no_directory_records_no_take_over() {
         let directory = tempfile::tempdir().expect("temp dir");
         let _holder = DataDirectoryLock::acquire(Some(directory.path()));
-        let mut read_only = lock_waiting_for(directory.path());
+        let read_only = lock_waiting_for(directory.path());
         read_only.give_up_marking_the_data_directory();
 
         assert_eq!(

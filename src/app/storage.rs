@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
 
 use egui::Context;
-use gt_instance_lock::{SharedDataDirectoryLock, TakeOverRecord};
+use gt_instance_lock::{DataDirectoryLock, TakeOverRecord};
 use gt_pending_writes::{PendingWrites, WriteAccess, WriteKind};
 use gt_store::{
     ArchiveHandle, DayArchiveError, DbError, FlareStore, GeomagneticIndexArchive,
@@ -172,7 +172,7 @@ impl StorageOpen {
     /// The wait a run starts in when another instance holds the data
     /// directory.
     pub(in crate::app) fn waiting_for_the_data_directory(
-        instance_lock: &SharedDataDirectoryLock,
+        instance_lock: &DataDirectoryLock,
     ) -> Self {
         Self::WaitingForTheDataDirectory {
             wait: DataDirectoryWait::new(instance_lock),

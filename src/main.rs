@@ -7,7 +7,7 @@ pub mod terms;
 use std::time::Duration;
 use std::{path::PathBuf, process::ExitCode};
 
-use gt_instance_lock::SharedDataDirectoryLock;
+use gt_instance_lock::DataDirectoryLock;
 use gt_pending_writes::{PendingWrites, WriteAccess};
 
 use crate::app::shutdown;
@@ -138,7 +138,7 @@ impl SignalDuringTheWait {
 /// instance lock keeps naming what is left to write while the wait runs.
 fn begin_shutdown_and_wait_for_pending_writes(
     pending_writes: &PendingWrites,
-    instance_lock: &SharedDataDirectoryLock,
+    instance_lock: &DataDirectoryLock,
 ) -> ExitCode {
     pending_writes.begin_shutdown();
     for status in pending_writes.snapshot().running {
@@ -284,7 +284,7 @@ fn main() -> ExitCode {
     // its own clone of it while another instance holds the directory. This
     // clone lives to the end of main, past the wait for the writes that
     // outlive the window.
-    let instance_lock = SharedDataDirectoryLock::acquire(storage.data_directory().as_deref());
+    let instance_lock = DataDirectoryLock::acquire(storage.data_directory().as_deref());
     let app_instance_lock = instance_lock.clone();
     let result = eframe::run_native(
         concat!("GeoTrace v", env!("CARGO_PKG_VERSION")),
@@ -322,7 +322,7 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    use gt_instance_lock::{InstanceState, InstanceStatusRead, SharedDataDirectoryLock};
+    use gt_instance_lock::{DataDirectoryLock, InstanceState, InstanceStatusRead};
     use gt_pending_writes::{PendingWrites, WriteKind};
     use rstest::rstest;
 
@@ -357,7 +357,7 @@ mod tests {
         assert_eq!(
             crate::begin_shutdown_and_wait_for_pending_writes(
                 &PendingWrites::default(),
-                &SharedDataDirectoryLock::marking_nothing()
+                &DataDirectoryLock::marking_nothing()
             ),
             ExitCode::SUCCESS
         );
@@ -382,7 +382,7 @@ mod tests {
                 drop(compaction);
             })
             .expect("spawn the holding thread");
-        let instance_lock = SharedDataDirectoryLock::acquire(Some(directory.path()));
+        let instance_lock = DataDirectoryLock::acquire(Some(directory.path()));
 
         assert_eq!(
             crate::begin_shutdown_and_wait_for_pending_writes(&pending_writes, &instance_lock),
@@ -437,7 +437,7 @@ mod tests {
         assert_eq!(
             crate::begin_shutdown_and_wait_for_pending_writes(
                 &pending_writes,
-                &SharedDataDirectoryLock::marking_nothing()
+                &DataDirectoryLock::marking_nothing()
             ),
             ExitCode::from(shutdown::FORCE_QUIT_EXIT_CODE)
         );
