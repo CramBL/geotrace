@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gt_fetch::{Connection, OfflineTransport, TransportSource};
+use gt_store::EnvironmentArchive;
 
 /// The transport one scheduler's day fetches run on, connected on the first
 /// fetch and kept until the host changes.
@@ -12,30 +13,30 @@ pub struct DayFetchTransport {
     /// application supplies this.
     source: TransportSource,
     pacing: Option<Duration>,
-    /// Prefix of the [`TransportSource::connect`] failure log line.
-    label: &'static str,
+    /// Used only in the log line for a failed [`TransportSource::connect`].
+    archive: EnvironmentArchive,
     connection: Option<Arc<Connection>>,
 }
 
 impl DayFetchTransport {
     /// A transport that sleeps the calling thread to keep its sends `interval`
     /// apart.
-    pub fn paced(source: TransportSource, interval: Duration, label: &'static str) -> Self {
+    pub fn paced(source: TransportSource, interval: Duration, archive: EnvironmentArchive) -> Self {
         Self {
             source,
             pacing: Some(interval),
-            label,
+            archive,
             connection: None,
         }
     }
 
     /// A transport that does not pace its sends, for a scheduler that spaces
     /// its own dispatches.
-    pub fn unpaced(source: TransportSource, label: &'static str) -> Self {
+    pub fn unpaced(source: TransportSource, archive: EnvironmentArchive) -> Self {
         Self {
             source,
             pacing: None,
-            label,
+            archive,
             connection: None,
         }
     }
@@ -61,7 +62,10 @@ impl DayFetchTransport {
                 connection
             }
             Err(err) => {
-                log::error!("{} transport unavailable: {err}", self.label);
+                log::error!(
+                    "The {} transport is unavailable: {err}",
+                    self.archive.label_in_sentence()
+                );
                 Arc::new(Connection::Offline(OfflineTransport))
             }
         }
@@ -84,7 +88,7 @@ mod tests {
         DayFetchTransport::paced(
             TransportSource::Offline,
             Duration::from_secs(1),
-            "Test data",
+            EnvironmentArchive::AircraftInterference,
         )
     }
 
