@@ -5,6 +5,7 @@
 ### Fixed
 
 - **Map & Tracks:** Fixed the min spread filter understating how far tracks that cross the antimeridian or circle a pole ranged.
+- **Map & Tracks:** Fixed a recording whose fixes are out of time order dropping markers and sensor samples that fall inside a track, and reporting a negative recorded time.
 
 ## 0.13.0 - 2026-08-25
 

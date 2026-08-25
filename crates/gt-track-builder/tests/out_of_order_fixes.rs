@@ -15,7 +15,8 @@ use gt_types::track::{FileSource, LoadedFile};
 use uom::si::angle::degree;
 use uom::si::f64::Angle;
 
-/// A measured fix at a fixed position, so only its timestamp distinguishes it.
+/// A measured fix, distinguished only by its timestamp: every one of them
+/// shares a position.
 fn measured_fix_at(millis: i64) -> NavPoint {
     let time = DateTime::<Utc>::UNIX_EPOCH + Duration::milliseconds(millis);
     let tpv = TimePositionVelocity::builder()
@@ -43,8 +44,8 @@ fn build(points: &[NavPoint], event_markers: Vec<EventMarker>) -> LoadedFile {
 }
 
 /// An event marker stamped at the exact time of a fix in the track belongs to
-/// that track. Here the middle fix is the latest one, so a time range taken
-/// from the first and last fix excludes it.
+/// that track. A time range taken from the first and last fix excludes the
+/// middle fix here, which is the latest one.
 #[test]
 fn event_marker_at_an_out_of_order_fix_time_is_assigned_to_its_track() {
     const SECOND_FIX_MILLIS: i64 = 100_000;
@@ -84,9 +85,9 @@ fn recorded_time_spans_every_fix_when_one_steps_backwards() {
 }
 
 proptest::proptest! {
-    /// Segmentation partitions the points, so the ranges are contiguous,
-    /// non-empty, and cover every point exactly once, whatever order the
-    /// timestamps arrive in.
+    /// The ranges are contiguous, non-empty, and cover every point exactly
+    /// once, whatever order the timestamps arrive in: segmentation partitions
+    /// the points.
     #[test]
     fn segment_tracks_partitions_every_point_exactly_once(
         millis in proptest::collection::vec(-1_000_000i64..1_000_000i64, 1..40usize)

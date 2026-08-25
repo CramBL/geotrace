@@ -186,10 +186,7 @@ impl ParsedLog {
     pub fn time_range(&self) -> Option<TimeRange> {
         let mut timestamps = self.entries.iter().map(|entry| entry.timestamp);
         let first = timestamps.next()?;
-        let (start, end) = timestamps.fold((first, first), |(start, end), timestamp| {
-            (start.min(timestamp), end.max(timestamp))
-        });
-        Some(TimeRange::new(start, end))
+        Some(TimeRange::spanning(first, timestamps))
     }
 
     /// The timestamp of the first entry that carried one of its own.
