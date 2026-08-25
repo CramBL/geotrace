@@ -114,7 +114,7 @@ impl SolarFlareScheduler {
             transport: DayFetchTransport::paced(
                 transport_source,
                 transport::REQUEST_INTERVAL,
-                "Solar flare",
+                EnvironmentArchive::SolarFlares,
             ),
             days: DayFetchQueue::default(),
             pending_writes,

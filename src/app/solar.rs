@@ -123,7 +123,7 @@ impl GeomagneticIndexScheduler {
             transport: DayFetchTransport::paced(
                 transport_source,
                 transport::REQUEST_INTERVAL,
-                "Geomagnetic index",
+                EnvironmentArchive::GeomagneticIndices,
             ),
             days: DayFetchQueue::default(),
             pending_writes,

@@ -214,7 +214,10 @@ impl JammingScheduler {
             rx,
             base_url,
             store: None,
-            transport: DayFetchTransport::unpaced(transport_source, "Interference"),
+            transport: DayFetchTransport::unpaced(
+                transport_source,
+                EnvironmentArchive::AircraftInterference,
+            ),
             days: DayFetchQueue::default(),
             last_request: None,
             pending_writes,

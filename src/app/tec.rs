@@ -137,7 +137,7 @@ impl TecMapScheduler {
             transport: DayFetchTransport::paced(
                 transport_source,
                 transport::REQUEST_INTERVAL,
-                "TEC map",
+                EnvironmentArchive::IonosphericTec,
             ),
             days: DayFetchQueue::default(),
             archived_days: BTreeSet::new(),
