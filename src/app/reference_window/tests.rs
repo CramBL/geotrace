@@ -3,7 +3,10 @@ use gt_flare::reference::SOLAR_FLARES;
 use gt_ionex::reference::IONOSPHERIC_TEC;
 use gt_jam::reference::AIRCRAFT_INTERFERENCE;
 use gt_solar::reference::GEOMAGNETIC_ACTIVITY;
-use gt_test_utils::{HarnessInteraction as _, TestHarness};
+use gt_test_utils::window_fit::{CRAMPED_VIEWPORT, NARROW_VIEWPORT, SHORT_VIEWPORT};
+use gt_test_utils::{
+    AuditedWindow, HarnessInteraction as _, TestHarness, WindowFitAssertions as _,
+};
 use gt_ui_types::reference::{
     Abbreviation, ColumnWidth, ReferenceBlock, ReferenceDocument, ReferenceTable, Source,
     TableCell, TableColumn,
@@ -29,10 +32,18 @@ fn harness_showing<'a>(
     document: ReferenceDocument,
     dark_mode: bool,
 ) -> TestHarness<'a, ReferenceWindow> {
+    harness_showing_at(document, dark_mode, HARNESS_SIZE)
+}
+
+fn harness_showing_at<'a>(
+    document: ReferenceDocument,
+    dark_mode: bool,
+    viewport: egui::Vec2,
+) -> TestHarness<'a, ReferenceWindow> {
     let mut window = ReferenceWindow::new();
     window.open(document);
     let mut harness = TestHarness::builder()
-        .size(HARNESS_SIZE)
+        .size(viewport)
         .theme(dark_mode)
         .ui_state(
             |ui: &mut egui::Ui, window: &mut ReferenceWindow| window.show(ui.ctx()),
@@ -401,4 +412,25 @@ fn a_long_cell_wraps_within_its_column() {
         last_span.top() > cell.top(),
         "the cell ends on the line it starts on"
     );
+}
+
+/// Every reference document stays inside the screen at any viewport: its
+/// prose, tables and illustrations scroll rather than stretching the window.
+#[rstest]
+fn the_reference_window_fits_every_viewport(
+    #[values(
+        AIRCRAFT_INTERFERENCE,
+        GEOMAGNETIC_ACTIVITY,
+        IONOSPHERIC_TEC,
+        SOLAR_FLARES
+    )]
+    document: ReferenceDocument,
+    #[values(CRAMPED_VIEWPORT, NARROW_VIEWPORT, SHORT_VIEWPORT)] viewport: egui::Vec2,
+) {
+    let mut harness = harness_showing_at(document, true, viewport);
+    harness.inner.run_steps(8);
+
+    harness
+        .inner
+        .assert_window_fits_the_viewport(AuditedWindow::titled(document.title));
 }

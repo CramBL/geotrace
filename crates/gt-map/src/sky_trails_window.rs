@@ -307,7 +307,14 @@ struct WindowBody<'a> {
 impl WindowBody<'_> {
     /// The window contents: the constellation stats/filter column beside the
     /// trails plot, with the transport (time labels and slider) below.
+    ///
+    /// The plot holds [`MIN_PLOT_DIAMETER_PX`] beside the stats column, which a
+    /// smaller screen reaches by scrolling.
     fn ui(self, ui: &mut egui::Ui) {
+        egui::ScrollArea::both().show(ui, |ui| self.body_ui(ui));
+    }
+
+    fn body_ui(self, ui: &mut egui::Ui) {
         let Self {
             trails,
             scrub_secs,
@@ -1912,5 +1919,52 @@ mod tests {
             Some((FileIdx::new(0), TrackIdx::new(0), epoch.point_index))
         );
         assert!(highlight.plot_hover_snapped);
+    }
+
+    /// The window stays inside the screen at any viewport: the constellation
+    /// column beside the plot and the transport below it scroll rather than
+    /// pushing the window past the screen edge.
+    #[rstest::rstest]
+    fn the_window_fits_every_viewport(
+        #[values(
+            gt_test_utils::window_fit::CRAMPED_VIEWPORT,
+            gt_test_utils::window_fit::NARROW_VIEWPORT,
+            gt_test_utils::window_fit::SHORT_VIEWPORT
+        )]
+        viewport: egui::Vec2,
+    ) {
+        use gt_test_utils::WindowFitAssertions as _;
+
+        let trails = demo_trails();
+        let mut harness = crate::test_harness::builder().size(viewport).ui(move |ui| {
+            Window::new("Sky trails")
+                .resizable(true)
+                .default_size(DEFAULT_WINDOW_SIZE)
+                .min_width(MIN_WINDOW_WIDTH_PX)
+                .min_height(MIN_WINDOW_HEIGHT_PX)
+                .show(ui.ctx(), |ui| {
+                    WindowBody {
+                        trails: &trails,
+                        scrub_secs: &mut 4.0,
+                        playing: &mut false,
+                        speed: &mut 60.0,
+                        shown: &mut ConstellationSet::all(),
+                        show_not_in_fix: &mut true,
+                        show_trails: &mut true,
+                        in_fix_now: &mut false,
+                        show_heatmap: &mut false,
+                        trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
+                        track_ref: track_ref(),
+                        elevation_mask_deg: 10.0,
+                        highlight: &mut MapHighlight::default(),
+                    }
+                    .ui(ui);
+                });
+        });
+        harness.inner.run_steps(8);
+
+        harness
+            .inner
+            .assert_window_fits_the_viewport(gt_test_utils::AuditedWindow::titled("Sky trails"));
     }
 }

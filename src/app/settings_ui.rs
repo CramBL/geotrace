@@ -174,7 +174,8 @@ impl App {
                         self.show_category_rail(ui);
                     });
                 egui::CentralPanel::default().show(ui, |ui| {
-                    ScrollArea::vertical()
+                    // Sideways too: a page can be wider than the rail leaves.
+                    ScrollArea::both()
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             apply = self.show_selected_page(ui);

@@ -25,11 +25,16 @@
 //! on a wedged install a manual path and lets CI exercise the updater end to
 //! end.
 
-use egui::{Button, RichText, Window};
+use egui::{Button, Label, RichText, Window};
 use std::{sync::Arc, thread};
 
 use axoupdater::{AxoUpdater, ReleaseSource, ReleaseSourceType};
 use parking_lot::Mutex;
+
+use crate::app::modals::{self, DialogActions, DialogBody};
+
+/// Room for the primary action and the two dismissals beside it.
+const DIALOG_WIDTH: f32 = 380.0;
 
 /// The app name dist records in the install receipt and uses for installer
 /// asset names. Must match the `geotrace` package/binary name.
@@ -175,70 +180,88 @@ impl UpdateChecker {
         Window::new("Update available")
             .collapsible(false)
             .resizable(false)
+            .min_width(DIALOG_WIDTH)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.label(format!(
-                        "GeoTrace {version} is available (current: {current_version})."
-                    ));
-                    ui.add_space(10.0);
-
-                    match &*install_status {
-                        InstallStatus::Done => {
-                            ui.label("Update installed. Restart GeoTrace to use the new version.");
-                            ui.add_space(8.0);
-                            if ui.button("Quit now").clicked() {
-                                quit = true;
-                            }
-                        }
-                        InstallStatus::Running => {
-                            ui.horizontal(|ui| {
-                                ui.spinner();
-                                ui.label("Downloading and installing…");
-                            });
-                        }
-                        InstallStatus::Failed(err) => {
-                            ui.colored_label(
-                                gt_ui_theme::warning_amber(ui.visuals().dark_mode),
-                                format!("Update failed: {err}"),
+                modals::dialog_body_above_actions(
+                    ui,
+                    DialogBody::new(|ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.add(
+                                Label::new(format!(
+                                    "GeoTrace {version} is available (current: \
+                                     {current_version})."
+                                ))
+                                .wrap(),
                             );
-                            ui.add_space(8.0);
-                            ui.horizontal(|ui| {
-                                ui.hyperlink_to("Download manually", RELEASES_URL);
-                                if ui.button("Later").clicked() {
-                                    later = true;
-                                }
-                            });
-                        }
-                        InstallStatus::Idle => {
-                            // Primary action: prominent, green, and the obvious default.
-                            let update = Button::new(
-                                RichText::new("Update and restart")
-                                    .color(egui::Color32::WHITE)
-                                    .strong(),
-                            )
-                            .fill(gt_ui_theme::SUCCESS_GREEN)
-                            .min_size(egui::vec2(200.0, 30.0));
-                            if ui.add(update).clicked() {
-                                start_install = true;
+                            if let InstallStatus::Failed(err) = &*install_status {
+                                ui.add_space(10.0);
+                                ui.add(
+                                    Label::new(
+                                        RichText::new(format!("Update failed: {err}")).color(
+                                            gt_ui_theme::warning_amber(ui.visuals().dark_mode),
+                                        ),
+                                    )
+                                    .wrap(),
+                                );
                             }
-                            ui.add_space(8.0);
-                            // Lower-key "not right now" choices.
-                            ui.horizontal(|ui| {
-                                if ui.button("Later").clicked() {
-                                    later = true;
+                        });
+                    }),
+                    DialogActions::new(|ui| {
+                        ui.vertical_centered(|ui| match &*install_status {
+                            InstallStatus::Done => {
+                                ui.label(
+                                    "Update installed. Restart GeoTrace to use the new version.",
+                                );
+                                ui.add_space(8.0);
+                                if ui.button("Quit now").clicked() {
+                                    quit = true;
                                 }
-                                if ui
-                                    .button("Skip this version")
-                                    .on_hover_text("Don't prompt again for this version")
-                                    .clicked()
-                                {
-                                    skip = true;
+                            }
+                            InstallStatus::Running => {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    ui.label("Downloading and installing…");
+                                });
+                            }
+                            InstallStatus::Failed(_) => {
+                                ui.horizontal(|ui| {
+                                    ui.hyperlink_to("Download manually", RELEASES_URL);
+                                    if ui.button("Later").clicked() {
+                                        later = true;
+                                    }
+                                });
+                            }
+                            InstallStatus::Idle => {
+                                // Primary action: prominent, green, and the obvious default.
+                                let update = Button::new(
+                                    RichText::new("Update and restart")
+                                        .color(egui::Color32::WHITE)
+                                        .strong(),
+                                )
+                                .fill(gt_ui_theme::SUCCESS_GREEN)
+                                .min_size(egui::vec2(200.0, 30.0));
+                                if ui.add(update).clicked() {
+                                    start_install = true;
                                 }
-                            });
-                        }
-                    }
-                });
+                                ui.add_space(8.0);
+                                // Lower-key "not right now" choices.
+                                ui.horizontal(|ui| {
+                                    if ui.button("Later").clicked() {
+                                        later = true;
+                                    }
+                                    if ui
+                                        .button("Skip this version")
+                                        .on_hover_text("Don't prompt again for this version")
+                                        .clicked()
+                                    {
+                                        skip = true;
+                                    }
+                                });
+                            }
+                        });
+                    }),
+                );
             });
         drop(install_status);
 

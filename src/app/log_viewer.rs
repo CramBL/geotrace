@@ -35,6 +35,15 @@ pub(super) const LOG_LOAD_HINT: &str = "Open a log file, drop it here, or paste 
 /// How the viewer writes a moment, in the table and in the summary panel alike.
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
+pub(super) const LOG_VIEWER_TITLE: &str = "Log viewer";
+
+/// Wide enough for the footer's association controls to sit on one row.
+const DEFAULT_WINDOW_WIDTH_PX: f32 = 800.0;
+
+/// Rows of the line table the sections above it leave room for before they
+/// start scrolling among themselves.
+const TABLE_ROWS_THE_HEADER_LEAVES: usize = 3;
+
 const SUMMARY_HOVER: &str = "Show what the parse read from this log";
 
 const ASSOCIATION_WINDOW_HOVER: &str = "Furthest a line's timestamp may be from a fix of the association target for \
@@ -177,27 +186,14 @@ impl LogViewerWindow {
 
         let mut open = self.open;
         let mut unload_selected = false;
-        Window::new("Log viewer")
+        Window::new(LOG_VIEWER_TITLE)
             .open(&mut open)
-            .default_width(680.0)
+            .default_width(DEFAULT_WINDOW_WIDTH_PX)
             .default_height(520.0)
             .resizable(true)
             .show(ctx, |ui| {
-                self.notices_ui(ui);
-                if logs.is_empty() {
-                    ui.label(RichText::new(LOG_LOAD_HINT).weak());
-                    return;
-                }
-                unload_selected = self.selector_row_ui(ui, logs);
-                if self.summary_expanded
-                    && let Some(log) = logs.get(self.selected)
-                {
-                    self.summary_panel_ui(ui, log);
-                }
-                self.filters_ui(ui, logs);
-                ui.separator();
-                // The footer claims its height first: the table then fills
-                // what remains of the window.
+                // The footer claims its height first: the sections above it
+                // divide what is left.
                 egui::Panel::bottom("log_viewer_footer")
                     .show_separator_line(false)
                     .show(ui, |ui| {
@@ -210,6 +206,33 @@ impl LogViewerWindow {
                             write_access,
                         );
                     });
+                // Notices, the selector, the parse summary and the filter rows
+                // scroll among themselves once they need more room than the
+                // window can spare, leaving the table
+                // `TABLE_ROWS_THE_HEADER_LEAVES` rows to draw in.
+                let reserved_for_the_table = ui.text_style_height(&egui::TextStyle::Monospace)
+                    * TABLE_ROWS_THE_HEADER_LEAVES as f32;
+                egui::ScrollArea::both()
+                    .id_salt("log_viewer_header")
+                    .max_height((ui.available_height() - reserved_for_the_table).max(0.0))
+                    .show(ui, |ui| {
+                        self.notices_ui(ui);
+                        if logs.is_empty() {
+                            ui.label(RichText::new(LOG_LOAD_HINT).weak());
+                            return;
+                        }
+                        unload_selected = self.selector_row_ui(ui, logs);
+                        if self.summary_expanded
+                            && let Some(log) = logs.get(self.selected)
+                        {
+                            self.summary_panel_ui(ui, log);
+                        }
+                        self.filters_ui(ui, logs);
+                    });
+                if logs.is_empty() {
+                    return;
+                }
+                ui.separator();
                 if let Some((log_id, log)) = logs.get_with_id(self.selected) {
                     self.line_table_ui(
                         ui,
@@ -244,7 +267,8 @@ impl LogViewerWindow {
     fn notices_ui(&mut self, ui: &mut egui::Ui) {
         let mut dismissed = None;
         for (index, notice) in self.notices.iter().enumerate() {
-            ui.horizontal(|ui| {
+            // Wrapped: a notice names a recording and a reason.
+            ui.horizontal_wrapped(|ui| {
                 ui.label(
                     RichText::new(notice).color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
                 );
@@ -279,7 +303,9 @@ impl LogViewerWindow {
         let mut chosen = selected;
         let mut summary_expanded = self.summary_expanded;
         let mut unload = false;
-        Sides::new().show(
+        // The summary yields before the log's name and controls do: it is the
+        // one part of the row a narrow window can shorten.
+        Sides::new().shrink_right().truncate().show(
             ui,
             |ui| {
                 if logs.len() > 1 {

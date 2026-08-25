@@ -46,6 +46,11 @@ use super::{App, SharedAppState, modals};
 
 const DROP_OVERLAY_SCRIM_OPACITY: f32 = 0.85;
 
+/// Width of the loading-progress overlay: enough for a progress bar and its
+/// stage, and no more than a recording name needs before it truncates.
+const LOADING_OVERLAY_MIN_WIDTH: f32 = 260.0;
+const LOADING_OVERLAY_MAX_WIDTH: f32 = 340.0;
+
 impl eframe::App for App {
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
         self.flush_settings();
@@ -913,10 +918,15 @@ impl App {
                 .resizable(false)
                 .anchor(egui::Align2::RIGHT_BOTTOM, [-8.0, -8.0])
                 .show(ui.ctx(), |ui| {
-                    ui.set_min_width(260.0);
+                    ui.set_min_width(LOADING_OVERLAY_MIN_WIDTH);
                     // Cap the width so a long recording name truncates.
-                    ui.set_max_width(340.0);
+                    ui.set_max_width(LOADING_OVERLAY_MAX_WIDTH);
 
+                    // The overlay grows upward from the corner, and many
+                    // concurrent loads reach past the top of the screen.
+                    egui::ScrollArea::vertical()
+                    .id_salt("loading_progress_jobs")
+                    .show(ui, |ui| {
                     if opening_databases {
                         ui.horizontal(|ui| {
                             ui.spinner();
@@ -984,6 +994,7 @@ impl App {
                         );
                         ui.add_space(2.0);
                     }
+                    });
                 });
         }
     }

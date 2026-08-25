@@ -1,7 +1,7 @@
 //! The dialog choosing the recording a log associates against, and whether the
 //! log is stored with that recording in history.
 
-use egui::{Checkbox, Grid, RichText, ScrollArea, Window};
+use egui::{Checkbox, Grid, Label, RichText, Window};
 use gt_fmt::MIDDLE_DOT;
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
 use gt_log_view::{AssociationCandidate, LoadedLog};
@@ -10,7 +10,7 @@ use gt_store::DatabaseRef;
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::LoadedLogId;
 
-use crate::app::modals;
+use crate::app::modals::{self, DialogActions, DialogBody};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 
 #[cfg(test)]
@@ -43,11 +43,8 @@ const DONT_SHOW_AGAIN_HOVER: &str = "Associate a loading log by itself when exac
 
 const CONFIRM_HOVER: &str = "Take this log's positions from the chosen recording";
 
-/// Bounds the dialog against a long recording name.
+/// Room for a recording name beside how much of the log it ran alongside.
 const WIDTH_PX: f32 = 460.0;
-
-/// Height the candidate list scrolls past, about eight rows.
-const CANDIDATES_MAX_HEIGHT_PX: f32 = 180.0;
 
 /// What the user decided in the association dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,21 +153,26 @@ impl LogAssociationDialog {
         self.attach &= attachable;
 
         let mut open = true;
+        // Read after the window renders: the body's tickbox writes `attach`.
+        let mut confirmed = false;
         Window::new(TITLE)
             .collapsible(false)
             .resizable(false)
+            .min_width(WIDTH_PX)
             .open(&mut open)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                ui.set_max_width(WIDTH_PX);
-                ui.label(format!(
-                    "Which recording should {} take its positions from?",
-                    log.name()
-                ));
-                ui.add_space(4.0);
-                ScrollArea::vertical()
-                    .max_height(CANDIDATES_MAX_HEIGHT_PX)
-                    .show(ui, |ui| {
+                modals::dialog_body_above_buttons(
+                    ui,
+                    DialogBody::new(|ui| {
+                        ui.add(
+                            Label::new(format!(
+                                "Which recording should {} take its positions from?",
+                                log.name()
+                            ))
+                            .wrap(),
+                        );
+                        ui.add_space(4.0);
                         Grid::new("log_association_candidates")
                             .num_columns(2)
                             .spacing([16.0, 4.0])
@@ -181,30 +183,30 @@ impl LogAssociationDialog {
                                     self.candidate_row_ui(ui, candidate, name);
                                 }
                             });
-                    });
-                ui.add_space(8.0);
-                self.attach_ui(ui, attachable, write_access);
-                ui.add_space(4.0);
-                ui.checkbox(&mut self.dont_show_again, DONT_SHOW_AGAIN_LABEL)
-                    .on_hover_text(DONT_SHOW_AGAIN_HOVER);
-                ui.add_space(8.0);
-                modals::dialog_button_row(ui, |ui| {
-                    if ui
-                        .button(CONFIRM_LABEL)
-                        .on_hover_text(CONFIRM_HOVER)
-                        .clicked()
-                    {
-                        choice = Some(LogAssociationChoice::Confirmed {
-                            target: self.selected,
-                            attach: self.attach,
-                        });
-                    }
-                    if ui.button(CANCEL_LABEL).clicked() {
-                        choice = Some(LogAssociationChoice::Cancelled);
-                    }
-                });
+                        ui.add_space(8.0);
+                        self.attach_ui(ui, attachable, write_access);
+                        ui.add_space(4.0);
+                        ui.checkbox(&mut self.dont_show_again, DONT_SHOW_AGAIN_LABEL)
+                            .on_hover_text(DONT_SHOW_AGAIN_HOVER);
+                    }),
+                    DialogActions::new(|ui| {
+                        confirmed = ui
+                            .button(CONFIRM_LABEL)
+                            .on_hover_text(CONFIRM_HOVER)
+                            .clicked();
+                        if ui.button(CANCEL_LABEL).clicked() {
+                            choice = Some(LogAssociationChoice::Cancelled);
+                        }
+                    }),
+                );
             });
 
+        if confirmed {
+            choice = Some(LogAssociationChoice::Confirmed {
+                target: self.selected,
+                attach: self.attach,
+            });
+        }
         if !open {
             choice = Some(LogAssociationChoice::Cancelled);
         }

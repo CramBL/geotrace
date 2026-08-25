@@ -157,7 +157,8 @@ impl LogViewerWindow {
         let pending_note = self.pending_note(ui, filters);
 
         let mut edit = None;
-        ui.horizontal(|ui| {
+        // Wraps onto further rows on a narrow window.
+        ui.horizontal_wrapped(|ui| {
             if ui
                 .add(
                     TextEdit::singleline(&mut text)

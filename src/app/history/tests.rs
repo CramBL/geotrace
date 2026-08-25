@@ -1,7 +1,12 @@
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use gt_pending_writes::{PendingWrites, WriteAccess};
 use gt_store::{HistoryDatabase as _, RecordingsHandle};
-use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
+use gt_test_utils::window_fit::{
+    CRAMPED_VIEWPORT, NARROW_VIEWPORT, OVERSIZED_ROW_COUNT, SHORT_VIEWPORT,
+};
+use gt_test_utils::{
+    AuditedWindow, By, ControlLabel, HarnessInteraction as _, TestHarness, WindowFitAssertions as _,
+};
 
 use crate::app::history_db::Response;
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
@@ -14,9 +19,9 @@ use super::table::{
     MAX_HOVER_CHANNELS, breakdown_cell_id, channel_title, data_breakdown_ui, track_count_text,
 };
 use super::{
-    DatabaseRef, HistorySort, HistoryWindow, HistoryWorker, ICON_CARET_DOWN, ICON_CARET_UP,
-    RecordingEntry, RecordingMeta, SortColumn, SortDirection, identity_display_parts,
-    travel_mode_display,
+    DELETE_HIDDEN_WINDOW_TITLE, DatabaseRef, HistorySort, HistoryWindow, HistoryWorker,
+    ICON_CARET_DOWN, ICON_CARET_UP, PRUNE_WINDOW_TITLE, RecordingEntry, RecordingMeta, SortColumn,
+    SortDirection, identity_display_parts, travel_mode_display,
 };
 use strum::{EnumCount as _, IntoEnumIterator as _};
 
@@ -1231,5 +1236,154 @@ fn identity_display_marks_auto_identity_without_losing_original() {
     assert_eq!(
         identity_display_parts(identity),
         ("recording-2026-07-09.gtd", true)
+    );
+}
+
+/// A History window filled with more recordings than any screen shows at once,
+/// each under a long identity, so both axes overflow.
+fn crowded_history_harness() -> HistoryHarness {
+    let identity = gt_test_utils::oversized_text('r');
+    let entries = (0..OVERSIZED_ROW_COUNT)
+        .map(|index| {
+            let mut entry = entry_with_identity(&format!("{identity}/{index}"));
+            entry.meta.gtd_size_bytes = CROWDED_RECORDING_BYTES;
+            entry
+        })
+        .collect();
+    history_harness(entries)
+}
+
+/// Size given to each of [`crowded_history_harness`]'s recordings, so the
+/// footer states a total rather than a placeholder.
+const CROWDED_RECORDING_BYTES: u64 = 1024;
+
+/// The stats line the footer ends on for [`crowded_history_harness`].
+const CROWDED_FOOTER_STATS: &str = "200 recordings - 200.0 KB";
+
+/// The History window keeps its footer reachable at any viewport: the listing
+/// takes the room that is left and scrolls its own rows, instead of pushing the
+/// stats line past the bottom of the screen.
+#[rstest::rstest]
+fn history_window_fits_every_viewport(
+    #[values(CRAMPED_VIEWPORT, NARROW_VIEWPORT, SHORT_VIEWPORT)] viewport: egui::Vec2,
+) {
+    let mut h = TestHarness::builder()
+        .size(viewport)
+        .ui_state(show_history, crowded_history_harness());
+    for _ in 0..8 {
+        h.step();
+    }
+    h.inner
+        .assert_window_fits_the_viewport(AuditedWindow::titled("History"));
+    h.inner.assert_control_is_reachable(
+        AuditedWindow::titled("History"),
+        ControlLabel(CROWDED_FOOTER_STATS),
+    );
+}
+
+/// The prune dialog with a preview of far more recordings than any viewport
+/// lists, each named at length.
+fn crowded_prune_harness() -> HistoryHarness {
+    let identity = gt_test_utils::oversized_text('r');
+    let mut harness = history_harness(Vec::new());
+    harness.window.prune.open = true;
+    harness.window.set_prune_preview(
+        (0..OVERSIZED_ROW_COUNT)
+            .map(|index| DatabaseRef {
+                identity: format!("{identity}/{index}"),
+                group_name: format!("rec{index}"),
+            })
+            .collect(),
+    );
+    harness
+}
+
+/// The prune dialog keeps its destructive action reachable at any viewport: the
+/// preview list scrolls rather than pushing the buttons past the screen edge.
+#[rstest::rstest]
+fn prune_dialog_fits_every_viewport(
+    #[values(CRAMPED_VIEWPORT, NARROW_VIEWPORT, SHORT_VIEWPORT)] viewport: egui::Vec2,
+) {
+    let mut h = TestHarness::builder()
+        .size(viewport)
+        .ui_state(show_history, crowded_prune_harness());
+    for _ in 0..8 {
+        h.step();
+    }
+    h.inner
+        .assert_window_fits_the_viewport(AuditedWindow::titled(PRUNE_WINDOW_TITLE));
+    h.inner.assert_control_is_reachable(
+        AuditedWindow::titled(PRUNE_WINDOW_TITLE),
+        ControlLabel("Cancel"),
+    );
+}
+
+/// The delete-hidden confirmation stays inside the screen and keeps its
+/// buttons reachable however many tracks it names.
+#[rstest::rstest]
+fn delete_hidden_confirmation_fits_every_viewport(
+    #[values(CRAMPED_VIEWPORT, NARROW_VIEWPORT, SHORT_VIEWPORT)] viewport: egui::Vec2,
+) {
+    let mut entry = entry_with_identity(&gt_test_utils::oversized_text('r'));
+    entry.total_tracks = OVERSIZED_ROW_COUNT;
+    entry.hidden_tracks = OVERSIZED_ROW_COUNT;
+    let mut harness = history_harness(vec![entry]);
+    harness.window.delete_hidden_confirm_open = true;
+    let mut h = TestHarness::builder()
+        .size(viewport)
+        .ui_state(show_history, harness);
+    for _ in 0..8 {
+        h.step();
+    }
+    h.inner
+        .assert_window_fits_the_viewport(AuditedWindow::titled(DELETE_HIDDEN_WINDOW_TITLE));
+    h.inner.assert_control_is_reachable(
+        AuditedWindow::titled(DELETE_HIDDEN_WINDOW_TITLE),
+        ControlLabel("Cancel"),
+    );
+}
+
+/// Screen the height audit runs against: taller than a handful of recordings
+/// need, shorter than [`OVERSIZED_ROW_COUNT`] of them.
+const HEIGHT_AUDIT_VIEWPORT: egui::Vec2 = egui::vec2(1000.0, 800.0);
+
+/// Settled height of the History window listing `rows` recordings, through the
+/// real rendering path ([`HistoryWindow::show`]).
+fn settled_history_window_height(rows: usize) -> f32 {
+    let entries = (0..rows)
+        .map(|index| entry_with_identity(&format!("auto:ride{index}.gtd")))
+        .collect();
+    let mut h = TestHarness::builder()
+        .size(HEIGHT_AUDIT_VIEWPORT)
+        .ui_state(show_history, history_harness(entries));
+    h.inner
+        .settled_window_size("History", 10)
+        .expect("the History window is shown")
+        .y
+}
+
+/// Three recordings leave the History window at the height of three
+/// recordings, well under its 480px default height.
+#[test]
+fn a_short_list_settles_the_window_at_its_content_height() {
+    let height = settled_history_window_height(3);
+    assert!(
+        height < 350.0,
+        "the History window settled at {height:.0}px listing three recordings, far more \
+         than three rows and the footer need: it stopped tracking its content",
+    );
+}
+
+/// More recordings than the screen shows grow the window to the screen edge
+/// and no further, the rows scrolling inside it from there on.
+#[test]
+fn a_list_longer_than_the_screen_stops_the_window_at_the_screen_edge() {
+    let height = settled_history_window_height(OVERSIZED_ROW_COUNT);
+    assert!(
+        (600.0..=HEIGHT_AUDIT_VIEWPORT.y).contains(&height),
+        "the History window settled at {height:.0}px listing {OVERSIZED_ROW_COUNT} \
+         recordings on a {:.0}px screen: it should take the screen's full height and \
+         scroll its rows there",
+        HEIGHT_AUDIT_VIEWPORT.y,
     );
 }
