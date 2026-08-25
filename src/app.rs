@@ -9,6 +9,7 @@ mod context_line;
 mod day_failures;
 mod day_fetch_queue;
 mod day_fetch_status;
+mod day_fetch_transport;
 mod day_index_read_retry;
 mod environment_storage;
 mod environment_storage_ui;

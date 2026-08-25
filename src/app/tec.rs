@@ -17,7 +17,7 @@ use std::time::Instant;
 use chrono::{DateTime, NaiveDate, Utc};
 use egui::Context;
 
-use gt_fetch::{Connection, OfflineTransport, SecretToken, Transport, TransportSource};
+use gt_fetch::{Connection, SecretToken, Transport, TransportSource};
 use gt_ionex::instant_selection::TecInstantSelection;
 use gt_ionex::maps::GlobalIonosphereMaps;
 use gt_ionex::mirrors::{MirrorAttempt, MirrorBaseUrl, MirrorList, MirrorOutcome};
@@ -39,6 +39,7 @@ use super::background_thread;
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
 use super::day_fetch_queue::DayFetchQueue;
 use super::day_fetch_status::ArchivedDayCount;
+use super::day_fetch_transport::DayFetchTransport;
 use super::day_index_read_retry::DayIndexReadRetry;
 use super::environment_storage::PrunedDays;
 use super::fix_positions::FixPositionTimeline;
@@ -91,12 +92,7 @@ pub struct TecMapScheduler {
     /// `None` disables fetching: no archive was opened. A read-only session
     /// has one here, and [`Self::writable_archive`] is [`None`].
     store: Option<TecMapArchive>,
-    /// Connected on the first request, and dropped when the mirror list
-    /// changes.
-    http: Option<Arc<Connection>>,
-    /// Where that transport comes from. Supplied by the application, so
-    /// nothing here determines whether requests may leave the machine.
-    transport_source: TransportSource,
+    transport: DayFetchTransport,
     days: DayFetchQueue,
     /// UTC days the archive holds maps for, read from its day index and
     /// extended on ingest, so resolving a fix's value never reads the day
@@ -138,8 +134,11 @@ impl TecMapScheduler {
             mirrors,
             earthdata_token,
             store: None,
-            http: None,
-            transport_source,
+            transport: DayFetchTransport::paced(
+                transport_source,
+                transport::REQUEST_INTERVAL,
+                "TEC map",
+            ),
             days: DayFetchQueue::default(),
             archived_days: BTreeSet::new(),
             day_index_read: DayIndexReadRetry::for_archive(EnvironmentArchive::IonosphericTec),
@@ -164,14 +163,11 @@ impl TecMapScheduler {
     /// Reads the days the archive holds, keeping the days already read when
     /// another process has the file open.
     fn read_the_day_index(&mut self) {
-        let Some(store) = self.store.clone() else {
-            self.day_index_read.forget_the_due_reread();
-            return;
-        };
-        if let Some(days) = self
-            .day_index_read
-            .record_read(&self.ctx, archived_days_of(store.read()))
-        {
+        if let Some(days) = self.day_index_read.read_the_day_index_of(
+            &self.ctx,
+            self.store.as_ref(),
+            archived_days_of,
+        ) {
             self.archived_days = days;
         }
     }
@@ -371,7 +367,7 @@ impl TecMapScheduler {
             return;
         }
         self.mirrors = mirrors.clone();
-        self.http = None;
+        self.transport.drop_the_connection();
         self.days.forget_host();
     }
 
@@ -568,7 +564,7 @@ impl TecMapScheduler {
         let Some(day) = self.days.take_next_day() else {
             return;
         };
-        let transport = self.transport();
+        let transport = self.transport.connect_or_offline();
         self.spawn_fetch(transport, archive, day);
     }
 
@@ -593,33 +589,6 @@ impl TecMapScheduler {
             tx.send(message).ok();
             ctx.request_repaint();
         });
-    }
-
-    /// The transport to fetch on, opened once and kept until the mirror list
-    /// changes.
-    ///
-    /// A transport that cannot be opened stands in as the offline one for this
-    /// dispatch only, and the day fails through the worker like any other
-    /// failure. The stand-in is not cached, so the next dispatch tries to open
-    /// a real one again.
-    fn transport(&mut self) -> Arc<Connection> {
-        if let Some(http) = self.http.as_ref() {
-            return Arc::clone(http);
-        }
-        match self
-            .transport_source
-            .connect(Some(transport::REQUEST_INTERVAL))
-        {
-            Ok(connection) => {
-                let http = Arc::new(connection);
-                self.http = Some(Arc::clone(&http));
-                http
-            }
-            Err(err) => {
-                log::error!("TEC map transport unavailable: {err}");
-                Arc::new(Connection::Offline(OfflineTransport))
-            }
-        }
     }
 }
 
