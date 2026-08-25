@@ -23,6 +23,29 @@ The release flow promotes it for you.
 A prerelease (`X.Y.Z-rc.N`) and its final release share one core-version section.
 The `--expect` guards refuse to tag if that section is missing.
 
+### Categories
+
+Every entry in `CHANGELOG.md` opens with one of six prefixes, and one feature keeps the same prefix everywhere it appears:
+
+- **Environment Data** - space weather, ionosphere and aircraft interference: downloads, archives, map layers, plot chips and warnings.
+- **Interface** - windows, panels, dialogs, and the plot and query surfaces.
+- **Log Viewer** - loading, parsing, filtering and inspecting logs.
+- **Map & Tracks** - the map, tracks, track points, markers and snapping.
+- **Settings & Storage** - the Settings window, the recording history and disk usage.
+- **System** - startup, shutdown, signals, the CLI, updates and running more than one GeoTrace at a time.
+
+Entries sort by prefix within `### Added`, `### Changed` and `### Fixed`.
+
+### Consolidate before bumping
+
+A changelog line per commit is the right discipline while a feature is being built, but `## Unreleased` ships verbatim as the release notes.
+Rewrite it before `just qa::bump-app`, not after:
+
+- One feature gets one to three entries, written from what a user gets rather than from what each commit did.
+- Every entry stands alone - no "that wait", no "after taking over", nothing that needs the entry above it to parse.
+- State the behaviour and drop the mechanism, along with detail a user cannot observe: retry budgets, temporary filenames, storage layout.
+- A bug in a feature that has not shipped yet is not a fix - fold what a user can observe into that feature's entry and drop the rest.
+
 ## Scripted flow
 
 The `just release::*` recipes walk these steps interactively from an up-to-date, clean `trunk`, printing each command as `<command> ?` and running it when you press Enter (`s` skips, `q` quits):
