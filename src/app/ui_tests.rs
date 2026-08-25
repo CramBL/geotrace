@@ -27,7 +27,7 @@ use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
 use geotrace_sdk::{Channel, ChannelUnit, DateTime, Duration, Unit, Utc};
 use gt_instance_lock::{
     DataDirectoryLock, DataDirectoryOwnership, InstanceState, InstanceStatus, InstanceStatusRead,
-    MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES, SharedDataDirectoryLock, TakeOverRecord,
+    MINIMUM_INTERVAL_BETWEEN_STATUS_WRITES, TakeOverRecord,
 };
 use gt_jam::wire::HexObservation;
 use gt_jam_store::schema;
@@ -132,7 +132,7 @@ fn build_app_with_write_access(
         config_path,
         fading,
         PendingWrites::new(write_access),
-        SharedDataDirectoryLock::marking_nothing(),
+        DataDirectoryLock::marking_nothing(),
     )
 }
 
@@ -144,7 +144,7 @@ fn build_app_with_the_instance_lock(
     config_path: &std::path::Path,
     fading: bool,
     pending_writes: PendingWrites,
-    instance_lock: SharedDataDirectoryLock,
+    instance_lock: DataDirectoryLock,
 ) -> App {
     App::new_with_config(
         cc,
@@ -184,7 +184,7 @@ fn transient_app_with_paths(cc: &eframe::CreationContext<'_>, paths: &[PathBuf])
     transient_app_with_the_instance_lock(
         cc,
         paths,
-        SharedDataDirectoryLock::marking_nothing(),
+        DataDirectoryLock::marking_nothing(),
         PendingWrites::default(),
     )
 }
@@ -195,7 +195,7 @@ fn transient_app_with_paths(cc: &eframe::CreationContext<'_>, paths: &[PathBuf])
 fn transient_app_with_the_instance_lock(
     cc: &eframe::CreationContext<'_>,
     paths: &[PathBuf],
-    instance_lock: SharedDataDirectoryLock,
+    instance_lock: DataDirectoryLock,
     pending_writes: PendingWrites,
 ) -> App {
     App::new_with_config(
@@ -4498,7 +4498,7 @@ fn app_with_the_databases_still_opening_for<'a>(
             let mut app = transient_app_with_the_instance_lock(
                 cc,
                 paths,
-                SharedDataDirectoryLock::marking_nothing(),
+                DataDirectoryLock::marking_nothing(),
                 PendingWrites::new(write_access),
             );
             sender_tx.send(app.storage_open.take_over_for_test()).ok();
@@ -4730,8 +4730,8 @@ fn a_storage_open_that_never_reports_still_runs_the_loads_that_waited() {
 /// The app takes its own lock on that very directory, which is refused for as
 /// long as the caller keeps its lock - the same answer a second GeoTrace gets
 /// from the first.
-fn lock_on_a_directory_another_instance_holds(data_directory: &Path) -> SharedDataDirectoryLock {
-    let instance_lock = SharedDataDirectoryLock::acquire(Some(data_directory));
+fn lock_on_a_directory_another_instance_holds(data_directory: &Path) -> DataDirectoryLock {
+    let instance_lock = DataDirectoryLock::acquire(Some(data_directory));
     assert_eq!(
         instance_lock.ownership(),
         DataDirectoryOwnership::HeldByAnotherInstance,
@@ -5117,7 +5117,7 @@ fn log_text_pasted_while_the_data_directory_is_held_loads_once_it_frees() {
 
 /// Reports `holder` as shutting down with one archive compaction left, which
 /// is what its status file then names.
-fn report_the_holder_as_compacting_an_archive(holder: &mut DataDirectoryLock) {
+fn report_the_holder_as_compacting_an_archive(holder: &DataDirectoryLock) {
     let pending_writes = PendingWrites::default();
     let _compaction = pending_writes
         .try_begin(
@@ -5147,7 +5147,7 @@ fn take_over_write_access(harness: &mut Harness<'_, App>) {
 #[test]
 fn the_take_over_confirmation_names_what_the_other_instance_is_doing() {
     let directory = tempfile::tempdir().expect("temp dir");
-    let mut holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let holder = DataDirectoryLock::acquire(Some(directory.path()));
     let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
     harness.step();
 
@@ -5166,7 +5166,7 @@ fn the_take_over_confirmation_names_what_the_other_instance_is_doing() {
         "the confirmation and the wait dialog are stacked on the same anchor"
     );
 
-    report_the_holder_as_compacting_an_archive(&mut holder);
+    report_the_holder_as_compacting_an_archive(&holder);
 
     assert!(
         harness.step_until(|harness| harness
@@ -7245,7 +7245,7 @@ fn the_shutdown_window_shrinks_the_window_once() {
 fn app_holding_the_data_directory_over_a_running_write<'a>(
     data_directory: &Path,
 ) -> (Harness<'a, App>, gt_pending_writes::PendingWriteGuard) {
-    let instance_lock = SharedDataDirectoryLock::acquire(Some(data_directory));
+    let instance_lock = DataDirectoryLock::acquire(Some(data_directory));
     assert_eq!(
         instance_lock.ownership(),
         DataDirectoryOwnership::MarkedByThisInstance,

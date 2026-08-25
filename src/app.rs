@@ -57,7 +57,7 @@ use std::{cell::RefCell, env, path::PathBuf, rc::Rc};
 use egui_tiles::{Container, Linear, LinearDir, Tile, TileId, Tiles, Tree};
 use gt_fetch::TransportSource;
 use gt_filter::GlobalFilter;
-use gt_instance_lock::{DataDirectoryOwnership, SharedDataDirectoryLock};
+use gt_instance_lock::{DataDirectoryLock, DataDirectoryOwnership};
 use gt_loaded_files::{LoadedFileId, LoadedFiles};
 use gt_log_view::{LoadedLog, LoadedLogs};
 use gt_map::NavMap;
@@ -180,7 +180,7 @@ pub struct StartupOptions {
     pub pending_writes: PendingWrites,
     /// The mark on the data directory, shared with `main`. A run that finds
     /// another instance holding it opens no database until it takes it.
-    pub instance_lock: SharedDataDirectoryLock,
+    pub instance_lock: DataDirectoryLock,
 }
 
 /// The dense per-component color slots the plot reads, from the settings
@@ -349,7 +349,7 @@ pub struct App {
     /// This instance's mark on the data directory, shared with `main`. The
     /// wait retries it while another instance holds the directory, and the
     /// shutdown reports what it is still writing through the same lock.
-    instance_lock: SharedDataDirectoryLock,
+    instance_lock: DataDirectoryLock,
     /// The startup open of every database, until the app adopts what it
     /// produced.
     storage_open: storage::StorageOpen,
