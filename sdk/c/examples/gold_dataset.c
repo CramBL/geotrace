@@ -8,6 +8,7 @@
  */
 
 #include "../geotrace.h"
+#include "gold_timestamp.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -71,63 +72,6 @@ static int split_delim(char *line, char delim, char *cols[], int max) {
 
 static int split_csv(char *line, char *cols[], int max) {
     return split_delim(line, ',', cols, max);
-}
-
-static int is_leap(int y) {
-    return (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
-}
-
-static int month_days(int m, int y) {
-    static const int dom[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-    return (m == 2 && is_leap(y)) ? 29 : dom[m - 1];
-}
-
-/* Parse "YYYY-MM-DDTHH:MM:SS[.ffffff][+HH:MM]" -> GtdTimestamp.
-   Returns gtd_ts_none() on failure. */
-static GtdTimestamp parse_ts(const char *s) {
-    int Y = 0, Mo = 0, D = 0, H = 0, Mi = 0, S = 0, consumed = 0;
-
-    if (!s || *s == '\0')
-        return gtd_ts_none();
-    if (sscanf(s, "%d-%d-%dT%d:%d:%d%n", &Y, &Mo, &D, &H, &Mi, &S, &consumed) < 6)
-        return gtd_ts_none();
-
-    const char *p = s + consumed;
-
-    /* Optional fractional seconds (".ffffff"), kept as microseconds. */
-    long frac_us = 0;
-    if (*p == '.') {
-        p++;
-        char digits[7] = "000000";
-        int n = 0;
-        while (n < 6 && *p >= '0' && *p <= '9')
-            digits[n++] = *p++;
-        while (*p >= '0' && *p <= '9') /* skip sub-microsecond digits */
-            p++;
-        frac_us = strtol(digits, NULL, 10);
-    }
-
-    /* Optional timezone offset ("+HH:MM" / "-HH:MM"). */
-    char sign = '+';
-    long tz = 0;
-    if (*p == '+' || *p == '-') {
-        int tz_h = 0, tz_m = 0;
-        sign = *p;
-        if (sscanf(p + 1, "%d:%d", &tz_h, &tz_m) == 2)
-            tz = (((long)tz_h * 60L) + tz_m) * 60L;
-    }
-
-    long days = 0;
-    for (int y = 1970; y < Y; y++)
-        days += is_leap(y) ? 366 : 365;
-    for (int m = 1; m < Mo; m++)
-        days += month_days(m, Y);
-    days += D - 1;
-
-    long secs = (days * 86400L) + (H * 3600L) + (Mi * 60L) + S;
-    secs += (sign == '-') ? tz : -tz;
-
-    return gtd_ts_from_micros(((uint64_t)secs * 1000000ULL) + (uint64_t)frac_us);
 }
 
 static GtdOptF64 parse_opt_f64(const char *s) {
@@ -308,8 +252,8 @@ static void load_fixes(GtdFileBuilder *b, const char *base) {
         if (split_csv(line, cols, CSV_MAX_COLS) < 8)
             continue;
 
-        GtdTimestamp gps_ts = parse_ts(cols[1]);
-        GtdTimestamp sys_ts = parse_ts(cols[2]);
+        GtdTimestamp gps_ts = gold_parse_timestamp(cols[1]);
+        GtdTimestamp sys_ts = gold_parse_timestamp(cols[2]);
 
         char *end;
         double lat = strtod(cols[3], &end);
@@ -366,7 +310,7 @@ static void load_markers(GtdFileBuilder *b, const char *base) {
         char *cols[CSV_MAX_COLS];
         if (split_csv(line, cols, CSV_MAX_COLS) < 3)
             continue;
-        GtdTimestamp ts = parse_ts(cols[0]);
+        GtdTimestamp ts = gold_parse_timestamp(cols[0]);
         if (gtd_ts_is_none(ts))
             FAIL("markers.csv: missing timestamp");
         const char *label = (*cols[1] != '\0') ? cols[1] : NULL;
@@ -390,7 +334,7 @@ static void load_events(GtdFileBuilder *b, const char *base) {
         char *cols[CSV_MAX_COLS];
         if (split_csv(line, cols, CSV_MAX_COLS) < 3)
             continue;
-        GtdTimestamp ts = parse_ts(cols[0]);
+        GtdTimestamp ts = gold_parse_timestamp(cols[0]);
         if (gtd_ts_is_none(ts))
             FAIL("events.csv: missing sys_time");
         const char *ann = (*cols[2] != '\0') ? cols[2] : NULL;
@@ -475,7 +419,7 @@ static void load_channels(GtdFileBuilder *b, const char *base) {
 
         if (ch->n_times >= MAX_CH_SAMPLES)
             FAIL("too many channel samples");
-        GtdTimestamp ch_ts = parse_ts(cols[5]);
+        GtdTimestamp ch_ts = gold_parse_timestamp(cols[5]);
         if (gtd_ts_is_none(ch_ts))
             FAIL("invalid channel timestamp");
         ch->times[ch->n_times++] = ch_ts;
