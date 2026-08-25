@@ -7,6 +7,7 @@ mod background_thread;
 mod civil_date;
 mod context_line;
 mod day_failures;
+mod day_fetch_dispatch;
 mod day_fetch_queue;
 mod day_fetch_status;
 mod day_fetch_transport;
