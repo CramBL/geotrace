@@ -65,6 +65,41 @@ fn scroll_to_end(harness: &mut TestHarness<'_, ReferenceWindow>, document: Refer
     );
 }
 
+/// One wheel step of the search below, small enough that a block cannot be
+/// scrolled past in a single step.
+const SCROLL_STEP_POINTS: f32 = 300.0;
+
+/// Steps the search takes before giving up, which covers any document the
+/// window holds.
+const SCROLL_STEP_LIMIT: usize = 20;
+
+/// Scrolls until the widget labelled `label` sits in the upper half of the
+/// window, so a snapshot of one block does not depend on how much prose runs
+/// above it.
+fn scroll_to_block(
+    harness: &mut TestHarness<'_, ReferenceWindow>,
+    document: ReferenceDocument,
+    label: &str,
+) {
+    let Some(window_rect) = harness.inner.window_rect(document.title) else {
+        panic!("the reference window is open");
+    };
+    for _ in 0..SCROLL_STEP_LIMIT {
+        let Some(node) = harness.inner.query_by_label_contains(label) else {
+            panic!("{label:?} is not in the document");
+        };
+        if node.rect().top() <= window_rect.center().y {
+            return;
+        }
+        harness.inner.scroll_wheel_at(
+            window_rect.center(),
+            -SCROLL_STEP_POINTS,
+            SCROLL_SETTLE_FRAMES,
+        );
+    }
+    panic!("{label:?} never came into view");
+}
+
 /// The urls of the [`egui::OutputCommand::OpenUrl`] commands in the output of
 /// the frame just run.
 fn opened_urls(harness: &TestHarness<'_, ReferenceWindow>) -> Vec<String> {
@@ -108,8 +143,8 @@ fn snapshot_reference_window_geomagnetic(
 }
 
 /// Both themes at both ends of the TEC document. The top holds the display
-/// equations, tinted to the theme's text colour, the end the storm map and the
-/// query examples.
+/// equations, tinted to the theme's text colour, the end the storm index table
+/// and the query examples.
 #[rstest]
 #[case(true, DocumentPosition::Top, "reference_window_tec")]
 #[case(false, DocumentPosition::Top, "reference_window_tec_light")]
@@ -126,6 +161,21 @@ fn snapshot_reference_window_tec(
     }
     harness.snapshot_loose(snapshot_name);
 }
+
+/// The plot illustration of the TEC document, at the width the window gives
+/// it: the storm's own [TEC] line over the quiet-time median behind it.
+#[test]
+fn snapshot_reference_window_tec_storm_plot() {
+    let mut harness = harness_showing(IONOSPHERIC_TEC, true);
+
+    scroll_to_block(&mut harness, IONOSPHERIC_TEC, STORM_PLOT_FRAME_LABEL);
+
+    harness.snapshot_loose("reference_window_tec_storm_plot");
+}
+
+/// Names the frame of the TEC document's plot illustration, which the scroll
+/// searches for.
+const STORM_PLOT_FRAME_LABEL: &str = "grid node 40 N";
 
 /// Both themes at both ends of the flare document. The top holds the flare
 /// image and the quotation of the class ladder, the end the R-scale table.

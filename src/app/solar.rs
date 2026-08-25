@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 use std::sync::mpsc;
 use std::time::Instant;
 
-use chrono::{NaiveDate, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use egui::Context;
 
 use gt_fetch::{Transport, TransportSource};
@@ -38,6 +38,7 @@ use super::day_fetch_queue::DayFetchQueue;
 use super::day_fetch_transport::DayFetchTransport;
 use super::day_index_read_retry::DayIndexReadRetry;
 use super::environment_storage::PrunedDays;
+use super::space_weather_warning::{self, ArchivedIndexPeriod, GeomagneticActivityBeforePeak};
 use super::track_day_values::TrackValuesByArchivedDays;
 use super::unarchived_day::UnarchivedDay;
 
@@ -91,6 +92,10 @@ pub struct GeomagneticIndexScheduler {
     hp30_context: ContextSampleCache<IndexContextSample>,
     /// The Kp line, sampled like [`Self::hp30_context`] at its own cadence.
     kp_context: ContextSampleCache<IndexContextSample>,
+    /// What the indices hold before each track's TEC deviation peak. Read
+    /// again when that window or the archived days covering it move, so the
+    /// assessment does not reach the archive every frame.
+    activity_before_peaks: FxHashMap<TrackRef, ResolvedActivityBeforePeak>,
     /// Registers every archive insert, and refuses the ones that would start
     /// after shutdown began.
     pending_writes: PendingWrites,
@@ -111,6 +116,7 @@ impl GeomagneticIndexScheduler {
             plot_points: TrackValuesByArchivedDays::default(),
             hp30_context: ContextSampleCache::default(),
             kp_context: ContextSampleCache::default(),
+            activity_before_peaks: FxHashMap::default(),
             ctx,
             tx,
             rx,
@@ -261,6 +267,7 @@ impl GeomagneticIndexScheduler {
                     self.days.mark_archived(day);
                     self.hp30_context.forget(day);
                     self.kp_context.forget(day);
+                    self.forget_windows_reading(day);
                     if kp_samples + hp30_samples == 0 {
                         log::info!("The service published no geomagnetic indices for {day}");
                     } else {
@@ -327,7 +334,76 @@ impl GeomagneticIndexScheduler {
             }
         }
         self.plot_points.retain_loaded_tracks(&live);
+        self.activity_before_peaks
+            .retain(|track, _| live.contains(track));
         series
+    }
+
+    /// What the archived indices hold over the hours before `peak`, the epoch
+    /// a track's TEC deviation peaks at.
+    ///
+    /// [`None`] where the archive holds no day the window falls in: a window
+    /// it knows nothing about is never reported as quiet. A partly archived
+    /// window is read for the days it holds.
+    pub fn activity_before_peak(
+        &mut self,
+        track: TrackRef,
+        peak: DateTime<Utc>,
+    ) -> Option<GeomagneticActivityBeforePeak> {
+        let window = space_weather_warning::geomagnetic_lookback_window(peak);
+        let archived_days = gt_types::utc_days::days_in_range(
+            window.start.date_naive()..=window.end.date_naive(),
+            |day| self.archived_days.contains(&day),
+        );
+        if let Some(resolved) = self
+            .activity_before_peaks
+            .get(&track)
+            .filter(|resolved| resolved.window == window && resolved.archived_days == archived_days)
+        {
+            return resolved.activity;
+        }
+        let activity = (!archived_days.is_empty()).then(|| {
+            GeomagneticActivityBeforePeak::of(
+                peak,
+                &self.archived_periods_in(&archived_days, window),
+            )
+        });
+        self.activity_before_peaks.insert(
+            track,
+            ResolvedActivityBeforePeak {
+                window,
+                archived_days,
+                activity,
+            },
+        );
+        activity
+    }
+
+    /// Drop what was read over every window `day` falls in, so a day the
+    /// service revised under the same date is read again. The set of archived
+    /// days a window covers is unchanged by such a revision.
+    fn forget_windows_reading(&mut self, day: NaiveDate) {
+        self.activity_before_peaks
+            .retain(|_, resolved| !resolved.archived_days.contains(&day));
+    }
+
+    /// Every period of either index the archive holds on `archived_days` that
+    /// overlaps `window`, in the order the days are read.
+    fn archived_periods_in(
+        &self,
+        archived_days: &[NaiveDate],
+        window: TimeRange,
+    ) -> Vec<ArchivedIndexPeriod> {
+        let store = self.store.as_ref().map(GeomagneticIndexArchive::read);
+        archived_days
+            .iter()
+            .flat_map(|day| {
+                let read = ArchivedDay::read(store, *day);
+                let kp = periods_overlapping(read.kp, GeomagneticIndex::Kp, window);
+                let hp30 = periods_overlapping(read.hp30, GeomagneticIndex::Hp30, window);
+                kp.into_iter().chain(hp30)
+            })
+            .collect()
     }
 
     /// The index lines across `span`, each sampled at its own published
@@ -470,6 +546,36 @@ fn day_needs_fetch(
     Ok(store
         .kp_series(day)?
         .is_some_and(|kp| kp.contains_nowcast_samples()))
+}
+
+/// One looked-up window before a track's TEC deviation peak, kept with what it
+/// was read from.
+struct ResolvedActivityBeforePeak {
+    window: TimeRange,
+    archived_days: Vec<NaiveDate>,
+    activity: Option<GeomagneticActivityBeforePeak>,
+}
+
+/// The periods of `series` that overlap `window`, each with the instant it
+/// ends at. A period runs from its start for the index's own period length,
+/// and one starting at the window's end covers only hours past it.
+fn periods_overlapping<S: IndexSample>(
+    series: Option<IndexSeries<S>>,
+    index: GeomagneticIndex,
+    window: TimeRange,
+) -> Vec<ArchivedIndexPeriod> {
+    series
+        .into_iter()
+        .flat_map(|series| series.samples)
+        .filter_map(|sample| {
+            let end = sample
+                .period_start()
+                .checked_add_signed(index.period_length())?;
+            let overlaps = sample.period_start() < window.end && end > window.start;
+            let activity = sample.activity()?;
+            overlaps.then_some(ArchivedIndexPeriod { end, activity })
+        })
+        .collect()
 }
 
 /// One day's archived series, read once and shared by every fix falling in
@@ -627,6 +733,7 @@ mod tests {
     use gt_fetch::HttpResponse;
     use gt_pending_writes::{WriteAccess, WriteRefusal};
     use gt_solar::DEFAULT_BASE_URL;
+    use gt_solar::activity::GeomagneticStormClass;
     use gt_solar::series::{Hp30Sample, KpSample, KpStatus};
     use gt_store::Store;
     use gt_test_utils::{ScriptedTransport, pending_writes};
@@ -744,6 +851,46 @@ mod tests {
         }
     }
 
+    /// The one track a deviation is looked up for.
+    fn one_track() -> TrackRef {
+        TrackRef::new(gt_types::FileIdx::new(0), gt_types::TrackIdx::new(0))
+    }
+
+    /// Archive `day` as a whole, one definitive Kp period starting at each
+    /// named hour and no Hp30 published, replacing whatever it held.
+    fn archive_kp_periods(
+        store: &GeomagneticIndexArchive,
+        archived: NaiveDate,
+        periods: &[(u32, f64)],
+    ) {
+        let samples = periods
+            .iter()
+            .map(|&(hour, value)| {
+                let start = archived
+                    .and_hms_opt(hour, 0, 0)
+                    .map(|naive| naive.and_utc())
+                    .unwrap_or_default();
+                kp_sample(start, value)
+            })
+            .collect();
+        archive_day(store, archived, |archive| {
+            archive.insert_or_replace_kp_day(
+                archived,
+                "host",
+                Utc::now(),
+                &KpSeries { samples },
+            )?;
+            archive.insert_or_replace_hp30_day(
+                archived,
+                "host",
+                Utc::now(),
+                &Hp30Series {
+                    samples: Vec::new(),
+                },
+            )
+        });
+    }
+
     /// Archive `day` as a whole definitive day, the way a finished ingest
     /// leaves it.
     fn archive_definitive_day(store: &GeomagneticIndexArchive, archived: NaiveDate) {
@@ -761,6 +908,71 @@ mod tests {
                 &Hp30Series { samples: vec![] },
             )
         });
+    }
+
+    /// The window before a TEC deviation's peak is read from the archived
+    /// periods of both indices: the strongest storm-level period in it is the
+    /// one reported, with the whole hours from its end to the peak. A window
+    /// no archived day falls in is reported as nothing at all rather than as
+    /// quiet.
+    #[rstest]
+    #[case::a_storm_before_the_peak(
+        true,
+        Some(GeomagneticActivityBeforePeak::Storm {
+            class: GeomagneticStormClass::Moderate,
+            hours_before_peak: 9,
+        })
+    )]
+    #[case::an_unarchived_window(false, None)]
+    fn the_window_before_a_tec_peak_is_read_from_the_archived_periods(
+        #[case] archived: bool,
+        #[case] expected: Option<GeomagneticActivityBeforePeak>,
+    ) {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived_day = day(2026, 7, 20);
+        if archived {
+            archive_kp_periods(&store, archived_day, &[(0, 4.667), (12, 6.0)]);
+            scheduler.archived_days.insert(archived_day);
+        }
+
+        let activity = scheduler.activity_before_peak(one_track(), at(2026, 7, 21, 0));
+
+        assert_eq!(activity, expected);
+    }
+
+    /// A nowcast day GFZ replaced with definitive values holds different
+    /// values under the same date, so the window covering it is read again
+    /// even though the archived days it covers are the same ones.
+    #[test]
+    fn a_day_archived_again_is_read_into_the_window_again() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived_day = day(2026, 7, 20);
+        let peak = at(2026, 7, 21, 0);
+        archive_kp_periods(&store, archived_day, &[(0, 4.667), (12, 4.0)]);
+        scheduler.archived_days.insert(archived_day);
+        assert_eq!(
+            scheduler.activity_before_peak(one_track(), peak),
+            Some(GeomagneticActivityBeforePeak::NoStorm)
+        );
+
+        archive_kp_periods(&store, archived_day, &[(0, 4.667), (12, 6.0)]);
+        scheduler
+            .tx
+            .send(IndexDayMessage::Stored {
+                day: archived_day,
+                kp_samples: 2,
+                hp30_samples: 0,
+            })
+            .expect("send");
+        scheduler.poll();
+
+        assert_eq!(
+            scheduler.activity_before_peak(one_track(), peak),
+            Some(GeomagneticActivityBeforePeak::Storm {
+                class: GeomagneticStormClass::Moderate,
+                hours_before_peak: 9,
+            })
+        );
     }
 
     /// A read-only session reads the day index beside the instance that owns

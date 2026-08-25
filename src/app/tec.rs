@@ -21,7 +21,7 @@ use gt_fetch::{SecretToken, Transport, TransportSource};
 use gt_ionex::instant_selection::TecInstantSelection;
 use gt_ionex::maps::GlobalIonosphereMaps;
 use gt_ionex::mirrors::{MirrorAttempt, MirrorBaseUrl, MirrorList, MirrorOutcome};
-use gt_ionex::quiet_time::{self, QuietTimeDeviation};
+use gt_ionex::quiet_time::{self, QuietTimeDeviationPeak};
 use gt_ionex::tec::TotalElectronContent;
 use gt_ionex::text;
 use gt_ionex::{IonexProduct, calendar, transport};
@@ -467,7 +467,7 @@ impl TecMapScheduler {
     pub fn quiet_time_deviations(
         &mut self,
         files: &[LoadedFile],
-    ) -> FxHashMap<TrackRef, QuietTimeDeviation> {
+    ) -> FxHashMap<TrackRef, QuietTimeDeviationPeak> {
         self.quiet_time.resolve(
             self.store.as_ref().map(TecMapArchive::read),
             &self.archived_days,
@@ -708,7 +708,7 @@ mod tests {
     use crate::app::day_fetch_status::{ArchivedDayCount, DayFetchStatus};
     use crate::app::fix_positions::FixPositions;
     use gt_fetch::BytesResponse;
-    use gt_ionex::quiet_time::IonosphericStormGrade;
+    use gt_ionex::quiet_time::{IonosphericStormGrade, QuietTimeDeviation};
     use gt_ionex::{DEFAULT_BASE_URL, MirrorLayout};
     use gt_pending_writes::{WriteAccess, WriteRefusal};
     use gt_store::Store;
@@ -1687,17 +1687,25 @@ mod tests {
         day(2024, 5, 20)
     }
 
-    /// The peak deviation of the one loaded track, or [`None`] where its
-    /// window yields no background.
-    fn peak_deviation(
+    /// The peak of the one loaded track, or [`None`] where its window yields
+    /// no background.
+    fn track_peak(
         scheduler: &mut TecMapScheduler,
         files: &[gt_types::LoadedFile],
-    ) -> Option<QuietTimeDeviation> {
+    ) -> Option<QuietTimeDeviationPeak> {
         scheduler
             .quiet_time_deviations(files)
             .values()
             .copied()
             .next()
+    }
+
+    /// The peak deviation of the one loaded track.
+    fn peak_deviation(
+        scheduler: &mut TecMapScheduler,
+        files: &[gt_types::LoadedFile],
+    ) -> Option<QuietTimeDeviation> {
+        Some(track_peak(scheduler, files)?.deviation)
     }
 
     /// Archive the whole window before [`recorded_day`], the recording day
@@ -1820,6 +1828,27 @@ mod tests {
         assert_eq!(deviation.grade(), IonosphericStormGrade::IntenseStorm);
     }
 
+    /// A fix past the last full epoch of its day falls on the map the file
+    /// dates to the next day's midnight. It is assessed on its own day, and
+    /// against the same offset of the window days.
+    #[test]
+    fn a_fix_at_the_end_of_its_day_is_graded_against_the_window() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        archive_whole_window(&mut scheduler, &store, 1.75);
+        let files = loaded_files_of(track_over(
+            at(2024, 5, 20, 23) + TimeDelta::minutes(30),
+            2,
+            600,
+        ));
+
+        let deviation = peak_deviation(&mut scheduler, &files).expect("a fully archived window");
+
+        assert!(
+            (deviation.percent_from_median() - 75.0).abs() < 1e-9,
+            "{deviation:?}"
+        );
+    }
+
     /// A rapid day replaced by a final one holds different values under the
     /// same date, so the day the ingest reports is read again.
     #[test]
@@ -1862,6 +1891,122 @@ mod tests {
             (revised.percent_from_median() - 200.0).abs() < 1e-9,
             "{revised:?}"
         );
+    }
+
+    /// The captured storm, archived onto the fixture grid: every node of
+    /// `day`'s maps carries what the [`NodeSeriesCapture`]'s `node` published
+    /// at that epoch, so a track sitting anywhere on the grid reads the real
+    /// day's shape.
+    fn captured_day_maps(
+        capture: &gt_ionex::node_series::NodeSeriesCapture,
+        node: &str,
+        day: NaiveDate,
+    ) -> GlobalIonosphereMaps {
+        let captured = capture.day(day).expect("a captured day");
+        let hours_per_epoch = captured.interval_seconds / 3600;
+        let samples: Vec<(i64, f64)> = captured
+            .values_tecu
+            .get(node)
+            .expect("the captured node")
+            .iter()
+            .enumerate()
+            .filter_map(|(index, tecu)| Some((index as i64 * hours_per_epoch, (*tecu)?)))
+            .collect();
+        ionex_fixtures::uniform_maps(day, &samples)
+    }
+
+    /// The deviation of the captured node itself at one offset into `day`,
+    /// computed straight from the capture, which is what the archive read
+    /// must reproduce.
+    fn captured_deviation(
+        capture: &gt_ionex::node_series::NodeSeriesCapture,
+        node: &str,
+        day: NaiveDate,
+        offset: TimeDelta,
+    ) -> QuietTimeDeviation {
+        let value = capture
+            .value_at_offset(node, day, offset)
+            .expect("the captured epoch");
+        let window = capture.background_window(node, day, offset);
+        quiet_time::deviation_from_quiet_time(value, &window).expect("a fully captured window")
+    }
+
+    /// The whole pipeline over the captured Gannon storm: the archive holds
+    /// the published values of the recorded day and of the 27 days behind it,
+    /// and the deviation the cache reports for a track recording at 20:00 UTC
+    /// is the one the capture grades directly.
+    ///
+    /// The storm-grade run beside the peak is the day's own, counted over
+    /// every epoch that day published rather than the three the track's fixes
+    /// touch: 11 May grades a storm at the North America node from 02:00 to
+    /// 24:00, while 10 May reaches it over Europe at 20:00 alone.
+    #[rstest]
+    #[case::a_day_held_at_the_storm_grade(
+        gt_ionex::NORTH_AMERICA_NODE,
+        11,
+        IonosphericStormGrade::IntenseStorm,
+        12,
+        "22 h"
+    )]
+    #[case::a_single_storm_epoch(
+        gt_ionex::EUROPE_NODE,
+        10,
+        IonosphericStormGrade::ModerateStorm,
+        1,
+        "one 2 h epoch"
+    )]
+    fn a_track_over_the_captured_storm_is_graded_as_the_capture_is(
+        #[case] node: &str,
+        #[case] day_of_may: u32,
+        #[case] expected_grade: IonosphericStormGrade,
+        #[case] expected_epochs: usize,
+        #[case] expected_run: &str,
+    ) {
+        let capture = gt_ionex::captured_node_series().expect("the node-series capture");
+        let recorded = day(2024, 5, day_of_may);
+        let offset = TimeDelta::hours(20);
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        for archived in quiet_time::background_days(recorded)
+            .into_iter()
+            .chain([recorded])
+        {
+            archive_maps(
+                &mut scheduler,
+                &store,
+                archived,
+                &captured_day_maps(&capture, node, archived),
+            );
+        }
+        // Ten minutes either side of the epoch, so every fix of the track
+        // falls on the 20:00 map the storm's depletion is published in.
+        let files = loaded_files_of(track_over(
+            at(2024, 5, day_of_may, 19) + TimeDelta::minutes(50),
+            3,
+            600,
+        ));
+
+        let resolved = track_peak(&mut scheduler, &files).expect("a fully archived window");
+
+        let expected = captured_deviation(&capture, node, recorded, offset);
+        assert_eq!(resolved.deviation.grade(), expected_grade);
+        assert_eq!(
+            resolved.epoch,
+            recorded
+                .and_time(chrono::NaiveTime::MIN)
+                .and_utc()
+                .checked_add_signed(offset)
+                .expect("an epoch of the recorded day")
+        );
+        assert!(
+            (resolved.deviation.percent_from_median() - expected.percent_from_median()).abs()
+                < 1e-9,
+            "the archive read graded {resolved:?}, the capture {expected:?}"
+        );
+        let run = resolved
+            .storm_grade_run
+            .expect("the peak reaches the storm grade");
+        assert_eq!(run.epoch_count(), expected_epochs);
+        assert_eq!(run.to_string(), expected_run);
     }
 
     /// A recording that is closed takes its deviation with it.

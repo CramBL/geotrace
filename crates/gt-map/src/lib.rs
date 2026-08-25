@@ -1504,7 +1504,7 @@ struct DrawState {
     tec_instant: gt_ionex::TecInstantSelection,
     log_matches: LogMatches,
     log_hover: LogMatchHover,
-    space_weather_warning: Vec<String>,
+    space_weather_warning: Vec<gt_ui_types::TrackSpaceWeatherWarning>,
     space_weather_levels: Vec<gt_ui_types::WarningLevelExplanation>,
 }
 
@@ -1554,8 +1554,9 @@ impl DrawState {
             log_hover: &mut self.log_hover,
             empty_reason: None,
             space_weather: SpaceWeatherIndicator {
-                warning_lines: &self.space_weather_warning,
+                track_warnings: &self.space_weather_warning,
                 levels: &self.space_weather_levels,
+                tec_deviation_caveat: &gt_ionex::text::DEVIATION_REFERENCE_CAVEAT,
             },
             filter: &self.filter,
             visibility,

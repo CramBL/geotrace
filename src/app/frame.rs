@@ -10,7 +10,7 @@ use egui_phosphor::regular::TERMINAL_WINDOW as ICON_TERMINAL_WINDOW;
 use egui_phosphor::regular::TRASH as ICON_TRASH;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use egui_phosphor::regular::X as ICON_X;
-use gt_ionex::quiet_time::QuietTimeDeviation;
+use gt_ionex::quiet_time::QuietTimeDeviationPeak;
 use gt_loaded_files::RecordingNames;
 use gt_map::MapLayer;
 use gt_query_run::RunInputs;
@@ -38,7 +38,9 @@ use super::modals::{
 use super::panes::MainBehavior;
 use super::shutdown::FrameContents;
 use super::snap_state::PendingSnapRequest;
-use super::space_weather_warning::{self, RecordingSeries, RecordingUnderAssessment};
+use super::space_weather_warning::{
+    self, RecordingUnderAssessment, TecDeviationEvidence, TrackSeries, TrackUnderAssessment,
+};
 use super::storage::{DatabasesPending, OPENING_DATABASES, QueuedLoad};
 #[cfg(feature = "self-update")]
 use super::update;
@@ -546,6 +548,36 @@ impl App {
         }
     }
 
+    /// Each track's peak TEC deviation, with what the archived geomagnetic
+    /// indices hold over the hours before the epoch it peaks at.
+    ///
+    /// The indices are read only for a deviation the index grades a storm,
+    /// which is the only one a warning line states.
+    fn tec_deviation_evidence(
+        &mut self,
+        peaks: &FxHashMap<TrackRef, QuietTimeDeviationPeak>,
+    ) -> FxHashMap<TrackRef, TecDeviationEvidence> {
+        let geomagnetic_indices = &mut self.geomagnetic_indices;
+        peaks
+            .iter()
+            .map(|(&track, &peak)| {
+                let geomagnetic_before_peak = peak
+                    .deviation
+                    .grade()
+                    .is_a_storm()
+                    .then(|| geomagnetic_indices.activity_before_peak(track, peak.epoch))
+                    .flatten();
+                (
+                    track,
+                    TecDeviationEvidence {
+                        peak,
+                        geomagnetic_before_peak,
+                    },
+                )
+            })
+            .collect()
+    }
+
     /// Assess every loaded recording against the archived environment values,
     /// and toast the ones a disturbance reaches for the first time.
     ///
@@ -557,32 +589,50 @@ impl App {
         jamming: &JammingSeries,
         geomagnetic: &GeomagneticSeries,
         tec: &TecSeries,
-        tec_deviations: &FxHashMap<TrackRef, QuietTimeDeviation>,
+        tec_deviations: &FxHashMap<TrackRef, TecDeviationEvidence>,
         positions: &Arc<FixPositionTimeline>,
     ) {
-        let newly_warned = {
+        let toasts = {
             let shared = self.shared.borrow();
-            let recordings: Vec<RecordingUnderAssessment<'_>> = shared
-                .loaded_files
-                .view()
+            let loaded_files = shared.loaded_files.view();
+            let names = RecordingNames::resolve(loaded_files, &shared.recording_name_template);
+            let files = loaded_files.files();
+            let recordings: Vec<RecordingUnderAssessment<'_>> = loaded_files
                 .entries()
                 .enumerate()
                 .map(|(index, entry)| {
                     let file = entry.file();
                     let span = file.metadata.time_range;
                     let fi = FileIdx::new(index);
-                    let tracks =
-                        (0..file.tracks.len()).map(move |ti| TrackRef::new(fi, TrackIdx::new(ti)));
+                    let tracks = file
+                        .tracks
+                        .iter()
+                        .enumerate()
+                        .map(|(ti, track)| {
+                            let track_ref = TrackRef::new(fi, TrackIdx::new(ti));
+                            TrackUnderAssessment {
+                                label: names
+                                    .track_label(files, track_ref)
+                                    .unwrap_or_else(|| file.metadata.filename.clone()),
+                                recorded: track.metadata.time_range,
+                                series: TrackSeries::of(
+                                    track_ref,
+                                    jamming,
+                                    geomagnetic,
+                                    tec,
+                                    tec_deviations,
+                                ),
+                            }
+                        })
+                        .collect();
                     RecordingUnderAssessment {
                         id: entry.id(),
+                        label: names
+                            .get(fi)
+                            .unwrap_or(file.metadata.filename.as_str())
+                            .to_owned(),
                         span,
-                        series: RecordingSeries::of(
-                            tracks,
-                            jamming,
-                            geomagnetic,
-                            tec,
-                            tec_deviations,
-                        ),
+                        tracks,
                         archived_flare_days: self.solar_flares.archived_days_for(span),
                         positions: ArcIdentity::of(positions),
                     }
@@ -592,8 +642,8 @@ impl App {
                 self.solar_flares.flares_peaking_in(span, positions)
             })
         };
-        for _ in 0..newly_warned {
-            self.toasts.warning(space_weather_warning::LOAD_WARNING);
+        for toast in toasts {
+            self.toasts.warning(toast);
         }
     }
 
@@ -620,6 +670,7 @@ impl App {
             let shared = self.shared.borrow();
             self.tec_maps.quiet_time_deviations(&shared.loaded_files)
         };
+        let tec_deviations = self.tec_deviation_evidence(&tec_deviations);
         // Resolved over the span the plot reported when it last drew, so a
         // pan or zoom reaches the lines on the frame after it.
         let context_span = Self::context_span_of(&self.shared.borrow().plot_state);
@@ -674,8 +725,9 @@ impl App {
                 } = self.tec_maps.overlay_layer();
                 let log_matches = self.logs.map_matches();
                 let space_weather = gt_map::SpaceWeatherIndicator {
-                    warning_lines: self.space_weather_warning.lines(),
+                    track_warnings: self.space_weather_warning.track_warnings(),
                     levels: &space_weather_warning::WARNING_LEVELS,
+                    tec_deviation_caveat: &gt_ionex::text::DEVIATION_REFERENCE_CAVEAT,
                 };
                 let mut behavior = MainBehavior {
                     map,

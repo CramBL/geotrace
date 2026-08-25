@@ -1,7 +1,7 @@
 //! Per-file recording display names, resolved from the user's name template.
 
 use gt_fmt::{NameFields, render_name_template};
-use gt_types::FileIdx;
+use gt_types::{FileIdx, LoadedFile, TrackRef};
 
 use crate::LoadedFilesView;
 
@@ -62,6 +62,22 @@ impl RecordingNames {
         self.names.get(file.as_usize()).map(String::as_str)
     }
 
+    /// How a surface names one track: the recording's display name, with the
+    /// track number appended where the recording split into several tracks.
+    ///
+    /// [`None`] when no such file is loaded. The raw filename stands in where
+    /// the template resolved no name for the recording.
+    pub fn track_label(&self, files: &[LoadedFile], track: TrackRef) -> Option<String> {
+        let file = track.fi.get(files)?;
+        let name = self
+            .get(track.fi)
+            .unwrap_or(file.metadata.filename.as_str());
+        if file.tracks.len() < 2 {
+            return Some(name.to_owned());
+        }
+        Some(format!("{name} (track {})", track.index.as_usize() + 1))
+    }
+
     pub fn len(&self) -> usize {
         self.names.len()
     }
@@ -112,7 +128,7 @@ fn common_path_prefix_len(names: &[&str]) -> usize {
 mod tests {
     use rustc_hash::FxHashMap;
 
-    use gt_types::{FileIdx, FileMetadata, LoadedFile};
+    use gt_types::{FileIdx, FileMetadata, LoadedFile, TrackIdx, TrackRef};
 
     use super::{RecordingNames, common_path_prefix_len};
     use crate::{FileHistory, LoadedFiles};
@@ -129,6 +145,17 @@ mod tests {
             orphaned_event_markers: Vec::new(),
             source: gt_types::FileSource::GtdPath(std::path::PathBuf::new()),
             load_warnings: Vec::new(),
+        }
+    }
+
+    /// The same file with `track_count` tracks, which is what decides whether
+    /// a track label carries a track number.
+    fn file_with_tracks(filename: &str, title: Option<&str>, track_count: usize) -> LoadedFile {
+        LoadedFile {
+            tracks: (0..track_count)
+                .map(|_| gt_test_utils::fixtures::loaded_track_with_points(Vec::new()))
+                .collect(),
+            ..file(filename, title)
         }
     }
 
@@ -240,6 +267,45 @@ mod tests {
         assert_eq!(
             common_path_prefix_len(&names),
             r"C:\Users\alice\recordings\".len()
+        );
+    }
+
+    /// A track is named by its recording, and by its number within it once
+    /// the recording holds more than one track. The raw filename stands in
+    /// where the template resolved nothing.
+    #[rstest::rstest]
+    #[case::the_only_track_of_a_recording("{title}", 1, 0, "Morning ride")]
+    #[case::one_of_several_tracks("{title}", 3, 1, "Morning ride (track 2)")]
+    #[case::an_unresolved_template("{device}", 3, 2, "ride.gtd (track 3)")]
+    fn a_track_is_named_by_its_recording_and_its_number(
+        #[case] template: &str,
+        #[case] track_count: usize,
+        #[case] track_index: usize,
+        #[case] expected: &str,
+    ) {
+        let mut files = LoadedFiles::new();
+        files.push(
+            file_with_tracks("ride.gtd", Some("Morning ride"), track_count),
+            FileHistory::None,
+        );
+        let names = RecordingNames::resolve(files.view(), template);
+
+        let label = names.track_label(
+            files.files(),
+            TrackRef::new(FileIdx::new(0), TrackIdx::new(track_index)),
+        );
+
+        assert_eq!(label.as_deref(), Some(expected));
+    }
+
+    /// A track of a file that is not loaded has no label at all.
+    #[test]
+    fn a_track_of_an_unloaded_recording_has_no_label() {
+        let names = RecordingNames::default();
+
+        assert_eq!(
+            names.track_label(&[], TrackRef::new(FileIdx::new(0), TrackIdx::new(0))),
+            None
         );
     }
 }

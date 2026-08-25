@@ -51,6 +51,11 @@ impl TimeRange {
         self.end - self.start
     }
 
+    /// Whether `instant` falls in the range, both ends included.
+    pub fn contains(self, instant: DateTime<Utc>) -> bool {
+        (self.start..=self.end).contains(&instant)
+    }
+
     /// The span `self` and `other` share, `None` when they are disjoint. Two
     /// ranges meeting at one instant share a zero-length range.
     pub fn intersection(self, other: Self) -> Option<Self> {

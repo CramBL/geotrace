@@ -174,13 +174,23 @@ pub static BACKGROUND_DAY_COVERAGE_HOVER: LazyLock<String> = LazyLock::new(|| {
 /// the quiet-time median that raises a warning.
 pub static DEVIATION_WARNING_TRIGGER: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "TEC: at least {:.0} % above or {:.0} % below the median of the {} days before, the \
+        "TEC: more than {:.0} % above or {:.0} % below the median of the {} days before, the \
          moderate-storm grade of the planetary ionospheric storm index.",
         QuietTimeDeviation::from_log_ratio(quiet_time::MODERATE_STORM_LOG_RATIO)
             .percent_from_median(),
         QuietTimeDeviation::from_log_ratio(-quiet_time::MODERATE_STORM_LOG_RATIO)
             .percent_from_median()
             .abs(),
+        quiet_time::BACKGROUND_WINDOW_DAYS
+    )
+});
+
+/// Closes every surface that states a TEC deviation, placing the grade
+/// against the reference it is measured from.
+pub static DEVIATION_REFERENCE_CAVEAT: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "A TEC grade with no geomagnetic storm near it is a weaker signal: it measures departure \
+         from the median of the {} days before, and a disturbed month lifts that reference.",
         quiet_time::BACKGROUND_WINDOW_DAYS
     )
 });
@@ -246,6 +256,7 @@ mod tests {
              recording day coverage hover: {RECORDING_DAY_COVERAGE_HOVER}\n\
              background day coverage hover: {}\n\
              deviation warning trigger: {}\n\
+             deviation reference caveat: {}\n\
              mirror skipped without a token: {MIRROR_SKIPPED_WITHOUT_TOKEN}\n\
              missing Earthdata token: {}\n\
              Earthdata signup: {EARTHDATA_SIGNUP_URL}",
@@ -254,6 +265,7 @@ mod tests {
             *QUERY_DOC,
             *BACKGROUND_DAY_COVERAGE_HOVER,
             *DEVIATION_WARNING_TRIGGER,
+            *DEVIATION_REFERENCE_CAVEAT,
             *MISSING_EARTHDATA_TOKEN
         );
         insta::assert_snapshot!("shared_wording", wording);

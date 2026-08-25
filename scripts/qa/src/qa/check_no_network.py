@@ -43,11 +43,12 @@ _EVERY_CONSTRUCT = frozenset(construct.name for construct in _CONSTRUCTS)
 _URL_LITERAL_ONLY = frozenset({"url-literal"})
 
 _ALLOWED: dict[str, frozenset[str]] = {
-    # The five capture tools. Requesting the live service is their whole job:
+    # The six capture tools. Requesting the live service is their whole job:
     # `just ionex-fixtures` and its siblings run them by hand, and the
     # fixture-freshness workflow runs them on trunk.
     "crates/gt-flare/examples/fetch_flare_fixtures.rs": _EVERY_CONSTRUCT,
     "crates/gt-ionex/examples/fetch_ionex_fixtures.rs": _EVERY_CONSTRUCT,
+    "crates/gt-ionex/examples/fetch_node_series_fixture.rs": _EVERY_CONSTRUCT,
     "crates/gt-jam/examples/fetch_jam_fixtures.rs": _EVERY_CONSTRUCT,
     "crates/gt-solar/examples/fetch_solar_fixtures.rs": _EVERY_CONSTRUCT,
     "crates/gt-snap/examples/fetch_snap_fixtures.rs": _EVERY_CONSTRUCT,

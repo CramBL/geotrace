@@ -366,7 +366,9 @@ fn snap_progress_strip(
             }
             match &progress.in_flight {
                 Some(run) => {
-                    let label = snap_progress_label(run.track, display_names, files);
+                    let label = display_names
+                        .track_label(files, run.track)
+                        .unwrap_or_default();
                     // Chunk currently being fetched, 1-based; a run only stays
                     // in flight while at least one chunk remains.
                     let current = (run.completed_chunks + 1).min(run.total_chunks);
@@ -407,25 +409,6 @@ const PROGRESS_BAR_HEIGHT: f32 = 4.0;
 
 /// Vertical padding above and below the strip contents.
 const STRIP_PADDING: f32 = 2.0;
-
-/// Display label of the in-flight track: the file's display name, plus the
-/// track number when the recording split into several tracks.
-fn snap_progress_label(
-    track: TrackRef,
-    display_names: &RecordingNames,
-    files: &[gt_types::LoadedFile],
-) -> String {
-    let name = display_names.get(track.fi).unwrap_or_default();
-    let multi_track = track
-        .fi
-        .get(files)
-        .is_some_and(|file| file.tracks.len() > 1);
-    if multi_track {
-        format!("{name} (track {})", track.index.as_usize() + 1)
-    } else {
-        name.to_owned()
-    }
-}
 
 fn render_file_row(
     ui: &mut egui::Ui,
@@ -1751,44 +1734,6 @@ mod snap_action_tests {
             costing_choices: &[],
             progress: IDLE.get_or_init(SnapProgressView::default),
         }
-    }
-
-    /// The in-flight label carries the file's display name, with a track
-    /// number only when the recording split into several tracks.
-    #[rstest::rstest]
-    #[case::single_track(1, "morning ride")]
-    #[case::multi_track(2, "morning ride (track 2)")]
-    fn progress_label_numbers_tracks_only_when_split(
-        #[case] track_count: usize,
-        #[case] expected: &str,
-    ) {
-        let points = if track_count > 1 {
-            gt_test_utils::nav_data_with_gap(5, 5)
-        } else {
-            gt_test_utils::nav_test_data()
-        };
-        let mut file = gt_track_builder::build_loaded_file(
-            "ride.gtd".to_owned(),
-            &points,
-            &[],
-            vec![],
-            vec![],
-            &[],
-            &gt_track_builder::SegmentationConfig::default(),
-            gt_types::FileSource::GtdPath(std::path::PathBuf::from("ride.gtd")),
-            gt_track_builder::FileMeta::default(),
-            vec![],
-        );
-        assert_eq!(file.tracks.len(), track_count, "fixture track count");
-        // The strip names the recording the way every other surface does, so
-        // the label follows the user's template rather than the filename.
-        file.metadata.title = Some("morning ride".to_owned());
-        let mut loaded = gt_loaded_files::LoadedFiles::new();
-        loaded.push(file.clone(), gt_loaded_files::FileHistory::None);
-        let names = RecordingNames::resolve(loaded.view(), "{title}");
-
-        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(track_count - 1));
-        assert_eq!(snap_progress_label(track, &names, &[file]), expected);
     }
 
     fn unsnappable() -> SnapRowView {
