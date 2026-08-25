@@ -44,12 +44,10 @@ WORKDIR /workspace
 COPY rust-toolchain.toml ./
 RUN rustup show
 
-# cargo-pup (architecture lints) and cargo-msrv are intentionally NOT installed
-# here. cargo-pup needs a pinned nightly with rustc-dev/llvm-tools and is
-# compiled from source; cargo-msrv downloads many toolchains at runtime. Both
-# bloat the image, so the `pup`, `msrv`, and `sdk-msrv` recipes run natively
-# (see scripts/container-rust.just) with the tools installed via cached CI
-# actions instead.
+# cargo-msrv is intentionally NOT installed here: it downloads many toolchains
+# at runtime and would bloat the image, so the `msrv` and `sdk-msrv` recipes
+# run natively (see scripts/container-rust.just) with the tool installed via
+# cached CI actions instead.
 
 # Python package manager used by the Python SDK.
 RUN curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
