@@ -16,6 +16,23 @@ const ENABLE_AUTO_STORE_FIRST: &str = "Enable 'Auto-store recordings' to use aut
 
 const ENABLE_AUTO_PRUNE_FIRST: &str = "Tick 'Auto-prune when over' to configure this";
 
+/// What a grayed auto-prune control says on hover.
+///
+/// The "Auto-prune when over" checkbox takes input whenever `storage.enabled`
+/// is set, so it never shows [`ENABLE_AUTO_PRUNE_FIRST`].
+fn auto_prune_disabled_hover_text(
+    storage: &StorageSettings,
+    write_access: WriteAccess,
+) -> &'static str {
+    if !write_access.allows_writing() {
+        READ_ONLY_RECORDING_HISTORY_HOVER
+    } else if storage.enabled {
+        ENABLE_AUTO_PRUNE_FIRST
+    } else {
+        ENABLE_AUTO_STORE_FIRST
+    }
+}
+
 pub fn show_auto_store_checkbox(
     ui: &mut egui::Ui,
     storage: &mut StorageSettings,
@@ -39,9 +56,9 @@ pub fn show_auto_prune_limit(
     write_access: WriteAccess,
 ) {
     ui.horizontal(|ui| {
-        let writes_recordings = write_access.allows_writing();
-        let storage_on = storage.enabled && writes_recordings;
+        let storage_on = storage.enabled && write_access.allows_writing();
         let prune_on = storage.auto_prune_enabled && storage_on;
+        let disabled_hover = auto_prune_disabled_hover_text(storage, write_access);
 
         ui.add_enabled(
             storage_on,
@@ -50,11 +67,7 @@ pub fn show_auto_prune_limit(
         .on_hover_text(
             "Automatically delete the oldest recordings when storage exceeds the threshold",
         )
-        .on_disabled_hover_text(if writes_recordings {
-            ENABLE_AUTO_STORE_FIRST
-        } else {
-            READ_ONLY_RECORDING_HISTORY_HOVER
-        });
+        .on_disabled_hover_text(disabled_hover);
 
         let mut max_gb = storage.auto_prune_max_bytes as f64 / gt_fmt::BYTES_PER_GB as f64;
         ui.add_enabled(
@@ -62,13 +75,7 @@ pub fn show_auto_prune_limit(
             DragValue::new(&mut max_gb).range(0.1..=1_000.0).speed(0.1),
         )
         .on_hover_text("Storage limit - oldest recordings are pruned when this is exceeded")
-        .on_disabled_hover_text(if !writes_recordings {
-            READ_ONLY_RECORDING_HISTORY_HOVER
-        } else if storage_on {
-            ENABLE_AUTO_PRUNE_FIRST
-        } else {
-            ENABLE_AUTO_STORE_FIRST
-        });
+        .on_disabled_hover_text(disabled_hover);
 
         if prune_on {
             #[expect(
@@ -88,18 +95,38 @@ pub fn show_auto_prune_confirm_checkbox(
     storage: &mut StorageSettings,
     write_access: WriteAccess,
 ) {
-    let writes_recordings = write_access.allows_writing();
-    let prune_on = storage.auto_prune_enabled && storage.enabled && writes_recordings;
+    let prune_on = storage.auto_prune_enabled && storage.enabled && write_access.allows_writing();
+    let disabled_hover = auto_prune_disabled_hover_text(storage, write_access);
     ui.add_enabled(
         prune_on,
         Checkbox::new(&mut storage.auto_prune_confirm, "Confirm before pruning"),
     )
     .on_hover_text("Show a confirmation dialog before auto-pruning deletes recordings")
-    .on_disabled_hover_text(if !writes_recordings {
-        READ_ONLY_RECORDING_HISTORY_HOVER
-    } else if storage.enabled {
-        ENABLE_AUTO_PRUNE_FIRST
-    } else {
-        ENABLE_AUTO_STORE_FIRST
-    });
+    .on_disabled_hover_text(disabled_hover);
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::*;
+
+    #[rstest]
+    #[case::read_only(WriteAccess::ReadOnly, true, READ_ONLY_RECORDING_HISTORY_HOVER)]
+    #[case::auto_storing_off(WriteAccess::Owner, false, ENABLE_AUTO_STORE_FIRST)]
+    #[case::auto_pruning_off(WriteAccess::Owner, true, ENABLE_AUTO_PRUNE_FIRST)]
+    fn the_disabled_hover_text_depends_on_write_access_and_auto_storing(
+        #[case] write_access: WriteAccess,
+        #[case] enabled: bool,
+        #[case] expected: &str,
+    ) {
+        let storage = StorageSettings {
+            enabled,
+            ..StorageSettings::default()
+        };
+        assert_eq!(
+            auto_prune_disabled_hover_text(&storage, write_access),
+            expected
+        );
+    }
 }
