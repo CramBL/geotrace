@@ -10,14 +10,13 @@
 //! [`transport::REQUEST_INTERVAL`] apart.
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Instant;
 
 use chrono::{NaiveDate, Utc};
 use egui::Context;
 
-use gt_fetch::{Connection, Transport, TransportSource};
+use gt_fetch::{Transport, TransportSource};
 use gt_pending_writes::{PendingWrites, WriteRefusal};
 use gt_solar::activity::GeomagneticActivity;
 use gt_solar::series::{Hp30Series, IndexSample, IndexSeries, KpSeries};
@@ -33,8 +32,8 @@ use gt_ui_types::{
 use rustc_hash::{FxHashMap, FxHashSet};
 use strum::IntoEnumIterator as _;
 
-use super::background_thread;
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
+use super::day_fetch_dispatch::{self, DayFetch};
 use super::day_fetch_queue::DayFetchQueue;
 use super::day_fetch_transport::DayFetchTransport;
 use super::day_index_read_retry::DayIndexReadRetry;
@@ -428,33 +427,29 @@ impl GeomagneticIndexScheduler {
     }
 
     fn start_next(&mut self) {
-        let Some(archive) = self.writable_archive() else {
+        let Some(fetch) = DayFetch::take_next(
+            self.writable_archive(),
+            &self.pending_writes,
+            &mut self.days,
+            &mut self.transport,
+        ) else {
             return;
         };
-        if self.pending_writes.refusal().is_some() {
-            return;
-        }
-        let Some(day) = self.days.take_next_day() else {
-            return;
-        };
-        let transport = self.transport.connect_or_offline();
-        self.spawn_fetch(transport, archive, day);
-    }
-
-    fn spawn_fetch(
-        &self,
-        transport: Arc<Connection>,
-        archive: WritableArchive<SolarStore>,
-        day: NaiveDate,
-    ) {
-        let ctx = self.ctx.clone();
-        let tx = self.tx.clone();
         let base_url = self.base_url.clone();
-        background_thread::spawn_or_panic(format!("solar-{day}"), move || {
-            let message = ingest(transport.as_ref(), &archive, &base_url, day);
-            tx.send(message).ok();
-            ctx.request_repaint();
-        });
+        day_fetch_dispatch::spawn_fetch_thread(
+            &self.ctx,
+            &self.tx,
+            "solar",
+            fetch.day,
+            move || {
+                ingest(
+                    fetch.transport.as_ref(),
+                    &fetch.archive,
+                    &base_url,
+                    fetch.day,
+                )
+            },
+        );
     }
 }
 
@@ -644,6 +639,7 @@ fn archive_fetched_indices(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::time::Duration;
 
     use chrono::{DateTime, TimeDelta};

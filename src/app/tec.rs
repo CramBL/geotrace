@@ -17,7 +17,7 @@ use std::time::Instant;
 use chrono::{DateTime, NaiveDate, Utc};
 use egui::Context;
 
-use gt_fetch::{Connection, SecretToken, Transport, TransportSource};
+use gt_fetch::{SecretToken, Transport, TransportSource};
 use gt_ionex::instant_selection::TecInstantSelection;
 use gt_ionex::maps::GlobalIonosphereMaps;
 use gt_ionex::mirrors::{MirrorAttempt, MirrorBaseUrl, MirrorList, MirrorOutcome};
@@ -35,8 +35,8 @@ use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
 use gt_ui_types::{ArcIdentity, TecContextSample, TecPoint, TecSeries};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::background_thread;
 use super::context_line::{ContextSampleCache, ContextSource, ContextSpan, midnight_secs};
+use super::day_fetch_dispatch::{self, DayFetch};
 use super::day_fetch_queue::DayFetchQueue;
 use super::day_fetch_status::ArchivedDayCount;
 use super::day_fetch_transport::DayFetchTransport;
@@ -555,39 +555,24 @@ impl TecMapScheduler {
     }
 
     fn start_next(&mut self) {
-        let Some(archive) = self.writable_archive() else {
+        let Some(fetch) = DayFetch::take_next(
+            self.writable_archive(),
+            &self.pending_writes,
+            &mut self.days,
+            &mut self.transport,
+        ) else {
             return;
         };
-        if self.pending_writes.refusal().is_some() {
-            return;
-        }
-        let Some(day) = self.days.take_next_day() else {
-            return;
-        };
-        let transport = self.transport.connect_or_offline();
-        self.spawn_fetch(transport, archive, day);
-    }
-
-    fn spawn_fetch(
-        &self,
-        transport: Arc<Connection>,
-        archive: WritableArchive<IonexStore>,
-        day: NaiveDate,
-    ) {
-        let ctx = self.ctx.clone();
-        let tx = self.tx.clone();
         let mirrors = self.mirrors.clone();
         let earthdata_token = self.earthdata_token.clone();
-        background_thread::spawn_or_panic(format!("tec-{day}"), move || {
-            let message = ingest(
-                transport.as_ref(),
-                &archive,
+        day_fetch_dispatch::spawn_fetch_thread(&self.ctx, &self.tx, "tec", fetch.day, move || {
+            ingest(
+                fetch.transport.as_ref(),
+                &fetch.archive,
                 &mirrors,
                 earthdata_token.as_ref(),
-                day,
-            );
-            tx.send(message).ok();
-            ctx.request_repaint();
+                fetch.day,
+            )
         });
     }
 }
