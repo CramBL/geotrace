@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use fd_lock::RwLock;
-use gt_pending_writes::{PendingWriteStatus, PendingWrites, WriteAccess};
+use gt_pending_writes::{PendingWriteStatus, PendingWrites};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
@@ -408,16 +408,6 @@ impl DataDirectoryLock {
         lock
     }
 
-    /// Marks `data_directory` as in use where this run owns it, and marks
-    /// nothing in a read-only session, which leaves the directory to the
-    /// instance holding it and writes nothing under it.
-    pub fn acquire_if_owner(write_access: WriteAccess, data_directory: Option<&Path>) -> Self {
-        match write_access {
-            WriteAccess::Owner => Self::acquire(data_directory),
-            WriteAccess::ReadOnly => Self::marking_nothing(),
-        }
-    }
-
     /// The lock of a run that marks nothing, whose reports write nothing.
     pub fn marking_nothing() -> Self {
         Self {
@@ -566,14 +556,6 @@ impl SharedDataDirectoryLock {
     /// [`DataDirectoryLock::acquire`], shared from the start.
     pub fn acquire(data_directory: Option<&Path>) -> Self {
         Self::new(DataDirectoryLock::acquire(data_directory))
-    }
-
-    /// See [`DataDirectoryLock::acquire_if_owner`].
-    pub fn acquire_if_owner(write_access: WriteAccess, data_directory: Option<&Path>) -> Self {
-        Self::new(DataDirectoryLock::acquire_if_owner(
-            write_access,
-            data_directory,
-        ))
     }
 
     /// The lock of a run that marks nothing, whose reports write nothing.
@@ -837,29 +819,6 @@ mod tests {
         );
     }
 
-    /// A second GeoTrace started read-only leaves the directory to the
-    /// instance that owns it: it marks nothing, and the mark it did not take
-    /// is still free.
-    #[test]
-    fn a_read_only_session_marks_nothing_and_leaves_the_directory_free() {
-        let directory = tempfile::tempdir().expect("temp dir");
-
-        let read_only =
-            DataDirectoryLock::acquire_if_owner(WriteAccess::ReadOnly, Some(directory.path()));
-
-        assert_eq!(
-            read_only.ownership(),
-            DataDirectoryOwnership::NoDataDirectory
-        );
-        assert_eq!(file_names_in(directory.path()), Vec::<String>::new());
-        assert_eq!(
-            DataDirectoryLock::acquire_if_owner(WriteAccess::Owner, Some(directory.path()))
-                .ownership(),
-            DataDirectoryOwnership::MarkedByThisInstance,
-            "the instance that owns the directory can still mark it"
-        );
-    }
-
     /// A session that gave up on the mark never takes it: the retry the wait
     /// ran has nothing left to try, whoever lets go of the directory.
     #[test]
@@ -883,6 +842,11 @@ mod tests {
             InstanceStatusRead::read_from(directory.path()),
             InstanceStatusRead::Absent,
             "the run that gave up the mark wrote a status file"
+        );
+        assert_eq!(
+            DataDirectoryLock::acquire(Some(directory.path())).ownership(),
+            DataDirectoryOwnership::MarkedByThisInstance,
+            "the run that gave up the mark holds the lock the next instance needs"
         );
     }
 
@@ -1250,19 +1214,20 @@ mod tests {
         );
     }
 
-    /// A run that marks no directory writes no record: the record goes into
-    /// the directory this run marks or waits for.
+    /// `record_take_over` writes into the directory the mark is on, and
+    /// `give_up_marking_the_data_directory` leaves the mark on none.
     #[test]
     fn a_run_that_marks_no_directory_records_no_take_over() {
         let directory = tempfile::tempdir().expect("temp dir");
-        let read_only =
-            DataDirectoryLock::acquire_if_owner(WriteAccess::ReadOnly, Some(directory.path()));
+        let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+        let mut read_only = lock_waiting_for(directory.path());
+        read_only.give_up_marking_the_data_directory();
 
         assert_eq!(
             read_only.record_take_over(Some(TAKEN_FROM_PROCESS_ID)),
             None
         );
-        assert_eq!(file_names_in(directory.path()), Vec::<String>::new());
+        assert_eq!(TakeOverRecord::read_from(directory.path()), None);
     }
 
     /// The take-over file's field names are part of the interface, not an

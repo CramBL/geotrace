@@ -284,10 +284,7 @@ fn main() -> ExitCode {
     // its own clone of it while another instance holds the directory. This
     // clone lives to the end of main, past the wait for the writes that
     // outlive the window.
-    let instance_lock = SharedDataDirectoryLock::acquire_if_owner(
-        WriteAccess::Owner,
-        storage.data_directory().as_deref(),
-    );
+    let instance_lock = SharedDataDirectoryLock::acquire(storage.data_directory().as_deref());
     let app_instance_lock = instance_lock.clone();
     let result = eframe::run_native(
         concat!("GeoTrace v", env!("CARGO_PKG_VERSION")),
