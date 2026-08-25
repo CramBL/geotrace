@@ -3,7 +3,7 @@
 //! order anomalies the parse found.
 
 use chrono::Duration;
-use egui::{Button, Frame, Grid, RichText, ScrollArea};
+use egui::{Button, Frame, Grid, Label, RichText, ScrollArea};
 use gt_log_view::LoadedLog;
 use gt_logfile::{BootSession, ParsedLog};
 use gt_ui_theme::EM_DASH;
@@ -78,22 +78,29 @@ impl LogViewerWindow {
                         self.scroll_to_row = separator_row;
                     }
                     let uptime = session.uptime();
-                    ui.label(session.anchored.map_or_else(
-                        || EM_DASH.to_owned(),
-                        |anchored| anchored.first.format(TIMESTAMP_FORMAT).to_string(),
-                    ));
-                    ui.label(
-                        uptime.map_or_else(
+                    ui.add(
+                        Label::new(session.anchored.map_or_else(
+                            || EM_DASH.to_owned(),
+                            |anchored| anchored.first.format(TIMESTAMP_FORMAT).to_string(),
+                        ))
+                        .selectable(true),
+                    );
+                    ui.add(
+                        Label::new(uptime.map_or_else(
                             || EM_DASH.to_owned(),
                             gt_fmt::format_human_terse_duration,
-                        ),
+                        ))
+                        .selectable(true),
                     );
                     let entries = session.entry_count();
-                    ui.label(format!(
-                        "{} {}",
-                        gt_fmt::format_count(entries),
-                        gt_fmt::pluralize(entries, "entry", "entries")
-                    ));
+                    ui.add(
+                        Label::new(format!(
+                            "{} {}",
+                            gt_fmt::format_count(entries),
+                            gt_fmt::pluralize(entries, "entry", "entries")
+                        ))
+                        .selectable(true),
+                    );
                     UptimeBar {
                         session: uptime,
                         longest_in_log: longest_uptime,
@@ -141,12 +148,15 @@ impl LogViewerWindow {
                     {
                         self.scroll_to_row = anomaly_row;
                     }
-                    ui.label(
-                        RichText::new(format!(
-                            "steps back {}",
-                            gt_fmt::format_human_terse_duration(anomaly.timestamp_step.abs())
-                        ))
-                        .color(amber),
+                    ui.add(
+                        Label::new(
+                            RichText::new(format!(
+                                "steps back {}",
+                                gt_fmt::format_human_terse_duration(anomaly.timestamp_step.abs())
+                            ))
+                            .color(amber),
+                        )
+                        .selectable(true),
                     );
                     ui.end_row();
                 }
@@ -162,26 +172,36 @@ fn parse_figures_ui(ui: &mut egui::Ui, parsed: &ParsedLog) {
         .spacing(GRID_SPACING)
         .show(ui, |ui| {
             ui.label("Format");
-            ui.label(parsed.format().display_name());
+            ui.add(Label::new(parsed.format().display_name()).selectable(true));
             ui.end_row();
 
             ui.label("Time span");
-            ui.label(parsed.time_range().map_or_else(
-                || EM_DASH.to_owned(),
-                |range| gt_fmt::format_time_range(range.start, range.end),
-            ));
+            ui.add(
+                Label::new(parsed.time_range().map_or_else(
+                    || EM_DASH.to_owned(),
+                    |range| gt_fmt::format_time_range(range.start, range.end),
+                ))
+                .selectable(true),
+            );
             ui.end_row();
 
             ui.label("Anchored entries");
-            ui.label(gt_fmt::format_count(parsed.anchored_entry_count()));
+            ui.add(
+                Label::new(gt_fmt::format_count(parsed.anchored_entry_count())).selectable(true),
+            );
             ui.end_row();
 
             ui.label("Interpolated entries");
-            ui.label(gt_fmt::format_count(parsed.interpolated_entry_count()));
+            ui.add(
+                Label::new(gt_fmt::format_count(parsed.interpolated_entry_count()))
+                    .selectable(true),
+            );
             ui.end_row();
 
             ui.label("Structural lines");
-            ui.label(gt_fmt::format_count(parsed.structural_lines().len()));
+            ui.add(
+                Label::new(gt_fmt::format_count(parsed.structural_lines().len())).selectable(true),
+            );
             ui.end_row();
         });
 }
@@ -197,17 +217,20 @@ fn service_summary_ui(ui: &mut egui::Ui, parsed: &ParsedLog) {
     if let Some(device_type) = &summary.device_type {
         ui.horizontal(|ui| {
             ui.label("Device type");
-            ui.label(RichText::new(device_type).strong());
+            ui.add(Label::new(RichText::new(device_type).strong()).selectable(true));
         });
     }
     if let Some(mismatch) = parsed.exporter_entry_count_mismatch() {
-        ui.label(
-            RichText::new(format!(
-                "The exporter counted {} entries, this parse anchored {}",
-                gt_fmt::format_count_u64(mismatch.stated_by_exporter),
-                gt_fmt::format_count_u64(mismatch.anchored_by_parse)
-            ))
-            .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+        ui.add(
+            Label::new(
+                RichText::new(format!(
+                    "The exporter counted {} entries, this parse anchored {}",
+                    gt_fmt::format_count_u64(mismatch.stated_by_exporter),
+                    gt_fmt::format_count_u64(mismatch.anchored_by_parse)
+                ))
+                .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+            )
+            .selectable(true),
         );
     }
 
@@ -224,9 +247,9 @@ fn service_summary_ui(ui: &mut egui::Ui, parsed: &ParsedLog) {
             ui.label(RichText::new("Warnings").weak());
             ui.end_row();
             for row in counts {
-                ui.label(row.service);
-                ui.label(gt_fmt::format_count_u64(row.errors));
-                ui.label(gt_fmt::format_count_u64(row.warnings));
+                ui.add(Label::new(row.service).selectable(true));
+                ui.add(Label::new(gt_fmt::format_count_u64(row.errors)).selectable(true));
+                ui.add(Label::new(gt_fmt::format_count_u64(row.warnings)).selectable(true));
                 ui.end_row();
             }
         });
