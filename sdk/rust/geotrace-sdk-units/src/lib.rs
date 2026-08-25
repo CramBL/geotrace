@@ -33,17 +33,17 @@
 //!
 //! Parsing a string yields a recognized unit and nothing else:
 //! `"rpm".parse::<ChannelUnit>()` fails with
-//! [`UnitParseError::Unrecognized`], the signal to call
-//! [`ChannelUnit::custom`] when a display-only label is what you meant.
+//! [`UnitParseError::Unrecognized`]: call [`ChannelUnit::custom`] to store a
+//! display-only label.
 //!
 //! # Reading a unit back
 //!
-//! A reader turns file metadata into a [`ChannelUnit`] with
-//! [`ChannelUnit::from_file_label`], which accepts every label. It resolves
-//! aliases such as `degrees`, `kph`, `m/s²` and `µg` to catalog units, keeps
-//! any other single-line label as custom, and preserves the rest as legacy.
-//! [`ChannelUnit::is_writable`] is false for exactly the legacy case, so a tool
-//! that rewrites a file learns which labels it cannot declare again.
+//! [`ChannelUnit::from_file_label`] parses file metadata and accepts every
+//! label. It resolves aliases such as `degrees`, `kph`, `m/s²` and `µg` to
+//! catalog units, keeps a label that is already trimmed, non-empty and free of
+//! control characters as custom, and preserves everything else as legacy.
+//! [`ChannelUnit::is_writable`] is false for the legacy case, which keeps
+//! legacy spellings out of newly written files.
 //!
 //! ```
 //! use geotrace_sdk_units::{ChannelUnit, ChannelUnitKind, Unit};
@@ -118,7 +118,7 @@ impl SiPrefix {
 
     /// Canonical spelling before the base unit.
     ///
-    /// Micro is written `u`; parsing also accepts `µ` and `μ`.
+    /// Micro is written `u`. Parsing also accepts `µ` and `μ`.
     pub const fn text(self) -> &'static str {
         match self {
             Self::Nano => "n",
@@ -230,11 +230,11 @@ impl BaseUnit {
 
     /// Whether this base accepts the given prefix.
     ///
-    /// The pairs are curated to spellings sensors report and readers cannot
-    /// misread: meters take every prefix, seconds take `n`/`u`/`m`, standard
+    /// The pairs are curated to the scales sensors report, each with a single
+    /// reading: meters take every prefix, seconds take `n`/`u`/`m`, standard
     /// gravity takes `u`/`m`, and `m/s` and `m/s2` take `m`/`c`. Neither `kg`
-    /// nor `cs` parses: `kg` reads as a kilogram, and `cs` is a scale nobody
-    /// writes.
+    /// nor `cs` parses: `kg` spells a kilogram, and `cs` is not a scale sensors
+    /// report.
     pub fn accepts_prefix(self, prefix: SiPrefix) -> bool {
         match self {
             Self::M => true,
@@ -278,8 +278,8 @@ impl BaseUnit {
 ///
 /// # Parsing
 ///
-/// [`Unit::from_label`] and the [`FromStr`] impl take a whole label as a file or
-/// a person writes it: they trim it, resolve aliases such as `degrees`, `°`,
+/// [`Unit::from_label`] and the [`FromStr`] impl take a whole label as written:
+/// they trim it, resolve aliases such as `degrees`, `°`,
 /// `kph`, `mps2` and `mG`, rewrite `²` and `^2` to `2`, and split a compound
 /// spelling on `/`. [`FromStr`] reports a [`UnitParseError`] where
 /// [`Unit::from_label`] returns [`None`].
@@ -304,8 +304,8 @@ impl BaseUnit {
 /// [`Unit::label`] returns the canonical spelling as a `&'static str`, which is
 /// what a `.gtd` file stores. [`Unit::text`] and the [`fmt::Display`] impl write
 /// that same spelling into a formatter. [`Unit::canonical_text`] returns it only
-/// for the units in [`Unit::CANONICAL`], which is how the query editor holds its
-/// suggestions to one unit per scale.
+/// for the units in [`Unit::CANONICAL`], the one spelling per scale the query
+/// editor suggests.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Unit {
     prefix: Option<SiPrefix>,
@@ -355,12 +355,16 @@ impl Unit {
     pub const M_PER_S2: Self = Self::base(BaseUnit::MPerS2);
     pub const MM_PER_S2: Self = Self::with_label(SiPrefix::Milli, BaseUnit::MPerS2, "mm/s2");
     pub const CM_PER_S2: Self = Self::with_label(SiPrefix::Centi, BaseUnit::MPerS2, "cm/s2");
+
     /// Standard gravity, 9.80665 m/s².
     pub const G: Self = Self::base(BaseUnit::G);
+
     /// A millionth of standard gravity.
     pub const UG: Self = Self::with_label(SiPrefix::Micro, BaseUnit::G, "ug");
+
     /// A thousandth of standard gravity.
     pub const MG: Self = Self::with_label(SiPrefix::Milli, BaseUnit::G, "mg");
+
     pub const KM_PER_H_PER_S: Self = Self::base(BaseUnit::KmPerHPerS);
     pub const NS: Self = Self::with_label(SiPrefix::Nano, BaseUnit::S, "ns");
     pub const US: Self = Self::with_label(SiPrefix::Micro, BaseUnit::S, "us");
@@ -377,7 +381,7 @@ impl Unit {
     ///
     /// A query accepts every unit in [`Unit::recognized`]. This subset is what
     /// completions and diagnostics list, which keeps the prefixed sensor scales
-    /// (`mm`, `ug`, `cm/s`) out of a list a person reads.
+    /// (`mm`, `ug`, `cm/s`) out of the suggestions.
     /// [`Unit::canonical_text`] returns [`Some`] for exactly these units.
     pub const CANONICAL: [Self; 17] = [
         Self::DEG,
@@ -610,8 +614,8 @@ impl Unit {
         Self::recognized().find(|unit| unit.prefix == Some(prefix) && unit.base == base)
     }
 
-    /// The quantity this unit measures, which decides what a query may compare
-    /// it against.
+    /// The quantity this unit measures. A query compares a value only against
+    /// units of the same quantity.
     pub fn quantity(self) -> PhysicalQuantity {
         self.base.quantity()
     }
@@ -649,7 +653,7 @@ impl Unit {
     /// [`Unit::CANONICAL`].
     ///
     /// The query editor filters its unit completions through this, which leaves
-    /// out the prefixed sensor scales it still parses.
+    /// out the prefixed sensor scales the parser still accepts.
     pub fn canonical_text(self) -> Option<&'static str> {
         match (self.prefix, self.base) {
             (None, base) => Some(base.text()),
@@ -712,9 +716,9 @@ impl Unit {
     ///
     /// Trims the label, maps aliases (`degree`, `metres`, `sec`, `kph`, `mps2`,
     /// `°`, `mG`) to their catalog unit, rewrites `²` and `^2` to `2`, and
-    /// splits a compound spelling on `/`. A file reader parses through this
-    /// entry point. The [`FromStr`] impl is the same parse with a
-    /// [`UnitParseError`] in place of [`None`].
+    /// splits a compound spelling on `/`. [`ChannelUnit::from_file_label`]
+    /// parses file labels through it. The [`FromStr`] impl is the same parse
+    /// with a [`UnitParseError`] in place of [`None`].
     pub fn from_label(label: &str) -> Option<Self> {
         let normalized = normalize_label(label);
         let exact = match normalized.as_str() {
@@ -890,9 +894,9 @@ impl ChannelUnit {
     /// Read existing file metadata, keeping every label.
     ///
     /// A label naming a catalog unit through any accepted alias becomes
-    /// [`ChannelUnitKind::Recognized`], another label that survives
-    /// [`CustomUnit::new`] unchanged becomes [`ChannelUnitKind::Custom`], and
-    /// the rest - untrimmed, empty, or holding a control character - becomes
+    /// [`ChannelUnitKind::Recognized`], a label [`CustomUnit::new`] accepts
+    /// unchanged becomes [`ChannelUnitKind::Custom`], and the rest - untrimmed,
+    /// empty, or holding a control character - becomes
     /// [`ChannelUnitKind::Legacy`] with its bytes intact.
     pub fn from_file_label(label: impl Into<String>) -> Self {
         let label = label.into();

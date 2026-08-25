@@ -4,6 +4,10 @@
 A channel is a named time series sampled at its own rate, correlated with the
 nav track by timestamp. It can be scalar (an inclinometer angle) or a vector
 whose components share one sample clock (an accelerometer's x/y/z axes).
+
+The three channels below cover the three ways to declare a unit: a recognized
+label string, a Unit catalog constant, and ChannelUnit.custom for a label
+outside the catalog, whose values stay dimensionless in queries.
 """
 
 from __future__ import annotations

@@ -229,7 +229,16 @@ typedef struct {
     GtdOptF64 snr_dbhz;      /**< Signal-to-noise ratio in dB·Hz. */
 } GtdSatellite;
 
-/** How a channel unit label should be interpreted on the write path. */
+/**
+ * How a channel unit label should be interpreted on the write path.
+ *
+ * A recognized unit has a physical quantity and a conversion factor, so a
+ * GeoTrace query compares it against literals in any unit of the same quantity.
+ * A custom unit is a label the catalog does not cover. It is stored and shown
+ * verbatim, and its values stay unitless in queries. A file may also hold a
+ * legacy label that is neither (see @ref gtd_nav_file_get_channel_unit): it is
+ * readable but not writable, so neither mode accepts it.
+ */
 typedef enum {
     GTD_CHANNEL_UNIT_RECOGNIZED = 0, /**< Validate as a recognized, convertible unit. */
     GTD_CHANNEL_UNIT_CUSTOM = 1, /**< Preserve as display-only; queries treat values as unitless. */
@@ -241,6 +250,23 @@ typedef enum {
  * Call with @p out NULL and @p out_capacity zero to query the required byte
  * length, including the terminating NUL, then call again with a large enough
  * buffer. Validation and Unicode handling are identical to the Rust SDK.
+ *
+ * Under `GTD_CHANNEL_UNIT_RECOGNIZED` the label is trimmed and aliases are
+ * resolved, so `"kph"`, `"degrees"` and `"m/s²"` come back as `"km/h"`,
+ * `"deg"` and `"m/s2"`. Under `GTD_CHANNEL_UNIT_CUSTOM` the label is only
+ * trimmed, and a label that names a recognized unit is rejected: it belongs in
+ * `GTD_CHANNEL_UNIT_RECOGNIZED`, which keeps its conversion factor.
+ *
+ * @param label        Unit label to validate, NUL-terminated UTF-8.
+ * @param unit_mode    A @ref GtdChannelUnitMode value.
+ * @param out          Buffer for the canonical label, or NULL to size it.
+ * @param out_capacity Bytes writable at @p out.
+ * @param required_len Receives the canonical byte length including the NUL.
+ *
+ * @return `GTD_ERR_INVALID_CHANNEL` if the label is invalid for @p unit_mode or
+ *         @p unit_mode is not a @ref GtdChannelUnitMode, `GTD_ERR_UTF8` if
+ *         @p label is not UTF-8, `GTD_ERR_NULL_ARGUMENT` if @p out is too small
+ *         for the canonical label.
  */
 GtdStatus gtd_channel_unit_parse(const char *label, uint32_t unit_mode, char *out,
                                  size_t out_capacity, size_t *required_len);
@@ -256,7 +282,7 @@ GtdStatus gtd_channel_unit_parse(const char *label, uint32_t unit_mode, char *ou
  */
 typedef struct {
     const char *name;     /**< Channel name (a lowercase identifier). */
-    const char *unit;     /**< Recognized unit of the values, or NULL. */
+    const char *unit;     /**< Unit of the values, or NULL. See @ref GtdChannelUnitMode. */
     GtdOptF64 period_deg; /**< Wrap period in degrees for an angular channel, or `GTD_NONE_F64`. */
     const char *description; /**< Human-readable description, or NULL. */
     const char *const
@@ -338,7 +364,8 @@ typedef struct {
  * `gtd_nav_file_channel_times()`, `gtd_nav_file_channel_values()`, and
  * `gtd_nav_file_get_channel_component()`. A @ref component_count of zero marks a
  * scalar channel. All string fields are null-terminated and truncated to their
- * buffer size if longer.
+ * buffer size if longer. `gtd_nav_file_get_channel_unit()` reads the unit
+ * without that limit and reports whether it is a recognized unit.
  */
 typedef struct {
     char name[256];          /**< Channel name. */
@@ -530,6 +557,11 @@ GtdStatus gtd_builder_add_channel(GtdFileBuilder *b, const GtdChannel *channel);
  *
  * This entry point preserves the layout of @ref GtdChannel while allowing a
  * display-only custom label through @ref GTD_CHANNEL_UNIT_CUSTOM.
+ * `gtd_builder_add_channel()` is this call with
+ * @ref GTD_CHANNEL_UNIT_RECOGNIZED. The label is validated and canonicalized as
+ * in @ref gtd_channel_unit_parse, so the file stores the canonical spelling. A
+ * NULL @ref GtdChannel::unit adds a channel without a unit, whatever
+ * @p unit_mode says.
  *
  * @return `GTD_ERR_INVALID_CHANNEL` for an invalid unit/mode combination or
  *         malformed channel metadata.
@@ -753,6 +785,12 @@ GtdStatus gtd_nav_file_get_channel(const GtdNavFile *f, size_t idx, GtdChannelIn
  * Pass NULL @p out and zero @p cap to query the required byte length, including
  * the trailing null byte. A channel without a unit reports zero. @p is_custom
  * may be NULL when the recognized/custom distinction is not needed.
+ *
+ * @p is_custom is non-zero for any label that is not a recognized unit. That
+ * covers both a custom label and a legacy label an older writer stored, which
+ * this SDK reports verbatim and rejects on the write path: passing such a label
+ * to @ref gtd_builder_add_channel_with_unit_mode returns
+ * `GTD_ERR_INVALID_CHANNEL`.
  */
 GtdStatus gtd_nav_file_get_channel_unit(const GtdNavFile *f, size_t idx, char *out, size_t cap,
                                         size_t *required_len, uint8_t *is_custom);

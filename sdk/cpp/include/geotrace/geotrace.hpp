@@ -650,36 +650,66 @@ struct EventMarkerStyle {
 };
 
 /**
- * A scalar or vector sensor channel sampled at its own rate.
+ * The unit of a channel's values: a recognized unit or a custom label.
  *
- * Leave `components` empty for a scalar channel, or list one label per column
- * for a vector channel (an accelerometer's `{"x", "y", "z"}`). `values` is
- * row-major: `times.size()` rows of one column (scalar) or `components.size()`
- * columns (vector).
+ * A recognized unit comes from the @ref RecognizedUnit catalog, has a physical
+ * quantity and a conversion factor, and is what a GeoTrace query compares
+ * against unit literals. A custom unit is any other label: it is stored and
+ * shown verbatim and its values stay unitless in queries.
+ *
+ * A unit read back from a file (@ref ChannelView::unit) reports `is_custom()`
+ * for any label that is not a catalog unit, including a legacy label an older
+ * writer stored. Adding a channel with such a label throws
+ * `InvalidChannelError`.
+ *
+ * ```
+ * auto accel = geotrace::ChannelUnit::recognized(geotrace::RecognizedUnit::Mg);
+ * auto score = geotrace::ChannelUnit::custom("vendor score");
+ * ```
  */
 class ChannelUnit {
   public:
+    /** A catalog unit, spelled canonically. */
     static ChannelUnit recognized(RecognizedUnit unit) {
         return ChannelUnit{recognized_unit_label(unit), false};
     }
 
+    /**
+     * A display-only label for a unit the catalog does not cover.
+     *
+     * Throws `InvalidChannelError` for an empty label, a label with a control
+     * character, or a label that spells a recognized unit: declare that one
+     * with `recognized()` or `parse_recognized()`.
+     */
     static ChannelUnit custom(std::string label) {
         return try_custom(std::move(label)).value_or_throw();
     }
 
+    /** The non-throwing form of `custom()`, returning a `Result`. */
     static Result<ChannelUnit> try_custom(std::string label) {
         return try_parse(std::move(label), GTD_CHANNEL_UNIT_CUSTOM, true);
     }
 
+    /**
+     * A catalog unit named by its label, resolving aliases: `"kph"` is
+     * `"km/h"`, `"degrees"` is `"deg"`, `"m/s²"` is `"m/s2"`.
+     *
+     * Throws `InvalidChannelError` for a label outside the catalog: store that
+     * one with `custom()`.
+     */
     static ChannelUnit parse_recognized(std::string_view label) {
         return try_parse_recognized(label).value_or_throw();
     }
 
+    /** The non-throwing form of `parse_recognized()`, returning a `Result`. */
     static Result<ChannelUnit> try_parse_recognized(std::string_view label) {
         return try_parse(std::string{label}, GTD_CHANNEL_UNIT_RECOGNIZED, false);
     }
 
+    /** The canonical label as stored in the file. */
     const std::string &label() const noexcept { return label_; }
+
+    /** True for a custom label, false for a catalog unit. */
     bool is_custom() const noexcept { return custom_; }
 
     friend bool operator==(const ChannelUnit &a, const ChannelUnit &b) noexcept {
@@ -713,6 +743,14 @@ class ChannelUnit {
     bool custom_;
 };
 
+/**
+ * A scalar or vector sensor channel sampled at its own rate.
+ *
+ * Leave `components` empty for a scalar channel, or list one label per column
+ * for a vector channel (an accelerometer's `{"x", "y", "z"}`). `values` is
+ * row-major: `times.size()` rows of one column (scalar) or `components.size()`
+ * columns (vector).
+ */
 struct Channel {
     std::string name;
     std::optional<ChannelUnit> unit;
@@ -1021,8 +1059,12 @@ class FileBuilder {
 
     /**
      * Add a scalar or vector sensor channel.
-     * @throws InvalidChannelError if the name/a component is malformed or
-     *         `values` is not `times.size() * max(components.size(), 1)` long.
+     *
+     * The unit keeps its recognized/custom interpretation, so a
+     * `ChannelUnit::custom` label is stored as a display-only unit.
+     * @throws InvalidChannelError if the name/a component is malformed, the
+     *         unit is not valid writer input, or `values` is not
+     *         `times.size() * max(components.size(), 1)` long.
      */
     FileBuilder &add_channel(const Channel &ch) {
         std::vector<const char *> components;

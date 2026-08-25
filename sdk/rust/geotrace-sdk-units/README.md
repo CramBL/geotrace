@@ -24,13 +24,14 @@ let score = ChannelUnit::custom("vendor score")?;
 assert!(score.as_recognized().is_none());
 ```
 
-Parsing a string yields a recognized unit and nothing else: `"rpm".parse::<ChannelUnit>()` fails with `UnitParseError::Unrecognized`, the signal to call `ChannelUnit::custom` when a display-only label is what you meant.
+Parsing a string yields a recognized unit and nothing else: `"rpm".parse::<ChannelUnit>()` fails with `UnitParseError::Unrecognized`.
+Call `ChannelUnit::custom` to store a display-only label.
 
 ## Reading a unit back
 
 `ChannelUnit::from_file_label` accepts every label a file can hold.
-It resolves aliases such as `degrees`, `kph`, `m/s²` and `µg` to catalog units, keeps any other single-line label as custom, and preserves the rest as legacy.
-`ChannelUnit::is_writable` is false for exactly the legacy case, so a tool that rewrites a file learns which labels it cannot declare again.
+It resolves aliases such as `degrees`, `kph`, `m/s²` and `µg` to catalog units, keeps a label that is already trimmed, non-empty and free of control characters as custom, and preserves everything else as legacy.
+`ChannelUnit::is_writable` is false for the legacy case, which keeps legacy spellings out of newly written files.
 
 ## What queries do with each kind
 
@@ -40,6 +41,7 @@ The base units are degrees, meters, meters per second, meters per second squared
 Custom and legacy values are read as plain numbers, so a unit literal cannot be compared against them.
 
 The catalog also covers prefixed sensor scales (`mm`, `ug`, `cm/s2`) that a query parses but the editor leaves out of its suggestions.
-`Unit::CANONICAL` is the suggested subset, `Unit::recognized()` is everything.
+`Unit::CANONICAL` is the suggested subset.
+`Unit::recognized()` is every unit the parser accepts.
 
 This crate is MIT licensed independently of the AGPL GeoTrace application.
