@@ -6,7 +6,11 @@
 
 use std::path::Path;
 
-use crate::prune::{DeclinedRecovery, InterruptedDelete, InterruptedDeleteRecovery};
+use chrono::NaiveDate;
+
+use crate::prune::{
+    DeclinedRecovery, InterruptedDelete, InterruptedDeleteRecovery, PruneProgressSink,
+};
 use crate::{ArchiveError, ArchiveFile};
 
 /// An [`ArchiveFile`] part-way through one of the opens in this module.
@@ -87,6 +91,20 @@ pub trait WritableDayArchive: Sized {
     /// Cut the rows an interrupted insert left behind, which no day index
     /// entry reaches.
     fn drop_unindexed_rows(archive: &mut ArchiveFileBeingOpened) -> Result<(), Self::Error>;
+
+    /// Remove every archived day before `cutoff`, reporting how many went.
+    ///
+    /// The rows the remaining days hold move down to close the gap. The file
+    /// itself rarely shrinks: the freed space is where later days are
+    /// written.
+    fn delete_days_before(
+        &self,
+        cutoff: NaiveDate,
+        report: PruneProgressSink<'_>,
+    ) -> Result<usize, Self::Error>;
+
+    /// Remove every archived day, reporting how many went.
+    fn delete_all_days(&self, report: PruneProgressSink<'_>) -> Result<usize, Self::Error>;
 
     /// Open the archive at `path`, creating it if it does not exist.
     ///

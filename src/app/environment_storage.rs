@@ -11,7 +11,7 @@ use egui::Context;
 use gt_pending_writes::{WriteRefusal, WriteRegistration};
 use gt_store::{
     ArchiveUsage, EnvironmentArchive, FlareStore, IonexStore, JamStore, PruneProgress,
-    PruneProgressSink, SolarStore, WritableArchive,
+    PruneProgressSink, SolarStore, StoredDayArchive, WritableArchive,
 };
 use strum::IntoEnumIterator as _;
 
@@ -277,49 +277,7 @@ impl<W: ArchivedDayDeletion> RegisteredDayDeletion for WritableArchive<W> {
     }
 }
 
-impl ArchivedDayDeletion for JamStore {
-    fn delete_pruned_days(
-        &self,
-        pruned: PrunedDays,
-        report: PruneProgressSink<'_>,
-    ) -> Result<usize, String> {
-        match pruned {
-            PrunedDays::Before(cutoff) => self.delete_days_before(cutoff, report),
-            PrunedDays::All => self.delete_all_days(report),
-        }
-        .map_err(|err| err.to_string())
-    }
-}
-
-impl ArchivedDayDeletion for SolarStore {
-    fn delete_pruned_days(
-        &self,
-        pruned: PrunedDays,
-        report: PruneProgressSink<'_>,
-    ) -> Result<usize, String> {
-        match pruned {
-            PrunedDays::Before(cutoff) => self.delete_days_before(cutoff, report),
-            PrunedDays::All => self.delete_all_days(report),
-        }
-        .map_err(|err| err.to_string())
-    }
-}
-
-impl ArchivedDayDeletion for IonexStore {
-    fn delete_pruned_days(
-        &self,
-        pruned: PrunedDays,
-        report: PruneProgressSink<'_>,
-    ) -> Result<usize, String> {
-        match pruned {
-            PrunedDays::Before(cutoff) => self.delete_days_before(cutoff, report),
-            PrunedDays::All => self.delete_all_days(report),
-        }
-        .map_err(|err| err.to_string())
-    }
-}
-
-impl ArchivedDayDeletion for FlareStore {
+impl<W: StoredDayArchive> ArchivedDayDeletion for W {
     fn delete_pruned_days(
         &self,
         pruned: PrunedDays,

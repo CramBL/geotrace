@@ -191,8 +191,7 @@ impl ReadOnlyJamStore {
 }
 
 /// The interference archive, which reads through [`ReadOnlyJamStore`] and
-/// adds [`Self::insert_day`], [`Self::delete_days_before`] and
-/// [`Self::delete_all_days`].
+/// adds [`Self::insert_day`] beside the deletes of [`WritableDayArchive`].
 #[derive(Debug)]
 pub struct JamStore {
     inner: ReadOnlyJamStore,
@@ -263,6 +262,22 @@ impl WritableDayArchive for JamStore {
         )?;
         Ok(())
     }
+
+    fn delete_days_before(
+        &self,
+        cutoff: NaiveDate,
+        report: PruneProgressSink<'_>,
+    ) -> Result<usize, JamStoreError> {
+        let mut archive = self.inner.archive.lock();
+        let file = archive.open_read_write()?;
+        with_layout(&file, |layout| layout.delete_days_before(cutoff, report))
+    }
+
+    fn delete_all_days(&self, report: PruneProgressSink<'_>) -> Result<usize, JamStoreError> {
+        let mut archive = self.inner.archive.lock();
+        let file = archive.open_read_write()?;
+        with_layout(&file, |layout| layout.delete_all_days(report))
+    }
 }
 
 impl JamStore {
@@ -319,28 +334,6 @@ impl JamStore {
         // stay unindexed, and the next open cuts them.
         index.insert_or_replace(day, placement, fetched_at, host)?;
         Ok(())
-    }
-
-    /// Remove every day before `cutoff`, reporting how many days went.
-    ///
-    /// The observations the remaining days hold move down to close the gap.
-    /// The file itself rarely shrinks: the space is what the days stored
-    /// after the delete are written into.
-    pub fn delete_days_before(
-        &self,
-        cutoff: NaiveDate,
-        report: PruneProgressSink<'_>,
-    ) -> Result<usize, JamStoreError> {
-        let mut archive = self.inner.archive.lock();
-        let file = archive.open_read_write()?;
-        with_layout(&file, |layout| layout.delete_days_before(cutoff, report))
-    }
-
-    /// Remove every stored day, reporting how many went.
-    pub fn delete_all_days(&self, report: PruneProgressSink<'_>) -> Result<usize, JamStoreError> {
-        let mut archive = self.inner.archive.lock();
-        let file = archive.open_read_write()?;
-        with_layout(&file, |layout| layout.delete_all_days(report))
     }
 }
 

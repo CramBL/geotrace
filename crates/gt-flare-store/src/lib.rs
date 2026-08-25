@@ -166,8 +166,11 @@ impl ReadOnlyFlareStore {
 }
 
 /// The solar flare archive, which reads through [`ReadOnlyFlareStore`] and
-/// adds [`Self::insert_or_replace_day`], [`Self::delete_days_before`] and
-/// [`Self::delete_all_days`].
+/// adds [`Self::insert_or_replace_day`] beside the deletes of
+/// [`WritableDayArchive`].
+///
+/// Deleting days never shrinks this file: most of what a flare holds is text,
+/// whose bytes libhdf5 does not free.
 #[derive(Debug)]
 pub struct FlareStore {
     inner: ReadOnlyFlareStore,
@@ -244,16 +247,8 @@ impl WritableDayArchive for FlareStore {
         DayIndex::new(&days).drop_unindexed_rows(&events, &schema::EVENT_COLUMNS, ARCHIVE_NAME)?;
         Ok(())
     }
-}
 
-impl FlareStore {
-    /// Remove every day before `cutoff`, reporting how many days went.
-    ///
-    /// The events the remaining days hold move down to close the gap. The
-    /// file itself does not shrink here at all: most of what a flare holds is
-    /// text, whose bytes libhdf5 never hands back. The space the rest freed is
-    /// what the days stored after the delete are written into.
-    pub fn delete_days_before(
+    fn delete_days_before(
         &self,
         cutoff: NaiveDate,
         report: PruneProgressSink<'_>,
@@ -263,13 +258,14 @@ impl FlareStore {
         with_layout(&file, |layout| layout.delete_days_before(cutoff, report))
     }
 
-    /// Remove every archived day, reporting how many went.
-    pub fn delete_all_days(&self, report: PruneProgressSink<'_>) -> Result<usize, FlareStoreError> {
+    fn delete_all_days(&self, report: PruneProgressSink<'_>) -> Result<usize, FlareStoreError> {
         let mut archive = self.inner.archive.lock();
         let file = archive.open_read_write()?;
         with_layout(&file, |layout| layout.delete_all_days(report))
     }
+}
 
+impl FlareStore {
     /// Store `flares` as the events of `day`, served by `host`, replacing
     /// whatever was archived for that day.
     pub fn insert_or_replace_day(

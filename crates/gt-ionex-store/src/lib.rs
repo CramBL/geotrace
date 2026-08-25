@@ -245,8 +245,8 @@ impl ReadOnlyIonexStore {
 }
 
 /// The TEC map archive, which reads through [`ReadOnlyIonexStore`] and adds
-/// [`Self::insert_or_replace_day`], [`Self::delete_days_before`] and
-/// [`Self::delete_all_days`].
+/// [`Self::insert_or_replace_day`] beside the deletes of
+/// [`WritableDayArchive`].
 #[derive(Debug)]
 pub struct IonexStore {
     inner: ReadOnlyIonexStore,
@@ -361,15 +361,8 @@ impl WritableDayArchive for IonexStore {
         }
         Ok(())
     }
-}
 
-impl IonexStore {
-    /// Remove every day before `cutoff`, reporting how many days went.
-    ///
-    /// The maps and values the remaining days hold move down to close the
-    /// gap. The file itself rarely shrinks: the space is what the days stored
-    /// after the delete are written into.
-    pub fn delete_days_before(
+    fn delete_days_before(
         &self,
         cutoff: NaiveDate,
         report: PruneProgressSink<'_>,
@@ -379,13 +372,14 @@ impl IonexStore {
         with_layout(&file, |layout| layout.delete_days_before(cutoff, report))
     }
 
-    /// Remove every archived day, reporting how many went.
-    pub fn delete_all_days(&self, report: PruneProgressSink<'_>) -> Result<usize, IonexStoreError> {
+    fn delete_all_days(&self, report: PruneProgressSink<'_>) -> Result<usize, IonexStoreError> {
         let mut archive = self.inner.archive.lock();
         let file = archive.open_read_write()?;
         with_layout(&file, |layout| layout.delete_all_days(report))
     }
+}
 
+impl IonexStore {
     /// Store `maps` as the maps of `day`, served by `host` from `product`,
     /// replacing whatever was archived for that day.
     pub fn insert_or_replace_day(
