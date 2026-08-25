@@ -4,60 +4,33 @@
 
 ### Added
 
-- **Environment Data:** Added support for Geomagnetic indices (Kp/Hp30) and Ionosphere maps (TEC), including auto-downloads, map heatmaps, and query support (e.g., `where tec > 100`).
-- **Environment Data:** Added solar flare markers from NASA's DONKI catalog to the plot, detailing peak times, class, and sunlit status. Hovering a marker shades how long that flare lasted, hovering the solar flare chip shades every flare the view reaches into, and the chip's right-click menu keeps every span shaded without hovering.
-- **Environment Data:** Added warnings (via toast and map icon) when space weather or aircraft interference reaches levels that could disrupt satellite navigation.
-  Each warning names the affected track and the value the metric reached, and clicking the map icon lists every affected track over the level each metric warns at.
-  The TEC reference material shows the May 2024 storm as the plot draws it, against the quiet-time median of the days before, and states the grade boundaries the warning fires on.
-  A TEC deviation states how long the storm grade held at the grid node it peaked over and whether the archived Kp and Hp30 place a geomagnetic storm in the 48 h before that peak, over one line naming what the grade is measured against.
+- **Environment Data:** Added support for Geomagnetic indices (Kp/Hp30) and Ionosphere maps (TEC), including auto-downloads, map heatmaps, and query support.
+- **Environment Data:** Added solar flare markers from NASA's DONKI catalog to the plot. Hovering a marker or the solar flare chip shades the flare's duration on the view.
+- **Environment Data:** Added warnings (via toast and map icon) when space weather or aircraft interference reaches levels that could disrupt satellite navigation. Warnings detail the affected tracks and metric values, and TEC deviations state storm durations and preceding geomagnetic activity.
 - **Log Viewer:** Added a dedicated log window to inspect loaded logs, view parse summaries, and center the map by clicking a line.
 - **Log Viewer:** Added plain text and regex filtering with the ability to save filters. Filtered lines now display on the map as color-coded hexagons with two-way hover sync.
-- **Log Viewer:** Added the ability to attach logs to specific recordings on load (retaining filters) and to paste log text directly using `Ctrl+V`.
-- **Map & Tracks:** Added a right-click option to snap all tracks in a recording to the road at once, and "Snap again as" now prompts before replacing existing data.
-- **Map & Tracks:** Added an animation to finished query matches so they flare up and settle on the map to stand out among tracks.
-- **Map & Tracks:** Added tooltips to identify which recording a map point belongs to when multiple files are loaded.
-- **Settings & Storage:** Added a storage manager to view disk usage for environment data, with options to manually delete old days or auto-prune them on startup.
-- **Settings & Storage:** Added a search field, a live preview for the recording name template, and consolidated reference links for atmospheric metrics.
-- **System:** Added the `--offline` flag to run without network access (replacing the `GEOTRACE_OFFLINE` environment variable).
-- **System:** Closing GeoTrace finishes the writes still in progress instead of ending them mid-file.
-  A shutdown window lists each unfinished write and archive delete with its progress.
-  "Run in background" closes the window and leaves them to finish, and "Force quit…" ends them at once after a confirmation naming what each one discards.
-  Ctrl+C and `kill` shut down the same way, and a second signal quits immediately, discarding the writes.
-- **System:** Only one GeoTrace writes to a data directory at a time.
-  A second one started on a directory already in use waits for it and opens the recordings and archives as soon as it is free.
-  The wait states what the GeoTrace holding the directory is doing, and marks a report it stopped refreshing with how old it is.
-  It also says when there is no report at all, and when one cannot be read or is damaged.
-  "Take over write access…" ends the wait after a confirmation naming what the other GeoTrace is doing and warning that both windows write the same settings file: the settings kept are those of whichever closes last.
-  A take-over then asks about each archive a delete was interrupted in: recover it and lose its archived days, or leave it alone and go without it for the session.
-  That question states when write access was taken and from which process.
-- **System:** "Start read-only" reads the recordings and archives beside the GeoTrace holding the data directory, including the interference, geomagnetic, TEC and flare data in an archive it has open, so both windows can be open at once.
-  A read-only session stores, downloads, deletes and saves nothing, is marked in the window's corner, and grays every control that would write, with the reason.
-  It stays read-only until GeoTrace is restarted.
+- **Log Viewer:** Added the ability to attach logs to specific recordings on load and to paste log text directly using `Ctrl+V`.
+- **Map & Tracks:** Added a right-click option to snap all tracks in a recording to the road at once. Finished query matches now flare up and settle on the map to stand out, and tooltips identify which recording a point belongs to.
+- **Settings & Storage:** Added a storage manager to view disk usage for environment data and auto-prune old days. Also added a search field and a live preview for the recording name template.
+- **System:** Added the `--offline` flag to run without network access.
+- **System:** Closing GeoTrace now finishes writes in progress instead of ending them mid-file, with a shutdown window listing the progress of unfinished writes and archive deletes.
+- **System:** Only one GeoTrace writes to a data directory at a time to prevent conflicts. Additional instances will wait until the directory is free, or can be started in a "read-only" mode that safely reads recordings and archives alongside the active window.
 
 ### Changed
 
-- **Environment Data:** Grouped space weather and interference chips together with descriptive hover states, and made the aircraft interference line span all archived days in view.
-- **Interface:** Redesigned query results into a tabbed panel below the editor, opening with a line per query stating what it matched.
-  A sortable table lists every match of the run with its duration as a clock reading, and the picked match's points sit below it under shared column headers, every number over a bar for its size against the whole run's matches.
-  A copy button puts every row of the run on the clipboard as tab-separated values.
-- **Interface:** Drag the splitter between the query results' two tables to divide the tab between them, or move the match list into a window of its own.
+- **Environment Data:** Grouped space weather and interference chips together with descriptive hover states.
+- **Interface:** Redesigned query results into a tabbed panel below the editor, featuring a sortable table, visual size bars, and a copy button for tab-separated values. You can drag the splitter to divide the tab or move the match list to its own window.
 - **Interface:** The Settings window now displays one category at a time using a left-side navigation rail.
-- **Interface:** A recording's hover text and its details dialog now state the time range it covers beside the recorded time its tracks hold, so a recording that idles between tracks no longer reads as if it recorded throughout.
-- **Interface:** Label text no longer selects, so readouts, captions and headers show the ordinary cursor. Text worth copying still selects: recording metadata, the recording history path, the version in About, the reference windows' query examples, a clicked marker's label, position and note, and the log viewer's lines, boot dividers and parse summary.
+- **Interface:** A recording's hover text and details dialog now state the time range it covers beside the recorded time its tracks hold.
+- **Interface:** Non-essential label text no longer selects so the cursor remains ordinary, while text worth copying (metadata, log lines, query examples) remains selectable.
 - **Log Viewer:** Log files now successfully load even if some lines have unrecognized timestamps by interpolating from neighboring data.
-- **System:** The window opens right away and the databases open behind it, so a large archive no longer delays the first frame.
-  Files named on the command line or dropped in are loaded and stored as usual once the databases are open, including after a wait for another GeoTrace.
+- **System:** The window now opens right away and databases open behind it, so a large archive no longer delays the first frame.
 
 ### Fixed
 
-- **Interface:** Every window now stays inside the screen and scrolls its content when there is more of it than fits.
-  A long list, an unbroken recording identity, path or log line, and hundreds of warnings all leave the window's buttons, footer and close button where the user can reach them.
-  The track-splitting and auto-prune prompts now group their buttons bottom-right like the rest of the dialogs, so their affirmative action sits rightmost.
-- **Interface:** Fixed external links in dialogs and reference materials so they correctly open in the web browser.
-- **Interface:** Fixed hover states in the plot so they correctly highlight the side panel rows and prevented hover labels from overlapping.
-- **Interface:** Fixed the plot's file legend so it no longer covers the settings and query windows.
-- **Map & Tracks:** Fixed snapped tracks improperly routing through nearby roads during dead-reckoning gaps (e.g., parking garages).
-- **Map & Tracks:** Fixed an issue where overlapping snapped tracks would flicker when redrawn.
+- **Interface:** Every window now stays inside the screen and scrolls its content when there is more of it than fits. Buttons in prompts are now grouped bottom-right.
+- **Interface:** Fixed external links properly opening in the browser, hover states correctly highlighting without overlapping, and the file legend no longer covering the settings and query windows.
+- **Map & Tracks:** Fixed snapped tracks improperly routing through nearby roads during dead-reckoning gaps (e.g., parking garages) and eliminated flickering on overlapping tracks.
 - **Settings & Storage:** Older environment archives are now automatically rebuilt on load so that deleting old days properly frees disk space.
 
 ## 0.12.0 - 2026-08-15
