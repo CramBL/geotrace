@@ -36,6 +36,7 @@ pub use gt_solar_store::{ArchivedIndexDay, ReadOnlySolarStore, SolarStore, Solar
 mod archive_handle;
 mod day_archive;
 pub mod log_attachments;
+mod per_archive;
 mod recordings_handle;
 mod writable_archive;
 
@@ -44,6 +45,7 @@ pub use day_archive::{DayArchiveError, EnvironmentArchive, StoredDayArchive};
 pub use log_attachments::{
     AttachedLog, LogAttachmentError, LogAttachments, LogToAttach, ReadOnlyLogAttachments,
 };
+pub use per_archive::PerArchive;
 pub use recordings_handle::RecordingsHandle;
 pub use writable_archive::WritableArchive;
 

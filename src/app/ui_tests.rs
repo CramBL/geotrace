@@ -5735,10 +5735,7 @@ fn recovering_after_a_take_over_opens_the_archive_with_its_days_discarded() {
         "the archive was opened with the interrupted delete still in it"
     );
     assert_eq!(
-        harness
-            .state()
-            .unavailable_archives
-            .of(EnvironmentArchive::AircraftInterference),
+        harness.state().unavailable_archives[EnvironmentArchive::AircraftInterference],
         None
     );
 }
@@ -5819,10 +5816,7 @@ fn leaving_an_interrupted_delete_unrecovered_writes_nothing_to_the_archive() {
         "the archive was opened after the user left it unrecovered"
     );
     assert_eq!(
-        harness
-            .state()
-            .unavailable_archives
-            .of(EnvironmentArchive::AircraftInterference),
+        harness.state().unavailable_archives[EnvironmentArchive::AircraftInterference],
         Some(ArchiveUnavailable::InterruptedDeleteLeftUnrecovered)
     );
     assert!(
@@ -5848,10 +5842,7 @@ fn escape_leaves_the_interrupted_delete_unrecovered() {
         "escape recovered the interrupted delete"
     );
     assert_eq!(
-        harness
-            .state()
-            .unavailable_archives
-            .of(EnvironmentArchive::AircraftInterference),
+        harness.state().unavailable_archives[EnvironmentArchive::AircraftInterference],
         Some(ArchiveUnavailable::InterruptedDeleteLeftUnrecovered)
     );
 }
@@ -5879,10 +5870,7 @@ fn an_archive_the_other_instance_holds_is_reported_as_in_use() {
     wait_for_the_archives_to_open(&mut harness);
 
     assert_eq!(
-        harness
-            .state()
-            .unavailable_archives
-            .of(EnvironmentArchive::AircraftInterference),
+        harness.state().unavailable_archives[EnvironmentArchive::AircraftInterference],
         Some(ArchiveUnavailable::HeldByTheOtherInstance)
     );
     assert!(
@@ -5908,10 +5896,7 @@ fn escape_leaves_the_archive_the_other_instance_holds_alone() {
     wait_for_the_archives_to_open(&mut harness);
 
     assert_eq!(
-        harness
-            .state()
-            .unavailable_archives
-            .of(EnvironmentArchive::AircraftInterference),
+        harness.state().unavailable_archives[EnvironmentArchive::AircraftInterference],
         Some(ArchiveUnavailable::HeldByTheOtherInstance)
     );
     assert!(
@@ -5940,10 +5925,7 @@ fn an_interrupted_delete_nobody_was_asked_about_is_declined() {
         "the open recovered a delete nobody was asked about"
     );
     assert_eq!(
-        harness
-            .state()
-            .unavailable_archives
-            .of(EnvironmentArchive::AircraftInterference),
+        harness.state().unavailable_archives[EnvironmentArchive::AircraftInterference],
         Some(ArchiveUnavailable::InterruptedDeleteLeftUnrecovered)
     );
     assert!(harness.state().tec_maps.archive_available());

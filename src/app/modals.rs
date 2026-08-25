@@ -957,7 +957,7 @@ pub fn show_environment_prune_confirmation(
                     for archive in EnvironmentArchive::iter()
                         .filter(|archive| prompt.request.scope.covers(*archive))
                     {
-                        let days = prompt.covered.of(archive);
+                        let days = prompt.covered[archive];
                         ui.label(archive.label());
                         ui.label(format!("{days} {}", gt_fmt::pluralize(days, "day", "days")));
                         ui.end_row();
@@ -1107,12 +1107,12 @@ mod tests {
     }
 
     fn covered_days() -> CoveredDayCounts {
-        CoveredDayCounts {
-            interference: 2,
-            geomagnetic_indices: 3,
-            tec_maps: 29,
-            solar_flares: 1,
-        }
+        let mut covered = CoveredDayCounts::default();
+        covered[EnvironmentArchive::AircraftInterference] = 2;
+        covered[EnvironmentArchive::GeomagneticIndices] = 3;
+        covered[EnvironmentArchive::IonosphericTec] = 29;
+        covered[EnvironmentArchive::SolarFlares] = 1;
+        covered
     }
 
     /// Renders the confirmation and reports the choice it took.

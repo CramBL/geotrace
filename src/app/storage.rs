@@ -519,7 +519,7 @@ fn open_archive<A: StoredDayArchive>(
     };
     let opened = match plan {
         ArchiveOpenPlan::LeaveClosed(reason) => {
-            unavailable_archives.record(archive, reason);
+            unavailable_archives[archive] = Some(reason);
             return None;
         }
         ArchiveOpenPlan::Open(choice) => {
@@ -537,16 +537,14 @@ fn open_archive<A: StoredDayArchive>(
                     archive.label_in_sentence(),
                     interrupted.archived_days
                 );
-                unavailable_archives.record(
-                    archive,
-                    ArchiveUnavailable::InterruptedDeleteLeftUnrecovered,
-                );
+                unavailable_archives[archive] =
+                    Some(ArchiveUnavailable::InterruptedDeleteLeftUnrecovered);
             } else if err.is_held_by_another_process() {
                 log::warn!(
                     "The {} archive is open in another process, and is not opened this session",
                     archive.label_in_sentence()
                 );
-                unavailable_archives.record(archive, ArchiveUnavailable::HeldByTheOtherInstance);
+                unavailable_archives[archive] = Some(ArchiveUnavailable::HeldByTheOtherInstance);
             } else {
                 log::error!(
                     "The {} archive at {} is unusable: {err}",
@@ -805,9 +803,7 @@ mod tests {
             "the open left the delete interrupted"
         );
         assert_eq!(
-            opened
-                .unavailable_archives
-                .of(EnvironmentArchive::AircraftInterference),
+            opened.unavailable_archives[EnvironmentArchive::AircraftInterference],
             None
         );
     }
@@ -834,7 +830,7 @@ mod tests {
         assert!(opened.solar_flares.is_none());
         for archive in EnvironmentArchive::iter() {
             assert_eq!(
-                opened.unavailable_archives.of(archive),
+                opened.unavailable_archives[archive],
                 Some(ArchiveUnavailable::MissingInAReadOnlySession),
                 "{archive:?} was reported as unavailable for the wrong reason"
             );
@@ -866,9 +862,7 @@ mod tests {
 
         assert!(opened.archive.is_none());
         assert_eq!(
-            opened
-                .unavailable_archives
-                .of(EnvironmentArchive::AircraftInterference),
+            opened.unavailable_archives[EnvironmentArchive::AircraftInterference],
             Some(ArchiveUnavailable::InterruptedDeleteLeftUnrecovered)
         );
         assert_eq!(
@@ -906,9 +900,7 @@ mod tests {
         );
         assert_eq!(archive.read().days().expect("read the day index"), []);
         assert_eq!(
-            opened
-                .unavailable_archives
-                .of(EnvironmentArchive::AircraftInterference),
+            opened.unavailable_archives[EnvironmentArchive::AircraftInterference],
             None
         );
     }

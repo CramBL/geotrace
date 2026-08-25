@@ -10,7 +10,7 @@ use chrono::{Months, NaiveDate, Utc};
 use egui::Context;
 use gt_pending_writes::{WriteRefusal, WriteRegistration};
 use gt_store::{
-    ArchiveUsage, EnvironmentArchive, FlareStore, IonexStore, JamStore, PruneProgress,
+    ArchiveUsage, EnvironmentArchive, FlareStore, IonexStore, JamStore, PerArchive, PruneProgress,
     PruneProgressSink, SolarStore, StoredDayArchive, WritableArchive,
 };
 use strum::IntoEnumIterator as _;
@@ -373,60 +373,11 @@ fn prune(archives: &OpenEnvironmentArchives, request: PruneRequest) -> PruneRepo
 }
 
 /// How many days each archive holds inside a delete's range.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct CoveredDayCounts {
-    pub interference: usize,
-    pub geomagnetic_indices: usize,
-    pub tec_maps: usize,
-    pub solar_flares: usize,
-}
+pub type CoveredDayCounts = PerArchive<usize>;
 
-impl CoveredDayCounts {
-    pub const fn of(&self, archive: EnvironmentArchive) -> usize {
-        match archive {
-            EnvironmentArchive::AircraftInterference => self.interference,
-            EnvironmentArchive::GeomagneticIndices => self.geomagnetic_indices,
-            EnvironmentArchive::IonosphericTec => self.tec_maps,
-            EnvironmentArchive::SolarFlares => self.solar_flares,
-        }
-    }
-
-    pub fn total(&self) -> usize {
-        EnvironmentArchive::iter()
-            .map(|archive| self.of(archive))
-            .sum()
-    }
-}
-
-/// What every archive holds, as the settings rows show it.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct EnvironmentUsage {
-    pub interference: Option<ArchiveUsage>,
-    pub geomagnetic_indices: Option<ArchiveUsage>,
-    pub tec_maps: Option<ArchiveUsage>,
-    pub solar_flares: Option<ArchiveUsage>,
-}
-
-impl EnvironmentUsage {
-    /// What one archive holds, or [`None`] where it could not be opened.
-    pub const fn of(&self, archive: EnvironmentArchive) -> Option<ArchiveUsage> {
-        match archive {
-            EnvironmentArchive::AircraftInterference => self.interference,
-            EnvironmentArchive::GeomagneticIndices => self.geomagnetic_indices,
-            EnvironmentArchive::IonosphericTec => self.tec_maps,
-            EnvironmentArchive::SolarFlares => self.solar_flares,
-        }
-    }
-
-    /// Every archive added up, or [`None`] while none of them could be
-    /// opened.
-    pub fn total(&self) -> Option<ArchiveUsage> {
-        let opened: Vec<ArchiveUsage> = EnvironmentArchive::iter()
-            .filter_map(|archive| self.of(archive))
-            .collect();
-        (!opened.is_empty()).then(|| ArchiveUsage::total(opened))
-    }
-}
+/// What every archive holds, as the settings rows show it. [`None`] for an
+/// archive that could not be opened.
+pub type EnvironmentUsage = PerArchive<Option<ArchiveUsage>>;
 
 impl App {
     /// The archives a delete acts on, taken from the schedulers that own
@@ -453,22 +404,24 @@ impl App {
 
     /// What every environment archive holds on disk.
     pub(super) fn environment_usage(&self) -> EnvironmentUsage {
-        EnvironmentUsage {
-            interference: self.jamming.archive_usage(),
-            geomagnetic_indices: self.geomagnetic_indices.archive_usage(),
-            tec_maps: self.tec_maps.archive_usage(),
-            solar_flares: self.solar_flares.archive_usage(),
-        }
+        let mut usage = EnvironmentUsage::default();
+        usage[EnvironmentArchive::AircraftInterference] = self.jamming.archive_usage();
+        usage[EnvironmentArchive::GeomagneticIndices] = self.geomagnetic_indices.archive_usage();
+        usage[EnvironmentArchive::IonosphericTec] = self.tec_maps.archive_usage();
+        usage[EnvironmentArchive::SolarFlares] = self.solar_flares.archive_usage();
+        usage
     }
 
     /// How many days each archive would lose to a delete of `pruned`.
     pub(super) fn environment_days_covered(&self, pruned: PrunedDays) -> CoveredDayCounts {
-        CoveredDayCounts {
-            interference: self.jamming.archived_days_covered(pruned),
-            geomagnetic_indices: self.geomagnetic_indices.archived_days_covered(pruned),
-            tec_maps: self.tec_maps.archived_days_covered(pruned),
-            solar_flares: self.solar_flares.archived_days_covered(pruned),
-        }
+        let mut covered = CoveredDayCounts::default();
+        covered[EnvironmentArchive::AircraftInterference] =
+            self.jamming.archived_days_covered(pruned);
+        covered[EnvironmentArchive::GeomagneticIndices] =
+            self.geomagnetic_indices.archived_days_covered(pruned);
+        covered[EnvironmentArchive::IonosphericTec] = self.tec_maps.archived_days_covered(pruned);
+        covered[EnvironmentArchive::SolarFlares] = self.solar_flares.archived_days_covered(pruned);
+        covered
     }
 
     /// The loaded recordings spanning a day the delete removes, named as the
