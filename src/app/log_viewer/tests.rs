@@ -14,12 +14,21 @@ use gt_log_view::{FilterChipMode, LayerColorSlot, LoadedLog, LoadedLogs};
 use gt_pending_writes::WriteAccess;
 
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
-use gt_test_utils::{By, HarnessInteraction as _, TestHarness, snapshot_harness};
+use gt_test_utils::window_fit::{
+    CRAMPED_VIEWPORT, NARROW_VIEWPORT, OVERSIZED_ROW_COUNT, SHORT_VIEWPORT,
+};
+use gt_test_utils::{
+    AuditedWindow, By, ControlLabel, HarnessInteraction as _, TestHarness,
+    WindowFitAssertions as _, snapshot_harness,
+};
 use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::{FileSource, Latitude, Longitude};
 use gt_ui_types::{HoveredLogGlyph, LogMatchColor, LogMatchHover};
 
-use super::{AssociationWindowUnit, LogViewerContext, LogViewerRequests, LogViewerWindow, filters};
+use super::{
+    AssociationWindowUnit, LOG_VIEWER_TITLE, LogViewerContext, LogViewerRequests, LogViewerWindow,
+    filters,
+};
 
 /// One log holding every row kind the table draws: an entry timestamped from
 /// its neighbours, a reboot separator, and a backwards timestamp step no clock
@@ -899,4 +908,40 @@ fn the_live_filter_belongs_to_the_log_it_was_written_for() {
 
     assert_eq!(match_count(&harness), "1 of 2");
     assert_eq!(live_filter_text(&harness), "battery low");
+}
+
+/// A log whose lines are longer and more numerous than any audit viewport
+/// shows: an unbroken message stresses the width, the row count the height.
+fn oversized_log_text() -> String {
+    let unbroken = gt_test_utils::oversized_text('e');
+    (0..OVERSIZED_ROW_COUNT)
+        .map(|index| format!("2026-05-29 18:48:25 navsyncd[{index}]: {unbroken}\n"))
+        .collect()
+}
+
+/// The log viewer keeps its footer controls reachable at any viewport, and an
+/// unbroken log line scrolls inside the table instead of stretching the window
+/// past the screen edge.
+#[rstest::rstest]
+fn log_viewer_window_fits_every_viewport(
+    #[values(CRAMPED_VIEWPORT, NARROW_VIEWPORT, SHORT_VIEWPORT)] viewport: egui::Vec2,
+) {
+    let mut state = viewer_state(Vec::new(), &[("navsyncd.log", &oversized_log_text())]);
+    // Every part of the window at once: the notices, the parse summary the
+    // header unfolds, and the table.
+    state
+        .viewer
+        .report_warning(gt_test_utils::oversized_text('w'));
+    state.viewer.summary_expanded = true;
+    let mut harness = Harness::builder()
+        .with_size(viewport)
+        .build_ui_state(viewer_ui, state);
+    gt_ui_theme::install_app_style(&harness.ctx);
+    harness.run_steps(8);
+
+    harness.assert_window_fits_the_viewport(AuditedWindow::titled(LOG_VIEWER_TITLE));
+    harness.assert_control_is_reachable(
+        AuditedWindow::titled(LOG_VIEWER_TITLE),
+        ControlLabel("Associated with"),
+    );
 }

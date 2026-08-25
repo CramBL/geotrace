@@ -12,13 +12,19 @@ use gt_pending_writes::WriteAccess;
 
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use gt_store::{DatabaseRef, RecordingMeta};
-use gt_test_utils::{By, HarnessInteraction as _};
+use gt_test_utils::window_fit::{
+    CRAMPED_VIEWPORT, NARROW_VIEWPORT, OVERSIZED_ROW_COUNT, SHORT_VIEWPORT,
+};
+use gt_test_utils::{
+    AuditedWindow, By, ControlLabel, HarnessInteraction as _, WindowFitAssertions as _,
+};
 use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::{FileSource, Latitude, Longitude};
 use gt_ui_types::LoadedLogId;
 
 use super::{
-    ATTACH_LABEL, CONFIRM_LABEL, DONT_SHOW_AGAIN_LABEL, LogAssociationChoice, LogAssociationDialog,
+    ATTACH_LABEL, CANCEL_LABEL, CONFIRM_LABEL, DONT_SHOW_AGAIN_LABEL, LogAssociationChoice,
+    LogAssociationDialog, TITLE,
 };
 
 /// Three entries spanning nine seconds from [`log_start`].
@@ -99,6 +105,13 @@ fn stored_in_history(identity: &str) -> FileHistory {
 fn harness_over(
     recordings: Vec<(gt_types::LoadedFile, FileHistory)>,
 ) -> Harness<'static, DialogState> {
+    harness_over_sized(recordings, DIALOG_SIZE)
+}
+
+fn harness_over_sized(
+    recordings: Vec<(gt_types::LoadedFile, FileHistory)>,
+    viewport: egui::Vec2,
+) -> Harness<'static, DialogState> {
     let mut loaded_recordings = LoadedFiles::new();
     for (file, history) in recordings {
         loaded_recordings.push(file, history);
@@ -117,7 +130,7 @@ fn harness_over(
         write_access: WriteAccess::Owner,
     };
     let mut harness = Harness::builder()
-        .with_size(DIALOG_SIZE)
+        .with_size(viewport)
         .build_ui_state(dialog_ui, state);
     harness.run_steps(3);
     harness
@@ -399,4 +412,27 @@ fn stored_db_ref() -> DatabaseRef {
         identity: "nav-devkit-mk2".to_owned(),
         group_name: "2026-05-29T18-48-25".to_owned(),
     }
+}
+
+/// The dialog keeps its confirm and cancel buttons reachable at any viewport,
+/// however many recordings the log could take its positions from and however
+/// long their names are.
+#[rstest::rstest]
+fn the_dialog_fits_every_viewport(
+    #[values(CRAMPED_VIEWPORT, NARROW_VIEWPORT, SHORT_VIEWPORT)] viewport: egui::Vec2,
+) {
+    let long = gt_test_utils::oversized_text('r');
+    let recordings = (0..OVERSIZED_ROW_COUNT)
+        .map(|index| {
+            (
+                recording(&format!("{long}{index}.gtd"), Duration::seconds(0), 9),
+                stored_in_history(&format!("{long}{index}")),
+            )
+        })
+        .collect();
+    let mut harness = harness_over_sized(recordings, viewport);
+    harness.run_steps(8);
+
+    harness.assert_window_fits_the_viewport(AuditedWindow::titled(TITLE));
+    harness.assert_control_is_reachable(AuditedWindow::titled(TITLE), ControlLabel(CANCEL_LABEL));
 }

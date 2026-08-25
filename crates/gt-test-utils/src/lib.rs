@@ -10,6 +10,8 @@ pub mod pending_writes;
 #[cfg(feature = "snapshot")]
 pub mod snapshot_harness;
 pub mod transport;
+#[cfg(feature = "snapshot")]
+pub mod window_fit;
 
 #[cfg(feature = "archive")]
 pub use day_archive::{ColumnName, GroupPath};
@@ -27,6 +29,8 @@ pub use log_fixtures::{
 #[cfg(feature = "snapshot")]
 pub use snapshot_harness::{By, Queryable, TestHarness, TestHarnessBuilder};
 pub use transport::{ScriptedTransport, TransportAnswer, UrlPrefixAnswers};
+#[cfg(feature = "snapshot")]
+pub use window_fit::{AuditedWindow, ControlLabel, WindowFitAssertions, oversized_text};
 
 pub const GOLD_BYTES: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),

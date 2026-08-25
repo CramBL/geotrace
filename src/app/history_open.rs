@@ -1,10 +1,18 @@
 use std::path::PathBuf;
 
-use egui::{Button, Grid, Label, RichText, ScrollArea, Window};
+use egui::{Button, Grid, Label, RichText, Window};
 use gt_pending_writes::{PendingWriteGuard, WriteKind};
 use gt_store::DbError;
 
-use super::{App, ResegmentPrompt, auto_prune, history_db, loader, storage};
+use super::modals::{DialogActions, DialogBody};
+use super::{App, ResegmentPrompt, auto_prune, history, history_db, loader, modals, storage};
+
+/// Room for a recording name to wrap at a readable length beside the stored and
+/// current split settings.
+const RESEGMENT_DIALOG_WIDTH: f32 = 480.0;
+
+/// Room for a recording identity and its group name on one line.
+const AUTO_PRUNE_DIALOG_WIDTH: f32 = 480.0;
 
 const OPENING_THE_DATABASE: &str = "Opening the recording history database";
 
@@ -513,53 +521,59 @@ impl App {
                 .ctx()
                 .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             let fmt_gap = |us: i64| format!("{} s", us / 1_000_000);
+            let intro = format!(
+                "'{}' was stored with a different track-splitting setting than the current one.",
+                prompt.filename
+            );
             Window::new("Track splitting differs")
                 .collapsible(false)
                 .resizable(false)
+                // Wide enough for a recording name to wrap at a readable
+                // length.
+                .min_width(RESEGMENT_DIALOG_WIDTH)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ui.ctx(), |ui| {
-                    // Bound the width so a long recording name wraps.
-                    ui.set_max_width(460.0);
-                    ui.add(Label::new(format!(
-                        "'{}' was stored with a different track-splitting setting than the current one.",
-                        prompt.filename
-                    )).wrap());
-                    ui.add_space(4.0);
-                    Grid::new("resegment_settings")
-                        .num_columns(3)
-                        .spacing([16.0, 4.0])
-                        .show(ui, |ui| {
-                            ui.label("");
-                            ui.strong("Stored");
-                            ui.strong("Current");
-                            ui.end_row();
-                            ui.label("Split gap");
-                            ui.label(fmt_gap(prompt.stored.track_split_gap_us));
-                            ui.label(fmt_gap(current.track_split_gap_us));
-                            ui.end_row();
-                        });
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        if ui
-                            .button("Use stored tracks")
-                            .on_hover_text("Open the tracks as stored, with their previous settings")
-                            .clicked()
-                        {
-                            use_stored = true;
-                        }
-                        if ui
-                            .button("Recalculate with current settings")
-                            .on_hover_text(
-                                "Re-split the recording with the current settings, replacing the stored tracks",
-                            )
-                            .clicked()
-                        {
-                            recalculate = true;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            cancel = true;
-                        }
-                    });
+                    modals::dialog_body_above_buttons(
+                        ui,
+                        DialogBody::new(|ui| {
+                            ui.add(Label::new(intro).wrap());
+                            ui.add_space(4.0);
+                            Grid::new("resegment_settings")
+                                .num_columns(3)
+                                .spacing([16.0, 4.0])
+                                .show(ui, |ui| {
+                                    ui.label("");
+                                    ui.strong("Stored");
+                                    ui.strong("Current");
+                                    ui.end_row();
+                                    ui.label("Split gap");
+                                    ui.label(fmt_gap(prompt.stored.track_split_gap_us));
+                                    ui.label(fmt_gap(current.track_split_gap_us));
+                                    ui.end_row();
+                                });
+                        }),
+                        DialogActions::new(|ui| {
+                            if ui
+                                .button("Recalculate with current settings")
+                                .on_hover_text(
+                                    "Re-split the recording with the current settings, replacing the stored tracks",
+                                )
+                                .clicked()
+                            {
+                                recalculate = true;
+                            }
+                            if ui
+                                .button("Use stored tracks")
+                                .on_hover_text("Open the tracks as stored, with their previous settings")
+                                .clicked()
+                            {
+                                use_stored = true;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                cancel = true;
+                            }
+                        }),
+                    );
                 });
             if recalculate {
                 self.loader.spawn_gtd_from_history(
@@ -604,39 +618,42 @@ impl App {
             Window::new("Auto-prune")
                 .resizable(false)
                 .collapsible(false)
+                // Wide enough for a recording identity to read.
+                .min_width(AUTO_PRUNE_DIALOG_WIDTH)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ui.ctx(), |ui| {
-                    // Bound the width so a long recording identity truncates.
-                    ui.set_max_width(460.0);
-                    let rec_label = gt_fmt::pluralize(n, "recording", "recordings");
-                    ui.label(format!(
-                        "{n} {rec_label} will be deleted to keep storage under {limit}"
-                    ));
-                    ui.add_space(4.0);
-                    ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-                        for r in refs {
-                            let label = format!("{}/{}", r.identity, r.group_name);
-                            ui.add(Label::new(label.as_str()).truncate());
-                        }
-                    });
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        if ui
-                            .button(
-                                RichText::new("Delete these recordings")
-                                    .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
-                            )
-                            .on_hover_text(
-                                "This cannot be undone. The original source files are unaffected.",
-                            )
-                            .clicked()
-                        {
-                            do_prune = true;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            cancel = true;
-                        }
-                    });
+                    modals::dialog_body_above_buttons(
+                        ui,
+                        DialogBody::new(|ui| {
+                            let rec_label = gt_fmt::pluralize(n, "recording", "recordings");
+                            ui.add(
+                                Label::new(format!(
+                                    "{n} {rec_label} will be deleted to keep storage under {limit}"
+                                ))
+                                .wrap(),
+                            );
+                            ui.add_space(4.0);
+                            for r in refs {
+                                let label = format!("{}/{}", r.identity, r.group_name);
+                                ui.add(Label::new(label.as_str()).truncate());
+                            }
+                        }),
+                        DialogActions::new(|ui| {
+                            if ui
+                                .button(
+                                    RichText::new("Delete these recordings")
+                                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                                )
+                                .on_hover_text(history::DESTRUCTIVE_DELETE_HOVER)
+                                .clicked()
+                            {
+                                do_prune = true;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                cancel = true;
+                            }
+                        }),
+                    );
                 });
             if do_prune {
                 let candidates = self.pending_auto_prune.take().unwrap_or_default();

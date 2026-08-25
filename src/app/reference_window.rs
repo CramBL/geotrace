@@ -148,7 +148,8 @@ impl ReferenceWindow {
         // Hovers here open without egui's default delay: the abbreviations and
         // the citations are what the reader points at.
         ui.style_mut().interaction.tooltip_delay = 0.0;
-        ScrollArea::vertical()
+        // Sideways too: a reference table can be wider than the window.
+        ScrollArea::both()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 for block in document.blocks {

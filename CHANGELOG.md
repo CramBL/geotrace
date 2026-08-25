@@ -46,6 +46,9 @@
 
 ### Fixed
 
+- **Interface:** Every window now stays inside the screen and scrolls its content when there is more of it than fits.
+  A long list, an unbroken recording identity, path or log line, and hundreds of warnings all leave the window's buttons, footer and close button where the user can reach them.
+  The track-splitting and auto-prune prompts now group their buttons bottom-right like the rest of the dialogs, so their affirmative action sits rightmost.
 - **Interface:** Fixed external links in dialogs and reference materials so they correctly open in the web browser.
 - **Interface:** Fixed hover states in the plot so they correctly highlight the side panel rows and prevented hover labels from overlapping.
 - **Interface:** Fixed the plot's file legend so it no longer covers the settings and query windows.

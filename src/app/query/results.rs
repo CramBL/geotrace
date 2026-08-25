@@ -5,7 +5,8 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use egui::{
-    Align, Button, CursorIcon, Label, Layout, RichText, Sense, TextStyle, TextWrapMode, Window,
+    Align, Button, CursorIcon, Label, Layout, RichText, ScrollArea, Sense, TextStyle, TextWrapMode,
+    Window,
 };
 use egui_extras::{Column, TableBuilder, TableRow};
 use egui_phosphor::regular::ARROW_SQUARE_IN as ICON_ARROW_SQUARE_IN;
@@ -535,18 +536,22 @@ impl<'a> ResultsTables<'a> {
             .default_height(MATCH_LIST_WINDOW_HEIGHT)
             .resizable(true)
             .show(ctx, |ui| {
-                ui.scope(|ui| {
-                    if self.stale {
-                        ui.disable();
-                    }
-                    self.match_list_ui(
-                        ui,
-                        state,
-                        selected,
-                        popped_out,
-                        out,
-                        MatchListPlacement::OwnWindow,
-                    );
+                // The summary strip and the table's columns have a width they
+                // cannot go below.
+                ScrollArea::horizontal().show(ui, |ui| {
+                    ui.scope(|ui| {
+                        if self.stale {
+                            ui.disable();
+                        }
+                        self.match_list_ui(
+                            ui,
+                            state,
+                            selected,
+                            popped_out,
+                            out,
+                            MatchListPlacement::OwnWindow,
+                        );
+                    });
                 });
             });
         if !open {

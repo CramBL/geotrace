@@ -13,6 +13,7 @@ use gt_ui_theme::warning_amber;
 use strum::{EnumCount, EnumIter};
 
 use crate::app::history_db::{DeleteReason, HistoryWorker};
+use crate::app::modals::{self, DialogActions, DialogBody};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use crate::app::storage_controls;
 use crate::settings::StorageSettings;
@@ -30,6 +31,20 @@ enum PruneKind {
     TotalSize,
     Count,
 }
+
+const PRUNE_WINDOW_TITLE: &str = "Prune History…";
+
+/// What a permanent delete of stored recordings costs, and what it leaves
+/// alone. Shared by the prune dialog, the auto-prune prompt and the
+/// delete-hidden confirmation.
+pub(super) const DESTRUCTIVE_DELETE_HOVER: &str =
+    "This cannot be undone. The original source files are unaffected.";
+
+const DELETE_HIDDEN_WINDOW_TITLE: &str = "Delete hidden data?";
+
+/// Floor on the listing's height, so a very short screen still shows part of
+/// the list.
+const MIN_LISTING_HEIGHT: f32 = 100.0;
 
 struct PruneDialog {
     open: bool,
@@ -84,6 +99,86 @@ impl PruneDialog {
         }
     }
 
+    /// The mode selector with the parameters it takes, and the recordings the
+    /// last preview request found.
+    fn body_ui(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Mode");
+            let old = self.mode;
+            ui.selectable_value(&mut self.mode, PruneKind::Age, "By age");
+            ui.selectable_value(&mut self.mode, PruneKind::TotalSize, "By total size");
+            ui.selectable_value(&mut self.mode, PruneKind::Count, "By count");
+            if self.mode != old {
+                self.reset();
+            }
+        });
+
+        ui.add_space(4.0);
+
+        let params_changed = match self.mode {
+            PruneKind::Age => {
+                let prev = self.age_days;
+                ui.horizontal(|ui| {
+                    ui.label("Remove recordings older than");
+                    ui.add(DragValue::new(&mut self.age_days).range(1..=3650));
+                    ui.label("days");
+                });
+                self.age_days != prev
+            }
+            PruneKind::TotalSize => {
+                let prev = self.size_limit_mb;
+                ui.horizontal(|ui| {
+                    ui.label("Keep total size under");
+                    ui.add(DragValue::new(&mut self.size_limit_mb).range(1..=100_000));
+                    ui.label("MB");
+                });
+                self.size_limit_mb != prev
+            }
+            PruneKind::Count => {
+                let prev = self.keep_count;
+                ui.horizontal(|ui| {
+                    ui.label("Keep at most");
+                    ui.add(DragValue::new(&mut self.keep_count).range(1..=10_000));
+                    ui.label("recordings per identity");
+                });
+                self.keep_count != prev
+            }
+        };
+
+        if params_changed {
+            // A preview for the old parameters is now stale. Drop any
+            // in-flight request so its result is ignored.
+            self.preview = None;
+            self.preview_pending = false;
+        }
+
+        ui.add_space(4.0);
+        ui.separator();
+
+        match &self.preview {
+            Some(refs) if refs.is_empty() => {
+                ui.label("Nothing to prune");
+            }
+            Some(refs) => {
+                let n = refs.len();
+                let rec_label = gt_fmt::pluralize(n, "recording", "recordings");
+                ui.label(format!("{n} {rec_label} will be deleted"));
+                for r in refs {
+                    // The recordings about to be deleted - selectable
+                    // so one can be copied out before confirming. A
+                    // truncated label shows its full text on hover by
+                    // itself.
+                    let label = format!("{}/{}", r.identity, r.group_name);
+                    ui.add(Label::new(label.as_str()).truncate().selectable(true));
+                }
+            }
+            None if self.preview_pending => {
+                ui.spinner();
+            }
+            None => {}
+        }
+    }
+
     /// Show the Prune dialog. Sends preview/delete requests to `worker`. The
     /// results arrive asynchronously via [`HistoryWindow::set_prune_preview`].
     fn show(&mut self, ctx: &egui::Context, worker: &HistoryWorker) {
@@ -100,113 +195,46 @@ impl PruneDialog {
             open = false;
         }
 
-        Window::new("Prune History…")
+        Window::new(PRUNE_WINDOW_TITLE)
             .open(&mut open)
             .resizable(true)
             .collapsible(false)
             .default_width(420.0)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Mode");
-                    let old = self.mode;
-                    ui.selectable_value(&mut self.mode, PruneKind::Age, "By age");
-                    ui.selectable_value(&mut self.mode, PruneKind::TotalSize, "By total size");
-                    ui.selectable_value(&mut self.mode, PruneKind::Count, "By count");
-                    if self.mode != old {
-                        self.reset();
-                    }
-                });
-
-                ui.add_space(4.0);
-
-                let params_changed = match self.mode {
-                    PruneKind::Age => {
-                        let prev = self.age_days;
-                        ui.horizontal(|ui| {
-                            ui.label("Remove recordings older than");
-                            ui.add(DragValue::new(&mut self.age_days).range(1..=3650));
-                            ui.label("days");
-                        });
-                        self.age_days != prev
-                    }
-                    PruneKind::TotalSize => {
-                        let prev = self.size_limit_mb;
-                        ui.horizontal(|ui| {
-                            ui.label("Keep total size under");
-                            ui.add(
-                                DragValue::new(&mut self.size_limit_mb).range(1..=100_000),
-                            );
-                            ui.label("MB");
-                        });
-                        self.size_limit_mb != prev
-                    }
-                    PruneKind::Count => {
-                        let prev = self.keep_count;
-                        ui.horizontal(|ui| {
-                            ui.label("Keep at most");
-                            ui.add(DragValue::new(&mut self.keep_count).range(1..=10_000));
-                            ui.label("recordings per identity");
-                        });
-                        self.keep_count != prev
-                    }
-                };
-
-                if params_changed {
-                    // A preview for the old parameters is now stale. Drop any
-                    // in-flight request so its result is ignored.
-                    self.preview = None;
-                    self.preview_pending = false;
-                }
-
-                ui.add_space(4.0);
-                ui.separator();
-
-                // Preview button / spinner / computed preview
-                if let Some(refs) = &self.preview {
-                    if refs.is_empty() {
-                        ui.label("Nothing to prune");
-                    } else {
-                        let n = refs.len();
-                        let rec_label = gt_fmt::pluralize(n, "recording", "recordings");
-                        ui.label(format!("{n} {rec_label} will be deleted"));
-                        ScrollArea::vertical()
-                            .max_height(200.0)
-                            .show(ui, |ui| {
-                                for r in refs {
-                                    // The recordings about to be deleted -
-                                    // selectable so one can be copied out
-                                    // before confirming. A truncated label
-                                    // shows its full text on hover by itself.
-                                    let label = format!("{}/{}", r.identity, r.group_name);
-                                    ui.add(
-                                        Label::new(label.as_str()).truncate().selectable(true),
-                                    );
-                                }
-                            });
-
-                        ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            let confirm_btn = ui
+                // What the preview found, read before the closures below take
+                // their own borrows of the dialog.
+                let previewed = self.preview.as_ref().map(Vec::len);
+                let preview_pending = self.preview_pending;
+                modals::dialog_body_above_buttons(
+                    ui,
+                    DialogBody::new(|ui| self.body_ui(ui)),
+                    DialogActions::new(|ui| match previewed {
+                        // A preview that found nothing, and one still being
+                        // computed, leave nothing to act on.
+                        Some(0) => {}
+                        Some(_) => {
+                            if ui
                                 .button(
                                     RichText::new("Delete these recordings")
                                         .color(warning_amber(ui.visuals().dark_mode)),
                                 )
-                                .on_hover_text(
-                                    "This cannot be undone. The original source files are unaffected.",
-                                );
-                            if confirm_btn.clicked() {
+                                .on_hover_text(DESTRUCTIVE_DELETE_HOVER)
+                                .clicked()
+                            {
                                 do_prune = true;
                             }
                             if ui.button("Cancel").clicked() {
                                 do_cancel_preview = true;
                             }
-                        });
-                    }
-                } else if self.preview_pending {
-                    ui.spinner();
-                } else if ui.button("Preview").clicked() {
-                    do_preview = true;
-                }
+                        }
+                        None if preview_pending => {}
+                        None => {
+                            if ui.button("Preview").clicked() {
+                                do_preview = true;
+                            }
+                        }
+                    }),
+                );
             });
 
         self.open = open;
@@ -413,6 +441,11 @@ pub struct HistoryWindow {
     rename: Option<RenameEdit>,
     /// Which column the list is ordered by, and which way.
     sort: HistorySort,
+    /// Height the separator and the stats footer took below the listing on the
+    /// previous frame, reserved out of the screen room the listing may claim.
+    /// The stats line's wrap point and the presence of the database-path line
+    /// are known only once they are drawn.
+    footer_height_last_frame: f32,
 }
 
 /// State for the inline identity-rename editor on one History row.
@@ -439,6 +472,7 @@ impl HistoryWindow {
             list_pending: false,
             rename: None,
             sort: HistorySort::default(),
+            footer_height_last_frame: 0.0,
         }
     }
 
@@ -547,11 +581,14 @@ impl HistoryWindow {
         // Take the inline-rename state out so `render_row` can mutate it while
         // `self.entries` is borrowed immutably for the list. Restored after.
         let mut rename = std::mem::take(&mut self.rename);
+        let mut footer_height = self.footer_height_last_frame;
 
         Window::new("History")
             .open(&mut open)
             .resizable(true)
             .default_width(640.0)
+            // The height the empty listing centres its notice in. A populated
+            // listing sizes the window to its own rows.
             .default_height(480.0)
             .show(ctx, |ui| {
                 if databases_opening {
@@ -584,92 +621,7 @@ impl HistoryWindow {
                 // inside closures where `entries` also holds an immutable borrow.
                 let filter_active = self.any_filter_active();
 
-                // Toolbar row: identity filter on the left, actions on the
-                // right. The right-side controls are laid out right-to-left so
-                // they claim their width first. The filter field then fills only
-                // the space between the label and them. Adding the field in the
-                // outer left-to-right layout instead lets it grow into the
-                // right-side controls and overlap them once the window narrows.
-                ui.horizontal(|ui| {
-                    LabelWithHover::underlined_term(RichText::new("Identity"))
-                        .explanation_ui(ui, crate::terms::IDENTITY);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let delete_hidden_label = if hidden_count > 0 {
-                            format!("Delete hidden data ({hidden_count})…")
-                        } else {
-                            "Delete hidden data…".to_owned()
-                        };
-                        let writes_recordings = write_access.allows_writing();
-                        let delete_hidden = ui
-                            .add_enabled(
-                                hidden_count > 0 && writes_recordings,
-                                Button::new(delete_hidden_label),
-                            )
-                            .on_hover_text(
-                                "Permanently delete every hidden track from the original recordings",
-                            )
-                            .on_disabled_hover_text(if writes_recordings {
-                                "No hidden tracks to delete"
-                            } else {
-                                READ_ONLY_RECORDING_HISTORY_HOVER
-                            });
-                        if delete_hidden.clicked() {
-                            self.delete_hidden_confirm_open = true;
-                        }
-                        if ui
-                            .add_enabled(writes_recordings, Button::new("Prune…"))
-                            .on_hover_text("Delete stored recordings by age, total size or count")
-                            .on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER)
-                            .clicked()
-                        {
-                            self.prune.open = true;
-                            self.prune.reset();
-                        }
-                        storage_controls::show_auto_store_checkbox(ui, storage, write_access);
-                        ui.add(
-                            TextEdit::singleline(&mut self.filter_text)
-                                .desired_width(ui.available_width()),
-                        );
-                    });
-                });
-
-                // Advanced filter row: points + date range
-                ui.horizontal(|ui| {
-                    ui.label("Points ≥");
-                    ui.add(TextEdit::singleline(&mut self.filter_min_points).desired_width(60.0));
-                    ui.label("≤");
-                    ui.add(TextEdit::singleline(&mut self.filter_max_points).desired_width(60.0));
-                    ui.separator();
-                    ui.label("Date");
-                    ui.add(
-                        TextEdit::singleline(&mut self.filter_date_from)
-                            .desired_width(90.0)
-                            .hint_text("YYYY-MM-DD"),
-                    );
-                    ui.label("–");
-                    ui.add(
-                        TextEdit::singleline(&mut self.filter_date_to)
-                            .desired_width(90.0)
-                            .hint_text("YYYY-MM-DD"),
-                    );
-                    if filter_active && ui.small_button(ICON_X).clicked() {
-                        self.filter_text.clear();
-                        self.filter_min_points.clear();
-                        self.filter_max_points.clear();
-                        self.filter_date_from.clear();
-                        self.filter_date_to.clear();
-                    }
-                });
-
-                // Auto-prune settings - separated because this is a persistent
-                // setting, not a filter or list entry.
-                ui.separator();
-                ui.horizontal(|ui| {
-                    storage_controls::show_auto_prune_limit(ui, storage, write_access);
-                    ui.separator();
-                    storage_controls::show_auto_prune_confirm_checkbox(ui, storage, write_access);
-                });
-                ui.add_space(4.0);
+                self.toolbar_ui(ui, storage, write_access, hidden_count, filter_active);
 
                 let Some(entries) = &self.entries else {
                     return;
@@ -717,30 +669,50 @@ impl HistoryWindow {
                     return;
                 }
 
-                // Reserve space for stats footer
-                let footer_height = ui.text_style_height(&egui::TextStyle::Body) + 8.0;
-                let available = ui.available_size();
-                let list_height = (available.y - footer_height - 8.0).max(100.0);
+                // The listing takes the screen room left below its own top, so
+                // the window grows with its content only until its bottom edge
+                // would leave the display. Inside an auto-sizing window
+                // `ui.available_height()` is the height the window had on the
+                // previous frame, which grows with the very content this bound
+                // holds.
+                let listing_top = ui.cursor().top();
+                // The window frame's margin below the content, which has to
+                // stay on screen along with the footer.
+                let window_frame_bottom = egui::Frame::window(ui.style()).total_margin().bottom;
+                let max_listing_height = (ui.ctx().content_rect().bottom()
+                    - listing_top
+                    - window_frame_bottom
+                    - footer_height)
+                    .max(MIN_LISTING_HEIGHT);
 
-                table::history_table(
-                    ui,
-                    table::HistoryTable {
-                        list_height,
-                        visible: &visible,
-                        loaded_metas,
-                        worker,
-                        rename: &mut rename,
-                        sort: &mut self.sort,
-                        write_access,
-                    },
-                );
+                // The listing scrolls sideways once its metadata columns alone
+                // need more width than the window has, identity having clamped
+                // to its minimum by then.
+                ScrollArea::horizontal()
+                    .id_salt("history_listing")
+                    .show(ui, |ui| {
+                        table::history_table(
+                            ui,
+                            table::HistoryTable {
+                                max_listing_height,
+                                visible: &visible,
+                                loaded_metas,
+                                worker,
+                                rename: &mut rename,
+                                sort: &mut self.sort,
+                                write_access,
+                            },
+                        );
+                    });
+                let listing_bottom = ui.min_rect().bottom();
 
                 ui.separator();
                 // Footer stats cover every stored recording. Hidden tracks are
-                // reported separately since they are pending permanent deletion.
+                // reported separately since they are pending permanent
+                // deletion.
                 let stored_count = entries.len();
                 let total_size: u64 = entries.iter().map(|e| e.meta.gtd_size_bytes).sum();
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     let rec_label = gt_fmt::pluralize(stored_count, "recording", "recordings");
                     ui.label(format!(
                         "{stored_count} {rec_label} - {}",
@@ -758,12 +730,16 @@ impl HistoryWindow {
                     // Kept selectable for copying.
                     ui.add(
                         Label::new(RichText::new(path.display().to_string()).weak())
+                            .truncate()
                             .selectable(true),
                     );
                 }
+
+                footer_height = ui.min_rect().bottom() - listing_bottom;
             });
 
         self.rename = rename;
+        self.footer_height_last_frame = footer_height;
 
         // Confirmation for the destructive "delete hidden data" action, mirroring
         // the prune/auto-prune confirm flow (no permanent delete without a prompt).
@@ -774,7 +750,7 @@ impl HistoryWindow {
                 let mut do_delete = false;
                 let mut cancel =
                     ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-                Window::new("Delete hidden data?")
+                Window::new(DELETE_HIDDEN_WINDOW_TITLE)
                     .collapsible(false)
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -790,9 +766,7 @@ impl HistoryWindow {
                                     RichText::new("Delete hidden tracks")
                                         .color(warning_amber(ui.visuals().dark_mode)),
                                 )
-                                .on_hover_text(
-                                    "This cannot be undone. The original source files are unaffected.",
-                                )
+                                .on_hover_text(DESTRUCTIVE_DELETE_HOVER)
                                 .clicked()
                             {
                                 do_delete = true;
@@ -812,6 +786,112 @@ impl HistoryWindow {
         }
 
         self.open = open;
+    }
+
+    /// The toolbar above the listing: the identity filter and the actions on
+    /// the stored recordings, the point and date filters, and the auto-prune
+    /// settings.
+    ///
+    /// Scrolls sideways when the window is narrower than its controls.
+    fn toolbar_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        storage: &mut StorageSettings,
+        write_access: WriteAccess,
+        hidden_count: usize,
+        filter_active: bool,
+    ) {
+        ScrollArea::horizontal()
+            .id_salt("history_toolbar")
+            .show(ui, |ui| {
+                // Toolbar row: identity filter on the left, actions on the
+                // right. The right-side controls are laid out right-to-left so
+                // they claim their width first. The filter field then fills only
+                // the space between the label and them. Adding the field in the
+                // outer left-to-right layout instead lets it grow into the
+                // right-side controls and overlap them once the window narrows.
+                ui.horizontal(|ui| {
+                    LabelWithHover::underlined_term(RichText::new("Identity"))
+                        .explanation_ui(ui, crate::terms::IDENTITY);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let delete_hidden_label = if hidden_count > 0 {
+                            format!("Delete hidden data ({hidden_count})…")
+                        } else {
+                            "Delete hidden data…".to_owned()
+                        };
+                        let writes_recordings = write_access.allows_writing();
+                        let delete_hidden = ui
+                        .add_enabled(
+                            hidden_count > 0 && writes_recordings,
+                            Button::new(delete_hidden_label),
+                        )
+                        .on_hover_text(
+                            "Permanently delete every hidden track from the original recordings",
+                        )
+                        .on_disabled_hover_text(if writes_recordings {
+                            "No hidden tracks to delete"
+                        } else {
+                            READ_ONLY_RECORDING_HISTORY_HOVER
+                        });
+                        if delete_hidden.clicked() {
+                            self.delete_hidden_confirm_open = true;
+                        }
+                        if ui
+                            .add_enabled(writes_recordings, Button::new("Prune…"))
+                            .on_hover_text("Delete stored recordings by age, total size or count")
+                            .on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER)
+                            .clicked()
+                        {
+                            self.prune.open = true;
+                            self.prune.reset();
+                        }
+                        storage_controls::show_auto_store_checkbox(ui, storage, write_access);
+                        ui.add(
+                            TextEdit::singleline(&mut self.filter_text)
+                                .desired_width(ui.available_width()),
+                        );
+                    });
+                });
+
+                // Advanced filter row: points + date range. Wraps onto a
+                // second line rather than widening the window.
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Points ≥");
+                    ui.add(TextEdit::singleline(&mut self.filter_min_points).desired_width(60.0));
+                    ui.label("≤");
+                    ui.add(TextEdit::singleline(&mut self.filter_max_points).desired_width(60.0));
+                    ui.separator();
+                    ui.label("Date");
+                    ui.add(
+                        TextEdit::singleline(&mut self.filter_date_from)
+                            .desired_width(90.0)
+                            .hint_text("YYYY-MM-DD"),
+                    );
+                    ui.label("–");
+                    ui.add(
+                        TextEdit::singleline(&mut self.filter_date_to)
+                            .desired_width(90.0)
+                            .hint_text("YYYY-MM-DD"),
+                    );
+                    if filter_active && ui.small_button(ICON_X).clicked() {
+                        self.filter_text.clear();
+                        self.filter_min_points.clear();
+                        self.filter_max_points.clear();
+                        self.filter_date_from.clear();
+                        self.filter_date_to.clear();
+                    }
+                });
+
+                // Auto-prune settings - separated because this is a persistent
+                // setting, not a filter or list entry.
+                ui.separator();
+                ui.horizontal_wrapped(|ui| {
+                    storage_controls::show_auto_prune_limit(ui, storage, write_access);
+                    ui.separator();
+                    storage_controls::show_auto_prune_confirm_checkbox(ui, storage, write_access);
+                });
+                ui.add_space(4.0);
+            });
     }
 }
 

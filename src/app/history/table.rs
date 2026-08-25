@@ -29,7 +29,7 @@ use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 pub(super) fn history_table(
     ui: &mut egui::Ui,
     HistoryTable {
-        list_height,
+        max_listing_height,
         visible,
         loaded_metas,
         worker,
@@ -39,6 +39,10 @@ pub(super) fn history_table(
     }: HistoryTable<'_>,
 ) {
     let row_height = ui.text_style_height(&egui::TextStyle::Body) + 6.0;
+    // The header row and the gap under it come out of the listing's budget
+    // before the scrolling body gets what is left.
+    let max_scroll_height =
+        (max_listing_height - row_height - ui.spacing().item_spacing.y).max(0.0);
 
     // Identity is window width minus last frame's metadata width, see this
     // function's doc comment.
@@ -68,7 +72,11 @@ pub(super) fn history_table(
         // Don't shrink to content: the table fills the window's width, which the
         // computed identity column already accounts for.
         .auto_shrink([false, true])
-        .max_scroll_height(list_height)
+        .max_scroll_height(max_scroll_height)
+        // egui_extras keeps a 200px floor by default, which on a short window
+        // pushes the footer off the bottom. The body takes exactly the height
+        // it is given.
+        .min_scrolled_height(0.0)
         // Identity fills the leftover width (see above) and clips long names
         // rather than growing to fit them.
         .column(Column::exact(identity_width).clip(true))
@@ -161,7 +169,9 @@ fn sort_header(ui: &mut egui::Ui, column: SortColumn, sort: &mut HistorySort, te
 /// What one render of the recordings table draws, and what it edits while the
 /// user works in it.
 pub(super) struct HistoryTable<'a> {
-    pub list_height: f32,
+    /// Height the whole listing may take, header row included. What is left
+    /// after the header bounds the scrolling body.
+    pub max_listing_height: f32,
     /// The rows the filters left, in the order the sort put them.
     pub visible: &'a [&'a RecordingEntry],
     /// The recordings already in the window, whose rows cannot be opened

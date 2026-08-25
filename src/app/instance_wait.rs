@@ -26,7 +26,7 @@ use gt_pending_writes::WriteKind;
 use gt_ui_theme::warning_amber;
 
 use super::App;
-use super::modals;
+use super::modals::{self, DialogActions, DialogBody};
 use super::storage::{QueuedLoad, StorageOpen};
 
 /// How often the wait tries the data directory again, and with it re-reads
@@ -271,27 +271,31 @@ impl DataDirectoryWait {
             .min_width(WAIT_DIALOG_MIN_WIDTH)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ui.ctx(), |ui| {
-                self.unavailable.wait_dialog_ui(ui);
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(RichText::new("Waiting for the data directory").weak());
-                    ui.add_space(8.0);
-                    if ui
-                        .button(TAKE_OVER_BUTTON_LABEL)
-                        .on_hover_text(&take_over_hover)
-                        .clicked()
-                    {
-                        self.confirming_take_over = true;
-                    }
-                    if ui
-                        .button(START_READ_ONLY_BUTTON_LABEL)
-                        .on_hover_text(START_READ_ONLY_BUTTON_HOVER)
-                        .clicked()
-                    {
-                        answer = WaitAnswer::StartReadOnly;
-                    }
-                });
+                modals::dialog_body_above_actions(
+                    ui,
+                    DialogBody::new(|ui| self.unavailable.wait_dialog_ui(ui)),
+                    DialogActions::new(|ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spinner();
+                            ui.label(RichText::new("Waiting for the data directory").weak());
+                            ui.add_space(8.0);
+                            if ui
+                                .button(TAKE_OVER_BUTTON_LABEL)
+                                .on_hover_text(&take_over_hover)
+                                .clicked()
+                            {
+                                self.confirming_take_over = true;
+                            }
+                            if ui
+                                .button(START_READ_ONLY_BUTTON_LABEL)
+                                .on_hover_text(START_READ_ONLY_BUTTON_HOVER)
+                                .clicked()
+                            {
+                                answer = WaitAnswer::StartReadOnly;
+                            }
+                        });
+                    }),
+                );
             });
         answer
     }
@@ -807,5 +811,51 @@ mod tests {
             DataDirectoryRetry::StillWaiting,
             "one unusable attempt after the directory was held ended the wait"
         );
+    }
+
+    /// The wait dialog and its take-over confirmation both stay inside the
+    /// screen and keep their actions reachable, however long the lock file's
+    /// failure reads and however many writes the holding instance lists.
+    #[rstest::rstest]
+    fn the_wait_dialogs_fit_every_viewport(
+        #[values(false, true)] confirming_take_over: bool,
+        #[values(
+            gt_test_utils::window_fit::CRAMPED_VIEWPORT,
+            gt_test_utils::window_fit::NARROW_VIEWPORT,
+            gt_test_utils::window_fit::SHORT_VIEWPORT
+        )]
+        viewport: egui::Vec2,
+    ) {
+        use gt_test_utils::{AuditedWindow, ControlLabel, WindowFitAssertions as _};
+
+        let wait = DataDirectoryWait {
+            unavailable: DataDirectoryUnavailable::UnusableLockFile(gt_test_utils::oversized_text(
+                'l',
+            )),
+            last_retry: Instant::now(),
+            consecutive_unusable_lock_file_retries: 0,
+            confirming_take_over,
+        };
+        let mut harness = gt_test_utils::TestHarness::builder()
+            .size(viewport)
+            .ui_state(
+                |ui: &mut egui::Ui, wait: &mut DataDirectoryWait| {
+                    wait.ui(ui);
+                },
+                wait,
+            );
+        harness.inner.run_steps(8);
+
+        let (title, control) = if confirming_take_over {
+            (TAKE_OVER_CONFIRMATION_TITLE, "Cancel")
+        } else {
+            (LOCK_FILE_UNUSABLE_TITLE, START_READ_ONLY_BUTTON_LABEL)
+        };
+        harness
+            .inner
+            .assert_window_fits_the_viewport(AuditedWindow::titled(title));
+        harness
+            .inner
+            .assert_control_is_reachable(AuditedWindow::titled(title), ControlLabel(control));
     }
 }

@@ -1793,3 +1793,67 @@ fn point_layout_covers_the_satellite_bearing_categories(
 ) {
     assert_eq!(super::sticky_uses_point_layout(category), expected);
 }
+
+/// A copy of the snapshot fixture whose custom marker carries a label far
+/// longer than any of the audit viewports fits.
+fn file_with_an_overlong_marker_label() -> gt_types::LoadedFile {
+    let mut file = make_snapshot_file();
+    for track in &mut file.tracks {
+        for marker in &mut track.custom_markers {
+            marker.label = gt_test_utils::oversized_text('m');
+        }
+    }
+    file
+}
+
+/// The sticky popup stays inside the screen whichever map item it pins and
+/// however long that item's label reads: the point layout's resizable frame
+/// and the auto-sized frame the markers use both scroll their content
+/// instead of growing past the screen edge.
+#[rstest::rstest]
+#[case::point(gt_types::DataCategory::Tpv, PointIdx::new(50))]
+#[case::custom_marker(gt_types::DataCategory::CustomMarker, PointIdx::new(0))]
+fn the_sticky_popup_fits_every_viewport(
+    #[case] category: gt_types::DataCategory,
+    #[case] point_index: PointIdx,
+    #[values(
+        gt_test_utils::window_fit::CRAMPED_VIEWPORT,
+        gt_test_utils::window_fit::NARROW_VIEWPORT,
+        gt_test_utils::window_fit::SHORT_VIEWPORT
+    )]
+    viewport: egui::Vec2,
+) {
+    use gt_test_utils::WindowFitAssertions as _;
+    use gt_ui_types::TrackDataVisibility;
+
+    let files = vec![file_with_an_overlong_marker_label()];
+    let visibility = TrackDataVisibility::from_loaded(&files);
+    let clicked = DataPointRef {
+        track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+        category,
+        point_index,
+    };
+
+    let mut harness = crate::test_harness::builder().size(viewport).ui_state(
+        move |ui, map: &mut Option<NavMap>| {
+            let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+            let mut state = DrawState {
+                highlight: MapHighlight {
+                    sticky: Some(clicked),
+                    ..MapHighlight::default()
+                },
+                ..DrawState::default()
+            };
+            map.draw(ui, state.context(&files, &visibility));
+        },
+        None,
+    );
+    harness.inner.run_steps(8);
+
+    harness
+        .inner
+        .assert_window_fits_the_viewport(gt_test_utils::AuditedWindow::identified(
+            "sticky popup",
+            egui::Id::new(("sticky_popup", clicked)),
+        ));
+}

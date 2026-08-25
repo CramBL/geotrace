@@ -248,7 +248,11 @@ impl LogViewerWindow {
             let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
             let mut scroll_area = ScrollArea::vertical()
                 .id_salt("log_viewer_line_table")
-                .auto_shrink([false, false]);
+                .auto_shrink([false, false])
+                // egui keeps a 64px floor by default, which on a short window
+                // pushes the footer off the bottom. The table takes exactly the
+                // room the window has left.
+                .min_scrolled_height(0.0);
             if let Some(row) = self.scroll_to_row.take() {
                 scroll_area = scroll_area.vertical_scroll_offset(row as f32 * row_height);
             }
@@ -393,7 +397,7 @@ impl EntryRow<'_> {
                     timestamp.on_hover_text(INTERPOLATED_TIMESTAMP_HOVER);
                 }
                 let message = self.message_job(ui, message_color);
-                ui.add(Label::new(message));
+                ui.add(Label::new(message).truncate());
             })
             .response;
         if let Some(fill) = self.cross_highlight_fill {
@@ -426,14 +430,12 @@ impl EntryRow<'_> {
     }
 
     /// The message, with what the live filter matched painted in the colour
-    /// reserved for it. Laid out as one truncated row: a long line must not
-    /// push the rows below it out of the virtualized table's grid.
+    /// reserved for it. The caller truncates it to one row: a long line must
+    /// not push the rows below it out of the virtualized table's grid, nor
+    /// stretch the window past the screen.
     fn message_job(&self, ui: &egui::Ui, color: Color32) -> LayoutJob {
         let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-        let mut job = LayoutJob {
-            wrap: egui::text::TextWrapping::truncate_at_width(ui.available_width()),
-            ..LayoutJob::default()
-        };
+        let mut job = LayoutJob::default();
         let mut appended_to = 0;
         for span in &self.highlighted.spans {
             let (Some(plain), Some(matched)) = (

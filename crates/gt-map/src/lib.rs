@@ -1377,108 +1377,113 @@ fn show_sticky_popup(
         window.auto_sized()
     };
     let mut trails_request = None;
-    window.show(ctx, |ui| match sticky_ref.category {
-        DataCategory::Tpv | DataCategory::SatelliteReport => {
-            if let Some(track) = sticky_ref
-                .track
-                .fi
-                .get(files)
-                .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-                && let Some(point) = sticky_ref.point_index.get(&track.points)
-            {
-                let sky = crate::tpv_renderer::SkySection::resolve(track, sticky_ref.point_index);
-                if show_point_window_body(
-                    ui,
-                    point,
-                    &sky,
-                    folds,
-                    recording_labels.name_when_several_files_loaded(sticky_ref.track.fi),
-                ) {
-                    trails_request = Some(SkyTrailsRequest::at_instant(
-                        sticky_ref.track,
-                        point.tpv.time(),
-                    ));
+    window.show(ctx, |ui| {
+        // A marker label or a satellite table can need more room than the
+        // screen has.
+        egui::ScrollArea::both().show(ui, |ui| match sticky_ref.category {
+            DataCategory::Tpv | DataCategory::SatelliteReport => {
+                if let Some(track) = sticky_ref
+                    .track
+                    .fi
+                    .get(files)
+                    .and_then(|f| sticky_ref.track.index.get(&f.tracks))
+                    && let Some(point) = sticky_ref.point_index.get(&track.points)
+                {
+                    let sky =
+                        crate::tpv_renderer::SkySection::resolve(track, sticky_ref.point_index);
+                    if show_point_window_body(
+                        ui,
+                        point,
+                        &sky,
+                        folds,
+                        recording_labels.name_when_several_files_loaded(sticky_ref.track.fi),
+                    ) {
+                        trails_request = Some(SkyTrailsRequest::at_instant(
+                            sticky_ref.track,
+                            point.tpv.time(),
+                        ));
+                    }
                 }
             }
-        }
-        DataCategory::CustomMarker => {
-            if let Some(marker) = sticky_ref
-                .track
-                .fi
-                .get(files)
-                .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-                .and_then(|t| sticky_ref.point_index.get(&t.custom_markers))
-            {
-                Grid::new("sticky_marker_grid")
-                    .num_columns(2)
-                    .show(ui, |ui| {
-                        ui.label("Label");
-                        ui.add(Label::new(marker.label.as_str()).selectable(true));
-                        ui.end_row();
-                    });
-                ui.add_space(4.0);
-                ui.label(RichText::new("Click to deselect").small().weak());
-            }
-        }
-        DataCategory::GeneratedMarker => {
-            if let Some(marker) = sticky_ref
-                .track
-                .fi
-                .get(files)
-                .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-                .and_then(|t| sticky_ref.point_index.get(&t.generated_markers))
-            {
-                // The window title already shows the time.
-                let header =
-                    crate::generated_marker_renderer::generated_marker_header(&marker.kind);
-                Grid::new("sticky_gen_grid").num_columns(2).show(ui, |ui| {
-                    ui.label("Event");
-                    ui.add(Label::new(header).selectable(true));
-                    ui.end_row();
-                    ui.label("Position");
-                    ui.add(
-                        Label::new(format!(
-                            "{:.6}, {:.6}",
-                            marker.lat.as_degrees(),
-                            marker.lon.as_degrees()
-                        ))
-                        .selectable(true),
-                    );
-                    ui.end_row();
-                });
-                if let gt_types::GeneratedMarkerKind::Slip(event) = &marker.kind {
-                    ui.add_space(4.0);
-                    crate::generated_marker_renderer::show_slip_table(ui, event);
-                }
-                ui.add_space(4.0);
-                ui.label(RichText::new("Click to deselect").small().weak());
-            }
-        }
-        DataCategory::Track => {}
-        DataCategory::EventMarker => {
-            if let Some(marker) = sticky_ref
-                .track
-                .fi
-                .get(files)
-                .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-                .and_then(|t| sticky_ref.point_index.get(&t.event_markers))
-            {
-                Grid::new("sticky_event_marker_grid")
-                    .num_columns(2)
-                    .show(ui, |ui| {
-                        ui.label("Event");
-                        ui.add(Label::new(marker.variant_path.as_str()).selectable(true));
-                        ui.end_row();
-                        if let Some(ann) = &marker.annotation {
-                            ui.label("Note");
-                            ui.add(Label::new(ann.as_str()).selectable(true));
+            DataCategory::CustomMarker => {
+                if let Some(marker) = sticky_ref
+                    .track
+                    .fi
+                    .get(files)
+                    .and_then(|f| sticky_ref.track.index.get(&f.tracks))
+                    .and_then(|t| sticky_ref.point_index.get(&t.custom_markers))
+                {
+                    Grid::new("sticky_marker_grid")
+                        .num_columns(2)
+                        .show(ui, |ui| {
+                            ui.label("Label");
+                            ui.add(Label::new(marker.label.as_str()).selectable(true));
                             ui.end_row();
-                        }
-                    });
-                ui.add_space(4.0);
-                ui.label(RichText::new("Click to deselect").small().weak());
+                        });
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Click to deselect").small().weak());
+                }
             }
-        }
+            DataCategory::GeneratedMarker => {
+                if let Some(marker) = sticky_ref
+                    .track
+                    .fi
+                    .get(files)
+                    .and_then(|f| sticky_ref.track.index.get(&f.tracks))
+                    .and_then(|t| sticky_ref.point_index.get(&t.generated_markers))
+                {
+                    // The window title already shows the time.
+                    let header =
+                        crate::generated_marker_renderer::generated_marker_header(&marker.kind);
+                    Grid::new("sticky_gen_grid").num_columns(2).show(ui, |ui| {
+                        ui.label("Event");
+                        ui.add(Label::new(header).selectable(true));
+                        ui.end_row();
+                        ui.label("Position");
+                        ui.add(
+                            Label::new(format!(
+                                "{:.6}, {:.6}",
+                                marker.lat.as_degrees(),
+                                marker.lon.as_degrees()
+                            ))
+                            .selectable(true),
+                        );
+                        ui.end_row();
+                    });
+                    if let gt_types::GeneratedMarkerKind::Slip(event) = &marker.kind {
+                        ui.add_space(4.0);
+                        crate::generated_marker_renderer::show_slip_table(ui, event);
+                    }
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Click to deselect").small().weak());
+                }
+            }
+            DataCategory::Track => {}
+            DataCategory::EventMarker => {
+                if let Some(marker) = sticky_ref
+                    .track
+                    .fi
+                    .get(files)
+                    .and_then(|f| sticky_ref.track.index.get(&f.tracks))
+                    .and_then(|t| sticky_ref.point_index.get(&t.event_markers))
+                {
+                    Grid::new("sticky_event_marker_grid")
+                        .num_columns(2)
+                        .show(ui, |ui| {
+                            ui.label("Event");
+                            ui.add(Label::new(marker.variant_path.as_str()).selectable(true));
+                            ui.end_row();
+                            if let Some(ann) = &marker.annotation {
+                                ui.label("Note");
+                                ui.add(Label::new(ann.as_str()).selectable(true));
+                                ui.end_row();
+                            }
+                        });
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Click to deselect").small().weak());
+                }
+            }
+        });
     });
     trails_request
 }
