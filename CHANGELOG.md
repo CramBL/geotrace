@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.13.0 - 2026-08-25
+
 ### Added
 
 - **Environment Data:** Added support for Geomagnetic indices (Kp/Hp30) and Ionosphere maps (TEC), including auto-downloads, map heatmaps, and query support.
