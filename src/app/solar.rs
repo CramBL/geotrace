@@ -17,7 +17,7 @@ use chrono::{NaiveDate, Utc};
 use egui::Context;
 
 use gt_fetch::{Transport, TransportSource};
-use gt_pending_writes::{PendingWrites, WriteRefusal};
+use gt_pending_writes::PendingWrites;
 use gt_solar::activity::GeomagneticActivity;
 use gt_solar::series::{Hp30Series, IndexSample, IndexSeries, KpSeries};
 use gt_solar::{GeomagneticIndex, TimeWindow, calendar, transport, wire};
@@ -39,6 +39,7 @@ use super::day_fetch_transport::DayFetchTransport;
 use super::day_index_read_retry::DayIndexReadRetry;
 use super::environment_storage::PrunedDays;
 use super::track_day_values::TrackValuesByArchivedDays;
+use super::unarchived_day::UnarchivedDay;
 
 /// What one day's fetch produced.
 enum IndexDayMessage {
@@ -49,25 +50,21 @@ enum IndexDayMessage {
         kp_samples: usize,
         hp30_samples: usize,
     },
-    Failed {
-        day: NaiveDate,
-        detail: String,
-    },
-    /// The day was downloaded, then discarded unarchived because the write
-    /// registry turned it away.
-    NotArchived {
-        day: NaiveDate,
-        refusal: WriteRefusal,
-    },
+    Unarchived(UnarchivedDay),
 }
 
 impl IndexDayMessage {
     fn day(&self) -> NaiveDate {
-        match *self {
-            Self::Stored { day, .. } | Self::Failed { day, .. } | Self::NotArchived { day, .. } => {
-                day
-            }
+        match self {
+            Self::Stored { day, .. } => *day,
+            Self::Unarchived(unarchived) => unarchived.day(),
         }
+    }
+}
+
+impl From<UnarchivedDay> for IndexDayMessage {
+    fn from(unarchived: UnarchivedDay) -> Self {
+        Self::Unarchived(unarchived)
     }
 }
 
@@ -272,12 +269,8 @@ impl GeomagneticIndexScheduler {
                         );
                     }
                 }
-                IndexDayMessage::Failed { day, detail } => {
-                    log::error!("No geomagnetic indices archived for {day}: {detail}");
-                    self.days.report_failure(day, detail);
-                }
-                IndexDayMessage::NotArchived { day, refusal } => {
-                    log::debug!("No geomagnetic indices archived for {day}: {refusal}");
+                IndexDayMessage::Unarchived(unarchived) => {
+                    unarchived.log_and_record_failure("geomagnetic indices", &mut self.days);
                 }
             }
         }
@@ -565,29 +558,20 @@ fn ingest(
         let body = match transport::fetch_index_window(transport, base_url, index, window) {
             Ok(body) => body,
             Err(failure) => {
-                return IndexDayMessage::Failed {
-                    day,
-                    detail: format!("{index}: {failure}"),
-                };
+                return UnarchivedDay::failed(day, format!("{index}: {failure}")).into();
             }
         };
         match index {
             GeomagneticIndex::Kp => match wire::parse_kp_series(&body) {
                 Ok(series) => fetched.kp = Some(series),
                 Err(err) => {
-                    return IndexDayMessage::Failed {
-                        day,
-                        detail: format!("{index}: {err}"),
-                    };
+                    return UnarchivedDay::failed(day, format!("{index}: {err}")).into();
                 }
             },
             GeomagneticIndex::Hp30 => match wire::parse_hp30_series(&body) {
                 Ok(series) => fetched.hp30 = Some(series),
                 Err(err) => {
-                    return IndexDayMessage::Failed {
-                        day,
-                        detail: format!("{index}: {err}"),
-                    };
+                    return UnarchivedDay::failed(day, format!("{index}: {err}")).into();
                 }
             },
         }
@@ -598,7 +582,7 @@ fn ingest(
             EnvironmentArchive::GeomagneticIndices.day_insert_registration(day),
             |store| archive_fetched_indices(store, base_url, day, &fetched),
         )
-        .unwrap_or_else(|refusal| IndexDayMessage::NotArchived { day, refusal })
+        .unwrap_or_else(|refusal| UnarchivedDay::refused(day, refusal).into())
 }
 
 /// Insert every index `fetched` holds, which [`ingest`] runs as one
@@ -614,19 +598,13 @@ fn archive_fetched_indices(
     let mut hp30_samples = 0;
     if let Some(series) = fetched.kp.as_ref() {
         if let Err(err) = store.insert_or_replace_kp_day(day, base_url, fetched_at, series) {
-            return IndexDayMessage::Failed {
-                day,
-                detail: err.to_string(),
-            };
+            return UnarchivedDay::failed(day, err.to_string()).into();
         }
         kp_samples = series.samples.len();
     }
     if let Some(series) = fetched.hp30.as_ref() {
         if let Err(err) = store.insert_or_replace_hp30_day(day, base_url, fetched_at, series) {
-            return IndexDayMessage::Failed {
-                day,
-                detail: err.to_string(),
-            };
+            return UnarchivedDay::failed(day, err.to_string()).into();
         }
         hp30_samples = series.samples.len();
     }
@@ -647,7 +625,7 @@ mod tests {
     use tempfile::TempDir;
 
     use gt_fetch::HttpResponse;
-    use gt_pending_writes::WriteAccess;
+    use gt_pending_writes::{WriteAccess, WriteRefusal};
     use gt_solar::DEFAULT_BASE_URL;
     use gt_solar::series::{Hp30Sample, KpSample, KpStatus};
     use gt_store::Store;
@@ -991,10 +969,13 @@ mod tests {
         let mut scheduler = scheduler_without_archive();
         scheduler
             .tx
-            .send(IndexDayMessage::Failed {
-                day: day(2026, 7, 20),
-                detail: "HTTP 500 Internal Server Error".to_owned(),
-            })
+            .send(
+                UnarchivedDay::failed(
+                    day(2026, 7, 20),
+                    "HTTP 500 Internal Server Error".to_owned(),
+                )
+                .into(),
+            )
             .expect("send");
         scheduler.poll();
 
@@ -1059,11 +1040,8 @@ mod tests {
     /// its day.
     #[rstest]
     #[case::stored(IndexDayMessage::Stored { day: day(2026, 7, 20), kp_samples: 8, hp30_samples: 48 })]
-    #[case::failed(IndexDayMessage::Failed { day: day(2026, 7, 20), detail: "boom".to_owned() })]
-    #[case::not_archived(IndexDayMessage::NotArchived {
-        day: day(2026, 7, 20),
-        refusal: WriteRefusal::ShuttingDown,
-    })]
+    #[case::failed(UnarchivedDay::failed(day(2026, 7, 20), "boom".to_owned()).into())]
+    #[case::refused(UnarchivedDay::refused(day(2026, 7, 20), WriteRefusal::ShuttingDown).into())]
     fn progress_advances_on_every_outcome(#[case] message: IndexDayMessage) {
         let mut scheduler = scheduler_without_archive();
         scheduler
@@ -1091,10 +1069,7 @@ mod tests {
 
         scheduler
             .tx
-            .send(IndexDayMessage::Failed {
-                day: day(2026, 7, 20),
-                detail: "boom".to_owned(),
-            })
+            .send(UnarchivedDay::failed(day(2026, 7, 20), "boom".to_owned()).into())
             .expect("send");
         scheduler.poll();
         assert_eq!(scheduler.days.backfill_progress(), None);
@@ -1280,7 +1255,7 @@ mod tests {
             ingested,
         );
 
-        let IndexDayMessage::NotArchived { refusal, .. } = message else {
+        let IndexDayMessage::Unarchived(UnarchivedDay::Refused { refusal, .. }) = message else {
             panic!("the day was archived where the insert is refused");
         };
         assert_eq!(refusal, expected);
@@ -1387,7 +1362,10 @@ mod tests {
             day(2026, 7, 20),
         );
 
-        assert!(matches!(message, IndexDayMessage::Failed { .. }));
+        assert!(matches!(
+            message,
+            IndexDayMessage::Unarchived(UnarchivedDay::Failed { .. })
+        ));
         for index in [GeomagneticIndex::Kp, GeomagneticIndex::Hp30] {
             assert!(
                 store.read().archived_days(index).expect("days").is_empty(),
@@ -1691,7 +1669,10 @@ mod tests {
         );
 
         assert!(
-            matches!(message, IndexDayMessage::Failed { .. }),
+            matches!(
+                message,
+                IndexDayMessage::Unarchived(UnarchivedDay::Failed { .. })
+            ),
             "the body carries no Hp30 array"
         );
         assert!(

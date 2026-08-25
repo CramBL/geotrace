@@ -19,7 +19,7 @@ use egui::Context;
 
 use gt_fetch::{Transport, TransportSource};
 use gt_flare::{ApiKey, DateWindow, MarkedFlare, SolarFlare, calendar, transport, wire};
-use gt_pending_writes::{PendingWrites, WriteRefusal};
+use gt_pending_writes::PendingWrites;
 use gt_store::{
     ArchiveUsage, EnvironmentArchive, FlareStore, FlareStoreError, ReadOnlyFlareStore,
     SolarFlareArchive, WritableArchive,
@@ -34,6 +34,7 @@ use super::day_fetch_transport::DayFetchTransport;
 use super::day_index_read_retry::DayIndexReadRetry;
 use super::environment_storage::PrunedDays;
 use super::fix_positions::FixPositionTimeline;
+use super::unarchived_day::UnarchivedDay;
 
 /// What one day's fetch produced.
 enum FlareDayMessage {
@@ -43,25 +44,21 @@ enum FlareDayMessage {
         day: NaiveDate,
         flares: usize,
     },
-    Failed {
-        day: NaiveDate,
-        detail: String,
-    },
-    /// The day was downloaded, then discarded unarchived because the write
-    /// registry turned it away.
-    NotArchived {
-        day: NaiveDate,
-        refusal: WriteRefusal,
-    },
+    Unarchived(UnarchivedDay),
 }
 
 impl FlareDayMessage {
     fn day(&self) -> NaiveDate {
-        match *self {
-            Self::Stored { day, .. } | Self::Failed { day, .. } | Self::NotArchived { day, .. } => {
-                day
-            }
+        match self {
+            Self::Stored { day, .. } => *day,
+            Self::Unarchived(unarchived) => unarchived.day(),
         }
+    }
+}
+
+impl From<UnarchivedDay> for FlareDayMessage {
+    fn from(unarchived: UnarchivedDay) -> Self {
+        Self::Unarchived(unarchived)
     }
 }
 
@@ -261,12 +258,8 @@ impl SolarFlareScheduler {
                         gt_fmt::pluralize(flares, "solar flare", "solar flares")
                     );
                 }
-                FlareDayMessage::Failed { day, detail } => {
-                    log::error!("No solar flares archived for {day}: {detail}");
-                    self.days.report_failure(day, detail);
-                }
-                FlareDayMessage::NotArchived { day, refusal } => {
-                    log::debug!("No solar flares archived for {day}: {refusal}");
+                FlareDayMessage::Unarchived(unarchived) => {
+                    unarchived.log_and_record_failure("solar flares", &mut self.days);
                 }
             }
         }
@@ -477,10 +470,7 @@ fn ingest(
         match transport::fetch_flare_window(transport, &endpoint.base_url, &endpoint.key, window) {
             Ok(body) => body,
             Err(failure) => {
-                return FlareDayMessage::Failed {
-                    day,
-                    detail: failure.to_string(),
-                };
+                return UnarchivedDay::failed(day, failure.to_string()).into();
             }
         };
     let flares: Vec<SolarFlare> = match wire::parse_flares(&body) {
@@ -489,10 +479,7 @@ fn ingest(
             .filter(|flare| flare.begin_day() == day)
             .collect(),
         Err(err) => {
-            return FlareDayMessage::Failed {
-                day,
-                detail: err.to_string(),
-            };
+            return UnarchivedDay::failed(day, err.to_string()).into();
         }
     };
 
@@ -506,14 +493,11 @@ fn ingest(
                         day,
                         flares: flares.len(),
                     },
-                    Err(err) => FlareDayMessage::Failed {
-                        day,
-                        detail: err.to_string(),
-                    },
+                    Err(err) => UnarchivedDay::failed(day, err.to_string()).into(),
                 }
             },
         )
-        .unwrap_or_else(|refusal| FlareDayMessage::NotArchived { day, refusal })
+        .unwrap_or_else(|refusal| UnarchivedDay::refused(day, refusal).into())
 }
 
 #[cfg(test)]
@@ -526,7 +510,7 @@ mod tests {
 
     use gt_fetch::HttpResponse;
     use gt_flare::DEFAULT_BASE_URL;
-    use gt_pending_writes::WriteAccess;
+    use gt_pending_writes::{WriteAccess, WriteRefusal};
     use gt_store::Store;
     use gt_test_utils::{ScriptedTransport, pending_writes};
     use gt_types::{Latitude, Longitude};
@@ -788,10 +772,7 @@ mod tests {
         let mut scheduler = scheduler_without_archive();
         scheduler
             .tx
-            .send(FlareDayMessage::Failed {
-                day: day(2024, 5, 9),
-                detail: "HTTP 403 Forbidden".to_owned(),
-            })
+            .send(UnarchivedDay::failed(day(2024, 5, 9), "HTTP 403 Forbidden".to_owned()).into())
             .expect("send");
         scheduler.poll();
 
@@ -908,7 +889,7 @@ mod tests {
             day(2024, 5, 9),
         );
 
-        let FlareDayMessage::NotArchived { refusal, .. } = message else {
+        let FlareDayMessage::Unarchived(UnarchivedDay::Refused { refusal, .. }) = message else {
             panic!("the day was archived where the insert is refused");
         };
         assert_eq!(refusal, expected);
@@ -1020,7 +1001,10 @@ mod tests {
 
         let message = ingest(&transport, &writable(&store), &endpoint(), day(2024, 5, 9));
 
-        assert!(matches!(message, FlareDayMessage::Failed { .. }));
+        assert!(matches!(
+            message,
+            FlareDayMessage::Unarchived(UnarchivedDay::Failed { .. })
+        ));
         assert!(store.read().archived_days().expect("days").is_empty());
     }
 
@@ -1042,7 +1026,7 @@ mod tests {
 
         let message = ingest(&transport, &writable(&store), &endpoint(), day(2024, 5, 9));
 
-        let FlareDayMessage::Failed { detail, .. } = message else {
+        let FlareDayMessage::Unarchived(UnarchivedDay::Failed { detail, .. }) = message else {
             panic!("the transport refused every attempt");
         };
         assert!(!detail.contains(TEST_KEY), "{detail}");

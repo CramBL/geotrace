@@ -23,7 +23,7 @@ use gt_jam::dataset::JamDataset;
 use gt_jam::day_selection::{DaySelection, EmptyReason};
 use gt_jam::transport::{self, FetchOutcome, REQUEST_INTERVAL};
 use gt_jam::wire::{self, ParseWarningReporter};
-use gt_pending_writes::{PendingWrites, WriteRefusal};
+use gt_pending_writes::PendingWrites;
 use gt_query_run::JammingValues;
 #[cfg(test)]
 use gt_store::Store;
@@ -44,6 +44,7 @@ use super::day_index_read_retry::DayIndexReadRetry;
 use super::environment_storage::PrunedDays;
 use super::fix_positions::FixPositionTimeline;
 use super::track_day_values::TrackValuesByArchivedDays;
+use super::unarchived_day::UnarchivedDay;
 
 /// What one day's fetch produced.
 enum JamMessage {
@@ -56,26 +57,21 @@ enum JamMessage {
         day: NaiveDate,
         pending: bool,
     },
-    Failed {
-        day: NaiveDate,
-        detail: String,
-    },
-    /// The day was downloaded, then discarded unarchived because the write
-    /// registry turned it away.
-    NotArchived {
-        day: NaiveDate,
-        refusal: WriteRefusal,
-    },
+    Unarchived(UnarchivedDay),
 }
 
 impl JamMessage {
     fn day(&self) -> NaiveDate {
-        match *self {
-            Self::Stored { day, .. }
-            | Self::Missing { day, .. }
-            | Self::Failed { day, .. }
-            | Self::NotArchived { day, .. } => day,
+        match self {
+            Self::Stored { day, .. } | Self::Missing { day, .. } => *day,
+            Self::Unarchived(unarchived) => unarchived.day(),
         }
+    }
+}
+
+impl From<UnarchivedDay> for JamMessage {
+    fn from(unarchived: UnarchivedDay) -> Self {
+        Self::Unarchived(unarchived)
     }
 }
 
@@ -376,12 +372,8 @@ impl JammingScheduler {
                     );
                     self.refused.insert(day);
                 }
-                JamMessage::Failed { day, detail } => {
-                    log::error!("No interference data archived for {day}: {detail}");
-                    self.days.report_failure(day, detail);
-                }
-                JamMessage::NotArchived { day, refusal } => {
-                    log::debug!("No interference data archived for {day}: {refusal}");
+                JamMessage::Unarchived(unarchived) => {
+                    unarchived.log_and_record_failure("interference data", &mut self.days);
                 }
             }
         }
@@ -665,10 +657,7 @@ fn ingest(
             let observations = match wire::parse_dataset(&csv, &reporter) {
                 Ok(observations) => observations,
                 Err(err) => {
-                    return JamMessage::Failed {
-                        day,
-                        detail: err.to_string(),
-                    };
+                    return UnarchivedDay::failed(day, err.to_string()).into();
                 }
             };
             let unusable = reporter.warnings().len() + reporter.suppressed();
@@ -686,19 +675,16 @@ fn ingest(
                             day,
                             cells: observations.len(),
                         },
-                        Err(err) => JamMessage::Failed {
-                            day,
-                            detail: err.to_string(),
-                        },
+                        Err(err) => UnarchivedDay::failed(day, err.to_string()).into(),
                     },
                 )
-                .unwrap_or_else(|refusal| JamMessage::NotArchived { day, refusal })
+                .unwrap_or_else(|refusal| UnarchivedDay::refused(day, refusal).into())
         }
         FetchOutcome::Missing => JamMessage::Missing {
             day,
             pending: calendar::awaiting_publication(day, calendar::today_utc()),
         },
-        FetchOutcome::Failed(detail) => JamMessage::Failed { day, detail },
+        FetchOutcome::Failed(detail) => UnarchivedDay::failed(day, detail).into(),
     }
 }
 
@@ -710,7 +696,7 @@ mod tests {
 
     use gt_fetch::HttpResponse;
     use gt_jam::DEFAULT_BASE_URL;
-    use gt_pending_writes::WriteAccess;
+    use gt_pending_writes::{WriteAccess, WriteRefusal};
     use gt_store::WritableDayArchive as _;
     use gt_test_utils::ScriptedTransport;
     use gt_test_utils::pending_writes;
@@ -838,11 +824,8 @@ mod tests {
     #[rstest]
     #[case::stored(JamMessage::Stored { day: day(2026, 7, 20), cells: 1 })]
     #[case::missing(JamMessage::Missing { day: day(2026, 7, 20), pending: false })]
-    #[case::failed(JamMessage::Failed { day: day(2026, 7, 20), detail: "boom".to_owned() })]
-    #[case::not_archived(JamMessage::NotArchived {
-        day: day(2026, 7, 20),
-        refusal: WriteRefusal::ShuttingDown,
-    })]
+    #[case::failed(UnarchivedDay::failed(day(2026, 7, 20), "boom".to_owned()).into())]
+    #[case::refused(UnarchivedDay::refused(day(2026, 7, 20), WriteRefusal::ShuttingDown).into())]
     fn progress_advances_on_every_outcome(#[case] message: JamMessage) {
         let mut scheduler = scheduler();
         let days = [day(2026, 7, 20), day(2026, 7, 21)];
@@ -991,10 +974,13 @@ mod tests {
         let mut scheduler = scheduler();
         scheduler
             .tx
-            .send(JamMessage::Failed {
-                day: day(2026, 7, 20),
-                detail: "HTTP 500 Internal Server Error".to_owned(),
-            })
+            .send(
+                UnarchivedDay::failed(
+                    day(2026, 7, 20),
+                    "HTTP 500 Internal Server Error".to_owned(),
+                )
+                .into(),
+            )
             .expect("send");
         scheduler.poll();
 
@@ -1014,10 +1000,7 @@ mod tests {
         let mut scheduler = scheduler();
         scheduler
             .tx
-            .send(JamMessage::NotArchived {
-                day: day(2026, 7, 20),
-                refusal: WriteRefusal::ReadOnlySession,
-            })
+            .send(UnarchivedDay::refused(day(2026, 7, 20), WriteRefusal::ReadOnlySession).into())
             .expect("send");
 
         scheduler.poll();
@@ -1091,7 +1074,7 @@ mod tests {
             day,
         );
 
-        let JamMessage::NotArchived { refusal, .. } = message else {
+        let JamMessage::Unarchived(UnarchivedDay::Refused { refusal, .. }) = message else {
             panic!("the day was archived where the insert is refused");
         };
         assert_eq!(refusal, expected);
@@ -1309,7 +1292,10 @@ mod tests {
         }));
 
         let message = ingest(&transport, &writable(&store), DEFAULT_BASE_URL, day);
-        assert!(matches!(message, JamMessage::Failed { .. }));
+        assert!(matches!(
+            message,
+            JamMessage::Unarchived(UnarchivedDay::Failed { .. })
+        ));
         assert!(store.read().days().expect("days").is_empty());
     }
 
