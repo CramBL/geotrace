@@ -6,6 +6,13 @@
 
 namespace geotrace {
 
+/**
+ * A unit GeoTrace recognizes, with a physical quantity and a conversion factor.
+ *
+ * Enumerators are named after the canonical label, with `/` written as `Per`:
+ * `KmPerH` is `km/h` and `MPerS2` is `m/s2`. `G` is standard gravity, with
+ * `Mg` and `Ug` its thousandth and millionth.
+ */
 enum class RecognizedUnit : std::uint8_t {
     Deg,
     M,
@@ -38,6 +45,7 @@ enum class RecognizedUnit : std::uint8_t {
     PerH,
 };
 
+/** The canonical label of @p unit, or NULL for a value outside the enum. */
 inline const char *recognized_unit_label(RecognizedUnit unit) {
     switch (unit) {
     case RecognizedUnit::Deg:

@@ -426,6 +426,15 @@ impl PySatelliteReport {
 }
 
 /// A recognized channel unit or an explicit display-only custom unit.
+///
+/// A recognized unit is one of the :class:`Unit` catalog entries: it has a
+/// physical quantity and a conversion factor, so a GeoTrace query compares it
+/// against unit literals. A custom unit is any other label, stored and shown
+/// verbatim with its values dimensionless in queries.
+///
+/// A unit read back from a file is also a ``ChannelUnit``. ``is_custom`` is
+/// true for a label that is not a catalog unit, including a legacy label an
+/// older writer stored, which raises ``ValueError`` when written again.
 #[pyclass(eq, skip_from_py_object, name = "ChannelUnit")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PyChannelUnit {
@@ -434,7 +443,11 @@ pub struct PyChannelUnit {
 
 #[pymethods]
 impl PyChannelUnit {
-    /// Parse a unit GeoTrace understands and can scale in queries.
+    /// Parse a catalog unit label, which queries convert and compare.
+    ///
+    /// Aliases resolve to the canonical spelling: ``"kph"`` is ``"km/h"``,
+    /// ``"degrees"`` is ``"deg"``, ``"m/s²"`` is ``"m/s2"``. A label outside
+    /// the catalog raises ``ValueError``: store it with :meth:`custom`.
     #[staticmethod]
     fn recognized(label: &str) -> PyResult<Self> {
         label
@@ -444,6 +457,10 @@ impl PyChannelUnit {
     }
 
     /// Construct a display-only unit whose values are dimensionless in queries.
+    ///
+    /// The label is trimmed. ``ValueError`` is raised for an empty label, a
+    /// label with a control character, or a label that spells a catalog unit:
+    /// declare that one with :meth:`recognized`.
     #[staticmethod]
     fn custom(label: &str) -> PyResult<Self> {
         ChannelUnit::custom(label)
@@ -451,11 +468,13 @@ impl PyChannelUnit {
             .map_err(|error| PyValueError::new_err(error.to_string()))
     }
 
+    /// The canonical label as stored in the file.
     #[getter]
     fn label(&self) -> String {
         self.inner.to_string()
     }
 
+    /// True for a display-only custom label, false for a catalog unit.
     #[getter]
     fn is_custom(&self) -> bool {
         self.inner.as_recognized().is_none()
@@ -477,6 +496,14 @@ impl PyChannelUnit {
 }
 
 /// A recognized, convertible channel unit.
+///
+/// The catalog is exposed as class attributes named after the canonical
+/// spelling with ``/`` written as ``_PER_``: ``Unit.KM_PER_H`` is ``km/h``,
+/// ``Unit.M_PER_S2`` is ``m/s2``, ``Unit.PER_MIN`` is ``per min``. ``Unit.G``,
+/// ``Unit.MG`` and ``Unit.UG`` are standard gravity and its sub-scales.
+///
+/// Pass one straight to :class:`Channel`, or ``Unit.MG.label`` for its
+/// spelling.
 #[pyclass(eq, skip_from_py_object, name = "Unit")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PyUnit {
@@ -491,6 +518,12 @@ include!("unit_catalog.rs");
 /// have one column per component, or omit it for a scalar channel. `values` is
 /// row-major: `len(times)` rows of one column (scalar) or `len(components)`
 /// columns (vector). `times` must be timezone-aware `datetime.datetime` objects.
+///
+/// `unit` takes a :class:`Unit` catalog entry, a recognized label such as
+/// `"km/h"` or `"degrees"`, or a :class:`ChannelUnit` from
+/// :meth:`ChannelUnit.custom` for a label outside the catalog. A label that is
+/// neither a catalog unit nor wrapped in `ChannelUnit.custom` raises
+/// `ValueError`.
 #[pyclass(skip_from_py_object, name = "Channel")]
 #[derive(Debug, Clone)]
 pub struct PyChannel {
@@ -530,7 +563,7 @@ impl PyChannel {
         self.inner.name()
     }
 
-    /// The unit of the values (`"g"`, `"deg"`), or `None`.
+    /// The declared unit as a :class:`ChannelUnit`, or `None`.
     #[getter]
     fn unit(&self) -> Option<PyChannelUnit> {
         self.inner

@@ -137,22 +137,47 @@ class SatelliteReport:
 
 @final
 class ChannelUnit:
-    """A recognized channel unit or an explicit display-only custom unit."""
+    """A recognized channel unit or an explicit display-only custom unit.
+
+    A recognized unit is one of the :class:`Unit` catalog entries: it has a
+    physical quantity and a conversion factor, so a GeoTrace query compares it
+    against unit literals. A custom unit is any other label, stored and shown
+    verbatim with its values dimensionless in queries.
+
+    A unit read back from a file is also a ``ChannelUnit``. ``is_custom`` is
+    true for a label that is not a catalog unit, including a legacy label an
+    older writer stored, which raises ``ValueError`` when written again.
+    """
 
     @staticmethod
     def recognized(label: str) -> ChannelUnit:
-        """Parse a unit GeoTrace understands and can scale in queries."""
+        """Parse a catalog unit label, which queries convert and compare.
+
+        Aliases resolve to the canonical spelling: ``"kph"`` is ``"km/h"``,
+        ``"degrees"`` is ``"deg"``, ``"m/s²"`` is ``"m/s2"``. A label outside
+        the catalog raises ``ValueError``: store it with :meth:`custom`.
+        """
         ...
 
     @staticmethod
     def custom(label: str) -> ChannelUnit:
-        """Construct a display-only unit treated as dimensionless in queries."""
+        """Construct a display-only unit treated as dimensionless in queries.
+
+        The label is trimmed. ``ValueError`` is raised for an empty label, a
+        label with a control character, or a label that spells a catalog unit:
+        declare that one with :meth:`recognized`.
+        """
         ...
 
     @property
-    def label(self) -> str: ...
+    def label(self) -> str:
+        """The canonical label as stored in the file."""
+        ...
+
     @property
-    def is_custom(self) -> bool: ...
+    def is_custom(self) -> bool:
+        """True for a display-only custom label, false for a catalog unit."""
+        ...
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
     def __eq__(self, other: object) -> bool: ...
@@ -160,7 +185,16 @@ class ChannelUnit:
 
 @final
 class Unit(UnitCatalog):
-    """A recognized, convertible channel unit."""
+    """A recognized, convertible channel unit.
+
+    The catalog is exposed as class attributes named after the canonical
+    spelling with ``/`` written as ``_PER_``: ``Unit.KM_PER_H`` is ``km/h``,
+    ``Unit.M_PER_S2`` is ``m/s2``, ``Unit.PER_MIN`` is ``per min``. ``Unit.G``,
+    ``Unit.MG`` and ``Unit.UG`` are standard gravity and its sub-scales.
+
+    Pass one straight to :class:`Channel`, or ``Unit.MG.label`` for its
+    spelling.
+    """
 
     @property
     def label(self) -> str: ...
@@ -182,14 +216,18 @@ class Channel:
         name: Channel identifier (a lowercase identifier), referenced as ``@name``.
         times: Sample timestamps, one per row of ``values``.
         values: Row-major sample values.
-        unit: Recognized unit string, :class:`ChannelUnit`, or ``None``.
+        unit: A :class:`Unit` catalog entry, a recognized label such as
+            ``"km/h"`` or ``"degrees"``, a :class:`ChannelUnit` from
+            :meth:`ChannelUnit.custom` for a label outside the catalog, or
+            ``None``.
         period_deg: Wrap period in degrees for an angular channel, or ``None``.
         description: Human description, or ``None``.
         components: Vector component labels, or ``None`` for a scalar channel.
 
     Raises:
-        ValueError: If the name or a component label is malformed, or ``values``
-            is not ``len(times) * max(len(components), 1)`` long.
+        ValueError: If the name or a component label is malformed, the unit is
+            neither a catalog unit nor a ``ChannelUnit``, or ``values`` is not
+            ``len(times) * max(len(components), 1)`` long.
     """
 
     def __init__(

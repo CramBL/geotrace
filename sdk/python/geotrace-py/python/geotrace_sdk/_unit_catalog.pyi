@@ -3,6 +3,8 @@
 from . import Unit as _Unit
 
 class UnitCatalog:
+    """The recognized units, inherited as class attributes of :class:`Unit`."""
+
     DEG: _Unit
     M: _Unit
     NM: _Unit
