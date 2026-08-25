@@ -6,7 +6,7 @@
 //! started, and then waits for the ones that have. A registry in
 //! [`WriteAccess::ReadOnly`] refuses every write for the rest of the run.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -43,7 +43,9 @@ pub enum WriteRefusal {
 }
 
 impl fmt::Display for WriteRefusal {
-    /// Reads as the reason clause a log line states after its colon.
+    /// The reason clause a log line states after its colon, as in
+    /// `PruneReport::skipped_line`. The UI wording for a read-only session is
+    /// in the `app::read_only_session` constants.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ShuttingDown => f.write_str("shutting down"),
@@ -157,7 +159,7 @@ struct RegistryState {
     write_access: WriteAccess,
     shutting_down: bool,
     running: BTreeMap<WriteId, RunningWrite>,
-    recently_finished: Vec<String>,
+    recently_finished: VecDeque<String>,
     next_id: WriteId,
 }
 
@@ -307,7 +309,7 @@ impl PendingWrites {
                     stage: write.stage.clone(),
                 })
                 .collect(),
-            recently_finished: state.recently_finished.clone(),
+            recently_finished: state.recently_finished.iter().cloned().collect(),
         }
     }
 }
@@ -350,9 +352,9 @@ impl Drop for PendingWriteGuard {
     fn drop(&mut self) {
         let mut state = self.registry.state.lock();
         if let Some(write) = state.running.remove(&self.id) {
-            state.recently_finished.push(write.label);
+            state.recently_finished.push_back(write.label);
             if state.recently_finished.len() > RECENTLY_FINISHED_KEPT {
-                state.recently_finished.remove(0);
+                state.recently_finished.pop_front();
             }
         }
         let idle = state.running.is_empty();
@@ -523,6 +525,7 @@ mod tests {
 
         assert_eq!(finished.len(), RECENTLY_FINISHED_KEPT);
         assert_eq!(finished.first().map(String::as_str), Some("Write 2"));
+        assert_eq!(finished.last().map(String::as_str), Some("Write 9"));
     }
 
     #[test]
