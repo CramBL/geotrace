@@ -5526,8 +5526,9 @@ fn a_read_only_session_does_not_become_the_owner_when_the_other_instance_exits()
     thread::sleep(DATA_DIRECTORY_RETRY_INTERVAL);
     harness.run_steps(3);
 
-    assert!(
-        DataDirectoryLock::acquire(Some(directory.path())).marks_the_data_directory(),
+    assert_eq!(
+        DataDirectoryLock::acquire(Some(directory.path())).ownership(),
+        DataDirectoryOwnership::MarkedByThisInstance,
         "the read-only session holds the lock the next instance needs"
     );
     assert_eq!(

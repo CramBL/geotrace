@@ -430,12 +430,6 @@ impl DataDirectoryLock {
         self.mark.ownership()
     }
 
-    /// Whether this process is the instance the data directory is marked as
-    /// in use by.
-    pub fn marks_the_data_directory(&self) -> bool {
-        self.ownership() == DataDirectoryOwnership::MarkedByThisInstance
-    }
-
     /// Gives up on marking the data directory for the rest of the run,
     /// leaving it to the instance that owns it.
     ///
@@ -443,7 +437,7 @@ impl DataDirectoryLock {
     /// to retry, nothing promotes that session to the owner later.
     pub fn give_up_marking_the_data_directory(&mut self) {
         debug_assert!(
-            !self.marks_the_data_directory(),
+            self.ownership() != DataDirectoryOwnership::MarkedByThisInstance,
             "the mark is given up before it is taken: dropping it here would leave the status \
              file behind the lock it vouches for"
         );
@@ -736,7 +730,10 @@ mod tests {
 
         let lock = DataDirectoryLock::acquire(Some(directory.path()));
 
-        assert!(lock.marks_the_data_directory());
+        assert_eq!(
+            lock.ownership(),
+            DataDirectoryOwnership::MarkedByThisInstance
+        );
         let status = status_file_in(directory.path()).expect("the status file");
         assert_eq!(status.process_id, process::id());
         assert_eq!(status.state, InstanceState::Running);
@@ -790,7 +787,10 @@ mod tests {
 
         let lock = DataDirectoryLock::acquire(Some(directory.path()));
 
-        assert!(lock.marks_the_data_directory());
+        assert_eq!(
+            lock.ownership(),
+            DataDirectoryOwnership::MarkedByThisInstance
+        );
         assert_eq!(
             file_names_in(directory.path()),
             vec![STATUS_FILE_NAME.to_owned(), LOCK_FILE_NAME.to_owned()]
@@ -809,7 +809,10 @@ mod tests {
 
         let lock = DataDirectoryLock::acquire(Some(&directory));
 
-        assert!(lock.marks_the_data_directory());
+        assert_eq!(
+            lock.ownership(),
+            DataDirectoryOwnership::MarkedByThisInstance
+        );
         assert!(directory.join(LOCK_FILE_NAME).exists());
     }
 
@@ -822,7 +825,6 @@ mod tests {
 
         let mut second = DataDirectoryLock::acquire(Some(directory.path()));
 
-        assert!(!second.marks_the_data_directory());
         assert_eq!(
             second.ownership(),
             DataDirectoryOwnership::HeldByAnotherInstance
@@ -845,11 +847,15 @@ mod tests {
         let read_only =
             DataDirectoryLock::acquire_if_owner(WriteAccess::ReadOnly, Some(directory.path()));
 
-        assert!(!read_only.marks_the_data_directory());
+        assert_eq!(
+            read_only.ownership(),
+            DataDirectoryOwnership::NoDataDirectory
+        );
         assert_eq!(file_names_in(directory.path()), Vec::<String>::new());
-        assert!(
+        assert_eq!(
             DataDirectoryLock::acquire_if_owner(WriteAccess::Owner, Some(directory.path()))
-                .marks_the_data_directory(),
+                .ownership(),
+            DataDirectoryOwnership::MarkedByThisInstance,
             "the instance that owns the directory can still mark it"
         );
     }
@@ -873,7 +879,6 @@ mod tests {
             waiting.retry_marking_the_data_directory(),
             DataDirectoryOwnership::NoDataDirectory
         );
-        assert!(!waiting.marks_the_data_directory());
         assert_eq!(
             InstanceStatusRead::read_from(directory.path()),
             InstanceStatusRead::Absent,
@@ -892,8 +897,9 @@ mod tests {
             InstanceStatusRead::Absent
         );
         assert_eq!(file_names_in(directory.path()), vec![LOCK_FILE_NAME]);
-        assert!(
-            DataDirectoryLock::acquire(Some(directory.path())).marks_the_data_directory(),
+        assert_eq!(
+            DataDirectoryLock::acquire(Some(directory.path())).ownership(),
+            DataDirectoryOwnership::MarkedByThisInstance,
             "the released lock is free for the next run"
         );
     }
@@ -991,7 +997,6 @@ mod tests {
 
         lock.mark_shutting_down(&PendingWrites::default());
 
-        assert!(!lock.marks_the_data_directory());
         assert_eq!(lock.ownership(), DataDirectoryOwnership::NoDataDirectory);
     }
 
