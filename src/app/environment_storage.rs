@@ -22,7 +22,6 @@ use super::environment_storage_ui::DeleteBlocker;
 use super::modals::{
     EnvironmentPruneChoice, EnvironmentPrunePrompt, show_environment_prune_confirmation,
 };
-use super::storage::DatabasesPending;
 
 /// Archive one day through `handle` with the write registered, as a fetch
 /// worker archives one.
@@ -499,20 +498,12 @@ impl App {
 
     /// What stops the delete controls from taking input, when something does.
     pub(super) fn environment_deletes_blocked_by(&self) -> Option<DeleteBlocker> {
-        if !self.pending_writes.write_access().allows_writing() {
-            return Some(DeleteBlocker::ReadOnlySession);
-        }
-        match self.storage_open.databases_pending() {
-            Some(DatabasesPending::WaitingForTheDataDirectory) => {
-                Some(DeleteBlocker::WaitingForTheDataDirectory)
-            }
-            Some(DatabasesPending::AwaitingAnInterruptedDeleteAnswer) => {
-                Some(DeleteBlocker::AwaitingAnInterruptedDeleteAnswer)
-            }
-            Some(DatabasesPending::Opening) => Some(DeleteBlocker::ArchivesOpening),
-            None if self.environment_prune_running() => Some(DeleteBlocker::DeleteRunning),
-            None => None,
-        }
+        self.archives_unreachable()
+            .map(DeleteBlocker::ArchivesUnreachable)
+            .or_else(|| {
+                self.environment_prune_running()
+                    .then_some(DeleteBlocker::DeleteRunning)
+            })
     }
 
     /// Start the delete the user confirmed.

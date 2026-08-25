@@ -28,7 +28,6 @@ use egui_phosphor::regular::APP_WINDOW as ICON_APP_WINDOW;
 
 use super::App;
 use super::backfill_ui::BackfillReadiness;
-use super::storage::DatabasesPending;
 
 /// One category of the settings window, in the order the rail lists them.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug, EnumIter)]
@@ -123,25 +122,16 @@ impl App {
     /// one that could not be opened outranks offline mode: there is nowhere
     /// to download to either way.
     fn backfill_readiness(&self, archive: EnvironmentArchive) -> BackfillReadiness {
-        if !self.pending_writes.write_access().allows_writing() {
-            return BackfillReadiness::ReadOnlySession;
+        if let Some(reason) = self.archives_unreachable() {
+            return BackfillReadiness::ArchivesUnreachable(reason);
         }
-        match self.storage_open.databases_pending() {
-            Some(DatabasesPending::WaitingForTheDataDirectory) => {
-                BackfillReadiness::WaitingForTheDataDirectory
+        match self.unavailable_archives[archive] {
+            Some(reason) => BackfillReadiness::ArchiveUnavailable(reason),
+            None if !self.environment_archive_available(archive) => {
+                BackfillReadiness::WithoutArchive
             }
-            Some(DatabasesPending::AwaitingAnInterruptedDeleteAnswer) => {
-                BackfillReadiness::AwaitingAnInterruptedDeleteAnswer
-            }
-            Some(DatabasesPending::Opening) => BackfillReadiness::ArchiveStillOpening,
-            None => match self.unavailable_archives[archive] {
-                Some(reason) => BackfillReadiness::ArchiveUnavailable(reason),
-                None if !self.environment_archive_available(archive) => {
-                    BackfillReadiness::WithoutArchive
-                }
-                None if self.offline => BackfillReadiness::Offline,
-                None => BackfillReadiness::Ready,
-            },
+            None if self.offline => BackfillReadiness::Offline,
+            None => BackfillReadiness::Ready,
         }
     }
 
