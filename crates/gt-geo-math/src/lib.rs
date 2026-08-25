@@ -1,7 +1,8 @@
 use geo::{ConvexHull, Distance, Haversine};
-use geo_types::{Coord, MultiPoint, Point};
+use geo_types::{MultiPoint, Point};
 use gt_types::NavPoint;
 use gt_types::coordinates::{Latitude, Longitude};
+use nalgebra::Vector3;
 use smallvec::SmallVec;
 
 /// Great-circle distance between two positions, returned in kilometres.
@@ -45,35 +46,118 @@ pub fn segment_length_range_m(points: &[NavPoint]) -> Option<(f64, f64)> {
 /// Maximum haversine distance between any two points in the set, in metres.
 /// Returns `0.0` for fewer than 2 points.
 ///
-/// Reduces the search space to the convex hull of the point set, then
-/// iterates all pairs of hull vertices (O(k²) where k = hull vertex count;
-/// acceptable because GPS track hulls are small).
+/// Searches the pairs of the set's convex hull vertices: O(k²) where k is the
+/// hull vertex count, acceptable because GPS track hulls are small. The hull
+/// is taken in a longitude/latitude grid rotated onto the set's mean
+/// direction, so neither the ±180° discontinuity nor a pole falls inside the
+/// set. A set spread over more than a hemisphere admits no such rotation and
+/// is searched pair by pair instead.
 pub fn point_set_diameter_m(points: &[NavPoint]) -> f64 {
     if points.len() < 2 {
         return 0.0;
     }
 
-    let multi: MultiPoint<f64> = points
+    let directions: Vec<Vector3<f64>> = points
         .iter()
-        .map(|p| Point::new(p.tpv.lon().as_degrees(), p.tpv.lat().as_degrees()))
+        .map(|p| earth_centred_direction(p.tpv.lat(), p.tpv.lon()))
         .collect();
 
-    let hull = multi.convex_hull();
+    let Some(frame) = MeanDirectionFrame::covering(&directions) else {
+        let positions: Vec<Point<f64>> = points
+            .iter()
+            .map(|p| Point::new(p.tpv.lon().as_degrees(), p.tpv.lat().as_degrees()))
+            .collect();
+        return max_pairwise_haversine_m(&positions);
+    };
+
+    let rotated: MultiPoint<f64> = directions
+        .iter()
+        .map(|d| frame.lon_lat_degrees(d))
+        .collect();
 
     // `lines()` yields one segment per edge. Each segment's `.start` is a
     // unique hull vertex (the closing duplicate coord is excluded).
-    let hull_verts: SmallVec<[Coord<f64>; 32]> = hull.exterior().lines().map(|l| l.start).collect();
+    let hull_vertices: SmallVec<[Point<f64>; 32]> = rotated
+        .convex_hull()
+        .exterior()
+        .lines()
+        .map(|line| Point::from(line.start))
+        .collect();
 
+    max_pairwise_haversine_m(&hull_vertices)
+}
+
+fn max_pairwise_haversine_m(positions: &[Point<f64>]) -> f64 {
     let mut max_m = 0.0_f64;
-    for (i, v1) in hull_verts.iter().enumerate() {
-        for v2 in hull_verts.iter().skip(i + 1) {
-            let d = Haversine.distance(Point::from(*v1), Point::from(*v2));
-            if d > max_m {
-                max_m = d;
-            }
+    for (i, a) in positions.iter().enumerate() {
+        for b in positions.iter().skip(i + 1) {
+            max_m = max_m.max(Haversine.distance(*a, *b));
         }
     }
     max_m
+}
+
+/// Direction from the earth's centre to a position, as a unit vector in the
+/// cartesian frame with `x` at 0° N 0° E, `y` at 0° N 90° E and `z` at the
+/// north pole.
+fn earth_centred_direction(lat: Latitude, lon: Longitude) -> Vector3<f64> {
+    let (sin_lat, cos_lat) = lat.as_degrees().to_radians().sin_cos();
+    let (sin_lon, cos_lon) = lon.as_degrees().to_radians().sin_cos();
+    Vector3::new(cos_lat * cos_lon, cos_lat * sin_lon, sin_lat)
+}
+
+/// A rotation of the longitude/latitude grid that puts a point set's mean
+/// direction at 0° N 0° E, leaving the set clear of the ±180° discontinuity
+/// and of both poles.
+struct MeanDirectionFrame {
+    origin: Vector3<f64>,
+    east: Vector3<f64>,
+    north: Vector3<f64>,
+}
+
+impl MeanDirectionFrame {
+    /// How nearly parallel to the frame's origin the polar axis may be before
+    /// the cross product that squares up the frame loses precision.
+    const MAX_POLAR_AXIS_ALIGNMENT: f64 = 0.9;
+
+    /// `None` when the directions cancel out, or when one of them is a quarter
+    /// turn or more away from their mean: no rotation of the grid is
+    /// continuous over a set that wide.
+    fn covering(directions: &[Vector3<f64>]) -> Option<Self> {
+        let origin = directions
+            .iter()
+            .sum::<Vector3<f64>>()
+            .try_normalize(f64::EPSILON)?;
+
+        if directions.iter().any(|d| d.dot(&origin) <= 0.0) {
+            return None;
+        }
+
+        let reference_axis = if origin.z.abs() < Self::MAX_POLAR_AXIS_ALIGNMENT {
+            Vector3::z()
+        } else {
+            Vector3::x()
+        };
+        let east = reference_axis.cross(&origin).try_normalize(f64::EPSILON)?;
+        let north = origin.cross(&east);
+
+        Some(Self {
+            origin,
+            east,
+            north,
+        })
+    }
+
+    fn lon_lat_degrees(&self, direction: &Vector3<f64>) -> Point<f64> {
+        let Self {
+            origin,
+            east,
+            north,
+        } = self;
+        let lon = direction.dot(east).atan2(direction.dot(origin));
+        let lat = direction.dot(north).clamp(-1.0, 1.0).asin();
+        Point::new(lon.to_degrees(), lat.to_degrees())
+    }
 }
 
 #[cfg(test)]
