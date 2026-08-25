@@ -4,7 +4,9 @@
 use std::ops::Range;
 
 use chrono::Duration;
-use egui::{Color32, Label, RichText, ScrollArea, Separator, Shape, text::LayoutJob};
+use egui::{
+    Color32, InteractOptions, Label, RichText, ScrollArea, Separator, Shape, text::LayoutJob,
+};
 use gt_fmt::MIDDLE_DOT;
 use gt_log_view::{EntryMatches, FilterStack, LoadedLog, VisibleEntries};
 use gt_logfile::{BootSession, LogEntry, ParsedLog, TimestampKind};
@@ -18,9 +20,10 @@ use super::{AssociationWindowUnit, LogViewerWindow, TIMESTAMP_FORMAT};
 /// U+2248 ALMOST EQUAL TO, marking an interpolated timestamp.
 const ALMOST_EQUAL_TO: &str = "≈";
 
-const INTERPOLATED_TIMESTAMP_HOVER: &str = "Timestamp interpolated between neighbouring entries";
+pub(super) const INTERPOLATED_TIMESTAMP_HOVER: &str =
+    "Timestamp interpolated between neighbouring entries";
 
-const ASSOCIATED_ROW_HOVER: &str = "Centre the map on this line";
+pub(super) const ASSOCIATED_ROW_HOVER: &str = "Centre the map on this line";
 
 /// Width of the gutter column holding the order-anomaly marker, keeping the
 /// timestamp column aligned on the rows without one.
@@ -392,12 +395,12 @@ impl EntryRow<'_> {
         let row = ui
             .horizontal(|ui| {
                 self.gutter_ui(ui);
-                let timestamp = ui.label(timestamp_text);
+                let timestamp = ui.add(Label::new(timestamp_text).selectable(true));
                 if interpolated {
                     timestamp.on_hover_text(INTERPOLATED_TIMESTAMP_HOVER);
                 }
                 let message = self.message_job(ui, message_color);
-                ui.add(Label::new(message).truncate());
+                ui.add(Label::new(message).truncate().selectable(true));
             })
             .response;
         if let Some(fill) = self.cross_highlight_fill {
@@ -417,11 +420,21 @@ impl EntryRow<'_> {
                 unit.describe(self.association_window)
             ),
         };
-        let Some((latitude, longitude)) = self.position else {
-            row.on_hover_text(hover);
-            return None;
-        };
-        let row = row.interact(egui::Sense::click()).on_hover_text(hover);
+        // Registered above the labels the row just drew: a selectable label
+        // senses the pointer, and the topmost sensing widget under the cursor
+        // takes the hover and the click.
+        let row = ui
+            .interact_opt(
+                row.rect,
+                row.id,
+                match associated {
+                    true => egui::Sense::click(),
+                    false => egui::Sense::hover(),
+                },
+                InteractOptions { move_to_top: true },
+            )
+            .on_hover_text(hover);
+        let (latitude, longitude) = self.position?;
         row.hovered().then_some(RowInteraction {
             latitude,
             longitude,
@@ -509,7 +522,7 @@ fn boot_separator_row_ui(ui: &mut egui::Ui, session: &BootSession) {
         gt_fmt::pluralize(entries, "entry", "entries"),
     );
     ui.horizontal(|ui| {
-        ui.label(RichText::new(label).monospace().strong());
+        ui.add(Label::new(RichText::new(label).monospace().strong()).selectable(true));
         ui.add(Separator::default().horizontal());
     });
 }

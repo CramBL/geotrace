@@ -42,7 +42,7 @@
   A copy button puts every row of the run on the clipboard as tab-separated values.
 - **Interface:** Drag the splitter between the query results' two tables to divide the tab between them, or move the match list into a window of its own.
 - **Interface:** The Settings window now displays one category at a time using a left-side navigation rail.
-- **Interface:** Label text no longer selects, so readouts, captions and table rows show the ordinary cursor. Text worth copying still selects: recording metadata, the recording history path, the version in About, the reference windows' query examples, and a clicked marker's label, position and note.
+- **Interface:** Label text no longer selects, so readouts, captions and headers show the ordinary cursor. Text worth copying still selects: recording metadata, the recording history path, the version in About, the reference windows' query examples, a clicked marker's label, position and note, and the log viewer's lines, boot dividers and parse summary.
 - **Log Viewer:** Log files now successfully load even if some lines have unrecognized timestamps by interpolating from neighboring data.
 - **System:** The window opens right away and the databases open behind it, so a large archive no longer delays the first frame.
   Files named on the command line or dropped in are loaded and stored as usual once the databases are open, including after a wait for another GeoTrace.

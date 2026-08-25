@@ -12,6 +12,7 @@ use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
 use gt_log_view::{FilterChipMode, LayerColorSlot, LoadedLog, LoadedLogs};
 use gt_pending_writes::WriteAccess;
+use rstest::rstest;
 
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use gt_test_utils::window_fit::{
@@ -27,7 +28,7 @@ use gt_ui_types::{HoveredLogGlyph, LogMatchColor, LogMatchHover};
 
 use super::{
     AssociationWindowUnit, LOG_VIEWER_TITLE, LogViewerContext, LogViewerRequests, LogViewerWindow,
-    filters,
+    filters, line_table,
 };
 
 /// One log holding every row kind the table draws: an entry timestamped from
@@ -54,6 +55,13 @@ const SECOND_LOG: &str = "\
 /// leading space where an interpolated entry carries its marker.
 const FIRST_ENTRY_TIMESTAMP: &str = " 2026-05-29 18:48:25";
 
+/// The message of the log's first entry, which its last boot repeats.
+const FIRST_ENTRY_MESSAGE: &str = "navsyncd: starting";
+
+/// The format the parse read the fixture log in, as the summary panel names
+/// it.
+const FIXTURE_LOG_FORMAT: &str = "ISO 8601";
+
 /// The second row of the fixture log, whose line carries no timestamp of its
 /// own.
 const INTERPOLATED_ENTRY_TIMESTAMP: &str = "≈2026-05-29 18:48:26";
@@ -65,6 +73,10 @@ const UNLOADED_LOG: gt_ui_types::LoadedLogId = gt_ui_types::LoadedLogId::new(7);
 /// The association window a freshly loaded log starts with, matching the app's
 /// default.
 const ASSOCIATION_WINDOW_SECS: i64 = 60;
+
+/// Frames the cursor rests on a row before egui opens its hover text: the
+/// harness clock ticks a quarter second per frame, past the tooltip delay.
+const TOOLTIP_DELAY_FRAMES: usize = 3;
 
 /// The window the viewer is driven in, wide enough for the footer's controls
 /// to sit on one row.
@@ -215,10 +227,11 @@ fn click_line(harness: &mut Harness<ViewerState>, timestamp: &str) {
     harness.run_steps(2);
 }
 
-/// Parks the cursor on the table row whose timestamp column reads `timestamp`.
+/// Parks the cursor on the table row whose timestamp column reads `timestamp`,
+/// long enough for the hover texts of that row to open.
 fn hover_line(harness: &mut Harness<ViewerState>, timestamp: &str) {
     let row = harness.get_by_label(timestamp).rect().center();
-    harness.hover_at_and_settle(row, 2);
+    harness.hover_at_and_settle(row, TOOLTIP_DELAY_FRAMES);
 }
 
 /// A recording in the history database, standing in for one this session's
@@ -329,6 +342,65 @@ fn clicking_a_line_with_no_fix_within_the_window_leaves_the_map_where_it_was() {
     assert_eq!(harness.state().map_center, None);
 }
 
+/// A drag across a line selects its text for the clipboard, and the row it
+/// crossed reports no click.
+#[test]
+fn dragging_across_a_line_copies_its_text_and_leaves_the_map_where_it_was() {
+    let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
+    let timestamp = harness.get_by_label(FIRST_ENTRY_TIMESTAMP).rect();
+    let message = harness
+        .topmost_matching(By::new().label(FIRST_ENTRY_MESSAGE))
+        .rect();
+
+    let from = timestamp.left_center() + egui::vec2(2.0, 0.0);
+    let to = message.right_center() - egui::vec2(2.0, 0.0);
+    harness.press_drag_release(from, to - from, 4);
+    harness.input_mut().events.push(egui::Event::Copy);
+    harness.step();
+
+    // The assertion is on the words the copy states: egui spaces one copied
+    // galley from the next by how far apart they sat.
+    let copied = copied_text(&harness);
+    let words: Vec<&str> = copied.split_whitespace().collect();
+    assert_eq!(words, ["2026-05-29", "18:48:25", "navsyncd:", "starting"]);
+    assert_eq!(
+        harness.state().map_center,
+        None,
+        "the drag selects text: the row reports no click"
+    );
+}
+
+/// The figures the parse derived are quoted elsewhere: their values select
+/// and copy.
+#[test]
+fn dragging_across_a_parse_figure_copies_its_value() {
+    let mut harness = harness_with(Vec::new());
+    unfold_the_summary_panel(&mut harness);
+    let format = harness.get_by_label(FIXTURE_LOG_FORMAT).rect();
+
+    let from = format.left_center();
+    let to = format.right_center();
+    harness.press_drag_release(from, to - from, 4);
+    harness.input_mut().events.push(egui::Event::Copy);
+    harness.step();
+
+    assert_eq!(copied_text(&harness).trim(), FIXTURE_LOG_FORMAT);
+}
+
+/// The text the viewer last put on the clipboard.
+fn copied_text(harness: &Harness<ViewerState>) -> String {
+    harness
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            egui::OutputCommand::CopyText(text) => Some(text.clone()),
+            egui::OutputCommand::OpenUrl(_) | egui::OutputCommand::CopyImage(_) => None,
+        })
+        .expect("the drag selected text to copy")
+}
+
 #[test]
 fn hovering_a_line_with_a_position_rings_it_on_the_map() {
     let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
@@ -345,6 +417,26 @@ fn hovering_a_line_with_a_position_rings_it_on_the_map() {
         "the one overlapping recording gave the line a position"
     );
     assert_eq!(ringed_position(&harness), position);
+}
+
+/// A selectable label senses the pointer, and both hover texts of a line still
+/// reach the reader over its text: the row's own, and the one an interpolated
+/// timestamp carries.
+#[rstest]
+#[case::row(FIRST_ENTRY_TIMESTAMP, line_table::ASSOCIATED_ROW_HOVER)]
+#[case::interpolated_timestamp(
+    INTERPOLATED_ENTRY_TIMESTAMP,
+    line_table::INTERPOLATED_TIMESTAMP_HOVER
+)]
+fn hovering_the_text_of_a_line_shows_its_hover_text(
+    #[case] timestamp: &str,
+    #[case] expected: &str,
+) {
+    let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
+
+    hover_line(&mut harness, timestamp);
+
+    harness.get_by_label(expected);
 }
 
 #[test]
