@@ -1,4 +1,5 @@
 mod archive_recovery;
+mod archives_unreachable;
 mod auto_prune;
 mod backfill;
 mod backfill_ui;

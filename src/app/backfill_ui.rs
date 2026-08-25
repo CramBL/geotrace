@@ -15,6 +15,7 @@ use egui_phosphor::regular::X as ICON_CANCEL;
 use jiff::civil::Date;
 
 use super::archive_recovery::ArchiveUnavailable;
+use super::archives_unreachable::ArchivesUnreachable;
 use super::backfill::BackfillProgress;
 use super::civil_date;
 
@@ -241,17 +242,8 @@ impl BackfillDataset for SolarFlareBackfill {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackfillReadiness {
     Ready,
-    /// Nothing may be downloaded: this session reads the archives beside the
-    /// instance that owns the data directory, and writes to none of them.
-    ReadOnlySession,
-    /// There is nowhere to download to: this instance does not have the data
-    /// directory, so it has opened no archive.
-    WaitingForTheDataDirectory,
-    /// There is nowhere to download to yet: the archives are still opening.
-    ArchiveStillOpening,
-    /// There is nowhere to download to yet: the open is waiting for the user
-    /// to answer for an archive a delete was interrupted in.
-    AwaitingAnInterruptedDeleteAnswer,
+    /// There is nowhere to download to.
+    ArchivesUnreachable(ArchivesUnreachable),
     /// There is nowhere to download to: the archive is closed for the
     /// session, on the answer the user gave for it.
     ArchiveUnavailable(ArchiveUnavailable),
@@ -431,20 +423,22 @@ impl<D: BackfillDataset> BackfillUi<D> {
     fn blocked_hover(readiness: BackfillReadiness) -> String {
         match readiness {
             BackfillReadiness::Ready => "Pick an end date on or after the start date".to_owned(),
-            BackfillReadiness::ReadOnlySession => format!(
-                "This session is read-only: nothing is downloaded into the {}",
-                D::ARCHIVE_NAME
-            ),
-            BackfillReadiness::WaitingForTheDataDirectory => format!(
-                "GeoTrace is waiting for the data directory: the {} is not open here",
-                D::ARCHIVE_NAME
-            ),
-            BackfillReadiness::ArchiveStillOpening => {
-                format!("The {} is still opening", D::ARCHIVE_NAME)
-            }
-            BackfillReadiness::AwaitingAnInterruptedDeleteAnswer => {
-                "Answer the question about the interrupted delete".to_owned()
-            }
+            BackfillReadiness::ArchivesUnreachable(reason) => match reason {
+                ArchivesUnreachable::ReadOnlySession => format!(
+                    "This session is read-only: nothing is downloaded into the {}",
+                    D::ARCHIVE_NAME
+                ),
+                ArchivesUnreachable::WaitingForTheDataDirectory => format!(
+                    "GeoTrace is waiting for the data directory: the {} is not open here",
+                    D::ARCHIVE_NAME
+                ),
+                ArchivesUnreachable::AwaitingAnInterruptedDeleteAnswer => {
+                    "Answer the question about the interrupted delete".to_owned()
+                }
+                ArchivesUnreachable::ArchivesOpening => {
+                    format!("The {} is still opening", D::ARCHIVE_NAME)
+                }
+            },
             BackfillReadiness::ArchiveUnavailable(reason) => format!(
                 "The {} is unavailable this session: {}",
                 D::ARCHIVE_NAME,
@@ -657,8 +651,12 @@ mod tests {
     /// Never hidden, per DESIGN.md: what blocks a download grays the button
     /// and says so on hover.
     #[rstest]
-    #[case::while_the_data_directory_is_waited_for(BackfillReadiness::WaitingForTheDataDirectory)]
-    #[case::while_the_archive_opens(BackfillReadiness::ArchiveStillOpening)]
+    #[case::while_the_data_directory_is_waited_for(BackfillReadiness::ArchivesUnreachable(
+        ArchivesUnreachable::WaitingForTheDataDirectory
+    ))]
+    #[case::while_the_archive_opens(BackfillReadiness::ArchivesUnreachable(
+        ArchivesUnreachable::ArchivesOpening
+    ))]
     #[case::without_an_archive(BackfillReadiness::WithoutArchive)]
     #[case::offline(BackfillReadiness::Offline)]
     #[case::without_an_api_key(BackfillReadiness::WithoutApiKey)]
@@ -683,11 +681,11 @@ mod tests {
         "Pick an end date on or after the start date"
     )]
     #[case::while_the_data_directory_is_waited_for(
-        BackfillReadiness::WaitingForTheDataDirectory,
+        BackfillReadiness::ArchivesUnreachable(ArchivesUnreachable::WaitingForTheDataDirectory),
         "GeoTrace is waiting for the data directory: the interference archive is not open here"
     )]
     #[case::while_the_archive_opens(
-        BackfillReadiness::ArchiveStillOpening,
+        BackfillReadiness::ArchivesUnreachable(ArchivesUnreachable::ArchivesOpening),
         "The interference archive is still opening"
     )]
     #[case::without_an_archive(

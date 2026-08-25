@@ -12,6 +12,7 @@ use jiff::civil::Date;
 use strum::IntoEnumIterator as _;
 
 use super::archive_recovery::{ArchiveUnavailable, UnavailableArchives};
+use super::archives_unreachable::ArchivesUnreachable;
 use super::civil_date;
 use super::environment_storage::{
     CoveredDayCounts, EnvironmentUsage, PruneRequest, PruneScope, PrunedDays,
@@ -40,18 +41,8 @@ const EARLIEST_PICKABLE_YEAR: i16 = 1970;
 /// Why the controls that delete archived days take no input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteBlocker {
-    /// This session reads the archives beside the instance that owns the data
-    /// directory, and changes none of them.
-    ReadOnlySession,
-    /// This instance does not have the data directory, so it has opened no
-    /// archive to delete from.
-    WaitingForTheDataDirectory,
-    /// The open is waiting for the user to answer for an archive a delete was
-    /// interrupted in.
-    AwaitingAnInterruptedDeleteAnswer,
-    /// The archives are still opening, so there is nothing to delete from
-    /// yet.
-    ArchivesOpening,
+    /// There is no archive to delete from.
+    ArchivesUnreachable(ArchivesUnreachable),
     /// A delete is already rewriting the same columns.
     DeleteRunning,
     /// This one archive is closed for the session, on the answer the user
@@ -62,14 +53,17 @@ pub enum DeleteBlocker {
 impl DeleteBlocker {
     pub fn hover_text(self) -> String {
         match self {
-            Self::ReadOnlySession => READ_ONLY_ARCHIVES_HOVER.to_owned(),
-            Self::WaitingForTheDataDirectory => {
-                "Wait for the data directory to become available".to_owned()
+            Self::ArchivesUnreachable(reason) => match reason {
+                ArchivesUnreachable::ReadOnlySession => READ_ONLY_ARCHIVES_HOVER,
+                ArchivesUnreachable::WaitingForTheDataDirectory => {
+                    "Wait for the data directory to become available"
+                }
+                ArchivesUnreachable::AwaitingAnInterruptedDeleteAnswer => {
+                    "Answer the question about the interrupted delete"
+                }
+                ArchivesUnreachable::ArchivesOpening => "Wait for the archives to finish opening",
             }
-            Self::AwaitingAnInterruptedDeleteAnswer => {
-                "Answer the question about the interrupted delete".to_owned()
-            }
-            Self::ArchivesOpening => "Wait for the archives to finish opening".to_owned(),
+            .to_owned(),
             Self::DeleteRunning => "Wait for the running delete to finish".to_owned(),
             Self::ArchiveUnavailable(reason) => format!(
                 "This archive is unavailable this session: {}",
@@ -535,8 +529,12 @@ mod tests {
     /// Never hidden, per DESIGN.md: whatever blocks a delete grays every
     /// control that starts one, and the hover says which it was.
     #[rstest]
-    #[case::waiting_for_the_data_directory(DeleteBlocker::WaitingForTheDataDirectory)]
-    #[case::archives_opening(DeleteBlocker::ArchivesOpening)]
+    #[case::waiting_for_the_data_directory(DeleteBlocker::ArchivesUnreachable(
+        ArchivesUnreachable::WaitingForTheDataDirectory
+    ))]
+    #[case::archives_opening(DeleteBlocker::ArchivesUnreachable(
+        ArchivesUnreachable::ArchivesOpening
+    ))]
     #[case::delete_running(DeleteBlocker::DeleteRunning)]
     fn a_blocked_delete_grays_every_control(#[case] blocker: DeleteBlocker) {
         let usage = filled_usage();

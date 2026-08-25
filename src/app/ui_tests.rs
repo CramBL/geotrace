@@ -54,6 +54,7 @@ use super::archive_recovery::{
     InterruptedDeleteFinding, LEAVE_UNRECOVERED_BUTTON_LABEL, RECOVER_BUTTON_LABEL,
     UnavailableArchives, WRITE_ACCESS_TAKEN_FROM,
 };
+use super::archives_unreachable::ArchivesUnreachable;
 use super::backfill_ui::DOWNLOAD_HISTORY_LABEL;
 use super::environment_storage;
 use super::environment_storage::PrunedDays;
@@ -6005,7 +6006,9 @@ fn the_environment_controls_are_grayed_while_the_archives_open() {
     assert!(prune.accesskit_node().is_disabled());
 
     harness.hover_and_settle(By::new().label_contains(PRUNE_BUTTON_LABEL), 3);
-    harness.get_by_label_contains(&DeleteBlocker::ArchivesOpening.hover_text());
+    harness.get_by_label_contains(
+        &DeleteBlocker::ArchivesUnreachable(ArchivesUnreachable::ArchivesOpening).hover_text(),
+    );
 
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path());
@@ -6030,7 +6033,10 @@ fn the_environment_controls_are_grayed_while_the_archives_open() {
     );
     assert!(
         harness
-            .query_by_label_contains(&DeleteBlocker::ArchivesOpening.hover_text())
+            .query_by_label_contains(
+                &DeleteBlocker::ArchivesUnreachable(ArchivesUnreachable::ArchivesOpening)
+                    .hover_text()
+            )
             .is_none(),
         "the opening hover text outlived the open"
     );
@@ -6061,7 +6067,9 @@ fn the_environment_controls_are_grayed_in_a_read_only_session() {
 
     assert_eq!(
         harness.state().environment_deletes_blocked_by(),
-        Some(DeleteBlocker::ReadOnlySession)
+        Some(DeleteBlocker::ArchivesUnreachable(
+            ArchivesUnreachable::ReadOnlySession
+        ))
     );
     for delete in harness.query_all_by_label_contains(DELETE_ALL_LABEL) {
         assert!(delete.accesskit_node().is_disabled());
@@ -6080,7 +6088,9 @@ fn the_environment_controls_are_grayed_in_a_read_only_session() {
         "the setting takes no input: a read-only session auto-prunes nothing"
     );
     harness.hover_and_settle(By::new().label_contains(PRUNE_BUTTON_LABEL), 3);
-    harness.get_by_label_contains(&DeleteBlocker::ReadOnlySession.hover_text());
+    harness.get_by_label_contains(
+        &DeleteBlocker::ArchivesUnreachable(ArchivesUnreachable::ReadOnlySession).hover_text(),
+    );
 
     harness.state_mut().settings_page = SettingsPage::AircraftInterference;
     harness.run_steps(3);
