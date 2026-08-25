@@ -62,6 +62,12 @@ pub enum InstanceState {
 }
 
 /// One running write, as the status file reports it.
+///
+/// The `kind` of [`PendingWriteStatus`] is left out so a new
+/// [`gt_pending_writes::WriteKind`] variant cannot change this JSON. A
+/// GeoTrace of a different version reads this file, and
+/// `the_status_file_holds_the_names_a_reader_looks_for` asserts the format in
+/// full.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PendingWriteReport {
     pub label: String,
