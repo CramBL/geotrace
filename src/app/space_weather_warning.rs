@@ -4,25 +4,31 @@
 //! Every value is read from the archives, so a recording loaded before its
 //! days were downloaded is assessed again as each day is stored, and a
 //! recording no archived day overlaps warns about nothing.
+//!
+//! The evidence is kept per track: the indicator names each affected track and
+//! the value every metric reached over it, and the load toast states the peaks
+//! over the recording the track belongs to.
 
+use std::fmt;
 use std::sync::{Arc, LazyLock};
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use gt_flare::{FlareClassification, MarkedFlare, RadioBlackoutClass};
-use gt_ionex::quiet_time::{self, QuietTimeDeviation};
+use gt_ionex::quiet_time::{self, QuietTimeDeviation, QuietTimeDeviationPeak};
 use gt_loaded_files::LoadedFileId;
 use gt_solar::GeomagneticIndex;
 use gt_solar::activity::{GeomagneticActivity, GeomagneticStormClass};
 use gt_types::{SunlitSide, TimeRange, TrackRef};
 use gt_ui_types::{
     ArcIdentity, GeomagneticPoint, GeomagneticSeries, JammingPoint, JammingSeries, TecPoint,
-    TecSeries, WarningLevelExplanation,
+    TecSeries, TrackSpaceWeatherWarning, WarningLevelExplanation,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 
-/// Shown as a toast the first time a loaded recording is found to overlap an
-/// archived value that can disturb reception.
-pub const LOAD_WARNING: &str = "Space weather or interference may have affected this recording";
+/// Leads the toast raised the first time a loaded recording is found to
+/// overlap an archived value that can disturb reception. The recording's name
+/// follows on the same line, and each metric's finding on a line below it.
+const SPACE_WEATHER_DURING: &str = "Space weather during";
 
 /// Share of aircraft, in percent, at or above which a cell-day a track
 /// crossed counts. It is the share gpsjam starts colouring its cells at.
@@ -36,11 +42,21 @@ const GEOMAGNETIC_STORM: &str = "Geomagnetic storm";
 const SOLAR_FLARE: &str = "Solar flare";
 
 /// Leads the TEC line, which states a range of values.
-const TEC_OVER_THE_RECORDING: &str = "TEC over the recording";
+const TEC_OVER_THE_TRACK: &str = "TEC over the track";
 
-/// Leads the TEC deviation line, which states one share of the quiet median
-/// and the storm grade it reaches.
+/// Leads the TEC deviation line, which states one share of the quiet median,
+/// the storm grade it reaches, how long that grade held, and the geomagnetic
+/// activity before it.
 const TEC_DEVIATION: &str = "TEC deviation";
+
+/// Hours before a TEC deviation's peak epoch the archived geomagnetic indices
+/// are read over, looking for a storm that would account for the deviation.
+///
+/// A day-long window would miss the storm behind a late depletion: the
+/// negative phase of an ionospheric storm follows the geomagnetic storm
+/// driving it by up to about a day. Twice that lag is GeoTrace's own choice,
+/// as the reference material states no figure to take.
+const GEOMAGNETIC_LOOKBACK_HOURS: i64 = 48;
 
 /// Closes the solar flare line. Only a flare that peaked while the receiver
 /// was in daylight counts, so every flare line ends this way.
@@ -93,9 +109,23 @@ pub static WARNING_LEVELS: LazyLock<Vec<WarningLevelExplanation>> = LazyLock::ne
     ]
 });
 
-/// The peak archived value of each environment metric over one or more
-/// recordings, kept only where it reaches the level that can disturb
-/// reception.
+/// One metric's finding: the metric that reached its disturbance level, and
+/// the value it reached there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WarningLine {
+    metric: &'static str,
+    finding: String,
+}
+
+impl fmt::Display for WarningLine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.metric, self.finding)
+    }
+}
+
+/// The peak archived value of each environment metric over one track, or over
+/// the tracks of one recording, kept only where it reaches the level that can
+/// disturb reception.
 ///
 /// Aircraft interference, geomagnetic activity, solar flares and the TEC
 /// deviation each have a published level above which reception is known to
@@ -103,38 +133,36 @@ pub static WARNING_LEVELS: LazyLock<Vec<WarningLevelExplanation>> = LazyLock::ne
 /// TEC range has no such level, so it is kept as context beside a warning
 /// another metric raised and never raises one.
 #[derive(Debug, Default, Clone, PartialEq)]
-pub struct DisturbanceEvidence {
+struct DisturbanceEvidence {
     aircraft_interference: Option<f64>,
     geomagnetic: Option<GeomagneticStormPeak>,
     solar_flare: Option<SunlitFlarePeak>,
-    tec_deviation: Option<QuietTimeDeviation>,
+    tec_deviation: Option<TecDeviationEvidence>,
     total_electron_content: Option<TecSpan>,
 }
 
 impl DisturbanceEvidence {
-    /// The evidence over one recording: its fixes' own values, and the
-    /// flares that peaked while it was recording.
-    fn of(series: &RecordingSeries<'_>, flares: &[MarkedFlare]) -> Self {
+    /// The evidence over one track: its fixes' own values, and the flares of
+    /// `flares` that peaked while it was recording.
+    fn of(series: &TrackSeries<'_>, flares: &[MarkedFlare], recorded: TimeRange) -> Self {
         let mut evidence = Self::default();
-        for points in &series.interference {
+        if let Some(points) = series.interference {
             evidence.collect_interference_from(points);
         }
-        for points in &series.geomagnetic {
+        if let Some(points) = series.geomagnetic {
             evidence.collect_geomagnetic_from(points);
         }
-        for points in &series.tec {
+        if let Some(points) = series.tec {
             evidence.collect_tec_from(points);
         }
-        for deviation in &series.tec_deviations {
-            evidence.keep_stronger_tec_deviation(Some(*deviation));
-        }
-        evidence.collect_flares_from(flares);
+        evidence.keep_stronger_tec_deviation(series.tec_deviation);
+        evidence.collect_flares_peaking_in(flares, recorded);
         evidence
     }
 
     /// Whether a metric reached its disturbance level. The TEC range alone
     /// never makes this true.
-    pub fn warns(&self) -> bool {
+    fn warns(&self) -> bool {
         let Self {
             aircraft_interference,
             geomagnetic,
@@ -151,49 +179,63 @@ impl DisturbanceEvidence {
     /// One line per metric that reached its disturbance level, closed by the
     /// TEC range where the archive holds one.
     ///
-    /// Empty while no metric reached its level, which is what keeps the
-    /// indicator off the map.
-    pub fn warning_lines(&self) -> Vec<String> {
+    /// Empty while no metric reached its level, which is what keeps the track
+    /// out of the indicator's list.
+    fn warning_lines(&self) -> Vec<String> {
         if !self.warns() {
             return Vec::new();
         }
+        let mut lines: Vec<String> = self.warnings().iter().map(WarningLine::to_string).collect();
+        lines.extend(self.total_electron_content.map(TecSpan::context_line));
+        lines
+    }
+
+    /// The toast raised for a recording the archives place a disturbance in:
+    /// the recording, then the peak each of its metrics reached over it,
+    /// closed by what a stated TEC grade is measured against.
+    fn load_toast_text(&self, recording: &str) -> String {
+        let mut lines = vec![format!("{SPACE_WEATHER_DURING} {recording}")];
+        lines.extend(self.warnings().iter().map(WarningLine::to_string));
+        if self.tec_deviation.is_some() {
+            lines.push(gt_ionex::text::DEVIATION_REFERENCE_CAVEAT.clone());
+        }
+        lines.join("\n")
+    }
+
+    /// One entry per metric that reached its disturbance level, in the order
+    /// every surface lists them.
+    fn warnings(&self) -> Vec<WarningLine> {
         let Self {
             aircraft_interference,
             geomagnetic,
             solar_flare,
             tec_deviation,
-            total_electron_content,
+            total_electron_content: _,
         } = self;
         let mut lines = Vec::new();
         if let Some(peak) = *geomagnetic {
             lines.push(peak.warning_line());
         }
         if let Some(percent) = *aircraft_interference {
-            lines.push(format!(
-                "{}: up to {percent:.1} % of aircraft in a crossed cell",
-                gt_jam::text::LAYER_LABEL
-            ));
+            lines.push(WarningLine {
+                metric: gt_jam::text::LAYER_LABEL,
+                finding: format!(
+                    "up to {percent:.1} % of aircraft in a crossed cell (warns from \
+                     {INTERFERENCE_TRIGGER_PERCENT:.0} %)"
+                ),
+            });
         }
         if let Some(peak) = *solar_flare {
             lines.push(peak.warning_line());
         }
-        if let Some(deviation) = *tec_deviation {
-            lines.push(format!(
-                "{TEC_DEVIATION}: {:+.0} % from the {}-day median, {} (W = {})",
-                deviation.percent_from_median(),
-                quiet_time::BACKGROUND_WINDOW_DAYS,
-                deviation.grade(),
-                deviation.storm_index_value()
-            ));
-        }
-        if let Some(span) = *total_electron_content {
-            lines.push(span.context_line());
+        if let Some(evidence) = *tec_deviation {
+            lines.push(evidence.warning_line());
         }
         lines
     }
 
     /// Fold `other`'s peaks into these, so one set of lines states the
-    /// strongest evidence over every loaded recording.
+    /// strongest evidence over every track of a recording.
     fn merge(&mut self, other: &Self) {
         let Self {
             aircraft_interference,
@@ -245,10 +287,14 @@ impl DisturbanceEvidence {
         }
     }
 
-    /// Keep the strongest of `flares` that counts. They are the ones peaking
-    /// over the recording, as the archive read produced them.
-    fn collect_flares_from(&mut self, flares: &[MarkedFlare]) {
-        for marked in flares {
+    /// Keep the strongest flare that counts and peaked while the track was
+    /// recording. A flare over another track of the same recording says
+    /// nothing about this one.
+    fn collect_flares_peaking_in(&mut self, flares: &[MarkedFlare], recorded: TimeRange) {
+        for marked in flares
+            .iter()
+            .filter(|marked| recorded.contains(marked.flare.peak))
+        {
             self.keep_stronger_flare(SunlitFlarePeak::of(marked));
         }
     }
@@ -283,13 +329,14 @@ impl DisturbanceEvidence {
 
     /// Keep the deviation standing furthest from its quiet median, of those
     /// the index grades a storm.
-    fn keep_stronger_tec_deviation(&mut self, candidate: Option<QuietTimeDeviation>) {
-        if let Some(deviation) = candidate.filter(|deviation| deviation.grade().is_a_storm())
-            && self
-                .tec_deviation
-                .is_none_or(|kept| deviation.log_ratio().abs() > kept.log_ratio().abs())
+    fn keep_stronger_tec_deviation(&mut self, candidate: Option<TecDeviationEvidence>) {
+        if let Some(evidence) =
+            candidate.filter(|evidence| evidence.peak.deviation.grade().is_a_storm())
+            && self.tec_deviation.is_none_or(|kept| {
+                evidence.peak.deviation.log_ratio().abs() > kept.peak.deviation.log_ratio().abs()
+            })
         {
-            self.tec_deviation = Some(deviation);
+            self.tec_deviation = Some(evidence);
         }
     }
 
@@ -304,6 +351,122 @@ impl DisturbanceEvidence {
             },
             None => span,
         });
+    }
+}
+
+/// One archived index period overlapping the window before a TEC deviation's
+/// peak epoch.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ArchivedIndexPeriod {
+    pub end: DateTime<Utc>,
+    pub activity: GeomagneticActivity,
+}
+
+/// What the archived geomagnetic indices hold over the
+/// [`GEOMAGNETIC_LOOKBACK_HOURS`] before a TEC deviation's peak epoch.
+///
+/// Stated beside a TEC deviation and never a warning level of its own: a storm
+/// before the peak accounts for the depletion, while a window the archive
+/// covers without one leaves the 27-day reference as the likelier explanation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GeomagneticActivityBeforePeak {
+    /// The archive covers the window, or part of it, and reaches no storm
+    /// level anywhere in what it holds.
+    NoStorm,
+    /// The strongest storm class the window holds, and the whole hours from
+    /// the end of the period carrying it to the peak epoch.
+    Storm {
+        class: GeomagneticStormClass,
+        hours_before_peak: i64,
+    },
+}
+
+impl GeomagneticActivityBeforePeak {
+    /// The strongest storm-level period of `periods`, which are the archived
+    /// index periods of both indices overlapping the window before `peak`.
+    pub fn of(peak: DateTime<Utc>, periods: &[ArchivedIndexPeriod]) -> Self {
+        let strongest = periods
+            .iter()
+            .filter_map(|period| Some((period.activity.storm_class()?, period.end)))
+            .max_by(|(left, left_end), (right, right_end)| {
+                left.cmp(right).then_with(|| left_end.cmp(right_end))
+            });
+        let Some((class, end)) = strongest else {
+            return Self::NoStorm;
+        };
+        Self::Storm {
+            class,
+            hours_before_peak: peak.signed_duration_since(end).num_hours().max(0),
+        }
+    }
+
+    /// The clause the TEC deviation line closes with.
+    fn finding(self) -> String {
+        match self {
+            Self::NoStorm => {
+                format!("no geomagnetic storm in the {GEOMAGNETIC_LOOKBACK_HOURS} h before")
+            }
+            Self::Storm {
+                class,
+                hours_before_peak,
+            } => format!(
+                "after a {} storm {hours_before_peak} h before",
+                class.scale_name()
+            ),
+        }
+    }
+}
+
+/// The window before `peak` the archived geomagnetic indices are read over.
+pub fn geomagnetic_lookback_window(peak: DateTime<Utc>) -> TimeRange {
+    TimeRange::new(
+        peak.checked_sub_signed(TimeDelta::hours(GEOMAGNETIC_LOOKBACK_HOURS))
+            .unwrap_or(peak),
+        peak,
+    )
+}
+
+/// One track's peak TEC deviation and what the archives say about it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TecDeviationEvidence {
+    pub peak: QuietTimeDeviationPeak,
+    /// [`None`] where the archive holds none of the hours before the peak,
+    /// which is stated neither way.
+    pub geomagnetic_before_peak: Option<GeomagneticActivityBeforePeak>,
+}
+
+impl TecDeviationEvidence {
+    /// The deviation's own share of the median, the share the same side of the
+    /// median warns from, the grade the index puts it at, how long that grade
+    /// held at the node the peak was read from, and what the geomagnetic
+    /// indices hold over the hours before it.
+    fn warning_line(self) -> WarningLine {
+        let deviation = self.peak.deviation;
+        let trigger = QuietTimeDeviation::from_log_ratio(
+            quiet_time::MODERATE_STORM_LOG_RATIO.copysign(deviation.log_ratio()),
+        );
+        let mut clauses = vec![
+            format!(
+                "{:+.0} % from the {}-day median (warns from {:+.0} %)",
+                deviation.percent_from_median(),
+                quiet_time::BACKGROUND_WINDOW_DAYS,
+                trigger.percent_from_median()
+            ),
+            format!(
+                "{} (W = {})",
+                deviation.grade(),
+                deviation.storm_index_value()
+            ),
+        ];
+        clauses.extend(self.peak.storm_grade_run.map(|run| format!("for {run}")));
+        clauses.extend(
+            self.geomagnetic_before_peak
+                .map(GeomagneticActivityBeforePeak::finding),
+        );
+        WarningLine {
+            metric: TEC_DEVIATION,
+            finding: clauses.join(", "),
+        }
     }
 }
 
@@ -326,13 +489,16 @@ impl GeomagneticStormPeak {
         })
     }
 
-    fn warning_line(self) -> String {
-        format!(
-            "{GEOMAGNETIC_STORM}: {} reached {} ({})",
-            self.index,
-            self.activity,
-            self.storm.scale_name()
-        )
+    fn warning_line(self) -> WarningLine {
+        WarningLine {
+            metric: GEOMAGNETIC_STORM,
+            finding: format!(
+                "{} reached {} ({})",
+                self.index,
+                self.activity,
+                self.storm.scale_name()
+            ),
+        }
     }
 }
 
@@ -341,6 +507,7 @@ impl GeomagneticStormPeak {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct SunlitFlarePeak {
     classification: FlareClassification,
+    blackout: RadioBlackoutClass,
     peak: DateTime<Utc>,
 }
 
@@ -349,25 +516,28 @@ impl SunlitFlarePeak {
     /// receiver spent on the night side, where the ionization it raises never
     /// reached the signal path.
     fn of(marked: &MarkedFlare) -> Option<Self> {
-        let sunlit = marked.receiver_side == Some(SunlitSide::Sunlit);
-        let reaches_the_blackout_scale =
-            marked.flare.classification.radio_blackout_class().is_some();
-        (sunlit && reaches_the_blackout_scale).then_some(Self {
+        let blackout = marked.flare.classification.radio_blackout_class()?;
+        (marked.receiver_side == Some(SunlitSide::Sunlit)).then_some(Self {
             classification: marked.flare.classification,
+            blackout,
             peak: marked.flare.peak,
         })
     }
 
-    fn warning_line(self) -> String {
-        format!(
-            "{SOLAR_FLARE}: {} at {} UTC, {RECEIVER_ON_THE_SUNLIT_SIDE}",
-            self.classification,
-            self.peak.format(FLARE_PEAK_FORMAT)
-        )
+    fn warning_line(self) -> WarningLine {
+        WarningLine {
+            metric: SOLAR_FLARE,
+            finding: format!(
+                "{} at {} UTC ({}), {RECEIVER_ON_THE_SUNLIT_SIDE}",
+                self.classification,
+                self.peak.format(FLARE_PEAK_FORMAT),
+                self.blackout.scale_name()
+            ),
+        }
     }
 }
 
-/// The lowest and highest TEC value a recording's fixes carry, in TEC units.
+/// The lowest and highest TEC value a track's fixes carry, in TEC units.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct TecSpan {
     lowest: f64,
@@ -377,7 +547,7 @@ struct TecSpan {
 impl TecSpan {
     fn context_line(self) -> String {
         format!(
-            "{TEC_OVER_THE_RECORDING}: {:.0} to {:.0} {}",
+            "{TEC_OVER_THE_TRACK}: {:.0} to {:.0} {}",
             self.lowest,
             self.highest,
             gt_ionex::text::LEGEND_UNIT
@@ -385,63 +555,67 @@ impl TecSpan {
     }
 }
 
-/// The per-fix series of one recording's tracks, borrowed from the ones the
-/// plot draws.
-pub struct RecordingSeries<'a> {
-    interference: Vec<&'a Arc<Vec<JammingPoint>>>,
-    geomagnetic: Vec<&'a Arc<Vec<GeomagneticPoint>>>,
-    tec: Vec<&'a Arc<Vec<TecPoint>>>,
-    /// The peak deviation of each track that has one. It is read from days
-    /// the track itself never spans, so it is kept as its own field.
-    tec_deviations: Vec<QuietTimeDeviation>,
+/// The per-fix series of one track, borrowed from the ones the plot draws.
+pub struct TrackSeries<'a> {
+    interference: Option<&'a Arc<Vec<JammingPoint>>>,
+    geomagnetic: Option<&'a Arc<Vec<GeomagneticPoint>>>,
+    tec: Option<&'a Arc<Vec<TecPoint>>>,
+    /// The track's peak deviation. It is read from days the track itself
+    /// never spans, so it is kept as its own field.
+    tec_deviation: Option<TecDeviationEvidence>,
 }
 
-impl<'a> RecordingSeries<'a> {
-    /// The series of `tracks`. A track whose day the archive does not hold is
-    /// absent from a series and contributes nothing.
+impl<'a> TrackSeries<'a> {
+    /// The series of `track`. A metric whose day the archive does not hold is
+    /// absent and contributes nothing.
     pub fn of(
-        tracks: impl Iterator<Item = TrackRef> + Clone,
+        track: TrackRef,
         jamming: &'a JammingSeries,
         geomagnetic: &'a GeomagneticSeries,
         tec: &'a TecSeries,
-        tec_deviations: &FxHashMap<TrackRef, QuietTimeDeviation>,
+        tec_deviations: &FxHashMap<TrackRef, TecDeviationEvidence>,
     ) -> Self {
         Self {
-            interference: tracks
-                .clone()
-                .filter_map(|track| jamming.points_by_track.get(&track))
-                .collect(),
-            geomagnetic: tracks
-                .clone()
-                .filter_map(|track| geomagnetic.points_by_track.get(&track))
-                .collect(),
-            tec: tracks
-                .clone()
-                .filter_map(|track| tec.points_by_track.get(&track))
-                .collect(),
-            tec_deviations: tracks
-                .filter_map(|track| tec_deviations.get(&track).copied())
-                .collect(),
+            interference: jamming.points_by_track.get(&track),
+            geomagnetic: geomagnetic.points_by_track.get(&track),
+            tec: tec.points_by_track.get(&track),
+            tec_deviation: tec_deviations.get(&track).copied(),
         }
     }
 
     /// The allocations the values were read from. A fetch worker archiving a
     /// day replaces the ones its day reaches, which is what re-assesses the
-    /// recording.
+    /// track.
     fn identities(&self) -> Vec<ArcIdentity> {
-        let interference = self.interference.iter().copied().map(ArcIdentity::of);
-        let geomagnetic = self.geomagnetic.iter().copied().map(ArcIdentity::of);
-        let tec = self.tec.iter().copied().map(ArcIdentity::of);
-        interference.chain(geomagnetic).chain(tec).collect()
+        let interference = self.interference.map(ArcIdentity::of);
+        let geomagnetic = self.geomagnetic.map(ArcIdentity::of);
+        let tec = self.tec.map(ArcIdentity::of);
+        interference
+            .into_iter()
+            .chain(geomagnetic)
+            .chain(tec)
+            .collect()
     }
+}
+
+/// One loaded track as it enters the assessment.
+pub struct TrackUnderAssessment<'a> {
+    /// How the warning names the track, as the rest of the app names it.
+    pub label: String,
+    /// The span the track's own fixes cover, which decides the flares it is
+    /// assessed against.
+    pub recorded: TimeRange,
+    pub series: TrackSeries<'a>,
 }
 
 /// One loaded recording as it enters the assessment.
 pub struct RecordingUnderAssessment<'a> {
     pub id: LoadedFileId,
+    /// How the load toast names the recording.
+    pub label: String,
     /// The span its tracks cover, which its flares are read over.
     pub span: TimeRange,
-    pub series: RecordingSeries<'a>,
+    pub tracks: Vec<TrackUnderAssessment<'a>>,
     /// The archived days a flare peaking inside [`Self::span`] can be filed
     /// under.
     pub archived_flare_days: Vec<NaiveDate>,
@@ -449,49 +623,104 @@ pub struct RecordingUnderAssessment<'a> {
     pub positions: ArcIdentity,
 }
 
-/// What one recording's evidence was read from: it is read again exactly when
+/// What one recording's warning was read from: it is read again exactly when
 /// this changes.
 #[derive(Debug, Clone, PartialEq)]
-struct EvidenceSource {
+struct WarningSource {
     series: Vec<ArcIdentity>,
-    /// Carried by value: a deviation is read from days outside the track's
-    /// own, so no allocation the track holds changes when one moves.
-    tec_deviations: Vec<QuietTimeDeviation>,
+    /// Carried by value: no allocation the track holds changes when a
+    /// deviation or the activity before it moves, since both are read from
+    /// days outside the track's own.
+    tec_deviations: Vec<Option<TecDeviationEvidence>>,
     archived_flare_days: Vec<NaiveDate>,
     positions: ArcIdentity,
+    /// The names the lines carry, which move with the user's recording-name
+    /// template and with the tracks a file holds.
+    labels: Vec<String>,
 }
 
-impl EvidenceSource {
+impl WarningSource {
     fn of(recording: &RecordingUnderAssessment<'_>) -> Self {
         Self {
-            series: recording.series.identities(),
-            tec_deviations: recording.series.tec_deviations.clone(),
+            series: recording
+                .tracks
+                .iter()
+                .flat_map(|track| track.series.identities())
+                .collect(),
+            tec_deviations: recording
+                .tracks
+                .iter()
+                .map(|track| track.series.tec_deviation)
+                .collect(),
             archived_flare_days: recording.archived_flare_days.clone(),
             positions: recording.positions,
+            labels: recording
+                .tracks
+                .iter()
+                .map(|track| track.label.clone())
+                .chain([recording.label.clone()])
+                .collect(),
         }
     }
 }
 
+/// What one recording warns about: one entry per affected track, and the
+/// toast text for the recording as a whole.
 struct AssessedRecording {
-    resolved_from: EvidenceSource,
-    evidence: DisturbanceEvidence,
+    resolved_from: WarningSource,
+    /// In track order, holding only the tracks a metric reached its level
+    /// over.
+    tracks: Vec<TrackSpaceWeatherWarning>,
+    /// [`None`] while no track of the recording warns.
+    toast: Option<String>,
+}
+
+impl AssessedRecording {
+    fn of(
+        recording: &RecordingUnderAssessment<'_>,
+        flares: &[MarkedFlare],
+        resolved_from: WarningSource,
+    ) -> Self {
+        let mut over_the_recording = DisturbanceEvidence::default();
+        let mut tracks = Vec::new();
+        for track in &recording.tracks {
+            let evidence = DisturbanceEvidence::of(&track.series, flares, track.recorded);
+            over_the_recording.merge(&evidence);
+            let lines = evidence.warning_lines();
+            if !lines.is_empty() {
+                tracks.push(TrackSpaceWeatherWarning {
+                    track_label: track.label.clone(),
+                    lines,
+                    states_tec_deviation: evidence.tec_deviation.is_some(),
+                });
+            }
+        }
+        let toast = over_the_recording
+            .warns()
+            .then(|| over_the_recording.load_toast_text(&recording.label));
+        Self {
+            resolved_from,
+            tracks,
+            toast,
+        }
+    }
 }
 
 /// What the loaded recordings' archived environment values warn about: the
-/// lines the map indicator lists, and which recordings the load toast has
-/// already been raised for.
+/// affected tracks the map indicator lists, and which recordings the load
+/// toast has already been raised for.
 #[derive(Default)]
 pub struct SpaceWeatherWarning {
     assessed: FxHashMap<LoadedFileId, AssessedRecording>,
     /// Recordings the toast has been shown for, so a day archived later never
     /// repeats it.
     toasted: FxHashSet<LoadedFileId>,
-    lines: Vec<String>,
+    track_warnings: Vec<TrackSpaceWeatherWarning>,
 }
 
 impl SpaceWeatherWarning {
-    /// Read the evidence of every recording the archives moved under, and
-    /// report how many of them warn for the first time - one load toast each.
+    /// Read the warning of every recording the archives moved under, and
+    /// report the load toast of each one that warns for the first time.
     ///
     /// `flares_peaking_in` reads the archive, so it runs only for a recording
     /// being assessed again.
@@ -499,10 +728,10 @@ impl SpaceWeatherWarning {
         &mut self,
         recordings: &[RecordingUnderAssessment<'_>],
         mut flares_peaking_in: impl FnMut(TimeRange) -> Vec<MarkedFlare>,
-    ) -> usize {
+    ) -> Vec<String> {
         let mut changed = false;
         for recording in recordings {
-            let resolved_from = EvidenceSource::of(recording);
+            let resolved_from = WarningSource::of(recording);
             if self
                 .assessed
                 .get(&recording.id)
@@ -510,14 +739,10 @@ impl SpaceWeatherWarning {
             {
                 continue;
             }
-            let evidence =
-                DisturbanceEvidence::of(&recording.series, &flares_peaking_in(recording.span));
+            let flares = flares_peaking_in(recording.span);
             self.assessed.insert(
                 recording.id,
-                AssessedRecording {
-                    resolved_from,
-                    evidence,
-                },
+                AssessedRecording::of(recording, &flares, resolved_from),
             );
             changed = true;
         }
@@ -527,37 +752,42 @@ impl SpaceWeatherWarning {
         self.assessed.retain(|id, _| loaded.contains(id));
         self.toasted.retain(|id| loaded.contains(id));
         if changed || self.assessed.len() != assessed_before {
-            self.rebuild_lines();
+            self.track_warnings = recordings
+                .iter()
+                .filter_map(|recording| self.assessed.get(&recording.id))
+                .flat_map(|assessed| assessed.tracks.iter().cloned())
+                .collect();
         }
 
-        let newly_warned: Vec<LoadedFileId> = self
-            .assessed
-            .iter()
-            .filter(|(id, assessed)| assessed.evidence.warns() && !self.toasted.contains(id))
-            .map(|(id, _)| *id)
-            .collect();
-        self.toasted.extend(&newly_warned);
-        newly_warned.len()
-    }
-
-    /// One line per metric that reached its disturbance level over any loaded
-    /// recording, empty while none did.
-    pub fn lines(&self) -> &[String] {
-        &self.lines
-    }
-
-    fn rebuild_lines(&mut self) {
-        let mut evidence = DisturbanceEvidence::default();
-        for assessed in self.assessed.values() {
-            evidence.merge(&assessed.evidence);
+        let mut toasts = Vec::new();
+        for recording in recordings {
+            if self.toasted.contains(&recording.id) {
+                continue;
+            }
+            let Some(toast) = self
+                .assessed
+                .get(&recording.id)
+                .and_then(|assessed| assessed.toast.clone())
+            else {
+                continue;
+            };
+            self.toasted.insert(recording.id);
+            toasts.push(toast);
         }
-        self.lines = evidence.warning_lines();
+        toasts
+    }
+
+    /// One entry per loaded track a metric reached its disturbance level over,
+    /// in the order the recordings are loaded in. Empty while none did.
+    pub fn track_warnings(&self) -> &[TrackSpaceWeatherWarning] {
+        &self.track_warnings
     }
 }
 
 #[cfg(test)]
 mod tests {
     use gt_flare::SolarFlare;
+    use gt_ionex::quiet_time::StormGradeRun;
     use gt_ionex::tec::TotalElectronContent;
     use gt_loaded_files::{FileHistory, LoadedFiles};
     use gt_types::{FileSource, LoadedFile};
@@ -576,42 +806,68 @@ mod tests {
         chrono::NaiveDate::from_ymd_opt(2024, 5, day_of_month).unwrap_or_default()
     }
 
-    /// The per-fix series of one recording's single track, owning what
-    /// [`RecordingSeries`] borrows.
+    /// The whole span the fixtures record over, which every track covers
+    /// unless a test states its own.
+    fn whole_recording() -> TimeRange {
+        TimeRange::new(at(0, 0), at(6, 0))
+    }
+
+    /// The per-fix series of one track, owning what [`TrackSeries`] borrows.
     #[derive(Default)]
     struct SeriesFixture {
-        interference: Vec<Arc<Vec<JammingPoint>>>,
-        geomagnetic: Vec<Arc<Vec<GeomagneticPoint>>>,
-        tec: Vec<Arc<Vec<TecPoint>>>,
-        tec_deviations: Vec<QuietTimeDeviation>,
+        interference: Option<Arc<Vec<JammingPoint>>>,
+        geomagnetic: Option<Arc<Vec<GeomagneticPoint>>>,
+        tec: Option<Arc<Vec<TecPoint>>>,
+        tec_deviation: Option<TecDeviationEvidence>,
     }
 
     impl SeriesFixture {
-        fn series(&self) -> RecordingSeries<'_> {
-            RecordingSeries {
-                interference: self.interference.iter().collect(),
-                geomagnetic: self.geomagnetic.iter().collect(),
-                tec: self.tec.iter().collect(),
-                tec_deviations: self.tec_deviations.clone(),
+        fn series(&self) -> TrackSeries<'_> {
+            TrackSeries {
+                interference: self.interference.as_ref(),
+                geomagnetic: self.geomagnetic.as_ref(),
+                tec: self.tec.as_ref(),
+                tec_deviation: self.tec_deviation,
             }
         }
     }
 
     /// The deviation a track reaches at `percent` of a fully archived quiet
-    /// window's median, built the way the archive read builds it.
-    fn tec_deviation(percent: f64) -> QuietTimeDeviation {
+    /// window's median, built the way the archive read builds it, holding at
+    /// the storm grade over five two-hour epochs, which span 8 h.
+    fn tec_deviation(percent: f64) -> Option<TecDeviationEvidence> {
+        tec_deviation_corroborated_by(percent, None)
+    }
+
+    /// The same deviation, with what the archived indices hold over the hours
+    /// before its peak epoch.
+    fn tec_deviation_corroborated_by(
+        percent: f64,
+        geomagnetic_before_peak: Option<GeomagneticActivityBeforePeak>,
+    ) -> Option<TecDeviationEvidence> {
         let median = 20.0;
         let window =
             vec![TotalElectronContent::from_tecu(median); quiet_time::BACKGROUND_WINDOW_DAYS];
-        quiet_time::deviation_from_quiet_time(
+        let deviation = quiet_time::deviation_from_quiet_time(
             TotalElectronContent::from_tecu(median * (1.0 + percent / 100.0)),
             &window,
-        )
-        .expect("a fully archived window")
+        )?;
+        Some(TecDeviationEvidence {
+            peak: QuietTimeDeviationPeak {
+                deviation,
+                epoch: at(4, 0),
+                storm_grade_run: StormGradeRun::containing_epoch(
+                    &[Some(deviation); 5],
+                    2,
+                    TimeDelta::hours(2),
+                ),
+            },
+            geomagnetic_before_peak,
+        })
     }
 
-    fn interference_points(percents: &[f64]) -> Vec<Arc<Vec<JammingPoint>>> {
-        vec![Arc::new(
+    fn interference_points(percents: &[f64]) -> Option<Arc<Vec<JammingPoint>>> {
+        Some(Arc::new(
             percents
                 .iter()
                 .enumerate()
@@ -622,19 +878,22 @@ mod tests {
                     bad: 1,
                 })
                 .collect(),
-        )]
+        ))
     }
 
-    fn geomagnetic_points(hp30: Option<f64>, kp: Option<f64>) -> Vec<Arc<Vec<GeomagneticPoint>>> {
-        vec![Arc::new(vec![GeomagneticPoint {
+    fn geomagnetic_points(
+        hp30: Option<f64>,
+        kp: Option<f64>,
+    ) -> Option<Arc<Vec<GeomagneticPoint>>> {
+        Some(Arc::new(vec![GeomagneticPoint {
             x_secs: 0.0,
             hp30,
             kp,
-        }])]
+        }]))
     }
 
-    fn tec_points(values: &[f64]) -> Vec<Arc<Vec<TecPoint>>> {
-        vec![Arc::new(
+    fn tec_points(values: &[f64]) -> Option<Arc<Vec<TecPoint>>> {
+        Some(Arc::new(
             values
                 .iter()
                 .enumerate()
@@ -643,15 +902,23 @@ mod tests {
                     tecu: Some(tecu),
                 })
                 .collect(),
-        )]
+        ))
     }
 
     fn flare(class_type: &str, receiver_side: Option<SunlitSide>) -> MarkedFlare {
+        flare_peaking_at(class_type, receiver_side, at(2, 1))
+    }
+
+    fn flare_peaking_at(
+        class_type: &str,
+        receiver_side: Option<SunlitSide>,
+        peak: DateTime<Utc>,
+    ) -> MarkedFlare {
         MarkedFlare {
             flare: SolarFlare {
                 id: format!("{class_type}-FLR-001"),
-                begin: at(2, 0),
-                peak: at(2, 1),
+                begin: peak - chrono::TimeDelta::minutes(1),
+                peak,
                 end: None,
                 classification: class_type.parse().expect("a published class"),
                 source_location: None,
@@ -661,8 +928,18 @@ mod tests {
         }
     }
 
+    /// One archived index period ending at `end` and carrying `value` on the
+    /// scale both indices are published on.
+    fn archived_period(end: DateTime<Utc>, value: f64) -> ArchivedIndexPeriod {
+        ArchivedIndexPeriod {
+            end,
+            activity: GeomagneticActivity::from_published_value(GeomagneticIndex::Kp, value)
+                .expect("a published value"),
+        }
+    }
+
     fn evidence_of(fixture: &SeriesFixture, flares: &[MarkedFlare]) -> DisturbanceEvidence {
-        DisturbanceEvidence::of(&fixture.series(), flares)
+        DisturbanceEvidence::of(&fixture.series(), flares, whole_recording())
     }
 
     /// Ids as the loader hands them out, so an assessment is keyed by the
@@ -685,16 +962,25 @@ mod tests {
         files.view().entries().map(|entry| entry.id()).collect()
     }
 
+    /// One recording of one track named `label`, covering the whole span the
+    /// fixtures record over.
     fn recording<'a>(
         id: LoadedFileId,
+        label: &str,
         series: &'a SeriesFixture,
         archived_flare_days: &[NaiveDate],
         positions: &Arc<u8>,
     ) -> RecordingUnderAssessment<'a> {
+        let track = TrackUnderAssessment {
+            label: label.to_owned(),
+            recorded: whole_recording(),
+            series: series.series(),
+        };
         RecordingUnderAssessment {
             id,
-            span: TimeRange::new(at(0, 0), at(6, 0)),
-            series: series.series(),
+            label: label.to_owned(),
+            span: whole_recording(),
+            tracks: vec![track],
             archived_flare_days: archived_flare_days.to_vec(),
             positions: ArcIdentity::of(positions),
         }
@@ -702,6 +988,14 @@ mod tests {
 
     fn no_flares(_span: TimeRange) -> Vec<MarkedFlare> {
         Vec::new()
+    }
+
+    /// The lines of the one track the assessment holds a warning for.
+    fn only_track_warning(warning: &SpaceWeatherWarning) -> &TrackSpaceWeatherWarning {
+        match warning.track_warnings() {
+            [only] => only,
+            listed => panic!("one track warns, not {}", listed.len()),
+        }
     }
 
     /// A crossed cell-day below the trigger is background, one at it is not.
@@ -785,6 +1079,25 @@ mod tests {
         assert!(!evidence_of(&SeriesFixture::default(), &flares).warns());
     }
 
+    /// A flare is evidence only for the track that was recording when it
+    /// peaked, so a recording's other tracks stay clear of it.
+    #[rstest]
+    #[case::while_the_track_recorded(at(1, 0), true)]
+    #[case::at_the_end_of_the_track(at(2, 0), true)]
+    #[case::after_the_track_ended(at(2, 1), false)]
+    fn a_flare_is_evidence_for_the_track_it_peaked_over(
+        #[case] peak: DateTime<Utc>,
+        #[case] expected: bool,
+    ) {
+        let flares = [flare_peaking_at("X5.8", Some(SunlitSide::Sunlit), peak)];
+        let recorded = TimeRange::new(at(0, 0), at(2, 0));
+
+        let evidence =
+            DisturbanceEvidence::of(&SeriesFixture::default().series(), &flares, recorded);
+
+        assert_eq!(evidence.warns(), expected);
+    }
+
     /// An absolute TEC value is context, so it raises no warning on its own
     /// and is listed only once another metric has.
     #[test]
@@ -800,15 +1113,15 @@ mod tests {
         assert!(evidence.warning_lines().is_empty());
     }
 
-    /// Every line of a fully disturbed recording, in the order the hover
-    /// lists them, each stating the peak that produced it.
+    /// Every line of a fully disturbed track, in the order the hover lists
+    /// them, each stating the peak that produced it and the level it crossed.
     #[test]
     fn every_metric_that_warns_states_its_peak() {
         let fixture = SeriesFixture {
             interference: interference_points(&[0.4, 34.2]),
             geomagnetic: geomagnetic_points(Some(7.667), Some(9.0)),
             tec: tec_points(&[12.4, 175.2]),
-            tec_deviations: vec![tec_deviation(62.0)],
+            tec_deviation: tec_deviation(62.0),
         };
         let flares = [
             flare("M1.2", Some(SunlitSide::Sunlit)),
@@ -819,10 +1132,12 @@ mod tests {
             evidence_of(&fixture, &flares).warning_lines(),
             [
                 "Geomagnetic storm: Kp reached 9 (G5)",
-                "Aircraft interference: up to 34.2 % of aircraft in a crossed cell",
-                "Solar flare: X5.8 at 2024-05-11 02:01 UTC, receiver on the sunlit side",
-                "TEC deviation: +62 % from the 27-day median, moderate ionospheric storm (W = 3)",
-                "TEC over the recording: 12 to 175 TECU",
+                "Aircraft interference: up to 34.2 % of aircraft in a crossed cell (warns from \
+                 2 %)",
+                "Solar flare: X5.8 at 2024-05-11 02:01 UTC (R3), receiver on the sunlit side",
+                "TEC deviation: +62 % from the 27-day median (warns from +43 %), moderate \
+                 ionospheric storm (W = 3), for 8 h",
+                "TEC over the track: 12 to 175 TECU",
             ]
         );
     }
@@ -832,7 +1147,7 @@ mod tests {
     #[test]
     fn a_deviation_short_of_the_storm_grade_warns_about_nothing() {
         let fixture = SeriesFixture {
-            tec_deviations: vec![tec_deviation(42.5)],
+            tec_deviation: tec_deviation(42.5),
             ..SeriesFixture::default()
         };
 
@@ -842,29 +1157,131 @@ mod tests {
         assert!(evidence.warning_lines().is_empty());
     }
 
-    /// The line states the signed share of the median and the grade the index
-    /// puts it at, and a deviation either side of the median raises the
-    /// warning.
+    /// The line states the signed share of the median, the share that side
+    /// warns from, the grade the index puts it at, and how long that grade
+    /// held at the node the peak was read from.
     #[rstest]
     #[case::a_moderate_storm(
         62.0,
-        "TEC deviation: +62 % from the 27-day median, moderate ionospheric storm (W = 3)"
+        "TEC deviation: +62 % from the 27-day median (warns from +43 %), moderate ionospheric \
+         storm (W = 3), for 8 h"
     )]
     #[case::a_negative_moderate_storm(
         -35.0,
-        "TEC deviation: -35 % from the 27-day median, moderate ionospheric storm (W = -3)"
+        "TEC deviation: -35 % from the 27-day median (warns from -30 %), moderate ionospheric \
+         storm (W = -3), for 8 h"
     )]
     #[case::an_intense_storm(
         200.0,
-        "TEC deviation: +200 % from the 27-day median, intense ionospheric storm (W = 4)"
+        "TEC deviation: +200 % from the 27-day median (warns from +43 %), intense ionospheric \
+         storm (W = 4), for 8 h"
     )]
     fn the_deviation_line_states_its_share_and_grade(#[case] percent: f64, #[case] expected: &str) {
         let fixture = SeriesFixture {
-            tec_deviations: vec![tec_deviation(percent)],
+            tec_deviation: tec_deviation(percent),
             ..SeriesFixture::default()
         };
 
         assert_eq!(evidence_of(&fixture, &[]).warning_lines(), [expected]);
+    }
+
+    /// A grade read from a single map epoch states that epoch's own length,
+    /// which the day's map interval sets.
+    #[test]
+    fn a_deviation_read_from_one_epoch_states_the_epoch() {
+        let Some(mut evidence) = tec_deviation(62.0) else {
+            panic!("a fully archived window grades the value");
+        };
+        evidence.peak.storm_grade_run = StormGradeRun::containing_epoch(
+            &[Some(evidence.peak.deviation)],
+            0,
+            TimeDelta::hours(2),
+        );
+        let fixture = SeriesFixture {
+            tec_deviation: Some(evidence),
+            ..SeriesFixture::default()
+        };
+
+        assert_eq!(
+            evidence_of(&fixture, &[]).warning_lines(),
+            [
+                "TEC deviation: +62 % from the 27-day median (warns from +43 %), moderate \
+                 ionospheric storm (W = 3), for one 2 h epoch"
+            ]
+        );
+    }
+
+    /// The archived indices qualify the deviation: a storm before the peak
+    /// accounts for it, a quiet window says the 27-day reference is doing the
+    /// work, and hours the archive holds none of are stated neither way.
+    #[rstest]
+    #[case::a_storm_before_the_peak(
+        Some(GeomagneticActivityBeforePeak::Storm {
+            class: GeomagneticStormClass::Strong,
+            hours_before_peak: 5,
+        }),
+        "TEC deviation: -35 % from the 27-day median (warns from -30 %), moderate ionospheric \
+         storm (W = -3), for 8 h, after a G3 storm 5 h before"
+    )]
+    #[case::a_quiet_window(
+        Some(GeomagneticActivityBeforePeak::NoStorm),
+        "TEC deviation: -35 % from the 27-day median (warns from -30 %), moderate ionospheric \
+         storm (W = -3), for 8 h, no geomagnetic storm in the 48 h before"
+    )]
+    #[case::an_unarchived_window(
+        None,
+        "TEC deviation: -35 % from the 27-day median (warns from -30 %), moderate ionospheric \
+         storm (W = -3), for 8 h"
+    )]
+    fn the_deviation_line_states_the_geomagnetic_activity_before_its_peak(
+        #[case] geomagnetic_before_peak: Option<GeomagneticActivityBeforePeak>,
+        #[case] expected: &str,
+    ) {
+        let fixture = SeriesFixture {
+            tec_deviation: tec_deviation_corroborated_by(-35.0, geomagnetic_before_peak),
+            ..SeriesFixture::default()
+        };
+
+        assert_eq!(evidence_of(&fixture, &[]).warning_lines(), [expected]);
+    }
+
+    /// The strongest storm class the window holds is the one named, and a
+    /// period the peak falls inside is stated as no hours before it.
+    #[rstest]
+    #[case::before_the_peak(at(4, 0), Some(GeomagneticActivityBeforePeak::Storm {
+        class: GeomagneticStormClass::Severe,
+        hours_before_peak: 2,
+    }))]
+    #[case::overlapping_the_peak(at(1, 0), Some(GeomagneticActivityBeforePeak::Storm {
+        class: GeomagneticStormClass::Severe,
+        hours_before_peak: 0,
+    }))]
+    fn the_strongest_archived_storm_is_the_one_named(
+        #[case] peak: DateTime<Utc>,
+        #[case] expected: Option<GeomagneticActivityBeforePeak>,
+    ) {
+        let periods = [
+            archived_period(at(1, 0), 5.0),
+            archived_period(at(2, 0), 8.0),
+            archived_period(at(3, 0), 6.0),
+            archived_period(at(3, 30), 4.667),
+        ];
+
+        assert_eq!(
+            Some(GeomagneticActivityBeforePeak::of(peak, &periods)),
+            expected
+        );
+    }
+
+    /// A window in which the archive holds only quiet periods names no storm.
+    #[test]
+    fn an_archived_window_without_a_storm_names_none() {
+        let periods = [archived_period(at(2, 0), 4.667)];
+
+        assert_eq!(
+            GeomagneticActivityBeforePeak::of(at(4, 0), &periods),
+            GeomagneticActivityBeforePeak::NoStorm
+        );
     }
 
     /// Every level the map indicator's popup states, with the link each row
@@ -917,23 +1334,30 @@ mod tests {
         };
         let quiet = SeriesFixture::default();
 
-        assert_eq!(
-            warning.reassess(&[recording(id, &quiet, &[], &positions)], no_flares),
-            0
+        assert!(
+            warning
+                .reassess(
+                    &[recording(id, "morning.gtd", &quiet, &[], &positions)],
+                    no_flares
+                )
+                .is_empty()
         );
-        assert!(warning.lines().is_empty());
+        assert!(warning.track_warnings().is_empty());
 
         let stormy = SeriesFixture {
             geomagnetic: geomagnetic_points(Some(7.667), None),
             ..SeriesFixture::default()
         };
         assert_eq!(
-            warning.reassess(&[recording(id, &stormy, &[], &positions)], no_flares),
-            1,
+            warning.reassess(
+                &[recording(id, "morning.gtd", &stormy, &[], &positions)],
+                no_flares
+            ),
+            ["Space weather during morning.gtd\nGeomagnetic storm: Hp30 reached 7.667 (G3)"],
             "the archived day reached the loaded recording"
         );
         assert_eq!(
-            warning.lines(),
+            only_track_warning(&warning).lines,
             ["Geomagnetic storm: Hp30 reached 7.667 (G3)"]
         );
 
@@ -941,14 +1365,59 @@ mod tests {
             geomagnetic: geomagnetic_points(Some(7.667), Some(9.0)),
             ..SeriesFixture::default()
         };
-        assert_eq!(
-            warning.reassess(&[recording(id, &stormier, &[], &positions)], no_flares),
-            0,
+        assert!(
+            warning
+                .reassess(
+                    &[recording(id, "morning.gtd", &stormier, &[], &positions)],
+                    no_flares
+                )
+                .is_empty(),
             "a second archived day does not toast the same recording again"
         );
     }
 
-    /// Every disturbed recording is toasted, and only the disturbed ones.
+    /// A toast stating a TEC deviation closes with what the grade is measured
+    /// against, and one without a deviation ends at its own findings.
+    #[rstest]
+    #[case::a_deviation(
+        SeriesFixture {
+            tec_deviation: tec_deviation(62.0),
+            ..SeriesFixture::default()
+        },
+        format!(
+            "Space weather during morning.gtd\nTEC deviation: +62 % from the 27-day median \
+             (warns from +43 %), moderate ionospheric storm (W = 3), for 8 h\n{}",
+            *gt_ionex::text::DEVIATION_REFERENCE_CAVEAT
+        )
+    )]
+    #[case::a_storm_without_one(
+        SeriesFixture {
+            geomagnetic: geomagnetic_points(Some(7.667), None),
+            ..SeriesFixture::default()
+        },
+        "Space weather during morning.gtd\nGeomagnetic storm: Hp30 reached 7.667 (G3)".to_owned()
+    )]
+    fn a_toast_stating_a_deviation_closes_with_its_reference(
+        #[case] series: SeriesFixture,
+        #[case] expected: String,
+    ) {
+        let mut warning = SpaceWeatherWarning::default();
+        let positions = Arc::new(0_u8);
+        let ids = loaded_recording_ids(1);
+        let Some(&id) = ids.first() else {
+            panic!("one recording was loaded");
+        };
+
+        let toasts = warning.reassess(
+            &[recording(id, "morning.gtd", &series, &[], &positions)],
+            no_flares,
+        );
+
+        assert_eq!(toasts, [expected]);
+    }
+
+    /// Every disturbed recording is toasted, and only the disturbed ones, each
+    /// toast naming its own recording.
     #[test]
     fn each_disturbed_recording_is_toasted_once() {
         let mut warning = SpaceWeatherWarning::default();
@@ -965,10 +1434,83 @@ mod tests {
         let recordings: Vec<RecordingUnderAssessment<'_>> = ids
             .iter()
             .enumerate()
-            .map(|(index, &id)| recording(id, series(index), &[], &positions))
+            .map(|(index, &id)| {
+                recording(
+                    id,
+                    &format!("ride-{index}.gtd"),
+                    series(index),
+                    &[],
+                    &positions,
+                )
+            })
             .collect();
 
-        assert_eq!(warning.reassess(&recordings, no_flares), 2);
+        assert_eq!(
+            warning.reassess(&recordings, no_flares),
+            [
+                "Space weather during ride-0.gtd\nGeomagnetic storm: Hp30 reached 5 (G1)",
+                "Space weather during ride-1.gtd\nGeomagnetic storm: Hp30 reached 5 (G1)",
+            ]
+        );
+    }
+
+    /// Each affected track is listed on its own, named the way the rest of
+    /// the app names it, and a quiet track is left out.
+    #[test]
+    fn every_affected_track_is_listed_with_its_own_values() {
+        let mut warning = SpaceWeatherWarning::default();
+        let positions = Arc::new(0_u8);
+        let ids = loaded_recording_ids(1);
+        let Some(&id) = ids.first() else {
+            panic!("one recording was loaded");
+        };
+        let quiet = SeriesFixture::default();
+        let stormy = SeriesFixture {
+            geomagnetic: geomagnetic_points(Some(5.0), None),
+            ..SeriesFixture::default()
+        };
+        let stormier = SeriesFixture {
+            geomagnetic: geomagnetic_points(Some(9.0), None),
+            ..SeriesFixture::default()
+        };
+        let tracks: Vec<TrackUnderAssessment<'_>> = [&stormy, &quiet, &stormier]
+            .into_iter()
+            .enumerate()
+            .map(|(index, series)| TrackUnderAssessment {
+                label: format!("morning.gtd (track {})", index + 1),
+                recorded: whole_recording(),
+                series: series.series(),
+            })
+            .collect();
+        let recording = RecordingUnderAssessment {
+            id,
+            label: "morning.gtd".to_owned(),
+            span: whole_recording(),
+            tracks,
+            archived_flare_days: Vec::new(),
+            positions: ArcIdentity::of(&positions),
+        };
+
+        warning.reassess(&[recording], no_flares);
+
+        let listed: Vec<(&str, &[String])> = warning
+            .track_warnings()
+            .iter()
+            .map(|warning| (warning.track_label.as_str(), warning.lines.as_slice()))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                (
+                    "morning.gtd (track 1)",
+                    ["Geomagnetic storm: Hp30 reached 5 (G1)".to_owned()].as_slice()
+                ),
+                (
+                    "morning.gtd (track 3)",
+                    ["Geomagnetic storm: Hp30 reached 9 (G5)".to_owned()].as_slice()
+                ),
+            ]
+        );
     }
 
     /// The flare archive is read only for a recording being assessed again,
@@ -989,22 +1531,55 @@ mod tests {
         };
 
         warning.reassess(
-            &[recording(id, &quiet, &[day(11)], &positions)],
+            &[recording(id, "morning.gtd", &quiet, &[day(11)], &positions)],
             &mut count_read,
         );
         warning.reassess(
-            &[recording(id, &quiet, &[day(11)], &positions)],
+            &[recording(id, "morning.gtd", &quiet, &[day(11)], &positions)],
             &mut count_read,
         );
         warning.reassess(
-            &[recording(id, &quiet, &[day(11), day(12)], &positions)],
+            &[recording(
+                id,
+                "morning.gtd",
+                &quiet,
+                &[day(11), day(12)],
+                &positions,
+            )],
             &mut count_read,
         );
 
         assert_eq!(reads, 2);
     }
 
-    /// A recording that is closed takes its evidence out of the map's lines.
+    /// Renaming a recording renames it in the warning, without waiting for an
+    /// archived day to move.
+    #[test]
+    fn a_renamed_recording_is_named_again_in_its_warning() {
+        let mut warning = SpaceWeatherWarning::default();
+        let positions = Arc::new(0_u8);
+        let ids = loaded_recording_ids(1);
+        let Some(&id) = ids.first() else {
+            panic!("one recording was loaded");
+        };
+        let stormy = SeriesFixture {
+            geomagnetic: geomagnetic_points(Some(7.667), None),
+            ..SeriesFixture::default()
+        };
+
+        warning.reassess(
+            &[recording(id, "morning.gtd", &stormy, &[], &positions)],
+            no_flares,
+        );
+        warning.reassess(
+            &[recording(id, "Morning ride", &stormy, &[], &positions)],
+            no_flares,
+        );
+
+        assert_eq!(only_track_warning(&warning).track_label, "Morning ride");
+    }
+
+    /// A recording that is closed takes its warning out of the map's list.
     #[test]
     fn unloading_a_recording_drops_its_evidence() {
         let mut warning = SpaceWeatherWarning::default();
@@ -1018,10 +1593,13 @@ mod tests {
             ..SeriesFixture::default()
         };
 
-        warning.reassess(&[recording(id, &stormy, &[], &positions)], no_flares);
-        assert!(!warning.lines().is_empty());
+        warning.reassess(
+            &[recording(id, "morning.gtd", &stormy, &[], &positions)],
+            no_flares,
+        );
+        assert!(!warning.track_warnings().is_empty());
 
         warning.reassess(&[], no_flares);
-        assert!(warning.lines().is_empty());
+        assert!(warning.track_warnings().is_empty());
     }
 }

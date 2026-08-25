@@ -18,9 +18,9 @@ pub mod sky_glyphs;
 pub mod sky_trails_request;
 pub mod snap_error_series;
 pub mod snapped_tracks;
+pub mod space_weather_warning;
 pub mod tec_series;
 pub mod visibility;
-pub mod warning_levels;
 
 pub use arc_identity::ArcIdentity;
 pub use context_series::{
@@ -56,8 +56,8 @@ pub use snapped_tracks::{
     SnapCosting, SnappedEdgeInfo, SnappedEdgeSpan, SnappedSegment, SnappedTrackGeometry,
     SnappedTracks, WhiskerAnchor,
 };
+pub use space_weather_warning::{TrackSpaceWeatherWarning, WarningLevelExplanation};
 pub use tec_series::{TecPoint, TecSeries};
 pub use visibility::{
     FileVisibility, MapScope, PointVisibility, TrackDataVisibility, TrackVisibility,
 };
-pub use warning_levels::WarningLevelExplanation;

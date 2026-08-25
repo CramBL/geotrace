@@ -10,6 +10,11 @@ generate-reference-equations:
 generate-reference-tec-map:
     cargo nextest run -p gt-map --run-ignored all -E 'test(generate_tec_reference_illustration)'
 
+# Render the TEC reference material's plot illustration from the committed node series.
+[group("reference-assets")]
+generate-reference-tec-plot:
+    cargo nextest run -p gt-plot --run-ignored all -E 'test(generate_tec_reference_plot)'
+
 # Render the interference reference material's illustration from the committed world day.
 [group("reference-assets")]
 generate-reference-interference-map:

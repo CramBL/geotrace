@@ -31,6 +31,7 @@ use std::path::PathBuf;
 use chrono::{Datelike as _, NaiveDate};
 
 use crate::maps::GlobalIonosphereMaps;
+use crate::node_series::NodeSeriesCapture;
 
 pub mod calendar;
 pub mod cddis;
@@ -38,6 +39,7 @@ pub mod grid;
 pub mod instant_selection;
 pub mod maps;
 pub mod mirrors;
+pub mod node_series;
 pub mod parse;
 pub mod quiet_time;
 pub mod reference;
@@ -183,6 +185,75 @@ pub const FIXTURE_FILES: [FixtureFile; 2] = [
     },
 ];
 
+/// One grid node the node-series capture follows across
+/// [`NODE_SERIES_DAYS`].
+///
+/// Every node sits on the grid JPL publishes its global maps on: 2.5 degrees
+/// in latitude, 5 in longitude.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FixtureNode {
+    /// Keys the node in the capture and names it on the capture command line.
+    pub name: &'static str,
+    pub latitude_degrees: f64,
+    pub longitude_degrees: f64,
+    /// What this node exists to show.
+    pub purpose: &'static str,
+}
+
+/// Name of the mid-latitude European node.
+pub const EUROPE_NODE: &str = "europe-mid-latitude";
+
+/// Name of the mid-latitude North American node.
+pub const NORTH_AMERICA_NODE: &str = "north-america-mid-latitude";
+
+/// Name of the node under the southern crest of the equatorial anomaly.
+pub const EQUATORIAL_CREST_NODE: &str = "south-america-equatorial-crest";
+
+/// The nodes the capture follows, in the order it writes them.
+pub const FIXTURE_NODES: [FixtureNode; 3] = [
+    FixtureNode {
+        name: EUROPE_NODE,
+        latitude_degrees: 50.0,
+        longitude_degrees: 10.0,
+        purpose: "mid-latitude Europe, in daylight through 11 May, where the storm's positive \
+                  phase is documented",
+    },
+    FixtureNode {
+        name: NORTH_AMERICA_NODE,
+        latitude_degrees: 40.0,
+        longitude_degrees: -100.0,
+        purpose: "mid-latitude North America, in afternoon daylight as the storm's main phase \
+                  began late on 10 May",
+    },
+    FixtureNode {
+        name: EQUATORIAL_CREST_NODE,
+        latitude_degrees: -10.0,
+        longitude_degrees: -60.0,
+        purpose: "the southern crest of the equatorial anomaly, where absolute TEC is highest \
+                  even on a quiet day",
+    },
+];
+
+/// First and last day of the node-series capture.
+///
+/// It opens on the 27 days the quiet-time window of 7 May 2024 is taken over,
+/// the earliest day the grading test assesses, and closes after the storm's
+/// recovery.
+pub const NODE_SERIES_DAYS: (NaiveDate, NaiveDate) = (
+    match NaiveDate::from_ymd_opt(2024, 4, 10) {
+        Some(day) => day,
+        None => panic!("a calendar date"),
+    },
+    match NaiveDate::from_ymd_opt(2024, 5, 13) {
+        Some(day) => day,
+        None => panic!("a calendar date"),
+    },
+);
+
+/// File name of the node-series capture, written beside the whole-file
+/// captures.
+pub const NODE_SERIES_CAPTURE: &str = "node_series.json";
+
 /// File name of the capture manifest written beside the fixtures, recording
 /// when each file was captured and what the archive served.
 pub const CAPTURE_MANIFEST: &str = "capture.json";
@@ -222,6 +293,8 @@ pub enum CaptureError {
         file_name: &'static str,
         source: parse::ParseError,
     },
+    #[error("reading the node series: {source}")]
+    ReadNodeSeries { source: serde_json::Error },
 }
 
 /// The capture [`FIXTURE_FILES`] declares under `name`.
@@ -258,6 +331,15 @@ pub fn captured_maps(name: &str) -> Result<GlobalIonosphereMaps, CaptureError> {
         file_name: fixture.file_name,
         source,
     })
+}
+
+/// The node-series capture, which the grading tests and the reference
+/// illustration read the storm days from.
+pub fn captured_node_series() -> Result<NodeSeriesCapture, CaptureError> {
+    let path = fixtures_dir().join(NODE_SERIES_CAPTURE);
+    let text =
+        std::fs::read_to_string(&path).map_err(|source| CaptureError::Read { path, source })?;
+    serde_json::from_str(&text).map_err(|source| CaptureError::ReadNodeSeries { source })
 }
 
 #[cfg(test)]

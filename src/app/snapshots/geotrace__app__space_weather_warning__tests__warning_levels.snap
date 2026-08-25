@@ -11,5 +11,5 @@ How does geomagnetic activity affect GNSS?
 Solar flares: class M1 or stronger, NOAA's R1 level, while the receiver was on the sunlit side.
 How do solar flares affect GNSS?
 
-TEC: at least 43 % above or 30 % below the median of the 27 days before, the moderate-storm grade of the planetary ionospheric storm index.
+TEC: more than 43 % above or 30 % below the median of the 27 days before, the moderate-storm grade of the planetary ionospheric storm index.
 How does ionospheric TEC affect GNSS?

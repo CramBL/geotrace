@@ -36,7 +36,23 @@ During the geomagnetic storm of 10 to 12 May 2024 the archived maps peak above 1
 Illustration tec_map_2024_05_10_gannon_storm (10 May 2024, 22:00 UTC)
 Global [TEC] during the Gannon storm of May 2024, as archived by GeoTrace.[^jpl]
 
-Storm studies quantify the ionospheric response as the deviation of [TEC] from its quiet-time level, the median over the same location and time of day, and place typical quiet-time variation at around 40 % either way from that median.[^storm-2017] The planetary ionospheric storm index takes the quiet reference as the median of the 27 days before the day observed and grades the logarithmic deviation from quiet through moderate disturbance to moderate and intense storm.[^iono-storm-index] GeoTrace's environment warning uses that index: it warns from the moderate-storm grade, a deviation of at least 43 % above or 30 % below the 27-day median.[^iono-storm-index][^w-index-thresholds]
+Storm studies quantify the ionospheric response as the deviation of [TEC] from its quiet-time level, the median over the same location and time of day, and place typical quiet-time variation at around 40 % either way from that median.[^storm-2017] The planetary ionospheric storm index takes the quiet reference as the median of the 27 days before the day observed and grades the logarithmic deviation from quiet through moderate disturbance to moderate and intense storm.[^iono-storm-index] GeoTrace's environment warning uses that index: it warns from the moderate-storm grade, a deviation of more than 43 % above or 30 % below the 27-day median.[^iono-storm-index][^w-index-thresholds]
+
+The index compares each [TEC] value with the median of the same hour of day over the 27 days before it, the quiet-time reference.[^iono-storm-index] The comparison is per hour because [TEC] over one place follows a daily cycle: it rises after sunrise, peaks in the afternoon and falls through the night. A storm is a departure from that median: [TEC] above it in the positive phase, below it in the negative phase.[^iono-storm-index]
+
+Illustration tec_plot_2024_05_gannon_storm (6 to 13 May 2024, grid node 40 N, 100 W)
+Vertical [TEC] over mid-latitude North America across the Gannon storm, from the maps GeoTrace archived, with the quiet-time median of each epoch dashed.[^jpl] The days before the storm track that median. Late on 10 May the [TEC] reaches 88 [TECU] against a median of 48, and through 11 and 12 May it stays far below it, down to 14 [TECU] against a median of 50.
+
+What the index grades is DTEC, the base-10 logarithm of the value over its quiet-time median, and its sign is what tells the two phases apart.[^iono-storm-index] Either phase develops the horizontal variations that displace a [GNSS] position.[^noaa-storms] At the node above, the deepest deviation of the whole event is the depletion through 11 May, not the enhancement that preceded it.
+
+Planetary ionospheric storm index: the grade of one deviation[^w-index-thresholds]
+Grade | DTEC | Share of the median | W | GeoTrace warns
+Quiet | up to 0.046 | up to 11 % above or 10 % below | ±1 | no
+Moderate disturbance | over 0.046, up to 0.155 | 11 to 43 % above or 10 to 30 % below | ±2 | no
+Moderate ionospheric storm | over 0.155, up to 0.301 | 43 to 100 % above or 30 to 50 % below | ±3 | yes
+Intense ionospheric storm | over 0.301 | over 100 % above or over 50 % below | ±4 | yes
+
+A grade reports how far the ionosphere stood from its own recent level, not how high the [TEC] was in absolute terms: the reference it is measured against is the median of the days before. The published planetary index reduces each map by the solar zenith angle and averages the extremes across latitudes into a single number for the globe.[^iono-storm-index] GeoTrace applies the same thresholds to one grid node and one time of day, which is what a recording was made under: it reads each fix's own node and map epoch, takes the median of the 27 archived days before that day at the same time, and warns from the moderate-storm grade. The warning states the deviation it found and the share the grade begins at.
 
 The fixes recorded under elevated [TEC]:
 points | where tec > 100

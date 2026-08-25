@@ -474,13 +474,39 @@ fn snapshot_warning_levels() -> Vec<gt_ui_types::WarningLevelExplanation> {
     ]
 }
 
-fn snapshot_warning_lines() -> Vec<String> {
-    vec![
-        "Geomagnetic storm: Hp30 reached 7.667 (G3)".to_owned(),
-        "Aircraft interference: up to 34.2 % of aircraft in a crossed cell".to_owned(),
-        "Solar flare: X5.8 at 2024-05-11 02:01 UTC, receiver on the sunlit side".to_owned(),
-        "TEC over the recording: 12 to 175 TECU".to_owned(),
-    ]
+/// One disturbed track, as the application hands it over: every metric that
+/// reached its level over it, with the value it reached.
+fn snapshot_track_warnings() -> Vec<gt_ui_types::TrackSpaceWeatherWarning> {
+    vec![gt_ui_types::TrackSpaceWeatherWarning {
+        track_label: "morning.gtd (track 2)".to_owned(),
+        lines: vec![
+            "Geomagnetic storm: Hp30 reached 7.667 (G3)".to_owned(),
+            "Aircraft interference: up to 34.2 % of aircraft in a crossed cell (warns from 2 %)"
+                .to_owned(),
+            "Solar flare: X5.8 at 2024-05-11 02:01 UTC (R3), receiver on the sunlit side"
+                .to_owned(),
+            "TEC deviation: -73 % from the 27-day median (warns from -30 %), intense ionospheric \
+             storm (W = -4), for 22 h, after a G5 storm 9 h before"
+                .to_owned(),
+            "TEC over the track: 12 to 175 TECU".to_owned(),
+        ],
+        states_tec_deviation: true,
+    }]
+}
+
+/// More disturbed tracks than the hover names, so the snapshot pins both the
+/// tracks it lists and the count of those it leaves to the popup.
+fn snapshot_many_track_warnings() -> Vec<gt_ui_types::TrackSpaceWeatherWarning> {
+    (0..8)
+        .map(|index| gt_ui_types::TrackSpaceWeatherWarning {
+            track_label: format!("ride-{index}.gtd"),
+            lines: vec![format!(
+                "Geomagnetic storm: Kp reached {}.667 (G3)",
+                5 + index % 3
+            )],
+            states_tec_deviation: false,
+        })
+        .collect()
 }
 
 /// How the glyph is interacted with before the snapshot is taken.
@@ -494,24 +520,29 @@ enum IndicatorInteraction {
 /// The warning indicator in the map's top-right corner, with the pointer on
 /// it so the snapshot pins its place, its strength, and whatever its hover
 /// holds. The idle case pins the faint glyph the map shows until a metric
-/// warns, and the levels case the popup a click opens, which lists the same
-/// rows either way. No map tiles render: the map is built with
-/// [`TileAccess::Offline`].
+/// warns, and the levels case the popup a click opens, which lists every
+/// affected track over the same rows either way. No map tiles render: the map
+/// is built with [`TileAccess::Offline`].
 #[rstest::rstest]
 #[case::warned(
     "space_weather_warning",
-    snapshot_warning_lines(),
+    snapshot_track_warnings(),
     IndicatorInteraction::Hover
 )]
 #[case::idle("space_weather_warning_idle", Vec::new(), IndicatorInteraction::Hover)]
+#[case::many_tracks(
+    "space_weather_warning_many_tracks",
+    snapshot_many_track_warnings(),
+    IndicatorInteraction::Hover
+)]
 #[case::levels(
     "space_weather_warning_levels",
-    snapshot_warning_lines(),
+    snapshot_many_track_warnings(),
     IndicatorInteraction::Click
 )]
 fn snapshot_space_weather_warning(
     #[case] name: &str,
-    #[case] warning: Vec<String>,
+    #[case] warning: Vec<gt_ui_types::TrackSpaceWeatherWarning>,
     #[case] interaction: IndicatorInteraction,
 ) {
     let files = vec![make_snapshot_file()];
@@ -529,8 +560,9 @@ fn snapshot_space_weather_warning(
                     ui,
                     MapDrawContext {
                         space_weather: crate::SpaceWeatherIndicator {
-                            warning_lines: &warning,
+                            track_warnings: &warning,
                             levels: &levels,
+                            tec_deviation_caveat: &gt_ionex::text::DEVIATION_REFERENCE_CAVEAT,
                         },
                         ..state.context(&files, &visibility)
                     },

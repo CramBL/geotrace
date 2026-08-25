@@ -9,8 +9,9 @@
 //! `just generate-reference-equations`.
 
 use gt_ui_types::reference::{
-    Abbreviation, IllustrationFrame, ReferenceBlock, ReferenceDocument, ReferenceEquation,
-    ReferenceIllustration, ReferenceImage, Source,
+    Abbreviation, ColumnWidth, IllustrationFrame, ReferenceBlock, ReferenceDocument,
+    ReferenceEquation, ReferenceIllustration, ReferenceImage, ReferenceTable, Source, TableCell,
+    TableColumn,
 };
 
 pub const IONOSPHERIC_TEC: ReferenceDocument = ReferenceDocument {
@@ -109,8 +110,36 @@ const BLOCKS: &[ReferenceBlock] = &[
          planetary ionospheric storm index takes the quiet reference as the median of the 27 days \
          before the day observed and grades the logarithmic deviation from quiet through moderate \
          disturbance to moderate and intense storm.[^iono-storm-index] GeoTrace's environment \
-         warning uses that index: it warns from the moderate-storm grade, a deviation of at least \
-         43 % above or 30 % below the 27-day median.[^iono-storm-index][^w-index-thresholds]",
+         warning uses that index: it warns from the moderate-storm grade, a deviation of more \
+         than 43 % above or 30 % below the 27-day \
+         median.[^iono-storm-index][^w-index-thresholds]",
+    ),
+    ReferenceBlock::Paragraph(
+        "The index compares each [TEC] value with the median of the same hour of day over the 27 \
+         days before it, the quiet-time reference.[^iono-storm-index] The comparison is per hour \
+         because [TEC] over one place follows a daily cycle: it rises after sunrise, peaks in the \
+         afternoon and falls through the night. A storm is a departure from that median: [TEC] \
+         above it in the positive phase, below it in the negative phase.[^iono-storm-index]",
+    ),
+    ReferenceBlock::Illustration(STORM_PLOT_ILLUSTRATION),
+    ReferenceBlock::Paragraph(
+        "What the index grades is DTEC, the base-10 logarithm of the value over its quiet-time \
+         median, and its sign is what tells the two phases apart.[^iono-storm-index] Either phase \
+         develops the horizontal variations that displace a [GNSS] position.[^noaa-storms] At the \
+         node above, the deepest deviation of the whole event is the depletion through 11 May, \
+         not the enhancement that preceded it.",
+    ),
+    ReferenceBlock::Table(STORM_INDEX_TABLE),
+    ReferenceBlock::Paragraph(
+        "A grade reports how far the ionosphere stood from its own recent level, not how high the \
+         [TEC] was in absolute terms: the reference it is measured against is the median of the \
+         days before. The published planetary index reduces each map by the solar zenith angle \
+         and averages the extremes across latitudes into a single number for the \
+         globe.[^iono-storm-index] GeoTrace applies the same thresholds to one grid node and one \
+         time of day, which is what a recording was made under: it reads each fix's own node and \
+         map epoch, takes the median of the 27 archived days before that day at the same time, \
+         and warns from the moderate-storm grade. The warning states the deviation it found and \
+         the share the grade begins at.",
     ),
     ReferenceBlock::QueryExample {
         intro: "The fixes recorded under elevated [TEC]:",
@@ -170,6 +199,87 @@ const STORM_MAP_ILLUSTRATION: ReferenceIllustration = ReferenceIllustration {
     credit: None,
 };
 
+const STORM_PLOT_ILLUSTRATION: ReferenceIllustration = ReferenceIllustration {
+    frames: &[IllustrationFrame {
+        image: ReferenceImage {
+            image_bytes: include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/tec_plot_2024_05_gannon_storm.png"
+            )),
+            asset_name: "tec_plot_2024_05_gannon_storm",
+        },
+        // The days and the node are `DRAWN_DAYS` and `DRAWN_NODE` of
+        // `gt-plot`'s reference_illustration, which renders the asset.
+        label: "6 to 13 May 2024, grid node 40 N, 100 W",
+    }],
+    caption: "Vertical [TEC] over mid-latitude North America across the Gannon storm, from the \
+              maps GeoTrace archived, with the quiet-time median of each epoch dashed.[^jpl] The \
+              days before the storm track that median. Late on 10 May the [TEC] reaches 88 \
+              [TECU] against a median of 48, and through 11 and 12 May it stays far below it, \
+              down to 14 [TECU] against a median of 50.",
+    credit: None,
+};
+
+/// The thresholds of Table 3 in the W index paper, which the planetary index
+/// applies to DTEC unchanged. The shares are those bounds as a change from
+/// the median, which `the_table_states_the_shares_its_bounds_come_to` pins
+/// against [`crate::quiet_time`]'s own constants.
+const STORM_INDEX_TABLE: ReferenceTable = ReferenceTable {
+    title: "Planetary ionospheric storm index: the grade of one deviation[^w-index-thresholds]",
+    columns: &[
+        TableColumn {
+            header: "Grade",
+            width: ColumnWidth::Fits,
+        },
+        TableColumn {
+            header: "DTEC",
+            width: ColumnWidth::Fits,
+        },
+        TableColumn {
+            header: "Share of the median",
+            width: ColumnWidth::Wraps,
+        },
+        TableColumn {
+            header: "W",
+            width: ColumnWidth::Fits,
+        },
+        TableColumn {
+            header: "GeoTrace warns",
+            width: ColumnWidth::Fits,
+        },
+    ],
+    rows: &[
+        &[
+            TableCell::Prose("Quiet"),
+            TableCell::Prose("up to 0.046"),
+            TableCell::Prose("up to 11 % above or 10 % below"),
+            TableCell::Prose("±1"),
+            TableCell::Prose("no"),
+        ],
+        &[
+            TableCell::Prose("Moderate disturbance"),
+            TableCell::Prose("over 0.046, up to 0.155"),
+            TableCell::Prose("11 to 43 % above or 10 to 30 % below"),
+            TableCell::Prose("±2"),
+            TableCell::Prose("no"),
+        ],
+        &[
+            TableCell::Prose("Moderate ionospheric storm"),
+            TableCell::Prose("over 0.155, up to 0.301"),
+            TableCell::Prose("43 to 100 % above or 30 to 50 % below"),
+            TableCell::Prose("±3"),
+            TableCell::Prose("yes"),
+        ],
+        &[
+            TableCell::Prose("Intense ionospheric storm"),
+            TableCell::Prose("over 0.301"),
+            TableCell::Prose("over 100 % above or over 50 % below"),
+            TableCell::Prose("±4"),
+            TableCell::Prose("yes"),
+        ],
+    ],
+};
+
 const SOURCES: &[Source] = &[
     Source {
         citation_key: "navipedia-iono",
@@ -225,9 +335,71 @@ const SOURCES: &[Source] = &[
 
 #[cfg(test)]
 mod tests {
+    use crate::quiet_time::{
+        INTENSE_STORM_LOG_RATIO, MODERATE_STORM_LOG_RATIO, QUIET_GRADE_LIMIT_LOG_RATIO,
+        QuietTimeDeviation,
+    };
     use crate::tec::L1_DELAY_METERS_PER_TECU;
 
     use super::*;
+
+    /// Where the share of the median sits in a row of [`STORM_INDEX_TABLE`].
+    const SHARE_COLUMN: usize = 2;
+
+    /// The share of the median each threshold comes to, as
+    /// [`crate::quiet_time`] computes it, rounded the way the table states it.
+    fn share_of_the_median(log_ratio: f64) -> i64 {
+        QuietTimeDeviation::from_log_ratio(log_ratio)
+            .percent_from_median()
+            .round() as i64
+    }
+
+    /// The shares the table states are the boundaries the index grades on,
+    /// written out. A deviation of 0.301 in DTEC is twice the median, which
+    /// is 100 % above it.
+    #[test]
+    fn the_table_states_the_shares_its_bounds_come_to() {
+        let above = |log_ratio: f64| share_of_the_median(log_ratio);
+        let below = |log_ratio: f64| -share_of_the_median(-log_ratio);
+        let stated: Vec<&str> = STORM_INDEX_TABLE
+            .rows
+            .iter()
+            .filter_map(|row| match row.get(SHARE_COLUMN) {
+                Some(TableCell::Prose(share)) => Some(*share),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            stated,
+            [
+                format!(
+                    "up to {} % above or {} % below",
+                    above(QUIET_GRADE_LIMIT_LOG_RATIO),
+                    below(QUIET_GRADE_LIMIT_LOG_RATIO)
+                ),
+                format!(
+                    "{} to {} % above or {} to {} % below",
+                    above(QUIET_GRADE_LIMIT_LOG_RATIO),
+                    above(MODERATE_STORM_LOG_RATIO),
+                    below(QUIET_GRADE_LIMIT_LOG_RATIO),
+                    below(MODERATE_STORM_LOG_RATIO)
+                ),
+                format!(
+                    "{} to {} % above or {} to {} % below",
+                    above(MODERATE_STORM_LOG_RATIO),
+                    above(INTENSE_STORM_LOG_RATIO),
+                    below(MODERATE_STORM_LOG_RATIO),
+                    below(INTENSE_STORM_LOG_RATIO)
+                ),
+                format!(
+                    "over {} % above or over {} % below",
+                    above(INTENSE_STORM_LOG_RATIO),
+                    below(INTENSE_STORM_LOG_RATIO)
+                ),
+            ]
+        );
+    }
 
     /// The window's wording, in one place.
     #[test]

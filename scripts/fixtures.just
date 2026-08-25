@@ -29,6 +29,12 @@ ionex-fixtures *FILES:
 cddis-verify *ARGS:
     cargo run -p gt-ionex --example verify_cddis_mirror -- {{ ARGS }}
 
+# Refresh the gt-ionex node-series fixture from the JPL archive (network!).
+# Captures the storm days' per-node values the quiet-time grading reads.
+[group("fixtures")]
+ionex-node-series:
+    cargo run -p gt-ionex --example fetch_node_series_fixture
+
 # Refresh the gt-jam interference dataset fixtures from gpsjam.org (network!).
 # Name days to capture only those (additive); no args captures all.
 [group("fixtures")]

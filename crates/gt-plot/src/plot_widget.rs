@@ -10,6 +10,8 @@ mod jamming;
 mod legend;
 mod levels;
 mod lines;
+#[cfg(test)]
+mod reference_illustration;
 mod snap_error;
 mod style;
 mod tec;

@@ -10,13 +10,17 @@ authors.workspace = true
 doctest = false
 
 [dependencies]
-chrono.workspace = true
+# The `serde` feature dates the node-series fixture's days.
+chrono = { workspace = true, features = ["serde"] }
 # The archives serve IONEX files gzipped, and the parser reads text.
 flate2.workspace = true
 gt-fetch = { path = "../gt-fetch" }
 gt-types = { path = "../gt-types" }
 gt-ui-types = { path = "../gt-ui-types" }
 serde.workspace = true
+# The node-series fixture is JSON: a month of published files would not be
+# committable, and the values behind the storm index must be.
+serde_json.workspace = true
 strum.workspace = true
 thiserror.workspace = true
 
@@ -27,7 +31,6 @@ proptest.workspace = true
 # gt_fetch::Transport.
 reqwest.workspace = true
 rstest.workspace = true
-serde_json.workspace = true
 
 [lints]
 workspace = true

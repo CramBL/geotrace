@@ -7,6 +7,9 @@
 - **Environment Data:** Added support for Geomagnetic indices (Kp/Hp30) and Ionosphere maps (TEC), including auto-downloads, map heatmaps, and query support (e.g., `where tec > 100`).
 - **Environment Data:** Added solar flare markers from NASA's DONKI catalog to the plot, detailing peak times, class, and sunlit status. Hovering a marker shades how long that flare lasted, hovering the solar flare chip shades every flare the view reaches into, and the chip's right-click menu keeps every span shaded without hovering.
 - **Environment Data:** Added warnings (via toast and map icon) when space weather or aircraft interference reaches levels that could disrupt satellite navigation.
+  Each warning names the affected track and the value the metric reached, and clicking the map icon lists every affected track over the level each metric warns at.
+  The TEC reference material shows the May 2024 storm as the plot draws it, against the quiet-time median of the days before, and states the grade boundaries the warning fires on.
+  A TEC deviation states how long the storm grade held at the grid node it peaked over and whether the archived Kp and Hp30 place a geomagnetic storm in the 48 h before that peak, over one line naming what the grade is measured against.
 - **Log Viewer:** Added a dedicated log window to inspect loaded logs, view parse summaries, and center the map by clicking a line.
 - **Log Viewer:** Added plain text and regex filtering with the ability to save filters. Filtered lines now display on the map as color-coded hexagons with two-way hover sync.
 - **Log Viewer:** Added the ability to attach logs to specific recordings on load (retaining filters) and to paste log text directly using `Ctrl+V`.

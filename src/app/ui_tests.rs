@@ -1997,8 +1997,8 @@ fn snapshot_app_with_file_loaded() {
 }
 
 /// The load warning as the user meets it: the toast the application raises
-/// for a recording the archives place a disturbance in, over a loaded
-/// recording.
+/// for a recording the archives place a disturbance in, naming the recording
+/// and what each metric reached over it.
 #[test]
 fn snapshot_space_weather_warning_toast() {
     let (mut harness, _config_path) = TestHarness::builder()
@@ -2012,11 +2012,32 @@ fn snapshot_space_weather_warning_toast() {
     );
     harness.inner.run_steps(60);
 
-    harness
-        .state_mut()
-        .toasts
-        .warning(super::space_weather_warning::LOAD_WARNING);
-    // Two frames put the toast past its slide-in without reaching its expiry.
+    let recorded = harness
+        .state()
+        .shared
+        .borrow()
+        .loaded_files
+        .files()
+        .first()
+        .map(|file| file.metadata.time_range.start.date_naive())
+        .expect("the gold recording is loaded");
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path())
+        .open_or_create_archive::<SolarStore>()
+        .expect("archive");
+    // Every period of the archived day is at storm level, so the recording is
+    // disturbed wherever in the day its first track falls.
+    archive_kp_day(&store, recorded, 5.0);
+    let ctx = harness.inner.ctx.clone();
+    harness.state_mut().geomagnetic_indices = crate::app::solar::GeomagneticIndexScheduler::new(
+        ctx,
+        Some(store),
+        gt_solar::DEFAULT_BASE_URL.to_owned(),
+        gt_fetch::TransportSource::Offline,
+        gt_pending_writes::PendingWrites::default(),
+    );
+    // Two frames put the toast the archived day raises past its slide-in
+    // without reaching its expiry.
     harness.inner.step();
     harness.inner.step();
 
@@ -8358,16 +8379,31 @@ fn snapshot_app_plot_snap_error() {
     harness.snapshot_loose("app_plot_snap_error");
 }
 
-/// A Kp day archived as the fetch worker leaves one: eight three-hour
-/// periods climbing through the storm levels.
-fn archive_kp_day(store: &gt_store::GeomagneticIndexArchive, day: chrono::NaiveDate) {
+/// Every affected track the map indicator lists, as its label and its lines.
+fn listed_track_warnings(harness: &Harness<'_, App>) -> Vec<(String, Vec<String>)> {
+    harness
+        .state()
+        .space_weather_warning
+        .track_warnings()
+        .iter()
+        .map(|warning| (warning.track_label.clone(), warning.lines.clone()))
+        .collect()
+}
+
+/// A Kp day archived as the fetch worker leaves one: eight three-hour periods
+/// climbing from `first_period_index` through the storm levels.
+fn archive_kp_day(
+    store: &gt_store::GeomagneticIndexArchive,
+    day: chrono::NaiveDate,
+    first_period_index: f64,
+) {
     let midnight = day.and_time(chrono::NaiveTime::MIN).and_utc();
     let samples = (0..8_u32)
         .map(|period| gt_solar::series::KpSample {
             period_start: midnight + chrono::TimeDelta::hours(i64::from(period) * 3),
             activity: gt_solar::activity::GeomagneticActivity::from_published_value(
                 gt_solar::GeomagneticIndex::Kp,
-                2.0 + f64::from(period % 5),
+                first_period_index + f64::from(period % 5),
             ),
             status: gt_solar::series::KpStatus::Definitive,
         })
@@ -8429,7 +8465,7 @@ fn snapshot_app_plot_context_line_spans_the_archived_days() {
     let recorded = base_time().date_naive();
     for offset in [-1_i64, 0, 2, 3, 4] {
         let day = recorded + chrono::TimeDelta::days(offset);
-        archive_kp_day(&store, day);
+        archive_kp_day(&store, day, 2.0);
     }
     let ctx = harness.ctx.clone();
     harness.state_mut().geomagnetic_indices = crate::app::solar::GeomagneticIndexScheduler::new(
@@ -8473,7 +8509,11 @@ fn a_storm_day_archived_after_the_load_warns_on_the_map() {
     );
     harness.run_steps(2);
     assert!(
-        harness.state().space_weather_warning.lines().is_empty(),
+        harness
+            .state()
+            .space_weather_warning
+            .track_warnings()
+            .is_empty(),
         "no archived day overlaps the recording yet"
     );
 
@@ -8481,7 +8521,7 @@ fn a_storm_day_archived_after_the_load_warns_on_the_map() {
     let store = gt_store::Store::open_in(dir.path())
         .open_or_create_archive::<SolarStore>()
         .expect("archive");
-    archive_kp_day(&store, base_time().date_naive());
+    archive_kp_day(&store, base_time().date_naive(), 2.0);
     let ctx = harness.ctx.clone();
     harness.state_mut().geomagnetic_indices = crate::app::solar::GeomagneticIndexScheduler::new(
         ctx,
@@ -8493,14 +8533,11 @@ fn a_storm_day_archived_after_the_load_warns_on_the_map() {
     harness.run_steps(2);
 
     assert_eq!(
-        harness
-            .state()
-            .space_weather_warning
-            .lines()
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
-        ["Geomagnetic storm: Kp reached 5 (G1)"],
+        listed_track_warnings(&harness),
+        [(
+            "ride.gtd".to_owned(),
+            vec!["Geomagnetic storm: Kp reached 5 (G1)".to_owned()]
+        )],
         "the period the recording's fixes fall in is what it carries"
     );
     assert_eq!(harness.state().toasts.len(), 1);
@@ -8568,7 +8605,11 @@ fn a_tec_window_archived_after_the_load_warns_on_the_map() {
     );
     harness.run_steps(2);
     assert!(
-        harness.state().space_weather_warning.lines().is_empty(),
+        harness
+            .state()
+            .space_weather_warning
+            .track_warnings()
+            .is_empty(),
         "no archived day overlaps the recording yet"
     );
 
@@ -8597,18 +8638,17 @@ fn a_tec_window_archived_after_the_load_warns_on_the_map() {
     harness.run_steps(2);
 
     assert_eq!(
-        harness
-            .state()
-            .space_weather_warning
-            .lines()
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
-        [
-            "TEC deviation: +75 % from the 27-day median, moderate ionospheric storm (W = 3)",
-            "TEC over the recording: 35 to 35 TECU",
-        ],
-        "the recording's day stands well above the median of the 27 days before it"
+        listed_track_warnings(&harness),
+        [(
+            "ride.gtd".to_owned(),
+            vec![
+                "TEC deviation: +75 % from the 27-day median (warns from +43 %), moderate \
+                 ionospheric storm (W = 3), for 24 h"
+                    .to_owned(),
+                "TEC over the track: 35 to 35 TECU".to_owned(),
+            ]
+        )],
+        "every epoch of the recording's day stands well above the median of the 27 days before it"
     );
     assert_eq!(harness.state().toasts.len(), 1);
 
@@ -8617,6 +8657,35 @@ fn a_tec_window_archived_after_the_load_warns_on_the_map() {
         harness.state().toasts.len(),
         1,
         "a later frame does not raise the toast again"
+    );
+
+    let indices_dir = tempfile::tempdir().expect("temp dir");
+    let indices = gt_store::Store::open_in(indices_dir.path())
+        .open_or_create_archive::<SolarStore>()
+        .expect("archive");
+    archive_kp_day(&indices, recorded - chrono::TimeDelta::days(1), 5.0);
+    let ctx = harness.ctx.clone();
+    harness.state_mut().geomagnetic_indices = crate::app::solar::GeomagneticIndexScheduler::new(
+        ctx,
+        Some(indices),
+        gt_solar::DEFAULT_BASE_URL.to_owned(),
+        gt_fetch::TransportSource::Offline,
+        gt_pending_writes::PendingWrites::default(),
+    );
+    harness.run_steps(2);
+
+    assert_eq!(
+        listed_track_warnings(&harness),
+        [(
+            "ride.gtd".to_owned(),
+            vec![
+                "TEC deviation: +75 % from the 27-day median (warns from +43 %), moderate \
+                 ionospheric storm (W = 3), for 24 h, after a G5 storm 21 h before"
+                    .to_owned(),
+                "TEC over the track: 35 to 35 TECU".to_owned(),
+            ]
+        )],
+        "the day of indices archived after the load qualifies the deviation"
     );
 }
 
