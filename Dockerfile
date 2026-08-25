@@ -85,18 +85,36 @@ FROM rust-dev AS sdk-dev
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# cmake is already provided by the Rust dev stage (the default history backend
-# builds libhdf5), so it is not repeated here.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    clang \
-    clang-format \
-    clang-tidy \
+# cmake is absent from the package list below because the Rust dev stage already
+# installs it (the default history backend builds libhdf5).
+#
+# clang-format 14, the version bookworm packages, reformats
+# sdk/cpp/include/geotrace/geotrace.hpp: it ignores
+# `AllowShortFunctionsOnASingleLine: Inline` for a function body inside the
+# `#else` branch of a preprocessor conditional. This major matches the one
+# .github/workflows/ci_sdk.yml pins for its lint-sdk job.
+ENV LLVM_VERSION=22
+RUN curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+      -o /usr/share/keyrings/apt-llvm-org.asc \
+    && echo "deb [signed-by=/usr/share/keyrings/apt-llvm-org.asc] https://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-${LLVM_VERSION} main" \
+       > /etc/apt/sources.list.d/apt-llvm-org.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    "clang-${LLVM_VERSION}" \
+    "clang-format-${LLVM_VERSION}" \
+    "clang-tidy-${LLVM_VERSION}" \
     libcriterion-dev \
     ninja-build \
     tar \
     unzip \
     zip \
     && rm -rf /var/lib/apt/lists/*
+
+# apt.llvm.org installs only versioned binary names, which the lint and format
+# scripts do not use.
+RUN set -e; for tool in clang clang++ clang-format clang-tidy; do \
+        update-alternatives --install "/usr/bin/${tool}" "${tool}" \
+            "/usr/bin/${tool}-${LLVM_VERSION}" 100; \
+    done
 
 RUN git clone --depth=1 https://github.com/microsoft/vcpkg /opt/vcpkg \
     && /opt/vcpkg/bootstrap-vcpkg.sh -disableMetrics

@@ -7,6 +7,14 @@ the app).
 
 ## [unreleased]
 
+### Changed
+
+- `geotrace/geotrace.hpp` uses an include guard instead of `#pragma once`, matching `geotrace/unit_catalog.hpp`.
+
+### Fixed
+
+- The C gold example rejects a date or time number too large for an `int` instead of reading it with `sscanf`, which cannot report the overflow.
+
 ## [0.5.1] - 2026-08-05
 
 ### Changed

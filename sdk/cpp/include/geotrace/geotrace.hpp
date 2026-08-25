@@ -18,7 +18,8 @@
  * the `try_*` API.
  */
 
-#pragma once
+#ifndef GEOTRACE_GEOTRACE_HPP
+#define GEOTRACE_GEOTRACE_HPP
 
 #if __has_include(<version>)
 #include <version>
@@ -219,7 +220,7 @@ namespace detail {
 
 // Encode a filesystem path as UTF-8 for the C API.
 inline std::string path_string(const std::filesystem::path &p) {
-#if defined(__cpp_lib_char8_t)
+#ifdef __cpp_lib_char8_t
     const auto u8 = p.u8string();
     return std::string(u8.begin(), u8.end());
 #else
@@ -1489,3 +1490,5 @@ inline NavFile FileBuilder::finish() {
 }
 
 } // namespace geotrace
+
+#endif // GEOTRACE_GEOTRACE_HPP

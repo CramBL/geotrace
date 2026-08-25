@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.21)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(Criterion REQUIRED IMPORTED_TARGET criterion)
 
-foreach(test test_builder test_channels test_null_guards test_thread_local)
+foreach(test test_builder test_channels test_gold_timestamp test_null_guards test_thread_local)
     add_executable(${test} ${test}.c)
     target_link_libraries(${test} PRIVATE GeoTrace::C PkgConfig::Criterion)
 

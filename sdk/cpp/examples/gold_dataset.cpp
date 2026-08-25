@@ -9,6 +9,7 @@
 
 #include <geotrace/geotrace.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -51,6 +52,17 @@ std::vector<std::string> split_csv(const std::string &line) {
     return split(line, ',');
 }
 
+// The first N comma-separated fields of `line`, or nullopt when it holds fewer.
+template <std::size_t N>
+std::optional<std::array<std::string, N>> split_csv_fields(const std::string &line) {
+    auto cols = split_csv(line);
+    if (cols.size() < N)
+        return std::nullopt;
+    std::array<std::string, N> fields;
+    std::move(cols.begin(), cols.begin() + static_cast<std::ptrdiff_t>(N), fields.begin());
+    return fields;
+}
+
 bool is_leap(int y) noexcept {
     return (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
 }
@@ -74,11 +86,11 @@ std::optional<geotrace::Timestamp> parse_ts(const std::string &s) {
         // Optional fractional seconds (".ffffff"), kept as microseconds.
         std::size_t i = 19;
         long frac_us = 0;
-        if (i < s.size() && s[i] == '.') {
+        if (i < s.size() && s.at(i) == '.') {
             ++i;
             std::string digits;
-            while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
-                digits.push_back(s[i]);
+            while (i < s.size() && s.at(i) >= '0' && s.at(i) <= '9') {
+                digits.push_back(s.at(i));
                 ++i;
             }
             digits.resize(6, '0'); // pad / truncate to microseconds
@@ -87,8 +99,8 @@ std::optional<geotrace::Timestamp> parse_ts(const std::string &s) {
         // Optional timezone offset ("+HH:MM" / "-HH:MM").
         char sign = '+';
         int tz_h = 0, tz_m = 0;
-        if (i < s.size() && (s[i] == '+' || s[i] == '-')) {
-            sign = s[i];
+        if (i < s.size() && (s.at(i) == '+' || s.at(i) == '-')) {
+            sign = s.at(i);
             if (i + 6 <= s.size()) {
                 tz_h = std::stoi(s.substr(i + 1, 2));
                 tz_m = std::stoi(s.substr(i + 4, 2));
@@ -189,13 +201,14 @@ void load_meta(geotrace::FileBuilder &b, const fs::path &base) {
     std::getline(f, line); // skip header
     if (!std::getline(f, line))
         throw geotrace::IoError("meta.csv: missing data row");
-    auto cols = split_csv(rtrim(std::move(line)));
-    if (cols.size() < 5)
+    auto fields = split_csv_fields<5>(rtrim(std::move(line)));
+    if (!fields)
         throw geotrace::IoError("meta.csv: need 5 columns");
-    auto travel_mode = geotrace::travel_mode_from_name(cols[4]);
+    const auto &[title, device, notes, identity, travel_mode_name] = *fields;
+    auto travel_mode = geotrace::travel_mode_from_name(travel_mode_name);
     if (!travel_mode)
-        throw geotrace::IoError("meta.csv: unknown travel mode: " + cols[4]);
-    b.title(cols[0]).device(cols[1]).notes(cols[2]).identity(cols[3]).travel_mode(*travel_mode);
+        throw geotrace::IoError("meta.csv: unknown travel mode: " + travel_mode_name);
+    b.title(title).device(device).notes(notes).identity(identity).travel_mode(*travel_mode);
 }
 
 void load_event_styles(geotrace::FileBuilder &b, const fs::path &base) {
@@ -206,10 +219,11 @@ void load_event_styles(geotrace::FileBuilder &b, const fs::path &base) {
         line = rtrim(std::move(line));
         if (line.empty())
             continue;
-        auto cols = split_csv(line);
-        if (cols.size() < 3)
+        auto fields = split_csv_fields<3>(line);
+        if (!fields)
             continue;
-        b.add_event_marker_style(geotrace::EventMarkerStyle{cols[0], parse_icon(cols[1]), cols[2]});
+        const auto &[variant_path, icon, color] = *fields;
+        b.add_event_marker_style(geotrace::EventMarkerStyle{variant_path, parse_icon(icon), color});
     }
 }
 
@@ -222,19 +236,21 @@ std::vector<SatRow> load_satellites(const fs::path &base) {
         line = rtrim(std::move(line));
         if (line.empty())
             continue;
-        auto cols = split_csv(line);
-        if (cols.size() < 8)
+        auto fields = split_csv_fields<8>(line);
+        if (!fields)
             continue;
+        const auto &[gps_time, sys_time, constellation, prn, in_fix, elevation, azimuth, snr] =
+            *fields;
         rows.push_back(SatRow{
-            cols[0],
-            cols[1],
+            gps_time,
+            sys_time,
             geotrace::Satellite{
-                parse_constellation(cols[2]),
-                static_cast<std::uint32_t>(std::stoul(cols[3])),
-                cols[4] == "true",
-                parse_opt_double(cols[5]),
-                parse_opt_double(cols[6]),
-                parse_opt_double(cols[7]),
+                parse_constellation(constellation),
+                static_cast<std::uint32_t>(std::stoul(prn)),
+                in_fix == "true",
+                parse_opt_double(elevation),
+                parse_opt_double(azimuth),
+                parse_opt_double(snr),
             },
         });
     }
@@ -249,33 +265,32 @@ void load_fixes(geotrace::FileBuilder &b, const fs::path &base, const std::vecto
         line = rtrim(std::move(line));
         if (line.empty())
             continue;
-        auto cols = split_csv(line);
-        // cols: track_id, gps_time, sys_time, lat, lon, heading_deg, speed_kmh, eph_m
-        if (cols.size() < 8)
+        auto fields = split_csv_fields<8>(line);
+        if (!fields)
             continue;
+        [[maybe_unused]] const auto &[track_id, gps_time, sys_time, lat, lon, heading_deg,
+                                      speed_kmh, eph_m] = *fields;
 
-        auto gps_ts = parse_ts(cols[1]);
-        auto sys_ts = parse_ts(cols[2]);
-        auto lat = std::stod(cols[3]);
-        auto lon = std::stod(cols[4]);
-        auto hdg = parse_opt_double(cols[5]);
-        auto kmh = parse_opt_double(cols[6]);
+        auto gps_ts = parse_ts(gps_time);
+        auto sys_ts = parse_ts(sys_time);
+        auto hdg = parse_opt_double(heading_deg);
+        auto kmh = parse_opt_double(speed_kmh);
 
         b.add(geotrace::NavFix{
             gps_ts.value_or(geotrace::Timestamp::none()),
             sys_ts.value_or(geotrace::Timestamp::none()),
-            geotrace::Angle::degrees(lat),
-            geotrace::Angle::degrees(lon),
+            geotrace::Angle::degrees(std::stod(lat)),
+            geotrace::Angle::degrees(std::stod(lon)),
             hdg ? std::optional{geotrace::Angle::degrees(*hdg)} : std::nullopt,
             kmh ? std::optional{geotrace::Velocity::kmh(*kmh)} : std::nullopt,
-            parse_opt_double(cols[7]),
+            parse_opt_double(eph_m),
         });
 
         geotrace::SatelliteReport report{};
         report.gps_time = gps_ts.value_or(geotrace::Timestamp::none());
         report.sys_time = sys_ts.value_or(geotrace::Timestamp::none());
         for (const auto &row : sats) {
-            if (row.gps_time == cols[1] && row.sys_time == cols[2])
+            if (row.gps_time == gps_time && row.sys_time == sys_time)
                 report.tracked.push_back(row.sat);
         }
         if (!report.tracked.empty())
@@ -291,13 +306,14 @@ void load_markers(geotrace::FileBuilder &b, const fs::path &base) {
         line = rtrim(std::move(line));
         if (line.empty())
             continue;
-        auto cols = split_csv(line);
-        if (cols.size() < 3)
+        auto fields = split_csv_fields<3>(line);
+        if (!fields)
             continue;
-        auto ts = parse_ts(cols[0]);
+        const auto &[time, label, icon] = *fields;
+        auto ts = parse_ts(time);
         if (!ts)
             throw geotrace::IoError("markers.csv: missing timestamp");
-        b.add(geotrace::Annotation{*ts, cols[1], parse_icon(cols[2])});
+        b.add(geotrace::Annotation{*ts, label, parse_icon(icon)});
     }
 }
 
@@ -309,13 +325,14 @@ void load_events(geotrace::FileBuilder &b, const fs::path &base) {
         line = rtrim(std::move(line));
         if (line.empty())
             continue;
-        auto cols = split_csv(line);
-        if (cols.size() < 3)
+        auto fields = split_csv_fields<3>(line);
+        if (!fields)
             continue;
-        auto ts = parse_ts(cols[0]);
+        const auto &[sys_time, variant_path, annotation] = *fields;
+        auto ts = parse_ts(sys_time);
         if (!ts)
             throw geotrace::IoError("events.csv: missing sys_time");
-        b.add(geotrace::EventMarker{cols[1], *ts, cols[2]});
+        b.add(geotrace::EventMarker{variant_path, *ts, annotation});
     }
 }
 
@@ -330,37 +347,37 @@ void load_channels(geotrace::FileBuilder &b, const fs::path &base) {
         line = rtrim(std::move(line));
         if (line.empty())
             continue;
-        auto cols = split_csv(line);
-        // cols: name, unit, period_deg, description, components, time, values
-        if (cols.size() < 7)
+        auto fields = split_csv_fields<7>(line);
+        if (!fields)
             continue;
+        const auto &[name, unit, period_deg, description, components, time, values] = *fields;
 
         geotrace::Channel *ch = nullptr;
         for (auto &existing : channels) {
-            if (existing.name == cols[0]) {
+            if (existing.name == name) {
                 ch = &existing;
                 break;
             }
         }
         if (ch == nullptr) {
             geotrace::Channel channel;
-            channel.name = cols[0];
-            if (!cols[1].empty())
-                channel.unit = geotrace::ChannelUnit::parse_recognized(cols[1]);
-            if (!cols[2].empty())
-                channel.period = geotrace::Angle::degrees(std::stod(cols[2]));
-            channel.description = cols[3];
-            if (!cols[4].empty())
-                channel.components = split(cols[4], ';');
+            channel.name = name;
+            if (!unit.empty())
+                channel.unit = geotrace::ChannelUnit::parse_recognized(unit);
+            if (!period_deg.empty())
+                channel.period = geotrace::Angle::degrees(std::stod(period_deg));
+            channel.description = description;
+            if (!components.empty())
+                channel.components = split(components, ';');
             channels.push_back(std::move(channel));
             ch = &channels.back();
         }
 
-        auto ts = parse_ts(cols[5]);
+        auto ts = parse_ts(time);
         if (!ts)
             throw geotrace::IoError("channels.csv: invalid timestamp");
         ch->times.push_back(*ts);
-        for (const auto &value : split(cols[6], ';'))
+        for (const auto &value : split(values, ';'))
             ch->values.push_back(std::stod(value));
     }
 

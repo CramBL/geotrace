@@ -72,10 +72,10 @@ TEST_CASE("channels: scalar and vector survive write → from_bytes → read") {
     CHECK(accel.components == std::vector<std::string>{"x", "y", "z"});
     CHECK_FALSE(accel.period.has_value());
     REQUIRE(accel.times.size() == 2);
-    CHECK(accel.times[1].unix_micros == T1.unix_micros);
+    CHECK(accel.times.at(1).unix_micros == T1.unix_micros);
     REQUIRE(accel.values.size() == 6);
-    CHECK(accel.values[0] == doctest::Approx(0.1));
-    CHECK(accel.values[5] == doctest::Approx(1.02));
+    CHECK(accel.values.at(0) == doctest::Approx(0.1));
+    CHECK(accel.values.at(5) == doctest::Approx(1.02));
 
     auto incline = file.channel(1);
     CHECK(incline.name == "incline");

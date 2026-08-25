@@ -166,11 +166,15 @@ jobs:
         with:
           persist-credentials: false
 
+      # The LLVM major must match the one the SDK dev image installs (Dockerfile,
+      # sdk-dev stage): clang-format output differs between majors. setup-cpp
+      # installs these from apt.llvm.org by major, ignoring any minor/patch
+      # given here.
       - name: Install clang tools and cmake
         uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
         with:
-          clang-format: true
-          clang-tidy: true
+          clang-format: "22"
+          clang-tidy: "22"
           cmake: true
           ninja: true
 
