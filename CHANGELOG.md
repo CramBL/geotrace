@@ -33,25 +33,25 @@
 
 ### Changed
 
-- **Log Processing:** Log files now successfully load even if some lines have unrecognized timestamps by interpolating from neighboring data.
+- **Environment Data:** Grouped space weather and interference chips together with descriptive hover states, and made the aircraft interference line span all archived days in view.
 - **Interface:** Redesigned query results into a tabbed panel below the editor, opening with a line per query stating what it matched.
   A sortable table lists every match of the run with its duration as a clock reading, and the picked match's points sit below it under shared column headers, every number over a bar for its size against the whole run's matches.
   A copy button puts every row of the run on the clipboard as tab-separated values.
 - **Interface:** Drag the splitter between the query results' two tables to divide the tab between them, or move the match list into a window of its own.
 - **Interface:** The Settings window now displays one category at a time using a left-side navigation rail.
 - **Interface:** Label text no longer selects, so readouts, captions and table rows show the ordinary cursor. Text worth copying still selects: recording metadata, the recording history path, the version in About, the reference windows' query examples, and a clicked marker's label, position and note.
-- **Plotting:** Grouped space weather and interference chips together with descriptive hover states, and made the aircraft interference line span all archived days in view.
+- **Log Viewer:** Log files now successfully load even if some lines have unrecognized timestamps by interpolating from neighboring data.
 - **System:** The window opens right away and the databases open behind it, so a large archive no longer delays the first frame.
   Files named on the command line or dropped in are loaded and stored as usual once the databases are open, including after a wait for another GeoTrace.
 
 ### Fixed
 
-- **File Operations:** Older environment archives are now automatically rebuilt on load so that deleting old days properly frees disk space.
+- **Interface:** Fixed external links in dialogs and reference materials so they correctly open in the web browser.
+- **Interface:** Fixed hover states in the plot so they correctly highlight the side panel rows and prevented hover labels from overlapping.
+- **Interface:** Fixed the plot's file legend so it no longer covers the settings and query windows.
 - **Map & Tracks:** Fixed snapped tracks improperly routing through nearby roads during dead-reckoning gaps (e.g., parking garages).
 - **Map & Tracks:** Fixed an issue where overlapping snapped tracks would flicker when redrawn.
-- **UI:** Fixed external links in dialogs and reference materials so they correctly open in the web browser.
-- **UI:** Fixed hover states in the plot so they correctly highlight the side panel rows and prevented hover labels from overlapping.
-- **UI:** Fixed the plot's file legend so it no longer covers the settings and query windows.
+- **Settings & Storage:** Older environment archives are now automatically rebuilt on load so that deleting old days properly frees disk space.
 
 ## 0.12.0 - 2026-08-15
 
