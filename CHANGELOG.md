@@ -16,36 +16,39 @@
 - **Settings & Storage:** Added a storage manager to view disk usage for environment data, with options to manually delete old days or auto-prune them on startup.
 - **Settings & Storage:** Added a search field, a live preview for the recording name template, and consolidated reference links for atmospheric metrics.
 - **System:** Added the `--offline` flag to run without network access (replacing the `GEOTRACE_OFFLINE` environment variable).
-- **System:** Added a shutdown window that lists each write still finishing and its progress, with "Run in background" to close the window and let them finish, and "Force quit…" to end at once after a confirmation listing what each unfinished write discards.
-- **System:** The shutdown window follows an archive delete with a bar, advancing as it rewrites each column.
-- **System:** Ctrl+C and `kill` now finish the writes in progress before exiting, the same as closing the window. A second signal quits at once, discarding them.
-- **System:** The window now opens right away and the databases open behind it, so a large archive no longer delays the first frame. Files named on the command line or dropped in wait for them and are stored as usual.
-- **System:** A second instance can no longer quietly work on the same archives: GeoTrace marks its data directory as in use while it runs.
-- **System:** A second GeoTrace started on a data directory another instance is using now waits for it and shows what that instance is doing. Files it was started with load once the wait ends.
-- **System:** That wait can now be ended with "Take over write access…", after a confirmation naming what the other instance is doing.
-- **System:** After taking over write access, an archive a delete was interrupted in is offered as a choice: recover it and lose its archived days, or leave it alone and without it for the session.
-- **System:** That wait can also be left with "Start read-only", which reads the recordings and archives beside the other GeoTrace so both windows can be open at once. A read-only session is marked in the window's corner, stores, downloads, deletes and saves nothing, and grays every control that would write with the reason. It stays read-only until GeoTrace is restarted.
-- **System:** That wait now says which of an absent, an unreadable and a damaged status file it found for the other GeoTrace, and marks a report that GeoTrace stopped refreshing with how old it is.
-- **System:** A take-over is now recorded in the data directory, and a later take-over that finds an interrupted delete in an archive nothing has written since states when write access was taken and from which process.
+- **System:** Closing GeoTrace finishes the writes still in progress instead of ending them mid-file.
+  A shutdown window lists each unfinished write and archive delete with its progress.
+  "Run in background" closes the window and leaves them to finish, and "Force quit…" ends them at once after a confirmation naming what each one discards.
+  Ctrl+C and `kill` shut down the same way, and a second signal quits immediately, discarding the writes.
+- **System:** Only one GeoTrace writes to a data directory at a time.
+  A second one started on a directory already in use waits for it and opens the recordings and archives as soon as it is free.
+  The wait states what the GeoTrace holding the directory is doing, and marks a report it stopped refreshing with how old it is.
+  It also says when there is no report at all, and when one cannot be read or is damaged.
+  "Take over write access…" ends the wait after a confirmation naming what the other GeoTrace is doing and warning that both windows write the same settings file: the settings kept are those of whichever closes last.
+  A take-over then asks about each archive a delete was interrupted in: recover it and lose its archived days, or leave it alone and go without it for the session.
+  That question states when write access was taken and from which process.
+- **System:** "Start read-only" reads the recordings and archives beside the GeoTrace holding the data directory, including the interference, geomagnetic, TEC and flare data in an archive it has open, so both windows can be open at once.
+  A read-only session stores, downloads, deletes and saves nothing, is marked in the window's corner, and grays every control that would write, with the reason.
+  It stays read-only until GeoTrace is restarted.
 
 ### Changed
 
 - **Log Processing:** Log files now successfully load even if some lines have unrecognized timestamps by interpolating from neighboring data.
-- **Interface:** Redesigned query results into a tabbed panel below the editor: a line per query stating what it matched, a sortable table of every match of the run with its duration as a clock reading, and the picked match's points under shared column headers, every number over a bar for its size against the whole run's matches, with TSV export. Drag the splitter between the two tables to divide the tab between them, or move the match list into a window of its own.
+- **Interface:** Redesigned query results into a tabbed panel below the editor, opening with a line per query stating what it matched.
+  A sortable table lists every match of the run with its duration as a clock reading, and the picked match's points sit below it under shared column headers, every number over a bar for its size against the whole run's matches.
+  A copy button puts every row of the run on the clipboard as tab-separated values.
+- **Interface:** Drag the splitter between the query results' two tables to divide the tab between them, or move the match list into a window of its own.
 - **Interface:** The Settings window now displays one category at a time using a left-side navigation rail.
 - **Interface:** Label text no longer selects, so readouts, captions and table rows show the ordinary cursor. Text worth copying still selects: recording metadata, the recording history path, the version in About, the reference windows' query examples, and a clicked marker's label, position and note.
 - **Plotting:** Grouped space weather and interference chips together with descriptive hover states, and made the aircraft interference line span all archived days in view.
+- **System:** The window opens right away and the databases open behind it, so a large archive no longer delays the first frame.
+  Files named on the command line or dropped in are loaded and stored as usual once the databases are open, including after a wait for another GeoTrace.
 
 ### Fixed
 
-- **Environment Data:** A read-only session no longer runs without interference, geomagnetic, TEC or flare data when the other GeoTrace had an archive open at startup: it reads that archive's day index again.
-- **Environment Data:** A read of an environment archive no longer fails outright while the other GeoTrace has that archive open for one of its own operations: it waits up to 40 ms for the open to finish and reads again.
-- **File Operations:** Closing the app no longer freezes the window, and writes in progress finish instead of leaving a partially written file behind.
 - **File Operations:** Older environment archives are now automatically rebuilt on load so that deleting old days properly frees disk space.
 - **Map & Tracks:** Fixed snapped tracks improperly routing through nearby roads during dead-reckoning gaps (e.g., parking garages).
 - **Map & Tracks:** Fixed an issue where overlapping snapped tracks would flicker when redrawn.
-- **Settings & Storage:** A settings save in progress is now listed in the shutdown window and in the force-quit confirmation, and a save that cannot replace `config.toml` no longer leaves a `config.toml.tmp` behind.
-- **Settings & Storage:** After "Take over write access…", settings changed here are no longer saved over the other GeoTrace's settings while it is still running: saving resumes once the other GeoTrace exits, and closing this window always saves them. The take-over confirmation now says that both windows write the same settings file.
 - **UI:** Fixed external links in dialogs and reference materials so they correctly open in the web browser.
 - **UI:** Fixed hover states in the plot so they correctly highlight the side panel rows and prevented hover labels from overlapping.
 - **UI:** Fixed the plot's file legend so it no longer covers the settings and query windows.
