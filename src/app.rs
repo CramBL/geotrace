@@ -47,6 +47,7 @@ mod tec;
 mod tec_mirrors_ui;
 mod tec_quiet_time;
 mod track_day_values;
+mod unarchived_day;
 pub use storage::Storage;
 #[cfg(feature = "self-update")]
 pub mod update;

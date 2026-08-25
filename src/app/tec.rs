@@ -26,7 +26,7 @@ use gt_ionex::tec::TotalElectronContent;
 use gt_ionex::text;
 use gt_ionex::{IonexProduct, calendar, transport};
 use gt_map::{TecHeatmapSnapshot, TecLayer};
-use gt_pending_writes::{PendingWrites, WriteRefusal};
+use gt_pending_writes::PendingWrites;
 use gt_store::{
     ArchiveUsage, EnvironmentArchive, IonexStore, IonexStoreError, ReadOnlyIonexStore,
     TecMapArchive, WritableArchive,
@@ -45,6 +45,7 @@ use super::environment_storage::PrunedDays;
 use super::fix_positions::FixPositionTimeline;
 use super::tec_quiet_time::QuietTimeDeviationCache;
 use super::track_day_values::TrackValuesByArchivedDays;
+use super::unarchived_day::UnarchivedDay;
 
 /// What one day's fetch produced.
 enum MapDayMessage {
@@ -57,25 +58,21 @@ enum MapDayMessage {
         /// returned.
         skipped: Vec<MirrorAttempt>,
     },
-    Failed {
-        day: NaiveDate,
-        detail: String,
-    },
-    /// The day was downloaded, then discarded unarchived because the write
-    /// registry turned it away.
-    NotArchived {
-        day: NaiveDate,
-        refusal: WriteRefusal,
-    },
+    Unarchived(UnarchivedDay),
 }
 
 impl MapDayMessage {
     fn day(&self) -> NaiveDate {
-        match *self {
-            Self::Stored { day, .. } | Self::Failed { day, .. } | Self::NotArchived { day, .. } => {
-                day
-            }
+        match self {
+            Self::Stored { day, .. } => *day,
+            Self::Unarchived(unarchived) => unarchived.day(),
         }
+    }
+}
+
+impl From<UnarchivedDay> for MapDayMessage {
+    fn from(unarchived: UnarchivedDay) -> Self {
+        Self::Unarchived(unarchived)
     }
 }
 
@@ -345,12 +342,8 @@ impl TecMapScheduler {
                     }
                     log::info!("Archived {map_count} {product} TEC maps for {day} from {mirror}");
                 }
-                MapDayMessage::Failed { day, detail } => {
-                    log::error!("No TEC maps archived for {day}: {detail}");
-                    self.days.report_failure(day, detail);
-                }
-                MapDayMessage::NotArchived { day, refusal } => {
-                    log::debug!("No TEC maps archived for {day}: {refusal}");
+                MapDayMessage::Unarchived(unarchived) => {
+                    unarchived.log_and_record_failure("TEC maps", &mut self.days);
                 }
             }
         }
@@ -670,16 +663,11 @@ fn ingest(
                 skipped,
             } => (mirror, product, maps, skipped),
             transport::DayFetch::Missing => {
-                return MapDayMessage::Failed {
-                    day,
-                    detail: "no map published by any mirror".to_owned(),
-                };
+                return UnarchivedDay::failed(day, "no map published by any mirror".to_owned())
+                    .into();
             }
             transport::DayFetch::Failed(failure) => {
-                return MapDayMessage::Failed {
-                    day,
-                    detail: failure.to_string(),
-                };
+                return UnarchivedDay::failed(day, failure.to_string()).into();
             }
         };
 
@@ -700,13 +688,10 @@ fn ingest(
                     map_count: maps.maps().len(),
                     skipped,
                 },
-                Err(err) => MapDayMessage::Failed {
-                    day,
-                    detail: err.to_string(),
-                },
+                Err(err) => UnarchivedDay::failed(day, err.to_string()).into(),
             },
         )
-        .unwrap_or_else(|refusal| MapDayMessage::NotArchived { day, refusal })
+        .unwrap_or_else(|refusal| UnarchivedDay::refused(day, refusal).into())
 }
 
 #[cfg(test)]
@@ -725,7 +710,7 @@ mod tests {
     use gt_fetch::BytesResponse;
     use gt_ionex::quiet_time::IonosphericStormGrade;
     use gt_ionex::{DEFAULT_BASE_URL, MirrorLayout};
-    use gt_pending_writes::WriteAccess;
+    use gt_pending_writes::{WriteAccess, WriteRefusal};
     use gt_store::Store;
     use gt_test_utils::{ScriptedTransport, UrlPrefixAnswers, ionex_fixtures, pending_writes};
 
@@ -1115,11 +1100,12 @@ mod tests {
         );
 
         match message {
-            MapDayMessage::Failed { detail, .. } => assert!(
+            MapDayMessage::Unarchived(UnarchivedDay::Failed { detail, .. }) => assert!(
                 detail.contains(gt_ionex::text::MIRROR_SKIPPED_WITHOUT_TOKEN),
                 "{detail}"
             ),
-            MapDayMessage::Stored { .. } | MapDayMessage::NotArchived { .. } => {
+            MapDayMessage::Stored { .. }
+            | MapDayMessage::Unarchived(UnarchivedDay::Refused { .. }) => {
                 panic!("the archive was never requested")
             }
         }
@@ -1144,10 +1130,13 @@ mod tests {
         let mut scheduler = scheduler_without_archive();
         scheduler
             .tx
-            .send(MapDayMessage::Failed {
-                day: day(2024, 5, 10),
-                detail: "final: HTTP 500 Internal Server Error".to_owned(),
-            })
+            .send(
+                UnarchivedDay::failed(
+                    day(2024, 5, 10),
+                    "final: HTTP 500 Internal Server Error".to_owned(),
+                )
+                .into(),
+            )
             .expect("send");
         scheduler.poll();
 
@@ -1312,7 +1301,7 @@ mod tests {
             day(2024, 5, 10),
         );
 
-        let MapDayMessage::NotArchived { refusal, .. } = message else {
+        let MapDayMessage::Unarchived(UnarchivedDay::Refused { refusal, .. }) = message else {
             panic!("the day was archived where the insert is refused");
         };
         assert_eq!(refusal, expected);
@@ -1336,7 +1325,10 @@ mod tests {
             day(2024, 5, 10),
         );
 
-        assert!(matches!(message, MapDayMessage::Failed { .. }));
+        assert!(matches!(
+            message,
+            MapDayMessage::Unarchived(UnarchivedDay::Failed { .. })
+        ));
         assert!(store.read().archived_days().expect("days").is_empty());
     }
 
@@ -1371,8 +1363,8 @@ mod tests {
                 assert_eq!(mirror, MirrorBaseUrl::new("https://second.example"));
                 assert_eq!(skipped.len(), 1, "the first mirror holds no file");
             }
-            MapDayMessage::Failed { detail, .. } => panic!("{detail}"),
-            MapDayMessage::NotArchived { .. } => {
+            MapDayMessage::Unarchived(UnarchivedDay::Failed { detail, .. }) => panic!("{detail}"),
+            MapDayMessage::Unarchived(UnarchivedDay::Refused { .. }) => {
                 panic!("the day should have been archived, not refused")
             }
         }
@@ -1405,14 +1397,15 @@ mod tests {
         );
 
         match message {
-            MapDayMessage::Failed { day, detail } => {
+            MapDayMessage::Unarchived(UnarchivedDay::Failed { day, detail }) => {
                 assert_eq!(
                     DayFailure { day, detail }.to_string(),
                     "2024-05-10 - final: https://first.example: HTTP 500 Internal Server Error, \
                      https://second.example: HTTP 500 Internal Server Error"
                 );
             }
-            MapDayMessage::Stored { .. } | MapDayMessage::NotArchived { .. } => {
+            MapDayMessage::Stored { .. }
+            | MapDayMessage::Unarchived(UnarchivedDay::Refused { .. }) => {
                 panic!("no mirror served a file")
             }
         }
@@ -1482,14 +1475,8 @@ mod tests {
         map_count: 13,
         skipped: Vec::new(),
     })]
-    #[case::failed(MapDayMessage::Failed {
-        day: day(2024, 5, 10),
-        detail: "final: HTTP 500 Internal Server Error".to_owned(),
-    })]
-    #[case::not_archived(MapDayMessage::NotArchived {
-        day: day(2024, 5, 10),
-        refusal: WriteRefusal::ShuttingDown,
-    })]
+    #[case::failed(UnarchivedDay::failed(day(2024, 5, 10), "final: HTTP 500 Internal Server Error".to_owned()).into())]
+    #[case::refused(UnarchivedDay::refused(day(2024, 5, 10), WriteRefusal::ShuttingDown).into())]
     fn progress_advances_on_every_outcome(#[case] message: MapDayMessage) {
         let mut scheduler = scheduler_without_archive();
         scheduler
