@@ -160,7 +160,7 @@ impl LogAssociationDialog {
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 ui.set_max_width(WIDTH_PX);
                 ui.label(format!(

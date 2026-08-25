@@ -777,7 +777,7 @@ impl HistoryWindow {
                 Window::new("Delete hidden data?")
                     .collapsible(false)
                     .resizable(false)
-                    .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                    .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                     .show(ctx, |ui| {
                         let track_label = gt_fmt::pluralize(hidden_count, "track", "tracks");
                         ui.label(format!(

@@ -382,7 +382,7 @@ impl App {
                     Window::new("History database in use")
                         .collapsible(false)
                         .resizable(false)
-                        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                         .show(ui.ctx(), |ui| {
                             match taken_over {
                                 Some(instance) => {
@@ -421,7 +421,7 @@ impl App {
                     Window::new("History database locked")
                         .collapsible(false)
                         .resizable(false)
-                        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                         .show(ui.ctx(), |ui| {
                             ui.label("The recording history is marked as open for write.");
                             ui.label(
@@ -465,7 +465,7 @@ impl App {
                     Window::new("History database is corrupted")
                         .collapsible(false)
                         .resizable(false)
-                        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                         .show(ui.ctx(), |ui| {
                             ui.label("The recording history database could not be opened.");
                             ui.label(
@@ -516,7 +516,7 @@ impl App {
             Window::new("Track splitting differs")
                 .collapsible(false)
                 .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ui.ctx(), |ui| {
                     // Bound the width so a long recording name wraps.
                     ui.set_max_width(460.0);
@@ -604,7 +604,7 @@ impl App {
             Window::new("Auto-prune")
                 .resizable(false)
                 .collapsible(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ui.ctx(), |ui| {
                     // Bound the width so a long recording identity truncates.
                     ui.set_max_width(460.0);

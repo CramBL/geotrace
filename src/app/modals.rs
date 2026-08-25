@@ -134,7 +134,7 @@ pub fn show_delete_confirmation(
         .collapsible(false)
         .resizable(true)
         .min_width(420.0)
-        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ui.ctx(), |ui| {
             ScrollArea::vertical()
                 .max_height(500.0)
@@ -530,7 +530,7 @@ pub fn show_about_dialog(ui: &egui::Ui, open: &mut bool, version: &str) {
         .open(&mut keep_open)
         .collapsible(false)
         .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ui.ctx(), |ui| {
             // Selectable: the version is what a bug report quotes.
             ui.add(
@@ -614,7 +614,7 @@ pub fn show_snap_consent_dialog(
         .resizable(false)
         .min_width(420.0)
         .open(&mut open)
-        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ui.ctx(), |ui| {
             ui.label(
                 "Snap to road matches a recorded track against the OpenStreetMap road network.",
@@ -708,7 +708,7 @@ pub fn show_snap_replace_dialog(ui: &egui::Ui, costing_name: &str) -> Option<Sna
         .resizable(false)
         .min_width(380.0)
         .open(&mut open)
-        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ui.ctx(), |ui| {
             ui.label(format!(
                 "This track already has snap to road data for {costing_name}."
@@ -789,7 +789,7 @@ pub fn show_snap_scope_dialog(
         .resizable(false)
         .min_width(380.0)
         .open(&mut open)
-        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ui.ctx(), |ui| {
             Grid::new("snap_scope_grid")
                 .num_columns(2)
@@ -885,7 +885,7 @@ pub fn show_snap_auto_prompt(ui: &egui::Ui, server_url: &str) -> Option<SnapAuto
         .resizable(false)
         .min_width(420.0)
         .open(&mut open)
-        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ui.ctx(), |ui| {
             ui.label(
                 "Snap to road can run automatically: every track you load and show on the map \
@@ -931,7 +931,7 @@ pub fn show_mapbox_token_dialog(
         .collapsible(false)
         .resizable(false)
         .open(&mut open)
-        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ui.ctx(), |ui| {
             ui.label("Satellite view requires a Mapbox API token");
             ui.label("Get one free at mapbox.com");
