@@ -495,39 +495,30 @@ fn show_take_over_confirmation(
     ui: &egui::Ui,
     unavailable: &DataDirectoryUnavailable,
 ) -> Option<TakeOverChoice> {
-    let mut choice = ui
-        .ctx()
-        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        .then_some(TakeOverChoice::Cancel);
-
-    Window::new(TAKE_OVER_CONFIRMATION_TITLE)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ui.ctx(), |ui| {
-            ui.set_max_width(TAKE_OVER_CONFIRMATION_MAX_WIDTH);
+    modals::confirmation_dialog(
+        ui,
+        TAKE_OVER_CONFIRMATION_TITLE,
+        TAKE_OVER_CONFIRMATION_MAX_WIDTH,
+        TakeOverChoice::Cancel,
+        |ui| {
             unavailable.take_over_confirmation_ui(ui);
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(ICON_WARNING).color(warning_amber(ui.visuals().dark_mode)));
                 ui.label(TAKE_OVER_WARNING);
             });
-            ui.add_space(6.0);
-            modals::dialog_button_row(ui, |ui| {
-                if ui
-                    .button(RichText::new("Take over").color(warning_amber(ui.visuals().dark_mode)))
-                    .on_hover_text("This cannot be undone")
-                    .clicked()
-                {
-                    choice = Some(TakeOverChoice::TakeOver);
-                }
-                if ui.button("Cancel").clicked() {
-                    choice = Some(TakeOverChoice::Cancel);
-                }
-            });
-        });
-
-    choice
+        },
+        |ui| {
+            let mut choice = None;
+            if modals::destructive_button(ui, "Take over").clicked() {
+                choice = Some(TakeOverChoice::TakeOver);
+            }
+            if ui.button("Cancel").clicked() {
+                choice = Some(TakeOverChoice::Cancel);
+            }
+            choice
+        },
+    )
 }
 
 impl App {

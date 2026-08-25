@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
 use chrono::DateTime;
-use egui::{RichText, Window};
+use egui::RichText;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use gt_instance_lock::TakeOverRecord;
 use gt_store::{
@@ -376,18 +376,12 @@ fn show_interrupted_delete_prompt(
     interrupted: InterruptedDelete,
     take_over: Option<TakeOverAfterTheArchiveWasLastWritten>,
 ) -> Option<InterruptedDeleteAnswer> {
-    let mut answer = ui
-        .ctx()
-        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        .then_some(InterruptedDeleteAnswer::LeaveUnrecovered);
-
-    let title = format!("Recover the {} archive?", archive.label_in_sentence());
-    Window::new(title)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ui.ctx(), |ui| {
-            ui.set_max_width(PROMPT_MAX_WIDTH);
+    modals::confirmation_dialog(
+        ui,
+        format!("Recover the {} archive?", archive.label_in_sentence()),
+        PROMPT_MAX_WIDTH,
+        InterruptedDeleteAnswer::LeaveUnrecovered,
+        |ui| {
             ui.label(
                 "A delete was interrupted part-way through this archive, and GeoTrace cannot \
                  open it as it stands.",
@@ -411,29 +405,22 @@ fn show_interrupted_delete_prompt(
                 "Leaving it unrecovered keeps the file exactly as it is. The archive is \
                  unavailable for this session and nothing is written to it.",
             );
-            ui.add_space(6.0);
-            modals::dialog_button_row(ui, |ui| {
-                if ui
-                    .button(
-                        RichText::new(RECOVER_BUTTON_LABEL)
-                            .color(warning_amber(ui.visuals().dark_mode)),
-                    )
-                    .on_hover_text("This cannot be undone")
-                    .clicked()
-                {
-                    answer = Some(InterruptedDeleteAnswer::Recover);
-                }
-                if ui
-                    .button(LEAVE_UNRECOVERED_BUTTON_LABEL)
-                    .on_hover_text("The archive keeps its days and stays closed this session")
-                    .clicked()
-                {
-                    answer = Some(InterruptedDeleteAnswer::LeaveUnrecovered);
-                }
-            });
-        });
-
-    answer
+        },
+        |ui| {
+            let mut answer = None;
+            if modals::destructive_button(ui, RECOVER_BUTTON_LABEL).clicked() {
+                answer = Some(InterruptedDeleteAnswer::Recover);
+            }
+            if ui
+                .button(LEAVE_UNRECOVERED_BUTTON_LABEL)
+                .on_hover_text("The archive keeps its days and stays closed this session")
+                .clicked()
+            {
+                answer = Some(InterruptedDeleteAnswer::LeaveUnrecovered);
+            }
+            answer
+        },
+    )
 }
 
 /// Tell the user about an archive the other GeoTrace has open, which there is
@@ -445,31 +432,23 @@ fn show_archive_held_by_the_other_instance(
     ui: &egui::Ui,
     archive: EnvironmentArchive,
 ) -> Option<InterruptedDeleteAnswer> {
-    let mut answer = ui
-        .ctx()
-        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        .then_some(InterruptedDeleteAnswer::LeaveToTheOtherInstance);
-
-    let title = format!("The {} archive is in use", archive.label_in_sentence());
-    Window::new(title)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ui.ctx(), |ui| {
-            ui.set_max_width(PROMPT_MAX_WIDTH);
+    modals::confirmation_dialog(
+        ui,
+        format!("The {} archive is in use", archive.label_in_sentence()),
+        PROMPT_MAX_WIDTH,
+        InterruptedDeleteAnswer::LeaveToTheOtherInstance,
+        |ui| {
             ui.label(
                 "GeoTrace cannot read this file here: the other GeoTrace still has it open. \
                  The archive is unavailable for this session and nothing is written to it.",
             );
-            ui.add_space(6.0);
-            modals::dialog_button_row(ui, |ui| {
-                if ui.button(ARCHIVE_IN_USE_BUTTON_LABEL).clicked() {
-                    answer = Some(InterruptedDeleteAnswer::LeaveToTheOtherInstance);
-                }
-            });
-        });
-
-    answer
+        },
+        |ui| {
+            ui.button(ARCHIVE_IN_USE_BUTTON_LABEL)
+                .clicked()
+                .then_some(InterruptedDeleteAnswer::LeaveToTheOtherInstance)
+        },
+    )
 }
 
 impl App {

@@ -1,4 +1,4 @@
-use egui::{Button, Checkbox, Grid, Label, RichText, ScrollArea, Window};
+use egui::{Button, Checkbox, Grid, IntoAtoms, Label, RichText, ScrollArea, Window};
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -50,13 +50,55 @@ pub struct RemoveOutcome {
 /// affirmative (or destructive action) rightmost - `add_contents` adds them
 /// in right-to-left order. The horizontal wrapper keeps the layout from
 /// claiming the window's full height.
-pub(super) fn dialog_button_row(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+pub(super) fn dialog_button_row<R>(
+    ui: &mut egui::Ui,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
     ui.horizontal(|ui| {
         ui.with_layout(
             egui::Layout::right_to_left(egui::Align::Center),
             add_contents,
-        );
-    });
+        )
+        .inner
+    })
+    .inner
+}
+
+/// A modal centred on the window, with `body` above a right-aligned button row.
+///
+/// Escape returns `escape_answer`: pass the answer that discards nothing.
+pub(super) fn confirmation_dialog<'a, T>(
+    ui: &egui::Ui,
+    title: impl IntoAtoms<'a>,
+    max_width: f32,
+    escape_answer: T,
+    body: impl FnOnce(&mut egui::Ui),
+    buttons: impl FnOnce(&mut egui::Ui) -> Option<T>,
+) -> Option<T> {
+    let mut answer = ui
+        .ctx()
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        .then_some(escape_answer);
+
+    Window::new(title)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ui.ctx(), |ui| {
+            ui.set_max_width(max_width);
+            body(ui);
+            ui.add_space(6.0);
+            if let Some(clicked) = dialog_button_row(ui, buttons) {
+                answer = Some(clicked);
+            }
+        });
+
+    answer
+}
+
+pub(super) fn destructive_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    ui.button(RichText::new(label).color(warning_amber(ui.visuals().dark_mode)))
+        .on_hover_text("This cannot be undone")
 }
 
 pub fn show_delete_confirmation(
@@ -912,6 +954,8 @@ pub fn show_mapbox_token_dialog(
     }
 }
 
+const ENVIRONMENT_PRUNE_MAX_WIDTH: f32 = 460.0;
+
 /// The environment-data delete waiting for the user to confirm, and what it
 /// would take.
 pub struct EnvironmentPrunePrompt<'a> {
@@ -937,17 +981,12 @@ pub fn show_environment_prune_confirmation(
     ui: &egui::Ui,
     prompt: &EnvironmentPrunePrompt<'_>,
 ) -> Option<EnvironmentPruneChoice> {
-    let mut choice = ui
-        .ctx()
-        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        .then_some(EnvironmentPruneChoice::Cancel);
-
-    Window::new("Delete archived days?")
-        .resizable(false)
-        .collapsible(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-        .show(ui.ctx(), |ui| {
-            ui.set_max_width(460.0);
+    confirmation_dialog(
+        ui,
+        "Delete archived days?",
+        ENVIRONMENT_PRUNE_MAX_WIDTH,
+        EnvironmentPruneChoice::Cancel,
+        |ui| {
             ui.label(prune_scope_line(prompt.request));
             ui.add_space(4.0);
             Grid::new("environment_prune_grid")
@@ -980,25 +1019,24 @@ pub fn show_environment_prune_confirmation(
                     }
                 });
             }
-
-            ui.add_space(6.0);
-            dialog_button_row(ui, |ui| {
-                if ui
-                    .button(RichText::new("Delete").color(warning_amber(ui.visuals().dark_mode)))
-                    .on_hover_text(
-                        "This cannot be undone. The days are downloaded again as they are needed.",
-                    )
-                    .clicked()
-                {
-                    choice = Some(EnvironmentPruneChoice::Delete);
-                }
-                if ui.button("Cancel").clicked() {
-                    choice = Some(EnvironmentPruneChoice::Cancel);
-                }
-            });
-        });
-
-    choice
+        },
+        |ui| {
+            let mut choice = None;
+            if ui
+                .button(RichText::new("Delete").color(warning_amber(ui.visuals().dark_mode)))
+                .on_hover_text(
+                    "This cannot be undone. The days are downloaded again as they are needed.",
+                )
+                .clicked()
+            {
+                choice = Some(EnvironmentPruneChoice::Delete);
+            }
+            if ui.button("Cancel").clicked() {
+                choice = Some(EnvironmentPruneChoice::Cancel);
+            }
+            choice
+        },
+    )
 }
 
 /// What the delete acts on, as the dialog opens with.
@@ -1018,6 +1056,9 @@ fn prune_scope_line(request: PruneRequest) -> String {
     }
 }
 
+/// Fits inside the window that shutdown sizes itself down to.
+const FORCE_QUIT_MAX_WIDTH: f32 = 360.0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ForceQuitChoice {
     Quit,
@@ -1033,41 +1074,29 @@ pub fn show_force_quit_confirmation(
     ui: &egui::Ui,
     interruption_costs: &[String],
 ) -> Option<ForceQuitChoice> {
-    let mut choice = ui
-        .ctx()
-        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        .then_some(ForceQuitChoice::Cancel);
-
-    Window::new("Force quit?")
-        .resizable(false)
-        .collapsible(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-        .show(ui.ctx(), |ui| {
-            // Fits inside the window that shutdown sizes itself down to.
-            ui.set_max_width(360.0);
+    confirmation_dialog(
+        ui,
+        "Force quit?",
+        FORCE_QUIT_MAX_WIDTH,
+        ForceQuitChoice::Cancel,
+        |ui| {
             ui.label("GeoTrace ends now, with the work it is still doing unfinished");
             ui.add_space(4.0);
             for cost in interruption_costs {
                 ui.add(Label::new(cost.as_str()).wrap());
             }
-            ui.add_space(6.0);
-            dialog_button_row(ui, |ui| {
-                if ui
-                    .button(
-                        RichText::new("Force quit").color(warning_amber(ui.visuals().dark_mode)),
-                    )
-                    .on_hover_text("This cannot be undone")
-                    .clicked()
-                {
-                    choice = Some(ForceQuitChoice::Quit);
-                }
-                if ui.button("Cancel").clicked() {
-                    choice = Some(ForceQuitChoice::Cancel);
-                }
-            });
-        });
-
-    choice
+        },
+        |ui| {
+            let mut choice = None;
+            if destructive_button(ui, "Force quit").clicked() {
+                choice = Some(ForceQuitChoice::Quit);
+            }
+            if ui.button("Cancel").clicked() {
+                choice = Some(ForceQuitChoice::Cancel);
+            }
+            choice
+        },
+    )
 }
 
 #[cfg(test)]
@@ -1188,6 +1217,25 @@ mod tests {
         let choice = std::cell::RefCell::new(None);
         let mut harness = prune_dialog(&prompt, &choice);
         harness.inner.get_by_label("Cancel").click();
+        harness.run();
+        drop(harness);
+
+        assert!(matches!(
+            choice.into_inner(),
+            Some(EnvironmentPruneChoice::Cancel)
+        ));
+    }
+
+    #[test]
+    fn escape_cancels_the_prune_dialog() {
+        let prompt = EnvironmentPrunePrompt {
+            request: prune_request(PruneScope::Every),
+            covered: covered_days(),
+            loaded_recordings: &[],
+        };
+        let choice = std::cell::RefCell::new(None);
+        let mut harness = prune_dialog(&prompt, &choice);
+        harness.inner.key_press(egui::Key::Escape);
         harness.run();
         drop(harness);
 
