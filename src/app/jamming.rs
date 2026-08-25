@@ -752,6 +752,7 @@ mod tests {
     use gt_fetch::HttpResponse;
     use gt_jam::DEFAULT_BASE_URL;
     use gt_pending_writes::WriteAccess;
+    use gt_store::WritableDayArchive as _;
     use gt_test_utils::ScriptedTransport;
     use gt_test_utils::pending_writes;
 

@@ -204,9 +204,12 @@ impl ReadOnlySolarStore {
 }
 
 /// The geomagnetic index archive, which reads through [`ReadOnlySolarStore`]
-/// and adds [`Self::insert_or_replace_kp_day`],
-/// [`Self::insert_or_replace_hp30_day`], [`Self::delete_days_before`] and
-/// [`Self::delete_all_days`].
+/// and adds [`Self::insert_or_replace_kp_day`] and
+/// [`Self::insert_or_replace_hp30_day`] beside the deletes of
+/// [`WritableDayArchive`].
+///
+/// It holds a Kp index and an Hp30 index: deleting days removes them from
+/// both, and a day both held counts once in the number reported.
 #[derive(Debug)]
 pub struct SolarStore {
     inner: ReadOnlySolarStore,
@@ -285,16 +288,8 @@ impl WritableDayArchive for SolarStore {
         }
         Ok(())
     }
-}
 
-impl SolarStore {
-    /// Remove every day before `cutoff` from both indices, reporting how many
-    /// days went. A day either index held counts once.
-    ///
-    /// The samples the remaining days hold move down to close the gap. The
-    /// file itself rarely shrinks: the space is what the days stored after the
-    /// delete are written into.
-    pub fn delete_days_before(
+    fn delete_days_before(
         &self,
         cutoff: NaiveDate,
         report: PruneProgressSink<'_>,
@@ -302,12 +297,12 @@ impl SolarStore {
         self.delete_from_both_indices(DeletedDays::Before(cutoff), report)
     }
 
-    /// Remove every archived day from both indices, reporting how many went.
-    /// A day either index held counts once.
-    pub fn delete_all_days(&self, report: PruneProgressSink<'_>) -> Result<usize, SolarStoreError> {
+    fn delete_all_days(&self, report: PruneProgressSink<'_>) -> Result<usize, SolarStoreError> {
         self.delete_from_both_indices(DeletedDays::Every, report)
     }
+}
 
+impl SolarStore {
     /// Delete `deleted` from each index in turn, counting the columns of both
     /// as one run: the second index carries on where the first stopped rather
     /// than starting the count again.
