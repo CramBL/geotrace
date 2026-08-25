@@ -61,7 +61,11 @@ RUN curl -L --proto '=https' --tlsv1.2 -sSf \
     https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh \
     | bash
 
-RUN cargo binstall --no-confirm \
+# --locked pins the `cargo install` source fallback to each crate's shipped
+# Cargo.lock, whose dependency versions are known to compile.
+# Binstall still finds a prebuilt binary when GitHub is slow:
+# --maximum-resolution-timeout raises its 15s default to 60s.
+RUN cargo binstall --no-confirm --locked --maximum-resolution-timeout 60 \
     just \
     cargo-nextest \
     typos-cli \
