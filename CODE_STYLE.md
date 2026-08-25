@@ -230,6 +230,8 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 | **point** | A single data point within a track. | `PointIdx`, `SpatialPoint`, `pi` |
 | **track ref** (`TrackRef`) | Typed (file-index, track-index) pair that uniquely addresses a track. Fields: `fi: FileIdx`, `index: TrackIdx`. | `TrackRef::new(fi, ti)` |
 | **data point ref** (`DataPointRef`) | Typed address of a single rendered point. Fields: `track: TrackRef`, `category`, `point_index`. | sticky/hover highlight |
+| **time range** | First fix to last fix of a recording or track: the wall-clock span it covers. | `TimeRange`, `FileMetadata::time_range` |
+| **recorded time** | The time a recording's tracks cover, the sum of their durations. Shorter than the time range whenever the recording idled between tracks. Not "effective duration" or "active time". | `FileMetadata::total_duration` |
 | **event marker** | A timestamped event associated with a track (e.g. `power/boot`). | `EventMarker`, `event_markers` |
 | **custom marker** | A user-placed geographic annotation. | `CustomMarker`, `custom_markers` |
 | **generated marker** | A marker derived automatically from data (e.g. trip start/end). | `GeneratedMarker`, `generated_markers` |

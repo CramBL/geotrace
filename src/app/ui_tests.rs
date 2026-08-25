@@ -9006,6 +9006,11 @@ fn snapshot_recording_details_dialog() {
         .size(egui::vec2(1024.0, 768.0))
         .eframe(build_app);
     harness.inner.step();
+    // The recorded time reads well short of the range it covers: this
+    // recording idled between its tracks.
+    let day = chrono::NaiveDate::from_ymd_opt(2025, 5, 23).unwrap_or_default();
+    let morning = day.and_hms_opt(7, 12, 4).unwrap_or_default().and_utc();
+    let noon = day.and_hms_opt(11, 48, 30).unwrap_or_default().and_utc();
     harness.inner.state().shared.borrow_mut().metadata_popup =
         Some(gt_side_panel::RecordingDetails {
             metadata: gt_types::FileMetadata {
@@ -9014,6 +9019,8 @@ fn snapshot_recording_details_dialog() {
                 device: Some("uBlox ZED-F9P".to_owned()),
                 notes: Some("Rooftop antenna, clear sky.".to_owned()),
                 travel_mode: Some(gt_types::TravelMode::Bicycle),
+                time_range: gt_types::TimeRange::new(morning, noon),
+                total_duration: chrono::TimeDelta::minutes(88),
                 ..gt_test_utils::empty_file_metadata()
             },
             // A long, auto-derived, path-like identity to show the dialog gives

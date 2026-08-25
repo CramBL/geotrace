@@ -490,19 +490,21 @@ fn render_file_row(
                     }
                 }
                 ui.label(format!("{ICON_CLOCK} {dur}"))
-                    .on_hover_text("Total duration");
+                    .on_hover_text("Recorded time, excluding the time between tracks");
                 ui.label(format!("{ICON_ROAD_HORIZON} {dist}"))
                     .on_hover_text("Total distance");
             },
         );
-        if let Some(stats) = file.metadata.fix_stats {
-            resp.on_hover_ui(|ui| {
-                ui.label(file.metadata.filename.as_str());
+        let time_range =
+            gt_fmt::format_time_range(file.metadata.time_range.start, file.metadata.time_range.end);
+        resp.on_hover_ui(|ui| {
+            ui.label(file.metadata.filename.as_str());
+            ui.label(RichText::new(&time_range).strong());
+            ui.label(format!("Recorded time {dur}"));
+            if let Some(stats) = file.metadata.fix_stats {
                 fix_stats_tooltip_row(ui, stats);
-            })
-        } else {
-            resp.on_hover_text(file.metadata.filename.as_str())
-        }
+            }
+        })
     });
 
     let file_label_resp = row_response.inner;

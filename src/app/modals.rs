@@ -545,9 +545,9 @@ pub fn show_load_warnings_dialog(ui: &egui::Ui, popup: &mut Option<(String, Vec<
     }
 }
 
-/// Resizable dialog listing a recording's metadata (title, device, identity,
-/// notes). Opened from a file row's note icon. Sized generously so long
-/// identities and note paths read in full.
+/// Resizable dialog listing a recording's time range and recorded time, then
+/// its metadata (title, device, identity, notes). Opened from a file row's note
+/// icon. Sized generously so long identities and note paths read in full.
 pub fn show_recording_details_dialog(ui: &egui::Ui, request: &mut Option<RecordingDetails>) {
     let Some(details) = request else {
         return;
@@ -572,13 +572,17 @@ pub fn show_recording_details_dialog(ui: &egui::Ui, request: &mut Option<Recordi
                         .truncate(),
                 );
                 ui.separator();
-                gt_side_panel::widgets::metadata_detail_rows(
-                    ui,
-                    &gt_side_panel::widgets::MetadataView::from_file_metadata(
-                        &details.metadata,
-                        details.identity.as_deref(),
-                    ),
+                gt_side_panel::widgets::recording_time_detail_rows(ui, &details.metadata);
+                let metadata_view = gt_side_panel::widgets::MetadataView::from_file_metadata(
+                    &details.metadata,
+                    details.identity.as_deref(),
                 );
+                // The separator introduces the metadata grid, so it shows only
+                // where that grid has rows of its own.
+                if gt_side_panel::widgets::has_metadata_details(&metadata_view) {
+                    ui.separator();
+                    gt_side_panel::widgets::metadata_detail_rows(ui, &metadata_view);
+                }
             });
         });
 
@@ -1211,7 +1215,7 @@ mod tests {
     use std::path::PathBuf;
 
     use gt_types::{
-        FileIdx, FileSource, LoadedFile, LoadedTrack, TrackIdx, TrackLod, TrackMetadata,
+        FileIdx, FileSource, LoadedFile, LoadedTrack, TimeRange, TrackIdx, TrackLod, TrackMetadata,
     };
 
     use egui_kittest::kittest::{NodeT as _, Queryable as _};
@@ -1228,8 +1232,8 @@ mod tests {
     use super::{
         CoveredDayCounts, EnvironmentArchive, EnvironmentPruneChoice, EnvironmentPrunePrompt,
         ForceQuitChoice, MapLayer, MapboxTokenField, NavMap, NodeKey, PERMANENT_DELETE_LABEL,
-        PruneRequest, PruneScope, PrunedDays, SnapScopeCounts, TrackRef, files_fully_removed,
-        prune_scope_line, show_about_dialog, show_delete_confirmation,
+        PruneRequest, PruneScope, PrunedDays, RecordingDetails, SnapScopeCounts, TrackRef,
+        files_fully_removed, prune_scope_line, show_about_dialog, show_delete_confirmation,
         show_environment_prune_confirmation, show_force_quit_confirmation,
         show_load_warnings_dialog, show_mapbox_token_dialog, show_orphaned_event_markers_popup,
         show_recording_details_dialog, show_snap_auto_prompt, show_snap_consent_dialog,
@@ -1517,6 +1521,43 @@ mod tests {
         harness.run();
 
         assert_eq!(harness.state().map.mapbox_token(), "typed");
+    }
+
+    /// The dialog states the time range and the recorded time apart for a
+    /// recording that idled between its tracks.
+    #[test]
+    fn the_recording_details_dialog_states_the_time_range_and_the_recorded_time() {
+        let mut metadata = gt_test_utils::empty_file_metadata();
+        metadata.filename = "paused.gtd".to_owned();
+        metadata.time_range = TimeRange::new(
+            chrono::DateTime::UNIX_EPOCH + chrono::TimeDelta::hours(12),
+            chrono::DateTime::UNIX_EPOCH + chrono::TimeDelta::minutes(18 * 60 + 30),
+        );
+        metadata.total_duration = chrono::TimeDelta::minutes(88);
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(520.0, 320.0))
+            .ui_state(
+                |ui, request: &mut Option<RecordingDetails>| {
+                    show_recording_details_dialog(ui, request);
+                },
+                Some(RecordingDetails {
+                    metadata,
+                    identity: None,
+                }),
+            );
+        harness.run();
+
+        assert!(
+            harness
+                .inner
+                .query_by_label("1970-01-01 12:00:00 – 18:30:00")
+                .is_some(),
+            "the dialog does not state the range the recording covers"
+        );
+        assert!(
+            harness.inner.query_by_label("1h28m").is_some(),
+            "the dialog does not state the recorded time its tracks hold"
+        );
     }
 
     fn make_file(track_count: usize) -> LoadedFile {

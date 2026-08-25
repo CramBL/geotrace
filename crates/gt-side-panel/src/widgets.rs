@@ -48,6 +48,19 @@ pub fn has_metadata_details(view: &MetadataView<'_>) -> bool {
         || view.notes.is_some()
 }
 
+/// Column and row spacing shared by every recording-details grid.
+const DETAIL_GRID_SPACING: [f32; 2] = [12.0, 6.0];
+
+/// A recording-details row: a weak caption and its value, which wraps to the
+/// available width. No colon after the caption, per DESIGN.md.
+fn detail_row(ui: &mut egui::Ui, caption: &str, value: &str) {
+    ui.label(RichText::new(caption).weak());
+    // Values select: a reader copies a recording's times, its identity, its
+    // device name or a note out of the details dialog.
+    ui.add(Label::new(value).wrap().selectable(true));
+    ui.end_row();
+}
+
 /// Render the present metadata fields as a two-column grid (weak label, value),
 /// in a stable order: title, device, travel mode, identity, notes. Values wrap
 /// to the available width, so the enclosing (resizable) container governs how
@@ -55,34 +68,50 @@ pub fn has_metadata_details(view: &MetadataView<'_>) -> bool {
 pub fn metadata_detail_rows(ui: &mut egui::Ui, view: &MetadataView<'_>) {
     Grid::new("recording_metadata_grid")
         .num_columns(2)
-        .spacing([12.0, 6.0])
+        .spacing(DETAIL_GRID_SPACING)
         .show(ui, |ui| {
-            let mut row = |label: &str, value: &str| {
-                // No colon after the label, per DESIGN.md. The weak label and
-                // normal value weighting separate the two.
-                ui.label(RichText::new(label).weak());
-                // The values are the recorder's own strings - an identity, a
-                // device name, a note - which the reader copies out of the
-                // details dialog.
-                ui.add(Label::new(value).wrap().selectable(true));
-                ui.end_row();
-            };
             if let Some(title) = view.title {
-                row("Title", title);
+                detail_row(ui, "Title", title);
             }
             if let Some(device) = view.device {
-                row("Device", device);
+                detail_row(ui, "Device", device);
             }
             if let Some(travel_mode) = view.travel_mode {
-                row("Travel mode", travel_mode);
+                detail_row(ui, "Travel mode", travel_mode);
             }
             if let Some(identity) = view.identity {
                 // Strip the internal `auto:` marker.
-                row("Identity", gt_loaded_files::display_identity(identity).0);
+                detail_row(
+                    ui,
+                    "Identity",
+                    gt_loaded_files::display_identity(identity).0,
+                );
             }
             if let Some(notes) = view.notes {
-                row("Notes", notes);
+                detail_row(ui, "Notes", notes);
             }
+        });
+}
+
+/// Render a recording's time range and its recorded time as a two-column grid
+/// beside [`metadata_detail_rows`]. The recorded time is the sum of the track
+/// durations: it is shorter than the time range whenever the recording idled
+/// between tracks.
+pub fn recording_time_detail_rows(ui: &mut egui::Ui, metadata: &FileMetadata) {
+    Grid::new("recording_times_grid")
+        .num_columns(2)
+        .spacing(DETAIL_GRID_SPACING)
+        .show(ui, |ui| {
+            detail_row(
+                ui,
+                "Time range",
+                &gt_fmt::format_time_range(metadata.time_range.start, metadata.time_range.end),
+            );
+            detail_row(
+                ui,
+                "Recorded time",
+                &gt_fmt::format_human_terse_duration(metadata.total_duration),
+            );
         });
 }
 

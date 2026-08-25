@@ -19,7 +19,9 @@ use gt_side_panel::{
     show_side_panel,
 };
 use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
-use gt_types::{FileIdx, FixStats, LoadWarning, PointIdx, TrackIdx, TrackRef};
+use gt_types::{
+    FileIdx, FixStats, LoadWarning, LoadedFile, NavPoint, PointIdx, TrackIdx, TrackRef,
+};
 use gt_ui_types::{DisplayCategory, DisplayMask, MapHighlight, SnapCosting};
 use rustc_hash::FxHashMap;
 
@@ -48,37 +50,30 @@ struct State {
     sky_trails_request: Option<gt_ui_types::SkyTrailsRequest>,
 }
 
-fn make_state(file_count: usize) -> State {
-    make_state_with_warnings_on(file_count, 0, &[])
+/// A recording built from `points`, loaded from a path of its own name.
+fn build_file(
+    name: &str,
+    points: &[NavPoint],
+    meta: gt_track_builder::FileMeta,
+    warnings: Vec<LoadWarning>,
+) -> LoadedFile {
+    gt_track_builder::build_loaded_file(
+        name.to_owned(),
+        points,
+        &[],
+        vec![],
+        vec![],
+        &[],
+        &gt_track_builder::SegmentationConfig::default(),
+        gt_types::FileSource::GtdPath(PathBuf::from(name)),
+        meta,
+        warnings,
+    )
 }
 
-fn make_state_with_warnings_on(
-    file_count: usize,
-    warned_file: usize,
-    warnings: &[LoadWarning],
-) -> State {
-    let points = gt_test_utils::nav_test_data();
-    let mut files = LoadedFiles::new();
-    for i in 0..file_count {
-        let w = if i == warned_file {
-            warnings.to_vec()
-        } else {
-            vec![]
-        };
-        let file = gt_track_builder::build_loaded_file(
-            format!("ride_{i}.gtd"),
-            &points,
-            &[],
-            vec![],
-            vec![],
-            &[],
-            &gt_track_builder::SegmentationConfig::default(),
-            gt_types::FileSource::GtdPath(PathBuf::from(format!("ride_{i}.gtd"))),
-            gt_track_builder::FileMeta::default(),
-            w,
-        );
-        files.push(file, FileHistory::None);
-    }
+/// The panel state over `files`, with the tree synced to them, no request
+/// pending and every snap view empty.
+fn make_state_from_files(files: LoadedFiles) -> State {
     let mut tree = TreeState::new();
     tree.sync_from_loaded_files(files.files());
     State {
@@ -101,14 +96,44 @@ fn make_state_with_warnings_on(
         snap_consent_pending: false,
         snap_request: None,
         snap_visibility_request: None,
-        snap_costing_choices: vec![
-            (SnapCosting::Auto, "Auto".to_owned()),
-            (SnapCosting::Bicycle, "Bicycle".to_owned()),
-            (SnapCosting::Pedestrian, "Pedestrian".to_owned()),
-        ],
+        snap_costing_choices: Vec::new(),
         snap_costing_request: None,
         sky_trails_request: None,
     }
+}
+
+fn make_state(file_count: usize) -> State {
+    make_state_with_warnings_on(file_count, 0, &[])
+}
+
+fn make_state_with_warnings_on(
+    file_count: usize,
+    warned_file: usize,
+    warnings: &[LoadWarning],
+) -> State {
+    let points = gt_test_utils::nav_test_data();
+    let mut files = LoadedFiles::new();
+    for i in 0..file_count {
+        let w = if i == warned_file {
+            warnings.to_vec()
+        } else {
+            vec![]
+        };
+        let file = build_file(
+            &format!("ride_{i}.gtd"),
+            &points,
+            gt_track_builder::FileMeta::default(),
+            w,
+        );
+        files.push(file, FileHistory::None);
+    }
+    let mut state = make_state_from_files(files);
+    state.snap_costing_choices = vec![
+        (SnapCosting::Auto, "Auto".to_owned()),
+        (SnapCosting::Bicycle, "Bicycle".to_owned()),
+        (SnapCosting::Pedestrian, "Pedestrian".to_owned()),
+    ];
+    state
 }
 
 fn make_harness(state: State) -> TestHarness<'static, State> {
@@ -761,15 +786,9 @@ fn expand_file_is_reflected_in_tree_state() {
 #[test]
 fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
     let points = gt_test_utils::stationary_nav_data(10);
-    let file = gt_track_builder::build_loaded_file(
-        "no_sats.gtd".to_owned(),
+    let file = build_file(
+        "no_sats.gtd",
         &points,
-        &[],
-        vec![],
-        vec![],
-        &[],
-        &gt_track_builder::SegmentationConfig::default(),
-        gt_types::FileSource::GtdPath(PathBuf::from("no_sats.gtd")),
         gt_track_builder::FileMeta::default(),
         vec![],
     );
@@ -779,40 +798,59 @@ fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
         "track with no satellite reports should have fix_stats == None"
     );
 
-    let mut tree = TreeState::new();
-    tree.sync_from_loaded_files(std::slice::from_ref(&file));
-    tree.toggle_expand_file(FileIdx::new(0));
     let mut files = LoadedFiles::new();
     files.push(file, FileHistory::None);
+    let mut state = make_state_from_files(files);
+    state.tree.toggle_expand_file(FileIdx::new(0));
 
-    let state = State {
-        files,
-        tree,
-        filter: GlobalFilter::default(),
-        filter_state: FilterPanelState::default(),
-        highlight: MapHighlight::default(),
-        map_center: None,
-        popup_pos: None,
-        zoom_to_visible: false,
-        warnings_request: None,
-        clear_query_request: false,
-        display_mask: DisplayMask::default(),
-        recording_name_template: "{filename}".to_owned(),
-        metadata_request: None,
-        snap_rows: FxHashMap::default(),
-        snap_progress: gt_side_panel::SnapProgressView::default(),
-        snap_offline: false,
-        snap_consent_pending: false,
-        snap_request: None,
-        snap_visibility_request: None,
-        snap_costing_choices: Vec::new(),
-        snap_costing_request: None,
-        sky_trails_request: None,
-    };
     // Renders the expanded track row, exercising the `fix_stats == None` fallback
     // ("No satellite data") instead of the colored tooltip.
     let mut harness = make_harness(state);
     harness.run();
+}
+
+/// The hover text states the time range and the recorded time apart for a
+/// recording that idled between its tracks.
+#[test]
+fn the_recording_row_hover_states_the_time_range_and_the_recorded_time() {
+    // The hover text states both times even for a recording with no fix stats:
+    // the two 60-point tracks here lie ten minutes apart and carry no
+    // satellite reports.
+    let points = gt_test_utils::nav_data_with_gap(60, 60);
+    let mut files = LoadedFiles::new();
+    files.push(
+        build_file(
+            "paused.gtd",
+            &points,
+            gt_track_builder::FileMeta::default(),
+            vec![],
+        ),
+        FileHistory::None,
+    );
+    let mut harness = make_harness(make_state_from_files(files));
+    harness.run();
+
+    let row = harness
+        .inner
+        .get_by_label_contains("paused.gtd")
+        .rect()
+        .center();
+    harness.inner.hover_at_and_settle(row, 3);
+
+    assert!(
+        harness
+            .inner
+            .query_by_label("2026-01-01 12:00:00 – 12:11:59")
+            .is_some(),
+        "the hover text must state the range the recording covers"
+    );
+    assert!(
+        harness
+            .inner
+            .query_by_label("Recorded time 1m58s")
+            .is_some(),
+        "the hover text must state the recorded time its tracks hold"
+    );
 }
 
 #[test]
@@ -951,46 +989,10 @@ fn make_state_with_shared_prefix() -> State {
         "/home/user/gps/recordings/2024-01-15_morning_ride.gtd",
         "/home/user/gps/recordings/2024-01-16_evening_walk.gtd",
     ] {
-        let file = gt_track_builder::build_loaded_file(
-            name.to_owned(),
-            &points,
-            &[],
-            vec![],
-            vec![],
-            &[],
-            &gt_track_builder::SegmentationConfig::default(),
-            gt_types::FileSource::GtdPath(PathBuf::from(name)),
-            gt_track_builder::FileMeta::default(),
-            vec![],
-        );
+        let file = build_file(name, &points, gt_track_builder::FileMeta::default(), vec![]);
         files.push(file, FileHistory::None);
     }
-    let mut tree = TreeState::new();
-    tree.sync_from_loaded_files(files.files());
-    State {
-        files,
-        tree,
-        filter: GlobalFilter::default(),
-        filter_state: FilterPanelState::default(),
-        highlight: MapHighlight::default(),
-        map_center: None,
-        popup_pos: None,
-        zoom_to_visible: false,
-        warnings_request: None,
-        clear_query_request: false,
-        display_mask: DisplayMask::default(),
-        recording_name_template: "{filename}".to_owned(),
-        metadata_request: None,
-        snap_rows: FxHashMap::default(),
-        snap_progress: gt_side_panel::SnapProgressView::default(),
-        snap_offline: false,
-        snap_consent_pending: false,
-        snap_request: None,
-        snap_visibility_request: None,
-        snap_costing_choices: Vec::new(),
-        snap_costing_request: None,
-        sky_trails_request: None,
-    }
+    make_state_from_files(files)
 }
 
 #[test]
@@ -1004,45 +1006,11 @@ fn make_state_with_long_name() -> State {
     let points = gt_test_utils::nav_test_data();
     let mut files = LoadedFiles::new();
     let name = "this_is_an_extremely_long_recording_filename_that_should_be_truncated_at_the_available_panel_width.gtd";
-    let file = gt_track_builder::build_loaded_file(
-        name.to_owned(),
-        &points,
-        &[],
-        vec![],
-        vec![],
-        &[],
-        &gt_track_builder::SegmentationConfig::default(),
-        gt_types::FileSource::GtdPath(PathBuf::from(name)),
-        gt_track_builder::FileMeta::default(),
-        vec![],
+    files.push(
+        build_file(name, &points, gt_track_builder::FileMeta::default(), vec![]),
+        FileHistory::None,
     );
-    files.push(file, FileHistory::None);
-    let mut tree = TreeState::new();
-    tree.sync_from_loaded_files(files.files());
-    State {
-        files,
-        tree,
-        filter: GlobalFilter::default(),
-        filter_state: FilterPanelState::default(),
-        highlight: MapHighlight::default(),
-        map_center: None,
-        popup_pos: None,
-        zoom_to_visible: false,
-        warnings_request: None,
-        clear_query_request: false,
-        display_mask: DisplayMask::default(),
-        recording_name_template: "{filename}".to_owned(),
-        metadata_request: None,
-        snap_rows: FxHashMap::default(),
-        snap_progress: gt_side_panel::SnapProgressView::default(),
-        snap_offline: false,
-        snap_consent_pending: false,
-        snap_request: None,
-        snap_visibility_request: None,
-        snap_costing_choices: Vec::new(),
-        snap_costing_request: None,
-        sky_trails_request: None,
-    }
+    make_state_from_files(files)
 }
 
 /// Two recordings carrying SDK title/device metadata, for exercising the
@@ -1059,15 +1027,9 @@ fn make_state_with_metadata() -> State {
         ),
         ("ride_1.gtd", "Evening walk", "uBlox F9P", "along the river"),
     ] {
-        let file = gt_track_builder::build_loaded_file(
-            name.to_owned(),
+        let file = build_file(
+            name,
             &points,
-            &[],
-            vec![],
-            vec![],
-            &[],
-            &gt_track_builder::SegmentationConfig::default(),
-            gt_types::FileSource::GtdPath(PathBuf::from(name)),
             gt_track_builder::FileMeta {
                 title: Some(title.to_owned()),
                 device: Some(device.to_owned()),
@@ -1088,32 +1050,9 @@ fn make_state_with_metadata() -> State {
         let identity = format!("auto:{title}::{device}");
         files.push(file, FileHistory::recording(identity, meta, None));
     }
-    let mut tree = TreeState::new();
-    tree.sync_from_loaded_files(files.files());
-    State {
-        files,
-        tree,
-        filter: GlobalFilter::default(),
-        filter_state: FilterPanelState::default(),
-        highlight: MapHighlight::default(),
-        map_center: None,
-        popup_pos: None,
-        zoom_to_visible: false,
-        warnings_request: None,
-        clear_query_request: false,
-        display_mask: DisplayMask::default(),
-        recording_name_template: "{title} — {device}".to_owned(),
-        metadata_request: None,
-        snap_rows: FxHashMap::default(),
-        snap_progress: gt_side_panel::SnapProgressView::default(),
-        snap_offline: false,
-        snap_consent_pending: false,
-        snap_request: None,
-        snap_visibility_request: None,
-        snap_costing_choices: Vec::new(),
-        snap_costing_request: None,
-        sky_trails_request: None,
-    }
+    let mut state = make_state_from_files(files);
+    state.recording_name_template = "{title} — {device}".to_owned();
+    state
 }
 
 #[test]
@@ -1231,15 +1170,9 @@ fn clicking_note_icon_requests_recording_details() {
     // metadata and identity. One file, so the NOTE glyph is unambiguous.
     let points = gt_test_utils::nav_test_data();
     let mut files = LoadedFiles::new();
-    let file = gt_track_builder::build_loaded_file(
-        "ride.gtd".to_owned(),
+    let file = build_file(
+        "ride.gtd",
         &points,
-        &[],
-        vec![],
-        vec![],
-        &[],
-        &gt_track_builder::SegmentationConfig::default(),
-        gt_types::FileSource::GtdPath(PathBuf::from("ride.gtd")),
         gt_track_builder::FileMeta {
             title: Some("Morning ride".to_owned()),
             device: Some("uBlox F9P".to_owned()),
@@ -1261,33 +1194,7 @@ fn clicking_note_icon_requests_recording_details() {
         file,
         FileHistory::recording("auto:Morning ride::uBlox F9P".to_owned(), meta, None),
     );
-    let mut tree = TreeState::new();
-    tree.sync_from_loaded_files(files.files());
-    let state = State {
-        files,
-        tree,
-        filter: GlobalFilter::default(),
-        filter_state: FilterPanelState::default(),
-        highlight: MapHighlight::default(),
-        map_center: None,
-        popup_pos: None,
-        zoom_to_visible: false,
-        warnings_request: None,
-        clear_query_request: false,
-        display_mask: DisplayMask::default(),
-        recording_name_template: "{filename}".to_owned(),
-        metadata_request: None,
-        snap_rows: FxHashMap::default(),
-        snap_progress: gt_side_panel::SnapProgressView::default(),
-        snap_offline: false,
-        snap_consent_pending: false,
-        snap_request: None,
-        snap_visibility_request: None,
-        snap_costing_choices: Vec::new(),
-        snap_costing_request: None,
-        sky_trails_request: None,
-    };
-    let mut harness = make_harness(state);
+    let mut harness = make_harness(make_state_from_files(files));
     harness.run();
     assert!(harness.state().metadata_request.is_none());
     harness.inner.get_by_label(ICON_NOTE).click();
