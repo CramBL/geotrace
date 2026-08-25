@@ -76,6 +76,7 @@ pub(crate) fn status_for_error(e: &geotrace_sdk::Error) -> GtdStatus {
         Error::UnsupportedVersion { .. } => GtdStatus::ErrVersion,
         Error::UnknownConstellation { .. }
         | Error::ShapeMismatch { .. }
+        | Error::ImplausibleDatasetSize { .. }
         | Error::UnknownConstellationName { .. }
         | Error::UnknownMarkerIcon { .. }
         | Error::ParseError { .. } => GtdStatus::ErrParse,

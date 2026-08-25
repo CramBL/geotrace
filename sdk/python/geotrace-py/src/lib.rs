@@ -40,6 +40,7 @@ fn file_err(e: geotrace_sdk::Error) -> PyErr {
         | Error::UnsupportedVersion { .. }
         | Error::UnknownConstellation { .. }
         | Error::ShapeMismatch { .. }
+        | Error::ImplausibleDatasetSize { .. }
         | Error::UnknownConstellationName { .. }
         | Error::UnknownMarkerIcon { .. }
         | Error::ParseError { .. } => PyValueError::new_err(msg),

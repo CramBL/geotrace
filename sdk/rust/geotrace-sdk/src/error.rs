@@ -186,6 +186,18 @@ pub enum Error {
         actual: usize,
     },
 
+    /// A dataset's header declares more data than the file's own bytes could
+    /// hold. The file is refused before a read allocates a buffer for the
+    /// declared extent.
+    #[error(
+        "dataset {dataset:?}: declared size of {declared_bytes} bytes exceeds the {limit_bytes} bytes this file could decompress to"
+    )]
+    ImplausibleDatasetSize {
+        dataset: String,
+        declared_bytes: u64,
+        limit_bytes: u64,
+    },
+
     #[error("unknown constellation name {name:?}")]
     UnknownConstellationName { name: String },
 
