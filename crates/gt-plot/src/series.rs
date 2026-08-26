@@ -1,7 +1,7 @@
 use crate::AnalysisConfig;
 use gt_analysis::clock_offset::ClockOffsetExcursion;
 use gt_analysis::satellite_utilization::UtilAnomaly;
-use gt_egui_mipmap::MipMap;
+use gt_egui_mipmap::{MipMap, WrapPeriod};
 use gt_types::LoadedFile;
 use gt_types::satellites::{Constellation, ConstellationSet};
 use uom::si::angle::degree;
@@ -128,6 +128,9 @@ pub(crate) struct ChannelComponentSeries {
 /// Build the per-component plot series of one channel.
 fn build_channel_series(channel: &gt_types::Channel) -> ChannelSeries {
     let columns = channel.component_count();
+    let period = channel
+        .period
+        .and_then(|period| WrapPeriod::new(period.get::<degree>()));
     let times: Vec<f64> = channel
         .times
         .iter()
@@ -146,7 +149,10 @@ fn build_channel_series(channel: &gt_types::Channel) -> ChannelSeries {
             };
             ChannelComponentSeries {
                 label,
-                mipmap: MipMap::build(pts),
+                mipmap: match period {
+                    Some(period) => MipMap::build_wrapping(pts, period),
+                    None => MipMap::build(pts),
+                },
             }
         })
         .collect();
@@ -382,7 +388,7 @@ fn build_track_series(
         present,
         velocity_kmh: MipMap::build(velocity_kmh_pts),
         eph_m: MipMap::build(eph_m_pts),
-        heading_deg: MipMap::build(heading_deg_pts),
+        heading_deg: MipMap::build_wrapping(heading_deg_pts, WrapPeriod::full_turn_degrees()),
         clock_delta_ms: MipMap::build(clock_delta_ms_pts),
         clock_excursions,
         util_all: MipMap::build(util.all),
@@ -591,8 +597,8 @@ mod heading_wrap {
 
     use super::*;
 
-    /// Number of samples a zoomed-out view wants of an eight-fix track, which
-    /// selects the first downsampled level.
+    /// Target sample count that selects the first downsampled level of an
+    /// eight-fix track.
     const COARSE_TARGET: usize = 4;
 
     fn at_second(i: i64) -> chrono::DateTime<chrono::Utc> {
@@ -692,13 +698,9 @@ mod heading_wrap {
         );
     }
 
-    /// A channel that declares no period is a linear value however angular its
-    /// unit reads, so its buckets keep their linear minimum and maximum.
+    /// A channel that declares no period keeps each bucket's linear minimum and
+    /// maximum, however angular its unit reads.
     #[test]
-    #[expect(
-        clippy::float_cmp,
-        reason = "the values pass through untransformed, so equality is exact"
-    )]
     fn a_degree_channel_without_a_declared_period_is_downsampled_linearly() {
         let channel = degree_channel(None, &[359.0, 1.0, 180.0, 2.0, 358.0, 0.0, 359.0, 1.0]);
         assert_eq!(
@@ -710,10 +712,6 @@ mod heading_wrap {
     /// At full detail the plot draws the headings the receiver reported, in
     /// the values it reported them.
     #[test]
-    #[expect(
-        clippy::float_cmp,
-        reason = "the headings pass through untransformed, so equality is exact"
-    )]
     fn every_recorded_heading_is_drawn_at_full_detail() {
         let headings = [359.0, 1.0, 180.0, 2.0, 358.0, 0.0, 359.0, 1.0];
         assert_eq!(
@@ -724,10 +722,6 @@ mod heading_wrap {
 
     /// A ghost fix has no heading, which is not a heading of north.
     #[test]
-    #[expect(
-        clippy::float_cmp,
-        reason = "the headings pass through untransformed, so equality is exact"
-    )]
     fn a_ghost_fixs_missing_heading_contributes_no_sample() {
         let series = heading_series(&[Some(10.0), None, None, Some(20.0)]);
         assert_eq!(drawn_values(&series, usize::MAX), [10.0, 20.0]);

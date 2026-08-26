@@ -13,6 +13,11 @@
 //! dramatically reducing the number of points that must be sent to the GPU
 //! when the plot is zoomed out.
 //!
+//! [`MipMap::build_wrapping`] keeps the point furthest to either side of the
+//! window's own mean direction instead, for a series whose values wrap (a
+//! heading, at 360°): around the wrap the linear minimum and maximum sit next
+//! to each other on the circle.
+//!
 //! ## Selecting the right level
 //!
 //! `MipMap::select_slice` returns the coarsest level that has at least
@@ -43,6 +48,54 @@ const MIN_LEVEL_POINTS: usize = 2;
 /// fine-grained enough that level selection can closely match the target sample
 /// count rather than overshooting it by up to 4×.
 const DOWNSAMPLE_WINDOW: usize = 4;
+
+const FULL_TURN_DEGREES: f64 = 360.0;
+
+/// Length below which the summed sample directions of a window cancel out and
+/// leave its mean direction undefined.
+const MEAN_RESULTANT_FLOOR: f64 = 1e-9;
+
+/// The period at which a series' values wrap: a compass heading repeats every
+/// 360°, and a `.gtd` channel declares its own.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WrapPeriod(f64);
+
+impl WrapPeriod {
+    /// `None` unless `period` is finite and positive: anything else describes
+    /// no wrap.
+    pub fn new(period: f64) -> Option<Self> {
+        (period.is_finite() && period > 0.0).then_some(Self(period))
+    }
+
+    /// The period of a compass quantity in degrees: a heading, a bearing, an
+    /// azimuth.
+    pub const fn full_turn_degrees() -> Self {
+        Self(FULL_TURN_DEGREES)
+    }
+
+    /// The direction `values` point in on average, scaled back to this period,
+    /// or `None` when they cancel out or one of them is not finite.
+    fn mean_direction(self, values: impl Iterator<Item = f64>) -> Option<f64> {
+        let scale = std::f64::consts::TAU / self.0;
+        let (sines, cosines) = values.fold((0.0, 0.0), |(sines, cosines), value| {
+            let radians = value * scale;
+            (sines + radians.sin(), cosines + radians.cos())
+        });
+        (sines.hypot(cosines) > MEAN_RESULTANT_FLOOR).then(|| sines.atan2(cosines) / scale)
+    }
+
+    /// The arc from one value to another, in `[-period / 2, period / 2)`:
+    /// negative counterclockwise, positive clockwise.
+    fn signed_arc(self, from: f64, to: f64) -> f64 {
+        let half_period = self.0 / 2.0;
+        (to - from + half_period).rem_euclid(self.0) - half_period
+    }
+
+    /// Whether `value` lies within one period of the origin, `[0, period)`.
+    fn contains(self, value: f64) -> bool {
+        (0.0..self.0).contains(&value)
+    }
+}
 
 /// A cached level selection produced by [`MipMap::select_indices`].
 ///
@@ -87,6 +140,29 @@ impl MipMap {
     /// `MIN_LEVEL_POINTS` floor (or stops shrinking), so all but the very
     /// smallest inputs gain coarse levels down to a single segment.
     pub fn build(data: Vec<[f64; 2]>) -> Self {
+        Self::build_levels(data, None)
+    }
+
+    /// Build a mipmap cascade from a time-sorted dataset whose values wrap
+    /// every `period`.
+    ///
+    /// Each window keeps the point furthest to either side of the window's own
+    /// mean direction, both of them input samples as at every other level.
+    /// Around the wrap that keeps a southward heading between two northward
+    /// ones, which the linear minimum and maximum [`Self::build`] keeps (~0°
+    /// and ~359°) drop.
+    ///
+    /// This applies only to a window whose samples all lie within one period,
+    /// `[0, period)`. A window holding a sample outside one period, or a
+    /// sample that is not finite, keeps its linear minimum and maximum: a
+    /// heading of 675° stays at 675° at every level. A window whose samples
+    /// cancel out, leaving no mean direction, keeps its linear minimum and
+    /// maximum too.
+    pub fn build_wrapping(data: Vec<[f64; 2]>, period: WrapPeriod) -> Self {
+        Self::build_levels(data, Some(period))
+    }
+
+    fn build_levels(data: Vec<[f64; 2]>, period: Option<WrapPeriod>) -> Self {
         if data.is_empty() {
             return Self { levels: Vec::new() };
         }
@@ -98,7 +174,7 @@ impl MipMap {
             // correct: an empty fallback produces an empty downsample, which has
             // len < MIN_LEVEL_POINTS and immediately breaks.
             let last_len = levels.last().map_or(0, Vec::len);
-            let next = downsample(levels.last().map_or(&[][..], Vec::as_slice));
+            let next = downsample(levels.last().map_or(&[][..], Vec::as_slice), period);
             // Stop at the floor, and also when a level stops shrinking: a
             // 2-point window downsamples back to 2 points, so without this guard
             // the cascade would loop forever once it reaches the bottom.
@@ -246,37 +322,64 @@ impl MipMap {
 }
 
 /// Produce the next (coarser) mipmap level from `data` by grouping into
-/// windows and emitting the minimum-value and maximum-value points in
-/// chronological order.
+/// windows and emitting the two points each window keeps in chronological
+/// order: its minimum-value and maximum-value points, or for a wrapping
+/// series the furthest to either side of the window's mean direction.
 ///
 /// Single-point windows emit only that one point (no duplication).
-/// Windows where min and max fall on the same point emit it once.
-fn downsample(data: &[PlotPoint]) -> Vec<PlotPoint> {
+/// Windows where both kept points fall on the same point emit it once.
+fn downsample(data: &[PlotPoint], period: Option<WrapPeriod>) -> Vec<PlotPoint> {
     let mut out = Vec::with_capacity(data.len() / DOWNSAMPLE_WINDOW * 2 + 2);
     for chunk in data.chunks(DOWNSAMPLE_WINDOW) {
-        let Some(min_pt) = chunk.iter().min_by(|a, b| a.y.total_cmp(&b.y)) else {
-            continue;
-        };
-        let Some(max_pt) = chunk.iter().max_by(|a, b| a.y.total_cmp(&b.y)) else {
+        let kept = period
+            .and_then(|period| extremes_either_side_of_mean_direction(chunk, period))
+            .or_else(|| {
+                let min_pt = chunk.iter().min_by(|a, b| a.y.total_cmp(&b.y))?;
+                let max_pt = chunk.iter().max_by(|a, b| a.y.total_cmp(&b.y))?;
+                Some((min_pt, max_pt))
+            });
+        let Some((first, second)) = kept else {
             continue;
         };
 
         // Emit in chronological order so the rendered line follows the
-        // correct time direction and the max/min shape is preserved.
+        // correct time direction and the shape of the window is preserved.
         // Compare by identity rather than `x` equality: a vertical line (two
         // distinct points sharing one timestamp) must still emit both ends.
-        if std::ptr::eq(min_pt, max_pt) {
+        if std::ptr::eq(first, second) {
             // Same point - one representative.
-            out.push(*min_pt);
-        } else if min_pt.x < max_pt.x {
-            out.push(*min_pt);
-            out.push(*max_pt);
+            out.push(*first);
+        } else if first.x < second.x {
+            out.push(*first);
+            out.push(*second);
         } else {
-            out.push(*max_pt);
-            out.push(*min_pt);
+            out.push(*second);
+            out.push(*first);
         }
     }
     out
+}
+
+/// The two points of `chunk` lying furthest to either side of its mean
+/// direction, by signed arc, or `None` when a value falls outside one period
+/// or the values cancel out and leave no mean direction. A single-point chunk
+/// yields that point twice.
+fn extremes_either_side_of_mean_direction(
+    chunk: &[PlotPoint],
+    period: WrapPeriod,
+) -> Option<(&PlotPoint, &PlotPoint)> {
+    if !chunk.iter().all(|p| period.contains(p.y)) {
+        return None;
+    }
+    let mean = period.mean_direction(chunk.iter().map(|p| p.y))?;
+    let arc_from_mean = |p: &PlotPoint| period.signed_arc(mean, p.y);
+    let counterclockwise = chunk
+        .iter()
+        .min_by(|a, b| arc_from_mean(a).total_cmp(&arc_from_mean(b)))?;
+    let clockwise = chunk
+        .iter()
+        .max_by(|a, b| arc_from_mean(a).total_cmp(&arc_from_mean(b)))?;
+    Some((counterclockwise, clockwise))
 }
 
 #[cfg(test)]
@@ -653,6 +756,8 @@ mod tests {
 /// maximum of a bucket sit next to each other on the circle.
 #[cfg(test)]
 mod wrapping_series {
+    use rstest::rstest;
+
     use super::*;
 
     /// A 1 Hz series of `values`, one sample per second.
@@ -689,8 +794,8 @@ mod wrapping_series {
         );
     }
 
-    /// A bucket holding one direction has no outlier to keep, so every sample
-    /// it emits is as close to north as the samples it was given.
+    /// Every sample a bucket of north jitter emits is as close to north as the
+    /// samples it was given: such a bucket holds no outlier to keep.
     #[test]
     fn a_bucket_of_north_jitter_keeps_northward_samples() {
         let period = WrapPeriod::full_turn_degrees();
@@ -699,7 +804,7 @@ mod wrapping_series {
             period,
         );
         for value in coarse_values(&mipmap) {
-            let arc_from_north = period.shortest_arc(0.0, value);
+            let arc_from_north = period.signed_arc(0.0, value).abs();
             assert!(
                 arc_from_north <= 2.0,
                 "{value}° is {arc_from_north}° from north, further than any sample"
@@ -707,19 +812,47 @@ mod wrapping_series {
         }
     }
 
-    /// Opposite samples cancel out and leave no mean direction to measure a
-    /// deviation from, so the bucket keeps its linear minimum and maximum.
+    /// A bucket of opposite samples keeps its linear minimum and maximum: they
+    /// cancel out and leave no mean direction to measure an arc from.
     #[test]
-    #[expect(
-        clippy::float_cmp,
-        reason = "the samples pass through by copy, so equality is exact"
-    )]
     fn a_bucket_of_opposite_headings_keeps_its_linear_extremes() {
         let mipmap = MipMap::build_wrapping(
             sampled_per_second(&[0.0, 180.0, 0.0, 180.0, 10.0, 11.0, 12.0, 13.0]),
             WrapPeriod::full_turn_degrees(),
         );
         assert_eq!(coarse_values(&mipmap), [0.0, 180.0, 10.0, 13.0]);
+    }
+
+    /// A bucket's two largest arcs from its mean direction can both lie on the
+    /// same side of it, leaving the other side undrawn. Here the mean sits at
+    /// 44°, and 100° and 190° are further from it than either northward
+    /// sample.
+    #[test]
+    fn a_bucket_keeps_the_extreme_on_each_side_of_its_mean_direction() {
+        let mipmap = MipMap::build_wrapping(
+            sampled_per_second(&[0.0, 0.0, 100.0, 190.0]),
+            WrapPeriod::full_turn_degrees(),
+        );
+        assert_eq!(coarse_values(&mipmap), [0.0, 190.0]);
+    }
+
+    /// The circular rule covers a bucket whose samples all lie within one
+    /// period. A bucket holding a sample outside it keeps its linear minimum
+    /// and maximum: a heading past a full turn is drawn at the value the
+    /// receiver wrote, 675° at 675°.
+    #[rstest]
+    #[case::within_one_period([359.0, 1.0, 180.0, 2.0], [359.0, 180.0])]
+    #[case::past_a_full_turn([0.0, 315.0, 360.0, 675.0], [0.0, 675.0])]
+    #[case::not_finite([0.0, 315.0, f64::INFINITY, 350.0], [0.0, f64::INFINITY])]
+    fn a_bucket_is_downsampled_by_the_rule_its_samples_fall_under(
+        #[case] headings: [f64; 4],
+        #[case] expected: [f64; 2],
+    ) {
+        let mipmap = MipMap::build_wrapping(
+            sampled_per_second(&headings),
+            WrapPeriod::full_turn_degrees(),
+        );
+        assert_eq!(coarse_values(&mipmap), expected);
     }
 
     /// A period that describes no wrap.
@@ -731,9 +864,8 @@ mod wrapping_series {
     }
 
     proptest::proptest! {
-        /// Every emitted point is an input sample: the guarantee `select_slice`'s
-        /// ±1 neighbour extension and the outlier contract rest on, and the one a
-        /// per-bucket average would break.
+        /// Every emitted point is an input sample. `select_slice`'s ±1 neighbour
+        /// extension and the outlier contract both rest on that.
         #[test]
         fn every_wrapping_level_is_a_subset_of_the_finest(
             values in proptest::collection::vec(0.0_f64..360.0, 1..200),
@@ -751,11 +883,48 @@ mod wrapping_series {
                     proptest::prop_assert!(
                         finest
                             .iter()
-                            .any(|sample| sample.x == point.x
+                            .any(|sample| sample.x.to_bits() == point.x.to_bits()
                                 && sample.y.to_bits() == point.y.to_bits()),
                         "{point:?} is not an input sample"
                     );
                 }
+            }
+        }
+
+        /// A bucket holding a value outside one period keeps its linear minimum
+        /// and maximum, whichever side of the period the value falls.
+        #[test]
+        fn a_bucket_of_out_of_range_values_keeps_its_linear_extremes(
+            buckets in proptest::collection::vec(
+                proptest::array::uniform4(-720.0_f64..1080.0),
+                1..25,
+            ),
+        ) {
+            let values: Vec<f64> = buckets.iter().flatten().copied().collect();
+            let mipmap = MipMap::build_wrapping(
+                sampled_per_second(&values),
+                WrapPeriod::full_turn_degrees(),
+            );
+            let coarse = mipmap.levels.get(1).map_or(&[][..], Vec::as_slice);
+            for (i, bucket) in buckets.iter().enumerate() {
+                if bucket.iter().all(|&value| (0.0..360.0).contains(&value)) {
+                    continue;
+                }
+                let Some(kept) = coarse.get(i * 2..i * 2 + 2) else {
+                    return Err(proptest::test_runner::TestCaseError::fail(
+                        format!("bucket {i} emitted no pair"),
+                    ));
+                };
+                let mut got: Vec<f64> = kept.iter().map(|p| p.y).collect();
+                got.sort_by(f64::total_cmp);
+                let mut expected = bucket.to_vec();
+                expected.sort_by(f64::total_cmp);
+                proptest::prop_assert_eq!(
+                    got,
+                    vec![expected[0], expected[3]],
+                    "bucket {:?} lost a linear extreme",
+                    bucket
+                );
             }
         }
     }
