@@ -598,9 +598,9 @@ mod tests {
         from_nav_file(nav_file).map(|(pts, markers, _, _, _)| (pts, markers))
     }
 
-    /// Which clock stamped a fix survives the conversion: a receiver timestamp
-    /// stays one, a fix the receiver had no lock for keeps the host timestamp it
-    /// was stamped with, and a fix neither clock stamped sits at the Unix epoch.
+    /// The loader records which clock stamped a fix: the receiver's timestamp
+    /// when it had a lock, the host timestamp when it did not, and the Unix
+    /// epoch when neither clock stamped it.
     #[test]
     fn a_loaded_fix_keeps_which_clock_stamped_it() {
         let receiver_stamp = base() + Duration::seconds(2);
