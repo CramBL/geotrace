@@ -316,7 +316,7 @@ impl<'a> TrackLayers<'a> {
                         gt_filter::point_passes_time_filter(p.tpv.time().utc(), self.filter)
                     })
                     .map(|(pi, p)| {
-                        let screen_pos = transform.to_screen(p.merc);
+                        let screen_pos = transform.to_screen(p.merc());
                         if paint_icons && p.is_ghost_fix() {
                             ghost_points.push(pi);
                         }

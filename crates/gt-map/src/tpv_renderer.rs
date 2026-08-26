@@ -168,7 +168,7 @@ pub(crate) fn draw_track_icons(
             if point.is_ghost_fix() {
                 continue;
             }
-            let screen_pos = transform.to_screen(point.merc);
+            let screen_pos = transform.to_screen(point.merc());
             let icon_alpha = fix_icon_alpha(
                 fade,
                 track,
@@ -222,7 +222,7 @@ pub(crate) fn draw_track_icons(
         .iter()
         .filter_map(|&pi| track.points.get(pi).map(|p| (pi, p)))
     {
-        let screen_pos = transform.to_screen(point.merc);
+        let screen_pos = transform.to_screen(point.merc());
         if !view_rect.contains(screen_pos) {
             continue;
         }
@@ -253,8 +253,8 @@ pub(crate) fn draw_track_icons(
             let merc_prev = pi
                 .checked_sub(1)
                 .and_then(|i| track.points.get(i))
-                .map_or(point.merc, |p| p.merc);
-            let merc_next = track.points.get(pi + 1).map_or(point.merc, |p| p.merc);
+                .map_or(point.merc(), |p| p.merc());
+            let merc_next = track.points.get(pi + 1).map_or(point.merc(), |p| p.merc());
             ghost_direction(merc_prev, merc_next)
         };
         let point_ref = DataPointRef {
@@ -426,7 +426,7 @@ pub(crate) fn draw_plot_hover_overlay(
             .and_then(|f| ti.get(&f.tracks))
             .and_then(|t| pi.get(&t.points))
     {
-        let pos = transform.to_screen(point.merc);
+        let pos = transform.to_screen(point.merc());
         let painter = ui.painter();
         painter.circle_stroke(
             pos,
@@ -1217,7 +1217,7 @@ fn local_fix_spacing_px(
         track
             .points
             .get(i)
-            .map(|p| (transform.to_screen(p.merc) - screen_pos).length())
+            .map(|p| (transform.to_screen(p.merc()) - screen_pos).length())
     };
     let prev = pi.checked_sub(1).and_then(dist_to);
     let next = dist_to(pi + 1);
@@ -1402,7 +1402,7 @@ pub(crate) fn draw_sat_labels(
         let Some(sats) = &point.satellites else {
             continue;
         };
-        let screen_pos = transform.to_screen(point.merc);
+        let screen_pos = transform.to_screen(point.merc());
         let label = format!("{}/{}", sats.fix_count(), sats.satellite_count());
         let text_pos = screen_pos + egui::vec2(style.base_arrow_size + 3.0, -style.base_arrow_size);
         let text_color = Color32::WHITE;

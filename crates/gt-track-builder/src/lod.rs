@@ -72,7 +72,7 @@ fn first_useful_exponent(points: &[NavPoint]) -> u32 {
     let total: f64 = points
         .windows(2)
         .map(|w| match w {
-            [a, b] => (b.merc.x - a.merc.x).hypot(b.merc.y - a.merc.y),
+            [a, b] => (b.merc().x - a.merc().x).hypot(b.merc().y - a.merc().y),
             _ => 0.0,
         })
         .sum();
@@ -119,14 +119,14 @@ fn decimate(
         let keep = match last_kept {
             None => true,
             Some((merc, last_class)) => {
-                let dx = point.merc.x - merc.x;
-                let dy = point.merc.y - merc.y;
+                let dx = point.merc().x - merc.x;
+                let dy = point.merc().y - merc.y;
                 class != last_class || dx * dx + dy * dy >= tol_sq
             }
         };
         if keep {
             kept.push(idx);
-            last_kept = Some((point.merc, class));
+            last_kept = Some((point.merc(), class));
         }
     }
     if let Some(last) = last_candidate
@@ -247,8 +247,8 @@ mod tests {
                 let anchor = &points[*a as usize];
                 for pi in (*a + 1)..*b {
                     let p = &points[pi as usize];
-                    let dx = (p.merc.x - anchor.merc.x) * px_per_merc;
-                    let dy = (p.merc.y - anchor.merc.y) * px_per_merc;
+                    let dx = (p.merc().x - anchor.merc().x) * px_per_merc;
+                    let dy = (p.merc().y - anchor.merc().y) * px_per_merc;
                     let err_px = dx.hypot(dy);
                     assert!(
                         err_px <= 0.75,

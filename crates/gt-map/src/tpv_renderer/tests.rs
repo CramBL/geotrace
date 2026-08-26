@@ -920,7 +920,7 @@ fn classify_mixed_spacing_selects_per_fix() {
 
 fn spacing_at(track: &LoadedTrack, pi: usize) -> Option<f32> {
     let transform = unit_transform();
-    let screen_pos = transform.to_screen(track.points[pi].merc);
+    let screen_pos = transform.to_screen(track.points[pi].merc());
     local_fix_spacing_px(track, pi, screen_pos, &transform)
 }
 
@@ -960,7 +960,7 @@ fn local_spacing_keeps_cluster_boundary_visible() {
 fn fix_icon_alpha_short_circuits_uniform_tracks() {
     let track = track_with_points(vec![nav_point_at_meters(0.0), nav_point_at_meters(0.0)]);
     let transform = unit_transform();
-    let pos = transform.to_screen(track.points[0].merc);
+    let pos = transform.to_screen(track.points[0].merc());
     // AllHidden / AllVisible ignore local spacing entirely.
     let hidden = fix_icon_alpha(
         TrackIconFade::AllHidden,
@@ -999,7 +999,7 @@ fn per_fix_alpha_handles_parked_highway_parked() {
     ]);
     let transform = unit_transform();
     let alpha_at = |pi: usize| {
-        let pos = transform.to_screen(track.points[pi].merc);
+        let pos = transform.to_screen(track.points[pi].merc());
         fix_icon_alpha(
             TrackIconFade::PerFix,
             &track,

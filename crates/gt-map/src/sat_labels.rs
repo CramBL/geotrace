@@ -50,7 +50,7 @@ pub(crate) fn select_sat_labels<'s, 'a>(
             let Some(point) = anchor.point.get(&track.points) else {
                 continue;
             };
-            let (x, y) = (point.merc.x, point.merc.y);
+            let (x, y) = (point.merc().x, point.merc().y);
             if x < viewport.x_min || x > viewport.x_max || y < viewport.y_min || y > viewport.y_max
             {
                 continue;

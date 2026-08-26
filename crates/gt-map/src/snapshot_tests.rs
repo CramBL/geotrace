@@ -761,8 +761,8 @@ fn snapped_segment(points: &[NavPoint], range: std::ops::Range<usize>) -> Vec<Me
         .unwrap_or_default()
         .iter()
         .map(|p| MercPoint {
-            x: p.merc.x,
-            y: p.merc.y + SNAPPED_OFFSET_MERC_Y,
+            x: p.merc().x,
+            y: p.merc().y + SNAPPED_OFFSET_MERC_Y,
         })
         .collect()
 }
@@ -839,8 +839,8 @@ fn snap_snapped_track_collapsed_dot() {
             vec![
                 (0..4)
                     .map(|i| MercPoint {
-                        x: base.merc.x + f64::from(i) * CLUSTER_STEP_MERC_X,
-                        y: base.merc.y + CLUSTER_OFFSET_MERC_Y,
+                        x: base.merc().x + f64::from(i) * CLUSTER_STEP_MERC_X,
+                        y: base.merc().y + CLUSTER_OFFSET_MERC_Y,
                     })
                     .collect(),
             ]
@@ -882,8 +882,8 @@ fn snap_snapped_track_edge_hover() {
                 ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN)),
                 |(min, max), p| {
                     (
-                        (min.0.min(p.merc.x), min.1.min(p.merc.y)),
-                        (max.0.max(p.merc.x), max.1.max(p.merc.y)),
+                        (min.0.min(p.merc().x), min.1.min(p.merc().y)),
+                        (max.0.max(p.merc().x), max.1.max(p.merc().y)),
                     )
                 },
             );
@@ -932,8 +932,8 @@ fn whisker_geometry(points: &[NavPoint]) -> gt_ui_types::SnappedTrackGeometry {
     let snapped: Vec<MercPoint> = points
         .iter()
         .map(|p| MercPoint {
-            x: p.merc.x + WHISKER_OFFSET_MERC_X,
-            y: p.merc.y,
+            x: p.merc().x + WHISKER_OFFSET_MERC_X,
+            y: p.merc().y,
         })
         .collect();
     gt_ui_types::SnappedTrackGeometry {
@@ -1213,7 +1213,7 @@ fn snap_log_match_hexagons() {
             .first()
             .and_then(|file| file.tracks.first())
             .and_then(|track| track.points.get(index))
-            .map_or(MercPoint { x: 0.5, y: 0.5 }, |point| point.merc)
+            .map_or(MercPoint { x: 0.5, y: 0.5 }, |point| point.merc())
     };
     let spread = |every: usize, count: usize| {
         (0..count)
@@ -1276,7 +1276,7 @@ fn snap_log_matches_along_a_dense_track() {
     let positions: Vec<MercPoint> = files
         .first()
         .and_then(|file| file.tracks.first())
-        .map(|track| track.points.iter().map(|point| point.merc).collect())
+        .map(|track| track.points.iter().map(|point| point.merc()).collect())
         .unwrap_or_default();
     let source = snapshot_log_source(positions.len());
     let log_matches = LogMatches::from_layers(vec![log_layer(
@@ -1322,7 +1322,7 @@ fn snap_log_matches_of_overlapping_layers() {
     let track_positions: Vec<MercPoint> = files
         .first()
         .and_then(|file| file.tracks.first())
-        .map(|track| track.points.iter().map(|point| point.merc).collect())
+        .map(|track| track.points.iter().map(|point| point.merc()).collect())
         .unwrap_or_default();
     let source = snapshot_log_source(track_positions.len() * 3);
     let covered = log_layer(
@@ -1537,7 +1537,7 @@ fn snap_log_matches_hidden_by_display_mask() {
     let positions: Vec<gt_types::MercPoint> = files
         .first()
         .and_then(|file| file.tracks.first())
-        .map(|track| track.points.iter().map(|point| point.merc).collect())
+        .map(|track| track.points.iter().map(|point| point.merc()).collect())
         .unwrap_or_default();
     let source = snapshot_log_source(positions.len());
     let log_matches = LogMatches::from_layers(vec![log_layer(

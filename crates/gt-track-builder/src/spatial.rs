@@ -16,7 +16,7 @@ pub fn build_global_tree(files: &[LoadedFile]) -> rstar::RTree<SpatialPoint> {
                     continue;
                 }
                 points.push(SpatialPoint {
-                    merc: p.merc,
+                    merc: p.merc(),
                     file_index,
                     track_index,
                     point_index: PointIdx::new(pi),
