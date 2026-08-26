@@ -2479,6 +2479,7 @@ version = "0.13.0"
 dependencies = [
  "egui_plot",
  "proptest",
+ "rstest",
 ]
 
 [[package]]
