@@ -648,3 +648,115 @@ mod tests {
         }
     }
 }
+
+/// Downsampling a series whose values wrap, where the linear minimum and
+/// maximum of a bucket sit next to each other on the circle.
+#[cfg(test)]
+mod wrapping_series {
+    use super::*;
+
+    /// A 1 Hz series of `values`, one sample per second.
+    fn sampled_per_second(values: &[f64]) -> Vec<[f64; 2]> {
+        values
+            .iter()
+            .enumerate()
+            .map(|(i, &value)| [i as f64, value])
+            .collect()
+    }
+
+    /// The values of the first downsampled level, in the order they are drawn.
+    fn coarse_values(mipmap: &MipMap) -> Vec<f64> {
+        mipmap
+            .levels
+            .get(1)
+            .map(|level| level.iter().map(|p| p.y).collect())
+            .unwrap_or_default()
+    }
+
+    /// The mip-map preserves every bucket's outliers, and around north a
+    /// southward sample is neither the linear minimum (~0°) nor the linear
+    /// maximum (~359°) of its bucket.
+    #[test]
+    fn a_southward_sample_survives_a_bucket_of_northward_headings() {
+        let mipmap = MipMap::build_wrapping(
+            sampled_per_second(&[359.0, 1.0, 180.0, 2.0, 358.0, 0.0, 359.0, 1.0]),
+            WrapPeriod::full_turn_degrees(),
+        );
+        let coarse = coarse_values(&mipmap);
+        assert!(
+            coarse.contains(&180.0),
+            "the southward sample must survive downsampling, got {coarse:?}"
+        );
+    }
+
+    /// A bucket holding one direction has no outlier to keep, so every sample
+    /// it emits is as close to north as the samples it was given.
+    #[test]
+    fn a_bucket_of_north_jitter_keeps_northward_samples() {
+        let period = WrapPeriod::full_turn_degrees();
+        let mipmap = MipMap::build_wrapping(
+            sampled_per_second(&[359.0, 1.0, 0.5, 359.5, 358.5, 0.0, 1.5, 359.0]),
+            period,
+        );
+        for value in coarse_values(&mipmap) {
+            let arc_from_north = period.shortest_arc(0.0, value);
+            assert!(
+                arc_from_north <= 2.0,
+                "{value}° is {arc_from_north}° from north, further than any sample"
+            );
+        }
+    }
+
+    /// Opposite samples cancel out and leave no mean direction to measure a
+    /// deviation from, so the bucket keeps its linear minimum and maximum.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "the samples pass through by copy, so equality is exact"
+    )]
+    fn a_bucket_of_opposite_headings_keeps_its_linear_extremes() {
+        let mipmap = MipMap::build_wrapping(
+            sampled_per_second(&[0.0, 180.0, 0.0, 180.0, 10.0, 11.0, 12.0, 13.0]),
+            WrapPeriod::full_turn_degrees(),
+        );
+        assert_eq!(coarse_values(&mipmap), [0.0, 180.0, 10.0, 13.0]);
+    }
+
+    /// A period that describes no wrap.
+    #[test]
+    fn a_period_that_is_not_finite_and_positive_is_no_period() {
+        for period in [0.0, -360.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(WrapPeriod::new(period), None, "{period} is no wrap period");
+        }
+    }
+
+    proptest::proptest! {
+        /// Every emitted point is an input sample: the guarantee `select_slice`'s
+        /// ±1 neighbour extension and the outlier contract rest on, and the one a
+        /// per-bucket average would break.
+        #[test]
+        fn every_wrapping_level_is_a_subset_of_the_finest(
+            values in proptest::collection::vec(0.0_f64..360.0, 1..200),
+            period_deg in 0.1_f64..1000.0,
+        ) {
+            let Some(period) = WrapPeriod::new(period_deg) else {
+                return Err(proptest::test_runner::TestCaseError::fail(
+                    format!("{period_deg} is a finite, positive period"),
+                ));
+            };
+            let mipmap = MipMap::build_wrapping(sampled_per_second(&values), period);
+            let finest = mipmap.levels.first().map_or(&[][..], Vec::as_slice);
+            for level in &mipmap.levels {
+                for point in level {
+                    proptest::prop_assert!(
+                        finest
+                            .iter()
+                            .any(|sample| sample.x == point.x
+                                && sample.y.to_bits() == point.y.to_bits()),
+                        "{point:?} is not an input sample"
+                    );
+                }
+            }
+        }
+    }
+}
