@@ -68,12 +68,21 @@ pub(crate) struct MapScale {
     total_px: f64,
 }
 
+/// The pixel width of the world at zoom 0: a single tile.
+const WORLD_PX_AT_ZOOM_0: f64 = 256.0;
+
 impl MapScale {
     pub(crate) fn from_zoom(zoom: f64) -> Self {
-        // At zoom z the world is 256·2^z pixels wide at the equator.
         Self {
-            total_px: 2_f64.powf(zoom) * 256.0,
+            total_px: 2_f64.powf(zoom) * WORLD_PX_AT_ZOOM_0,
         }
+    }
+
+    /// The zoom at which the world spans `total_px` pixels: the inverse of
+    /// [`MapScale::from_zoom`]. Unclamped, so it can land outside walkers'
+    /// [1, 18] range.
+    pub(crate) fn zoom_for_world_px(total_px: f64) -> f64 {
+        (total_px / WORLD_PX_AT_ZOOM_0).log2()
     }
 
     /// Pixels per metre at the given latitude.

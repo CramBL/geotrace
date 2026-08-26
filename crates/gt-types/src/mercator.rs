@@ -12,6 +12,17 @@ use std::f64::consts::PI;
 /// tile covers anything past it.
 pub const MAX_LATITUDE_DEGREES: f64 = 85.051_128_779_806_59;
 
+impl Latitude {
+    /// This latitude pulled back to [`MAX_LATITUDE_DEGREES`] when it lies
+    /// past the parallel Web Mercator ends on.
+    pub fn clamped_to_the_mercator_limit(self) -> Self {
+        Self::new(
+            self.as_degrees()
+                .clamp(-MAX_LATITUDE_DEGREES, MAX_LATITUDE_DEGREES),
+        )
+    }
+}
+
 /// A pre-computed normalized Web Mercator position.
 ///
 /// Both fields are in `[0.0, 1.0]`:
