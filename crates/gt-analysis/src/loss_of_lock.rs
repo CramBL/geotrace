@@ -113,13 +113,50 @@ pub struct SlipSeries {
 /// events in `events` that fall inside the trailing window `(t - window_secs, t]`
 /// and dividing by `per_min` minutes.
 ///
-/// Both slices must be sorted ascending in time, which lets the two cursors
-/// advance monotonically for an O(n) sweep.  Returns no points when `per_min` is
-/// not positive (the rate would be undefined).
+/// A track's fix timestamps are not guaranteed to ascend (a receiver resuming
+/// after a gap can stamp a fix earlier than the one before it), so epochs and
+/// events out of ascending order are sorted before the sweep and the rates are
+/// written back into the order `epochs` was given in.  Returns no points when
+/// `per_min` is not positive (the rate would be undefined).
 fn windowed_rate(epochs: &[f64], events: &[f64], window_secs: f64, per_min: f64) -> Vec<[f64; 2]> {
     if per_min <= 0.0 {
         return Vec::new();
     }
+    if epochs.is_sorted() && events.is_sorted() {
+        return windowed_rate_of_ascending_epochs_and_events(epochs, events, window_secs, per_min);
+    }
+
+    let mut epochs_in_time_order: Vec<(f64, usize)> =
+        epochs.iter().enumerate().map(|(i, &t)| (t, i)).collect();
+    epochs_in_time_order.sort_by(|(a, _), (b, _)| a.total_cmp(b));
+    let sorted_epochs: Vec<f64> = epochs_in_time_order.iter().map(|&(t, _)| t).collect();
+    let mut sorted_events = events.to_vec();
+    sorted_events.sort_by(f64::total_cmp);
+
+    let swept = windowed_rate_of_ascending_epochs_and_events(
+        &sorted_epochs,
+        &sorted_events,
+        window_secs,
+        per_min,
+    );
+    let mut out = vec![[0.0; 2]; epochs.len()];
+    for (&(_, original_index), point) in epochs_in_time_order.iter().zip(swept) {
+        if let Some(slot) = out.get_mut(original_index) {
+            *slot = point;
+        }
+    }
+    out
+}
+
+/// [`windowed_rate`] for the common case of both slices already sorted
+/// ascending in time, where the two cursors advance monotonically for an O(n)
+/// sweep with no allocation beyond the result.
+fn windowed_rate_of_ascending_epochs_and_events(
+    epochs: &[f64],
+    events: &[f64],
+    window_secs: f64,
+    per_min: f64,
+) -> Vec<[f64; 2]> {
     let mut out = Vec::with_capacity(epochs.len());
     let mut lo = 0usize;
     let mut hi = 0usize;
@@ -382,11 +419,54 @@ mod windowed_rate_tests {
     }
 
     #[test]
+    fn epochs_and_events_out_of_order_count_the_windows_they_would_when_sorted() {
+        // Epochs 0, 60 and 120 with events at 10 and 70, all given out of
+        // order: t=0 counts nothing, t=60 counts the event at 10, t=120 the one
+        // at 70. Each rate comes back at its epoch's own position.
+        let out = windowed_rate(&[120.0, 0.0, 60.0], &[70.0, 10.0], 60.0, 1.0);
+        assert_eq!(rates(&out), vec![1.0, 0.0, 1.0]);
+        assert_eq!(out.first().map(|p| p[0]), Some(120.0));
+    }
+
+    #[test]
     fn rate_divides_the_window_count_by_the_window_length() {
         // Three events all inside a 2-minute window -> 1.5 per minute.
         let events = [10.0, 20.0, 30.0];
         let out = windowed_rate(&[120.0], &events, 120.0, 2.0);
         assert_eq!(rates(&out), vec![1.5]);
+    }
+
+    /// Window length of the generated cases, in seconds.
+    const PROPERTY_WINDOW_SECS: f64 = 60.0;
+
+    /// Window length of the generated cases, in minutes - the divisor that
+    /// turns a window count into a rate.
+    const PROPERTY_PER_MIN: f64 = 1.0;
+
+    proptest::proptest! {
+        /// Every epoch's rate counts exactly the events inside its own
+        /// `(t - window, t]` window, whatever order the epochs and the events
+        /// arrive in, and each rate comes back at its epoch's own position.
+        #[test]
+        fn every_epoch_counts_the_events_in_its_own_window(
+            epochs in proptest::collection::vec(-1000.0f64..1000.0, 0..40),
+            events in proptest::collection::vec(-1000.0f64..1000.0, 0..40),
+        ) {
+            let expected: Vec<[f64; 2]> = epochs
+                .iter()
+                .map(|&t| {
+                    let counted = events
+                        .iter()
+                        .filter(|&&e| e > t - PROPERTY_WINDOW_SECS && e <= t)
+                        .count();
+                    [t, counted as f64 / PROPERTY_PER_MIN]
+                })
+                .collect();
+
+            let out = windowed_rate(&epochs, &events, PROPERTY_WINDOW_SECS, PROPERTY_PER_MIN);
+
+            proptest::prop_assert_eq!(out, expected);
+        }
     }
 }
 

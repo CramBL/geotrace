@@ -15,6 +15,7 @@ vec1.workspace = true
 
 [dev-dependencies]
 chrono.workspace = true
+proptest.workspace = true
 rstest.workspace = true
 
 [lints]
