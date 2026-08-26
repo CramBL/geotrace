@@ -24,6 +24,7 @@ mod space_weather_indicator;
 mod tec_renderer;
 #[cfg(test)]
 mod test_harness;
+pub mod test_tiles;
 pub mod tpv_renderer;
 mod track_layers;
 pub mod track_renderer;
@@ -36,6 +37,7 @@ pub use tec_renderer::{TecHeatmapSnapshot, TecLayer};
 pub use viewport::ViewportBounds;
 
 use std::cell::{Cell, RefCell};
+use std::path::PathBuf;
 
 use egui::Context;
 
@@ -65,6 +67,7 @@ use crate::marker_renderer::MarkerRenderer;
 use crate::match_reveal::MatchRevealState;
 use crate::recording_labels::RecordingLabels;
 use crate::snapped_track_renderer::SnappedTrackRenderer;
+use crate::test_tiles::TestTileSource;
 use crate::track_layers::TrackLayers;
 use crate::transform::{MapScale, MercTransform};
 use crate::viewport::{
@@ -249,14 +252,25 @@ impl Default for HoverFadeState {
     }
 }
 
-/// Whether the map may fetch its base tiles.
+/// Where the map takes its base tiles from.
 ///
 /// The application supplies it at construction. [`TileAccess::Offline`]
-/// builds no tile fetcher at all.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// builds no tile source at all and leaves the base layer blank.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TileAccess {
     Network,
     Offline,
+    /// Tiles drawn in process, each labelled with its id and the degrees of
+    /// its north-west corner.
+    Synthetic,
+    /// Captured tiles read from `{directory}/{zoom}/{x}/{y}.png`.
+    Fixture(PathBuf),
+}
+
+impl TileAccess {
+    fn allows_tile_requests(&self) -> bool {
+        matches!(self, Self::Network)
+    }
 }
 
 /// Context provided to the map for a single frame.
@@ -374,10 +388,13 @@ struct FrameAnimation {
 
 pub struct NavMap {
     egui_ctx: Context,
-    /// [`None`] under [`TileAccess::Offline`]: the base layer stays blank
-    /// and nothing is requested.
+    /// Built under [`TileAccess::Network`] alone: every other access draws
+    /// its base layer from [`NavMap::test_tiles`] or leaves it blank.
     osm_tiles: Option<HttpTiles>,
     mapbox_tiles: Option<HttpTiles>,
+    /// The base layer under [`TileAccess::Synthetic`] and
+    /// [`TileAccess::Fixture`], drawn in place of both fetchers.
+    test_tiles: Option<TestTileSource>,
     tile_access: TileAccess,
     mapbox_token: String,
     layer: MapLayer,
@@ -450,11 +467,11 @@ impl NavMap {
             }
         };
         Self {
-            osm_tiles: match tile_access {
-                TileAccess::Network => Some(HttpTiles::new(OpenStreetMap, egui_ctx.clone())),
-                TileAccess::Offline => None,
-            },
+            osm_tiles: tile_access
+                .allows_tile_requests()
+                .then(|| HttpTiles::new(OpenStreetMap, egui_ctx.clone())),
             mapbox_tiles: None,
+            test_tiles: TestTileSource::for_tile_access(&tile_access, &egui_ctx),
             tile_access,
             mapbox_token: String::new(),
             layer: MapLayer::default(),
@@ -510,7 +527,7 @@ impl NavMap {
     /// Set (or clear) the Mapbox API token. Passing an empty string clears the token
     /// and falls back to OpenStreetMap for satellite mode.
     pub fn set_mapbox_token(&mut self, token: String) {
-        if self.tile_access == TileAccess::Offline {
+        if !self.tile_access.allows_tile_requests() {
             self.mapbox_token = token;
             return;
         }
@@ -818,19 +835,19 @@ impl NavMap {
         plan: &viewport::TrackPlan,
         animation: FrameAnimation,
     ) -> egui::Response {
-        let mut map = if self.use_mapbox_tiles() {
-            let tiles = self
-                .mapbox_tiles
+        let use_mapbox_tiles = self.use_mapbox_tiles();
+        let tiles: Option<&mut dyn walkers::Tiles> = if let Some(tiles) = self.test_tiles.as_mut() {
+            Some(tiles)
+        } else if use_mapbox_tiles {
+            self.mapbox_tiles
                 .as_mut()
-                .map(|t| -> &mut dyn walkers::Tiles { t });
-            Map::new(tiles, &mut self.map_memory, default_map_center())
+                .map(|tiles| -> &mut dyn walkers::Tiles { tiles })
         } else {
-            let tiles = self
-                .osm_tiles
+            self.osm_tiles
                 .as_mut()
-                .map(|t| -> &mut dyn walkers::Tiles { t });
-            Map::new(tiles, &mut self.map_memory, default_map_center())
+                .map(|tiles| -> &mut dyn walkers::Tiles { tiles })
         };
+        let mut map = Map::new(tiles, &mut self.map_memory, default_map_center());
         let pointer_ownership = PointerOwnership {
             recorded_element_hovered: ctx.highlight.hover.is_some(),
             marker_hovered: ctx.highlight.hover_candidates.any_marker(),

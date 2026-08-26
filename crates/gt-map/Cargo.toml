@@ -54,6 +54,7 @@ gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 proptest.workspace = true
 rstest.workspace = true
+tempfile.workspace = true
 vec1.workspace = true
 
 [[bench]]
