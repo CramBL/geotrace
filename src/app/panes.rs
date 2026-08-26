@@ -197,7 +197,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
 fn tpv_time_range_in_bounds(
     files: &[LoadedFile],
     visibility: &TrackDataVisibility,
-    bounds: gt_map::GeoBounds,
+    bounds: gt_map::ViewportBounds,
 ) -> Option<(f64, f64)> {
     let mut t_min = f64::INFINITY;
     let mut t_max = f64::NEG_INFINITY;

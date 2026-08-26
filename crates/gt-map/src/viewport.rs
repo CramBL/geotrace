@@ -5,7 +5,7 @@
 use std::ops::Range;
 
 use gt_filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
-use gt_types::{DataCategory, FileIdx, LoadedFile, NavPoint, SpatialPoint, TrackIdx, TrackRef};
+use gt_types::{DataCategory, FileIdx, GeoBounds, LoadedFile, SpatialPoint, TrackIdx, TrackRef};
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, MapScope, QueryMatches, TrackDataVisibility,
 };
@@ -18,7 +18,7 @@ use crate::transform::{MapScale, MercTransform};
 
 /// Geographic bounding box of the currently visible map viewport.
 #[derive(Debug, Clone, Copy)]
-pub struct GeoBounds {
+pub struct ViewportBounds {
     pub lat_min: f64,
     pub lat_max: f64,
     pub lon_min: f64,
@@ -222,7 +222,7 @@ pub(crate) fn compute_visible_bounding_box(
     visibility: &TrackDataVisibility,
     filter: &GlobalFilter,
     display_mask: DisplayMask,
-) -> Option<(f64, f64, f64, f64)> {
+) -> Option<GeoBounds> {
     let points_displayed = [
         DisplayCategory::Tracks,
         DisplayCategory::TrackPoints,
@@ -234,65 +234,32 @@ pub(crate) fn compute_visible_bounding_box(
     if !points_displayed && !custom_markers_displayed {
         return None;
     }
-    let mut min_lat = f64::MAX;
-    let mut max_lat = f64::MIN;
-    let mut min_lon = f64::MAX;
-    let mut max_lon = f64::MIN;
-    let mut any = false;
 
-    for (fi, file) in files.iter().enumerate() {
-        let Some(file_vis) = visibility.files.get(fi) else {
-            continue;
-        };
-        if !file_vis.enabled {
-            continue;
-        }
-        for (ti, track) in file.tracks.iter().enumerate() {
-            let Some(track_vis) = file_vis.tracks.get(ti) else {
-                continue;
-            };
-            if !track_vis.enabled {
-                continue;
-            }
-            if !track_passes_filter(&track.metadata, filter) {
-                continue;
-            }
-            if points_displayed {
-                for point in &track.points {
-                    if !point_passes_time_filter(point.tpv.time().utc(), filter) {
-                        continue;
-                    }
-                    let lat = point.tpv.lat().as_degrees();
-                    let lon = point.tpv.lon().as_degrees();
-                    min_lat = min_lat.min(lat);
-                    max_lat = max_lat.max(lat);
-                    min_lon = min_lon.min(lon);
-                    max_lon = max_lon.max(lon);
-                    any = true;
-                }
-            }
-            if custom_markers_displayed {
-                for marker in &track.custom_markers {
-                    if !point_passes_time_filter(marker.time, filter) {
-                        continue;
-                    }
-                    let lat = marker.lat.as_degrees();
-                    let lon = marker.lon.as_degrees();
-                    min_lat = min_lat.min(lat);
-                    max_lat = max_lat.max(lat);
-                    min_lon = min_lon.min(lon);
-                    max_lon = max_lon.max(lon);
-                    any = true;
-                }
-            }
-        }
-    }
+    let visible_positions = files
+        .iter()
+        .zip(&visibility.files)
+        .filter(|(_, file_vis)| file_vis.enabled)
+        .flat_map(|(file, file_vis)| file.tracks.iter().zip(&file_vis.tracks))
+        .filter(|(track, track_vis)| {
+            track_vis.enabled && track_passes_filter(&track.metadata, filter)
+        })
+        .flat_map(|(track, _)| {
+            let points = points_displayed
+                .then(|| track.points.iter())
+                .into_iter()
+                .flatten()
+                .filter(|point| point_passes_time_filter(point.tpv.time().utc(), filter))
+                .map(|point| (point.tpv.lat(), point.tpv.lon()));
+            let markers = custom_markers_displayed
+                .then(|| track.custom_markers.iter())
+                .into_iter()
+                .flatten()
+                .filter(|marker| point_passes_time_filter(marker.time, filter))
+                .map(|marker| (marker.lat, marker.lon));
+            points.chain(markers)
+        });
 
-    if any {
-        Some((min_lat, max_lat, min_lon, max_lon))
-    } else {
-        None
-    }
+    GeoBounds::from_positions(visible_positions)
 }
 
 /// Bounding box over the points every `draw` layer of `matches` covers, for
@@ -301,22 +268,29 @@ pub(crate) fn compute_visible_bounding_box(
 pub(crate) fn matched_bounding_box(
     files: &[LoadedFile],
     matches: &QueryMatches,
-) -> Option<(f64, f64, f64, f64)> {
-    let mut bounds = None;
-    for layer in &matches.draws {
-        for (track_ref, ranges) in &layer.ranges {
-            let Some(track) = track_ref.resolve(files) else {
-                continue;
-            };
-            for range in ranges {
-                grow_bounds_over(
-                    &mut bounds,
-                    track.points.get(range.clone()).unwrap_or_default(),
-                );
-            }
-        }
-    }
-    bounds
+) -> Option<GeoBounds> {
+    let mut matched_ranges: Vec<(TrackRef, &[Range<usize>])> = matches
+        .draws
+        .iter()
+        .flat_map(|layer| &layer.ranges)
+        .map(|(track_ref, ranges)| (*track_ref, ranges.as_slice()))
+        .collect();
+    // Sorting the ranges by TrackRef fixes the order the longitude extent
+    // grows in: the ranges of a draw layer are keyed by a hash map, so an
+    // unsorted fold would frame a different box from run to run.
+    matched_ranges.sort_by_key(|(track_ref, _)| *track_ref);
+
+    GeoBounds::from_positions(
+        matched_ranges
+            .into_iter()
+            .filter_map(|(track_ref, ranges)| Some((track_ref.resolve(files)?, ranges)))
+            .flat_map(|(track, ranges)| {
+                ranges
+                    .iter()
+                    .flat_map(move |range| track.points.get(range.clone()).unwrap_or_default())
+            })
+            .map(|point| (point.tpv.lat(), point.tpv.lon())),
+    )
 }
 
 /// Bounding box over the points of one match, for framing the map on the match
@@ -326,36 +300,24 @@ pub(crate) fn match_bounding_box(
     files: &[LoadedFile],
     track_ref: TrackRef,
     points: &Range<usize>,
-) -> Option<(f64, f64, f64, f64)> {
+) -> Option<GeoBounds> {
     let track = track_ref.resolve(files)?;
-    let mut bounds = None;
-    grow_bounds_over(&mut bounds, track.points.get(points.clone())?);
-    bounds
-}
-
-/// Grows `bounds` over every point of `points`, starting it at the first one
-/// when it is still `None`.
-fn grow_bounds_over(bounds: &mut Option<(f64, f64, f64, f64)>, points: &[NavPoint]) {
-    for point in points {
-        let lat = point.tpv.lat().as_degrees();
-        let lon = point.tpv.lon().as_degrees();
-        *bounds = Some(match *bounds {
-            None => (lat, lat, lon, lon),
-            Some((min_lat, max_lat, min_lon, max_lon)) => (
-                min_lat.min(lat),
-                max_lat.max(lat),
-                min_lon.min(lon),
-                max_lon.max(lon),
-            ),
-        });
-    }
+    let matched = track.points.get(points.clone())?;
+    GeoBounds::from_positions(
+        matched
+            .iter()
+            .map(|point| (point.tpv.lat(), point.tpv.lon())),
+    )
 }
 
 /// Compute the geographic bounding box of the given map viewport rect.
 ///
 /// Uses the walkers `Projector` to unproject the four corners of `map_rect`
 /// into geographic positions and returns their bounding envelope.
-pub(crate) fn compute_viewport_bounds(map_memory: &MapMemory, map_rect: egui::Rect) -> GeoBounds {
+pub(crate) fn compute_viewport_bounds(
+    map_memory: &MapMemory,
+    map_rect: egui::Rect,
+) -> ViewportBounds {
     // `my_position` is only used as a fallback when the map is in GPS-follow
     // mode. `center_at()` is always called explicitly, so `detached()` provides
     // the actual center. Fall back to (0, 0) if `detached()` is unset.
@@ -386,7 +348,7 @@ pub(crate) fn compute_viewport_bounds(map_memory: &MapMemory, map_rect: egui::Re
         lon_max = lon_max.max(lon);
     }
 
-    GeoBounds {
+    ViewportBounds {
         lat_min,
         lat_max,
         lon_min,
@@ -412,19 +374,22 @@ pub(crate) fn is_spatial_point_visible(sp: &SpatialPoint, scope: MapScope<'_>) -
     })
 }
 
-/// Center the map and set the zoom so the given bounding box fills ~80 % of the
-/// viewport. Respects walkers' valid zoom range [1, 18].
-pub(crate) fn zoom_to_fit(
-    map_memory: &mut MapMemory,
-    viewport: egui::Rect,
-    (min_lat, max_lat, min_lon, max_lon): (f64, f64, f64, f64),
-) {
-    let center_lat = (min_lat + max_lat) / 2.0;
-    let center_lon = (min_lon + max_lon) / 2.0;
-    map_memory.center_at(walkers::lat_lon(center_lat, center_lon));
+/// Floor on a bounding box's extent, keeping the fit of a single position
+/// finite.
+const MIN_FIT_SPAN_DEGREES: f64 = 0.001;
 
-    let lat_range = (max_lat - min_lat).max(0.001);
-    let lon_range = (max_lon - min_lon).max(0.001);
+/// Center the map and set the zoom so `bounds` fills ~80 % of the viewport.
+/// Respects walkers' valid zoom range [1, 18].
+pub(crate) fn zoom_to_fit(map_memory: &mut MapMemory, viewport: egui::Rect, bounds: GeoBounds) {
+    let (center_lat, center_lon) = bounds.center();
+    map_memory.center_at(walkers::lat_lon(
+        center_lat.as_degrees(),
+        center_lon.as_degrees(),
+    ));
+
+    let lat_range = (bounds.lat.north().as_degrees() - bounds.lat.south().as_degrees())
+        .max(MIN_FIT_SPAN_DEGREES);
+    let lon_range = bounds.lon.span_degrees().max(MIN_FIT_SPAN_DEGREES);
     let vw = viewport.width() as f64;
     let vh = viewport.height() as f64;
 
@@ -438,4 +403,106 @@ pub(crate) fn zoom_to_fit(
     // zoom is already clamped to [1, 18], so set_zoom can only fail if the
     // walkers library's valid range narrows further - ignore silently.
     let _ignored = map_memory.set_zoom(zoom);
+}
+
+#[cfg(test)]
+mod zoom_to_fit_antimeridian {
+    use chrono::{Duration, TimeZone, Utc};
+    use gt_types::NavPoint;
+
+    use super::*;
+    use crate::tests::{file_with_tracks, nav_at, track_over, vis_all_visible};
+
+    /// The viewport every case here frames into, in logical pixels.
+    const VIEWPORT: egui::Rect =
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 600.0));
+
+    /// Fixes one second apart at `positions`, given as (latitude, longitude)
+    /// in degrees.
+    fn fixes_at(positions: &[(f64, f64)]) -> Vec<NavPoint> {
+        let start = Utc.timestamp_opt(0, 0).single().expect("valid timestamp");
+        positions
+            .iter()
+            .zip(0_i64..)
+            .map(|(&(lat, lon), second)| nav_at(start + Duration::seconds(second), lat, lon))
+            .collect()
+    }
+
+    fn file_over(positions: &[(f64, f64)]) -> Vec<LoadedFile> {
+        vec![file_with_tracks(vec![track_over(fixes_at(positions))])]
+    }
+
+    /// An eastbound equatorial crossing running 179.0° E to 180.5° E:
+    /// 1.5° of longitude, 166.79 km long.
+    fn antimeridian_file() -> Vec<LoadedFile> {
+        file_over(&[(0.0, 179.0), (0.0, 179.5), (0.0, -179.9), (0.0, -179.5)])
+    }
+
+    fn visible_bounds(files: &[LoadedFile]) -> GeoBounds {
+        compute_visible_bounding_box(
+            files,
+            &vis_all_visible(),
+            &GlobalFilter::default(),
+            DisplayMask::default(),
+        )
+        .expect("the file has visible points")
+    }
+
+    /// Opening a Pacific recording frames the map through `adopt_new_files`
+    /// and [`zoom_to_fit`], which must center on the track's own center
+    /// meridian, 179.75° E.
+    #[test]
+    fn zoom_to_fit_across_the_antimeridian_centers_on_the_track() {
+        let files = antimeridian_file();
+        let mut map_memory = MapMemory::default();
+        zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
+        let center = map_memory.detached().expect("centered");
+        assert!(
+            (center.x() - 179.75).abs() < 0.5,
+            "expected the map centered near 179.75° E, got {}",
+            center.x()
+        );
+    }
+
+    /// The same framing must zoom in on the 1.5° the track covers:
+    /// `log2(800 · 0.8 · 360 / (256 · 1.5))` is 9.23, while the long way
+    /// around the planet gives 1.32.
+    #[test]
+    fn zoom_to_fit_across_the_antimeridian_frames_the_track_not_the_globe() {
+        let files = antimeridian_file();
+        let mut map_memory = MapMemory::default();
+        zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
+        assert!(
+            map_memory.zoom() > 8.0,
+            "a 166.79 km track was framed at zoom {}",
+            map_memory.zoom()
+        );
+    }
+
+    /// A track clear of the antimeridian is framed on itself: the same
+    /// formula, at a longitude range of 0.04°, zooms all the way in.
+    #[test]
+    fn zoom_to_fit_over_a_local_track_frames_it() {
+        let files = file_over(&[(55.67, 12.55), (55.69, 12.59)]);
+        let mut map_memory = MapMemory::default();
+        zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
+        let center = map_memory.detached().expect("centered");
+        assert!((center.x() - 12.57).abs() < 1e-9, "lon {}", center.x());
+        assert!((center.y() - 55.68).abs() < 1e-9, "lat {}", center.y());
+        assert!(map_memory.zoom() > 12.0, "zoom {}", map_memory.zoom());
+    }
+
+    /// A single-fix track gives a zero-sized box: [`zoom_to_fit`]'s floor on
+    /// the span keeps the zoom finite and clamped to the map's maximum.
+    #[test]
+    fn zoom_to_fit_over_a_single_fix_clamps_to_the_maximum_zoom() {
+        let files = file_over(&[(55.67, 12.55)]);
+        let mut map_memory = MapMemory::default();
+        zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
+        assert!(
+            (map_memory.zoom() - 18.0).abs() < 1e-9,
+            "{}",
+            map_memory.zoom()
+        );
+    }
 }
