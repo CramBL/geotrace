@@ -867,10 +867,11 @@ fn precompute_ghost_positions(points: &mut [NavPoint]) {
         }
         let (lat, lon) = match (prev_real[i], next_real[i]) {
             (Some(pi), Some(ni)) => {
-                let t_total = (points[ni].tpv.time() - points[pi].tpv.time()).num_seconds() as f64;
-                let t_curr = (points[i].tpv.time() - points[pi].tpv.time()).num_seconds() as f64;
-                if t_total > 0.0 {
-                    let f = t_curr / t_total;
+                let anchor_span_secs =
+                    (points[ni].tpv.time() - points[pi].tpv.time()).as_seconds_f64();
+                let elapsed_secs = (points[i].tpv.time() - points[pi].tpv.time()).as_seconds_f64();
+                if anchor_span_secs > 0.0 {
+                    let f = elapsed_secs / anchor_span_secs;
                     let lat = points[pi].tpv.lat().as_degrees()
                         + (points[ni].tpv.lat().as_degrees() - points[pi].tpv.lat().as_degrees())
                             * f;
