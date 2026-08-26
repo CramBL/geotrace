@@ -17,6 +17,7 @@ thiserror.workspace = true
 uom.workspace = true
 
 [dev-dependencies]
+gt-analysis = { path = "../gt-analysis" }
 gt-test-utils = { path = "../gt-test-utils" }
 proptest.workspace = true
 rstest.workspace = true
