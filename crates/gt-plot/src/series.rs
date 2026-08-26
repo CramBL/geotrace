@@ -222,8 +222,7 @@ fn clock_delta_series(
         .enumerate()
         .filter(|(i, _)| excluded.binary_search(i).is_err())
         .filter_map(|(_, point)| {
-            let sys = point.tpv.sys_time()?;
-            let delta_ms = point.tpv.time().offset_from_sys(sys).num_milliseconds();
+            let delta_ms = point.tpv.gps_system_clock_offset()?.num_milliseconds();
             Some([point.tpv.time().as_secs_f64(), delta_ms as f64])
         })
         .collect();

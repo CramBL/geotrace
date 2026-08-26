@@ -549,9 +549,9 @@ fn hover_grid_ui(ui: &mut Ui, p: &NavPoint, recording_name: Option<&str>) {
                 }
             }
 
-            // GPS/system-clock delta (if system timestamp is available).
-            if let Some(sys) = p.tpv.sys_time() {
-                let clock_delta_ms = p.tpv.time().offset_from_sys(sys).num_milliseconds();
+            // GPS/system-clock delta.
+            if let Some(offset) = p.tpv.gps_system_clock_offset() {
+                let clock_delta_ms = offset.num_milliseconds();
                 ui.label(format!("Clock {DELTA}t"));
                 ui.label(format!(
                     "{} ({})",
@@ -742,9 +742,8 @@ fn sticky_metrics(
         }
 
         // GPS/system-clock delta: how far the GPS clock leads the host clock.
-        // Only shown when the fix carries a system timestamp.
-        if let Some(sys) = p.tpv.sys_time() {
-            let clock_delta_ms = p.tpv.time().offset_from_sys(sys).num_milliseconds();
+        if let Some(offset) = p.tpv.gps_system_clock_offset() {
+            let clock_delta_ms = offset.num_milliseconds();
             ui.label(format!("Clock {DELTA}t"));
             ui.label(gt_fmt::format_signed_delta(clock_delta_ms));
             ui.end_row();

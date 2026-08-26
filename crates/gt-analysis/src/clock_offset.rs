@@ -94,11 +94,10 @@ pub fn detect_excursions(points: &[NavPoint], threshold_s: f32) -> Vec<ClockOffs
         .iter()
         .enumerate()
         .filter_map(|(index, p)| {
-            let sys = p.tpv.sys_time()?;
             Some(ExcursionSample {
                 index,
                 t: p.tpv.time().as_secs_f64_with_subseconds(),
-                offset_ms: p.tpv.time().offset_from_sys(sys).num_milliseconds(),
+                offset_ms: p.tpv.gps_system_clock_offset()?.num_milliseconds(),
             })
         })
         .collect();
@@ -182,7 +181,7 @@ fn threshold_ms(threshold_s: f32) -> i64 {
 mod tests {
     use chrono::{TimeZone, Utc};
     use gt_types::coordinates::{Latitude, Longitude};
-    use gt_types::time_types::{GpsTime, SysTime};
+    use gt_types::time_types::{FixTimestamp, GpsTime, SysTime};
     use gt_types::tpv::TimePositionVelocity;
 
     use super::*;
@@ -205,19 +204,15 @@ mod tests {
         NavPoint::new(tpv, None)
     }
 
-    /// How far the host clock of [`a_fix_without_a_gps_lock_is_not_an_excursion`]
-    /// sits behind GPS, in seconds.
-    const HOST_BEHIND_S: i64 = 3600;
-
-    /// A point the receiver took without a lock: it reported no GPS time, so
-    /// the fix carries the host timestamp at `sys_secs` as its time.
+    /// The host clock stamped this point at `sys_secs`, the receiver having
+    /// reported no GPS time.
     fn point_without_gps_lock(sys_secs: i64) -> NavPoint {
-        let host = Utc.timestamp_opt(sys_secs, 0).single().expect("valid");
+        let host = SysTime::from_utc(Utc.timestamp_opt(sys_secs, 0).single().expect("valid"));
         let tpv = TimePositionVelocity::builder()
-            .time(GpsTime::from_utc(host))
+            .time(FixTimestamp::FromHostClock(host))
             .lat(Latitude::new(55.0))
             .lon(Longitude::new(12.0))
-            .sys_time(SysTime::from_utc(host))
+            .sys_time(host)
             .build();
         NavPoint::new(tpv, None)
     }
@@ -323,12 +318,13 @@ mod tests {
         );
     }
 
-    /// A fix taken without a GPS lock carries the host timestamp as its time,
-    /// so its GPS−system difference is a structural zero rather than a
-    /// measurement: on a track whose host clock sits an hour behind GPS it is
-    /// not a departure from the baseline, while a real one beside it still is.
+    /// A fix taken without a GPS lock has a structural zero GPS−system
+    /// difference: it carries the host timestamp as its own time. On a track
+    /// whose host clock sits an hour behind GPS that zero is no departure from
+    /// the baseline, while a real one beside it still is.
     #[test]
     fn a_fix_without_a_gps_lock_is_not_an_excursion() {
+        const HOST_BEHIND_S: i64 = 3600;
         let behind_ms = -HOST_BEHIND_S * 1000;
         let mut points: Vec<NavPoint> = (0..4).map(|i| point(1000 + i, behind_ms)).collect();
         points.push(point_without_gps_lock(1004 - HOST_BEHIND_S));

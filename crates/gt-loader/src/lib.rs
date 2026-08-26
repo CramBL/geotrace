@@ -48,7 +48,7 @@ use geotrace_sdk::{
     SatelliteReport, TravelMode as SdkTravelMode, collect_satellite_warnings,
 };
 use gt_types::satellites::{Constellation, Satellite, Satellites};
-use gt_types::time_types::{GpsTime, SysTime};
+use gt_types::time_types::{FixTimestamp, GpsTime, SysTime};
 use gt_types::{
     Channel, CustomMarker, EventMarker, EventMarkerStyle, FileSource, Latitude, LoadWarning,
     LoadedFile, Longitude, MarkerColor, MarkerIcon, NavPoint, TimePositionVelocity, TravelMode,
@@ -323,8 +323,14 @@ fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
             return Err(LoadError::LongitudeOutOfRange { lon: lon_deg, idx });
         }
 
+        let time = match (sdk_point.fix.gps_time, sdk_point.fix.sys_time) {
+            (Some(gps), _) => FixTimestamp::FromGpsReceiver(GpsTime::from_utc(gps)),
+            (None, Some(host)) => FixTimestamp::FromHostClock(SysTime::from_utc(host)),
+            (None, None) => FixTimestamp::Missing,
+        };
+
         let tpv = TimePositionVelocity::builder()
-            .time(GpsTime::from_utc(sdk_point.fix.effective_gps_time()))
+            .time(time)
             .lat(Latitude::new(lat_deg))
             .lon(Longitude::new(lon_deg))
             .maybe_heading(sdk_point.fix.heading.map(to_uom_angle))
@@ -590,6 +596,51 @@ mod tests {
 
     fn build(nav_file: &NavFile) -> Result<(Vec<NavPoint>, Vec<CustomMarker>), LoadError> {
         from_nav_file(nav_file).map(|(pts, markers, _, _, _)| (pts, markers))
+    }
+
+    /// Which clock stamped a fix survives the conversion: a receiver timestamp
+    /// stays one, a fix the receiver had no lock for keeps the host timestamp it
+    /// was stamped with, and a fix neither clock stamped sits at the Unix epoch.
+    #[test]
+    fn a_loaded_fix_keeps_which_clock_stamped_it() {
+        let receiver_stamp = base() + Duration::seconds(2);
+        let host_stamp = base() + Duration::seconds(1);
+        let mut recorder = NavFileBuilder::new().open();
+        recorder.add_nav_fix(
+            NavFix::builder()
+                .gps_time(receiver_stamp)
+                .lat(Angle::degrees(55.0))
+                .lon(Angle::degrees(12.0))
+                .build(),
+        );
+        recorder.add_nav_fix(
+            NavFix::builder()
+                .sys_time(host_stamp)
+                .lat(Angle::degrees(55.0))
+                .lon(Angle::degrees(12.0))
+                .build(),
+        );
+        recorder.add_nav_fix(
+            NavFix::builder()
+                .lat(Angle::degrees(55.0))
+                .lon(Angle::degrees(12.0))
+                .build(),
+        );
+
+        let (points, _) = build(&recorder.finish().unwrap()).unwrap();
+
+        let stamped: Vec<(DateTime<Utc>, Option<DateTime<Utc>>)> = points
+            .iter()
+            .map(|p| (p.tpv.time().utc(), p.tpv.gps_time().map(GpsTime::utc)))
+            .collect();
+        assert_eq!(
+            stamped,
+            vec![
+                (DateTime::UNIX_EPOCH, None),
+                (host_stamp, None),
+                (receiver_stamp, Some(receiver_stamp)),
+            ]
+        );
     }
 
     #[test]
