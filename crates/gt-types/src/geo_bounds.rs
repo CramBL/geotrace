@@ -1,7 +1,70 @@
-use crate::coordinates::{Latitude, Longitude};
+use crate::coordinates::{FULL_CIRCLE_DEGREES, HALF_CIRCLE_DEGREES, Latitude, Longitude};
 
-const FULL_CIRCLE_DEGREES: f64 = 360.0;
-const HALF_CIRCLE_DEGREES: f64 = 180.0;
+const NORTH_POLE_DEGREES: f64 = 90.0;
+const SOUTH_POLE_DEGREES: f64 = -90.0;
+
+/// Slack for the arc comparisons below, 1e-6° of it: an evenly sampled lap
+/// closes with an arc as long as its others, and a closed path's arcs sum to
+/// an exact multiple of 360°, both only up to floating-point rounding.
+const ARC_TOLERANCE_DEGREES: f64 = 1e-6;
+
+/// Whether the closed path through a track's fixes encircles a pole, and
+/// which one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoleWinding {
+    None,
+    AroundNorthPole,
+    AroundSouthPole,
+}
+
+impl PoleWinding {
+    /// The winding of `fixes`, read in recorded order.
+    ///
+    /// It sums the shorter longitude arc between consecutive fixes, plus the
+    /// arc from the last fix back to the first. That closing arc counts only
+    /// when it is no longer than the longest arc between recorded fixes: a
+    /// track that ended far from where it started is read as an open line.
+    /// The arcs of a closed path sum to a multiple of 360°, and a non-zero
+    /// multiple means the path encircles a pole - the one in the hemisphere
+    /// the fixes' mean latitude lies in.
+    pub fn of_track(fixes: impl IntoIterator<Item = (Latitude, Longitude)>) -> Self {
+        let mut fixes = fixes.into_iter();
+        let Some((first_latitude, first_longitude)) = fixes.next() else {
+            return Self::None;
+        };
+        let mut latitude_sum_degrees = first_latitude.as_degrees();
+        let mut arc_sum_degrees = 0.0;
+        let mut longest_arc_degrees = 0.0_f64;
+        let mut previous_longitude = first_longitude;
+        for (latitude, longitude) in fixes {
+            let Some(arc_degrees) = previous_longitude.shorter_arc_degrees_to(longitude) else {
+                return Self::None;
+            };
+            latitude_sum_degrees += latitude.as_degrees();
+            arc_sum_degrees += arc_degrees;
+            longest_arc_degrees = longest_arc_degrees.max(arc_degrees.abs());
+            previous_longitude = longitude;
+        }
+
+        let Some(closing_arc_degrees) = previous_longitude.shorter_arc_degrees_to(first_longitude)
+        else {
+            return Self::None;
+        };
+        if closing_arc_degrees.abs() > longest_arc_degrees + ARC_TOLERANCE_DEGREES {
+            return Self::None;
+        }
+
+        let closed_sum_degrees = arc_sum_degrees + closing_arc_degrees;
+        if closed_sum_degrees.abs() < FULL_CIRCLE_DEGREES - ARC_TOLERANCE_DEGREES {
+            return Self::None;
+        }
+        if latitude_sum_degrees < 0.0 {
+            Self::AroundSouthPole
+        } else {
+            Self::AroundNorthPole
+        }
+    }
+}
 
 /// A longitude interval, measured eastward from `start` over `span_degrees`.
 ///
@@ -260,6 +323,30 @@ impl GeoBounds {
         }
     }
 
+    /// This box as `winding` leaves it: a track that encircles a pole is held
+    /// only by the cap over every meridian, reaching from its extreme fix to
+    /// that pole.
+    #[must_use]
+    pub fn extended_to_the_encircled_pole(self, winding: PoleWinding) -> Self {
+        match winding {
+            PoleWinding::None => self,
+            PoleWinding::AroundNorthPole => Self {
+                lat: LatRange {
+                    south: self.lat.south,
+                    north: Latitude::new(NORTH_POLE_DEGREES),
+                },
+                lon: LonRange::full_circle(),
+            },
+            PoleWinding::AroundSouthPole => Self {
+                lat: LatRange {
+                    south: Latitude::new(SOUTH_POLE_DEGREES),
+                    north: self.lat.north,
+                },
+                lon: LonRange::full_circle(),
+            },
+        }
+    }
+
     /// The bounds covering both, closing the shorter of the two longitude
     /// gaps between them as [`LonRange::union`] does.
     pub fn union(self, other: Self) -> Self {
@@ -285,14 +372,25 @@ impl GeoBounds {
 mod tests {
     use rstest::rstest;
 
-    use super::{FULL_CIRCLE_DEGREES, GeoBounds, LonRange};
+    use super::{FULL_CIRCLE_DEGREES, GeoBounds, LonRange, PoleWinding};
     use crate::coordinates::{Latitude, Longitude};
+    use crate::mercator;
 
     /// 1e-9° is about 0.1 mm.
     const DEGREES_TOLERANCE: f64 = 1e-9;
 
     /// An eastbound track over the antimeridian, 1.5° wide.
     const ACROSS_THE_ANTIMERIDIAN: &[f64] = &[179.0, 179.5, -179.9, -179.5];
+
+    /// A receiver carried around the north pole, sampled a quarter turn apart.
+    const AROUND_THE_NORTH_POLE: &[(f64, f64)] =
+        &[(89.9, 0.0), (89.9, 90.0), (89.9, 180.0), (89.9, -90.0)];
+
+    fn positions_of(fixes: &[(f64, f64)]) -> impl Iterator<Item = (Latitude, Longitude)> {
+        fixes
+            .iter()
+            .map(|&(lat, lon)| (Latitude::new(lat), Longitude::new(lon)))
+    }
 
     fn assert_degrees_close(actual: f64, expected: f64) {
         assert!(
@@ -458,6 +556,66 @@ mod tests {
         );
     }
 
+    #[rstest]
+    #[case::around_the_north_pole(AROUND_THE_NORTH_POLE, PoleWinding::AroundNorthPole)]
+    #[case::around_the_north_pole_the_other_way(
+        &[(89.9, 0.0), (89.9, -90.0), (89.9, 180.0), (89.9, 90.0)],
+        PoleWinding::AroundNorthPole
+    )]
+    #[case::around_the_south_pole(
+        &[(-89.9, 0.0), (-89.9, 90.0), (-89.9, 180.0), (-89.9, -90.0)],
+        PoleWinding::AroundSouthPole
+    )]
+    #[case::a_stationary_receiver_jittering_over_the_antimeridian(
+        &[(89.99, 170.0), (89.99, -170.0), (89.99, 170.0), (89.99, -170.0)],
+        PoleWinding::None
+    )]
+    #[case::across_the_antimeridian(
+        &[(0.0, 179.0), (0.0, 179.5), (0.0, -179.9), (0.0, -179.5)],
+        PoleWinding::None
+    )]
+    #[case::two_hundred_degrees_east_along_the_equator(
+        &[(0.0, 0.0), (0.0, 100.0), (0.0, -160.0)],
+        PoleWinding::None
+    )]
+    #[case::two_fixes(&[(55.0, 12.0), (55.2, 12.5)], PoleWinding::None)]
+    #[case::two_fixes_on_opposite_meridians(&[(55.0, 0.0), (55.0, 180.0)], PoleWinding::None)]
+    #[case::no_fixes(&[], PoleWinding::None)]
+    fn a_track_winds_around_a_pole_only_once_its_closed_path_turns_full_circle(
+        #[case] fixes: &[(f64, f64)],
+        #[case] expected: PoleWinding,
+    ) {
+        assert_eq!(PoleWinding::of_track(positions_of(fixes)), expected);
+    }
+
+    #[rstest]
+    #[case::north(PoleWinding::AroundNorthPole, 55.0, 90.0)]
+    #[case::south(PoleWinding::AroundSouthPole, -90.0, 56.0)]
+    fn the_cap_around_an_encircled_pole_reaches_from_the_extreme_fix_to_the_pole(
+        #[case] winding: PoleWinding,
+        #[case] expected_south: f64,
+        #[case] expected_north: f64,
+    ) {
+        let bounds = GeoBounds::from_positions(positions_of(&[(55.0, 12.0), (56.0, 13.0)]))
+            .expect("at least one position")
+            .extended_to_the_encircled_pole(winding);
+
+        assert!(bounds.lon.is_full_circle());
+        assert_degrees_close(bounds.lat.south().as_degrees(), expected_south);
+        assert_degrees_close(bounds.lat.north().as_degrees(), expected_north);
+    }
+
+    #[test]
+    fn a_track_around_no_pole_keeps_the_box_over_its_fixes() {
+        let bounds = GeoBounds::from_positions(positions_of(&[(55.0, 12.0), (56.0, 13.0)]))
+            .expect("at least one position");
+
+        assert_eq!(
+            bounds.extended_to_the_encircled_pole(PoleWinding::None),
+            bounds
+        );
+    }
+
     #[test]
     fn a_single_position_bounds_that_position_alone() {
         let bounds = GeoBounds::single_position(Latitude::new(-33.9), Longitude::new(151.2));
@@ -468,6 +626,34 @@ mod tests {
     }
 
     proptest::proptest! {
+        /// A lap of evenly spaced fixes around a parallel encircles the pole
+        /// of its hemisphere, whichever way round it was walked, however
+        /// coarsely it was sampled and wherever it started.
+        #[test]
+        fn an_even_lap_of_a_parallel_encircles_the_pole_of_its_hemisphere(
+            fix_count in 3_u32..24,
+            start_degrees in -180.0_f64..180.0,
+            latitude_degrees in -89.9_f64..=89.9,
+            eastward in proptest::bool::ANY,
+        ) {
+            let spacing = FULL_CIRCLE_DEGREES / f64::from(fix_count);
+            let direction = if eastward { 1.0 } else { -1.0 };
+            let lap = (0..fix_count).map(|step| {
+                let degrees = start_degrees + direction * spacing * f64::from(step);
+                (
+                    Latitude::new(latitude_degrees),
+                    Longitude::new(mercator::wrap_longitude_degrees(degrees)),
+                )
+            });
+            let expected = if latitude_degrees < 0.0 {
+                PoleWinding::AroundSouthPole
+            } else {
+                PoleWinding::AroundNorthPole
+            };
+
+            proptest::prop_assert_eq!(PoleWinding::of_track(lap), expected);
+        }
+
         #[test]
         fn a_grown_range_holds_every_longitude_and_spans_at_most_one_circle(
             degrees in proptest::collection::vec(-180.0_f64..=180.0_f64, 1..20),

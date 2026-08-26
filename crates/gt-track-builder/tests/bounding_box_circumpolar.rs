@@ -1,9 +1,9 @@
 //! `TrackMetadata::bounding_box` and `merc_bounds` for a track that circles a
 //! pole.
 //!
-//! Such a track spans every meridian without crossing anything, so no
-//! longitude arc frames it: the box is the polar cap holding it, every
-//! meridian and latitudes from the southernmost fix to the pole.
+//! The box is the polar cap holding the track: every meridian, and latitudes
+//! from the southernmost fix to the pole. No longitude arc frames such a
+//! track, which reaches every meridian without crossing any of them twice.
 
 use chrono::{DateTime, Duration};
 use gt_types::coordinates::{Latitude, Longitude};
@@ -63,9 +63,8 @@ fn bounding_box_around_the_pole_holds_every_meridian_and_reaches_the_pole() {
     assert_degrees_close(bounds.lat.north().as_degrees(), 90.0);
 }
 
-/// The map culls tracks by `merc_bounds`, so the cap must project to the
-/// world's whole width. Mercator y grows southwards, which puts the pole at
-/// `y_min`.
+/// The cap projects to the world's whole width, which the map culls tracks
+/// against. Mercator y grows southwards, which puts the pole at `y_min`.
 ///
 /// Oracle: `mercator::normalize` on the two corners.
 #[test]

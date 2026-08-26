@@ -5,6 +5,7 @@
 ### Fixed
 
 - **Map & Tracks:** Fixed the min spread filter understating how far tracks that cross the antimeridian or circle a pole ranged.
+- **Map & Tracks:** Fixed a recording that circles a pole being bounded by an arbitrary arc of longitudes: its bounds now cover every meridian up to the pole.
 - **Map & Tracks:** Fixed a recording whose fixes are out of time order dropping markers and sensor samples that fall inside a track, and reporting a negative recorded time.
 - **Map & Tracks:** Fixed dead-reckoned fixes in a recording faster than 1 Hz being drawn on top of the preceding fix instead of between the fixes around them.
 - **Map & Tracks:** Fixed a dead-reckoned fix between two fixes across the antimeridian being drawn half a world away, and one between two fixes near a pole being drawn off the great circle they lie on.
