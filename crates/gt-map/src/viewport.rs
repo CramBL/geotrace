@@ -439,3 +439,152 @@ pub(crate) fn zoom_to_fit(
     // walkers library's valid range narrows further - ignore silently.
     let _ignored = map_memory.set_zoom(zoom);
 }
+
+#[cfg(test)]
+mod zoom_to_fit_antimeridian {
+    use std::path::PathBuf;
+
+    use chrono::{TimeZone, Utc};
+    use gt_types::{
+        FileMetadata, FileSource, GpsTime, Latitude, LoadedTrack, Longitude, TimePositionVelocity,
+        TrackLod,
+    };
+    use gt_ui_types::{FileVisibility, TrackVisibility};
+    use rustc_hash::FxHashMap;
+    use uom::si::angle::degree;
+    use uom::si::f64::Angle;
+
+    use super::*;
+
+    /// The viewport every case here frames into, in logical pixels.
+    const VIEWPORT: egui::Rect =
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 600.0));
+
+    fn fix(seconds: i64, lat: f64, lon: f64) -> NavPoint {
+        let time = GpsTime::from_utc(
+            Utc.timestamp_opt(seconds, 0)
+                .single()
+                .expect("valid timestamp"),
+        );
+        let tpv = TimePositionVelocity::builder()
+            .time(time)
+            .lat(Latitude::new(lat))
+            .lon(Longitude::new(lon))
+            .heading(Angle::new::<degree>(90.0))
+            .build();
+        NavPoint::new(tpv, None)
+    }
+
+    /// A one-track file over `points`. Only the points matter here:
+    /// [`compute_visible_bounding_box`] reads them, not the track metadata.
+    fn file_over(points: Vec<NavPoint>) -> LoadedFile {
+        LoadedFile {
+            metadata: FileMetadata {
+                filename: "track.gtd".to_owned(),
+                ..gt_test_utils::empty_file_metadata()
+            },
+            tracks: vec![LoadedTrack {
+                metadata: gt_test_utils::empty_track_metadata(),
+                points,
+                lod: TrackLod::default(),
+                sat_label_anchors: Vec::new(),
+                custom_markers: vec![],
+                generated_markers: vec![],
+                event_markers: vec![],
+                channels: vec![],
+            }],
+            event_marker_styles: FxHashMap::default(),
+            orphaned_event_markers: vec![],
+            source: FileSource::GtdPath(PathBuf::from("track.gtd")),
+            load_warnings: vec![],
+        }
+    }
+
+    fn all_visible() -> TrackDataVisibility {
+        TrackDataVisibility {
+            files: vec![FileVisibility {
+                enabled: true,
+                tracks: vec![TrackVisibility::all_visible()],
+            }],
+        }
+    }
+
+    /// An eastbound equatorial crossing running 179.0° E to 180.5° E:
+    /// 1.5° of longitude, 166.79 km long.
+    fn antimeridian_file() -> Vec<LoadedFile> {
+        vec![file_over(vec![
+            fix(0, 0.0, 179.0),
+            fix(60, 0.0, 179.5),
+            fix(120, 0.0, -179.9),
+            fix(180, 0.0, -179.5),
+        ])]
+    }
+
+    fn visible_bounds(files: &[LoadedFile]) -> (f64, f64, f64, f64) {
+        compute_visible_bounding_box(
+            files,
+            &all_visible(),
+            &GlobalFilter::default(),
+            DisplayMask::default(),
+        )
+        .expect("the file has visible points")
+    }
+
+    /// Opening a Pacific recording frames the map through `adopt_new_files`
+    /// and [`zoom_to_fit`], which must center on the track's own center
+    /// meridian, 179.75° E.
+    #[test]
+    fn zoom_to_fit_across_the_antimeridian_centers_on_the_track() {
+        let files = antimeridian_file();
+        let mut map_memory = MapMemory::default();
+        zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
+        let center = map_memory.detached().expect("centered");
+        assert!(
+            (center.x() - 179.75).abs() < 0.5,
+            "expected the map centered near 179.75° E, got {}",
+            center.x()
+        );
+    }
+
+    /// The same framing must zoom in on the 1.5° the track covers:
+    /// `log2(800 · 0.8 · 360 / (256 · 1.5))` is 9.23, while the long way
+    /// around the planet gives 1.32.
+    #[test]
+    fn zoom_to_fit_across_the_antimeridian_frames_the_track_not_the_globe() {
+        let files = antimeridian_file();
+        let mut map_memory = MapMemory::default();
+        zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
+        assert!(
+            map_memory.zoom() > 8.0,
+            "a 166.79 km track was framed at zoom {}",
+            map_memory.zoom()
+        );
+    }
+
+    /// A track clear of the antimeridian is framed on itself: the same
+    /// formula, at a longitude range of 0.04°, zooms all the way in.
+    #[test]
+    fn zoom_to_fit_over_a_local_track_frames_it() {
+        let files = vec![file_over(vec![fix(0, 55.67, 12.55), fix(60, 55.69, 12.59)])];
+        let mut map_memory = MapMemory::default();
+        zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
+        let center = map_memory.detached().expect("centered");
+        assert!((center.x() - 12.57).abs() < 1e-9, "lon {}", center.x());
+        assert!((center.y() - 55.68).abs() < 1e-9, "lat {}", center.y());
+        assert!(map_memory.zoom() > 12.0, "zoom {}", map_memory.zoom());
+    }
+
+    /// A single-fix track gives a zero-sized box; [`zoom_to_fit`]'s floor on
+    /// the span keeps the zoom finite and clamped to the map's maximum.
+    #[test]
+    fn zoom_to_fit_over_a_single_fix_clamps_to_the_maximum_zoom() {
+        let files = vec![file_over(vec![fix(0, 55.67, 12.55)])];
+        let mut map_memory = MapMemory::default();
+        zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
+        assert!(
+            (map_memory.zoom() - 18.0).abs() < 1e-9,
+            "{}",
+            map_memory.zoom()
+        );
+    }
+}
