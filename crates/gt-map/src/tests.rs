@@ -799,6 +799,43 @@ fn match_bounding_box_covers_one_match() {
     assert_eq!(match_bounding_box(&files, missing_file, &(0..1)), None);
 }
 
+/// Every framing fold covers where the points are drawn. A dead-reckoned fix
+/// the builder resolved between its neighbours is framed there, and not at the
+/// coordinates the receiver wrote for it: here the null island, half a world
+/// from the track.
+#[test]
+fn map_framing_covers_where_the_points_are_drawn() {
+    let drawn = (Latitude::new(55.0), Longitude::new(12.0));
+    let mut track = track_at(0.0, 0.0);
+    for point in &mut track.points {
+        point.set_resolved_position(drawn);
+    }
+    let files = vec![file_with_tracks(vec![track])];
+    let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    let expected = Some(GeoBounds::single_position(drawn.0, drawn.1));
+
+    assert_eq!(
+        compute_visible_bounding_box(
+            &files,
+            &vis_all_visible(),
+            &GlobalFilter::default(),
+            DisplayMask::default()
+        ),
+        expected,
+        "zoom to fit"
+    );
+    assert_eq!(
+        matched_bounding_box(&files, &matches_of_run(1, track_ref)),
+        expected,
+        "the run's map button"
+    );
+    assert_eq!(
+        match_bounding_box(&files, track_ref, &(0..1)),
+        expected,
+        "a match row's map button"
+    );
+}
+
 /// The map answers the query window's map button by framing the matches,
 /// wherever the camera stood before.
 #[test]
