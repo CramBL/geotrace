@@ -11,7 +11,6 @@ doctest = false
 
 [dependencies]
 chrono.workspace = true
-geo-types.workspace = true
 geotrace-sdk-units = { path = "../../sdk/rust/geotrace-sdk-units" }
 gt-analysis = { path = "../gt-analysis" }
 gt-geo-math = { path = "../gt-geo-math" }

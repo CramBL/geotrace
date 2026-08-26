@@ -5,8 +5,8 @@ use crate::hover_labels::candidate_label;
 use crate::viewport::match_bounding_box;
 use gt_test_utils::nav_test_data;
 use gt_types::{
-    Coord, DataCategory, FileIdx, FileMetadata, LoadedFile, LoadedTrack, MercPoint, PointIdx, Rect,
-    SpatialPoint, TimeRange, TrackIdx, TrackMetadata, merc_bounds_for_rect,
+    DataCategory, FileIdx, FileMetadata, GeoBounds, Latitude, LoadedFile, LoadedTrack, Longitude,
+    MercBounds, MercPoint, PointIdx, SpatialPoint, TimeRange, TrackIdx, TrackMetadata,
 };
 use gt_ui_types::{DrawLayer, FileVisibility, TrackRanges, TrackVisibility};
 use rustc_hash::FxHashMap;
@@ -15,16 +15,11 @@ use uom::si::length::{kilometer, meter};
 
 fn make_file_from_points(points: Vec<gt_types::NavPoint>) -> LoadedFile {
     let now = chrono::Utc::now();
-    let bb = Rect::new(
-        Coord {
-            x: 12.55f64,
-            y: 55.67,
-        },
-        Coord {
-            x: 12.59f64,
-            y: 55.69,
-        },
-    );
+    let bb = GeoBounds::from_positions([
+        (Latitude::new(55.67), Longitude::new(12.55)),
+        (Latitude::new(55.69), Longitude::new(12.59)),
+    ])
+    .expect("two positions");
     let n = points.len();
     let track = LoadedTrack {
         metadata: TrackMetadata {
@@ -33,7 +28,7 @@ fn make_file_from_points(points: Vec<gt_types::NavPoint>) -> LoadedFile {
             duration: chrono::Duration::seconds(n as i64),
             time_range: TimeRange::new(now, now + chrono::Duration::seconds(n as i64)),
             bounding_box: bb,
-            merc_bounds: merc_bounds_for_rect(bb),
+            merc_bounds: MercBounds::from(bb),
             point_set_diameter_m: Length::new::<meter>(100.0),
             has_custom_markers: false,
             tpv_count: n,
@@ -627,7 +622,11 @@ fn candidate_label_generated_marker_matches_header() {
     let dur = chrono::Duration::milliseconds(12_300);
     let lat = Latitude::new(55.686_7);
     let lon = Longitude::new(12.563_8);
-    let bb = Rect::new(Coord { x: 12.55, y: 55.67 }, Coord { x: 12.59, y: 55.69 });
+    let bb = GeoBounds::from_positions([
+        (Latitude::new(55.67), Longitude::new(12.55)),
+        (Latitude::new(55.69), Longitude::new(12.59)),
+    ])
+    .expect("two positions");
     let track = LoadedTrack {
         metadata: TrackMetadata {
             index: 0,
@@ -635,7 +634,7 @@ fn candidate_label_generated_marker_matches_header() {
             duration: chrono::Duration::seconds(1),
             time_range: TimeRange::new(now, now + chrono::Duration::seconds(1)),
             bounding_box: bb,
-            merc_bounds: merc_bounds_for_rect(bb),
+            merc_bounds: MercBounds::from(bb),
             point_set_diameter_m: uom::si::f64::Length::new::<uom::si::length::meter>(10.0),
             has_custom_markers: false,
             tpv_count: 0,

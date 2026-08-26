@@ -25,10 +25,7 @@ pub fn empty_track_metadata() -> gt_types::track::TrackMetadata {
             chrono::DateTime::UNIX_EPOCH,
             chrono::DateTime::UNIX_EPOCH,
         ),
-        bounding_box: gt_types::Rect::new(
-            gt_types::Coord { x: 0.0, y: 0.0 },
-            gt_types::Coord { x: 0.0, y: 0.0 },
-        ),
+        bounding_box: gt_types::GeoBounds::single_position(Latitude::new(0.0), Longitude::new(0.0)),
         merc_bounds: gt_types::track::MercBounds {
             x_min: 0.0,
             x_max: 0.0,

@@ -5,7 +5,6 @@ use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::CHECK as ICON_CHECK;
 use gt_filter::{self as filter, GlobalFilter};
 use gt_sky::{SkyHighlight, SkyPlot, SkyPlotSize};
-use gt_types::coordinates::Latitude;
 use gt_types::satellites::{Constellation, Satellite};
 use gt_types::{
     DataCategory, FileIdx, LoadedFile, LoadedTrack, NavPoint, NearestSatelliteReport, PointIdx,
@@ -1175,9 +1174,7 @@ pub(crate) fn classify_icon_fade(
     let Some(range) = track.metadata.segment_length_range else {
         return TrackIconFade::AllVisible;
     };
-    let bbox = track.metadata.bounding_box;
-    let mid_lat = Latitude::new((bbox.min().y + bbox.max().y) / 2.0);
-    let ppm = scale.pixels_per_meter(mid_lat);
+    let ppm = scale.pixels_per_meter(track.metadata.bounding_box.lat.center());
     let min_px = (range.min.get::<meter>() * ppm) as f32;
     let max_px = (range.max.get::<meter>() * ppm) as f32;
     let (lo, hi) = fade_band(icon_size_px);

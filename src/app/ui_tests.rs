@@ -2124,15 +2124,14 @@ fn snapshot_app_sahara_tracks() {
     );
 
     // Identify the Sahara tracks by latitude: they are all centred around
-    // 23°N 13°E. The bounding_box is in (lon, lat) geo-types order, so
-    // min.y / max.y are the south/north latitudes.
+    // 23°N 13°E.
     let sahara_tracks: Vec<TrackRef> = {
         let state = harness.inner.state().shared.borrow();
         state.loaded_files[0]
             .tracks
             .iter()
             .enumerate()
-            .filter(|(_, t)| t.metadata.bounding_box.min().y > 20.0)
+            .filter(|(_, t)| t.metadata.bounding_box.lat.south().as_degrees() > 20.0)
             .map(|(i, _)| TrackRef {
                 fi: FileIdx::new(0),
                 index: TrackIdx::new(i),

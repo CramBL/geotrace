@@ -2495,7 +2495,6 @@ name = "gt-filter"
 version = "0.13.0"
 dependencies = [
  "chrono",
- "geo-types",
  "gt-test-utils",
  "gt-types",
  "uom",
@@ -3081,7 +3080,6 @@ name = "gt-track-builder"
 version = "0.13.0"
 dependencies = [
  "chrono",
- "geo-types",
  "geotrace-sdk-units",
  "gt-analysis",
  "gt-geo-math",
