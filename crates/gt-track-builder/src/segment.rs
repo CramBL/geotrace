@@ -1,7 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 use gt_analysis::clock_offset::{self, ClockOffsetExcursion};
 use gt_analysis::robust::median_i64;
-use gt_geo_math::{path_distance_km, point_set_diameter_m, segment_length_range_m};
+use gt_geo_math::{GreatCircleArc, path_distance_km, point_set_diameter_m, segment_length_range_m};
 use gt_types::channel::Channel;
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::geo_bounds::GeoBounds;
@@ -800,7 +800,8 @@ pub fn reassemble_channels(tracks: &[LoadedTrack]) -> Vec<Channel> {
 }
 
 /// Overwrites `merc` on ghost points (those with `heading == None`) with
-/// positions linearly interpolated from the surrounding real fixes (`fix_count > 0`).
+/// positions interpolated in time along the great circle between the
+/// surrounding real fixes (`fix_count > 0`).
 ///
 /// The renderer displays ghost points at the interpolated position. Raw GPS
 /// coordinates may be unreliable when no heading is present.
@@ -848,35 +849,20 @@ fn precompute_ghost_positions(points: &mut [NavPoint]) {
                     (points[ni].tpv.time() - points[pi].tpv.time()).as_seconds_f64();
                 let elapsed_secs = (points[i].tpv.time() - points[pi].tpv.time()).as_seconds_f64();
                 if anchor_span_secs > 0.0 {
-                    let f = elapsed_secs / anchor_span_secs;
-                    let lat = points[pi].tpv.lat().as_degrees()
-                        + (points[ni].tpv.lat().as_degrees() - points[pi].tpv.lat().as_degrees())
-                            * f;
-                    let lon = points[pi].tpv.lon().as_degrees()
-                        + (points[ni].tpv.lon().as_degrees() - points[pi].tpv.lon().as_degrees())
-                            * f;
-                    (lat, lon)
+                    let arc = GreatCircleArc {
+                        start: (points[pi].tpv.lat(), points[pi].tpv.lon()),
+                        end: (points[ni].tpv.lat(), points[ni].tpv.lon()),
+                    };
+                    arc.position_at_ratio(elapsed_secs / anchor_span_secs)
                 } else {
-                    (
-                        points[i].tpv.lat().as_degrees(),
-                        points[i].tpv.lon().as_degrees(),
-                    )
+                    (points[i].tpv.lat(), points[i].tpv.lon())
                 }
             }
-            (Some(pi), None) => (
-                points[pi].tpv.lat().as_degrees(),
-                points[pi].tpv.lon().as_degrees(),
-            ),
-            (None, Some(ni)) => (
-                points[ni].tpv.lat().as_degrees(),
-                points[ni].tpv.lon().as_degrees(),
-            ),
-            (None, None) => (
-                points[i].tpv.lat().as_degrees(),
-                points[i].tpv.lon().as_degrees(),
-            ),
+            (Some(pi), None) => (points[pi].tpv.lat(), points[pi].tpv.lon()),
+            (None, Some(ni)) => (points[ni].tpv.lat(), points[ni].tpv.lon()),
+            (None, None) => (points[i].tpv.lat(), points[i].tpv.lon()),
         };
-        let merc = mercator::normalize(Latitude::new(lat), Longitude::new(lon));
+        let merc = mercator::normalize(lat, lon);
         updates.push((i, merc));
     }
 
@@ -1539,16 +1525,16 @@ mod tests {
 
     #[test]
     fn precompute_ghost_positions_ghost_between_two_anchors_interpolates() {
-        // real at t=0 (lat=0, lon=0), ghost at t=5, real at t=10 (lat=1, lon=1)
-        // → ghost should land at lat=0.5, lon=0.5
+        // Real fixes on the equator at t=0 (lon=0) and t=10 (lon=1), ghost at
+        // t=5. The equator is a great circle, so the ghost lands at lon=0.5.
         let mut points = vec![
             make_real_fix(0, Latitude::new(0.0), Longitude::new(0.0)),
             make_ghost(5, Latitude::new(10.0), Longitude::new(10.0)), // initial coords are irrelevant - will be overwritten
-            make_real_fix(10, Latitude::new(1.0), Longitude::new(1.0)),
+            make_real_fix(10, Latitude::new(0.0), Longitude::new(1.0)),
         ];
         precompute_ghost_positions(&mut points);
 
-        let expected = mercator::normalize(Latitude::new(0.5), Longitude::new(0.5));
+        let expected = mercator::normalize(Latitude::new(0.0), Longitude::new(0.5));
         assert!(
             (points[1].merc.x - expected.x).abs() < 1e-9,
             "merc.x mismatch: {} vs {}",
