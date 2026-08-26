@@ -205,6 +205,23 @@ mod tests {
         NavPoint::new(tpv, None)
     }
 
+    /// How far the host clock of [`a_fix_without_a_gps_lock_is_not_an_excursion`]
+    /// sits behind GPS, in seconds.
+    const HOST_BEHIND_S: i64 = 3600;
+
+    /// A point the receiver took without a lock: it reported no GPS time, so
+    /// the fix carries the host timestamp at `sys_secs` as its time.
+    fn point_without_gps_lock(sys_secs: i64) -> NavPoint {
+        let host = Utc.timestamp_opt(sys_secs, 0).single().expect("valid");
+        let tpv = TimePositionVelocity::builder()
+            .time(GpsTime::from_utc(host))
+            .lat(Latitude::new(55.0))
+            .lon(Longitude::new(12.0))
+            .sys_time(SysTime::from_utc(host))
+            .build();
+        NavPoint::new(tpv, None)
+    }
+
     /// A point with no system timestamp - no offset to measure.
     fn point_without_sys(gps_secs: i64) -> NavPoint {
         let gps = GpsTime::from_utc(Utc.timestamp_opt(gps_secs, 0).single().expect("valid"));
@@ -304,6 +321,24 @@ mod tests {
             detect_excursions(&points, 60.0).is_empty(),
             "30 s stays inside a 60 s bar"
         );
+    }
+
+    /// A fix taken without a GPS lock carries the host timestamp as its time,
+    /// so its GPS−system difference is a structural zero rather than a
+    /// measurement: on a track whose host clock sits an hour behind GPS it is
+    /// not a departure from the baseline, while a real one beside it still is.
+    #[test]
+    fn a_fix_without_a_gps_lock_is_not_an_excursion() {
+        let behind_ms = -HOST_BEHIND_S * 1000;
+        let mut points: Vec<NavPoint> = (0..4).map(|i| point(1000 + i, behind_ms)).collect();
+        points.push(point_without_gps_lock(1004 - HOST_BEHIND_S));
+        points.extend((5..9).map(|i| point(1000 + i, behind_ms)));
+        points.push(point(1009, behind_ms + 60_000));
+        points.extend((10..14).map(|i| point(1000 + i, behind_ms)));
+
+        let excursions = detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S);
+
+        assert_eq!(excursion_indices(&excursions), vec![9]);
     }
 
     #[test]
