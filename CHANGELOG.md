@@ -19,6 +19,7 @@
 - **Map & Tracks:** Fixed a track's reported length, spread, bounding box and zoom to fit measuring dead-reckoned fixes at the coordinates the receiver wrote for them rather than where they are drawn.
 - **Map & Tracks:** Fixed opening a recording that circles a pole showing the whole globe instead of zooming the map to the track.
 - **Map & Tracks:** Fixed zooming the map to a track cropping it at high latitudes, where the map projection draws a degree of latitude taller than one at the equator.
+- **Map & Tracks:** Fixed an SNR of 99 dB-Hz, the firmware sentinel for "no measurement", being read as a signal strength: such a satellite now reads as having no SNR, and the sentinel no longer outranks a real reading for a satellite reported on two rows.
 - **Map & Tracks:** Fixed a satellite listed on two rows of one satellite report counting as two satellites in the map's satellite counts, its lost-lock slips and the satellite utilization rate.
 
 ## 0.13.0 - 2026-08-25

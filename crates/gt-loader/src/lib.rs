@@ -434,7 +434,22 @@ fn convert_constellation(c: SdkConstellation) -> Constellation {
 }
 
 fn convert_satellite_report(report: &SatelliteReport) -> Satellites {
-    let satellites: Vec<Satellite> = merge_rows_repeating_a_satellite(&report.tracked)
+    // A sentinel SNR is cleared to `None` here, before the merge, so it never
+    // outranks a real reading for the same satellite.
+    let measured: Vec<SdkSatellite> = report
+        .tracked
+        .iter()
+        .map(|row| SdkSatellite {
+            snr: if row.snr_is_no_data_sentinel() {
+                None
+            } else {
+                row.snr
+            },
+            ..*row
+        })
+        .collect();
+
+    let satellites: Vec<Satellite> = merge_rows_repeating_a_satellite(&measured)
         .iter()
         .map(|s: &SdkSatellite| {
             Satellite::new(

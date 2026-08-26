@@ -76,8 +76,31 @@ pub struct Satellite {
     pub elevation: Option<f32>,
     /// Azimuth from true north in degrees. `None` if unavailable.
     pub azimuth: Option<f32>,
-    /// Signal-to-noise ratio in dB-Hz. `None` if unavailable.
+    /// Signal-to-noise ratio in dB-Hz.
+    ///
+    /// An unavailable SNR is `None`. Never encode one as `0.0`, which readers
+    /// take as a measured 0 dB-Hz, nor as a sentinel such as 99 dB-Hz.
     pub snr: Option<f32>,
+}
+
+/// The SNR some receiver firmware reports in place of a measurement, in dB-Hz.
+const SNR_NO_DATA_SENTINEL_DB_HZ: f32 = 99.0;
+
+/// How far from [`SNR_NO_DATA_SENTINEL_DB_HZ`] a reported SNR still counts as
+/// the sentinel, in dB-Hz.
+const SNR_NO_DATA_SENTINEL_TOLERANCE_DB_HZ: f32 = 0.5;
+
+impl Satellite {
+    /// Whether `snr` holds ≈99 dB-Hz, the firmware sentinel for "no data".
+    ///
+    /// The SDK reads and writes the value unchanged and only counts it among
+    /// [`crate::NavFileBuilder`]'s satellite warnings: interpreting it is left
+    /// to the caller.
+    pub fn snr_is_no_data_sentinel(&self) -> bool {
+        self.snr.is_some_and(|snr| {
+            (snr - SNR_NO_DATA_SENTINEL_DB_HZ).abs() < SNR_NO_DATA_SENTINEL_TOLERANCE_DB_HZ
+        })
+    }
 }
 
 /// GNSS constellation identifier.
