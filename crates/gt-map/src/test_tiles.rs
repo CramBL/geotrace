@@ -1,20 +1,22 @@
 //! Base tile sources that reach no tile server: a grid generated in process
-//! and a directory of captured PNG tiles. A snapshot taken over either one
+//! and a directory of captured tiles. A snapshot taken over either one
 //! shows where the map was framed. A blank base layer shows nothing of it.
 
 pub mod fixture;
 pub mod glyph;
 pub mod synthetic;
 
+use std::collections::BTreeSet;
+
 use egui::{Context, Rect, pos2};
 use walkers::sources::Attribution;
 use walkers::{TileId, TilePiece, Tiles};
 
 use crate::TileAccess;
-pub use crate::test_tiles::fixture::{FixtureTiles, MissingTile};
+pub use crate::test_tiles::fixture::{
+    CapturedTileFormat, FixtureTileId, FixtureTiles, TileFixtureManifest, TileFixtureManifestError,
+};
 pub use crate::test_tiles::synthetic::SyntheticTiles;
-
-pub const TILE_SIZE_PX: usize = 256;
 
 /// A piece covers its texture entirely: both sources serve whole tiles at the
 /// requested zoom.
@@ -30,10 +32,29 @@ impl TestTileSource {
         match tile_access {
             TileAccess::Network | TileAccess::Offline => None,
             TileAccess::Synthetic => Some(Self::Synthetic(SyntheticTiles::new(egui_ctx.clone()))),
-            TileAccess::Fixture(directory) => Some(Self::Fixture(FixtureTiles::new(
-                directory.clone(),
-                egui_ctx.clone(),
-            ))),
+            TileAccess::Fixture(directory) => {
+                match FixtureTiles::new(directory.clone(), egui_ctx.clone()) {
+                    Ok(tiles) => Some(Self::Fixture(tiles)),
+                    Err(err) => {
+                        log::error!("the map draws no base layer: {err}");
+                        None
+                    }
+                }
+            }
+        }
+    }
+
+    pub(crate) fn missing_tiles(&self) -> Option<&BTreeSet<FixtureTileId>> {
+        match self {
+            Self::Synthetic(_) => None,
+            Self::Fixture(tiles) => Some(tiles.missing_tiles()),
+        }
+    }
+
+    pub(crate) fn forget_missing_tiles(&mut self) {
+        match self {
+            Self::Synthetic(_) => {}
+            Self::Fixture(tiles) => tiles.forget_missing_tiles(),
         }
     }
 }

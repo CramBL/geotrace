@@ -29,14 +29,15 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  # The directories the capture recipes write into. Two are absent: gt-snap's
+  # The directories the capture recipes write into. Three are absent: gt-snap's
   # map-matching answers change with every OpenStreetMap edit, so its fixtures
   # are frozen by design and checked on demand through `just snap-live-test`,
-  # and gt-flare's endpoint needs a per-user api.nasa.gov key that this
-  # workflow has none of, so `just flare-fixtures` is run by hand. The TEC
-  # feature's CDDIS mirror is checked the same way, by hand through
-  # `just cddis-verify`: it serves files to callers holding a per-user NASA
-  # Earthdata token.
+  # gt-flare's endpoint needs a per-user api.nasa.gov key that this workflow
+  # has none of, so `just flare-fixtures` is run by hand, and gt-map's tiles
+  # need a per-user Mapbox token and are frozen once captured, so
+  # `just map-tile-fixtures` is run by hand as well. The TEC feature's CDDIS
+  # mirror is checked the same way, by hand through `just cddis-verify`: it
+  # serves files to callers holding a per-user NASA Earthdata token.
   FIXTURE_DIRS: crates/gt-ionex/tests/fixtures crates/gt-jam/tests/fixtures crates/gt-solar/tests/fixtures
 
 jobs:

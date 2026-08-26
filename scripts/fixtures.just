@@ -41,6 +41,14 @@ ionex-node-series:
 jam-fixtures *DAYS:
     cargo run -p gt-jam --example fetch_jam_fixtures -- {{ DAYS }}
 
+# Capture the Mapbox satellite tiles the fixture-backed map snapshots draw
+# (network!). Needs MAPBOX_TOKEN.
+# Name files a snapshot run recorded under GEOTRACE_RECORD_TILE_MISSES to add
+# their tiles (additive); no args re-captures what the manifest already lists.
+[group("fixtures")]
+map-tile-fixtures *WANTED:
+    cargo run -p gt-map --example fetch_map_tile_fixtures -- {{ WANTED }}
+
 # Refresh the gt-solar index fixtures from the GFZ Potsdam service (network!).
 # Name windows to capture only those (additive); no args captures all.
 [group("fixtures")]

@@ -37,6 +37,7 @@ pub use tec_renderer::{TecHeatmapSnapshot, TecLayer};
 pub use viewport::ViewportBounds;
 
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use egui::Context;
@@ -67,7 +68,7 @@ use crate::marker_renderer::MarkerRenderer;
 use crate::match_reveal::MatchRevealState;
 use crate::recording_labels::RecordingLabels;
 use crate::snapped_track_renderer::SnappedTrackRenderer;
-use crate::test_tiles::TestTileSource;
+use crate::test_tiles::{FixtureTileId, TestTileSource};
 use crate::track_layers::TrackLayers;
 use crate::transform::{MapScale, MercTransform};
 use crate::viewport::{
@@ -515,6 +516,25 @@ impl NavMap {
             gt_ui_theme::TEC_OPACITY_PERCENT_MIN,
             gt_ui_theme::TEC_OPACITY_PERCENT_MAX,
         );
+    }
+
+    /// Every base tile the fixture directory could not serve since the last
+    /// [`NavMap::forget_missing_fixture_tiles`], which is every tile the map
+    /// drew blank. `None` unless the map was built on a
+    /// [`TileAccess::Fixture`] directory holding a readable manifest.
+    pub fn missing_fixture_tiles(&self) -> Option<&BTreeSet<FixtureTileId>> {
+        self.test_tiles
+            .as_ref()
+            .and_then(TestTileSource::missing_tiles)
+    }
+
+    /// Starts a fresh record, so a check after the last frame covers that
+    /// frame rather than every frame the map animated through on its way to
+    /// it.
+    pub fn forget_missing_fixture_tiles(&mut self) {
+        if let Some(tiles) = self.test_tiles.as_mut() {
+            tiles.forget_missing_tiles();
+        }
     }
 
     /// Return the geographic bounds of the most recently rendered map viewport.

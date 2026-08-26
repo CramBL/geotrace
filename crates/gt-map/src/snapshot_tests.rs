@@ -1,5 +1,6 @@
-//! Every map here draws the labelled synthetic tiles, so every baseline
-//! shows the map's frame and what the track sits on.
+//! Every map here draws a base layer that reaches no tile server: the
+//! labelled synthetic tiles, or the captured Mapbox tiles where the imagery
+//! under the track is part of what the baseline shows.
 
 use std::path::PathBuf;
 
@@ -306,6 +307,7 @@ fn snapshot_nav_map_with_matches(
     mode: DisplayMode,
     stale: bool,
     capture: MatchCapture,
+    tile_access: TileAccess,
 ) {
     use gt_ui_types::{DrawLayer, QueryMatches, TrackDataVisibility, TrackRanges};
 
@@ -348,12 +350,13 @@ fn snapshot_nav_map_with_matches(
         },
     };
 
+    let on_captured_tiles = matches!(tile_access, TileAccess::Fixture(_));
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(800.0, 600.0))
         .ui_state(
             move |ui, map: &mut Option<NavMap>| {
                 let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), tile_access.clone()));
                 let mut state = DrawState::default();
                 map.draw(
                     ui,
@@ -376,6 +379,20 @@ fn snapshot_nav_map_with_matches(
         }
         // One frame exactly, so the reveal is captured on the frame it starts.
         MatchCapture::RevealStart => harness.step(),
+    }
+    if on_captured_tiles {
+        // One more frame off a fresh record, so the check covers only the
+        // frame the snapshot captures.
+        if let Some(map) = harness.state_mut().as_mut() {
+            map.forget_missing_fixture_tiles();
+        }
+        harness.step();
+        let missing = harness
+            .state()
+            .as_ref()
+            .and_then(NavMap::missing_fixture_tiles)
+            .expect("the map draws the captured tiles");
+        gt_test_utils::assert_map_tile_fixture_is_complete(name, missing);
     }
     harness.snapshot_loose(name);
 }
@@ -1072,6 +1089,7 @@ fn snap_query_match_halos() {
         DisplayMode::Draw,
         false,
         MatchCapture::Settled,
+        TileAccess::Fixture(gt_test_utils::map_tile_fixture_dir()),
     );
 }
 
@@ -1084,6 +1102,7 @@ fn snap_query_match_halos_stale() {
         DisplayMode::Draw,
         true,
         MatchCapture::Settled,
+        TileAccess::Synthetic,
     );
 }
 
@@ -1096,6 +1115,7 @@ fn snap_query_keep_mode() {
         DisplayMode::Keep,
         false,
         MatchCapture::Settled,
+        TileAccess::Synthetic,
     );
 }
 
@@ -1108,6 +1128,7 @@ fn snap_query_hide_mode() {
         DisplayMode::Hide,
         false,
         MatchCapture::Settled,
+        TileAccess::Synthetic,
     );
 }
 
@@ -1121,6 +1142,7 @@ fn snap_query_match_reveal() {
         DisplayMode::Draw,
         false,
         MatchCapture::RevealStart,
+        TileAccess::Synthetic,
     );
 }
 
