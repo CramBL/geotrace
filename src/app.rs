@@ -61,6 +61,7 @@ use gt_instance_lock::{DataDirectoryLock, DataDirectoryOwnership};
 use gt_loaded_files::{LoadedFileId, LoadedFiles};
 use gt_log_view::{LoadedLog, LoadedLogs};
 use gt_map::NavMap;
+use gt_map::mapbox_tiles;
 use gt_pending_writes::PendingWrites;
 use gt_plot::PlotState;
 use gt_side_panel::{FilterPanelState, TreeState};
@@ -479,7 +480,10 @@ impl App {
         }
 
         // Environment variables override the config file for the token.
-        if let Ok(token) = env::var("MAPBOX_TOKEN").or_else(|_| env::var("MAPBOX_ACCESS_TOKEN")) {
+        if let Some(token) = mapbox_tiles::TOKEN_ENVS
+            .iter()
+            .find_map(|name| env::var(name).ok())
+        {
             loaded_settings.map.mapbox_token = token;
         }
 

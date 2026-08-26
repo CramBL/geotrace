@@ -6,6 +6,7 @@ pub mod interaction;
 #[cfg(feature = "ionex")]
 pub mod ionex_fixtures;
 pub mod log_fixtures;
+pub mod map_tile_fixtures;
 pub mod pending_writes;
 #[cfg(feature = "snapshot")]
 pub mod snapshot_harness;
@@ -26,6 +27,7 @@ pub use interaction::HarnessInteraction;
 pub use log_fixtures::{
     SyntheticLogSpec, SyntheticLogTimestamps, synthetic_journald_log, synthetic_log_start,
 };
+pub use map_tile_fixtures::{assert_map_tile_fixture_is_complete, map_tile_fixture_dir};
 #[cfg(feature = "snapshot")]
 pub use snapshot_harness::{By, Queryable, TestHarness, TestHarnessBuilder};
 pub use transport::{ScriptedTransport, TransportAnswer, UrlPrefixAnswers};

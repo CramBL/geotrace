@@ -120,6 +120,39 @@ fn build_app(cc: &eframe::CreationContext<'_>, config_path: &std::path::Path, fa
     build_app_with_write_access(cc, config_path, fading, WriteAccess::Owner)
 }
 
+/// [`build_app`] with the map drawing the captured Mapbox satellite tiles, so
+/// its snapshot shows the ground the recording was made on.
+fn build_app_on_captured_tiles(
+    cc: &eframe::CreationContext<'_>,
+    config_path: &std::path::Path,
+    fading: bool,
+) -> App {
+    build_app_with_the_instance_lock(
+        cc,
+        config_path,
+        fading,
+        PendingWrites::new(WriteAccess::Owner),
+        DataDirectoryLock::marking_nothing(),
+        gt_map::TileAccess::Fixture(gt_test_utils::map_tile_fixture_dir()),
+    )
+}
+
+/// Fails naming every captured tile the frame about to be snapshotted asked
+/// for and did not get, so no fixture-backed snapshot is recorded over blank
+/// ground. The record starts fresh and one more frame is drawn, so the check
+/// covers only that frame.
+fn assert_the_capture_covers_the_map(harness: &mut TestHarness<'_, App>, snapshot_name: &str) {
+    harness.inner.state_mut().map.forget_missing_fixture_tiles();
+    harness.inner.step();
+    let missing = harness
+        .inner
+        .state()
+        .map
+        .missing_fixture_tiles()
+        .expect("the map draws the captured tiles");
+    gt_test_utils::assert_map_tile_fixture_is_complete(snapshot_name, missing);
+}
+
 /// [`build_app`] for a session with the given write access, which is what
 /// decides whether the settings are persisted at all.
 fn build_app_with_write_access(
@@ -134,6 +167,7 @@ fn build_app_with_write_access(
         fading,
         PendingWrites::new(write_access),
         DataDirectoryLock::marking_nothing(),
+        gt_map::TileAccess::Synthetic,
     )
 }
 
@@ -146,6 +180,7 @@ fn build_app_with_the_instance_lock(
     fading: bool,
     pending_writes: PendingWrites,
     instance_lock: DataDirectoryLock,
+    tile_access: gt_map::TileAccess,
 ) -> App {
     App::new_with_config(
         cc,
@@ -154,7 +189,7 @@ fn build_app_with_the_instance_lock(
         super::StartupOptions {
             fading_enabled: fading,
             offline: true,
-            tile_access: gt_map::TileAccess::Synthetic,
+            tile_access,
             storage: crate::app::Storage::Disabled,
             app_version: TEST_APP_VERSION,
             pending_writes,
@@ -2117,7 +2152,7 @@ fn snapshot_app_with_file_loaded_light() {
 fn snapshot_app_sahara_tracks() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(build_app_on_captured_tiles);
     harness.inner.step();
 
     drop_file_and_wait_for_load(
@@ -2149,6 +2184,7 @@ fn snapshot_app_sahara_tracks() {
 
     harness.inner.run_steps(60);
 
+    assert_the_capture_covers_the_map(&mut harness, "app_sahara_tracks");
     harness.snapshot_loose("app_sahara_tracks");
 }
 
@@ -2160,7 +2196,7 @@ fn snapshot_app_sahara_tracks() {
 fn snapshot_app_demo_trip() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(build_app_on_captured_tiles);
     harness.inner.step();
 
     drop_file_and_wait_for_load(
@@ -2179,6 +2215,7 @@ fn snapshot_app_demo_trip() {
     // so the map zoom and plot layout converge before we snapshot.
     harness.inner.run_steps(60);
 
+    assert_the_capture_covers_the_map(&mut harness, "app_demo_trip");
     harness.snapshot_loose("app_demo_trip");
 }
 
@@ -2189,7 +2226,7 @@ fn snapshot_app_demo_trip() {
 fn snapshot_app_query_window() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(build_app_on_captured_tiles);
     harness.inner.step();
 
     drop_file_and_wait_for_load(
@@ -2232,6 +2269,7 @@ fn snapshot_app_query_window() {
     let history_len = harness.inner.state().query_window.history().len();
     assert_eq!(history_len, 1, "the run above is recorded in history");
 
+    assert_the_capture_covers_the_map(&mut harness, "app_query_window");
     harness.snapshot_loose("app_query_window");
 }
 
@@ -3741,7 +3779,7 @@ fn query_hover_doc_sticks_within_its_token() {
 fn snapshot_app_three_overlapping_files() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(build_app_on_captured_tiles);
     harness.inner.step();
     load_three_overlapping_files(&mut harness.inner);
     assert_eq!(harness.inner.state().shared.borrow().loaded_files.len(), 3);
@@ -3751,6 +3789,7 @@ fn snapshot_app_three_overlapping_files() {
         state.zoom_to_visible_request = true;
     }
     harness.inner.run_steps(70);
+    assert_the_capture_covers_the_map(&mut harness, "app_three_overlapping_files");
     // Full-app map+plot render, so it carries the same GPU/anti-aliasing
     // nondeterminism as the other map snapshots and uses the shared loose
     // tolerance rather than a tighter hand-picked count that the macOS runner
@@ -5431,6 +5470,7 @@ fn app_waiting_for_the_data_directory_that_saves_settings<'a>(
                 fading,
                 PendingWrites::default(),
                 instance_lock,
+                gt_map::TileAccess::Synthetic,
             )
         })
 }
@@ -9620,7 +9660,7 @@ fn a_layer_chip_puts_the_lines_it_matched_on_the_map() {
 fn snapshot_app_log_map_hexagons() {
     let (mut harness, _config_path) = TestHarness::builder()
         .size(egui::vec2(1280.0, 800.0))
-        .eframe(build_app);
+        .eframe(build_app_on_captured_tiles);
     harness.inner.step();
 
     drop_file_and_wait_for_load(
@@ -9641,6 +9681,7 @@ fn snapshot_app_log_map_hexagons() {
     harness.inner.get_by_label(ICON_ARTICLE).click();
     harness.inner.run_steps(5);
 
+    assert_the_capture_covers_the_map(&mut harness, "app_log_map_hexagons");
     harness.snapshot_loose("app_log_map_hexagons");
 }
 

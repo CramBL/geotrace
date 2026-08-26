@@ -9,7 +9,7 @@ use walkers::{Tile, TileId, TilePiece, Tiles};
 
 use gt_types::mercator::{self, MercPoint};
 
-use crate::test_tiles::{FULL_TILE_UV, TILE_SIZE_PX, glyph};
+use crate::test_tiles::{FULL_TILE_UV, glyph};
 
 /// Muted enough that a track's own colours stay legible over it. The two
 /// backgrounds alternate so neighbouring tiles show their shared edge.
@@ -22,6 +22,9 @@ mod palette {
     pub const BORDER: Color32 = Color32::from_rgb(0x93, 0x8F, 0x84);
     pub const LABEL: Color32 = Color32::from_rgb(0x4B, 0x48, 0x41);
 }
+
+/// The edge of a generated tile, which is the slippy default.
+const TILE_SIZE_PX: usize = 256;
 
 const GRID_SPACING_PX: usize = 32;
 /// Wide enough that nearest-neighbour sampling still catches a line where the
