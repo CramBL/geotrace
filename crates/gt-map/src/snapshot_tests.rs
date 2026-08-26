@@ -1,3 +1,6 @@
+//! Every map here draws the labelled synthetic tiles, so every baseline
+//! shows the map's frame and what the track sits on.
+
 use std::path::PathBuf;
 
 use egui_kittest::kittest::Queryable as _;
@@ -297,8 +300,7 @@ enum MatchCapture {
 }
 
 /// Drive the full `NavMap::draw` path over the fixture track with a
-/// hardcoded set of query matches. No map tiles render beneath the halos:
-/// the map is built with [`TileAccess::Offline`].
+/// hardcoded set of query matches.
 fn snapshot_nav_map_with_matches(
     name: &'static str,
     mode: DisplayMode,
@@ -351,7 +353,7 @@ fn snapshot_nav_map_with_matches(
         .ui_state(
             move |ui, map: &mut Option<NavMap>| {
                 let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
                 let mut state = DrawState::default();
                 map.draw(
                     ui,
@@ -411,8 +413,7 @@ fn snapshot_jamming_dataset() -> JamDataset {
 /// The interference overlay under the fixture track. At the zoom that
 /// frames a 1 km track a single 22 km cell covers the viewport, so this
 /// pins the fill and the draw order - track ink over cells - rather than
-/// the ramp, which `jamming_renderer`'s own tests cover. No map tiles
-/// render: the map is built with [`TileAccess::Offline`].
+/// the ramp, which `jamming_renderer`'s own tests cover.
 #[rstest::rstest]
 #[case::dark("jamming_overlay_dark", true, None)]
 #[case::light("jamming_overlay_light", false, None)]
@@ -432,7 +433,7 @@ fn snapshot_jamming_overlay(
         .ui_state(
             move |ui, map: &mut Option<NavMap>| {
                 let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
                 let mut state = DrawState::default();
                 map.draw(
                     ui,
@@ -522,8 +523,7 @@ enum IndicatorInteraction {
 /// it so the snapshot pins its place, its strength, and whatever its hover
 /// holds. The idle case pins the faint glyph the map shows until a metric
 /// warns, and the levels case the popup a click opens, which lists every
-/// affected track over the same rows either way. No map tiles render: the map
-/// is built with [`TileAccess::Offline`].
+/// affected track over the same rows either way.
 #[rstest::rstest]
 #[case::warned(
     "space_weather_warning",
@@ -555,7 +555,7 @@ fn snapshot_space_weather_warning(
         .ui_state(
             move |ui, map: &mut Option<NavMap>| {
                 let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
                 let mut state = DrawState::default();
                 map.draw(
                     ui,
@@ -599,8 +599,7 @@ const WORLD_ZOOM: f64 = 1.5;
 
 /// The TEC heatmap under the fixture track, at the 10 May 2024 storm's peak
 /// hours. The whole world is in view, so one snapshot covers the ramp from the
-/// quiet night side to the equatorial crests past 150 TECU. No map tiles
-/// render: the map is built with [`TileAccess::Offline`].
+/// quiet night side to the equatorial crests past 150 TECU.
 #[rstest::rstest]
 #[case::dark("tec_heatmap_dark", true, None)]
 #[case::light("tec_heatmap_light", false, None)]
@@ -624,7 +623,7 @@ fn snapshot_tec_heatmap(
         .ui_state(
             move |ui, map: &mut Option<NavMap>| {
                 let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
                 map.map_memory.set_zoom(WORLD_ZOOM).expect("a valid zoom");
                 let mut state = DrawState::default();
                 state
@@ -673,8 +672,7 @@ const SNAPPED_OFFSET_MERC_Y: f64 = -1.5e-6;
 /// Snapshot the map with `make_snapshot_file`'s track plus the snapped
 /// geometry `geometry_for` derives from its points, drawn under `mask`.
 /// With `hover`, the pointer is parked there before the snapshot (frames
-/// are stepped past egui's tooltip delay). No map tiles render: the map is
-/// built with [`TileAccess::Offline`].
+/// are stepped past egui's tooltip delay).
 fn snapshot_snapped_tracks_with(
     name: &str,
     mask: DisplayMask,
@@ -701,7 +699,7 @@ fn snapshot_snapped_tracks_with(
         .ui_state(
             move |ui, map: &mut Option<NavMap>| {
                 let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
                 let mut state = DrawState {
                     display_mask: mask,
                     ..DrawState::default()
@@ -1035,7 +1033,7 @@ fn snap_snapped_track_whiskers_at_high_zoom() {
         .ui_state(
             move |ui, map: &mut Option<NavMap>| {
                 let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
                 let mut state = DrawState::default();
                 map.draw(
                     ui,
@@ -1140,7 +1138,7 @@ fn snap_query_match_hover_halo() {
         .ui_state(
             move |ui, map: &mut Option<NavMap>| {
                 let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
                 let mut state = DrawState {
                     highlight: MapHighlight {
                         hover_match: Some(gt_ui_types::MatchHighlight::new(track, &(150..300))),
@@ -1249,7 +1247,7 @@ fn snap_log_match_hexagons() {
         .ui_state(
             move |ui, map: &mut Option<NavMap>| {
                 let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
                 let mut state = DrawState {
                     log_matches: log_matches.clone(),
                     ..DrawState::default()
@@ -1293,7 +1291,7 @@ fn snap_log_matches_along_a_dense_track() {
         .ui_state(
             move |ui, map: &mut Option<NavMap>| {
                 let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
                 let mut state = DrawState {
                     log_matches: log_matches.clone(),
                     ..DrawState::default()
@@ -1355,7 +1353,7 @@ fn snap_log_matches_of_overlapping_layers() {
         .ui_state(
             move |ui, map: &mut Option<NavMap>| {
                 let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
                 let mut state = DrawState {
                     log_matches: log_matches.clone(),
                     ..DrawState::default()
@@ -1416,7 +1414,7 @@ fn log_map_harness(
             move |ui, state: &mut LogHoverState| {
                 let map = state
                     .map
-                    .get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                    .get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
                 map.draw(ui, state.draw.context(&files, &visibility));
             },
             LogHoverState {
@@ -1556,7 +1554,7 @@ fn snap_log_matches_hidden_by_display_mask() {
         .ui_state(
             move |ui, map: &mut Option<NavMap>| {
                 let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
                 let mut state = DrawState {
                     log_matches: log_matches.clone(),
                     display_mask: mask,
@@ -1596,7 +1594,7 @@ fn snap_display_mask_hides_markers() {
         .ui_state(
             move |ui, map: &mut Option<NavMap>| {
                 let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
                 let mut state = DrawState {
                     display_mask: mask,
                     ..DrawState::default()
@@ -1641,7 +1639,7 @@ fn snap_sky_glyphs_only(#[case] name: &str, #[case] variant: gt_ui_types::SkyGly
         .ui_state(
             move |ui, map: &mut Option<NavMap>| {
                 let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
                 let mut state = DrawState {
                     display_mask: mask,
                     sky_glyph_variant: variant,
@@ -1679,7 +1677,7 @@ fn snap_plot_hover_sky_disc() {
         .ui_state(
             move |ui, map: &mut Option<NavMap>| {
                 let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
                 let mut state = DrawState {
                     display_mask: mask,
                     highlight: MapHighlight {
@@ -1720,7 +1718,7 @@ fn snap_sticky_point_window() {
         .ui_state(
             move |ui, map: &mut Option<NavMap>| {
                 let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
                 let mut state = DrawState {
                     highlight: MapHighlight {
                         sticky: Some(clicked),
@@ -1770,7 +1768,7 @@ fn the_point_window_button_returns_a_timed_sky_trails_action() {
         .ui_state(
             move |ui, map: &mut Option<NavMap>| {
                 let map =
-                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
                 let mut state = DrawState {
                     highlight: MapHighlight {
                         sticky: Some(clicked),
@@ -1865,7 +1863,8 @@ fn the_sticky_popup_fits_every_viewport(
 
     let mut harness = crate::test_harness::builder().size(viewport).ui_state(
         move |ui, map: &mut Option<NavMap>| {
-            let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+            let map =
+                map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
             let mut state = DrawState {
                 highlight: MapHighlight {
                     sticky: Some(clicked),

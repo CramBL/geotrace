@@ -164,11 +164,16 @@ pub struct StartupOptions {
     /// started read-only beside the instance that owns it.
     ///
     /// Whether the app runs without network access: no interference
-    /// downloads, no snapping, no update check, no map tiles.
+    /// downloads, no snapping, no update check.
     ///
     /// `main` sets it from the `--offline` flag, and is the only place that
     /// reads the command line. Everything downstream is handed the value.
     pub offline: bool,
+    /// Where the map takes its base tiles from. `main` derives it from the
+    /// `--offline` flag. The UI tests set the labelled synthetic tiles, which
+    /// need no tile server and make every snapshot show where the map was
+    /// framed.
+    pub tile_access: gt_map::TileAccess,
     /// Which databases the run opens.
     pub storage: storage::Storage,
     /// The running version, shown in the About dialog and used by the update
@@ -478,14 +483,7 @@ impl App {
             loaded_settings.map.mapbox_token = token;
         }
 
-        let map = NavMap::new(
-            cc.egui_ctx.clone(),
-            if options.offline {
-                gt_map::TileAccess::Offline
-            } else {
-                gt_map::TileAccess::Network
-            },
-        );
+        let map = NavMap::new(cc.egui_ctx.clone(), options.tile_access);
         let loader = LoadJobs::new(cc.egui_ctx.clone(), options.pending_writes.clone());
         let snap = snap::SnapScheduler::new(
             cc.egui_ctx.clone(),
