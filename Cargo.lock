@@ -2468,6 +2468,7 @@ version = "0.13.0"
 dependencies = [
  "chrono",
  "gt-types",
+ "proptest",
  "rstest",
  "vec1",
 ]

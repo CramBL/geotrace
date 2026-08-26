@@ -67,11 +67,10 @@ fn slip_rate_at_the_first_epoch_of_a_sub_second_track_is_zero() {
     assert_eq!(series.all.get(1).map(|point| point[1]), Some(1.0));
 }
 
-/// A receiver resuming after a gap can stamp a fix with a GPS epoch earlier
-/// than the fix before it. The slip detected at that fix still falls inside
-/// that fix's own trailing window, so the rate series and the slip markers
-/// agree on it, and the series stays in point order for the per-point form to
-/// index into.
+/// The rate series and the slip markers agree on the slip at a fix whose GPS
+/// epoch steps backwards - the shape a receiver resuming after a gap writes:
+/// the slip still falls inside that fix's own trailing window. The series
+/// stays in point order, which the per-point form needs to index into.
 #[test]
 fn slip_rate_counts_the_slip_at_a_fix_whose_epoch_steps_backwards() {
     let points = vec![
