@@ -428,8 +428,7 @@ fn convert_constellation(c: SdkConstellation) -> Constellation {
 }
 
 fn convert_satellite_report(report: &SatelliteReport) -> Satellites {
-    let satellites: Vec<Satellite> = report
-        .tracked
+    let satellites: Vec<Satellite> = merge_rows_repeating_a_satellite(&report.tracked)
         .iter()
         .map(|s: &SdkSatellite| {
             Satellite::new(
@@ -446,6 +445,37 @@ fn convert_satellite_report(report: &SatelliteReport) -> Satellites {
     let gps_time = report.gps_time.map(GpsTime::from_utc);
     let sys_time = report.sys_time.map(SysTime::from_utc);
     Satellites::new(gps_time, sys_time, satellites)
+}
+
+/// Merges the rows of a report that repeat a `(constellation, prn)` into one
+/// row per satellite, which is what every count taken from a report measures.
+///
+/// The merged row is in the fix when any of its rows was, and takes the highest
+/// SNR reported: the strongest signal measured for the satellite. Taking the
+/// highest keeps the result independent of row order, which
+/// `gt_analysis::loss_of_lock` reads when it compares a satellite's SNR between
+/// epochs. Elevation and azimuth are properties of the satellite's geometry,
+/// not of the signal: the merged row keeps the first value a row reported for
+/// each of them.
+fn merge_rows_repeating_a_satellite(tracked: &[SdkSatellite]) -> Vec<SdkSatellite> {
+    let mut merged: Vec<SdkSatellite> = Vec::with_capacity(tracked.len());
+    for row in tracked {
+        let same_satellite = merged
+            .iter_mut()
+            .find(|s| s.constellation == row.constellation && s.prn == row.prn);
+        if let Some(satellite) = same_satellite {
+            satellite.in_fix |= row.in_fix;
+            satellite.elevation = satellite.elevation.or(row.elevation);
+            satellite.azimuth = satellite.azimuth.or(row.azimuth);
+            satellite.snr = match (satellite.snr, row.snr) {
+                (Some(merged_snr), Some(row_snr)) => Some(merged_snr.max(row_snr)),
+                (reported, None) | (None, reported) => reported,
+            };
+        } else {
+            merged.push(*row);
+        }
+    }
+    merged
 }
 
 fn convert_marker(m: &SdkMarker) -> CustomMarker {
@@ -905,6 +935,114 @@ mod tests {
         assert_eq!(first.elevation(), Some(30.0));
         assert_eq!(first.azimuth(), Some(90.0));
         assert_eq!(first.snr().map(|s| s.value()), Some(28.0));
+    }
+
+    const REPEATED_ELEVATION_DEG: f32 = 40.0;
+
+    const HIGHEST_ROW_SNR_DB: f32 = 45.0;
+
+    const AZIMUTH_JUST_WEST_OF_NORTH_DEG: f32 = 359.0;
+
+    const AZIMUTH_JUST_EAST_OF_NORTH_DEG: f32 = 2.0;
+
+    fn row_for_prn_7(elevation_deg: Option<f32>, snr_db: f32, in_fix: bool) -> SdkSat {
+        SdkSat::builder()
+            .constellation(SdkConst::Gps)
+            .prn(7u32)
+            .maybe_elevation(elevation_deg)
+            .azimuth(90.0f32)
+            .snr(snr_db)
+            .in_fix(in_fix)
+            .build()
+    }
+
+    #[rstest]
+    #[case::highest_snr_first(vec![
+        row_for_prn_7(Some(REPEATED_ELEVATION_DEG), HIGHEST_ROW_SNR_DB, true),
+        row_for_prn_7(Some(REPEATED_ELEVATION_DEG), 30.0, false),
+    ])]
+    #[case::highest_snr_last(vec![
+        row_for_prn_7(Some(REPEATED_ELEVATION_DEG), 30.0, false),
+        row_for_prn_7(Some(REPEATED_ELEVATION_DEG), HIGHEST_ROW_SNR_DB, true),
+    ])]
+    #[case::three_rows(vec![
+        row_for_prn_7(Some(REPEATED_ELEVATION_DEG), 30.0, false),
+        row_for_prn_7(Some(REPEATED_ELEVATION_DEG), HIGHEST_ROW_SNR_DB, true),
+        row_for_prn_7(Some(REPEATED_ELEVATION_DEG), 38.0, false),
+    ])]
+    #[case::elevation_on_one_row(vec![
+        row_for_prn_7(None, 30.0, false),
+        row_for_prn_7(Some(REPEATED_ELEVATION_DEG), HIGHEST_ROW_SNR_DB, true),
+    ])]
+    fn rows_repeating_a_satellite_merge_into_one(#[case] tracked: Vec<SdkSat>) {
+        let report = SatelliteReport::builder()
+            .gps_time(base())
+            .tracked(tracked)
+            .build();
+
+        let merged = convert_satellite_report(&report);
+
+        assert_eq!(merged.satellite_count(), 1);
+        assert_eq!(merged.fix_count(), 1);
+        let satellite = merged.satellites().next().unwrap();
+        assert!(satellite.in_fix());
+        assert_eq!(satellite.elevation(), Some(REPEATED_ELEVATION_DEG));
+        assert_eq!(satellite.snr().map(|s| s.value()), Some(HIGHEST_ROW_SNR_DB));
+    }
+
+    #[test]
+    fn a_repeated_satellite_keeps_the_first_azimuth_reported() {
+        let row_at = |azimuth_deg: f32| {
+            SdkSat::builder()
+                .constellation(SdkConst::Gps)
+                .prn(7u32)
+                .elevation(REPEATED_ELEVATION_DEG)
+                .azimuth(azimuth_deg)
+                .snr(HIGHEST_ROW_SNR_DB)
+                .in_fix(true)
+                .build()
+        };
+        let report = SatelliteReport::builder()
+            .gps_time(base())
+            .tracked(vec![
+                row_at(AZIMUTH_JUST_WEST_OF_NORTH_DEG),
+                row_at(AZIMUTH_JUST_EAST_OF_NORTH_DEG),
+            ])
+            .build();
+
+        let merged = convert_satellite_report(&report);
+
+        assert_eq!(merged.satellite_count(), 1);
+        assert_eq!(
+            merged.satellites().next().and_then(|s| s.azimuth()),
+            Some(AZIMUTH_JUST_WEST_OF_NORTH_DEG)
+        );
+    }
+
+    #[test]
+    fn one_prn_in_two_constellations_stays_two_satellites() {
+        let galileo_row = SdkSat::builder()
+            .constellation(SdkConst::Galileo)
+            .prn(7u32)
+            .elevation(REPEATED_ELEVATION_DEG)
+            .in_fix(true)
+            .build();
+        let report = SatelliteReport::builder()
+            .gps_time(base())
+            .tracked(vec![
+                row_for_prn_7(Some(REPEATED_ELEVATION_DEG), HIGHEST_ROW_SNR_DB, true),
+                galileo_row,
+            ])
+            .build();
+
+        let merged = convert_satellite_report(&report);
+
+        let constellations: Vec<Constellation> =
+            merged.satellites().map(|s| s.constellation()).collect();
+        assert_eq!(
+            constellations,
+            vec![Constellation::Gps, Constellation::Galileo]
+        );
     }
 
     #[test]

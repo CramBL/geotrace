@@ -2742,6 +2742,7 @@ name = "gt-loader"
 version = "0.13.0"
 dependencies = [
  "geotrace-sdk",
+ "gt-analysis",
  "gt-test-utils",
  "gt-track-builder",
  "gt-types",
