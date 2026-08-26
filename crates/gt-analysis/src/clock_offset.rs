@@ -319,9 +319,9 @@ mod tests {
     }
 
     /// A fix taken without a GPS lock has a structural zero GPS−system
-    /// difference: it carries the host timestamp as its own time. On a track
-    /// whose host clock sits an hour behind GPS that zero is no departure from
-    /// the baseline, while a real one beside it still is.
+    /// difference: its time field holds the host timestamp. That zero is no
+    /// departure from the baseline of a track whose host clock runs an hour
+    /// behind GPS. A real departure beside it still is one.
     #[test]
     fn a_fix_without_a_gps_lock_is_not_an_excursion() {
         const HOST_BEHIND_S: i64 = 3600;

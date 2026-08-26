@@ -549,7 +549,6 @@ fn hover_grid_ui(ui: &mut Ui, p: &NavPoint, recording_name: Option<&str>) {
                 }
             }
 
-            // GPS/system-clock delta.
             if let Some(offset) = p.tpv.gps_system_clock_offset() {
                 let clock_delta_ms = offset.num_milliseconds();
                 ui.label(format!("Clock {DELTA}t"));

@@ -20,7 +20,7 @@ pub fn to_linestring(tpvs: &[TimePositionVelocity]) -> geo_types::LineString<f64
 /// compile-time error.
 #[derive(bon::Builder, Debug, Clone, Copy)]
 pub struct TimePositionVelocity {
-    /// Passing a [`GpsTime`] states that the receiver's own clock stamped this
+    /// Pass a [`GpsTime`] to record that the receiver's own clock stamped this
     /// fix.
     #[builder(into)]
     pub(crate) time: FixTimestamp,
@@ -40,7 +40,7 @@ impl TimePositionVelocity {
     /// timestamp when it had a lock, the host timestamp the fix was stamped
     /// with when it did not, and the Unix epoch when neither clock stamped it.
     ///
-    /// [`Self::gps_time`] is what tells those apart.
+    /// Read [`Self::gps_time`] to tell those apart.
     pub fn time(&self) -> GpsTime {
         match self.time {
             FixTimestamp::FromGpsReceiver(gps) => gps,
@@ -57,7 +57,7 @@ impl TimePositionVelocity {
         }
     }
 
-    /// GPS−system clock offset at this fix: positive means the GPS clock is
+    /// GPS−system clock offset at this fix, positive when the GPS clock is
     /// ahead of the host clock.
     ///
     /// `None` unless both clocks stamped the fix.
@@ -171,8 +171,8 @@ mod tests {
             .build()
     }
 
-    /// A fix the host clock stamped on its own yields no offset, however far
-    /// the two clocks stand apart elsewhere in the recording.
+    /// No offset can be measured from a fix the host clock stamped on its own,
+    /// however far the two clocks stand apart elsewhere in the recording.
     #[test]
     fn only_a_fix_the_receiver_stamped_has_a_gps_system_clock_offset() {
         const GPS_AHEAD_MS: i64 = 600;
