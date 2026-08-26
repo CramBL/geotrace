@@ -1395,22 +1395,20 @@ fn log_map_harness(
     gt_test_utils::TestHarness<'static, LogHoverState>,
     MercPoint,
 ) {
-    use gt_types::{Latitude, Longitude, mercator};
+    use gt_types::mercator;
     use gt_ui_types::TrackDataVisibility;
 
     let files = vec![make_snapshot_file()];
     let visibility = TrackDataVisibility::from_loaded(&files);
-    let (min_lat, max_lat, min_lon, max_lon) = crate::viewport::compute_visible_bounding_box(
+    let bounds = crate::viewport::compute_visible_bounding_box(
         &files,
         &visibility,
         &gt_filter::GlobalFilter::default(),
         DisplayMask::default(),
     )
     .expect("the fixture recording has points");
-    let center = mercator::normalize(
-        Latitude::new((min_lat + max_lat) / 2.0),
-        Longitude::new((min_lon + max_lon) / 2.0),
-    );
+    let (center_lat, center_lon) = bounds.center();
+    let center = mercator::normalize(center_lat, center_lon);
 
     let mut harness = crate::test_harness::builder()
         .size(LOG_HOVER_CANVAS)

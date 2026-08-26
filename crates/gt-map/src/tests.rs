@@ -72,7 +72,7 @@ fn tpv_spatial_point(fi: usize, ti: usize, pi: usize) -> SpatialPoint {
     }
 }
 
-fn vis_all_visible() -> TrackDataVisibility {
+pub(crate) fn vis_all_visible() -> TrackDataVisibility {
     TrackDataVisibility {
         files: vec![FileVisibility {
             enabled: true,
@@ -137,14 +137,13 @@ fn hidden_track_blocks_hover() {
 }
 
 fn track_at(lat: f64, lon: f64) -> LoadedTrack {
-    let tpv = gt_types::TimePositionVelocity::builder()
-        .time(gt_types::GpsTime::from_utc(chrono::Utc::now()))
-        .lat(gt_types::Latitude::new(lat))
-        .lon(gt_types::Longitude::new(lon))
-        .build();
+    track_over(vec![nav_at(chrono::Utc::now(), lat, lon)])
+}
+
+pub(crate) fn track_over(points: Vec<gt_types::NavPoint>) -> LoadedTrack {
     LoadedTrack {
         metadata: gt_test_utils::empty_track_metadata(),
-        points: vec![gt_types::NavPoint::new(tpv, None)],
+        points,
         lod: gt_types::TrackLod::default(),
         sat_label_anchors: Vec::new(),
         custom_markers: vec![],
@@ -154,7 +153,7 @@ fn track_at(lat: f64, lon: f64) -> LoadedTrack {
     }
 }
 
-fn file_with_tracks(tracks: Vec<LoadedTrack>) -> LoadedFile {
+pub(crate) fn file_with_tracks(tracks: Vec<LoadedTrack>) -> LoadedFile {
     LoadedFile {
         metadata: gt_test_utils::empty_file_metadata(),
         tracks,
@@ -184,17 +183,27 @@ fn visible_bounding_box_excludes_hidden_tracks() {
         }],
     };
 
-    // Everything visible: the box spans both tracks (min_lat, max_lat, min_lon, max_lon).
+    // Everything visible: the box spans both tracks.
     let filter = GlobalFilter::default();
     let all_visible = compute_visible_bounding_box(&files, &vis, &filter, DisplayMask::default())
         .expect("visible data has a bbox");
-    assert_eq!(all_visible, (55.0, 56.0, 12.0, 13.0));
+    assert_eq!(
+        all_visible,
+        GeoBounds::from_positions([
+            (Latitude::new(55.0), Longitude::new(12.0)),
+            (Latitude::new(56.0), Longitude::new(13.0)),
+        ])
+        .expect("two positions")
+    );
 
     // Hide the north-east track: its corner drops out of the box.
     vis.files[0].tracks[1].enabled = false;
     let only_first = compute_visible_bounding_box(&files, &vis, &filter, DisplayMask::default())
         .expect("track 0 still visible");
-    assert_eq!(only_first, (55.0, 55.0, 12.0, 12.0));
+    assert_eq!(
+        only_first,
+        GeoBounds::single_position(Latitude::new(55.0), Longitude::new(12.0))
+    );
 }
 
 /// Regression test: turning off the TPV layer must prevent hover on TPV points.
@@ -306,7 +315,11 @@ fn fully_masked_map_has_no_bounding_box() {
 }
 
 /// Builds a single-point [`NavPoint`] stamped at `time`.
-fn nav_at(time: chrono::DateTime<chrono::Utc>, lat: f64, lon: f64) -> gt_types::NavPoint {
+pub(crate) fn nav_at(
+    time: chrono::DateTime<chrono::Utc>,
+    lat: f64,
+    lon: f64,
+) -> gt_types::NavPoint {
     let tpv = gt_types::TimePositionVelocity::builder()
         .time(gt_types::GpsTime::from_utc(time))
         .lat(gt_types::Latitude::new(lat))
@@ -718,9 +731,53 @@ fn matched_bounding_box_covers_only_the_drawn_matches() {
     let matches = matches_of_run(1, TrackRef::new(FileIdx::new(0), TrackIdx::new(1)));
     assert_eq!(
         matched_bounding_box(&files, &matches),
-        Some((56.0, 56.0, 13.0, 13.0))
+        Some(GeoBounds::single_position(
+            Latitude::new(56.0),
+            Longitude::new(13.0)
+        ))
     );
     assert_eq!(matched_bounding_box(&files, &QueryMatches::default()), None);
+}
+
+/// Matches spread either side of the antimeridian are framed on the tight
+/// arc they cover, 175.0° E to 180.5° E, whichever track the fold reads
+/// first.
+#[test]
+fn matched_bounding_box_across_the_antimeridian_frames_the_arc_the_matches_cover() {
+    let files = vec![file_with_tracks(vec![
+        track_at(0.0, 175.0),
+        track_at(0.0, 179.0),
+        track_at(0.0, -179.5),
+    ])];
+    let rng = |start: usize, end: usize| start..end;
+    let matches = QueryMatches {
+        draws: vec![DrawLayer {
+            color: 0,
+            ranges: (0..files[0].tracks.len())
+                .map(|ti| {
+                    (
+                        TrackRef::new(FileIdx::new(0), TrackIdx::new(ti)),
+                        vec![rng(0, 1)],
+                    )
+                })
+                .collect(),
+        }],
+        run: 1,
+        ..QueryMatches::default()
+    };
+
+    let bounds = matched_bounding_box(&files, &matches).expect("all three tracks are loaded");
+    let (_, center_lon) = bounds.center();
+    assert!(
+        (bounds.lon.span_degrees() - 5.5).abs() < 1e-9,
+        "spans {}°",
+        bounds.lon.span_degrees()
+    );
+    assert!(
+        (center_lon.as_degrees() - 177.75).abs() < 1e-9,
+        "centered on {}°",
+        center_lon.as_degrees()
+    );
 }
 
 /// A match row's own map button frames that match's points, not every match
@@ -731,7 +788,10 @@ fn match_bounding_box_covers_one_match() {
     let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
     assert_eq!(
         match_bounding_box(&files, track, &(0..1)),
-        Some((55.0, 55.0, 12.0, 12.0))
+        Some(GeoBounds::single_position(
+            Latitude::new(55.0),
+            Longitude::new(12.0)
+        ))
     );
     // A range reaching past the track frames nothing: its points are gone.
     assert_eq!(match_bounding_box(&files, track, &(0..10_000)), None);

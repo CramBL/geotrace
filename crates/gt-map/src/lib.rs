@@ -33,7 +33,7 @@ mod viewport;
 pub use sky_trails_window::SkyTrailsWindow;
 pub use space_weather_indicator::SpaceWeatherIndicator;
 pub use tec_renderer::{TecHeatmapSnapshot, TecLayer};
-pub use viewport::GeoBounds;
+pub use viewport::ViewportBounds;
 
 use std::cell::{Cell, RefCell};
 
@@ -43,7 +43,7 @@ use gt_filter::GlobalFilter;
 use gt_jam::dataset::JamDataset;
 use gt_jam::day_selection::{DaySelection, EmptyReason};
 use gt_loaded_files::RecordingNames;
-use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackRef};
+use gt_types::{DataCategory, FileIdx, GeoBounds, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::reference::ReferenceDocument;
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
@@ -314,13 +314,13 @@ impl<'a> MapDrawContext<'a> {
     }
 
     /// The bounding box around every element currently drawn, for framing.
-    fn visible_bounding_box(&self) -> Option<(f64, f64, f64, f64)> {
+    fn visible_bounding_box(&self) -> Option<GeoBounds> {
         compute_visible_bounding_box(self.files, self.visibility, self.filter, *self.display_mask)
     }
 
     /// The bounding box a reveal request frames: every match the run drew, or
     /// the points of the one match the request names.
-    fn reveal_bounding_box(&self, target: &MatchRevealTarget) -> Option<(f64, f64, f64, f64)> {
+    fn reveal_bounding_box(&self, target: &MatchRevealTarget) -> Option<GeoBounds> {
         match target {
             MatchRevealTarget::WholeRun => matched_bounding_box(self.files, self.query_matches?),
             MatchRevealTarget::OneMatch { track, points } => {
@@ -398,7 +398,7 @@ pub struct NavMap {
     match_reveal: MatchRevealState,
     /// Geographic bounds of the last rendered viewport.
     /// `None` before the first draw call.
-    last_viewport_bounds: Option<GeoBounds>,
+    last_viewport_bounds: Option<ViewportBounds>,
     /// The element that was under the pointer when the last right-click fired.
     /// Held across frames so the context menu can reference it while it is open.
     right_click_ref: Option<DataPointRef>,
@@ -500,7 +500,7 @@ impl NavMap {
     /// Return the geographic bounds of the most recently rendered map viewport.
     ///
     /// Returns `None` before the first call to [`Self::draw`].
-    pub fn viewport_geo_bounds(&self) -> Option<GeoBounds> {
+    pub fn viewport_geo_bounds(&self) -> Option<ViewportBounds> {
         self.last_viewport_bounds
     }
 
