@@ -1,6 +1,6 @@
-//! What a receiver that reports one satellite once per signal band means for
+//! What a `.gtd` report holding the same `(constellation, prn)` twice means for
 //! the estimators reading the loaded track: the slip count and the utilization
-//! baseline count satellites, not the signals each was tracked on.
+//! baseline count satellites, not report rows.
 
 #![expect(
     clippy::expect_used,
@@ -26,17 +26,17 @@ const ELEVATION_DEG: f32 = 40.0;
 
 const AZIMUTH_DEG: f32 = 120.0;
 
-/// The satellite the receiver tracks on two signal bands.
-const TWO_BAND_PRN: u32 = 7;
+/// The satellite each report holds two rows for.
+const REPEATED_PRN: u32 = 7;
 
-/// The satellite that stays in view after the two-band one drops out.
+/// The satellite that stays in view after the repeated one drops out.
 const REMAINING_PRN: u32 = 1;
 
 fn base_time() -> DateTime<Utc> {
     DateTime::from_timestamp(1_700_000_000, 0).expect("fixed timestamp is within range")
 }
 
-fn signal_band_of(prn: u32, snr_db: f32, in_fix: bool) -> SdkSatellite {
+fn satellite_row(prn: u32, snr_db: f32, in_fix: bool) -> SdkSatellite {
     SdkSatellite::builder()
         .constellation(SdkConstellation::Gps)
         .prn(prn)
@@ -77,24 +77,22 @@ fn load_track_reporting(reports: Vec<Vec<SdkSatellite>>) -> LoadedTrack {
         .expect("writing to a vector succeeds");
 
     let file =
-        gt_loader::load_bytes(&bytes, "signal_bands.gtd".to_owned()).expect("the file loads");
+        gt_loader::load_bytes(&bytes, "repeated_rows.gtd".to_owned()).expect("the file loads");
     file.tracks
         .into_iter()
         .next()
         .expect("the consecutive fixes form one track")
 }
 
-/// A satellite that drops out slips once, whatever number of signal bands the
-/// receiver tracked it on.
 #[test]
-fn a_satellite_tracked_on_two_signal_bands_slips_once_when_it_drops_out() {
+fn a_satellite_reported_on_two_rows_slips_once_when_it_drops_out() {
     let track = load_track_reporting(vec![
         vec![
-            signal_band_of(TWO_BAND_PRN, 45.0, true),
-            signal_band_of(TWO_BAND_PRN, 30.0, true),
+            satellite_row(REPEATED_PRN, 45.0, true),
+            satellite_row(REPEATED_PRN, 30.0, true),
         ],
-        vec![signal_band_of(REMAINING_PRN, 40.0, true)],
-        vec![signal_band_of(REMAINING_PRN, 40.0, true)],
+        vec![satellite_row(REMAINING_PRN, 40.0, true)],
+        vec![satellite_row(REMAINING_PRN, 40.0, true)],
     ]);
 
     let events = loss_of_lock::detect_slip_events(&track.points, MASK_DEG, SNR_DROP_DB);
@@ -104,17 +102,15 @@ fn a_satellite_tracked_on_two_signal_bands_slips_once_when_it_drops_out() {
         .flat_map(|(_, slips)| slips)
         .map(|slip| (slip.prn.value(), slip.cause))
         .collect();
-    assert_eq!(slips, vec![(TWO_BAND_PRN, SlipCause::LostLock)]);
+    assert_eq!(slips, vec![(REPEATED_PRN, SlipCause::LostLock)]);
 }
 
-/// The receiver solves with one of the two bands it tracks a satellite on, and
-/// that satellite is one satellite in view: the utilization rate reads 100 %.
 #[test]
-fn a_satellite_solved_on_one_of_its_two_signal_bands_is_fully_utilized() {
+fn a_satellite_reported_on_two_rows_and_in_the_fix_on_one_is_fully_utilized() {
     let epoch = || {
         vec![
-            signal_band_of(TWO_BAND_PRN, 45.0, true),
-            signal_band_of(TWO_BAND_PRN, 30.0, false),
+            satellite_row(REPEATED_PRN, 45.0, true),
+            satellite_row(REPEATED_PRN, 30.0, false),
         ]
     };
     let track = load_track_reporting(vec![epoch(), epoch(), epoch()]);
