@@ -89,11 +89,10 @@ pub fn track_passes_filter(meta: &TrackMetadata, filter: &GlobalFilter) -> bool 
 mod tests {
     use super::*;
     use chrono::{Duration, TimeZone, Utc};
-    use geo_types::Rect;
     use gt_types::coordinates::{Latitude, Longitude};
     use gt_types::time_types::GpsTime;
     use gt_types::tpv::TimePositionVelocity;
-    use gt_types::{MercBounds, TimeRange, TrackMetadata};
+    use gt_types::{GeoBounds, MercBounds, TimeRange, TrackMetadata};
     use uom::si::length::{kilometer, meter};
 
     /// Points one second apart starting at a fixed epoch.
@@ -181,10 +180,11 @@ mod tests {
                 epoch + Duration::seconds(start_offset_secs),
                 epoch + Duration::seconds(end_offset_secs),
             ),
-            bounding_box: Rect::new(
-                geo_types::coord! { x: 0.0, y: 0.0 },
-                geo_types::coord! { x: 1.0, y: 1.0 },
-            ),
+            bounding_box: GeoBounds::from_positions([
+                (Latitude::new(0.0), Longitude::new(0.0)),
+                (Latitude::new(1.0), Longitude::new(1.0)),
+            ])
+            .expect("two positions"),
             merc_bounds: MercBounds {
                 x_min: 0.0,
                 x_max: 0.0,

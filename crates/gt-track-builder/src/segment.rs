@@ -1,10 +1,10 @@
 use chrono::{DateTime, Duration, Utc};
-use geo_types::{Coord, Rect};
 use gt_analysis::clock_offset::{self, ClockOffsetExcursion};
 use gt_analysis::robust::median_i64;
 use gt_geo_math::{path_distance_km, point_set_diameter_m, segment_length_range_m};
 use gt_types::channel::Channel;
 use gt_types::coordinates::{Latitude, Longitude};
+use gt_types::geo_bounds::GeoBounds;
 use gt_types::markers::{
     CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind,
 };
@@ -13,8 +13,8 @@ use gt_types::nav_point::NavPoint;
 use gt_types::satellites::SlipEvent;
 use gt_types::time_types::GpsTime;
 use gt_types::track::{
-    FileMetadata, FileSource, FixStats, LoadWarning, LoadedFile, LoadedTrack, SegmentLengthRange,
-    TimeRange, TrackMetadata, TravelMode,
+    FileMetadata, FileSource, FixStats, LoadWarning, LoadedFile, LoadedTrack, MercBounds,
+    SegmentLengthRange, TimeRange, TrackMetadata, TravelMode,
 };
 use std::ops::Range;
 use uom::si::f64::Length;
@@ -522,34 +522,11 @@ pub fn compute_track_metadata(
 ) -> TrackMetadata {
     let first = points.first();
 
-    let first_lat = first.tpv.lat().as_degrees();
-    let first_lon = first.tpv.lon().as_degrees();
-
-    let (min_lat, max_lat, min_lon, max_lon) = points.iter().fold(
-        (first_lat, first_lat, first_lon, first_lon),
-        |(min_lat, max_lat, min_lon, max_lon), p| {
-            let lat = p.tpv.lat().as_degrees();
-            let lon = p.tpv.lon().as_degrees();
-            (
-                min_lat.min(lat),
-                max_lat.max(lat),
-                min_lon.min(lon),
-                max_lon.max(lon),
-            )
-        },
+    let bounding_box = GeoBounds::from_first_position_and_rest(
+        (first.tpv.lat(), first.tpv.lon()),
+        points.iter().skip(1).map(|p| (p.tpv.lat(), p.tpv.lon())),
     );
-
-    let bounding_box = Rect::new(
-        Coord {
-            x: min_lon,
-            y: min_lat,
-        },
-        Coord {
-            x: max_lon,
-            y: max_lat,
-        },
-    );
-    let merc_bounds = gt_types::merc_bounds_for_rect(bounding_box);
+    let merc_bounds = MercBounds::from(bounding_box);
 
     let distance_km = Length::new::<kilometer>(path_distance_km(points));
     let diameter_m = Length::new::<meter>(point_set_diameter_m(points));

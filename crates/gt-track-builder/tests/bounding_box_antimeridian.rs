@@ -1,7 +1,7 @@
 //! `TrackMetadata::bounding_box` and `merc_bounds` for a track that crosses
 //! the antimeridian, and for the ordinary tracks that must stay unaffected.
 
-use chrono::{TimeZone, Utc};
+use chrono::{DateTime, Duration};
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::nav_point::NavPoint;
 use gt_types::time_types::GpsTime;
@@ -18,7 +18,7 @@ const DEGREES_TOLERANCE: f64 = 1e-9;
 
 /// One fix at second `t`.
 fn fix(t: i64, lat: Latitude, lon: Longitude) -> NavPoint {
-    let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().expect("valid timestamp"));
+    let time = GpsTime::from_utc(DateTime::UNIX_EPOCH + Duration::seconds(t));
     let tpv = TimePositionVelocity::builder()
         .time(time)
         .lat(lat)
@@ -57,8 +57,8 @@ fn bounding_box_across_the_antimeridian_covers_the_span_the_track_flew() {
     assert_degrees_close(bounds.lon.span_degrees(), 1.5);
 }
 
-/// The side panel centres the map on the middle of `bounding_box` when a track
-/// row is double-clicked, so that centre must land on the track.
+/// The centre of the box must land on the track: the side panel centres the
+/// map on it when a track row is double-clicked.
 ///
 /// Oracle: the great-circle distance from the centre to the nearest fix,
 /// against the track's own diameter (166_792.62 m).
@@ -82,13 +82,14 @@ fn bounding_box_center_across_the_antimeridian_lands_on_the_track() {
     );
 }
 
-/// The map culls tracks by `merc_bounds`, so a track 166.79 km across must
-/// claim 1.5° of the world's width and wrap at its eastern edge.
+/// A track 166.79 km across must claim 1.5° of the world's width and wrap at
+/// its eastern edge: the map culls tracks by `merc_bounds`.
 ///
 /// Oracle: normalized Mercator x is `(lon + 180) / 360`.
 #[test]
 fn merc_bounds_across_the_antimeridian_wrap_at_the_world_edge() {
-    let merc_bounds = segment::compute_track_metadata(0, &antimeridian_track(), &[], &[]).merc_bounds;
+    let merc_bounds =
+        segment::compute_track_metadata(0, &antimeridian_track(), &[], &[]).merc_bounds;
 
     assert!(merc_bounds.crosses_the_antimeridian());
     let width = (1.0 - merc_bounds.x_min) + merc_bounds.x_max;

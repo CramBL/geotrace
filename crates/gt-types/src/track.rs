@@ -1,5 +1,4 @@
 use crate::channel::Channel;
-use crate::coordinates::{Latitude, Longitude};
 use crate::geo_bounds::GeoBounds;
 use crate::highlight::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
 use crate::markers::{CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker};
@@ -9,7 +8,6 @@ use crate::sat_label::SatLabelAnchor;
 use crate::satellites::Satellites;
 use crate::time_types::GpsTime;
 use chrono::{DateTime, Days, Duration, NaiveDate, Utc};
-use geo_types::Rect;
 use rustc_hash::FxHashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -276,10 +274,9 @@ pub struct TrackMetadata {
     pub distance_km: Length,
     pub duration: Duration,
     pub time_range: TimeRange,
-    /// Geographic bounding box in (lon, lat) coordinate order per geo-types convention.
-    pub bounding_box: Rect<f64>,
-    /// Normalised Web Mercator bounding box, pre-computed from `bounding_box`.
-    /// Used by map renderers for O(1) viewport intersection tests without trigonometry.
+    pub bounding_box: GeoBounds,
+    /// Pre-computed from `bounding_box` so map renderers get O(1) viewport
+    /// intersection tests without trigonometry.
     pub merc_bounds: MercBounds,
     pub point_set_diameter_m: Length,
     /// `None` when the track has fewer than two points (no segments).
@@ -298,23 +295,6 @@ impl TrackMetadata {
     /// Returns `true` when the track has at least one custom, event, or generated marker.
     pub fn has_any_marker(&self) -> bool {
         self.has_custom_markers || self.generated_marker_count > 0 || self.event_marker_count > 0
-    }
-}
-
-/// Compute the normalised Web Mercator bounding box for a geographic rectangle.
-///
-/// The input `Rect` uses (lon, lat) coordinate order per `geo_types` convention.
-///
-/// Mercator Y increases south (0 = north pole, 1 = south pole), so the
-/// northernmost latitude (`bb.max().y`) maps to `y_min`.
-pub fn merc_bounds_for_rect(bb: Rect<f64>) -> MercBounds {
-    let sw = mercator::normalize(Latitude::new(bb.max().y), Longitude::new(bb.min().x));
-    let ne = mercator::normalize(Latitude::new(bb.min().y), Longitude::new(bb.max().x));
-    MercBounds {
-        x_min: sw.x,
-        x_max: ne.x,
-        y_min: sw.y,
-        y_max: ne.y,
     }
 }
 
@@ -736,13 +716,13 @@ mod nearest_satellite_report_tests {
     use rstest::rstest;
 
     use crate::coordinates::{Latitude, Longitude};
+    use crate::geo_bounds::GeoBounds;
     use crate::highlight::PointIdx;
     use crate::nav_point::NavPoint;
     use crate::satellites::{Constellation, Satellite, Satellites};
     use crate::time_types::GpsTime;
     use crate::tpv::TimePositionVelocity;
 
-    use geo_types::{Coord, Rect};
     use uom::si::f64::Length;
     use uom::si::length::{kilometer, meter};
 
@@ -754,7 +734,7 @@ mod nearest_satellite_report_tests {
             distance_km: Length::new::<kilometer>(0.0),
             duration: Duration::zero(),
             time_range: TimeRange::new(DateTime::<Utc>::UNIX_EPOCH, DateTime::<Utc>::UNIX_EPOCH),
-            bounding_box: Rect::new(Coord { x: 0.0, y: 0.0 }, Coord { x: 0.0, y: 0.0 }),
+            bounding_box: GeoBounds::single_position(Latitude::new(0.0), Longitude::new(0.0)),
             merc_bounds: MercBounds {
                 x_min: 0.0,
                 x_max: 0.0,

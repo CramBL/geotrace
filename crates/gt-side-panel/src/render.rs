@@ -11,8 +11,8 @@ use egui_phosphor::regular::WARNING as ICON_WARNING;
 use gt_filter::GlobalFilter;
 use gt_loaded_files::{LoadedFilesView, RecordingNames};
 use gt_types::{
-    DataCategory, FileIdx, GeneratedMarkerKind, LoadWarning, LoadedFile, LoadedTrack, PointIdx,
-    TrackIdx, TrackRef,
+    DataCategory, FileIdx, GeneratedMarkerKind, GeoBounds, LoadWarning, LoadedFile, LoadedTrack,
+    PointIdx, TrackIdx, TrackRef,
 };
 use gt_ui_theme::ELLIPSIS;
 use gt_ui_theme::buttons::FramelessIconButton;
@@ -1076,10 +1076,8 @@ fn render_track_row(
     }
     let modifiers = ui.ctx().input(|i| i.modifiers);
     if response.double_clicked() {
-        let bb = track.metadata.bounding_box;
-        let center_lat = (bb.min().y + bb.max().y) / 2.0;
-        let center_lon = (bb.min().x + bb.max().x) / 2.0;
-        *ctx.map_center_request = Some((center_lat, center_lon));
+        let (center_lat, center_lon) = track.metadata.bounding_box.center();
+        *ctx.map_center_request = Some((center_lat.as_degrees(), center_lon.as_degrees()));
     } else if response.clicked() {
         if modifiers.ctrl || modifiers.shift {
             ctx.tree.apply_click(key, modifiers.ctrl, modifiers.shift);
@@ -1694,27 +1692,13 @@ fn render_generated_markers_section(
 }
 
 fn file_bounding_center(file: Option<&LoadedFile>) -> Option<(f64, f64)> {
-    let tracks = &file?.tracks;
-    if tracks.is_empty() {
-        return None;
-    }
-    let min_lat = tracks
+    let bounds = file?
+        .tracks
         .iter()
-        .map(|t| t.metadata.bounding_box.min().y)
-        .fold(f64::INFINITY, f64::min);
-    let max_lat = tracks
-        .iter()
-        .map(|t| t.metadata.bounding_box.max().y)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let min_lon = tracks
-        .iter()
-        .map(|t| t.metadata.bounding_box.min().x)
-        .fold(f64::INFINITY, f64::min);
-    let max_lon = tracks
-        .iter()
-        .map(|t| t.metadata.bounding_box.max().x)
-        .fold(f64::NEG_INFINITY, f64::max);
-    Some(((min_lat + max_lat) / 2.0, (min_lon + max_lon) / 2.0))
+        .map(|t| t.metadata.bounding_box)
+        .reduce(GeoBounds::union)?;
+    let (lat, lon) = bounds.center();
+    Some((lat.as_degrees(), lon.as_degrees()))
 }
 
 #[cfg(test)]
