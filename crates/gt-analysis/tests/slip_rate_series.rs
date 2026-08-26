@@ -1,7 +1,7 @@
 //! The trailing-window slip rate over tracks whose fixes arrive faster than
 //! once a second.
 
-use chrono::DateTime;
+use chrono::{DateTime, Duration, Utc};
 use gt_analysis::loss_of_lock;
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::nav_point::NavPoint;
@@ -22,9 +22,7 @@ const WINDOW_MIN: f32 = 1.0;
 const BASE_MILLIS: i64 = 1_700_000_000_000;
 
 fn fix_at(millis: i64, satellites: Vec<Satellite>) -> NavPoint {
-    let time = GpsTime::from_utc(
-        DateTime::from_timestamp_millis(millis).expect("timestamp within chrono's range"),
-    );
+    let time = GpsTime::from_utc(DateTime::<Utc>::UNIX_EPOCH + Duration::milliseconds(millis));
     let tpv = TimePositionVelocity::builder()
         .time(time)
         .lat(Latitude::new(55.0))
@@ -52,9 +50,9 @@ fn one_satellite_in_view() -> Vec<Satellite> {
     )]
 }
 
-/// No slip can be attributed to a track's first epoch: there is no earlier
-/// report to have slipped from, so its trailing window counts nothing. The
-/// slip belongs to the second fix, 500 ms later.
+/// A track's first epoch counts nothing in its trailing window: there is no
+/// earlier report to have slipped from. The slip belongs to the second fix,
+/// 500 ms later.
 #[test]
 fn slip_rate_at_the_first_epoch_of_a_sub_second_track_is_zero() {
     let points = vec![
