@@ -184,7 +184,7 @@ pub fn compute_util(points: &[NavPoint], mask_deg: f32) -> UtilPoints {
         let Some(sats) = &point.satellites else {
             continue;
         };
-        let t = point.tpv.time().as_secs_f64();
+        let t = point.tpv.time().as_secs_f64_with_subseconds();
 
         let rates = epoch_rates(sats, mask_deg);
         let all_rate = rates.all;

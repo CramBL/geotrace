@@ -163,7 +163,7 @@ fn collect_slip_events(points: &[NavPoint], mask_deg: f32, snr_drop_db: f32) -> 
         let Some(sats) = &point.satellites else {
             continue;
         };
-        let t = point.tpv.time().as_secs_f64();
+        let t = point.tpv.time().as_secs_f64_with_subseconds();
         out.epochs.push(t);
         out.epoch_points.push(pi);
         if let Some(prev_sats) = prev {

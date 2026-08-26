@@ -23,6 +23,8 @@ use chrono::{DateTime, Duration, Utc};
 use std::fmt;
 use std::ops::Sub;
 
+const NANOS_PER_SEC: f64 = 1e9;
+
 /// A timestamp from the GPS receiver clock.
 ///
 /// GPS time and system time are different clocks. Use [`SysTime`] for host
@@ -59,10 +61,24 @@ impl GpsTime {
         self.0 - sys.0
     }
 
-    /// Unix timestamp as `f64` seconds, for use in float-based plot axes.
+    /// Unix timestamp as `f64` seconds, floored to a whole second, for use in
+    /// float-based plot axes.
+    ///
+    /// Fixes less than a second apart share one value here: use
+    /// [`GpsTime::as_secs_f64_with_subseconds`] wherever they must stay
+    /// distinct.
     #[inline]
     pub fn as_secs_f64(self) -> f64 {
         self.0.timestamp() as f64
+    }
+
+    /// Unix timestamp as `f64` seconds, keeping the sub-second fraction.
+    ///
+    /// This is what a rate or a window computed over fixes faster than 1 Hz
+    /// needs. [`GpsTime::as_secs_f64`] is the whole-second form.
+    #[inline]
+    pub fn as_secs_f64_with_subseconds(self) -> f64 {
+        self.0.timestamp() as f64 + f64::from(self.0.timestamp_subsec_nanos()) / NANOS_PER_SEC
     }
 }
 
@@ -185,6 +201,17 @@ mod tests {
             later.signed_duration_since(earlier).num_milliseconds(),
             1500
         );
+    }
+
+    #[rstest::rstest]
+    #[case::whole_second(1_700_000_000_000, 1_700_000_000.0)]
+    #[case::sub_second(1_700_000_000_250, 1_700_000_000.25)]
+    #[case::before_the_epoch(-1500, -1.5)]
+    fn as_secs_f64_with_subseconds(#[case] millis: i64, #[case] expected_secs: f64) {
+        #[expect(clippy::float_cmp, reason = "every case is exact in binary")]
+        {
+            assert_eq!(gps(millis).as_secs_f64_with_subseconds(), expected_secs);
+        }
     }
 
     #[test]

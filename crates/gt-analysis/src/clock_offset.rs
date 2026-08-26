@@ -97,7 +97,7 @@ pub fn detect_excursions(points: &[NavPoint], threshold_s: f32) -> Vec<ClockOffs
             let sys = p.tpv.sys_time()?;
             Some(ExcursionSample {
                 index,
-                t: p.tpv.time().as_secs_f64(),
+                t: p.tpv.time().as_secs_f64_with_subseconds(),
                 offset_ms: p.tpv.time().offset_from_sys(sys).num_milliseconds(),
             })
         })
