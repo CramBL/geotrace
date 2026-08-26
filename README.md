@@ -11,8 +11,8 @@ Narrowing the view is done through explicit steps, such as a time span filter, p
 
 ![GeoTrace showing the demo trip: a ride along the Paris quays with per-fix satellite counts, custom and event markers, a tunnel fix-loss rendered in red, and the satellite metrics plot below](tests/snapshots/snap_app_demo_trip.png)
 
-_(offline map) A short ride with multi-constellation satellite data, custom and event markers, and a 59-second tunnel fix-loss followed by gradual signal reacquisition.
-The screenshot is the UI snapshot test baseline (with map tiles off), so it always matches the current build._
+_(synthetic tiles) A short ride with multi-constellation satellite data, custom and event markers, and a 59-second tunnel fix-loss followed by gradual signal reacquisition.
+The screenshot always matches the current build: it is the UI snapshot test baseline, which draws a labelled grid in place of the base map._
 
 ## Features
 

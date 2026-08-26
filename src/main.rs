@@ -296,6 +296,11 @@ fn main() -> ExitCode {
                 app::StartupOptions {
                     fading_enabled: true,
                     offline,
+                    tile_access: if offline {
+                        gt_map::TileAccess::Offline
+                    } else {
+                        gt_map::TileAccess::Network
+                    },
                     storage,
                     app_version: env!("CARGO_PKG_VERSION"),
                     pending_writes: app_pending_writes,

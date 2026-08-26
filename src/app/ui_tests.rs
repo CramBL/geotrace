@@ -154,6 +154,7 @@ fn build_app_with_the_instance_lock(
         super::StartupOptions {
             fading_enabled: fading,
             offline: true,
+            tile_access: gt_map::TileAccess::Synthetic,
             storage: crate::app::Storage::Disabled,
             app_version: TEST_APP_VERSION,
             pending_writes,
@@ -206,6 +207,7 @@ fn transient_app_with_the_instance_lock(
         super::StartupOptions {
             fading_enabled: false,
             offline: true,
+            tile_access: gt_map::TileAccess::Synthetic,
             storage: crate::app::Storage::Disabled,
             app_version: TEST_APP_VERSION,
             pending_writes,
@@ -3669,7 +3671,7 @@ fn snapshot_query_hover_docs() {
     // the delay (steps advance the mock clock a frame at a time).
     harness.inner.run_steps(40);
 
-    harness.snapshot("query_hover_docs");
+    harness.snapshot_loose("query_hover_docs");
 }
 
 /// The hover doc stays up while the pointer moves within its token, hides off
@@ -3820,7 +3822,7 @@ fn snapshot_settings_pages() {
     for page in SettingsPage::iter() {
         harness.inner.state_mut().settings_page = page;
         harness.run();
-        harness.snapshot(page.snapshot_file_stem());
+        harness.snapshot_loose(page.snapshot_file_stem());
     }
 }
 
@@ -4022,7 +4024,7 @@ fn snapshot_settings_window_search_matches() {
     harness.run();
     type_into_settings_search(&mut harness, "clock");
     harness.run();
-    harness.snapshot("settings_window_search_matches");
+    harness.snapshot_loose("settings_window_search_matches");
 }
 
 /// Clicks the tickbox of the settings row headed `label`.
@@ -4296,7 +4298,7 @@ fn snapshot_update_prompt_self_update() {
     harness.inner.state_mut().update_checker =
         super::update::UpdateChecker::available_for_test("0.2.0", true);
     harness.run();
-    harness.snapshot("update_prompt_self_update");
+    harness.snapshot_loose("update_prompt_self_update");
 }
 
 /// A non-self-updatable build (Homebrew / MSI / manual download) shows no
@@ -4401,7 +4403,7 @@ fn snapshot_history_locked_dialog() {
         PathBuf::from("geotrace.h5"),
     ));
     harness.run();
-    harness.snapshot("history_locked_dialog");
+    harness.snapshot_loose("history_locked_dialog");
 }
 
 #[test]
@@ -4414,7 +4416,7 @@ fn snapshot_history_corrupt_dialog() {
         crate::app::storage::HistoryFailure::Unreadable(PathBuf::from("geotrace.h5")),
     );
     harness.run();
-    harness.snapshot("history_corrupt_dialog");
+    harness.snapshot_loose("history_corrupt_dialog");
 }
 
 /// Startup hands the app the databases a completed open produced. The worker
@@ -6382,7 +6384,7 @@ fn snapshot_history_busy_dialog() {
         PathBuf::from("geotrace.h5"),
     ));
     harness.run();
-    harness.snapshot("history_busy_dialog");
+    harness.snapshot_loose("history_busy_dialog");
 }
 
 #[test]
@@ -6407,7 +6409,7 @@ fn snapshot_history_resegment_dialog() {
         marker_settings_changed: false,
     });
     harness.run();
-    harness.snapshot("history_resegment_dialog");
+    harness.snapshot_loose("history_resegment_dialog");
 }
 
 #[test]
@@ -6438,7 +6440,7 @@ fn snapshot_load_warnings_dialog() {
         ],
     ));
     harness.run();
-    harness.snapshot("load_warnings_dialog");
+    harness.snapshot_loose("load_warnings_dialog");
 }
 
 #[test]
@@ -6449,7 +6451,7 @@ fn snapshot_snap_consent_dialog() {
     harness.inner.step();
     harness.inner.state_mut().snap_consent_prompt = true;
     harness.run();
-    harness.snapshot("snap_consent_dialog");
+    harness.snapshot_loose("snap_consent_dialog");
 }
 
 /// The service link only shows for the default FOSSGIS host - its terms do
@@ -6492,7 +6494,7 @@ fn snapshot_snap_consent_dialog_mode_chosen() {
     harness.inner.state_mut().snap_settings.auto_snap = Some(false);
     harness.inner.state_mut().snap_consent_prompt = true;
     harness.run();
-    harness.snapshot("snap_consent_dialog_mode_chosen");
+    harness.snapshot_loose("snap_consent_dialog_mode_chosen");
 }
 
 /// The one-time auto prompt for uploads acknowledged before auto mode
@@ -8920,7 +8922,7 @@ fn snapshot_about_dialog() {
             .is_none(),
         "the live crate version must never reach the rendered dialog"
     );
-    harness.snapshot("about_dialog");
+    harness.snapshot_loose("about_dialog");
 }
 
 #[test]
@@ -8931,7 +8933,7 @@ fn snapshot_file_menu_open() {
     harness.inner.step();
     harness.inner.get_by_label("File").click();
     harness.run();
-    harness.snapshot("file_menu_open");
+    harness.snapshot_loose("file_menu_open");
 }
 
 /// The File menu is the sole route to the About dialog: opening the menu and
@@ -9027,7 +9029,7 @@ fn snapshot_recording_details_dialog() {
             identity: Some("auto:/home/user/recordings/2025/05/ride_2025-05-23.gtd".to_owned()),
         });
     harness.run();
-    harness.snapshot("recording_details_dialog");
+    harness.snapshot_loose("recording_details_dialog");
 }
 
 /// A journald-shaped log in the ISO form: its lines carry the year, so what the
