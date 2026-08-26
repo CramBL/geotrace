@@ -4,7 +4,7 @@ use gt_analysis::robust::median_i64;
 use gt_geo_math::{GreatCircleArc, path_distance_km, point_set_diameter_m, segment_length_range_m};
 use gt_types::channel::Channel;
 use gt_types::coordinates::{Latitude, Longitude};
-use gt_types::geo_bounds::GeoBounds;
+use gt_types::geo_bounds::{GeoBounds, PoleWinding};
 use gt_types::markers::{
     CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind,
 };
@@ -522,9 +522,12 @@ pub fn compute_track_metadata(
     let first = points.first();
 
     let bounding_box = GeoBounds::from_first_position_and_rest(
-        (first.tpv.lat(), first.tpv.lon()),
-        points.iter().skip(1).map(|p| (p.tpv.lat(), p.tpv.lon())),
-    );
+        first.resolved_position(),
+        points.iter().skip(1).map(NavPoint::resolved_position),
+    )
+    .extended_to_the_encircled_pole(PoleWinding::of_track(
+        points.iter().map(NavPoint::resolved_position),
+    ));
     let merc_bounds = MercBounds::from(bounding_box);
 
     let distance_km = Length::new::<kilometer>(path_distance_km(points));
