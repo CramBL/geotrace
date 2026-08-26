@@ -2807,6 +2807,7 @@ dependencies = [
  "egui_kittest",
  "gt-filter",
  "gt-fmt",
+ "gt-geo-math",
  "gt-icon-tessellate",
  "gt-ionex",
  "gt-jam",

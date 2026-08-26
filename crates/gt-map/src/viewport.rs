@@ -6,7 +6,8 @@ use std::ops::Range;
 
 use gt_filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
 use gt_types::{
-    DataCategory, FileIdx, GeoBounds, LoadedFile, NavPoint, SpatialPoint, TrackIdx, TrackRef,
+    DataCategory, FileIdx, GeoBounds, Latitude, LoadedFile, LoadedTrack, Longitude, NavPoint,
+    PoleWinding, SpatialPoint, TrackIdx, TrackRef, mercator,
 };
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, MapScope, QueryMatches, TrackDataVisibility,
@@ -219,6 +220,10 @@ impl TrackPlan {
 /// (tracks, track points, satellite labels) is displayed, custom markers only
 /// while theirs is. Snapped tracks deliberately never contribute: they
 /// annotate a recorded track that is already framed.
+///
+/// A track whose drawn fixes circle a pole contributes the cap around that
+/// pole, the way its metadata's box does: each track is bounded on its own
+/// before the boxes are united.
 pub(crate) fn compute_visible_bounding_box(
     files: &[LoadedFile],
     visibility: &TrackDataVisibility,
@@ -237,7 +242,7 @@ pub(crate) fn compute_visible_bounding_box(
         return None;
     }
 
-    let visible_positions = files
+    files
         .iter()
         .zip(&visibility.files)
         .filter(|(_, file_vis)| file_vis.enabled)
@@ -245,23 +250,43 @@ pub(crate) fn compute_visible_bounding_box(
         .filter(|(track, track_vis)| {
             track_vis.enabled && track_passes_filter(&track.metadata, filter)
         })
-        .flat_map(|(track, _)| {
-            let points = points_displayed
-                .then(|| track.points.iter())
-                .into_iter()
-                .flatten()
-                .filter(|point| point_passes_time_filter(point.tpv.time().utc(), filter))
-                .map(NavPoint::resolved_position);
+        .filter_map(|(track, _)| {
+            let fixes = || {
+                points_displayed
+                    .then(|| drawn_fix_positions(track, filter))
+                    .into_iter()
+                    .flatten()
+            };
             let markers = custom_markers_displayed
-                .then(|| track.custom_markers.iter())
+                .then(|| drawn_custom_marker_positions(track, filter))
                 .into_iter()
-                .flatten()
-                .filter(|marker| point_passes_time_filter(marker.time, filter))
-                .map(|marker| (marker.lat, marker.lon));
-            points.chain(markers)
-        });
+                .flatten();
+            let bounds = GeoBounds::from_positions(fixes().chain(markers))?;
+            Some(bounds.extended_to_the_encircled_pole(PoleWinding::of_track(fixes())))
+        })
+        .reduce(GeoBounds::union)
+}
 
-    GeoBounds::from_positions(visible_positions)
+fn drawn_fix_positions<'a>(
+    track: &'a LoadedTrack,
+    filter: &'a GlobalFilter,
+) -> impl Iterator<Item = (Latitude, Longitude)> + 'a {
+    track
+        .points
+        .iter()
+        .filter(|point| point_passes_time_filter(point.tpv.time().utc(), filter))
+        .map(NavPoint::resolved_position)
+}
+
+fn drawn_custom_marker_positions<'a>(
+    track: &'a LoadedTrack,
+    filter: &'a GlobalFilter,
+) -> impl Iterator<Item = (Latitude, Longitude)> + 'a {
+    track
+        .custom_markers
+        .iter()
+        .filter(|marker| point_passes_time_filter(marker.time, filter))
+        .map(|marker| (marker.lat, marker.lon))
 }
 
 /// Bounding box over the points every `draw` layer of `matches` covers, for
@@ -376,18 +401,67 @@ pub(crate) fn is_spatial_point_visible(sp: &SpatialPoint, scope: MapScope<'_>) -
 /// finite.
 const MIN_FIT_SPAN_DEGREES: f64 = 0.001;
 
+/// The share of the viewport a fit fills with the bounding box.
+const FIT_FILL: f64 = 0.8;
+
+/// What a fit could put on the map.
+///
+/// Web Mercator ends at [`mercator::MAX_LATITUDE_DEGREES`]. No zoom draws a
+/// fix past that parallel, and the fit centres on the limit instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FitOutcome {
+    Framed,
+    FixesPastTheNorthernLimit,
+    FixesPastTheSouthernLimit,
+    FixesPastBothLimits,
+}
+
+impl FitOutcome {
+    /// What to tell the user about the fixes the projection leaves out.
+    pub(crate) fn notice(self) -> Option<String> {
+        let limit = mercator::MAX_LATITUDE_DEGREES;
+        match self {
+            Self::Framed => None,
+            Self::FixesPastTheNorthernLimit => Some(format!(
+                "The map projection ends at {limit:.0}° N: fixes above it are not drawn"
+            )),
+            Self::FixesPastTheSouthernLimit => Some(format!(
+                "The map projection ends at {limit:.0}° S: fixes below it are not drawn"
+            )),
+            Self::FixesPastBothLimits => Some(format!(
+                "The map projection ends at {limit:.0}° N and {limit:.0}° S: fixes past them are not drawn"
+            )),
+        }
+    }
+}
+
 /// Center the map and set the zoom so `bounds` fills ~80 % of the viewport.
 /// Respects walkers' valid zoom range [1, 18].
-pub(crate) fn zoom_to_fit(map_memory: &mut MapMemory, viewport: egui::Rect, bounds: GeoBounds) {
+pub(crate) fn zoom_to_fit(
+    map_memory: &mut MapMemory,
+    viewport: egui::Rect,
+    bounds: GeoBounds,
+) -> FitOutcome {
     let (center_lat, center_lon) = bounds.center();
+    let center_lat_degrees = center_lat.as_degrees().clamp(
+        -mercator::MAX_LATITUDE_DEGREES,
+        mercator::MAX_LATITUDE_DEGREES,
+    );
     map_memory.center_at(walkers::lat_lon(
-        center_lat.as_degrees(),
+        center_lat_degrees,
         center_lon.as_degrees(),
     ));
 
     let lat_range = (bounds.lat.north().as_degrees() - bounds.lat.south().as_degrees())
         .max(MIN_FIT_SPAN_DEGREES);
-    let lon_range = bounds.lon.span_degrees().max(MIN_FIT_SPAN_DEGREES);
+    // A box over every meridian holds a polar cap, and what the fit has to
+    // show of it is its diameter across the pole. Mercator draws that arc as
+    // wide as the longitudes it covers on the parallel the map centres on.
+    let lon_range = match bounds.lon.is_full_circle() {
+        true => bounds.lat.arc_across_the_pole_degrees() / center_lat_degrees.to_radians().cos(),
+        false => bounds.lon.span_degrees(),
+    }
+    .max(MIN_FIT_SPAN_DEGREES);
     let vw = viewport.width() as f64;
     let vh = viewport.height() as f64;
 
@@ -395,18 +469,29 @@ pub(crate) fn zoom_to_fit(map_memory: &mut MapMemory, viewport: egui::Rect, boun
     // Fill 80 % of the viewport with the bounding box:
     //   lon_range · (256·2^z / 360) = vw · 0.8
     //   → z = log2(vw · 0.8 · 360 / (256 · lon_range))
-    let z_lon = (vw * 0.8 * 360.0 / (256.0 * lon_range)).log2();
-    let z_lat = (vh * 0.8 * 360.0 / (256.0 * lat_range)).log2();
+    let z_lon = (vw * FIT_FILL * 360.0 / (256.0 * lon_range)).log2();
+    let z_lat = (vh * FIT_FILL * 360.0 / (256.0 * lat_range)).log2();
     let zoom = z_lon.min(z_lat).clamp(1.0, 18.0);
     // zoom is already clamped to [1, 18], so set_zoom can only fail if the
     // walkers library's valid range narrows further - ignore silently.
     let _ignored = map_memory.set_zoom(zoom);
+
+    match (
+        bounds.lat.north().as_degrees() > mercator::MAX_LATITUDE_DEGREES,
+        bounds.lat.south().as_degrees() < -mercator::MAX_LATITUDE_DEGREES,
+    ) {
+        (false, false) => FitOutcome::Framed,
+        (true, false) => FitOutcome::FixesPastTheNorthernLimit,
+        (false, true) => FitOutcome::FixesPastTheSouthernLimit,
+        (true, true) => FitOutcome::FixesPastBothLimits,
+    }
 }
 
 #[cfg(test)]
-mod zoom_to_fit_antimeridian {
+mod zoom_to_fit {
     use chrono::{Duration, TimeZone, Utc};
     use gt_types::NavPoint;
+    use rstest::rstest;
 
     use super::*;
     use crate::tests::{file_with_tracks, nav_at, track_over, vis_all_visible};
@@ -414,6 +499,15 @@ mod zoom_to_fit_antimeridian {
     /// The viewport every case here frames into, in logical pixels.
     const VIEWPORT: egui::Rect =
         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 600.0));
+
+    /// A receiver carried around the north pole a quarter turn at a time, on
+    /// a ring 22.24 km across.
+    const AROUND_THE_NORTH_POLE: &[(f64, f64)] =
+        &[(89.9, 0.0), (89.9, 90.0), (89.9, 180.0), (89.9, -90.0)];
+
+    /// The same lap around the south pole, walked the other way.
+    const AROUND_THE_SOUTH_POLE: &[(f64, f64)] =
+        &[(-89.9, 0.0), (-89.9, -90.0), (-89.9, 180.0), (-89.9, 90.0)];
 
     /// Fixes one second apart at `positions`, given as (latitude, longitude)
     /// in degrees.
@@ -501,6 +595,91 @@ mod zoom_to_fit_antimeridian {
             (map_memory.zoom() - 18.0).abs() < 1e-9,
             "{}",
             map_memory.zoom()
+        );
+    }
+
+    /// A track that circles a pole is bounded by the cap over every meridian,
+    /// so the fit must size from the cap's 22.24 km diameter. Read as 360°
+    /// of longitude, the same box frames the whole globe at zoom 1.32.
+    #[test]
+    fn zoom_to_fit_around_the_pole_frames_the_track_not_the_globe() {
+        let files = file_over(AROUND_THE_NORTH_POLE);
+        let mut map_memory = MapMemory::default();
+        zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
+        assert!(
+            map_memory.zoom() > 8.0,
+            "a 22.24 km track around the pole was framed at zoom {}",
+            map_memory.zoom()
+        );
+    }
+
+    /// The cap around a pole centres at 89.95°, which Web Mercator does not
+    /// reach: the map has to stop at the parallel the projection ends on.
+    #[test]
+    fn zoom_to_fit_around_the_pole_centers_at_the_projection_limit() {
+        let files = file_over(AROUND_THE_NORTH_POLE);
+        let mut map_memory = MapMemory::default();
+        zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
+        let center = map_memory.detached().expect("centered");
+        assert!(
+            (center.y() - mercator::MAX_LATITUDE_DEGREES).abs() < 1e-9,
+            "centered on {}° N",
+            center.y()
+        );
+    }
+
+    /// A fit spans the ground the track covers, wherever on the globe it
+    /// lies. The map's scale at the centre and zoom the fit chose turns the
+    /// share of the viewport it fills back into metres.
+    #[rstest]
+    #[case::at_the_equator(&[(0.0, 0.0), (0.0, 0.3473)])]
+    #[case::at_eighty_north(&[(80.0, 0.0), (80.0, 2.0)])]
+    #[case::around_the_south_pole(AROUND_THE_SOUTH_POLE)]
+    fn zoom_to_fit_frames_the_width_of_the_track(#[case] positions: &[(f64, f64)]) {
+        let files = file_over(positions);
+        let mut map_memory = MapMemory::default();
+        zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
+
+        let framed_m = framed_width_m(&map_memory);
+        let track_m = gt_geo_math::point_set_diameter_m(&fixes_at(positions));
+        assert!(
+            (framed_m / track_m - 1.0).abs() < 0.02,
+            "framed {framed_m:.0} m of a {track_m:.0} m wide track at zoom {}",
+            map_memory.zoom()
+        );
+    }
+
+    /// The ground the map spans across the share of the viewport a fit fills,
+    /// at the centre and zoom the fit left it at.
+    fn framed_width_m(map_memory: &MapMemory) -> f64 {
+        let center = map_memory.detached().expect("centered");
+        let pixels_per_meter =
+            MapScale::from_zoom(map_memory.zoom()).pixels_per_meter(Latitude::new(center.y()));
+        VIEWPORT.width() as f64 * FIT_FILL / pixels_per_meter
+    }
+
+    /// What the fit could not show is the caller's to pass on to the user.
+    #[rstest]
+    #[case::inside_the_projection(&[(55.67, 12.55), (55.69, 12.59)], FitOutcome::Framed)]
+    #[case::past_the_northern_limit(
+        &[(86.0, 10.0), (87.0, 11.0)],
+        FitOutcome::FixesPastTheNorthernLimit
+    )]
+    #[case::past_the_southern_limit(
+        &[(-87.0, 10.0), (-86.0, 11.0)],
+        FitOutcome::FixesPastTheSouthernLimit
+    )]
+    #[case::past_both_limits(&[(-86.0, 10.0), (86.0, 11.0)], FitOutcome::FixesPastBothLimits)]
+    fn zoom_to_fit_reports_the_fixes_the_projection_leaves_out(
+        #[case] positions: &[(f64, f64)],
+        #[case] expected: FitOutcome,
+    ) {
+        let files = file_over(positions);
+        let mut map_memory = MapMemory::default();
+
+        assert_eq!(
+            zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files)),
+            expected
         );
     }
 }

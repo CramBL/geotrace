@@ -7,6 +7,11 @@
 use crate::coordinates::{Latitude, Longitude};
 use std::f64::consts::PI;
 
+/// The latitude Web Mercator ends at, north and south: `asinh(tan(lat))`
+/// reaches π there, which [`normalize`] places on the edge of the world. No
+/// tile covers anything past it.
+pub const MAX_LATITUDE_DEGREES: f64 = 85.051_128_779_806_59;
+
 /// A pre-computed normalized Web Mercator position.
 ///
 /// Both fields are in `[0.0, 1.0]`:
@@ -54,7 +59,10 @@ pub fn denormalize(point: MercPoint) -> (f64, f64) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Latitude, Longitude, MercPoint, denormalize, normalize, wrap_longitude_degrees};
+    use super::{
+        Latitude, Longitude, MAX_LATITUDE_DEGREES, MercPoint, denormalize, normalize,
+        wrap_longitude_degrees,
+    };
 
     proptest::proptest! {
         /// `normalize` must never return NaN or Inf for any geographically valid input.
@@ -84,6 +92,14 @@ mod tests {
             let pt = normalize(Latitude::new(lat), Longitude::new(0.0));
             proptest::prop_assert!(pt.y >= 0.0 && pt.y <= 1.0, "y={} out of [0,1] for lat={lat}", pt.y);
         }
+    }
+
+    #[test]
+    fn the_projection_limit_maps_to_the_edge_of_the_world() {
+        let north = normalize(Latitude::new(MAX_LATITUDE_DEGREES), Longitude::new(0.0));
+        let south = normalize(Latitude::new(-MAX_LATITUDE_DEGREES), Longitude::new(0.0));
+        assert!(north.y.abs() < 1e-12, "north edge at y={}", north.y);
+        assert!((south.y - 1.0).abs() < 1e-12, "south edge at y={}", south.y);
     }
 
     #[test]

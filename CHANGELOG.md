@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **Map & Tracks:** The map now says when a recording's fixes lie past 85° latitude, where the map projection ends and nothing can be drawn.
+
 ### Fixed
 
 - **Map & Tracks:** Fixed the min spread filter understating how far tracks that cross the antimeridian or circle a pole ranged.
@@ -12,6 +16,7 @@
 - **Map & Tracks:** Fixed double-clicking a recording or track that crosses the antimeridian centering the map on the opposite side of the globe.
 - **Map & Tracks:** Fixed opening a recording that crosses the antimeridian showing the whole globe instead of zooming the map to the track.
 - **Map & Tracks:** Fixed a track's reported length, spread, bounding box and zoom to fit measuring dead-reckoned fixes at the coordinates the receiver wrote for them rather than where they are drawn.
+- **Map & Tracks:** Fixed opening a recording that circles a pole showing the whole globe instead of zooming the map to the track.
 
 ## 0.13.0 - 2026-08-25
 

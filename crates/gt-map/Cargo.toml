@@ -46,6 +46,7 @@ postcard.workspace = true
 [dev-dependencies]
 criterion.workspace = true
 egui_kittest.workspace = true
+gt-geo-math = { path = "../gt-geo-math" }
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
 # For reading back rendered frames in projection tests and for encoding the
 # reference illustration asset; this is the same `image` version
