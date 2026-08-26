@@ -640,7 +640,8 @@ mod zoom_to_fit {
         let mut map_memory = MapMemory::default();
         zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
 
-        let framed_m = framed_width_m(&map_memory);
+        let framed_m =
+            VIEWPORT.width() as f64 * FIT_FILL / pixels_per_meter_at_the_map_center(&map_memory);
         let track_m = gt_geo_math::point_set_diameter_m(&fixes_at(positions));
         assert!(
             (framed_m / track_m - 1.0).abs() < 0.02,
@@ -649,13 +650,65 @@ mod zoom_to_fit {
         );
     }
 
-    /// The ground the map spans across the share of the viewport a fit fills,
-    /// at the centre and zoom the fit left it at.
-    fn framed_width_m(map_memory: &MapMemory) -> f64 {
+    /// A track 1° of latitude tall and 0.1° of longitude wide, centred on
+    /// `center_lat_degrees`.
+    fn tall_narrow_track(center_lat_degrees: f64) -> Vec<(f64, f64)> {
+        vec![
+            (center_lat_degrees - 0.5, 0.0),
+            (center_lat_degrees + 0.5, 0.1),
+        ]
+    }
+
+    /// A fit spans the ground the track covers north to south, wherever on
+    /// the globe it lies. Web Mercator draws a degree of latitude 1/cos(lat)
+    /// as tall as one at the equator, so the further from the equator the
+    /// track lies, the further out its fit has to sit.
+    #[rstest]
+    #[case::straddling_the_equator(0.0)]
+    #[case::at_fifty_five_north(55.0)]
+    #[case::at_eighty_north(80.0)]
+    #[case::at_eighty_four_north(84.0)]
+    fn zoom_to_fit_frames_the_height_of_the_track(#[case] center_lat_degrees: f64) {
+        let files = file_over(&tall_narrow_track(center_lat_degrees));
+        let bounds = visible_bounds(&files);
+        let mut map_memory = MapMemory::default();
+        zoom_to_fit(&mut map_memory, VIEWPORT, bounds);
+
+        let framed_m =
+            VIEWPORT.height() as f64 * FIT_FILL / pixels_per_meter_at_the_map_center(&map_memory);
+        let track_m = gt_geo_math::haversine_m(
+            bounds.lat.south(),
+            bounds.lon.center(),
+            bounds.lat.north(),
+            bounds.lon.center(),
+        );
+        assert!(
+            (framed_m / track_m - 1.0).abs() < 0.02,
+            "framed {framed_m:.0} m of a {track_m:.0} m tall track at zoom {}, drawing it {:.1}× the height the fit frames",
+            map_memory.zoom(),
+            track_m / framed_m
+        );
+    }
+
+    /// Mercator's vertical stretch is 1 at the equator, where a degree of
+    /// latitude covers 1/360 of the world: a box 1° tall straddling it frames
+    /// at `log2(600 · 0.8 · 360 / 256)`.
+    #[test]
+    fn zoom_to_fit_over_the_equator_sizes_from_the_degree_span() {
+        let files = file_over(&tall_narrow_track(0.0));
+        let mut map_memory = MapMemory::default();
+        zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
+        assert!(
+            (map_memory.zoom() - 9.399).abs() < 1e-3,
+            "zoom {}",
+            map_memory.zoom()
+        );
+    }
+
+    /// The map's scale at the centre and zoom the fit left it at.
+    fn pixels_per_meter_at_the_map_center(map_memory: &MapMemory) -> f64 {
         let center = map_memory.detached().expect("centered");
-        let pixels_per_meter =
-            MapScale::from_zoom(map_memory.zoom()).pixels_per_meter(Latitude::new(center.y()));
-        VIEWPORT.width() as f64 * FIT_FILL / pixels_per_meter
+        MapScale::from_zoom(map_memory.zoom()).pixels_per_meter(Latitude::new(center.y()))
     }
 
     /// What the fit could not show is the caller's to pass on to the user.
