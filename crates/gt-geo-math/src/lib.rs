@@ -1,9 +1,36 @@
-use geo::{ConvexHull, Distance, Haversine};
+use geo::{ConvexHull, Distance, Haversine, InterpolatePoint as _};
 use geo_types::{MultiPoint, Point};
 use gt_types::NavPoint;
 use gt_types::coordinates::{Latitude, Longitude};
 use nalgebra::Vector3;
 use smallvec::SmallVec;
+
+/// The shorter great-circle arc between two positions, on the sphere
+/// [`haversine_m`] measures on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GreatCircleArc {
+    pub start: (Latitude, Longitude),
+    pub end: (Latitude, Longitude),
+}
+
+impl GreatCircleArc {
+    /// The position `ratio_from_start` of the way along the arc: 0.0 is
+    /// [`GreatCircleArc::start`] and 1.0 is [`GreatCircleArc::end`]. An arc
+    /// over the antimeridian stays over it, and one between two identical
+    /// positions holds that position at every ratio.
+    pub fn position_at_ratio(self, ratio_from_start: f64) -> (Latitude, Longitude) {
+        let Self {
+            start: (start_lat, start_lon),
+            end: (end_lat, end_lon),
+        } = self;
+        let position = Haversine.point_at_ratio_between(
+            Point::new(start_lon.as_degrees(), start_lat.as_degrees()),
+            Point::new(end_lon.as_degrees(), end_lat.as_degrees()),
+            ratio_from_start,
+        );
+        (Latitude::new(position.y()), Longitude::new(position.x()))
+    }
+}
 
 /// Great-circle distance between two positions, returned in kilometres.
 pub fn haversine_km(lat1: Latitude, lon1: Longitude, lat2: Latitude, lon2: Longitude) -> f64 {
@@ -308,5 +335,44 @@ mod tests {
             (d - expected).abs() < TOLERANCE_M,
             "expected {expected}, got {d}"
         );
+    }
+
+    #[test]
+    fn great_circle_arc_returns_its_endpoints_at_a_ratio_of_zero_and_one() {
+        let arc = GreatCircleArc {
+            start: (lat(55.68), lon(12.57)),
+            end: (lat(-33.87), lon(151.21)),
+        };
+
+        assert_eq!(arc.position_at_ratio(0.0), arc.start);
+        assert_eq!(arc.position_at_ratio(1.0), arc.end);
+    }
+
+    #[test]
+    fn great_circle_arc_at_a_quarter_is_a_quarter_of_its_length_from_the_start() {
+        let start = (lat(55.68), lon(12.57));
+        let end = (lat(48.86), lon(2.35));
+        let (quarter_lat, quarter_lon) = GreatCircleArc { start, end }.position_at_ratio(0.25);
+
+        let arc_m = haversine_m(start.0, start.1, end.0, end.1);
+        let walked_m = haversine_m(start.0, start.1, quarter_lat, quarter_lon);
+        assert!(
+            (walked_m - arc_m / 4.0).abs() < 0.1,
+            "expected {} m from the start of a {arc_m} m arc, got {walked_m} m",
+            arc_m / 4.0
+        );
+    }
+
+    #[test]
+    fn great_circle_arc_between_two_identical_positions_holds_that_position() {
+        let position = (lat(-89.9), lon(120.0));
+
+        let midpoint = GreatCircleArc {
+            start: position,
+            end: position,
+        }
+        .position_at_ratio(0.5);
+
+        assert_eq!(midpoint, position);
     }
 }

@@ -1,5 +1,6 @@
 //! Distance between consecutive fixes across the antimeridian and at the
-//! poles, and the point-set diameter derived from the same positions.
+//! poles, the point-set diameter derived from the same positions, and the
+//! positions interpolated between them.
 //!
 //! The oracles are hand-computed great-circle lengths on the sphere `geo`'s
 //! [`geo::Haversine`] measures on (the GRS80 mean radius, 6_371_008.8 m), plus
@@ -7,6 +8,7 @@
 //! segment between two of its consecutive points.
 
 use chrono::DateTime;
+use gt_geo_math::GreatCircleArc;
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::time_types::GpsTime;
 use gt_types::{NavPoint, TimePositionVelocity};
@@ -236,5 +238,44 @@ fn diameter_is_at_least_the_longest_segment_on_a_local_track() {
     assert!(
         diameter_m >= longest_segment_m - TOLERANCE_M,
         "diameter {diameter_m} m is shorter than the longest segment {longest_segment_m} m"
+    );
+}
+
+/// Halfway from 179.9° E to 179.9° W on the equator lies on the antimeridian,
+/// 0.1° from each end of the arc.
+#[test]
+fn great_circle_arc_across_the_antimeridian_takes_the_short_way() {
+    let start = (Latitude::new(0.0), Longitude::new(179.9));
+    let end = (Latitude::new(0.0), Longitude::new(-179.9));
+    let (mid_lat, mid_lon) = GreatCircleArc { start, end }.position_at_ratio(0.5);
+
+    let expected_m = 0.1 * DEGREE_M;
+    let from_start_m = gt_geo_math::haversine_m(start.0, start.1, mid_lat, mid_lon);
+    let from_end_m = gt_geo_math::haversine_m(end.0, end.1, mid_lat, mid_lon);
+
+    assert!(
+        (from_start_m - expected_m).abs() < TOLERANCE_M,
+        "midpoint at {mid_lat:?}, {mid_lon:?} is {from_start_m} m from the start, expected {expected_m} m"
+    );
+    assert!(
+        (from_end_m - expected_m).abs() < TOLERANCE_M,
+        "midpoint at {mid_lat:?}, {mid_lon:?} is {from_end_m} m from the end, expected {expected_m} m"
+    );
+}
+
+/// 89.9° N at 0° and at 180° lie either side of the north pole, so the great
+/// circle between them runs over the pole and its midpoint is the pole itself.
+#[test]
+fn great_circle_arc_between_fixes_either_side_of_the_pole_runs_over_it() {
+    let start = (Latitude::new(89.9), Longitude::new(0.0));
+    let end = (Latitude::new(89.9), Longitude::new(180.0));
+    let (mid_lat, mid_lon) = GreatCircleArc { start, end }.position_at_ratio(0.5);
+
+    let from_pole_m =
+        gt_geo_math::haversine_m(Latitude::new(90.0), Longitude::new(0.0), mid_lat, mid_lon);
+
+    assert!(
+        from_pole_m < TOLERANCE_M,
+        "the midpoint at {mid_lat:?}, {mid_lon:?} is {from_pole_m} m from the pole"
     );
 }
