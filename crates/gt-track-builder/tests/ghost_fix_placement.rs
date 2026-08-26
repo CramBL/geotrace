@@ -114,3 +114,21 @@ fn ghost_fix_between_fixes_at_one_instant_keeps_its_recorded_position() {
         "ghost fix drawn at lon {lon}, expected the recorded 9.0"
     );
 }
+
+/// The measured fixes are 0.2 deg apart across the date line, so the great
+/// circle between them holds every position at |lon| >= 179.9.
+#[test]
+fn ghost_fix_between_fixes_across_the_antimeridian_stays_between_them() {
+    let points = vec![
+        measured_fix(0, 179.9),
+        ghost_fix(10_000, 179.95),
+        measured_fix(20_000, -179.9),
+    ];
+
+    let lon = drawn_ghost_lon_degrees(&points).expect("the ghost fix is in the file's only track");
+
+    assert!(
+        lon.abs() >= 179.9,
+        "ghost fix drawn at lon {lon}, expected it between 179.9 and -179.9 across the date line"
+    );
+}
