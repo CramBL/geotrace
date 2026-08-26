@@ -141,7 +141,7 @@ impl Plugin for SnappedTrackRenderer<'_> {
                     let Some(recorded) = anchor.point.get(&track.points) else {
                         continue;
                     };
-                    let from = transform.to_screen(recorded.merc);
+                    let from = transform.to_screen(recorded.merc());
                     let to = transform.to_screen(anchor.snapped);
                     if segment_outside(from, to, cull_rect) {
                         continue;

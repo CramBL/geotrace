@@ -138,7 +138,7 @@ pub(crate) fn select_glyphs<'s, 'a>(
             let Some(satellites) = &point.satellites else {
                 continue;
             };
-            let (x, y) = (point.merc.x, point.merc.y);
+            let (x, y) = (point.merc().x, point.merc().y);
             if x < viewport.x_min || x > viewport.x_max || y < viewport.y_min || y > viewport.y_max
             {
                 continue;
@@ -207,7 +207,7 @@ pub(crate) fn draw_glyphs(
         let Some(satellites) = &point.satellites else {
             continue;
         };
-        let fix_pos = transform.to_screen(point.merc);
+        let fix_pos = transform.to_screen(point.merc());
         match variant {
             SkyGlyphVariant::Ring => {
                 draw_ring(
@@ -313,7 +313,7 @@ fn tangent_sample(
 ) -> Option<Pos2> {
     for idx in indices {
         let point = track.points.get(idx)?;
-        let pos = transform.to_screen(point.merc);
+        let pos = transform.to_screen(point.merc());
         if (pos - fix_pos).length() >= TANGENT_SAMPLE_MIN_PX {
             return Some(pos);
         }

@@ -75,7 +75,7 @@ fn drawn_ghost_lon_degrees(points: &[NavPoint]) -> Option<f64> {
         .tracks
         .first()
         .and_then(|track| track.points.get(GHOST_INDEX))?;
-    Some(mercator::denormalize(ghost.merc).1)
+    Some(mercator::denormalize(ghost.merc()).1)
 }
 
 /// The ghost fix sits at t = 0.5 s between measured fixes at t = 0.0 s (lon 0)

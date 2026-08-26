@@ -8,7 +8,6 @@ use gt_types::geo_bounds::GeoBounds;
 use gt_types::markers::{
     CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind,
 };
-use gt_types::mercator::{self, MercPoint};
 use gt_types::nav_point::NavPoint;
 use gt_types::satellites::SlipEvent;
 use gt_types::time_types::GpsTime;
@@ -799,12 +798,13 @@ pub fn reassemble_channels(tracks: &[LoadedTrack]) -> Vec<Channel> {
     by_name
 }
 
-/// Overwrites `merc` on ghost points (those with `heading == None`) with
-/// positions interpolated in time along the great circle between the
+/// Sets the resolved position of ghost points (those with `heading == None`)
+/// to a position interpolated in time along the great circle between the
 /// surrounding real fixes (`fix_count > 0`).
 ///
-/// The renderer displays ghost points at the interpolated position. Raw GPS
-/// coordinates may be unreliable when no heading is present.
+/// The interpolated position is where the point is taken to be and what the
+/// renderers draw: the coordinates a receiver reports without a heading may be
+/// unreliable. [`NavPoint::tpv`] keeps the recorded coordinates.
 ///
 /// Runs in O(n) over all points in the track.
 #[expect(
@@ -838,12 +838,12 @@ fn precompute_ghost_positions(points: &mut [NavPoint]) {
     }
 
     // Collect updates to avoid simultaneous mutable and immutable borrows.
-    let mut updates: Vec<(usize, MercPoint)> = Vec::new();
+    let mut updates: Vec<(usize, (Latitude, Longitude))> = Vec::new();
     for i in 0..n {
         if points[i].tpv.heading().is_some() {
             continue;
         }
-        let (lat, lon) = match (prev_real[i], next_real[i]) {
+        let position = match (prev_real[i], next_real[i]) {
             (Some(pi), Some(ni)) => {
                 let anchor_span_secs =
                     (points[ni].tpv.time() - points[pi].tpv.time()).as_seconds_f64();
@@ -862,12 +862,11 @@ fn precompute_ghost_positions(points: &mut [NavPoint]) {
             (None, Some(ni)) => (points[ni].tpv.lat(), points[ni].tpv.lon()),
             (None, None) => (points[i].tpv.lat(), points[i].tpv.lon()),
         };
-        let merc = mercator::normalize(lat, lon);
-        updates.push((i, merc));
+        updates.push((i, position));
     }
 
-    for (i, merc) in updates {
-        points[i].merc = merc;
+    for (i, position) in updates {
+        points[i].set_resolved_position(position);
     }
 }
 
@@ -1517,9 +1516,9 @@ mod tests {
             make_real_fix(0, Latitude::new(55.0), Longitude::new(12.0)),
             make_real_fix(1, Latitude::new(55.1), Longitude::new(12.1)),
         ];
-        let before: Vec<_> = points.iter().map(|p| p.merc).collect();
+        let before: Vec<_> = points.iter().map(NavPoint::resolved_position).collect();
         precompute_ghost_positions(&mut points);
-        let after: Vec<_> = points.iter().map(|p| p.merc).collect();
+        let after: Vec<_> = points.iter().map(NavPoint::resolved_position).collect();
         assert_eq!(before, after);
     }
 
@@ -1529,23 +1528,26 @@ mod tests {
         // t=5. The equator is a great circle, so the ghost lands at lon=0.5.
         let mut points = vec![
             make_real_fix(0, Latitude::new(0.0), Longitude::new(0.0)),
-            make_ghost(5, Latitude::new(10.0), Longitude::new(10.0)), // initial coords are irrelevant - will be overwritten
+            make_ghost(5, Latitude::new(10.0), Longitude::new(10.0)),
             make_real_fix(10, Latitude::new(0.0), Longitude::new(1.0)),
         ];
         precompute_ghost_positions(&mut points);
 
-        let expected = mercator::normalize(Latitude::new(0.0), Longitude::new(0.5));
+        let (latitude, longitude) = points[1].resolved_position();
         assert!(
-            (points[1].merc.x - expected.x).abs() < 1e-9,
-            "merc.x mismatch: {} vs {}",
-            points[1].merc.x,
-            expected.x,
+            latitude.as_degrees().abs() < 1e-9,
+            "latitude mismatch: {} vs 0.0",
+            latitude.as_degrees(),
         );
         assert!(
-            (points[1].merc.y - expected.y).abs() < 1e-9,
-            "merc.y mismatch: {} vs {}",
-            points[1].merc.y,
-            expected.y,
+            (longitude.as_degrees() - 0.5).abs() < 1e-9,
+            "longitude mismatch: {} vs 0.5",
+            longitude.as_degrees(),
+        );
+        assert_eq!(
+            (points[1].tpv.lat(), points[1].tpv.lon()),
+            (Latitude::new(10.0), Longitude::new(10.0)),
+            "the recorded coordinates must survive interpolation"
         );
     }
 
@@ -1557,9 +1559,10 @@ mod tests {
         ];
         precompute_ghost_positions(&mut points);
 
-        let expected = mercator::normalize(Latitude::new(55.0), Longitude::new(12.0));
-        assert!((points[0].merc.x - expected.x).abs() < 1e-9);
-        assert!((points[0].merc.y - expected.y).abs() < 1e-9);
+        assert_eq!(
+            points[0].resolved_position(),
+            (Latitude::new(55.0), Longitude::new(12.0))
+        );
     }
 
     #[test]
@@ -1570,9 +1573,10 @@ mod tests {
         ];
         precompute_ghost_positions(&mut points);
 
-        let expected = mercator::normalize(Latitude::new(55.0), Longitude::new(12.0));
-        assert!((points[1].merc.x - expected.x).abs() < 1e-9);
-        assert!((points[1].merc.y - expected.y).abs() < 1e-9);
+        assert_eq!(
+            points[1].resolved_position(),
+            (Latitude::new(55.0), Longitude::new(12.0))
+        );
     }
 
     #[test]
@@ -1581,9 +1585,9 @@ mod tests {
             make_ghost(0, Latitude::new(55.0), Longitude::new(12.0)),
             make_ghost(5, Latitude::new(56.0), Longitude::new(13.0)),
         ];
-        let before: Vec<_> = points.iter().map(|p| p.merc).collect();
+        let before: Vec<_> = points.iter().map(NavPoint::resolved_position).collect();
         precompute_ghost_positions(&mut points);
-        let after: Vec<_> = points.iter().map(|p| p.merc).collect();
+        let after: Vec<_> = points.iter().map(NavPoint::resolved_position).collect();
         assert_eq!(before, after);
     }
 

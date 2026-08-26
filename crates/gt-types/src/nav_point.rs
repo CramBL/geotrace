@@ -1,4 +1,5 @@
-use crate::mercator::MercPoint;
+use crate::coordinates::{Latitude, Longitude};
+use crate::mercator::{self, MercPoint};
 use crate::satellites::Satellites;
 use crate::tpv::TimePositionVelocity;
 
@@ -20,22 +21,53 @@ pub enum FixQuality {
     Lost,
 }
 
+/// One nav fix with its satellite report, carrying two positions that can
+/// differ.
+///
+/// `tpv` holds the position the receiver recorded for this epoch. The
+/// resolved position is where the point actually is, and is what every
+/// renderer draws. The two are equal until the track builder resolves a ghost
+/// fix, which it places by interpolating between the surrounding measured
+/// fixes: a receiver that reports no heading often writes coordinates it did
+/// not measure, down to (0, 0).
+///
+/// So read [`NavPoint::resolved_position`] (or [`NavPoint::merc`], its
+/// projection) for anything geometric - a distance, a bounding box, a
+/// bearing, a label placement. Read `tpv` only for what the receiver itself
+/// reported at this epoch.
 #[derive(Debug, Clone)]
 pub struct NavPoint {
     pub tpv: TimePositionVelocity,
     pub satellites: Option<Satellites>,
-    /// Pre-computed normalized Web Mercator coordinates, see [`crate::mercator`].
-    pub merc: MercPoint,
+    resolved_position: (Latitude, Longitude),
+    merc: MercPoint,
 }
 
 impl NavPoint {
     pub fn new(tpv: TimePositionVelocity, satellites: Option<Satellites>) -> Self {
-        let merc = crate::mercator::normalize(tpv.lat(), tpv.lon());
+        let (latitude, longitude) = (tpv.lat(), tpv.lon());
         Self {
             tpv,
             satellites,
-            merc,
+            resolved_position: (latitude, longitude),
+            merc: mercator::normalize(latitude, longitude),
         }
+    }
+
+    pub fn resolved_position(&self) -> (Latitude, Longitude) {
+        self.resolved_position
+    }
+
+    /// The resolved position in normalized Web Mercator coordinates, see
+    /// [`crate::mercator`]. Kept pre-computed because the renderers project
+    /// every visible point each frame.
+    pub fn merc(&self) -> MercPoint {
+        self.merc
+    }
+
+    pub fn set_resolved_position(&mut self, (latitude, longitude): (Latitude, Longitude)) {
+        self.resolved_position = (latitude, longitude);
+        self.merc = mercator::normalize(latitude, longitude);
     }
 
     pub fn fix_count(&self) -> u32 {
@@ -88,6 +120,49 @@ mod tests {
     use chrono::Utc;
     use uom::si::angle::degree;
     use uom::si::f64::Angle;
+
+    fn point_at(latitude: Latitude, longitude: Longitude) -> NavPoint {
+        let tpv = TimePositionVelocity::builder()
+            .time(GpsTime::from_utc(Utc::now()))
+            .lat(latitude)
+            .lon(longitude)
+            .build();
+        NavPoint::new(tpv, None)
+    }
+
+    #[test]
+    fn a_new_point_resolves_to_the_recorded_position() {
+        let point = point_at(Latitude::new(55.0), Longitude::new(12.0));
+
+        assert_eq!(
+            point.resolved_position(),
+            (Latitude::new(55.0), Longitude::new(12.0))
+        );
+        assert_eq!(
+            point.merc(),
+            mercator::normalize(Latitude::new(55.0), Longitude::new(12.0))
+        );
+    }
+
+    #[test]
+    fn resolving_a_point_elsewhere_reprojects_it_and_keeps_the_recorded_position() {
+        let mut point = point_at(Latitude::new(55.0), Longitude::new(12.0));
+
+        point.set_resolved_position((Latitude::new(-33.0), Longitude::new(151.0)));
+
+        assert_eq!(
+            point.resolved_position(),
+            (Latitude::new(-33.0), Longitude::new(151.0))
+        );
+        assert_eq!(
+            point.merc(),
+            mercator::normalize(Latitude::new(-33.0), Longitude::new(151.0))
+        );
+        assert_eq!(
+            (point.tpv.lat(), point.tpv.lon()),
+            (Latitude::new(55.0), Longitude::new(12.0))
+        );
+    }
 
     #[test]
     fn test_nav_point_fix_counts() {
