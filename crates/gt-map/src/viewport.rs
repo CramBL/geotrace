@@ -376,6 +376,9 @@ pub(crate) fn is_spatial_point_visible(sp: &SpatialPoint, scope: MapScope<'_>) -
 /// finite.
 const MIN_FIT_SPAN_DEGREES: f64 = 0.001;
 
+/// The share of the viewport a fit fills with the bounding box.
+const FIT_FILL: f64 = 0.8;
+
 /// Center the map and set the zoom so `bounds` fills ~80 % of the viewport.
 /// Respects walkers' valid zoom range [1, 18].
 pub(crate) fn zoom_to_fit(map_memory: &mut MapMemory, viewport: egui::Rect, bounds: GeoBounds) {
@@ -395,8 +398,8 @@ pub(crate) fn zoom_to_fit(map_memory: &mut MapMemory, viewport: egui::Rect, boun
     // Fill 80 % of the viewport with the bounding box:
     //   lon_range · (256·2^z / 360) = vw · 0.8
     //   → z = log2(vw · 0.8 · 360 / (256 · lon_range))
-    let z_lon = (vw * 0.8 * 360.0 / (256.0 * lon_range)).log2();
-    let z_lat = (vh * 0.8 * 360.0 / (256.0 * lat_range)).log2();
+    let z_lon = (vw * FIT_FILL * 360.0 / (256.0 * lon_range)).log2();
+    let z_lat = (vh * FIT_FILL * 360.0 / (256.0 * lat_range)).log2();
     let zoom = z_lon.min(z_lat).clamp(1.0, 18.0);
     // zoom is already clamped to [1, 18], so set_zoom can only fail if the
     // walkers library's valid range narrows further - ignore silently.
@@ -404,9 +407,10 @@ pub(crate) fn zoom_to_fit(map_memory: &mut MapMemory, viewport: egui::Rect, boun
 }
 
 #[cfg(test)]
-mod zoom_to_fit_antimeridian {
+mod zoom_to_fit {
     use chrono::{Duration, TimeZone, Utc};
-    use gt_types::NavPoint;
+    use gt_types::{Latitude, NavPoint, mercator};
+    use rstest::rstest;
 
     use super::*;
     use crate::tests::{file_with_tracks, nav_at, track_over, vis_all_visible};
@@ -414,6 +418,15 @@ mod zoom_to_fit_antimeridian {
     /// The viewport every case here frames into, in logical pixels.
     const VIEWPORT: egui::Rect =
         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 600.0));
+
+    /// A receiver carried around the north pole a quarter turn at a time, on
+    /// a ring 22.24 km across.
+    const AROUND_THE_NORTH_POLE: &[(f64, f64)] =
+        &[(89.9, 0.0), (89.9, 90.0), (89.9, 180.0), (89.9, -90.0)];
+
+    /// The same lap around the south pole, walked the other way.
+    const AROUND_THE_SOUTH_POLE: &[(f64, f64)] =
+        &[(-89.9, 0.0), (-89.9, -90.0), (-89.9, 180.0), (-89.9, 90.0)];
 
     /// Fixes one second apart at `positions`, given as (latitude, longitude)
     /// in degrees.
@@ -502,5 +515,65 @@ mod zoom_to_fit_antimeridian {
             "{}",
             map_memory.zoom()
         );
+    }
+
+    /// A track that circles a pole is bounded by the cap over every meridian,
+    /// so the fit must size from the cap's 22.24 km diameter. Read as 360°
+    /// of longitude, the same box frames the whole globe at zoom 1.32.
+    #[test]
+    fn zoom_to_fit_around_the_pole_frames_the_track_not_the_globe() {
+        let files = file_over(AROUND_THE_NORTH_POLE);
+        let mut map_memory = MapMemory::default();
+        zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
+        assert!(
+            map_memory.zoom() > 8.0,
+            "a 22.24 km track around the pole was framed at zoom {}",
+            map_memory.zoom()
+        );
+    }
+
+    /// The cap around a pole centres at 89.95°, which Web Mercator does not
+    /// reach: the map has to stop at the parallel the projection ends on.
+    #[test]
+    fn zoom_to_fit_around_the_pole_centers_at_the_projection_limit() {
+        let files = file_over(AROUND_THE_NORTH_POLE);
+        let mut map_memory = MapMemory::default();
+        zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
+        let center = map_memory.detached().expect("centered");
+        assert!(
+            (center.y() - mercator::MAX_LATITUDE_DEGREES).abs() < 1e-9,
+            "centered on {}° N",
+            center.y()
+        );
+    }
+
+    /// Wherever the track lies, the fit puts the ground it covers across the
+    /// share of the viewport a fit fills: the map's own scale at the centre
+    /// and zoom it leaves behind gives that width back in metres.
+    #[rstest]
+    #[case::at_the_equator(&[(0.0, 0.0), (0.0, 0.3473)])]
+    #[case::at_eighty_north(&[(80.0, 0.0), (80.0, 2.0)])]
+    #[case::around_the_south_pole(AROUND_THE_SOUTH_POLE)]
+    fn zoom_to_fit_frames_the_width_of_the_track(#[case] positions: &[(f64, f64)]) {
+        let files = file_over(positions);
+        let mut map_memory = MapMemory::default();
+        zoom_to_fit(&mut map_memory, VIEWPORT, visible_bounds(&files));
+
+        let framed_m = framed_width_m(&map_memory);
+        let track_m = gt_geo_math::point_set_diameter_m(&fixes_at(positions));
+        assert!(
+            (framed_m / track_m - 1.0).abs() < 0.02,
+            "framed {framed_m:.0} m of a {track_m:.0} m wide track at zoom {}",
+            map_memory.zoom()
+        );
+    }
+
+    /// The ground the map spans across the share of the viewport a fit fills,
+    /// at the centre and zoom the fit left it at.
+    fn framed_width_m(map_memory: &MapMemory) -> f64 {
+        let center = map_memory.detached().expect("centered");
+        let pixels_per_meter =
+            MapScale::from_zoom(map_memory.zoom()).pixels_per_meter(Latitude::new(center.y()));
+        VIEWPORT.width() as f64 * FIT_FILL / pixels_per_meter
     }
 }
