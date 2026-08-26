@@ -1,6 +1,7 @@
 mod bitset;
 pub mod channel;
 pub mod coordinates;
+pub mod geo_bounds;
 pub mod highlight;
 pub mod markers;
 pub mod mercator;
@@ -18,6 +19,7 @@ pub mod utc_days;
 
 pub use channel::Channel;
 pub use coordinates::{Latitude, Longitude};
+pub use geo_bounds::{GeoBounds, LatRange, LonRange};
 pub use geo_types::{Coord, Rect};
 pub use highlight::{DataCategory, DataCategorySet, FileIdx, PointIdx, TrackIdx, TrackRef};
 pub use markers::{

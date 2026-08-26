@@ -1,7 +1,9 @@
 use crate::channel::Channel;
+use crate::coordinates::{Latitude, Longitude};
+use crate::geo_bounds::GeoBounds;
 use crate::highlight::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
 use crate::markers::{CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker};
-use crate::mercator::MercPoint;
+use crate::mercator::{self, MercPoint};
 use crate::nav_point::NavPoint;
 use crate::sat_label::SatLabelAnchor;
 use crate::satellites::Satellites;
@@ -17,6 +19,10 @@ use uom::si::f64::Length;
 ///
 /// Mercator Y increases south (0 = north pole, 1 = south pole), so `y_min`
 /// corresponds to the northernmost latitude.
+///
+/// `x_min > x_max` describes a box across the antimeridian: the world's
+/// eastern edge cuts it into `[x_min, 1]` and `[0, x_max]`, and
+/// [`MercBounds::intersects`] tests both pieces.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MercBounds {
     pub x_min: f64,
@@ -26,12 +32,48 @@ pub struct MercBounds {
 }
 
 impl MercBounds {
-    /// Returns `true` when `self` overlaps `viewport` in both axes.
+    /// Returns `true` when `self` overlaps `viewport` in both axes. Either box
+    /// may cross the antimeridian.
     pub fn intersects(self, viewport: MercBounds) -> bool {
-        self.x_max >= viewport.x_min
-            && self.x_min <= viewport.x_max
-            && self.y_max >= viewport.y_min
-            && self.y_min <= viewport.y_max
+        self.y_max >= viewport.y_min && self.y_min <= viewport.y_max && self.x_overlaps(viewport)
+    }
+
+    pub fn crosses_the_antimeridian(self) -> bool {
+        self.x_min > self.x_max
+    }
+
+    fn x_overlaps(self, other: MercBounds) -> bool {
+        match (
+            self.crosses_the_antimeridian(),
+            other.crosses_the_antimeridian(),
+        ) {
+            // Both cover the antimeridian, so they share at least it.
+            (true, true) => true,
+            // The crossing box covers `[x_min, 1]` and `[0, x_max]`: the other
+            // one overlaps as soon as it reaches either piece.
+            (true, false) | (false, true) => self.x_max >= other.x_min || self.x_min <= other.x_max,
+            (false, false) => self.x_max >= other.x_min && self.x_min <= other.x_max,
+        }
+    }
+}
+
+/// A longitude range crossing the antimeridian projects to `x_min > x_max`,
+/// and a full circle to the world's whole width.
+impl From<GeoBounds> for MercBounds {
+    fn from(bounds: GeoBounds) -> Self {
+        let north_west = mercator::normalize(bounds.lat.north(), bounds.lon.start());
+        let south_east = mercator::normalize(bounds.lat.south(), bounds.lon.end());
+        let (x_min, x_max) = if bounds.lon.is_full_circle() {
+            (0.0, 1.0)
+        } else {
+            (north_west.x, south_east.x)
+        };
+        Self {
+            x_min,
+            x_max,
+            y_min: north_west.y,
+            y_max: south_east.y,
+        }
     }
 }
 
@@ -266,9 +308,8 @@ impl TrackMetadata {
 /// Mercator Y increases south (0 = north pole, 1 = south pole), so the
 /// northernmost latitude (`bb.max().y`) maps to `y_min`.
 pub fn merc_bounds_for_rect(bb: Rect<f64>) -> MercBounds {
-    use crate::coordinates::{Latitude, Longitude};
-    let sw = crate::mercator::normalize(Latitude::new(bb.max().y), Longitude::new(bb.min().x));
-    let ne = crate::mercator::normalize(Latitude::new(bb.min().y), Longitude::new(bb.max().x));
+    let sw = mercator::normalize(Latitude::new(bb.max().y), Longitude::new(bb.min().x));
+    let ne = mercator::normalize(Latitude::new(bb.min().y), Longitude::new(bb.max().x));
     MercBounds {
         x_min: sw.x,
         x_max: ne.x,
@@ -790,5 +831,114 @@ mod nearest_satellite_report_tests {
     fn out_of_bounds_index_is_none() {
         let track = track(&[(0, Some(3))]);
         assert!(track.nearest_satellite_report(PointIdx::new(9)).is_none());
+    }
+}
+
+#[cfg(test)]
+mod merc_bounds_tests {
+    use rstest::rstest;
+
+    use super::MercBounds;
+    use crate::coordinates::{Latitude, Longitude};
+    use crate::geo_bounds::{GeoBounds, LatRange, LonRange};
+    use crate::mercator;
+
+    const MERC_TOLERANCE: f64 = 1e-9;
+
+    /// 1.5° of longitude wide, from 179.0° E to 179.5° W.
+    fn bounds_across_the_antimeridian() -> GeoBounds {
+        GeoBounds::from_positions([
+            (Latitude::new(60.0), Longitude::new(179.0)),
+            (Latitude::new(61.0), Longitude::new(-179.5)),
+        ])
+        .expect("two positions")
+    }
+
+    #[test]
+    fn merc_bounds_across_the_antimeridian_wrap_at_the_world_edge() {
+        let bounds = MercBounds::from(bounds_across_the_antimeridian());
+
+        assert!(bounds.crosses_the_antimeridian());
+        let width = (1.0 - bounds.x_min) + bounds.x_max;
+        assert!(
+            (width - 1.5 / 360.0).abs() < MERC_TOLERANCE,
+            "1.5° of longitude is 1.5/360 of the world, got {width}"
+        );
+    }
+
+    #[test]
+    fn merc_bounds_put_the_northern_edge_at_y_min() {
+        let bounds = MercBounds::from(bounds_across_the_antimeridian());
+        let north = mercator::normalize(Latitude::new(61.0), Longitude::new(179.0));
+
+        assert!((bounds.y_min - north.y).abs() < MERC_TOLERANCE);
+        assert!(bounds.y_min < bounds.y_max);
+    }
+
+    #[test]
+    fn merc_bounds_of_a_full_circle_span_the_world() {
+        let bounds = MercBounds::from(GeoBounds {
+            lat: LatRange::single_parallel(Latitude::new(89.9)),
+            lon: LonRange::full_circle(),
+        });
+
+        assert!(!bounds.crosses_the_antimeridian());
+        assert!(bounds.x_min.abs() < MERC_TOLERANCE);
+        assert!((bounds.x_max - 1.0).abs() < MERC_TOLERANCE);
+    }
+
+    #[test]
+    fn merc_bounds_ending_on_the_antimeridian_reach_the_eastern_edge() {
+        let bounds = MercBounds::from(
+            GeoBounds::from_positions([
+                (Latitude::new(60.0), Longitude::new(170.0)),
+                (Latitude::new(60.0), Longitude::new(180.0)),
+            ])
+            .expect("two positions"),
+        );
+
+        assert!(!bounds.crosses_the_antimeridian());
+        assert!((bounds.x_max - 1.0).abs() < MERC_TOLERANCE);
+    }
+
+    #[rstest]
+    #[case::viewport_east_of_the_antimeridian(0.9997, 0.9999, true)]
+    #[case::viewport_west_of_the_antimeridian(0.0001, 0.0003, true)]
+    #[case::viewport_on_the_prime_meridian(0.49, 0.51, false)]
+    #[case::viewport_just_short_of_the_track(0.9960, 0.9965, false)]
+    #[case::viewport_wrapping_too(0.99, 0.01, true)]
+    #[case::viewport_covering_the_world(0.0, 1.0, true)]
+    fn a_crossing_box_intersects_only_the_viewports_it_reaches(
+        #[case] x_min: f64,
+        #[case] x_max: f64,
+        #[case] expected: bool,
+    ) {
+        let bounds = MercBounds::from(bounds_across_the_antimeridian());
+        let viewport = MercBounds {
+            x_min,
+            x_max,
+            y_min: 0.0,
+            y_max: 1.0,
+        };
+
+        assert_eq!(bounds.intersects(viewport), expected);
+        assert_eq!(
+            viewport.intersects(bounds),
+            expected,
+            "overlap does not depend on argument order"
+        );
+    }
+
+    #[test]
+    fn a_crossing_box_misses_a_viewport_south_of_it() {
+        let bounds = MercBounds::from(bounds_across_the_antimeridian());
+        let south_of_the_track = MercBounds {
+            x_min: 0.999,
+            x_max: 1.0,
+            y_min: 0.9,
+            y_max: 1.0,
+        };
+
+        assert!(!bounds.intersects(south_of_the_track));
     }
 }
