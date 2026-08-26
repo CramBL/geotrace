@@ -268,6 +268,20 @@ impl LatRange {
         Latitude::new((self.south.as_degrees() + self.north.as_degrees()) / 2.0)
     }
 
+    /// The diameter, in degrees, of the polar cap a box over every meridian
+    /// covers at these latitudes. The arc runs from the parallel nearest the
+    /// equator over the pole to the far side. A range reaching both
+    /// hemispheres gives a half circle.
+    pub fn arc_across_the_pole_degrees(self) -> f64 {
+        let (south_degrees, north_degrees) = (self.south.as_degrees(), self.north.as_degrees());
+        let nearest_the_equator_degrees = if south_degrees <= 0.0 && north_degrees >= 0.0 {
+            0.0
+        } else {
+            south_degrees.abs().min(north_degrees.abs())
+        };
+        2.0 * (NORTH_POLE_DEGREES - nearest_the_equator_degrees)
+    }
+
     pub fn contains(self, latitude: Latitude) -> bool {
         (self.south.as_degrees()..=self.north.as_degrees()).contains(&latitude.as_degrees())
     }
@@ -372,7 +386,7 @@ impl GeoBounds {
 mod tests {
     use rstest::rstest;
 
-    use super::{FULL_CIRCLE_DEGREES, GeoBounds, LonRange, PoleWinding};
+    use super::{FULL_CIRCLE_DEGREES, GeoBounds, LatRange, LonRange, PoleWinding};
     use crate::coordinates::{Latitude, Longitude};
     use crate::mercator;
 
@@ -614,6 +628,23 @@ mod tests {
             bounds.extended_to_the_encircled_pole(PoleWinding::None),
             bounds
         );
+    }
+
+    #[rstest]
+    #[case::a_cap_around_the_north_pole(89.9, 90.0, 0.2)]
+    #[case::a_cap_around_the_south_pole(-90.0, -89.9, 0.2)]
+    #[case::a_band_north_of_the_equator(50.0, 60.0, 80.0)]
+    #[case::a_band_over_the_equator(-10.0, 10.0, 180.0)]
+    #[case::from_pole_to_pole(-90.0, 90.0, 180.0)]
+    fn the_arc_across_the_pole_runs_from_the_parallel_nearest_the_equator(
+        #[case] south: f64,
+        #[case] north: f64,
+        #[case] expected_degrees: f64,
+    ) {
+        let range = LatRange::from_latitudes([Latitude::new(south), Latitude::new(north)])
+            .expect("two latitudes");
+
+        assert_degrees_close(range.arc_across_the_pole_degrees(), expected_degrees);
     }
 
     #[test]

@@ -756,6 +756,9 @@ impl App {
                 tiles_tree.ui(&mut behavior, ui);
                 toggle_plot_request = behavior.toggle_plot_request;
             }
+            if let Some(notice) = self.map.take_fit_notice() {
+                self.toasts.warning(notice);
+            }
             if toggle_plot_request {
                 self.tiles_tree.tiles.toggle_visibility(self.plot_tile_id);
             }

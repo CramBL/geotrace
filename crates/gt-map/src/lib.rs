@@ -436,6 +436,8 @@ pub struct NavMap {
     /// percentage. A persisted preference, seeded from settings via
     /// [`NavMap::set_tec_heatmap_opacity_percent`].
     tec_heatmap_opacity_percent: f32,
+    /// What the last fit could not put on the map.
+    fit_notice: Option<String>,
 }
 
 impl NavMap {
@@ -466,6 +468,7 @@ impl NavMap {
             hover_fade: HoverFadeState::default(),
             match_reveal: MatchRevealState::default(),
             last_viewport_bounds: None,
+            fit_notice: None,
             right_click_ref: None,
             disambiguation_candidates: HoverCandidates::default(),
             disambiguation_pos: egui::pos2(0.0, 0.0),
@@ -620,7 +623,7 @@ impl NavMap {
         if map_response.double_clicked()
             && let Some(bbox) = ctx.visible_bounding_box()
         {
-            zoom_to_fit(&mut self.map_memory, map_response.rect, bbox);
+            self.fit_to_bounds(map_response.rect, bbox);
         }
 
         let map_rect = map_response.rect;
@@ -663,13 +666,25 @@ impl NavMap {
         if ctx.zoom_to_visible
             && let Some(bbox) = ctx.visible_bounding_box()
         {
-            zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
+            self.fit_to_bounds(ui.max_rect(), bbox);
         }
         if let Some(target) = &ctx.reveal_query_matches
             && let Some(bbox) = ctx.reveal_bounding_box(target)
         {
-            zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
+            self.fit_to_bounds(ui.max_rect(), bbox);
         }
+    }
+
+    /// Frame `bounds`, keeping what the projection could not show for
+    /// [`NavMap::take_fit_notice`].
+    fn fit_to_bounds(&mut self, viewport: egui::Rect, bounds: GeoBounds) {
+        self.fit_notice = zoom_to_fit(&mut self.map_memory, viewport, bounds).notice();
+    }
+
+    /// What the last fit could not put on the map, cleared as it is taken.
+    /// The caller shows it once per fit, not once per frame.
+    pub fn take_fit_notice(&mut self) -> Option<String> {
+        self.fit_notice.take()
     }
 
     /// Frame newly loaded files, start the load-highlight pulse, and rebuild
@@ -689,7 +704,7 @@ impl NavMap {
             self.blink.trigger(now);
         }
         if let Some(bbox) = ctx.visible_bounding_box() {
-            zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
+            self.fit_to_bounds(ui.max_rect(), bbox);
         }
         self.global_tree = gt_track_builder::build_global_tree(ctx.files);
     }
