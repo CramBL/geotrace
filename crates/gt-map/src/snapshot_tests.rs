@@ -46,9 +46,9 @@ fn gen_ref() -> DataPointRef {
 /// snapshot tests so each candidate type produces real human-readable text.
 fn make_snapshot_file() -> gt_types::LoadedFile {
     use gt_types::{
-        CustomMarker, EventMarker, FileMetadata, GeneratedMarker, GeneratedMarkerKind, Latitude,
-        LoadedFile, LoadedTrack, Longitude, MarkerIcon, TimeRange, TrackMetadata,
-        merc_bounds_for_rect, mercator,
+        CustomMarker, EventMarker, FileMetadata, GeneratedMarker, GeneratedMarkerKind, GeoBounds,
+        Latitude, LoadedFile, LoadedTrack, Longitude, MarkerIcon, MercBounds, TimeRange,
+        TrackMetadata, mercator,
     };
     use uom::si::f64::Length;
     use uom::si::length::kilometer;
@@ -76,10 +76,11 @@ fn make_snapshot_file() -> gt_types::LoadedFile {
         merc: mercator::normalize(lat, lon),
     };
 
-    let bb = gt_types::Rect::new(
-        gt_types::Coord { x: 12.55, y: 55.67 },
-        gt_types::Coord { x: 12.59, y: 55.69 },
-    );
+    let bb = GeoBounds::from_positions([
+        (Latitude::new(55.67), Longitude::new(12.55)),
+        (Latitude::new(55.69), Longitude::new(12.59)),
+    ])
+    .expect("two positions");
     let n = points.len();
     // Counted from the points rather than hard-coded: `SkySection::resolve`
     // short-circuits on a zero count, so claiming zero here would hide the
@@ -92,7 +93,7 @@ fn make_snapshot_file() -> gt_types::LoadedFile {
             duration: chrono::Duration::seconds(n as i64),
             time_range: TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64)),
             bounding_box: bb,
-            merc_bounds: merc_bounds_for_rect(bb),
+            merc_bounds: MercBounds::from(bb),
             point_set_diameter_m: Length::new::<uom::si::length::meter>(500.0),
             has_custom_markers: true,
             tpv_count: n,
@@ -958,8 +959,8 @@ fn whisker_geometry(points: &[NavPoint]) -> gt_ui_types::SnappedTrackGeometry {
 fn make_short_walk_file() -> gt_types::LoadedFile {
     use gt_types::time_types::GpsTime;
     use gt_types::{
-        FileMetadata, Latitude, LoadedFile, LoadedTrack, Longitude, TimeRange, TrackMetadata,
-        merc_bounds_for_rect,
+        FileMetadata, GeoBounds, Latitude, LoadedFile, LoadedTrack, Longitude, MercBounds,
+        TimeRange, TrackMetadata,
     };
 
     let t0 = chrono::DateTime::from_timestamp(1_767_268_800, 0).unwrap_or_default();
@@ -973,19 +974,17 @@ fn make_short_walk_file() -> gt_types::LoadedFile {
             gt_types::NavPoint::new(tpv, None)
         })
         .collect();
-    let bb = gt_types::Rect::new(
-        gt_types::Coord { x: 12.56, y: 55.68 },
-        gt_types::Coord {
-            x: 12.56,
-            y: 55.6805,
-        },
-    );
+    let bb = GeoBounds::from_positions([
+        (Latitude::new(55.68), Longitude::new(12.56)),
+        (Latitude::new(55.6805), Longitude::new(12.56)),
+    ])
+    .expect("two positions");
     let n = points.len();
     let track = LoadedTrack {
         metadata: TrackMetadata {
             time_range: TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64)),
             bounding_box: bb,
-            merc_bounds: merc_bounds_for_rect(bb),
+            merc_bounds: MercBounds::from(bb),
             tpv_count: n,
             ..gt_test_utils::empty_track_metadata()
         },

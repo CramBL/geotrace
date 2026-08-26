@@ -44,6 +44,33 @@ impl LonRange {
         Some(range.finish())
     }
 
+    /// The narrower of the two ranges covering both `self` and `other`: the
+    /// gap closed is whichever of the two between them is shorter, matching
+    /// how [`LonRange::from_longitudes`] grows over a single longitude.
+    pub fn union(self, other: Self) -> Self {
+        if self.is_full_circle() || other.is_full_circle() {
+            return Self::full_circle();
+        }
+        let eastward = self.grown_east_over(other);
+        let westward = other.grown_east_over(self);
+        if eastward.span_degrees <= westward.span_degrees {
+            eastward
+        } else {
+            westward
+        }
+    }
+
+    /// `self` grown eastward until it reaches the eastern end of `other`.
+    fn grown_east_over(self, other: Self) -> Self {
+        let span = (self.eastward_offset_degrees(other.start) + other.span_degrees)
+            .max(self.span_degrees)
+            .min(FULL_CIRCLE_DEGREES);
+        Self {
+            start: self.start,
+            span_degrees: span,
+        }
+    }
+
     pub fn start(self) -> Longitude {
         self.start
     }
@@ -209,17 +236,40 @@ impl GeoBounds {
         positions: impl IntoIterator<Item = (Latitude, Longitude)>,
     ) -> Option<Self> {
         let mut positions = positions.into_iter();
-        let (first_latitude, first_longitude) = positions.next()?;
+        Some(Self::from_first_position_and_rest(
+            positions.next()?,
+            positions,
+        ))
+    }
+
+    /// The same fold as [`GeoBounds::from_positions`], for a caller holding a
+    /// position set the type system already proves non-empty.
+    pub fn from_first_position_and_rest(
+        (first_latitude, first_longitude): (Latitude, Longitude),
+        rest: impl IntoIterator<Item = (Latitude, Longitude)>,
+    ) -> Self {
         let mut lat = LatRange::single_parallel(first_latitude);
         let mut lon = GrowingLonRange::starting_at(first_longitude);
-        for (latitude, longitude) in positions {
+        for (latitude, longitude) in rest {
             lat = lat.extended_to(latitude);
             lon.extend_to(longitude);
         }
-        Some(Self {
+        Self {
             lat,
             lon: lon.finish(),
-        })
+        }
+    }
+
+    /// The bounds covering both, closing the shorter of the two longitude
+    /// gaps between them as [`LonRange::union`] does.
+    pub fn union(self, other: Self) -> Self {
+        Self {
+            lat: self
+                .lat
+                .extended_to(other.lat.south())
+                .extended_to(other.lat.north()),
+            lon: self.lon.union(other.lon),
+        }
     }
 
     pub fn center(self) -> (Latitude, Longitude) {
@@ -314,6 +364,59 @@ mod tests {
         assert!(range.contains(Longitude::new(degrees)));
     }
 
+    #[rstest]
+    #[case::disjoint_across_the_antimeridian(&[179.0, 179.5], &[-179.9, -179.5], 179.0, 1.5)]
+    #[case::overlapping(&[10.0, 14.0], &[12.0, 16.0], 10.0, 6.0)]
+    #[case::one_inside_the_other(&[10.0, 20.0], &[12.0, 16.0], 10.0, 10.0)]
+    #[case::the_gap_east_of_the_first_range_is_shorter(&[170.0, 175.0], &[-100.0, -95.0], 170.0, 95.0)]
+    #[case::the_gap_east_of_the_second_range_is_shorter(&[-100.0, -95.0], &[170.0, 175.0], 170.0, 95.0)]
+    #[case::a_single_meridian_east_of_the_range(&[10.0, 12.0], &[13.0], 10.0, 3.0)]
+    fn union_closes_the_shorter_gap(
+        #[case] left_degrees: &[f64],
+        #[case] right_degrees: &[f64],
+        #[case] expected_start: f64,
+        #[case] expected_span: f64,
+    ) {
+        let union = range_over(left_degrees).union(range_over(right_degrees));
+
+        assert_degrees_close(union.start().as_degrees(), expected_start);
+        assert_degrees_close(union.span_degrees(), expected_span);
+        for &degrees in left_degrees.iter().chain(right_degrees) {
+            assert!(union.contains(Longitude::new(degrees)), "{degrees}°");
+        }
+    }
+
+    #[test]
+    fn a_union_with_a_full_circle_is_a_full_circle() {
+        assert!(
+            range_over(&[10.0, 12.0])
+                .union(LonRange::full_circle())
+                .is_full_circle()
+        );
+    }
+
+    #[test]
+    fn a_union_covering_every_meridian_is_a_full_circle() {
+        let union = range_over(&[0.0, 120.0, -120.0]).union(range_over(&[120.0, -120.0, 0.0]));
+
+        assert!(union.is_full_circle());
+        assert_degrees_close(union.span_degrees(), FULL_CIRCLE_DEGREES);
+    }
+
+    #[test]
+    fn bounds_unite_over_both_latitude_and_longitude_extents() {
+        let west = GeoBounds::from_positions([(Latitude::new(60.0), Longitude::new(179.0))])
+            .expect("one position");
+        let east = GeoBounds::from_positions([(Latitude::new(58.0), Longitude::new(-179.5))])
+            .expect("one position");
+        let union = west.union(east);
+
+        assert_degrees_close(union.lat.south().as_degrees(), 58.0);
+        assert_degrees_close(union.lat.north().as_degrees(), 60.0);
+        assert_degrees_close(union.lon.start().as_degrees(), 179.0);
+        assert_degrees_close(union.lon.span_degrees(), 1.5);
+    }
+
     #[test]
     fn a_grown_range_stops_short_of_a_full_circle() {
         assert!(!range_over(&[0.0, 90.0, 180.0, -90.0]).is_full_circle());
@@ -378,6 +481,32 @@ mod tests {
                 proptest::prop_assert!(
                     range.contains(Longitude::new(d)),
                     "{d}° is outside {range:?}"
+                );
+            }
+        }
+
+        /// On the half-degree grid, where every sum and difference below is
+        /// exact, a longitude on the union's own end is inside it.
+        #[test]
+        fn a_union_holds_every_longitude_of_both_ranges(
+            left_half_degrees in proptest::collection::vec(-360_i32..=360, 1..10),
+            right_half_degrees in proptest::collection::vec(-360_i32..=360, 1..10),
+        ) {
+            let left_degrees: Vec<f64> = left_half_degrees.iter().map(|&h| f64::from(h) / 2.0).collect();
+            let right_degrees: Vec<f64> = right_half_degrees.iter().map(|&h| f64::from(h) / 2.0).collect();
+            let left = LonRange::from_longitudes(left_degrees.iter().map(|&d| Longitude::new(d)))
+                .expect("at least one longitude");
+            let right = LonRange::from_longitudes(right_degrees.iter().map(|&d| Longitude::new(d)))
+                .expect("at least one longitude");
+            let union = left.union(right);
+
+            proptest::prop_assert!(union.span_degrees() <= FULL_CIRCLE_DEGREES);
+            proptest::prop_assert!(union.span_degrees() >= left.span_degrees());
+            proptest::prop_assert!(union.span_degrees() >= right.span_degrees());
+            for &d in left_degrees.iter().chain(&right_degrees) {
+                proptest::prop_assert!(
+                    union.contains(Longitude::new(d)),
+                    "{d}° is outside {union:?}"
                 );
             }
         }

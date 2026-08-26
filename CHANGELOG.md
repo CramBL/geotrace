@@ -8,6 +8,7 @@
 - **Map & Tracks:** Fixed a recording whose fixes are out of time order dropping markers and sensor samples that fall inside a track, and reporting a negative recorded time.
 - **Map & Tracks:** Fixed dead-reckoned fixes in a recording faster than 1 Hz being drawn on top of the preceding fix instead of between the fixes around them.
 - **Map & Tracks:** Fixed a dead-reckoned fix between two fixes across the antimeridian being drawn half a world away, and one between two fixes near a pole being drawn off the great circle they lie on.
+- **Map & Tracks:** Fixed double-clicking a recording or track that crosses the antimeridian centering the map on the opposite side of the globe.
 
 ## 0.13.0 - 2026-08-25
 
