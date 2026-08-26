@@ -397,9 +397,14 @@ pub(crate) fn is_spatial_point_visible(sp: &SpatialPoint, scope: MapScope<'_>) -
     })
 }
 
-/// Floor on a bounding box's extent, keeping the fit of a single position
-/// finite.
-const MIN_FIT_SPAN_DEGREES: f64 = 0.001;
+/// Longitude the normalized Mercator world spans: dividing a longitude span
+/// by it gives that span's x extent.
+const WORLD_WIDTH_DEGREES: f64 = 360.0;
+
+/// Floor on a bounding box's extent in normalized Mercator units, keeping the
+/// fit of a single position finite. A thousandth of a degree of longitude,
+/// which every viewport frames past the maximum zoom.
+const MIN_FIT_EXTENT_MERC: f64 = 0.001 / WORLD_WIDTH_DEGREES;
 
 /// The share of the viewport a fit fills with the bounding box.
 const FIT_FILL: f64 = 0.8;
@@ -443,34 +448,39 @@ pub(crate) fn zoom_to_fit(
     bounds: GeoBounds,
 ) -> FitOutcome {
     let (center_lat, center_lon) = bounds.center();
-    let center_lat_degrees = center_lat.as_degrees().clamp(
-        -mercator::MAX_LATITUDE_DEGREES,
-        mercator::MAX_LATITUDE_DEGREES,
-    );
+    let center_lat = center_lat.clamped_to_the_mercator_limit();
     map_memory.center_at(walkers::lat_lon(
-        center_lat_degrees,
+        center_lat.as_degrees(),
         center_lon.as_degrees(),
     ));
 
-    let lat_range = (bounds.lat.north().as_degrees() - bounds.lat.south().as_degrees())
-        .max(MIN_FIT_SPAN_DEGREES);
     // A box over every meridian holds a polar cap, and what the fit has to
     // show of it is its diameter across the pole. Mercator draws that arc as
     // wide as the longitudes it covers on the parallel the map centres on.
-    let lon_range = match bounds.lon.is_full_circle() {
-        true => bounds.lat.arc_across_the_pole_degrees() / center_lat_degrees.to_radians().cos(),
+    let lon_span_degrees = match bounds.lon.is_full_circle() {
+        true => {
+            bounds.lat.arc_across_the_pole_degrees() / center_lat.as_degrees().to_radians().cos()
+        }
         false => bounds.lon.span_degrees(),
-    }
-    .max(MIN_FIT_SPAN_DEGREES);
-    let vw = viewport.width() as f64;
-    let vh = viewport.height() as f64;
+    };
+    let x_extent = (lon_span_degrees / WORLD_WIDTH_DEGREES).max(MIN_FIT_EXTENT_MERC);
 
-    // At zoom z the world is 256·2^z pixels wide (equatorial Mercator).
-    // Fill 80 % of the viewport with the bounding box:
-    //   lon_range · (256·2^z / 360) = vw · 0.8
-    //   → z = log2(vw · 0.8 · 360 / (256 · lon_range))
-    let z_lon = (vw * FIT_FILL * 360.0 / (256.0 * lon_range)).log2();
-    let z_lat = (vh * FIT_FILL * 360.0 / (256.0 * lat_range)).log2();
+    // Mercator stretches latitude away from the equator: a degree at 80° N
+    // stands 5.8 times as tall as one at the equator.
+    let north_edge = mercator::normalize(
+        bounds.lat.north().clamped_to_the_mercator_limit(),
+        center_lon,
+    );
+    let south_edge = mercator::normalize(
+        bounds.lat.south().clamped_to_the_mercator_limit(),
+        center_lon,
+    );
+    let y_extent = (south_edge.y - north_edge.y).max(MIN_FIT_EXTENT_MERC);
+
+    // The box fills FIT_FILL of the viewport once the world spans
+    // viewport · FIT_FILL / extent pixels.
+    let z_lon = MapScale::zoom_for_world_px(viewport.width() as f64 * FIT_FILL / x_extent);
+    let z_lat = MapScale::zoom_for_world_px(viewport.height() as f64 * FIT_FILL / y_extent);
     let zoom = z_lon.min(z_lat).clamp(1.0, 18.0);
     // zoom is already clamped to [1, 18], so set_zoom can only fail if the
     // walkers library's valid range narrows further - ignore silently.
