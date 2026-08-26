@@ -355,10 +355,7 @@ fn detect_clock_discontinuities(
         .iter()
         .enumerate()
         .filter(|(i, _)| excursion_indices.binary_search(i).is_err())
-        .filter_map(|(i, p)| {
-            let sys = p.tpv.sys_time()?;
-            Some((i, p.tpv.time().offset_from_sys(sys).num_milliseconds()))
-        })
+        .filter_map(|(i, p)| Some((i, p.tpv.gps_system_clock_offset()?.num_milliseconds())))
         .collect();
     if samples.len() < MIN_CLOCK_SAMPLES {
         return Vec::new();

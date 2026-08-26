@@ -228,9 +228,10 @@ impl MetricProvider for TrackProvider<'_> {
             // requested from providers.
             QueryMetric::Accel => None,
             QueryMetric::Eph => point.tpv.eph_m().map(f64::from),
-            QueryMetric::ClockDelta => point.tpv.sys_time().map(|sys| {
-                point.tpv.time().offset_from_sys(sys).num_milliseconds() as f64 / 1_000.0
-            }),
+            QueryMetric::ClockDelta => point
+                .tpv
+                .gps_system_clock_offset()
+                .map(|offset| offset.num_milliseconds() as f64 / 1_000.0),
             QueryMetric::SatsSeen => sats.map(|s| f64::from(s.satellite_count())),
             QueryMetric::SatsFix => sats.map(|s| f64::from(s.fix_count())),
             QueryMetric::GpsSeen => {

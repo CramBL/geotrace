@@ -152,6 +152,28 @@ impl fmt::Display for SysTime {
     }
 }
 
+/// The clock that stamped a fix with its time.
+///
+/// The host clock stamps a fix when the receiver has no lock and reports no GPS
+/// time. That fix's difference from the same host clock is a structural zero.
+/// Keeping the two clocks apart here stops that zero from being read as a
+/// measured GPS/system offset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FixTimestamp {
+    /// The receiver had a lock and reported this time with the fix.
+    FromGpsReceiver(GpsTime),
+    /// The receiver had no lock: the host clock stamped the fix.
+    FromHostClock(SysTime),
+    /// Neither clock stamped the fix.
+    Missing,
+}
+
+impl From<GpsTime> for FixTimestamp {
+    fn from(gps: GpsTime) -> Self {
+        Self::FromGpsReceiver(gps)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -94,11 +94,10 @@ pub fn detect_excursions(points: &[NavPoint], threshold_s: f32) -> Vec<ClockOffs
         .iter()
         .enumerate()
         .filter_map(|(index, p)| {
-            let sys = p.tpv.sys_time()?;
             Some(ExcursionSample {
                 index,
                 t: p.tpv.time().as_secs_f64_with_subseconds(),
-                offset_ms: p.tpv.time().offset_from_sys(sys).num_milliseconds(),
+                offset_ms: p.tpv.gps_system_clock_offset()?.num_milliseconds(),
             })
         })
         .collect();
@@ -182,7 +181,7 @@ fn threshold_ms(threshold_s: f32) -> i64 {
 mod tests {
     use chrono::{TimeZone, Utc};
     use gt_types::coordinates::{Latitude, Longitude};
-    use gt_types::time_types::{GpsTime, SysTime};
+    use gt_types::time_types::{FixTimestamp, GpsTime, SysTime};
     use gt_types::tpv::TimePositionVelocity;
 
     use super::*;
@@ -201,6 +200,19 @@ mod tests {
             .lat(Latitude::new(55.0))
             .lon(Longitude::new(12.0))
             .sys_time(sys)
+            .build();
+        NavPoint::new(tpv, None)
+    }
+
+    /// The host clock stamped this point at `sys_secs`, the receiver having
+    /// reported no GPS time.
+    fn point_without_gps_lock(sys_secs: i64) -> NavPoint {
+        let host = SysTime::from_utc(Utc.timestamp_opt(sys_secs, 0).single().expect("valid"));
+        let tpv = TimePositionVelocity::builder()
+            .time(FixTimestamp::FromHostClock(host))
+            .lat(Latitude::new(55.0))
+            .lon(Longitude::new(12.0))
+            .sys_time(host)
             .build();
         NavPoint::new(tpv, None)
     }
@@ -304,6 +316,25 @@ mod tests {
             detect_excursions(&points, 60.0).is_empty(),
             "30 s stays inside a 60 s bar"
         );
+    }
+
+    /// A fix taken without a GPS lock has a structural zero GPS−system
+    /// difference: it carries the host timestamp as its own time. On a track
+    /// whose host clock sits an hour behind GPS that zero is no departure from
+    /// the baseline, while a real one beside it still is.
+    #[test]
+    fn a_fix_without_a_gps_lock_is_not_an_excursion() {
+        const HOST_BEHIND_S: i64 = 3600;
+        let behind_ms = -HOST_BEHIND_S * 1000;
+        let mut points: Vec<NavPoint> = (0..4).map(|i| point(1000 + i, behind_ms)).collect();
+        points.push(point_without_gps_lock(1004 - HOST_BEHIND_S));
+        points.extend((5..9).map(|i| point(1000 + i, behind_ms)));
+        points.push(point(1009, behind_ms + 60_000));
+        points.extend((10..14).map(|i| point(1000 + i, behind_ms)));
+
+        let excursions = detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S);
+
+        assert_eq!(excursion_indices(&excursions), vec![9]);
     }
 
     #[test]

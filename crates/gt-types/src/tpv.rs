@@ -1,5 +1,6 @@
 use crate::coordinates::{Latitude, Longitude};
-use crate::time_types::{GpsTime, SysTime};
+use crate::time_types::{FixTimestamp, GpsTime, SysTime};
+use chrono::{DateTime, Duration};
 use geo_types::{Coord, Point};
 use uom::si::f64::{Angle, Velocity};
 use uom::si::velocity::kilometer_per_hour;
@@ -14,11 +15,15 @@ pub fn to_linestring(tpvs: &[TimePositionVelocity]) -> geo_types::LineString<f64
 /// but have no known direction. The renderer draws those as circles.
 ///
 /// `sys_time` is the host system-clock timestamp at the moment of the fix, when
-/// available. Use [`GpsTime::offset_from_sys`] to compute the GPS/system-clock
-/// offset - direct arithmetic between the two fields is a compile-time error.
+/// available. Use [`TimePositionVelocity::gps_system_clock_offset`] to compute
+/// the GPS/system-clock offset - direct arithmetic between the two fields is a
+/// compile-time error.
 #[derive(bon::Builder, Debug, Clone, Copy)]
 pub struct TimePositionVelocity {
-    pub(crate) time: GpsTime,
+    /// Passing a [`GpsTime`] states that the receiver's own clock stamped this
+    /// fix.
+    #[builder(into)]
+    pub(crate) time: FixTimestamp,
     pub(crate) lat: Latitude,
     pub(crate) lon: Longitude,
     pub(crate) velocity: Option<Velocity>,
@@ -31,8 +36,33 @@ pub struct TimePositionVelocity {
 }
 
 impl TimePositionVelocity {
+    /// Where the fix sits on the recording's time axis: the receiver's own
+    /// timestamp when it had a lock, the host timestamp the fix was stamped
+    /// with when it did not, and the Unix epoch when neither clock stamped it.
+    ///
+    /// [`Self::gps_time`] is what tells those apart.
     pub fn time(&self) -> GpsTime {
-        self.time
+        match self.time {
+            FixTimestamp::FromGpsReceiver(gps) => gps,
+            FixTimestamp::FromHostClock(host) => GpsTime::from_utc(host.utc()),
+            FixTimestamp::Missing => GpsTime::from_utc(DateTime::UNIX_EPOCH),
+        }
+    }
+
+    /// The receiver's own timestamp for this fix, `None` when it had no lock.
+    pub fn gps_time(&self) -> Option<GpsTime> {
+        match self.time {
+            FixTimestamp::FromGpsReceiver(gps) => Some(gps),
+            FixTimestamp::FromHostClock(_) | FixTimestamp::Missing => None,
+        }
+    }
+
+    /// GPS−system clock offset at this fix: positive means the GPS clock is
+    /// ahead of the host clock.
+    ///
+    /// `None` unless both clocks stamped the fix.
+    pub fn gps_system_clock_offset(&self) -> Option<Duration> {
+        Some(self.gps_time()?.offset_from_sys(self.sys_time?))
     }
     pub fn lat(&self) -> Latitude {
         self.lat
@@ -52,7 +82,8 @@ impl TimePositionVelocity {
     }
     /// Host system-clock timestamp, if recorded alongside the GPS fix.
     ///
-    /// Use [`GpsTime::offset_from_sys`] to compute the GPS/system-clock offset.
+    /// Use [`Self::gps_system_clock_offset`] to compute the GPS/system-clock
+    /// offset.
     pub fn sys_time(&self) -> Option<SysTime> {
         self.sys_time
     }
@@ -129,5 +160,36 @@ mod tests {
             .build();
 
         assert_eq!(tpv.heading(), None);
+    }
+
+    fn fix(time: FixTimestamp, sys_time: Option<SysTime>) -> TimePositionVelocity {
+        TimePositionVelocity::builder()
+            .time(time)
+            .lat(Latitude::new(55.0))
+            .lon(Longitude::new(12.0))
+            .maybe_sys_time(sys_time)
+            .build()
+    }
+
+    /// A fix the host clock stamped on its own yields no offset, however far
+    /// the two clocks stand apart elsewhere in the recording.
+    #[test]
+    fn only_a_fix_the_receiver_stamped_has_a_gps_system_clock_offset() {
+        const GPS_AHEAD_MS: i64 = 600;
+        let stamped_at = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let host = SysTime::from_utc(stamped_at);
+        let gps = GpsTime::from_utc(stamped_at + Duration::milliseconds(GPS_AHEAD_MS));
+
+        assert_eq!(
+            fix(gps.into(), Some(host))
+                .gps_system_clock_offset()
+                .map(|offset| offset.num_milliseconds()),
+            Some(GPS_AHEAD_MS)
+        );
+        assert_eq!(
+            fix(FixTimestamp::FromHostClock(host), Some(host)).gps_system_clock_offset(),
+            None
+        );
+        assert_eq!(fix(gps.into(), None).gps_system_clock_offset(), None);
     }
 }
