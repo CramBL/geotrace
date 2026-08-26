@@ -64,7 +64,7 @@ fn ghost_fix_at_the_null_island(secs: i64) -> NavPoint {
 
 /// Metadata of a track of two measured fixes 0.002° of longitude apart, with a
 /// dead-reckoned epoch halfway between them in time.
-fn metadata_of_a_track_with_a_ghost_fix() -> TrackMetadata {
+fn metadata_of_a_track_with_a_ghost_fix() -> Option<TrackMetadata> {
     let points = vec![
         measured_fix(0, FIRST_LON_DEGREES),
         ghost_fix_at_the_null_island(10),
@@ -82,10 +82,7 @@ fn metadata_of_a_track_with_a_ghost_fix() -> TrackMetadata {
         FileMeta::default(),
         vec![],
     );
-    file.tracks
-        .first()
-        .map(|track| track.metadata)
-        .expect("the fixes form one track")
+    file.tracks.first().map(|track| track.metadata)
 }
 
 /// Distance between the two measured fixes, which is the length of the arc the
@@ -104,10 +101,9 @@ fn measured_fix_separation_m() -> f64 {
 /// where the receiver wrote the ghost fix, the same track is 12 425 km long.
 #[test]
 fn track_distance_matches_the_polyline_the_map_draws() {
-    let distance_m = metadata_of_a_track_with_a_ghost_fix()
-        .distance_km
-        .get::<kilometer>()
-        * 1_000.0;
+    let metadata = metadata_of_a_track_with_a_ghost_fix().expect("the fixes form one track");
+
+    let distance_m = metadata.distance_km.get::<kilometer>() * 1_000.0;
 
     let expected_m = measured_fix_separation_m();
     assert!(
@@ -120,9 +116,9 @@ fn track_distance_matches_the_polyline_the_map_draws() {
 /// drawn track is the measured pair.
 #[test]
 fn point_set_diameter_spans_the_drawn_track() {
-    let diameter_m = metadata_of_a_track_with_a_ghost_fix()
-        .point_set_diameter_m
-        .get::<meter>();
+    let metadata = metadata_of_a_track_with_a_ghost_fix().expect("the fixes form one track");
+
+    let diameter_m = metadata.point_set_diameter_m.get::<meter>();
 
     let expected_m = measured_fix_separation_m();
     assert!(
@@ -135,7 +131,9 @@ fn point_set_diameter_spans_the_drawn_track() {
 /// 0.002° the drawn track spans and never reaches down to the null island.
 #[test]
 fn bounding_box_covers_where_the_track_is_drawn() {
-    let bounds = metadata_of_a_track_with_a_ghost_fix().bounding_box;
+    let bounds = metadata_of_a_track_with_a_ghost_fix()
+        .expect("the fixes form one track")
+        .bounding_box;
 
     assert!(
         (bounds.lat.south().as_degrees() - LATITUDE_DEGREES).abs() < DEGREES_TOLERANCE,

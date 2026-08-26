@@ -49,9 +49,15 @@ pub fn haversine_m(lat1: Latitude, lon1: Longitude, lat2: Latitude, lon2: Longit
 /// in recording order. Empty for fewer than 2 points. The primitive behind
 /// every along-track distance walk ([`path_distance_km`],
 /// [`segment_length_range_m`], threshold crossings).
+///
+/// Measured over [`NavPoint::resolved_position`], so it walks the polyline
+/// the map draws.
 pub fn segment_distances_m(points: &[NavPoint]) -> impl Iterator<Item = f64> + '_ {
     points.windows(2).map(|w| match w {
-        [a, b] => haversine_m(a.tpv.lat(), a.tpv.lon(), b.tpv.lat(), b.tpv.lon()),
+        [a, b] => {
+            let ((a_lat, a_lon), (b_lat, b_lon)) = (a.resolved_position(), b.resolved_position());
+            haversine_m(a_lat, a_lon, b_lat, b_lon)
+        }
         _ => 0.0,
     })
 }
@@ -70,8 +76,8 @@ pub fn segment_length_range_m(points: &[NavPoint]) -> Option<(f64, f64)> {
     })
 }
 
-/// Maximum haversine distance between any two points in the set, in metres.
-/// Returns `0.0` for fewer than 2 points.
+/// Maximum haversine distance between any two [`NavPoint::resolved_position`]
+/// in the set, in metres. Returns `0.0` for fewer than 2 points.
 ///
 /// Searches the pairs of the set's convex hull vertices: O(k²) where k is the
 /// hull vertex count, acceptable because GPS track hulls are small. The hull
@@ -86,13 +92,19 @@ pub fn point_set_diameter_m(points: &[NavPoint]) -> f64 {
 
     let directions: Vec<Vector3<f64>> = points
         .iter()
-        .map(|p| earth_centred_direction(p.tpv.lat(), p.tpv.lon()))
+        .map(|p| {
+            let (lat, lon) = p.resolved_position();
+            earth_centred_direction(lat, lon)
+        })
         .collect();
 
     let Some(frame) = MeanDirectionFrame::covering(&directions) else {
         let positions: Vec<Point<f64>> = points
             .iter()
-            .map(|p| Point::new(p.tpv.lon().as_degrees(), p.tpv.lat().as_degrees()))
+            .map(|p| {
+                let (lat, lon) = p.resolved_position();
+                Point::new(lon.as_degrees(), lat.as_degrees())
+            })
             .collect();
         return max_pairwise_haversine_m(&positions);
     };

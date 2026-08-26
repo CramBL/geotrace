@@ -5,7 +5,9 @@
 use std::ops::Range;
 
 use gt_filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
-use gt_types::{DataCategory, FileIdx, GeoBounds, LoadedFile, SpatialPoint, TrackIdx, TrackRef};
+use gt_types::{
+    DataCategory, FileIdx, GeoBounds, LoadedFile, NavPoint, SpatialPoint, TrackIdx, TrackRef,
+};
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, MapScope, QueryMatches, TrackDataVisibility,
 };
@@ -249,7 +251,7 @@ pub(crate) fn compute_visible_bounding_box(
                 .into_iter()
                 .flatten()
                 .filter(|point| point_passes_time_filter(point.tpv.time().utc(), filter))
-                .map(|point| (point.tpv.lat(), point.tpv.lon()));
+                .map(NavPoint::resolved_position);
             let markers = custom_markers_displayed
                 .then(|| track.custom_markers.iter())
                 .into_iter()
@@ -289,7 +291,7 @@ pub(crate) fn matched_bounding_box(
                     .iter()
                     .flat_map(move |range| track.points.get(range.clone()).unwrap_or_default())
             })
-            .map(|point| (point.tpv.lat(), point.tpv.lon())),
+            .map(NavPoint::resolved_position),
     )
 }
 
@@ -303,11 +305,7 @@ pub(crate) fn match_bounding_box(
 ) -> Option<GeoBounds> {
     let track = track_ref.resolve(files)?;
     let matched = track.points.get(points.clone())?;
-    GeoBounds::from_positions(
-        matched
-            .iter()
-            .map(|point| (point.tpv.lat(), point.tpv.lon())),
-    )
+    GeoBounds::from_positions(matched.iter().map(NavPoint::resolved_position))
 }
 
 /// Compute the geographic bounding box of the given map viewport rect.

@@ -133,8 +133,7 @@ enum GpsFixState {
     /// The most recent satellite report had `fix_count > 0`.
     HasFix {
         last_time: GpsTime,
-        last_lat: Latitude,
-        last_lon: Longitude,
+        last_position: (Latitude, Longitude),
     },
     /// The most recent satellite report had `fix_count == 0`.
     LostFix {
@@ -166,8 +165,7 @@ impl GpsFixTracker {
                 if fix_count > 0 {
                     GpsFixState::HasFix {
                         last_time: point.tpv.time(),
-                        last_lat: point.tpv.lat(),
-                        last_lon: point.tpv.lon(),
+                        last_position: point.resolved_position(),
                     }
                 } else {
                     GpsFixState::Waiting
@@ -175,8 +173,7 @@ impl GpsFixTracker {
             }
             GpsFixState::HasFix {
                 last_time,
-                last_lat,
-                last_lon,
+                last_position: (last_lat, last_lon),
             } => {
                 if fix_count == 0 {
                     result = Some(GeneratedMarker::new(
@@ -190,26 +187,25 @@ impl GpsFixTracker {
                     result = None;
                     GpsFixState::HasFix {
                         last_time: point.tpv.time(),
-                        last_lat: point.tpv.lat(),
-                        last_lon: point.tpv.lon(),
+                        last_position: point.resolved_position(),
                     }
                 }
             }
             GpsFixState::LostFix { lost_at } => {
                 if fix_count > 0 {
                     let duration = point.tpv.time().signed_duration_since(lost_at);
+                    let (lat, lon) = point.resolved_position();
                     result = Some(GeneratedMarker::new(
                         point.tpv.time().utc(),
                         GeneratedMarkerKind::GnssFixRegained {
                             fix_lost_duration: duration,
                         },
-                        point.tpv.lat(),
-                        point.tpv.lon(),
+                        lat,
+                        lon,
                     ));
                     GpsFixState::HasFix {
                         last_time: point.tpv.time(),
-                        last_lat: point.tpv.lat(),
-                        last_lon: point.tpv.lon(),
+                        last_position: (lat, lon),
                     }
                 } else {
                     result = None;
@@ -284,11 +280,12 @@ fn detect_slip_markers(
     .into_iter()
     .filter_map(|(i, slips)| {
         let point = points.get(i)?;
+        let (lat, lon) = point.resolved_position();
         Some(GeneratedMarker::new(
             point.tpv.time().utc(),
             GeneratedMarkerKind::Slip(SlipEvent { slips }),
-            point.tpv.lat(),
-            point.tpv.lon(),
+            lat,
+            lon,
         ))
     })
     .collect()
@@ -405,13 +402,14 @@ fn detect_clock_discontinuities(
         )]
         let is_outlier = (step.saturating_sub(median).saturating_abs() as f64) > threshold;
         if is_outlier && let Some(point) = points.get(b.0) {
+            let (lat, lon) = point.resolved_position();
             markers.push(GeneratedMarker::new(
                 point.tpv.time().utc(),
                 GeneratedMarkerKind::ClockDiscontinuity {
                     step: Duration::milliseconds(step),
                 },
-                point.tpv.lat(),
-                point.tpv.lon(),
+                lat,
+                lon,
             ));
         }
     }
@@ -431,6 +429,7 @@ fn excursion_markers(
         .filter_map(|excursion| {
             let peak = excursion.peak();
             let point = points.get(peak.index)?;
+            let (lat, lon) = point.resolved_position();
             Some(GeneratedMarker::new(
                 point.tpv.time().utc(),
                 GeneratedMarkerKind::ClockOffsetExcursion {
@@ -438,8 +437,8 @@ fn excursion_markers(
                     offset: Duration::milliseconds(peak.offset_ms),
                     samples: u32::try_from(excursion.samples.len()).unwrap_or(u32::MAX),
                 },
-                point.tpv.lat(),
-                point.tpv.lon(),
+                lat,
+                lon,
             ))
         })
         .collect()
@@ -513,6 +512,11 @@ fn time_range_spanning_every_fix(points: &vec1::Vec1<NavPoint>) -> TimeRange {
 }
 
 /// Computes `TrackMetadata` from a non-empty slice of points.
+///
+/// The geometry - distance, diameter, segment lengths and bounding box - is
+/// measured over [`NavPoint::resolved_position`], so it describes the path the
+/// map draws. [`build_loaded_file`] resolves a track's ghost fixes before it
+/// calls this.
 pub fn compute_track_metadata(
     index: usize,
     points: &vec1::Vec1<NavPoint>,
@@ -614,9 +618,14 @@ pub fn build_loaded_file(
                 .get(range)
                 .expect("ranges from segment_tracks are in bounds");
 
-            let track_points: vec1::Vec1<NavPoint> =
+            let mut track_points: vec1::Vec1<NavPoint> =
                 vec1::Vec1::try_from_vec(track_points_slice.to_vec())
                     .expect("segment_tracks produces only non-empty ranges");
+
+            // The ghost fixes are resolved first: the metadata geometry, the
+            // generated markers, the LOD levels and the satellite-label
+            // anchors below all read the resolved positions.
+            precompute_ghost_positions(&mut track_points);
 
             let track_time_range = time_range_spanning_every_fix(&track_points);
 
@@ -646,10 +655,7 @@ pub fn build_loaded_file(
                 &track_generated,
             );
 
-            let mut track_points_vec = track_points.into_vec();
-            precompute_ghost_positions(&mut track_points_vec);
-            // After ghost-position precomputation: LOD distances must see
-            // the same Mercator coordinates the renderers will project.
+            let track_points_vec = track_points.into_vec();
             let lod = crate::lod::build_track_lod(&track_points_vec);
             let sat_label_anchors = crate::sat_label::build_sat_label_anchors(&track_points_vec);
 

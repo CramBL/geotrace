@@ -11,6 +11,7 @@
 - **Map & Tracks:** Fixed a dead-reckoned fix between two fixes across the antimeridian being drawn half a world away, and one between two fixes near a pole being drawn off the great circle they lie on.
 - **Map & Tracks:** Fixed double-clicking a recording or track that crosses the antimeridian centering the map on the opposite side of the globe.
 - **Map & Tracks:** Fixed opening a recording that crosses the antimeridian showing the whole globe instead of zooming the map to the track.
+- **Map & Tracks:** Fixed a track's reported length, spread, bounding box and zoom to fit measuring dead-reckoned fixes at the coordinates the receiver wrote for them rather than where they are drawn.
 
 ## 0.13.0 - 2026-08-25
 
