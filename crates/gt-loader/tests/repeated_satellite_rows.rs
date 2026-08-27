@@ -1,6 +1,7 @@
-//! What a `.gtd` report holding the same `(constellation, prn)` twice means for
-//! the estimators reading the loaded track: the slip count and the utilization
-//! baseline count satellites, not report rows.
+//! What the loader makes of a `.gtd` report's satellite rows, read back through
+//! the real file path: rows repeating a `(constellation, prn)` merge into the
+//! one satellite every count taken from a report measures, and an SNR of ≈99
+//! dB-Hz, the firmware sentinel for "no data", arrives as no SNR at all.
 
 #![expect(
     clippy::expect_used,
@@ -12,8 +13,10 @@ use geotrace_sdk::{
     Satellite as SdkSatellite, SatelliteReport, Utc,
 };
 use gt_analysis::{loss_of_lock, satellite_utilization};
+use gt_test_utils::GOLD_BYTES;
 use gt_types::LoadedTrack;
-use gt_types::satellites::SlipCause;
+use gt_types::satellites::{Constellation, SlipCause};
+use rstest::rstest;
 
 /// Elevation mask, in degrees.
 const MASK_DEG: f32 = 15.0;
@@ -31,6 +34,18 @@ const REPEATED_PRN: u32 = 7;
 
 /// The satellite that stays in view after the repeated one drops out.
 const REMAINING_PRN: u32 = 1;
+
+/// The GPS satellite the gold dataset's satellite-stress track reports on two
+/// rows: once with the ≈99 dB-Hz sentinel, once with [`GOLD_MEASURED_SNR_DB`].
+const GOLD_REPEATED_PRN: u32 = 1;
+
+/// The out-of-range PRN that identifies the gold dataset's satellite-stress track.
+const GOLD_STRESS_TRACK_PRN: u32 = 0;
+
+const GOLD_MEASURED_SNR_DB: f32 = 40.0;
+
+/// Satellite reports the gold dataset's satellite-stress track holds.
+const GOLD_STRESS_TRACK_REPORTS: usize = 5;
 
 fn base_time() -> DateTime<Utc> {
     DateTime::from_timestamp(1_700_000_000, 0).expect("fixed timestamp is within range")
@@ -119,4 +134,60 @@ fn a_satellite_reported_on_two_rows_and_in_the_fix_on_one_is_fully_utilized() {
 
     let rates: Vec<f64> = util.all.iter().map(|point| point[1]).collect();
     assert_eq!(rates, vec![100.0; 3]);
+}
+
+#[test]
+fn the_gold_dataset_keeps_the_measured_snr_of_the_satellite_it_also_reports_as_a_sentinel() {
+    let file =
+        gt_loader::load_bytes(GOLD_BYTES, "gold.gtd".to_owned()).expect("the gold file loads");
+
+    let stress_track_snrs: Vec<Vec<f32>> = file
+        .tracks
+        .iter()
+        .flat_map(|track| &track.points)
+        .filter_map(|point| point.satellites.as_ref())
+        .filter(|satellites| {
+            satellites.satellites().any(|satellite| {
+                satellite.constellation() == Constellation::Gps
+                    && satellite.prn() == GOLD_STRESS_TRACK_PRN
+            })
+        })
+        .map(|satellites| {
+            satellites
+                .satellites()
+                .filter(|satellite| {
+                    satellite.constellation() == Constellation::Gps
+                        && satellite.prn() == GOLD_REPEATED_PRN
+                })
+                .filter_map(|satellite| satellite.snr().map(|snr| snr.value()))
+                .collect()
+        })
+        .collect();
+
+    assert_eq!(
+        stress_track_snrs,
+        vec![vec![GOLD_MEASURED_SNR_DB]; GOLD_STRESS_TRACK_REPORTS]
+    );
+}
+
+#[rstest]
+#[case::inside_the_sentinel_band(99.4, None)]
+#[case::just_outside_the_sentinel_band(98.5, Some(98.5))]
+#[case::high_but_measured(60.0, Some(60.0))]
+#[case::zero_is_a_measurement(0.0, Some(0.0))]
+fn an_snr_within_half_a_db_of_the_sentinel_arrives_as_no_snr(
+    #[case] reported_snr_db: f32,
+    #[case] expected_snr_db: Option<f32>,
+) {
+    let epoch = || vec![satellite_row(REMAINING_PRN, reported_snr_db, true)];
+    let track = load_track_reporting(vec![epoch(), epoch(), epoch()]);
+
+    let snrs: Vec<Option<f32>> = track
+        .points
+        .iter()
+        .filter_map(|point| point.satellites.as_ref())
+        .flat_map(|satellites| satellites.satellites())
+        .map(|satellite| satellite.snr().map(|snr| snr.value()))
+        .collect();
+    assert_eq!(snrs, vec![expected_snr_db; 3]);
 }

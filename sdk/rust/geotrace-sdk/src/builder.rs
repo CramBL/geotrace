@@ -1378,9 +1378,7 @@ fn collect_satellite_issues_inner<'a>(
             if let Some(snr) = sat.snr {
                 if snr < 0.0 {
                     issues.snr_negative += 1;
-                } else if (snr - 99.0).abs() < 0.5 {
-                    // 99 dB-Hz is a common firmware sentinel for "no data". Callers
-                    // should pass `None` for unavailable SNR rather than a sentinel value.
+                } else if sat.snr_is_no_data_sentinel() {
                     issues.snr_sentinel_99 += 1;
                 } else if snr > 60.0 {
                     issues.snr_above_60 += 1;
