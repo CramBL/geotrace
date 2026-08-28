@@ -882,10 +882,11 @@ mod tests {
 
     use chrono::TimeZone;
     use geotrace_sdk_units::Unit;
-    use gt_types::coordinates::{Latitude, Longitude};
+    use gt_types::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
     use gt_types::satellites::{Constellation, Satellite, Satellites};
     use gt_types::time_types::{GpsTime, SysTime};
     use gt_types::tpv::TimePositionVelocity;
+    use rstest::rstest;
     use uom::si::angle::degree;
     use uom::si::f64::Angle;
 
@@ -1583,6 +1584,120 @@ mod tests {
             points[1].resolved_position(),
             (Latitude::new(55.0), Longitude::new(12.0))
         );
+    }
+
+    /// Every fix in the placement tests below sits on the equator, so the
+    /// longitudes alone say where the builder placed them. 1e-9° is about
+    /// 0.1 mm.
+    const PLACEMENT_TOLERANCE_DEGREES: f64 = 1e-9;
+
+    /// A fix with a position and a heading, but no satellite report: the
+    /// receiver said where it was without saying what it tracked.
+    fn measured_fix_without_a_satellite_report(secs: i64, lon_degrees: f64) -> NavPoint {
+        let time = GpsTime::from_utc(
+            Utc.timestamp_opt(secs, 0)
+                .single()
+                .expect("valid timestamp"),
+        );
+        let tpv = TimePositionVelocity::builder()
+            .time(time)
+            .lat(Latitude::new(0.0))
+            .lon(Longitude::new(lon_degrees))
+            .heading(Angle::new::<degree>(90.0))
+            .build();
+        NavPoint::new(tpv, None)
+    }
+
+    /// A fix the receiver wrote a latitude of NaN for. It has a heading, so
+    /// only its unusable coordinate makes the builder place it, and a
+    /// longitude far from the fixes around it, so a position kept as recorded
+    /// is distinguishable from a placed one.
+    fn fix_without_a_recorded_position(secs: i64) -> NavPoint {
+        let time = GpsTime::from_utc(
+            Utc.timestamp_opt(secs, 0)
+                .single()
+                .expect("valid timestamp"),
+        );
+        let tpv = TimePositionVelocity::builder()
+            .time(time)
+            .lat(RecordedLatitude::from_degrees(f64::NAN))
+            .lon(RecordedLongitude::from_degrees(88.0))
+            .heading(Angle::new::<degree>(90.0))
+            .build();
+        NavPoint::new(tpv, None)
+    }
+
+    #[rstest]
+    #[case::between_two_measured_fixes(
+        vec![
+            measured_fix_without_a_satellite_report(0, 0.0),
+            fix_without_a_recorded_position(5),
+            measured_fix_without_a_satellite_report(10, 10.0),
+        ],
+        vec![0.0, 5.0, 10.0]
+    )]
+    #[case::before_the_first_measured_fix(
+        vec![
+            fix_without_a_recorded_position(0),
+            measured_fix_without_a_satellite_report(10, 10.0),
+            measured_fix_without_a_satellite_report(20, 20.0),
+        ],
+        vec![10.0, 10.0, 20.0]
+    )]
+    #[case::after_the_last_measured_fix(
+        vec![
+            measured_fix_without_a_satellite_report(0, 0.0),
+            measured_fix_without_a_satellite_report(10, 10.0),
+            fix_without_a_recorded_position(20),
+        ],
+        vec![0.0, 10.0, 10.0]
+    )]
+    #[case::a_run_of_three_spreads_over_the_time_they_span(
+        vec![
+            measured_fix_without_a_satellite_report(0, 0.0),
+            fix_without_a_recorded_position(2),
+            fix_without_a_recorded_position(5),
+            fix_without_a_recorded_position(8),
+            measured_fix_without_a_satellite_report(10, 10.0),
+        ],
+        vec![0.0, 2.0, 5.0, 8.0, 10.0]
+    )]
+    fn a_fix_without_a_recorded_position_is_placed_from_the_fixes_around_it(
+        #[case] mut points: Vec<NavPoint>,
+        #[case] expected_longitudes: Vec<f64>,
+    ) {
+        place_fixes_without_a_measured_position(&mut points);
+
+        let drawn_longitudes: Vec<f64> = points
+            .iter()
+            .map(|point| point.resolved_position().1.as_degrees())
+            .collect();
+        assert_eq!(drawn_longitudes.len(), expected_longitudes.len());
+        for (index, (drawn, expected)) in drawn_longitudes
+            .iter()
+            .zip(&expected_longitudes)
+            .enumerate()
+        {
+            assert!(
+                (drawn - expected).abs() < PLACEMENT_TOLERANCE_DEGREES,
+                "fix {index} drawn at lon {drawn}, expected {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn track_metadata_counts_the_fixes_whose_recorded_position_is_out_of_range() {
+        let mut points = vec![
+            measured_fix_without_a_satellite_report(0, 0.0),
+            fix_without_a_recorded_position(5),
+            measured_fix_without_a_satellite_report(10, 10.0),
+        ];
+        place_fixes_without_a_measured_position(&mut points);
+        let points = vec1::Vec1::try_from_vec(points).expect("three fixes");
+
+        let metadata = compute_track_metadata(1, &points, &[], &[]);
+
+        assert_eq!(metadata.invalid_position_count, 1);
     }
 
     #[test]

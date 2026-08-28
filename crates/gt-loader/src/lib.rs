@@ -1229,11 +1229,11 @@ mod tests {
     }
 
     /// A file can hold a marker position no interpolation would produce: the
-    /// marker is left out and the recording still loads.
+    /// marker is left out and the recording says which one and why.
     #[test]
-    fn a_marker_outside_the_coordinate_range_is_dropped() {
+    fn a_marker_outside_the_coordinate_range_is_dropped_and_named() {
         let marker = SdkMarker {
-            annotation: Annotation::builder().time(base()).build(),
+            annotation: Annotation::builder().time(base()).label("launch").build(),
             lat: Angle::degrees(91.0),
             lon: Angle::degrees(12.0),
         };
@@ -1245,45 +1245,142 @@ mod tests {
             annotation: None,
         };
 
-        assert!(convert_marker(&marker).is_none());
-        assert!(convert_event_marker(&event_marker).is_none());
-    }
-
-    #[test]
-    fn lat_out_of_range() {
-        let mut recorder = NavFileBuilder::new().open();
-        recorder.add_nav_fix(
-            NavFix::builder()
-                .gps_time(base())
-                .lat(Angle::degrees(91.0))
-                .lon(Angle::degrees(0.0))
-                .heading(Angle::degrees(0.0))
-                .build(),
+        assert_eq!(
+            convert_marker(&marker)
+                .expect_err("latitude 91 is out of range")
+                .to_string(),
+            "\"launch\": latitude 91 is outside -90..90"
         );
-        let nav_file = recorder.finish().unwrap();
-        let err = from_nav_file(&nav_file).unwrap_err();
-        assert!(
-            matches!(err, LoadError::LatitudeOutOfRange { lat, idx: 0 } if (lat - 91.0).abs() < 1e-10),
-            "expected LatitudeOutOfRange, got: {err:?}"
+        assert_eq!(
+            convert_event_marker(&event_marker)
+                .expect_err("longitude -181 is out of range")
+                .to_string(),
+            "\"power/boot\": longitude -181 is outside -180..180"
         );
     }
 
-    #[test]
-    fn lon_out_of_range() {
+    /// 1e-9° is about 0.1 mm.
+    const DEGREE_TOLERANCE: f64 = 1e-9;
+
+    /// Ten fixes a second apart along the equator at longitudes 0 to 9, with
+    /// an unusable latitude at record 3 and an unusable longitude at record 5.
+    /// Each of those two carries a plausible value on its other axis, far from
+    /// where the fixes around it are, so a position kept as recorded is
+    /// distinguishable from one placed between the neighbouring fixes.
+    fn recording_with_two_coordinates_out_of_range() -> Vec<u8> {
         let mut recorder = NavFileBuilder::new().open();
-        recorder.add_nav_fix(
-            NavFix::builder()
-                .gps_time(base())
-                .lat(Angle::degrees(0.0))
-                .lon(Angle::degrees(-181.0))
-                .heading(Angle::degrees(0.0))
-                .build(),
-        );
-        let nav_file = recorder.finish().unwrap();
-        let err = from_nav_file(&nav_file).unwrap_err();
+        for record in 0..10i64 {
+            let (lat_degrees, lon_degrees) = match record {
+                3 => (f64::NAN, 100.0),
+                5 => (45.0, -181.0),
+                _ => (0.0, record as f64),
+            };
+            recorder.add_nav_fix(
+                NavFix::builder()
+                    .gps_time(base() + Duration::seconds(record))
+                    .lat(Angle::degrees(lat_degrees))
+                    .lon(Angle::degrees(lon_degrees))
+                    .heading(Angle::degrees(90.0))
+                    .build(),
+            );
+        }
+        let mut bytes = Vec::new();
+        recorder.finish().unwrap().write(&mut bytes).unwrap();
+        bytes
+    }
+
+    fn assert_drawn_at(drawn: (Latitude, Longitude), expected_degrees: (f64, f64)) {
+        let (latitude, longitude) = drawn;
+        let (expected_latitude, expected_longitude) = expected_degrees;
         assert!(
-            matches!(err, LoadError::LongitudeOutOfRange { lon, idx: 0 } if (lon - -181.0).abs() < 1e-10),
-            "expected LongitudeOutOfRange, got: {err:?}"
+            (latitude.as_degrees() - expected_latitude).abs() < DEGREE_TOLERANCE
+                && (longitude.as_degrees() - expected_longitude).abs() < DEGREE_TOLERANCE,
+            "drawn at {}, {}, expected {expected_latitude}, {expected_longitude}",
+            latitude.as_degrees(),
+            longitude.as_degrees()
+        );
+    }
+
+    #[test]
+    fn fixes_with_a_coordinate_out_of_range_load_with_a_warning_naming_them() {
+        let file = load_bytes(
+            &recording_with_two_coordinates_out_of_range(),
+            "out_of_range.gtd".to_owned(),
+        )
+        .unwrap();
+
+        let track = file.tracks.first().expect("the ten fixes form one track");
+        assert_eq!(track.points.len(), 10);
+        assert_eq!(track.metadata.invalid_position_count, 2);
+        let warnings: Vec<(u32, &str, &str)> = file
+            .load_warnings
+            .iter()
+            .map(|w| (w.count, w.issue.as_str(), w.description.as_str()))
+            .collect();
+        assert_eq!(
+            warnings,
+            vec![
+                (
+                    1,
+                    "fix(es) with a latitude out of range",
+                    "record 3 wrote NaN°. Each such fix is drawn at a position \
+                     interpolated from the fixes around it."
+                ),
+                (
+                    1,
+                    "fix(es) with a longitude out of range",
+                    "record 5 wrote -181°. Each such fix is drawn at a position \
+                     interpolated from the fixes around it."
+                ),
+            ]
+        );
+    }
+
+    /// Record 3 is drawn between records 2 and 4 (longitudes 2 and 4), record
+    /// 5 between records 4 and 6 (longitudes 4 and 6), both halfway in time.
+    #[test]
+    fn a_fix_with_a_coordinate_out_of_range_keeps_it_and_is_drawn_between_its_neighbours() {
+        let file = load_bytes(
+            &recording_with_two_coordinates_out_of_range(),
+            "out_of_range.gtd".to_owned(),
+        )
+        .unwrap();
+
+        let track = file.tracks.first().expect("the ten fixes form one track");
+        let out_of_range_latitude = track.points.get(3).expect("record 3");
+        let out_of_range_longitude = track.points.get(5).expect("record 5");
+
+        assert!(out_of_range_latitude.tpv.lat().as_written().is_nan());
+        assert_eq!(out_of_range_latitude.tpv.lon().as_written(), 100.0);
+        assert_eq!(out_of_range_longitude.tpv.lat().as_written(), 45.0);
+        assert_eq!(out_of_range_longitude.tpv.lon().as_written(), -181.0);
+        assert_drawn_at(out_of_range_latitude.resolved_position(), (0.0, 3.0));
+        assert_drawn_at(out_of_range_longitude.resolved_position(), (0.0, 5.0));
+    }
+
+    /// A track holding no fix with a position at all has nowhere to draw any
+    /// of them, and is still refused.
+    #[test]
+    fn a_recording_whose_every_fix_is_out_of_range_is_refused() {
+        let mut recorder = NavFileBuilder::new().open();
+        for record in 0..3i64 {
+            recorder.add_nav_fix(
+                NavFix::builder()
+                    .gps_time(base() + Duration::seconds(record))
+                    .lat(Angle::degrees(91.0))
+                    .lon(Angle::degrees(12.0))
+                    .heading(Angle::degrees(90.0))
+                    .build(),
+            );
+        }
+        let mut bytes = Vec::new();
+        recorder.finish().unwrap().write(&mut bytes).unwrap();
+
+        let error = load_bytes(&bytes, "out_of_range.gtd".to_owned()).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "no fix between records 0 and 2 has a latitude and longitude in range"
         );
     }
 }
