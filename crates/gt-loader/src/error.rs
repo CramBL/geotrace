@@ -12,9 +12,11 @@ pub enum LoadError {
     #[error("invalid event marker: {0}")]
     EventMarker(#[from] geotrace_sdk::EventMarkerError),
 
-    #[error("latitude {lat} at index {idx} is out of range [-90, 90]")]
-    LatitudeOutOfRange { lat: f64, idx: usize },
-
-    #[error("longitude {lon} at index {idx} is out of range [-180, 180]")]
-    LongitudeOutOfRange { lon: f64, idx: usize },
+    #[error(
+        "no fix between records {first_record} and {last_record} has a latitude and longitude in range"
+    )]
+    TrackWithoutAPosition {
+        first_record: usize,
+        last_record: usize,
+    },
 }

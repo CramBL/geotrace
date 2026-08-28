@@ -383,7 +383,7 @@ mod tests {
                 // Point 1 has a satellite report, so it anchors a sky glyph.
                 let satellites =
                     (i == 1).then(|| gt_types::satellites::Satellites::new(None, None, Vec::new()));
-                NavPoint::new(tpv, satellites).expect("coordinates in range")
+                NavPoint::new(tpv, satellites)
             })
             .collect();
         let anchor = |pi, tier| SatLabelAnchor {
@@ -394,6 +394,7 @@ mod tests {
             metadata: TrackMetadata {
                 time_range: TimeRange::new(t(0), t(3)),
                 tpv_count: points.len(),
+                invalid_position_count: 0,
                 ..gt_test_utils::empty_track_metadata()
             },
             points,

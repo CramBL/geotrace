@@ -32,6 +32,7 @@ fn make_file_from_points(points: Vec<gt_types::NavPoint>) -> LoadedFile {
             point_set_diameter_m: Length::new::<meter>(100.0),
             has_custom_markers: false,
             tpv_count: n,
+            invalid_position_count: 0,
             satellite_report_count: 0,
             custom_marker_count: 0,
             generated_marker_count: 0,
@@ -325,7 +326,7 @@ pub(crate) fn nav_at(
         .lat(gt_types::Latitude::new(lat))
         .lon(gt_types::Longitude::new(lon))
         .build();
-    gt_types::NavPoint::new(tpv, None).expect("coordinates in range")
+    gt_types::NavPoint::new(tpv, None)
 }
 
 /// Regression test: with a partially-overlapping track, points outside the
@@ -651,6 +652,7 @@ fn candidate_label_generated_marker_matches_header() {
             point_set_diameter_m: uom::si::f64::Length::new::<uom::si::length::meter>(10.0),
             has_custom_markers: false,
             tpv_count: 0,
+            invalid_position_count: 0,
             satellite_report_count: 0,
             custom_marker_count: 0,
             generated_marker_count: 1,
@@ -808,7 +810,7 @@ fn map_framing_covers_where_the_points_are_drawn() {
     let drawn = (Latitude::new(55.0), Longitude::new(12.0));
     let mut track = track_at(0.0, 0.0);
     for point in &mut track.points {
-        point.set_resolved_position(drawn);
+        point.set_interpolated_position(drawn);
     }
     let files = vec![file_with_tracks(vec![track])];
     let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));

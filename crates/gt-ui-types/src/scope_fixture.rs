@@ -38,7 +38,7 @@ pub fn one_track_file() -> Vec<LoadedFile> {
                 .lat(Latitude::new(55.0))
                 .lon(Longitude::new(12.0))
                 .build();
-            NavPoint::new(tpv, None).expect("fixture coordinates in range")
+            NavPoint::new(tpv, None)
         })
         .collect();
     vec![gt_track_builder::build_loaded_file(

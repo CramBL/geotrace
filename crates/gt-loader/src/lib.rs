@@ -36,6 +36,7 @@ const STAGE_PARSING: &str = "Parsing…";
 const STAGE_CONVERTING: &str = "Converting…";
 const STAGE_SEGMENTING: &str = "Segmenting…";
 
+use std::fmt;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
@@ -47,6 +48,7 @@ use geotrace_sdk::{
     MarkerIcon as SdkMarkerIcon, NavFile, NavFileBuilder, Satellite as SdkSatellite,
     SatelliteReport, TravelMode as SdkTravelMode, collect_satellite_warnings,
 };
+use gt_types::coordinates::{CoordinateAxis, OutOfRange, RawDegrees};
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::{FixTimestamp, GpsTime, SysTime};
 use gt_types::{
@@ -114,8 +116,8 @@ pub fn load_gtd_file_with_progress(
     progress(0.20, STAGE_PARSING);
     let nav_file = NavFile::read(file)?;
     progress(0.65, STAGE_CONVERTING);
-    let (points, markers, event_markers, event_marker_styles, channels) = from_nav_file(&nav_file)?;
-    let load_warnings = satellite_warnings_from_nav_file(&nav_file);
+    let contents = from_nav_file(&nav_file);
+    check_every_track_holds_a_fix_with_a_position(&contents.nav_points, config)?;
     progress(0.90, STAGE_SEGMENTING);
     let source = FileSource::GtdPath(path.to_path_buf());
     let identity = derive_identity(
@@ -126,15 +128,15 @@ pub fn load_gtd_file_with_progress(
     );
     let file = gt_track_builder::build_loaded_file(
         filename,
-        &points,
-        &markers,
-        event_markers,
-        event_marker_styles,
-        &channels,
+        &contents.nav_points,
+        &contents.markers,
+        contents.event_markers,
+        contents.event_marker_styles,
+        &contents.channels,
         config,
         source,
         file_meta_from_nav(&nav_file),
-        load_warnings,
+        contents.load_warnings,
     );
     Ok(LoadedGtd { file, identity })
 }
@@ -186,8 +188,8 @@ pub fn load_gtd_bytes_with_progress(
     progress(0.15, STAGE_PARSING);
     let nav_file = NavFile::read(bytes)?;
     progress(0.60, STAGE_CONVERTING);
-    let (points, markers, event_markers, event_marker_styles, channels) = from_nav_file(&nav_file)?;
-    let load_warnings = satellite_warnings_from_nav_file(&nav_file);
+    let contents = from_nav_file(&nav_file);
+    check_every_track_holds_a_fix_with_a_position(&contents.nav_points, config)?;
     progress(0.90, STAGE_SEGMENTING);
     let source = FileSource::GtdBytes(Arc::from(bytes));
     let identity = derive_identity(
@@ -198,15 +200,15 @@ pub fn load_gtd_bytes_with_progress(
     );
     let file = gt_track_builder::build_loaded_file(
         filename,
-        &points,
-        &markers,
-        event_markers,
-        event_marker_styles,
-        &channels,
+        &contents.nav_points,
+        &contents.markers,
+        contents.event_markers,
+        contents.event_marker_styles,
+        &contents.channels,
         config,
         source,
         file_meta_from_nav(&nav_file),
-        load_warnings,
+        contents.load_warnings,
     );
     Ok(LoadedGtd { file, identity })
 }
@@ -302,20 +304,117 @@ fn satellite_warnings_from_nav_file(nav_file: &NavFile) -> Vec<LoadWarning> {
     .collect()
 }
 
-type NavFileContents = (
-    Vec<NavPoint>,
-    Vec<CustomMarker>,
-    Vec<EventMarker>,
-    Vec<EventMarkerStyle>,
-    Vec<Channel>,
-);
+/// How many entries a warning names before it only counts the rest.
+const MAX_LISTED_ENTRIES: usize = 5;
 
-fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
+/// One fix's recorded coordinate on one axis, outside that axis' range.
+struct CoordinateOutOfRange {
+    record: usize,
+    degrees: RawDegrees,
+}
+
+impl fmt::Display for CoordinateOutOfRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { record, degrees } = self;
+        write!(f, "record {record} wrote {degrees}")
+    }
+}
+
+/// A marker the loader left out: the position written for it is no position.
+struct DroppedMarker {
+    label: String,
+    out_of_range: OutOfRange,
+}
+
+impl fmt::Display for DroppedMarker {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            label,
+            out_of_range,
+        } = self;
+        write!(f, "{label:?}: {out_of_range}")
+    }
+}
+
+fn first_few_listed<T: fmt::Display>(entries: &[T]) -> String {
+    let listed = entries
+        .iter()
+        .take(MAX_LISTED_ENTRIES)
+        .map(T::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    match entries.len().saturating_sub(MAX_LISTED_ENTRIES) {
+        0 => listed,
+        rest => format!("{listed}, and {rest} more"),
+    }
+}
+
+fn coordinates_out_of_range_warning(
+    axis: CoordinateAxis,
+    fixes: &[CoordinateOutOfRange],
+) -> Option<LoadWarning> {
+    (!fixes.is_empty()).then(|| LoadWarning {
+        count: u32::try_from(fixes.len()).unwrap_or(u32::MAX),
+        issue: format!("fix(es) with a {axis} out of range"),
+        description: format!(
+            "{}. Each such fix is drawn at a position interpolated from the fixes around it.",
+            first_few_listed(fixes)
+        ),
+    })
+}
+
+fn dropped_markers_warning(issue: &str, dropped: &[DroppedMarker]) -> Option<LoadWarning> {
+    (!dropped.is_empty()).then(|| LoadWarning {
+        count: u32::try_from(dropped.len()).unwrap_or(u32::MAX),
+        issue: issue.to_owned(),
+        description: format!(
+            "{}. A marker written outside the coordinate ranges has no place on the map and is left out.",
+            first_few_listed(dropped)
+        ),
+    })
+}
+
+/// Refuses a recording in which some track holds no fix with a position: its
+/// fixes have nowhere to be drawn, and nothing to interpolate one from.
+fn check_every_track_holds_a_fix_with_a_position(
+    points: &[NavPoint],
+    config: &gt_track_builder::SegmentationConfig,
+) -> Result<(), LoadError> {
+    for range in gt_track_builder::segment_tracks(points, &config.track_layout) {
+        let track = points.get(range.clone()).unwrap_or_default();
+        if !track.is_empty() && track.iter().all(|point| point.tpv.position().is_none()) {
+            return Err(LoadError::TrackWithoutAPosition {
+                first_record: range.start,
+                last_record: range.end.saturating_sub(1),
+            });
+        }
+    }
+    Ok(())
+}
+
+struct NavFileContents {
+    nav_points: Vec<NavPoint>,
+    markers: Vec<CustomMarker>,
+    event_markers: Vec<EventMarker>,
+    event_marker_styles: Vec<EventMarkerStyle>,
+    channels: Vec<Channel>,
+    load_warnings: Vec<LoadWarning>,
+}
+
+fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
     let mut nav_points = Vec::with_capacity(nav_file.nav_points().len());
+    let mut latitudes_out_of_range: Vec<CoordinateOutOfRange> = Vec::new();
+    let mut longitudes_out_of_range: Vec<CoordinateOutOfRange> = Vec::new();
 
-    for (idx, sdk_point) in nav_file.nav_points().iter().enumerate() {
+    for (record, sdk_point) in nav_file.nav_points().iter().enumerate() {
         let lat = RecordedLatitude::from_degrees(sdk_point.fix.lat.as_degrees());
         let lon = RecordedLongitude::from_degrees(sdk_point.fix.lon.as_degrees());
+        if let RecordedLatitude::Invalid(degrees) = lat {
+            latitudes_out_of_range.push(CoordinateOutOfRange { record, degrees });
+        }
+        if let RecordedLongitude::Invalid(degrees) = lon {
+            longitudes_out_of_range.push(CoordinateOutOfRange { record, degrees });
+        }
 
         let time = match (sdk_point.fix.gps_time, sdk_point.fix.sys_time) {
             (Some(gps), _) => FixTimestamp::FromGpsReceiver(GpsTime::from_utc(gps)),
@@ -334,33 +433,26 @@ fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
             .build();
 
         let satellites = sdk_point.satellites.as_ref().map(convert_satellite_report);
-
-        let Some(nav_point) = NavPoint::new(tpv, satellites) else {
-            return Err(match lat.valid() {
-                None => LoadError::LatitudeOutOfRange {
-                    lat: lat.as_written(),
-                    idx,
-                },
-                Some(_) => LoadError::LongitudeOutOfRange {
-                    lon: lon.as_written(),
-                    idx,
-                },
-            });
-        };
-        nav_points.push(nav_point);
+        nav_points.push(NavPoint::new(tpv, satellites));
     }
 
-    let markers = nav_file
-        .markers()
-        .iter()
-        .filter_map(convert_marker)
-        .collect();
+    let mut markers = Vec::new();
+    let mut dropped_markers = Vec::new();
+    for marker in nav_file.markers() {
+        match convert_marker(marker) {
+            Ok(marker) => markers.push(marker),
+            Err(dropped) => dropped_markers.push(dropped),
+        }
+    }
 
-    let event_markers = nav_file
-        .event_markers()
-        .iter()
-        .filter_map(convert_event_marker)
-        .collect();
+    let mut event_markers = Vec::new();
+    let mut dropped_event_markers = Vec::new();
+    for event_marker in nav_file.event_markers() {
+        match convert_event_marker(event_marker) {
+            Ok(event_marker) => event_markers.push(event_marker),
+            Err(dropped) => dropped_event_markers.push(dropped),
+        }
+    }
 
     let event_marker_styles = nav_file
         .event_marker_styles()
@@ -370,13 +462,31 @@ fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
 
     let channels = nav_file.channels().iter().map(convert_channel).collect();
 
-    Ok((
+    let load_warnings = [
+        coordinates_out_of_range_warning(CoordinateAxis::Latitude, &latitudes_out_of_range),
+        coordinates_out_of_range_warning(CoordinateAxis::Longitude, &longitudes_out_of_range),
+        dropped_markers_warning(
+            "custom marker(s) with a position out of range",
+            &dropped_markers,
+        ),
+        dropped_markers_warning(
+            "event marker(s) with a position out of range",
+            &dropped_event_markers,
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    .chain(satellite_warnings_from_nav_file(nav_file))
+    .collect();
+
+    NavFileContents {
         nav_points,
         markers,
         event_markers,
         event_marker_styles,
         channels,
-    ))
+        load_warnings,
+    }
 }
 
 fn convert_channel(sdk: &geotrace_sdk::Channel) -> Channel {
@@ -391,23 +501,22 @@ fn convert_channel(sdk: &geotrace_sdk::Channel) -> Channel {
     }
 }
 
-fn convert_event_marker(m: &EventMarkerPoint) -> Option<EventMarker> {
+fn convert_event_marker(m: &EventMarkerPoint) -> Result<EventMarker, DroppedMarker> {
     match (
         Latitude::try_new(m.lat.as_degrees()),
         Longitude::try_new(m.lon.as_degrees()),
     ) {
-        (Ok(lat), Ok(lon)) => Some(EventMarker::new(
+        (Ok(lat), Ok(lon)) => Ok(EventMarker::new(
             m.sys_time,
             m.variant_path.clone(),
             m.annotation.clone(),
             lat,
             lon,
         )),
-        (Err(out_of_range), _) | (Ok(_), Err(out_of_range)) => {
-            let path = &m.variant_path;
-            log::error!("Dropping the event marker {path:?}: {out_of_range}");
-            None
-        }
+        (Err(out_of_range), _) | (Ok(_), Err(out_of_range)) => Err(DroppedMarker {
+            label: m.variant_path.clone(),
+            out_of_range,
+        }),
     }
 }
 
@@ -519,23 +628,23 @@ fn merge_rows_repeating_a_satellite(tracked: &[SdkSatellite]) -> Vec<SdkSatellit
     merged
 }
 
-fn convert_marker(m: &SdkMarker) -> Option<CustomMarker> {
+fn convert_marker(m: &SdkMarker) -> Result<CustomMarker, DroppedMarker> {
+    let label = m.annotation.label.as_deref().unwrap_or("").to_owned();
     match (
         Latitude::try_new(m.lat.as_degrees()),
         Longitude::try_new(m.lon.as_degrees()),
     ) {
-        (Ok(lat), Ok(lon)) => Some(CustomMarker::new(
+        (Ok(lat), Ok(lon)) => Ok(CustomMarker::new(
             m.annotation.time,
-            m.annotation.label.as_deref().unwrap_or("").to_owned(),
+            label,
             m.annotation.icon.map_or(MarkerIcon::Pin, convert_icon),
             lat,
             lon,
         )),
-        (Err(out_of_range), _) | (Ok(_), Err(out_of_range)) => {
-            let label = m.annotation.label.as_deref().unwrap_or("");
-            log::error!("Dropping the custom marker {label:?}: {out_of_range}");
-            None
-        }
+        (Err(out_of_range), _) | (Ok(_), Err(out_of_range)) => Err(DroppedMarker {
+            label,
+            out_of_range,
+        }),
     }
 }
 
@@ -639,8 +748,9 @@ mod tests {
             .build()
     }
 
-    fn build(nav_file: &NavFile) -> Result<(Vec<NavPoint>, Vec<CustomMarker>), LoadError> {
-        from_nav_file(nav_file).map(|(pts, markers, _, _, _)| (pts, markers))
+    fn build(nav_file: &NavFile) -> (Vec<NavPoint>, Vec<CustomMarker>) {
+        let contents = from_nav_file(nav_file);
+        (contents.nav_points, contents.markers)
     }
 
     /// The loader records which clock stamped a fix: the receiver's timestamp
@@ -672,7 +782,7 @@ mod tests {
                 .build(),
         );
 
-        let (points, _) = build(&recorder.finish().unwrap()).unwrap();
+        let (points, _) = build(&recorder.finish().unwrap());
 
         let stamped: Vec<(DateTime<Utc>, Option<DateTime<Utc>>)> = points
             .iter()
@@ -957,7 +1067,7 @@ mod tests {
                 .speed(Velocity::meter_per_second(12.5))
                 .build(),
         );
-        let (nav_points, _) = build(&recorder.finish().unwrap()).unwrap();
+        let (nav_points, _) = build(&recorder.finish().unwrap());
         assert_eq!(nav_points.len(), 1);
         let tpv = nav_points[0].tpv;
         assert_eq!(tpv.time().utc(), t0);
@@ -974,7 +1084,7 @@ mod tests {
     fn speed_none_propagation() {
         let mut recorder = NavFileBuilder::new().open();
         recorder.add_nav_fix(minimal_fix(base()));
-        let (nav_points, _) = build(&recorder.finish().unwrap()).unwrap();
+        let (nav_points, _) = build(&recorder.finish().unwrap());
         assert_eq!(nav_points[0].tpv.velocity(), None);
     }
 
@@ -990,7 +1100,7 @@ mod tests {
                 .speed(Velocity::meter_per_second(15.0))
                 .build(),
         );
-        let (nav_points, _) = build(&recorder.finish().unwrap()).unwrap();
+        let (nav_points, _) = build(&recorder.finish().unwrap());
         assert_eq!(
             nav_points[0].tpv.velocity().map(|v| v.get::<uom_mps>()),
             Some(15.0)
@@ -1021,7 +1131,7 @@ mod tests {
                 ])
                 .build(),
         );
-        let (nav_points, _) = build(&recorder.finish().unwrap()).unwrap();
+        let (nav_points, _) = build(&recorder.finish().unwrap());
         let sats = nav_points[0].satellites.as_ref().unwrap();
         assert_eq!(sats.satellite_count(), 2);
         assert_eq!(sats.fix_count(), 1);
@@ -1166,7 +1276,7 @@ mod tests {
                 .time(t0 + Duration::milliseconds(500))
                 .build(),
         );
-        let (_, markers) = build(&recorder.finish().unwrap()).unwrap();
+        let (_, markers) = build(&recorder.finish().unwrap());
         assert_eq!(markers[0].label, "");
     }
 
@@ -1183,7 +1293,7 @@ mod tests {
                 .label(String::new())
                 .build(),
         );
-        let (_, markers) = build(&recorder.finish().unwrap()).unwrap();
+        let (_, markers) = build(&recorder.finish().unwrap());
         assert_eq!(markers[0].label, "");
     }
 
@@ -1199,7 +1309,7 @@ mod tests {
                 .time(t0 + Duration::milliseconds(500))
                 .build(),
         );
-        let (_, markers) = build(&recorder.finish().unwrap()).unwrap();
+        let (_, markers) = build(&recorder.finish().unwrap());
         assert_eq!(markers[0].icon, MarkerIcon::Pin);
     }
 
@@ -1264,9 +1374,9 @@ mod tests {
 
     /// Ten fixes a second apart along the equator at longitudes 0 to 9, with
     /// an unusable latitude at record 3 and an unusable longitude at record 5.
-    /// Each of those two carries a plausible value on its other axis, far from
-    /// where the fixes around it are, so a position kept as recorded is
-    /// distinguishable from one placed between the neighbouring fixes.
+    /// A position kept as recorded is distinguishable from one placed between
+    /// the neighbouring fixes: each of the two carries a plausible value on
+    /// its other axis, far from the fixes around it.
     fn recording_with_two_coordinates_out_of_range() -> Vec<u8> {
         let mut recorder = NavFileBuilder::new().open();
         for record in 0..10i64 {
@@ -1351,9 +1461,18 @@ mod tests {
         let out_of_range_longitude = track.points.get(5).expect("record 5");
 
         assert!(out_of_range_latitude.tpv.lat().as_written().is_nan());
-        assert_eq!(out_of_range_latitude.tpv.lon().as_written(), 100.0);
-        assert_eq!(out_of_range_longitude.tpv.lat().as_written(), 45.0);
-        assert_eq!(out_of_range_longitude.tpv.lon().as_written(), -181.0);
+        assert_eq!(
+            out_of_range_latitude.tpv.lon(),
+            RecordedLongitude::from_degrees(100.0)
+        );
+        assert_eq!(
+            out_of_range_longitude.tpv.lat(),
+            RecordedLatitude::from_degrees(45.0)
+        );
+        assert_eq!(
+            out_of_range_longitude.tpv.lon(),
+            RecordedLongitude::from_degrees(-181.0)
+        );
         assert_drawn_at(out_of_range_latitude.resolved_position(), (0.0, 3.0));
         assert_drawn_at(out_of_range_longitude.resolved_position(), (0.0, 5.0));
     }

@@ -162,7 +162,7 @@ mod tests {
             .lon(Longitude::new(x_m * DEG_PER_METER))
             .heading(Angle::new::<degree>(90.0))
             .build();
-        NavPoint::new(tpv, Some(Satellites::new(None, None, sats))).expect("coordinates in range")
+        NavPoint::new(tpv, Some(Satellites::new(None, None, sats)))
     }
 
     /// 1024 strong-fix points spaced 10 m apart.

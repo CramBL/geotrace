@@ -468,7 +468,7 @@ mod tests {
                         gps + chrono::Duration::milliseconds(ahead_ms),
                     ))
                     .build();
-                gt_types::nav_point::NavPoint::new(tpv, None).expect("coordinates in range")
+                gt_types::nav_point::NavPoint::new(tpv, None)
             })
             .collect();
         gt_types::LoadedTrack {
@@ -617,7 +617,7 @@ mod heading_wrap {
                     .lon(Longitude::new(12.0))
                     .maybe_heading(heading.map(Angle::new::<degree>))
                     .build();
-                NavPoint::new(tpv, None).expect("coordinates in range")
+                NavPoint::new(tpv, None)
             })
             .collect();
         gt_types::LoadedTrack {

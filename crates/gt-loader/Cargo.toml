@@ -13,7 +13,6 @@ doctest = false
 geotrace-sdk = { path = "../../sdk/rust/geotrace-sdk" }
 gt-track-builder = { path = "../gt-track-builder" }
 gt-types = { path = "../gt-types" }
-log.workspace = true
 thiserror.workspace = true
 uom.workspace = true
 

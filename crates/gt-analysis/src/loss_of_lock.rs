@@ -487,7 +487,6 @@ mod series_tests {
             .lon(Longitude::new(12.0))
             .build();
         NavPoint::new(tpv, Some(Satellites::new(Some(time), None, sats)))
-            .expect("coordinates in range")
     }
 
     fn gps(prn: u32, elevation: f32, snr: f32) -> Satellite {
@@ -548,7 +547,7 @@ mod series_tests {
                 .lat(Latitude::new(55.0))
                 .lon(Longitude::new(12.0))
                 .build();
-            NavPoint::new(tpv, None).expect("coordinates in range")
+            NavPoint::new(tpv, None)
         };
         let points = vec![
             point(0, vec![gps(1, 40.0, 45.0), gps(2, 30.0, 40.0)]),

@@ -23,17 +23,13 @@ const DEGREE_M: f64 = 111_195.080_233_532_92;
 /// Metres of slack allowed against a hand-computed great-circle length.
 const TOLERANCE_M: f64 = 0.1;
 
-#[expect(
-    clippy::expect_used,
-    reason = "Test data generation with hardcoded values"
-)]
 fn point(lat: Latitude, lon: Longitude) -> NavPoint {
     let tpv = TimePositionVelocity::builder()
         .time(GpsTime::from_utc(DateTime::UNIX_EPOCH))
         .lat(lat)
         .lon(lon)
         .build();
-    NavPoint::new(tpv, None).expect("coordinates in range")
+    NavPoint::new(tpv, None)
 }
 
 /// A track running east over the antimeridian: 179.0° E, then 179.0° W, then

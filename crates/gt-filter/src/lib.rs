@@ -108,7 +108,7 @@ mod tests {
                     .lat(Latitude::new(55.0))
                     .lon(Longitude::new(12.0))
                     .build();
-                NavPoint::new(tpv, None).expect("coordinates in range")
+                NavPoint::new(tpv, None)
             })
             .collect()
     }
@@ -194,6 +194,7 @@ mod tests {
             point_set_diameter_m: Length::new::<meter>(spread_m),
             has_custom_markers: has_custom,
             tpv_count: 1,
+            invalid_position_count: 0,
             satellite_report_count: 0,
             custom_marker_count: 0,
             generated_marker_count: 0,

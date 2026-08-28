@@ -283,6 +283,10 @@ pub struct TrackMetadata {
     pub segment_length_range: Option<SegmentLengthRange>,
     pub has_custom_markers: bool,
     pub tpv_count: usize,
+    /// Fixes whose recorded latitude or longitude is outside its range. Those
+    /// are drawn where the track builder placed them, not where the receiver
+    /// wrote them.
+    pub invalid_position_count: usize,
     pub satellite_report_count: usize,
     pub custom_marker_count: usize,
     pub generated_marker_count: usize,
@@ -745,6 +749,7 @@ mod nearest_satellite_report_tests {
             segment_length_range: None,
             has_custom_markers: false,
             tpv_count: 0,
+            invalid_position_count: 0,
             satellite_report_count: 0,
             custom_marker_count: 0,
             generated_marker_count: 0,
@@ -771,7 +776,7 @@ mod nearest_satellite_report_tests {
                         .collect();
                     Satellites::new(None, None, sats)
                 });
-                NavPoint::new(tpv, satellites).expect("coordinates in range")
+                NavPoint::new(tpv, satellites)
             })
             .collect();
         LoadedTrack {

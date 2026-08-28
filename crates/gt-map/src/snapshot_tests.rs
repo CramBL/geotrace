@@ -101,6 +101,7 @@ fn make_snapshot_file() -> gt_types::LoadedFile {
             point_set_diameter_m: Length::new::<uom::si::length::meter>(500.0),
             has_custom_markers: true,
             tpv_count: n,
+            invalid_position_count: 0,
             satellite_report_count,
             custom_marker_count: 1,
             generated_marker_count: 1,
@@ -986,7 +987,7 @@ fn make_short_walk_file() -> gt_types::LoadedFile {
                 .lat(Latitude::new(55.68 + i as f64 * 1.0e-4))
                 .lon(Longitude::new(12.56))
                 .build();
-            gt_types::NavPoint::new(tpv, None).expect("coordinates in range")
+            gt_types::NavPoint::new(tpv, None)
         })
         .collect();
     let bb = GeoBounds::from_positions([
@@ -1001,6 +1002,7 @@ fn make_short_walk_file() -> gt_types::LoadedFile {
             bounding_box: bb,
             merc_bounds: MercBounds::from(bb),
             tpv_count: n,
+            invalid_position_count: 0,
             ..gt_test_utils::empty_track_metadata()
         },
         sat_label_anchors: Vec::new(),

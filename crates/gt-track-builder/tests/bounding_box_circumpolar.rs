@@ -20,10 +20,6 @@ use gt_track_builder::segment;
 const DEGREES_TOLERANCE: f64 = 1e-9;
 
 /// One fix at second `t`, in degrees.
-#[expect(
-    clippy::expect_used,
-    reason = "Test data generation with hardcoded values"
-)]
 fn fix(t: i64, lat: f64, lon: f64) -> NavPoint {
     let time = GpsTime::from_utc(DateTime::UNIX_EPOCH + Duration::seconds(t));
     let tpv = TimePositionVelocity::builder()
@@ -32,7 +28,7 @@ fn fix(t: i64, lat: f64, lon: f64) -> NavPoint {
         .lon(Longitude::new(lon))
         .heading(Angle::new::<degree>(90.0))
         .build();
-    NavPoint::new(tpv, None).expect("coordinates in range")
+    NavPoint::new(tpv, None)
 }
 
 /// Four fixes at 89.9° N, a quarter turn apart: a receiver carried around the

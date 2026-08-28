@@ -21,15 +21,66 @@ pub enum FixQuality {
     Lost,
 }
 
+/// Coordinates with their Web Mercator projection, held together so the two
+/// can never disagree. The projection is kept because the renderers project
+/// every visible point each frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedPosition {
+    latitude: Latitude,
+    longitude: Longitude,
+    merc: MercPoint,
+}
+
+impl ProjectedPosition {
+    fn new(latitude: Latitude, longitude: Longitude) -> Self {
+        Self {
+            latitude,
+            longitude,
+            merc: mercator::normalize(latitude, longitude),
+        }
+    }
+
+    pub fn coordinates(self) -> (Latitude, Longitude) {
+        (self.latitude, self.longitude)
+    }
+
+    pub fn merc(self) -> MercPoint {
+        self.merc
+    }
+}
+
+/// Where a nav point is drawn, and how it got there.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ResolvedPosition {
+    /// The coordinates the receiver recorded, both inside their axis' range.
+    Measured(ProjectedPosition),
+    /// The position the track builder placed the point at, in time between
+    /// the fixes around it.
+    Interpolated(ProjectedPosition),
+    /// A recorded position outside the coordinate ranges, which the track
+    /// builder has not placed yet.
+    Pending,
+}
+
+impl ResolvedPosition {
+    /// `None` for a point the track builder has not placed yet.
+    pub fn projected(self) -> Option<ProjectedPosition> {
+        match self {
+            Self::Measured(projected) | Self::Interpolated(projected) => Some(projected),
+            Self::Pending => None,
+        }
+    }
+}
+
 /// One nav fix with its satellite report, carrying two positions that can
 /// differ.
 ///
-/// `tpv` holds the position the receiver recorded for this epoch. The
-/// resolved position is where the point actually is, and is what every
-/// renderer draws. The two are equal until the track builder resolves a ghost
-/// fix, which it places by interpolating between the surrounding measured
-/// fixes: a receiver that reports no heading often writes coordinates it did
-/// not measure, down to (0, 0).
+/// `tpv` holds the position the receiver recorded for this epoch, out of range
+/// values included. The resolved position is where the point actually is, and
+/// is what every renderer draws. The two are equal until the track builder
+/// places the point: a receiver that reports no heading often writes
+/// coordinates it did not measure, down to (0, 0), and one that reports a
+/// latitude of 91° wrote no position at all.
 ///
 /// So read [`NavPoint::resolved_position`] (or [`NavPoint::merc`], its
 /// projection) for anything geometric - a distance, a bounding box, a
@@ -39,37 +90,55 @@ pub enum FixQuality {
 pub struct NavPoint {
     pub tpv: TimePositionVelocity,
     pub satellites: Option<Satellites>,
-    resolved_position: (Latitude, Longitude),
-    merc: MercPoint,
+    resolved: ResolvedPosition,
 }
 
 impl NavPoint {
-    /// `None` when the fix has no position to resolve to, which is when
-    /// either of its recorded coordinates is out of range.
-    pub fn new(tpv: TimePositionVelocity, satellites: Option<Satellites>) -> Option<Self> {
-        let (latitude, longitude) = tpv.position()?;
-        Some(Self {
+    pub fn new(tpv: TimePositionVelocity, satellites: Option<Satellites>) -> Self {
+        let resolved = match tpv.position() {
+            Some((latitude, longitude)) => {
+                ResolvedPosition::Measured(ProjectedPosition::new(latitude, longitude))
+            }
+            None => ResolvedPosition::Pending,
+        };
+        Self {
             tpv,
             satellites,
-            resolved_position: (latitude, longitude),
-            merc: mercator::normalize(latitude, longitude),
-        })
+            resolved,
+        }
+    }
+
+    pub fn resolved(&self) -> ResolvedPosition {
+        self.resolved
+    }
+
+    /// A point that reached a track always holds a position: the track builder
+    /// places every fix whose recorded coordinates are out of range from the
+    /// fixes that have a recorded position, and the loader refuses a recording
+    /// where no fix has one.
+    #[expect(
+        clippy::unreachable,
+        reason = "a point built into a track is always placed; reaching this is a bug in the builder, not bad file data"
+    )]
+    fn placed(&self) -> ProjectedPosition {
+        match self.resolved.projected() {
+            Some(projected) => projected,
+            None => unreachable!("the track builder places every point before it reaches a track"),
+        }
     }
 
     pub fn resolved_position(&self) -> (Latitude, Longitude) {
-        self.resolved_position
+        self.placed().coordinates()
     }
 
     /// The resolved position in normalized Web Mercator coordinates, see
-    /// [`crate::mercator`]. Kept pre-computed because the renderers project
-    /// every visible point each frame.
+    /// [`crate::mercator`].
     pub fn merc(&self) -> MercPoint {
-        self.merc
+        self.placed().merc()
     }
 
-    pub fn set_resolved_position(&mut self, (latitude, longitude): (Latitude, Longitude)) {
-        self.resolved_position = (latitude, longitude);
-        self.merc = mercator::normalize(latitude, longitude);
+    pub fn set_interpolated_position(&mut self, (latitude, longitude): (Latitude, Longitude)) {
+        self.resolved = ResolvedPosition::Interpolated(ProjectedPosition::new(latitude, longitude));
     }
 
     pub fn fix_count(&self) -> u32 {
@@ -129,7 +198,7 @@ mod tests {
             .lat(latitude)
             .lon(longitude)
             .build();
-        NavPoint::new(tpv, None).expect("coordinates in range")
+        NavPoint::new(tpv, None)
     }
 
     #[test]
@@ -144,14 +213,19 @@ mod tests {
             point.merc(),
             mercator::normalize(Latitude::new(55.0), Longitude::new(12.0))
         );
+        assert!(matches!(point.resolved(), ResolvedPosition::Measured(_)));
     }
 
     #[test]
     fn resolving_a_point_elsewhere_reprojects_it_and_keeps_the_recorded_position() {
         let mut point = point_at(Latitude::new(55.0), Longitude::new(12.0));
 
-        point.set_resolved_position((Latitude::new(-33.0), Longitude::new(151.0)));
+        point.set_interpolated_position((Latitude::new(-33.0), Longitude::new(151.0)));
 
+        assert!(matches!(
+            point.resolved(),
+            ResolvedPosition::Interpolated(_)
+        ));
         assert_eq!(
             point.resolved_position(),
             (Latitude::new(-33.0), Longitude::new(151.0))
@@ -166,15 +240,25 @@ mod tests {
         );
     }
 
+    /// The point holds no position of its own until the track builder places
+    /// it between the fixes around it.
     #[test]
-    fn a_fix_with_a_coordinate_out_of_range_has_no_point_to_resolve_to() {
+    fn a_fix_with_a_coordinate_out_of_range_waits_to_be_placed() {
         let tpv = TimePositionVelocity::builder()
             .time(GpsTime::from_utc(Utc::now()))
             .lat(RecordedLatitude::from_degrees(91.0))
             .lon(RecordedLongitude::from_degrees(12.0))
             .build();
 
-        assert!(NavPoint::new(tpv, None).is_none());
+        let mut point = NavPoint::new(tpv, None);
+        assert_eq!(point.resolved(), ResolvedPosition::Pending);
+
+        point.set_interpolated_position((Latitude::new(55.0), Longitude::new(12.0)));
+
+        assert_eq!(
+            point.resolved_position(),
+            (Latitude::new(55.0), Longitude::new(12.0))
+        );
     }
 
     #[test]
@@ -186,7 +270,7 @@ mod tests {
             .heading(Angle::new::<degree>(0.0))
             .build();
 
-        let mut np = NavPoint::new(tpv, None).expect("coordinates in range");
+        let mut np = NavPoint::new(tpv, None);
         assert_eq!(np.fix_count(), 0);
         assert_eq!(np.total_satellites(), 0);
 
