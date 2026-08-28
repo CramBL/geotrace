@@ -201,7 +201,7 @@ mod tests {
             .lon(Longitude::new(12.0))
             .sys_time(sys)
             .build();
-        NavPoint::new(tpv, None)
+        NavPoint::new(tpv, None).expect("coordinates in range")
     }
 
     /// The host clock stamped this point at `sys_secs`, the receiver having
@@ -214,7 +214,7 @@ mod tests {
             .lon(Longitude::new(12.0))
             .sys_time(host)
             .build();
-        NavPoint::new(tpv, None)
+        NavPoint::new(tpv, None).expect("coordinates in range")
     }
 
     /// A point with no system timestamp - no offset to measure.
@@ -225,7 +225,7 @@ mod tests {
             .lat(Latitude::new(55.0))
             .lon(Longitude::new(12.0))
             .build();
-        NavPoint::new(tpv, None)
+        NavPoint::new(tpv, None).expect("coordinates in range")
     }
 
     /// A steady offset with one sample carrying a whole recording gap - the

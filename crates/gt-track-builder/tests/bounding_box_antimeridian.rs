@@ -17,6 +17,10 @@ use gt_track_builder::segment;
 const DEGREES_TOLERANCE: f64 = 1e-9;
 
 /// One fix at second `t`.
+#[expect(
+    clippy::expect_used,
+    reason = "Test data generation with hardcoded values"
+)]
 fn fix(t: i64, lat: Latitude, lon: Longitude) -> NavPoint {
     let time = GpsTime::from_utc(DateTime::UNIX_EPOCH + Duration::seconds(t));
     let tpv = TimePositionVelocity::builder()
@@ -25,7 +29,7 @@ fn fix(t: i64, lat: Latitude, lon: Longitude) -> NavPoint {
         .lon(lon)
         .heading(Angle::new::<degree>(90.0))
         .build();
-    NavPoint::new(tpv, None)
+    NavPoint::new(tpv, None).expect("coordinates in range")
 }
 
 /// An eastbound equatorial track stepping over the antimeridian:
@@ -69,7 +73,10 @@ fn bounding_box_center_across_the_antimeridian_lands_on_the_track() {
     let (center_lat, center_lon) = meta.bounding_box.center();
     let nearest_m = points
         .iter()
-        .map(|p| gt_geo_math::haversine_m(center_lat, center_lon, p.tpv.lat(), p.tpv.lon()))
+        .map(|p| {
+            let (latitude, longitude) = p.resolved_position();
+            gt_geo_math::haversine_m(center_lat, center_lon, latitude, longitude)
+        })
         .fold(f64::INFINITY, f64::min);
     let diameter_m = meta.point_set_diameter_m.get::<meter>();
 
@@ -118,8 +125,9 @@ fn bounding_box_of_a_local_track_is_tight_and_holds_every_fix() {
     assert_degrees_close(bounds.lat.south().as_degrees(), 54.9);
     assert_degrees_close(bounds.lat.north().as_degrees(), 55.2);
     for p in &points {
+        let (latitude, longitude) = p.resolved_position();
         assert!(
-            bounds.contains(p.tpv.lat(), p.tpv.lon()),
+            bounds.contains(latitude, longitude),
             "a fix lies outside the box"
         );
     }
@@ -182,7 +190,8 @@ proptest::proptest! {
         let points = vec1::Vec1::try_from_vec(points).expect("at least one fix");
         let bounds = segment::compute_track_metadata(0, &points, &[], &[]).bounding_box;
         for p in &points {
-            proptest::prop_assert!(bounds.contains(p.tpv.lat(), p.tpv.lon()));
+            let (latitude, longitude) = p.resolved_position();
+            proptest::prop_assert!(bounds.contains(latitude, longitude));
         }
     }
 }

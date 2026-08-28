@@ -220,8 +220,8 @@ impl MetricProvider for TrackProvider<'_> {
                 .tpv
                 .sys_time()
                 .map(|s| s.utc().timestamp_millis() as f64 / 1_000.0),
-            QueryMetric::Lat => Some(point.tpv.lat().as_degrees()),
-            QueryMetric::Lon => Some(point.tpv.lon().as_degrees()),
+            QueryMetric::Lat => Some(point.tpv.lat().as_written()),
+            QueryMetric::Lon => Some(point.tpv.lon().as_written()),
             QueryMetric::Velocity => point.tpv.velocity().map(|v| v.get::<meter_per_second>()),
             QueryMetric::Heading => point.tpv.heading().map(|h| h.get::<degree>()),
             // Derived by the evaluator (`gt_query::derived_accel`), never

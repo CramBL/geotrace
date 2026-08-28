@@ -71,6 +71,7 @@ struct RouteSegment {
 }
 
 #[expect(
+    clippy::expect_used,
     clippy::unwrap_used,
     reason = "Test data generation with hardcoded values"
 )]
@@ -183,7 +184,7 @@ pub fn nav_test_data() -> Vec<NavPoint> {
             ))
         };
 
-        route.push(NavPoint::new(tpv, satellites));
+        route.push(NavPoint::new(tpv, satellites).expect("fixture coordinates in range"));
     }
 
     route
@@ -193,6 +194,7 @@ pub fn nav_test_data() -> Vec<NavPoint> {
 ///
 /// Useful for edge-case tests that require the minimum valid input.
 #[expect(
+    clippy::expect_used,
     clippy::unwrap_used,
     reason = "Test data generation with hardcoded values"
 )]
@@ -209,7 +211,7 @@ pub fn single_nav_point() -> NavPoint {
         .heading(Angle::new::<degree>(0.0))
         .velocity(Velocity::new::<kilometer_per_hour>(0.0))
         .build();
-    NavPoint::new(tpv, None)
+    NavPoint::new(tpv, None).expect("fixture coordinates in range")
 }
 
 /// `count` evenly-spaced GPS fixes, one per second starting at 2026-01-01 12:00:00 UTC.
@@ -217,6 +219,7 @@ pub fn single_nav_point() -> NavPoint {
 /// All points are at the same location (stationary). No satellite reports.
 /// Useful for tests that need a predictable number of fixes without caring about movement.
 #[expect(
+    clippy::expect_used,
     clippy::unwrap_used,
     reason = "Test data generation with hardcoded values"
 )]
@@ -236,7 +239,7 @@ pub fn stationary_nav_data(count: usize) -> Vec<NavPoint> {
                 .heading(Angle::new::<degree>(0.0))
                 .velocity(Velocity::new::<kilometer_per_hour>(0.0))
                 .build();
-            NavPoint::new(tpv, None)
+            NavPoint::new(tpv, None).expect("fixture coordinates in range")
         })
         .collect()
 }
@@ -246,6 +249,7 @@ pub fn stationary_nav_data(count: usize) -> Vec<NavPoint> {
 /// Returns `first_count + second_count` points. The gap falls between index `first_count - 1`
 /// and `first_count`. Both groups move along the same straight line. No satellite reports.
 #[expect(
+    clippy::expect_used,
     clippy::unwrap_used,
     reason = "Test data generation with hardcoded values"
 )]
@@ -268,7 +272,7 @@ pub fn nav_data_with_gap(first_count: usize, second_count: usize) -> Vec<NavPoin
             .heading(Angle::new::<degree>(45.0))
             .velocity(Velocity::new::<kilometer_per_hour>(15.0))
             .build();
-        NavPoint::new(tpv, None)
+        NavPoint::new(tpv, None).expect("fixture coordinates in range")
     };
 
     let mut points = Vec::with_capacity(first_count + second_count);
@@ -334,6 +338,10 @@ pub fn latlon_at_meters(x_m: f64, y_m: f64) -> (Latitude, Longitude) {
 /// A [`NavPoint`] at the given metric offset from the origin, carrying an
 /// optional satellite report. Stamped at the Unix epoch, since the placement
 /// tests that use this are time-independent.
+#[expect(
+    clippy::expect_used,
+    reason = "Test data generation with hardcoded values"
+)]
 pub fn nav_point_at_meters(x_m: f64, y_m: f64, satellites: Option<Satellites>) -> NavPoint {
     let (lat, lon) = latlon_at_meters(x_m, y_m);
     let tpv = TimePositionVelocity::builder()
@@ -343,7 +351,7 @@ pub fn nav_point_at_meters(x_m: f64, y_m: f64, satellites: Option<Satellites>) -
         .lat(lat)
         .lon(lon)
         .build();
-    NavPoint::new(tpv, satellites)
+    NavPoint::new(tpv, satellites).expect("fixture coordinates in range")
 }
 
 /// A [`gt_types::LoadedTrack`] over the given points, every other field
@@ -382,6 +390,10 @@ pub fn nav_points_from(
 
 /// [`nav_points_from`] starting at a position of the caller's choosing, for
 /// tests that must tell two recordings apart by where their fixes are.
+#[expect(
+    clippy::expect_used,
+    reason = "Test data generation with hardcoded values"
+)]
 pub fn nav_points_walking_from(
     start: chrono::DateTime<chrono::Utc>,
     count: usize,
@@ -399,7 +411,7 @@ pub fn nav_points_walking_from(
                 .heading(Angle::new::<degree>(45.0))
                 .velocity(Velocity::new::<kilometer_per_hour>(15.0))
                 .build();
-            NavPoint::new(tpv, None)
+            NavPoint::new(tpv, None).expect("fixture coordinates in range")
         })
         .collect()
 }
@@ -436,6 +448,10 @@ impl NavPointSpec {
 ///
 /// The millisecond spacing and the fine steps suit tests over fix quality
 /// and sampling rate. [`nav_points_from`] is the coarser per-second walk.
+#[expect(
+    clippy::expect_used,
+    reason = "Test data generation with hardcoded values"
+)]
 pub fn nav_points_from_specs(
     start: chrono::DateTime<chrono::Utc>,
     count: usize,
@@ -461,7 +477,7 @@ pub fn nav_points_from_specs(
                 }
                 FixKind::Real | FixKind::GhostWithoutHeading => None,
             };
-            NavPoint::new(tpv, satellites)
+            NavPoint::new(tpv, satellites).expect("fixture coordinates in range")
         })
         .collect()
 }
@@ -494,12 +510,13 @@ pub fn marker_test_data() -> Vec<CustomMarker> {
         match (last_fix_index, has_fix) {
             (Some(last_idx), false) => {
                 if let Some(last_point) = nav_points.get(last_idx) {
+                    let (lat, lon) = last_point.resolved_position();
                     markers.push(CustomMarker::new(
                         last_point.tpv.time().utc(),
                         GeneratedMarkerKind::GnssFixLost.to_string(),
                         MarkerIcon::Warning,
-                        last_point.tpv.lat(),
-                        last_point.tpv.lon(),
+                        lat,
+                        lon,
                     ));
                 }
                 last_fix_index = None;
@@ -511,6 +528,7 @@ pub fn marker_test_data() -> Vec<CustomMarker> {
                     .is_some_and(|prev| prev.fix_count() == 0);
 
                 if is_fix_regain {
+                    let (lat, lon) = p.resolved_position();
                     let mut fix_lost_time = p.tpv.time();
                     for j in (0..i).rev() {
                         if let Some(np) = nav_points.get(j).filter(|np| np.fix_count() > 0) {
@@ -531,8 +549,8 @@ pub fn marker_test_data() -> Vec<CustomMarker> {
                             }
                         ),
                         MarkerIcon::Check,
-                        p.tpv.lat(),
-                        p.tpv.lon(),
+                        lat,
+                        lon,
                     ));
                 }
                 last_fix_index = Some(i);
@@ -682,7 +700,7 @@ mod tests {
     #[test]
     fn single_nav_point_is_valid() {
         let p = single_nav_point();
-        assert!(p.tpv.lat().as_degrees() > 55.0 && p.tpv.lat().as_degrees() < 56.0);
+        assert!(p.tpv.lat().as_written() > 55.0 && p.tpv.lat().as_written() < 56.0);
         assert!(p.satellites.is_none());
     }
 
@@ -690,7 +708,7 @@ mod tests {
     fn stationary_nav_data_has_correct_count() {
         let points = stationary_nav_data(5);
         assert_eq!(points.len(), 5);
-        let lats: Vec<f64> = points.iter().map(|p| p.tpv.lat().as_degrees()).collect();
+        let lats: Vec<f64> = points.iter().map(|p| p.tpv.lat().as_written()).collect();
         assert!(lats.windows(2).all(|w| (w[0] - w[1]).abs() < 1e-9));
     }
 

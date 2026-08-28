@@ -153,8 +153,8 @@ impl TrackValues<'_> {
     }
 
     fn lat_lon(&self, point_index: usize) -> Option<(f64, f64)> {
-        let point = self.points.get(point_index)?;
-        Some((point.tpv.lat().as_degrees(), point.tpv.lon().as_degrees()))
+        let (latitude, longitude) = self.points.get(point_index)?.resolved_position();
+        Some((latitude.as_degrees(), longitude.as_degrees()))
     }
 }
 

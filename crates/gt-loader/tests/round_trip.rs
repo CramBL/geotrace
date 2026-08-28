@@ -47,8 +47,8 @@ fn round_trip_from_gt_types_test_data() {
         let tpv = np.tpv;
         let fix_b = NavFix::builder()
             .gps_time(tpv.time().utc())
-            .lat(Angle::degrees(tpv.lat().as_degrees()))
-            .lon(Angle::degrees(tpv.lon().as_degrees()))
+            .lat(Angle::degrees(tpv.lat().as_written()))
+            .lon(Angle::degrees(tpv.lon().as_written()))
             .maybe_heading(tpv.heading().map(Angle::from));
         let nav_fix = if let Some(v) = tpv.velocity() {
             fix_b.speed(Velocity::from(v)).build()
@@ -116,23 +116,23 @@ fn round_trip_from_gt_types_test_data() {
 
     let first = nav_points.first().expect("at least one point");
     assert_eq!(
-        first.tpv.lat().as_degrees(),
-        nav_data[0].tpv.lat().as_degrees()
+        first.tpv.lat().as_written(),
+        nav_data[0].tpv.lat().as_written()
     );
     assert_eq!(
-        first.tpv.lon().as_degrees(),
-        nav_data[0].tpv.lon().as_degrees()
+        first.tpv.lon().as_written(),
+        nav_data[0].tpv.lon().as_written()
     );
 
     let last = nav_points.last().expect("at least one point");
     let last_orig = nav_data.last().expect("nav_data is non-empty");
     assert_eq!(
-        last.tpv.lat().as_degrees(),
-        last_orig.tpv.lat().as_degrees()
+        last.tpv.lat().as_written(),
+        last_orig.tpv.lat().as_written()
     );
     assert_eq!(
-        last.tpv.lon().as_degrees(),
-        last_orig.tpv.lon().as_degrees()
+        last.tpv.lon().as_written(),
+        last_orig.tpv.lon().as_written()
     );
 
     for (i, (m, orig)) in markers.iter().zip(&marker_data).enumerate() {

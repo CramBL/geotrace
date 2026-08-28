@@ -383,9 +383,10 @@ fn assessment_points(
                 .or_insert_with(|| read_archived_maps(store, day))
                 .as_ref()?;
             let epoch = maps.nearest_epoch(time)?;
+            let (latitude, longitude) = point.resolved_position();
             Some(NodeSample {
                 day,
-                node: maps.grid().nearest_node(point.tpv.lat(), point.tpv.lon())?,
+                node: maps.grid().nearest_node(latitude, longitude)?,
                 epoch_since_day_start: epoch.signed_duration_since(start_of_day(day)),
             })
         })

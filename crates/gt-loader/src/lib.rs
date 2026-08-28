@@ -51,7 +51,8 @@ use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::{FixTimestamp, GpsTime, SysTime};
 use gt_types::{
     Channel, CustomMarker, EventMarker, EventMarkerStyle, FileSource, Latitude, LoadWarning,
-    LoadedFile, Longitude, MarkerColor, MarkerIcon, NavPoint, TimePositionVelocity, TravelMode,
+    LoadedFile, Longitude, MarkerColor, MarkerIcon, NavPoint, RecordedLatitude, RecordedLongitude,
+    TimePositionVelocity, TravelMode,
 };
 
 pub struct LoadedGtd {
@@ -313,15 +314,8 @@ fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
     let mut nav_points = Vec::with_capacity(nav_file.nav_points().len());
 
     for (idx, sdk_point) in nav_file.nav_points().iter().enumerate() {
-        let lat_deg = sdk_point.fix.lat.as_degrees();
-        let lon_deg = sdk_point.fix.lon.as_degrees();
-
-        if !(-90.0..=90.0).contains(&lat_deg) {
-            return Err(LoadError::LatitudeOutOfRange { lat: lat_deg, idx });
-        }
-        if !(-180.0..=180.0).contains(&lon_deg) {
-            return Err(LoadError::LongitudeOutOfRange { lon: lon_deg, idx });
-        }
+        let lat = RecordedLatitude::from_degrees(sdk_point.fix.lat.as_degrees());
+        let lon = RecordedLongitude::from_degrees(sdk_point.fix.lon.as_degrees());
 
         let time = match (sdk_point.fix.gps_time, sdk_point.fix.sys_time) {
             (Some(gps), _) => FixTimestamp::FromGpsReceiver(GpsTime::from_utc(gps)),
@@ -331,8 +325,8 @@ fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
 
         let tpv = TimePositionVelocity::builder()
             .time(time)
-            .lat(Latitude::new(lat_deg))
-            .lon(Longitude::new(lon_deg))
+            .lat(lat)
+            .lon(lon)
             .maybe_heading(sdk_point.fix.heading.map(to_uom_angle))
             .maybe_velocity(sdk_point.fix.speed.map(to_uom_velocity))
             .maybe_sys_time(sdk_point.fix.sys_time.map(SysTime::from_utc))
@@ -341,15 +335,31 @@ fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
 
         let satellites = sdk_point.satellites.as_ref().map(convert_satellite_report);
 
-        nav_points.push(NavPoint::new(tpv, satellites));
+        let Some(nav_point) = NavPoint::new(tpv, satellites) else {
+            return Err(match lat.valid() {
+                None => LoadError::LatitudeOutOfRange {
+                    lat: lat.as_written(),
+                    idx,
+                },
+                Some(_) => LoadError::LongitudeOutOfRange {
+                    lon: lon.as_written(),
+                    idx,
+                },
+            });
+        };
+        nav_points.push(nav_point);
     }
 
-    let markers = nav_file.markers().iter().map(convert_marker).collect();
+    let markers = nav_file
+        .markers()
+        .iter()
+        .filter_map(convert_marker)
+        .collect();
 
     let event_markers = nav_file
         .event_markers()
         .iter()
-        .map(convert_event_marker)
+        .filter_map(convert_event_marker)
         .collect();
 
     let event_marker_styles = nav_file
@@ -381,14 +391,24 @@ fn convert_channel(sdk: &geotrace_sdk::Channel) -> Channel {
     }
 }
 
-fn convert_event_marker(m: &EventMarkerPoint) -> EventMarker {
-    EventMarker::new(
-        m.sys_time,
-        m.variant_path.clone(),
-        m.annotation.clone(),
-        Latitude::new(m.lat.as_degrees()),
-        Longitude::new(m.lon.as_degrees()),
-    )
+fn convert_event_marker(m: &EventMarkerPoint) -> Option<EventMarker> {
+    match (
+        Latitude::try_new(m.lat.as_degrees()),
+        Longitude::try_new(m.lon.as_degrees()),
+    ) {
+        (Ok(lat), Ok(lon)) => Some(EventMarker::new(
+            m.sys_time,
+            m.variant_path.clone(),
+            m.annotation.clone(),
+            lat,
+            lon,
+        )),
+        (Err(out_of_range), _) | (Ok(_), Err(out_of_range)) => {
+            let path = &m.variant_path;
+            log::error!("Dropping the event marker {path:?}: {out_of_range}");
+            None
+        }
+    }
 }
 
 fn convert_event_marker_style(s: &SdkEventMarkerStyle) -> EventMarkerStyle {
@@ -499,14 +519,24 @@ fn merge_rows_repeating_a_satellite(tracked: &[SdkSatellite]) -> Vec<SdkSatellit
     merged
 }
 
-fn convert_marker(m: &SdkMarker) -> CustomMarker {
-    CustomMarker::new(
-        m.annotation.time,
-        m.annotation.label.as_deref().unwrap_or("").to_owned(),
-        m.annotation.icon.map_or(MarkerIcon::Pin, convert_icon),
-        Latitude::new(m.lat.as_degrees()),
-        Longitude::new(m.lon.as_degrees()),
-    )
+fn convert_marker(m: &SdkMarker) -> Option<CustomMarker> {
+    match (
+        Latitude::try_new(m.lat.as_degrees()),
+        Longitude::try_new(m.lon.as_degrees()),
+    ) {
+        (Ok(lat), Ok(lon)) => Some(CustomMarker::new(
+            m.annotation.time,
+            m.annotation.label.as_deref().unwrap_or("").to_owned(),
+            m.annotation.icon.map_or(MarkerIcon::Pin, convert_icon),
+            lat,
+            lon,
+        )),
+        (Err(out_of_range), _) | (Ok(_), Err(out_of_range)) => {
+            let label = m.annotation.label.as_deref().unwrap_or("");
+            log::error!("Dropping the custom marker {label:?}: {out_of_range}");
+            None
+        }
+    }
 }
 
 /// Converts the SDK's wire-format icon to the app's internal [`MarkerIcon`].
@@ -931,8 +961,8 @@ mod tests {
         assert_eq!(nav_points.len(), 1);
         let tpv = nav_points[0].tpv;
         assert_eq!(tpv.time().utc(), t0);
-        assert_eq!(tpv.lat().as_degrees(), 51.5);
-        assert_eq!(tpv.lon().as_degrees(), -0.1);
+        assert_eq!(tpv.lat().as_written(), 51.5);
+        assert_eq!(tpv.lon().as_written(), -0.1);
         assert_eq!(
             tpv.heading().map(|h| h.get::<uom::si::angle::degree>()),
             Some(270.0)
@@ -1196,6 +1226,27 @@ mod tests {
         for (sdk, expected) in pairs {
             assert_eq!(convert_icon(sdk), expected);
         }
+    }
+
+    /// A file can hold a marker position no interpolation would produce: the
+    /// marker is left out and the recording still loads.
+    #[test]
+    fn a_marker_outside_the_coordinate_range_is_dropped() {
+        let marker = SdkMarker {
+            annotation: Annotation::builder().time(base()).build(),
+            lat: Angle::degrees(91.0),
+            lon: Angle::degrees(12.0),
+        };
+        let event_marker = EventMarkerPoint {
+            variant_path: "power/boot".to_owned(),
+            sys_time: base(),
+            lat: Angle::degrees(55.0),
+            lon: Angle::degrees(-181.0),
+            annotation: None,
+        };
+
+        assert!(convert_marker(&marker).is_none());
+        assert!(convert_event_marker(&event_marker).is_none());
     }
 
     #[test]

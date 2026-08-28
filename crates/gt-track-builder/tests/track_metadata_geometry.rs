@@ -37,6 +37,10 @@ fn gps_time(secs: i64) -> GpsTime {
 }
 
 /// A measured fix: heading present and a full solution behind it.
+#[expect(
+    clippy::expect_used,
+    reason = "Test data generation with hardcoded values"
+)]
 fn measured_fix(secs: i64, lon_degrees: f64) -> NavPoint {
     let time = gps_time(secs);
     let tpv = TimePositionVelocity::builder()
@@ -49,17 +53,22 @@ fn measured_fix(secs: i64, lon_degrees: f64) -> NavPoint {
         .map(|prn| Satellite::new(Constellation::Gps, prn, None, None, None, true))
         .collect();
     NavPoint::new(tpv, Some(Satellites::new(Some(time), None, satellites)))
+        .expect("coordinates in range")
 }
 
 /// An epoch the receiver dead-reckoned and wrote at the null island: no heading
 /// and no satellite report, so the builder redraws it between its neighbours.
+#[expect(
+    clippy::expect_used,
+    reason = "Test data generation with hardcoded values"
+)]
 fn ghost_fix_at_the_null_island(secs: i64) -> NavPoint {
     let tpv = TimePositionVelocity::builder()
         .time(gps_time(secs))
         .lat(Latitude::new(0.0))
         .lon(Longitude::new(0.0))
         .build();
-    NavPoint::new(tpv, None)
+    NavPoint::new(tpv, None).expect("coordinates in range")
 }
 
 /// Metadata of a track of two measured fixes 0.002° of longitude apart, with a

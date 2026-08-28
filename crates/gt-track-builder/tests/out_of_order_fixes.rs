@@ -17,6 +17,10 @@ use uom::si::f64::Angle;
 
 /// A measured fix, distinguished only by its timestamp: every one of them
 /// shares a position.
+#[expect(
+    clippy::expect_used,
+    reason = "Test data generation with hardcoded values"
+)]
 fn measured_fix_at(millis: i64) -> NavPoint {
     let time = DateTime::<Utc>::UNIX_EPOCH + Duration::milliseconds(millis);
     let tpv = TimePositionVelocity::builder()
@@ -25,7 +29,7 @@ fn measured_fix_at(millis: i64) -> NavPoint {
         .lon(Longitude::new(12.0))
         .heading(Angle::new::<degree>(90.0))
         .build();
-    NavPoint::new(tpv, None)
+    NavPoint::new(tpv, None).expect("coordinates in range")
 }
 
 fn build(points: &[NavPoint], event_markers: Vec<EventMarker>) -> LoadedFile {

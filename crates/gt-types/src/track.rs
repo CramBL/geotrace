@@ -771,7 +771,7 @@ mod nearest_satellite_report_tests {
                         .collect();
                     Satellites::new(None, None, sats)
                 });
-                NavPoint::new(tpv, satellites)
+                NavPoint::new(tpv, satellites).expect("coordinates in range")
             })
             .collect();
         LoadedTrack {

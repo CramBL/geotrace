@@ -1,4 +1,4 @@
-use crate::coordinates::{Latitude, Longitude};
+use crate::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
 use crate::time_types::{FixTimestamp, GpsTime, SysTime};
 use chrono::{DateTime, Duration};
 use geo_types::{Coord, Point};
@@ -24,8 +24,12 @@ pub struct TimePositionVelocity {
     /// fix.
     #[builder(into)]
     pub(crate) time: FixTimestamp,
-    pub(crate) lat: Latitude,
-    pub(crate) lon: Longitude,
+    /// Pass a [`Latitude`] for a coordinate known to be in range.
+    #[builder(into)]
+    pub(crate) lat: RecordedLatitude,
+    /// Pass a [`Longitude`] for a coordinate known to be in range.
+    #[builder(into)]
+    pub(crate) lon: RecordedLongitude,
     pub(crate) velocity: Option<Velocity>,
     /// Compass heading in \[0°, 360°). `None` = direction unknown (ghost fix).
     pub(crate) heading: Option<Angle>,
@@ -64,11 +68,17 @@ impl TimePositionVelocity {
     pub fn gps_system_clock_offset(&self) -> Option<Duration> {
         Some(self.gps_time()?.offset_from_sys(self.sys_time?))
     }
-    pub fn lat(&self) -> Latitude {
+    pub fn lat(&self) -> RecordedLatitude {
         self.lat
     }
-    pub fn lon(&self) -> Longitude {
+    pub fn lon(&self) -> RecordedLongitude {
         self.lon
+    }
+
+    /// Where the receiver placed this fix, `None` unless both of its
+    /// coordinates are in range.
+    pub fn position(&self) -> Option<(Latitude, Longitude)> {
+        Some((self.lat.valid()?, self.lon.valid()?))
     }
     pub fn velocity(&self) -> Option<Velocity> {
         self.velocity
@@ -99,8 +109,8 @@ impl TimePositionVelocity {
 impl From<&TimePositionVelocity> for Coord<f64> {
     fn from(tpv: &TimePositionVelocity) -> Self {
         Coord {
-            x: tpv.lon().as_degrees(),
-            y: tpv.lat().as_degrees(),
+            x: tpv.lon().as_written(),
+            y: tpv.lat().as_written(),
         }
     }
 }
@@ -115,6 +125,7 @@ impl From<&TimePositionVelocity> for Point<f64> {
 mod tests {
     use super::*;
     use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+    use rstest::rstest;
     use uom::si::velocity::meter_per_second;
 
     #[test]
@@ -138,7 +149,7 @@ mod tests {
             .build();
 
         assert_eq!(tpv.time().utc(), dt);
-        assert_eq!(tpv.lat().as_degrees(), 55.676);
+        assert_eq!(tpv.lat().as_written(), 55.676);
         assert_eq!(
             tpv.heading().map(|h| h.get::<uom::si::angle::degree>()),
             Some(270.0)
@@ -160,6 +171,25 @@ mod tests {
             .build();
 
         assert_eq!(tpv.heading(), None);
+    }
+
+    #[rstest]
+    #[case::both_in_range(55.0, 12.0, true)]
+    #[case::latitude_past_the_pole(91.0, 12.0, false)]
+    #[case::longitude_past_the_antimeridian(55.0, -181.0, false)]
+    #[case::neither_in_range(f64::NAN, f64::NAN, false)]
+    fn a_fix_has_a_position_only_when_both_its_coordinates_are_in_range(
+        #[case] lat_degrees: f64,
+        #[case] lon_degrees: f64,
+        #[case] expected_position: bool,
+    ) {
+        let tpv = TimePositionVelocity::builder()
+            .time(GpsTime::from_utc(DateTime::UNIX_EPOCH))
+            .lat(RecordedLatitude::from_degrees(lat_degrees))
+            .lon(RecordedLongitude::from_degrees(lon_degrees))
+            .build();
+
+        assert_eq!(tpv.position().is_some(), expected_position);
     }
 
     fn fix(time: FixTimestamp, sys_time: Option<SysTime>) -> TimePositionVelocity {

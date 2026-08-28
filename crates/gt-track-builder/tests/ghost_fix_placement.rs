@@ -32,6 +32,10 @@ fn gps_time(millis: i64) -> GpsTime {
 }
 
 /// A measured fix: heading present and a full solution behind it.
+#[expect(
+    clippy::expect_used,
+    reason = "Test data generation with hardcoded values"
+)]
 fn measured_fix(millis: i64, lon_degrees: f64) -> NavPoint {
     let time = gps_time(millis);
     let tpv = TimePositionVelocity::builder()
@@ -44,17 +48,22 @@ fn measured_fix(millis: i64, lon_degrees: f64) -> NavPoint {
         .map(|prn| Satellite::new(Constellation::Gps, prn, None, None, None, true))
         .collect();
     NavPoint::new(tpv, Some(Satellites::new(Some(time), None, satellites)))
+        .expect("coordinates in range")
 }
 
 /// An epoch the receiver dead-reckoned: no heading and no satellite report, so
 /// the builder redraws it between its neighbours.
+#[expect(
+    clippy::expect_used,
+    reason = "Test data generation with hardcoded values"
+)]
 fn ghost_fix(millis: i64, lon_degrees: f64) -> NavPoint {
     let tpv = TimePositionVelocity::builder()
         .time(gps_time(millis))
         .lat(Latitude::new(LATITUDE_DEGREES))
         .lon(Longitude::new(lon_degrees))
         .build();
-    NavPoint::new(tpv, None)
+    NavPoint::new(tpv, None).expect("coordinates in range")
 }
 
 /// Longitude in degrees where the map draws the ghost fix of `points`.

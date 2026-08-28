@@ -1092,6 +1092,7 @@ mod tests {
                     .lon(Longitude::new(12.0))
                     .build();
                 NavPoint::new(tpv, Some(Satellites::new(None, None, sats)))
+                    .expect("coordinates in range")
             })
             .collect();
         gt_sky::extract_trails(&gt_test_utils::loaded_track_with_points(points))
@@ -1141,6 +1142,7 @@ mod tests {
                     .lon(Longitude::new(12.0))
                     .build();
                 NavPoint::new(tpv, Some(Satellites::new(None, None, sats)))
+                    .expect("coordinates in range")
             })
             .collect();
         gt_sky::extract_trails(&gt_test_utils::loaded_track_with_points(points))
@@ -1420,7 +1422,8 @@ mod tests {
             .lat(Latitude::new(55.0))
             .lon(Longitude::new(12.0))
             .build();
-        let point = NavPoint::new(tpv, Some(Satellites::new(None, None, sats)));
+        let point = NavPoint::new(tpv, Some(Satellites::new(None, None, sats)))
+            .expect("coordinates in range");
         gt_sky::extract_trails(&gt_test_utils::loaded_track_with_points(vec![point]))
     }
 
