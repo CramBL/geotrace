@@ -108,7 +108,7 @@ mod tests {
                     .lat(Latitude::new(55.0))
                     .lon(Longitude::new(12.0))
                     .build();
-                NavPoint::new(tpv, None)
+                NavPoint::new(tpv, None).expect("coordinates in range")
             })
             .collect()
     }

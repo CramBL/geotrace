@@ -44,14 +44,16 @@ pub struct NavPoint {
 }
 
 impl NavPoint {
-    pub fn new(tpv: TimePositionVelocity, satellites: Option<Satellites>) -> Self {
-        let (latitude, longitude) = (tpv.lat(), tpv.lon());
-        Self {
+    /// `None` when the fix has no position to resolve to, which is when
+    /// either of its recorded coordinates is out of range.
+    pub fn new(tpv: TimePositionVelocity, satellites: Option<Satellites>) -> Option<Self> {
+        let (latitude, longitude) = tpv.position()?;
+        Some(Self {
             tpv,
             satellites,
             resolved_position: (latitude, longitude),
             merc: mercator::normalize(latitude, longitude),
-        }
+        })
     }
 
     pub fn resolved_position(&self) -> (Latitude, Longitude) {
@@ -113,7 +115,7 @@ impl NavPoint {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coordinates::{Latitude, Longitude};
+    use crate::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
     use crate::satellites::{Constellation, Satellite, Satellites};
     use crate::time_types::GpsTime;
     use crate::tpv::TimePositionVelocity;
@@ -127,7 +129,7 @@ mod tests {
             .lat(latitude)
             .lon(longitude)
             .build();
-        NavPoint::new(tpv, None)
+        NavPoint::new(tpv, None).expect("coordinates in range")
     }
 
     #[test]
@@ -159,9 +161,20 @@ mod tests {
             mercator::normalize(Latitude::new(-33.0), Longitude::new(151.0))
         );
         assert_eq!(
-            (point.tpv.lat(), point.tpv.lon()),
-            (Latitude::new(55.0), Longitude::new(12.0))
+            point.tpv.position(),
+            Some((Latitude::new(55.0), Longitude::new(12.0)))
         );
+    }
+
+    #[test]
+    fn a_fix_with_a_coordinate_out_of_range_has_no_point_to_resolve_to() {
+        let tpv = TimePositionVelocity::builder()
+            .time(GpsTime::from_utc(Utc::now()))
+            .lat(RecordedLatitude::from_degrees(91.0))
+            .lon(RecordedLongitude::from_degrees(12.0))
+            .build();
+
+        assert!(NavPoint::new(tpv, None).is_none());
     }
 
     #[test]
@@ -173,7 +186,7 @@ mod tests {
             .heading(Angle::new::<degree>(0.0))
             .build();
 
-        let mut np = NavPoint::new(tpv, None);
+        let mut np = NavPoint::new(tpv, None).expect("coordinates in range");
         assert_eq!(np.fix_count(), 0);
         assert_eq!(np.total_satellites(), 0);
 

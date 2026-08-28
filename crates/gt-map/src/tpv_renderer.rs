@@ -190,8 +190,9 @@ pub(crate) fn draw_track_icons(
                 point_index: PointIdx::new(pi),
             };
             let eph_m = point.tpv.eph_m();
+            let (latitude, _) = point.resolved_position();
             let pixels_per_meter = if eph_m.is_some() {
-                transform.pixels_per_meter(point.tpv.lat())
+                transform.pixels_per_meter(latitude)
             } else {
                 0.0
             };
@@ -495,8 +496,8 @@ fn hover_grid_ui(ui: &mut Ui, p: &NavPoint, recording_name: Option<&str>) {
             ui.label(p.tpv.time().utc().format("%Y-%m-%d %H:%M:%S").to_string());
             ui.end_row();
 
-            let lat = p.tpv.lat().as_degrees();
-            let lon = p.tpv.lon().as_degrees();
+            let lat = p.tpv.lat().as_written();
+            let lon = p.tpv.lon().as_written();
             ui.label("Lat");
             ui.label(format!(
                 "{:.6}{DEGREE_SIGN} {}",

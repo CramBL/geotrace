@@ -468,8 +468,8 @@ fn install_interference_archive_covering_loaded_fixes(
         for file in shared.loaded_files.files() {
             for track in &file.tracks {
                 for point in &track.points {
-                    let Some(cell) = gt_jam::dataset::cell_at(point.tpv.lat(), point.tpv.lon())
-                    else {
+                    let (latitude, longitude) = point.resolved_position();
+                    let Some(cell) = gt_jam::dataset::cell_at(latitude, longitude) else {
                         continue;
                     };
                     let observations = observations_by_day

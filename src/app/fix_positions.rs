@@ -31,10 +31,13 @@ impl FixPositionTimeline {
             .iter()
             .flat_map(|file| file.tracks.iter())
             .flat_map(|track| track.points.iter())
-            .map(|point| PositionedFix {
-                secs: point.tpv.time().utc().timestamp(),
-                latitude: point.tpv.lat(),
-                longitude: point.tpv.lon(),
+            .map(|point| {
+                let (latitude, longitude) = point.resolved_position();
+                PositionedFix {
+                    secs: point.tpv.time().utc().timestamp(),
+                    latitude,
+                    longitude,
+                }
             })
             .collect();
         fixes.sort_unstable_by_key(|fix| fix.secs);
@@ -103,6 +106,7 @@ impl FixPositions {
 #[cfg(test)]
 mod tests {
     use chrono::TimeDelta;
+    use gt_types::NavPoint;
     use rstest::rstest;
 
     use gt_ui_types::ArcIdentity;
@@ -154,7 +158,7 @@ mod tests {
         let expected = track
             .points
             .get(expected_index)
-            .map(|point| (point.tpv.lat(), point.tpv.lon()))
+            .map(NavPoint::resolved_position)
             .expect("the fixture has four fixes");
 
         let timeline = FixPositionTimeline::of(&files_of(track));
@@ -168,7 +172,7 @@ mod tests {
         let expected = track
             .points
             .get(1)
-            .map(|point| (point.tpv.lat(), point.tpv.lon()))
+            .map(NavPoint::resolved_position)
             .expect("the fixture has four fixes");
 
         let timeline = FixPositionTimeline::of(&files_of(track));

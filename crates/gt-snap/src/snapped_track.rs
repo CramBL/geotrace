@@ -14,6 +14,7 @@
 
 use std::ops::Range;
 
+use gt_types::{Latitude, Longitude};
 use serde::{Deserialize, Serialize};
 
 use crate::wire::{SnapPointKind, SnappedPoint, TraceAttributesResponse};
@@ -34,6 +35,17 @@ pub const SHAPE_POLYLINE_PRECISION: u32 = 6;
 pub struct Position {
     pub lat: f64,
     pub lon: f64,
+}
+
+impl Position {
+    /// `None` when the server answered with degrees outside their axis'
+    /// range.
+    pub fn coordinates(self) -> Option<(Latitude, Longitude)> {
+        Some((
+            Latitude::try_new(self.lat).ok()?,
+            Longitude::try_new(self.lon).ok()?,
+        ))
+    }
 }
 
 /// A maximal unbroken stretch of the snapped track, ready to draw as one

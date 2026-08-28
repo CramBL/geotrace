@@ -116,7 +116,7 @@ impl ResolvedTrackInterference {
                     })
                 });
                 let observation = dataset.as_ref().and_then(|dataset| {
-                    let (lat, lon) = (point.tpv.lat(), point.tpv.lon());
+                    let (lat, lon) = point.resolved_position();
                     dataset.observation_at(lat, lon)
                 });
                 let rate = observation.and_then(gt_jam::wire::HexObservation::rate);
@@ -1380,7 +1380,8 @@ mod tests {
         let track = track_with_time_range();
         let day = track.metadata.time_range.start.date_naive();
         let first = track.points.first().expect("a fix");
-        let cell = gt_jam::dataset::cell_at(first.tpv.lat(), first.tpv.lon()).expect("cell");
+        let (latitude, longitude) = first.resolved_position();
+        let cell = gt_jam::dataset::cell_at(latitude, longitude).expect("cell");
         archive_day(
             &store,
             day,
@@ -1432,7 +1433,8 @@ mod tests {
             next.and_time(NaiveTime::MIN).and_utc(),
         );
         let fix = track.points.first().expect("a fix");
-        let cell = gt_jam::dataset::cell_at(fix.tpv.lat(), fix.tpv.lon()).expect("cell");
+        let (latitude, longitude) = fix.resolved_position();
+        let cell = gt_jam::dataset::cell_at(latitude, longitude).expect("cell");
         let observations = [gt_jam::wire::HexObservation {
             cell,
             good: 90,
@@ -1490,7 +1492,8 @@ mod tests {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         let track = track_with_time_range();
         let first = track.points.first().expect("a fix");
-        let cell = gt_jam::dataset::cell_at(first.tpv.lat(), first.tpv.lon()).expect("cell");
+        let (latitude, longitude) = first.resolved_position();
+        let cell = gt_jam::dataset::cell_at(latitude, longitude).expect("cell");
         let recorded = track.metadata.time_range.start.date_naive();
         let later = recorded
             .checked_add_days(chrono::Days::new(3))

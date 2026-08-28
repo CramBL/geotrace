@@ -539,7 +539,8 @@ impl TecMapScheduler {
                     tecu: maps
                         .as_ref()
                         .and_then(|maps| {
-                            maps.total_electron_content_at(point.tpv.lat(), point.tpv.lon(), time)
+                            let (latitude, longitude) = point.resolved_position();
+                            maps.total_electron_content_at(latitude, longitude, time)
                         })
                         .map(TotalElectronContent::tecu),
                 }

@@ -306,6 +306,7 @@ mod tests {
             .lon(Longitude::new(12.0))
             .build();
         NavPoint::new(tpv, satellites.map(|s| Satellites::new(None, None, s)))
+            .expect("coordinates in range")
     }
 
     fn track(points: Vec<NavPoint>) -> gt_types::LoadedTrack {

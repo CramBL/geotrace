@@ -217,8 +217,9 @@ fn tpv_time_range_in_bounds(
                 continue;
             }
             for point in &track.points {
-                let lat = point.tpv.lat().as_degrees();
-                let lon = point.tpv.lon().as_degrees();
+                let (latitude, longitude) = point.resolved_position();
+                let lat = latitude.as_degrees();
+                let lon = longitude.as_degrees();
                 if lat < bounds.lat_min
                     || lat > bounds.lat_max
                     || lon < bounds.lon_min

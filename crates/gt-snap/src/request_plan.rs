@@ -267,11 +267,12 @@ fn downsample_run(run: &[NavPoint], base: usize) -> Vec<SentPoint> {
         };
         if keep {
             last_kept = Some(time);
+            let (latitude, longitude) = point.resolved_position();
             sent.push(SentPoint {
                 point: PointIdx::new(base + offset),
                 shape_point: ShapePoint {
-                    lat: point.tpv.lat().as_degrees(),
-                    lon: point.tpv.lon().as_degrees(),
+                    lat: latitude.as_degrees(),
+                    lon: longitude.as_degrees(),
                     time: Some(time.timestamp()),
                 },
                 eph_m: point.tpv.eph_m(),

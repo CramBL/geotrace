@@ -383,7 +383,7 @@ mod tests {
                 // Point 1 has a satellite report, so it anchors a sky glyph.
                 let satellites =
                     (i == 1).then(|| gt_types::satellites::Satellites::new(None, None, Vec::new()));
-                NavPoint::new(tpv, satellites)
+                NavPoint::new(tpv, satellites).expect("coordinates in range")
             })
             .collect();
         let anchor = |pi, tier| SatLabelAnchor {

@@ -856,17 +856,17 @@ fn precompute_ghost_positions(points: &mut [NavPoint]) {
                 let elapsed_secs = (points[i].tpv.time() - points[pi].tpv.time()).as_seconds_f64();
                 if anchor_span_secs > 0.0 {
                     let arc = GreatCircleArc {
-                        start: (points[pi].tpv.lat(), points[pi].tpv.lon()),
-                        end: (points[ni].tpv.lat(), points[ni].tpv.lon()),
+                        start: points[pi].resolved_position(),
+                        end: points[ni].resolved_position(),
                     };
                     arc.position_at_ratio(elapsed_secs / anchor_span_secs)
                 } else {
-                    (points[i].tpv.lat(), points[i].tpv.lon())
+                    points[i].resolved_position()
                 }
             }
-            (Some(pi), None) => (points[pi].tpv.lat(), points[pi].tpv.lon()),
-            (None, Some(ni)) => (points[ni].tpv.lat(), points[ni].tpv.lon()),
-            (None, None) => (points[i].tpv.lat(), points[i].tpv.lon()),
+            (Some(pi), None) => points[pi].resolved_position(),
+            (None, Some(ni)) => points[ni].resolved_position(),
+            (None, None) => points[i].resolved_position(),
         };
         updates.push((i, position));
     }
@@ -906,7 +906,7 @@ mod tests {
             .lon(Longitude::new(12.0))
             .sys_time(sys)
             .build();
-        NavPoint::new(tpv, None)
+        NavPoint::new(tpv, None).expect("coordinates in range")
     }
 
     #[test]
@@ -1073,7 +1073,7 @@ mod tests {
             .lon(gt_types::coordinates::Longitude::new(12.0))
             .heading(Angle::new::<degree>(0.0))
             .build();
-        NavPoint::new(tpv, None)
+        NavPoint::new(tpv, None).expect("coordinates in range")
     }
 
     fn make_point_at_pos(t: i64, lat: f64, lon: f64) -> NavPoint {
@@ -1084,7 +1084,7 @@ mod tests {
             .lon(gt_types::coordinates::Longitude::new(lon))
             .heading(Angle::new::<degree>(0.0))
             .build();
-        NavPoint::new(tpv, None)
+        NavPoint::new(tpv, None).expect("coordinates in range")
     }
 
     #[test]
@@ -1383,7 +1383,7 @@ mod tests {
                 fix_count_positive,
             )],
         );
-        NavPoint::new(tpv, Some(sats))
+        NavPoint::new(tpv, Some(sats)).expect("coordinates in range")
     }
 
     #[test]
@@ -1497,7 +1497,7 @@ mod tests {
                 true,
             )],
         );
-        NavPoint::new(tpv, Some(sats))
+        NavPoint::new(tpv, Some(sats)).expect("coordinates in range")
     }
 
     fn make_ghost(t: i64, lat: Latitude, lon: Longitude) -> NavPoint {
@@ -1507,7 +1507,7 @@ mod tests {
             .lat(lat)
             .lon(lon)
             .build();
-        NavPoint::new(tpv, None)
+        NavPoint::new(tpv, None).expect("coordinates in range")
     }
 
     #[test]
@@ -1551,8 +1551,8 @@ mod tests {
             longitude.as_degrees(),
         );
         assert_eq!(
-            (points[1].tpv.lat(), points[1].tpv.lon()),
-            (Latitude::new(10.0), Longitude::new(10.0)),
+            points[1].tpv.position(),
+            Some((Latitude::new(10.0), Longitude::new(10.0))),
             "the recorded coordinates must survive interpolation"
         );
     }

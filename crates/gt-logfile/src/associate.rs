@@ -42,17 +42,19 @@ pub fn associate_position(
             } else {
                 elapsed as f64 / span as f64
             };
-            let lat = before.tpv.lat().as_degrees() * (1.0 - fraction)
-                + after.tpv.lat().as_degrees() * fraction;
-            let lon = before.tpv.lon().as_degrees() * (1.0 - fraction)
-                + after.tpv.lon().as_degrees() * fraction;
+            let (before_lat, before_lon) = before.resolved_position();
+            let (after_lat, after_lon) = after.resolved_position();
+            let lat =
+                before_lat.as_degrees() * (1.0 - fraction) + after_lat.as_degrees() * fraction;
+            let lon =
+                before_lon.as_degrees() * (1.0 - fraction) + after_lon.as_degrees() * fraction;
             Some((Latitude::new(lat), Longitude::new(lon)))
         }
         (Some(nearest), None) | (None, Some(nearest)) => {
             if (time - nearest.tpv.time().utc()).abs() > window {
                 return None;
             }
-            Some((nearest.tpv.lat(), nearest.tpv.lon()))
+            Some(nearest.resolved_position())
         }
         (None, None) => None,
     }

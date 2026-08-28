@@ -163,7 +163,7 @@ mod tests {
             .lon(Longitude::new(x_m * DEG_PER_METER))
             .maybe_heading(heading.then(|| Angle::new::<degree>(90.0)))
             .build();
-        NavPoint::new(tpv, sats)
+        NavPoint::new(tpv, sats).expect("coordinates in range")
     }
 
     /// Points spaced 10 m apart with the given fix counts, heading present.

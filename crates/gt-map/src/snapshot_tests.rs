@@ -986,7 +986,7 @@ fn make_short_walk_file() -> gt_types::LoadedFile {
                 .lat(Latitude::new(55.68 + i as f64 * 1.0e-4))
                 .lon(Longitude::new(12.56))
                 .build();
-            gt_types::NavPoint::new(tpv, None)
+            gt_types::NavPoint::new(tpv, None).expect("coordinates in range")
         })
         .collect();
     let bb = GeoBounds::from_positions([

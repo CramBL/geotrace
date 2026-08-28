@@ -26,6 +26,10 @@ use gt_types::{Latitude, Longitude};
 
 /// A 30-point 1 Hz trace along H.C. Andersens Boulevard, Copenhagen (the
 /// capture harness's clean-drive reference street).
+#[expect(
+    clippy::expect_used,
+    reason = "Test data generation with hardcoded values"
+)]
 fn boulevard_points() -> Vec<NavPoint> {
     // Two anchors of the /route-sampled boulevard geometry.
     let (from, to) = ((55.678_74, 12.564_49), (55.674_34, 12.570_53));
@@ -39,7 +43,7 @@ fn boulevard_points() -> Vec<NavPoint> {
                 .lat(Latitude::new(from.0 + (to.0 - from.0) * t))
                 .lon(Longitude::new(from.1 + (to.1 - from.1) * t))
                 .build();
-            NavPoint::new(tpv, None)
+            NavPoint::new(tpv, None).expect("coordinates in range")
         })
         .collect()
 }

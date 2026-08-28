@@ -1506,7 +1506,8 @@ fn render_tpv_items(
             point_index: PointIdx::new(pi),
         };
         let label = point.tpv.time().utc().format("%H:%M:%S").to_string();
-        let lat_lon = (point.tpv.lat().as_degrees(), point.tpv.lon().as_degrees());
+        let (latitude, longitude) = point.resolved_position();
+        let lat_lon = (latitude.as_degrees(), longitude.as_degrees());
         point_item_row(ui, point_ref, label, lat_lon, scope, highlight, requests);
     }
 }
@@ -1537,7 +1538,8 @@ fn render_satellite_report_items(
             sats.fix_count(),
             sats.satellite_count()
         );
-        let lat_lon = (point.tpv.lat().as_degrees(), point.tpv.lon().as_degrees());
+        let (latitude, longitude) = point.resolved_position();
+        let lat_lon = (latitude.as_degrees(), longitude.as_degrees());
         point_item_row(ui, point_ref, label, lat_lon, scope, highlight, requests);
     }
 }

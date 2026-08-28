@@ -35,10 +35,11 @@ use egui::Context;
 use gt_fetch::{Connection, TransportSource};
 use gt_snap::merge::{self, SnapResult, SnapWarning, SnapWarningReporter};
 use gt_snap::request_plan::{self, RequestPlan, SnapParams};
+use gt_snap::snapped_track::Position;
 use gt_snap::wire::{Costing, SpeedLimit};
 use gt_snap::{DEFAULT_SERVER_URL, REQUEST_INTERVAL, server_host, transport};
 use gt_types::mercator::{self};
-use gt_types::{Latitude, LoadedTrack, Longitude, TrackRef, TravelMode};
+use gt_types::{LoadedTrack, TrackRef, TravelMode};
 use gt_ui_types::{
     SnappedEdgeInfo, SnappedEdgeSpan, SnappedSegment, SnappedTrackGeometry, TrackDataVisibility,
     WhiskerAnchor,
@@ -152,15 +153,19 @@ impl SnapRun {
         warnings: Vec<SnapWarning>,
         server_host: Option<String>,
     ) -> Self {
+        let mut positions_out_of_range = 0_usize;
+        let mut project = |position: &Position| match position.coordinates() {
+            Some((latitude, longitude)) => Some(mercator::normalize(latitude, longitude)),
+            None => {
+                positions_out_of_range += 1;
+                None
+            }
+        };
         let segments = result
             .segments
             .iter()
             .map(|segment| SnappedSegment {
-                points: segment
-                    .positions
-                    .iter()
-                    .map(|p| mercator::normalize(Latitude::new(p.lat), Longitude::new(p.lon)))
-                    .collect(),
+                points: segment.positions.iter().filter_map(&mut project).collect(),
                 edge_spans: segment
                     .edge_spans
                     .iter()
@@ -186,15 +191,18 @@ impl SnapRun {
             .points
             .iter()
             .filter_map(|point| {
-                point.snapped.map(|snapped| WhiskerAnchor {
+                Some(WhiskerAnchor {
                     point: point.point,
-                    snapped: mercator::normalize(
-                        Latitude::new(snapped.lat),
-                        Longitude::new(snapped.lon),
-                    ),
+                    snapped: project(&point.snapped?)?,
                 })
             })
             .collect();
+        if positions_out_of_range > 0 {
+            log::error!(
+                "Dropped {positions_out_of_range} snapped positions the map matching server \
+                 placed outside the coordinate range"
+            );
+        }
         Self {
             result,
             warnings,
@@ -831,7 +839,7 @@ fn run_failure_summary(reporter: &SnapWarningReporter) -> String {
 #[cfg(test)]
 mod tests {
     use gt_test_utils::fixtures::{self, FixKind, NavPointSpec};
-    use gt_types::{FileIdx, TrackIdx};
+    use gt_types::{FileIdx, Latitude, Longitude, TrackIdx};
 
     use super::*;
 
@@ -1357,6 +1365,58 @@ mod tests {
             anchor.snapped,
             mercator::normalize(Latitude::new(55.68), Longitude::new(12.56)),
         );
+    }
+
+    /// A server answer holding a position outside the coordinate range keeps
+    /// the rest of the geometry and leaves that vertex out.
+    #[test]
+    fn snap_run_leaves_out_positions_outside_the_coordinate_range() {
+        use gt_snap::merge::SnapPoint;
+        use gt_snap::snapped_track::{Position, SnappedTrackSegment};
+        use gt_snap::wire::SnapPointKind;
+        use gt_types::PointIdx;
+
+        let mut result = merge::merge(
+            &request_plan::plan(&[]),
+            SnapParams::new(Costing::Auto),
+            &[],
+            &SnapWarningReporter::default(),
+        );
+        result.segments = vec![SnappedTrackSegment {
+            positions: vec![
+                Position {
+                    lat: 55.68,
+                    lon: 12.56,
+                },
+                Position {
+                    lat: 91.0,
+                    lon: 12.56,
+                },
+            ],
+            edge_spans: Vec::new(),
+        }];
+        result.points = vec![SnapPoint {
+            point: PointIdx::new(3),
+            kind: SnapPointKind::Snapped,
+            error_m: Some(2.0),
+            snapped: Some(Position {
+                lat: 55.68,
+                lon: -181.0,
+            }),
+            edge: None,
+            follows_gap: false,
+        }];
+
+        let run = SnapRun::new(result, Vec::new(), None);
+
+        assert_eq!(
+            run.geometry
+                .segments
+                .first()
+                .map(|segment| segment.points.len()),
+            Some(1)
+        );
+        assert!(run.geometry.whiskers.is_empty());
     }
 
     /// A restored run seeds the display and dedupe stores and cancels a

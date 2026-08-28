@@ -2747,6 +2747,7 @@ dependencies = [
  "gt-test-utils",
  "gt-track-builder",
  "gt-types",
+ "log",
  "proptest",
  "rstest",
  "strum",
@@ -3113,6 +3114,7 @@ dependencies = [
  "rustc-hash 2.1.3",
  "serde",
  "strum",
+ "thiserror 2.0.20",
  "uom",
 ]
 

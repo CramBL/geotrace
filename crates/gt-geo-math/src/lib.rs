@@ -224,7 +224,7 @@ mod tests {
             .lat(lat(lat_deg))
             .lon(lon(lon_deg))
             .build();
-        NavPoint::new(tpv, None)
+        NavPoint::new(tpv, None).expect("coordinates in range")
     }
 
     #[test]

@@ -22,6 +22,10 @@ const WINDOW_MIN: f32 = 1.0;
 /// A recent epoch to hang the synthetic fixes off, in Unix milliseconds.
 const BASE_MILLIS: i64 = 1_700_000_000_000;
 
+#[expect(
+    clippy::expect_used,
+    reason = "Test data generation with hardcoded values"
+)]
 fn fix_at(millis: i64, satellites: Vec<Satellite>) -> NavPoint {
     let time = GpsTime::from_utc(DateTime::<Utc>::UNIX_EPOCH + Duration::milliseconds(millis));
     let tpv = TimePositionVelocity::builder()
@@ -30,6 +34,7 @@ fn fix_at(millis: i64, satellites: Vec<Satellite>) -> NavPoint {
         .lon(Longitude::new(12.0))
         .build();
     NavPoint::new(tpv, Some(Satellites::new(Some(time), None, satellites)))
+        .expect("coordinates in range")
 }
 
 fn two_satellites_in_view() -> Vec<Satellite> {

@@ -325,7 +325,7 @@ pub(crate) fn nav_at(
         .lat(gt_types::Latitude::new(lat))
         .lon(gt_types::Longitude::new(lon))
         .build();
-    gt_types::NavPoint::new(tpv, None)
+    gt_types::NavPoint::new(tpv, None).expect("coordinates in range")
 }
 
 /// Regression test: with a partially-overlapping track, points outside the

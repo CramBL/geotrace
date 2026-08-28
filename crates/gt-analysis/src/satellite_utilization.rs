@@ -291,7 +291,7 @@ mod tests {
                 .lat(Latitude::new(55.0))
                 .lon(Longitude::new(12.0))
                 .build();
-            NavPoint::new(tpv, sats)
+            NavPoint::new(tpv, sats).expect("coordinates in range")
         };
         let with_sats = |used: bool| {
             report(vec![

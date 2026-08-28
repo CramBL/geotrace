@@ -96,6 +96,10 @@ impl PointSpec {
         self
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "Test data generation with hardcoded values"
+    )]
     fn build(self, shift_secs: i64) -> NavPoint {
         let time = GpsTime::from_utc(epoch() + Duration::seconds(self.secs + shift_secs));
         let tpv = TimePositionVelocity::builder()
@@ -106,7 +110,7 @@ impl PointSpec {
             .maybe_heading(self.heading_deg.map(Angle::new::<degree>))
             .maybe_eph_m(self.eph_m)
             .build();
-        NavPoint::new(tpv, None)
+        NavPoint::new(tpv, None).expect("fixture coordinates in range")
     }
 }
 
