@@ -861,7 +861,6 @@ mod tests {
                     .lon(Longitude::new(12.0))
                     .build();
                 NavPoint::new(tpv, Some(Satellites::new(None, None, list)))
-                    .expect("coordinates in range")
             })
             .collect();
         extract_trails(&gt_test_utils::loaded_track_with_points(points))
@@ -1074,7 +1073,6 @@ mod tests {
                     .lon(Longitude::new(12.0))
                     .build();
                 NavPoint::new(tpv, Some(Satellites::new(None, None, sats)))
-                    .expect("coordinates in range")
             })
             .collect();
         extract_trails(&gt_test_utils::loaded_track_with_points(points))

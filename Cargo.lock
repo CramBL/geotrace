@@ -2747,7 +2747,6 @@ dependencies = [
  "gt-test-utils",
  "gt-track-builder",
  "gt-types",
- "log",
  "proptest",
  "rstest",
  "strum",

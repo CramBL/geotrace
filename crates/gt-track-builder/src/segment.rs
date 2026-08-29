@@ -15,6 +15,7 @@ use gt_types::track::{
     FileMetadata, FileSource, FixStats, LoadWarning, LoadedFile, LoadedTrack, MercBounds,
     SegmentLengthRange, TimeRange, TrackMetadata, TravelMode,
 };
+use std::borrow::Cow;
 use std::ops::Range;
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
@@ -553,6 +554,10 @@ pub fn compute_track_metadata(
         segment_length_range,
         has_custom_markers: !custom_markers.is_empty(),
         tpv_count: points.len(),
+        invalid_position_count: points
+            .iter()
+            .filter(|point| point.tpv.position().is_none())
+            .count(),
         satellite_report_count: points.iter().filter(|p| p.satellites.is_some()).count(),
         custom_marker_count: custom_markers.len(),
         generated_marker_count: generated_markers.len(),
@@ -585,6 +590,10 @@ impl From<&FileMetadata> for FileMeta {
 }
 
 /// Segments `points` into tracks and builds a fully-populated `LoadedFile`.
+///
+/// Every fix whose recorded coordinates are out of range is placed between the
+/// fixes that have a recorded position. At least one fix must have one, which
+/// is what the loader refuses a recording without.
 #[expect(
     clippy::expect_used,
     reason = "ranges from segment_tracks are always in-bounds and non-empty"
@@ -605,7 +614,20 @@ pub fn build_loaded_file(
     file_meta: FileMeta,
     mut load_warnings: Vec<LoadWarning>,
 ) -> LoadedFile {
-    let ranges = segment_tracks(points, &config.track_layout);
+    debug_assert!(
+        points.is_empty() || points.iter().any(|point| point.tpv.position().is_some()),
+        "no fix has a recorded position to place the rest of the recording from"
+    );
+
+    // A fix with no recorded position is placed across the whole recording
+    // first. The per-track pass below refines it from its own track's fixes,
+    // and a track holding no fix with a position keeps this placement.
+    let mut points = Cow::Borrowed(points);
+    if points.iter().any(|point| point.tpv.position().is_none()) {
+        place_fixes(points.to_mut(), UnmeasuredFix::CoordinateOutOfRange);
+    }
+
+    let ranges = segment_tracks(&points, &config.track_layout);
 
     let mut loaded_tracks: Vec<LoadedTrack> = ranges
         .into_iter()
@@ -619,10 +641,12 @@ pub fn build_loaded_file(
                 vec1::Vec1::try_from_vec(track_points_slice.to_vec())
                     .expect("segment_tracks produces only non-empty ranges");
 
-            // The ghost fixes are resolved first: the metadata geometry, the
-            // generated markers, the LOD levels and the satellite-label
-            // anchors below all read the resolved positions.
-            precompute_ghost_positions(&mut track_points);
+            // The fixes the receiver did not measure are placed first: the
+            // metadata geometry, the generated markers, the LOD levels and
+            // the satellite-label anchors below all read the resolved
+            // positions.
+            place_fixes(&mut track_points, UnmeasuredFix::CoordinateOutOfRange);
+            place_fixes(&mut track_points, UnmeasuredFix::Ghost);
 
             let track_time_range = time_range_spanning_every_fix(&track_points);
 
@@ -804,76 +828,130 @@ pub fn reassemble_channels(tracks: &[LoadedTrack]) -> Vec<Channel> {
     by_name
 }
 
-/// Sets the resolved position of ghost points (those with `heading == None`)
-/// to a position interpolated in time along the great circle between the
-/// surrounding real fixes (`fix_count > 0`).
-///
-/// The interpolated position is where the point is taken to be and what the
-/// renderers draw: the coordinates a receiver reports without a heading may be
-/// unreliable. [`NavPoint::tpv`] keeps the recorded coordinates.
-///
-/// Runs in O(n) over all points in the track.
-#[expect(
-    clippy::indexing_slicing,
-    reason = "all indices are constructed from 0..n and arrays have length n, so always in bounds"
-)]
-fn precompute_ghost_positions(points: &mut [NavPoint]) {
-    let n = points.len();
-    if n == 0 {
-        return;
-    }
+/// A fix the receiver did not measure at the coordinates it holds, and what
+/// anchors the position the builder places it at.
+#[derive(Clone, Copy)]
+enum UnmeasuredFix {
+    /// A fix with no heading, anchored by the fixes with a satellite in fix:
+    /// the coordinates a receiver reports without a heading are often its own
+    /// dead reckoning, as is a position it reports with nothing in fix.
+    Ghost,
+    /// A fix with a recorded latitude or longitude outside its range, anchored
+    /// by every fix that has a recorded position: it holds none of its own to
+    /// fall back on.
+    CoordinateOutOfRange,
+}
 
-    // Forward pass: for each index, the nearest preceding index with fix_count > 0.
-    let mut prev_real: Vec<Option<usize>> = vec![None; n];
-    let mut last_real: Option<usize> = None;
-    for i in 0..n {
-        prev_real[i] = last_real;
-        if points[i].fix_count() > 0 {
-            last_real = Some(i);
+impl UnmeasuredFix {
+    fn is_target(self, point: &NavPoint) -> bool {
+        match self {
+            Self::Ghost => point.tpv.position().is_some() && point.tpv.heading().is_none(),
+            Self::CoordinateOutOfRange => point.tpv.position().is_none(),
         }
     }
 
-    // Backward pass: for each index, the nearest following index with fix_count > 0.
-    let mut next_real: Vec<Option<usize>> = vec![None; n];
-    let mut next_real_fix: Option<usize> = None;
-    for i in (0..n).rev() {
-        next_real[i] = next_real_fix;
-        if points[i].fix_count() > 0 {
-            next_real_fix = Some(i);
+    fn is_anchor(self, point: &NavPoint) -> bool {
+        match self {
+            Self::Ghost => point.tpv.position().is_some() && point.fix_count() > 0,
+            Self::CoordinateOutOfRange => point.tpv.position().is_some(),
         }
     }
 
-    // Collect updates to avoid simultaneous mutable and immutable borrows.
-    let mut updates: Vec<(usize, (Latitude, Longitude))> = Vec::new();
-    for i in 0..n {
-        if points[i].tpv.heading().is_some() {
-            continue;
-        }
-        let position = match (prev_real[i], next_real[i]) {
-            (Some(pi), Some(ni)) => {
-                let anchor_span_secs =
-                    (points[ni].tpv.time() - points[pi].tpv.time()).as_seconds_f64();
-                let elapsed_secs = (points[i].tpv.time() - points[pi].tpv.time()).as_seconds_f64();
-                if anchor_span_secs > 0.0 {
-                    let arc = GreatCircleArc {
-                        start: points[pi].resolved_position(),
-                        end: points[ni].resolved_position(),
-                    };
-                    arc.position_at_ratio(elapsed_secs / anchor_span_secs)
-                } else {
-                    points[i].resolved_position()
-                }
+    /// Where `point` falls between its anchors: the share of their time span
+    /// that has passed at its own timestamp, along the great circle between
+    /// them.
+    ///
+    /// `None` leaves the point where it is, which is what a ghost fix does
+    /// when nothing anchors it and when its anchors stamp the same instant,
+    /// spanning no time to place it in.
+    fn placement(
+        self,
+        points: &[NavPoint],
+        point: &NavPoint,
+        (preceding, following): (Option<usize>, Option<usize>),
+    ) -> Option<(Latitude, Longitude)> {
+        let before = preceding.and_then(|index| points.get(index));
+        let after = following.and_then(|index| points.get(index));
+
+        let interpolated = match (before, after) {
+            (Some(before), Some(after)) => {
+                let anchor_span_secs = (after.tpv.time() - before.tpv.time()).as_seconds_f64();
+                let elapsed_secs = (point.tpv.time() - before.tpv.time()).as_seconds_f64();
+                (anchor_span_secs > 0.0).then(|| {
+                    GreatCircleArc {
+                        start: before.resolved_position(),
+                        end: after.resolved_position(),
+                    }
+                    .position_at_ratio(elapsed_secs / anchor_span_secs)
+                })
             }
-            (Some(pi), None) => points[pi].resolved_position(),
-            (None, Some(ni)) => points[ni].resolved_position(),
-            (None, None) => points[i].resolved_position(),
+            (Some(anchor), None) | (None, Some(anchor)) => Some(anchor.resolved_position()),
+            (None, None) => None,
         };
-        updates.push((i, position));
+
+        match self {
+            Self::Ghost => interpolated,
+            // Any anchor places a fix out of range better than none does: it
+            // has no recorded position to be left at.
+            Self::CoordinateOutOfRange => {
+                interpolated.or_else(|| before.or(after).map(NavPoint::resolved_position))
+            }
+        }
+    }
+}
+
+/// Places every fix of `kind` at the position its anchors give it. What the
+/// receiver recorded stays on [`NavPoint::tpv`], and the placed position is
+/// what the renderers draw.
+///
+/// Running this again over already placed points repeats the same placement:
+/// both the targets and the anchors are read off the recorded coordinates.
+/// Runs in O(n) over the points.
+fn place_fixes(points: &mut [NavPoint], kind: UnmeasuredFix) {
+    let anchors = nearest_anchors(points, |point| kind.is_anchor(point));
+
+    let placements: Vec<(usize, (Latitude, Longitude))> = points
+        .iter()
+        .enumerate()
+        .zip(&anchors)
+        .filter(|((_, point), _)| kind.is_target(point))
+        .filter_map(|((index, point), anchors)| {
+            Some((index, kind.placement(points, point, *anchors)?))
+        })
+        .collect();
+
+    for (index, position) in placements {
+        if let Some(point) = points.get_mut(index) {
+            point.set_interpolated_position(position);
+        }
+    }
+}
+
+/// For each point, the nearest anchor before it and the nearest one after it.
+fn nearest_anchors(
+    points: &[NavPoint],
+    is_anchor: impl Fn(&NavPoint) -> bool,
+) -> Vec<(Option<usize>, Option<usize>)> {
+    let mut preceding: Vec<Option<usize>> = Vec::with_capacity(points.len());
+    let mut latest: Option<usize> = None;
+    for (index, point) in points.iter().enumerate() {
+        preceding.push(latest);
+        if is_anchor(point) {
+            latest = Some(index);
+        }
     }
 
-    for (i, position) in updates {
-        points[i].set_resolved_position(position);
+    let mut following: Vec<Option<usize>> = Vec::with_capacity(points.len());
+    let mut earliest: Option<usize> = None;
+    for (index, point) in points.iter().enumerate().rev() {
+        following.push(earliest);
+        if is_anchor(point) {
+            earliest = Some(index);
+        }
     }
+    following.reverse();
+
+    preceding.into_iter().zip(following).collect()
 }
 
 #[cfg(test)]
@@ -882,10 +960,11 @@ mod tests {
 
     use chrono::TimeZone;
     use geotrace_sdk_units::Unit;
-    use gt_types::coordinates::{Latitude, Longitude};
+    use gt_types::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
     use gt_types::satellites::{Constellation, Satellite, Satellites};
     use gt_types::time_types::{GpsTime, SysTime};
     use gt_types::tpv::TimePositionVelocity;
+    use rstest::rstest;
     use uom::si::angle::degree;
     use uom::si::f64::Angle;
 
@@ -906,7 +985,7 @@ mod tests {
             .lon(Longitude::new(12.0))
             .sys_time(sys)
             .build();
-        NavPoint::new(tpv, None).expect("coordinates in range")
+        NavPoint::new(tpv, None)
     }
 
     #[test]
@@ -1073,7 +1152,7 @@ mod tests {
             .lon(gt_types::coordinates::Longitude::new(12.0))
             .heading(Angle::new::<degree>(0.0))
             .build();
-        NavPoint::new(tpv, None).expect("coordinates in range")
+        NavPoint::new(tpv, None)
     }
 
     fn make_point_at_pos(t: i64, lat: f64, lon: f64) -> NavPoint {
@@ -1084,7 +1163,7 @@ mod tests {
             .lon(gt_types::coordinates::Longitude::new(lon))
             .heading(Angle::new::<degree>(0.0))
             .build();
-        NavPoint::new(tpv, None).expect("coordinates in range")
+        NavPoint::new(tpv, None)
     }
 
     #[test]
@@ -1383,7 +1462,7 @@ mod tests {
                 fix_count_positive,
             )],
         );
-        NavPoint::new(tpv, Some(sats)).expect("coordinates in range")
+        NavPoint::new(tpv, Some(sats))
     }
 
     #[test]
@@ -1497,7 +1576,7 @@ mod tests {
                 true,
             )],
         );
-        NavPoint::new(tpv, Some(sats)).expect("coordinates in range")
+        NavPoint::new(tpv, Some(sats))
     }
 
     fn make_ghost(t: i64, lat: Latitude, lon: Longitude) -> NavPoint {
@@ -1507,29 +1586,29 @@ mod tests {
             .lat(lat)
             .lon(lon)
             .build();
-        NavPoint::new(tpv, None).expect("coordinates in range")
+        NavPoint::new(tpv, None)
     }
 
     #[test]
-    fn precompute_ghost_positions_empty_slice() {
+    fn placing_an_empty_track_does_nothing() {
         let mut points: Vec<NavPoint> = vec![];
-        precompute_ghost_positions(&mut points);
+        place_fixes(&mut points, UnmeasuredFix::Ghost);
     }
 
     #[test]
-    fn precompute_ghost_positions_all_real_unchanged() {
+    fn measured_fixes_stay_where_they_were_recorded() {
         let mut points = vec![
             make_real_fix(0, Latitude::new(55.0), Longitude::new(12.0)),
             make_real_fix(1, Latitude::new(55.1), Longitude::new(12.1)),
         ];
         let before: Vec<_> = points.iter().map(NavPoint::resolved_position).collect();
-        precompute_ghost_positions(&mut points);
+        place_fixes(&mut points, UnmeasuredFix::Ghost);
         let after: Vec<_> = points.iter().map(NavPoint::resolved_position).collect();
         assert_eq!(before, after);
     }
 
     #[test]
-    fn precompute_ghost_positions_ghost_between_two_anchors_interpolates() {
+    fn a_ghost_fix_between_two_anchors_is_interpolated() {
         // Real fixes on the equator at t=0 (lon=0) and t=10 (lon=1), ghost at
         // t=5. The equator is a great circle, so the ghost lands at lon=0.5.
         let mut points = vec![
@@ -1537,7 +1616,7 @@ mod tests {
             make_ghost(5, Latitude::new(10.0), Longitude::new(10.0)),
             make_real_fix(10, Latitude::new(0.0), Longitude::new(1.0)),
         ];
-        precompute_ghost_positions(&mut points);
+        place_fixes(&mut points, UnmeasuredFix::Ghost);
 
         let (latitude, longitude) = points[1].resolved_position();
         assert!(
@@ -1558,12 +1637,12 @@ mod tests {
     }
 
     #[test]
-    fn precompute_ghost_positions_ghost_before_first_anchor_snaps_to_it() {
+    fn a_ghost_fix_before_the_first_anchor_snaps_to_it() {
         let mut points = vec![
             make_ghost(0, Latitude::new(10.0), Longitude::new(10.0)),
             make_real_fix(10, Latitude::new(55.0), Longitude::new(12.0)),
         ];
-        precompute_ghost_positions(&mut points);
+        place_fixes(&mut points, UnmeasuredFix::Ghost);
 
         assert_eq!(
             points[0].resolved_position(),
@@ -1572,12 +1651,12 @@ mod tests {
     }
 
     #[test]
-    fn precompute_ghost_positions_ghost_after_last_anchor_snaps_to_it() {
+    fn a_ghost_fix_after_the_last_anchor_snaps_to_it() {
         let mut points = vec![
             make_real_fix(0, Latitude::new(55.0), Longitude::new(12.0)),
             make_ghost(10, Latitude::new(10.0), Longitude::new(10.0)),
         ];
-        precompute_ghost_positions(&mut points);
+        place_fixes(&mut points, UnmeasuredFix::Ghost);
 
         assert_eq!(
             points[1].resolved_position(),
@@ -1585,14 +1664,164 @@ mod tests {
         );
     }
 
+    /// The longitudes alone say where the builder placed a fix in the tests
+    /// below: every fix in them sits on the equator. 1e-9° is about 0.1 mm.
+    const PLACEMENT_TOLERANCE_DEGREES: f64 = 1e-9;
+
+    /// A fix with a position and a heading, but no satellite report: the
+    /// receiver said where it was without saying what it tracked.
+    fn measured_fix_without_a_satellite_report(secs: i64, lon_degrees: f64) -> NavPoint {
+        let time = GpsTime::from_utc(
+            Utc.timestamp_opt(secs, 0)
+                .single()
+                .expect("valid timestamp"),
+        );
+        let tpv = TimePositionVelocity::builder()
+            .time(time)
+            .lat(Latitude::new(0.0))
+            .lon(Longitude::new(lon_degrees))
+            .heading(Angle::new::<degree>(90.0))
+            .build();
+        NavPoint::new(tpv, None)
+    }
+
+    /// A fix the receiver wrote a latitude of NaN for. Its heading is present,
+    /// leaving the unusable coordinate as the only reason to place it. A
+    /// position kept as recorded is distinguishable from a placed one: its
+    /// longitude is far from the fixes around it.
+    fn fix_without_a_recorded_position(secs: i64) -> NavPoint {
+        let time = GpsTime::from_utc(
+            Utc.timestamp_opt(secs, 0)
+                .single()
+                .expect("valid timestamp"),
+        );
+        let tpv = TimePositionVelocity::builder()
+            .time(time)
+            .lat(RecordedLatitude::from_degrees(f64::NAN))
+            .lon(RecordedLongitude::from_degrees(88.0))
+            .heading(Angle::new::<degree>(90.0))
+            .build();
+        NavPoint::new(tpv, None)
+    }
+
+    #[rstest]
+    #[case::between_two_measured_fixes(
+        vec![
+            measured_fix_without_a_satellite_report(0, 0.0),
+            fix_without_a_recorded_position(5),
+            measured_fix_without_a_satellite_report(10, 10.0),
+        ],
+        vec![0.0, 5.0, 10.0]
+    )]
+    #[case::before_the_first_measured_fix(
+        vec![
+            fix_without_a_recorded_position(0),
+            measured_fix_without_a_satellite_report(10, 10.0),
+            measured_fix_without_a_satellite_report(20, 20.0),
+        ],
+        vec![10.0, 10.0, 20.0]
+    )]
+    #[case::after_the_last_measured_fix(
+        vec![
+            measured_fix_without_a_satellite_report(0, 0.0),
+            measured_fix_without_a_satellite_report(10, 10.0),
+            fix_without_a_recorded_position(20),
+        ],
+        vec![0.0, 10.0, 10.0]
+    )]
+    #[case::a_run_of_three_spreads_over_the_time_they_span(
+        vec![
+            measured_fix_without_a_satellite_report(0, 0.0),
+            fix_without_a_recorded_position(2),
+            fix_without_a_recorded_position(5),
+            fix_without_a_recorded_position(8),
+            measured_fix_without_a_satellite_report(10, 10.0),
+        ],
+        vec![0.0, 2.0, 5.0, 8.0, 10.0]
+    )]
+    fn a_fix_without_a_recorded_position_is_placed_from_the_fixes_around_it(
+        #[case] mut points: Vec<NavPoint>,
+        #[case] expected_longitudes: Vec<f64>,
+    ) {
+        place_fixes(&mut points, UnmeasuredFix::CoordinateOutOfRange);
+
+        let drawn_longitudes: Vec<f64> = points
+            .iter()
+            .map(|point| point.resolved_position().1.as_degrees())
+            .collect();
+        assert_eq!(drawn_longitudes.len(), expected_longitudes.len());
+        for (index, (drawn, expected)) in drawn_longitudes
+            .iter()
+            .zip(&expected_longitudes)
+            .enumerate()
+        {
+            assert!(
+                (drawn - expected).abs() < PLACEMENT_TOLERANCE_DEGREES,
+                "fix {index} drawn at lon {drawn}, expected {expected}"
+            );
+        }
+    }
+
+    /// A track whose every fix is out of range holds no anchor of its own, and
+    /// the fixes of the recording's other tracks place it: 3610 s is halfway
+    /// between the fixes at 10 s (lon 10) and 7210 s (lon 20).
     #[test]
-    fn precompute_ghost_positions_all_ghosts_no_anchors_unchanged() {
+    fn a_track_without_a_position_is_placed_from_the_rest_of_the_recording() {
+        let points = vec![
+            measured_fix_without_a_satellite_report(0, 0.0),
+            measured_fix_without_a_satellite_report(10, 10.0),
+            fix_without_a_recorded_position(3610),
+            measured_fix_without_a_satellite_report(7210, 20.0),
+        ];
+
+        let file = build_loaded_file(
+            "out_of_range.gtd".to_owned(),
+            &points,
+            &[],
+            vec![],
+            vec![],
+            &[],
+            &SegmentationConfig::default(),
+            FileSource::GtdPath(PathBuf::from("out_of_range.gtd")),
+            FileMeta::default(),
+            vec![],
+        );
+
+        let drawn = file
+            .tracks
+            .get(1)
+            .and_then(|track| track.points.first())
+            .expect("the middle fix is a track of its own");
+        let longitude = drawn.resolved_position().1.as_degrees();
+        assert!(
+            (longitude - 15.0).abs() < PLACEMENT_TOLERANCE_DEGREES,
+            "drawn at lon {longitude}, expected 15"
+        );
+    }
+
+    #[test]
+    fn track_metadata_counts_the_fixes_whose_recorded_position_is_out_of_range() {
+        let mut points = vec![
+            measured_fix_without_a_satellite_report(0, 0.0),
+            fix_without_a_recorded_position(5),
+            measured_fix_without_a_satellite_report(10, 10.0),
+        ];
+        place_fixes(&mut points, UnmeasuredFix::CoordinateOutOfRange);
+        let points = vec1::Vec1::try_from_vec(points).expect("three fixes");
+
+        let metadata = compute_track_metadata(1, &points, &[], &[]);
+
+        assert_eq!(metadata.invalid_position_count, 1);
+    }
+
+    #[test]
+    fn ghost_fixes_with_no_anchor_stay_where_they_were_recorded() {
         let mut points = vec![
             make_ghost(0, Latitude::new(55.0), Longitude::new(12.0)),
             make_ghost(5, Latitude::new(56.0), Longitude::new(13.0)),
         ];
         let before: Vec<_> = points.iter().map(NavPoint::resolved_position).collect();
-        precompute_ghost_positions(&mut points);
+        place_fixes(&mut points, UnmeasuredFix::Ghost);
         let after: Vec<_> = points.iter().map(NavPoint::resolved_position).collect();
         assert_eq!(before, after);
     }

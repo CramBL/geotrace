@@ -61,9 +61,8 @@ pub(crate) fn test_points() -> Vec<NavPoint> {
                     sat(Constellation::Galileo, true),
                 ],
             )),
-        )
-        .expect("fixture coordinates in range"),
-        NavPoint::new(bare, None).expect("fixture coordinates in range"),
+        ),
+        NavPoint::new(bare, None),
     ]
 }
 

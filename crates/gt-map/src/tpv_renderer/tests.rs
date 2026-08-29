@@ -20,7 +20,7 @@ fn make_point(satellites: Option<Satellites>) -> NavPoint {
         .lon(Longitude::new(-0.1))
         .heading(Angle::new::<degree>(90.0))
         .build();
-    NavPoint::new(tpv, satellites).expect("coordinates in range")
+    NavPoint::new(tpv, satellites)
 }
 
 fn sats_with_fix(fix_count: u32) -> Satellites {
@@ -492,7 +492,7 @@ fn point_at(secs: i64, satellites: Option<Satellites>) -> NavPoint {
         .lon(Longitude::new(-0.1))
         .heading(Angle::new::<degree>(90.0))
         .build();
-    NavPoint::new(tpv, satellites).expect("coordinates in range")
+    NavPoint::new(tpv, satellites)
 }
 
 /// A report whose satellites carry sky positions, so the badge's compact
@@ -684,7 +684,7 @@ fn color_fix_lost_is_red() {
 #[test]
 fn no_heading_is_ghost() {
     let tpv = make_tpv(51.5, -0.1, None);
-    let point = NavPoint::new(tpv, None).expect("coordinates in range");
+    let point = NavPoint::new(tpv, None);
     assert!(point.is_ghost_fix());
 }
 
@@ -692,7 +692,7 @@ fn no_heading_is_ghost() {
 #[test]
 fn heading_no_satellite_report_is_real() {
     let tpv = make_tpv(51.5, -0.1, Some(90.0));
-    let point = NavPoint::new(tpv, None).expect("coordinates in range");
+    let point = NavPoint::new(tpv, None);
     assert!(!point.is_ghost_fix());
 }
 
@@ -703,7 +703,7 @@ fn heading_no_satellite_report_is_real() {
 #[test]
 fn heading_with_good_fix_is_real() {
     let tpv = make_tpv(51.5, -0.1, Some(225.0));
-    let point = NavPoint::new(tpv, Some(sats_with_fix(5))).expect("coordinates in range");
+    let point = NavPoint::new(tpv, Some(sats_with_fix(5)));
     assert!(!point.is_ghost_fix());
 }
 
@@ -715,7 +715,7 @@ fn heading_with_good_fix_is_real() {
 #[test]
 fn heading_with_fix_lost_is_ghost() {
     let tpv = make_tpv(51.5, -0.1, Some(180.0));
-    let point = NavPoint::new(tpv, Some(sats_with_fix(0))).expect("coordinates in range");
+    let point = NavPoint::new(tpv, Some(sats_with_fix(0)));
     assert!(point.is_ghost_fix());
 }
 
@@ -849,7 +849,7 @@ fn unit_transform() -> crate::transform::MercTransform {
 /// A real fix on the equator, `x_m` metres east of the origin.
 fn nav_point_at_meters(x_m: f64) -> NavPoint {
     let lon_deg = x_m * 360.0 / EARTH_CIRCUMFERENCE_M;
-    NavPoint::new(make_tpv(0.0, lon_deg, Some(90.0)), None).expect("coordinates in range")
+    NavPoint::new(make_tpv(0.0, lon_deg, Some(90.0)), None)
 }
 
 fn track_with_segment_range(min_m: f64, max_m: f64) -> LoadedTrack {
@@ -1039,7 +1039,7 @@ fn quality_line_color_marks_ghost_fixes_red() {
     // No heading and no satellite report: tpv_point_color alone would say
     // blue, but the point is a ghost fix and must show as red.
     let tpv = make_tpv(51.5, -0.1, None);
-    let point = NavPoint::new(tpv, None).expect("coordinates in range");
+    let point = NavPoint::new(tpv, None);
     assert_eq!(quality_line_color(&point), FIX_LOST_RED);
 }
 

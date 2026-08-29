@@ -32,7 +32,7 @@ pub use markers::{
 };
 pub use mercator::MercPoint;
 pub use metrics::MetricKind;
-pub use nav_point::{FixQuality, NavPoint};
+pub use nav_point::{FixQuality, NavPoint, ProjectedPosition, ResolvedPosition};
 pub use query::DisplayMode;
 pub use sat_label::{SatLabelAnchor, SatLabelTier};
 pub use solar_position::SunlitSide;
