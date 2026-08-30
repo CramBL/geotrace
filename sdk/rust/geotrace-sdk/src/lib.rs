@@ -29,6 +29,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 mod builder;
 mod error;
+mod fixed_width_string;
 mod read;
 mod time_types;
 mod types;
@@ -41,6 +42,10 @@ pub use builder::{
     NavFileBuilder, NavRecord, NavRecorder, SatelliteWarning, collect_satellite_warnings,
 };
 pub use error::{BuildError, ChannelError, Error, EventMarkerError};
+pub use fixed_width_string::{
+    AnnotationField, ColorHexField, FixedWidthString, FixedWidthStringError, IconNameField,
+    MarkerLabelField, VariantPathField,
+};
 pub use geotrace_sdk_units::{
     ChannelUnit, ChannelUnitKind, CustomUnit, PhysicalQuantity, Unit, UnitParseError,
 };
