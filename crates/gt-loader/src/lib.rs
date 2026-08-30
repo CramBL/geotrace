@@ -332,8 +332,8 @@ impl fmt::Display for DroppedMarker {
     }
 }
 
-/// One satellite of one record's report, named as the app's satellite tables
-/// name it.
+/// One satellite of one record's report, in the same notation as the app's
+/// satellite tables.
 struct SatelliteInRecord {
     record: usize,
     constellation: Constellation,
@@ -392,7 +392,7 @@ impl fmt::Display for UnreadableEventMarkerColor {
 }
 
 /// What the loader changed about the satellite rows a recording holds, so the
-/// load-warnings dialog can name each change and a user can trace a satellite
+/// load-warnings dialog lists each change and a user can trace a satellite
 /// count or a signal strength on screen back to it.
 #[derive(Default)]
 struct SatelliteAlterations {
@@ -703,8 +703,9 @@ struct MergedSatellite {
 /// highest keeps the result independent of row order, which
 /// `gt_analysis::loss_of_lock` reads when it compares a satellite's SNR between
 /// epochs. Elevation and azimuth are properties of the satellite's geometry,
-/// not of the signal: the merged row keeps the first value a row reported for
-/// each of them. Each result carries how many rows of the report it holds.
+/// not of the signal: the merged row keeps the first value any of its rows
+/// holds for each of them. Each result carries how many rows of the report it
+/// holds.
 fn merge_rows_repeating_a_satellite(tracked: &[SdkSatellite]) -> Vec<MergedSatellite> {
     let mut merged: Vec<MergedSatellite> = Vec::with_capacity(tracked.len());
     for row in tracked {
@@ -1442,7 +1443,7 @@ mod tests {
     }
 
     /// A file can hold a marker position no interpolation would produce: the
-    /// marker is left out and the recording says which one and why.
+    /// marker is left out and a load warning lists which one and why.
     #[test]
     fn a_marker_outside_the_coordinate_range_is_dropped_and_named() {
         let marker = SdkMarker {
@@ -1654,9 +1655,9 @@ mod tests {
         bytes
     }
 
-    /// The file's own warning about the repeated rows and the loader's warning
-    /// about merging them are both raised: one says the file is malformed, the
-    /// other says what the app made of it.
+    /// Two warnings are raised for a file that repeats a satellite: the SDK's,
+    /// about the file being malformed, and the loader's, about what the app
+    /// made of the repeated rows.
     #[test]
     fn satellites_merged_from_several_rows_load_with_a_warning_naming_them() {
         let bytes = recording_with_satellite_reports(vec![
@@ -1774,6 +1775,9 @@ mod tests {
         );
     }
 
+    /// The last style written for a variant path is the one every marker on it
+    /// is drawn with: the styles reach the builder in the order the file holds
+    /// them.
     #[test]
     fn several_styles_for_one_variant_path_load_as_the_last_one_with_a_warning_listing_the_path() {
         let bytes = recording_with_event_marker_styles(vec![

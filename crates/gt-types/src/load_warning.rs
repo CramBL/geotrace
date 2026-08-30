@@ -11,10 +11,10 @@ pub struct LoadWarning {
     pub description: String,
 }
 
-/// How many entries a warning names before it only counts the rest.
+/// How many entries a warning lists before it only counts the rest.
 const MAX_LISTED_ENTRIES: usize = 5;
 
-/// Renders the first [`MAX_LISTED_ENTRIES`] of `entries`, followed by how many
+/// Renders the first `MAX_LISTED_ENTRIES` of `entries`, followed by how many
 /// more there are.
 pub fn first_few_listed<T: fmt::Display>(entries: &[T]) -> String {
     let listed = entries
@@ -30,12 +30,13 @@ pub fn first_few_listed<T: fmt::Display>(entries: &[T]) -> String {
 }
 
 /// The wording of a warning about what a layer of the loading pipeline altered:
-/// `issue` completes the "<count> …" line, `consequence` follows the listed
+/// `issue` completes the `<count> …` line, `consequence` follows the listed
 /// entries in the description.
 ///
-/// The SDK's own warnings describe the file itself, and these sit beside them:
-/// a file that repeats a satellite raises one warning about the file and one
-/// about what the app made of it.
+/// Some of these sit beside an SDK warning about the file itself: a file that
+/// repeats a satellite raises one warning from the SDK about the file and one
+/// from this type about what the app made of it. Others stand alone, for an
+/// alteration the SDK does not flag.
 #[derive(Clone, Copy)]
 pub struct AlterationWording {
     pub issue: &'static str,

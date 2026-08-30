@@ -537,7 +537,7 @@ mod series_tests {
     }
 
     /// The per-point form is index-aligned: reportless points hold `None`,
-    /// and every value agrees with the time-keyed series.
+    /// and every value matches the time-keyed series.
     #[test]
     fn slip_rate_per_point_aligns_with_series() {
         let reportless = |secs: i64| {

@@ -16,8 +16,8 @@
 //! # Cross-domain operations
 //!
 //! When you genuinely need the GPS/sys-clock offset, use
-//! [`GpsTime::offset_from_sys`] - the explicit name signals that you are
-//! performing a cross-domain measurement.
+//! [`GpsTime::offset_from_sys`] - a reader sees from the explicit name that the
+//! measurement crosses the two clock domains.
 
 use chrono::{DateTime, Duration, Utc};
 use std::fmt;
