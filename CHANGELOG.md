@@ -13,6 +13,7 @@
 ### Fixed
 
 - **Log Viewer:** Fixed a log entry between two fixes across the antimeridian being placed half a world away from both.
+- **Map & Tracks:** Fixed the window for a clicked fix drawing its content over its own title bar when scrolled: the sky plot column and the satellite tables now scroll on their own.
 - **Map & Tracks:** Fixed a recording whose tracks are drawn nowhere reporting a distance of "-0 m": its side panel row now shows a dash, the way its track rows already do.
 - **Map & Tracks:** Fixed dead-reckoned fixes on the map ignoring hover and clicks: they are now in the map's index at the position they are drawn at.
 - **Map & Tracks:** Fixed a recording in which no fix has a valid position being rejected: it now loads and shows its data in the plot and the history, with its tracks drawn nowhere on the map.

@@ -707,8 +707,9 @@ pub(crate) fn show_sticky_tpv_content(
     // when they do not, since squeezing the tables in beside a 256 px plot
     // leaves them too narrow to read.
     let side_by_side = ui.available_width() >= MIN_SIDE_BY_SIDE_WIDTH_PX;
-    // `folds` is a parameter rather than a capture so both closures can take
-    // it in turn without holding overlapping mutable borrows.
+    // `folds` and `highlight` are parameters, not closure captures: this
+    // closure and `sticky_satellites` each take them in turn, without
+    // overlapping mutable borrows.
     // Returns whether the header's "open sky trails" button was pressed.
     let summary =
         |ui: &mut Ui, folds: &mut PointWindowFolds, highlight: &mut Option<SkyHighlight>| {
@@ -754,26 +755,31 @@ pub(crate) fn show_sticky_tpv_content(
             sticky_metrics(ui, p, highlight, recording_name, placement);
             open_trails
         };
-    // The satellite tables always scroll on their own, so the plot beside or
-    // above them never scrolls out of view.
-    let satellites =
-        |ui: &mut Ui, folds: &mut PointWindowFolds, highlight: &mut Option<SkyHighlight>| {
-            ScrollArea::vertical()
-                .id_salt("sticky_sats_scroll")
-                .show(ui, |ui| sticky_satellites(ui, p, folds, highlight));
-        };
-
     let mut open_trails = false;
     if side_by_side {
+        // The body itself has no scroll: each column scrolls inside it.
         ui.horizontal_top(|ui| {
-            ui.vertical(|ui| open_trails = summary(ui, folds, &mut highlight));
+            ui.vertical(|ui| {
+                ScrollArea::vertical()
+                    .id_salt("sticky_summary_scroll")
+                    .show(ui, |ui| open_trails = summary(ui, folds, &mut highlight));
+            });
             ui.add_space(STICKY_COLUMN_GAP_PX);
-            ui.vertical(|ui| satellites(ui, folds, &mut highlight));
+            ui.vertical(|ui| {
+                ScrollArea::vertical()
+                    .id_salt("sticky_sats_scroll")
+                    .show(ui, |ui| sticky_satellites(ui, p, folds, &mut highlight));
+            });
         });
     } else {
-        open_trails = summary(ui, folds, &mut highlight);
-        ui.add_space(6.0);
-        satellites(ui, folds, &mut highlight);
+        // Stacked, the plot sits above the tables and the two scroll as one.
+        ScrollArea::both()
+            .id_salt("sticky_stacked_scroll")
+            .show(ui, |ui| {
+                open_trails = summary(ui, folds, &mut highlight);
+                ui.add_space(6.0);
+                sticky_satellites(ui, p, folds, &mut highlight);
+            });
     }
 
     if highlight != prev_highlight {
