@@ -309,6 +309,26 @@ mod tests {
         assert!(!track_passes_filter(&meta, &filter));
     }
 
+    /// A track no fix of which has a valid position has neither a distance nor
+    /// a spread to compare against a minimum, so the filter keeps it: the same
+    /// reading as a track without segments, whose icons stay visible at every
+    /// zoom.
+    #[test]
+    fn a_track_without_geometry_passes_the_distance_and_spread_filters() {
+        let track = gt_test_utils::loaded_track_with_points(
+            gt_test_utils::nav_points_without_a_valid_position(3),
+        );
+        assert_eq!(track.geometry, gt_types::TrackGeometry::NoValidPosition);
+
+        let filter = GlobalFilter {
+            min_distance_km: Some(Length::new::<kilometer>(5.0)),
+            min_spread_m: Some(Length::new::<meter>(200.0)),
+            ..Default::default()
+        };
+
+        assert!(track_passes_filter(&track, &filter));
+    }
+
     #[test]
     fn require_custom_marker_pass() {
         let meta = make_meta(1.0, 60, 100.0, true, 0, 60);

@@ -838,6 +838,67 @@ fn map_framing_covers_where_the_points_are_drawn() {
     );
 }
 
+/// A file whose only track has no geometry puts no ink on the map, so zoom to
+/// fit has nothing to frame.
+#[test]
+fn a_file_whose_only_track_has_no_geometry_has_nothing_to_frame() {
+    let files = vec![file_with_tracks(vec![
+        gt_test_utils::loaded_track_with_points(
+            gt_test_utils::nav_points_without_a_valid_position(3),
+        ),
+    ])];
+
+    assert_eq!(
+        compute_visible_bounding_box(
+            &files,
+            &vis_all_visible(),
+            &GlobalFilter::default(),
+            DisplayMask::default()
+        ),
+        None
+    );
+}
+
+/// The map culls tracks by their Mercator bounds. A track without geometry has
+/// none: every drawing pass leaves it out, and the track beside it draws and
+/// frames as usual.
+#[test]
+fn a_track_without_geometry_is_left_out_of_every_drawing_pass() {
+    let files = vec![file_with_tracks(vec![
+        track_at(55.0, 12.0),
+        gt_test_utils::loaded_track_with_points(
+            gt_test_utils::nav_points_without_a_valid_position(3),
+        ),
+    ])];
+    let visibility = TrackDataVisibility::from_loaded(&files);
+    let mut harness = crate::test_harness::builder()
+        .size(egui::vec2(400.0, 400.0))
+        .ui_state(
+            |ui, map: &mut Option<NavMap>| {
+                let map =
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                let mut state = DrawState::default();
+                map.draw(ui, state.context(&files, &visibility));
+            },
+            None,
+        );
+
+    harness.step();
+
+    let framed = harness
+        .state()
+        .as_ref()
+        .and_then(NavMap::viewport_geo_bounds)
+        .expect("the map framed the track that has a geometry");
+    assert!(
+        framed.lat_min < 55.0
+            && framed.lat_max > 55.0
+            && framed.lon_min < 12.0
+            && framed.lon_max > 12.0,
+        "the framing covers the drawn track alone, got {framed:?}"
+    );
+}
+
 /// The map answers the query window's map button by framing the matches,
 /// wherever the camera stood before.
 #[test]

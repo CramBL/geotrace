@@ -890,6 +890,7 @@ mod tests {
         Angle, Annotation, Constellation as SdkConst, DateTime, Duration, MarkerIcon as SdkIcon,
         NavFile, NavFileBuilder, NavFix, Satellite as SdkSat, SatelliteReport, Unit, Utc, Velocity,
     };
+    use gt_types::TrackGeometry;
     use proptest::prelude::*;
     use rstest::rstest;
     use strum::{EnumCount, IntoEnumIterator};
@@ -1639,16 +1640,17 @@ mod tests {
         assert_drawn_at(out_of_range_longitude.resolved_position(), (0.0, 5.0));
     }
 
-    /// A track holding no fix with a position at all has nowhere to draw any
-    /// of them, and is still refused.
+    /// A recording no fix of which has a position has nowhere to draw its
+    /// track, and still loads: the fixes reach the plot and the history, and
+    /// the warning names the records.
     #[test]
-    fn a_recording_whose_every_fix_is_out_of_range_is_refused() {
+    fn a_recording_whose_every_latitude_is_nan_loads_with_tracks_that_have_no_geometry() {
         let mut recorder = NavFileBuilder::new().open();
         for record in 0..3i64 {
             recorder.add_nav_fix(
                 NavFix::builder()
                     .gps_time(base() + Duration::seconds(record))
-                    .lat(Angle::degrees(91.0))
+                    .lat(Angle::degrees(f64::NAN))
                     .lon(Angle::degrees(12.0))
                     .heading(Angle::degrees(90.0))
                     .build(),
@@ -1657,12 +1659,19 @@ mod tests {
         let mut bytes = Vec::new();
         recorder.finish().unwrap().write(&mut bytes).unwrap();
 
-        let error = load_bytes(&bytes, "out_of_range.gtd".to_owned()).unwrap_err();
+        let file = load_bytes(&bytes, "no_position.gtd".to_owned()).unwrap();
 
-        assert_eq!(
-            error.to_string(),
-            "no fix between records 0 and 2 has a latitude and longitude in range"
-        );
+        let track = file.tracks.first().expect("the three fixes form one track");
+        assert_eq!(track.points.len(), 3);
+        assert_eq!(track.geometry, TrackGeometry::NoValidPosition);
+        assert!(track.placed_points().is_none());
+        assert_eq!(track.metadata.invalid_position_count, 3);
+        let warnings: Vec<(u32, &str)> = file
+            .load_warnings
+            .iter()
+            .map(|w| (w.count, w.issue.as_str()))
+            .collect();
+        assert_eq!(warnings, vec![(3, "fix(es) with a latitude out of range")]);
     }
 
     /// An SNR inside the ≈ 99 dB-Hz band the firmware writes for "no

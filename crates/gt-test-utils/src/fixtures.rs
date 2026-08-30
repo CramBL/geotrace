@@ -11,7 +11,7 @@ use uom::si::velocity::kilometer_per_hour;
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::{
     CustomMarker, GeneratedMarkerKind, GpsTime, Latitude, Longitude, MarkerIcon, NavPoint,
-    TimePositionVelocity,
+    RecordedLatitude, RecordedLongitude, TimePositionVelocity,
 };
 
 /// Track metadata with every count and measure zeroed, at the epoch and the
@@ -236,6 +236,32 @@ pub fn stationary_nav_data(count: usize) -> Vec<NavPoint> {
                 .lon(Longitude::new(12.5638))
                 .heading(Angle::new::<degree>(0.0))
                 .velocity(Velocity::new::<kilometer_per_hour>(0.0))
+                .build();
+            NavPoint::new(tpv, None)
+        })
+        .collect()
+}
+
+/// `count` fixes one second apart from 2026-01-01 12:00:00 UTC, each with a
+/// latitude of 91°, for tests over a recording the receiver wrote no position
+/// in.
+#[expect(
+    clippy::unwrap_used,
+    reason = "Test data generation with hardcoded values"
+)]
+pub fn nav_points_without_a_valid_position(count: usize) -> Vec<NavPoint> {
+    let start = NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+        NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+    )
+    .and_utc();
+    (0..count)
+        .map(|i| {
+            let tpv = TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(start + Duration::seconds(i as i64)))
+                .lat(RecordedLatitude::from_degrees(91.0))
+                .lon(RecordedLongitude::from_degrees(12.5638))
+                .heading(Angle::new::<degree>(0.0))
                 .build();
             NavPoint::new(tpv, None)
         })
