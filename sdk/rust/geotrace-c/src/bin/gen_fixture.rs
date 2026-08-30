@@ -1,4 +1,5 @@
-//! Generates `sdk/c/tests/fixtures/minimal.gtd` for the C SDK round-trip test.
+//! Generates the `.gtd` fixtures under `sdk/c/tests/fixtures/` that the C, C++,
+//! Python and Rust SDK tests open.
 //!
 //! Run via: cargo run -p geotrace-c --bin gen_fixture
 
@@ -8,21 +9,34 @@
 )]
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use geotrace_sdk::{
-    Angle, Constellation, NavFileBuilder, NavFix, Satellite, SatelliteReport, Velocity,
+    Angle, Constellation, DateTime, Duration, NavFile, NavFileBuilder, NavFix, Satellite,
+    SatelliteReport, Velocity,
 };
 
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR");
-    let out = PathBuf::from(manifest_dir).join("../../c/tests/fixtures/minimal.gtd");
+    let fixtures = PathBuf::from(manifest_dir).join("../../c/tests/fixtures");
+    write_fixture(&minimal(), &fixtures.join("minimal.gtd"));
+    write_fixture(
+        &out_of_range_values(),
+        &fixtures.join("out_of_range_values.gtd"),
+    );
+}
 
-    let t0 =
-        chrono::DateTime::from_timestamp_micros(1_700_000_000_000_000).expect("valid timestamp");
+fn write_fixture(nav_file: &NavFile, path: &Path) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("create fixture dir");
+    }
+    nav_file.write_to_file(path).expect("write fixture");
+    println!("wrote {}", path.display());
+}
 
-    let t1 =
-        chrono::DateTime::from_timestamp_micros(1_700_000_010_000_000).expect("valid timestamp");
+fn minimal() -> NavFile {
+    let t0 = DateTime::from_timestamp_micros(1_700_000_000_000_000).expect("valid timestamp");
+    let t1 = t0 + Duration::seconds(10);
 
     let mut recorder = NavFileBuilder::new()
         .with_title("minimal fixture")
@@ -72,12 +86,56 @@ fn main() {
         eph_m: Some(2.5),
     });
 
-    let nav_file = recorder.finish().expect("gen_fixture: build failed");
+    recorder.finish().expect("gen_fixture: build failed")
+}
 
-    if let Some(parent) = out.parent() {
-        std::fs::create_dir_all(parent).expect("create fixture dir");
-    }
+fn out_of_range_values() -> NavFile {
+    let t0 = DateTime::from_timestamp_micros(1_700_000_000_000_000).expect("valid timestamp");
 
-    nav_file.write_to_file(&out).expect("write fixture");
-    println!("wrote {}", out.display());
+    let mut recorder = NavFileBuilder::new()
+        .with_title("out of range values fixture")
+        .with_device("gen_fixture")
+        .open();
+
+    recorder.add_nav_fix(NavFix {
+        gps_time: Some(t0),
+        sys_time: None,
+        lat: Angle::degrees(f64::NAN),
+        lon: Angle::degrees(-0.1278),
+        heading: None,
+        speed: None,
+        eph_m: None,
+    });
+
+    recorder.add_nav_fix(NavFix {
+        gps_time: Some(t0 + Duration::seconds(1)),
+        sys_time: None,
+        lat: Angle::degrees(91.0),
+        lon: Angle::degrees(-0.1278),
+        heading: None,
+        speed: None,
+        eph_m: None,
+    });
+
+    recorder.add_nav_fix(NavFix {
+        gps_time: Some(t0 + Duration::seconds(2)),
+        sys_time: None,
+        lat: Angle::degrees(51.5074),
+        lon: Angle::degrees(-181.0),
+        heading: None,
+        speed: None,
+        eph_m: None,
+    });
+
+    recorder.add_nav_fix(NavFix {
+        gps_time: Some(t0 + Duration::seconds(3)),
+        sys_time: None,
+        lat: Angle::degrees(51.5074),
+        lon: Angle::degrees(-0.1278),
+        heading: Some(Angle::degrees(675.0)),
+        speed: None,
+        eph_m: None,
+    });
+
+    recorder.finish().expect("gen_fixture: build failed")
 }

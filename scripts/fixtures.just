@@ -1,7 +1,7 @@
 # Fixture capture and verification recipes. Fixtures are frozen once
 # committed - review the resulting diff like code.
 
-# Generate the minimal.gtd fixture used by the C SDK tests.
+# Generate the .gtd fixtures the C, C++, Python and Rust SDK tests read.
 [group("fixtures")]
 gen-fixture:
     cargo run -p geotrace-c --bin gen_fixture

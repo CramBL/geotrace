@@ -21,6 +21,16 @@ use crate::{Angle, Velocity};
 /// Providing it allows the builder to compute the GPS/system-clock delta, which
 /// is used to convert satellite report system-clock timestamps into the GPS time
 /// domain for accurate ghost-fix interpolation during no-fix periods.
+///
+/// The ranges stated on the fields below are data quality expectations, not
+/// parse rules.
+/// [`NavFile::read`] returns a latitude or longitude the file holds unchanged,
+/// NaN included.
+/// A NaN `heading`, `speed` or `eph_m` reads back as `None`: NaN is how the
+/// write path stores an absent one.
+/// The builder writes every value it is given: a recorder that captured bad
+/// data must be able to write it.
+/// Checking a value against its range is the consumer's job.
 #[derive(bon::Builder, Debug, Clone, Copy, PartialEq)]
 pub struct NavFix {
     /// GPS-receiver timestamp. `None` when the receiver had no active lock.
@@ -29,12 +39,17 @@ pub struct NavFix {
     /// System-clock time at the moment of this fix, if recorded.
     #[builder(into)]
     pub sys_time: Option<DateTime<Utc>>,
+    /// WGS-84 latitude, expected in \[-90°, 90°].
     pub lat: Angle,
+    /// WGS-84 longitude, expected in \[-180°, 180°].
     pub lon: Angle,
-    /// Compass heading in \[0°, 360°). `None` = unknown direction (ghost fix).
+    /// Compass heading, expected in \[0°, 360°). `None` = unknown direction
+    /// (ghost fix).
     pub heading: Option<Angle>,
+    /// Ground speed, expected to be non-negative.
     pub speed: Option<Velocity>,
-    /// Estimated horizontal position accuracy in metres, as reported by the GPS receiver.
+    /// Estimated horizontal position accuracy in metres, as reported by the GPS
+    /// receiver, expected to be non-negative.
     ///
     /// The app renders a translucent blue circle of this radius around the point when
     /// present. `None` when the receiver did not report an accuracy estimate.
@@ -882,6 +897,9 @@ impl Channel {
 
     /// The wrap period of an angular channel (`360°` for a heading), or `None`
     /// for a linear value.
+    ///
+    /// A `deg` channel without a period holds an unbounded angle: only a
+    /// channel with a period wraps.
     pub fn period(&self) -> Option<Angle> {
         self.period
     }
