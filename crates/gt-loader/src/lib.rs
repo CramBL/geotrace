@@ -1763,19 +1763,35 @@ mod tests {
         );
     }
 
-    #[test]
-    fn an_event_marker_color_that_is_not_hex_loads_as_gray_with_a_warning_naming_the_variant() {
+    /// Three fixes a second apart, and the given event marker styles in the
+    /// order they are written.
+    fn recording_with_event_marker_styles(styles: Vec<SdkEventMarkerStyle>) -> Vec<u8> {
         let mut recorder = NavFileBuilder::new().open();
         for second in 0..3i64 {
             recorder.add_nav_fix(minimal_fix(base() + Duration::seconds(second)));
         }
-        recorder.add_event_marker_style(SdkEventMarkerStyle {
-            variant_path: "power/boot".to_owned(),
-            icon: SdkEventMarkerIconChoice::Auto,
-            color: SdkEventMarkerColor::hex(COLOR_THAT_IS_NOT_HEX),
-        });
+        for style in styles {
+            recorder.add_event_marker_style(style);
+        }
         let mut bytes = Vec::new();
         recorder.finish().unwrap().write(&mut bytes).unwrap();
+        bytes
+    }
+
+    fn event_marker_style(variant_path: &str, color_hex: &str) -> SdkEventMarkerStyle {
+        SdkEventMarkerStyle {
+            variant_path: variant_path.to_owned(),
+            icon: SdkEventMarkerIconChoice::Auto,
+            color: SdkEventMarkerColor::hex(color_hex),
+        }
+    }
+
+    #[test]
+    fn an_event_marker_color_that_is_not_hex_loads_as_gray_with_a_warning_naming_the_variant() {
+        let bytes = recording_with_event_marker_styles(vec![event_marker_style(
+            "power/boot",
+            COLOR_THAT_IS_NOT_HEX,
+        )]);
 
         let file = load_bytes(&bytes, "marker_color.gtd".to_owned()).unwrap();
 
@@ -1792,6 +1808,33 @@ mod tests {
                 "event marker color(s) replaced with gray",
                 "\"power/boot\": \"#ZZZZZZ\". Those markers are drawn mid-gray: the style \
                  holds a color that is not a #RRGGBB hex value."
+            )]
+        );
+    }
+
+    #[test]
+    fn several_styles_for_one_variant_path_load_as_the_last_one_with_a_warning_listing_the_path() {
+        let bytes = recording_with_event_marker_styles(vec![
+            event_marker_style("power/boot", "#112233"),
+            event_marker_style("power/boot", "#445566"),
+            event_marker_style("power/shutdown", "#778899"),
+        ]);
+
+        let file = load_bytes(&bytes, "repeated_style.gtd".to_owned()).unwrap();
+
+        assert_eq!(
+            file.event_marker_styles
+                .get("power/boot")
+                .map(|style| style.color),
+            Some(MarkerColor::new(0x44, 0x55, 0x66))
+        );
+        assert_eq!(
+            listed_warnings(&file),
+            vec![(
+                1,
+                "event marker variant path(s) with several styles",
+                "\"power/boot\": 2 styles. Every marker on those paths is drawn with the \
+                 last style the recording holds for it: one style is kept per variant path."
             )]
         );
     }
