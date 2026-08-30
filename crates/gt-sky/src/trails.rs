@@ -92,13 +92,6 @@ pub struct EpochCount {
     pub fix: usize,
 }
 
-impl EpochCount {
-    /// Whether the not-in-fix filter is hiding satellites from [`Self::seen`].
-    pub const fn is_filtered(self) -> bool {
-        self.seen_unfiltered > self.seen
-    }
-}
-
 /// One report epoch on the track's timeline - the scrubber walks these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrailEpoch {
@@ -339,7 +332,6 @@ mod tests {
 
         // Nothing hidden, so the unfiltered total matches what is shown.
         assert_eq!(gps.seen_unfiltered, 2);
-        assert!(!gps.is_filtered());
 
         // Excluding never-in-fix satellites drops the tracked-only GPS-12, so
         // GPS counts one seen (and still one in fix). The unfiltered total
@@ -351,7 +343,6 @@ mod tests {
             .expect("gps present");
         assert_eq!((gps.seen, gps.fix), (1, 1));
         assert_eq!(gps.seen_unfiltered, 2);
-        assert!(gps.is_filtered());
     }
 
     #[test]

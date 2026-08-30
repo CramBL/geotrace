@@ -13,6 +13,7 @@
 ### Fixed
 
 - **Log Viewer:** Fixed a log entry between two fixes across the antimeridian being placed half a world away from both.
+- **Map & Tracks:** Fixed the sky trails plot shifting and resizing as the satellite counts beside it gained or lost the parenthesised total for hidden satellites.
 - **Map & Tracks:** Fixed the window for a clicked fix drawing its content over its own title bar when scrolled: the sky plot column and the satellite tables now scroll on their own.
 - **Map & Tracks:** Fixed a recording whose marker or event marker text is not valid UTF-8 loading with that text mangled: it is now rejected with an error naming the field.
 - **Map & Tracks:** Fixed a recording whose tracks are drawn nowhere reporting a distance of "-0 m": its side panel row now shows a dash, the way its track rows already do.
