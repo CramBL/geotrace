@@ -279,6 +279,9 @@ GtdStatus gtd_channel_unit_parse(const char *label, uint32_t unit_mode, char *ou
  * @ref values is row-major: @ref n_times rows of one column (scalar) or
  * @ref n_components columns (vector), so @ref n_values must equal
  * `n_times * (n_components > 0 ? n_components : 1)`.
+ *
+ * Only a channel with @ref period_deg set wraps: a `deg` channel without it
+ * holds an unbounded angle.
  */
 typedef struct {
     const char *name;     /**< Channel name (a lowercase identifier). */
@@ -305,15 +308,24 @@ typedef struct {
  * Navigation fix data returned by `gtd_nav_file_get_nav_point()`.
  *
  * All fields are caller-owned (no pointers to SDK memory).
+ *
+ * The ranges on @ref lat_deg, @ref lon_deg and @ref heading_deg, and
+ * non-negative @ref speed_mps and @ref eph_m, are data quality expectations,
+ * not parse rules.
+ * The SDK returns @ref lat_deg and @ref lon_deg unchanged, NaN included.
+ * A NaN @ref heading_deg, @ref speed_mps or @ref eph_m is returned as
+ * `GTD_NONE_F64`: NaN is how the write path stores an absent one.
+ * Checking a value against its range is the caller's job.
  */
 typedef struct {
     GtdTimestamp gps_time; /**< GPS time of the fix. Use `gtd_ts_is_none()` to check. */
     GtdTimestamp sys_time; /**< System (wall-clock) time of the fix. */
-    double lat_deg;        /**< WGS-84 latitude in degrees. */
-    double lon_deg;        /**< WGS-84 longitude in degrees. */
-    GtdOptF64 heading_deg; /**< Compass heading in degrees [0, 360), if known. */
-    GtdOptF64 speed_mps;   /**< Ground speed in m/s, if known. */
-    GtdOptF64 eph_m;       /**< Estimated horizontal position error in metres, if known. */
+    double lat_deg;        /**< WGS-84 latitude in degrees, expected in [-90, 90]. */
+    double lon_deg;        /**< WGS-84 longitude in degrees, expected in [-180, 180]. */
+    GtdOptF64 heading_deg; /**< Compass heading in degrees, expected in [0, 360), if known. */
+    GtdOptF64 speed_mps;   /**< Ground speed in m/s, expected to be non-negative, if known. */
+    GtdOptF64 eph_m;       /**< Estimated horizontal position error in metres, expected to be
+                                non-negative, if known. */
     size_t sat_count; /**< Number of tracked satellites (0 when no satellite report present). */
 } GtdNavPointInfo;
 
@@ -366,6 +378,9 @@ typedef struct {
  * scalar channel. All string fields are null-terminated and truncated to their
  * buffer size if longer. `gtd_nav_file_get_channel_unit()` reads the unit
  * without that limit and reports whether it is a recognized unit.
+ *
+ * Only a channel with @ref period_deg set wraps: a `deg` channel without it
+ * holds an unbounded angle.
  */
 typedef struct {
     char name[256];          /**< Channel name. */
@@ -462,14 +477,21 @@ void gtd_builder_set_lenient(GtdFileBuilder *b);
  * At least one nav fix is required before `gtd_builder_finish()`.
  * Fixes must be added in ascending time order.
  *
+ * The ranges named below are data quality expectations, not parse rules.
+ * The SDK records a value outside its range, NaN included, as given: a recorder
+ * that captured bad data must be able to write it.
+ * A NaN @p heading_deg, @p speed_mps or @p eph_m reads back as absent: the SDK
+ * stores `GTD_NONE_F64` as NaN.
+ *
  * @param b           Builder handle.
  * @param gps_time    GPS time of the fix.  Use `gtd_ts_none()` when unavailable.
  * @param sys_time    System (wall-clock) time.  Use `gtd_ts_none()` when unavailable.
- * @param lat_deg     WGS-84 latitude in degrees.
- * @param lon_deg     WGS-84 longitude in degrees.
- * @param heading_deg Compass heading in degrees [0, 360), or `GTD_NONE_F64`.
- * @param speed_mps   Ground speed in m/s, or `GTD_NONE_F64`.
- * @param eph_m       Estimated horizontal position error in metres, or `GTD_NONE_F64`.
+ * @param lat_deg     WGS-84 latitude in degrees, expected in [-90, 90].
+ * @param lon_deg     WGS-84 longitude in degrees, expected in [-180, 180].
+ * @param heading_deg Compass heading in degrees, expected in [0, 360), or `GTD_NONE_F64`.
+ * @param speed_mps   Ground speed in m/s, expected to be non-negative, or `GTD_NONE_F64`.
+ * @param eph_m       Estimated horizontal position error in metres, expected to be
+ *                    non-negative, or `GTD_NONE_F64`.
  */
 GtdStatus gtd_builder_add_nav_fix(GtdFileBuilder *b, GtdTimestamp gps_time, GtdTimestamp sys_time,
                                   double lat_deg, double lon_deg, GtdOptF64 heading_deg,

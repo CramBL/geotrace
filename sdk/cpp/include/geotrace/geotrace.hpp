@@ -601,7 +601,17 @@ inline std::optional<TravelMode> travel_mode_from_name(const std::string &name) 
     return detail::from_c(mode);
 }
 
-/** A single GPS navigation fix. */
+/**
+ * A single GPS navigation fix.
+ *
+ * `lat` is expected in [-90, 90] degrees, `lon` in [-180, 180], `heading` in
+ * [0, 360), `speed` and `eph_m` to be non-negative.
+ * These are data quality expectations, not parse rules.
+ * The SDK writes every value it is given, NaN included: a recorder that
+ * captured bad data must be able to write it.
+ * An absent `heading`, `speed` or `eph_m` is written as NaN: a NaN given for one
+ * of the three reads back as `std::nullopt`.
+ */
 struct NavFix {
     Timestamp gps_time = Timestamp::none();
     Timestamp sys_time = Timestamp::none();
@@ -755,7 +765,8 @@ class ChannelUnit {
 struct Channel {
     std::string name;
     std::optional<ChannelUnit> unit;
-    std::optional<Angle> period;         // wrap period, none = linear
+    // Wrap period, none = linear: a `deg` channel without one is an unbounded angle.
+    std::optional<Angle> period;
     std::string description;             // empty = none
     std::vector<std::string> components; // empty = scalar channel
     std::vector<Timestamp> times;
@@ -766,7 +777,8 @@ struct Channel {
 struct ChannelView {
     std::string name;
     std::optional<ChannelUnit> unit;
-    std::optional<Angle> period;         // none = linear
+    // Wrap period, none = linear: a `deg` channel without one is an unbounded angle.
+    std::optional<Angle> period;
     std::string description;             // empty = none
     std::vector<std::string> components; // empty = scalar channel
     std::vector<Timestamp> times;
@@ -776,7 +788,15 @@ struct ChannelView {
     bool is_vector() const noexcept { return !components.empty(); }
 };
 
-/** Data for one navigation fix, returned by `NavFile::nav_point()`. */
+/**
+ * Data for one navigation fix, returned by `NavFile::nav_point()`.
+ *
+ * The value ranges of `NavFix` apply here too, as expectations.
+ * The SDK returns `lat` and `lon` unchanged, NaN included.
+ * A NaN `heading`, `speed` or `eph_m` is returned as `std::nullopt`: NaN is how
+ * the write path stores an absent one.
+ * Checking a value against its range is the caller's job.
+ */
 struct NavPointView {
     Timestamp gps_time;
     Timestamp sys_time;

@@ -573,6 +573,8 @@ impl PyChannel {
     }
 
     /// The wrap period in degrees for an angular channel, or `None` if linear.
+    ///
+    /// A `deg` channel without a period holds an unbounded angle.
     #[getter]
     fn period_deg(&self) -> Option<f64> {
         self.inner.period().map(Angle::as_degrees)
@@ -641,8 +643,13 @@ fn parse_python_channel_unit(value: &Bound<'_, PyAny>) -> PyResult<ChannelUnit> 
 ///
 /// Provide at least one of `gps_time` or `sys_time`.
 /// All `datetime` arguments must be timezone-aware.
-/// `lat` and `lon` are in degrees; `heading` in degrees [0, 360);
-/// `speed_mps` in m/s. `eph_m` is the horizontal accuracy radius in metres.
+/// `lat` is expected in [-90, 90] degrees, `lon` in [-180, 180], `heading` in
+/// [0, 360), `speed_mps` in m/s and `eph_m` in metres, both non-negative.
+/// These are data quality expectations, not parse rules.
+/// The SDK writes every value it is given, NaN included: a recorder that
+/// captured bad data must be able to write it.
+/// An absent `heading`, `speed_mps` or `eph_m` is written as NaN: a NaN given
+/// for one of the three reads back as `None`.
 #[pyclass(skip_from_py_object, name = "NavFix")]
 #[derive(Debug, Clone, Copy)]
 pub struct PyNavFix {
@@ -674,13 +681,13 @@ impl PyNavFix {
         Self { inner }
     }
 
-    /// Latitude in degrees.
+    /// Latitude in degrees, expected in [-90, 90].
     #[getter]
     fn lat(&self) -> f64 {
         self.inner.lat.as_degrees()
     }
 
-    /// Longitude in degrees.
+    /// Longitude in degrees, expected in [-180, 180].
     #[getter]
     fn lon(&self) -> f64 {
         self.inner.lon.as_degrees()
@@ -698,19 +705,21 @@ impl PyNavFix {
         self.inner.sys_time.map(to_fixed)
     }
 
-    /// Heading in degrees [0, 360), or `None` for ghost/unknown-direction fixes.
+    /// Heading in degrees, expected in [0, 360), or `None` for
+    /// ghost/unknown-direction fixes.
     #[getter]
     fn heading(&self) -> Option<f64> {
         self.inner.heading.map(|h| h.as_degrees())
     }
 
-    /// Speed in m/s, or `None`.
+    /// Speed in m/s, expected to be non-negative, or `None`.
     #[getter]
     fn speed_mps(&self) -> Option<f64> {
         self.inner.speed.map(|s| s.as_meters_per_second())
     }
 
-    /// Estimated horizontal accuracy radius in metres, or `None`.
+    /// Estimated horizontal accuracy radius in metres, expected to be
+    /// non-negative, or `None`.
     #[getter]
     fn eph_m(&self) -> Option<f64> {
         self.inner.eph_m
@@ -864,6 +873,12 @@ impl PyMeta {
 }
 
 /// A nav fix combined with its associated satellite report, as read from a file.
+///
+/// The value ranges of `NavFix` apply here too, as expectations.
+/// The SDK returns `lat` and `lon` unchanged, NaN included.
+/// A NaN `heading`, `speed_mps` or `eph_m` is returned as `None`: NaN is how the
+/// write path stores an absent one.
+/// Checking a value against its range is the caller's job.
 #[pyclass(skip_from_py_object, name = "NavPoint")]
 #[derive(Debug, Clone)]
 pub struct PyNavPoint {
@@ -872,13 +887,13 @@ pub struct PyNavPoint {
 
 #[pymethods]
 impl PyNavPoint {
-    /// Latitude in degrees.
+    /// Latitude in degrees, expected in [-90, 90].
     #[getter]
     fn lat(&self) -> f64 {
         self.inner.fix.lat.as_degrees()
     }
 
-    /// Longitude in degrees.
+    /// Longitude in degrees, expected in [-180, 180].
     #[getter]
     fn lon(&self) -> f64 {
         self.inner.fix.lon.as_degrees()
@@ -896,19 +911,20 @@ impl PyNavPoint {
         self.inner.fix.sys_time.map(to_fixed)
     }
 
-    /// Heading in degrees [0, 360), or `None`.
+    /// Heading in degrees, expected in [0, 360), or `None`.
     #[getter]
     fn heading(&self) -> Option<f64> {
         self.inner.fix.heading.map(|h| h.as_degrees())
     }
 
-    /// Speed in m/s, or `None`.
+    /// Speed in m/s, expected to be non-negative, or `None`.
     #[getter]
     fn speed_mps(&self) -> Option<f64> {
         self.inner.fix.speed.map(|s| s.as_meters_per_second())
     }
 
-    /// Estimated horizontal accuracy radius in metres, or `None`.
+    /// Estimated horizontal accuracy radius in metres, expected to be
+    /// non-negative, or `None`.
     #[getter]
     fn eph_m(&self) -> Option<f64> {
         self.inner.fix.eph_m

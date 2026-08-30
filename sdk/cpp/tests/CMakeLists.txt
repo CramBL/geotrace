@@ -14,6 +14,8 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(doctest)
 
 set(GEOTRACE_CPP_FIXTURE "${CMAKE_CURRENT_SOURCE_DIR}/../../c/tests/fixtures/minimal.gtd")
+set(GEOTRACE_CPP_OUT_OF_RANGE_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../c/tests/fixtures/out_of_range_values.gtd")
 
 function(add_cpp_test name)
     add_executable(${name} ${name}.cpp)
@@ -44,6 +46,11 @@ function(add_cpp_test name)
             GTD_FIXTURE_PATH="${GEOTRACE_CPP_FIXTURE}"
         )
     endif()
+    if(EXISTS "${GEOTRACE_CPP_OUT_OF_RANGE_FIXTURE}")
+        target_compile_definitions(${name} PRIVATE
+            GTD_OUT_OF_RANGE_FIXTURE_PATH="${GEOTRACE_CPP_OUT_OF_RANGE_FIXTURE}"
+        )
+    endif()
 
     if(DEFINED GEOTRACE_SANITIZE)
         if(GEOTRACE_SANITIZE STREQUAL "asan")
@@ -70,6 +77,7 @@ endfunction()
 add_cpp_test(test_file_builder)
 add_cpp_test(test_nav_file)
 add_cpp_test(test_round_trip)
+add_cpp_test(test_value_ranges)
 add_cpp_test(test_channels)
 add_cpp_test(test_exceptions)
 add_cpp_test(test_event_kind)

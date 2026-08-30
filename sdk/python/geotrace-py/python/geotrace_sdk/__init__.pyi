@@ -221,6 +221,7 @@ class Channel:
             :meth:`ChannelUnit.custom` for a label outside the catalog, or
             ``None``.
         period_deg: Wrap period in degrees for an angular channel, or ``None``.
+            A ``deg`` channel without a period holds an unbounded angle.
         description: Human description, or ``None``.
         components: Vector component labels, or ``None`` for a scalar channel.
 
@@ -266,14 +267,22 @@ class NavFix:
     Provide at least one of ``gps_time`` or ``sys_time``.
     All :class:`datetime.datetime` arguments must be timezone-aware.
 
+    The ranges below are data quality expectations, not parse rules.
+    The SDK writes every value it is given, NaN included: a recorder that
+    captured bad data must be able to write it.
+    An absent ``heading``, ``speed_mps`` or ``eph_m`` is written as NaN: a NaN
+    given for one of the three reads back as ``None``.
+
     Args:
-        lat: Latitude in degrees.
-        lon: Longitude in degrees.
+        lat: Latitude in degrees, expected in [-90, 90].
+        lon: Longitude in degrees, expected in [-180, 180].
         gps_time: GPS-receiver timestamp, or ``None`` when the receiver had no lock.
         sys_time: System-clock timestamp recorded alongside this fix.
-        heading: Compass heading in degrees [0, 360), or ``None`` if unknown.
-        speed_mps: Speed in m/s, or ``None``.
-        eph_m: Estimated horizontal accuracy radius in metres, or ``None``.
+        heading: Compass heading in degrees, expected in [0, 360), or ``None``
+            if unknown.
+        speed_mps: Speed in m/s, expected to be non-negative, or ``None``.
+        eph_m: Estimated horizontal accuracy radius in metres, expected to be
+            non-negative, or ``None``.
     """
 
     def __init__(
@@ -289,12 +298,12 @@ class NavFix:
     ) -> None: ...
     @property
     def lat(self) -> float:
-        """Latitude in degrees."""
+        """Latitude in degrees, expected in [-90, 90]."""
         ...
 
     @property
     def lon(self) -> float:
-        """Longitude in degrees."""
+        """Longitude in degrees, expected in [-180, 180]."""
         ...
 
     @property
@@ -309,17 +318,19 @@ class NavFix:
 
     @property
     def heading(self) -> float | None:
-        """Compass heading in degrees [0, 360), or ``None``."""
+        """Compass heading in degrees, expected in [0, 360), or ``None``."""
         ...
 
     @property
     def speed_mps(self) -> float | None:
-        """Speed in m/s, or ``None``."""
+        """Speed in m/s, expected to be non-negative, or ``None``."""
         ...
 
     @property
     def eph_m(self) -> float | None:
-        """Estimated horizontal accuracy radius in metres, or ``None``."""
+        """Estimated horizontal accuracy radius in metres, expected to be
+        non-negative, or ``None``.
+        """
         ...
 
     def __eq__(self, other: object) -> bool: ...
@@ -396,16 +407,23 @@ class Meta:
 
 @final
 class NavPoint:
-    """A nav fix combined with its associated satellite report, as read from a file."""
+    """A nav fix combined with its associated satellite report, as read from a file.
+
+    The value ranges of :class:`NavFix` apply here too, as expectations.
+    The SDK returns ``lat`` and ``lon`` unchanged, NaN included.
+    A NaN ``heading``, ``speed_mps`` or ``eph_m`` is returned as ``None``: NaN is
+    how the write path stores an absent one.
+    Checking a value against its range is the caller's job.
+    """
 
     @property
     def lat(self) -> float:
-        """Latitude in degrees."""
+        """Latitude in degrees, expected in [-90, 90]."""
         ...
 
     @property
     def lon(self) -> float:
-        """Longitude in degrees."""
+        """Longitude in degrees, expected in [-180, 180]."""
         ...
 
     @property
@@ -420,17 +438,19 @@ class NavPoint:
 
     @property
     def heading(self) -> float | None:
-        """Compass heading in degrees [0, 360), or ``None``."""
+        """Compass heading in degrees, expected in [0, 360), or ``None``."""
         ...
 
     @property
     def speed_mps(self) -> float | None:
-        """Speed in m/s, or ``None``."""
+        """Speed in m/s, expected to be non-negative, or ``None``."""
         ...
 
     @property
     def eph_m(self) -> float | None:
-        """Estimated horizontal accuracy radius in metres, or ``None``."""
+        """Estimated horizontal accuracy radius in metres, expected to be
+        non-negative, or ``None``.
+        """
         ...
 
     @property
