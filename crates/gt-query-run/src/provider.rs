@@ -222,6 +222,9 @@ impl MetricProvider for TrackProvider<'_> {
                 .map(|s| s.utc().timestamp_millis() as f64 / 1_000.0),
             QueryMetric::Lat => Some(point.tpv.lat().as_written()),
             QueryMetric::Lon => Some(point.tpv.lon().as_written()),
+            QueryMetric::InvalidCoordinates => {
+                Some(f64::from(point.tpv.invalid_coordinate_count()))
+            }
             QueryMetric::Velocity => point.tpv.velocity().map(|v| v.get::<meter_per_second>()),
             QueryMetric::Heading => point.tpv.heading().map(|h| h.get::<degree>()),
             // Derived by the evaluator (`gt_query::derived_accel`), never
@@ -392,14 +395,25 @@ impl MetricProvider for SliceProvider<'_> {
 
 #[cfg(test)]
 mod tests {
+    use gt_types::coordinates::{RecordedLatitude, RecordedLongitude};
     use gt_types::{FileIdx, TrackIdx, TrackRef};
+    use rstest::rstest;
 
     use super::*;
     use crate::check::check_text;
     use crate::schema::schema_from_files;
     use crate::test_fixtures::{
-        TEST_EPOCH, file_with_channels, scalar_channel, test_points, vector_channel,
+        TEST_EPOCH, file_with_channels, points_at_recorded_coordinates, rng, scalar_channel,
+        test_points, vector_channel,
     };
+
+    /// A latitude and a longitude in range, for the fixes a test leaves valid.
+    fn in_range() -> (RecordedLatitude, RecordedLongitude) {
+        (
+            RecordedLatitude::from_degrees(55.5),
+            RecordedLongitude::from_degrees(12.25),
+        )
+    }
 
     #[test]
     fn provider_maps_metrics_to_base_units() {
@@ -498,6 +512,90 @@ mod tests {
             }
         }
         assert_eq!(provider.len(), 2);
+    }
+
+    #[rstest]
+    #[case::both_axes_in_range(55.5, 12.25, 0.0)]
+    #[case::a_latitude_of_nan(f64::NAN, 12.25, 1.0)]
+    #[case::both_axes_out_of_range(91.0, -181.0, 2.0)]
+    fn invalid_coordinates_counts_the_axes_outside_their_range(
+        #[case] lat_degrees: f64,
+        #[case] lon_degrees: f64,
+        #[case] expected: f64,
+    ) {
+        let points = points_at_recorded_coordinates(&[(
+            RecordedLatitude::from_degrees(lat_degrees),
+            RecordedLongitude::from_degrees(lon_degrees),
+        )]);
+        let provider = TrackProvider::new(&points, &[], None);
+
+        assert_eq!(
+            provider.value(QueryMetric::InvalidCoordinates, 0),
+            Some(expected)
+        );
+    }
+
+    /// The query the metric exists for: the fixes with an out-of-range
+    /// coordinate match. The fixes between them do not.
+    #[test]
+    fn invalid_coordinates_matches_the_out_of_range_fixes_end_to_end() {
+        let points = points_at_recorded_coordinates(&[
+            in_range(),
+            (
+                RecordedLatitude::from_degrees(f64::NAN),
+                RecordedLongitude::from_degrees(12.25),
+            ),
+            in_range(),
+            (
+                RecordedLatitude::from_degrees(91.0),
+                RecordedLongitude::from_degrees(-181.0),
+            ),
+        ]);
+        let query = check_text(
+            "points | where invalid_coordinates > 0",
+            &schema_from_files(&[]),
+        )
+        .expect("a count compares against a bare number");
+
+        let provider = TrackProvider::new(&points, &[], None);
+        let output = gt_query::run(
+            &query,
+            &[gt_query::TrackInput {
+                track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+                provider: &provider,
+            }],
+        );
+
+        assert_eq!(output.matches[0].ranges, vec![rng(1, 2), rng(3, 4)]);
+    }
+
+    /// The metric's documented windowed example: the union of the matching
+    /// windows is the last window, the only one reaching the out-of-range fix.
+    #[test]
+    fn a_window_matches_when_one_of_its_fixes_is_out_of_range() {
+        const POINT_COUNT: usize = 12;
+        let mut coordinates = vec![in_range(); POINT_COUNT];
+        coordinates[POINT_COUNT - 1] = (
+            RecordedLatitude::from_degrees(91.0),
+            RecordedLongitude::from_degrees(12.25),
+        );
+        let points = points_at_recorded_coordinates(&coordinates);
+        let query = check_text(
+            "points | window 10 | where max(invalid_coordinates) > 0",
+            &schema_from_files(&[]),
+        )
+        .expect("an aggregated count compares against a bare number");
+
+        let provider = TrackProvider::new(&points, &[], None);
+        let output = gt_query::run(
+            &query,
+            &[gt_query::TrackInput {
+                track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+                provider: &provider,
+            }],
+        );
+
+        assert_eq!(output.matches[0].ranges, vec![rng(2, POINT_COUNT)]);
     }
 
     /// A track without a snap run resolves no `snap_error` values - the

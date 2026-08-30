@@ -373,8 +373,27 @@ fn metric_docs(metric: QueryMetric) -> (&'static str, &'static str, &'static [&'
              when the host did not timestamp the fix.",
             &[],
         ),
-        QueryMetric::Lat => ("latitude, degrees", "", &[]),
-        QueryMetric::Lon => ("longitude, degrees", "", &[]),
+        QueryMetric::Lat => (
+            "latitude, degrees",
+            "The latitude the receiver recorded, out of range or NaN when the \
+             receiver wrote such a value.",
+            &[],
+        ),
+        QueryMetric::Lon => (
+            "longitude, degrees",
+            "The longitude the receiver recorded, out of range or NaN when \
+             the receiver wrote such a value.",
+            &[],
+        ),
+        QueryMetric::InvalidCoordinates => (
+            "out-of-range coordinate axes of the fix",
+            "How many of the fix's coordinate axes lie outside their range: \
+             0, 1 or 2. NaN counts as out of range.",
+            &[
+                "invalid_coordinates > 0",
+                "points | window 10 | where max(invalid_coordinates) > 0",
+            ],
+        ),
         QueryMetric::Velocity => ("ground speed", "", &["velocity > 30 km/h"]),
         QueryMetric::Heading => (
             "compass heading, degrees",
