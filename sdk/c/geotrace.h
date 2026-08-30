@@ -531,14 +531,15 @@ GtdStatus gtd_builder_add_annotation(GtdFileBuilder *b, GtdTimestamp time, const
  *
  * Event markers use a hierarchical variant path (e.g. `"system/startup"`)
  * to identify the event type.  Paths must be non-empty, consist of
- * alphanumeric segments separated by `/`, and not exceed 256 bytes.
+ * alphanumeric segments separated by `/`, and not exceed 255 bytes.
  *
  * @param b            Builder handle.
  * @param variant_path Hierarchical event type path.
  * @param sys_time     Time of the event.  Must not be `gtd_ts_none()`.
  * @param annotation   Optional human-readable text.  Pass NULL for none.
  *
- * @return `GTD_ERR_INVALID_PATH` if @p variant_path is malformed.
+ * @return `GTD_ERR_INVALID_PATH` if @p variant_path is malformed, or if
+ *         @p annotation is longer than 511 bytes.
  */
 GtdStatus gtd_builder_add_event_marker(GtdFileBuilder *b, const char *variant_path,
                                        GtdTimestamp sys_time, const char *annotation);
@@ -554,6 +555,10 @@ GtdStatus gtd_builder_add_event_marker(GtdFileBuilder *b, const char *variant_pa
  * `gtd_builder_add_event_marker()`).
  * @param icon         Icon to display.  `GTD_ICON_AUTO` uses the application default.
  * @param color_hex    Color as an `"#RRGGBB"` string, or NULL for automatic.
+ *
+ * @note The style is checked when the file is written: a @p variant_path past
+ *       255 bytes or a @p color_hex past 7 bytes fails there with
+ *       `GTD_ERR_INVALID_PATH`.
  */
 GtdStatus gtd_builder_add_event_marker_style(GtdFileBuilder *b, const char *variant_path,
                                              GtdMarkerIcon icon, const char *color_hex);
@@ -622,6 +627,9 @@ GtdStatus gtd_builder_finish(GtdFileBuilder *b, GtdNavFile **out);
  *
  * @param f    File handle (not consumed - caller must still call `gtd_nav_file_destroy()`).
  * @param path Destination file path.
+ *
+ * @return `GTD_ERR_INVALID_PATH` if an event marker style holds a variant path
+ *         or color longer than its field.
  */
 GtdStatus gtd_nav_file_write_to_path(const GtdNavFile *f, const char *path);
 
@@ -634,6 +642,9 @@ GtdStatus gtd_nav_file_write_to_path(const GtdNavFile *f, const char *path);
  * @param f   File handle (not consumed).
  * @param buf Output: pointer to the allocated buffer.
  * @param len Output: number of bytes in the buffer.
+ *
+ * @return `GTD_ERR_INVALID_PATH` if an event marker style holds a variant path
+ *         or color longer than its field.
  */
 GtdStatus gtd_nav_file_to_bytes(const GtdNavFile *f, uint8_t **buf, size_t *len);
 

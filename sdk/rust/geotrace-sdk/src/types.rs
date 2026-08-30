@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use geotrace_sdk_units::{ChannelUnit, PhysicalQuantity};
 
 use crate::error::{ChannelError, Error, EventMarkerError};
+use crate::fixed_width_string::AnnotationField;
 use crate::{Angle, Velocity};
 
 /// A single GPS/GNSS fix: position, heading, and optional speed at a point in time.
@@ -627,8 +628,8 @@ pub struct Marker {
 /// The builder computes the geographic position by interpolating surrounding
 /// nav fixes. Producers supply only a timestamp.
 ///
-/// Construct via `EventMarker::builder().build()` - it validates the variant path and returns
-/// `Err` immediately if it is malformed.
+/// Construct via `EventMarker::builder().build()` - it returns `Err` immediately
+/// for a malformed variant path and for an annotation its field cannot hold.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EventMarker {
     pub(crate) variant_path: String,
@@ -641,7 +642,9 @@ impl EventMarker {
     /// Build a validated [`EventMarker`].
     ///
     /// Returns `Err` if `variant_path` is malformed (empty, leading/trailing slash,
-    /// consecutive slashes, non-ASCII-alphanumeric/hyphen/underscore, or > 256 bytes).
+    /// consecutive slashes, non-ASCII-alphanumeric/hyphen/underscore, or longer than
+    /// [`VariantPathField::CONTENT_CAPACITY`](crate::VariantPathField::CONTENT_CAPACITY)
+    /// bytes), and if `annotation` does not fit an [`AnnotationField`].
     #[builder(finish_fn = build)]
     pub fn new(
         #[builder(into)] variant_path: String,
@@ -649,6 +652,10 @@ impl EventMarker {
         #[builder(into)] annotation: Option<String>,
     ) -> Result<Self, EventMarkerError> {
         crate::error::validate_variant_path(&variant_path)?;
+        if let Some(annotation) = annotation.as_deref() {
+            AnnotationField::new(annotation)
+                .map_err(|source| EventMarkerError::UnwritableAnnotation { source })?;
+        }
         Ok(Self {
             variant_path,
             sys_time,

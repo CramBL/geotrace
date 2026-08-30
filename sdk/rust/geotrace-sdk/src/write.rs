@@ -2,6 +2,10 @@ use hdf5_pure::{AttrValue, FileBuilder};
 
 use crate::builder::{datetime_to_micros, opt_datetime_to_u64};
 use crate::error::Error;
+use crate::fixed_width_string::{
+    AnnotationField, ColorHexField, FixedWidthString, FixedWidthStringError, IconNameField,
+    VariantPathField,
+};
 use crate::types::{Constellation, MarkerIcon, NavFile};
 
 /// Number of elements per chunk for 1-D compressed datasets.
@@ -42,7 +46,7 @@ pub(crate) fn build_hdf5(nav_file: &NavFile) -> Result<Vec<u8>, Error> {
     write_nav_points(nav_file, &mut fb);
     write_satellite_data(nav_file, &mut fb);
     write_markers(nav_file, &mut fb)?;
-    write_event_markers(nav_file, &mut fb);
+    write_event_markers(nav_file, &mut fb)?;
     write_channels(nav_file, &mut fb);
 
     Ok(fb.finish()?)
@@ -450,7 +454,26 @@ fn write_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> 
     Ok(())
 }
 
-fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) {
+#[derive(Clone, Copy)]
+struct FieldLocation {
+    group: &'static str,
+    dataset: &'static str,
+}
+
+fn encode_field_row<const ROW_BYTES: usize>(
+    location: FieldLocation,
+    field: Result<FixedWidthString<ROW_BYTES>, FixedWidthStringError>,
+) -> Result<[u8; ROW_BYTES], Error> {
+    field
+        .map(|field| field.encode_row())
+        .map_err(|source| Error::UnwritableField {
+            group: location.group,
+            dataset: location.dataset,
+            source,
+        })
+}
+
+fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> {
     let em = nav_file.event_markers();
     let styles = nav_file.event_marker_styles();
 
@@ -467,22 +490,21 @@ fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) {
             lats.push(m.lat.as_degrees());
             lons.push(m.lon.as_degrees());
 
-            let vp = m.variant_path.as_bytes();
-            let mut row = [0u8; 256];
-            let len = vp.len().min(255);
-            if let (Some(dst), Some(src)) = (row.get_mut(..len), vp.get(..len)) {
-                dst.copy_from_slice(src);
-            }
-            vp_flat.extend_from_slice(&row);
+            vp_flat.extend_from_slice(&encode_field_row(
+                FieldLocation {
+                    group: "event_markers",
+                    dataset: "variant_path",
+                },
+                VariantPathField::new(&m.variant_path),
+            )?);
 
-            let ann = m.annotation.as_deref().unwrap_or("");
-            let ann_bytes = ann.as_bytes();
-            let mut row = [0u8; 512];
-            let len = ann_bytes.len().min(511);
-            if let (Some(dst), Some(src)) = (row.get_mut(..len), ann_bytes.get(..len)) {
-                dst.copy_from_slice(src);
-            }
-            ann_flat.extend_from_slice(&row);
+            ann_flat.extend_from_slice(&encode_field_row(
+                FieldLocation {
+                    group: "event_markers",
+                    dataset: "annotation",
+                },
+                AnnotationField::new(m.annotation.as_deref().unwrap_or("")),
+            )?);
         }
 
         let n_chunk = CHUNK_SIZE.max(1);
@@ -545,37 +567,37 @@ fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) {
         let mut color_flat: Vec<u8> = Vec::with_capacity(m * 8);
 
         for s in styles {
-            let vp = s.variant_path.as_bytes();
-            let mut row = [0u8; 256];
-            let len = vp.len().min(255);
-            if let (Some(dst), Some(src)) = (row.get_mut(..len), vp.get(..len)) {
-                dst.copy_from_slice(src);
-            }
-            vp_flat.extend_from_slice(&row);
+            vp_flat.extend_from_slice(&encode_field_row(
+                FieldLocation {
+                    group: "event_marker_styles",
+                    dataset: "variant_path",
+                },
+                VariantPathField::new(&s.variant_path),
+            )?);
 
-            let icon_str = match &s.icon {
+            let icon_name = match &s.icon {
                 crate::types::EventMarkerIconChoice::Auto => "",
                 crate::types::EventMarkerIconChoice::Icon(i) => i.name(),
             };
-            let icon = icon_str.as_bytes();
-            let mut row = [0u8; 32];
-            let len = icon.len().min(31);
-            if let (Some(dst), Some(src)) = (row.get_mut(..len), icon.get(..len)) {
-                dst.copy_from_slice(src);
-            }
-            icon_flat.extend_from_slice(&row);
+            icon_flat.extend_from_slice(&encode_field_row(
+                FieldLocation {
+                    group: "event_marker_styles",
+                    dataset: "icon_name",
+                },
+                IconNameField::new(icon_name),
+            )?);
 
-            let color_str = match &s.color {
+            let color_hex = match &s.color {
                 crate::types::EventMarkerColor::Auto => "",
                 crate::types::EventMarkerColor::Hex(h) => h.as_str(),
             };
-            let color = color_str.as_bytes();
-            let mut row = [0u8; 8];
-            let len = color.len().min(7);
-            if let (Some(dst), Some(src)) = (row.get_mut(..len), color.get(..len)) {
-                dst.copy_from_slice(src);
-            }
-            color_flat.extend_from_slice(&row);
+            color_flat.extend_from_slice(&encode_field_row(
+                FieldLocation {
+                    group: "event_marker_styles",
+                    dataset: "color_hex",
+                },
+                ColorHexField::new(color_hex),
+            )?);
         }
 
         let m_chunk = (CHUNK_SIZE / 256).max(1);
@@ -608,6 +630,8 @@ fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) {
             .with_deflate(6);
         fb.add_group(grp.finish());
     }
+
+    Ok(())
 }
 
 /// Truncate `s` to at most `max_bytes` bytes on a valid UTF-8 boundary.

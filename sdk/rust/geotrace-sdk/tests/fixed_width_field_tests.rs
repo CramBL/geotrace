@@ -2,8 +2,9 @@
 //! the paths that reach them without passing `EventMarker::builder().build()`.
 
 use geotrace_sdk::{
-    Angle, DateTime, Duration, EventKind, EventMarker, EventMarkerColor, EventMarkerIconChoice,
-    EventMarkerStyle, NavFile, NavFileBuilder, NavFix, NavRecorder, Utc,
+    Angle, AnnotationField, DateTime, Duration, EventKind, EventMarker, EventMarkerColor,
+    EventMarkerIconChoice, EventMarkerStyle, NavFile, NavFileBuilder, NavFix, NavRecorder, Utc,
+    VariantPathField,
 };
 
 fn base() -> DateTime<Utc> {
@@ -36,8 +37,8 @@ enum PowerEvent {
 
 #[test]
 fn an_event_marker_at_the_field_capacities_round_trips() {
-    let variant_path = "a".repeat(255);
-    let annotation = "n".repeat(511);
+    let variant_path = "a".repeat(VariantPathField::CONTENT_CAPACITY);
+    let annotation = "n".repeat(AnnotationField::CONTENT_CAPACITY);
     let mut recorder = recorder_with_one_fix();
     recorder.add_event_marker(
         EventMarker::builder()
@@ -63,11 +64,9 @@ fn an_event_marker_at_the_field_capacities_round_trips() {
     assert_eq!(marker.annotation.as_deref(), Some(annotation.as_str()));
 }
 
-/// `add_event_with_note` takes the note straight to the recorder, so the write
-/// is where a note past the annotation capacity is caught.
 #[test]
 fn a_note_one_byte_past_the_annotation_capacity_stops_the_write() {
-    let note = "n".repeat(512);
+    let note = "n".repeat(AnnotationField::CONTENT_CAPACITY + 1);
     let mut recorder = recorder_with_one_fix();
     recorder.add_event_with_note(&PowerEvent::Boot, t(0), note.clone());
 
@@ -87,7 +86,7 @@ fn a_note_one_byte_past_the_annotation_capacity_stops_the_write() {
 
 #[test]
 fn a_style_variant_path_one_byte_past_the_capacity_stops_the_write() {
-    let variant_path = "a".repeat(256);
+    let variant_path = "a".repeat(VariantPathField::CONTENT_CAPACITY + 1);
     let mut recorder = recorder_with_one_fix();
     recorder.add_event_marker_style(EventMarkerStyle {
         variant_path: variant_path.clone(),

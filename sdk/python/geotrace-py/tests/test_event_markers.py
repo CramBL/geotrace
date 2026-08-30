@@ -158,6 +158,13 @@ def test_event_marker_style_round_trips(tmp_path: Path) -> None:
     assert s.color == "#FF0000"
 
 
+def test_style_variant_path_past_the_field_capacity_raises_on_write() -> None:
+    b = _builder_with_fixes()
+    b.add_event_marker_style(EventMarkerStyle("a" * 256))
+    with pytest.raises(ValueError, match="event_marker_styles/variant_path"):
+        b.finish().to_bytes()
+
+
 # @event_kind decorator
 
 

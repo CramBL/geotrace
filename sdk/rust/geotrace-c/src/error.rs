@@ -79,5 +79,7 @@ pub(crate) fn status_for_error(e: &geotrace_sdk::Error) -> GtdStatus {
         | Error::UnknownConstellationName { .. }
         | Error::UnknownMarkerIcon { .. }
         | Error::ParseError { .. } => GtdStatus::ErrParse,
+        // Every field this covers belongs to an event marker or to its style.
+        Error::UnwritableField { .. } => GtdStatus::ErrInvalidPath,
     }
 }

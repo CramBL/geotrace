@@ -1,6 +1,7 @@
 use geotrace_sdk::{
-    Angle, DateTime, Duration, EventKind, EventMarker, EventMarkerColor, EventMarkerError,
-    EventMarkerIconChoice, EventMarkerStyle, MarkerIcon, NavFileBuilder, NavFix, Utc,
+    Angle, AnnotationField, DateTime, Duration, EventKind, EventMarker, EventMarkerColor,
+    EventMarkerError, EventMarkerIconChoice, EventMarkerStyle, MarkerIcon, NavFileBuilder, NavFix,
+    Utc, VariantPathField,
 };
 use rstest::rstest;
 
@@ -65,7 +66,7 @@ fn valid_mixed_case_and_digits() {
 
 #[test]
 fn valid_at_the_variant_path_capacity() {
-    let path = "a".repeat(255);
+    let path = "a".repeat(VariantPathField::CONTENT_CAPACITY);
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(fix(0, 55.0, 12.0));
     recorder.add_event_marker(marker(&path, 0));
@@ -123,7 +124,7 @@ fn double_slash_is_rejected() {
 
 #[test]
 fn a_variant_path_one_byte_past_the_capacity_is_rejected() {
-    let path = "a".repeat(256);
+    let path = "a".repeat(VariantPathField::CONTENT_CAPACITY + 1);
     let err = EventMarker::builder()
         .variant_path(path.clone())
         .sys_time(t(0))
@@ -138,8 +139,10 @@ fn a_variant_path_one_byte_past_the_capacity_is_rejected() {
 }
 
 #[rstest]
-#[case::one_byte_past_the_capacity("a".repeat(512))]
-#[case::a_multi_byte_character_straddling_the_capacity(format!("{}é", "a".repeat(510)))]
+#[case::one_byte_past_the_capacity("a".repeat(AnnotationField::CONTENT_CAPACITY + 1))]
+#[case::a_multi_byte_character_straddling_the_capacity(
+    format!("{}é", "a".repeat(AnnotationField::CONTENT_CAPACITY - 1))
+)]
 fn an_annotation_the_field_cannot_hold_is_rejected(#[case] annotation: String) {
     let err = EventMarker::builder()
         .variant_path("power/boot")
