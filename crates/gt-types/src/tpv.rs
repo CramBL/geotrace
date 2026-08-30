@@ -80,6 +80,13 @@ impl TimePositionVelocity {
     pub fn position(&self) -> Option<(Latitude, Longitude)> {
         Some((self.lat.valid()?, self.lon.valid()?))
     }
+
+    /// How many of the fix's two coordinate axes the receiver wrote outside
+    /// their range, NaN counting as outside.
+    pub fn invalid_coordinate_count(&self) -> u32 {
+        u32::from(self.lat.valid().is_none()) + u32::from(self.lon.valid().is_none())
+    }
+
     pub fn velocity(&self) -> Option<Velocity> {
         self.velocity
     }

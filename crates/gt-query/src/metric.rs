@@ -8,8 +8,9 @@ use crate::dimension::Dimension;
 ///
 /// Covers all of [`MetricKind`] (names are the wire names with unit suffixes
 /// stripped, since units live in the type system here) plus the per-point
-/// fields that are not plot metrics: `time`, `sys_time`, `lat`, `lon`, and the
-/// derived `accel`. The mapping is pinned by tests below.
+/// fields that are not plot metrics: `time`, `sys_time`, `lat`, `lon`,
+/// `invalid_coordinates`, and the derived `accel`. The mapping is pinned by
+/// tests below.
 #[derive(
     Debug,
     Clone,
@@ -31,6 +32,7 @@ pub enum QueryMetric {
     SysTime,
     Lat,
     Lon,
+    InvalidCoordinates,
     Velocity,
     Heading,
     Accel,
@@ -126,7 +128,8 @@ impl QueryMetric {
             QueryMetric::Accel => Quantity::Acceleration,
             QueryMetric::Eph | QueryMetric::SnapError => Quantity::Length,
             QueryMetric::ClockDelta => Quantity::Duration,
-            QueryMetric::SatsSeen
+            QueryMetric::InvalidCoordinates
+            | QueryMetric::SatsSeen
             | QueryMetric::SatsFix
             | QueryMetric::GpsSeen
             | QueryMetric::GpsFix
@@ -166,6 +169,7 @@ impl QueryMetric {
             | QueryMetric::SysTime
             | QueryMetric::Lat
             | QueryMetric::Lon
+            | QueryMetric::InvalidCoordinates
             | QueryMetric::Accel => None,
             QueryMetric::Velocity => Some(MetricKind::Velocity),
             QueryMetric::Heading => Some(MetricKind::HeadingDeg),
@@ -299,7 +303,7 @@ mod tests {
     }
 
     /// Every plot metric is reachable from a query, none is covered twice,
-    /// and the extra query-only metrics are exactly the five per-point
+    /// and the extra query-only metrics are exactly the six per-point
     /// fields. A new `MetricKind` variant fails here until it is wired up.
     #[test]
     fn covers_every_metric_kind() {
@@ -313,7 +317,7 @@ mod tests {
             .filter(|kind| !mapped.contains(kind))
             .collect();
         assert!(unmapped.is_empty(), "no query metric for {unmapped:?}");
-        assert_eq!(QueryMetric::COUNT, MetricKind::COUNT + 5);
+        assert_eq!(QueryMetric::COUNT, MetricKind::COUNT + 6);
     }
 
     /// The DSL name is the `MetricKind` wire name with the unit suffix

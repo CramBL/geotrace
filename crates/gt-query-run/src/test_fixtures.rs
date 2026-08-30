@@ -8,7 +8,7 @@ use std::sync::Arc;
 use chrono::DateTime;
 use geotrace_sdk_units::ChannelUnit;
 use gt_track_builder::{FileMeta, SegmentationConfig};
-use gt_types::coordinates::{Latitude, Longitude};
+use gt_types::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::GpsTime;
 use gt_types::tpv::TimePositionVelocity;
@@ -64,6 +64,27 @@ pub(crate) fn test_points() -> Vec<NavPoint> {
         ),
         NavPoint::new(bare, None),
     ]
+}
+
+/// One point per coordinate pair, a second apart from [`TEST_EPOCH`], with no
+/// velocity, heading or satellite report.
+pub(crate) fn points_at_recorded_coordinates(
+    coordinates: &[(RecordedLatitude, RecordedLongitude)],
+) -> Vec<NavPoint> {
+    coordinates
+        .iter()
+        .enumerate()
+        .map(|(index, &(lat, lon))| {
+            let time =
+                DateTime::from_timestamp(TEST_EPOCH + index as i64, 0).expect("valid timestamp");
+            let tpv = TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(time))
+                .lat(lat)
+                .lon(lon)
+                .build();
+            NavPoint::new(tpv, None)
+        })
+        .collect()
 }
 
 /// A scalar channel named `name` with `unit`, sampled at `TEST_EPOCH + secs`
