@@ -2,10 +2,15 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::builder::{micros_to_datetime, u64_to_opt_datetime};
-use crate::error::Error;
+use crate::error::{Error, FieldLocation};
+use crate::fixed_width_string::{
+    AnnotationField, ColorHexField, FixedWidthString, IconNameField, MarkerLabelField,
+    VariantPathField,
+};
 use crate::types::{
-    Annotation, Channel, Constellation, EventMarkerPoint, EventMarkerStyle, Marker, MarkerIcon,
-    Meta, NavFile, NavFix, NavPoint, Satellite, SatelliteReport, TravelMode,
+    Annotation, Channel, Constellation, EventMarkerColor, EventMarkerIconChoice, EventMarkerPoint,
+    EventMarkerStyle, Marker, MarkerIcon, Meta, NavFile, NavFix, NavPoint, Satellite,
+    SatelliteReport, TravelMode,
 };
 use crate::write;
 use crate::{Angle, Velocity};
@@ -262,24 +267,31 @@ fn read_markers(file: &File) -> Result<Vec<Marker>, Error> {
     check_len("markers", "icon", k, icons.len())?;
     check_len("markers", "label", k * 256, label_flat.len())?;
 
-    let markers = times
+    let mut markers = Vec::with_capacity(k);
+    for ((((time_us, lat_deg), lon_deg), icon_code), label_row) in times
         .iter()
         .zip(lats.iter())
         .zip(lons.iter())
         .zip(icons.iter())
         .zip(label_flat.chunks(256))
-        .map(
-            |((((time_us, lat_deg), lon_deg), icon_code), label_row)| Marker {
-                annotation: Annotation {
-                    time: micros_to_datetime(*time_us),
-                    label: decode_label(label_row),
-                    icon: Some(MarkerIcon::from_u8(*icon_code)),
-                },
-                lat: Angle::degrees(*lat_deg),
-                lon: Angle::degrees(*lon_deg),
+    {
+        let label: MarkerLabelField = decode_field_row(
+            FieldLocation {
+                group: "markers",
+                dataset: "label",
             },
-        )
-        .collect();
+            label_row,
+        )?;
+        markers.push(Marker {
+            annotation: Annotation {
+                time: micros_to_datetime(*time_us),
+                label: label.into_string_unless_empty(),
+                icon: Some(MarkerIcon::from_u8(*icon_code)),
+            },
+            lat: Angle::degrees(*lat_deg),
+            lon: Angle::degrees(*lon_deg),
+        });
+    }
 
     Ok(markers)
 }
@@ -301,25 +313,42 @@ fn read_event_markers(file: &File) -> Result<Vec<EventMarkerPoint>, Error> {
     check_len("event_markers", "variant_path", n * 256, vp_flat.len())?;
     check_len("event_markers", "annotation", n * 512, ann_flat.len())?;
 
-    let markers = sys_times
+    let mut markers = Vec::with_capacity(n);
+    for ((((sys_time_us, lat_deg), lon_deg), vp_row), ann_row) in sys_times
         .iter()
         .zip(lats.iter())
         .zip(lons.iter())
         .zip(vp_flat.chunks(256))
         .zip(ann_flat.chunks(512))
-        .filter_map(|((((sys_time_us, lat_deg), lon_deg), vp_row), ann_row)| {
-            let sys_time = crate::builder::u64_to_opt_datetime(*sys_time_us)?;
-            let variant_path = decode_fixed_str(vp_row)?;
-            let annotation = decode_fixed_str(ann_row);
-            Some(EventMarkerPoint {
-                variant_path,
-                sys_time,
-                lat: Angle::degrees(*lat_deg),
-                lon: Angle::degrees(*lon_deg),
-                annotation,
-            })
-        })
-        .collect();
+    {
+        let variant_path: VariantPathField = decode_field_row(
+            FieldLocation {
+                group: "event_markers",
+                dataset: "variant_path",
+            },
+            vp_row,
+        )?;
+        let annotation: AnnotationField = decode_field_row(
+            FieldLocation {
+                group: "event_markers",
+                dataset: "annotation",
+            },
+            ann_row,
+        )?;
+        let Some(sys_time) = u64_to_opt_datetime(*sys_time_us) else {
+            continue;
+        };
+        let Some(variant_path) = variant_path.into_string_unless_empty() else {
+            continue;
+        };
+        markers.push(EventMarkerPoint {
+            variant_path,
+            sys_time,
+            lat: Angle::degrees(*lat_deg),
+            lon: Angle::degrees(*lon_deg),
+            annotation: annotation.into_string_unless_empty(),
+        });
+    }
 
     Ok(markers)
 }
@@ -337,31 +366,50 @@ fn read_event_marker_styles(file: &File) -> Result<Vec<EventMarkerStyle>, Error>
     check_len("event_marker_styles", "icon_name", m * 32, icon_flat.len())?;
     check_len("event_marker_styles", "color_hex", m * 8, color_flat.len())?;
 
-    let styles = vp_flat
+    let mut styles = Vec::with_capacity(m);
+    for ((vp_row, icon_row), color_row) in vp_flat
         .chunks(256)
         .zip(icon_flat.chunks(32))
         .zip(color_flat.chunks(8))
-        .filter_map(|((vp_row, icon_row), color_row)| {
-            let variant_path = decode_fixed_str(vp_row)?;
-            let icon = decode_fixed_str(icon_row)
-                .and_then(|s| crate::types::MarkerIcon::try_from_lower_case(&s).ok())
-                .map_or(
-                    crate::types::EventMarkerIconChoice::Auto,
-                    crate::types::EventMarkerIconChoice::Icon,
-                );
-            let color = decode_fixed_str(color_row)
-                .filter(|s| s.starts_with('#'))
-                .map_or(
-                    crate::types::EventMarkerColor::Auto,
-                    crate::types::EventMarkerColor::Hex,
-                );
-            Some(EventMarkerStyle {
-                variant_path,
-                icon,
-                color,
-            })
-        })
-        .collect();
+    {
+        let variant_path: VariantPathField = decode_field_row(
+            FieldLocation {
+                group: "event_marker_styles",
+                dataset: "variant_path",
+            },
+            vp_row,
+        )?;
+        let icon_name: IconNameField = decode_field_row(
+            FieldLocation {
+                group: "event_marker_styles",
+                dataset: "icon_name",
+            },
+            icon_row,
+        )?;
+        let color_hex: ColorHexField = decode_field_row(
+            FieldLocation {
+                group: "event_marker_styles",
+                dataset: "color_hex",
+            },
+            color_row,
+        )?;
+        let Some(variant_path) = variant_path.into_string_unless_empty() else {
+            continue;
+        };
+        let icon = icon_name
+            .into_string_unless_empty()
+            .and_then(|name| MarkerIcon::try_from_lower_case(&name).ok())
+            .map_or(EventMarkerIconChoice::Auto, EventMarkerIconChoice::Icon);
+        let color = color_hex
+            .into_string_unless_empty()
+            .filter(|hex| hex.starts_with('#'))
+            .map_or(EventMarkerColor::Auto, EventMarkerColor::Hex);
+        styles.push(EventMarkerStyle {
+            variant_path,
+            icon,
+            color,
+        });
+    }
 
     Ok(styles)
 }
@@ -412,12 +460,15 @@ fn read_channels(file: &File) -> Result<Vec<Channel>, Error> {
     Ok(channels)
 }
 
-fn decode_fixed_str(row: &[u8]) -> Option<String> {
-    let end = row.iter().position(|&b| b == 0).unwrap_or(row.len());
-    if end == 0 {
-        return None;
-    }
-    Some(String::from_utf8_lossy(row.get(..end)?).into_owned())
+fn decode_field_row<const ROW_BYTES: usize>(
+    location: FieldLocation,
+    row: &[u8],
+) -> Result<FixedWidthString<ROW_BYTES>, Error> {
+    FixedWidthString::decode_row(row).map_err(|source| Error::UnreadableField {
+        group: location.group,
+        dataset: location.dataset,
+        source,
+    })
 }
 
 fn check_len(
@@ -436,15 +487,6 @@ fn check_len(
             actual,
         })
     }
-}
-
-fn decode_label(row: &[u8]) -> Option<String> {
-    let end = row.iter().position(|&b| b == 0).unwrap_or(row.len());
-    if end == 0 {
-        return None;
-    }
-    let s = String::from_utf8_lossy(row.get(..end)?).into_owned();
-    Some(s)
 }
 
 fn opt_f32(v: f32) -> Option<f32> {

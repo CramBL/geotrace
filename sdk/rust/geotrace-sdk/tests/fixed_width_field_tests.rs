@@ -177,8 +177,9 @@ impl Default for FixedWidthFieldRows {
 }
 
 /// A `.gtd` file with one nav fix, one marker, one event marker and one event
-/// marker style, whose fixed-width field rows are written as given. The writer
-/// cannot produce a malformed row, so these tests assemble the file themselves.
+/// marker style, whose fixed-width field rows are written as given. These tests
+/// assemble the file themselves, since the writer cannot produce a malformed row.
+#[expect(clippy::expect_used, reason = "test setup must succeed")]
 fn gtd_bytes_with_field_rows(rows: FixedWidthFieldRows) -> Vec<u8> {
     let FixedWidthFieldRows {
         marker_label,
