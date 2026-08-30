@@ -1,7 +1,9 @@
+use crate::fixed_width_string::{FixedWidthStringError, VariantPathField};
+
 /// Validate that `path` is a well-formed event marker variant path.
 ///
 /// Rules: non-empty, ASCII alphanumeric + `-` + `_` + `/`, no leading/trailing slash,
-/// no empty segments (`//`), at most 256 bytes.
+/// no empty segments (`//`), at most [`VariantPathField::CONTENT_CAPACITY`] bytes.
 pub(crate) fn validate_variant_path(path: &str) -> Result<(), EventMarkerError> {
     if path.is_empty() {
         return Err(EventMarkerError::Empty { path: path.into() });
@@ -15,7 +17,7 @@ pub(crate) fn validate_variant_path(path: &str) -> Result<(), EventMarkerError> 
     if path.contains("//") {
         return Err(EventMarkerError::EmptySegment { path: path.into() });
     }
-    if path.len() > 256 {
+    if path.len() > VariantPathField::CONTENT_CAPACITY {
         return Err(EventMarkerError::TooLong {
             path: path.into(),
             len: path.len(),
@@ -30,8 +32,8 @@ pub(crate) fn validate_variant_path(path: &str) -> Result<(), EventMarkerError> 
     Ok(())
 }
 
-/// Error returned by `EventMarker::builder().build()` when the supplied
-/// variant path is malformed.
+/// Error returned by `EventMarker::builder().build()` when the variant path is
+/// malformed, or when the annotation does not fit the field that holds it.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum EventMarkerError {
     #[error("invalid event marker variant path {path:?}: path is empty")]
@@ -46,13 +48,19 @@ pub enum EventMarkerError {
     #[error("invalid event marker variant path {path:?}: contains '//'")]
     EmptySegment { path: String },
 
-    #[error("invalid event marker variant path {path:?}: exceeds 256 bytes ({len} bytes)")]
+    #[error(
+        "invalid event marker variant path {path:?}: {len} bytes, past the {} bytes the field holds",
+        VariantPathField::CONTENT_CAPACITY
+    )]
     TooLong { path: String, len: usize },
 
     #[error(
         "invalid event marker variant path {path:?}: contains characters outside ASCII alphanumeric, hyphen, underscore, and slash"
     )]
     InvalidChars { path: String },
+
+    #[error("invalid event marker annotation: {source}")]
+    UnwritableAnnotation { source: FixedWidthStringError },
 }
 
 /// Errors that can occur when building a [`Channel`](crate::Channel).
@@ -197,6 +205,13 @@ pub enum Error {
         unit: &'static str,
         input: String,
         reason: String,
+    },
+
+    #[error("{group}/{dataset}: {source}")]
+    UnwritableField {
+        group: &'static str,
+        dataset: &'static str,
+        source: FixedWidthStringError,
     },
 }
 

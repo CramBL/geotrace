@@ -29,8 +29,8 @@ fn build_err(e: BuildError) -> PyErr {
 
 // Map a core SDK error to the appropriate Python exception: filesystem failures
 // become OSError (IOError). Bad file content (invalid HDF5 container, wrong
-// version, or a decode failure) becomes ValueError. Exhaustive, so a new
-// variant must be classified.
+// version, or a decode failure) and a value too long for the field that holds
+// it become ValueError. Exhaustive, so a new variant must be classified.
 fn file_err(e: geotrace_sdk::Error) -> PyErr {
     use geotrace_sdk::Error;
     let msg = e.to_string();
@@ -42,7 +42,8 @@ fn file_err(e: geotrace_sdk::Error) -> PyErr {
         | Error::ShapeMismatch { .. }
         | Error::UnknownConstellationName { .. }
         | Error::UnknownMarkerIcon { .. }
-        | Error::ParseError { .. } => PyValueError::new_err(msg),
+        | Error::ParseError { .. }
+        | Error::UnwritableField { .. } => PyValueError::new_err(msg),
     }
 }
 
@@ -1010,7 +1011,8 @@ impl PyMarker {
 /// ``"connectivity/agps/request"``, or ``None`` (or the ``event_kind.skip``
 /// sentinel) to silently skip this marker.
 /// Allowed characters: ASCII alphanumeric, hyphen, underscore, and slash.
-/// No leading or trailing slash. No empty segments (``//``). Max 256 bytes.
+/// No leading or trailing slash. No empty segments (``//``). Max 255 bytes.
+/// ``annotation`` holds at most 511 bytes, checked when the file is written.
 ///
 /// ``sys_time`` must be a timezone-aware ``datetime.datetime``.
 #[pyclass(skip_from_py_object, name = "EventMarker")]

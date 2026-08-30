@@ -10,10 +10,13 @@ the app).
 ### Changed
 
 - `geotrace/geotrace.hpp` uses an include guard instead of `#pragma once`, matching `geotrace/unit_catalog.hpp`.
+- An event marker whose variant path is longer than the 255 bytes that field holds is rejected where it is built: Rust `EventMarker::builder().build()`, C `gtd_builder_add_event_marker`, C++ `FileBuilder::add_event_marker`, and the Python `EventMarker` constructor.
+- Rust `EventMarker::builder().build()`, C `gtd_builder_add_event_marker`, and C++ `FileBuilder::add_event_marker` reject an annotation longer than the 511 bytes that field holds.
 
 ### Fixed
 
 - The C gold example rejects a date or time number too large for an `int` instead of reading it with `sscanf`, which cannot report the overflow.
+- Fixed the writer cutting an event marker variant path, annotation, icon name, or color hex mid-character to fit its field: writing a file that holds such a value now fails with an error naming the field, in all four SDKs.
 
 ## [0.5.1] - 2026-08-05
 
