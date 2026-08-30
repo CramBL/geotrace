@@ -40,7 +40,9 @@ pub fn empty_track_metadata() -> gt_types::track::TrackMetadata {
 pub fn empty_file_metadata() -> gt_types::FileMetadata {
     gt_types::FileMetadata {
         filename: String::new(),
-        total_distance_km: Length::new::<uom::si::length::kilometer>(0.0),
+        total_distance: gt_types::TotalDistance::Measured(
+            Length::new::<uom::si::length::kilometer>(0.0),
+        ),
         total_duration: Duration::zero(),
         time_range: gt_types::track::TimeRange::new(
             chrono::DateTime::UNIX_EPOCH,

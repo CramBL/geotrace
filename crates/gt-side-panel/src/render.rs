@@ -463,7 +463,11 @@ fn render_file_row(
             }
         }
         let arrow = expand_arrow(is_expanded);
-        let dist = gt_fmt::format_distance(file.metadata.total_distance_km);
+        let dist = file
+            .metadata
+            .total_distance
+            .measured()
+            .map_or_else(|| gt_ui_theme::EM_DASH.to_owned(), gt_fmt::format_distance);
         let dur = gt_fmt::format_human_terse_duration(file.metadata.total_duration);
         let is_selected = ctx.tree.selection.contains(&file_key);
         // Truncate only the identity: the distance and duration stay pinned on the

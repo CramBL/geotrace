@@ -532,6 +532,27 @@ fn recording_row_ui(ui: &mut Ui, recording_name: Option<&str>) {
     }
 }
 
+/// Where the map draws a fix, for the surfaces that name it beside the
+/// coordinates the receiver recorded.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum FixPlacement {
+    Placed(ResolvedPosition),
+    /// The fix belongs to a track with no geometry, so the map draws it
+    /// nowhere.
+    TrackWithoutGeometry,
+}
+
+impl FixPlacement {
+    pub(crate) fn resolve(track: &LoadedTrack, point_index: PointIdx) -> Self {
+        track
+            .placed_points()
+            .and_then(|placed| placed.get(point_index.as_usize()))
+            .map_or(Self::TrackWithoutGeometry, |point| {
+                Self::Placed(point.resolved())
+            })
+    }
+}
+
 /// One coordinate row of the hover badge: the degrees the receiver recorded,
 /// in the warning colour when they lie outside their axis' range.
 fn recorded_coordinate_row_ui<C: Coordinate>(
@@ -573,6 +594,21 @@ fn drawn_at_row_ui(ui: &mut Ui, resolved: ResolvedPosition) {
     ui.end_row();
 }
 
+/// The position rows of a fix, in the grid the caller has open: the two
+/// coordinates the receiver recorded, then where the map draws the fix.
+fn position_rows_ui(ui: &mut Ui, fix: &NavPoint, placement: FixPlacement) {
+    recorded_coordinate_row_ui(ui, "Lat", fix.tpv.lat());
+    recorded_coordinate_row_ui(ui, "Lon", fix.tpv.lon());
+    match placement {
+        FixPlacement::Placed(resolved) => drawn_at_row_ui(ui, resolved),
+        FixPlacement::TrackWithoutGeometry => {
+            ui.label("Not drawn");
+            ui.label("No fix in this track has a valid coordinate");
+            ui.end_row();
+        }
+    }
+}
+
 fn hover_grid_ui(ui: &mut Ui, point: PlacedPoint<'_>, recording_name: Option<&str>) {
     let fix = point.fix;
     Grid::new("hover_grid")
@@ -585,9 +621,7 @@ fn hover_grid_ui(ui: &mut Ui, point: PlacedPoint<'_>, recording_name: Option<&st
             ui.label(fix.tpv.time().utc().format("%Y-%m-%d %H:%M:%S").to_string());
             ui.end_row();
 
-            recorded_coordinate_row_ui(ui, "Lat", fix.tpv.lat());
-            recorded_coordinate_row_ui(ui, "Lon", fix.tpv.lon());
-            drawn_at_row_ui(ui, point.resolved());
+            position_rows_ui(ui, fix, FixPlacement::Placed(point.resolved()));
 
             ui.label("Speed");
             match fix.tpv.velocity_kmh() {
@@ -658,6 +692,7 @@ pub(crate) fn show_sticky_tpv_content(
     sky: &SkySection<'_>,
     folds: &mut PointWindowFolds,
     recording_name: Option<&str>,
+    placement: FixPlacement,
 ) -> bool {
     // The sky plot is drawn beside the tables, so hovering a table row feeds
     // the plot through egui's per-frame data store: this frame's plot uses
@@ -716,7 +751,7 @@ pub(crate) fn show_sticky_tpv_content(
                 }
                 ui.add_space(6.0);
             }
-            sticky_metrics(ui, p, highlight, recording_name);
+            sticky_metrics(ui, p, highlight, recording_name, placement);
             open_trails
         };
     // The satellite tables always scroll on their own, so the plot beside or
@@ -749,17 +784,19 @@ pub(crate) fn show_sticky_tpv_content(
     open_trails
 }
 
-/// The fix metrics beneath the plot: speed, heading, accuracy, the satellite
-/// fix/seen counts, and the clock deltas. Hovering the fix count highlights
-/// the in-fix satellites on the plot.
+/// The fix metrics beneath the plot: its position, speed, heading, accuracy,
+/// the satellite fix/seen counts, and the clock deltas. Hovering the fix count
+/// highlights the in-fix satellites on the plot.
 fn sticky_metrics(
     ui: &mut Ui,
     p: &NavPoint,
     highlight: &mut Option<SkyHighlight>,
     recording_name: Option<&str>,
+    placement: FixPlacement,
 ) {
     Grid::new("sticky_tpv_basic").num_columns(2).show(ui, |ui| {
         recording_row_ui(ui, recording_name);
+        position_rows_ui(ui, p, placement);
 
         ui.label("Speed");
         match p.tpv.velocity_kmh() {

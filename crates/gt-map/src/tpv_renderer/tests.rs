@@ -125,6 +125,12 @@ fn sats_multi_constellation() -> Satellites {
     Satellites::new(None, None, satellites)
 }
 
+/// Where the map draws a fixture point, resolved over a one-fix track the way
+/// the point window reaches it.
+fn placement_of(point: &NavPoint) -> FixPlacement {
+    FixPlacement::resolve(&track_with_points(vec![point.clone()]), PointIdx::new(0))
+}
+
 /// The sticky content's sky section for a fixture point: its own report
 /// when it has one.
 fn sky_for(point: &NavPoint) -> SkySection<'_> {
@@ -174,11 +180,13 @@ fn balanced_split_keeps_a_lone_panel_in_one_column() {
 fn dense_multi_constellation_packs_into_two_columns() {
     let point = make_point(Some(sats_dense_multi_constellation()));
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(620.0, 560.0))
         .theme(true)
         .ui(move |ui| {
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
     harness.snapshot("sticky_dense_two_columns");
 }
@@ -189,11 +197,13 @@ fn dense_multi_constellation_packs_into_two_columns() {
 fn dense_multi_constellation_reflows_to_one_column_when_narrow() {
     let point = make_point(Some(sats_dense_multi_constellation()));
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(330.0, 560.0))
         .theme(true)
         .ui(move |ui| {
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
     harness.snapshot_loose("sticky_dense_one_column");
 }
@@ -237,13 +247,15 @@ fn folded_sections_keep_their_headers() {
         plot_folded: true,
         ..Default::default()
     };
+    let placement = placement_of(&point);
     folds.toggle(Constellation::Gps);
     folds.toggle(Constellation::Beidou);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(620.0, 380.0))
         .theme(true)
         .ui(move |ui| {
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
     harness.snapshot("sticky_folded_sections");
 }
@@ -256,6 +268,7 @@ fn folded_sections_keep_their_headers() {
 fn folding_a_constellation_hides_only_its_rows(#[case] fold_gps: bool, #[case] expect_rows: bool) {
     let point = make_point(Some(sats_dense_multi_constellation()));
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     if fold_gps {
         folds.toggle(Constellation::Gps);
     }
@@ -263,7 +276,8 @@ fn folding_a_constellation_hides_only_its_rows(#[case] fold_gps: bool, #[case] e
         .size(egui::vec2(620.0, 560.0))
         .theme(true)
         .ui(move |ui| {
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
     harness.run();
 
@@ -281,11 +295,13 @@ fn clicking_anywhere_on_the_header_folds() {
     let folded = std::rc::Rc::new(std::cell::Cell::new(false));
     let seen = folded.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(600.0, 440.0))
         .theme(true)
         .ui(move |ui| {
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
             seen.set(folds.is_folded(Constellation::Gps));
         });
     harness.run();
@@ -304,11 +320,13 @@ fn the_open_trails_button_does_not_fold_the_sky_plot() {
     let state = std::rc::Rc::new(std::cell::Cell::new((false, false)));
     let seen = state.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(600.0, 440.0))
         .theme(true)
         .ui(move |ui| {
-            let opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
             let (ever_opened, _) = seen.get();
             seen.set((ever_opened || opened, folds.plot_folded));
         });
@@ -337,11 +355,13 @@ fn each_header_folds_its_own_constellation() {
     let state = std::rc::Rc::new(std::cell::Cell::new((false, false)));
     let seen = state.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(600.0, 440.0))
         .theme(true)
         .ui(move |ui| {
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
             seen.set((
                 folds.is_folded(Constellation::Gps),
                 folds.is_folded(Constellation::Glonass),
@@ -366,12 +386,14 @@ fn the_gap_between_satellite_rows_keeps_the_highlight() {
     let id_cell = std::rc::Rc::new(std::cell::Cell::new(None));
     let cell = id_cell.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(600.0, 440.0))
         .theme(true)
         .ui(move |ui| {
             cell.set(Some(sky_table_highlight_id(ui)));
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
     harness.run();
 
@@ -409,11 +431,13 @@ fn satellite_badge(#[case] name: &str, #[case] dark_mode: bool) {
     // Sized like the real point window: the plot sits beside the satellite
     // tables, so this is wide and short rather than narrow and tall.
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(600.0, 440.0))
         .theme(dark_mode)
         .ui(move |ui| {
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
     harness.snapshot(name);
 }
@@ -433,12 +457,14 @@ fn hovering_a_table_sets_the_sky_highlight(#[case] label: &str, #[case] expected
     let id_cell = std::rc::Rc::new(std::cell::Cell::new(None));
     let cell = id_cell.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(320.0, 920.0))
         .theme(true)
         .ui(move |ui| {
             cell.set(Some(sky_table_highlight_id(ui)));
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
     harness.run();
     harness.inner.hover_and_settle(By::new().label(label), 2);
@@ -454,11 +480,13 @@ fn hovering_a_table_sets_the_sky_highlight(#[case] label: &str, #[case] expected
 fn hovering_a_prn_row_shows_the_affordance_band() {
     let point = make_point(Some(sats_multi_constellation()));
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(600.0, 440.0))
         .theme(true)
         .ui(move |ui| {
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
     harness.run();
     harness.inner.hover_and_settle(By::new().label("G01"), 2);
@@ -624,6 +652,74 @@ fn hover_badge_coordinate_out_of_range() {
             }
         });
     harness.snapshot("hover_badge_coordinate_out_of_range");
+}
+
+/// What the point window says under the two recorded coordinates.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PlacementRow {
+    /// The receiver's own coordinates place the fix, so neither row is drawn.
+    Absent,
+    DrawnAt,
+    NotDrawn,
+}
+
+/// The point window writes both coordinates the receiver recorded, marking one
+/// outside its range, and names where the map draws the fix.
+#[rstest]
+#[case::measured(
+    gt_test_utils::nav_points_with_a_latitude_out_of_range(3, PointIdx::new(1)),
+    PointIdx::new(0),
+    "55.000000° N",
+    PlacementRow::Absent
+)]
+#[case::latitude_out_of_range(
+    gt_test_utils::nav_points_with_a_latitude_out_of_range(3, PointIdx::new(1)),
+    PointIdx::new(1),
+    "91° (invalid)",
+    PlacementRow::DrawnAt
+)]
+#[case::track_without_a_position(
+    gt_test_utils::nav_points_without_a_valid_position(3),
+    PointIdx::new(1),
+    "91° (invalid)",
+    PlacementRow::NotDrawn
+)]
+fn the_point_window_names_the_recorded_coordinates(
+    #[case] points: Vec<NavPoint>,
+    #[case] point_index: PointIdx,
+    #[case] expected_latitude: &str,
+    #[case] expected_placement: PlacementRow,
+) {
+    let track = track_with_points(points);
+    let mut folds = gt_ui_types::PointWindowFolds::default();
+    let mut harness = crate::test_harness::builder()
+        .size(egui::vec2(430.0, 300.0))
+        .theme(true)
+        .ui(move |ui| {
+            let Some(point) = point_index.get(&track.points) else {
+                return;
+            };
+            let _opened = show_sticky_tpv_content(
+                ui,
+                point,
+                &SkySection::resolve(&track, point_index),
+                &mut folds,
+                None,
+                FixPlacement::resolve(&track, point_index),
+            );
+        });
+    harness.run();
+
+    assert!(harness.inner.query_by_label(expected_latitude).is_some());
+    assert!(harness.inner.query_by_label("Lon").is_some());
+    assert_eq!(
+        harness.inner.query_by_label("Drawn at").is_some(),
+        expected_placement == PlacementRow::DrawnAt
+    );
+    assert_eq!(
+        harness.inner.query_by_label("Not drawn").is_some(),
+        expected_placement == PlacementRow::NotDrawn
+    );
 }
 
 /// The recording row names the file a fix came from, and is absent while

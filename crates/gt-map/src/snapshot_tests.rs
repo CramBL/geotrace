@@ -62,7 +62,7 @@ fn make_snapshot_file() -> gt_types::LoadedFile {
     use gt_types::{
         CustomMarker, EventMarker, FileMetadata, GeneratedMarker, GeneratedMarkerKind, GeoBounds,
         Latitude, LoadedFile, LoadedTrack, Longitude, MarkerIcon, MercBounds, TimeRange,
-        TrackMetadata, mercator,
+        TotalDistance, TrackMetadata, mercator,
     };
     use uom::si::f64::Length;
     use uom::si::length::kilometer;
@@ -141,7 +141,7 @@ fn make_snapshot_file() -> gt_types::LoadedFile {
     LoadedFile {
         metadata: FileMetadata {
             filename: "snapshot_test.gtd".to_string(),
-            total_distance_km: Length::new::<kilometer>(5.0),
+            total_distance: TotalDistance::Measured(Length::new::<kilometer>(5.0)),
             total_duration: chrono::Duration::seconds(n as i64),
             time_range: TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64)),
             ..gt_test_utils::empty_file_metadata()

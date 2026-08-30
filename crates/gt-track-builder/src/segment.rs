@@ -15,7 +15,7 @@ use gt_types::satellites::SlipEvent;
 use gt_types::time_types::GpsTime;
 use gt_types::track::{
     FileMetadata, FileSource, FixStats, LoadedFile, LoadedTrack, MeasuredTrackGeometry, MercBounds,
-    SegmentLengthRange, TimeRange, TrackGeometry, TrackMetadata, TravelMode,
+    SegmentLengthRange, TimeRange, TotalDistance, TrackGeometry, TrackMetadata, TravelMode,
 };
 use rustc_hash::FxHashMap;
 use std::fmt;
@@ -849,10 +849,11 @@ pub fn build_loaded_file(
         });
     }
 
-    let total_distance_km = loaded_tracks
+    let total_distance = loaded_tracks
         .iter()
         .filter_map(|t| Some(t.geometry.measured()?.distance_km))
-        .sum::<Length>();
+        .reduce(|total, distance| total + distance)
+        .map_or(TotalDistance::NoMeasuredTrack, TotalDistance::Measured);
     let total_duration = loaded_tracks
         .iter()
         .fold(Duration::zero(), |acc, t| acc + t.metadata.duration);
@@ -898,7 +899,7 @@ pub fn build_loaded_file(
     LoadedFile {
         metadata: FileMetadata {
             filename,
-            total_distance_km,
+            total_distance,
             total_duration,
             time_range: file_time_range,
             fix_stats: file_fix_stats,
