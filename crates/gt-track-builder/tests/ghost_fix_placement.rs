@@ -74,7 +74,7 @@ fn build_ghost_file(points: &[NavPoint]) -> LoadedFile {
     )
 }
 
-/// Where the map draws the ghost fix of `points`, in normalized Web Mercator.
+/// Where the map draws the ghost fix held in `file`, in normalized Web Mercator.
 fn drawn_ghost_merc(file: &LoadedFile) -> Option<MercPoint> {
     let ghost = file
         .tracks
@@ -143,9 +143,9 @@ fn ghost_fix_between_fixes_across_the_antimeridian_stays_between_them() {
     );
 }
 
-/// A ghost fix is drawn where the builder placed it, so the map must find it
-/// there: without an index entry a user can point at the chevron and get
-/// neither a tooltip nor a selection.
+/// The spatial index must hold a ghost fix at the position it is drawn at:
+/// without an entry there, a user pointing at the chevron gets neither a
+/// tooltip nor a selection.
 #[test]
 fn a_ghost_fix_is_indexed_at_the_position_it_is_drawn_at() {
     let points = vec![

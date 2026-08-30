@@ -2,9 +2,8 @@ use gt_types::{DataCategory, FileIdx, LoadedFile, PointIdx, SpatialPoint, TrackI
 
 /// Build the global spatial index over all loaded files.
 ///
-/// Includes real TPV fixes (heading present), custom markers, generated markers,
-/// and event markers. Ghost TPV fixes are excluded until their positions are
-/// pre-computed at load time.
+/// Every fix is indexed at the position it is drawn at, alongside the custom,
+/// generated and event markers.
 pub fn build_global_tree(files: &[LoadedFile]) -> rstar::RTree<SpatialPoint> {
     let mut points: Vec<SpatialPoint> = Vec::new();
     for (fi, file) in files.iter().enumerate() {
@@ -15,9 +14,6 @@ pub fn build_global_tree(files: &[LoadedFile]) -> rstar::RTree<SpatialPoint> {
             // can be hit on the map.
             if let Some(placed) = track.placed_points() {
                 for (pi, p) in placed.iter().enumerate() {
-                    if p.fix.tpv.heading().is_none() {
-                        continue;
-                    }
                     points.push(SpatialPoint {
                         merc: p.merc(),
                         file_index,

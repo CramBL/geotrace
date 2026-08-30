@@ -336,9 +336,9 @@ impl TrackMetadata {
     }
 }
 
-/// A point in the global spatial index, covering TPV fixes and all marker categories.
-///
-/// Ghost TPV fixes (heading == `None`) are excluded.
+/// A point in the global spatial index, covering TPV fixes and all marker
+/// categories. A fix is indexed at the position it is drawn at, which for a
+/// ghost fix is not the position the receiver recorded.
 #[derive(Debug, Clone, Copy)]
 pub struct SpatialPoint {
     pub merc: MercPoint,
