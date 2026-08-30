@@ -13,6 +13,7 @@
 ### Fixed
 
 - **Map & Tracks:** Fixed a recording whose tracks are drawn nowhere reporting a distance of "-0 m": its side panel row now shows a dash, the way its track rows already do.
+- **Map & Tracks:** Fixed dead-reckoned fixes on the map ignoring hover and clicks: they are now in the map's index at the position they are drawn at.
 - **Map & Tracks:** Fixed a recording in which no fix has a valid position being rejected: it now loads and shows its data in the plot and the history, with its tracks drawn nowhere on the map.
 - **Map & Tracks:** Fixed a recording holding a fix with a latitude or longitude outside the valid range being rejected: it now loads with a data quality warning naming those fixes, keeps the recorded values, and draws each of them between the fixes around it.
 - **Map & Tracks:** Fixed a heading swing between two northward readings disappearing from the plot when zoomed out, and the same for a sensor channel that declares a wrap period.
