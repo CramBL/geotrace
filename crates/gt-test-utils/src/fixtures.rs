@@ -467,6 +467,30 @@ pub fn nav_points_walking_from(
         .collect()
 }
 
+/// One fix per position of `positions`, a second apart from `start`, each with
+/// a heading so that none of them reads as a ghost fix. For tests over
+/// positions the walking fixtures cannot reach, such as a pair either side of
+/// the antimeridian.
+pub fn nav_points_at_positions(
+    start: chrono::DateTime<chrono::Utc>,
+    positions: &[(Latitude, Longitude)],
+) -> Vec<NavPoint> {
+    positions
+        .iter()
+        .enumerate()
+        .map(|(i, (lat, lon))| {
+            let tpv = TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(start + Duration::seconds(i as i64)))
+                .lat(*lat)
+                .lon(*lon)
+                .heading(Angle::new::<degree>(90.0))
+                .velocity(Velocity::new::<kilometer_per_hour>(15.0))
+                .build();
+            NavPoint::new(tpv, None)
+        })
+        .collect()
+}
+
 /// Whether a fixture point is a measured fix or one of the two ways a
 /// receiver produces a ghost fix ([`NavPoint::is_ghost_fix`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

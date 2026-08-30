@@ -133,6 +133,43 @@ mod tests {
         assert!((lon.as_degrees() - 12.0).abs() < 1e-9);
     }
 
+    /// Two fixes a second apart, 0.2 deg of longitude apart across the date
+    /// line, on the equator.
+    fn track_across_the_antimeridian() -> LoadedTrack {
+        gt_test_utils::loaded_track_with_points(gt_test_utils::nav_points_at_positions(
+            start(),
+            &[
+                (Latitude::new(0.0), Longitude::new(179.9)),
+                (Latitude::new(0.0), Longitude::new(-179.9)),
+            ],
+        ))
+    }
+
+    /// The great circle between the two fixes runs over the date line, so every
+    /// position on it lies at a longitude of at least 179.9 deg either side.
+    #[test]
+    fn a_time_between_fixes_across_the_antimeridian_is_placed_between_them() {
+        let track = track_across_the_antimeridian();
+        let time = start() + Duration::milliseconds(500);
+        let (lat, lon) =
+            associate_position(time, &placed_fixes(&track), window()).expect("associates");
+        let lon = lon.as_degrees();
+        assert!(
+            lon.abs() >= 179.9,
+            "entry placed at lon {lon}, expected it between 179.9 and -179.9 across the date line"
+        );
+        assert!((lat.as_degrees()).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_time_on_a_fix_across_the_antimeridian_takes_that_fixs_position() {
+        let track = track_across_the_antimeridian();
+        let (lat, lon) =
+            associate_position(start(), &placed_fixes(&track), window()).expect("associates");
+        assert!((lat.as_degrees()).abs() < 1e-9);
+        assert!((lon.as_degrees() - 179.9).abs() < 1e-9);
+    }
+
     /// The five fixes run from `start()` to `start() + 4 s`.
     #[rstest]
     #[case::just_after_the_last_fix(4 + 59, true)]
