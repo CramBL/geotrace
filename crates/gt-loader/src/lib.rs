@@ -1411,6 +1411,13 @@ mod tests {
         );
     }
 
+    fn listed_warnings(file: &LoadedFile) -> Vec<(u32, &str, &str)> {
+        file.load_warnings
+            .iter()
+            .map(|w| (w.count, w.issue.as_str(), w.description.as_str()))
+            .collect()
+    }
+
     #[test]
     fn fixes_with_a_coordinate_out_of_range_load_with_a_warning_naming_them() {
         let file = load_bytes(
@@ -1422,13 +1429,8 @@ mod tests {
         let track = file.tracks.first().expect("the ten fixes form one track");
         assert_eq!(track.points.len(), 10);
         assert_eq!(track.metadata.invalid_position_count, 2);
-        let warnings: Vec<(u32, &str, &str)> = file
-            .load_warnings
-            .iter()
-            .map(|w| (w.count, w.issue.as_str(), w.description.as_str()))
-            .collect();
         assert_eq!(
-            warnings,
+            listed_warnings(&file),
             vec![
                 (
                     1,
@@ -1500,6 +1502,147 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "no fix between records 0 and 2 has a latitude and longitude in range"
+        );
+    }
+
+    /// An SNR inside the ≈99 dB-Hz band the firmware writes for "no
+    /// measurement".
+    const SENTINEL_SNR_DB: f32 = 99.0;
+
+    /// A color field a file can hold that is not a `#RRGGBB` hex value.
+    const COLOR_THAT_IS_NOT_HEX: &str = "#ZZZZZZ";
+
+    fn gps_row(prn: u32, snr_db: f32, in_fix: bool) -> SdkSat {
+        SdkSat::builder()
+            .constellation(SdkConst::Gps)
+            .prn(prn)
+            .elevation(REPEATED_ELEVATION_DEG)
+            .azimuth(90.0f32)
+            .snr(snr_db)
+            .in_fix(in_fix)
+            .build()
+    }
+
+    /// One fix per report, a second apart, each fix carrying the rows of its
+    /// report.
+    fn recording_with_satellite_reports(reports: Vec<Vec<SdkSat>>) -> Vec<u8> {
+        let mut recorder = NavFileBuilder::new().open();
+        for (second, tracked) in (0i64..).zip(reports) {
+            let time = base() + Duration::seconds(second);
+            recorder.add_nav_fix(minimal_fix(time));
+            recorder.add_satellite_report(
+                SatelliteReport::builder()
+                    .gps_time(time)
+                    .tracked(tracked)
+                    .build(),
+            );
+        }
+        let mut bytes = Vec::new();
+        recorder.finish().unwrap().write(&mut bytes).unwrap();
+        bytes
+    }
+
+    /// The file's own warning about the repeated rows and the loader's warning
+    /// about merging them are both raised: one says the file is malformed, the
+    /// other says what the app made of it.
+    #[test]
+    fn satellites_merged_from_several_rows_load_with_a_warning_naming_them() {
+        let bytes = recording_with_satellite_reports(vec![
+            vec![
+                gps_row(7, 45.0, true),
+                gps_row(7, 30.0, true),
+                gps_row(1, 40.0, true),
+            ],
+            vec![gps_row(1, 40.0, true)],
+            vec![
+                gps_row(7, 45.0, true),
+                gps_row(7, 30.0, true),
+                gps_row(7, 25.0, false),
+            ],
+        ]);
+
+        let file = load_bytes(&bytes, "repeated_rows.gtd".to_owned()).unwrap();
+
+        assert_eq!(
+            listed_warnings(&file),
+            vec![
+                (
+                    2,
+                    "satellite(s) merged from several rows of one report",
+                    "record 0: G07 on 2 rows, record 2: G07 on 3 rows. Every satellite \
+                     count shown is one per satellite, not one per row: the merged \
+                     satellite takes the highest SNR of its rows, the first elevation and \
+                     azimuth reported, and is in the fix when any row was."
+                ),
+                (
+                    2,
+                    "satellite report(s) with duplicate (constellation, PRN) pairs",
+                    "each satellite should appear at most once per report"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn sentinel_snrs_load_with_a_warning_naming_the_satellites_read_as_measureless() {
+        let bytes = recording_with_satellite_reports(vec![
+            vec![gps_row(1, SENTINEL_SNR_DB, true), gps_row(7, 40.0, true)],
+            vec![gps_row(1, SENTINEL_SNR_DB, true)],
+            vec![gps_row(7, 40.0, true)],
+        ]);
+
+        let file = load_bytes(&bytes, "sentinel_snr.gtd".to_owned()).unwrap();
+
+        assert_eq!(
+            listed_warnings(&file),
+            vec![
+                (
+                    2,
+                    "satellite SNR reading(s) discarded as the no-data sentinel",
+                    "record 0: G01, record 1: G01. Those satellites are drawn and listed \
+                     with no signal strength: an SNR of ≈99 dB-Hz is the firmware sentinel \
+                     for an unavailable measurement, not a reading."
+                ),
+                (
+                    2,
+                    "satellite(s) with SNR ≈ 99 dB-Hz",
+                    "common firmware sentinel for unavailable signal strength; omit \
+                    the SNR field when no measurement is available"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_event_marker_color_that_is_not_hex_loads_as_gray_with_a_warning_naming_the_variant() {
+        let mut recorder = NavFileBuilder::new().open();
+        for second in 0..3i64 {
+            recorder.add_nav_fix(minimal_fix(base() + Duration::seconds(second)));
+        }
+        recorder.add_event_marker_style(SdkEventMarkerStyle {
+            variant_path: "power/boot".to_owned(),
+            icon: SdkEventMarkerIconChoice::Auto,
+            color: SdkEventMarkerColor::hex(COLOR_THAT_IS_NOT_HEX),
+        });
+        let mut bytes = Vec::new();
+        recorder.finish().unwrap().write(&mut bytes).unwrap();
+
+        let file = load_bytes(&bytes, "marker_color.gtd".to_owned()).unwrap();
+
+        assert_eq!(
+            file.event_marker_styles
+                .get("power/boot")
+                .map(|style| style.color),
+            Some(MarkerColor::new(128, 128, 128))
+        );
+        assert_eq!(
+            listed_warnings(&file),
+            vec![(
+                1,
+                "event marker color(s) replaced with gray",
+                "\"power/boot\": \"#ZZZZZZ\". Those markers are drawn mid-gray: the style \
+                 holds a color that is not a #RRGGBB hex value."
+            )]
         );
     }
 }
