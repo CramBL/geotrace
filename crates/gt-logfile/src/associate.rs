@@ -1,7 +1,9 @@
 //! Placing a log entry on a recorded track: it takes the position of the fix
-//! nearest in time, interpolated between the two fixes it falls between.
+//! nearest in time, interpolated along the great circle between the two fixes
+//! it falls between.
 
 use chrono::{DateTime, Duration, Utc};
+use gt_geo_math::GreatCircleArc;
 use gt_types::{Latitude, Longitude, PlacedPoint};
 use rayon::prelude::*;
 
@@ -42,13 +44,13 @@ pub fn associate_position(
             } else {
                 elapsed as f64 / span as f64
             };
-            let (before_lat, before_lon) = before.resolved_position();
-            let (after_lat, after_lon) = after.resolved_position();
-            let lat =
-                before_lat.as_degrees() * (1.0 - fraction) + after_lat.as_degrees() * fraction;
-            let lon =
-                before_lon.as_degrees() * (1.0 - fraction) + after_lon.as_degrees() * fraction;
-            Some((Latitude::new(lat), Longitude::new(lon)))
+            Some(
+                GreatCircleArc {
+                    start: before.resolved_position(),
+                    end: after.resolved_position(),
+                }
+                .position_at_ratio(fraction),
+            )
         }
         (Some(nearest), None) | (None, Some(nearest)) => {
             if (time - nearest.fix.tpv.time().utc()).abs() > window {
@@ -103,6 +105,11 @@ mod tests {
             .collect()
     }
 
+    /// Positions this close are the same place to within a centimetre, which
+    /// covers the great circle's departure from a straight line in degrees
+    /// over the fixtures' steps.
+    const POSITION_TOLERANCE_DEGREES: f64 = 1e-7;
+
     /// The window every test runs with, matching the app's default.
     fn window() -> Duration {
         Duration::seconds(60)
@@ -120,17 +127,53 @@ mod tests {
         let time = start() + Duration::milliseconds(500);
         let (lat, lon) =
             associate_position(time, &placed_fixes(&track), window()).expect("associates");
-        assert!((lat.as_degrees() - 55.0005).abs() < 1e-9);
-        assert!((lon.as_degrees() - 12.0005).abs() < 1e-9);
+        assert!((lat.as_degrees() - 55.0005).abs() < POSITION_TOLERANCE_DEGREES);
+        assert!((lon.as_degrees() - 12.0005).abs() < POSITION_TOLERANCE_DEGREES);
     }
 
+    /// Two fixes a second apart, 0.2 deg of longitude apart across the date
+    /// line, on the equator.
+    fn track_across_the_antimeridian() -> LoadedTrack {
+        gt_test_utils::loaded_track_with_points(gt_test_utils::nav_points_at_positions(
+            start(),
+            &[
+                (Latitude::new(0.0), Longitude::new(179.9)),
+                (Latitude::new(0.0), Longitude::new(-179.9)),
+            ],
+        ))
+    }
+
+    /// Every position on the great circle between the two fixes lies at a
+    /// longitude of at least 179.9 deg either side, since it runs over the
+    /// date line.
     #[test]
-    fn a_time_on_a_fix_takes_that_fixs_position() {
-        let track = track_of(5);
+    fn a_time_between_fixes_across_the_antimeridian_is_placed_between_them() {
+        let track = track_across_the_antimeridian();
+        let time = start() + Duration::milliseconds(500);
+        let (lat, lon) =
+            associate_position(time, &placed_fixes(&track), window()).expect("associates");
+        let lon = lon.as_degrees();
+        assert!(
+            lon.abs() >= 179.9,
+            "entry placed at lon {lon}, expected it between 179.9 and -179.9 across the date line"
+        );
+        assert!(lat.as_degrees().abs() < POSITION_TOLERANCE_DEGREES);
+    }
+
+    #[rstest]
+    #[case::walking_north_east(track_of(5), (Latitude::new(55.0), Longitude::new(12.0)))]
+    #[case::across_the_antimeridian(
+        track_across_the_antimeridian(),
+        (Latitude::new(0.0), Longitude::new(179.9))
+    )]
+    fn a_time_on_a_fix_takes_that_fixs_position(
+        #[case] track: LoadedTrack,
+        #[case] (expected_lat, expected_lon): (Latitude, Longitude),
+    ) {
         let (lat, lon) =
             associate_position(start(), &placed_fixes(&track), window()).expect("associates");
-        assert!((lat.as_degrees() - 55.0).abs() < 1e-9);
-        assert!((lon.as_degrees() - 12.0).abs() < 1e-9);
+        assert!((lat.as_degrees() - expected_lat.as_degrees()).abs() < POSITION_TOLERANCE_DEGREES);
+        assert!((lon.as_degrees() - expected_lon.as_degrees()).abs() < POSITION_TOLERANCE_DEGREES);
     }
 
     /// The five fixes run from `start()` to `start() + 4 s`.

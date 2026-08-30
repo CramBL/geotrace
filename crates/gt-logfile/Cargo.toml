@@ -12,6 +12,7 @@ doctest = false
 [dependencies]
 chrono.workspace = true
 gt-fmt = { path = "../gt-fmt" }
+gt-geo-math = { path = "../gt-geo-math" }
 gt-types = { path = "../gt-types" }
 log.workspace = true
 memchr.workspace = true
