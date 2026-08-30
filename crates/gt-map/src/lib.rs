@@ -69,6 +69,7 @@ use crate::match_reveal::MatchRevealState;
 use crate::recording_labels::RecordingLabels;
 use crate::snapped_track_renderer::SnappedTrackRenderer;
 use crate::test_tiles::{FixtureTileId, TestTileSource};
+use crate::tpv_renderer::FixPlacement;
 use crate::track_layers::TrackLayers;
 use crate::transform::{MapScale, MercTransform};
 use crate::viewport::{
@@ -1331,6 +1332,7 @@ fn show_point_window_body(
     sky: &crate::tpv_renderer::SkySection<'_>,
     folds: &mut PointWindowFolds,
     recording_name: Option<&str>,
+    placement: FixPlacement,
 ) -> bool {
     egui::Panel::bottom("sticky_point_hint").show(ui, |ui| {
         ui.add_space(4.0);
@@ -1339,7 +1341,14 @@ fn show_point_window_body(
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show(ui, |ui| {
-            crate::tpv_renderer::show_sticky_tpv_content(ui, point, sky, folds, recording_name)
+            crate::tpv_renderer::show_sticky_tpv_content(
+                ui,
+                point,
+                sky,
+                folds,
+                recording_name,
+                placement,
+            )
         })
         .inner
 }
@@ -1449,6 +1458,7 @@ fn show_sticky_popup(
                         &sky,
                         folds,
                         recording_labels.name_when_several_files_loaded(sticky_ref.track.fi),
+                        FixPlacement::resolve(track, sticky_ref.point_index),
                     ) {
                         trails_request = Some(SkyTrailsRequest::at_instant(
                             sticky_ref.track,

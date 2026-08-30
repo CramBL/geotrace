@@ -5,10 +5,11 @@ use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::CHECK as ICON_CHECK;
 use gt_filter::{self as filter, GlobalFilter};
 use gt_sky::{SkyHighlight, SkyPlot, SkyPlotSize};
+use gt_types::coordinates::{Coordinate, RecordedCoordinate};
 use gt_types::satellites::{Constellation, Satellite};
 use gt_types::{
-    DataCategory, FileIdx, LoadedFile, LoadedTrack, NavPoint, NearestSatelliteReport, PlacedPoints,
-    PointIdx, SKY_REPORT_MAX_AGE_SECS, TrackIdx, TrackRef,
+    DataCategory, FileIdx, LoadedFile, LoadedTrack, NavPoint, NearestSatelliteReport, PlacedPoint,
+    PlacedPoints, PointIdx, ResolvedPosition, SKY_REPORT_MAX_AGE_SECS, TrackIdx, TrackRef,
 };
 use gt_ui_theme::{DEGREE_SIGN, DELTA, EM_DASH};
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, PointWindowFolds};
@@ -113,6 +114,42 @@ const FIX_STRONG_BLUE: Color32 = Color32::from_rgb(66, 133, 244);
 const FIX_MARGINAL_YELLOW: Color32 = Color32::from_rgb(244, 180, 0);
 const FIX_LOST_RED: Color32 = Color32::from_rgb(219, 68, 55);
 
+/// Why the map draws a fix as a hollow chevron where the track builder placed
+/// it, instead of a navigation arrow at the coordinates the receiver wrote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChevronFix {
+    /// The receiver dead-reckoned the fix: it reported no heading, or nothing
+    /// in fix. See [`NavPoint::is_ghost_fix`].
+    DeadReckoned,
+    /// No position recorded for this fix: the receiver wrote a latitude or a
+    /// longitude outside its range.
+    CoordinateOutOfRange,
+}
+
+impl ChevronFix {
+    /// `None` for a fix the receiver measured and gave a heading, which the
+    /// map draws as a navigation arrow.
+    ///
+    /// A coordinate out of range outranks dead reckoning: it is the finding
+    /// the chevron's colour reports.
+    pub(crate) fn for_fix(fix: &NavPoint) -> Option<Self> {
+        if fix.tpv.position().is_none() {
+            Some(Self::CoordinateOutOfRange)
+        } else if fix.is_ghost_fix() {
+            Some(Self::DeadReckoned)
+        } else {
+            None
+        }
+    }
+
+    fn tint(self, dark_mode: bool) -> Color32 {
+        match self {
+            Self::DeadReckoned => FIX_LOST_RED,
+            Self::CoordinateOutOfRange => gt_ui_theme::warning_amber(dark_mode),
+        }
+    }
+}
+
 fn is_arrow_highlighted(highlight: &MapHighlight, point_ref: DataPointRef) -> bool {
     if highlight.sticky.is_some_and(|r| r == point_ref) {
         return true;
@@ -138,7 +175,7 @@ pub(crate) fn draw_track_icons(
     ti: TrackIdx,
     track: &LoadedTrack,
     real_fix_indices: Option<&Vec<usize>>,
-    ghost_points: &[usize],
+    chevron_points: &[(usize, ChevronFix)],
     style: &TpvDrawStyle,
     fade: TrackIconFade,
     transform: &crate::transform::MercTransform,
@@ -163,13 +200,14 @@ pub(crate) fn draw_track_icons(
             if !filter::point_passes_time_filter(point.fix.tpv.time().utc(), filter) {
                 continue;
             }
+            // Dead-reckoned fixes and fixes with a coordinate out of range are
+            // drawn by the chevron loop below.
+            if ChevronFix::for_fix(point.fix).is_some() {
+                continue;
+            }
             let Some(h) = point.fix.tpv.heading() else {
                 continue;
             };
-            // Fix-lost points (0 satellites in fix) are drawn by the ghost loop.
-            if point.fix.is_ghost_fix() {
-                continue;
-            }
             let screen_pos = transform.to_screen(point.merc());
             let icon_alpha = fix_icon_alpha(
                 fade,
@@ -214,16 +252,17 @@ pub(crate) fn draw_track_icons(
         }
     }
 
-    // Ghost fixes: heading absent, or satellite fix count dropped to zero.
-    // The latter covers devices that continue outputting positions and headings
-    // during fix loss - the heading field is present but unreliable as a
-    // "real" direction indicator, so we still show a hollow chevron.
-    // `ghost_points` was collected on the LOD level during the geometry
-    // walk (time-filtered there). Ghost/real transitions survive every
+    // Chevrons: dead-reckoned fixes, and fixes the receiver wrote a coordinate
+    // out of range for. Dead reckoning covers devices that continue outputting
+    // positions and headings during fix loss - the heading field is present but
+    // unreliable as a "real" direction indicator, so we still show a hollow
+    // chevron.
+    // `chevron_points` was collected on the LOD level during the geometry
+    // walk (time-filtered there). Chevron/arrow transitions survive every
     // level, so faded stretches lose only sub-pixel interior chevrons.
-    for (pi, point) in ghost_points
+    for (pi, chevron, point) in chevron_points
         .iter()
-        .filter_map(|&pi| Some((pi, placed.get(pi)?)))
+        .filter_map(|&(pi, chevron)| Some((pi, chevron, placed.get(pi)?)))
     {
         let screen_pos = transform.to_screen(point.merc());
         if !view_rect.contains(screen_pos) {
@@ -248,7 +287,7 @@ pub(crate) fn draw_track_icons(
         // - If the GPS reported a heading (fix-lost but device maintained estimate),
         //   use it - it is more accurate than deriving from neighbour positions.
         // - Otherwise derive from neighbouring Mercator positions (see
-        //   [`ghost_direction`]).
+        //   [`chevron_direction`]).
         let direction = if let Some(h) = point.fix.tpv.heading() {
             let angle_rad = h.get::<radian>() - std::f64::consts::FRAC_PI_2;
             egui::vec2(angle_rad.cos() as f32, angle_rad.sin() as f32)
@@ -258,7 +297,7 @@ pub(crate) fn draw_track_icons(
                 .and_then(|i| placed.get(i))
                 .map_or(point.merc(), |p| p.merc());
             let merc_next = placed.get(pi + 1).map_or(point.merc(), |p| p.merc());
-            ghost_direction(merc_prev, merc_next)
+            chevron_direction(merc_prev, merc_next)
         };
         let point_ref = DataPointRef {
             track: TrackRef::new(fi, ti),
@@ -268,7 +307,10 @@ pub(crate) fn draw_track_icons(
         draw_tpv_point(
             ui,
             screen_pos,
-            &PointKind::Ghost { direction },
+            &PointKind::Chevron {
+                direction,
+                fix: chevron,
+            },
             None,
             0.0,
             is_arrow_highlighted(highlight, point_ref),
@@ -295,7 +337,10 @@ pub(crate) fn show_tooltip(
     let Some(track) = point_ref.track.index.get(&file.tracks) else {
         return;
     };
-    let Some(point) = point_ref.point_index.get(&track.points) else {
+    let Some(point) = track
+        .placed_points()
+        .and_then(|placed| placed.get(point_ref.point_index.as_usize()))
+    else {
         return;
     };
     let tooltip_id = ui
@@ -464,12 +509,12 @@ pub(crate) fn draw_plot_hover_overlay(
 /// single file is loaded.
 pub(crate) fn show_hover_table(
     ui: &mut Ui,
-    p: &NavPoint,
+    point: PlacedPoint<'_>,
     sky: &SkySection<'_>,
     recording_name: Option<&str>,
 ) {
     ui.horizontal_top(|ui| {
-        hover_grid_ui(ui, p, recording_name);
+        hover_grid_ui(ui, point, recording_name);
         if !matches!(sky, SkySection::TrackWithoutReports) {
             ui.add_space(12.0);
             ui.vertical(|ui| sky_section_ui(ui, sky, SkyPlotSize::Compact, None));
@@ -487,7 +532,85 @@ fn recording_row_ui(ui: &mut Ui, recording_name: Option<&str>) {
     }
 }
 
-fn hover_grid_ui(ui: &mut Ui, p: &NavPoint, recording_name: Option<&str>) {
+/// Where the map draws a fix, for the surfaces that name it beside the
+/// coordinates the receiver recorded.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum FixPlacement {
+    Placed(ResolvedPosition),
+    /// The fix belongs to a track with no geometry, so the map draws it
+    /// nowhere.
+    TrackWithoutGeometry,
+}
+
+impl FixPlacement {
+    pub(crate) fn resolve(track: &LoadedTrack, point_index: PointIdx) -> Self {
+        track
+            .placed_points()
+            .and_then(|placed| placed.get(point_index.as_usize()))
+            .map_or(Self::TrackWithoutGeometry, |point| {
+                Self::Placed(point.resolved())
+            })
+    }
+}
+
+/// One coordinate row of the hover badge: the degrees the receiver recorded,
+/// in the warning colour when they lie outside their axis' range.
+fn recorded_coordinate_row_ui<C: Coordinate>(
+    ui: &mut Ui,
+    caption: &str,
+    recorded: RecordedCoordinate<C>,
+) {
+    ui.label(caption);
+    let degrees = RichText::new(recorded.to_degrees_with_hemisphere());
+    match recorded {
+        RecordedCoordinate::Valid(_) => ui.label(degrees),
+        RecordedCoordinate::Invalid(_) => {
+            ui.label(degrees.color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)))
+        }
+    };
+    ui.end_row();
+}
+
+/// The row naming where the map draws a fix, shown only for one the track
+/// builder placed between the fixes around it.
+fn drawn_at_row_ui(ui: &mut Ui, resolved: ResolvedPosition) {
+    let ResolvedPosition::Interpolated(projected) = resolved else {
+        return;
+    };
+    let (latitude, longitude) = projected.coordinates();
+    ui.label("Drawn at");
+    ui.vertical(|ui| {
+        ui.label(format!(
+            "{}  {}",
+            latitude.to_degrees_with_hemisphere(),
+            longitude.to_degrees_with_hemisphere()
+        ));
+        ui.label(
+            RichText::new("Interpolated between the fixes around it")
+                .weak()
+                .small(),
+        );
+    });
+    ui.end_row();
+}
+
+/// The position rows of a fix, in the grid the caller has open: the two
+/// coordinates the receiver recorded, then where the map draws the fix.
+fn position_rows_ui(ui: &mut Ui, fix: &NavPoint, placement: FixPlacement) {
+    recorded_coordinate_row_ui(ui, "Lat", fix.tpv.lat());
+    recorded_coordinate_row_ui(ui, "Lon", fix.tpv.lon());
+    match placement {
+        FixPlacement::Placed(resolved) => drawn_at_row_ui(ui, resolved),
+        FixPlacement::TrackWithoutGeometry => {
+            ui.label("Not drawn");
+            ui.label("No fix in this track has a valid coordinate");
+            ui.end_row();
+        }
+    }
+}
+
+fn hover_grid_ui(ui: &mut Ui, point: PlacedPoint<'_>, recording_name: Option<&str>) {
+    let fix = point.fix;
     Grid::new("hover_grid")
         .striped(true)
         .num_columns(2)
@@ -495,56 +618,41 @@ fn hover_grid_ui(ui: &mut Ui, p: &NavPoint, recording_name: Option<&str>) {
             recording_row_ui(ui, recording_name);
 
             ui.label("Time");
-            ui.label(p.tpv.time().utc().format("%Y-%m-%d %H:%M:%S").to_string());
+            ui.label(fix.tpv.time().utc().format("%Y-%m-%d %H:%M:%S").to_string());
             ui.end_row();
 
-            let lat = p.tpv.lat().as_written();
-            let lon = p.tpv.lon().as_written();
-            ui.label("Lat");
-            ui.label(format!(
-                "{:.6}{DEGREE_SIGN} {}",
-                lat.abs(),
-                if lat >= 0.0 { "N" } else { "S" }
-            ));
-            ui.end_row();
-            ui.label("Lon");
-            ui.label(format!(
-                "{:.6}{DEGREE_SIGN} {}",
-                lon.abs(),
-                if lon >= 0.0 { "E" } else { "W" }
-            ));
-            ui.end_row();
+            position_rows_ui(ui, fix, FixPlacement::Placed(point.resolved()));
 
             ui.label("Speed");
-            match p.tpv.velocity_kmh() {
+            match fix.tpv.velocity_kmh() {
                 Some(v) => ui.label(format!("{:.1} km/h", v)),
                 None => ui.label(EM_DASH), // em-dash: speed unknown (interpolated point)
             };
             ui.end_row();
 
             ui.label("Heading");
-            match p.tpv.heading() {
+            match fix.tpv.heading() {
                 Some(h) => ui.label(format!("{:.1}{DEGREE_SIGN}", h.get::<degree>())),
                 None => ui.label(EM_DASH), // em-dash: unknown direction
             };
             ui.end_row();
 
-            if let Some(eph) = p.tpv.eph_m() {
+            if let Some(eph) = fix.tpv.eph_m() {
                 ui.label("Accuracy");
                 ui.label(format!("±{eph:.1} m"));
                 ui.end_row();
             }
 
-            show_satellite_rows(ui, p);
+            show_satellite_rows(ui, fix);
 
             // Time delta between the GPS fix and the satellite report.
             // Only shown when the satellite report was GPS-timestamped - if it
             // only has sys_time, this delta equals the GPS/sys-clock delta below
             // and showing it would be redundant.
-            if let Some(sats) = &p.satellites
+            if let Some(sats) = &fix.satellites
                 && let Some(sat_gps_time) = sats.gps_time()
             {
-                let sat_delta_ms = (p.tpv.time() - sat_gps_time).num_milliseconds();
+                let sat_delta_ms = (fix.tpv.time() - sat_gps_time).num_milliseconds();
                 if sat_delta_ms != 0 {
                     ui.label(format!("Sat {DELTA}t"));
                     ui.label(gt_fmt::format_signed_delta(sat_delta_ms));
@@ -552,7 +660,7 @@ fn hover_grid_ui(ui: &mut Ui, p: &NavPoint, recording_name: Option<&str>) {
                 }
             }
 
-            if let Some(offset) = p.tpv.gps_system_clock_offset() {
+            if let Some(offset) = fix.tpv.gps_system_clock_offset() {
                 let clock_delta_ms = offset.num_milliseconds();
                 ui.label(format!("Clock {DELTA}t"));
                 ui.label(format!(
@@ -584,6 +692,7 @@ pub(crate) fn show_sticky_tpv_content(
     sky: &SkySection<'_>,
     folds: &mut PointWindowFolds,
     recording_name: Option<&str>,
+    placement: FixPlacement,
 ) -> bool {
     // The sky plot is drawn beside the tables, so hovering a table row feeds
     // the plot through egui's per-frame data store: this frame's plot uses
@@ -642,7 +751,7 @@ pub(crate) fn show_sticky_tpv_content(
                 }
                 ui.add_space(6.0);
             }
-            sticky_metrics(ui, p, highlight, recording_name);
+            sticky_metrics(ui, p, highlight, recording_name, placement);
             open_trails
         };
     // The satellite tables always scroll on their own, so the plot beside or
@@ -675,17 +784,19 @@ pub(crate) fn show_sticky_tpv_content(
     open_trails
 }
 
-/// The fix metrics beneath the plot: speed, heading, accuracy, the satellite
-/// fix/seen counts, and the clock deltas. Hovering the fix count highlights
-/// the in-fix satellites on the plot.
+/// The fix metrics beneath the plot: its position, speed, heading, accuracy,
+/// the satellite fix/seen counts, and the clock deltas. Hovering the fix count
+/// highlights the in-fix satellites on the plot.
 fn sticky_metrics(
     ui: &mut Ui,
     p: &NavPoint,
     highlight: &mut Option<SkyHighlight>,
     recording_name: Option<&str>,
+    placement: FixPlacement,
 ) {
     Grid::new("sticky_tpv_basic").num_columns(2).show(ui, |ui| {
         recording_row_ui(ui, recording_name);
+        position_rows_ui(ui, p, placement);
 
         ui.label("Speed");
         match p.tpv.velocity_kmh() {
@@ -1280,7 +1391,7 @@ pub(crate) fn bucket_alpha(bucket: u8) -> f32 {
 }
 
 /// Color of the continuous quality line at a given point. Same palette as
-/// the icons: ghost fixes match the red ghost chevron, real fixes use the
+/// the icons: ghost fixes match the red chevron, real fixes use the
 /// satellite-count tiers of [`tpv_point_color`].
 pub(crate) fn quality_line_color(point: &NavPoint) -> Color32 {
     if point.is_ghost_fix() {
@@ -1374,11 +1485,17 @@ fn draw_tpv_point(
                 style.base_arrow_size,
             );
         }
-        PointKind::Ghost { direction } => {
-            draw_ghost_chevron(
+        PointKind::Chevron { direction, fix } => {
+            let tint = if highlighted {
+                gt_ui_theme::HIGHLIGHT_BLUE
+            } else {
+                fix.tint(ui.visuals().dark_mode)
+            };
+            draw_chevron(
                 batch,
                 screen_pos,
                 *direction,
+                tint,
                 highlighted,
                 style.base_arrow_size,
                 style.icon_alpha,
@@ -1432,8 +1549,8 @@ pub(crate) fn draw_sat_labels(
 /// [`gt_types::FixQuality`] tier: blue for strong or unknown quality, yellow
 /// for marginal, red for lost.
 ///
-/// Ghost fixes (no heading, or fix count zero) are rendered as red hollow chevrons
-/// by `draw_ghost_chevron` and never reach this function.
+/// A fix drawn as a hollow chevron ([`ChevronFix`]) is tinted by
+/// [`ChevronFix::tint`] and never reaches this function.
 fn tpv_point_color(point: &NavPoint) -> Color32 {
     match point.fix_quality() {
         gt_types::FixQuality::Unknown | gt_types::FixQuality::Strong => FIX_STRONG_BLUE,
@@ -1447,19 +1564,19 @@ fn tpv_point_color(point: &NavPoint) -> Color32 {
 enum PointKind {
     /// Real GPS fix - heading known, precomputed Mercator coordinates used.
     Real { color: Color32, heading: Angle },
-    /// Ghost fix - either heading is absent, or the satellite fix count is zero.
+    /// A fix drawn where the track builder placed it, see [`ChevronFix`].
     ///
     /// `direction` is a normalised screen-space vector pointing in the inferred
     /// travel direction. When the GPS reported a heading it is converted directly,
     /// otherwise it is derived from the surrounding fixes' Mercator positions.
-    Ghost { direction: Vec2 },
+    Chevron { direction: Vec2, fix: ChevronFix },
 }
 
-/// Compute the travel direction for a ghost fix from its neighbouring Mercator positions.
+/// Compute the travel direction for a chevron from its neighbouring Mercator positions.
 ///
 /// Mercator y increases southward, so dx/dy map directly to egui screen space without
 /// a Y-flip. Falls back to [`Vec2::DOWN`] when both neighbours coincide (isolated point).
-fn ghost_direction(prev: gt_types::MercPoint, next: gt_types::MercPoint) -> Vec2 {
+fn chevron_direction(prev: gt_types::MercPoint, next: gt_types::MercPoint) -> Vec2 {
     let raw = egui::vec2((next.x - prev.x) as f32, (next.y - prev.y) as f32);
     if raw.length_sq() > 1e-12 {
         raw.normalized()
@@ -1468,15 +1585,17 @@ fn ghost_direction(prev: gt_types::MercPoint, next: gt_types::MercPoint) -> Vec2
     }
 }
 
-/// Push a hollow chevron for a ghost fix into the track's icon batch.
+/// Push a hollow chevron, for a fix the receiver did not measure, into the
+/// track's icon batch.
 ///
 /// The chevron tip points in `direction` (the inferred travel direction).
 /// Stacking against interleaved painter primitives is the caller's job via
 /// [IconMeshBatch::barrier]; see [draw_tpv_point].
-fn draw_ghost_chevron(
+fn draw_chevron(
     batch: &mut IconMeshBatch<'_>,
     center: Pos2,
     direction: Vec2,
+    tint: Color32,
     highlighted: bool,
     base_size: f32,
     icon_alpha: f32,
@@ -1486,12 +1605,7 @@ fn draw_ghost_chevron(
     } else {
         base_size
     };
-    let tint = if highlighted {
-        Color32::from_rgb(100, 200, 255)
-    } else {
-        FIX_LOST_RED
-    }
-    .gamma_multiply(icon_alpha);
+    let tint = tint.gamma_multiply(icon_alpha);
     batch.push(IconInstance {
         icon: IconId::GhostFix,
         center,

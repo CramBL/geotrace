@@ -11,6 +11,9 @@ const DEGREE_SIGN: &str = "°";
 /// Marks a recorded coordinate the receiver wrote outside its axis' range.
 const INVALID_MARKER: &str = "(invalid)";
 
+/// Decimal places a coordinate is written with: 1e-6° is about 0.1 m.
+const WRITTEN_DECIMALS: usize = 6;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CoordinateAxis {
     Latitude,
@@ -22,6 +25,17 @@ impl CoordinateAxis {
         match self {
             Self::Latitude => QUARTER_CIRCLE_DEGREES,
             Self::Longitude => HALF_CIRCLE_DEGREES,
+        }
+    }
+
+    /// The letter of the hemisphere `degrees` falls in, with the equator
+    /// counting as north and the prime meridian as east.
+    fn hemisphere_letter(self, degrees: f64) -> &'static str {
+        match (self, degrees < 0.0) {
+            (Self::Latitude, false) => "N",
+            (Self::Latitude, true) => "S",
+            (Self::Longitude, false) => "E",
+            (Self::Longitude, true) => "W",
         }
     }
 }
@@ -50,6 +64,17 @@ pub trait Coordinate: Copy + Sized {
     fn try_new(degrees: f64) -> Result<Self, OutOfRange>;
 
     fn as_degrees(self) -> f64;
+
+    /// This coordinate written for a reader: how far it lies from the equator
+    /// or the prime meridian, and the hemisphere it lies in.
+    fn to_degrees_with_hemisphere(self) -> String {
+        let degrees = self.as_degrees();
+        format!(
+            "{:.WRITTEN_DECIMALS$}{DEGREE_SIGN} {}",
+            degrees.abs(),
+            Self::AXIS.hemisphere_letter(degrees)
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -188,6 +213,15 @@ impl<C: Coordinate> RecordedCoordinate<C> {
         match self {
             Self::Valid(coordinate) => Some(coordinate),
             Self::Invalid(_) => None,
+        }
+    }
+
+    /// This coordinate written for a reader: a valid one with its hemisphere,
+    /// and one outside its range as the receiver wrote it, marked invalid.
+    pub fn to_degrees_with_hemisphere(self) -> String {
+        match self {
+            Self::Valid(coordinate) => coordinate.to_degrees_with_hemisphere(),
+            Self::Invalid(_) => self.to_string(),
         }
     }
 
@@ -344,6 +378,29 @@ mod tests {
         #[case] expected: &str,
     ) {
         assert_eq!(latitude.to_string(), expected);
+    }
+
+    #[rstest]
+    #[case::north(RecordedLatitude::from_degrees(51.5), "51.500000° N")]
+    #[case::south(RecordedLatitude::from_degrees(-33.25), "33.250000° S")]
+    #[case::out_of_range(RecordedLatitude::from_degrees(91.0), "91° (invalid)")]
+    #[case::not_a_number(RecordedLatitude::from_degrees(f64::NAN), "NaN° (invalid)")]
+    fn a_recorded_latitude_is_written_with_the_hemisphere_it_lies_in(
+        #[case] latitude: RecordedLatitude,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(latitude.to_degrees_with_hemisphere(), expected);
+    }
+
+    #[rstest]
+    #[case::east(RecordedLongitude::from_degrees(12.5), "12.500000° E")]
+    #[case::west(RecordedLongitude::from_degrees(-0.1), "0.100000° W")]
+    #[case::out_of_range(RecordedLongitude::from_degrees(-181.0), "-181° (invalid)")]
+    fn a_recorded_longitude_is_written_with_the_hemisphere_it_lies_in(
+        #[case] longitude: RecordedLongitude,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(longitude.to_degrees_with_hemisphere(), expected);
     }
 
     #[rstest]

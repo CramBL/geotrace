@@ -410,11 +410,11 @@ mod tests {
     #[test]
     fn compute_range_single_file() {
         use chrono::TimeZone;
-        use gt_types::track::{FileMetadata, LoadedFile};
+        use gt_types::track::{FileMetadata, LoadedFile, TotalDistance};
         let file = LoadedFile {
             metadata: FileMetadata {
                 filename: "test.gtd".to_owned(),
-                total_distance_km: Length::new::<kilometer>(1.0),
+                total_distance: TotalDistance::Measured(Length::new::<kilometer>(1.0)),
                 total_duration: Duration::seconds(60),
                 time_range: TimeRange::new(
                     Utc.timestamp_opt(0, 0).single().expect("valid"),

@@ -6,7 +6,7 @@ use super::*;
 use egui::Color32;
 use gt_types::MercPoint;
 use gt_types::NavPoint;
-use gt_types::coordinates::{Latitude, Longitude};
+use gt_types::coordinates::{Latitude, Longitude, RecordedLatitude};
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::GpsTime;
 use gt_types::tpv::TimePositionVelocity;
@@ -125,6 +125,12 @@ fn sats_multi_constellation() -> Satellites {
     Satellites::new(None, None, satellites)
 }
 
+/// Where the map draws a fixture point, resolved over a one-fix track the way
+/// the point window reaches it.
+fn placement_of(point: &NavPoint) -> FixPlacement {
+    FixPlacement::resolve(&track_with_points(vec![point.clone()]), PointIdx::new(0))
+}
+
 /// The sticky content's sky section for a fixture point: its own report
 /// when it has one.
 fn sky_for(point: &NavPoint) -> SkySection<'_> {
@@ -174,11 +180,13 @@ fn balanced_split_keeps_a_lone_panel_in_one_column() {
 fn dense_multi_constellation_packs_into_two_columns() {
     let point = make_point(Some(sats_dense_multi_constellation()));
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(620.0, 560.0))
         .theme(true)
         .ui(move |ui| {
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
     harness.snapshot("sticky_dense_two_columns");
 }
@@ -189,11 +197,13 @@ fn dense_multi_constellation_packs_into_two_columns() {
 fn dense_multi_constellation_reflows_to_one_column_when_narrow() {
     let point = make_point(Some(sats_dense_multi_constellation()));
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(330.0, 560.0))
         .theme(true)
         .ui(move |ui| {
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
     harness.snapshot_loose("sticky_dense_one_column");
 }
@@ -237,13 +247,15 @@ fn folded_sections_keep_their_headers() {
         plot_folded: true,
         ..Default::default()
     };
+    let placement = placement_of(&point);
     folds.toggle(Constellation::Gps);
     folds.toggle(Constellation::Beidou);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(620.0, 380.0))
         .theme(true)
         .ui(move |ui| {
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
     harness.snapshot("sticky_folded_sections");
 }
@@ -256,6 +268,7 @@ fn folded_sections_keep_their_headers() {
 fn folding_a_constellation_hides_only_its_rows(#[case] fold_gps: bool, #[case] expect_rows: bool) {
     let point = make_point(Some(sats_dense_multi_constellation()));
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     if fold_gps {
         folds.toggle(Constellation::Gps);
     }
@@ -263,7 +276,8 @@ fn folding_a_constellation_hides_only_its_rows(#[case] fold_gps: bool, #[case] e
         .size(egui::vec2(620.0, 560.0))
         .theme(true)
         .ui(move |ui| {
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
     harness.run();
 
@@ -281,11 +295,13 @@ fn clicking_anywhere_on_the_header_folds() {
     let folded = std::rc::Rc::new(std::cell::Cell::new(false));
     let seen = folded.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(600.0, 440.0))
         .theme(true)
         .ui(move |ui| {
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
             seen.set(folds.is_folded(Constellation::Gps));
         });
     harness.run();
@@ -304,11 +320,13 @@ fn the_open_trails_button_does_not_fold_the_sky_plot() {
     let state = std::rc::Rc::new(std::cell::Cell::new((false, false)));
     let seen = state.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(600.0, 440.0))
         .theme(true)
         .ui(move |ui| {
-            let opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
             let (ever_opened, _) = seen.get();
             seen.set((ever_opened || opened, folds.plot_folded));
         });
@@ -337,11 +355,13 @@ fn each_header_folds_its_own_constellation() {
     let state = std::rc::Rc::new(std::cell::Cell::new((false, false)));
     let seen = state.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(600.0, 440.0))
         .theme(true)
         .ui(move |ui| {
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
             seen.set((
                 folds.is_folded(Constellation::Gps),
                 folds.is_folded(Constellation::Glonass),
@@ -366,12 +386,14 @@ fn the_gap_between_satellite_rows_keeps_the_highlight() {
     let id_cell = std::rc::Rc::new(std::cell::Cell::new(None));
     let cell = id_cell.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(600.0, 440.0))
         .theme(true)
         .ui(move |ui| {
             cell.set(Some(sky_table_highlight_id(ui)));
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
     harness.run();
 
@@ -409,11 +431,13 @@ fn satellite_badge(#[case] name: &str, #[case] dark_mode: bool) {
     // Sized like the real point window: the plot sits beside the satellite
     // tables, so this is wide and short rather than narrow and tall.
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(600.0, 440.0))
         .theme(dark_mode)
         .ui(move |ui| {
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
     harness.snapshot(name);
 }
@@ -433,12 +457,14 @@ fn hovering_a_table_sets_the_sky_highlight(#[case] label: &str, #[case] expected
     let id_cell = std::rc::Rc::new(std::cell::Cell::new(None));
     let cell = id_cell.clone();
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(320.0, 920.0))
         .theme(true)
         .ui(move |ui| {
             cell.set(Some(sky_table_highlight_id(ui)));
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
     harness.run();
     harness.inner.hover_and_settle(By::new().label(label), 2);
@@ -454,11 +480,13 @@ fn hovering_a_table_sets_the_sky_highlight(#[case] label: &str, #[case] expected
 fn hovering_a_prn_row_shows_the_affordance_band() {
     let point = make_point(Some(sats_multi_constellation()));
     let mut folds = gt_ui_types::PointWindowFolds::default();
+    let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(600.0, 440.0))
         .theme(true)
         .ui(move |ui| {
-            let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
+            let _opened =
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None, placement);
         });
     harness.run();
     harness.inner.hover_and_settle(By::new().label("G01"), 2);
@@ -481,6 +509,12 @@ fn track_with_points(points: Vec<NavPoint>) -> LoadedTrack {
         event_markers: Vec::new(),
         channels: Vec::new(),
     }
+}
+
+/// The fix at `index` of `track` with the position the track builder placed
+/// it at, the way the map's hover reaches it.
+fn placed_point(track: &LoadedTrack, index: usize) -> Option<gt_types::PlacedPoint<'_>> {
+    track.placed_points()?.get(index)
 }
 
 /// A nav point at a fixed time plus `secs`, so hover-badge snapshots
@@ -555,7 +589,7 @@ fn hover_badge_own_report(#[case] name: &str, #[case] dark_mode: bool) {
         .theme(dark_mode)
         .ui(move |ui| {
             let sky = SkySection::resolve(&track, PointIdx::new(0));
-            if let Some(point) = track.points.first() {
+            if let Some(point) = placed_point(&track, 0) {
                 show_hover_table(ui, point, &sky, None);
             }
         });
@@ -581,11 +615,111 @@ fn hover_badge_report_states(
         .theme(true)
         .ui(move |ui| {
             let sky = SkySection::resolve(&track, PointIdx::new(query));
-            if let Some(point) = track.points.get(query) {
+            if let Some(point) = placed_point(&track, query) {
                 show_hover_table(ui, point, &sky, None);
             }
         });
     harness.snapshot(name);
+}
+
+/// A fix the receiver wrote a latitude of 91° for, with the heading it
+/// reported for it if any.
+fn fix_with_a_latitude_out_of_range(heading_degrees: Option<f64>) -> NavPoint {
+    let tpv = TimePositionVelocity::builder()
+        .time(GpsTime::from_utc(chrono::Utc::now()))
+        .lat(RecordedLatitude::from_degrees(91.0))
+        .lon(Longitude::new(-0.1))
+        .maybe_heading(heading_degrees.map(Angle::new::<degree>))
+        .build();
+    NavPoint::new(tpv, None)
+}
+
+/// The hover of a fix the receiver wrote a latitude of 91° for: the recorded
+/// value stands as written and marked, above the position the map draws it at.
+#[test]
+fn hover_badge_coordinate_out_of_range() {
+    let track = track_with_points(gt_test_utils::nav_points_with_a_latitude_out_of_range(
+        3,
+        PointIdx::new(1),
+    ));
+    let mut harness = crate::test_harness::builder()
+        .size(egui::vec2(430.0, 260.0))
+        .theme(true)
+        .ui(move |ui| {
+            let sky = SkySection::resolve(&track, PointIdx::new(1));
+            if let Some(point) = placed_point(&track, 1) {
+                show_hover_table(ui, point, &sky, None);
+            }
+        });
+    harness.snapshot("hover_badge_coordinate_out_of_range");
+}
+
+/// What the point window says under the two recorded coordinates.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PlacementRow {
+    /// The receiver's own coordinates place the fix, so neither row is drawn.
+    Absent,
+    DrawnAt,
+    NotDrawn,
+}
+
+/// The point window writes both coordinates the receiver recorded, marking one
+/// outside its range, and names where the map draws the fix.
+#[rstest]
+#[case::measured(
+    gt_test_utils::nav_points_with_a_latitude_out_of_range(3, PointIdx::new(1)),
+    PointIdx::new(0),
+    "55.000000° N",
+    PlacementRow::Absent
+)]
+#[case::latitude_out_of_range(
+    gt_test_utils::nav_points_with_a_latitude_out_of_range(3, PointIdx::new(1)),
+    PointIdx::new(1),
+    "91° (invalid)",
+    PlacementRow::DrawnAt
+)]
+#[case::track_without_a_position(
+    gt_test_utils::nav_points_without_a_valid_position(3),
+    PointIdx::new(1),
+    "91° (invalid)",
+    PlacementRow::NotDrawn
+)]
+fn the_point_window_names_the_recorded_coordinates(
+    #[case] points: Vec<NavPoint>,
+    #[case] point_index: PointIdx,
+    #[case] expected_latitude: &str,
+    #[case] expected_placement: PlacementRow,
+) {
+    let track = track_with_points(points);
+    let mut folds = gt_ui_types::PointWindowFolds::default();
+    let mut harness = crate::test_harness::builder()
+        .size(egui::vec2(430.0, 300.0))
+        .theme(true)
+        .ui(move |ui| {
+            let Some(point) = point_index.get(&track.points) else {
+                return;
+            };
+            let _opened = show_sticky_tpv_content(
+                ui,
+                point,
+                &SkySection::resolve(&track, point_index),
+                &mut folds,
+                None,
+                FixPlacement::resolve(&track, point_index),
+            );
+        });
+    harness.run();
+
+    assert!(harness.inner.query_by_label(expected_latitude).is_some());
+    assert!(harness.inner.query_by_label("Lon").is_some());
+    assert_eq!(
+        harness.inner.query_by_label("Drawn at").is_some(),
+        expected_placement == PlacementRow::DrawnAt
+    );
+    assert_eq!(
+        harness.inner.query_by_label("Not drawn").is_some(),
+        expected_placement == PlacementRow::NotDrawn
+    );
 }
 
 /// The recording row names the file a fix came from, and is absent while
@@ -603,7 +737,7 @@ fn hover_badge_recording_row(
         .theme(true)
         .ui(move |ui| {
             let sky = SkySection::resolve(&track, PointIdx::new(0));
-            if let Some(point) = track.points.first() {
+            if let Some(point) = placed_point(&track, 0) {
                 show_hover_table(ui, point, &sky, recording_name);
             }
         });
@@ -720,12 +854,34 @@ fn heading_with_fix_lost_is_ghost() {
     assert!(point.is_ghost_fix());
 }
 
-/// Ghost chevron points east when the surrounding fixes move eastward.
+#[rstest]
+#[case::measured(make_point(None), None)]
+#[case::without_a_heading(
+    NavPoint::new(make_tpv(51.5, -0.1, None), None),
+    Some(ChevronFix::DeadReckoned)
+)]
+#[case::with_nothing_in_fix(make_point(Some(sats_with_fix(0))), Some(ChevronFix::DeadReckoned))]
+#[case::latitude_out_of_range(
+    fix_with_a_latitude_out_of_range(Some(90.0)),
+    Some(ChevronFix::CoordinateOutOfRange)
+)]
+#[case::out_of_range_without_a_heading(
+    fix_with_a_latitude_out_of_range(None),
+    Some(ChevronFix::CoordinateOutOfRange)
+)]
+fn a_fix_the_receiver_did_not_measure_is_drawn_as_a_chevron(
+    #[case] fix: NavPoint,
+    #[case] expected: Option<ChevronFix>,
+) {
+    assert_eq!(ChevronFix::for_fix(&fix), expected);
+}
+
+/// The chevron points east when the surrounding fixes move eastward.
 #[test]
-fn ghost_direction_points_east_for_eastward_movement() {
+fn chevron_direction_points_east_for_eastward_movement() {
     let prev = MercPoint { x: 0.50, y: 0.50 };
     let next = MercPoint { x: 0.60, y: 0.50 };
-    let dir = ghost_direction(prev, next);
+    let dir = chevron_direction(prev, next);
     assert!(
         dir.x > 0.99,
         "eastward movement → large positive x; got {dir:?}"
@@ -736,13 +892,13 @@ fn ghost_direction_points_east_for_eastward_movement() {
     );
 }
 
-/// Ghost chevron points south when the surrounding fixes move southward.
+/// The chevron points south when the surrounding fixes move southward.
 /// Mercator y increases southward, so this also tests that no Y-flip is applied.
 #[test]
-fn ghost_direction_points_south_for_southward_movement() {
+fn chevron_direction_points_south_for_southward_movement() {
     let prev = MercPoint { x: 0.50, y: 0.40 };
     let next = MercPoint { x: 0.50, y: 0.60 };
-    let dir = ghost_direction(prev, next);
+    let dir = chevron_direction(prev, next);
     assert!(
         dir.y > 0.99,
         "southward movement → large positive y; got {dir:?}"
@@ -755,9 +911,9 @@ fn ghost_direction_points_south_for_southward_movement() {
 
 /// When prev and next coincide (isolated point) the direction falls back to DOWN.
 #[test]
-fn ghost_direction_falls_back_when_neighbours_coincide() {
+fn chevron_direction_falls_back_when_neighbours_coincide() {
     let pt = MercPoint { x: 0.5, y: 0.5 };
-    let dir = ghost_direction(pt, pt);
+    let dir = chevron_direction(pt, pt);
     assert_eq!(
         dir,
         Vec2::DOWN,

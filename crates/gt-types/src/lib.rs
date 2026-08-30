@@ -46,6 +46,6 @@ pub use tpv::TimePositionVelocityBuilder;
 pub use track::{
     AssociationConfig, FileMetadata, FileSource, FixStats, LOD_BASE_TOLERANCE_MERC, LoadedFile,
     LoadedTrack, MarkerRequirement, MeasuredTrackGeometry, MercBounds, NearestSatelliteReport,
-    SKY_REPORT_MAX_AGE_SECS, SegmentLengthRange, SpatialPoint, TimeRange, TrackGeometry, TrackLod,
-    TrackMetadata, TravelMode,
+    SKY_REPORT_MAX_AGE_SECS, SegmentLengthRange, SpatialPoint, TimeRange, TotalDistance,
+    TrackGeometry, TrackLod, TrackMetadata, TravelMode,
 };

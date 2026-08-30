@@ -6,7 +6,8 @@ use crate::viewport::match_bounding_box;
 use gt_test_utils::nav_test_data;
 use gt_types::{
     DataCategory, FileIdx, FileMetadata, GeoBounds, Latitude, LoadedFile, LoadedTrack, Longitude,
-    MercBounds, MercPoint, PointIdx, SpatialPoint, TimeRange, TrackIdx, TrackMetadata,
+    MercBounds, MercPoint, PointIdx, SpatialPoint, TimeRange, TotalDistance, TrackIdx,
+    TrackMetadata,
 };
 use gt_ui_types::{DrawLayer, FileVisibility, TrackRanges, TrackVisibility};
 use rustc_hash::FxHashMap;
@@ -35,7 +36,7 @@ fn make_file_from_points(points: Vec<gt_types::NavPoint>) -> LoadedFile {
     LoadedFile {
         metadata: FileMetadata {
             filename: format!("test_{n}.gtd"),
-            total_distance_km: Length::new::<kilometer>(1.0),
+            total_distance: TotalDistance::Measured(Length::new::<kilometer>(1.0)),
             total_duration: chrono::Duration::seconds(n as i64),
             time_range: TimeRange::new(now, now + chrono::Duration::seconds(n as i64)),
             ..gt_test_utils::empty_file_metadata()
@@ -643,7 +644,7 @@ fn candidate_label_generated_marker_matches_header() {
     let file = LoadedFile {
         metadata: FileMetadata {
             filename: "test.gtd".to_string(),
-            total_distance_km: uom::si::f64::Length::new::<uom::si::length::kilometer>(1.0),
+            total_distance: TotalDistance::Measured(Length::new::<kilometer>(1.0)),
             total_duration: chrono::Duration::seconds(1),
             time_range: TimeRange::new(now, now + chrono::Duration::seconds(1)),
             ..gt_test_utils::empty_file_metadata()

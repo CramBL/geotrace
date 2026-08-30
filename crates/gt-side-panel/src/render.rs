@@ -12,7 +12,7 @@ use gt_filter::GlobalFilter;
 use gt_loaded_files::{LoadedFilesView, RecordingNames};
 use gt_types::{
     DataCategory, FileIdx, GeneratedMarkerKind, GeoBounds, LoadWarning, LoadedFile, LoadedTrack,
-    PointIdx, TrackIdx, TrackRef,
+    PointIdx, TrackGeometry, TrackIdx, TrackRef,
 };
 use gt_ui_theme::ELLIPSIS;
 use gt_ui_theme::buttons::FramelessIconButton;
@@ -463,7 +463,11 @@ fn render_file_row(
             }
         }
         let arrow = expand_arrow(is_expanded);
-        let dist = gt_fmt::format_distance(file.metadata.total_distance_km);
+        let dist = file
+            .metadata
+            .total_distance
+            .measured()
+            .map_or_else(|| gt_ui_theme::EM_DASH.to_owned(), gt_fmt::format_distance);
         let dur = gt_fmt::format_human_terse_duration(file.metadata.total_duration);
         let is_selected = ctx.tree.selection.contains(&file_key);
         // Truncate only the identity: the distance and duration stay pinned on the
@@ -979,6 +983,43 @@ fn snap_menu_entry(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContex
     }
 }
 
+/// What a track's fixes say about the coordinates the receiver wrote for
+/// them, when something is wrong with them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CoordinateWarning {
+    /// This many fixes hold a latitude or a longitude outside its range. Each
+    /// of them is drawn between the fixes around it.
+    FixesOutOfRange(usize),
+    /// No fix of the recording holds a position, so nothing places this
+    /// track's fixes.
+    NoValidPosition,
+}
+
+impl CoordinateWarning {
+    fn for_track(track: &LoadedTrack) -> Option<Self> {
+        match track.geometry {
+            TrackGeometry::NoValidPosition => Some(Self::NoValidPosition),
+            TrackGeometry::Measured(_) => match track.metadata.invalid_position_count {
+                0 => None,
+                count => Some(Self::FixesOutOfRange(count)),
+            },
+        }
+    }
+
+    fn hover_text(self) -> String {
+        match self {
+            Self::FixesOutOfRange(count) => format!(
+                "{count} {} with a coordinate out of range, drawn between the fixes around {}",
+                gt_fmt::pluralize(count, "fix", "fixes"),
+                gt_fmt::pluralize(count, "it", "them")
+            ),
+            Self::NoValidPosition => {
+                "No fix has a valid coordinate, so the track is not drawn on the map".to_owned()
+            }
+        }
+    }
+}
+
 fn render_track_row(
     ui: &mut egui::Ui,
     fi: FileIdx,
@@ -1063,6 +1104,13 @@ fn render_track_row(
                 }
             }
         });
+        if let Some(warning) = CoordinateWarning::for_track(&track) {
+            ui.label(
+                RichText::new(ICON_WARNING)
+                    .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+            )
+            .on_hover_text(warning.hover_text());
+        }
         snap_control(ui, track_ref, ctx);
         (resp, newly_enabled)
     });
@@ -1839,5 +1887,65 @@ mod snap_action_tests {
     fn consent_suffix_only_on_clickable_states(#[case] row: SnapRowView, #[case] expected: bool) {
         let action = snap_action(&row, view(false, true));
         assert_eq!(action.map(|a| a.consent_pending), Some(expected));
+    }
+}
+
+#[cfg(test)]
+mod coordinate_warning_tests {
+    use gt_types::TrackGeometry;
+    use rstest::rstest;
+
+    use super::CoordinateWarning;
+
+    #[rstest]
+    #[case::one_fix(
+        CoordinateWarning::FixesOutOfRange(1),
+        "1 fix with a coordinate out of range, drawn between the fixes around it"
+    )]
+    #[case::several_fixes(
+        CoordinateWarning::FixesOutOfRange(2),
+        "2 fixes with a coordinate out of range, drawn between the fixes around them"
+    )]
+    #[case::no_valid_position(
+        CoordinateWarning::NoValidPosition,
+        "No fix has a valid coordinate, so the track is not drawn on the map"
+    )]
+    fn a_coordinate_warning_states_what_is_wrong_with_the_track(
+        #[case] warning: CoordinateWarning,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(warning.hover_text(), expected);
+    }
+
+    #[test]
+    fn a_track_whose_fixes_all_hold_a_coordinate_in_range_raises_no_warning() {
+        let track = gt_test_utils::loaded_track_with_points(gt_test_utils::nav_test_data());
+
+        assert_eq!(CoordinateWarning::for_track(&track), None);
+    }
+
+    #[test]
+    fn a_track_with_fixes_out_of_range_counts_them() {
+        let mut track = gt_test_utils::loaded_track_with_points(gt_test_utils::nav_test_data());
+        track.metadata.invalid_position_count = 2;
+
+        assert_eq!(
+            CoordinateWarning::for_track(&track),
+            Some(CoordinateWarning::FixesOutOfRange(2))
+        );
+    }
+
+    #[test]
+    fn a_track_without_a_geometry_reports_no_valid_position() {
+        let mut track = gt_test_utils::loaded_track_with_points(
+            gt_test_utils::nav_points_without_a_valid_position(3),
+        );
+        track.metadata.invalid_position_count = 3;
+
+        assert_eq!(track.geometry, TrackGeometry::NoValidPosition);
+        assert_eq!(
+            CoordinateWarning::for_track(&track),
+            Some(CoordinateWarning::NoValidPosition)
+        );
     }
 }

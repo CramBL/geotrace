@@ -544,10 +544,28 @@ impl TravelMode {
     }
 }
 
+/// How far a recording travelled, summed over the tracks that have a geometry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TotalDistance {
+    Measured(Length),
+    /// No track of the recording has a geometry, so nothing measures a
+    /// distance.
+    NoMeasuredTrack,
+}
+
+impl TotalDistance {
+    pub fn measured(self) -> Option<Length> {
+        match self {
+            Self::Measured(distance) => Some(distance),
+            Self::NoMeasuredTrack => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FileMetadata {
     pub filename: String,
-    pub total_distance_km: Length,
+    pub total_distance: TotalDistance,
     pub total_duration: Duration,
     pub time_range: TimeRange,
     /// Aggregated fix stats across all tracks. `None` when no track has satellite reports.

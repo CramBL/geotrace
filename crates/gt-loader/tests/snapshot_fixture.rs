@@ -326,9 +326,14 @@ fn generate_and_verify_snapshot_fixture() {
 
     // File-level metadata
     assert_eq!(loaded.metadata.filename, "snapshot.gtd");
+    let total_distance = loaded
+        .metadata
+        .total_distance
+        .measured()
+        .expect("both tracks are measured");
     assert!(
-        loaded.metadata.total_distance_km > Length::new::<kilometer>(0.8)
-            && loaded.metadata.total_distance_km < Length::new::<kilometer>(2.5),
+        total_distance > Length::new::<kilometer>(0.8)
+            && total_distance < Length::new::<kilometer>(2.5),
         "total distance sane"
     );
     assert_eq!(

@@ -6,9 +6,12 @@
 
 - **Map & Tracks:** The map now says when a recording's fixes lie past 85° latitude, where the map projection ends and nothing can be drawn.
 - **Map & Tracks:** The data quality warnings now also name what the app changed about what a recording said: the satellites it merged from several rows of one report, the satellite SNR readings it discarded as the ≈ 99 dB-Hz no-data sentinel, the event marker colors it replaced with gray, and the event marker styles it dropped for a variant path with several.
+- **Map & Tracks:** A track holding fixes with a coordinate outside the valid range now carries a warning glyph in the side panel, and each such fix is marked in its hover text and drawn in the warning color at the position it is placed at.
+- **Map & Tracks:** The window for a clicked fix now names the coordinates the receiver recorded for it, marking one outside the valid range, and the position the map draws it at.
 
 ### Fixed
 
+- **Map & Tracks:** Fixed a recording whose tracks are drawn nowhere reporting a distance of "-0 m": its side panel row now shows a dash, the way its track rows already do.
 - **Map & Tracks:** Fixed a recording in which no fix has a valid position being rejected: it now loads and shows its data in the plot and the history, with its tracks drawn nowhere on the map.
 - **Map & Tracks:** Fixed a recording holding a fix with a latitude or longitude outside the valid range being rejected: it now loads with a data quality warning naming those fixes, keeps the recorded values, and draws each of them between the fixes around it.
 - **Map & Tracks:** Fixed a heading swing between two northward readings disappearing from the plot when zoomed out, and the same for a sensor channel that declares a wrap period.

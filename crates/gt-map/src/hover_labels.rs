@@ -8,7 +8,7 @@ use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
 use egui_phosphor::regular::FLAG as ICON_FLAG;
 use egui_phosphor::regular::MAP_PIN as ICON_MAP_PIN;
 use gt_types::{
-    CustomMarker, DataCategory, EventMarker, GeneratedMarker, LoadedFile, LoadedTrack, NavPoint,
+    CustomMarker, DataCategory, EventMarker, GeneratedMarker, LoadedFile, LoadedTrack, PlacedPoint,
     PointIdx,
 };
 use gt_ui_theme::EM_DASH;
@@ -146,7 +146,7 @@ pub(crate) fn draw_multi_hover_label_contents(
 
 enum ResolvedCandidate<'a> {
     Tpv {
-        point: &'a NavPoint,
+        point: PlacedPoint<'a>,
         track: &'a LoadedTrack,
         point_index: PointIdx,
     },
@@ -163,7 +163,9 @@ fn resolve_candidate<'a>(
     let track = candidate.track.index.get(&file.tracks)?;
     Some(match candidate.category {
         DataCategory::Tpv | DataCategory::SatelliteReport => ResolvedCandidate::Tpv {
-            point: candidate.point_index.get(&track.points)?,
+            point: track
+                .placed_points()?
+                .get(candidate.point_index.as_usize())?,
             track,
             point_index: candidate.point_index,
         },
@@ -205,7 +207,7 @@ fn draw_candidate_section(
         }) => {
             ui.strong(format!(
                 "{icon}{ICON_GAP}GNSS fix{ICON_GAP}{}",
-                point.tpv.time().utc().format("%H:%M:%S")
+                point.fix.tpv.time().utc().format("%H:%M:%S")
             ));
             crate::tpv_renderer::show_hover_table(
                 ui,
@@ -293,7 +295,7 @@ pub(crate) fn candidate_label(candidate: DataPointRef, files: &[LoadedFile]) -> 
         Some(ResolvedCandidate::Tpv { point, .. }) => {
             format!(
                 "GNSS fix{ICON_GAP}{}",
-                point.tpv.time().utc().format("%H:%M:%S")
+                point.fix.tpv.time().utc().format("%H:%M:%S")
             )
         }
         Some(ResolvedCandidate::EventMarker(m)) => match &m.annotation {

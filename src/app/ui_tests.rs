@@ -2145,6 +2145,40 @@ fn snapshot_app_with_file_loaded_light() {
     harness.snapshot_with_tolerance("app_with_file_loaded_light", 2.5, 4);
 }
 
+/// Snapshot of the point window pinned on a fix the receiver wrote a latitude
+/// of 91° for: the window marks the recorded value and names the position the
+/// map draws the fix at.
+#[test]
+fn snapshot_app_point_window_coordinate_out_of_range() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+
+    let out_of_range = gt_types::PointIdx::new(2);
+    let points = gt_test_utils::nav_points_with_a_latitude_out_of_range(6, out_of_range);
+    let fi = push_points_as(
+        &mut harness.inner,
+        "out_of_range.gtd",
+        &points,
+        None,
+        gt_loaded_files::FileHistory::None,
+    );
+
+    {
+        let mut shared = harness.inner.state().shared.borrow_mut();
+        shared.highlight.toggle_sticky(gt_ui_types::DataPointRef {
+            track: TrackRef::new(fi, TrackIdx::new(0)),
+            category: gt_types::DataCategory::Tpv,
+            point_index: out_of_range,
+        });
+        shared.zoom_to_visible_request = true;
+    }
+    harness.inner.run_steps(30);
+
+    harness.snapshot_loose("app_point_window_coordinate_out_of_range");
+}
+
 /// Snapshot of the app zoomed into the cluster of Sahara desert tracks from
 /// the gold dataset. All other tracks (antimeridian, southern hemisphere, etc.)
 /// are hidden so only the closely-spaced Sahara tracks fill the map.

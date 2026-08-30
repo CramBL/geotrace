@@ -78,7 +78,8 @@ impl<'a> GeneratedMarkerRenderer<'a> {
                         .points
                         .iter()
                         .position(|p| p.tpv.time().utc() == marker.time)
-                        && let Some(point) = track.points.get(index)
+                        && let Some(point) =
+                            track.placed_points().and_then(|placed| placed.get(index))
                     {
                         ui.separator();
                         crate::tpv_renderer::show_hover_table(
