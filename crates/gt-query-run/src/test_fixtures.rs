@@ -12,7 +12,7 @@ use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::GpsTime;
 use gt_types::tpv::TimePositionVelocity;
-use gt_types::{Channel, FileSource, LoadedFile, LoadedTrack, NavPoint, TrackLod};
+use gt_types::{Channel, FileSource, LoadedFile, LoadedTrack, NavPoint};
 use rustc_hash::FxHashMap;
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Velocity};
@@ -109,14 +109,8 @@ pub(crate) fn file_with_channels(channels: Vec<Channel>) -> LoadedFile {
     LoadedFile {
         metadata: gt_test_utils::empty_file_metadata(),
         tracks: vec![LoadedTrack {
-            metadata: gt_test_utils::empty_track_metadata(),
-            points: test_points(),
-            lod: TrackLod::default(),
-            sat_label_anchors: Vec::new(),
-            custom_markers: vec![],
-            generated_markers: vec![],
-            event_markers: vec![],
             channels,
+            ..gt_test_utils::loaded_track_with_points(test_points())
         }],
         event_marker_styles: FxHashMap::default(),
         orphaned_event_markers: vec![],

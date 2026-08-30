@@ -7,11 +7,8 @@
 //! the invariant that a point set's diameter is never shorter than the longest
 //! segment between two of its consecutive points.
 
-use chrono::DateTime;
 use gt_geo_math::GreatCircleArc;
 use gt_types::coordinates::{Latitude, Longitude};
-use gt_types::time_types::GpsTime;
-use gt_types::{NavPoint, TimePositionVelocity};
 
 /// Mean earth radius [`geo::Haversine`] measures on, in metres.
 const EARTH_RADIUS_M: f64 = 6_371_008.8;
@@ -23,27 +20,18 @@ const DEGREE_M: f64 = 111_195.080_233_532_92;
 /// Metres of slack allowed against a hand-computed great-circle length.
 const TOLERANCE_M: f64 = 0.1;
 
-fn point(lat: Latitude, lon: Longitude) -> NavPoint {
-    let tpv = TimePositionVelocity::builder()
-        .time(GpsTime::from_utc(DateTime::UNIX_EPOCH))
-        .lat(lat)
-        .lon(lon)
-        .build();
-    NavPoint::new(tpv, None)
-}
-
 /// A track running east over the antimeridian: 179.0° E, then 179.0° W, then
 /// 179.9° W, all on the equator. Its two extreme fixes are 2° apart, which is
 /// both the diameter of the set and the length of its first segment.
 #[test]
 fn diameter_across_the_antimeridian_is_at_least_the_longest_segment() {
-    let points = [
-        point(Latitude::new(0.0), Longitude::new(179.0)),
-        point(Latitude::new(0.0), Longitude::new(-179.0)),
-        point(Latitude::new(0.0), Longitude::new(-179.9)),
+    let positions = [
+        (Latitude::new(0.0), Longitude::new(179.0)),
+        (Latitude::new(0.0), Longitude::new(-179.0)),
+        (Latitude::new(0.0), Longitude::new(-179.9)),
     ];
-    let diameter_m = gt_geo_math::point_set_diameter_m(&points);
-    let longest_segment_m = gt_geo_math::segment_distances_m(&points).fold(0.0_f64, f64::max);
+    let diameter_m = gt_geo_math::point_set_diameter_m(&positions);
+    let longest_segment_m = gt_geo_math::segment_distances_m(&positions).fold(0.0_f64, f64::max);
 
     assert!(
         diameter_m >= longest_segment_m - TOLERANCE_M,
@@ -55,12 +43,12 @@ fn diameter_across_the_antimeridian_is_at_least_the_longest_segment() {
 /// pair passes over the pole 0.2° apart and is the diameter of the set.
 #[test]
 fn diameter_of_a_circumpolar_track_spans_the_pole() {
-    let points = [
-        point(Latitude::new(89.9), Longitude::new(0.0)),
-        point(Latitude::new(89.9), Longitude::new(180.0)),
-        point(Latitude::new(89.9), Longitude::new(-90.0)),
+    let positions = [
+        (Latitude::new(89.9), Longitude::new(0.0)),
+        (Latitude::new(89.9), Longitude::new(180.0)),
+        (Latitude::new(89.9), Longitude::new(-90.0)),
     ];
-    let diameter_m = gt_geo_math::point_set_diameter_m(&points);
+    let diameter_m = gt_geo_math::point_set_diameter_m(&positions);
     let expected_m = 0.2 * DEGREE_M;
 
     assert!(
@@ -74,12 +62,12 @@ fn diameter_of_a_circumpolar_track_spans_the_pole() {
 /// 120° apart.
 #[test]
 fn diameter_of_a_set_wider_than_a_hemisphere_spans_its_widest_pair() {
-    let points = [
-        point(Latitude::new(0.0), Longitude::new(0.0)),
-        point(Latitude::new(0.0), Longitude::new(120.0)),
-        point(Latitude::new(0.0), Longitude::new(-120.0)),
+    let positions = [
+        (Latitude::new(0.0), Longitude::new(0.0)),
+        (Latitude::new(0.0), Longitude::new(120.0)),
+        (Latitude::new(0.0), Longitude::new(-120.0)),
     ];
-    let diameter_m = gt_geo_math::point_set_diameter_m(&points);
+    let diameter_m = gt_geo_math::point_set_diameter_m(&positions);
     let expected_m = 120.0 * DEGREE_M;
 
     assert!(
@@ -92,11 +80,11 @@ fn diameter_of_a_set_wider_than_a_hemisphere_spans_its_widest_pair() {
 /// mean direction to rotate onto. They are half a circumference apart.
 #[test]
 fn diameter_of_an_antipodal_pair_is_half_the_circumference() {
-    let points = [
-        point(Latitude::new(0.0), Longitude::new(0.0)),
-        point(Latitude::new(0.0), Longitude::new(180.0)),
+    let positions = [
+        (Latitude::new(0.0), Longitude::new(0.0)),
+        (Latitude::new(0.0), Longitude::new(180.0)),
     ];
-    let diameter_m = gt_geo_math::point_set_diameter_m(&points);
+    let diameter_m = gt_geo_math::point_set_diameter_m(&positions);
     let expected_m = std::f64::consts::PI * EARTH_RADIUS_M;
 
     assert!(
@@ -140,10 +128,10 @@ fn haversine_m_at_both_signs_of_180_is_zero() {
 /// antimeridian inside the track adds nothing.
 #[test]
 fn path_distance_km_across_the_antimeridian_equals_the_direct_span() {
-    let points = [
-        point(Latitude::new(0.0), Longitude::new(179.0)),
-        point(Latitude::new(0.0), Longitude::new(180.0)),
-        point(Latitude::new(0.0), Longitude::new(-179.0)),
+    let positions = [
+        (Latitude::new(0.0), Longitude::new(179.0)),
+        (Latitude::new(0.0), Longitude::new(180.0)),
+        (Latitude::new(0.0), Longitude::new(-179.0)),
     ];
     let direct_km = gt_geo_math::haversine_km(
         Latitude::new(0.0),
@@ -151,7 +139,7 @@ fn path_distance_km_across_the_antimeridian_equals_the_direct_span() {
         Latitude::new(0.0),
         Longitude::new(-179.0),
     );
-    let walked_km = gt_geo_math::path_distance_km(&points);
+    let walked_km = gt_geo_math::path_distance_km(&positions);
 
     assert!(
         (walked_km - direct_km).abs() < TOLERANCE_M / 1_000.0,
@@ -211,13 +199,13 @@ fn haversine_m_pole_to_pole_is_half_the_circumference() {
 /// exactly zero and none of them is NaN.
 #[test]
 fn repeated_polar_fixes_give_finite_zero_segments() {
-    let points = [
-        point(Latitude::new(90.0), Longitude::new(0.0)),
-        point(Latitude::new(90.0), Longitude::new(0.0)),
-        point(Latitude::new(90.0), Longitude::new(0.0)),
+    let positions = [
+        (Latitude::new(90.0), Longitude::new(0.0)),
+        (Latitude::new(90.0), Longitude::new(0.0)),
+        (Latitude::new(90.0), Longitude::new(0.0)),
     ];
 
-    for (i, m) in gt_geo_math::segment_distances_m(&points).enumerate() {
+    for (i, m) in gt_geo_math::segment_distances_m(&positions).enumerate() {
         assert!(m.is_finite() && m < TOLERANCE_M, "segment {i} is {m} m");
     }
 }
@@ -226,14 +214,14 @@ fn repeated_polar_fixes_give_finite_zero_segments() {
 /// on a shape that stays clear of the antimeridian and the poles.
 #[test]
 fn diameter_is_at_least_the_longest_segment_on_a_local_track() {
-    let points = [
-        point(Latitude::new(55.60), Longitude::new(12.90)),
-        point(Latitude::new(55.62), Longitude::new(12.94)),
-        point(Latitude::new(55.61), Longitude::new(12.99)),
-        point(Latitude::new(55.58), Longitude::new(12.95)),
+    let positions = [
+        (Latitude::new(55.60), Longitude::new(12.90)),
+        (Latitude::new(55.62), Longitude::new(12.94)),
+        (Latitude::new(55.61), Longitude::new(12.99)),
+        (Latitude::new(55.58), Longitude::new(12.95)),
     ];
-    let diameter_m = gt_geo_math::point_set_diameter_m(&points);
-    let longest_segment_m = gt_geo_math::segment_distances_m(&points).fold(0.0_f64, f64::max);
+    let diameter_m = gt_geo_math::point_set_diameter_m(&positions);
+    let longest_segment_m = gt_geo_math::segment_distances_m(&positions).fold(0.0_f64, f64::max);
 
     assert!(
         diameter_m >= longest_segment_m - TOLERANCE_M,

@@ -32,6 +32,7 @@ gt-fetch = { path = "../gt-fetch" }
 gt-hdf5-archive = { path = "../gt-hdf5-archive", optional = true }
 gt-ionex = { path = "../gt-ionex", optional = true }
 gt-pending-writes = { path = "../gt-pending-writes" }
+gt-track-builder = { path = "../gt-track-builder" }
 gt-types = { path = "../gt-types" }
 gt-ui-theme = { path = "../gt-ui-theme", optional = true }
 hdf5 = { workspace = true, optional = true }

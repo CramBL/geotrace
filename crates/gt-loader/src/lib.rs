@@ -117,7 +117,6 @@ pub fn load_gtd_file_with_progress(
     let nav_file = NavFile::read(file)?;
     progress(0.65, STAGE_CONVERTING);
     let contents = from_nav_file(&nav_file);
-    check_every_track_holds_a_fix_with_a_position(&contents.nav_points, config)?;
     progress(0.90, STAGE_SEGMENTING);
     let source = FileSource::GtdPath(path.to_path_buf());
     let identity = derive_identity(
@@ -189,7 +188,6 @@ pub fn load_gtd_bytes_with_progress(
     let nav_file = NavFile::read(bytes)?;
     progress(0.60, STAGE_CONVERTING);
     let contents = from_nav_file(&nav_file);
-    check_every_track_holds_a_fix_with_a_position(&contents.nav_points, config)?;
     progress(0.90, STAGE_SEGMENTING);
     let source = FileSource::GtdBytes(Arc::from(bytes));
     let identity = derive_identity(
@@ -484,24 +482,6 @@ const REPLACED_EVENT_MARKER_COLORS: AlterationWording = AlterationWording {
     consequence: "Those markers are drawn mid-gray: the style holds a color that is not \
         a #RRGGBB hex value.",
 };
-
-/// Refuses a recording in which some track holds no fix with a position: its
-/// fixes have nowhere to be drawn, and nothing to interpolate one from.
-fn check_every_track_holds_a_fix_with_a_position(
-    points: &[NavPoint],
-    config: &gt_track_builder::SegmentationConfig,
-) -> Result<(), LoadError> {
-    for range in gt_track_builder::segment_tracks(points, &config.track_layout) {
-        let track = points.get(range.clone()).unwrap_or_default();
-        if !track.is_empty() && track.iter().all(|point| point.tpv.position().is_none()) {
-            return Err(LoadError::TrackWithoutAPosition {
-                first_record: range.start,
-                last_record: range.end.saturating_sub(1),
-            });
-        }
-    }
-    Ok(())
-}
 
 struct NavFileContents {
     nav_points: Vec<NavPoint>,
@@ -1620,20 +1600,21 @@ mod tests {
         .unwrap();
 
         let track = file.tracks.first().expect("the ten fixes form one track");
-        let out_of_range_latitude = track.points.get(3).expect("record 3");
-        let out_of_range_longitude = track.points.get(5).expect("record 5");
+        let placed = track.placed_points().expect("the track has a geometry");
+        let out_of_range_latitude = placed.get(3).expect("record 3");
+        let out_of_range_longitude = placed.get(5).expect("record 5");
 
-        assert!(out_of_range_latitude.tpv.lat().as_written().is_nan());
+        assert!(out_of_range_latitude.fix.tpv.lat().as_written().is_nan());
         assert_eq!(
-            out_of_range_latitude.tpv.lon(),
+            out_of_range_latitude.fix.tpv.lon(),
             RecordedLongitude::from_degrees(100.0)
         );
         assert_eq!(
-            out_of_range_longitude.tpv.lat(),
+            out_of_range_longitude.fix.tpv.lat(),
             RecordedLatitude::from_degrees(45.0)
         );
         assert_eq!(
-            out_of_range_longitude.tpv.lon(),
+            out_of_range_longitude.fix.tpv.lon(),
             RecordedLongitude::from_degrees(-181.0)
         );
         assert_drawn_at(out_of_range_latitude.resolved_position(), (0.0, 3.0));

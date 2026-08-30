@@ -14,7 +14,7 @@
 use std::ops::{Range, RangeInclusive};
 use std::time::Duration;
 
-use gt_types::{NavPoint, PointIdx};
+use gt_types::{PlacedPoint, PlacedPoints, PointIdx};
 
 use crate::wire::{Costing, ShapePoint, TraceAttributesRequest, TraceOptions};
 
@@ -214,9 +214,11 @@ struct SendableStretch {
     sent: Vec<SentPoint>,
 }
 
-/// Build the request plan for a track's points.
-pub fn plan(points: &[NavPoint]) -> RequestPlan {
-    let stretches = downsample(points);
+/// Build the request plan for a track's points. A track with no geometry has
+/// no position to send, so it plans nothing.
+pub fn plan(points: PlacedPoints<'_>) -> RequestPlan {
+    let points: Vec<PlacedPoint<'_>> = points.iter().collect();
+    let stretches = downsample(&points);
     let gps_accuracy_m = derive_gps_accuracy(stretches.iter().flat_map(|s| s.sent.iter()));
     let chunks = stretches
         .iter()
@@ -234,10 +236,10 @@ pub fn plan(points: &[NavPoint]) -> RequestPlan {
 /// positions. Each one ends the stretch. Two points sent either side of a
 /// dropped run arrive as neighbors and the matcher routes a road through the
 /// gap between them.
-fn downsample(points: &[NavPoint]) -> Vec<SendableStretch> {
+fn downsample(points: &[PlacedPoint<'_>]) -> Vec<SendableStretch> {
     let mut stretches = Vec::new();
     let mut start = 0;
-    for run in points.split(NavPoint::is_ghost_fix) {
+    for run in points.split(|point| point.fix.is_ghost_fix()) {
         let sent = downsample_run(run, start);
         if !sent.is_empty() {
             stretches.push(SendableStretch { sent });
@@ -251,11 +253,11 @@ fn downsample(points: &[NavPoint]) -> Vec<SendableStretch> {
 /// Thin one run of real fixes: its first point, then every point at least
 /// [`MIN_POINT_INTERVAL`] after the previously selected one. `base` is the
 /// run's start index within the track, which the sent points carry back.
-fn downsample_run(run: &[NavPoint], base: usize) -> Vec<SentPoint> {
+fn downsample_run(run: &[PlacedPoint<'_>], base: usize) -> Vec<SentPoint> {
     let mut sent = Vec::new();
     let mut last_kept = None;
     for (offset, point) in run.iter().enumerate() {
-        let time = point.tpv.time().utc();
+        let time = point.fix.tpv.time().utc();
         let keep = match last_kept {
             None => true,
             // `to_std` fails for a negative elapsed time (out-of-order
@@ -275,7 +277,7 @@ fn downsample_run(run: &[NavPoint], base: usize) -> Vec<SentPoint> {
                     lon: longitude.as_degrees(),
                     time: Some(time.timestamp()),
                 },
-                eph_m: point.tpv.eph_m(),
+                eph_m: point.fix.tpv.eph_m(),
             });
         }
     }

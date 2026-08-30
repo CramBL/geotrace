@@ -216,7 +216,12 @@ fn tpv_time_range_in_bounds(
             if !tv.enabled {
                 continue;
             }
-            for point in &track.points {
+            // A track with no geometry is drawn nowhere, so no map area
+            // covers any of its fixes.
+            let Some(placed) = track.placed_points() else {
+                continue;
+            };
+            for point in placed.iter() {
                 let (latitude, longitude) = point.resolved_position();
                 let lat = latitude.as_degrees();
                 let lon = longitude.as_degrees();
@@ -227,7 +232,7 @@ fn tpv_time_range_in_bounds(
                 {
                     continue;
                 }
-                let t = point.tpv.time().utc().timestamp() as f64;
+                let t = point.fix.tpv.time().utc().timestamp() as f64;
                 t_min = t_min.min(t);
                 t_max = t_max.max(t);
             }

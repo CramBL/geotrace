@@ -286,7 +286,7 @@ fn compute_filtered_time_range(
     let mut max: Option<DateTime<Utc>> = None;
     for file in files {
         for track in &file.tracks {
-            if gt_filter::track_passes_filter(&track.metadata, filter) {
+            if gt_filter::track_passes_filter(track, filter) {
                 let start = track.metadata.time_range.start;
                 let end = track.metadata.time_range.end;
                 min = Some(min.map_or(start, |m: DateTime<Utc>| m.min(start)));

@@ -7,6 +7,7 @@ pub mod markers;
 pub mod mercator;
 pub mod metrics;
 pub mod nav_point;
+pub mod placed_point;
 pub mod query;
 pub mod sat_label;
 pub mod satellites;
@@ -33,6 +34,7 @@ pub use markers::{
 pub use mercator::MercPoint;
 pub use metrics::MetricKind;
 pub use nav_point::{FixQuality, NavPoint, ProjectedPosition, ResolvedPosition};
+pub use placed_point::{PlacedPoint, PlacedPoints};
 pub use query::DisplayMode;
 pub use sat_label::{SatLabelAnchor, SatLabelTier};
 pub use solar_position::SunlitSide;
@@ -41,7 +43,7 @@ pub use tpv::TimePositionVelocity;
 pub use tpv::TimePositionVelocityBuilder;
 pub use track::{
     AssociationConfig, FileMetadata, FileSource, FixStats, LOD_BASE_TOLERANCE_MERC, LoadWarning,
-    LoadedFile, LoadedTrack, MarkerRequirement, MercBounds, NearestSatelliteReport,
-    SKY_REPORT_MAX_AGE_SECS, SegmentLengthRange, SpatialPoint, TimeRange, TrackLod, TrackMetadata,
-    TravelMode,
+    LoadedFile, LoadedTrack, MarkerRequirement, MeasuredTrackGeometry, MercBounds,
+    NearestSatelliteReport, SKY_REPORT_MAX_AGE_SECS, SegmentLengthRange, SpatialPoint, TimeRange,
+    TrackGeometry, TrackLod, TrackMetadata, TravelMode,
 };

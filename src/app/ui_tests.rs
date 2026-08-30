@@ -467,13 +467,13 @@ fn install_interference_archive_covering_loaded_fixes(
         let shared = state.shared.borrow();
         for file in shared.loaded_files.files() {
             for track in &file.tracks {
-                for point in &track.points {
+                for point in track.placed_points().into_iter().flat_map(|p| p.iter()) {
                     let (latitude, longitude) = point.resolved_position();
                     let Some(cell) = gt_jam::dataset::cell_at(latitude, longitude) else {
                         continue;
                     };
                     let observations = observations_by_day
-                        .entry(point.tpv.time().utc().date_naive())
+                        .entry(point.fix.tpv.time().utc().date_naive())
                         .or_default();
                     if !observations
                         .iter()
@@ -2168,7 +2168,11 @@ fn snapshot_app_sahara_tracks() {
             .tracks
             .iter()
             .enumerate()
-            .filter(|(_, t)| t.metadata.bounding_box.lat.south().as_degrees() > 20.0)
+            .filter(|(_, t)| {
+                t.geometry
+                    .measured()
+                    .is_some_and(|geometry| geometry.bounding_box.lat.south().as_degrees() > 20.0)
+            })
             .map(|(i, _)| TrackRef {
                 fi: FileIdx::new(0),
                 index: TrackIdx::new(i),
@@ -3488,7 +3492,7 @@ fn accel_channel_gtd_bytes(speed_kmh: f64) -> Vec<u8> {
 /// completion path through the app: `schema_from_files` builds the schema the
 /// popup offers from.
 fn push_file_with_channel(harness: &mut Harness<App>, name: &str, unit: &str) {
-    use gt_types::{Channel, FileSource, LoadedFile, LoadedTrack, TrackLod};
+    use gt_types::{Channel, FileSource, LoadedFile, LoadedTrack};
     let channel = Channel {
         name: name.to_owned(),
         unit: Some(ChannelUnit::from_file_label(unit)),
@@ -3501,14 +3505,8 @@ fn push_file_with_channel(harness: &mut Harness<App>, name: &str, unit: &str) {
     let file = LoadedFile {
         metadata: gt_test_utils::empty_file_metadata(),
         tracks: vec![LoadedTrack {
-            metadata: gt_test_utils::empty_track_metadata(),
-            points: vec![],
-            lod: TrackLod::default(),
-            sat_label_anchors: Vec::new(),
-            custom_markers: vec![],
-            generated_markers: vec![],
-            event_markers: vec![],
             channels: vec![channel],
+            ..gt_test_utils::loaded_track_with_points(vec![])
         }],
         event_marker_styles: FxHashMap::default(),
         orphaned_event_markers: vec![],
@@ -7812,7 +7810,7 @@ fn costing_override_reaches_the_dispatched_run() {
         );
         let run = SnapRun::new(
             merge::merge(
-                &gt_snap::request_plan::plan(&[]),
+                &gt_snap::request_plan::plan(gt_types::PlacedPoints::default()),
                 params,
                 &[],
                 &SnapWarningReporter::default(),

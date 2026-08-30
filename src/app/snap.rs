@@ -550,7 +550,7 @@ impl SnapScheduler {
         if self.offline || self.activity.contains_key(&track_ref) {
             return;
         }
-        let plan = request_plan::plan(&track.points);
+        let plan = request_plan::plan(track.placed_points().unwrap_or_default());
         if plan.chunks.is_empty() {
             self.activity.insert(track_ref, SnapActivity::NothingToSend);
             return;
@@ -866,7 +866,7 @@ mod tests {
     fn empty_run(params: SnapParams) -> SnapRun {
         SnapRun::new(
             merge::merge(
-                &request_plan::plan(&[]),
+                &request_plan::plan(gt_types::PlacedPoints::default()),
                 params,
                 &[],
                 &SnapWarningReporter::default(),
@@ -1187,7 +1187,7 @@ mod tests {
             priority,
             key: key(track, SnapParams::new(Costing::Auto)),
             params: SnapParams::new(Costing::Auto),
-            plan: request_plan::plan(&[]),
+            plan: request_plan::plan(gt_types::PlacedPoints::default()),
             server_host: None,
         }
     }
@@ -1329,7 +1329,7 @@ mod tests {
         use gt_types::PointIdx;
 
         let mut result = merge::merge(
-            &request_plan::plan(&[]),
+            &request_plan::plan(gt_types::PlacedPoints::default()),
             SnapParams::new(Costing::Auto),
             &[],
             &SnapWarningReporter::default(),
@@ -1377,7 +1377,7 @@ mod tests {
         use gt_types::PointIdx;
 
         let mut result = merge::merge(
-            &request_plan::plan(&[]),
+            &request_plan::plan(gt_types::PlacedPoints::default()),
             SnapParams::new(Costing::Auto),
             &[],
             &SnapWarningReporter::default(),

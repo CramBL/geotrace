@@ -528,7 +528,8 @@ impl TecMapScheduler {
         track
             .points
             .iter()
-            .map(|point| {
+            .enumerate()
+            .map(|(index, point)| {
                 let time = point.tpv.time().utc();
                 let day = time.date_naive();
                 let maps = archived
@@ -536,10 +537,12 @@ impl TecMapScheduler {
                     .or_insert_with(|| read_archived_maps(store, day));
                 TecPoint {
                     x_secs: time.timestamp() as f64,
+                    // A fix of a track with no geometry is nowhere, so no map
+                    // values it.
                     tecu: maps
                         .as_ref()
-                        .and_then(|maps| {
-                            let (latitude, longitude) = point.resolved_position();
+                        .zip(track.resolved_position_at(index))
+                        .and_then(|(maps, (latitude, longitude))| {
                             maps.total_electron_content_at(latitude, longitude, time)
                         })
                         .map(TotalElectronContent::tecu),

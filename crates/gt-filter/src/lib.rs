@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use chrono::{DateTime, Duration, Utc};
-use gt_types::{MarkerRequirement, NavPoint, TimeRange, TrackMetadata};
+use gt_types::{LoadedTrack, MarkerRequirement, NavPoint, TimeRange};
 use uom::si::f64::Length;
 
 /// Returns `true` when the timestamp falls within the filter's active time window.
@@ -51,7 +51,12 @@ impl GlobalFilter {
 }
 
 /// Returns `true` when the track satisfies all active filter conditions.
-pub fn track_passes_filter(meta: &TrackMetadata, filter: &GlobalFilter) -> bool {
+///
+/// A track no fix of which has a valid position measures neither a distance
+/// nor a spread, so a minimum on either has nothing to compare and keeps it.
+pub fn track_passes_filter(track: &LoadedTrack, filter: &GlobalFilter) -> bool {
+    let meta = &track.metadata;
+    let geometry = track.geometry.measured();
     if !meta
         .time_range
         .overlaps_window(filter.time_start, filter.time_end)
@@ -59,7 +64,7 @@ pub fn track_passes_filter(meta: &TrackMetadata, filter: &GlobalFilter) -> bool 
         return false;
     }
     if let Some(min_dist) = filter.min_distance_km
-        && meta.distance_km < min_dist
+        && geometry.is_some_and(|geometry| geometry.distance_km < min_dist)
     {
         return false;
     }
@@ -69,7 +74,7 @@ pub fn track_passes_filter(meta: &TrackMetadata, filter: &GlobalFilter) -> bool 
         return false;
     }
     if let Some(min_spread) = filter.min_spread_m
-        && meta.point_set_diameter_m < min_spread
+        && geometry.is_some_and(|geometry| geometry.point_set_diameter_m < min_spread)
     {
         return false;
     }
@@ -92,7 +97,9 @@ mod tests {
     use gt_types::coordinates::{Latitude, Longitude};
     use gt_types::time_types::GpsTime;
     use gt_types::tpv::TimePositionVelocity;
-    use gt_types::{GeoBounds, MercBounds, TimeRange, TrackMetadata};
+    use gt_types::{
+        GeoBounds, MeasuredTrackGeometry, MercBounds, TimeRange, TrackGeometry, TrackMetadata,
+    };
     use uom::si::length::{kilometer, meter};
 
     /// Points one second apart starting at a fixed epoch.
@@ -163,150 +170,155 @@ mod tests {
         }
     }
 
-    fn make_meta(
+    /// A track whose geometry and time range are what the filter reads, with
+    /// the fixes themselves left out.
+    fn make_track(
         distance_km: f64,
         duration_secs: i64,
         spread_m: f64,
         has_custom: bool,
         start_offset_secs: i64,
         end_offset_secs: i64,
-    ) -> TrackMetadata {
+    ) -> LoadedTrack {
         let epoch = Utc.timestamp_opt(0, 0).single().expect("valid");
-        TrackMetadata {
-            index: 1,
-            distance_km: Length::new::<kilometer>(distance_km),
-            duration: Duration::seconds(duration_secs),
-            time_range: TimeRange::new(
-                epoch + Duration::seconds(start_offset_secs),
-                epoch + Duration::seconds(end_offset_secs),
-            ),
-            bounding_box: GeoBounds::from_positions([
-                (Latitude::new(0.0), Longitude::new(0.0)),
-                (Latitude::new(1.0), Longitude::new(1.0)),
-            ])
-            .expect("two positions"),
-            merc_bounds: MercBounds {
-                x_min: 0.0,
-                x_max: 0.0,
-                y_min: 0.0,
-                y_max: 0.0,
+        let bounding_box = GeoBounds::from_positions([
+            (Latitude::new(0.0), Longitude::new(0.0)),
+            (Latitude::new(1.0), Longitude::new(1.0)),
+        ])
+        .expect("two positions");
+        LoadedTrack {
+            metadata: TrackMetadata {
+                index: 1,
+                duration: Duration::seconds(duration_secs),
+                time_range: TimeRange::new(
+                    epoch + Duration::seconds(start_offset_secs),
+                    epoch + Duration::seconds(end_offset_secs),
+                ),
+                has_custom_markers: has_custom,
+                ..gt_test_utils::empty_track_metadata()
             },
-            point_set_diameter_m: Length::new::<meter>(spread_m),
-            has_custom_markers: has_custom,
-            tpv_count: 1,
-            invalid_position_count: 0,
-            satellite_report_count: 0,
-            custom_marker_count: 0,
-            generated_marker_count: 0,
-            event_marker_count: 0,
-            ..gt_test_utils::empty_track_metadata()
+            geometry: TrackGeometry::Measured(MeasuredTrackGeometry {
+                resolved_positions: Vec::new(),
+                bounding_box,
+                merc_bounds: MercBounds::from(bounding_box),
+                distance_km: Length::new::<kilometer>(distance_km),
+                point_set_diameter_m: Length::new::<meter>(spread_m),
+                segment_length_range: None,
+            }),
+            points: Vec::new(),
+            lod: gt_types::TrackLod::default(),
+            sat_label_anchors: Vec::new(),
+            custom_markers: Vec::new(),
+            generated_markers: Vec::new(),
+            event_markers: Vec::new(),
+            channels: Vec::new(),
         }
     }
 
     #[test]
     fn empty_filter_passes_all() {
-        let meta = make_meta(1.0, 60, 100.0, false, 0, 60);
-        assert!(track_passes_filter(&meta, &GlobalFilter::default()));
+        let track = make_track(1.0, 60, 100.0, false, 0, 60);
+        assert!(track_passes_filter(&track, &GlobalFilter::default()));
     }
 
     #[test]
     fn time_start_track_ends_before() {
-        let meta = make_meta(1.0, 60, 100.0, false, 0, 60);
+        let track = make_track(1.0, 60, 100.0, false, 0, 60);
         let filter = GlobalFilter {
             time_start: Some(Utc.timestamp_opt(120, 0).single().expect("valid")),
             ..Default::default()
         };
-        assert!(!track_passes_filter(&meta, &filter));
+        assert!(!track_passes_filter(&track, &filter));
     }
 
     #[test]
     fn time_start_track_overlaps() {
-        let meta = make_meta(1.0, 60, 100.0, false, 0, 200);
+        let track = make_track(1.0, 60, 100.0, false, 0, 200);
         let filter = GlobalFilter {
             time_start: Some(Utc.timestamp_opt(100, 0).single().expect("valid")),
             ..Default::default()
         };
-        assert!(track_passes_filter(&meta, &filter));
+        assert!(track_passes_filter(&track, &filter));
     }
 
     #[test]
     fn time_end_track_starts_after() {
-        let meta = make_meta(1.0, 60, 100.0, false, 200, 260);
+        let track = make_track(1.0, 60, 100.0, false, 200, 260);
         let filter = GlobalFilter {
             time_end: Some(Utc.timestamp_opt(100, 0).single().expect("valid")),
             ..Default::default()
         };
-        assert!(!track_passes_filter(&meta, &filter));
+        assert!(!track_passes_filter(&track, &filter));
     }
 
     #[test]
     fn time_end_track_overlaps() {
-        let meta = make_meta(1.0, 60, 100.0, false, 50, 150);
+        let track = make_track(1.0, 60, 100.0, false, 50, 150);
         let filter = GlobalFilter {
             time_end: Some(Utc.timestamp_opt(100, 0).single().expect("valid")),
             ..Default::default()
         };
-        assert!(track_passes_filter(&meta, &filter));
+        assert!(track_passes_filter(&track, &filter));
     }
 
     #[test]
     fn min_distance_pass() {
-        let meta = make_meta(10.0, 60, 100.0, false, 0, 60);
+        let track = make_track(10.0, 60, 100.0, false, 0, 60);
         let filter = GlobalFilter {
             min_distance_km: Some(Length::new::<kilometer>(5.0)),
             ..Default::default()
         };
-        assert!(track_passes_filter(&meta, &filter));
+        assert!(track_passes_filter(&track, &filter));
     }
 
     #[test]
     fn min_distance_fail() {
-        let meta = make_meta(3.0, 60, 100.0, false, 0, 60);
+        let track = make_track(3.0, 60, 100.0, false, 0, 60);
         let filter = GlobalFilter {
             min_distance_km: Some(Length::new::<kilometer>(5.0)),
             ..Default::default()
         };
-        assert!(!track_passes_filter(&meta, &filter));
+        assert!(!track_passes_filter(&track, &filter));
     }
 
     #[test]
     fn min_duration_pass() {
-        let meta = make_meta(1.0, 600, 100.0, false, 0, 600);
+        let track = make_track(1.0, 600, 100.0, false, 0, 600);
         let filter = GlobalFilter {
             min_duration: Some(Duration::seconds(300)),
             ..Default::default()
         };
-        assert!(track_passes_filter(&meta, &filter));
+        assert!(track_passes_filter(&track, &filter));
     }
 
     #[test]
     fn min_duration_fail() {
-        let meta = make_meta(1.0, 60, 100.0, false, 0, 60);
+        let track = make_track(1.0, 60, 100.0, false, 0, 60);
         let filter = GlobalFilter {
             min_duration: Some(Duration::seconds(300)),
             ..Default::default()
         };
-        assert!(!track_passes_filter(&meta, &filter));
+        assert!(!track_passes_filter(&track, &filter));
     }
 
     #[test]
     fn min_spread_pass() {
-        let meta = make_meta(1.0, 60, 500.0, false, 0, 60);
+        let track = make_track(1.0, 60, 500.0, false, 0, 60);
         let filter = GlobalFilter {
             min_spread_m: Some(Length::new::<meter>(200.0)),
             ..Default::default()
         };
-        assert!(track_passes_filter(&meta, &filter));
+        assert!(track_passes_filter(&track, &filter));
     }
 
     #[test]
     fn min_spread_fail() {
-        let meta = make_meta(1.0, 60, 50.0, false, 0, 60);
+        let track = make_track(1.0, 60, 50.0, false, 0, 60);
         let filter = GlobalFilter {
             min_spread_m: Some(Length::new::<meter>(200.0)),
             ..Default::default()
         };
-        assert!(!track_passes_filter(&meta, &filter));
+        assert!(!track_passes_filter(&track, &filter));
     }
 
     /// A track no fix of which has a valid position has neither a distance nor
@@ -331,48 +343,48 @@ mod tests {
 
     #[test]
     fn require_custom_marker_pass() {
-        let meta = make_meta(1.0, 60, 100.0, true, 0, 60);
+        let track = make_track(1.0, 60, 100.0, true, 0, 60);
         let filter = GlobalFilter {
             marker_requirement: MarkerRequirement::CustomMarker,
             ..Default::default()
         };
-        assert!(track_passes_filter(&meta, &filter));
+        assert!(track_passes_filter(&track, &filter));
     }
 
     #[test]
     fn require_custom_marker_fail() {
-        let meta = make_meta(1.0, 60, 100.0, false, 0, 60);
+        let track = make_track(1.0, 60, 100.0, false, 0, 60);
         let filter = GlobalFilter {
             marker_requirement: MarkerRequirement::CustomMarker,
             ..Default::default()
         };
-        assert!(!track_passes_filter(&meta, &filter));
+        assert!(!track_passes_filter(&track, &filter));
     }
 
     #[test]
     fn require_custom_marker_passes_for_event_markers() {
-        let mut meta = make_meta(1.0, 60, 100.0, false, 0, 60);
-        meta.event_marker_count = 3;
+        let mut track = make_track(1.0, 60, 100.0, false, 0, 60);
+        track.metadata.event_marker_count = 3;
         let filter = GlobalFilter {
             marker_requirement: MarkerRequirement::CustomMarker,
             ..Default::default()
         };
         assert!(
-            track_passes_filter(&meta, &filter),
+            track_passes_filter(&track, &filter),
             "track with event markers should pass CustomMarker filter"
         );
     }
 
     #[test]
     fn any_marker_filter_passes_for_event_markers() {
-        let mut meta = make_meta(1.0, 60, 100.0, false, 0, 60);
-        meta.event_marker_count = 1;
+        let mut track = make_track(1.0, 60, 100.0, false, 0, 60);
+        track.metadata.event_marker_count = 1;
         let filter = GlobalFilter {
             marker_requirement: MarkerRequirement::AnyMarker,
             ..Default::default()
         };
         assert!(
-            track_passes_filter(&meta, &filter),
+            track_passes_filter(&track, &filter),
             "track with event markers should pass AnyMarker filter"
         );
     }

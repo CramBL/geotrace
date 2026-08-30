@@ -373,10 +373,11 @@ fn assessment_points(
     track: &LoadedTrack,
 ) -> FxHashSet<NodeSample> {
     track
-        .points
-        .iter()
+        .placed_points()
+        .into_iter()
+        .flat_map(|placed| placed.iter())
         .filter_map(|point| {
-            let time = point.tpv.time().utc();
+            let time = point.fix.tpv.time().utc();
             let day = time.date_naive();
             let maps = own_days
                 .entry(day)

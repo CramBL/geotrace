@@ -6,7 +6,7 @@ use std::ops::Range;
 
 use gt_filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
 use gt_types::{
-    DataCategory, FileIdx, GeoBounds, Latitude, LoadedFile, LoadedTrack, Longitude, NavPoint,
+    DataCategory, FileIdx, GeoBounds, Latitude, LoadedFile, LoadedTrack, Longitude, PlacedPoint,
     PoleWinding, SpatialPoint, TrackIdx, TrackRef, mercator,
 };
 use gt_ui_types::{
@@ -176,7 +176,7 @@ impl TrackPlan {
                 let track_vis = file_vis.and_then(|fv| TrackIdx::new(ti).get(&fv.tracks));
                 let enabled = file_enabled
                     && track_vis.is_some_and(|tv| tv.enabled)
-                    && track_passes_filter(&track.metadata, filter);
+                    && track_passes_filter(track, filter);
                 let tpv_on =
                     enabled && track_vis.is_some_and(|tv| tv.category_visible(DataCategory::Tpv));
                 // The fade classification runs last so it is skipped for
@@ -247,9 +247,7 @@ pub(crate) fn compute_visible_bounding_box(
         .zip(&visibility.files)
         .filter(|(_, file_vis)| file_vis.enabled)
         .flat_map(|(file, file_vis)| file.tracks.iter().zip(&file_vis.tracks))
-        .filter(|(track, track_vis)| {
-            track_vis.enabled && track_passes_filter(&track.metadata, filter)
-        })
+        .filter(|(track, track_vis)| track_vis.enabled && track_passes_filter(track, filter))
         .filter_map(|(track, _)| {
             let fixes = || {
                 points_displayed
@@ -267,15 +265,18 @@ pub(crate) fn compute_visible_bounding_box(
         .reduce(GeoBounds::union)
 }
 
+/// Where the map draws the fixes of `track` that pass the time filter. Empty
+/// for a track with no geometry, which is drawn nowhere.
 fn drawn_fix_positions<'a>(
     track: &'a LoadedTrack,
     filter: &'a GlobalFilter,
 ) -> impl Iterator<Item = (Latitude, Longitude)> + 'a {
     track
-        .points
-        .iter()
-        .filter(|point| point_passes_time_filter(point.tpv.time().utc(), filter))
-        .map(NavPoint::resolved_position)
+        .placed_points()
+        .into_iter()
+        .flat_map(|placed| placed.iter())
+        .filter(|point| point_passes_time_filter(point.fix.tpv.time().utc(), filter))
+        .map(PlacedPoint::resolved_position)
 }
 
 fn drawn_custom_marker_positions<'a>(
@@ -311,12 +312,12 @@ pub(crate) fn matched_bounding_box(
         matched_ranges
             .into_iter()
             .filter_map(|(track_ref, ranges)| Some((track_ref.resolve(files)?, ranges)))
-            .flat_map(|(track, ranges)| {
-                ranges
-                    .iter()
-                    .flat_map(move |range| track.points.get(range.clone()).unwrap_or_default())
-            })
-            .map(NavPoint::resolved_position),
+            .filter_map(|(track, ranges)| Some((track.placed_points()?, ranges)))
+            .flat_map(|(placed, ranges)| {
+                ranges.iter().flat_map(move |range| {
+                    placed.range(range.clone()).unwrap_or_default().positions()
+                })
+            }),
     )
 }
 
@@ -329,8 +330,8 @@ pub(crate) fn match_bounding_box(
     points: &Range<usize>,
 ) -> Option<GeoBounds> {
     let track = track_ref.resolve(files)?;
-    let matched = track.points.get(points.clone())?;
-    GeoBounds::from_positions(matched.iter().map(NavPoint::resolved_position))
+    let matched = track.placed_points()?.range(points.clone())?;
+    GeoBounds::from_positions(matched.positions())
 }
 
 /// Compute the geographic bounding box of the given map viewport rect.
@@ -652,7 +653,11 @@ mod zoom_to_fit {
 
         let framed_m =
             VIEWPORT.width() as f64 * FIT_FILL / pixels_per_meter_at_the_map_center(&map_memory);
-        let track_m = gt_geo_math::point_set_diameter_m(&fixes_at(positions));
+        let track_positions: Vec<(Latitude, Longitude)> = positions
+            .iter()
+            .map(|&(lat, lon)| (Latitude::new(lat), Longitude::new(lon)))
+            .collect();
+        let track_m = gt_geo_math::point_set_diameter_m(&track_positions);
         assert!(
             (framed_m / track_m - 1.0).abs() < 0.02,
             "framed {framed_m:.0} m of a {track_m:.0} m wide track at zoom {}",

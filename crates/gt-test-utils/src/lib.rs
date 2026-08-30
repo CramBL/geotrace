@@ -19,8 +19,9 @@ pub use day_archive::{ColumnName, GroupPath};
 pub use fixtures::{
     SyntheticGtdSpec, empty_file_metadata, empty_track_metadata, latlon_at_meters,
     loaded_track_with_points, marker_test_data, nav_data_with_gap, nav_point_at_meters,
-    nav_points_from, nav_points_walking_from, nav_test_data, single_nav_point, stationary_nav_data,
-    synthetic_gtd_bytes, synthetic_gtd_bytes_with_channels,
+    nav_points_from, nav_points_walking_from, nav_points_without_a_valid_position, nav_test_data,
+    single_nav_point, stationary_nav_data, synthetic_gtd_bytes, synthetic_gtd_bytes_with_channels,
+    track_geometry,
 };
 #[cfg(feature = "snapshot")]
 pub use interaction::HarnessInteraction;

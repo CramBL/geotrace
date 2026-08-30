@@ -1,4 +1,4 @@
-use gt_types::nav_point::NavPoint;
+use gt_types::placed_point::PlacedPoints;
 use gt_types::track::{LOD_BASE_TOLERANCE_MERC, TrackLod};
 
 /// Stop building coarser levels once one has this few points - drawing them
@@ -20,7 +20,7 @@ const MAX_KEPT_DENOMINATOR: usize = 4;
 ///
 /// Levels apply a Mercator-space radial-distance filter with doubling
 /// tolerances: a point survives when it is at least the tolerance away from
-/// the previously kept point or its [`NavPoint::render_class`] (ghost flag,
+/// the previously kept point or its [`gt_types::NavPoint::render_class`] (ghost flag,
 /// fix quality) differs, so no styled transition is ever decimated away.
 /// The first and last point always survive. Each level is built from the
 /// previous one, so the total build cost is a geometric series in the point
@@ -28,7 +28,7 @@ const MAX_KEPT_DENOMINATOR: usize = 4;
 ///
 /// The first level's tolerance starts near the track's mean segment length so
 /// sparse recordings store no full-length levels.
-pub fn build_track_lod(points: &[NavPoint]) -> TrackLod {
+pub fn build_track_lod(points: PlacedPoints<'_>) -> TrackLod {
     if points.len() < MIN_LEVEL_POINTS || u32::try_from(points.len()).is_err() {
         return TrackLod::default();
     }
@@ -67,12 +67,13 @@ pub fn build_track_lod(points: &[NavPoint]) -> TrackLod {
 /// The tolerance exponent at which decimation starts paying off: the level
 /// whose tolerance is roughly the track's mean Mercator segment length.
 /// Finer levels would keep nearly every point.
-fn first_useful_exponent(points: &[NavPoint]) -> u32 {
+fn first_useful_exponent(points: PlacedPoints<'_>) -> u32 {
     let segments = points.len().saturating_sub(1).max(1);
-    let total: f64 = points
+    let mercs: Vec<gt_types::MercPoint> = points.iter().map(|point| point.merc()).collect();
+    let total: f64 = mercs
         .windows(2)
         .map(|w| match w {
-            [a, b] => (b.merc().x - a.merc().x).hypot(b.merc().y - a.merc().y),
+            [a, b] => (b.x - a.x).hypot(b.y - a.y),
             _ => 0.0,
         })
         .sum();
@@ -98,7 +99,7 @@ fn exponent_to_i32(exp: u32) -> i32 {
 /// (Mercator units) from the last kept point or its render class changed.
 /// The first and last candidate are always kept.
 fn decimate(
-    points: &[NavPoint],
+    points: PlacedPoints<'_>,
     candidates: impl Iterator<Item = usize>,
     tolerance: f64,
 ) -> Vec<u32> {
@@ -115,7 +116,7 @@ fn decimate(
             continue;
         };
         last_candidate = Some(idx);
-        let class = point.render_class();
+        let class = point.fix.render_class();
         let keep = match last_kept {
             None => true,
             Some((merc, last_class)) => {
@@ -141,16 +142,34 @@ fn decimate(
 mod tests {
     use super::*;
     use chrono::Utc;
-    use gt_types::FixQuality;
     use gt_types::coordinates::{Latitude, Longitude};
+    use gt_types::nav_point::NavPoint;
     use gt_types::satellites::{Constellation, Satellite, Satellites};
     use gt_types::time_types::GpsTime;
     use gt_types::tpv::TimePositionVelocity;
+    use gt_types::{FixQuality, TrackLod};
     use uom::si::angle::degree;
     use uom::si::f64::Angle;
 
     /// ~1 m of longitude at the equator, in degrees.
     const DEG_PER_METER: f64 = 360.0 / 40_030_173.0;
+
+    /// Every fixture fix records a position, so it is drawn where it was
+    /// recorded.
+    fn merc_at(point: &NavPoint) -> gt_types::MercPoint {
+        let (latitude, longitude) = point.tpv.position().expect("a recorded position");
+        gt_types::mercator::normalize(latitude, longitude)
+    }
+
+    /// The LOD of `points` taken as a track of their own.
+    fn lod_of(points: &[NavPoint]) -> TrackLod {
+        let geometry = crate::segment::measure_track_geometry(points);
+        let placed = geometry
+            .measured()
+            .and_then(|measured| PlacedPoints::new(points, &measured.resolved_positions))
+            .expect("every fixture fix has a recorded position");
+        build_track_lod(placed)
+    }
 
     fn point_at_meters(x_m: f64, fix_count: u32) -> NavPoint {
         let sats: Vec<_> = (1..=fix_count.max(1))
@@ -175,7 +194,7 @@ mod tests {
     #[test]
     fn tiny_tracks_get_no_lod() {
         let points: Vec<_> = (0..10).map(|i| point_at_meters(f64::from(i), 12)).collect();
-        let lod = build_track_lod(&points);
+        let lod = lod_of(&points);
         assert!(lod.select(f64::MAX, f32::MAX).is_none());
     }
 
@@ -187,7 +206,7 @@ mod tests {
         let points: Vec<_> = (0..512)
             .map(|i| point_at_meters(f64::from(i) * 0.1, 12))
             .collect();
-        let lod = build_track_lod(&points);
+        let lod = lod_of(&points);
         let level = lod
             .select(f64::MIN_POSITIVE, 0.75)
             .expect("expected a usable level for a dense sub-meter track");
@@ -202,7 +221,7 @@ mod tests {
     #[test]
     fn coarse_scales_get_coarse_levels() {
         let points = uniform_track();
-        let lod = build_track_lod(&points);
+        let lod = lod_of(&points);
         // At a scale where the whole ~10 km track is a few hundred pixels,
         // a sub-pixel-error level must exist and be much smaller than the
         // full point list.
@@ -221,7 +240,7 @@ mod tests {
     #[test]
     fn fine_scales_fall_back_to_full_points() {
         let points = uniform_track();
-        let lod = build_track_lod(&points);
+        let lod = lod_of(&points);
         // Zoomed in so far that even the finest level's tolerance is more
         // than a pixel: the renderer must use the full point list.
         let px_per_merc = 2_f64.powi(40);
@@ -234,7 +253,7 @@ mod tests {
         // screen-space deviation of dropped points from the kept polyline
         // anchor stays below the requested error bound.
         let points = uniform_track();
-        let lod = build_track_lod(&points);
+        let lod = lod_of(&points);
         for exp in 10..30 {
             let px_per_merc = 2_f64.powi(exp);
             let Some(level) = lod.select(px_per_merc, 0.75) else {
@@ -247,8 +266,8 @@ mod tests {
                 let anchor = &points[*a as usize];
                 for pi in (*a + 1)..*b {
                     let p = &points[pi as usize];
-                    let dx = (p.merc().x - anchor.merc().x) * px_per_merc;
-                    let dy = (p.merc().y - anchor.merc().y) * px_per_merc;
+                    let dx = (merc_at(p).x - merc_at(anchor).x) * px_per_merc;
+                    let dy = (merc_at(p).y - merc_at(anchor).y) * px_per_merc;
                     let err_px = dx.hypot(dy);
                     assert!(
                         err_px <= 0.75,
@@ -268,7 +287,7 @@ mod tests {
         for p in points.iter_mut().take(260).skip(200) {
             *p = point_at_meters(0.0, 4);
         }
-        let lod = build_track_lod(&points);
+        let lod = lod_of(&points);
         let level = lod
             .select(f64::MIN_POSITIVE, 0.75)
             .expect("coarsest level exists");
@@ -283,7 +302,7 @@ mod tests {
         // The diagnostics index and the rendering slice must always agree -
         // strategy-transition logs would otherwise misreport the level.
         let points = uniform_track();
-        let lod = build_track_lod(&points);
+        let lod = lod_of(&points);
         for exp in 0..40 {
             let px_per_merc = 2_f64.powi(exp);
             let by_index = lod
@@ -296,7 +315,7 @@ mod tests {
     #[test]
     fn first_and_last_points_survive_every_level() {
         let points = uniform_track();
-        let lod = build_track_lod(&points);
+        let lod = lod_of(&points);
         let level = lod
             .select(f64::MIN_POSITIVE, 0.75)
             .expect("coarsest level exists");
@@ -309,7 +328,7 @@ mod tests {
         // A parked recording: hundreds of identical points reduce to the
         // two mandatory endpoints at every level.
         let points: Vec<_> = (0..512).map(|_| point_at_meters(0.0, 12)).collect();
-        let lod = build_track_lod(&points);
+        let lod = lod_of(&points);
         let level = lod
             .select(f64::MIN_POSITIVE, 0.75)
             .expect("coarsest level exists");

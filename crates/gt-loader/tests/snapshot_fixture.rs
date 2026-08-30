@@ -263,11 +263,15 @@ fn generate_and_verify_snapshot_fixture() {
         "track 0: GnssFixLost + GnssFixRegained"
     );
     assert_eq!(t0.metadata.duration.num_seconds(), 330, "track 0: 5m30s");
+    let t0_distance_km = t0
+        .geometry
+        .measured()
+        .expect("track 0 has a geometry")
+        .distance_km;
     assert!(
-        t0.metadata.distance_km > Length::new::<kilometer>(0.5)
-            && t0.metadata.distance_km < Length::new::<kilometer>(1.5),
-        "track 0 distance ~0.84 km, got {:?}",
-        t0.metadata.distance_km
+        t0_distance_km > Length::new::<kilometer>(0.5)
+            && t0_distance_km < Length::new::<kilometer>(1.5),
+        "track 0 distance ~0.84 km, got {t0_distance_km:?}"
     );
     assert!(t0.metadata.has_custom_markers, "track 0 has custom markers");
 
@@ -305,11 +309,15 @@ fn generate_and_verify_snapshot_fixture() {
         "track 1: no generated markers"
     );
     assert_eq!(t1.metadata.duration.num_seconds(), 210, "track 1: 3m30s");
+    let t1_distance_km = t1
+        .geometry
+        .measured()
+        .expect("track 1 has a geometry")
+        .distance_km;
     assert!(
-        t1.metadata.distance_km > Length::new::<kilometer>(0.3)
-            && t1.metadata.distance_km < Length::new::<kilometer>(1.0),
-        "track 1 distance ~0.62 km, got {:?}",
-        t1.metadata.distance_km
+        t1_distance_km > Length::new::<kilometer>(0.3)
+            && t1_distance_km < Length::new::<kilometer>(1.0),
+        "track 1 distance ~0.62 km, got {t1_distance_km:?}"
     );
     assert!(t1.metadata.has_custom_markers, "track 1 has custom marker");
 

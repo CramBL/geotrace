@@ -345,8 +345,12 @@ mod tests {
             Duration::seconds(2),
             "one second per point"
         );
+        let geometry = loaded
+            .geometry
+            .measured()
+            .expect("every fix has a recorded position");
         assert!(
-            loaded.metadata.distance_km.value > 0.0,
+            geometry.distance_km.value > 0.0,
             "the points walk a real distance"
         );
         assert_eq!(dataset.label(track(0, 0)), "track.gtd#0");

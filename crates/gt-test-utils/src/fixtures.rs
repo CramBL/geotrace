@@ -14,26 +14,16 @@ use gt_types::{
     RecordedLatitude, RecordedLongitude, TimePositionVelocity,
 };
 
-/// Track metadata with every count and measure zeroed, at the epoch and the
-/// coordinate origin, for tests that fill in only the fields they exercise.
+/// Track metadata with every count zeroed, at the epoch, for tests that fill
+/// in only the fields they exercise.
 pub fn empty_track_metadata() -> gt_types::track::TrackMetadata {
     gt_types::track::TrackMetadata {
         index: 0,
-        distance_km: Length::new::<uom::si::length::kilometer>(0.0),
         duration: Duration::zero(),
         time_range: gt_types::track::TimeRange::new(
             chrono::DateTime::UNIX_EPOCH,
             chrono::DateTime::UNIX_EPOCH,
         ),
-        bounding_box: gt_types::GeoBounds::single_position(Latitude::new(0.0), Longitude::new(0.0)),
-        merc_bounds: gt_types::track::MercBounds {
-            x_min: 0.0,
-            x_max: 0.0,
-            y_min: 0.0,
-            y_max: 0.0,
-        },
-        point_set_diameter_m: Length::new::<meter>(0.0),
-        segment_length_range: None,
         has_custom_markers: false,
         tpv_count: 0,
         invalid_position_count: 0,
@@ -338,6 +328,7 @@ pub fn loaded_track_from(
             invalid_position_count: 0,
             ..empty_track_metadata()
         },
+        geometry: track_geometry(&points),
         points,
         lod: gt_types::track::TrackLod::default(),
         sat_label_anchors: Vec::new(),
@@ -374,12 +365,20 @@ pub fn nav_point_at_meters(x_m: f64, y_m: f64, satellites: Option<Satellites>) -
     NavPoint::new(tpv, satellites)
 }
 
-/// A [`gt_types::LoadedTrack`] over the given points, every other field
-/// defaulted. The shared builder for tests that supply explicit per-point
-/// content (satellite reports, or anchors set on the returned track).
+/// The geometry the track builder measures for `points` taken as a track of
+/// their own, for tests that assemble a [`gt_types::LoadedTrack`] by hand.
+pub fn track_geometry(points: &[NavPoint]) -> gt_types::TrackGeometry {
+    gt_track_builder::segment::measure_track_geometry(points)
+}
+
+/// A [`gt_types::LoadedTrack`] over the given points, with the geometry the
+/// track builder measures for them and every other field defaulted. The shared
+/// builder for tests that supply explicit per-point content (satellite
+/// reports, or anchors set on the returned track).
 pub fn loaded_track_with_points(points: Vec<NavPoint>) -> gt_types::LoadedTrack {
     gt_types::LoadedTrack {
         metadata: empty_track_metadata(),
+        geometry: track_geometry(&points),
         points,
         lod: gt_types::track::TrackLod::default(),
         sat_label_anchors: Vec::new(),
@@ -521,8 +520,9 @@ pub fn marker_test_data() -> Vec<CustomMarker> {
 
         match (last_fix_index, has_fix) {
             (Some(last_idx), false) => {
-                if let Some(last_point) = nav_points.get(last_idx) {
-                    let (lat, lon) = last_point.resolved_position();
+                if let Some(last_point) = nav_points.get(last_idx)
+                    && let Some((lat, lon)) = last_point.tpv.position()
+                {
                     markers.push(CustomMarker::new(
                         last_point.tpv.time().utc(),
                         GeneratedMarkerKind::GnssFixLost.to_string(),
@@ -539,8 +539,7 @@ pub fn marker_test_data() -> Vec<CustomMarker> {
                     .and_then(|idx| nav_points.get(idx))
                     .is_some_and(|prev| prev.fix_count() == 0);
 
-                if is_fix_regain {
-                    let (lat, lon) = p.resolved_position();
+                if is_fix_regain && let Some((lat, lon)) = p.tpv.position() {
                     let mut fix_lost_time = p.tpv.time();
                     for j in (0..i).rev() {
                         if let Some(np) = nav_points.get(j).filter(|np| np.fix_count() > 0) {

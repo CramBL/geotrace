@@ -255,6 +255,7 @@ fn files_signature(files: &[LoadedFile]) -> u64 {
                 generated_markers,
                 event_markers,
                 metadata: _,
+                geometry: _,
                 lod: _,
                 channels: _,
             } = track;
@@ -397,6 +398,7 @@ mod tests {
                 invalid_position_count: 0,
                 ..gt_test_utils::empty_track_metadata()
             },
+            geometry: gt_test_utils::track_geometry(&points),
             points,
             lod: TrackLod::default(),
             sat_label_anchors: vec![

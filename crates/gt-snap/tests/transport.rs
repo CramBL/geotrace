@@ -13,7 +13,7 @@ use support::points;
 
 use gt_fetch::{HttpRequest, HttpResponse, Transport, TransportError, TransportSource};
 use gt_snap::merge::{ChunkOutcome, SnapWarningReporter};
-use gt_snap::request_plan::{self, CHUNK_POINTS, SnapParams};
+use gt_snap::request_plan::{CHUNK_POINTS, SnapParams};
 use gt_snap::wire::Costing;
 use gt_snap::{DEFAULT_SERVER_URL, fixtures_dir, transport};
 
@@ -84,7 +84,7 @@ fn connection_reset() -> Result<HttpResponse, TransportError> {
 fn fixture_success_body_classifies_and_merges_end_to_end() {
     // The captured partially_snappable response has 20 matched points, so a
     // 20-point plan is one chunk.
-    let plan = request_plan::plan(&points(20));
+    let plan = support::plan_of(&points(20));
     let transport = CannedTransport::new(vec![ok(fixture_body(
         "partially_snappable.response.json",
     )
@@ -121,7 +121,7 @@ fn merge_all(
 
 #[test]
 fn off_network_error_becomes_off_network_outcome_without_retry() {
-    let plan = request_plan::plan(&points(10));
+    let plan = support::plan_of(&points(10));
     let transport = CannedTransport::new(vec![status(
         400,
         &fixture_body("unsnappable.response.json").expect("fixture"),
@@ -141,7 +141,7 @@ fn off_network_error_becomes_off_network_outcome_without_retry() {
 
 #[test]
 fn deterministic_client_error_fails_without_retry() {
-    let plan = request_plan::plan(&points(10));
+    let plan = support::plan_of(&points(10));
     let transport = CannedTransport::new(vec![status(
         400,
         &fixture_body("bad_request.response.json").expect("fixture"),
@@ -163,7 +163,7 @@ fn deterministic_client_error_fails_without_retry() {
 
 #[test]
 fn html_error_body_fails_without_retry() {
-    let plan = request_plan::plan(&points(10));
+    let plan = support::plan_of(&points(10));
     let transport = CannedTransport::new(vec![status(
         413,
         &fixture_body("too_large_body.response.json").expect("fixture"),
@@ -185,7 +185,7 @@ fn html_error_body_fails_without_retry() {
 
 #[test]
 fn transient_transport_failure_gets_one_retry_then_succeeds() {
-    let plan = request_plan::plan(&points(10));
+    let plan = support::plan_of(&points(10));
     let transport = CannedTransport::new(vec![
         connection_reset(),
         ok(fixture_body("clean_drive.response.json").expect("fixture")),
@@ -205,7 +205,7 @@ fn transient_transport_failure_gets_one_retry_then_succeeds() {
 
 #[test]
 fn server_error_gets_one_retry_then_fails() {
-    let plan = request_plan::plan(&points(10));
+    let plan = support::plan_of(&points(10));
     let transport = CannedTransport::new(vec![
         status(503, "upstream overloaded"),
         status(503, "upstream overloaded"),
@@ -227,7 +227,7 @@ fn server_error_gets_one_retry_then_fails() {
 
 #[test]
 fn failed_chunk_does_not_stop_later_chunks() {
-    let plan = request_plan::plan(&points(CHUNK_POINTS + 1));
+    let plan = support::plan_of(&points(CHUNK_POINTS + 1));
     assert_eq!(plan.chunks.len(), 2, "precondition");
     let transport = CannedTransport::new(vec![
         connection_reset(),
@@ -254,7 +254,7 @@ fn failed_chunk_does_not_stop_later_chunks() {
 
 #[test]
 fn unparsable_success_body_is_a_failure() {
-    let plan = request_plan::plan(&points(10));
+    let plan = support::plan_of(&points(10));
     let transport = CannedTransport::new(vec![status(200, "not json")]);
 
     let outcomes = transport::send_plan(
@@ -277,7 +277,7 @@ proptest::proptest! {
     /// else, mirroring the shape-decoder fuzz tests.
     #[test]
     fn arbitrary_responses_never_panic(code in proptest::prelude::any::<u16>(), body in ".{0,512}") {
-        let plan = request_plan::plan(&points(5));
+        let plan = support::plan_of(&points(5));
         let transport = CannedTransport::new(vec![
             status(code, &body),
             status(code, &body), // a transient classification retries once
@@ -307,7 +307,7 @@ fn an_offline_plan_fails_every_chunk() {
     let transport = TransportSource::Offline
         .connect(None)
         .expect("the offline source connects");
-    let plan = request_plan::plan(&points(10));
+    let plan = support::plan_of(&points(10));
 
     let outcomes = transport::send_plan(
         &transport,

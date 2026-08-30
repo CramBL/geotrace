@@ -895,7 +895,7 @@ fn track_is_visible(
     let Some(track) = file.tracks.get(ti) else {
         return false;
     };
-    gt_filter::track_passes_filter(&track.metadata, global_filter)
+    gt_filter::track_passes_filter(track, global_filter)
 }
 
 /// Given a set of visible tracks and a plot-hovered time (in seconds since
@@ -928,7 +928,7 @@ pub fn find_closest_tpv(
             if !track_vis.enabled {
                 continue;
             }
-            if !gt_filter::track_passes_filter(&track.metadata, filter) {
+            if !gt_filter::track_passes_filter(track, filter) {
                 continue;
             }
             // Only points inside the filter's time window are drawn on the map,

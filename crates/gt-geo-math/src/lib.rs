@@ -1,6 +1,5 @@
 use geo::{ConvexHull, Distance, Haversine, InterpolatePoint as _};
 use geo_types::{MultiPoint, Point};
-use gt_types::NavPoint;
 use gt_types::coordinates::{Latitude, Longitude};
 use nalgebra::Vector3;
 use smallvec::SmallVec;
@@ -45,39 +44,34 @@ pub fn haversine_m(lat1: Latitude, lon1: Longitude, lat2: Latitude, lon2: Longit
     )
 }
 
-/// Haversine length, in metres, of each segment between consecutive points,
-/// in recording order. Empty for fewer than 2 points. The primitive behind
+/// Haversine length, in metres, of each segment between consecutive positions,
+/// in recording order. Empty for fewer than 2 positions. The primitive behind
 /// every along-track distance walk ([`path_distance_km`],
 /// [`segment_length_range_m`], threshold crossings).
-///
-/// Measured over [`NavPoint::resolved_position`], so it walks the polyline
-/// the map draws.
-pub fn segment_distances_m(points: &[NavPoint]) -> impl Iterator<Item = f64> + '_ {
-    points.windows(2).map(|w| match w {
-        [a, b] => {
-            let ((a_lat, a_lon), (b_lat, b_lon)) = (a.resolved_position(), b.resolved_position());
-            haversine_m(a_lat, a_lon, b_lat, b_lon)
-        }
+pub fn segment_distances_m(positions: &[(Latitude, Longitude)]) -> impl Iterator<Item = f64> + '_ {
+    positions.windows(2).map(|w| match w {
+        [(a_lat, a_lon), (b_lat, b_lon)] => haversine_m(*a_lat, *a_lon, *b_lat, *b_lon),
         _ => 0.0,
     })
 }
 
-/// Sum of haversine distances along an ordered sequence of GPS points,
-/// in kilometres. Returns `0.0` for fewer than 2 points.
-pub fn path_distance_km(points: &[NavPoint]) -> f64 {
-    segment_distances_m(points).sum::<f64>() / 1_000.0
+/// Sum of haversine distances along an ordered sequence of positions,
+/// in kilometres. Returns `0.0` for fewer than 2 positions.
+pub fn path_distance_km(positions: &[(Latitude, Longitude)]) -> f64 {
+    segment_distances_m(positions).sum::<f64>() / 1_000.0
 }
 
 /// Minimum and maximum haversine length, in metres, over the segments
-/// between consecutive points. `None` for fewer than 2 points (no segments).
-pub fn segment_length_range_m(points: &[NavPoint]) -> Option<(f64, f64)> {
-    segment_distances_m(points).fold(None, |range: Option<(f64, f64)>, m| {
+/// between consecutive positions. `None` for fewer than 2 positions (no
+/// segments).
+pub fn segment_length_range_m(positions: &[(Latitude, Longitude)]) -> Option<(f64, f64)> {
+    segment_distances_m(positions).fold(None, |range: Option<(f64, f64)>, m| {
         Some(range.map_or((m, m), |(min, max)| (min.min(m), max.max(m))))
     })
 }
 
-/// Maximum haversine distance between any two [`NavPoint::resolved_position`]
-/// in the set, in metres. Returns `0.0` for fewer than 2 points.
+/// Maximum haversine distance between any two positions in the set, in metres.
+/// Returns `0.0` for fewer than 2 positions.
 ///
 /// Searches the pairs of the set's convex hull vertices: O(k²) where k is the
 /// hull vertex count, acceptable because GPS track hulls are small. The hull
@@ -85,28 +79,22 @@ pub fn segment_length_range_m(points: &[NavPoint]) -> Option<(f64, f64)> {
 /// direction, so neither the ±180° discontinuity nor a pole falls inside the
 /// set. A set spread over more than a hemisphere admits no such rotation and
 /// is searched pair by pair instead.
-pub fn point_set_diameter_m(points: &[NavPoint]) -> f64 {
-    if points.len() < 2 {
+pub fn point_set_diameter_m(positions: &[(Latitude, Longitude)]) -> f64 {
+    if positions.len() < 2 {
         return 0.0;
     }
 
-    let directions: Vec<Vector3<f64>> = points
+    let directions: Vec<Vector3<f64>> = positions
         .iter()
-        .map(|p| {
-            let (lat, lon) = p.resolved_position();
-            earth_centred_direction(lat, lon)
-        })
+        .map(|&(lat, lon)| earth_centred_direction(lat, lon))
         .collect();
 
     let Some(frame) = MeanDirectionFrame::covering(&directions) else {
-        let positions: Vec<Point<f64>> = points
+        let points: Vec<Point<f64>> = positions
             .iter()
-            .map(|p| {
-                let (lat, lon) = p.resolved_position();
-                Point::new(lon.as_degrees(), lat.as_degrees())
-            })
+            .map(|(lat, lon)| Point::new(lon.as_degrees(), lat.as_degrees()))
             .collect();
-        return max_pairwise_haversine_m(&positions);
+        return max_pairwise_haversine_m(&points);
     };
 
     let rotated: MultiPoint<f64> = directions
@@ -202,10 +190,7 @@ impl MeanDirectionFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
-    use gt_types::NavPoint;
     use gt_types::coordinates::{Latitude, Longitude};
-    use gt_types::time_types::GpsTime;
 
     const TOLERANCE_KM: f64 = 0.5;
     const TOLERANCE_M: f64 = 500.0;
@@ -218,13 +203,8 @@ mod tests {
         Longitude::new(v)
     }
 
-    fn make_point(lat_deg: f64, lon_deg: f64) -> NavPoint {
-        let tpv = gt_types::TimePositionVelocity::builder()
-            .time(GpsTime::from_utc(Utc::now()))
-            .lat(lat(lat_deg))
-            .lon(lon(lon_deg))
-            .build();
-        NavPoint::new(tpv, None)
+    fn make_position(lat_deg: f64, lon_deg: f64) -> (Latitude, Longitude) {
+        (lat(lat_deg), lon(lon_deg))
     }
 
     #[test]
@@ -250,12 +230,12 @@ mod tests {
     #[test]
     fn segment_length_range_none_without_segments() {
         assert_eq!(segment_length_range_m(&[]), None);
-        assert_eq!(segment_length_range_m(&[make_point(55.0, 12.0)]), None);
+        assert_eq!(segment_length_range_m(&[make_position(55.0, 12.0)]), None);
     }
 
     #[test]
     fn segment_length_range_single_segment_has_equal_min_and_max() {
-        let pts = [make_point(0.0, 0.0), make_point(0.0, 1.0)];
+        let pts = [make_position(0.0, 0.0), make_position(0.0, 1.0)];
         let Some((min, max)) = segment_length_range_m(&pts) else {
             panic!("expected a range for 2 points");
         };
@@ -269,9 +249,9 @@ mod tests {
         // Stationary pair (zero-length segment), then a ~111 km hop:
         // exactly the parked-then-highway shape the range must capture.
         let pts = [
-            make_point(0.0, 0.0),
-            make_point(0.0, 0.0),
-            make_point(0.0, 1.0),
+            make_position(0.0, 0.0),
+            make_position(0.0, 0.0),
+            make_position(0.0, 1.0),
         ];
         let Some((min, max)) = segment_length_range_m(&pts) else {
             panic!("expected a range for 3 points");
@@ -288,13 +268,13 @@ mod tests {
 
     #[test]
     fn path_distance_km_single_point() {
-        let d = path_distance_km(&[make_point(55.0, 12.0)]);
+        let d = path_distance_km(&[make_position(55.0, 12.0)]);
         assert!(d < f64::EPSILON, "expected 0.0, got {d}");
     }
 
     #[test]
     fn path_distance_km_two_points() {
-        let d = path_distance_km(&[make_point(0.0, 0.0), make_point(1.0, 0.0)]);
+        let d = path_distance_km(&[make_position(0.0, 0.0), make_position(1.0, 0.0)]);
         assert!((d - 111.195).abs() < TOLERANCE_KM, "got {d} km");
     }
 
@@ -302,9 +282,9 @@ mod tests {
     fn path_distance_km_three_points_sums_segments() {
         let leg = haversine_km(lat(0.0), lon(0.0), lat(1.0), lon(0.0));
         let total = path_distance_km(&[
-            make_point(0.0, 0.0),
-            make_point(1.0, 0.0),
-            make_point(2.0, 0.0),
+            make_position(0.0, 0.0),
+            make_position(1.0, 0.0),
+            make_position(2.0, 0.0),
         ]);
         assert!((total - 2.0 * leg).abs() < TOLERANCE_KM, "got {total} km");
     }
@@ -312,15 +292,15 @@ mod tests {
     #[test]
     fn diameter_fewer_than_two_points() {
         assert!(point_set_diameter_m(&[]) < f64::EPSILON);
-        assert!(point_set_diameter_m(&[make_point(55.0, 12.0)]) < f64::EPSILON);
+        assert!(point_set_diameter_m(&[make_position(55.0, 12.0)]) < f64::EPSILON);
     }
 
     #[test]
     fn diameter_identical_points_is_zero() {
         let d = point_set_diameter_m(&[
-            make_point(55.0, 12.0),
-            make_point(55.0, 12.0),
-            make_point(55.0, 12.0),
+            make_position(55.0, 12.0),
+            make_position(55.0, 12.0),
+            make_position(55.0, 12.0),
         ]);
         assert!(d < 1.0, "expected ~0.0, got {d}");
     }
@@ -328,7 +308,7 @@ mod tests {
     #[test]
     fn diameter_two_points_matches_haversine() {
         let expected = haversine_m(lat(0.0), lon(0.0), lat(1.0), lon(0.0));
-        let d = point_set_diameter_m(&[make_point(0.0, 0.0), make_point(1.0, 0.0)]);
+        let d = point_set_diameter_m(&[make_position(0.0, 0.0), make_position(1.0, 0.0)]);
         assert!(
             (d - expected).abs() < TOLERANCE_M,
             "expected {expected}, got {d}"
@@ -339,9 +319,9 @@ mod tests {
     fn diameter_collinear_points_is_endpoint_distance() {
         let expected = haversine_m(lat(0.0), lon(0.0), lat(1.0), lon(0.0));
         let d = point_set_diameter_m(&[
-            make_point(0.0, 0.0),
-            make_point(0.5, 0.0),
-            make_point(1.0, 0.0),
+            make_position(0.0, 0.0),
+            make_position(0.5, 0.0),
+            make_position(1.0, 0.0),
         ]);
         assert!(
             (d - expected).abs() < TOLERANCE_M,

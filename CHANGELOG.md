@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- **Map & Tracks:** Fixed a recording in which no fix has a valid position being refused: it now loads and shows its data in the plot and the history, with its tracks drawn nowhere on the map.
 - **Map & Tracks:** Fixed a recording holding a fix with a latitude or longitude outside the valid range being refused: it now loads with a data quality warning naming those fixes, keeps the recorded values, and draws each of them between the fixes around it.
 - **Map & Tracks:** Fixed a heading swing between two northward readings disappearing from the plot when zoomed out, and the same for a sensor channel that declares a wrap period.
 - **Map & Tracks:** Fixed the min spread filter understating how far tracks that cross the antimeridian or circle a pole ranged.

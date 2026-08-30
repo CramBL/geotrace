@@ -131,7 +131,7 @@ mod tests {
     fn run(costing: Costing) -> SnapRun {
         SnapRun::new(
             merge::merge(
-                &request_plan::plan(&[]),
+                &request_plan::plan(gt_types::PlacedPoints::default()),
                 SnapParams::new(costing),
                 &[],
                 &SnapWarningReporter::default(),

@@ -46,8 +46,13 @@ pub(crate) fn select_sat_labels<'s, 'a>(
 ) -> &'s [Vec<usize>] {
     let candidates = scratch.candidates();
     for (geometry_index, track_ref, track) in tracks {
+        // Only a track that has a geometry carries anchors, so a track drawn
+        // nowhere contributes no candidate.
+        let Some(placed) = track.placed_points() else {
+            continue;
+        };
         for anchor in &track.sat_label_anchors {
-            let Some(point) = anchor.point.get(&track.points) else {
+            let Some(point) = placed.get(anchor.point.as_usize()) else {
                 continue;
             };
             let (x, y) = (point.merc().x, point.merc().y);
@@ -55,7 +60,7 @@ pub(crate) fn select_sat_labels<'s, 'a>(
             {
                 continue;
             }
-            if !point_passes(track_ref, anchor.point.as_usize(), point) {
+            if !point_passes(track_ref, anchor.point.as_usize(), point.fix) {
                 continue;
             }
             candidates.push((

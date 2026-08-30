@@ -230,7 +230,10 @@ pub fn show_delete_confirmation(
                                     let name = recording_names
                                         .get(*fi)
                                         .unwrap_or(file.metadata.filename.as_str());
-                                    let dist = gt_fmt::format_distance(track.metadata.distance_km);
+                                    let dist = track.geometry.measured().map_or_else(
+                                        || gt_ui_theme::EM_DASH.to_owned(),
+                                        |geometry| gt_fmt::format_distance(geometry.distance_km),
+                                    );
                                     let dur =
                                         gt_fmt::format_human_terse_duration(track.metadata.duration);
                                     let label =
@@ -1215,7 +1218,7 @@ mod tests {
     use std::path::PathBuf;
 
     use gt_types::{
-        FileIdx, FileSource, LoadedFile, LoadedTrack, TimeRange, TrackIdx, TrackLod, TrackMetadata,
+        FileIdx, FileSource, LoadedFile, LoadedTrack, TimeRange, TrackIdx, TrackMetadata,
     };
 
     use egui_kittest::kittest::{NodeT as _, Queryable as _};
@@ -1570,13 +1573,7 @@ mod tests {
                         index: ti + 1,
                         ..gt_test_utils::empty_track_metadata()
                     },
-                    points: Vec::new(),
-                    lod: TrackLod::default(),
-                    sat_label_anchors: Vec::new(),
-                    custom_markers: Vec::new(),
-                    generated_markers: Vec::new(),
-                    event_markers: Vec::new(),
-                    channels: Vec::new(),
+                    ..gt_test_utils::loaded_track_with_points(Vec::new())
                 })
                 .collect(),
             event_marker_styles: FxHashMap::default(),

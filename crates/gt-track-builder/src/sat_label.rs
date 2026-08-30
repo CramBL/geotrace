@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use gt_geo_math::segment_distances_m;
 use gt_types::sat_label::{SatLabelAnchor, SatLabelTier};
-use gt_types::{FixQuality, NavPoint, PointIdx};
+use gt_types::{FixQuality, PlacedPoints, PointIdx};
 
 /// Along-track spacing of [`SatLabelTier::Fill`] anchors. Dense enough that
 /// labels appear on every screen at street-level zoom. The renderer's
@@ -26,8 +26,13 @@ struct SatPoint {
 /// ghost-stretch recoveries, and periodic fill along the track. Only points
 /// carrying a satellite report qualify. Each point gets at most one anchor,
 /// keeping the highest-priority tier. The result is ascending by point index.
-pub fn build_sat_label_anchors(points: &[NavPoint]) -> Vec<SatLabelAnchor> {
+///
+/// A label is drawn beside the fix it belongs to, so only a track that has a
+/// geometry has anchors: the fill spacing is measured along where its fixes
+/// are drawn.
+pub fn build_sat_label_anchors(points: PlacedPoints<'_>) -> Vec<SatLabelAnchor> {
     let sat_points: Vec<SatPoint> = points
+        .fixes()
         .iter()
         .enumerate()
         .filter(|(_, p)| p.satellites.is_some())
@@ -102,8 +107,8 @@ fn add_fix_count_minima(anchors: &mut BTreeMap<usize, SatLabelTier>, sat_points:
 /// stretch. Quality transitions already cover recoveries from zero-fix
 /// ghosts. This additionally catches heading-loss ghosts, where the fix
 /// count (and therefore the quality tier) never changed.
-fn add_ghost_recoveries(anchors: &mut BTreeMap<usize, SatLabelTier>, points: &[NavPoint]) {
-    for (i, w) in points.windows(2).enumerate() {
+fn add_ghost_recoveries(anchors: &mut BTreeMap<usize, SatLabelTier>, points: PlacedPoints<'_>) {
+    for (i, w) in points.fixes().windows(2).enumerate() {
         let [prev, cur] = w else { continue };
         if prev.is_ghost_fix() && !cur.is_ghost_fix() && cur.satellites.is_some() {
             add_anchor(anchors, i + 1, SatLabelTier::Endpoint);
@@ -115,9 +120,10 @@ fn add_ghost_recoveries(anchors: &mut BTreeMap<usize, SatLabelTier>, points: &[N
 /// the last anchored point reaches [`FILL_SPACING_M`]. Existing anchors of
 /// any tier reset the accumulator, so fill only covers the gaps between
 /// higher-priority anchors.
-fn add_fill(anchors: &mut BTreeMap<usize, SatLabelTier>, points: &[NavPoint]) {
+fn add_fill(anchors: &mut BTreeMap<usize, SatLabelTier>, points: PlacedPoints<'_>) {
+    let positions: Vec<(gt_types::Latitude, gt_types::Longitude)> = points.positions().collect();
     let mut since_anchor_m = 0.0;
-    for (i, segment_m) in segment_distances_m(points).enumerate() {
+    for (i, segment_m) in segment_distances_m(&positions).enumerate() {
         since_anchor_m += segment_m;
         let cur_index = i + 1;
         if anchors.contains_key(&cur_index) {
@@ -125,7 +131,7 @@ fn add_fill(anchors: &mut BTreeMap<usize, SatLabelTier>, points: &[NavPoint]) {
         } else if since_anchor_m >= FILL_SPACING_M
             && points
                 .get(cur_index)
-                .is_some_and(|p| p.satellites.is_some())
+                .is_some_and(|p| p.fix.satellites.is_some())
         {
             add_anchor(anchors, cur_index, SatLabelTier::Fill);
             since_anchor_m = 0.0;
@@ -138,6 +144,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use gt_types::coordinates::{Latitude, Longitude};
+    use gt_types::nav_point::NavPoint;
     use gt_types::satellites::{Constellation, Satellite, Satellites};
     use gt_types::time_types::GpsTime;
     use gt_types::tpv::TimePositionVelocity;
@@ -147,6 +154,16 @@ mod tests {
 
     /// ~1 m of longitude at the equator, in degrees.
     const DEG_PER_METER: f64 = 360.0 / 40_030_173.0;
+
+    /// The anchors of `points` taken as a track of their own, none for a track
+    /// of no fixes.
+    fn anchors_of(points: &[NavPoint]) -> Vec<SatLabelAnchor> {
+        let geometry = crate::segment::measure_track_geometry(points);
+        geometry
+            .measured()
+            .and_then(|measured| PlacedPoints::new(points, &measured.resolved_positions))
+            .map_or_else(Vec::new, build_sat_label_anchors)
+    }
 
     /// A point `x_m` meters east of the origin. `fix_count: None` means no
     /// satellite report attached. `heading: false` makes a ghost fix.
@@ -184,13 +201,13 @@ mod tests {
     #[test]
     fn no_satellite_reports_no_anchors() {
         let points = track(&[None, None, None]);
-        assert!(build_sat_label_anchors(&points).is_empty());
+        assert!(anchors_of(&points).is_empty());
     }
 
     #[test]
     fn first_and_last_satellite_points_are_endpoints() {
         let points = track(&[None, Some(12), Some(12), Some(12), None]);
-        let anchors = build_sat_label_anchors(&points);
+        let anchors = anchors_of(&points);
         assert_eq!(tier_at(&anchors, 1), Some(SatLabelTier::Endpoint));
         assert_eq!(tier_at(&anchors, 3), Some(SatLabelTier::Endpoint));
         assert_eq!(anchors.len(), 2);
@@ -200,7 +217,7 @@ mod tests {
     fn quality_transitions_anchor_where_the_tier_changes() {
         // Strong → Marginal at 2, Marginal → Strong at 4.
         let points = track(&[Some(12), Some(12), Some(4), Some(4), Some(12), Some(12)]);
-        let anchors = build_sat_label_anchors(&points);
+        let anchors = anchors_of(&points);
         assert_eq!(tier_at(&anchors, 2), Some(SatLabelTier::QualityTransition));
         assert_eq!(tier_at(&anchors, 4), Some(SatLabelTier::QualityTransition));
     }
@@ -212,7 +229,7 @@ mod tests {
     #[case(&[Some(12), Some(8), Some(5), Some(5), Some(5), Some(8), Some(12)], 2)]
     fn fix_count_minima_anchor_the_dip(#[case] counts: &[Option<u32>], #[case] expected: usize) {
         let points = track(counts);
-        let anchors = build_sat_label_anchors(&points);
+        let anchors = anchors_of(&points);
         assert_eq!(
             tier_at(&anchors, expected),
             Some(SatLabelTier::FixCountMinimum)
@@ -222,7 +239,7 @@ mod tests {
     #[test]
     fn a_dip_touching_the_track_end_is_not_a_minimum() {
         let points = track(&[Some(8), Some(5), Some(5)]);
-        let anchors = build_sat_label_anchors(&points);
+        let anchors = anchors_of(&points);
         // The last point is anchored as an endpoint, not as a minimum.
         assert_eq!(tier_at(&anchors, 2), Some(SatLabelTier::Endpoint));
         assert_eq!(tier_at(&anchors, 1), None);
@@ -236,7 +253,7 @@ mod tests {
             .zip([true, true, false, false, true, true])
             .map(|(i, heading)| point(f64::from(i) * 10.0, Some(12), heading))
             .collect();
-        let anchors = build_sat_label_anchors(&points);
+        let anchors = anchors_of(&points);
         assert_eq!(tier_at(&anchors, 4), Some(SatLabelTier::Endpoint));
     }
 
@@ -245,7 +262,7 @@ mod tests {
         // 1 km of stable strong fixes, 10 m spacing: fill anchors roughly
         // every 100 m between the two endpoint anchors.
         let points = track(&[Some(12); 101]);
-        let anchors = build_sat_label_anchors(&points);
+        let anchors = anchors_of(&points);
         let fills = anchors
             .iter()
             .filter(|a| a.tier == SatLabelTier::Fill)
@@ -261,7 +278,7 @@ mod tests {
         // The last satellite point is both an endpoint and a quality
         // transition - the transition tier must win.
         let points = track(&[Some(12), Some(12), Some(4)]);
-        let anchors = build_sat_label_anchors(&points);
+        let anchors = anchors_of(&points);
         assert_eq!(tier_at(&anchors, 2), Some(SatLabelTier::QualityTransition));
     }
 
@@ -290,7 +307,7 @@ mod tests {
                 })
                 .collect();
 
-            let anchors = build_sat_label_anchors(&points);
+            let anchors = anchors_of(&points);
 
             proptest::prop_assert!(
                 anchors
@@ -318,7 +335,7 @@ mod tests {
             Some(4),
             Some(12),
         ]);
-        let anchors = build_sat_label_anchors(&points);
+        let anchors = anchors_of(&points);
         assert!(anchors.windows(2).all(|w| match w {
             [a, b] => a.point < b.point,
             _ => true,

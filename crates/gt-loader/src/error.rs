@@ -11,12 +11,4 @@ pub enum LoadError {
 
     #[error("invalid event marker: {0}")]
     EventMarker(#[from] geotrace_sdk::EventMarkerError),
-
-    #[error(
-        "no fix between records {first_record} and {last_record} has a latitude and longitude in range"
-    )]
-    TrackWithoutAPosition {
-        first_record: usize,
-        last_record: usize,
-    },
 }

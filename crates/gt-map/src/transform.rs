@@ -2,7 +2,7 @@
 //! pixels, and the LOD-aware point iteration built on top of it.
 
 use gt_types::coordinates::{Latitude, Longitude};
-use gt_types::{LoadedTrack, MercPoint, NavPoint, mercator};
+use gt_types::{LoadedTrack, MercPoint, PlacedPoint, PlacedPoints, mercator};
 use walkers::MapMemory;
 
 use crate::polyline::MAX_LOD_ERROR_PX;
@@ -240,16 +240,20 @@ impl MercTransform {
 /// current map scale, or over the full point list when no stored level is
 /// fine enough (zoomed in, or no LOD built). Bounds polyline-pass iteration
 /// by on-screen detail instead of recording size.
+///
+/// `placed` are `track`'s own points, which the caller has already gated on
+/// the track having a geometry.
 pub(crate) fn lod_points<'a>(
     track: &'a LoadedTrack,
+    placed: PlacedPoints<'a>,
     transform: &MercTransform,
-) -> Box<dyn Iterator<Item = (usize, &'a NavPoint)> + 'a> {
+) -> Box<dyn Iterator<Item = (usize, PlacedPoint<'a>)> + 'a> {
     match track.lod.select(transform.px_per_merc(), MAX_LOD_ERROR_PX) {
         Some(indices) => Box::new(indices.iter().filter_map(move |&i| {
             let pi = usize::try_from(i).ok()?;
-            Some((pi, track.points.get(pi)?))
+            Some((pi, placed.get(pi)?))
         })),
-        None => Box::new(track.points.iter().enumerate()),
+        None => Box::new(placed.iter().enumerate()),
     }
 }
 

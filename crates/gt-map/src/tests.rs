@@ -15,21 +15,12 @@ use uom::si::length::{kilometer, meter};
 
 fn make_file_from_points(points: Vec<gt_types::NavPoint>) -> LoadedFile {
     let now = chrono::Utc::now();
-    let bb = GeoBounds::from_positions([
-        (Latitude::new(55.67), Longitude::new(12.55)),
-        (Latitude::new(55.69), Longitude::new(12.59)),
-    ])
-    .expect("two positions");
     let n = points.len();
     let track = LoadedTrack {
         metadata: TrackMetadata {
             index: 0,
-            distance_km: Length::new::<kilometer>(1.0),
             duration: chrono::Duration::seconds(n as i64),
             time_range: TimeRange::new(now, now + chrono::Duration::seconds(n as i64)),
-            bounding_box: bb,
-            merc_bounds: MercBounds::from(bb),
-            point_set_diameter_m: Length::new::<meter>(100.0),
             has_custom_markers: false,
             tpv_count: n,
             invalid_position_count: 0,
@@ -39,13 +30,7 @@ fn make_file_from_points(points: Vec<gt_types::NavPoint>) -> LoadedFile {
             event_marker_count: 0,
             ..gt_test_utils::empty_track_metadata()
         },
-        points,
-        lod: gt_types::TrackLod::default(),
-        sat_label_anchors: Vec::new(),
-        custom_markers: vec![],
-        generated_markers: vec![],
-        event_markers: vec![],
-        channels: vec![],
+        ..gt_test_utils::loaded_track_with_points(points)
     };
     LoadedFile {
         metadata: FileMetadata {
@@ -142,16 +127,7 @@ fn track_at(lat: f64, lon: f64) -> LoadedTrack {
 }
 
 pub(crate) fn track_over(points: Vec<gt_types::NavPoint>) -> LoadedTrack {
-    LoadedTrack {
-        metadata: gt_test_utils::empty_track_metadata(),
-        points,
-        lod: gt_types::TrackLod::default(),
-        sat_label_anchors: Vec::new(),
-        custom_markers: vec![],
-        generated_markers: vec![],
-        event_markers: vec![],
-        channels: vec![],
-    }
+    gt_test_utils::loaded_track_with_points(points)
 }
 
 pub(crate) fn file_with_tracks(tracks: Vec<LoadedTrack>) -> LoadedFile {
@@ -341,13 +317,7 @@ fn time_filtered_point_is_not_hoverable() {
             time_range: TimeRange::new(early, late),
             ..gt_test_utils::empty_track_metadata()
         },
-        points: vec![nav_at(early, 55.0, 12.0), nav_at(late, 55.0, 12.0)],
-        lod: gt_types::TrackLod::default(),
-        sat_label_anchors: Vec::new(),
-        custom_markers: vec![],
-        generated_markers: vec![],
-        event_markers: vec![],
-        channels: vec![],
+        ..track_over(vec![nav_at(early, 55.0, 12.0), nav_at(late, 55.0, 12.0)])
     };
     let files = vec![file_with_tracks(vec![track])];
     let vis = vis_all_visible();
@@ -372,16 +342,7 @@ fn time_filtered_point_is_not_hoverable() {
 #[test]
 fn query_hidden_point_is_not_hoverable() {
     let now = chrono::DateTime::from_timestamp(0, 0).expect("valid");
-    let track = LoadedTrack {
-        metadata: gt_test_utils::empty_track_metadata(),
-        points: vec![nav_at(now, 55.0, 12.0), nav_at(now, 55.0001, 12.0001)],
-        lod: gt_types::TrackLod::default(),
-        sat_label_anchors: Vec::new(),
-        custom_markers: vec![],
-        generated_markers: vec![],
-        event_markers: vec![],
-        channels: vec![],
-    };
+    let track = track_over(vec![nav_at(now, 55.0, 12.0), nav_at(now, 55.0001, 12.0001)]);
     let files = vec![file_with_tracks(vec![track])];
     let vis = vis_all_visible();
     let filter = GlobalFilter::default();
@@ -644,12 +605,8 @@ fn candidate_label_generated_marker_matches_header() {
     let track = LoadedTrack {
         metadata: TrackMetadata {
             index: 0,
-            distance_km: uom::si::f64::Length::new::<uom::si::length::kilometer>(1.0),
             duration: chrono::Duration::seconds(1),
             time_range: TimeRange::new(now, now + chrono::Duration::seconds(1)),
-            bounding_box: bb,
-            merc_bounds: MercBounds::from(bb),
-            point_set_diameter_m: uom::si::f64::Length::new::<uom::si::length::meter>(10.0),
             has_custom_markers: false,
             tpv_count: 0,
             invalid_position_count: 0,
@@ -659,6 +616,14 @@ fn candidate_label_generated_marker_matches_header() {
             event_marker_count: 0,
             ..gt_test_utils::empty_track_metadata()
         },
+        geometry: gt_types::TrackGeometry::Measured(gt_types::MeasuredTrackGeometry {
+            resolved_positions: Vec::new(),
+            bounding_box: bb,
+            merc_bounds: MercBounds::from(bb),
+            distance_km: uom::si::f64::Length::new::<uom::si::length::kilometer>(1.0),
+            point_set_diameter_m: uom::si::f64::Length::new::<uom::si::length::meter>(10.0),
+            segment_length_range: None,
+        }),
         points: vec![],
         lod: gt_types::TrackLod::default(),
         sat_label_anchors: Vec::new(),
@@ -809,9 +774,20 @@ fn match_bounding_box_covers_one_match() {
 fn map_framing_covers_where_the_points_are_drawn() {
     let drawn = (Latitude::new(55.0), Longitude::new(12.0));
     let mut track = track_at(0.0, 0.0);
-    for point in &mut track.points {
-        point.set_interpolated_position(drawn);
-    }
+    // The receiver wrote the null island, the builder placed the fix at
+    // `drawn`.
+    track.geometry = gt_types::TrackGeometry::Measured(gt_types::MeasuredTrackGeometry {
+        resolved_positions: track
+            .points
+            .iter()
+            .map(|_| gt_types::ResolvedPosition::interpolated(drawn.0, drawn.1))
+            .collect(),
+        bounding_box: GeoBounds::single_position(drawn.0, drawn.1),
+        merc_bounds: MercBounds::from(GeoBounds::single_position(drawn.0, drawn.1)),
+        distance_km: Length::new::<kilometer>(0.0),
+        point_set_diameter_m: Length::new::<meter>(0.0),
+        segment_length_range: None,
+    });
     let files = vec![file_with_tracks(vec![track])];
     let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
     let expected = Some(GeoBounds::single_position(drawn.0, drawn.1));

@@ -135,10 +135,14 @@ impl Plugin for SnappedTrackRenderer<'_> {
 
             // Error whiskers: recorded point to snapped position, gated on
             // scale and culled per pair like the dashing.
-            if draw_whiskers && let Some(track) = track_ref.resolve(self.files) {
+            if draw_whiskers
+                && let Some(placed) = track_ref
+                    .resolve(self.files)
+                    .and_then(gt_types::LoadedTrack::placed_points)
+            {
                 let whisker_stroke = Stroke::new(WHISKER_STROKE_WIDTH, color);
                 for anchor in &geometry.whiskers {
-                    let Some(recorded) = anchor.point.get(&track.points) else {
+                    let Some(recorded) = placed.get(anchor.point.as_usize()) else {
                         continue;
                     };
                     let from = transform.to_screen(recorded.merc());
