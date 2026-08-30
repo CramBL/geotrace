@@ -336,6 +336,74 @@ impl fmt::Display for DroppedMarker {
     }
 }
 
+/// One satellite of one record's report, named as the app's satellite tables
+/// name it.
+struct SatelliteInRecord {
+    record: usize,
+    constellation: Constellation,
+    prn: u32,
+}
+
+impl SatelliteInRecord {
+    fn from_row(row: &SdkSatellite, record: usize) -> Self {
+        Self {
+            record,
+            constellation: convert_constellation(row.constellation),
+            prn: row.prn,
+        }
+    }
+}
+
+impl fmt::Display for SatelliteInRecord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            record,
+            constellation,
+            prn,
+        } = self;
+        write!(f, "record {record}: {}{prn:02}", constellation.prn_prefix())
+    }
+}
+
+/// A satellite whose several rows in one report the loader folded into one.
+struct MergedSatelliteRows {
+    satellite: SatelliteInRecord,
+    rows: usize,
+}
+
+impl fmt::Display for MergedSatelliteRows {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { satellite, rows } = self;
+        write!(f, "{satellite} on {rows} rows")
+    }
+}
+
+/// An event marker style whose color field the loader could not read as a
+/// `#RRGGBB` hex value.
+struct UnreadableEventMarkerColor {
+    variant_path: String,
+    written_color: String,
+}
+
+impl fmt::Display for UnreadableEventMarkerColor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            variant_path,
+            written_color,
+        } = self;
+        write!(f, "{variant_path:?}: {written_color:?}")
+    }
+}
+
+/// What the loader changed about the satellite rows a recording holds, so the
+/// load-warnings dialog can name each change and a user can trace a satellite
+/// count or a signal strength on screen back to it.
+#[derive(Default)]
+struct SatelliteAlterations {
+    satellites_merged_from_several_rows: Vec<MergedSatelliteRows>,
+    discarded_snr_sentinels: Vec<SatelliteInRecord>,
+}
+
 fn first_few_listed<T: fmt::Display>(entries: &[T]) -> String {
     let listed = entries
         .iter()
@@ -374,6 +442,49 @@ fn dropped_markers_warning(issue: &str, dropped: &[DroppedMarker]) -> Option<Loa
     })
 }
 
+/// The wording of a warning about what the loader altered: `issue` completes
+/// the "<count> …" line, `consequence` follows the listed entries in the
+/// description.
+///
+/// The SDK's own satellite warnings describe the file itself, and these sit
+/// beside them: a file that repeats a satellite raises one warning about the
+/// file and one about what the app made of it.
+#[derive(Clone, Copy)]
+struct AlterationWording {
+    issue: &'static str,
+    consequence: &'static str,
+}
+
+impl AlterationWording {
+    fn load_warning<T: fmt::Display>(self, entries: &[T]) -> Option<LoadWarning> {
+        (!entries.is_empty()).then(|| LoadWarning {
+            count: u32::try_from(entries.len()).unwrap_or(u32::MAX),
+            issue: self.issue.to_owned(),
+            description: format!("{}. {}", first_few_listed(entries), self.consequence),
+        })
+    }
+}
+
+const MERGED_SATELLITE_ROWS: AlterationWording = AlterationWording {
+    issue: "satellite(s) merged from several rows of one report",
+    consequence: "Every satellite count shown is one per satellite, not one per row: \
+        the merged satellite takes the highest SNR of its rows, the first elevation \
+        and azimuth reported, and is in the fix when any row was.",
+};
+
+const DISCARDED_SNR_SENTINELS: AlterationWording = AlterationWording {
+    issue: "satellite SNR reading(s) discarded as the no-data sentinel",
+    consequence: "Those satellites are drawn and listed with no signal strength: an SNR \
+        of ≈ 99 dB-Hz is the firmware sentinel for an unavailable measurement, not a \
+        reading.",
+};
+
+const REPLACED_EVENT_MARKER_COLORS: AlterationWording = AlterationWording {
+    issue: "event marker color(s) replaced with gray",
+    consequence: "Those markers are drawn mid-gray: the style holds a color that is not \
+        a #RRGGBB hex value.",
+};
+
 /// Refuses a recording in which some track holds no fix with a position: its
 /// fixes have nowhere to be drawn, and nothing to interpolate one from.
 fn check_every_track_holds_a_fix_with_a_position(
@@ -405,6 +516,7 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
     let mut nav_points = Vec::with_capacity(nav_file.nav_points().len());
     let mut latitudes_out_of_range: Vec<CoordinateOutOfRange> = Vec::new();
     let mut longitudes_out_of_range: Vec<CoordinateOutOfRange> = Vec::new();
+    let mut satellite_alterations = SatelliteAlterations::default();
 
     for (record, sdk_point) in nav_file.nav_points().iter().enumerate() {
         let lat = RecordedLatitude::from_degrees(sdk_point.fix.lat.as_degrees());
@@ -432,7 +544,10 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
             .maybe_eph_m(sdk_point.fix.eph_m.map(|v| v as f32))
             .build();
 
-        let satellites = sdk_point.satellites.as_ref().map(convert_satellite_report);
+        let satellites = sdk_point
+            .satellites
+            .as_ref()
+            .map(|report| convert_satellite_report(report, record, &mut satellite_alterations));
         nav_points.push(NavPoint::new(tpv, satellites));
     }
 
@@ -454,10 +569,11 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
         }
     }
 
+    let mut unreadable_event_marker_colors = Vec::new();
     let event_marker_styles = nav_file
         .event_marker_styles()
         .iter()
-        .map(convert_event_marker_style)
+        .map(|style| convert_event_marker_style(style, &mut unreadable_event_marker_colors))
         .collect();
 
     let channels = nav_file.channels().iter().map(convert_channel).collect();
@@ -473,6 +589,10 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
             "event marker(s) with a position out of range",
             &dropped_event_markers,
         ),
+        MERGED_SATELLITE_ROWS
+            .load_warning(&satellite_alterations.satellites_merged_from_several_rows),
+        DISCARDED_SNR_SENTINELS.load_warning(&satellite_alterations.discarded_snr_sentinels),
+        REPLACED_EVENT_MARKER_COLORS.load_warning(&unreadable_event_marker_colors),
     ]
     .into_iter()
     .flatten()
@@ -520,7 +640,14 @@ fn convert_event_marker(m: &EventMarkerPoint) -> Result<EventMarker, DroppedMark
     }
 }
 
-fn convert_event_marker_style(s: &SdkEventMarkerStyle) -> EventMarkerStyle {
+/// Drawn for an event marker whose style holds a color field that is not a
+/// `#RRGGBB` hex value.
+const UNREADABLE_COLOR_REPLACEMENT: MarkerColor = MarkerColor::new(128, 128, 128);
+
+fn convert_event_marker_style(
+    s: &SdkEventMarkerStyle,
+    unreadable_colors: &mut Vec<UnreadableEventMarkerColor>,
+) -> EventMarkerStyle {
     let icon = match s.icon {
         SdkEventMarkerIconChoice::Auto => MarkerIcon::Pin,
         SdkEventMarkerIconChoice::Icon(i) => convert_icon(i),
@@ -529,9 +656,13 @@ fn convert_event_marker_style(s: &SdkEventMarkerStyle) -> EventMarkerStyle {
         SdkEventMarkerColor::Auto => {
             gt_types::markers::event_marker_fallback_color(&s.variant_path)
         }
-        SdkEventMarkerColor::Hex(hex) => {
-            parse_hex_color(hex).unwrap_or(MarkerColor::new(128, 128, 128))
-        }
+        SdkEventMarkerColor::Hex(hex) => parse_hex_color(hex).unwrap_or_else(|| {
+            unreadable_colors.push(UnreadableEventMarkerColor {
+                variant_path: s.variant_path.clone(),
+                written_color: hex.clone(),
+            });
+            UNREADABLE_COLOR_REPLACEMENT
+        }),
     };
     EventMarkerStyle {
         variant_path: s.variant_path.clone(),
@@ -562,32 +693,50 @@ fn convert_constellation(c: SdkConstellation) -> Constellation {
     }
 }
 
-fn convert_satellite_report(report: &SatelliteReport) -> Satellites {
+fn convert_satellite_report(
+    report: &SatelliteReport,
+    record: usize,
+    alterations: &mut SatelliteAlterations,
+) -> Satellites {
     // A sentinel SNR is cleared to `None` here, before the merge, so it never
     // outranks a real reading for the same satellite.
     let measured: Vec<SdkSatellite> = report
         .tracked
         .iter()
-        .map(|row| SdkSatellite {
-            snr: if row.snr_is_no_data_sentinel() {
-                None
+        .map(|row| {
+            if row.snr_is_no_data_sentinel() {
+                alterations
+                    .discarded_snr_sentinels
+                    .push(SatelliteInRecord::from_row(row, record));
+                SdkSatellite { snr: None, ..*row }
             } else {
-                row.snr
-            },
-            ..*row
+                *row
+            }
         })
         .collect();
 
-    let satellites: Vec<Satellite> = merge_rows_repeating_a_satellite(&measured)
+    let merged = merge_rows_repeating_a_satellite(&measured);
+    for MergedSatellite { satellite, rows } in &merged {
+        if *rows > 1 {
+            alterations
+                .satellites_merged_from_several_rows
+                .push(MergedSatelliteRows {
+                    satellite: SatelliteInRecord::from_row(satellite, record),
+                    rows: *rows,
+                });
+        }
+    }
+
+    let satellites: Vec<Satellite> = merged
         .iter()
-        .map(|s: &SdkSatellite| {
+        .map(|MergedSatellite { satellite, .. }| {
             Satellite::new(
-                convert_constellation(s.constellation),
-                s.prn,
-                s.elevation,
-                s.azimuth,
-                s.snr,
-                s.in_fix,
+                convert_constellation(satellite.constellation),
+                satellite.prn,
+                satellite.elevation,
+                satellite.azimuth,
+                satellite.snr,
+                satellite.in_fix,
             )
         })
         .collect();
@@ -595,6 +744,13 @@ fn convert_satellite_report(report: &SatelliteReport) -> Satellites {
     let gps_time = report.gps_time.map(GpsTime::from_utc);
     let sys_time = report.sys_time.map(SysTime::from_utc);
     Satellites::new(gps_time, sys_time, satellites)
+}
+
+/// One satellite of a report, and how many of the report's rows it was merged
+/// from.
+struct MergedSatellite {
+    satellite: SdkSatellite,
+    rows: usize,
 }
 
 /// Merges the rows of a report that repeat a `(constellation, prn)` into one
@@ -606,14 +762,14 @@ fn convert_satellite_report(report: &SatelliteReport) -> Satellites {
 /// `gt_analysis::loss_of_lock` reads when it compares a satellite's SNR between
 /// epochs. Elevation and azimuth are properties of the satellite's geometry,
 /// not of the signal: the merged row keeps the first value a row reported for
-/// each of them.
-fn merge_rows_repeating_a_satellite(tracked: &[SdkSatellite]) -> Vec<SdkSatellite> {
-    let mut merged: Vec<SdkSatellite> = Vec::with_capacity(tracked.len());
+/// each of them. Each result carries how many rows of the report it holds.
+fn merge_rows_repeating_a_satellite(tracked: &[SdkSatellite]) -> Vec<MergedSatellite> {
+    let mut merged: Vec<MergedSatellite> = Vec::with_capacity(tracked.len());
     for row in tracked {
         let same_satellite = merged
             .iter_mut()
-            .find(|s| s.constellation == row.constellation && s.prn == row.prn);
-        if let Some(satellite) = same_satellite {
+            .find(|m| m.satellite.constellation == row.constellation && m.satellite.prn == row.prn);
+        if let Some(MergedSatellite { satellite, rows }) = same_satellite {
             satellite.in_fix |= row.in_fix;
             satellite.elevation = satellite.elevation.or(row.elevation);
             satellite.azimuth = satellite.azimuth.or(row.azimuth);
@@ -621,8 +777,12 @@ fn merge_rows_repeating_a_satellite(tracked: &[SdkSatellite]) -> Vec<SdkSatellit
                 (Some(merged_snr), Some(row_snr)) => Some(merged_snr.max(row_snr)),
                 (reported, None) | (None, reported) => reported,
             };
+            *rows += 1;
         } else {
-            merged.push(*row);
+            merged.push(MergedSatellite {
+                satellite: *row,
+                rows: 1,
+            });
         }
     }
     merged
@@ -1186,7 +1346,7 @@ mod tests {
             .tracked(tracked)
             .build();
 
-        let merged = convert_satellite_report(&report);
+        let merged = convert_satellite_report(&report, 0, &mut SatelliteAlterations::default());
 
         assert_eq!(merged.satellite_count(), 1);
         assert_eq!(merged.fix_count(), 1);
@@ -1216,7 +1376,7 @@ mod tests {
             ])
             .build();
 
-        let merged = convert_satellite_report(&report);
+        let merged = convert_satellite_report(&report, 0, &mut SatelliteAlterations::default());
 
         assert_eq!(merged.satellite_count(), 1);
         assert_eq!(
@@ -1241,7 +1401,7 @@ mod tests {
             ])
             .build();
 
-        let merged = convert_satellite_report(&report);
+        let merged = convert_satellite_report(&report, 0, &mut SatelliteAlterations::default());
 
         let constellations: Vec<Constellation> =
             merged.satellites().map(|s| s.constellation()).collect();
@@ -1411,6 +1571,13 @@ mod tests {
         );
     }
 
+    fn listed_warnings(file: &LoadedFile) -> Vec<(u32, &str, &str)> {
+        file.load_warnings
+            .iter()
+            .map(|w| (w.count, w.issue.as_str(), w.description.as_str()))
+            .collect()
+    }
+
     #[test]
     fn fixes_with_a_coordinate_out_of_range_load_with_a_warning_naming_them() {
         let file = load_bytes(
@@ -1422,13 +1589,8 @@ mod tests {
         let track = file.tracks.first().expect("the ten fixes form one track");
         assert_eq!(track.points.len(), 10);
         assert_eq!(track.metadata.invalid_position_count, 2);
-        let warnings: Vec<(u32, &str, &str)> = file
-            .load_warnings
-            .iter()
-            .map(|w| (w.count, w.issue.as_str(), w.description.as_str()))
-            .collect();
         assert_eq!(
-            warnings,
+            listed_warnings(&file),
             vec![
                 (
                     1,
@@ -1500,6 +1662,147 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "no fix between records 0 and 2 has a latitude and longitude in range"
+        );
+    }
+
+    /// An SNR inside the ≈ 99 dB-Hz band the firmware writes for "no
+    /// measurement".
+    const SENTINEL_SNR_DB: f32 = 99.0;
+
+    /// A color field a file can hold that is not a `#RRGGBB` hex value.
+    const COLOR_THAT_IS_NOT_HEX: &str = "#ZZZZZZ";
+
+    fn gps_row(prn: u32, snr_db: f32, in_fix: bool) -> SdkSat {
+        SdkSat::builder()
+            .constellation(SdkConst::Gps)
+            .prn(prn)
+            .elevation(REPEATED_ELEVATION_DEG)
+            .azimuth(90.0f32)
+            .snr(snr_db)
+            .in_fix(in_fix)
+            .build()
+    }
+
+    /// One fix per report, a second apart, each fix carrying the rows of its
+    /// report.
+    fn recording_with_satellite_reports(reports: Vec<Vec<SdkSat>>) -> Vec<u8> {
+        let mut recorder = NavFileBuilder::new().open();
+        for (second, tracked) in (0i64..).zip(reports) {
+            let time = base() + Duration::seconds(second);
+            recorder.add_nav_fix(minimal_fix(time));
+            recorder.add_satellite_report(
+                SatelliteReport::builder()
+                    .gps_time(time)
+                    .tracked(tracked)
+                    .build(),
+            );
+        }
+        let mut bytes = Vec::new();
+        recorder.finish().unwrap().write(&mut bytes).unwrap();
+        bytes
+    }
+
+    /// The file's own warning about the repeated rows and the loader's warning
+    /// about merging them are both raised: one says the file is malformed, the
+    /// other says what the app made of it.
+    #[test]
+    fn satellites_merged_from_several_rows_load_with_a_warning_naming_them() {
+        let bytes = recording_with_satellite_reports(vec![
+            vec![
+                gps_row(7, 45.0, true),
+                gps_row(7, 30.0, true),
+                gps_row(1, 40.0, true),
+            ],
+            vec![gps_row(1, 40.0, true)],
+            vec![
+                gps_row(7, 45.0, true),
+                gps_row(7, 30.0, true),
+                gps_row(7, 25.0, false),
+            ],
+        ]);
+
+        let file = load_bytes(&bytes, "repeated_rows.gtd".to_owned()).unwrap();
+
+        assert_eq!(
+            listed_warnings(&file),
+            vec![
+                (
+                    2,
+                    "satellite(s) merged from several rows of one report",
+                    "record 0: G07 on 2 rows, record 2: G07 on 3 rows. Every satellite \
+                     count shown is one per satellite, not one per row: the merged \
+                     satellite takes the highest SNR of its rows, the first elevation and \
+                     azimuth reported, and is in the fix when any row was."
+                ),
+                (
+                    2,
+                    "satellite report(s) with duplicate (constellation, PRN) pairs",
+                    "each satellite should appear at most once per report"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn sentinel_snrs_load_with_a_warning_naming_the_satellites_read_as_measureless() {
+        let bytes = recording_with_satellite_reports(vec![
+            vec![gps_row(1, SENTINEL_SNR_DB, true), gps_row(7, 40.0, true)],
+            vec![gps_row(1, SENTINEL_SNR_DB, true)],
+            vec![gps_row(7, 40.0, true)],
+        ]);
+
+        let file = load_bytes(&bytes, "sentinel_snr.gtd".to_owned()).unwrap();
+
+        assert_eq!(
+            listed_warnings(&file),
+            vec![
+                (
+                    2,
+                    "satellite SNR reading(s) discarded as the no-data sentinel",
+                    "record 0: G01, record 1: G01. Those satellites are drawn and listed \
+                     with no signal strength: an SNR of ≈ 99 dB-Hz is the firmware sentinel \
+                     for an unavailable measurement, not a reading."
+                ),
+                (
+                    2,
+                    "satellite(s) with SNR ≈ 99 dB-Hz",
+                    "common firmware sentinel for unavailable signal strength; omit \
+                    the SNR field when no measurement is available"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_event_marker_color_that_is_not_hex_loads_as_gray_with_a_warning_naming_the_variant() {
+        let mut recorder = NavFileBuilder::new().open();
+        for second in 0..3i64 {
+            recorder.add_nav_fix(minimal_fix(base() + Duration::seconds(second)));
+        }
+        recorder.add_event_marker_style(SdkEventMarkerStyle {
+            variant_path: "power/boot".to_owned(),
+            icon: SdkEventMarkerIconChoice::Auto,
+            color: SdkEventMarkerColor::hex(COLOR_THAT_IS_NOT_HEX),
+        });
+        let mut bytes = Vec::new();
+        recorder.finish().unwrap().write(&mut bytes).unwrap();
+
+        let file = load_bytes(&bytes, "marker_color.gtd".to_owned()).unwrap();
+
+        assert_eq!(
+            file.event_marker_styles
+                .get("power/boot")
+                .map(|style| style.color),
+            Some(MarkerColor::new(128, 128, 128))
+        );
+        assert_eq!(
+            listed_warnings(&file),
+            vec![(
+                1,
+                "event marker color(s) replaced with gray",
+                "\"power/boot\": \"#ZZZZZZ\". Those markers are drawn mid-gray: the style \
+                 holds a color that is not a #RRGGBB hex value."
+            )]
         );
     }
 }
