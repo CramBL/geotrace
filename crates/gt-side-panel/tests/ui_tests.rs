@@ -891,6 +891,38 @@ fn snapshot_file_with_warnings() {
     harness.snapshot("side_panel_file_with_warnings");
 }
 
+/// A track holding fixes with a coordinate out of range, and one of a
+/// recording that has no valid position at all, each marked with the warning
+/// glyph.
+#[test]
+fn snapshot_tracks_with_coordinates_out_of_range() {
+    let mut files = LoadedFiles::new();
+    files.push(
+        build_file(
+            "out_of_range.gtd",
+            &gt_test_utils::nav_points_with_a_latitude_out_of_range(5, PointIdx::new(2)),
+            gt_track_builder::FileMeta::default(),
+            vec![],
+        ),
+        FileHistory::None,
+    );
+    files.push(
+        build_file(
+            "no_position.gtd",
+            &gt_test_utils::nav_points_without_a_valid_position(4),
+            gt_track_builder::FileMeta::default(),
+            vec![],
+        ),
+        FileHistory::None,
+    );
+    let mut state = make_state_from_files(files);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    state.tree.toggle_expand_file(FileIdx::new(1));
+    let mut harness = make_harness(state);
+    harness.run();
+    harness.snapshot("side_panel_coordinates_out_of_range");
+}
+
 #[test]
 fn snapshot_track_channels() {
     // A stationary track (starts 2026-01-01T12:00:00Z, 1 pt/s) plus two channels

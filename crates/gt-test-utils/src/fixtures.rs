@@ -11,7 +11,7 @@ use uom::si::velocity::kilometer_per_hour;
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::{
     CustomMarker, GeneratedMarkerKind, GpsTime, Latitude, Longitude, MarkerIcon, NavPoint,
-    RecordedLatitude, RecordedLongitude, TimePositionVelocity,
+    PointIdx, RecordedLatitude, RecordedLongitude, TimePositionVelocity,
 };
 
 /// Track metadata with every count zeroed, at the epoch, for tests that fill
@@ -252,6 +252,40 @@ pub fn nav_points_without_a_valid_position(count: usize) -> Vec<NavPoint> {
                 .lat(RecordedLatitude::from_degrees(91.0))
                 .lon(RecordedLongitude::from_degrees(12.5638))
                 .heading(Angle::new::<degree>(0.0))
+                .build();
+            NavPoint::new(tpv, None)
+        })
+        .collect()
+}
+
+/// `count` fixes one second apart from 2026-01-01 12:00:00 UTC, walking
+/// north-east from 55°N 12°E, with the fix at `out_of_range` carrying a
+/// latitude of 91° instead of its own.
+#[expect(
+    clippy::unwrap_used,
+    reason = "Test data generation with hardcoded values"
+)]
+pub fn nav_points_with_a_latitude_out_of_range(
+    count: usize,
+    out_of_range: PointIdx,
+) -> Vec<NavPoint> {
+    let start = NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+        NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+    )
+    .and_utc();
+    (0..count)
+        .map(|i| {
+            let walked = i as f64 * 0.001;
+            let tpv = TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(start + Duration::seconds(i as i64)))
+                .lat(if i == out_of_range.as_usize() {
+                    RecordedLatitude::from_degrees(91.0)
+                } else {
+                    RecordedLatitude::from_degrees(55.0 + walked)
+                })
+                .lon(Longitude::new(12.0 + walked))
+                .heading(Angle::new::<degree>(45.0))
                 .build();
             NavPoint::new(tpv, None)
         })

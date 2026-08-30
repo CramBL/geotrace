@@ -6,7 +6,7 @@ use super::*;
 use egui::Color32;
 use gt_types::MercPoint;
 use gt_types::NavPoint;
-use gt_types::coordinates::{Latitude, Longitude};
+use gt_types::coordinates::{Latitude, Longitude, RecordedLatitude};
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::GpsTime;
 use gt_types::tpv::TimePositionVelocity;
@@ -483,6 +483,12 @@ fn track_with_points(points: Vec<NavPoint>) -> LoadedTrack {
     }
 }
 
+/// The fix at `index` of `track` with the position the track builder placed
+/// it at, the way the map's hover reaches it.
+fn placed_point(track: &LoadedTrack, index: usize) -> Option<gt_types::PlacedPoint<'_>> {
+    track.placed_points()?.get(index)
+}
+
 /// A nav point at a fixed time plus `secs`, so hover-badge snapshots
 /// (which render the time row) stay deterministic.
 fn point_at(secs: i64, satellites: Option<Satellites>) -> NavPoint {
@@ -555,7 +561,7 @@ fn hover_badge_own_report(#[case] name: &str, #[case] dark_mode: bool) {
         .theme(dark_mode)
         .ui(move |ui| {
             let sky = SkySection::resolve(&track, PointIdx::new(0));
-            if let Some(point) = track.points.first() {
+            if let Some(point) = placed_point(&track, 0) {
                 show_hover_table(ui, point, &sky, None);
             }
         });
@@ -581,11 +587,43 @@ fn hover_badge_report_states(
         .theme(true)
         .ui(move |ui| {
             let sky = SkySection::resolve(&track, PointIdx::new(query));
-            if let Some(point) = track.points.get(query) {
+            if let Some(point) = placed_point(&track, query) {
                 show_hover_table(ui, point, &sky, None);
             }
         });
     harness.snapshot(name);
+}
+
+/// A fix the receiver wrote a latitude of 91° for, with the heading it
+/// reported for it if any.
+fn fix_with_a_latitude_out_of_range(heading_degrees: Option<f64>) -> NavPoint {
+    let tpv = TimePositionVelocity::builder()
+        .time(GpsTime::from_utc(chrono::Utc::now()))
+        .lat(RecordedLatitude::from_degrees(91.0))
+        .lon(Longitude::new(-0.1))
+        .maybe_heading(heading_degrees.map(Angle::new::<degree>))
+        .build();
+    NavPoint::new(tpv, None)
+}
+
+/// The hover of a fix the receiver wrote a latitude of 91° for: the recorded
+/// value stands as written and marked, above the position the map draws it at.
+#[test]
+fn hover_badge_coordinate_out_of_range() {
+    let track = track_with_points(gt_test_utils::nav_points_with_a_latitude_out_of_range(
+        3,
+        PointIdx::new(1),
+    ));
+    let mut harness = crate::test_harness::builder()
+        .size(egui::vec2(430.0, 260.0))
+        .theme(true)
+        .ui(move |ui| {
+            let sky = SkySection::resolve(&track, PointIdx::new(1));
+            if let Some(point) = placed_point(&track, 1) {
+                show_hover_table(ui, point, &sky, None);
+            }
+        });
+    harness.snapshot("hover_badge_coordinate_out_of_range");
 }
 
 /// The recording row names the file a fix came from, and is absent while
@@ -603,7 +641,7 @@ fn hover_badge_recording_row(
         .theme(true)
         .ui(move |ui| {
             let sky = SkySection::resolve(&track, PointIdx::new(0));
-            if let Some(point) = track.points.first() {
+            if let Some(point) = placed_point(&track, 0) {
                 show_hover_table(ui, point, &sky, recording_name);
             }
         });
@@ -720,12 +758,34 @@ fn heading_with_fix_lost_is_ghost() {
     assert!(point.is_ghost_fix());
 }
 
-/// Ghost chevron points east when the surrounding fixes move eastward.
+#[rstest]
+#[case::measured(make_point(None), None)]
+#[case::without_a_heading(
+    NavPoint::new(make_tpv(51.5, -0.1, None), None),
+    Some(ChevronFix::DeadReckoned)
+)]
+#[case::with_nothing_in_fix(make_point(Some(sats_with_fix(0))), Some(ChevronFix::DeadReckoned))]
+#[case::latitude_out_of_range(
+    fix_with_a_latitude_out_of_range(Some(90.0)),
+    Some(ChevronFix::CoordinateOutOfRange)
+)]
+#[case::out_of_range_without_a_heading(
+    fix_with_a_latitude_out_of_range(None),
+    Some(ChevronFix::CoordinateOutOfRange)
+)]
+fn a_fix_the_receiver_did_not_measure_is_drawn_as_a_chevron(
+    #[case] fix: NavPoint,
+    #[case] expected: Option<ChevronFix>,
+) {
+    assert_eq!(ChevronFix::for_fix(&fix), expected);
+}
+
+/// The chevron points east when the surrounding fixes move eastward.
 #[test]
-fn ghost_direction_points_east_for_eastward_movement() {
+fn chevron_direction_points_east_for_eastward_movement() {
     let prev = MercPoint { x: 0.50, y: 0.50 };
     let next = MercPoint { x: 0.60, y: 0.50 };
-    let dir = ghost_direction(prev, next);
+    let dir = chevron_direction(prev, next);
     assert!(
         dir.x > 0.99,
         "eastward movement → large positive x; got {dir:?}"
@@ -736,13 +796,13 @@ fn ghost_direction_points_east_for_eastward_movement() {
     );
 }
 
-/// Ghost chevron points south when the surrounding fixes move southward.
+/// The chevron points south when the surrounding fixes move southward.
 /// Mercator y increases southward, so this also tests that no Y-flip is applied.
 #[test]
-fn ghost_direction_points_south_for_southward_movement() {
+fn chevron_direction_points_south_for_southward_movement() {
     let prev = MercPoint { x: 0.50, y: 0.40 };
     let next = MercPoint { x: 0.50, y: 0.60 };
-    let dir = ghost_direction(prev, next);
+    let dir = chevron_direction(prev, next);
     assert!(
         dir.y > 0.99,
         "southward movement → large positive y; got {dir:?}"
@@ -755,9 +815,9 @@ fn ghost_direction_points_south_for_southward_movement() {
 
 /// When prev and next coincide (isolated point) the direction falls back to DOWN.
 #[test]
-fn ghost_direction_falls_back_when_neighbours_coincide() {
+fn chevron_direction_falls_back_when_neighbours_coincide() {
     let pt = MercPoint { x: 0.5, y: 0.5 };
-    let dir = ghost_direction(pt, pt);
+    let dir = chevron_direction(pt, pt);
     assert_eq!(
         dir,
         Vec2::DOWN,

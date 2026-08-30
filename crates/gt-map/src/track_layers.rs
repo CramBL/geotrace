@@ -22,8 +22,8 @@ use crate::recording_labels::RecordingLabels;
 use crate::sat_labels::{self, LabelSelection};
 use crate::sky_glyph_renderer::{self, GlyphSelection};
 use crate::tpv_renderer::{
-    self, QUALITY_LINE_WIDTH, TpvDrawStyle, TrackIconFade, bucket_alpha, fix_icon_alpha,
-    line_alpha_bucket, quality_line_color, split_spans_by,
+    self, ChevronFix, QUALITY_LINE_WIDTH, TpvDrawStyle, TrackIconFade, bucket_alpha,
+    fix_icon_alpha, line_alpha_bucket, quality_line_color, split_spans_by,
 };
 use crate::track_renderer::{
     self, blink_stroke, draw_track_with_ghost, skip_trackline, track_stroke,
@@ -74,9 +74,9 @@ struct TrackGeometry<'a> {
     paint_trackline: bool,
     need_blink: bool,
     path: VisiblePath<LinePointKey>,
-    /// Original indices of the LOD level's ghost fixes (hollow chevrons),
-    /// collected during the geometry walk.
-    ghost_points: Vec<usize>,
+    /// Original indices of the LOD level's fixes drawn as hollow chevrons,
+    /// each paired with why it is one, collected during the geometry walk.
+    chevron_points: Vec<(usize, ChevronFix)>,
 }
 
 impl TrackGeometry<'_> {
@@ -251,7 +251,7 @@ impl Plugin for TrackLayers<'_> {
 impl<'a> TrackLayers<'a> {
     /// The single geometry walk for every visible track: LOD selection,
     /// time filter, projection, culling, and the per-point styling key,
-    /// plus the ghost-fix indices for the chevron pass. The quality color
+    /// plus the indices for the chevron pass. The quality color
     /// is keyed even when only the trackline draws - it is a cheap match,
     /// and constant key components never split spans.
     fn prepare_track_geometries(
@@ -310,7 +310,7 @@ impl<'a> TrackLayers<'a> {
                 }
 
                 let track_ref = TrackRef::new(fi, ti);
-                let mut ghost_points: Vec<usize> = Vec::new();
+                let mut chevron_points: Vec<(usize, ChevronFix)> = Vec::new();
                 let fade = entry.fade;
                 let hover_match = self
                     .highlight
@@ -325,8 +325,8 @@ impl<'a> TrackLayers<'a> {
                     })
                     .map(|(pi, p)| {
                         let screen_pos = transform.to_screen(p.merc());
-                        if paint_icons && p.fix.is_ghost_fix() {
-                            ghost_points.push(pi);
+                        if paint_icons && let Some(chevron) = ChevronFix::for_fix(p.fix) {
+                            chevron_points.push((pi, chevron));
                         }
                         let bucket = match fade {
                             None | Some(TrackIconFade::AllVisible) => 0,
@@ -365,7 +365,7 @@ impl<'a> TrackLayers<'a> {
                     paint_trackline,
                     need_blink,
                     path,
-                    ghost_points,
+                    chevron_points,
                 });
             }
         }
@@ -613,20 +613,20 @@ impl<'a> TrackLayers<'a> {
                 let tpv = self.tpv_by_track.get(&track_ref);
                 // In keep/hide, drop the icons of hidden points too, so the
                 // arrows match the (broken) line.
-                let (filtered_tpv, filtered_ghost);
-                let (tpv, ghost) = match self.query_matches {
+                let (filtered_tpv, filtered_chevrons);
+                let (tpv, chevrons) = match self.query_matches {
                     Some(matches) if !matches.hidden_ranges(track_ref).is_empty() => {
                         let shown = |pi: &usize| !matches.is_hidden(track_ref, *pi);
                         filtered_tpv = tpv.map(|v| v.iter().copied().filter(shown).collect());
-                        filtered_ghost = geo
-                            .ghost_points
+                        filtered_chevrons = geo
+                            .chevron_points
                             .iter()
                             .copied()
-                            .filter(shown)
+                            .filter(|(pi, _)| shown(pi))
                             .collect::<Vec<_>>();
-                        (filtered_tpv.as_ref(), filtered_ghost.as_slice())
+                        (filtered_tpv.as_ref(), filtered_chevrons.as_slice())
                     }
-                    _ => (tpv, geo.ghost_points.as_slice()),
+                    _ => (tpv, geo.chevron_points.as_slice()),
                 };
                 tpv_renderer::draw_track_icons(
                     ui,
@@ -635,7 +635,7 @@ impl<'a> TrackLayers<'a> {
                     geo.ti,
                     geo.track,
                     tpv,
-                    ghost,
+                    chevrons,
                     style,
                     fade,
                     transform,
