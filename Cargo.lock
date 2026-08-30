@@ -2785,6 +2785,7 @@ dependencies = [
  "chrono",
  "criterion",
  "gt-fmt",
+ "gt-geo-math",
  "gt-test-utils",
  "gt-types",
  "log",
