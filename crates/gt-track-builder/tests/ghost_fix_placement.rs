@@ -1,17 +1,19 @@
 //! Where the builder draws a ghost fix: the position it interpolates in time
-//! between the measured fixes around it.
+//! between the measured fixes around it, and the entry the map's spatial index
+//! holds for it there.
 
 use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, Utc};
 use gt_track_builder::{FileMeta, SegmentationConfig};
+use gt_types::DataCategory;
 use gt_types::coordinates::{Latitude, Longitude};
-use gt_types::mercator;
+use gt_types::mercator::{self, MercPoint};
 use gt_types::nav_point::NavPoint;
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::GpsTime;
 use gt_types::tpv::TimePositionVelocity;
-use gt_types::track::FileSource;
+use gt_types::track::{FileSource, LoadedFile};
 use uom::si::angle::degree;
 use uom::si::f64::Angle;
 
@@ -57,9 +59,8 @@ fn ghost_fix(millis: i64, lon_degrees: f64) -> NavPoint {
     NavPoint::new(tpv, None)
 }
 
-/// Longitude in degrees where the map draws the ghost fix of `points`.
-fn drawn_ghost_lon_degrees(points: &[NavPoint]) -> Option<f64> {
-    let file = gt_track_builder::build_loaded_file(
+fn build_ghost_file(points: &[NavPoint]) -> LoadedFile {
+    gt_track_builder::build_loaded_file(
         "ghosts.gtd".to_owned(),
         points,
         &[],
@@ -70,12 +71,21 @@ fn drawn_ghost_lon_degrees(points: &[NavPoint]) -> Option<f64> {
         FileSource::GtdPath(PathBuf::from("ghosts.gtd")),
         FileMeta::default(),
         vec![],
-    );
+    )
+}
+
+/// Where the map draws the ghost fix of `points`, in normalized Web Mercator.
+fn drawn_ghost_merc(file: &LoadedFile) -> Option<MercPoint> {
     let ghost = file
         .tracks
         .first()
         .and_then(|track| track.placed_points()?.get(GHOST_INDEX))?;
-    Some(mercator::denormalize(ghost.merc()).1)
+    Some(ghost.merc())
+}
+
+/// Longitude in degrees where the map draws the ghost fix of `points`.
+fn drawn_ghost_lon_degrees(points: &[NavPoint]) -> Option<f64> {
+    Some(mercator::denormalize(drawn_ghost_merc(&build_ghost_file(points))?).1)
 }
 
 /// The ghost fix sits at t = 0.5 s between measured fixes at t = 0.0 s (lon 0)
@@ -131,4 +141,30 @@ fn ghost_fix_between_fixes_across_the_antimeridian_stays_between_them() {
         lon.abs() >= 179.9,
         "ghost fix drawn at lon {lon}, expected it between 179.9 and -179.9 across the date line"
     );
+}
+
+/// A ghost fix is drawn where the builder placed it, so the map must find it
+/// there: without an index entry a user can point at the chevron and get
+/// neither a tooltip nor a selection.
+#[test]
+fn a_ghost_fix_is_indexed_at_the_position_it_is_drawn_at() {
+    let points = vec![
+        measured_fix(0, 0.0),
+        ghost_fix(500, 9.0),
+        measured_fix(1000, 1.0),
+    ];
+    let files = vec![build_ghost_file(&points)];
+    let ghost_merc = files
+        .first()
+        .and_then(drawn_ghost_merc)
+        .expect("the ghost fix is in the file's only track");
+
+    let tree = gt_track_builder::build_global_tree(&files);
+    let nearest = tree
+        .nearest_neighbor([ghost_merc.x, ghost_merc.y])
+        .expect("the index holds the track's fixes");
+
+    assert_eq!(nearest.category, DataCategory::Tpv);
+    assert_eq!(nearest.point_index.as_usize(), GHOST_INDEX);
+    assert_eq!(nearest.merc, ghost_merc);
 }
