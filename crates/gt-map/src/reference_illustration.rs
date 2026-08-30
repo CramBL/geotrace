@@ -8,7 +8,7 @@
 //! write the assets across that boundary.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use chrono::{DateTime, NaiveDate, Utc};
 use egui::{Mesh, Rect, Shape, Stroke};
@@ -130,7 +130,7 @@ fn captured_interference_day() -> JamDataset {
 }
 
 fn asset_path(relative: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join(relative)
+    gt_test_utils::cargo_manifest_dir().join(relative)
 }
 
 /// Writes the illustration the TEC reference material shows. Ignored so it

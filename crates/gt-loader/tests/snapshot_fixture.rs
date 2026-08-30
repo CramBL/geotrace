@@ -32,10 +32,7 @@
     reason = "test fixture setup is inherently complex"
 )]
 
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::PathBuf};
 
 use geotrace_sdk::{
     Angle, Annotation, Constellation as SdkConst, DateTime, Duration, MarkerIcon as SdkIcon,
@@ -48,7 +45,7 @@ use uom::si::length::kilometer;
 
 fn fixture_path() -> PathBuf {
     // The workspace root is two levels up from crates/gt-loader.
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest = gt_test_utils::cargo_manifest_dir();
     let workspace = manifest
         .parent()
         .expect("crates/ dir")

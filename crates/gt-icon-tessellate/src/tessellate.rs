@@ -478,6 +478,7 @@ fn normalize(mesh: &mut IconMeshTemplate, extent_x_px: f32, extent_y_px: f32) {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
     use std::fmt::Write as _;
     use std::fs;
     use std::path::PathBuf;
@@ -511,7 +512,8 @@ mod tests {
     ];
 
     fn icons_dir() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons")
+        let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR");
+        PathBuf::from(manifest_dir).join("../../assets/icons")
     }
 
     fn icon_svg(name: &str) -> Vec<u8> {
