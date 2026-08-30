@@ -1788,6 +1788,83 @@ fn snap_sticky_point_window() {
     harness.snapshot_loose("sticky_point_window");
 }
 
+/// Wheel points the scroll test sends over the sky column: several rows of the
+/// fix metrics.
+const POINT_WINDOW_WHEEL_POINTS: f32 = 200.0;
+
+/// The point window's body has no scroll of its own: the wheel over the sky
+/// column moves that column inside its own scroll area, and the title bar
+/// renders the same before and after. Both layouts of the body are covered,
+/// the plot beside the satellite tables and the plot stacked above them.
+#[rstest::rstest]
+#[case::side_by_side(egui::vec2(700.0, 420.0))]
+#[case::stacked(egui::vec2(360.0, 420.0))]
+fn scrolling_the_point_window_leaves_the_title_bar_untouched(#[case] viewport: egui::Vec2) {
+    use gt_test_utils::HarnessInteraction as _;
+    use gt_ui_types::TrackDataVisibility;
+
+    let files = vec![make_snapshot_file()];
+    let visibility = TrackDataVisibility::from_loaded(&files);
+    let clicked = DataPointRef {
+        track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+        category: DataCategory::Tpv,
+        point_index: PointIdx::new(50),
+    };
+
+    let mut harness = crate::test_harness::builder().size(viewport).ui_state(
+        move |ui, map: &mut Option<NavMap>| {
+            let map =
+                map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
+            let mut state = DrawState {
+                highlight: MapHighlight {
+                    sticky: Some(clicked),
+                    ..MapHighlight::default()
+                },
+                ..DrawState::default()
+            };
+            map.draw(ui, state.context(&files, &visibility));
+        },
+        None,
+    );
+    harness.inner.run_steps(8);
+
+    let window = harness
+        .inner
+        .ctx
+        .memory(|memory| memory.area_rect(egui::Id::new(("sticky_popup", clicked))))
+        .expect("the point window is shown");
+    let sky_before = harness.inner.get_by_label("Sky").rect();
+    // From the window's top edge to halfway to the body's first row, clear of
+    // the fade egui paints at the scrolled edge of a scroll area.
+    let title_bar = egui::Rect::from_min_max(
+        window.min,
+        egui::pos2(window.max.x, (window.top() + sky_before.top()) / 2.0),
+    );
+    let before = harness.inner.render().expect("the harness renders a frame");
+
+    harness.inner.scroll_wheel_at(
+        egui::pos2(sky_before.center().x, window.center().y),
+        -POINT_WINDOW_WHEEL_POINTS,
+        4,
+    );
+
+    let sky_after = harness.inner.get_by_label("Sky").rect();
+    assert!(
+        sky_after.top() < sky_before.top(),
+        "the wheel must scroll the sky column, or this proves nothing"
+    );
+    let after = harness.inner.render().expect("the harness renders a frame");
+    assert!(
+        !gt_test_utils::snapshot_harness::pixels_differ(
+            &before,
+            &after,
+            title_bar,
+            harness.inner.ctx.pixels_per_point()
+        ),
+        "the scrolled content must stay below the title bar"
+    );
+}
+
 /// The point window's open-trails button has to travel the whole way out
 /// of `draw`: through the window body, into a [`SkyTrailsRequest`] carrying
 /// the clicked point's instant, and out as a [`MapAction`]. The

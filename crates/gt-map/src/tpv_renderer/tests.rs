@@ -13,6 +13,12 @@ use gt_types::tpv::TimePositionVelocity;
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Length};
 
+/// Canvas the sticky-content snapshots render into: as wide as the real point
+/// window, where the plot sits beside the satellite tables, and tall enough to
+/// hold the whole plot column. A column clipped at its scroll edge leaves a
+/// part-drawn row that each GPU backend antialiases differently.
+const STICKY_CONTENT_CANVAS: egui::Vec2 = egui::vec2(600.0, 500.0);
+
 fn make_point(satellites: Option<Satellites>) -> NavPoint {
     let tpv = TimePositionVelocity::builder()
         .time(GpsTime::from_utc(chrono::Utc::now()))
@@ -428,12 +434,10 @@ fn the_gap_between_satellite_rows_keeps_the_highlight() {
 #[case::light("satellite_badge_light", false)]
 fn satellite_badge(#[case] name: &str, #[case] dark_mode: bool) {
     let point = make_point(Some(sats_multi_constellation()));
-    // Sized like the real point window: the plot sits beside the satellite
-    // tables, so this is wide and short rather than narrow and tall.
     let mut folds = gt_ui_types::PointWindowFolds::default();
     let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
-        .size(egui::vec2(600.0, 440.0))
+        .size(STICKY_CONTENT_CANVAS)
         .theme(dark_mode)
         .ui(move |ui| {
             let _opened =
@@ -482,7 +486,7 @@ fn hovering_a_prn_row_shows_the_affordance_band() {
     let mut folds = gt_ui_types::PointWindowFolds::default();
     let placement = placement_of(&point);
     let mut harness = crate::test_harness::builder()
-        .size(egui::vec2(600.0, 440.0))
+        .size(STICKY_CONTENT_CANVAS)
         .theme(true)
         .ui(move |ui| {
             let _opened =
