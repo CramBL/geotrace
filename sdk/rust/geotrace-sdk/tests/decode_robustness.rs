@@ -10,8 +10,8 @@ use geotrace_sdk::{Angle, DateTime, NavFile, NavFileBuilder, NavFix, Utc};
 
 /// The committed gold fixture, the same seed the cargo-fuzz workflow uses.
 fn gold_bytes() -> std::io::Result<Vec<u8>> {
-    let path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/gold_dataset/gold.gtd");
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").map_err(std::io::Error::other)?;
+    let path = Path::new(&manifest_dir).join("../../../tests/fixtures/gold_dataset/gold.gtd");
     std::fs::read(path)
 }
 

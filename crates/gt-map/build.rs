@@ -18,7 +18,7 @@ use gt_icon_tessellate::{IconTessellation, StrokeWidthUnit};
 const PHYSICAL_PIXEL_STROKE_STEMS: [&str; 1] = ["nav_arrow"];
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let icons_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons");
+    let icons_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?).join("../../assets/icons");
     // A directory path makes cargo scan it recursively, so edits, additions,
     // and removals all retrigger the bake.
     println!("cargo::rerun-if-changed={}", icons_dir.display());

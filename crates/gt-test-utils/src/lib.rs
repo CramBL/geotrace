@@ -1,3 +1,4 @@
+pub mod cargo_env;
 #[cfg(feature = "archive")]
 pub mod day_archive;
 pub mod fixtures;
@@ -14,6 +15,7 @@ pub mod transport;
 #[cfg(feature = "snapshot")]
 pub mod window_fit;
 
+pub use cargo_env::cargo_manifest_dir;
 #[cfg(feature = "archive")]
 pub use day_archive::{ColumnName, GroupPath};
 pub use fixtures::{

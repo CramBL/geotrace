@@ -10,12 +10,18 @@
 //! there. When the per-language files are absent (a plain `cargo test` checkout)
 //! the missing ones are skipped.
 
+use std::env;
 use std::path::{Path, PathBuf};
 
 use geotrace_sdk::NavFile;
 
+#[expect(
+    clippy::expect_used,
+    reason = "cargo sets CARGO_MANIFEST_DIR for the test it runs"
+)]
 fn gold_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/gold_dataset")
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR");
+    Path::new(&manifest_dir).join("../../../tests/fixtures/gold_dataset")
 }
 
 #[test]

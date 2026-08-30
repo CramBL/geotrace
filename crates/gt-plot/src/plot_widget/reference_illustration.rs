@@ -5,7 +5,6 @@
 //! this crate projects it, as `gt-map` projects the map illustrations.
 //! `just generate-reference-tec-plot` runs the ignored test below.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDate, NaiveTime, TimeDelta, Utc};
@@ -198,7 +197,7 @@ fn generate_tec_reference_plot() {
         });
     harness.run();
     let rendered = harness.inner.render().expect("the frame renders");
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ASSET_PATH);
+    let path = gt_test_utils::cargo_manifest_dir().join(ASSET_PATH);
     rendered.save(&path).expect("the asset is written");
     println!("wrote {}", path.display());
 }
