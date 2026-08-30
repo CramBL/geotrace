@@ -43,7 +43,8 @@ fn file_err(e: geotrace_sdk::Error) -> PyErr {
         | Error::UnknownConstellationName { .. }
         | Error::UnknownMarkerIcon { .. }
         | Error::ParseError { .. }
-        | Error::UnwritableField { .. } => PyValueError::new_err(msg),
+        | Error::UnwritableField { .. }
+        | Error::UnreadableField { .. } => PyValueError::new_err(msg),
     }
 }
 

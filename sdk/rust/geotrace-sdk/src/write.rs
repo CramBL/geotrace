@@ -1,7 +1,7 @@
 use hdf5_pure::{AttrValue, FileBuilder};
 
 use crate::builder::{datetime_to_micros, opt_datetime_to_u64};
-use crate::error::Error;
+use crate::error::{Error, FieldLocation};
 use crate::fixed_width_string::{
     AnnotationField, ColorHexField, FixedWidthString, FixedWidthStringError, IconNameField,
     VariantPathField,
@@ -452,12 +452,6 @@ fn write_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> 
     fb.add_group(grp.finish());
 
     Ok(())
-}
-
-#[derive(Clone, Copy)]
-struct FieldLocation {
-    group: &'static str,
-    dataset: &'static str,
 }
 
 fn encode_field_row<const ROW_BYTES: usize>(

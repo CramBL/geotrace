@@ -17,6 +17,7 @@ the app).
 
 - The C gold example rejects a date or time number too large for an `int` instead of reading it with `sscanf`, which cannot report the overflow.
 - Fixed the writer cutting an event marker variant path, annotation, icon name, or color hex mid-character to fit its field: writing a file that holds such a value now fails with an error naming the field, in all four SDKs.
+- Fixed the reader replacing the invalid bytes of a marker label, event marker variant path or annotation, or event marker style icon name or color hex with U+FFFD: reading a file whose field is not UTF-8 now fails with an error naming the group and dataset, in all four SDKs.
 
 ## [0.5.1] - 2026-08-05
 

@@ -59,6 +59,15 @@ impl<const ROW_BYTES: usize> FixedWidthString<ROW_BYTES> {
         self.0.is_empty()
     }
 
+    /// `None` where the field is empty, the `.gtd` encoding of an absent value.
+    pub(crate) fn into_string_unless_empty(self) -> Option<String> {
+        if self.0.is_empty() {
+            None
+        } else {
+            Some(self.0)
+        }
+    }
+
     pub fn encode_row(&self) -> [u8; ROW_BYTES] {
         let mut row = [0u8; ROW_BYTES];
         if let Some(destination) = row.get_mut(..self.0.len()) {

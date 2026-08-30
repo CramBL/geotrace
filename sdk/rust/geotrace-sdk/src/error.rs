@@ -213,6 +213,21 @@ pub enum Error {
         dataset: &'static str,
         source: FixedWidthStringError,
     },
+
+    #[error("{group}/{dataset}: {source}")]
+    UnreadableField {
+        group: &'static str,
+        dataset: &'static str,
+        source: FixedWidthStringError,
+    },
+}
+
+/// The group and dataset of one fixed-width string field, named by
+/// [`Error::UnwritableField`] and [`Error::UnreadableField`].
+#[derive(Clone, Copy)]
+pub(crate) struct FieldLocation {
+    pub(crate) group: &'static str,
+    pub(crate) dataset: &'static str,
 }
 
 impl From<hdf5_pure::Error> for Error {
