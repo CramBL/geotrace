@@ -2551,7 +2551,6 @@ dependencies = [
 name = "gt-geo-math"
 version = "0.13.0"
 dependencies = [
- "chrono",
  "geo",
  "geo-types",
  "gt-types",
@@ -3074,6 +3073,7 @@ dependencies = [
  "gt-hdf5-archive",
  "gt-ionex",
  "gt-pending-writes",
+ "gt-track-builder",
  "gt-types",
  "gt-ui-theme",
  "hdf5-metno",

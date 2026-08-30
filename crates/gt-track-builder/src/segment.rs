@@ -8,14 +8,15 @@ use gt_types::geo_bounds::{GeoBounds, PoleWinding};
 use gt_types::markers::{
     CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind,
 };
-use gt_types::nav_point::NavPoint;
+use gt_types::nav_point::{NavPoint, ResolvedPosition};
+use gt_types::placed_point::{PlacedPoint, PlacedPoints};
 use gt_types::satellites::SlipEvent;
 use gt_types::time_types::GpsTime;
 use gt_types::track::{
-    FileMetadata, FileSource, FixStats, LoadWarning, LoadedFile, LoadedTrack, MercBounds,
-    SegmentLengthRange, TimeRange, TrackMetadata, TravelMode,
+    FileMetadata, FileSource, FixStats, LoadWarning, LoadedFile, LoadedTrack,
+    MeasuredTrackGeometry, MercBounds, SegmentLengthRange, TimeRange, TrackGeometry, TrackMetadata,
+    TravelMode,
 };
-use std::borrow::Cow;
 use std::ops::Range;
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
@@ -158,14 +159,14 @@ impl GpsFixTracker {
     ///
     /// Returns `Some(marker)` when a transition emits a generated marker
     /// (`GnssFixLost` or `GnssFixRegained`), or `None` for silent transitions.
-    fn update(&mut self, point: &NavPoint, fix_count: u32) -> Option<GeneratedMarker> {
+    fn update(&mut self, point: PlacedPoint<'_>, fix_count: u32) -> Option<GeneratedMarker> {
         let result;
         self.state = match self.state {
             GpsFixState::Waiting => {
                 result = None;
                 if fix_count > 0 {
                     GpsFixState::HasFix {
-                        last_time: point.tpv.time(),
+                        last_time: point.fix.tpv.time(),
                         last_position: point.resolved_position(),
                     }
                 } else {
@@ -187,17 +188,17 @@ impl GpsFixTracker {
                 } else {
                     result = None;
                     GpsFixState::HasFix {
-                        last_time: point.tpv.time(),
+                        last_time: point.fix.tpv.time(),
                         last_position: point.resolved_position(),
                     }
                 }
             }
             GpsFixState::LostFix { lost_at } => {
                 if fix_count > 0 {
-                    let duration = point.tpv.time().signed_duration_since(lost_at);
+                    let duration = point.fix.tpv.time().signed_duration_since(lost_at);
                     let (lat, lon) = point.resolved_position();
                     result = Some(GeneratedMarker::new(
-                        point.tpv.time().utc(),
+                        point.fix.tpv.time().utc(),
                         GeneratedMarkerKind::GnssFixRegained {
                             fix_lost_duration: duration,
                         },
@@ -205,7 +206,7 @@ impl GpsFixTracker {
                         lon,
                     ));
                     GpsFixState::HasFix {
-                        last_time: point.tpv.time(),
+                        last_time: point.fix.tpv.time(),
                         last_position: (lat, lon),
                     }
                 } else {
@@ -218,16 +219,18 @@ impl GpsFixTracker {
     }
 }
 
+/// Every generated marker sits at a position, so only a track that has a
+/// geometry has any.
 fn detect_generated_markers(
-    points: &[NavPoint],
+    points: PlacedPoints<'_>,
     config: &GeneratedMarkerConfig,
 ) -> Vec<GeneratedMarker> {
     let mut tracker = GpsFixTracker::new();
     let mut markers = Vec::new();
-    for point in points {
+    for point in points.iter() {
         // The state machine always advances so the regained-duration stays
         // correct, but a marker is only kept when its kind is enabled.
-        if let Some(sats) = &point.satellites
+        if let Some(sats) = &point.fix.satellites
             && let Some(marker) = tracker.update(point, sats.fix_count())
             && fix_marker_enabled(&marker.kind, config)
         {
@@ -237,7 +240,8 @@ fn detect_generated_markers(
     // Excursions are classified whatever the marker toggle says: the
     // discontinuity pass needs them out of its step series either way, or one
     // excursion reads as a pair of jumps - out and straight back.
-    let excursions = clock_offset::detect_excursions(points, config.clock_excursion_threshold_s);
+    let excursions =
+        clock_offset::detect_excursions(points.fixes(), config.clock_excursion_threshold_s);
     if config.detect_clock_offset_excursions {
         markers.extend(excursion_markers(points, &excursions));
     }
@@ -270,11 +274,11 @@ fn fix_marker_enabled(kind: &GeneratedMarkerKind, config: &GeneratedMarkerConfig
 /// loss-of-lock, grouping every satellite that slipped at that epoch into the
 /// one marker, placed at the position and time of that epoch.
 fn detect_slip_markers(
-    points: &[NavPoint],
+    points: PlacedPoints<'_>,
     config: &GeneratedMarkerConfig,
 ) -> Vec<GeneratedMarker> {
     gt_analysis::loss_of_lock::detect_slip_events(
-        points,
+        points.fixes(),
         config.slip_elevation_mask_deg,
         config.slip_snr_drop_db,
     )
@@ -283,7 +287,7 @@ fn detect_slip_markers(
         let point = points.get(i)?;
         let (lat, lon) = point.resolved_position();
         Some(GeneratedMarker::new(
-            point.tpv.time().utc(),
+            point.fix.tpv.time().utc(),
             GeneratedMarkerKind::Slip(SlipEvent { slips }),
             lat,
             lon,
@@ -346,13 +350,14 @@ pub fn clock_discontinuity_floor_seconds(sigmas: f64) -> f64 {
 /// [`GeneratedMarkerKind::ClockOffsetExcursion`], which are left out of the
 /// step series.
 fn detect_clock_discontinuities(
-    points: &[NavPoint],
+    points: PlacedPoints<'_>,
     sigmas: f64,
     excursion_indices: &[usize],
 ) -> Vec<GeneratedMarker> {
     // Pass 1: offset (ms) and source index for each with-system-timestamp
     // sample, then the step (first difference) between consecutive samples.
     let samples: Vec<(usize, i64)> = points
+        .fixes()
         .iter()
         .enumerate()
         .filter(|(i, _)| excursion_indices.binary_search(i).is_err())
@@ -402,7 +407,7 @@ fn detect_clock_discontinuities(
         if is_outlier && let Some(point) = points.get(b.0) {
             let (lat, lon) = point.resolved_position();
             markers.push(GeneratedMarker::new(
-                point.tpv.time().utc(),
+                point.fix.tpv.time().utc(),
                 GeneratedMarkerKind::ClockDiscontinuity {
                     step: Duration::milliseconds(step),
                 },
@@ -419,7 +424,7 @@ fn detect_clock_discontinuities(
 /// offset.  Detection lives in `gt_analysis::clock_offset` so the plot and these
 /// markers agree on what an excursion is.
 fn excursion_markers(
-    points: &[NavPoint],
+    points: PlacedPoints<'_>,
     excursions: &[ClockOffsetExcursion],
 ) -> Vec<GeneratedMarker> {
     excursions
@@ -429,7 +434,7 @@ fn excursion_markers(
             let point = points.get(peak.index)?;
             let (lat, lon) = point.resolved_position();
             Some(GeneratedMarker::new(
-                point.tpv.time().utc(),
+                point.fix.tpv.time().utc(),
                 GeneratedMarkerKind::ClockOffsetExcursion {
                     deviation: Duration::milliseconds(excursion.deviation_ms()),
                     offset: Duration::milliseconds(peak.offset_ms),
@@ -511,47 +516,20 @@ fn time_range_spanning_every_fix(points: &vec1::Vec1<NavPoint>) -> TimeRange {
 
 /// Computes `TrackMetadata` from a non-empty slice of points.
 ///
-/// The geometry - distance, diameter, segment lengths and bounding box - is
-/// measured over [`NavPoint::resolved_position`], so it describes the path the
-/// map draws. [`build_loaded_file`] resolves a track's ghost fixes before it
-/// calls this.
+/// What the track's fixes measure is its geometry, computed separately by
+/// [`measure_track_geometry`].
 pub fn compute_track_metadata(
     index: usize,
     points: &vec1::Vec1<NavPoint>,
     custom_markers: &[CustomMarker],
     generated_markers: &[GeneratedMarker],
 ) -> TrackMetadata {
-    let first = points.first();
-
-    let bounding_box = GeoBounds::from_first_position_and_rest(
-        first.resolved_position(),
-        points.iter().skip(1).map(NavPoint::resolved_position),
-    )
-    .extended_to_the_encircled_pole(PoleWinding::of_track(
-        points.iter().map(NavPoint::resolved_position),
-    ));
-    let merc_bounds = MercBounds::from(bounding_box);
-
-    let distance_km = Length::new::<kilometer>(path_distance_km(points));
-    let diameter_m = Length::new::<meter>(point_set_diameter_m(points));
-    let segment_length_range =
-        segment_length_range_m(points).map(|(min_m, max_m)| SegmentLengthRange {
-            min: Length::new::<meter>(min_m),
-            max: Length::new::<meter>(max_m),
-        });
-
     let time_range = time_range_spanning_every_fix(points);
-    let duration = time_range.duration();
 
     TrackMetadata {
         index,
-        distance_km,
-        duration,
+        duration: time_range.duration(),
         time_range,
-        bounding_box,
-        merc_bounds,
-        point_set_diameter_m: diameter_m,
-        segment_length_range,
         has_custom_markers: !custom_markers.is_empty(),
         tpv_count: points.len(),
         invalid_position_count: points
@@ -564,6 +542,77 @@ pub fn compute_track_metadata(
         event_marker_count: 0, // filled in by build_loaded_file after event marker assignment
         fix_stats: compute_fix_stats(points),
     }
+}
+
+/// Where the builder has placed each fix so far, `None` for a fix it has not
+/// placed: the receiver wrote no position for it and no anchor gives it one.
+type FixPlacements = Vec<Option<ResolvedPosition>>;
+
+/// The recorded position of every fix that has one, before any interpolation.
+fn recorded_placements(points: &[NavPoint]) -> FixPlacements {
+    points
+        .iter()
+        .map(|point| {
+            point
+                .tpv
+                .position()
+                .map(|(latitude, longitude)| ResolvedPosition::measured(latitude, longitude))
+        })
+        .collect()
+}
+
+/// The geometry of `points` taken as a track on their own: every fix the
+/// receiver did not measure is placed from the fixes that have a recorded
+/// position, and the geometry is measured over where they all landed.
+///
+/// [`TrackGeometry::NoValidPosition`] when no fix of `points` has a recorded
+/// position, which leaves the whole track unplaced.
+pub fn measure_track_geometry(points: &[NavPoint]) -> TrackGeometry {
+    let mut placements = recorded_placements(points);
+    place_track_fixes(points, &mut placements);
+    track_geometry(placements)
+}
+
+/// Places the fixes of one track from its own fixes: first those the receiver
+/// wrote no position for, then the ones it dead-reckoned.
+fn place_track_fixes(points: &[NavPoint], placements: &mut FixPlacements) {
+    place_fixes(points, placements, UnmeasuredFix::CoordinateOutOfRange);
+    place_fixes(points, placements, UnmeasuredFix::Ghost);
+}
+
+fn track_geometry(placements: FixPlacements) -> TrackGeometry {
+    placements
+        .into_iter()
+        .collect::<Option<Vec<ResolvedPosition>>>()
+        .and_then(measured_geometry)
+        .map_or(TrackGeometry::NoValidPosition, TrackGeometry::Measured)
+}
+
+/// Measures a track over the positions its fixes are drawn at, so the geometry
+/// describes the path the map draws. `None` for an empty track.
+fn measured_geometry(resolved_positions: Vec<ResolvedPosition>) -> Option<MeasuredTrackGeometry> {
+    let positions: Vec<(Latitude, Longitude)> = resolved_positions
+        .iter()
+        .map(|resolved| resolved.coordinates())
+        .collect();
+    let (first, rest) = positions.split_first()?;
+
+    let bounding_box = GeoBounds::from_first_position_and_rest(*first, rest.iter().copied())
+        .extended_to_the_encircled_pole(PoleWinding::of_track(positions.iter().copied()));
+
+    Some(MeasuredTrackGeometry {
+        bounding_box,
+        merc_bounds: MercBounds::from(bounding_box),
+        distance_km: Length::new::<kilometer>(path_distance_km(&positions)),
+        point_set_diameter_m: Length::new::<meter>(point_set_diameter_m(&positions)),
+        segment_length_range: segment_length_range_m(&positions).map(|(min_m, max_m)| {
+            SegmentLengthRange {
+                min: Length::new::<meter>(min_m),
+                max: Length::new::<meter>(max_m),
+            }
+        }),
+        resolved_positions,
+    })
 }
 
 /// Optional file-level metadata carried from the recording's SDK metadata into
@@ -592,8 +641,9 @@ impl From<&FileMetadata> for FileMeta {
 /// Segments `points` into tracks and builds a fully-populated `LoadedFile`.
 ///
 /// Every fix whose recorded coordinates are out of range is placed between the
-/// fixes that have a recorded position. At least one fix must have one, which
-/// is what the loader refuses a recording without.
+/// fixes that have a recorded position. A recording that holds no such fix
+/// builds tracks with no geometry: they carry every fix the receiver wrote and
+/// are drawn nowhere.
 #[expect(
     clippy::expect_used,
     reason = "ranges from segment_tracks are always in-bounds and non-empty"
@@ -614,39 +664,39 @@ pub fn build_loaded_file(
     file_meta: FileMeta,
     mut load_warnings: Vec<LoadWarning>,
 ) -> LoadedFile {
-    debug_assert!(
-        points.is_empty() || points.iter().any(|point| point.tpv.position().is_some()),
-        "no fix has a recorded position to place the rest of the recording from"
-    );
-
     // A fix with no recorded position is placed across the whole recording
     // first. The per-track pass below refines it from its own track's fixes,
     // and a track holding no fix with a position keeps this placement.
-    let mut points = Cow::Borrowed(points);
-    if points.iter().any(|point| point.tpv.position().is_none()) {
-        place_fixes(points.to_mut(), UnmeasuredFix::CoordinateOutOfRange);
-    }
+    let mut placements = recorded_placements(points);
+    place_fixes(points, &mut placements, UnmeasuredFix::CoordinateOutOfRange);
 
-    let ranges = segment_tracks(&points, &config.track_layout);
+    let ranges = segment_tracks(points, &config.track_layout);
 
     let mut loaded_tracks: Vec<LoadedTrack> = ranges
         .into_iter()
         .enumerate()
         .map(|(track_idx, range)| {
             let track_points_slice = points
-                .get(range)
+                .get(range.clone())
                 .expect("ranges from segment_tracks are in bounds");
 
-            let mut track_points: vec1::Vec1<NavPoint> =
+            let track_points: vec1::Vec1<NavPoint> =
                 vec1::Vec1::try_from_vec(track_points_slice.to_vec())
                     .expect("segment_tracks produces only non-empty ranges");
 
             // The fixes the receiver did not measure are placed first: the
-            // metadata geometry, the generated markers, the LOD levels and
-            // the satellite-label anchors below all read the resolved
-            // positions.
-            place_fixes(&mut track_points, UnmeasuredFix::CoordinateOutOfRange);
-            place_fixes(&mut track_points, UnmeasuredFix::Ghost);
+            // geometry, the generated markers and the LOD levels below all
+            // read the positions they landed at.
+            let mut track_placements: FixPlacements = placements
+                .get(range)
+                .expect("ranges from segment_tracks are in bounds")
+                .to_vec();
+            place_track_fixes(&track_points, &mut track_placements);
+            let geometry = track_geometry(track_placements);
+
+            let placed_points = geometry.measured().and_then(|measured| {
+                PlacedPoints::new(&track_points, &measured.resolved_positions)
+            });
 
             let track_time_range = time_range_spanning_every_fix(&track_points);
 
@@ -666,8 +716,14 @@ pub fn build_loaded_file(
                 .filter(|c| !c.times.is_empty())
                 .collect();
 
-            let track_generated =
-                detect_generated_markers(&track_points, &config.generated_markers);
+            let track_generated = placed_points.map_or_else(Vec::new, |placed| {
+                detect_generated_markers(placed, &config.generated_markers)
+            });
+            let lod = placed_points
+                .map(crate::lod::build_track_lod)
+                .unwrap_or_default();
+            let sat_label_anchors =
+                placed_points.map_or_else(Vec::new, crate::sat_label::build_sat_label_anchors);
 
             let metadata = compute_track_metadata(
                 track_idx + 1,
@@ -677,12 +733,11 @@ pub fn build_loaded_file(
             );
 
             let track_points_vec = track_points.into_vec();
-            let lod = crate::lod::build_track_lod(&track_points_vec);
-            let sat_label_anchors = crate::sat_label::build_sat_label_anchors(&track_points_vec);
 
             LoadedTrack {
                 metadata,
                 points: track_points_vec,
+                geometry,
                 lod,
                 sat_label_anchors,
                 custom_markers: track_custom,
@@ -741,7 +796,7 @@ pub fn build_loaded_file(
 
     let total_distance_km = loaded_tracks
         .iter()
-        .map(|t| t.metadata.distance_km)
+        .filter_map(|t| Some(t.geometry.measured()?.distance_km))
         .sum::<Length>();
     let total_duration = loaded_tracks
         .iter()
@@ -867,62 +922,69 @@ impl UnmeasuredFix {
     fn placement(
         self,
         points: &[NavPoint],
+        placements: &FixPlacements,
         point: &NavPoint,
         (preceding, following): (Option<usize>, Option<usize>),
-    ) -> Option<(Latitude, Longitude)> {
-        let before = preceding.and_then(|index| points.get(index));
-        let after = following.and_then(|index| points.get(index));
+    ) -> Option<ResolvedPosition> {
+        let anchor = |index: Option<usize>| {
+            let index = index?;
+            Some((points.get(index)?, (*placements.get(index)?)?))
+        };
+        let before = anchor(preceding);
+        let after = anchor(following);
 
         let interpolated = match (before, after) {
-            (Some(before), Some(after)) => {
+            (Some((before, before_position)), Some((after, after_position))) => {
                 let anchor_span_secs = (after.tpv.time() - before.tpv.time()).as_seconds_f64();
                 let elapsed_secs = (point.tpv.time() - before.tpv.time()).as_seconds_f64();
                 (anchor_span_secs > 0.0).then(|| {
                     GreatCircleArc {
-                        start: before.resolved_position(),
-                        end: after.resolved_position(),
+                        start: before_position.coordinates(),
+                        end: after_position.coordinates(),
                     }
                     .position_at_ratio(elapsed_secs / anchor_span_secs)
                 })
             }
-            (Some(anchor), None) | (None, Some(anchor)) => Some(anchor.resolved_position()),
+            (Some((_, position)), None) | (None, Some((_, position))) => {
+                Some(position.coordinates())
+            }
             (None, None) => None,
         };
 
-        match self {
+        let (latitude, longitude) = match self {
             Self::Ghost => interpolated,
             // Any anchor places a fix out of range better than none does: it
             // has no recorded position to be left at.
-            Self::CoordinateOutOfRange => {
-                interpolated.or_else(|| before.or(after).map(NavPoint::resolved_position))
-            }
-        }
+            Self::CoordinateOutOfRange => interpolated
+                .or_else(|| before.or(after).map(|(_, position)| position.coordinates())),
+        }?;
+        Some(ResolvedPosition::interpolated(latitude, longitude))
     }
 }
 
-/// Places every fix of `kind` at the position its anchors give it. What the
-/// receiver recorded stays on [`NavPoint::tpv`], and the placed position is
-/// what the renderers draw.
+/// Places every fix of `kind` at the position its anchors give it, writing it
+/// into `placements`. What the receiver recorded stays on [`NavPoint::tpv`],
+/// and the placed position is what the renderers draw.
 ///
-/// Running this again over already placed points repeats the same placement:
+/// Running this again over the same placements repeats the same placement:
 /// both the targets and the anchors are read off the recorded coordinates.
 /// Runs in O(n) over the points.
-fn place_fixes(points: &mut [NavPoint], kind: UnmeasuredFix) {
+fn place_fixes(points: &[NavPoint], placements: &mut FixPlacements, kind: UnmeasuredFix) {
     let anchors = nearest_anchors(points, |point| kind.is_anchor(point));
 
-    let placements: Vec<(usize, (Latitude, Longitude))> = points
+    let placed: Vec<(usize, ResolvedPosition)> = points
         .iter()
         .enumerate()
         .zip(&anchors)
         .filter(|((_, point), _)| kind.is_target(point))
         .filter_map(|((index, point), anchors)| {
-            Some((index, kind.placement(points, point, *anchors)?))
+            Some((index, kind.placement(points, placements, point, *anchors)?))
         })
         .collect();
 
-    for (index, position) in placements {
-        if let Some(point) = points.get_mut(index) {
-            point.set_interpolated_position(position);
+    for (index, position) in placed {
+        if let Some(placement) = placements.get_mut(index) {
+            *placement = Some(position);
         }
     }
 }
@@ -970,6 +1032,30 @@ mod tests {
 
     use super::*;
 
+    /// `points` taken as a track of their own, each fix with where the builder
+    /// places it. `None` for a track it places no fix of.
+    fn placed<'a>(points: &'a [NavPoint], geometry: &'a TrackGeometry) -> Option<PlacedPoints<'a>> {
+        geometry
+            .measured()
+            .and_then(|measured| PlacedPoints::new(points, &measured.resolved_positions))
+    }
+
+    fn generated_markers_of(
+        points: &[NavPoint],
+        config: &GeneratedMarkerConfig,
+    ) -> Vec<GeneratedMarker> {
+        let geometry = measure_track_geometry(points);
+        placed(points, &geometry)
+            .map_or_else(Vec::new, |placed| detect_generated_markers(placed, config))
+    }
+
+    fn clock_discontinuities_of(points: &[NavPoint], sigmas: f64) -> Vec<GeneratedMarker> {
+        let geometry = measure_track_geometry(points);
+        placed(points, &geometry).map_or_else(Vec::new, |placed| {
+            detect_clock_discontinuities(placed, sigmas, &[])
+        })
+    }
+
     /// A point at GPS second `gps_secs` whose system clock is `sys_ahead_ms`
     /// ahead of GPS (so the GPS−system offset is `-sys_ahead_ms`).
     fn point_with_sys(gps_secs: i64, sys_ahead_ms: i64) -> NavPoint {
@@ -1000,7 +1086,7 @@ mod tests {
             point_with_sys(1003, 300),
             point_with_sys(1004, 300 + two_hours_ms),
         ];
-        let markers = detect_clock_discontinuities(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS, &[]);
+        let markers = clock_discontinuities_of(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS);
         assert_eq!(
             markers.len(),
             1,
@@ -1040,7 +1126,7 @@ mod tests {
     #[test]
     fn an_excursion_is_one_marker_not_a_pair_of_discontinuities() {
         let markers =
-            detect_generated_markers(&resume_from_gap_points(), &GeneratedMarkerConfig::default());
+            generated_markers_of(&resume_from_gap_points(), &GeneratedMarkerConfig::default());
         let [marker] = markers.as_slice() else {
             panic!("expected exactly one marker, got {}", markers.len());
         };
@@ -1068,7 +1154,7 @@ mod tests {
             detect_clock_offset_excursions: false,
             ..GeneratedMarkerConfig::default()
         };
-        let markers = detect_generated_markers(&resume_from_gap_points(), &config);
+        let markers = generated_markers_of(&resume_from_gap_points(), &config);
         assert!(
             markers.is_empty(),
             "the excursion sample stays out of the step series either way, so the \
@@ -1080,7 +1166,7 @@ mod tests {
     fn a_permanent_offset_step_stays_a_discontinuity() {
         let mut points: Vec<NavPoint> = (0..6).map(|i| point_with_sys(1000 + i, 200)).collect();
         points.extend((6..12).map(|i| point_with_sys(1000 + i, 3_600_000)));
-        let markers = detect_generated_markers(&points, &GeneratedMarkerConfig::default());
+        let markers = generated_markers_of(&points, &GeneratedMarkerConfig::default());
         let [marker] = markers.as_slice() else {
             panic!("expected exactly one marker, got {}", markers.len());
         };
@@ -1098,9 +1184,7 @@ mod tests {
             point_with_sys(1002, 298),
             point_with_sys(1003, 302),
         ];
-        assert!(
-            detect_clock_discontinuities(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS, &[]).is_empty()
-        );
+        assert!(clock_discontinuities_of(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS).is_empty());
     }
 
     #[test]
@@ -1116,9 +1200,7 @@ mod tests {
             point_with_sys(1003, big + 2),
             point_with_sys(1004, big - 5),
         ];
-        assert!(
-            detect_clock_discontinuities(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS, &[]).is_empty()
-        );
+        assert!(clock_discontinuities_of(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS).is_empty());
     }
 
     #[test]
@@ -1138,7 +1220,7 @@ mod tests {
                 })
                 .collect();
             assert!(
-                detect_clock_discontinuities(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS, &[]).is_empty(),
+                clock_discontinuities_of(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS).is_empty(),
                 "detection must be skipped with {count} samples (< {MIN_CLOCK_SAMPLES})"
             );
         }
@@ -1226,13 +1308,17 @@ mod tests {
         assert_eq!(meta.index, 1);
         assert_eq!(meta.tpv_count, 2);
         assert_eq!(meta.duration.num_seconds(), 3600);
-        assert!(
-            meta.distance_km > Length::new::<kilometer>(5.0),
-            "expected > 5 km, got {:?}",
-            meta.distance_km
-        );
         assert!(!meta.has_custom_markers);
         assert_eq!(meta.satellite_report_count, 0);
+
+        let distance_km = measure_track_geometry(&pts)
+            .measured()
+            .expect("both fixes have a recorded position")
+            .distance_km;
+        assert!(
+            distance_km > Length::new::<kilometer>(5.0),
+            "expected > 5 km, got {distance_km:?}"
+        );
     }
 
     #[test]
@@ -1240,7 +1326,12 @@ mod tests {
         let pts = vec1::vec1![make_point_at_pos(0, 55.0, 12.0)];
         let meta = compute_track_metadata(1, &pts, &[], &[]);
         assert_eq!(meta.duration.num_seconds(), 0);
-        assert_eq!(meta.distance_km, Length::new::<kilometer>(0.0));
+
+        let distance_km = measure_track_geometry(&pts)
+            .measured()
+            .expect("the fix has a recorded position")
+            .distance_km;
+        assert_eq!(distance_km, Length::new::<kilometer>(0.0));
     }
 
     #[test]
@@ -1589,36 +1680,55 @@ mod tests {
         NavPoint::new(tpv, None)
     }
 
+    /// Where the builder draws each fix of `points`, taken as a track of their
+    /// own. Empty for a track it places no fix of.
+    fn drawn_positions(points: &[NavPoint]) -> Vec<(Latitude, Longitude)> {
+        measure_track_geometry(points)
+            .measured()
+            .map_or_else(Vec::new, |measured| {
+                measured
+                    .resolved_positions
+                    .iter()
+                    .map(|resolved| resolved.coordinates())
+                    .collect()
+            })
+    }
+
+    /// The recorded position of every fix, which is where a measured one is
+    /// drawn.
+    fn recorded_positions(points: &[NavPoint]) -> Vec<(Latitude, Longitude)> {
+        points
+            .iter()
+            .filter_map(|point| point.tpv.position())
+            .collect()
+    }
+
     #[test]
-    fn placing_an_empty_track_does_nothing() {
-        let mut points: Vec<NavPoint> = vec![];
-        place_fixes(&mut points, UnmeasuredFix::Ghost);
+    fn a_track_of_no_fixes_has_no_geometry() {
+        assert_eq!(measure_track_geometry(&[]), TrackGeometry::NoValidPosition);
     }
 
     #[test]
     fn measured_fixes_stay_where_they_were_recorded() {
-        let mut points = vec![
+        let points = vec![
             make_real_fix(0, Latitude::new(55.0), Longitude::new(12.0)),
             make_real_fix(1, Latitude::new(55.1), Longitude::new(12.1)),
         ];
-        let before: Vec<_> = points.iter().map(NavPoint::resolved_position).collect();
-        place_fixes(&mut points, UnmeasuredFix::Ghost);
-        let after: Vec<_> = points.iter().map(NavPoint::resolved_position).collect();
-        assert_eq!(before, after);
+
+        assert_eq!(drawn_positions(&points), recorded_positions(&points));
     }
 
     #[test]
     fn a_ghost_fix_between_two_anchors_is_interpolated() {
         // Real fixes on the equator at t=0 (lon=0) and t=10 (lon=1), ghost at
         // t=5. The equator is a great circle, so the ghost lands at lon=0.5.
-        let mut points = vec![
+        let points = vec![
             make_real_fix(0, Latitude::new(0.0), Longitude::new(0.0)),
             make_ghost(5, Latitude::new(10.0), Longitude::new(10.0)),
             make_real_fix(10, Latitude::new(0.0), Longitude::new(1.0)),
         ];
-        place_fixes(&mut points, UnmeasuredFix::Ghost);
 
-        let (latitude, longitude) = points[1].resolved_position();
+        let (latitude, longitude) = drawn_positions(&points)[1];
         assert!(
             latitude.as_degrees().abs() < 1e-9,
             "latitude mismatch: {} vs 0.0",
@@ -1638,28 +1748,26 @@ mod tests {
 
     #[test]
     fn a_ghost_fix_before_the_first_anchor_snaps_to_it() {
-        let mut points = vec![
+        let points = vec![
             make_ghost(0, Latitude::new(10.0), Longitude::new(10.0)),
             make_real_fix(10, Latitude::new(55.0), Longitude::new(12.0)),
         ];
-        place_fixes(&mut points, UnmeasuredFix::Ghost);
 
         assert_eq!(
-            points[0].resolved_position(),
+            drawn_positions(&points)[0],
             (Latitude::new(55.0), Longitude::new(12.0))
         );
     }
 
     #[test]
     fn a_ghost_fix_after_the_last_anchor_snaps_to_it() {
-        let mut points = vec![
+        let points = vec![
             make_real_fix(0, Latitude::new(55.0), Longitude::new(12.0)),
             make_ghost(10, Latitude::new(10.0), Longitude::new(10.0)),
         ];
-        place_fixes(&mut points, UnmeasuredFix::Ghost);
 
         assert_eq!(
-            points[1].resolved_position(),
+            drawn_positions(&points)[1],
             (Latitude::new(55.0), Longitude::new(12.0))
         );
     }
@@ -1740,14 +1848,12 @@ mod tests {
         vec![0.0, 2.0, 5.0, 8.0, 10.0]
     )]
     fn a_fix_without_a_recorded_position_is_placed_from_the_fixes_around_it(
-        #[case] mut points: Vec<NavPoint>,
+        #[case] points: Vec<NavPoint>,
         #[case] expected_longitudes: Vec<f64>,
     ) {
-        place_fixes(&mut points, UnmeasuredFix::CoordinateOutOfRange);
-
-        let drawn_longitudes: Vec<f64> = points
-            .iter()
-            .map(|point| point.resolved_position().1.as_degrees())
+        let drawn_longitudes: Vec<f64> = drawn_positions(&points)
+            .into_iter()
+            .map(|(_, longitude)| longitude.as_degrees())
             .collect();
         assert_eq!(drawn_longitudes.len(), expected_longitudes.len());
         for (index, (drawn, expected)) in drawn_longitudes
@@ -1790,7 +1896,7 @@ mod tests {
         let drawn = file
             .tracks
             .get(1)
-            .and_then(|track| track.points.first())
+            .and_then(|track| track.placed_points()?.get(0))
             .expect("the middle fix is a track of its own");
         let longitude = drawn.resolved_position().1.as_degrees();
         assert!(
@@ -1801,13 +1907,11 @@ mod tests {
 
     #[test]
     fn track_metadata_counts_the_fixes_whose_recorded_position_is_out_of_range() {
-        let mut points = vec![
+        let points = vec1::vec1![
             measured_fix_without_a_satellite_report(0, 0.0),
             fix_without_a_recorded_position(5),
             measured_fix_without_a_satellite_report(10, 10.0),
         ];
-        place_fixes(&mut points, UnmeasuredFix::CoordinateOutOfRange);
-        let points = vec1::Vec1::try_from_vec(points).expect("three fixes");
 
         let metadata = compute_track_metadata(1, &points, &[], &[]);
 
@@ -1816,14 +1920,12 @@ mod tests {
 
     #[test]
     fn ghost_fixes_with_no_anchor_stay_where_they_were_recorded() {
-        let mut points = vec![
+        let points = vec![
             make_ghost(0, Latitude::new(55.0), Longitude::new(12.0)),
             make_ghost(5, Latitude::new(56.0), Longitude::new(13.0)),
         ];
-        let before: Vec<_> = points.iter().map(NavPoint::resolved_position).collect();
-        place_fixes(&mut points, UnmeasuredFix::Ghost);
-        let after: Vec<_> = points.iter().map(NavPoint::resolved_position).collect();
-        assert_eq!(before, after);
+
+        assert_eq!(drawn_positions(&points), recorded_positions(&points));
     }
 
     #[test]

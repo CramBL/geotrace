@@ -74,7 +74,7 @@ fn drawn_ghost_lon_degrees(points: &[NavPoint]) -> Option<f64> {
     let ghost = file
         .tracks
         .first()
-        .and_then(|track| track.points.get(GHOST_INDEX))?;
+        .and_then(|track| track.placed_points()?.get(GHOST_INDEX))?;
     Some(mercator::denormalize(ghost.merc()).1)
 }
 

@@ -471,16 +471,7 @@ mod tests {
                 gt_types::nav_point::NavPoint::new(tpv, None)
             })
             .collect();
-        gt_types::LoadedTrack {
-            metadata: gt_test_utils::empty_track_metadata(),
-            points,
-            lod: gt_types::track::TrackLod::default(),
-            sat_label_anchors: Vec::new(),
-            custom_markers: Vec::new(),
-            generated_markers: Vec::new(),
-            event_markers: Vec::new(),
-            channels: Vec::new(),
-        }
+        gt_test_utils::loaded_track_with_points(points)
     }
 
     /// The y-extent of the clock offset line, over every point it carries.
@@ -620,16 +611,7 @@ mod heading_wrap {
                 NavPoint::new(tpv, None)
             })
             .collect();
-        gt_types::LoadedTrack {
-            metadata: gt_test_utils::empty_track_metadata(),
-            points,
-            lod: gt_types::track::TrackLod::default(),
-            sat_label_anchors: Vec::new(),
-            custom_markers: Vec::new(),
-            generated_markers: Vec::new(),
-            event_markers: Vec::new(),
-            channels: Vec::new(),
-        }
+        gt_test_utils::loaded_track_with_points(points)
     }
 
     fn heading_series(headings: &[Option<f64>]) -> MipMap {

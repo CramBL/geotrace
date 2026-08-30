@@ -101,7 +101,8 @@ impl ResolvedTrackInterference {
         let plot_points: Vec<JammingPoint> = track
             .points
             .iter()
-            .map(|point| {
+            .enumerate()
+            .map(|(index, point)| {
                 let time = point.tpv.time().utc();
                 let day = time.date_naive();
                 let dataset = datasets.entry(day).or_insert_with(|| {
@@ -115,10 +116,12 @@ impl ResolvedTrackInterference {
                             .flatten()
                     })
                 });
-                let observation = dataset.as_ref().and_then(|dataset| {
-                    let (lat, lon) = point.resolved_position();
-                    dataset.observation_at(lat, lon)
-                });
+                // A fix of a track with no geometry is nowhere: no cell of the
+                // archive covers it.
+                let observation = dataset
+                    .as_ref()
+                    .zip(track.resolved_position_at(index))
+                    .and_then(|(dataset, (lat, lon))| dataset.observation_at(lat, lon));
                 let rate = observation.and_then(gt_jam::wire::HexObservation::rate);
                 JammingPoint {
                     x_secs: time.timestamp() as f64,
@@ -1379,8 +1382,9 @@ mod tests {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         let track = track_with_time_range();
         let day = track.metadata.time_range.start.date_naive();
-        let first = track.points.first().expect("a fix");
-        let (latitude, longitude) = first.resolved_position();
+        let (latitude, longitude) = track
+            .resolved_position_at(0)
+            .expect("the fixture track is placed");
         let cell = gt_jam::dataset::cell_at(latitude, longitude).expect("cell");
         archive_day(
             &store,
@@ -1432,8 +1436,9 @@ mod tests {
             track.metadata.time_range.start,
             next.and_time(NaiveTime::MIN).and_utc(),
         );
-        let fix = track.points.first().expect("a fix");
-        let (latitude, longitude) = fix.resolved_position();
+        let (latitude, longitude) = track
+            .resolved_position_at(0)
+            .expect("the fixture track is placed");
         let cell = gt_jam::dataset::cell_at(latitude, longitude).expect("cell");
         let observations = [gt_jam::wire::HexObservation {
             cell,
@@ -1491,8 +1496,9 @@ mod tests {
     fn the_context_line_values_a_day_no_recording_covers() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
         let track = track_with_time_range();
-        let first = track.points.first().expect("a fix");
-        let (latitude, longitude) = first.resolved_position();
+        let (latitude, longitude) = track
+            .resolved_position_at(0)
+            .expect("the fixture track is placed");
         let cell = gt_jam::dataset::cell_at(latitude, longitude).expect("cell");
         let recorded = track.metadata.time_range.start.date_naive();
         let later = recorded

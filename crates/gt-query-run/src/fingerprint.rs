@@ -78,7 +78,7 @@ impl RunFingerprint {
             for (ti, track) in file.tracks.iter().enumerate() {
                 let track_ref = TrackRef::new(fi, TrackIdx::new(ti));
                 if visibility.track_enabled(track_ref)
-                    && gt_filter::track_passes_filter(&track.metadata, filter)
+                    && gt_filter::track_passes_filter(track, filter)
                 {
                     tracks.push(track_ref);
                 }

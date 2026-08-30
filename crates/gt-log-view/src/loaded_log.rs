@@ -272,7 +272,7 @@ impl LoadedLog {
         };
         let entry_positions = gt_logfile::associate_entries(
             self.parsed.entries(),
-            &recording.nav_points(),
+            &recording.placed_points(),
             self.association.window,
         );
         self.association.associated_entry_count = entry_positions

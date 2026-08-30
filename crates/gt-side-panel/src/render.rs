@@ -266,7 +266,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
                             .get(&vis.files)
                             .and_then(|fv| ti.get(&fv.tracks))
                             .is_some_and(|tv| tv.enabled);
-                    let passes = gt_filter::track_passes_filter(&track.metadata, &filter_snapshot);
+                    let passes = gt_filter::track_passes_filter(track, &filter_snapshot);
                     if !track_enabled || !passes {
                         Some(NodeKey::Track(TrackRef::new(fi, ti)))
                     } else {
@@ -994,7 +994,7 @@ fn render_track_row(
         let Some(track) = ti.get(&file.tracks) else {
             return;
         };
-        let passes = gt_filter::track_passes_filter(&track.metadata, ctx.filter);
+        let passes = gt_filter::track_passes_filter(track, ctx.filter);
         let is_expanded = ctx.tree.track_node(track_ref).is_some_and(|t| t.expanded);
         let panel_hovered = ctx
             .highlight
@@ -1034,7 +1034,10 @@ fn render_track_row(
         let newly_enabled =
             chk_resp.clicked() && matches!(check, CheckState::Off | CheckState::Mixed);
         let arrow = expand_arrow(is_expanded);
-        let dist = gt_fmt::format_distance(track.metadata.distance_km);
+        let dist = track.geometry.measured().map_or_else(
+            || gt_ui_theme::EM_DASH.to_owned(),
+            |geometry| gt_fmt::format_distance(geometry.distance_km),
+        );
         let dur = gt_fmt::format_human_terse_duration(track.metadata.duration);
         let label = format!("{arrow} #{}  {dist}  {dur}", track.metadata.index);
         let mut text = RichText::new(label);
@@ -1076,8 +1079,12 @@ fn render_track_row(
     }
     let modifiers = ui.ctx().input(|i| i.modifiers);
     if response.double_clicked() {
-        let (center_lat, center_lon) = track.metadata.bounding_box.center();
-        *ctx.map_center_request = Some((center_lat.as_degrees(), center_lon.as_degrees()));
+        // A track with no geometry is drawn nowhere: there is no centre to
+        // jump to.
+        if let Some(geometry) = track.geometry.measured() {
+            let (center_lat, center_lon) = geometry.bounding_box.center();
+            *ctx.map_center_request = Some((center_lat.as_degrees(), center_lon.as_degrees()));
+        }
     } else if response.clicked() {
         if modifiers.ctrl || modifiers.shift {
             ctx.tree.apply_click(key, modifiers.ctrl, modifiers.shift);
@@ -1506,8 +1513,7 @@ fn render_tpv_items(
             point_index: PointIdx::new(pi),
         };
         let label = point.tpv.time().utc().format("%H:%M:%S").to_string();
-        let (latitude, longitude) = point.resolved_position();
-        let lat_lon = (latitude.as_degrees(), longitude.as_degrees());
+        let lat_lon = drawn_at(track, pi);
         point_item_row(ui, point_ref, label, lat_lon, scope, highlight, requests);
     }
 }
@@ -1538,10 +1544,15 @@ fn render_satellite_report_items(
             sats.fix_count(),
             sats.satellite_count()
         );
-        let (latitude, longitude) = point.resolved_position();
-        let lat_lon = (latitude.as_degrees(), longitude.as_degrees());
+        let lat_lon = drawn_at(track, pi);
         point_item_row(ui, point_ref, label, lat_lon, scope, highlight, requests);
     }
+}
+
+/// Where the map draws the fix at `index`, in degrees.
+fn drawn_at(track: &LoadedTrack, index: usize) -> Option<(f64, f64)> {
+    let (latitude, longitude) = track.resolved_position_at(index)?;
+    Some((latitude.as_degrees(), longitude.as_degrees()))
 }
 
 fn render_custom_marker_items(
@@ -1559,7 +1570,7 @@ fn render_custom_marker_items(
             point_index: PointIdx::new(pi),
         };
         let label = format!("{}  {}", marker.time.format("%H:%M:%S"), marker.label);
-        let lat_lon = (marker.lat.as_degrees(), marker.lon.as_degrees());
+        let lat_lon = Some((marker.lat.as_degrees(), marker.lon.as_degrees()));
         point_item_row(ui, point_ref, label, lat_lon, scope, highlight, requests);
     }
 }
@@ -1674,7 +1685,7 @@ fn render_generated_markers_section(
                         _ => String::new(),
                     };
                     let label = format!("{}{detail}", marker.time.format("%H:%M:%S"));
-                    let lat_lon = (marker.lat.as_degrees(), marker.lon.as_degrees());
+                    let lat_lon = Some((marker.lat.as_degrees(), marker.lon.as_degrees()));
                     point_item_row(
                         ui,
                         point_ref,
@@ -1697,7 +1708,7 @@ fn file_bounding_center(file: Option<&LoadedFile>) -> Option<(f64, f64)> {
     let bounds = file?
         .tracks
         .iter()
-        .map(|t| t.metadata.bounding_box)
+        .filter_map(|t| Some(t.geometry.measured()?.bounding_box))
         .reduce(GeoBounds::union)?;
     let (lat, lon) = bounds.center();
     Some((lat.as_degrees(), lon.as_degrees()))

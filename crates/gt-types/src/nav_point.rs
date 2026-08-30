@@ -32,7 +32,7 @@ pub struct ProjectedPosition {
 }
 
 impl ProjectedPosition {
-    fn new(latitude: Latitude, longitude: Longitude) -> Self {
+    pub fn new(latitude: Latitude, longitude: Longitude) -> Self {
         Self {
             latitude,
             longitude,
@@ -49,96 +49,60 @@ impl ProjectedPosition {
     }
 }
 
-/// Where a nav point is drawn, and how it got there.
+/// Where the track builder placed a fix, and how it got there.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ResolvedPosition {
     /// The coordinates the receiver recorded, both inside their axis' range.
     Measured(ProjectedPosition),
-    /// The position the track builder placed the point at, in time between
-    /// the fixes around it.
+    /// A position the track builder derived, in time between the fixes around
+    /// it: a fix the receiver dead-reckoned, or one whose recorded coordinates
+    /// are out of range.
     Interpolated(ProjectedPosition),
-    /// A recorded position outside the coordinate ranges, which the track
-    /// builder has not placed yet.
-    Pending,
 }
 
 impl ResolvedPosition {
-    /// `None` for a point the track builder has not placed yet.
-    pub fn projected(self) -> Option<ProjectedPosition> {
+    pub fn measured(latitude: Latitude, longitude: Longitude) -> Self {
+        Self::Measured(ProjectedPosition::new(latitude, longitude))
+    }
+
+    pub fn interpolated(latitude: Latitude, longitude: Longitude) -> Self {
+        Self::Interpolated(ProjectedPosition::new(latitude, longitude))
+    }
+
+    pub fn projected(self) -> ProjectedPosition {
         match self {
-            Self::Measured(projected) | Self::Interpolated(projected) => Some(projected),
-            Self::Pending => None,
+            Self::Measured(projected) | Self::Interpolated(projected) => projected,
         }
+    }
+
+    pub fn coordinates(self) -> (Latitude, Longitude) {
+        self.projected().coordinates()
+    }
+
+    pub fn merc(self) -> MercPoint {
+        self.projected().merc()
     }
 }
 
-/// One nav fix with its satellite report, carrying two positions that can
-/// differ.
+/// One nav fix as the receiver wrote it, with its satellite report.
 ///
-/// `tpv` holds the position the receiver recorded for this epoch, out of range
-/// values included. The resolved position is where the point actually is, and
-/// is what every renderer draws. The two are equal until the track builder
-/// places the point: a receiver that reports no heading often writes
-/// coordinates it did not measure, down to (0, 0), and one that reports a
-/// latitude of 91° wrote no position at all.
+/// `tpv` holds the coordinates recorded for this epoch, out of range values
+/// included, which is not always where the fix belongs on the map: a receiver
+/// that reports no heading often writes coordinates it did not measure, down
+/// to (0, 0), and one that reports a latitude of 91° wrote no position at all.
 ///
-/// So read [`NavPoint::resolved_position`] (or [`NavPoint::merc`], its
-/// projection) for anything geometric - a distance, a bounding box, a
-/// bearing, a label placement. Read `tpv` only for what the receiver itself
-/// reported at this epoch.
+/// Where a fix is drawn is the track's geometry, not the fix's own: read
+/// [`crate::track::LoadedTrack::placed_points`] for anything geometric - a
+/// distance, a bounding box, a bearing, a label placement.
 #[derive(Debug, Clone)]
 pub struct NavPoint {
     pub tpv: TimePositionVelocity,
     pub satellites: Option<Satellites>,
-    resolved: ResolvedPosition,
 }
 
 impl NavPoint {
     pub fn new(tpv: TimePositionVelocity, satellites: Option<Satellites>) -> Self {
-        let resolved = match tpv.position() {
-            Some((latitude, longitude)) => {
-                ResolvedPosition::Measured(ProjectedPosition::new(latitude, longitude))
-            }
-            None => ResolvedPosition::Pending,
-        };
-        Self {
-            tpv,
-            satellites,
-            resolved,
-        }
-    }
-
-    pub fn resolved(&self) -> ResolvedPosition {
-        self.resolved
-    }
-
-    /// A point that reached a track always holds a position: the track builder
-    /// places every fix whose recorded coordinates are out of range from the
-    /// fixes that have a recorded position, and the loader refuses a recording
-    /// where no fix has one.
-    #[expect(
-        clippy::unreachable,
-        reason = "a point built into a track is always placed; reaching this is a bug in the builder, not bad file data"
-    )]
-    fn placed(&self) -> ProjectedPosition {
-        match self.resolved.projected() {
-            Some(projected) => projected,
-            None => unreachable!("the track builder places every point before it reaches a track"),
-        }
-    }
-
-    pub fn resolved_position(&self) -> (Latitude, Longitude) {
-        self.placed().coordinates()
-    }
-
-    /// The resolved position in normalized Web Mercator coordinates, see
-    /// [`crate::mercator`].
-    pub fn merc(&self) -> MercPoint {
-        self.placed().merc()
-    }
-
-    pub fn set_interpolated_position(&mut self, (latitude, longitude): (Latitude, Longitude)) {
-        self.resolved = ResolvedPosition::Interpolated(ProjectedPosition::new(latitude, longitude));
+        Self { tpv, satellites }
     }
 
     pub fn fix_count(&self) -> u32 {
@@ -184,82 +148,13 @@ impl NavPoint {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
+    use crate::coordinates::{Latitude, Longitude};
     use crate::satellites::{Constellation, Satellite, Satellites};
     use crate::time_types::GpsTime;
     use crate::tpv::TimePositionVelocity;
     use chrono::Utc;
     use uom::si::angle::degree;
     use uom::si::f64::Angle;
-
-    fn point_at(latitude: Latitude, longitude: Longitude) -> NavPoint {
-        let tpv = TimePositionVelocity::builder()
-            .time(GpsTime::from_utc(Utc::now()))
-            .lat(latitude)
-            .lon(longitude)
-            .build();
-        NavPoint::new(tpv, None)
-    }
-
-    #[test]
-    fn a_new_point_resolves_to_the_recorded_position() {
-        let point = point_at(Latitude::new(55.0), Longitude::new(12.0));
-
-        assert_eq!(
-            point.resolved_position(),
-            (Latitude::new(55.0), Longitude::new(12.0))
-        );
-        assert_eq!(
-            point.merc(),
-            mercator::normalize(Latitude::new(55.0), Longitude::new(12.0))
-        );
-        assert!(matches!(point.resolved(), ResolvedPosition::Measured(_)));
-    }
-
-    #[test]
-    fn resolving_a_point_elsewhere_reprojects_it_and_keeps_the_recorded_position() {
-        let mut point = point_at(Latitude::new(55.0), Longitude::new(12.0));
-
-        point.set_interpolated_position((Latitude::new(-33.0), Longitude::new(151.0)));
-
-        assert!(matches!(
-            point.resolved(),
-            ResolvedPosition::Interpolated(_)
-        ));
-        assert_eq!(
-            point.resolved_position(),
-            (Latitude::new(-33.0), Longitude::new(151.0))
-        );
-        assert_eq!(
-            point.merc(),
-            mercator::normalize(Latitude::new(-33.0), Longitude::new(151.0))
-        );
-        assert_eq!(
-            point.tpv.position(),
-            Some((Latitude::new(55.0), Longitude::new(12.0)))
-        );
-    }
-
-    /// The point holds no position of its own until the track builder places
-    /// it between the fixes around it.
-    #[test]
-    fn a_fix_with_a_coordinate_out_of_range_waits_to_be_placed() {
-        let tpv = TimePositionVelocity::builder()
-            .time(GpsTime::from_utc(Utc::now()))
-            .lat(RecordedLatitude::from_degrees(91.0))
-            .lon(RecordedLongitude::from_degrees(12.0))
-            .build();
-
-        let mut point = NavPoint::new(tpv, None);
-        assert_eq!(point.resolved(), ResolvedPosition::Pending);
-
-        point.set_interpolated_position((Latitude::new(55.0), Longitude::new(12.0)));
-
-        assert_eq!(
-            point.resolved_position(),
-            (Latitude::new(55.0), Longitude::new(12.0))
-        );
-    }
 
     #[test]
     fn test_nav_point_fix_counts() {

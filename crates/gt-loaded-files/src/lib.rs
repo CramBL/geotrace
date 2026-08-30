@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::ops::{Deref, Index, IndexMut};
 
 use gt_history_types::{DatabaseRef, RecordingMeta};
-use gt_types::{FileIdx, LoadedFile, LoadedTrack, NavPoint};
+use gt_types::{FileIdx, LoadedFile, LoadedTrack, NavPoint, PlacedPoint};
 
 mod recording_names;
 
@@ -199,6 +199,17 @@ impl<'a> LoadedFileEntry<'a> {
 
     pub fn is_stored_in_history(&self) -> bool {
         self.history.is_stored()
+    }
+
+    /// [`LoadedFileEntry::nav_points`] with the position each fix is drawn at,
+    /// leaving out the fixes of a track that has no geometry.
+    pub fn placed_points(&self) -> Vec<PlacedPoint<'a>> {
+        self.file
+            .tracks
+            .iter()
+            .filter_map(|track| track.placed_points())
+            .flat_map(|placed| placed.iter())
+            .collect()
     }
 
     /// Every fix of the file, its tracks concatenated in track order and

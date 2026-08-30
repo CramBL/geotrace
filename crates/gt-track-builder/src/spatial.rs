@@ -11,17 +11,21 @@ pub fn build_global_tree(files: &[LoadedFile]) -> rstar::RTree<SpatialPoint> {
         let file_index = FileIdx::new(fi);
         for (ti, track) in file.tracks.iter().enumerate() {
             let track_index = TrackIdx::new(ti);
-            for (pi, p) in track.points.iter().enumerate() {
-                if p.tpv.heading().is_none() {
-                    continue;
+            // A track with no geometry is drawn nowhere, so none of its fixes
+            // can be hit on the map.
+            if let Some(placed) = track.placed_points() {
+                for (pi, p) in placed.iter().enumerate() {
+                    if p.fix.tpv.heading().is_none() {
+                        continue;
+                    }
+                    points.push(SpatialPoint {
+                        merc: p.merc(),
+                        file_index,
+                        track_index,
+                        point_index: PointIdx::new(pi),
+                        category: DataCategory::Tpv,
+                    });
                 }
-                points.push(SpatialPoint {
-                    merc: p.merc(),
-                    file_index,
-                    track_index,
-                    point_index: PointIdx::new(pi),
-                    category: DataCategory::Tpv,
-                });
             }
             for (pi, m) in track.custom_markers.iter().enumerate() {
                 points.push(SpatialPoint {

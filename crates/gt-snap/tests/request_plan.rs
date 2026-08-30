@@ -7,7 +7,7 @@ use rstest::rstest;
 use support::points_with as points;
 
 use gt_snap::request_plan::{
-    self, CHUNK_OVERLAP_POINTS, CHUNK_POINTS, ChunkContinuity, GPS_ACCURACY_OVERRIDE_RANGE_M,
+    CHUNK_OVERLAP_POINTS, CHUNK_POINTS, ChunkContinuity, GPS_ACCURACY_OVERRIDE_RANGE_M,
     GPS_ACCURACY_RANGE_M, RequestPlan, SEARCH_RADIUS_RANGE_M, SnapParams,
     TURN_PENALTY_FACTOR_RANGE,
 };
@@ -43,13 +43,13 @@ fn owned_indices_per_chunk(plan: &RequestPlan) -> Vec<Vec<usize>> {
 #[case::hz_2_keeps_every_second_point(500, 30)]
 #[case::slower_than_1hz_keeps_all(2000, 60)]
 fn downsampling_respects_min_interval(#[case] step_ms: i64, #[case] expected: usize) {
-    let plan = request_plan::plan(&points(60, step_ms, |_| None));
+    let plan = support::plan_of(&points(60, step_ms, |_| None));
     assert_eq!(plan.sent_point_count(), expected);
 }
 
 #[test]
 fn empty_track_plans_no_chunks() {
-    let plan = request_plan::plan(&[]);
+    let plan = support::plan_of(&[]);
     assert_eq!(plan.chunks.len(), 0);
     assert_eq!(plan.sent_point_count(), 0);
     assert_eq!(plan.gps_accuracy_m, None);
@@ -57,7 +57,7 @@ fn empty_track_plans_no_chunks() {
 
 #[test]
 fn single_point_plans_one_chunk() {
-    let plan = request_plan::plan(&points(1, 1000, |_| None));
+    let plan = support::plan_of(&points(1, 1000, |_| None));
     assert_eq!(plan.chunks.len(), 1);
     assert_eq!(plan.sent_point_count(), 1);
 }
@@ -70,7 +70,7 @@ fn single_point_plans_one_chunk() {
 #[case::two_full_steps(2 * CHUNK_POINTS - CHUNK_OVERLAP_POINTS, 2)]
 #[case::just_past_two_steps(2 * CHUNK_POINTS - CHUNK_OVERLAP_POINTS + 1, 3)]
 fn chunk_count_at_boundaries(#[case] count: usize, #[case] expected_chunks: usize) {
-    let plan = request_plan::plan(&points(count, 1000, |_| None));
+    let plan = support::plan_of(&points(count, 1000, |_| None));
     assert_eq!(
         plan.chunks.len(),
         expected_chunks,
@@ -86,7 +86,7 @@ fn chunk_count_at_boundaries(#[case] count: usize, #[case] expected_chunks: usiz
 #[case(CHUNK_POINTS + 1)]
 #[case(3 * CHUNK_POINTS)]
 fn ownership_partitions_sent_points(#[case] count: usize) {
-    let plan = request_plan::plan(&points(count, 1000, |_| None));
+    let plan = support::plan_of(&points(count, 1000, |_| None));
     let indices = distinct_sent_indices(&plan);
     let expected: Vec<usize> = (0..count).collect();
     assert_eq!(indices, expected);
@@ -106,7 +106,7 @@ fn ownership_partitions_sent_points(#[case] count: usize) {
 /// track's sent points map back to every 10th original index.
 #[test]
 fn sent_points_carry_original_indices() {
-    let plan = request_plan::plan(&points(50, 100, |_| None));
+    let plan = support::plan_of(&points(50, 100, |_| None));
     let indices = distinct_sent_indices(&plan);
     assert_eq!(indices, vec![0, 10, 20, 30, 40]);
 }
@@ -115,7 +115,7 @@ fn sent_points_carry_original_indices() {
 fn out_of_order_timestamps_are_not_kept() {
     let mut pts = points(5, 1000, |_| None);
     pts.reverse();
-    let plan = request_plan::plan(&pts);
+    let plan = support::plan_of(&pts);
     // Only the first point qualifies. Every later one goes back in time.
     assert_eq!(plan.sent_point_count(), 1);
 }
@@ -131,7 +131,7 @@ fn out_of_order_timestamps_are_not_kept() {
 #[case::outlier_resistant(&[9.0, 10.0, 11.0, 900.0, 900.0], Some(11.0))]
 fn gps_accuracy_is_clamped_median(#[case] ephs: &[f32], #[case] expected: Option<f64>) {
     let pts = points(ephs.len().max(1), 1000, |i| ephs.get(i).copied());
-    let plan = request_plan::plan(&pts);
+    let plan = support::plan_of(&pts);
     assert_eq!(plan.gps_accuracy_m, expected);
 }
 
@@ -142,7 +142,7 @@ fn gps_accuracy_is_clamped_median(#[case] ephs: &[f32], #[case] expected: Option
 fn gps_accuracy_derives_from_sent_points_only() {
     // Every 10th point (the kept ones) has eph 10. The rest have 900.
     let pts = points(50, 100, |i| Some(if i % 10 == 0 { 10.0 } else { 900.0 }));
-    let plan = request_plan::plan(&pts);
+    let plan = support::plan_of(&pts);
     assert_eq!(plan.gps_accuracy_m, Some(10.0));
 }
 
@@ -159,7 +159,7 @@ fn ghost_runs_split_the_plan_into_stretches(
     #[case] ghosts: &[usize],
     #[case] expected_owned: Vec<Vec<usize>>,
 ) {
-    let plan = request_plan::plan(&support::points_with_ghosts_at(10, ghosts));
+    let plan = support::plan_of(&support::points_with_ghosts_at(10, ghosts));
     assert_eq!(owned_indices_per_chunk(&plan), expected_owned);
     // Each stretch here fits in one chunk, so no chunk continues another.
     let continuity: Vec<ChunkContinuity> = plan.chunks.iter().map(|c| c.continuity).collect();
@@ -180,7 +180,7 @@ fn a_fix_without_satellites_in_fix_also_breaks_the_stretch() {
             NavPointSpec::default()
         }
     });
-    let plan = request_plan::plan(&points);
+    let plan = support::plan_of(&points);
     assert_eq!(
         owned_indices_per_chunk(&plan),
         vec![vec![0, 1, 2], vec![4, 5]]
@@ -199,7 +199,7 @@ fn the_fix_after_a_gap_is_sent_within_the_downsample_interval() {
             NavPointSpec::default()
         }
     });
-    let plan = request_plan::plan(&points);
+    let plan = support::plan_of(&points);
     assert_eq!(
         owned_indices_per_chunk(&plan),
         vec![vec![0, 10], vec![16, 26]]
@@ -213,7 +213,7 @@ fn chunks_continue_within_a_stretch_and_open_after_a_gap() {
     let gap = CHUNK_POINTS + 1..CHUNK_POINTS + 4;
     let ghosts: Vec<usize> = gap.clone().collect();
     let count = 2 * (CHUNK_POINTS + 1) + ghosts.len();
-    let plan = request_plan::plan(&support::points_with_ghosts_at(count, &ghosts));
+    let plan = support::plan_of(&support::points_with_ghosts_at(count, &ghosts));
 
     let continuity: Vec<ChunkContinuity> = plan.chunks.iter().map(|c| c.continuity).collect();
     assert_eq!(
@@ -244,7 +244,7 @@ fn chunks_continue_within_a_stretch_and_open_after_a_gap() {
 /// derived accuracy either.
 #[test]
 fn gps_accuracy_ignores_ghost_fixes() {
-    let plan = request_plan::plan(&support::points_with_spec(20, 1000, |i| {
+    let plan = support::plan_of(&support::points_with_spec(20, 1000, |i| {
         if (5..15).contains(&i) {
             NavPointSpec {
                 fix: FixKind::GhostWithoutHeading,

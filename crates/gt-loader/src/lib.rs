@@ -117,7 +117,6 @@ pub fn load_gtd_file_with_progress(
     let nav_file = NavFile::read(file)?;
     progress(0.65, STAGE_CONVERTING);
     let contents = from_nav_file(&nav_file);
-    check_every_track_holds_a_fix_with_a_position(&contents.nav_points, config)?;
     progress(0.90, STAGE_SEGMENTING);
     let source = FileSource::GtdPath(path.to_path_buf());
     let identity = derive_identity(
@@ -189,7 +188,6 @@ pub fn load_gtd_bytes_with_progress(
     let nav_file = NavFile::read(bytes)?;
     progress(0.60, STAGE_CONVERTING);
     let contents = from_nav_file(&nav_file);
-    check_every_track_holds_a_fix_with_a_position(&contents.nav_points, config)?;
     progress(0.90, STAGE_SEGMENTING);
     let source = FileSource::GtdBytes(Arc::from(bytes));
     let identity = derive_identity(
@@ -484,24 +482,6 @@ const REPLACED_EVENT_MARKER_COLORS: AlterationWording = AlterationWording {
     consequence: "Those markers are drawn mid-gray: the style holds a color that is not \
         a #RRGGBB hex value.",
 };
-
-/// Refuses a recording in which some track holds no fix with a position: its
-/// fixes have nowhere to be drawn, and nothing to interpolate one from.
-fn check_every_track_holds_a_fix_with_a_position(
-    points: &[NavPoint],
-    config: &gt_track_builder::SegmentationConfig,
-) -> Result<(), LoadError> {
-    for range in gt_track_builder::segment_tracks(points, &config.track_layout) {
-        let track = points.get(range.clone()).unwrap_or_default();
-        if !track.is_empty() && track.iter().all(|point| point.tpv.position().is_none()) {
-            return Err(LoadError::TrackWithoutAPosition {
-                first_record: range.start,
-                last_record: range.end.saturating_sub(1),
-            });
-        }
-    }
-    Ok(())
-}
 
 struct NavFileContents {
     nav_points: Vec<NavPoint>,
@@ -890,6 +870,7 @@ mod tests {
         Angle, Annotation, Constellation as SdkConst, DateTime, Duration, MarkerIcon as SdkIcon,
         NavFile, NavFileBuilder, NavFix, Satellite as SdkSat, SatelliteReport, Unit, Utc, Velocity,
     };
+    use gt_types::TrackGeometry;
     use proptest::prelude::*;
     use rstest::rstest;
     use strum::{EnumCount, IntoEnumIterator};
@@ -1619,36 +1600,38 @@ mod tests {
         .unwrap();
 
         let track = file.tracks.first().expect("the ten fixes form one track");
-        let out_of_range_latitude = track.points.get(3).expect("record 3");
-        let out_of_range_longitude = track.points.get(5).expect("record 5");
+        let placed = track.placed_points().expect("the track has a geometry");
+        let out_of_range_latitude = placed.get(3).expect("record 3");
+        let out_of_range_longitude = placed.get(5).expect("record 5");
 
-        assert!(out_of_range_latitude.tpv.lat().as_written().is_nan());
+        assert!(out_of_range_latitude.fix.tpv.lat().as_written().is_nan());
         assert_eq!(
-            out_of_range_latitude.tpv.lon(),
+            out_of_range_latitude.fix.tpv.lon(),
             RecordedLongitude::from_degrees(100.0)
         );
         assert_eq!(
-            out_of_range_longitude.tpv.lat(),
+            out_of_range_longitude.fix.tpv.lat(),
             RecordedLatitude::from_degrees(45.0)
         );
         assert_eq!(
-            out_of_range_longitude.tpv.lon(),
+            out_of_range_longitude.fix.tpv.lon(),
             RecordedLongitude::from_degrees(-181.0)
         );
         assert_drawn_at(out_of_range_latitude.resolved_position(), (0.0, 3.0));
         assert_drawn_at(out_of_range_longitude.resolved_position(), (0.0, 5.0));
     }
 
-    /// A track holding no fix with a position at all has nowhere to draw any
-    /// of them, and is still refused.
+    /// A recording no fix of which has a position has nowhere to draw its
+    /// track, and still loads: the fixes reach the plot and the history, and
+    /// the warning names the records.
     #[test]
-    fn a_recording_whose_every_fix_is_out_of_range_is_refused() {
+    fn a_recording_whose_every_latitude_is_nan_loads_with_tracks_that_have_no_geometry() {
         let mut recorder = NavFileBuilder::new().open();
         for record in 0..3i64 {
             recorder.add_nav_fix(
                 NavFix::builder()
                     .gps_time(base() + Duration::seconds(record))
-                    .lat(Angle::degrees(91.0))
+                    .lat(Angle::degrees(f64::NAN))
                     .lon(Angle::degrees(12.0))
                     .heading(Angle::degrees(90.0))
                     .build(),
@@ -1657,12 +1640,19 @@ mod tests {
         let mut bytes = Vec::new();
         recorder.finish().unwrap().write(&mut bytes).unwrap();
 
-        let error = load_bytes(&bytes, "out_of_range.gtd".to_owned()).unwrap_err();
+        let file = load_bytes(&bytes, "no_position.gtd".to_owned()).unwrap();
 
-        assert_eq!(
-            error.to_string(),
-            "no fix between records 0 and 2 has a latitude and longitude in range"
-        );
+        let track = file.tracks.first().expect("the three fixes form one track");
+        assert_eq!(track.points.len(), 3);
+        assert_eq!(track.geometry, TrackGeometry::NoValidPosition);
+        assert!(track.placed_points().is_none());
+        assert_eq!(track.metadata.invalid_position_count, 3);
+        let warnings: Vec<(u32, &str)> = file
+            .load_warnings
+            .iter()
+            .map(|w| (w.count, w.issue.as_str()))
+            .collect();
+        assert_eq!(warnings, vec![(3, "fix(es) with a latitude out of range")]);
     }
 
     /// An SNR inside the ≈ 99 dB-Hz band the firmware writes for "no

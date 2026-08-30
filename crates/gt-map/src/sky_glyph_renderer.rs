@@ -16,7 +16,7 @@ use std::cmp::Reverse;
 use egui::{Pos2, Shape, Stroke, Vec2};
 
 use gt_types::satellites::Satellites;
-use gt_types::{LoadedTrack, MercBounds, TrackRef};
+use gt_types::{LoadedTrack, MercBounds, PlacedPoints, TrackRef};
 use gt_ui_types::SkyGlyphVariant;
 use smallvec::SmallVec;
 
@@ -134,8 +134,12 @@ pub(crate) fn select_glyphs<'s, 'a>(
 ) -> &'s [Vec<usize>] {
     let candidates = scratch.candidates();
     for (geometry_index, track_ref, track) in tracks {
-        for (point_index, point) in track.points.iter().enumerate() {
-            let Some(satellites) = &point.satellites else {
+        // A track with no geometry is drawn nowhere, so it carries no glyph.
+        let Some(placed) = track.placed_points() else {
+            continue;
+        };
+        for (point_index, point) in placed.iter().enumerate() {
+            let Some(satellites) = &point.fix.satellites else {
                 continue;
             };
             let (x, y) = (point.merc().x, point.merc().y);
@@ -143,7 +147,7 @@ pub(crate) fn select_glyphs<'s, 'a>(
             {
                 continue;
             }
-            if !point_passes(track_ref, point_index, point) {
+            if !point_passes(track_ref, point_index, point.fix) {
                 continue;
             }
             candidates.push((
@@ -200,11 +204,14 @@ pub(crate) fn draw_glyphs(
 ) {
     let dark_mode = ui.visuals().dark_mode;
     let baseline_color = ui.visuals().weak_text_color();
+    let Some(placed) = track.placed_points() else {
+        return;
+    };
     for &pi in point_indices {
-        let Some(point) = track.points.get(pi) else {
+        let Some(point) = placed.get(pi) else {
             continue;
         };
-        let Some(satellites) = &point.satellites else {
+        let Some(satellites) = &point.fix.satellites else {
             continue;
         };
         let fix_pos = transform.to_screen(point.merc());
@@ -220,7 +227,7 @@ pub(crate) fn draw_glyphs(
                 );
             }
             SkyGlyphVariant::Disc => {
-                let center = fix_pos + disc_offset(track, pi, transform, fix_pos, size_scale);
+                let center = fix_pos + disc_offset(placed, pi, transform, fix_pos, size_scale);
                 draw_disc(
                     ui,
                     fix_pos,
@@ -306,13 +313,13 @@ fn bead_pos(center: Pos2, azimuth_deg: f32, radius: f32) -> Pos2 {
 /// the sample that defines the local tangent on that side. `None` when the
 /// track runs out first (a short or heavily-culled track near its end).
 fn tangent_sample(
-    track: &LoadedTrack,
+    points: PlacedPoints<'_>,
     transform: &MercTransform,
     fix_pos: Pos2,
     indices: impl Iterator<Item = usize>,
 ) -> Option<Pos2> {
     for idx in indices {
-        let point = track.points.get(idx)?;
+        let point = points.get(idx)?;
         let pos = transform.to_screen(point.merc());
         if (pos - fix_pos).length() >= TANGENT_SAMPLE_MIN_PX {
             return Some(pos);
@@ -329,14 +336,14 @@ fn tangent_sample(
 /// vertical track, up-and-right). Where the anchor has no usable neighbor on
 /// either side it falls back to [`DISC_OFFSET_PX`].
 fn disc_offset(
-    track: &LoadedTrack,
+    points: PlacedPoints<'_>,
     pi: usize,
     transform: &MercTransform,
     fix_pos: Pos2,
     size_scale: f32,
 ) -> Vec2 {
-    let prev = tangent_sample(track, transform, fix_pos, (0..pi).rev());
-    let next = tangent_sample(track, transform, fix_pos, pi + 1..track.points.len());
+    let prev = tangent_sample(points, transform, fix_pos, (0..pi).rev());
+    let next = tangent_sample(points, transform, fix_pos, pi + 1..points.len());
     disc_offset_for_samples(prev, next, fix_pos, size_scale)
 }
 

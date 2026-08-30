@@ -21,7 +21,7 @@ use gt_query_run::{
     TrackProvider, TrackQueryData,
 };
 use gt_side_panel::widgets::{PointClickRequests, apply_point_click};
-use gt_types::{DataCategory, LoadedFile, NavPoint, PointIdx, TrackRef};
+use gt_types::{DataCategory, LoadedFile, PlacedPoints, PointIdx, TrackRef};
 use gt_ui_theme::buttons::SortHeaderButton;
 use gt_ui_theme::labels::{CountLine, LabelWithHover};
 use gt_ui_types::{
@@ -131,7 +131,9 @@ enum ColumnSource {
 /// One track's values, as the run computed them. A row reads its value without
 /// rebuilding a provider: this is built once per track the run matched.
 struct TrackValues<'a> {
-    points: &'a [NavPoint],
+    /// Where the map draws the track's points, absent for a track with no
+    /// geometry.
+    placed: Option<PlacedPoints<'a>>,
     provider: TrackProvider<'a>,
     /// The evaluator's view of the track, for the metrics derived across
     /// neighbouring points.
@@ -153,7 +155,7 @@ impl TrackValues<'_> {
     }
 
     fn lat_lon(&self, point_index: usize) -> Option<(f64, f64)> {
-        let (latitude, longitude) = self.points.get(point_index)?.resolved_position();
+        let (latitude, longitude) = self.placed?.get(point_index)?.resolved_position();
         Some((latitude.as_degrees(), longitude.as_degrees()))
     }
 }
@@ -236,7 +238,9 @@ fn timeline_of(tracks: &[ChannelTrackResult], track: TrackRef) -> Option<&Channe
 /// table is laid out and the enclosing panel's `Ui` is available again.
 struct PointClick {
     point: DataPointRef,
-    lat_lon: (f64, f64),
+    /// Where double-clicking the row centres the map, absent for a point of a
+    /// track with no geometry.
+    lat_lon: Option<(f64, f64)>,
     response: egui::Response,
 }
 
@@ -1078,7 +1082,7 @@ impl<'a> ResultsTables<'a> {
         }
         Some(PointClick {
             point,
-            lat_lon: self.source.lat_lon(track, source_index)?,
+            lat_lon: self.source.lat_lon(track, source_index),
             response,
         })
     }
@@ -1291,13 +1295,14 @@ fn track_values<'a>(
     results: &'a PointsResults,
     track: TrackRef,
 ) -> Option<TrackValues<'a>> {
-    let points = track.resolve(files)?.points.as_slice();
+    let loaded = track.resolve(files)?;
+    let points = loaded.points.as_slice();
     let data = results.track_data(track);
     // Match tables need no channel data: they read only metric columns.
     let provider = TrackProvider::new(points, &[], data);
     let slice_start = data.map_or(0, TrackQueryData::slice_start);
     Some(TrackValues {
-        points,
+        placed: loaded.placed_points(),
         provider,
         slice: SliceProvider::new(
             provider,

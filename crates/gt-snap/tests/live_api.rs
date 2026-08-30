@@ -16,7 +16,7 @@ use support::base_time;
 
 use gt_fetch::HttpTransport;
 use gt_snap::merge::{self, ChunkOutcome, SnapWarningReporter};
-use gt_snap::request_plan::{self, SnapParams};
+use gt_snap::request_plan::SnapParams;
 use gt_snap::wire::Costing;
 use gt_snap::{DEFAULT_SERVER_URL, REQUEST_INTERVAL, transport};
 use gt_types::nav_point::NavPoint;
@@ -54,7 +54,7 @@ fn boulevard_points() -> Vec<NavPoint> {
 #[test]
 fn full_pipeline_against_live_server() {
     let points = boulevard_points();
-    let plan = request_plan::plan(&points);
+    let plan = support::plan_of(&points);
     assert_eq!(plan.chunks.len(), 1);
 
     let transport = HttpTransport::new(Some(REQUEST_INTERVAL)).expect("transport builds");

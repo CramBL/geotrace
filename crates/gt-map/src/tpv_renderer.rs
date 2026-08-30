@@ -7,8 +7,8 @@ use gt_filter::{self as filter, GlobalFilter};
 use gt_sky::{SkyHighlight, SkyPlot, SkyPlotSize};
 use gt_types::satellites::{Constellation, Satellite};
 use gt_types::{
-    DataCategory, FileIdx, LoadedFile, LoadedTrack, NavPoint, NearestSatelliteReport, PointIdx,
-    SKY_REPORT_MAX_AGE_SECS, TrackIdx, TrackRef,
+    DataCategory, FileIdx, LoadedFile, LoadedTrack, NavPoint, NearestSatelliteReport, PlacedPoints,
+    PointIdx, SKY_REPORT_MAX_AGE_SECS, TrackIdx, TrackRef,
 };
 use gt_ui_theme::{DEGREE_SIGN, DELTA, EM_DASH};
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, PointWindowFolds};
@@ -150,28 +150,30 @@ pub(crate) fn draw_track_icons(
     // pass (accuracy circles, highlighted arrows) barrier the batch so
     // stacking matches immediate painting exactly; see [IconMeshBatch].
     let mut batch = IconMeshBatch::gpu_when_available(ui, icon_meshes);
+    // A track with no geometry is drawn nowhere, so it has no icons.
+    let Some(placed) = track.placed_points() else {
+        return;
+    };
     // Real fixes: indices come from the global R-tree viewport query.
     if let Some(indices) = real_fix_indices {
         for &pi in indices {
-            #[expect(
-                clippy::indexing_slicing,
-                reason = "index from global RTree built over track.points, so always in bounds"
-            )]
-            let point = &track.points[pi];
-            if !filter::point_passes_time_filter(point.tpv.time().utc(), filter) {
+            let Some(point) = placed.get(pi) else {
+                continue;
+            };
+            if !filter::point_passes_time_filter(point.fix.tpv.time().utc(), filter) {
                 continue;
             }
-            let Some(h) = point.tpv.heading() else {
+            let Some(h) = point.fix.tpv.heading() else {
                 continue;
             };
             // Fix-lost points (0 satellites in fix) are drawn by the ghost loop.
-            if point.is_ghost_fix() {
+            if point.fix.is_ghost_fix() {
                 continue;
             }
             let screen_pos = transform.to_screen(point.merc());
             let icon_alpha = fix_icon_alpha(
                 fade,
-                track,
+                placed,
                 pi,
                 screen_pos,
                 style.base_arrow_size,
@@ -189,7 +191,7 @@ pub(crate) fn draw_track_icons(
                 category: DataCategory::Tpv,
                 point_index: PointIdx::new(pi),
             };
-            let eph_m = point.tpv.eph_m();
+            let eph_m = point.fix.tpv.eph_m();
             let (latitude, _) = point.resolved_position();
             let pixels_per_meter = if eph_m.is_some() {
                 transform.pixels_per_meter(latitude)
@@ -200,7 +202,7 @@ pub(crate) fn draw_track_icons(
                 ui,
                 screen_pos,
                 &PointKind::Real {
-                    color: tpv_point_color(point),
+                    color: tpv_point_color(point.fix),
                     heading: h,
                 },
                 eph_m,
@@ -221,7 +223,7 @@ pub(crate) fn draw_track_icons(
     // level, so faded stretches lose only sub-pixel interior chevrons.
     for (pi, point) in ghost_points
         .iter()
-        .filter_map(|&pi| track.points.get(pi).map(|p| (pi, p)))
+        .filter_map(|&pi| Some((pi, placed.get(pi)?)))
     {
         let screen_pos = transform.to_screen(point.merc());
         if !view_rect.contains(screen_pos) {
@@ -229,7 +231,7 @@ pub(crate) fn draw_track_icons(
         }
         let icon_alpha = fix_icon_alpha(
             fade,
-            track,
+            placed,
             pi,
             screen_pos,
             style.base_arrow_size,
@@ -247,15 +249,15 @@ pub(crate) fn draw_track_icons(
         //   use it - it is more accurate than deriving from neighbour positions.
         // - Otherwise derive from neighbouring Mercator positions (see
         //   [`ghost_direction`]).
-        let direction = if let Some(h) = point.tpv.heading() {
+        let direction = if let Some(h) = point.fix.tpv.heading() {
             let angle_rad = h.get::<radian>() - std::f64::consts::FRAC_PI_2;
             egui::vec2(angle_rad.cos() as f32, angle_rad.sin() as f32)
         } else {
             let merc_prev = pi
                 .checked_sub(1)
-                .and_then(|i| track.points.get(i))
+                .and_then(|i| placed.get(i))
                 .map_or(point.merc(), |p| p.merc());
-            let merc_next = track.points.get(pi + 1).map_or(point.merc(), |p| p.merc());
+            let merc_next = placed.get(pi + 1).map_or(point.merc(), |p| p.merc());
             ghost_direction(merc_prev, merc_next)
         };
         let point_ref = DataPointRef {
@@ -425,7 +427,7 @@ pub(crate) fn draw_plot_hover_overlay(
         && let Some(point) = fi
             .get(files)
             .and_then(|f| ti.get(&f.tracks))
-            .and_then(|t| pi.get(&t.points))
+            .and_then(|t| t.placed_points()?.get(pi.as_usize()))
     {
         let pos = transform.to_screen(point.merc());
         let painter = ui.painter();
@@ -447,7 +449,7 @@ pub(crate) fn draw_plot_hover_overlay(
         );
         // The detailed disc at the scrubbed point, independent of the sky
         // glyphs overlay's own variant or visibility.
-        if let Some(satellites) = &point.satellites {
+        if let Some(satellites) = &point.fix.satellites {
             crate::sky_glyph_renderer::draw_hover_disc(
                 ui,
                 pos,
@@ -1164,16 +1166,19 @@ pub(crate) enum TrackIconFade {
 ///
 /// A track without segments (a lone fix) has nothing to overlap with and is
 /// always [`TrackIconFade::AllVisible`] - a spacing of zero would hide it at
-/// every zoom.
+/// every zoom. So is a track with no geometry, which draws no icon anyway.
 pub(crate) fn classify_icon_fade(
     track: &LoadedTrack,
     scale: MapScale,
     icon_size_px: f32,
 ) -> TrackIconFade {
-    let Some(range) = track.metadata.segment_length_range else {
+    let Some(geometry) = track.geometry.measured() else {
         return TrackIconFade::AllVisible;
     };
-    let ppm = scale.pixels_per_meter(track.metadata.bounding_box.lat.center());
+    let Some(range) = geometry.segment_length_range else {
+        return TrackIconFade::AllVisible;
+    };
+    let ppm = scale.pixels_per_meter(geometry.bounding_box.lat.center());
     let min_px = (range.min.get::<meter>() * ppm) as f32;
     let max_px = (range.max.get::<meter>() * ppm) as f32;
     let (lo, hi) = fade_band(icon_size_px);
@@ -1207,14 +1212,13 @@ fn fade_band(icon_size_px: f32) -> (f32, f32) {
 /// only one neighbour, so a track that starts or ends parked fades its
 /// first/last arrow with the rest of the cluster.
 fn local_fix_spacing_px(
-    track: &LoadedTrack,
+    points: PlacedPoints<'_>,
     pi: usize,
     screen_pos: Pos2,
     transform: &crate::transform::MercTransform,
 ) -> Option<f32> {
     let dist_to = |i: usize| {
-        track
-            .points
+        points
             .get(i)
             .map(|p| (transform.to_screen(p.merc()) - screen_pos).length())
     };
@@ -1244,7 +1248,7 @@ fn icon_fade_alpha(spacing_px: f32, icon_size_px: f32) -> f32 {
 /// Opacity of the fix at `pi` under the given per-track fade mode.
 pub(crate) fn fix_icon_alpha(
     fade: TrackIconFade,
-    track: &LoadedTrack,
+    points: PlacedPoints<'_>,
     pi: usize,
     screen_pos: Pos2,
     icon_size_px: f32,
@@ -1253,7 +1257,7 @@ pub(crate) fn fix_icon_alpha(
     match fade {
         TrackIconFade::AllHidden => 0.0,
         TrackIconFade::AllVisible => 1.0,
-        TrackIconFade::PerFix => local_fix_spacing_px(track, pi, screen_pos, transform)
+        TrackIconFade::PerFix => local_fix_spacing_px(points, pi, screen_pos, transform)
             .map_or(1.0, |spacing| icon_fade_alpha(spacing, icon_size_px)),
     }
 }
@@ -1397,8 +1401,11 @@ pub(crate) fn draw_sat_labels(
     style: &TpvDrawStyle,
     transform: &crate::transform::MercTransform,
 ) {
-    for point in label_indices.iter().filter_map(|&pi| track.points.get(pi)) {
-        let Some(sats) = &point.satellites else {
+    let Some(placed) = track.placed_points() else {
+        return;
+    };
+    for point in label_indices.iter().filter_map(|&pi| placed.get(pi)) {
+        let Some(sats) = &point.fix.satellites else {
             continue;
         };
         let screen_pos = transform.to_screen(point.merc());

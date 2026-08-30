@@ -280,7 +280,12 @@ impl<'a> TrackLayers<'a> {
                 if entry.draws_nothing() {
                     continue;
                 }
-                if !track.metadata.merc_bounds.intersects(vp_bounds) {
+                // A track with no geometry is nowhere on the map: nothing of
+                // it is drawn, and the culling test has no box to take.
+                let Some(geometry) = track.geometry.measured() else {
+                    continue;
+                };
+                if !geometry.merc_bounds.intersects(vp_bounds) {
                     continue;
                 }
                 // Blink overlay: a bright pulsing stroke on top of newly
@@ -311,13 +316,16 @@ impl<'a> TrackLayers<'a> {
                     .highlight
                     .hover_match
                     .filter(|hm| hm.track == track_ref);
-                let pts = lod_points(track, transform)
+                let Some(placed) = track.placed_points() else {
+                    continue;
+                };
+                let pts = lod_points(track, placed, transform)
                     .filter(|(_, p)| {
-                        gt_filter::point_passes_time_filter(p.tpv.time().utc(), self.filter)
+                        gt_filter::point_passes_time_filter(p.fix.tpv.time().utc(), self.filter)
                     })
                     .map(|(pi, p)| {
                         let screen_pos = transform.to_screen(p.merc());
-                        if paint_icons && p.is_ghost_fix() {
+                        if paint_icons && p.fix.is_ghost_fix() {
                             ghost_points.push(pi);
                         }
                         let bucket = match fade {
@@ -325,7 +333,7 @@ impl<'a> TrackLayers<'a> {
                             Some(fade) => line_alpha_bucket(
                                 1.0 - fix_icon_alpha(
                                     fade,
-                                    track,
+                                    placed,
                                     pi,
                                     screen_pos,
                                     style.base_arrow_size,
@@ -339,8 +347,8 @@ impl<'a> TrackLayers<'a> {
                                 (m.draw_mask(track_ref, pi), m.is_hidden(track_ref, pi))
                             });
                         let key = LinePointKey {
-                            ghost: p.tpv.heading().is_none(),
-                            quality: quality_line_color(p),
+                            ghost: p.fix.tpv.heading().is_none(),
+                            quality: quality_line_color(p.fix),
                             bucket,
                             matched,
                             hidden,

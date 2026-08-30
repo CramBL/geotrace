@@ -1,9 +1,10 @@
-//! `TrackMetadata::bounding_box` and `merc_bounds` for a track that circles a
-//! pole.
+//! A track's `bounding_box` and `merc_bounds` when it circles a pole.
 //!
 //! The box is the polar cap holding the track: every meridian, and latitudes
 //! from the southernmost fix to the pole. No longitude arc frames such a
 //! track, which reaches every meridian without crossing any of them twice.
+
+mod support;
 
 use chrono::{DateTime, Duration};
 use gt_types::coordinates::{Latitude, Longitude};
@@ -14,7 +15,7 @@ use gt_types::tpv::TimePositionVelocity;
 use uom::si::angle::degree;
 use uom::si::f64::Angle;
 
-use gt_track_builder::segment;
+use support::measured_geometry;
 
 /// 1e-9° is about 0.1 mm.
 const DEGREES_TOLERANCE: f64 = 1e-9;
@@ -51,7 +52,9 @@ fn assert_degrees_close(actual: f64, expected: f64) {
 
 #[test]
 fn bounding_box_around_the_pole_holds_every_meridian_and_reaches_the_pole() {
-    let bounds = segment::compute_track_metadata(0, &circumpolar_track(), &[], &[]).bounding_box;
+    let bounds = measured_geometry(&circumpolar_track())
+        .expect("every fix has a recorded position")
+        .bounding_box;
 
     assert!(
         bounds.lon.is_full_circle(),
@@ -69,8 +72,9 @@ fn bounding_box_around_the_pole_holds_every_meridian_and_reaches_the_pole() {
 /// Oracle: `mercator::normalize` on the two corners.
 #[test]
 fn merc_bounds_around_the_pole_span_the_world_with_the_pole_at_y_min() {
-    let merc_bounds =
-        segment::compute_track_metadata(0, &circumpolar_track(), &[], &[]).merc_bounds;
+    let merc_bounds = measured_geometry(&circumpolar_track())
+        .expect("every fix has a recorded position")
+        .merc_bounds;
     let pole = mercator::normalize(Latitude::new(90.0), Longitude::new(-180.0));
     let southern_edge = mercator::normalize(Latitude::new(89.9), Longitude::new(180.0));
 

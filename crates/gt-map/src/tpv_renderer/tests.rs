@@ -472,6 +472,7 @@ fn track_with_points(points: Vec<NavPoint>) -> LoadedTrack {
             satellite_report_count,
             ..gt_test_utils::empty_track_metadata()
         },
+        geometry: gt_test_utils::track_geometry(&points),
         points,
         lod: gt_types::TrackLod::default(),
         sat_label_anchors: Vec::new(),
@@ -853,14 +854,21 @@ fn nav_point_at_meters(x_m: f64) -> NavPoint {
 }
 
 fn track_with_segment_range(min_m: f64, max_m: f64) -> LoadedTrack {
+    let bounding_box =
+        gt_types::GeoBounds::single_position(Latitude::new(0.0), gt_types::Longitude::new(0.0));
     LoadedTrack {
-        metadata: gt_types::TrackMetadata {
+        metadata: gt_test_utils::empty_track_metadata(),
+        geometry: gt_types::TrackGeometry::Measured(gt_types::MeasuredTrackGeometry {
+            resolved_positions: Vec::new(),
+            bounding_box,
+            merc_bounds: gt_types::MercBounds::from(bounding_box),
+            distance_km: Length::new::<uom::si::length::kilometer>(0.0),
+            point_set_diameter_m: Length::new::<meter>(0.0),
             segment_length_range: Some(gt_types::SegmentLengthRange {
                 min: Length::new::<meter>(min_m),
                 max: Length::new::<meter>(max_m),
             }),
-            ..gt_test_utils::empty_track_metadata()
-        },
+        }),
         points: Vec::new(),
         lod: gt_types::TrackLod::default(),
         sat_label_anchors: Vec::new(),
@@ -920,8 +928,9 @@ fn classify_mixed_spacing_selects_per_fix() {
 
 fn spacing_at(track: &LoadedTrack, pi: usize) -> Option<f32> {
     let transform = unit_transform();
-    let screen_pos = transform.to_screen(track.points[pi].merc());
-    local_fix_spacing_px(track, pi, screen_pos, &transform)
+    let placed = track.placed_points()?;
+    let screen_pos = transform.to_screen(placed.get(pi)?.merc());
+    local_fix_spacing_px(placed, pi, screen_pos, &transform)
 }
 
 #[test]
@@ -959,12 +968,13 @@ fn local_spacing_keeps_cluster_boundary_visible() {
 #[test]
 fn fix_icon_alpha_short_circuits_uniform_tracks() {
     let track = track_with_points(vec![nav_point_at_meters(0.0), nav_point_at_meters(0.0)]);
+    let placed = track.placed_points().expect("the fixture track is placed");
     let transform = unit_transform();
-    let pos = transform.to_screen(track.points[0].merc());
+    let pos = transform.to_screen(placed.get(0).expect("the first fix").merc());
     // AllHidden / AllVisible ignore local spacing entirely.
     let hidden = fix_icon_alpha(
         TrackIconFade::AllHidden,
-        &track,
+        placed,
         0,
         pos,
         TEST_ICON_PX,
@@ -972,7 +982,7 @@ fn fix_icon_alpha_short_circuits_uniform_tracks() {
     );
     let visible = fix_icon_alpha(
         TrackIconFade::AllVisible,
-        &track,
+        placed,
         0,
         pos,
         TEST_ICON_PX,
@@ -997,12 +1007,13 @@ fn per_fix_alpha_handles_parked_highway_parked() {
         nav_point_at_meters(300.0),
         nav_point_at_meters(300.0),
     ]);
+    let placed = track.placed_points().expect("the fixture track is placed");
     let transform = unit_transform();
     let alpha_at = |pi: usize| {
-        let pos = transform.to_screen(track.points[pi].merc());
+        let pos = transform.to_screen(placed.get(pi).expect("a fix at pi").merc());
         fix_icon_alpha(
             TrackIconFade::PerFix,
-            &track,
+            placed,
             pi,
             pos,
             TEST_ICON_PX,

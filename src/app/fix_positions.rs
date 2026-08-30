@@ -30,11 +30,12 @@ impl FixPositionTimeline {
         let mut fixes: Vec<PositionedFix> = files
             .iter()
             .flat_map(|file| file.tracks.iter())
-            .flat_map(|track| track.points.iter())
+            .filter_map(|track| track.placed_points())
+            .flat_map(|placed| placed.iter())
             .map(|point| {
                 let (latitude, longitude) = point.resolved_position();
                 PositionedFix {
-                    secs: point.tpv.time().utc().timestamp(),
+                    secs: point.fix.tpv.time().utc().timestamp(),
                     latitude,
                     longitude,
                 }
@@ -106,7 +107,6 @@ impl FixPositions {
 #[cfg(test)]
 mod tests {
     use chrono::TimeDelta;
-    use gt_types::NavPoint;
     use rstest::rstest;
 
     use gt_ui_types::ArcIdentity;
@@ -156,10 +156,8 @@ mod tests {
     ) {
         let track = hourly_track();
         let expected = track
-            .points
-            .get(expected_index)
-            .map(NavPoint::resolved_position)
-            .expect("the fixture has four fixes");
+            .resolved_position_at(expected_index)
+            .expect("the fixture has four placed fixes");
 
         let timeline = FixPositionTimeline::of(&files_of(track));
         assert_eq!(timeline.nearest_position(time), Some(expected));
@@ -170,10 +168,8 @@ mod tests {
     fn a_tie_takes_the_earlier_fix() {
         let track = hourly_track();
         let expected = track
-            .points
-            .get(1)
-            .map(NavPoint::resolved_position)
-            .expect("the fixture has four fixes");
+            .resolved_position_at(1)
+            .expect("the fixture has four placed fixes");
 
         let timeline = FixPositionTimeline::of(&files_of(track));
         assert_eq!(

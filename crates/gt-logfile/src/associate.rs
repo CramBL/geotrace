@@ -2,7 +2,7 @@
 //! nearest in time, interpolated between the two fixes it falls between.
 
 use chrono::{DateTime, Duration, Utc};
-use gt_types::{Latitude, Longitude, NavPoint};
+use gt_types::{Latitude, Longitude, PlacedPoint};
 use rayon::prelude::*;
 
 use crate::{parse::LogEntry, pool};
@@ -11,30 +11,30 @@ use crate::{parse::LogEntry, pool};
 /// handing it to [`pool::log_worker_pool`].
 const PARALLEL_ASSOCIATION_MIN_ENTRIES: usize = 16 * 1024;
 
-/// The recorded position at `time`, or `None` when no fix of `nav_points` lies
+/// The recorded position at `time`, or `None` when no fix of `fixes` lies
 /// within `window` of it.
 ///
-/// `nav_points` must be in ascending time order.
+/// `fixes` must be in ascending time order.
 pub fn associate_position(
     time: DateTime<Utc>,
-    nav_points: &[NavPoint],
+    fixes: &[PlacedPoint<'_>],
     window: Duration,
 ) -> Option<(Latitude, Longitude)> {
-    let index = nav_points.partition_point(|point| point.tpv.time().utc() <= time);
-    let before = index.checked_sub(1).and_then(|i| nav_points.get(i));
-    let after = nav_points.get(index);
+    let index = fixes.partition_point(|point| point.fix.tpv.time().utc() <= time);
+    let before = index.checked_sub(1).and_then(|i| fixes.get(i));
+    let after = fixes.get(index);
 
     match (before, after) {
         (Some(before), Some(after)) => {
-            let gap_before = (time - before.tpv.time().utc()).abs();
-            let gap_after = (after.tpv.time().utc() - time).abs();
+            let gap_before = (time - before.fix.tpv.time().utc()).abs();
+            let gap_after = (after.fix.tpv.time().utc() - time).abs();
             if gap_before.min(gap_after) > window {
                 return None;
             }
-            let span = (after.tpv.time() - before.tpv.time())
+            let span = (after.fix.tpv.time() - before.fix.tpv.time())
                 .num_microseconds()
                 .unwrap_or(1);
-            let elapsed = (time - before.tpv.time().utc())
+            let elapsed = (time - before.fix.tpv.time().utc())
                 .num_microseconds()
                 .unwrap_or(0);
             let fraction = if span == 0 {
@@ -51,7 +51,7 @@ pub fn associate_position(
             Some((Latitude::new(lat), Longitude::new(lon)))
         }
         (Some(nearest), None) | (None, Some(nearest)) => {
-            if (time - nearest.tpv.time().utc()).abs() > window {
+            if (time - nearest.fix.tpv.time().utc()).abs() > window {
                 return None;
             }
             Some(nearest.resolved_position())
@@ -60,17 +60,17 @@ pub fn associate_position(
     }
 }
 
-/// The position of every entry of `entries` against `nav_points`, in entry
-/// order, `None` for an entry no fix lies within `window` of.
+/// The position of every entry of `entries` against `fixes`, in entry order,
+/// `None` for an entry no fix lies within `window` of.
 ///
-/// `nav_points` are those of the log's association target alone: a log is never
+/// `fixes` are those of the log's association target alone: a log is never
 /// associated against the fixes of several recordings at once.
 pub fn associate_entries(
     entries: &[LogEntry],
-    nav_points: &[NavPoint],
+    fixes: &[PlacedPoint<'_>],
     window: Duration,
 ) -> Vec<Option<(Latitude, Longitude)>> {
-    let position_of = |entry: &LogEntry| associate_position(entry.timestamp, nav_points, window);
+    let position_of = |entry: &LogEntry| associate_position(entry.timestamp, fixes, window);
     match pool::log_worker_pool() {
         Some(pool) if entries.len() >= PARALLEL_ASSOCIATION_MIN_ENTRIES => {
             pool.install(|| entries.par_iter().map(position_of).collect())
@@ -83,10 +83,25 @@ pub fn associate_entries(
 mod tests {
     use chrono::TimeZone as _;
     use gt_test_utils::nav_points_from;
+    use gt_types::LoadedTrack;
     use rstest::rstest;
 
     use super::*;
     use crate::{TextSlice, TimestampKind};
+
+    /// `count` fixes a second apart from `start()`, as a track of their own.
+    fn track_of(count: usize) -> LoadedTrack {
+        gt_test_utils::loaded_track_with_points(nav_points_from(start(), count, 1))
+    }
+
+    /// The track's fixes with where the builder places each of them.
+    fn placed_fixes(track: &LoadedTrack) -> Vec<PlacedPoint<'_>> {
+        track
+            .placed_points()
+            .expect("every fixture fix has a recorded position")
+            .iter()
+            .collect()
+    }
 
     /// The window every test runs with, matching the app's default.
     fn window() -> Duration {
@@ -101,17 +116,19 @@ mod tests {
 
     #[test]
     fn a_time_between_two_fixes_lands_between_their_positions() {
-        let points = nav_points_from(start(), 5, 1);
+        let track = track_of(5);
         let time = start() + Duration::milliseconds(500);
-        let (lat, lon) = associate_position(time, &points, window()).expect("associates");
+        let (lat, lon) =
+            associate_position(time, &placed_fixes(&track), window()).expect("associates");
         assert!((lat.as_degrees() - 55.0005).abs() < 1e-9);
         assert!((lon.as_degrees() - 12.0005).abs() < 1e-9);
     }
 
     #[test]
     fn a_time_on_a_fix_takes_that_fixs_position() {
-        let points = nav_points_from(start(), 5, 1);
-        let (lat, lon) = associate_position(start(), &points, window()).expect("associates");
+        let track = track_of(5);
+        let (lat, lon) =
+            associate_position(start(), &placed_fixes(&track), window()).expect("associates");
         assert!((lat.as_degrees() - 55.0).abs() < 1e-9);
         assert!((lon.as_degrees() - 12.0).abs() < 1e-9);
     }
@@ -126,10 +143,10 @@ mod tests {
         #[case] offset_secs: i64,
         #[case] associates: bool,
     ) {
-        let points = nav_points_from(start(), 5, 1);
+        let track = track_of(5);
         let time = start() + Duration::seconds(offset_secs);
         assert_eq!(
-            associate_position(time, &points, window()).is_some(),
+            associate_position(time, &placed_fixes(&track), window()).is_some(),
             associates
         );
     }
@@ -139,7 +156,8 @@ mod tests {
     #[test]
     fn a_log_long_enough_for_the_pool_associates_as_one_thread_does() {
         let entry_count = PARALLEL_ASSOCIATION_MIN_ENTRIES + 1;
-        let points = nav_points_from(start(), 1 + entry_count / 1000, 1);
+        let track = track_of(1 + entry_count / 1000);
+        let points = placed_fixes(&track);
         let entries: Vec<LogEntry> = (0..entry_count)
             .map(|index| LogEntry {
                 timestamp: start() + Duration::milliseconds(index as i64),

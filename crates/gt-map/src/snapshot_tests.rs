@@ -9,7 +9,7 @@ use egui_phosphor::regular::CLOUD_LIGHTNING as ICON_CLOUD_LIGHTNING;
 
 use super::*;
 use gt_types::mercator::MercPoint;
-use gt_types::{DataCategory, DisplayMode, FileIdx, NavPoint, PointIdx, TrackIdx, TrackRef};
+use gt_types::{DataCategory, DisplayMode, FileIdx, PointIdx, TrackIdx, TrackRef};
 use gt_ui_types::{DataPointRef, DisplayCategory, DisplayMask};
 use rustc_hash::FxHashMap;
 
@@ -43,6 +43,16 @@ fn gen_ref() -> DataPointRef {
         category: DataCategory::GeneratedMarker,
         point_index: PointIdx::new(0),
     }
+}
+
+/// Where the map draws each fix of a fixture whose every fix records its
+/// position.
+fn recorded_positions(points: &[gt_types::NavPoint]) -> Vec<gt_types::ResolvedPosition> {
+    points
+        .iter()
+        .filter_map(|point| point.tpv.position())
+        .map(|(latitude, longitude)| gt_types::ResolvedPosition::measured(latitude, longitude))
+        .collect()
 }
 
 /// Builds a single `LoadedFile` with one TPV point, one event marker, one custom
@@ -80,25 +90,35 @@ fn make_snapshot_file() -> gt_types::LoadedFile {
         merc: mercator::normalize(lat, lon),
     };
 
-    let bb = GeoBounds::from_positions([
-        (Latitude::new(55.67), Longitude::new(12.55)),
-        (Latitude::new(55.69), Longitude::new(12.59)),
-    ])
-    .expect("two positions");
     let n = points.len();
     // Counted from the points rather than hard-coded: `SkySection::resolve`
     // short-circuits on a zero count, so claiming zero here would hide the
     // sky plot even though these points carry satellite reports.
     let satellite_report_count = points.iter().filter(|p| p.satellites.is_some()).count();
+    let bb = GeoBounds::from_positions([
+        (Latitude::new(55.67), Longitude::new(12.55)),
+        (Latitude::new(55.69), Longitude::new(12.59)),
+    ])
+    .expect("two positions");
+    // Every fix is drawn where it was recorded. The measures are the ones
+    // these snapshots are laid out for.
+    let geometry = gt_types::TrackGeometry::Measured(gt_types::MeasuredTrackGeometry {
+        resolved_positions: recorded_positions(&points),
+        bounding_box: bb,
+        merc_bounds: MercBounds::from(bb),
+        distance_km: Length::new::<kilometer>(5.0),
+        point_set_diameter_m: Length::new::<uom::si::length::meter>(500.0),
+        segment_length_range: None,
+    });
+    let sat_label_anchors = geometry
+        .measured()
+        .and_then(|measured| gt_types::PlacedPoints::new(&points, &measured.resolved_positions))
+        .map_or_else(Vec::new, gt_track_builder::build_sat_label_anchors);
     let track = LoadedTrack {
         metadata: TrackMetadata {
             index: 0,
-            distance_km: Length::new::<kilometer>(5.0),
             duration: chrono::Duration::seconds(n as i64),
             time_range: TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64)),
-            bounding_box: bb,
-            merc_bounds: MercBounds::from(bb),
-            point_set_diameter_m: Length::new::<uom::si::length::meter>(500.0),
             has_custom_markers: true,
             tpv_count: n,
             invalid_position_count: 0,
@@ -108,7 +128,8 @@ fn make_snapshot_file() -> gt_types::LoadedFile {
             event_marker_count: 1,
             ..gt_test_utils::empty_track_metadata()
         },
-        sat_label_anchors: gt_track_builder::build_sat_label_anchors(&points),
+        geometry,
+        sat_label_anchors,
         points,
         lod: gt_types::TrackLod::default(),
         custom_markers: vec![custom_marker],
@@ -688,14 +709,14 @@ fn snapshot_tec_heatmap(
 const SNAPPED_OFFSET_MERC_Y: f64 = -1.5e-6;
 
 /// Snapshot the map with `make_snapshot_file`'s track plus the snapped
-/// geometry `geometry_for` derives from its points, drawn under `mask`.
-/// With `hover`, the pointer is parked there before the snapshot (frames
-/// are stepped past egui's tooltip delay).
+/// geometry `geometry_for` derives from where its fixes are drawn, under
+/// `mask`. With `hover`, the pointer is parked there before the snapshot
+/// (frames are stepped past egui's tooltip delay).
 fn snapshot_snapped_tracks_with(
     name: &str,
     mask: DisplayMask,
     hover: Option<egui::Pos2>,
-    geometry_for: impl Fn(&[NavPoint]) -> gt_ui_types::SnappedTrackGeometry,
+    geometry_for: impl Fn(&[MercPoint]) -> gt_ui_types::SnappedTrackGeometry,
 ) {
     use std::sync::Arc;
 
@@ -704,13 +725,14 @@ fn snapshot_snapped_tracks_with(
     let files = vec![make_snapshot_file()];
     let visibility = TrackDataVisibility::from_loaded(&files);
     let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
-    let points = files
+    let drawn: Vec<MercPoint> = files
         .first()
         .and_then(|f| f.tracks.first())
-        .map(|t| t.points.clone())
+        .and_then(gt_types::LoadedTrack::placed_points)
+        .map(|placed| placed.iter().map(|point| point.merc()).collect())
         .unwrap_or_default();
     let mut snapped = SnappedTracks::default();
-    snapped.insert(track_ref, Arc::new(geometry_for(&points)));
+    snapped.insert(track_ref, Arc::new(geometry_for(&drawn)));
 
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(800.0, 600.0))
@@ -752,7 +774,7 @@ fn snapshot_snapped_tracks_with(
 fn snapshot_snapped_tracks(
     name: &str,
     mask: DisplayMask,
-    segments_for: impl Fn(&[NavPoint]) -> Vec<Vec<MercPoint>>,
+    segments_for: impl Fn(&[MercPoint]) -> Vec<Vec<MercPoint>>,
 ) {
     snapshot_snapped_tracks_with(name, mask, None, |points| {
         gt_ui_types::SnappedTrackGeometry {
@@ -771,14 +793,14 @@ fn snapshot_snapped_tracks(
 
 /// A snapped segment following the recorded points in `range`, nudged
 /// north by [`SNAPPED_OFFSET_MERC_Y`].
-fn snapped_segment(points: &[NavPoint], range: std::ops::Range<usize>) -> Vec<MercPoint> {
-    points
+fn snapped_segment(drawn: &[MercPoint], range: std::ops::Range<usize>) -> Vec<MercPoint> {
+    drawn
         .get(range)
         .unwrap_or_default()
         .iter()
         .map(|p| MercPoint {
-            x: p.merc().x,
-            y: p.merc().y + SNAPPED_OFFSET_MERC_Y,
+            x: p.x,
+            y: p.y + SNAPPED_OFFSET_MERC_Y,
         })
         .collect()
 }
@@ -855,8 +877,8 @@ fn snap_snapped_track_collapsed_dot() {
             vec![
                 (0..4)
                     .map(|i| MercPoint {
-                        x: base.merc().x + f64::from(i) * CLUSTER_STEP_MERC_X,
-                        y: base.merc().y + CLUSTER_OFFSET_MERC_Y,
+                        x: base.x + f64::from(i) * CLUSTER_STEP_MERC_X,
+                        y: base.y + CLUSTER_OFFSET_MERC_Y,
                     })
                     .collect(),
             ]
@@ -898,8 +920,8 @@ fn snap_snapped_track_edge_hover() {
                 ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN)),
                 |(min, max), p| {
                     (
-                        (min.0.min(p.merc().x), min.1.min(p.merc().y)),
-                        (max.0.max(p.merc().x), max.1.max(p.merc().y)),
+                        (min.0.min(p.x), min.1.min(p.y)),
+                        (max.0.max(p.x), max.1.max(p.y)),
                     )
                 },
             );
@@ -943,13 +965,13 @@ fn snap_snapped_track_edge_hover() {
 const WHISKER_OFFSET_MERC_X: f64 = 4.0e-7;
 
 /// Whisker anchors and the matching snapped polyline for a run over
-/// `points`: every recorded point snaps [`WHISKER_OFFSET_MERC_X`] east.
-fn whisker_geometry(points: &[NavPoint]) -> gt_ui_types::SnappedTrackGeometry {
-    let snapped: Vec<MercPoint> = points
+/// the fixes drawn at `drawn`: every one snaps [`WHISKER_OFFSET_MERC_X`] east.
+fn whisker_geometry(drawn: &[MercPoint]) -> gt_ui_types::SnappedTrackGeometry {
+    let snapped: Vec<MercPoint> = drawn
         .iter()
         .map(|p| MercPoint {
-            x: p.merc().x + WHISKER_OFFSET_MERC_X,
-            y: p.merc().y,
+            x: p.x + WHISKER_OFFSET_MERC_X,
+            y: p.y,
         })
         .collect();
     gt_ui_types::SnappedTrackGeometry {
@@ -958,7 +980,7 @@ fn whisker_geometry(points: &[NavPoint]) -> gt_ui_types::SnappedTrackGeometry {
             edge_spans: Vec::new(),
         }],
         edges: Vec::new(),
-        whiskers: points
+        whiskers: drawn
             .iter()
             .zip(snapped)
             .enumerate()
@@ -999,19 +1021,19 @@ fn make_short_walk_file() -> gt_types::LoadedFile {
     let track = LoadedTrack {
         metadata: TrackMetadata {
             time_range: TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64)),
-            bounding_box: bb,
-            merc_bounds: MercBounds::from(bb),
             tpv_count: n,
             invalid_position_count: 0,
             ..gt_test_utils::empty_track_metadata()
         },
-        sat_label_anchors: Vec::new(),
-        points,
-        lod: gt_types::TrackLod::default(),
-        custom_markers: Vec::new(),
-        generated_markers: Vec::new(),
-        event_markers: Vec::new(),
-        channels: Vec::new(),
+        geometry: gt_types::TrackGeometry::Measured(gt_types::MeasuredTrackGeometry {
+            resolved_positions: recorded_positions(&points),
+            bounding_box: bb,
+            merc_bounds: MercBounds::from(bb),
+            distance_km: uom::si::f64::Length::new::<uom::si::length::kilometer>(0.0),
+            point_set_diameter_m: uom::si::f64::Length::new::<uom::si::length::meter>(0.0),
+            segment_length_range: None,
+        }),
+        ..gt_test_utils::loaded_track_with_points(points)
     };
     LoadedFile {
         metadata: FileMetadata {
@@ -1039,13 +1061,14 @@ fn snap_snapped_track_whiskers_at_high_zoom() {
     let files = vec![make_short_walk_file()];
     let visibility = TrackDataVisibility::from_loaded(&files);
     let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
-    let points = files
+    let drawn: Vec<MercPoint> = files
         .first()
         .and_then(|f| f.tracks.first())
-        .map(|t| t.points.clone())
+        .and_then(gt_types::LoadedTrack::placed_points)
+        .map(|placed| placed.iter().map(|point| point.merc()).collect())
         .unwrap_or_default();
     let mut snapped = SnappedTracks::default();
-    snapped.insert(track_ref, Arc::new(whisker_geometry(&points)));
+    snapped.insert(track_ref, Arc::new(whisker_geometry(&drawn)));
 
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(800.0, 600.0))
@@ -1234,7 +1257,8 @@ fn snap_log_match_hexagons() {
         files
             .first()
             .and_then(|file| file.tracks.first())
-            .and_then(|track| track.points.get(index))
+            .and_then(gt_types::LoadedTrack::placed_points)
+            .and_then(|placed| placed.get(index))
             .map_or(MercPoint { x: 0.5, y: 0.5 }, |point| point.merc())
     };
     let spread = |every: usize, count: usize| {
@@ -1298,7 +1322,8 @@ fn snap_log_matches_along_a_dense_track() {
     let positions: Vec<MercPoint> = files
         .first()
         .and_then(|file| file.tracks.first())
-        .map(|track| track.points.iter().map(|point| point.merc()).collect())
+        .and_then(gt_types::LoadedTrack::placed_points)
+        .map(|placed| placed.iter().map(|point| point.merc()).collect())
         .unwrap_or_default();
     let source = snapshot_log_source(positions.len());
     let log_matches = LogMatches::from_layers(vec![log_layer(
@@ -1344,7 +1369,8 @@ fn snap_log_matches_of_overlapping_layers() {
     let track_positions: Vec<MercPoint> = files
         .first()
         .and_then(|file| file.tracks.first())
-        .map(|track| track.points.iter().map(|point| point.merc()).collect())
+        .and_then(gt_types::LoadedTrack::placed_points)
+        .map(|placed| placed.iter().map(|point| point.merc()).collect())
         .unwrap_or_default();
     let source = snapshot_log_source(track_positions.len() * 3);
     let covered = log_layer(
@@ -1559,7 +1585,8 @@ fn snap_log_matches_hidden_by_display_mask() {
     let positions: Vec<gt_types::MercPoint> = files
         .first()
         .and_then(|file| file.tracks.first())
-        .map(|track| track.points.iter().map(|point| point.merc()).collect())
+        .and_then(gt_types::LoadedTrack::placed_points)
+        .map(|placed| placed.iter().map(|point| point.merc()).collect())
         .unwrap_or_default();
     let source = snapshot_log_source(positions.len());
     let log_matches = LogMatches::from_layers(vec![log_layer(

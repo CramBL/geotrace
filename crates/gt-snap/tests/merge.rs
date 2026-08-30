@@ -9,7 +9,7 @@ use support::points;
 
 use gt_snap::fixtures_dir;
 use gt_snap::merge::{self, ChunkOutcome, SnapWarning, SnapWarningReporter};
-use gt_snap::request_plan::{self, CHUNK_POINTS, RequestPlan, SnapParams};
+use gt_snap::request_plan::{CHUNK_POINTS, RequestPlan, SnapParams};
 use gt_snap::snapped_track::SHAPE_POLYLINE_PRECISION;
 use gt_snap::wire::{Costing, SnapPointKind, TraceAttributesResponse};
 
@@ -60,7 +60,7 @@ fn uniform_response(
 
 /// A two-chunk plan (CHUNK_POINTS + 1 sent points at 1 Hz).
 fn two_chunk_plan() -> RequestPlan {
-    let plan = request_plan::plan(&points(CHUNK_POINTS + 1));
+    let plan = support::plan_of(&points(CHUNK_POINTS + 1));
     assert_eq!(plan.chunks.len(), 2, "precondition");
     plan
 }
@@ -76,7 +76,7 @@ fn single_fixture_chunk_merges_into_result() {
     let response: TraceAttributesResponse = serde_json::from_str(&body).expect("parse");
     let sent_count = response.snapped_points.len();
 
-    let plan = request_plan::plan(&points(sent_count));
+    let plan = support::plan_of(&points(sent_count));
     assert_eq!(plan.chunks.len(), 1);
 
     let reporter = SnapWarningReporter::default();
@@ -264,7 +264,7 @@ fn confidence_takes_the_minimum_and_changeset_mismatch_warns() {
 
 #[test]
 fn server_warnings_are_passed_through() {
-    let plan = request_plan::plan(&points(10));
+    let plan = support::plan_of(&points(10));
     let response: TraceAttributesResponse = serde_json::from_value(json!({
         "matched_points": (0..10).map(|_| json!({ "lat": 55.0, "lon": 12.0, "type": "matched" })).collect::<Vec<_>>(),
         "warnings": [{ "message": "synthetic deprecation" }],
@@ -403,7 +403,7 @@ fn off_network_boundary_keeps_segments_split() {
 
 #[test]
 fn geometry_error_reports_warning_and_never_welds_across() {
-    let plan = request_plan::plan(&points(2 * CHUNK_POINTS));
+    let plan = support::plan_of(&points(2 * CHUNK_POINTS));
     assert_eq!(plan.chunks.len(), 3, "precondition");
     let sizes = chunk_sizes(&plan);
     let outcomes = [
@@ -434,7 +434,7 @@ fn geometry_error_reports_warning_and_never_welds_across() {
 /// the stretch the receiver never measured.
 #[test]
 fn chunks_across_a_ghost_gap_keep_their_geometry_split() {
-    let plan = request_plan::plan(&support::points_with_ghosts_at(20, &[10, 11, 12]));
+    let plan = support::plan_of(&support::points_with_ghosts_at(20, &[10, 11, 12]));
     assert_eq!(plan.chunks.len(), 2, "precondition");
     let sizes = chunk_sizes(&plan);
     let outcomes = [
@@ -465,7 +465,7 @@ fn chunks_across_a_ghost_gap_keep_their_geometry_split() {
 /// the server returned.
 #[test]
 fn an_off_network_chunk_after_a_ghost_gap_follows_the_gap() {
-    let plan = request_plan::plan(&support::points_with_ghosts_at(20, &[10, 11, 12]));
+    let plan = support::plan_of(&support::points_with_ghosts_at(20, &[10, 11, 12]));
     let sizes = chunk_sizes(&plan);
     let outcomes = [
         uniform_response(sizes[0], SnapPointKind::Snapped, 1.0).expect("outcome"),

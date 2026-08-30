@@ -16,8 +16,5 @@ gt-types = { path = "../gt-types" }
 nalgebra.workspace = true
 smallvec = { workspace = true }
 
-[dev-dependencies]
-chrono.workspace = true
-
 [lints]
 workspace = true

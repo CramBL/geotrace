@@ -136,7 +136,7 @@ pub fn track_in_scope<'a>(
         return None;
     }
     let track = track_ref.resolve(files)?;
-    track_passes_filter(&track.metadata, filter).then_some((track, track_vis))
+    track_passes_filter(track, filter).then_some((track, track_vis))
 }
 
 /// [`track_in_scope`] refined by one category's tree toggle - the gate the

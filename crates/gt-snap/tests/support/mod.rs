@@ -6,6 +6,7 @@
 
 use chrono::{DateTime, Utc};
 
+use gt_snap::request_plan::{self, RequestPlan};
 use gt_test_utils::fixtures::{self, FixKind, NavPointSpec};
 use gt_types::nav_point::NavPoint;
 
@@ -54,4 +55,10 @@ pub fn points_with_ghosts_at(count: usize, ghosts: &[usize]) -> Vec<NavPoint> {
             NavPointSpec::default()
         }
     })
+}
+
+/// The request plan for `points` taken as a track of their own.
+pub fn plan_of(points: &[NavPoint]) -> RequestPlan {
+    let track = gt_test_utils::loaded_track_with_points(points.to_vec());
+    request_plan::plan(track.placed_points().unwrap_or_default())
 }

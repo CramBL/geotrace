@@ -182,7 +182,7 @@ pub fn point_item_row(
     ui: &mut egui::Ui,
     point_ref: DataPointRef,
     label: impl Into<WidgetText>,
-    lat_lon: (f64, f64),
+    lat_lon: Option<(f64, f64)>,
     scope: MapScope<'_>,
     highlight: &mut MapHighlight,
     requests: &mut PointClickRequests<'_>,
@@ -210,11 +210,14 @@ pub struct PointClickRequests<'a> {
 ///
 /// Pinning is gated by [`MapHighlight::toggle_sticky_if_drawn`], so only a point
 /// the map draws can be pinned. Double-click centers the map either way.
+///
+/// `lat_lon` is `None` for a fix of a track with no geometry: it is drawn
+/// nowhere, so there is nothing to centre on.
 pub fn apply_point_click(
     ui: &egui::Ui,
     response: &egui::Response,
     point_ref: DataPointRef,
-    lat_lon: (f64, f64),
+    lat_lon: Option<(f64, f64)>,
     scope: MapScope<'_>,
     highlight: &mut MapHighlight,
     requests: &mut PointClickRequests<'_>,
@@ -223,6 +226,6 @@ pub fn apply_point_click(
         *requests.popup_pos = Some(egui::pos2(ui.clip_rect().max.x + 8.0, response.rect.min.y));
     }
     if response.double_clicked() {
-        *requests.map_center = Some(lat_lon);
+        *requests.map_center = lat_lon;
     }
 }

@@ -1,9 +1,11 @@
 use crate::channel::Channel;
+use crate::coordinates::{Latitude, Longitude};
 use crate::geo_bounds::GeoBounds;
 use crate::highlight::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
 use crate::markers::{CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker};
 use crate::mercator::{self, MercPoint};
-use crate::nav_point::NavPoint;
+use crate::nav_point::{NavPoint, ResolvedPosition};
+use crate::placed_point::PlacedPoints;
 use crate::sat_label::SatLabelAnchor;
 use crate::satellites::Satellites;
 use crate::time_types::GpsTime;
@@ -268,19 +270,50 @@ impl TrackLod {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct TrackMetadata {
-    pub index: usize,
-    pub distance_km: Length,
-    pub duration: Duration,
-    pub time_range: TimeRange,
+/// Where a track's fixes are drawn, and the measures taken over them.
+///
+/// A recording places its fixes before it is cut into tracks, so a track has a
+/// geometry unless the whole recording holds no fix with a latitude and a
+/// longitude in range.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TrackGeometry {
+    Measured(MeasuredTrackGeometry),
+    /// No fix of the recording has a position, so nothing places this track's
+    /// fixes: it is drawn nowhere and measures nothing. Its fixes still carry
+    /// everything the receiver recorded.
+    NoValidPosition,
+}
+
+impl TrackGeometry {
+    pub fn measured(&self) -> Option<&MeasuredTrackGeometry> {
+        match self {
+            Self::Measured(measured) => Some(measured),
+            Self::NoValidPosition => None,
+        }
+    }
+}
+
+/// The geometry of a track whose fixes all have a position: where each of them
+/// is drawn, and what that path measures.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeasuredTrackGeometry {
+    /// One position per fix of the track, in fix order.
+    pub resolved_positions: Vec<ResolvedPosition>,
     pub bounding_box: GeoBounds,
     /// Pre-computed from `bounding_box` so map renderers get O(1) viewport
     /// intersection tests without trigonometry.
     pub merc_bounds: MercBounds,
+    pub distance_km: Length,
     pub point_set_diameter_m: Length,
     /// `None` when the track has fewer than two points (no segments).
     pub segment_length_range: Option<SegmentLengthRange>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TrackMetadata {
+    pub index: usize,
+    pub duration: Duration,
+    pub time_range: TimeRange,
     pub has_custom_markers: bool,
     pub tpv_count: usize,
     /// Fixes whose recorded latitude or longitude is outside its range. Those
@@ -341,6 +374,8 @@ pub struct LoadedTrack {
     pub metadata: TrackMetadata,
     /// TPV points, each optionally paired with a satellite report.
     pub points: Vec<NavPoint>,
+    /// Where the track builder placed `points`, and what they measure.
+    pub geometry: TrackGeometry,
     /// Multi-resolution decimation of `points` for rendering. Empty (the
     /// default) makes renderers fall back to the full point list.
     pub lod: TrackLod,
@@ -372,6 +407,19 @@ pub struct NearestSatelliteReport<'a> {
 }
 
 impl LoadedTrack {
+    /// This track's fixes with the position each is drawn at, `None` for a
+    /// track no fix of the recording has a position for.
+    pub fn placed_points(&self) -> Option<PlacedPoints<'_>> {
+        let measured = self.geometry.measured()?;
+        PlacedPoints::new(&self.points, &measured.resolved_positions)
+    }
+
+    /// Where the map draws the fix at `index`, `None` for a track with no
+    /// geometry and for an index past its fixes.
+    pub fn resolved_position_at(&self, index: usize) -> Option<(Latitude, Longitude)> {
+        Some(self.placed_points()?.get(index)?.resolved_position())
+    }
+
     /// The satellite report to show for `point_index`: the point's own report
     /// when it has one, otherwise the nearest report within
     /// [`SKY_REPORT_MAX_AGE_SECS`] of it, preferring the earlier side on a
@@ -730,23 +778,16 @@ mod nearest_satellite_report_tests {
     use uom::si::f64::Length;
     use uom::si::length::{kilometer, meter};
 
-    use super::{LoadedTrack, MercBounds, TimeRange, TrackMetadata};
+    use super::{
+        LoadedTrack, MeasuredTrackGeometry, MercBounds, TimeRange, TrackGeometry, TrackMetadata,
+    };
+    use crate::nav_point::ResolvedPosition;
 
     fn empty_metadata() -> TrackMetadata {
         TrackMetadata {
             index: 0,
-            distance_km: Length::new::<kilometer>(0.0),
             duration: Duration::zero(),
             time_range: TimeRange::new(DateTime::<Utc>::UNIX_EPOCH, DateTime::<Utc>::UNIX_EPOCH),
-            bounding_box: GeoBounds::single_position(Latitude::new(0.0), Longitude::new(0.0)),
-            merc_bounds: MercBounds {
-                x_min: 0.0,
-                x_max: 0.0,
-                y_min: 0.0,
-                y_max: 0.0,
-            },
-            point_set_diameter_m: Length::new::<meter>(0.0),
-            segment_length_range: None,
             has_custom_markers: false,
             tpv_count: 0,
             invalid_position_count: 0,
@@ -758,11 +799,27 @@ mod nearest_satellite_report_tests {
         }
     }
 
+    /// Every fix of these tracks sits at one position, which is where the
+    /// builder would place them.
+    fn geometry_at_one_position(fix_count: usize) -> TrackGeometry {
+        let bounding_box = GeoBounds::single_position(Latitude::new(55.0), Longitude::new(12.0));
+        TrackGeometry::Measured(MeasuredTrackGeometry {
+            resolved_positions: (0..fix_count)
+                .map(|_| ResolvedPosition::measured(Latitude::new(55.0), Longitude::new(12.0)))
+                .collect(),
+            bounding_box,
+            merc_bounds: MercBounds::from(bounding_box),
+            distance_km: Length::new::<kilometer>(0.0),
+            point_set_diameter_m: Length::new::<meter>(0.0),
+            segment_length_range: None,
+        })
+    }
+
     /// A track from `(seconds, report)` specs, where `Some(n)` attaches a
     /// report with `n` satellites so assertions can distinguish reports.
     fn track(spec: &[(i64, Option<u32>)]) -> LoadedTrack {
         let start = DateTime::<Utc>::from_timestamp(1_748_000_000, 0).expect("valid");
-        let points = spec
+        let points: Vec<NavPoint> = spec
             .iter()
             .map(|&(secs, report)| {
                 let tpv = TimePositionVelocity::builder()
@@ -781,6 +838,7 @@ mod nearest_satellite_report_tests {
             .collect();
         LoadedTrack {
             metadata: empty_metadata(),
+            geometry: geometry_at_one_position(points.len()),
             points,
             lod: Default::default(),
             sat_label_anchors: Vec::new(),
