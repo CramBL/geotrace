@@ -49,12 +49,13 @@ use geotrace_sdk::{
     SatelliteReport, TravelMode as SdkTravelMode, collect_satellite_warnings,
 };
 use gt_types::coordinates::{CoordinateAxis, OutOfRange, RawDegrees};
+use gt_types::load_warning;
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::{FixTimestamp, GpsTime, SysTime};
 use gt_types::{
-    Channel, CustomMarker, EventMarker, EventMarkerStyle, FileSource, Latitude, LoadWarning,
-    LoadedFile, Longitude, MarkerColor, MarkerIcon, NavPoint, RecordedLatitude, RecordedLongitude,
-    TimePositionVelocity, TravelMode,
+    AlterationWording, Channel, CustomMarker, EventMarker, EventMarkerStyle, FileSource, Latitude,
+    LoadWarning, LoadedFile, Longitude, MarkerColor, MarkerIcon, NavPoint, RecordedLatitude,
+    RecordedLongitude, TimePositionVelocity, TravelMode,
 };
 
 pub struct LoadedGtd {
@@ -302,9 +303,6 @@ fn satellite_warnings_from_nav_file(nav_file: &NavFile) -> Vec<LoadWarning> {
     .collect()
 }
 
-/// How many entries a warning names before it only counts the rest.
-const MAX_LISTED_ENTRIES: usize = 5;
-
 /// One fix's recorded coordinate on one axis, outside that axis' range.
 struct CoordinateOutOfRange {
     record: usize,
@@ -402,19 +400,6 @@ struct SatelliteAlterations {
     discarded_snr_sentinels: Vec<SatelliteInRecord>,
 }
 
-fn first_few_listed<T: fmt::Display>(entries: &[T]) -> String {
-    let listed = entries
-        .iter()
-        .take(MAX_LISTED_ENTRIES)
-        .map(T::to_string)
-        .collect::<Vec<_>>()
-        .join(", ");
-    match entries.len().saturating_sub(MAX_LISTED_ENTRIES) {
-        0 => listed,
-        rest => format!("{listed}, and {rest} more"),
-    }
-}
-
 fn coordinates_out_of_range_warning(
     axis: CoordinateAxis,
     fixes: &[CoordinateOutOfRange],
@@ -424,7 +409,7 @@ fn coordinates_out_of_range_warning(
         issue: format!("fix(es) with a {axis} out of range"),
         description: format!(
             "{}. Each such fix is drawn at a position interpolated from the fixes around it.",
-            first_few_listed(fixes)
+            load_warning::first_few_listed(fixes)
         ),
     })
 }
@@ -435,32 +420,9 @@ fn dropped_markers_warning(issue: &str, dropped: &[DroppedMarker]) -> Option<Loa
         issue: issue.to_owned(),
         description: format!(
             "{}. A marker written outside the coordinate ranges has no place on the map and is left out.",
-            first_few_listed(dropped)
+            load_warning::first_few_listed(dropped)
         ),
     })
-}
-
-/// The wording of a warning about what the loader altered: `issue` completes
-/// the "<count> …" line, `consequence` follows the listed entries in the
-/// description.
-///
-/// The SDK's own satellite warnings describe the file itself, and these sit
-/// beside them: a file that repeats a satellite raises one warning about the
-/// file and one about what the app made of it.
-#[derive(Clone, Copy)]
-struct AlterationWording {
-    issue: &'static str,
-    consequence: &'static str,
-}
-
-impl AlterationWording {
-    fn load_warning<T: fmt::Display>(self, entries: &[T]) -> Option<LoadWarning> {
-        (!entries.is_empty()).then(|| LoadWarning {
-            count: u32::try_from(entries.len()).unwrap_or(u32::MAX),
-            issue: self.issue.to_owned(),
-            description: format!("{}. {}", first_few_listed(entries), self.consequence),
-        })
-    }
 }
 
 const MERGED_SATELLITE_ROWS: AlterationWording = AlterationWording {

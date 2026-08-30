@@ -2,6 +2,7 @@ use crate::channel::Channel;
 use crate::coordinates::{Latitude, Longitude};
 use crate::geo_bounds::GeoBounds;
 use crate::highlight::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
+use crate::load_warning::LoadWarning;
 use crate::markers::{CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker};
 use crate::mercator::{self, MercPoint};
 use crate::nav_point::{NavPoint, ResolvedPosition};
@@ -589,17 +590,6 @@ pub enum FileSource {
     GtdPath(PathBuf),
     /// Loaded from bytes delivered via drag-and-drop (GTD file).
     GtdBytes(Arc<[u8]>),
-}
-
-/// A structured data quality warning produced when loading a recording file.
-#[derive(Debug, Clone)]
-pub struct LoadWarning {
-    /// Number of instances of this issue in the file.
-    pub count: u32,
-    /// Short description of the issue (e.g. "satellite(s) with PRN 0").
-    pub issue: String,
-    /// Explanation of why the issue matters and how to resolve it.
-    pub description: String,
 }
 
 #[derive(Debug, Clone)]

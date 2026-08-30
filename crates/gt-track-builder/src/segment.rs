@@ -5,6 +5,7 @@ use gt_geo_math::{GreatCircleArc, path_distance_km, point_set_diameter_m, segmen
 use gt_types::channel::Channel;
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::geo_bounds::{GeoBounds, PoleWinding};
+use gt_types::load_warning::{AlterationWording, LoadWarning};
 use gt_types::markers::{
     CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind,
 };
@@ -13,10 +14,11 @@ use gt_types::placed_point::{PlacedPoint, PlacedPoints};
 use gt_types::satellites::SlipEvent;
 use gt_types::time_types::GpsTime;
 use gt_types::track::{
-    FileMetadata, FileSource, FixStats, LoadWarning, LoadedFile, LoadedTrack,
-    MeasuredTrackGeometry, MercBounds, SegmentLengthRange, TimeRange, TrackGeometry, TrackMetadata,
-    TravelMode,
+    FileMetadata, FileSource, FixStats, LoadedFile, LoadedTrack, MeasuredTrackGeometry,
+    MercBounds, SegmentLengthRange, TimeRange, TrackGeometry, TrackMetadata, TravelMode,
 };
+use rustc_hash::FxHashMap;
+use std::fmt;
 use std::ops::Range;
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
@@ -638,6 +640,56 @@ impl From<&FileMetadata> for FileMeta {
     }
 }
 
+/// A variant path a recording holds more than one event marker style for, and
+/// how many it holds.
+struct RepeatedEventMarkerStyle {
+    variant_path: String,
+    styles: usize,
+}
+
+impl fmt::Display for RepeatedEventMarkerStyle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            variant_path,
+            styles,
+        } = self;
+        write!(f, "{variant_path:?}: {styles} styles")
+    }
+}
+
+const REPEATED_EVENT_MARKER_STYLES: AlterationWording = AlterationWording {
+    issue: "event marker variant path(s) with several styles",
+    consequence: "Every marker on those paths is drawn with the last style the recording \
+        holds for it: one style is kept per variant path.",
+};
+
+/// Keeps the last style a recording holds for each variant path, which is the
+/// one every marker on that path is drawn with.
+fn keep_the_last_event_marker_style_per_variant_path(
+    styles: Vec<EventMarkerStyle>,
+    load_warnings: &mut Vec<LoadWarning>,
+) -> FxHashMap<String, EventMarkerStyle> {
+    let mut kept: FxHashMap<String, EventMarkerStyle> = FxHashMap::default();
+    let mut repeated: Vec<RepeatedEventMarkerStyle> = Vec::new();
+    for style in styles {
+        let variant_path = style.variant_path.clone();
+        if kept.insert(variant_path.clone(), style).is_some() {
+            match repeated
+                .iter_mut()
+                .find(|entry| entry.variant_path == variant_path)
+            {
+                Some(entry) => entry.styles += 1,
+                None => repeated.push(RepeatedEventMarkerStyle {
+                    variant_path,
+                    styles: 2,
+                }),
+            }
+        }
+    }
+    load_warnings.extend(REPEATED_EVENT_MARKER_STYLES.load_warning(&repeated));
+    kept
+}
+
 /// Segments `points` into tracks and builds a fully-populated `LoadedFile`.
 ///
 /// Every fix whose recorded coordinates are out of range is placed between the
@@ -669,6 +721,9 @@ pub fn build_loaded_file(
     // and a track holding no fix with a position keeps this placement.
     let mut placements = recorded_placements(points);
     place_fixes(points, &mut placements, UnmeasuredFix::CoordinateOutOfRange);
+
+    let event_marker_styles =
+        keep_the_last_event_marker_style_per_variant_path(event_marker_styles, &mut load_warnings);
 
     let ranges = segment_tracks(points, &config.track_layout);
 
@@ -853,10 +908,7 @@ pub fn build_loaded_file(
             travel_mode: file_meta.travel_mode,
         },
         tracks: loaded_tracks,
-        event_marker_styles: event_marker_styles
-            .into_iter()
-            .map(|s| (s.variant_path.clone(), s))
-            .collect(),
+        event_marker_styles,
         orphaned_event_markers,
         source,
         load_warnings,
