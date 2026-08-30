@@ -38,11 +38,16 @@ const TRANSPORT_RESERVE_PX: f32 = 78.0;
 /// digits line up down the column and across rows whatever their width.
 const STATS_COUNT_COL_PX: f32 = 38.0;
 
-/// Fixed width of the parenthesised unfiltered-total column, present only while
-/// the not-in-fix filter hides satellites. Reserved on every row of a filtered
-/// column, so the seen numbers stay in a line whether or not their own row
-/// hides anything.
+/// Fixed width of the parenthesised unfiltered-total column, which holds a
+/// total only on a row the not-in-fix filter cuts. Reserved on every row of
+/// every frame, so neither the seen numbers nor the plot beside them move when
+/// a row starts or stops hiding satellites.
 const STATS_PAREN_COL_PX: f32 = 34.0;
+
+/// The stats column's total width: the label area, the two count columns and
+/// the parenthesised total beside the seen count.
+const STATS_COL_WIDTH_PX: f32 =
+    STATS_LABEL_WIDTH_PX + STATS_COUNT_COL_PX * 2.0 + STATS_PAREN_COL_PX;
 
 /// Right-hand padding inside a count cell, so a digit does not sit flush
 /// against the next column.
@@ -375,11 +380,7 @@ impl WindowBody<'_> {
         }
         // Stats and counts reflect the report in effect at this instant.
         let stats_time = floor_epoch(trails, scrub_time).map_or(first, |e| e.time);
-        // Computed before layout: the counts determine how wide the seen column
-        // has to be, and that in turn sets the stats column and the plot.
         let counts = trails.counts_at(stats_time, *show_not_in_fix);
-        let has_paren = any_row_is_filtered(&counts);
-        let stats_width = stats_col_width(has_paren);
 
         // Size the plot to the space left after the stats column and the
         // transport, so resizing the window grows the plot rather than a gap.
@@ -394,18 +395,18 @@ impl WindowBody<'_> {
         let reserved = ui
             .data(|d| d.get_temp::<f32>(reserve_id))
             .unwrap_or(TRANSPORT_RESERVE_PX);
-        let diameter = plot_diameter(ui.available_size(), stats_width, reserved);
+        let diameter = plot_diameter(ui.available_size(), reserved);
 
         let mut focus = None;
         ui.horizontal_top(|ui| {
             // Stats/filter on the left, computed before the plot so hover
             // focus lands on the same frame.
             ui.allocate_ui_with_layout(
-                egui::vec2(stats_width, diameter),
+                egui::vec2(STATS_COL_WIDTH_PX, diameter),
                 Layout::top_down(Align::Min),
                 |ui| {
-                    ui.set_width(stats_width);
-                    focus = constellation_stats(ui, &counts, shown, has_paren);
+                    ui.set_width(STATS_COL_WIDTH_PX);
+                    focus = constellation_stats(ui, &counts, shown);
                     ui.add_space(6.0);
                     view_toggles(
                         ui,
@@ -530,27 +531,12 @@ fn not_in_fix_label(ui: &egui::Ui) -> egui::text::LayoutJob {
 }
 
 /// The plot diameter for the given available space, leaving `reserved` pixels
-/// below for the transport and the stats column beside it, clamped so the plot
-/// stays legible in a small window.
-fn plot_diameter(avail: egui::Vec2, stats_width: f32, reserved: f32) -> f32 {
-    (avail.x - stats_width - COLUMN_GAP_PX)
+/// below for the transport and [`STATS_COL_WIDTH_PX`] beside it, clamped so the
+/// plot stays legible in a small window.
+fn plot_diameter(avail: egui::Vec2, reserved: f32) -> f32 {
+    (avail.x - STATS_COL_WIDTH_PX - COLUMN_GAP_PX)
         .min(avail.y - reserved)
         .max(MIN_PLOT_DIAMETER_PX)
-}
-
-/// The stats column's total width: the label area plus the two count columns,
-/// plus the parenthetical column while the not-in-fix filter is hiding
-/// satellites.
-fn stats_col_width(has_paren: bool) -> f32 {
-    STATS_LABEL_WIDTH_PX
-        + STATS_COUNT_COL_PX * 2.0
-        + if has_paren { STATS_PAREN_COL_PX } else { 0.0 }
-}
-
-/// Whether any row's seen count is being cut by the not-in-fix filter, so the
-/// whole column reserves the parenthetical slot.
-fn any_row_is_filtered(counts: &[EpochCount]) -> bool {
-    counts.iter().copied().any(EpochCount::is_filtered)
 }
 
 /// The stats/filter column: one row per constellation showing its live fix and
@@ -561,21 +547,20 @@ fn constellation_stats(
     ui: &mut egui::Ui,
     counts: &[EpochCount],
     shown: &mut ConstellationSet,
-    has_paren: bool,
 ) -> Option<Constellation> {
-    stats_header(ui, has_paren);
+    stats_header(ui);
     let mut focus = None;
     for count in counts {
-        if stats_row(ui, shown, count, has_paren) {
+        if stats_row(ui, shown, count) {
             focus = Some(count.constellation);
         }
     }
-    stats_total_row(ui, counts, has_paren);
+    stats_total_row(ui, counts);
     focus
 }
 
 /// The stats column header: a label plus the right-aligned Fix / Seen columns.
-fn stats_header(ui: &mut egui::Ui, has_paren: bool) {
+fn stats_header(ui: &mut egui::Ui) {
     let heading = |ui: &mut egui::Ui, width: f32, text: &str| {
         let font = egui::TextStyle::Small.resolve(ui.style());
         stats_cell(ui, width, text, font, ui.visuals().weak_text_color());
@@ -585,9 +570,7 @@ fn stats_header(ui: &mut egui::Ui, has_paren: bool) {
         // Right to left, matching the rows: seen (with its empty parenthetical
         // slot) then fix, so each heading lands over its own column.
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if has_paren {
-                ui.add_space(STATS_PAREN_COL_PX);
-            }
+            ui.add_space(STATS_PAREN_COL_PX);
             heading(ui, STATS_COUNT_COL_PX, "Seen");
             heading(ui, STATS_COUNT_COL_PX, "Fix");
         });
@@ -597,12 +580,7 @@ fn stats_header(ui: &mut egui::Ui, has_paren: bool) {
 /// One constellation row: its swatch and name, a checkbox toggle, and the live
 /// fix/seen counts, colored the same way as the sticky point popup. Returns
 /// whether the row is hovered (to focus the plot).
-fn stats_row(
-    ui: &mut egui::Ui,
-    shown: &mut ConstellationSet,
-    count: &EpochCount,
-    has_paren: bool,
-) -> bool {
+fn stats_row(ui: &mut egui::Ui, shown: &mut ConstellationSet, count: &EpochCount) -> bool {
     let on = shown.contains(count.constellation);
     let row = ui
         .horizontal(|ui| {
@@ -615,7 +593,7 @@ fn stats_row(
             // Right to left, so the columns anchor to the row's right edge and
             // line up regardless of the constellation name's width.
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                seen_columns(ui, count, has_paren, on);
+                seen_columns(ui, count, on);
                 count_cell(ui, count.fix, fix_count_color, on);
             });
         })
@@ -623,36 +601,34 @@ fn stats_row(
     crate::hover_labels::hover_affordance(ui, row.rect)
 }
 
-/// The seen count and, while the not-in-fix filter is on, the unfiltered total
-/// in parentheses beside it.
+/// The seen count and, on a row the not-in-fix filter cuts, the unfiltered
+/// total in parentheses beside it.
 ///
 /// Without the total the count silently drops when the filter engages. The
-/// parenthetical gets its own fixed column, reserved on every row of a filtered
-/// table (empty on rows that hide nothing), so the seen numbers stay in one
-/// line. Added right to left, so the parenthetical sits to the right of the
-/// number.
-fn seen_columns(ui: &mut egui::Ui, count: &EpochCount, has_paren: bool, on: bool) {
+/// parenthetical gets its own fixed column, reserved on every row (empty on the
+/// rows that hide nothing), so the seen numbers stay in one line and the plot
+/// beside the column keeps its place. Added right to left, so the parenthetical
+/// sits to the right of the number.
+fn seen_columns(ui: &mut egui::Ui, count: &EpochCount, on: bool) {
     let hidden = count
         .seen_unfiltered
         .checked_sub(count.seen)
         .filter(|h| *h > 0);
-    if has_paren {
-        let text = hidden.map(|_| format!("({})", count.seen_unfiltered));
-        let font = count_font(ui);
-        let cell = stats_cell(
-            ui,
-            STATS_PAREN_COL_PX,
-            text.as_deref().unwrap_or(""),
-            font,
-            ui.visuals().weak_text_color(),
-        );
-        if let Some(hidden) = hidden {
-            let plural = if hidden == 1 { "" } else { "s" };
-            cell.on_hover_text(format!(
-                "{} of {} seen. {hidden} satellite{plural} hidden: never in the fix over this track",
-                count.seen, count.seen_unfiltered
-            ));
-        }
+    let text = hidden.map(|_| format!("({})", count.seen_unfiltered));
+    let font = count_font(ui);
+    let cell = stats_cell(
+        ui,
+        STATS_PAREN_COL_PX,
+        text.as_deref().unwrap_or(""),
+        font,
+        ui.visuals().weak_text_color(),
+    );
+    if let Some(hidden) = hidden {
+        let plural = if hidden == 1 { "" } else { "s" };
+        cell.on_hover_text(format!(
+            "{} of {} seen. {hidden} satellite{plural} hidden: never in the fix over this track",
+            count.seen, count.seen_unfiltered
+        ));
     }
     count_cell(ui, count.seen, seen_count_color, on);
 }
@@ -661,7 +637,7 @@ fn seen_columns(ui: &mut egui::Ui, count: &EpochCount, has_paren: bool, on: bool
 /// "Total" label and the separator above set it off. Its counts stay the same
 /// weight and tier colour as the per-constellation rows, so the numbers read as
 /// one column.
-fn stats_total_row(ui: &mut egui::Ui, counts: &[EpochCount], has_paren: bool) {
+fn stats_total_row(ui: &mut egui::Ui, counts: &[EpochCount]) {
     let (seen, seen_unfiltered, fix) = counts.iter().fold((0, 0, 0), |(s, u, f), c| {
         (s + c.seen, u + c.seen_unfiltered, f + c.fix)
     });
@@ -677,7 +653,7 @@ fn stats_total_row(ui: &mut egui::Ui, counts: &[EpochCount], has_paren: bool) {
     ui.horizontal(|ui| {
         ui.label(RichText::new("Total").strong());
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            seen_columns(ui, &total, has_paren, true);
+            seen_columns(ui, &total, true);
             count_cell(ui, fix, fix_count_color, true);
         });
     });
@@ -1059,10 +1035,10 @@ mod tests {
     };
 
     use super::{
-        ConstellationSet, DEFAULT_WINDOW_SIZE, MAX_PLAYBACK_FRAME_SECS, MIN_WINDOW_HEIGHT_PX,
-        MIN_WINDOW_WIDTH_PX, MapHighlight, SEEK_TAP_SECS, SkyTrails, SkyTrailsRequest,
-        SkyTrailsWindow, TrackRef, Window, WindowBody, advanced_scrub, apply_scrub_highlight,
-        floor_epoch, offset_time, scrub_offset_of, track_total_secs,
+        ConstellationSet, DEFAULT_WINDOW_SIZE, MAX_PLAYBACK_FRAME_SECS, MIN_PLOT_DIAMETER_PX,
+        MIN_WINDOW_HEIGHT_PX, MIN_WINDOW_WIDTH_PX, MapHighlight, SEEK_TAP_SECS, STATS_COL_WIDTH_PX,
+        SkyTrails, SkyTrailsRequest, SkyTrailsWindow, TrackRef, Window, WindowBody, advanced_scrub,
+        apply_scrub_highlight, floor_epoch, offset_time, scrub_offset_of, track_total_secs,
     };
 
     /// A synthetic track: a few satellites drifting across the sky over eight
@@ -1887,25 +1863,66 @@ mod tests {
 
     #[rstest::rstest]
     // Ample space: the plot fills the height left above the transport.
-    #[case::height_bound(egui::vec2(800.0, 500.0), false, 80.0, 420.0)]
-    // Wide but short: the plot is bounded by the leftover height, not width.
-    #[case::width_is_slack(egui::vec2(1200.0, 400.0), false, 80.0, 320.0)]
+    #[case::height_bound(egui::vec2(800.0, 500.0), 80.0, 420.0)]
+    // Tall but narrow: the plot is bounded by the width left beside the stats
+    // column, which takes its space from the plot rather than from the
+    // constellation names.
+    #[case::width_bound(egui::vec2(600.0, 900.0), 80.0, 378.0)]
     // Tiny window: the plot holds its legibility floor rather than shrinking.
-    #[case::clamped_to_floor(egui::vec2(300.0, 300.0), false, 80.0, 240.0)]
-    // The parenthetical column (the not-in-fix filter is on) takes its space
-    // from the plot, not from the constellation names.
-    #[case::filtered_column(egui::vec2(600.0, 900.0), true, 80.0, 378.0)]
+    #[case::clamped_to_floor(egui::vec2(300.0, 300.0), 80.0, 240.0)]
     fn plot_diameter_fills_the_space_above_the_transport(
         #[case] avail: egui::Vec2,
-        #[case] has_paren: bool,
         #[case] reserved: f32,
         #[case] expected: f32,
     ) {
-        let diameter = super::plot_diameter(avail, super::stats_col_width(has_paren), reserved);
+        let diameter = super::plot_diameter(avail, reserved);
         assert!(
             (diameter - expected).abs() < 0.5,
             "diameter {diameter} != expected {expected}"
         );
+    }
+
+    /// The stats column stays inside its reserved width whether or not the
+    /// not-in-fix filter cuts a row's seen count, so the parenthesised total
+    /// appearing never pushes the plot beside the column.
+    #[test]
+    fn the_stats_column_keeps_its_width_whatever_the_filter_hides() {
+        let showing_every_satellite = laid_out_stats_column_width(true);
+        let hiding_the_not_in_fix_ones = laid_out_stats_column_width(false);
+        assert!(
+            (showing_every_satellite - hiding_the_not_in_fix_ones).abs() < f32::EPSILON,
+            "the stats column is {showing_every_satellite} wide showing every satellite \
+             and {hiding_the_not_in_fix_ones} wide hiding the not-in-fix ones"
+        );
+    }
+
+    /// The width the stats column occupies for the given `show_not_in_fix`
+    /// setting, laid out in the fixed-width container the body gives it. Wider
+    /// than [`STATS_COL_WIDTH_PX`] when the rows overflow it.
+    fn laid_out_stats_column_width(show_not_in_fix: bool) -> f32 {
+        let trails = demo_trails_with_tracked_only();
+        let mut harness = crate::test_harness::builder()
+            .size(egui::vec2(560.0, 440.0))
+            .ui_state(
+                move |ui, width: &mut f32| {
+                    let Some(epoch) = trails.epochs.first() else {
+                        return;
+                    };
+                    let counts = trails.counts_at(epoch.time, show_not_in_fix);
+                    let column = ui.allocate_ui_with_layout(
+                        egui::vec2(STATS_COL_WIDTH_PX, MIN_PLOT_DIAMETER_PX),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_width(STATS_COL_WIDTH_PX);
+                            super::constellation_stats(ui, &counts, &mut ConstellationSet::all());
+                        },
+                    );
+                    *width = column.response.rect.width();
+                },
+                0.0,
+            );
+        harness.run();
+        *harness.state()
     }
 
     #[test]
