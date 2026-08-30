@@ -130,7 +130,7 @@ pub fn detect_excursions(points: &[NavPoint], threshold_s: f32) -> Vec<ClockOffs
     }
     push_run(&mut excursions, run, baseline_ms, max_run);
 
-    // A median only stands for a baseline while most of the track agrees with
+    // A median only stands for a baseline while most of the track lies near
     // it.  On a track split evenly between two levels it lands between them and
     // every run passes the per-run cap on its own, so check the total too.
     let flagged: usize = excursions.iter().map(|e| e.samples.len()).sum();

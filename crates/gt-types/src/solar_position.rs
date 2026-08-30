@@ -143,7 +143,7 @@ mod tests {
         );
     }
 
-    /// Each case is read at the hour that would otherwise say the opposite:
+    /// Each case is read at the hour whose usual answer is the opposite:
     /// polar day at midnight, polar night at midday, and the far side of
     /// Earth at midday.
     #[rstest]
@@ -169,8 +169,8 @@ mod tests {
     /// Second offsets from 2010-01-01, spanning twenty years.
     const SECONDS_OF_TWO_DECADES: std::ops::RangeInclusive<i64> = 0..=631_152_000;
 
-    /// The antipode of a position sees the Sun as far below its horizon as the
-    /// position sees it above, wherever and whenever the two are read.
+    /// The antipode's solar elevation is as far below the horizon as the
+    /// position's is above, wherever and whenever the two are read.
     #[test]
     fn the_antipode_sees_the_sun_as_far_below_the_horizon() {
         proptest::proptest!(|(

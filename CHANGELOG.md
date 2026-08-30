@@ -5,7 +5,7 @@
 ### Added
 
 - **Map & Tracks:** The map now says when a recording's fixes lie past 85° latitude, where the map projection ends and nothing can be drawn.
-- **Map & Tracks:** The data quality warnings now also name what the app changed about what a recording said: the satellites it merged from several rows of one report, the satellite SNR readings it discarded as the ≈ 99 dB-Hz no-data sentinel, and the event marker colors it replaced with gray.
+- **Map & Tracks:** The data quality warnings now also name what the app changed about what a recording said: the satellites it merged from several rows of one report, the satellite SNR readings it discarded as the ≈ 99 dB-Hz no-data sentinel, the event marker colors it replaced with gray, and the event marker styles it dropped for a variant path with several.
 
 ### Fixed
 

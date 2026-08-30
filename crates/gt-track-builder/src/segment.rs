@@ -5,6 +5,7 @@ use gt_geo_math::{GreatCircleArc, path_distance_km, point_set_diameter_m, segmen
 use gt_types::channel::Channel;
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::geo_bounds::{GeoBounds, PoleWinding};
+use gt_types::load_warning::{AlterationWording, LoadWarning};
 use gt_types::markers::{
     CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind,
 };
@@ -13,10 +14,11 @@ use gt_types::placed_point::{PlacedPoint, PlacedPoints};
 use gt_types::satellites::SlipEvent;
 use gt_types::time_types::GpsTime;
 use gt_types::track::{
-    FileMetadata, FileSource, FixStats, LoadWarning, LoadedFile, LoadedTrack,
-    MeasuredTrackGeometry, MercBounds, SegmentLengthRange, TimeRange, TrackGeometry, TrackMetadata,
-    TravelMode,
+    FileMetadata, FileSource, FixStats, LoadedFile, LoadedTrack, MeasuredTrackGeometry, MercBounds,
+    SegmentLengthRange, TimeRange, TrackGeometry, TrackMetadata, TravelMode,
 };
+use rustc_hash::FxHashMap;
+use std::fmt;
 use std::ops::Range;
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
@@ -93,7 +95,7 @@ pub struct SegmentationConfig {
 }
 
 /// Default elevation mask (degrees) for slip detection.  Mirrors the slip-rate
-/// plot's default so a fresh config agrees with the plot out of the box.
+/// plot's default so a fresh config matches the plot out of the box.
 pub const DEFAULT_SLIP_ELEVATION_MASK_DEG: f32 = 15.0;
 
 /// Default SNR drop (dB-Hz) that counts as a slip.
@@ -237,7 +239,7 @@ fn detect_generated_markers(
             markers.push(marker);
         }
     }
-    // Excursions are classified whatever the marker toggle says: the
+    // Excursions are classified whatever the marker toggle is set to: the
     // discontinuity pass needs them out of its step series either way, or one
     // excursion reads as a pair of jumps - out and straight back.
     let excursions =
@@ -346,7 +348,7 @@ pub fn clock_discontinuity_floor_seconds(sigmas: f64) -> f64 {
 ///
 /// `sigmas` is the outlier sensitivity (see
 /// [`SegmentationConfig::clock_discontinuity_sigmas`]). `excursion_indices`
-/// (ascending) names the samples already explained by a
+/// (ascending) lists the samples already explained by a
 /// [`GeneratedMarkerKind::ClockOffsetExcursion`], which are left out of the
 /// step series.
 fn detect_clock_discontinuities(
@@ -638,6 +640,56 @@ impl From<&FileMetadata> for FileMeta {
     }
 }
 
+/// A variant path a recording holds more than one event marker style for, and
+/// how many it holds.
+struct RepeatedEventMarkerStyle {
+    variant_path: String,
+    styles: usize,
+}
+
+impl fmt::Display for RepeatedEventMarkerStyle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            variant_path,
+            styles,
+        } = self;
+        write!(f, "{variant_path:?}: {styles} styles")
+    }
+}
+
+const REPEATED_EVENT_MARKER_STYLES: AlterationWording = AlterationWording {
+    issue: "event marker variant path(s) with several styles",
+    consequence: "Every marker on those paths is drawn with the last style the recording \
+        holds for it: one style is kept per variant path.",
+};
+
+/// Keeps the last style a recording holds for each variant path, which is the
+/// one every marker on that path is drawn with.
+fn keep_the_last_event_marker_style_per_variant_path(
+    styles: Vec<EventMarkerStyle>,
+    load_warnings: &mut Vec<LoadWarning>,
+) -> FxHashMap<String, EventMarkerStyle> {
+    let mut kept: FxHashMap<String, EventMarkerStyle> = FxHashMap::default();
+    let mut repeated: Vec<RepeatedEventMarkerStyle> = Vec::new();
+    for style in styles {
+        let Some(replaced) = kept.insert(style.variant_path.clone(), style) else {
+            continue;
+        };
+        match repeated
+            .iter_mut()
+            .find(|entry| entry.variant_path == replaced.variant_path)
+        {
+            Some(entry) => entry.styles += 1,
+            None => repeated.push(RepeatedEventMarkerStyle {
+                variant_path: replaced.variant_path,
+                styles: 2,
+            }),
+        }
+    }
+    load_warnings.extend(REPEATED_EVENT_MARKER_STYLES.load_warning(&repeated));
+    kept
+}
+
 /// Segments `points` into tracks and builds a fully-populated `LoadedFile`.
 ///
 /// Every fix whose recorded coordinates are out of range is placed between the
@@ -669,6 +721,9 @@ pub fn build_loaded_file(
     // and a track holding no fix with a position keeps this placement.
     let mut placements = recorded_placements(points);
     place_fixes(points, &mut placements, UnmeasuredFix::CoordinateOutOfRange);
+
+    let event_marker_styles =
+        keep_the_last_event_marker_style_per_variant_path(event_marker_styles, &mut load_warnings);
 
     let ranges = segment_tracks(points, &config.track_layout);
 
@@ -853,10 +908,7 @@ pub fn build_loaded_file(
             travel_mode: file_meta.travel_mode,
         },
         tracks: loaded_tracks,
-        event_marker_styles: event_marker_styles
-            .into_iter()
-            .map(|s| (s.variant_path.clone(), s))
-            .collect(),
+        event_marker_styles,
         orphaned_event_markers,
         source,
         load_warnings,
@@ -1023,6 +1075,7 @@ mod tests {
     use chrono::TimeZone;
     use geotrace_sdk_units::Unit;
     use gt_types::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
+    use gt_types::markers::{MarkerColor, MarkerIcon};
     use gt_types::satellites::{Constellation, Satellite, Satellites};
     use gt_types::time_types::{GpsTime, SysTime};
     use gt_types::tpv::TimePositionVelocity;
@@ -1350,6 +1403,82 @@ mod tests {
         );
         assert!(f.tracks.is_empty());
         assert_eq!(f.metadata.filename, "test.gtd");
+    }
+
+    const FIRST_STYLE_COLOR: MarkerColor = MarkerColor::new(0x11, 0x22, 0x33);
+    const SECOND_STYLE_COLOR: MarkerColor = MarkerColor::new(0x44, 0x55, 0x66);
+    const THIRD_STYLE_COLOR: MarkerColor = MarkerColor::new(0x77, 0x88, 0x99);
+
+    fn event_marker_style(variant_path: &str, color: MarkerColor) -> EventMarkerStyle {
+        EventMarkerStyle {
+            variant_path: variant_path.to_owned(),
+            icon: MarkerIcon::Pin,
+            color,
+        }
+    }
+
+    #[rstest]
+    #[case::two_styles(vec![FIRST_STYLE_COLOR, SECOND_STYLE_COLOR], SECOND_STYLE_COLOR)]
+    #[case::three_styles(
+        vec![FIRST_STYLE_COLOR, SECOND_STYLE_COLOR, THIRD_STYLE_COLOR],
+        THIRD_STYLE_COLOR
+    )]
+    fn several_event_marker_styles_for_one_variant_path_keep_the_last_and_warn(
+        #[case] written_colors: Vec<MarkerColor>,
+        #[case] expected_color: MarkerColor,
+    ) {
+        let written_count = written_colors.len();
+        let mut styles: Vec<EventMarkerStyle> = written_colors
+            .iter()
+            .map(|color| event_marker_style("power/boot", *color))
+            .collect();
+        styles.push(event_marker_style("power/shutdown", FIRST_STYLE_COLOR));
+
+        let file = build_loaded_file(
+            "test.gtd".to_owned(),
+            &[make_point_at(0), make_point_at(30)],
+            &[],
+            vec![],
+            styles,
+            &[],
+            &SegmentationConfig::default(),
+            FileSource::GtdPath(PathBuf::from("test.gtd")),
+            FileMeta::default(),
+            vec![],
+        );
+
+        assert_eq!(
+            file.event_marker_styles
+                .get("power/boot")
+                .map(|style| style.color),
+            Some(expected_color)
+        );
+        assert_eq!(
+            file.event_marker_styles
+                .get("power/shutdown")
+                .map(|style| style.color),
+            Some(FIRST_STYLE_COLOR)
+        );
+        let expected_description = format!(
+            "\"power/boot\": {written_count} styles. Every marker on those paths is drawn \
+             with the last style the recording holds for it: one style is kept per variant \
+             path."
+        );
+        assert_eq!(
+            file.load_warnings
+                .iter()
+                .map(|warning| (
+                    warning.count,
+                    warning.issue.as_str(),
+                    warning.description.as_str()
+                ))
+                .collect::<Vec<_>>(),
+            vec![(
+                1,
+                "event marker variant path(s) with several styles",
+                expected_description.as_str()
+            )]
+        );
     }
 
     #[test]
@@ -1772,12 +1901,12 @@ mod tests {
         );
     }
 
-    /// The longitudes alone say where the builder placed a fix in the tests
-    /// below: every fix in them sits on the equator. 1e-9° is about 0.1 mm.
+    /// Placement is read from longitude alone in the tests below: every fix
+    /// in them sits on the equator. 1e-9° is about 0.1 mm.
     const PLACEMENT_TOLERANCE_DEGREES: f64 = 1e-9;
 
     /// A fix with a position and a heading, but no satellite report: the
-    /// receiver said where it was without saying what it tracked.
+    /// receiver reported where it was but not what it tracked.
     fn measured_fix_without_a_satellite_report(secs: i64, lon_degrees: f64) -> NavPoint {
         let time = GpsTime::from_utc(
             Utc.timestamp_opt(secs, 0)

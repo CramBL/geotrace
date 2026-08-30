@@ -56,10 +56,10 @@ pub trait Coordinate: Copy + Sized {
 pub struct Latitude(f64);
 
 impl Latitude {
-    /// For a latitude the call site knows to be in range: a literal, a
-    /// constant, or a value derived from other latitudes. Panics on anything
-    /// else - read a latitude out of measured or parsed data with
-    /// [`Latitude::try_new`].
+    /// For a latitude already known to be in range at the call site: a
+    /// literal, a constant, or a value derived from other latitudes.
+    /// Panics on anything else - read a latitude out of measured or parsed
+    /// data with [`Latitude::try_new`].
     pub fn new(degrees: f64) -> Self {
         assert!(
             (-QUARTER_CIRCLE_DEGREES..=QUARTER_CIRCLE_DEGREES).contains(&degrees),
@@ -100,10 +100,10 @@ impl Coordinate for Latitude {
 pub struct Longitude(f64);
 
 impl Longitude {
-    /// For a longitude the call site knows to be in range: a literal, a
-    /// constant, or a value already wrapped into `[-180, 180]`. Panics on
-    /// anything else - read a longitude out of measured or parsed data with
-    /// [`Longitude::try_new`].
+    /// For a longitude already known to be in range at the call site: a
+    /// literal, a constant, or a value already wrapped into `[-180, 180]`.
+    /// Panics on anything else - read a longitude out of measured or parsed
+    /// data with [`Longitude::try_new`].
     pub fn new(degrees: f64) -> Self {
         assert!(
             (-HALF_CIRCLE_DEGREES..=HALF_CIRCLE_DEGREES).contains(&degrees),

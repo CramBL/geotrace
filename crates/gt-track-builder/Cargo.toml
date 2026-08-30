@@ -16,6 +16,7 @@ gt-analysis = { path = "../gt-analysis" }
 gt-geo-math = { path = "../gt-geo-math" }
 gt-types = { path = "../gt-types" }
 rstar.workspace = true
+rustc-hash.workspace = true
 uom.workspace = true
 vec1.workspace = true
 

@@ -3,6 +3,8 @@ pub mod channel;
 pub mod coordinates;
 pub mod geo_bounds;
 pub mod highlight;
+pub mod load_warning;
+pub use load_warning::{AlterationWording, LoadWarning};
 pub mod markers;
 pub mod mercator;
 pub mod metrics;
@@ -42,8 +44,8 @@ pub use time_types::{FixTimestamp, GpsTime, GpsTimeRange, SysTime};
 pub use tpv::TimePositionVelocity;
 pub use tpv::TimePositionVelocityBuilder;
 pub use track::{
-    AssociationConfig, FileMetadata, FileSource, FixStats, LOD_BASE_TOLERANCE_MERC, LoadWarning,
-    LoadedFile, LoadedTrack, MarkerRequirement, MeasuredTrackGeometry, MercBounds,
-    NearestSatelliteReport, SKY_REPORT_MAX_AGE_SECS, SegmentLengthRange, SpatialPoint, TimeRange,
-    TrackGeometry, TrackLod, TrackMetadata, TravelMode,
+    AssociationConfig, FileMetadata, FileSource, FixStats, LOD_BASE_TOLERANCE_MERC, LoadedFile,
+    LoadedTrack, MarkerRequirement, MeasuredTrackGeometry, MercBounds, NearestSatelliteReport,
+    SKY_REPORT_MAX_AGE_SECS, SegmentLengthRange, SpatialPoint, TimeRange, TrackGeometry, TrackLod,
+    TrackMetadata, TravelMode,
 };

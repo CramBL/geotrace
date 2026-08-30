@@ -49,12 +49,13 @@ use geotrace_sdk::{
     SatelliteReport, TravelMode as SdkTravelMode, collect_satellite_warnings,
 };
 use gt_types::coordinates::{CoordinateAxis, OutOfRange, RawDegrees};
+use gt_types::load_warning;
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::{FixTimestamp, GpsTime, SysTime};
 use gt_types::{
-    Channel, CustomMarker, EventMarker, EventMarkerStyle, FileSource, Latitude, LoadWarning,
-    LoadedFile, Longitude, MarkerColor, MarkerIcon, NavPoint, RecordedLatitude, RecordedLongitude,
-    TimePositionVelocity, TravelMode,
+    AlterationWording, Channel, CustomMarker, EventMarker, EventMarkerStyle, FileSource, Latitude,
+    LoadWarning, LoadedFile, Longitude, MarkerColor, MarkerIcon, NavPoint, RecordedLatitude,
+    RecordedLongitude, TimePositionVelocity, TravelMode,
 };
 
 pub struct LoadedGtd {
@@ -302,9 +303,6 @@ fn satellite_warnings_from_nav_file(nav_file: &NavFile) -> Vec<LoadWarning> {
     .collect()
 }
 
-/// How many entries a warning names before it only counts the rest.
-const MAX_LISTED_ENTRIES: usize = 5;
-
 /// One fix's recorded coordinate on one axis, outside that axis' range.
 struct CoordinateOutOfRange {
     record: usize,
@@ -334,8 +332,8 @@ impl fmt::Display for DroppedMarker {
     }
 }
 
-/// One satellite of one record's report, named as the app's satellite tables
-/// name it.
+/// One satellite of one record's report, in the same notation as the app's
+/// satellite tables.
 struct SatelliteInRecord {
     record: usize,
     constellation: Constellation,
@@ -394,25 +392,12 @@ impl fmt::Display for UnreadableEventMarkerColor {
 }
 
 /// What the loader changed about the satellite rows a recording holds, so the
-/// load-warnings dialog can name each change and a user can trace a satellite
+/// load-warnings dialog lists each change and a user can trace a satellite
 /// count or a signal strength on screen back to it.
 #[derive(Default)]
 struct SatelliteAlterations {
     satellites_merged_from_several_rows: Vec<MergedSatelliteRows>,
     discarded_snr_sentinels: Vec<SatelliteInRecord>,
-}
-
-fn first_few_listed<T: fmt::Display>(entries: &[T]) -> String {
-    let listed = entries
-        .iter()
-        .take(MAX_LISTED_ENTRIES)
-        .map(T::to_string)
-        .collect::<Vec<_>>()
-        .join(", ");
-    match entries.len().saturating_sub(MAX_LISTED_ENTRIES) {
-        0 => listed,
-        rest => format!("{listed}, and {rest} more"),
-    }
 }
 
 fn coordinates_out_of_range_warning(
@@ -424,7 +409,7 @@ fn coordinates_out_of_range_warning(
         issue: format!("fix(es) with a {axis} out of range"),
         description: format!(
             "{}. Each such fix is drawn at a position interpolated from the fixes around it.",
-            first_few_listed(fixes)
+            load_warning::first_few_listed(fixes)
         ),
     })
 }
@@ -435,32 +420,9 @@ fn dropped_markers_warning(issue: &str, dropped: &[DroppedMarker]) -> Option<Loa
         issue: issue.to_owned(),
         description: format!(
             "{}. A marker written outside the coordinate ranges has no place on the map and is left out.",
-            first_few_listed(dropped)
+            load_warning::first_few_listed(dropped)
         ),
     })
-}
-
-/// The wording of a warning about what the loader altered: `issue` completes
-/// the "<count> …" line, `consequence` follows the listed entries in the
-/// description.
-///
-/// The SDK's own satellite warnings describe the file itself, and these sit
-/// beside them: a file that repeats a satellite raises one warning about the
-/// file and one about what the app made of it.
-#[derive(Clone, Copy)]
-struct AlterationWording {
-    issue: &'static str,
-    consequence: &'static str,
-}
-
-impl AlterationWording {
-    fn load_warning<T: fmt::Display>(self, entries: &[T]) -> Option<LoadWarning> {
-        (!entries.is_empty()).then(|| LoadWarning {
-            count: u32::try_from(entries.len()).unwrap_or(u32::MAX),
-            issue: self.issue.to_owned(),
-            description: format!("{}. {}", first_few_listed(entries), self.consequence),
-        })
-    }
 }
 
 const MERGED_SATELLITE_ROWS: AlterationWording = AlterationWording {
@@ -741,8 +703,9 @@ struct MergedSatellite {
 /// highest keeps the result independent of row order, which
 /// `gt_analysis::loss_of_lock` reads when it compares a satellite's SNR between
 /// epochs. Elevation and azimuth are properties of the satellite's geometry,
-/// not of the signal: the merged row keeps the first value a row reported for
-/// each of them. Each result carries how many rows of the report it holds.
+/// not of the signal: the merged row keeps the first value any of its rows
+/// holds for each of them. Each result carries how many rows of the report it
+/// holds.
 fn merge_rows_repeating_a_satellite(tracked: &[SdkSatellite]) -> Vec<MergedSatellite> {
     let mut merged: Vec<MergedSatellite> = Vec::with_capacity(tracked.len());
     for row in tracked {
@@ -1480,7 +1443,7 @@ mod tests {
     }
 
     /// A file can hold a marker position no interpolation would produce: the
-    /// marker is left out and the recording says which one and why.
+    /// marker is left out and a load warning lists which one and why.
     #[test]
     fn a_marker_outside_the_coordinate_range_is_dropped_and_named() {
         let marker = SdkMarker {
@@ -1692,9 +1655,9 @@ mod tests {
         bytes
     }
 
-    /// The file's own warning about the repeated rows and the loader's warning
-    /// about merging them are both raised: one says the file is malformed, the
-    /// other says what the app made of it.
+    /// Two warnings are raised for a file that repeats a satellite: the SDK's,
+    /// about the file being malformed, and the loader's, about what the app
+    /// made of the repeated rows.
     #[test]
     fn satellites_merged_from_several_rows_load_with_a_warning_naming_them() {
         let bytes = recording_with_satellite_reports(vec![
@@ -1763,19 +1726,35 @@ mod tests {
         );
     }
 
-    #[test]
-    fn an_event_marker_color_that_is_not_hex_loads_as_gray_with_a_warning_naming_the_variant() {
+    /// Three fixes a second apart, and the given event marker styles in the
+    /// order they are written.
+    fn recording_with_event_marker_styles(styles: Vec<SdkEventMarkerStyle>) -> Vec<u8> {
         let mut recorder = NavFileBuilder::new().open();
         for second in 0..3i64 {
             recorder.add_nav_fix(minimal_fix(base() + Duration::seconds(second)));
         }
-        recorder.add_event_marker_style(SdkEventMarkerStyle {
-            variant_path: "power/boot".to_owned(),
-            icon: SdkEventMarkerIconChoice::Auto,
-            color: SdkEventMarkerColor::hex(COLOR_THAT_IS_NOT_HEX),
-        });
+        for style in styles {
+            recorder.add_event_marker_style(style);
+        }
         let mut bytes = Vec::new();
         recorder.finish().unwrap().write(&mut bytes).unwrap();
+        bytes
+    }
+
+    fn event_marker_style(variant_path: &str, color_hex: &str) -> SdkEventMarkerStyle {
+        SdkEventMarkerStyle {
+            variant_path: variant_path.to_owned(),
+            icon: SdkEventMarkerIconChoice::Auto,
+            color: SdkEventMarkerColor::hex(color_hex),
+        }
+    }
+
+    #[test]
+    fn an_event_marker_color_that_is_not_hex_loads_as_gray_with_a_warning_naming_the_variant() {
+        let bytes = recording_with_event_marker_styles(vec![event_marker_style(
+            "power/boot",
+            COLOR_THAT_IS_NOT_HEX,
+        )]);
 
         let file = load_bytes(&bytes, "marker_color.gtd".to_owned()).unwrap();
 
@@ -1792,6 +1771,36 @@ mod tests {
                 "event marker color(s) replaced with gray",
                 "\"power/boot\": \"#ZZZZZZ\". Those markers are drawn mid-gray: the style \
                  holds a color that is not a #RRGGBB hex value."
+            )]
+        );
+    }
+
+    /// The last style written for a variant path is the one every marker on it
+    /// is drawn with: the styles reach the builder in the order the file holds
+    /// them.
+    #[test]
+    fn several_styles_for_one_variant_path_load_as_the_last_one_with_a_warning_listing_the_path() {
+        let bytes = recording_with_event_marker_styles(vec![
+            event_marker_style("power/boot", "#112233"),
+            event_marker_style("power/boot", "#445566"),
+            event_marker_style("power/shutdown", "#778899"),
+        ]);
+
+        let file = load_bytes(&bytes, "repeated_style.gtd".to_owned()).unwrap();
+
+        assert_eq!(
+            file.event_marker_styles
+                .get("power/boot")
+                .map(|style| style.color),
+            Some(MarkerColor::new(0x44, 0x55, 0x66))
+        );
+        assert_eq!(
+            listed_warnings(&file),
+            vec![(
+                1,
+                "event marker variant path(s) with several styles",
+                "\"power/boot\": 2 styles. Every marker on those paths is drawn with the \
+                 last style the recording holds for it: one style is kept per variant path."
             )]
         );
     }
