@@ -90,7 +90,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # sdk/cpp/include/geotrace/geotrace.hpp: it ignores
 # `AllowShortFunctionsOnASingleLine: Inline` for a function body inside the
 # `#else` branch of a preprocessor conditional. This major matches the one
-# .github/workflows/ci_sdk.yml pins for its lint-sdk job.
+# .github/workflows/ci_sdk.yml pins as LLVM_CLANG_MAJOR.
 ENV LLVM_VERSION=22
 RUN curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
       -o /usr/share/keyrings/apt-llvm-org.asc \
