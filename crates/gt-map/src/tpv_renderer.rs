@@ -12,7 +12,10 @@ use gt_types::{
     PlacedPoints, PointIdx, ResolvedPosition, SKY_REPORT_MAX_AGE_SECS, TrackIdx, TrackRef,
 };
 use gt_ui_theme::{DEGREE_SIGN, DELTA, EM_DASH};
-use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, PointWindowFolds};
+use gt_ui_types::{
+    DRAWN_AT_CAPTION, DataPointRef, HighlightScope, INTERPOLATED_POSITION_NOTE, MapHighlight,
+    PointWindowFolds,
+};
 use smallvec::SmallVec;
 use strum::{EnumCount as _, IntoEnumIterator as _};
 use uom::si::angle::{degree, radian};
@@ -578,18 +581,14 @@ fn drawn_at_row_ui(ui: &mut Ui, resolved: ResolvedPosition) {
         return;
     };
     let (latitude, longitude) = projected.coordinates();
-    ui.label("Drawn at");
+    ui.label(DRAWN_AT_CAPTION);
     ui.vertical(|ui| {
         ui.label(format!(
             "{}  {}",
             latitude.to_degrees_with_hemisphere(),
             longitude.to_degrees_with_hemisphere()
         ));
-        ui.label(
-            RichText::new("Interpolated between the fixes around it")
-                .weak()
-                .small(),
-        );
+        ui.label(RichText::new(INTERPOLATED_POSITION_NOTE).weak().small());
     });
     ui.end_row();
 }

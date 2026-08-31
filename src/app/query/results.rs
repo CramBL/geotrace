@@ -21,12 +21,12 @@ use gt_query_run::{
     TrackProvider, TrackQueryData,
 };
 use gt_side_panel::widgets::{PointClickRequests, apply_point_click};
-use gt_types::{DataCategory, LoadedFile, PlacedPoints, PointIdx, TrackRef};
+use gt_types::{DataCategory, LoadedFile, PlacedPoints, PointIdx, ResolvedPosition, TrackRef};
 use gt_ui_theme::buttons::SortHeaderButton;
 use gt_ui_theme::labels::{CountLine, LabelWithHover};
 use gt_ui_types::{
-    DataPointRef, HighlightScope, MapHighlight, MapScope, MatchHighlight, MatchRevealTarget,
-    StaleRunNote,
+    DRAWN_AT_CAPTION, DataPointRef, HighlightScope, INTERPOLATED_POSITION_NOTE, MapHighlight,
+    MapScope, MatchHighlight, MatchRevealTarget, StaleRunNote,
 };
 use strum::IntoEnumIterator as _;
 
@@ -154,9 +154,8 @@ impl TrackValues<'_> {
         self.provider.value(metric, point_index)
     }
 
-    fn lat_lon(&self, point_index: usize) -> Option<(f64, f64)> {
-        let (latitude, longitude) = self.placed?.get(point_index)?.resolved_position();
-        Some((latitude.as_degrees(), longitude.as_degrees()))
+    fn resolved_position(&self, point_index: usize) -> Option<ResolvedPosition> {
+        Some(self.placed?.get(point_index)?.resolved())
     }
 }
 
@@ -203,22 +202,29 @@ impl RowSource<'_> {
         }
     }
 
-    fn lat_lon(&self, track: TrackRef, source_index: usize) -> Option<(f64, f64)> {
+    fn resolved_position(&self, track: TrackRef, source_index: usize) -> Option<ResolvedPosition> {
         match self {
             Self::NavPoints { track_values } => track_values
                 .iter()
                 .find(|(candidate, _)| *candidate == track)
-                .and_then(|(_, values)| values.lat_lon(source_index)),
+                .and_then(|(_, values)| values.resolved_position(source_index)),
             Self::ChannelSamples { .. } => None,
         }
     }
 
+    /// Where double-clicking a row centres the map, in degrees: the position
+    /// the map draws that row's point at.
+    fn map_center(&self, track: TrackRef, source_index: usize) -> Option<(f64, f64)> {
+        let (latitude, longitude) = self.resolved_position(track, source_index)?.coordinates();
+        Some((latitude.as_degrees(), longitude.as_degrees()))
+    }
+
     /// What one row's hover states: which row of its source it holds, and where
-    /// that row was recorded.
+    /// the map draws it.
     fn row_hover_text(&self, track: TrackRef, source_index: usize) -> String {
         match self {
             Self::NavPoints { .. } => {
-                point_hover_text(source_index, self.lat_lon(track, source_index))
+                point_hover_text(source_index, self.resolved_position(track, source_index))
             }
             Self::ChannelSamples { .. } => {
                 format!("#{source_index}\n{SAMPLE_WITHOUT_POSITION}")
@@ -238,9 +244,8 @@ fn timeline_of(tracks: &[ChannelTrackResult], track: TrackRef) -> Option<&Channe
 /// table is laid out and the enclosing panel's `Ui` is available again.
 struct PointClick {
     point: DataPointRef,
-    /// Where double-clicking the row centres the map, absent for a point of a
-    /// track with no geometry.
-    lat_lon: Option<(f64, f64)>,
+    /// Absent for a point of a track with no geometry: it is drawn nowhere.
+    map_center: Option<(f64, f64)>,
     response: egui::Response,
 }
 
@@ -1039,7 +1044,7 @@ impl<'a> ResultsTables<'a> {
                 ui,
                 &click.response,
                 click.point,
-                click.lat_lon,
+                click.map_center,
                 scope,
                 out.highlight,
                 out.requests,
@@ -1082,7 +1087,7 @@ impl<'a> ResultsTables<'a> {
         }
         Some(PointClick {
             point,
-            lat_lon: self.source.lat_lon(track, source_index),
+            map_center: self.source.map_center(track, source_index),
             response,
         })
     }
@@ -1281,11 +1286,20 @@ fn query_swatch_ui(ui: &mut egui::Ui, color: Option<egui::Color32>, hover: &str)
 }
 
 /// The hover text of a nav-point row: which point of its track the row holds,
-/// and where that point was recorded.
-fn point_hover_text(point_index: usize, lat_lon: Option<(f64, f64)>) -> String {
-    match lat_lon {
-        Some((lat, lon)) => format!("#{point_index}\n{lat:.5}, {lon:.5}"),
-        None => format!("#{point_index}"),
+/// and where the map draws that point. A position the track builder placed
+/// between the fixes around it is captioned, since the row's `lat` and `lon`
+/// columns hold the coordinates the receiver recorded instead.
+fn point_hover_text(point_index: usize, position: Option<ResolvedPosition>) -> String {
+    let Some(position) = position else {
+        return format!("#{point_index}");
+    };
+    let (latitude, longitude) = position.coordinates();
+    let (lat, lon) = (latitude.as_degrees(), longitude.as_degrees());
+    match position {
+        ResolvedPosition::Measured(_) => format!("#{point_index}\n{lat:.5}, {lon:.5}"),
+        ResolvedPosition::Interpolated(_) => format!(
+            "#{point_index}\n{DRAWN_AT_CAPTION} {lat:.5}, {lon:.5}\n{INTERPOLATED_POSITION_NOTE}"
+        ),
     }
 }
 
@@ -1315,14 +1329,40 @@ fn track_values<'a>(
 
 #[cfg(test)]
 mod tests {
+    use gt_types::{Latitude, Longitude};
+
     use super::*;
 
     #[test]
-    fn a_point_row_states_its_index_and_position() {
+    fn a_point_row_states_its_index_and_measured_position() {
         assert_eq!(
-            point_hover_text(150, Some((55.676_23, 12.568_9))),
+            point_hover_text(
+                150,
+                Some(ResolvedPosition::measured(
+                    Latitude::new(55.676_23),
+                    Longitude::new(12.568_9)
+                ))
+            ),
             "#150\n55.67623, 12.56890"
         );
+    }
+
+    #[test]
+    fn a_point_row_whose_fix_the_track_builder_placed_captions_the_position_as_drawn() {
+        assert_eq!(
+            point_hover_text(
+                150,
+                Some(ResolvedPosition::interpolated(
+                    Latitude::new(55.676_23),
+                    Longitude::new(12.568_9)
+                ))
+            ),
+            "#150\nDrawn at 55.67623, 12.56890\nInterpolated between the fixes around it"
+        );
+    }
+
+    #[test]
+    fn a_point_row_of_a_track_without_geometry_states_only_its_index() {
         assert_eq!(point_hover_text(150, None), "#150");
     }
 }
