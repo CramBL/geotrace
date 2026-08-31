@@ -78,8 +78,10 @@ const UNIT_DROPDOWN_WIDTH_PX: f32 = 52.0;
 pub(super) struct LogViewerWindow {
     pub open: bool,
 
-    /// Indexes the loaded logs. Clamped against them before every render.
-    selected: usize,
+    /// The log the window shows. Resolved against the loaded logs before every
+    /// render: `None`, or an id no longer loaded, falls back to the log that
+    /// loaded first.
+    selected: Option<LoadedLogId>,
 
     summary_expanded: bool,
     association_window_unit: AssociationWindowUnit,
@@ -115,6 +117,13 @@ pub(super) struct LogViewerContext<'a> {
     pub dialog_open: bool,
 }
 
+/// What the selector row left behind: the log it now shows, and whether its
+/// unload button was pressed.
+struct SelectorRow {
+    shown: LoadedLogId,
+    unload_requested: bool,
+}
+
 /// What the viewer requests of the app for the log it is showing. The app owns
 /// the history database, the dialog, and the log's association target.
 #[derive(Debug, Default)]
@@ -130,7 +139,7 @@ impl LogViewerWindow {
     pub(super) fn new() -> Self {
         Self {
             open: false,
-            selected: 0,
+            selected: None,
             summary_expanded: false,
             association_window_unit: AssociationWindowUnit::Seconds,
             query_pending_since: None,
@@ -147,15 +156,25 @@ impl LogViewerWindow {
         self.open = true;
     }
 
-    /// Shows the log that just finished loading, opening the window on it.
-    pub(super) fn open_on_newly_loaded_log(&mut self, logs: &LoadedLogs) {
-        self.selected = logs.len().saturating_sub(1);
+    /// Shows the log `id` names, opening the window on it.
+    pub(super) fn open_on_log(&mut self, id: LoadedLogId) {
+        self.selected = Some(id);
         self.open = true;
     }
 
-    /// Which of the loaded logs the window is showing.
+    /// Which of the loaded logs the window is showing, as of the last render.
     #[cfg(test)]
-    pub(super) fn selected_log_index(&self) -> usize {
+    pub(super) fn selected_log(&self) -> Option<LoadedLogId> {
+        self.selected
+    }
+
+    /// The log this frame draws, which is the selected one while it stays
+    /// loaded and the log that loaded first otherwise.
+    fn resolve_selected_log(&mut self, logs: &LoadedLogs) -> Option<LoadedLogId> {
+        self.selected = self
+            .selected
+            .filter(|id| logs.get_by_id(*id).is_some())
+            .or_else(|| logs.first_id());
         self.selected
     }
 
@@ -179,13 +198,13 @@ impl LogViewerWindow {
         // The ring on the map lives exactly as long as the cursor is on a
         // row: the rows below fill this in again while they draw.
         log_hover.row_position = None;
+        let selected = self.resolve_selected_log(logs);
         if !self.open {
             return;
         }
-        self.selected = self.selected.min(logs.len().saturating_sub(1));
 
         let mut open = self.open;
-        let mut unload_selected = false;
+        let mut unload = None;
         Window::new(LOG_VIEWER_TITLE)
             .open(&mut open)
             .default_width(DEFAULT_WINDOW_WIDTH_PX)
@@ -217,27 +236,31 @@ impl LogViewerWindow {
                     .max_height((ui.available_height() - reserved_for_the_table).max(0.0))
                     .show(ui, |ui| {
                         self.notices_ui(ui);
-                        if logs.is_empty() {
+                        let Some(selected) = selected else {
                             ui.label(RichText::new(LOG_LOAD_HINT).weak());
                             return;
+                        };
+                        let row = self.selector_row_ui(ui, logs, selected);
+                        if row.unload_requested {
+                            unload = Some(selected);
                         }
-                        unload_selected = self.selector_row_ui(ui, logs);
+                        let shown = row.shown;
                         if self.summary_expanded
-                            && let Some(log) = logs.get(self.selected)
+                            && let Some(log) = logs.get_by_id(shown)
                         {
                             self.summary_panel_ui(ui, log);
                         }
-                        self.filters_ui(ui, logs);
+                        self.filters_ui(ui, logs, shown);
                     });
-                if logs.is_empty() {
+                let Some(shown) = self.selected else {
                     return;
-                }
+                };
                 ui.separator();
-                if let Some((log_id, log)) = logs.get_with_id(self.selected) {
+                if let Some(log) = logs.get_by_id(shown) {
                     self.line_table_ui(
                         ui,
                         log,
-                        log_id,
+                        shown,
                         &mut LineTableRequests {
                             map_center: map_center_request,
                             hover: log_hover,
@@ -253,12 +276,12 @@ impl LogViewerWindow {
         }
         self.open = open;
 
-        if unload_selected {
-            let unloaded = logs.remove(self.selected);
-            if let Some(log) = unloaded {
+        if let Some(id) = unload {
+            if let Some(log) = logs.remove_by_id(id) {
                 log::info!("Unloaded log {:?}", log.name());
             }
-            self.selected = self.selected.min(logs.len().saturating_sub(1));
+            // The next frame resolves the selection against what is left.
+            self.selected = None;
         }
     }
 
@@ -287,22 +310,26 @@ impl LogViewerWindow {
     }
 
     /// The log being shown, the actions on it, and the parse summary that
-    /// unfolds the summary panel. Returns whether the log was asked to unload.
-    fn selector_row_ui(&mut self, ui: &mut egui::Ui, logs: &mut LoadedLogs) -> bool {
-        let selected = self.selected;
+    /// unfolds the summary panel.
+    fn selector_row_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        logs: &mut LoadedLogs,
+        selected: LoadedLogId,
+    ) -> SelectorRow {
         let summary = logs
-            .get(selected)
+            .get_by_id(selected)
             .map(LoadedLog::parse_summary_line)
             .unwrap_or_default();
         let selected_name = logs
-            .get(selected)
+            .get_by_id(selected)
             .map_or(EM_DASH, LoadedLog::name)
             .to_owned();
-        let visible = logs.get(selected).is_some_and(LoadedLog::is_visible);
+        let visible = logs.get_by_id(selected).is_some_and(LoadedLog::is_visible);
 
         let mut chosen = selected;
         let mut summary_expanded = self.summary_expanded;
-        let mut unload = false;
+        let mut unload_requested = false;
         // The summary yields before the log's name and controls do: it is the
         // one part of the row a narrow window can shorten.
         Sides::new().shrink_right().truncate().show(
@@ -312,8 +339,8 @@ impl LogViewerWindow {
                     ComboBox::from_id_salt("log_viewer_selected_log")
                         .selected_text(&selected_name)
                         .show_ui(ui, |ui| {
-                            for (index, log) in logs.iter().enumerate() {
-                                ui.selectable_value(&mut chosen, index, log.name());
+                            for (id, log) in logs.iter_with_ids() {
+                                ui.selectable_value(&mut chosen, id, log.name());
                             }
                         });
                 } else {
@@ -324,17 +351,17 @@ impl LogViewerWindow {
                     .selectable_label(visible, eye)
                     .on_hover_text("Draw this log's matches on the map")
                     .clicked()
-                    && let Some(log) = logs.get_mut(selected)
+                    && let Some(log) = logs.get_mut_by_id(selected)
                 {
                     log.set_visible(!visible);
                 }
-                if let Some(attachment) = logs.get(selected).and_then(LoadedLog::attachment) {
+                if let Some(attachment) = logs.get_by_id(selected).and_then(LoadedLog::attachment) {
                     let (recording, _) =
                         gt_loaded_files::display_identity(&attachment.recording.identity);
                     ui.label(ICON_PAPERCLIP)
                         .on_hover_text(format!("Stored with the recording {recording}"));
                 }
-                unload = ui
+                unload_requested = ui
                     .small_button(ICON_X)
                     .on_hover_text("Unload this log")
                     .clicked();
@@ -349,9 +376,12 @@ impl LogViewerWindow {
                 }
             },
         );
-        self.selected = chosen;
+        self.selected = Some(chosen);
         self.summary_expanded = summary_expanded;
-        unload
+        SelectorRow {
+            shown: chosen,
+            unload_requested,
+        }
     }
 
     /// The association target the log takes its positions from, and how far an
@@ -366,7 +396,7 @@ impl LogViewerWindow {
         write_access: WriteAccess,
     ) {
         let selected = self.selected;
-        let Some((log_id, log)) = logs.get_with_id(selected) else {
+        let Some(log) = selected.and_then(|id| logs.get_by_id(id)) else {
             return;
         };
         let target = log.association_target();
@@ -450,7 +480,7 @@ impl LogViewerWindow {
                 Button::new(ATTACH_LABEL),
             );
             if attach.clicked() {
-                requests.open_association_dialog = Some(log_id);
+                requests.open_association_dialog = selected;
             }
             attach
                 .on_hover_text(ATTACH_HOVER)
@@ -461,7 +491,7 @@ impl LogViewerWindow {
                 });
             let detach = ui.add_enabled(attached && writes_recordings, Button::new(DETACH_LABEL));
             if detach.clicked() {
-                requests.detach = Some(log_id);
+                requests.detach = selected;
             }
             detach
                 .on_hover_text(DETACH_HOVER)
@@ -473,7 +503,7 @@ impl LogViewerWindow {
         });
 
         self.association_window_unit = unit;
-        let Some(log) = logs.get_mut(selected) else {
+        let Some(log) = selected.and_then(|id| logs.get_mut_by_id(id)) else {
             return;
         };
         if window_edited {

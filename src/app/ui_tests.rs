@@ -9162,7 +9162,20 @@ fn app_with_a_log_loaded() -> Harness<'static, App> {
 
 impl App {
     fn shown_log(&self) -> Option<&LoadedLog> {
-        self.logs.get(self.log_viewer.selected_log_index())
+        self.log_viewer
+            .selected_log()
+            .and_then(|id| self.logs.get_by_id(id))
+    }
+
+    /// The log that loaded first, which is the only one in every fixture that
+    /// loads one.
+    fn first_log(&self) -> Option<&LoadedLog> {
+        self.logs.iter().next()
+    }
+
+    /// The log that loaded last, for the fixtures loading a second one.
+    fn last_log(&self) -> Option<&LoadedLog> {
+        self.logs.iter().last()
     }
 }
 
@@ -9189,6 +9202,43 @@ fn a_log_that_finished_loading_opens_the_viewer_on_its_parse_summary() {
         "the summary names the detected format, got {summary:?}"
     );
     harness.get_by_label(summary.as_str());
+}
+
+/// One log per content: dropping a text the session already holds names the
+/// loaded log and loads nothing.
+#[test]
+fn dropping_a_log_the_session_already_holds_shows_the_loaded_one() {
+    let mut harness = app_with_a_log_loaded();
+    let loaded = harness.state().logs.first_id();
+    harness.state_mut().log_viewer.open = false;
+
+    drop_log_and_wait_for_load(
+        &mut harness,
+        &synthetic_log(64 * 1024),
+        "copy-of-navsyncd.log",
+    );
+    harness.run_steps(3);
+
+    assert_eq!(harness.state().logs.len(), 1);
+    assert_eq!(
+        harness.state().logs.first_id(),
+        loaded,
+        "the loaded log kept its identity"
+    );
+    assert_eq!(
+        harness
+            .state()
+            .shown_log()
+            .map(gt_log_view::LoadedLog::name),
+        Some("navsyncd.log"),
+        "the viewer shows the log the session holds, under the name it loaded with"
+    );
+    assert!(harness.state().log_viewer.open, "the viewer opens on it");
+    assert_eq!(
+        harness.state().toasts.len(),
+        1,
+        "the drop is answered with a toast naming the loaded log"
+    );
 }
 
 /// A drag over the app covers it with the hint the empty viewer shows.
@@ -9245,8 +9295,7 @@ fn pasting_log_text_loads_it_named_after_its_first_entry() {
     assert_eq!(
         harness
             .state()
-            .logs
-            .get(0)
+            .first_log()
             .map(gt_log_view::LoadedLog::name),
         Some("pasted 14:02:11")
     );
@@ -9333,8 +9382,7 @@ fn a_log_loaded_without_a_recording_stays_untargeted_and_raises_no_dialog() {
     assert_eq!(
         harness
             .state()
-            .logs
-            .get(0)
+            .first_log()
             .and_then(gt_log_view::LoadedLog::association_target),
         None
     );
@@ -9675,7 +9723,8 @@ fn a_layer_chip_puts_the_lines_it_matched_on_the_map() {
     let matched = harness.inner.state_mut().logs.map_matches().match_count();
     assert!(matched > 0, "the chip's lines reach the map");
 
-    if let Some(log) = harness.inner.state_mut().logs.get_mut(0) {
+    let loaded = harness.inner.state().logs.first_id();
+    if let Some(log) = loaded.and_then(|id| harness.inner.state_mut().logs.get_mut_by_id(id)) {
         log.set_visible(false);
     }
     harness.inner.run_steps(2);
@@ -9739,8 +9788,7 @@ fn choosing_a_target_in_the_footer_associates_the_log_against_it() {
     assert_eq!(
         harness
             .state()
-            .logs
-            .get(0)
+            .first_log()
             .and_then(|log| log.association_target()),
         None,
         "two overlapping recordings leave the choice to the user"
@@ -9759,8 +9807,7 @@ fn choosing_a_target_in_the_footer_associates_the_log_against_it() {
     assert!(
         harness
             .state()
-            .logs
-            .get(0)
+            .first_log()
             .is_some_and(|log| log.associated_entry_count() > 0),
         "picking a target associates the log against it right away"
     );
@@ -9771,7 +9818,10 @@ fn choosing_a_target_in_the_footer_associates_the_log_against_it() {
 mod log_association {
     use gt_store::{HistoryDatabase as _, LogAttachmentEntry, Recordings, StoredLogFilterMode};
 
+    use gt_log_view::LogAttachmentRef;
+
     use crate::app::history_db::HistoryWorker;
+    use crate::app::loader::AttachedLogRestore;
     use crate::app::log_viewer::association_dialog;
 
     use super::*;
@@ -9793,7 +9843,21 @@ mod log_association {
     }
 
     fn drop_the_log(harness: &mut Harness<App>) {
-        drop_log_and_wait_for_load(harness, &synthetic_log(8 * 1024), "navsyncd.log");
+        drop_a_log(harness, FIXTURE_LOG_SEED);
+    }
+
+    /// The seed [`drop_the_log`] writes its lines from.
+    const FIXTURE_LOG_SEED: u64 = 7;
+
+    /// Drops a log generated from `seed`. Two drops in one test need two
+    /// seeds: the session holds one log per content.
+    fn drop_a_log(harness: &mut Harness<App>, seed: u64) {
+        let text = synthetic_journald_log(SyntheticLogSpec {
+            approx_bytes: 8 * 1024,
+            seed,
+            timestamps: SyntheticLogTimestamps::Iso8601Space,
+        });
+        drop_log_and_wait_for_load(harness, &text, "navsyncd.log");
         harness.run_steps(3);
     }
 
@@ -9816,8 +9880,7 @@ mod log_association {
     fn shown_log_target(harness: &Harness<App>) -> Option<gt_loaded_files::LoadedFileId> {
         harness
             .state()
-            .logs
-            .get(0)
+            .first_log()
             .and_then(gt_log_view::LoadedLog::association_target)
     }
 
@@ -9864,8 +9927,7 @@ mod log_association {
         assert!(
             harness.step_until(|harness| harness
                 .state()
-                .logs
-                .get(0)
+                .first_log()
                 .is_some_and(|log| log.attachment().is_some())),
             "the viewer noted the attachment the worker stored"
         );
@@ -9911,8 +9973,7 @@ mod log_association {
         assert!(
             harness
                 .state()
-                .logs
-                .get(0)
+                .first_log()
                 .is_some_and(|log| log.associated_entry_count() > 0),
             "the preselected recording is what the log associates against"
         );
@@ -9942,8 +10003,7 @@ mod log_association {
         assert_eq!(
             harness
                 .state()
-                .logs
-                .get(0)
+                .first_log()
                 .map(gt_log_view::LoadedLog::associated_entry_count),
             Some(0)
         );
@@ -10055,14 +10115,13 @@ mod log_association {
         cancel(&mut harness);
         assert!(!harness.state().ask_log_association_target);
 
-        drop_the_log(&mut harness);
+        drop_a_log(&mut harness, FIXTURE_LOG_SEED + 1);
 
         assert!(!dialog_is_open(&harness), "the dialog stays away");
         assert!(
             harness
                 .state()
-                .logs
-                .get(1)
+                .last_log()
                 .is_some_and(|log| log.associated_entry_count() > 0),
             "the one overlapping recording is taken without asking"
         );
@@ -10079,7 +10138,7 @@ mod log_association {
         harness.run_steps(2);
         assert!(harness.state().ask_log_association_target);
 
-        drop_the_log(&mut harness);
+        drop_a_log(&mut harness, FIXTURE_LOG_SEED + 2);
 
         assert!(
             dialog_is_open(&harness),
@@ -10118,16 +10177,20 @@ mod log_association {
             "the chip reached the stored attachment"
         );
 
+        // With the session copy unloaded, the attachment is what brings the
+        // log back.
+        unload_the_log(&mut harness);
+        assert_eq!(harness.state().logs.len(), 0);
+
         // Opening the recording again restores the log it carries.
         drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
         assert!(
-            harness.step_until(|harness| harness.state().logs.len() == 2),
+            harness.step_until(|harness| harness.state().logs.len() == 1),
             "the attached log came back with the recording"
         );
         let restored = harness
             .state()
-            .logs
-            .get(1)
+            .first_log()
             .map(|log| {
                 log.filters()
                     .chips()
@@ -10144,12 +10207,71 @@ mod log_association {
         assert!(
             harness
                 .state()
-                .logs
-                .get(1)
+                .first_log()
                 .is_some_and(|log| log.association_target().is_some()),
             "a restored log is associated with the recording that carried it"
         );
         assert!(harness.state().log_viewer.open);
+    }
+
+    /// The recording is opened again while its log is still loaded: the
+    /// attachment is skipped, and the session keeps the one log.
+    #[test]
+    fn a_recording_opened_again_restores_no_attachment_that_is_already_loaded() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("geotrace.h5");
+        let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
+        attach_the_log(&mut harness, &db_path, &db_ref);
+        let loaded = harness.state().logs.first_id();
+
+        restore_the_stored_attachment(&mut harness, &db_path, &db_ref);
+
+        assert_eq!(harness.state().logs.len(), 1, "no second copy was loaded");
+        assert_eq!(
+            harness.state().logs.first_id(),
+            loaded,
+            "the loaded log kept its identity"
+        );
+    }
+
+    /// Hands the app the attachment a recording load reads back, parsed as the
+    /// loader's worker parses it.
+    fn restore_the_stored_attachment(
+        harness: &mut Harness<App>,
+        db_path: &std::path::Path,
+        db_ref: &gt_store::DatabaseRef,
+    ) {
+        let stored = stored_attachments(db_path, db_ref);
+        let entry = stored.first().expect("the attachment was stored");
+        let text = synthetic_journald_log(SyntheticLogSpec {
+            approx_bytes: 8 * 1024,
+            seed: FIXTURE_LOG_SEED,
+            timestamps: SyntheticLogTimestamps::Iso8601Space,
+        });
+        let parsed = gt_logfile::parse_log(text.as_str().into(), synthetic_log_start())
+            .expect("the fixture log parses");
+        let restore = AttachedLogRestore {
+            attachment: LogAttachmentRef {
+                recording: db_ref.clone(),
+                id: entry.id,
+            },
+            filters: entry.attachment.filters.clone(),
+        };
+        harness.state_mut().load_parsed_log(
+            Some(entry.attachment.name.clone()),
+            parsed,
+            Some(restore),
+        );
+        harness.run_steps(2);
+    }
+
+    /// Unloads the shown log through the viewer's own button, which the
+    /// selector row draws before any filter chip's.
+    fn unload_the_log(harness: &mut Harness<App>) {
+        harness
+            .nth_matching(By::new().label(egui_phosphor::regular::X), 0)
+            .click();
+        harness.run_steps(3);
     }
 
     /// The stored log is gone from the store, and the recording still opens.
@@ -10200,8 +10322,7 @@ mod log_association {
         assert!(
             harness.step_until(|harness| harness
                 .state()
-                .logs
-                .get(0)
+                .first_log()
                 .is_some_and(|log| log.attachment().is_none())),
             "the viewer noted the attachment the worker removed"
         );
@@ -10240,8 +10361,7 @@ mod log_association {
         assert!(
             harness
                 .state()
-                .logs
-                .get(0)
+                .first_log()
                 .is_some_and(|log| log.attachment().is_none()),
             "nothing about the loaded log changed"
         );
