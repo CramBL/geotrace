@@ -482,9 +482,10 @@ fn a_file_without_gps_time_us_reads_its_time_axis_as_the_receiver_timestamp()
 -> Result<(), Box<dyn std::error::Error>> {
     let fix_time = t(0);
     let host_time = t(500);
-    let bytes = make_file_without_gps_time_us(
+    let bytes = make_nav_points_file(
         fix_time.timestamp_micros(),
         host_time.timestamp_micros().cast_unsigned(),
+        None,
     );
 
     let nav_file = NavFile::read(bytes.as_slice())?;
@@ -495,13 +496,37 @@ fn a_file_without_gps_time_us_reads_its_time_axis_as_the_receiver_timestamp()
     Ok(())
 }
 
-fn make_file_without_gps_time_us(time_us: i64, sys_time_us: u64) -> Vec<u8> {
+#[test]
+fn a_gps_time_us_shorter_than_the_time_axis_is_rejected() -> Result<(), Box<dyn std::error::Error>>
+{
+    let bytes = make_nav_points_file(t(0).timestamp_micros(), u64::MAX, Some(&[]));
+
+    let err = NavFile::read(bytes.as_slice()).expect_err("should detect shape mismatch");
+
+    assert!(matches!(
+        err,
+        Error::ShapeMismatch {
+            group: "nav_points",
+            dataset: "gps_time_us",
+            expected: 1,
+            actual: 0,
+        }
+    ));
+    Ok(())
+}
+
+fn make_nav_points_file(time_us: i64, sys_time_us: u64, gps_time_us: Option<&[u64]>) -> Vec<u8> {
     let mut fb = FileBuilder::new();
     fb.set_attr("geotrace_version", AttrValue::String("1".into()));
     let mut np = fb.create_group("nav_points");
     np.create_dataset("time")
         .with_i64_data(&[time_us])
         .with_shape(&[1]);
+    if let Some(gps_time_us) = gps_time_us {
+        np.create_dataset("gps_time_us")
+            .with_u64_data(gps_time_us)
+            .with_shape(&[gps_time_us.len() as u64]);
+    }
     np.create_dataset("sys_time_us")
         .with_u64_data(&[sys_time_us])
         .with_shape(&[1]);

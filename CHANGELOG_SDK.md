@@ -9,6 +9,7 @@ the app).
 
 ### Added
 
+- The `nav_points/gps_time_us` dataset, holding each fix's GPS-receiver timestamp in microseconds since the Unix epoch, `u64::MAX` where the fix has none. The `nav_points/time` axis is unchanged.
 - Rust `EventMarkerIconChoice::wire_name` returns the `icon_name` wire value the choice writes: the empty name for `Auto`, the icon's name for `Icon`, and the stored name for `Unrecognized`.
 - Python `EventMarkerStyle.icon_name`, a read-only property holding the stored name of `icon`: `None` where the style leaves the icon to the application, and the name verbatim where it is outside the `MarkerIcon` set. `NavFileBuilder.add_event_marker_style` writes such a name back unchanged.
 
@@ -26,6 +27,7 @@ the app).
 
 ### Fixed
 
+- Fixed the reader giving every fix a GPS-receiver timestamp: `NavFix::gps_time` reads `None` for a fix written without one. A file written before the `nav_points/gps_time_us` dataset existed reads its `time` axis as the receiver's timestamp.
 - The C gold example rejects a date or time number too large for an `int` instead of reading it with `sscanf`, which cannot report the overflow.
 - Fixed the reader reading an event marker style's icon name outside the `MarkerIcon` set, and a color that is not `#RRGGBB`, as the automatic style: both values now survive the read.
 - Fixed the writer cutting a marker label, event marker variant path, annotation, icon name, or color hex mid-character to fit its field: writing a file that holds such a value now fails with an error naming the field, in all four SDKs.

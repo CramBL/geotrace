@@ -106,6 +106,14 @@ fn read_nav_points(file: &File) -> Result<Vec<NavPoint>, Error> {
     let headings = grp.dataset("heading")?.read_f64()?;
     let speeds = grp.dataset("speed_mps")?.read_f64()?;
 
+    // A file written before `gps_time_us` existed stores only the `time` axis,
+    // holding the receiver's timestamp for a fix taken under lock and the host
+    // clock's for one taken without. Such a file is read with `time` treated as
+    // the receiver's timestamp.
+    let gps_times: Vec<u64> = grp
+        .dataset("gps_time_us")
+        .and_then(|ds| ds.read_u64())
+        .unwrap_or_else(|_| times.iter().map(|&us| us.cast_unsigned()).collect());
     // sys_time_us and eph_m are absent in older files. Default to sentinel/NaN.
     let sys_times: Vec<u64> = grp
         .dataset("sys_time_us")
@@ -117,12 +125,13 @@ fn read_nav_points(file: &File) -> Result<Vec<NavPoint>, Error> {
         .unwrap_or_else(|_| vec![f64::NAN; times.len()]);
 
     let n = times.len();
+    check_len("nav_points", "gps_time_us", n, gps_times.len())?;
     check_len("nav_points", "lat", n, lats.len())?;
     check_len("nav_points", "lon", n, lons.len())?;
     check_len("nav_points", "heading", n, headings.len())?;
     check_len("nav_points", "speed_mps", n, speeds.len())?;
 
-    let nav_points = times
+    let nav_points = gps_times
         .iter()
         .zip(lats.iter())
         .zip(lons.iter())
@@ -132,12 +141,12 @@ fn read_nav_points(file: &File) -> Result<Vec<NavPoint>, Error> {
         .zip(ephs.iter())
         .map(
             |(
-                (((((time_us, lat_deg), lon_deg), heading_deg), speed_mps), sys_time_us),
+                (((((gps_time_us, lat_deg), lon_deg), heading_deg), speed_mps), sys_time_us),
                 eph_val,
             )| {
                 NavPoint {
                     fix: NavFix {
-                        gps_time: Some(micros_to_datetime(*time_us)),
+                        gps_time: u64_to_opt_datetime(*gps_time_us),
                         sys_time: u64_to_opt_datetime(*sys_time_us),
                         lat: Angle::degrees(*lat_deg),
                         lon: Angle::degrees(*lon_deg),
