@@ -14,8 +14,8 @@ use std::{
 };
 
 use gt_history::{
-    DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentId, LogContentHash,
-    ReadOnlyHistoryDatabase, StoredLogFilter, log_attachment,
+    DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentEntry, LogAttachmentId,
+    LogContentHash, ReadOnlyHistoryDatabase, StoredLogFilter, log_attachment,
 };
 use thiserror::Error;
 
@@ -133,7 +133,8 @@ impl<T: ReadOnlyHistoryDatabase + ?Sized> ReadOnlyLogAttachments for T {}
 /// Implemented for every [`HistoryDatabase`]. The database holds the
 /// attributes, and these operations pair each one with its compressed log.
 pub trait LogAttachments: HistoryDatabase {
-    /// Store `log` with a recording and return the id it was stored under.
+    /// Store `log` with a recording and return the attachment it was stored
+    /// as.
     ///
     /// A failure to write the attribute removes the log again: an attachment
     /// the database does not name is one nothing could delete later.
@@ -141,7 +142,7 @@ pub trait LogAttachments: HistoryDatabase {
         &mut self,
         db_ref: &DatabaseRef,
         log: &LogToAttach<'_>,
-    ) -> Result<LogAttachmentId, LogAttachmentError> {
+    ) -> Result<LogAttachmentEntry, LogAttachmentError> {
         let directory = log_attachment::logs_directory_for_database(self.path());
         let id = LogAttachmentId::new_random();
         let path = id.file_path(&directory);
@@ -167,7 +168,7 @@ pub trait LogAttachments: HistoryDatabase {
             log.name,
             db_ref.group_name
         );
-        Ok(id)
+        Ok(LogAttachmentEntry { id, attachment })
     }
 
     /// Remove one attachment: its attribute, and the log stored with it.

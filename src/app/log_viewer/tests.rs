@@ -7,10 +7,14 @@ use chrono::{DateTime, Duration, TimeZone as _, Utc};
 use egui::accesskit::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
+use egui_phosphor::regular::EYE as ICON_EYE;
 use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
+use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
 use egui_phosphor::regular::PLUS_CIRCLE as ICON_PLUS_CIRCLE;
 use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
-use gt_log_view::{FilterChipMode, LayerColorSlot, LoadedLog, LoadedLogs};
+use gt_log_view::{
+    FilterChipMode, LayerColorSlot, LoadedLog, LoadedLogs, LogAttachmentRef, SessionLogAttachments,
+};
 use gt_pending_writes::WriteAccess;
 use rstest::rstest;
 
@@ -28,7 +32,7 @@ use gt_ui_types::{HoveredLogGlyph, LoadedLogId, LogMatchColor, LogMatchHover};
 
 use super::{
     AssociationWindowUnit, LOG_VIEWER_TITLE, LogViewerContext, LogViewerRequests, LogViewerWindow,
-    filters, line_table,
+    filters, line_table, log_list,
 };
 
 /// One log holding every row kind the table draws: an entry timestamped from
@@ -45,10 +49,16 @@ const LOG_WITH_EVERY_ROW_KIND: &str = "\
 ";
 
 /// A second log sharing none of the first one's messages: switching the
-/// selector switches what the filter row shows.
+/// selected row switches what the filter row shows.
 const SECOND_LOG: &str = "\
 2026-05-29 18:48:26 hal-powerd: battery low
 2026-05-29 18:48:28 hal-powerd: battery critical
+";
+
+/// A third log, for the group of logs that take their positions from no
+/// recording.
+const THIRD_LOG: &str = "\
+2026-05-29 18:48:29 kernel: usb 1-1 disconnect
 ";
 
 /// The timestamp column of the log's first entry, as the table writes it: a
@@ -92,6 +102,9 @@ struct ViewerState {
     viewer: LogViewerWindow,
     logs: LoadedLogs,
     recordings: LoadedFiles,
+    /// What the loaded recordings hold in history, as a recording load lists
+    /// it.
+    attachments: SessionLogAttachments,
     map_center: Option<(f64, f64)>,
     log_hover: LogMatchHover,
     requests: LogViewerRequests,
@@ -149,9 +162,13 @@ fn harness_of(
     recordings: Vec<gt_types::LoadedFile>,
     logs: &[(&str, &str)],
 ) -> Harness<'static, ViewerState> {
+    harness_from(viewer_state(recordings, logs))
+}
+
+fn harness_from(state: ViewerState) -> Harness<'static, ViewerState> {
     let mut harness = Harness::builder()
         .with_size(VIEWER_SIZE)
-        .build_ui_state(viewer_ui, viewer_state(recordings, logs));
+        .build_ui_state(viewer_ui, state);
     // Matches the app's context setup: the clickable rows depend on it.
     gt_ui_theme::install_app_style(&harness.ctx);
     harness.run_steps(3);
@@ -181,6 +198,7 @@ fn viewer_ui(ui: &mut egui::Ui, state: &mut ViewerState) {
             write_access: state.write_access,
             recordings: state.recordings.view(),
             recording_names: &names,
+            attachments: &state.attachments,
             map_center_request: &mut state.map_center,
             log_hover: &mut state.log_hover,
             requests: &mut state.requests,
@@ -224,6 +242,7 @@ fn viewer_state(recordings: Vec<gt_types::LoadedFile>, logs: &[(&str, &str)]) ->
         viewer,
         logs,
         recordings: loaded_recordings,
+        attachments: SessionLogAttachments::default(),
         map_center: None,
         log_hover: LogMatchHover::default(),
         requests: LogViewerRequests::default(),
@@ -614,12 +633,12 @@ fn an_attachment_is_shown_and_removable_only_while_the_log_has_one() {
             .is_disabled(),
         "a log stored nowhere has no attachment to remove"
     );
-    assert!(harness.query_by_label(super::ICON_PAPERCLIP).is_none());
+    assert!(harness.query_by_label(ICON_PAPERCLIP).is_none());
 
     let shown = harness.state().first_loaded_log();
     attach_the_shown_log(&mut harness);
 
-    harness.get_by_label(super::ICON_PAPERCLIP);
+    harness.get_by_label(ICON_PAPERCLIP);
     harness.get_by_label(super::DETACH_LABEL).click();
     harness.run_steps(2);
 
@@ -721,7 +740,10 @@ fn unloading_the_shown_log_leaves_the_viewer_on_the_log_that_loaded_first() {
         ],
     );
 
-    harness.get_by_label(super::ICON_X).click();
+    // The second row is the log that loaded last, which the viewer opened on.
+    harness
+        .nth_matching(By::new().label(super::ICON_X), 1)
+        .click();
     harness.run_steps(3);
 
     assert_eq!(harness.state().logs.len(), 1);
@@ -729,6 +751,259 @@ fn unloading_the_shown_log_leaves_the_viewer_on_the_log_that_loaded_first() {
         harness.state().shown_log().map(LoadedLog::name),
         Some("navsyncd.log")
     );
+}
+
+/// The recording in the history database the fixture attachments belong to.
+fn stored_recording_ref() -> gt_store::DatabaseRef {
+    gt_store::DatabaseRef {
+        identity: "nav-devkit-mk2".to_owned(),
+        group_name: "2026-05-29T18-48-25".to_owned(),
+    }
+}
+
+/// The session sidecar of a recording the history database holds, which is
+/// what lets a log anchored to that database entry resolve to it.
+fn stored_in_history() -> FileHistory {
+    FileHistory::recording(
+        stored_recording_ref().identity,
+        gt_store::RecordingMeta {
+            start_us: 0,
+            end_us: 0,
+            nav_point_count: 0,
+            sat_report_count: 0,
+            marker_count: 0,
+            event_marker_count: 0,
+            gtd_size_bytes: 0,
+        },
+        Some(stored_recording_ref()),
+    )
+}
+
+/// The fixture log as the history database holds it with the fixture
+/// recording.
+fn stored_attachment() -> gt_store::LogAttachmentEntry {
+    gt_store::LogAttachmentEntry {
+        id: gt_store::LogAttachmentId::new_random(),
+        attachment: gt_store::LogAttachment::new(
+            "navsyncd.log".to_owned(),
+            gt_store::LogContentHash::of_log_bytes(LOG_WITH_EVERY_ROW_KIND.as_bytes()),
+            Vec::new(),
+        ),
+    }
+}
+
+/// The viewer over one recording of the history database, which holds
+/// `attachment` as its one stored log, and over no loaded log.
+fn viewer_state_over_a_stored_recording(attachment: gt_store::LogAttachmentEntry) -> ViewerState {
+    let mut state = viewer_state(Vec::new(), &[]);
+    state
+        .recordings
+        .push(recording("walk.gtd", 55.0), stored_in_history());
+    state
+        .attachments
+        .set_attachments_of(stored_recording_ref(), vec![attachment]);
+    state.viewer.open = true;
+    state
+}
+
+/// Loads the fixture log into `state` holding `attachment`, as a log read back
+/// out of the recording arrives.
+fn load_the_stored_log(state: &mut ViewerState, attachment: &gt_store::LogAttachmentEntry) {
+    let parsed = gt_logfile::parse_log(LOG_WITH_EVERY_ROW_KIND.into(), log_start())
+        .unwrap_or_else(|error| panic!("the fixture log parses: {error}"));
+    let mut log = LoadedLog::new(
+        Some("navsyncd.log".to_owned()),
+        parsed,
+        Duration::seconds(ASSOCIATION_WINDOW_SECS),
+    );
+    log.restore_attachment(
+        LogAttachmentRef {
+            recording: stored_recording_ref(),
+            id: attachment.id,
+        },
+        Vec::new(),
+        &state.recordings.view(),
+    );
+    let id = state.logs.push(log).id();
+    state.viewer.open_on_log(id);
+}
+
+/// Anchors the log named `log` to the recording at `index`, as choosing that
+/// recording in the footer does.
+fn anchor_log_to_recording(harness: &mut Harness<ViewerState>, log: &str, index: usize) {
+    let state = harness.state_mut();
+    let chosen: Option<LoadedLogId> = state
+        .logs
+        .iter_with_ids()
+        .find(|(_, loaded)| loaded.name() == log)
+        .map(|(id, _)| id);
+    let recordings = state.recordings.view();
+    let recording = recordings.get(index).map(|entry| entry.id());
+    if let Some(loaded) = chosen.and_then(|id| state.logs.get_mut_by_id(id)) {
+        loaded.anchor_to_loaded_recording(recording, &recordings);
+    }
+    harness.run_steps(2);
+}
+
+/// Every group of the list: its heading, and the name each of its rows shows.
+fn listed_rows(state: &ViewerState) -> Vec<(String, Vec<String>)> {
+    let names = RecordingNames::resolve(state.recordings.view(), "{filename}");
+    log_list::group_logs_by_recording(
+        &state.logs,
+        state.recordings.view(),
+        &names,
+        &state.attachments,
+    )
+    .into_iter()
+    .map(|group| {
+        let rows = group
+            .rows
+            .iter()
+            .map(|row| match row {
+                log_list::LogRow::Loaded(loaded) => loaded.name.clone(),
+                log_list::LogRow::Available(available) => available.name.clone(),
+            })
+            .collect();
+        (
+            group
+                .recording
+                .unwrap_or_else(|| log_list::NOT_ANCHORED_HEADING.to_owned()),
+            rows,
+        )
+    })
+    .collect()
+}
+
+/// Two recordings with a log each, and a third log that takes its positions
+/// from neither.
+#[test]
+fn the_list_groups_every_log_under_the_recording_it_is_anchored_to() {
+    let mut harness = harness_of(
+        vec![recording("walk.gtd", 55.0), recording("drive.gtd", 60.0)],
+        &[
+            ("navsyncd.log", LOG_WITH_EVERY_ROW_KIND),
+            ("hal-powerd.log", SECOND_LOG),
+            ("kernel.log", THIRD_LOG),
+        ],
+    );
+
+    anchor_log_to_recording(&mut harness, "navsyncd.log", 0);
+    anchor_log_to_recording(&mut harness, "hal-powerd.log", 1);
+
+    assert_eq!(
+        listed_rows(harness.state()),
+        [
+            ("walk.gtd".to_owned(), vec!["navsyncd.log".to_owned()]),
+            ("drive.gtd".to_owned(), vec!["hal-powerd.log".to_owned()]),
+            (
+                log_list::NOT_ANCHORED_HEADING.to_owned(),
+                vec!["kernel.log".to_owned()]
+            ),
+        ]
+    );
+    harness.get_by_label("walk.gtd");
+    harness.get_by_label("drive.gtd");
+    harness.get_by_label(log_list::NOT_ANCHORED_HEADING);
+}
+
+/// One log alone stands on its own row: there is nothing to group it against.
+#[test]
+fn a_session_holding_one_log_lists_it_without_a_heading() {
+    let harness = harness_with(vec![recording("walk.gtd", 55.0)]);
+
+    harness.get_by_label("navsyncd.log");
+    assert!(harness.query_by_label("walk.gtd").is_none());
+}
+
+/// Each row draws the toggle of its own log, whichever log the viewer shows.
+#[test]
+fn the_map_toggle_of_a_row_leaves_the_selection_where_it_is() {
+    let mut harness = harness_of(
+        Vec::new(),
+        &[
+            ("navsyncd.log", LOG_WITH_EVERY_ROW_KIND),
+            ("hal-powerd.log", SECOND_LOG),
+        ],
+    );
+    let shown = harness.state().viewer.selected_log();
+    let first = harness.state().first_loaded_log();
+    assert_ne!(shown, Some(first), "the viewer shows the log loaded last");
+
+    harness.nth_matching(By::new().label(ICON_EYE), 0).click();
+    harness.run_steps(2);
+
+    assert_eq!(
+        harness
+            .state()
+            .logs
+            .get_by_id(first)
+            .map(LoadedLog::is_visible),
+        Some(false),
+        "the toggle of the first row switched off the log of that row"
+    );
+    assert_eq!(harness.state().viewer.selected_log(), shown);
+}
+
+/// What the unload button says it leaves behind: an attached log stays stored
+/// with its recording.
+#[rstest]
+#[case::attached(
+    ShownLogStorage::StoredWithTheRecording,
+    "Unload this log. It stays attached to walk.gtd."
+)]
+#[case::stored_nowhere(ShownLogStorage::StoredNowhere, log_list::UNLOAD_HOVER)]
+fn the_unload_hover_says_whether_the_log_stays_attached(
+    #[case] storage: ShownLogStorage,
+    #[case] expected: &str,
+) {
+    let mut harness = match storage {
+        ShownLogStorage::StoredWithTheRecording => {
+            let attachment = stored_attachment();
+            let mut state = viewer_state_over_a_stored_recording(attachment.clone());
+            load_the_stored_log(&mut state, &attachment);
+            harness_from(state)
+        }
+        ShownLogStorage::StoredNowhere => harness_with(vec![recording("walk.gtd", 55.0)]),
+    };
+    let unload = harness.get_by_label(super::ICON_X).rect().center();
+
+    harness.hover_at_and_settle(unload, TOOLTIP_DELAY_FRAMES);
+
+    harness.get_by_label_contains(expected);
+}
+
+/// Whether the shown log is stored with the recording it is anchored to.
+#[derive(Debug, Clone, Copy)]
+enum ShownLogStorage {
+    StoredWithTheRecording,
+    StoredNowhere,
+}
+
+/// A stored log that is not loaded is listed under its recording, and the row
+/// requests that the app read it back.
+#[test]
+fn an_attachment_that_is_not_loaded_is_listed_with_a_load_button() {
+    let attachment = stored_attachment();
+    let mut harness = harness_from(viewer_state_over_a_stored_recording(attachment.clone()));
+    assert_eq!(
+        listed_rows(harness.state()),
+        [("walk.gtd".to_owned(), vec!["navsyncd.log".to_owned()])]
+    );
+
+    harness
+        .get_by_label(log_list::LOAD_ATTACHMENT_LABEL)
+        .click();
+    harness.run_steps(2);
+
+    let requested = harness
+        .state()
+        .requests
+        .load_attachment
+        .as_ref()
+        .expect("the row requested that the app read the attachment back");
+    assert_eq!(requested.attachment.id, attachment.id);
+    assert_eq!(requested.attachment.recording, stored_recording_ref());
+    assert_eq!(requested.name, "navsyncd.log");
 }
 
 /// Runs until every scan the shown log's filters started has landed: they run
@@ -838,19 +1113,9 @@ fn remove_chip(harness: &mut Harness<ViewerState>, index: usize) {
     run_until_the_scans_land(harness);
 }
 
-/// Shows the log named `name`, through the selector the user would use.
+/// Shows the log named `name`, by clicking its row in the list.
 fn select_log(harness: &mut Harness<ViewerState>, name: &str) {
-    let shown = harness
-        .state()
-        .shown_log()
-        .map(LoadedLog::name)
-        .unwrap_or_default()
-        .to_owned();
-    harness.get(By::new().value(shown.as_str())).click();
-    harness.run_steps(2);
-    // The popup's row is the lower of the two: the selector above it shows the
-    // name it is already on.
-    harness.bottommost_matching(By::new().label(name)).click();
+    harness.get_by_label(name).click();
     run_until_the_scans_land(harness);
 }
 

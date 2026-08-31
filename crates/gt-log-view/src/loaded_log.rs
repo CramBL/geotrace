@@ -556,6 +556,13 @@ impl LoadedLogs {
             .map(|stored| &mut stored.log)
     }
 
+    /// Whether `attachment` is loaded as a log, as opposed to only stored.
+    pub fn any_loaded_log_holds(&self, attachment: &LogAttachmentRef) -> bool {
+        self.logs
+            .iter()
+            .any(|stored| stored.log.attachment() == Some(attachment))
+    }
+
     /// Every loaded log anchored to one of `recording_keys`, in load order.
     pub fn anchored_to<'a>(
         &'a self,

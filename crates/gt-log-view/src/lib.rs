@@ -20,7 +20,7 @@ mod test_fixtures;
 
 pub use anchor::RecordingKey;
 pub use association::{AssociationCandidate, AssociationCandidates};
-pub use attachment::LogAttachmentRef;
+pub use attachment::{LogAttachmentRef, SessionLogAttachments};
 pub use filter::{
     EntryMatches, FilterChip, FilterChipId, FilterChipMode, FilterPattern, FilterStack,
     InvalidFilterPattern, LAYER_COLOR_SLOT_COUNT, LayerColorSlot, LayerColorSlots, VisibleEntries,

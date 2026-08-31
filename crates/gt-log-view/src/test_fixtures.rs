@@ -143,9 +143,15 @@ pub(crate) fn anchor_to(log: &mut LoadedLog, files: &LoadedFiles, index: usize) 
 /// The recording in the history database the crate's tests anchor a stored log
 /// to.
 pub(crate) fn stored_recording_ref() -> DatabaseRef {
+    recording_ref_of_group("2026-01-01T14-02-11")
+}
+
+/// The recording the history database holds under `group_name`, for the tests
+/// telling two stored recordings apart.
+pub(crate) fn recording_ref_of_group(group_name: &str) -> DatabaseRef {
     DatabaseRef {
         identity: "nav-devkit-mk2".to_owned(),
-        group_name: "2026-01-01T14-02-11".to_owned(),
+        group_name: group_name.to_owned(),
     }
 }
 

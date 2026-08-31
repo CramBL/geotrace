@@ -82,11 +82,24 @@ pub enum LoadOutcome {
     },
 }
 
-/// A log read back out of history: the attachment it is stored as, and the
-/// filter stack stored with it.
+/// A log read back out of history: the attachment it is stored as, the filter
+/// stack stored with it, and what requested it.
 pub(super) struct AttachedLogRestore {
     pub attachment: LogAttachmentRef,
     pub filters: Vec<StoredLogFilter>,
+    pub requested_by: AttachedLogRequester,
+}
+
+/// What requested an attachment to be read back. The app opens the viewer on
+/// the log it loads only for [`AttachedLogRequester::LogViewerList`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AttachedLogRequester {
+    /// The load of the recording holding the attachment, which reads back
+    /// every log that recording holds.
+    RecordingLoad,
+
+    /// The user, on the attachment's row in the log viewer's list.
+    LogViewerList,
 }
 
 /// Messages sent from background load threads to the UI thread via `mpsc`.
@@ -503,9 +516,14 @@ impl LoadJobs {
         });
     }
 
-    /// Parses a log a recording carries as an attachment, so it comes back
-    /// with that recording.
-    pub fn spawn_attached_log(&mut self, log: AttachedLog, attachment: LogAttachmentRef) {
+    /// Parses a log stored with a recording, so it loads with the attachment
+    /// and the filter stack it was stored with.
+    pub fn spawn_attached_log(
+        &mut self,
+        log: AttachedLog,
+        attachment: LogAttachmentRef,
+        requested_by: AttachedLogRequester,
+    ) {
         let id = self.alloc_id();
         let AttachedLog {
             name,
@@ -525,8 +543,9 @@ impl LoadJobs {
         let restored = AttachedLogRestore {
             attachment,
             filters,
+            requested_by,
         };
-        log::info!("Loading the log {name:?} attached to a recording opened from history");
+        log::info!("Loading the log {name:?} stored with a recording in history");
         background_thread::spawn_or_panic(format!("load-log-{name}"), move || {
             let report = progress_reporter(id, tx.clone(), ctx.clone());
             finish_log_load(id, Some(name), text, Some(restored), &tx, &ctx, report);

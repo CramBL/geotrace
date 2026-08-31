@@ -59,7 +59,7 @@ use gt_fetch::TransportSource;
 use gt_filter::GlobalFilter;
 use gt_instance_lock::{DataDirectoryLock, DataDirectoryOwnership};
 use gt_loaded_files::LoadedFiles;
-use gt_log_view::{LoadedLog, LoadedLogs, LogPushOutcome, RecordingKey};
+use gt_log_view::{LoadedLog, LoadedLogs, LogPushOutcome, RecordingKey, SessionLogAttachments};
 use gt_logfile::ParsedLog;
 use gt_map::NavMap;
 use gt_map::mapbox_tiles;
@@ -238,6 +238,9 @@ pub struct App {
     /// The logs loaded in this session. Logs are not recordings: they appear in
     /// neither the file tree nor the plot.
     logs: LoadedLogs,
+    /// The attachments the loaded recordings hold in the history database,
+    /// loaded or not, which the log viewer lists beside the loaded logs.
+    log_attachments: SessionLogAttachments,
     orphaned_event_markers: Option<Vec<(chrono::DateTime<chrono::Utc>, String)>>,
     /// The Mapbox token under edit, shared by the map's token dialog and the
     /// settings window's Interface page.
@@ -606,6 +609,7 @@ impl App {
             })),
             load_error: None,
             logs: LoadedLogs::default(),
+            log_attachments: SessionLogAttachments::default(),
             orphaned_event_markers: None,
             mapbox_token_field: mapbox_token::MapboxTokenField::default(),
             mapbox_token_test: mapbox_token_test::MapboxTokenTest::default(),
@@ -972,8 +976,9 @@ impl App {
 
     /// Loads a log the worker finished parsing and associates it.
     ///
-    /// The viewer opens on a log the user opened. A log that came back with a
-    /// recording is counted on the toolbar's log button instead.
+    /// The viewer opens on a log the user opened, and on one they chose in its
+    /// list. A log that came back with its recording is counted on the
+    /// toolbar's log button instead.
     ///
     /// The session holds one log per content: text it already holds is not
     /// loaded a second time.
@@ -987,6 +992,7 @@ impl App {
             i64::try_from(self.assoc_config.log_association_window_s).unwrap_or(i64::MAX),
         );
         let mut log = LoadedLog::new(filename, parsed, window);
+        let requested_by = restored.as_ref().map(|restore| restore.requested_by);
         let restored_from_history = restored.is_some();
         if let Some(restore) = &restored
             && let Some(loaded) = self.logs.id_of_content(log.content_hash())
@@ -996,6 +1002,9 @@ impl App {
                 restore.attachment.clone(),
                 restore.filters.clone(),
             );
+            if requested_by == Some(loader::AttachedLogRequester::LogViewerList) {
+                self.log_viewer.open_on_log(loaded);
+            }
             return;
         }
         // Associating runs on the UI thread, as the spatial-index rebuild
@@ -1025,14 +1034,20 @@ impl App {
                 log::info!(
                     "Loaded log {name:?}: {entry_count} entries, {associated_entry_count} of them associated"
                 );
-                if restored_from_history {
-                    self.log_viewer
+                match requested_by {
+                    Some(loader::AttachedLogRequester::RecordingLoad) => self
+                        .log_viewer
                         .restored_logs
-                        .note_log_loaded_with_a_recording();
-                } else {
-                    self.log_viewer.open_on_log(id);
-                    if ask {
-                        self.association_dialog = Some(LogAssociationDialog::new(id, unambiguous));
+                        .note_log_loaded_with_a_recording(),
+                    Some(loader::AttachedLogRequester::LogViewerList) => {
+                        self.log_viewer.open_on_log(id);
+                    }
+                    None => {
+                        self.log_viewer.open_on_log(id);
+                        if ask {
+                            self.association_dialog =
+                                Some(LogAssociationDialog::new(id, unambiguous));
+                        }
                     }
                 }
             }
@@ -1050,9 +1065,16 @@ impl App {
         }
     }
 
-    fn unload_logs_of_removed_recordings(&mut self, removed: &[RecordingKey]) {
+    /// Unloads the logs of the recordings `removed` names and drops the
+    /// attachments this session listed for them.
+    fn unload_logs_and_forget_attachments_of(&mut self, removed: &[RecordingKey]) {
         for log in self.logs.unload_anchored_to(removed) {
             log::info!("Unloaded the log {:?} with its recording", log.name());
+        }
+        for key in removed {
+            if let RecordingKey::Stored(db_ref) = key {
+                self.log_attachments.forget_recording(db_ref);
+            }
         }
     }
 
