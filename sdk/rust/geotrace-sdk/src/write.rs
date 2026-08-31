@@ -125,6 +125,10 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) {
         .iter()
         .map(|p| datetime_to_micros(p.fix.effective_gps_time()))
         .collect();
+    let gps_times: Vec<u64> = points
+        .iter()
+        .map(|p| opt_datetime_to_u64(p.fix.gps_time))
+        .collect();
     let sys_times: Vec<u64> = points
         .iter()
         .map(|p| opt_datetime_to_u64(p.fix.sys_time))
@@ -155,6 +159,17 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) {
             "units",
             AttrValue::String(MICROS_SINCE_EPOCH_UNITS.to_owned()),
         )
+        .with_chunks(&[chunk])
+        .with_shuffle()
+        .with_deflate(6);
+    grp.create_dataset("gps_time_us")
+        .with_u64_data(&gps_times)
+        .with_shape(&[n as u64])
+        .set_attr(
+            "units",
+            AttrValue::String(MICROS_SINCE_EPOCH_UNITS.to_owned()),
+        )
+        .set_attr("absent_sentinel", AttrValue::String("u64::MAX".into()))
         .with_chunks(&[chunk])
         .with_shuffle()
         .with_deflate(6);

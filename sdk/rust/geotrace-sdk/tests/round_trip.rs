@@ -9,6 +9,7 @@ use geotrace_sdk::{
     Annotation, Channel, Constellation, MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix,
     Satellite, SatelliteReport, TravelMode,
 };
+use rstest::rstest;
 
 #[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
 fn base() -> DateTime<Utc> {
@@ -861,5 +862,32 @@ fn a_vector_channel_preserves_nan_holes() -> Result<(), Box<dyn std::error::Erro
     // NaN != NaN, so compare finiteness and the finite values explicitly.
     assert!(values[0] == 1.0 && values[3] == 4.0);
     assert!(values[1].is_nan() && values[2].is_nan());
+    Ok(())
+}
+
+#[rstest]
+#[case::receiver_and_host_clock(Some(base()), Some(base() + Duration::milliseconds(250)))]
+#[case::host_clock_only(None, Some(base()))]
+#[case::receiver_only(Some(base()), None)]
+#[case::neither_clock(None, None)]
+fn a_fix_keeps_the_clock_that_stamped_it(
+    #[case] gps_time: Option<DateTime<Utc>>,
+    #[case] sys_time: Option<DateTime<Utc>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .maybe_gps_time(gps_time)
+            .maybe_sys_time(sys_time)
+            .lat(Angle::degrees(51.5))
+            .lon(Angle::degrees(-0.1))
+            .build(),
+    );
+
+    let rt = round_trip(&recorder.finish()?)?;
+    let fix = &rt.nav_points().first().ok_or("no nav point")?.fix;
+
+    assert_eq!(fix.gps_time, gps_time);
+    assert_eq!(fix.sys_time, sys_time);
     Ok(())
 }
