@@ -7,7 +7,7 @@
 - **Interface:** Added an `invalid_coordinates` query metric, counting a fix's coordinate axes outside their range.
 - **Interface:** The hover text of a query results row now gives where the map draws a dead-reckoned fix or a fix with a coordinate outside the valid range.
 - **Interface:** The time range filter now draws a bar for a recording shorter than a second, and its handles select to the millisecond.
-- **Map & Tracks:** The side panel now lists the tracks toggled on above the tree, grouped by recording, in a fixed area resized by dragging its divider and kept at that height across restarts, where a track can be hidden, hovered, revealed in the tree and centered on the map.
+- **Map & Tracks:** The side panel now lists the tracks toggled on above the tree, grouped by recording, in columns of track number, distance in kilometres and duration under one header row, in a fixed area resized by dragging its divider and kept at that height across restarts, where a track can be hidden, hovered, revealed in the tree and centered on the map.
 - **Map & Tracks:** The map warns when a recording has fixes outside the map projection (past 85° latitude).
 - **Map & Tracks:** The data quality warnings now list what the app changed in a recording: the satellites merged from several rows of one report, the satellite SNR readings discarded as the no-data sentinel, the event marker colors replaced with gray, and the event marker styles dropped for a variant path with several.
 - **Map & Tracks:** The side panel shows a warning glyph on a track with a fix whose coordinate is outside the valid range, and the map draws that fix in the warning color and marks it in its hover text.

@@ -1,4 +1,4 @@
-use egui::{Button, Label, RichText, ScrollArea, Sides, TextEdit};
+use egui::{Button, InteractOptions, Label, RichText, ScrollArea, Sides, TextEdit};
 use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::CLOCK as ICON_CLOCK;
 use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
@@ -203,6 +203,11 @@ impl<'a> PanelContext<'a> {
 
     fn file(&self, file: FileIdx) -> Option<&'a LoadedFile> {
         self.loaded_files.entry_for(file).map(|entry| entry.file())
+    }
+
+    fn track(&self, track_ref: TrackRef) -> Option<&'a LoadedTrack> {
+        self.file(track_ref.fi)
+            .and_then(|file| track_ref.index.get(&file.tracks))
     }
 
     fn file_stored_in_history(&self, file: FileIdx) -> bool {
@@ -445,6 +450,162 @@ const VISIBLE_SECTION_ROW_SPACING: f32 = 1.0;
 /// label.
 const VISIBLE_SECTION_ICON_WIDTH: f32 = 10.0;
 
+/// The header over the track numbers, which are drawn bare.
+const NUMBER_COLUMN_HEADER: &str = "#";
+
+/// The header over the distances, which are drawn without their unit.
+const DISTANCE_COLUMN_HEADER: &str = "km";
+
+/// The header over the durations, which are drawn as `h:mm:ss`.
+const DURATION_COLUMN_HEADER: &str = ICON_CLOCK;
+
+/// A track row of the section. The cells are built before any row draws: the
+/// column widths come from measuring them.
+struct VisibleTrackRow {
+    track_ref: TrackRef,
+    cells: TrackColumnCells,
+}
+
+/// The cells of one track row. The units are stated once in the header row,
+/// not repeated per cell.
+struct TrackColumnCells {
+    number: String,
+    /// `None` for a track with no measured geometry, drawn as an em dash.
+    distance_km: Option<String>,
+    duration: String,
+}
+
+impl TrackColumnCells {
+    fn for_track(track: &LoadedTrack) -> Self {
+        Self {
+            number: track.metadata.index.to_string(),
+            distance_km: track
+                .geometry
+                .measured()
+                .map(|geometry| gt_fmt::format_kilometers(geometry.distance_km)),
+            duration: gt_fmt::DurationClockFormat::HoursMinutesSeconds
+                .format_seconds(track.metadata.duration.num_seconds()),
+        }
+    }
+
+    fn distance(&self) -> &str {
+        self.distance_km.as_deref().unwrap_or(gt_ui_theme::EM_DASH)
+    }
+
+    /// What a screen reader announces for the row: the drawn cells, the
+    /// distance with the unit its header states.
+    fn accessibility_label(&self) -> String {
+        let distance = match &self.distance_km {
+            Some(km) => format!("{km} km"),
+            None => self.distance().to_owned(),
+        };
+        format!("#{}  {distance}  {}", self.number, self.duration)
+    }
+
+    fn paint(
+        &self,
+        ui: &mut egui::Ui,
+        TrackColumnWidths {
+            number,
+            distance,
+            duration,
+        }: TrackColumnWidths,
+        color: egui::Color32,
+    ) {
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let align = egui::Align2::RIGHT_CENTER;
+        paint_column_cell(ui, number, &self.number, &font, color, align);
+        paint_column_cell(ui, distance, self.distance(), &font, color, align);
+        paint_column_cell(ui, duration, &self.duration, &font, color, align);
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TrackColumnWidths {
+    number: f32,
+    distance: f32,
+    duration: f32,
+}
+
+impl TrackColumnWidths {
+    /// The width of the widest cell of each column, over the header and the
+    /// tracks the section shows.
+    fn measure<'c>(ui: &egui::Ui, cells: impl Iterator<Item = &'c TrackColumnCells>) -> Self {
+        let cell_font = egui::TextStyle::Body.resolve(ui.style());
+        let header_font = egui::TextStyle::Small.resolve(ui.style());
+        let width = |text: &str, font: &egui::FontId| {
+            ui.painter()
+                .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::PLACEHOLDER)
+                .size()
+                .x
+        };
+        let mut widths = Self {
+            number: width(NUMBER_COLUMN_HEADER, &header_font),
+            distance: width(DISTANCE_COLUMN_HEADER, &header_font),
+            duration: width(DURATION_COLUMN_HEADER, &header_font),
+        };
+        let Self {
+            number,
+            distance,
+            duration,
+        } = &mut widths;
+        for row in cells {
+            *number = number.max(width(&row.number, &cell_font));
+            *distance = distance.max(width(row.distance(), &cell_font));
+            *duration = duration.max(width(&row.duration, &cell_font));
+        }
+        widths
+    }
+}
+
+/// Paints `text` at `align` in a cell `width` wide and returns the cell. The
+/// values of a column line up under each other: the row's layout advances past
+/// each cell.
+fn paint_column_cell(
+    ui: &mut egui::Ui,
+    width: f32,
+    text: &str,
+    font: &egui::FontId,
+    color: egui::Color32,
+    align: egui::Align2,
+) -> egui::Rect {
+    let (_, rect) = ui.allocate_space(egui::vec2(width, ui.spacing().interact_size.y));
+    ui.painter()
+        .text(align.pos_in_rect(&rect), align, text, font.clone(), color);
+    rect
+}
+
+/// The section's header row, over the columns of the track rows below it. A
+/// hairline under it spans the columns, from the number column's left edge to
+/// the duration column's right edge. The leading space is the track rows'
+/// indent plus their checkbox plus the gap after it, which puts the headers
+/// over the columns.
+fn render_visible_column_header(
+    ui: &mut egui::Ui,
+    TrackColumnWidths {
+        number,
+        distance,
+        duration,
+    }: TrackColumnWidths,
+) {
+    let font = egui::TextStyle::Small.resolve(ui.style());
+    let color = ui.visuals().text_color();
+    let align = egui::Align2::CENTER_CENTER;
+    let row = ui.horizontal(|ui| {
+        let leading_space = ui.spacing().indent + checkbox_width(ui) + ui.spacing().item_spacing.x;
+        ui.add_space(leading_space);
+        let first = paint_column_cell(ui, number, NUMBER_COLUMN_HEADER, &font, color, align);
+        paint_column_cell(ui, distance, DISTANCE_COLUMN_HEADER, &font, color, align);
+        let last = paint_column_cell(ui, duration, DURATION_COLUMN_HEADER, &font, color, align);
+        first.left()..=last.right()
+    });
+    ui.painter().hline(
+        row.inner,
+        row.response.rect.bottom(),
+        ui.visuals().widgets.noninteractive.bg_stroke,
+    );
+}
+
 /// The visible-tracks section above the tree: the recordings and the tracks
 /// toggled on right now, however far the tree is scrolled. Its height is a
 /// fixed share of the region it shares with the tree, changed only by dragging
@@ -454,6 +615,20 @@ const VISIBLE_SECTION_ICON_WIDTH: f32 = 10.0;
 /// to persist.
 fn render_visible_tracks_section(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
     let groups = ctx.tree.visible_tracks_by_file();
+    let rows: Vec<Vec<VisibleTrackRow>> = groups
+        .iter()
+        .map(|group| {
+            group
+                .tracks
+                .iter()
+                .filter_map(|&track_ref| {
+                    let cells = TrackColumnCells::for_track(ctx.track(track_ref)?);
+                    Some(VisibleTrackRow { track_ref, cells })
+                })
+                .collect()
+        })
+        .collect();
+    let column_widths = TrackColumnWidths::measure(ui, rows.iter().flatten().map(|row| &row.cells));
     let region_height = ui.available_height();
     let row_pitch =
         VISIBLE_SECTION_INTERACT_HEIGHT + CHECKBOX_PADDING + VISIBLE_SECTION_ROW_SPACING;
@@ -485,13 +660,20 @@ fn render_visible_tracks_section(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) 
                         });
                         return;
                     }
+                    render_visible_column_header(ui, column_widths);
                     let names = ctx.recording_names;
-                    for group in &groups {
+                    for (group, rows) in groups.iter().zip(&rows) {
                         let display_name = names.get(group.file).unwrap_or_default();
                         render_visible_file_caption(ui, group.file, display_name, ctx);
                         ui.indent(group.file, |ui| {
-                            for &track_ref in &group.tracks {
-                                render_visible_track_row(ui, track_ref, ctx);
+                            for row in rows {
+                                render_visible_track_row(
+                                    ui,
+                                    row.track_ref,
+                                    &row.cells,
+                                    column_widths,
+                                    ctx,
+                                );
                             }
                         });
                     }
@@ -526,7 +708,7 @@ fn render_visible_file_caption(
     let map_hovered = ctx.highlight.hovers_anything_in_file(fi);
 
     let response = ui
-        .add(Label::new(RichText::new(display_name).small().weak()).truncate())
+        .add(Label::new(RichText::new(display_name).small().weak().italics()).truncate())
         .on_hover_ui(|ui| recording_tooltip_rows(ui, &file.metadata));
 
     if map_hovered {
@@ -541,42 +723,83 @@ fn render_visible_file_caption(
     }
 }
 
-fn render_visible_track_row(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'_>) {
-    let Some(track) = ctx
-        .file(track_ref.fi)
-        .and_then(|file| track_ref.index.get(&file.tracks))
-    else {
+fn render_visible_track_row(
+    ui: &mut egui::Ui,
+    track_ref: TrackRef,
+    cells: &TrackColumnCells,
+    column_widths: TrackColumnWidths,
+    ctx: &mut PanelContext<'_>,
+) {
+    let Some(track) = ctx.track(track_ref) else {
         return;
     };
     let key = NodeKey::Track(track_ref);
     let passes = gt_filter::track_passes_filter(track, ctx.filter);
     let panel_hovered = ctx.highlight.hovers_the_whole_track(track_ref);
     let map_hovered = ctx.highlight.hovers_a_point_of_track(track_ref);
+    let is_selected = ctx.tree.selection.contains(&key);
+    let cell_color = if panel_hovered {
+        gt_ui_theme::HIGHLIGHT_BLUE
+    } else if is_selected {
+        ui.visuals().selection.stroke.color
+    } else if passes {
+        ui.visuals().text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
 
-    let row_response = ui.horizontal(|ui| {
-        if tri_checkbox(ui, CheckState::On).clicked() {
-            ctx.tree.hide_track(track_ref);
-        }
-        let mut text = RichText::new(track_row_label(track));
-        if !passes {
-            text = text.weak();
-        }
-        if panel_hovered {
-            text = text.color(gt_ui_theme::HIGHLIGHT_BLUE);
-        }
-        let is_selected = ctx.tree.selection.contains(&key);
-        let resp = ui.selectable_label(is_selected, text);
-        resp.on_hover_ui(|ui| track_tooltip_rows(ui, &track.metadata))
+    // Claimed before the row draws: its fill belongs behind the cells.
+    let background = ui.painter().add(egui::Shape::Noop);
+    let row_width = ui.available_width();
+    let row = ui
+        .horizontal(|ui| {
+            ui.set_min_width(row_width);
+            if tri_checkbox(ui, CheckState::On).clicked() {
+                ctx.tree.hide_track(track_ref);
+            }
+            cells.paint(ui, column_widths, cell_color);
+        })
+        .response;
+    // The row's sense registers below the checkbox it holds: the checkbox takes
+    // its own clicks, the row takes the rest of its width.
+    let response = ui
+        .interact_opt(
+            row.rect,
+            row.id,
+            egui::Sense::click(),
+            InteractOptions { move_to_top: false },
+        )
+        .on_hover_ui(|ui| track_tooltip_rows(ui, &track.metadata));
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            true,
+            is_selected,
+            cells.accessibility_label(),
+        )
     });
 
+    let row_fill = if is_selected {
+        Some(ui.visuals().selection.bg_fill)
+    } else if response.hovered() {
+        Some(ui.visuals().widgets.hovered.weak_bg_fill)
+    } else {
+        None
+    };
+    if let Some(fill) = row_fill {
+        let corner_radius = ui.visuals().widgets.hovered.corner_radius;
+        ui.painter().set(
+            background,
+            egui::Shape::rect_filled(response.rect, corner_radius, fill),
+        );
+    }
     if map_hovered {
         paint_map_hover_bg(
             ui,
-            row_response.response.rect,
+            response.rect,
             gt_ui_theme::map_hover_color(ui.visuals().dark_mode),
         );
     }
-    let response = row_response.inner;
     if response.hovered() {
         ctx.highlight.hover = Some(HighlightScope::Track(track_ref));
     }

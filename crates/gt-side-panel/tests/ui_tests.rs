@@ -806,6 +806,38 @@ fn snapshot_visible_section_groups_the_tracks_under_their_recording() {
     harness.snapshot("side_panel_visible_section");
 }
 
+/// The section's columns line up across magnitudes: a track of hours and tens
+/// of kilometres above two tracks of under a minute and under a kilometre.
+#[test]
+fn snapshot_visible_section_columns_across_magnitudes() {
+    let start = chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+        .and_then(|d| d.and_hms_opt(12, 0, 0))
+        .expect("valid date")
+        .and_utc();
+    let mut files = LoadedFiles::new();
+    files.push(
+        build_file(
+            "commute.gtd",
+            &gt_test_utils::nav_points_from(start, 400, 30),
+            gt_track_builder::FileMeta::default(),
+            vec![],
+        ),
+        FileHistory::None,
+    );
+    files.push(
+        build_file(
+            "paused.gtd",
+            &gt_test_utils::nav_data_with_gap(60, 60),
+            gt_track_builder::FileMeta::default(),
+            vec![],
+        ),
+        FileHistory::None,
+    );
+    let mut harness = make_harness_with_a_tall_panel(make_state_from_files(files));
+    harness.run();
+    harness.snapshot("side_panel_visible_section_columns");
+}
+
 /// More tracks than the section's height holds scroll inside it, and the tree
 /// keeps the rest of the panel.
 #[test]
@@ -941,6 +973,11 @@ fn the_visible_section_checkbox_hides_one_track_of_a_fully_visible_recording() {
     assert!(!visibility.files[0].tracks[0].enabled);
     assert!(visibility.files[0].tracks[1].enabled);
     assert!(
+        !harness.state().tree.files[0].expanded,
+        "the checkbox takes the click on its own, without the row revealing the track"
+    );
+    assert!(harness.state().tree.selection.is_empty());
+    assert!(
         harness.inner.query_by_label_contains("#1  ").is_none(),
         "the hidden track leaves the section"
     );
@@ -969,6 +1006,21 @@ fn clicking_a_visible_section_row_reveals_the_track_in_the_tree() {
             .selection
             .contains(&NodeKey::Track(first_track()))
     );
+}
+
+/// The row is one surface over its whole width: a click past its columns
+/// reveals the track, as a click on them does.
+#[test]
+fn clicking_a_visible_section_row_past_its_columns_reveals_the_track() {
+    let mut harness = make_harness(make_state(1));
+    harness.run();
+    let row = section_row(&harness, "#1  4.6 km").rect();
+
+    harness
+        .inner
+        .click_at(egui::pos2(row.right() - 2.0, row.center().y));
+
+    assert!(harness.state().tree.files[0].expanded);
 }
 
 #[test]
