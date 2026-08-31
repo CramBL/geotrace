@@ -5,6 +5,7 @@
 //! everything from this module via `python/geotrace_sdk/__init__.py`.
 
 use std::collections::hash_map::DefaultHasher;
+use std::ffi::CString;
 use std::hash::{Hash as _, Hasher as _};
 use std::path::PathBuf;
 
@@ -15,7 +16,7 @@ use geotrace_sdk::{
     MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix, NavPoint, NavRecorder, Satellite,
     SatelliteReport, TravelMode, Unit, Velocity,
 };
-use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyIOError, PyRuntimeError, PyUserWarning, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
@@ -1105,13 +1106,17 @@ impl PyEventMarkerStyle {
         &self.variant_path
     }
 
-    /// Icon shape, or ``None`` for the application default.
+    /// Icon shape, or ``None`` for the application default and for an icon name
+    /// this build does not have.
     #[getter]
     fn icon(&self) -> Option<PyMarkerIcon> {
         self.icon
     }
 
     /// Fill color as ``#RRGGBB``, or ``None`` for the deterministic hash color.
+    ///
+    /// A file written by a newer build can hold a color in another notation.
+    /// Such a color reads back verbatim.
     #[getter]
     fn color(&self) -> Option<&str> {
         self.color.as_deref()
@@ -1264,23 +1269,41 @@ impl PyNavFile {
     }
 
     /// Per-variant style overrides stored in the file.
+    ///
+    /// A style naming an icon this build does not have raises a
+    /// ``UserWarning`` and its ``icon`` reads as ``None``: ``MarkerIcon`` has no
+    /// member for that name.
     #[getter]
-    fn event_marker_styles(&self) -> Vec<PyEventMarkerStyle> {
-        self.inner
-            .event_marker_styles()
-            .iter()
-            .map(|s| PyEventMarkerStyle {
+    fn event_marker_styles(&self, py: Python<'_>) -> PyResult<Vec<PyEventMarkerStyle>> {
+        let styles = self.inner.event_marker_styles();
+        let mut converted = Vec::with_capacity(styles.len());
+        for s in styles {
+            let icon = match &s.icon {
+                EventMarkerIconChoice::Auto => None,
+                EventMarkerIconChoice::Icon(icon) => Some(PyMarkerIcon::from(*icon)),
+                EventMarkerIconChoice::Unrecognized(name) => {
+                    let message = CString::new(format!(
+                        "event marker style {:?} names the icon {name:?}, which this build \
+                         does not have: icon reads as None",
+                        s.variant_path
+                    ))
+                    .map_err(|err| PyValueError::new_err(err.to_string()))?;
+                    PyErr::warn(py, &py.get_type::<PyUserWarning>(), &message, 1)?;
+                    None
+                }
+            };
+            converted.push(PyEventMarkerStyle {
                 variant_path: s.variant_path.clone(),
-                icon: match s.icon {
-                    EventMarkerIconChoice::Auto => None,
-                    EventMarkerIconChoice::Icon(i) => Some(PyMarkerIcon::from(i)),
-                },
+                icon,
                 color: match &s.color {
                     EventMarkerColor::Auto => None,
-                    EventMarkerColor::Hex(h) => Some(h.clone()),
+                    EventMarkerColor::Hex(h) | EventMarkerColor::Unrecognized(h) => {
+                        Some(h.clone())
+                    }
                 },
-            })
-            .collect()
+            });
+        }
+        Ok(converted)
     }
 
     fn __repr__(&self) -> String {

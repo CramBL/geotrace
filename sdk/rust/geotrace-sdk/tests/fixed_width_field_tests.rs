@@ -1,7 +1,8 @@
 //! The fixed-width string fields of the `.gtd` format: the writer refusing a
-//! value past a field's capacity, and the reader refusing a field row that is
-//! not UTF-8. The write tests go through the paths that reach those fields
-//! without passing `EventMarker::builder().build()`.
+//! value past a field's capacity, the reader refusing a field row that is not
+//! UTF-8, and the reader preserving a well-formed value it does not recognize.
+//! The write tests go through the paths that reach those fields without passing
+//! `EventMarker::builder().build()`.
 
 use geotrace_sdk::{
     Angle, AnnotationField, ColorHexField, DateTime, Duration, EventKind, EventMarker,
@@ -302,6 +303,44 @@ fn well_formed_fixed_width_field_rows_read_back() {
     assert_eq!(style.variant_path, "power/boot");
     assert_eq!(style.icon, EventMarkerIconChoice::Icon(MarkerIcon::Wrench));
     assert_eq!(style.color, EventMarkerColor::hex("#FFAA00"));
+}
+
+#[test]
+fn an_icon_name_outside_the_known_set_survives_the_read() {
+    let bytes = gtd_bytes_with_field_rows(FixedWidthFieldRows {
+        style_icon_name: nul_padded_row(b"hovercraft", ICON_NAME_ROW_BYTES),
+        ..FixedWidthFieldRows::default()
+    });
+
+    let file = NavFile::read(bytes.as_slice()).expect("a well-formed icon name reads");
+
+    let style = file
+        .event_marker_styles()
+        .first()
+        .expect("the file holds the event marker style");
+    assert_eq!(
+        style.icon,
+        EventMarkerIconChoice::Unrecognized("hovercraft".to_owned())
+    );
+}
+
+#[test]
+fn a_color_that_is_not_rrggbb_survives_the_read() {
+    let bytes = gtd_bytes_with_field_rows(FixedWidthFieldRows {
+        style_color_hex: nul_padded_row(b"FFAA00", COLOR_HEX_ROW_BYTES),
+        ..FixedWidthFieldRows::default()
+    });
+
+    let file = NavFile::read(bytes.as_slice()).expect("a well-formed color reads");
+
+    let style = file
+        .event_marker_styles()
+        .first()
+        .expect("the file holds the event marker style");
+    assert_eq!(
+        style.color,
+        EventMarkerColor::Unrecognized("FFAA00".to_owned())
+    );
 }
 
 #[rstest]

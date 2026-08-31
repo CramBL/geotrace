@@ -13,6 +13,7 @@
 ### Fixed
 
 - **Log Viewer:** Fixed a log entry between two fixes across the antimeridian being placed half a world away from both.
+- **Map & Tracks:** Fixed a recording whose event marker style names an icon this version does not have, or a color that is not a #RRGGBB value, loading as if the style had named neither: those markers are now drawn as a pin or in gray, and the data quality warnings name the variant path and the recorded value.
 - **Map & Tracks:** Fixed the sky trails plot shifting and resizing as the satellite counts beside it gained or lost the parenthesised total for hidden satellites.
 - **Map & Tracks:** Fixed the window for a clicked fix drawing its content over its own title bar when scrolled: the sky plot column and the satellite tables now scroll on their own.
 - **Map & Tracks:** Fixed a recording whose marker or event marker text is not valid UTF-8 loading with that text mangled: it is now rejected with an error naming the field.
