@@ -4,38 +4,37 @@
 
 ### Added
 
-- **Interface:** Added an `invalid_coordinates` query metric: the number of a fix's coordinate axes outside their range, so `where invalid_coordinates > 0` lists those fixes.
-- **Interface:** The hover text of a query results row now names the position the map draws the fix at when the track builder placed it between the fixes around it.
-- **Map & Tracks:** The map now says when a recording's fixes lie past 85° latitude, where the map projection ends and nothing can be drawn.
-- **Map & Tracks:** The data quality warnings now also name what the app changed about what a recording said: the satellites it merged from several rows of one report, the satellite SNR readings it discarded as the ≈ 99 dB-Hz no-data sentinel, the event marker colors it replaced with gray, and the event marker styles it dropped for a variant path with several.
-- **Map & Tracks:** A track holding fixes with a coordinate outside the valid range now carries a warning glyph in the side panel, and each such fix is marked in its hover text and drawn in the warning color at the position it is placed at.
-- **Map & Tracks:** The window for a clicked fix now names the coordinates the receiver recorded for it, marking one outside the valid range, and the position the map draws it at.
+- **Interface:** Added an `invalid_coordinates` query metric, counting a fix's coordinate axes outside their range.
+- **Interface:** The hover text of a query results row now gives where the map draws a dead-reckoned fix or a fix with a coordinate outside the valid range.
+- **Interface:** The time range filter now draws a bar for a recording shorter than a second, and its handles select to the millisecond.
+- **Map & Tracks:** The map warns when a recording has fixes outside the map projection (past 85° latitude).
+- **Map & Tracks:** The data quality warnings now list what the app changed in a recording: the satellites merged from several rows of one report, the satellite SNR readings discarded as the no-data sentinel, the event marker colors replaced with gray, and the event marker styles dropped for a variant path with several.
+- **Map & Tracks:** The side panel shows a warning glyph on a track with a fix whose coordinate is outside the valid range, and the map draws that fix in the warning color and marks it in its hover text.
+- **Map & Tracks:** The window for a clicked fix now shows the coordinates the receiver recorded, marking one outside the valid range, and where the map draws the fix.
+- **Map & Tracks:** A recording in which no fix has a valid position now loads, with its tracks drawn nowhere on the map.
+- **Map & Tracks:** A recording with a fix whose latitude or longitude is outside the valid range now loads, with that fix drawn between the fixes around it.
+- **Map & Tracks:** Hovering or clicking a dead-reckoned fix on the map now selects it.
+
+### Changed
+
+- **Map & Tracks:** A recording with an event marker style naming an unknown icon, or a color that is not a #RRGGBB value, now loads with that marker drawn as a pin or in gray, and the recorded value named in the data quality warnings.
+- **Map & Tracks:** A recording with marker or event marker text that is not valid UTF-8 is now rejected with an error naming the field.
 
 ### Fixed
 
-- **Interface:** Fixed the time range filter drawing no bar for a recording shorter than a second, and its handles moving in whole-second steps: the bar is now drawn for any recording and its handles select to the millisecond.
-- **Log Viewer:** Fixed a log entry between two fixes across the antimeridian being placed half a world away from both.
-- **Map & Tracks:** Fixed a recording whose event marker style names an icon this version does not have, or a color that is not a #RRGGBB value, loading as if the style had named neither: those markers are now drawn as a pin or in gray, and the data quality warnings name the variant path and the recorded value.
-- **Map & Tracks:** Fixed the sky trails plot shifting and resizing as the satellite counts beside it gained or lost the parenthesised total for hidden satellites.
-- **Map & Tracks:** Fixed the window for a clicked fix drawing its content over its own title bar when scrolled: the sky plot column and the satellite tables now scroll on their own.
-- **Map & Tracks:** Fixed a recording whose marker or event marker text is not valid UTF-8 loading with that text mangled: it is now rejected with an error naming the field.
-- **Map & Tracks:** Fixed a recording whose tracks are drawn nowhere reporting a distance of "-0 m": its side panel row now shows a dash, the way its track rows already do.
-- **Map & Tracks:** Fixed dead-reckoned fixes on the map ignoring hover and clicks: they are now in the map's index at the position they are drawn at.
-- **Map & Tracks:** Fixed a recording in which no fix has a valid position being rejected: it now loads and shows its data in the plot and the history, with its tracks drawn nowhere on the map.
-- **Map & Tracks:** Fixed a recording holding a fix with a latitude or longitude outside the valid range being rejected: it now loads with a data quality warning naming those fixes, keeps the recorded values, and draws each of them between the fixes around it.
+- **Log Viewer:** Fixed a log entry between two fixes across the antimeridian being placed half a world away.
+- **Map & Tracks:** Fixed the sky trails plot shifting and resizing when the satellite counts beside it change width.
+- **Map & Tracks:** Fixed the window for a clicked fix drawing its content over its own title bar when scrolled.
+- **Map & Tracks:** Fixed the side panel showing a distance of "-0 m" for a recording whose tracks are drawn nowhere.
 - **Map & Tracks:** Fixed a heading swing between two northward readings disappearing from the plot when zoomed out, and the same for a sensor channel that declares a wrap period.
-- **Map & Tracks:** Fixed the min spread filter understating how far tracks that cross the antimeridian or circle a pole ranged.
-- **Map & Tracks:** Fixed a recording that circles a pole being bounded by an arbitrary arc of longitudes: its bounds now cover every meridian up to the pole.
+- **Map & Tracks:** Fixed the min spread filter understating the spread of a track that crosses the antimeridian or circles a pole.
+- **Map & Tracks:** Fixed a recording that circles a pole being bounded by an arbitrary arc of longitudes.
 - **Map & Tracks:** Fixed a recording whose fixes are out of time order dropping markers and sensor samples that fall inside a track, and reporting a negative recorded time.
-- **Map & Tracks:** Fixed dead-reckoned fixes in a recording faster than 1 Hz being drawn on top of the preceding fix instead of between the fixes around them.
-- **Map & Tracks:** Fixed a dead-reckoned fix between two fixes across the antimeridian being drawn half a world away, and one between two fixes near a pole being drawn off the great circle they lie on.
-- **Map & Tracks:** Fixed double-clicking a recording or track that crosses the antimeridian centering the map on the opposite side of the globe.
-- **Map & Tracks:** Fixed opening a recording that crosses the antimeridian showing the whole globe instead of zooming the map to the track.
-- **Map & Tracks:** Fixed a track's reported length, spread, bounding box and zoom to fit measuring dead-reckoned fixes at the coordinates the receiver wrote for them rather than where they are drawn.
-- **Map & Tracks:** Fixed opening a recording that circles a pole showing the whole globe instead of zooming the map to the track.
-- **Map & Tracks:** Fixed zooming the map to a track cropping it at high latitudes, where the map projection draws a degree of latitude taller than one at the equator.
-- **Map & Tracks:** Fixed an SNR of 99 dB-Hz, the firmware sentinel for "no measurement", being read as a signal strength: such a satellite now reads as having no SNR, and the sentinel no longer outranks a real reading for a satellite reported on two rows.
-- **Map & Tracks:** Fixed a satellite listed on two rows of one satellite report counting as two satellites in the map's satellite counts, its lost-lock slips and the satellite utilization rate.
+- **Map & Tracks:** Fixed the map drawing a dead-reckoned fix on the preceding fix in a recording faster than 1 Hz, and off the great circle between the fixes around it across the antimeridian or near a pole.
+- **Map & Tracks:** Fixed zooming the map to a recording or track that crosses the antimeridian, circles a pole, or reaches high latitudes.
+- **Map & Tracks:** Fixed a track's length, spread, bounding box and zoom to fit measuring a dead-reckoned fix at its recorded coordinates.
+- **Map & Tracks:** Fixed an SNR of 99 dB-Hz, the firmware sentinel for "no measurement", being read as a signal strength.
+- **Map & Tracks:** Fixed a satellite listed on two rows of one satellite report counting twice in the map's satellite counts, its lost-lock slips and the satellite utilization rate.
 
 ## 0.13.0 - 2026-08-25
 
