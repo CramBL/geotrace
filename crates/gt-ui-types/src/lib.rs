@@ -1,6 +1,7 @@
 pub mod arc_identity;
 pub mod context_series;
 pub mod display_mask;
+pub mod drawn_position;
 pub mod event_marker_visibility;
 pub mod generated_marker_visibility;
 pub mod geomagnetic_series;
@@ -28,6 +29,7 @@ pub use context_series::{
     TecContextSample,
 };
 pub use display_mask::{DisplayCategory, DisplayMask};
+pub use drawn_position::{DRAWN_AT_CAPTION, INTERPOLATED_POSITION_NOTE};
 pub use event_marker_visibility::EventMarkerVisibility;
 pub use generated_marker_visibility::GeneratedMarkerVisibility;
 pub use geomagnetic_series::{GeomagneticPoint, GeomagneticSeries};
