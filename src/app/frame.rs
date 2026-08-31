@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use egui::{Button, CentralPanel, Label, MenuBar, ProgressBar, RichText, Sides, Window};
-use egui_phosphor::regular::ARTICLE as ICON_ARTICLE;
 use egui_phosphor::regular::CHART_LINE_UP as ICON_CHART_LINE_UP;
 use egui_phosphor::regular::CHECK as ICON_CHECK;
 use egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE as ICON_CLOCK_COUNTER_CLOCKWISE;
@@ -284,13 +283,7 @@ impl App {
                         self.history_window.invalidate();
                     }
 
-                    if ui
-                        .selectable_label(self.log_viewer.open, ICON_ARTICLE)
-                        .on_hover_text("Read the loaded logs against the recordings")
-                        .clicked()
-                    {
-                        self.log_viewer.open = !self.log_viewer.open;
-                    }
+                    self.log_viewer.toolbar_button_ui(ui);
 
                     // While a query is filtering the map but its window is
                     // closed, the button turns amber with a "!" so the active

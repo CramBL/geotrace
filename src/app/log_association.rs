@@ -6,13 +6,13 @@ use std::mem;
 use std::sync::Arc;
 
 use gt_loaded_files::{LoadedFileId, RecordingNames};
-use gt_log_view::LogAttachmentRef;
-use gt_store::{DatabaseRef, DbError, LogAttachmentError};
+use gt_log_view::{LogAttachmentRef, RestoredAttachmentAdoption};
+use gt_store::{DatabaseRef, DbError, LogAttachmentError, StoredLogFilter};
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::LoadedLogId;
 
 use super::App;
-use super::history_db::{RestoredLogAttachment, StoredLogAttachment};
+use super::history_db::{ExistingLogAttachment, RestoredLogAttachment, StoredLogAttachment};
 use super::log_viewer::association_dialog::{LogAssociationChoice, LogAssociationDialog};
 
 impl App {
@@ -105,6 +105,40 @@ impl App {
         }
     }
 
+    /// Hands a restored attachment to the loaded log that already holds its
+    /// text.
+    ///
+    /// The loaded log keeps the anchor and the attachment it has: an anchor
+    /// moves only where the user chooses.
+    pub(super) fn adopt_restored_attachment(
+        &mut self,
+        log_id: LoadedLogId,
+        attachment: LogAttachmentRef,
+        stored_filters: Vec<StoredLogFilter>,
+    ) {
+        let shared = self.shared.borrow();
+        let Some(log) = self.logs.get_mut_by_id(log_id) else {
+            return;
+        };
+        let name = log.name().to_owned();
+        let adoption =
+            log.adopt_restored_attachment(attachment, stored_filters, &shared.loaded_files.view());
+        drop(shared);
+        match adoption {
+            RestoredAttachmentAdoption::Recorded => {
+                log::info!("The loaded log {name:?} took the attachment it is stored as");
+            }
+            RestoredAttachmentAdoption::NotAnchoredToThatRecording => {
+                log::info!(
+                    "Left the loaded log {name:?} as it is: it is not anchored to the recording that holds the attachment"
+                );
+            }
+            RestoredAttachmentAdoption::AlreadyAttached => {
+                log::info!("Left the loaded log {name:?} as it is: it already holds an attachment");
+            }
+        }
+    }
+
     /// Notes the attachment a log was stored as, or reports why it was not.
     pub(super) fn apply_log_attach_outcome(
         &mut self,
@@ -160,7 +194,7 @@ impl App {
         &mut self,
         log_id: LoadedLogId,
         recording: &DatabaseRef,
-        existing: Result<Option<String>, DbError>,
+        existing: Result<Option<ExistingLogAttachment>, DbError>,
     ) {
         let existing = match existing {
             Ok(existing) => existing,
@@ -210,14 +244,24 @@ impl App {
         }
         drop(shared);
         if attach {
-            self.attach_log_to_recording(log_id, target);
+            self.attach_log_to_recording(dialog, target);
         }
     }
 
-    fn attach_log_to_recording(&self, log_id: LoadedLogId, target: Option<LoadedFileId>) {
+    /// Stores the dialog's log with the recording `target` identifies, or
+    /// reuses the attachment that recording already holds it as.
+    fn attach_log_to_recording(
+        &mut self,
+        dialog: &LogAssociationDialog,
+        target: Option<LoadedFileId>,
+    ) {
+        let log_id = dialog.log();
         let Some(log) = self.logs.get_by_id(log_id) else {
             return;
         };
+        let name = log.name().to_owned();
+        let text = Arc::clone(log.parsed().text());
+        let filters = log.filters().to_stored_filters();
         let shared = self.shared.borrow();
         let db_ref = target
             .and_then(|id| shared.loaded_files.view().entry_for_id(id))
@@ -226,18 +270,45 @@ impl App {
         drop(shared);
         let Some(db_ref) = db_ref else {
             log::warn!(
-                "Not attaching the log {:?}: the recording it was associated with is not in the history database",
-                log.name()
+                "Not attaching the log {name:?}: the recording it was associated with is not in the history database"
             );
             return;
         };
-        self.history.attach_log(
-            db_ref,
-            log_id,
-            log.name().to_owned(),
-            Arc::clone(log.parsed().text()),
-            log.filters().to_stored_filters(),
-        );
+        match dialog.duplicate_attachment_of(&db_ref) {
+            Some(existing) => {
+                let attachment = LogAttachmentRef {
+                    recording: db_ref,
+                    id: existing.id,
+                };
+                self.adopt_the_attachment_the_recording_holds(log_id, attachment, filters);
+                self.toasts.info(format!(
+                    "Reused this recording's attachment \"{}\"",
+                    existing.name
+                ));
+            }
+            None => self.history.attach_log(db_ref, log_id, name, text, filters),
+        }
+    }
+
+    /// Records `attachment` on the log, and writes the stack the user is
+    /// looking at to it. The log bytes the database holds stay as they are:
+    /// they are this log's own text.
+    fn adopt_the_attachment_the_recording_holds(
+        &mut self,
+        log_id: LoadedLogId,
+        attachment: LogAttachmentRef,
+        filters: Vec<StoredLogFilter>,
+    ) {
+        let shared = self.shared.borrow();
+        if let Some(log) = self.logs.get_mut_by_id(log_id) {
+            log.record_attachment(
+                attachment.clone(),
+                filters.clone(),
+                &shared.loaded_files.view(),
+            );
+        }
+        drop(shared);
+        self.history.set_attached_log_filters(attachment, filters);
     }
 
     fn detach_log(&self, log_id: LoadedLogId) {

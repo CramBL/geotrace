@@ -10,6 +10,7 @@ use gt_store::DatabaseRef;
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::LoadedLogId;
 
+use crate::app::history_db::ExistingLogAttachment;
 use crate::app::modals::{self, DialogActions, DialogBody};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 
@@ -71,9 +72,9 @@ pub(in crate::app) struct LogAssociationDialog {
     /// The recording the duplicate-attachment query was sent for.
     duplicate_query_sent_for: Option<DatabaseRef>,
 
-    /// Name of the attachment under which the selected recording already holds
-    /// this exact log.
-    duplicate: Option<String>,
+    /// The attachment under which the selected recording already holds this
+    /// exact log.
+    duplicate: Option<ExistingLogAttachment>,
 }
 
 impl LogAssociationDialog {
@@ -118,16 +119,28 @@ impl LogAssociationDialog {
     }
 
     /// Takes the result of [`duplicate_query_to_send`](Self::duplicate_query_to_send),
-    /// `existing` naming the attachment that recording already holds this log
+    /// `existing` being the attachment that recording already holds this log
     /// as.
     pub(in crate::app) fn set_duplicate_attachment(
         &mut self,
         recording: &DatabaseRef,
-        existing: Option<String>,
+        existing: Option<ExistingLogAttachment>,
     ) {
         if self.duplicate_query_sent_for.as_ref() == Some(recording) {
             self.duplicate = existing;
         }
+    }
+
+    /// The attachment `recording` already holds this log as, `None` while the
+    /// query for that recording is pending or answered with none.
+    pub(in crate::app) fn duplicate_attachment_of(
+        &self,
+        recording: &DatabaseRef,
+    ) -> Option<&ExistingLogAttachment> {
+        if self.duplicate_query_sent_for.as_ref() != Some(recording) {
+            return None;
+        }
+        self.duplicate.as_ref()
     }
 
     /// Draws the dialog, returning `None` while the user has not decided.
@@ -254,8 +267,8 @@ impl LogAssociationDialog {
         ui.end_row();
     }
 
-    /// The attach tickbox, and the warning that the chosen recording already
-    /// holds this exact log.
+    /// The attach tickbox, and what attaching does where the chosen recording
+    /// already holds this exact log.
     fn attach_ui(&mut self, ui: &mut egui::Ui, attachable: bool, write_access: WriteAccess) {
         let attach = ui.add_enabled(attachable, Checkbox::new(&mut self.attach, ATTACH_LABEL));
         if attachable {
@@ -268,11 +281,13 @@ impl LogAssociationDialog {
             attach.on_disabled_hover_text(ATTACH_NO_TARGET_HOVER);
         }
         if let Some(existing) = &self.duplicate {
-            ui.label(
-                RichText::new(format!(
-                    "This recording already holds this log, attached as \"{existing}\""
+            ui.add(
+                Label::new(format!(
+                    "This recording already holds this log as \"{}\". Attaching reuses that \
+                     attachment.",
+                    existing.name
                 ))
-                .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                .wrap(),
             );
         }
     }

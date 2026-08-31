@@ -177,6 +177,12 @@ pub struct StoredLogAttachment {
     pub filters: Vec<StoredLogFilter>,
 }
 
+/// The attachment a recording already holds a log as, found by content hash.
+pub struct ExistingLogAttachment {
+    pub id: LogAttachmentId,
+    pub name: String,
+}
+
 /// A result delivered back to the UI thread, drained via [`HistoryWorker::poll`].
 pub enum Response {
     Listed(Result<Vec<RecordingEntry>, DbError>),
@@ -223,7 +229,7 @@ pub enum Response {
     DuplicateAttachmentFound {
         log: LoadedLogId,
         recording: DatabaseRef,
-        existing: Result<Option<String>, DbError>,
+        existing: Result<Option<ExistingLogAttachment>, DbError>,
     },
     /// The registry rejected the write, and the worker answered without
     /// touching the database.
@@ -557,7 +563,12 @@ fn handle_read_request(db: &ReadOnlyRecordings, req: ReadRequest) -> Response {
         ReadRequest::FindDuplicateAttachment { db_ref, log, text } => {
             let existing = db
                 .log_attachment_with_content(&db_ref, LogContentHash::of_log_bytes(text.as_bytes()))
-                .map(|entry| entry.map(|entry| entry.attachment.name));
+                .map(|entry| {
+                    entry.map(|entry| ExistingLogAttachment {
+                        id: entry.id,
+                        name: entry.attachment.name,
+                    })
+                });
             Response::DuplicateAttachmentFound {
                 log,
                 recording: db_ref,

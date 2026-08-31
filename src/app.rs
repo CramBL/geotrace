@@ -970,8 +970,10 @@ impl App {
         }
     }
 
-    /// Loads a log the worker finished parsing, associates it, and shows it in
-    /// the viewer.
+    /// Loads a log the worker finished parsing and associates it.
+    ///
+    /// The viewer opens on a log the user opened. A log that came back with a
+    /// recording is counted on the toolbar's log button instead.
     ///
     /// The session holds one log per content: text it already holds is not
     /// loaded a second time.
@@ -986,10 +988,13 @@ impl App {
         );
         let mut log = LoadedLog::new(filename, parsed, window);
         let restored_from_history = restored.is_some();
-        if restored_from_history && self.logs.id_of_content(log.content_hash()).is_some() {
-            log::info!(
-                "Skipped the attachment {:?}: this session holds that log already",
-                log.name()
+        if let Some(restore) = &restored
+            && let Some(loaded) = self.logs.id_of_content(log.content_hash())
+        {
+            self.adopt_restored_attachment(
+                loaded,
+                restore.attachment.clone(),
+                restore.filters.clone(),
             );
             return;
         }
@@ -1020,9 +1025,15 @@ impl App {
                 log::info!(
                     "Loaded log {name:?}: {entry_count} entries, {associated_entry_count} of them associated"
                 );
-                self.log_viewer.open_on_log(id);
-                if ask {
-                    self.association_dialog = Some(LogAssociationDialog::new(id, unambiguous));
+                if restored_from_history {
+                    self.log_viewer
+                        .restored_logs
+                        .note_log_loaded_with_a_recording();
+                } else {
+                    self.log_viewer.open_on_log(id);
+                    if ask {
+                        self.association_dialog = Some(LogAssociationDialog::new(id, unambiguous));
+                    }
                 }
             }
             LogPushOutcome::AlreadyLoaded(id) => {
