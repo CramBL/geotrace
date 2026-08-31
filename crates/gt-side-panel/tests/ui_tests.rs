@@ -1422,3 +1422,36 @@ fn a_plot_hover_that_has_not_snapped_marks_no_row() {
         }
     );
 }
+
+/// The time range filter's bar and its start and end labels, for a recording
+/// of ten fixes at 10 Hz spanning 900 ms.
+#[test]
+fn the_time_range_filter_covers_a_recording_shorter_than_a_second() {
+    let start = chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+        .and_then(|d| d.and_hms_opt(12, 0, 0))
+        .expect("valid date")
+        .and_utc();
+    let points = gt_test_utils::fixtures::nav_points_from_specs(start, 10, 100, |_| {
+        gt_test_utils::fixtures::NavPointSpec::default()
+    });
+    let mut files = LoadedFiles::new();
+    files.push(
+        build_file(
+            "sprint.gtd",
+            &points,
+            gt_track_builder::FileMeta::default(),
+            vec![],
+        ),
+        FileHistory::None,
+    );
+    let mut harness = make_harness(make_state_from_files(files));
+    harness.run();
+
+    assert!(
+        harness
+            .inner
+            .query_by_label("01/01 12:00 — 01/01 12:00")
+            .is_some(),
+        "the time range bar must be drawn for a recording spanning under a second"
+    );
+}
