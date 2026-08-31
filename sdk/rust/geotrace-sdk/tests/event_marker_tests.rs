@@ -373,3 +373,30 @@ fn add_event_icon_survives_round_trip() {
         "Lightning icon must survive write/read round-trip"
     );
 }
+
+/// A style read from a newer file keeps the icon name and color that file held,
+/// so writing the recording out again holds them still.
+#[test]
+fn an_icon_name_and_color_outside_the_known_sets_are_written_back_verbatim() {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix(0, 55.0, 12.0));
+    recorder.add_event_marker_style(EventMarkerStyle {
+        variant_path: "power/on".to_owned(),
+        icon: EventMarkerIconChoice::Unrecognized("hovercraft".to_owned()),
+        color: EventMarkerColor::Unrecognized("cornflower".to_owned()),
+    });
+
+    let mut bytes = Vec::new();
+    recorder.finish().unwrap().write(&mut bytes).unwrap();
+    let loaded = geotrace_sdk::NavFile::read(bytes.as_slice()).unwrap();
+
+    let styles = loaded.event_marker_styles();
+    assert_eq!(
+        styles[0].icon,
+        EventMarkerIconChoice::Unrecognized("hovercraft".to_owned())
+    );
+    assert_eq!(
+        styles[0].color,
+        EventMarkerColor::Unrecognized("cornflower".to_owned())
+    );
+}

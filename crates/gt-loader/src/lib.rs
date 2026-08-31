@@ -1775,6 +1775,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_event_marker_icon_outside_the_known_set_loads_as_a_pin_with_a_warning_naming_the_variant()
+    {
+        let bytes = recording_with_event_marker_styles(vec![SdkEventMarkerStyle {
+            variant_path: "power/boot".to_owned(),
+            icon: SdkEventMarkerIconChoice::Unrecognized("hovercraft".to_owned()),
+            color: SdkEventMarkerColor::Auto,
+        }]);
+
+        let file = load_bytes(&bytes, "marker_icon.gtd".to_owned()).unwrap();
+
+        assert_eq!(
+            file.event_marker_styles
+                .get("power/boot")
+                .map(|style| style.icon),
+            Some(MarkerIcon::Pin)
+        );
+        assert_eq!(
+            listed_warnings(&file),
+            vec![(
+                1,
+                "event marker icon(s) replaced with the pin",
+                "\"power/boot\": \"hovercraft\". Those markers are drawn as a pin: the style \
+                 names an icon this version of GeoTrace does not have."
+            )]
+        );
+    }
+
     /// The last style written for a variant path is the one every marker on it
     /// is drawn with: the styles reach the builder in the order the file holds
     /// them.
