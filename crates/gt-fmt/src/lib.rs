@@ -107,6 +107,12 @@ pub fn format_distance(d: f64::Length) -> String {
     }
 }
 
+/// A distance in kilometres to one decimal, without the unit. A distance under
+/// 50 m reads `0.0`.
+pub fn format_kilometers(d: f64::Length) -> String {
+    format!("{:.1}", d.get::<kilometer>())
+}
+
 /// Formats a duration as a timeline offset: `M:SS`, or `H:MM:SS` once past an
 /// hour. Unlike [`format_human_terse_duration`] the fields are fixed-width and
 /// colon-separated, so a running position reads like a media scrubber's clock.
@@ -415,6 +421,7 @@ mod tests {
     #[case::widened_below_an_hour(DurationClockFormat::HoursMinutesSeconds, 3_599, "0:59:59")]
     #[case::an_hour(DurationClockFormat::HoursMinutesSeconds, 3_600, "1:00:00")]
     #[case::hours(DurationClockFormat::HoursMinutesSeconds, 45_296, "12:34:56")]
+    #[case::hours_count_past_a_day(DurationClockFormat::HoursMinutesSeconds, 94_205, "26:10:05")]
     fn a_clock_reading_prints_the_fields_of_its_format(
         #[case] format: DurationClockFormat,
         #[case] secs: i64,
@@ -443,6 +450,19 @@ mod tests {
     ) {
         assert_eq!(
             DurationClockFormat::fitting_longest_duration(longest_secs),
+            expected
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::nothing(0.0, "0.0")]
+    #[case::below_the_first_step(0.04, "0.0")]
+    #[case::the_first_step(0.05, "0.1")]
+    #[case::kilometres(4.63, "4.6")]
+    #[case::thousands(1_234.56, "1234.6")]
+    fn a_kilometre_reading_keeps_one_decimal(#[case] km: f64, #[case] expected: &str) {
+        assert_eq!(
+            format_kilometers(f64::Length::new::<kilometer>(km)),
             expected
         );
     }

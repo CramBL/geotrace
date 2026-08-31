@@ -60,5 +60,6 @@ Bad: `Color: 🔴`
 Labels do not select: `gt_ui_theme::install_app_style` turns egui's default off for the whole app, so no readout, caption or header shows a text I-beam.
 Text a user copies out - an identity, a path, a version, a log line - opts back in with `Label::new(…).selectable(true)`.
 In a clickable row, register the row's own `Sense` above its labels with `Ui::interact_opt` and `InteractOptions { move_to_top: true }`, as the log viewer's table does: a selectable label senses clicks and drags too.
+A row holding an interactive control, such as the Visible section's track rows with their checkbox, registers with `move_to_top: false` instead, which leaves the row's sense under the control and lets the control keep its own clicks.
 The row then keeps its hover text and its click, the labels keep the drag that selects, and egui reports no click when the pointer travelled.
 Offer a copy button (as the query results do) where such a value is worth copying.

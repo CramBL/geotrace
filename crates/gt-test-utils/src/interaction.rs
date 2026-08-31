@@ -12,6 +12,21 @@ use egui_kittest::{Harness, Node};
 const STEP_UNTIL_FRAME_BUDGET: usize = 200;
 const PAUSE_BETWEEN_FRAMES: Duration = Duration::from_millis(10);
 
+/// Queues `clicks` primary press-and-release pairs at `target`, all read by
+/// the frame that runs next.
+fn queue_primary_clicks<State>(harness: &mut Harness<'_, State>, target: egui::Pos2, clicks: u8) {
+    for _ in 0..clicks {
+        for pressed in [true, false] {
+            harness.input_mut().events.push(egui::Event::PointerButton {
+                pos: target,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+    }
+}
+
 /// Driving an [`egui_kittest::Harness`]: waiting on background work, pointer
 /// interaction, and picking one node out of several that share a label.
 pub trait HarnessInteraction {
@@ -42,6 +57,10 @@ pub trait HarnessInteraction {
     fn hover_at_and_settle(&mut self, target: egui::Pos2, settle_frames: usize);
 
     fn press_drag_release(&mut self, from: egui::Pos2, delta: egui::Vec2, move_frames: u16);
+
+    /// Presses and releases at `target` within one frame, which egui reads as
+    /// a click.
+    fn click_at(&mut self, target: egui::Pos2);
 
     /// Presses and releases twice at `target` within one frame, which egui
     /// reads as a double click.
@@ -123,19 +142,17 @@ impl<State> HarnessInteraction for Harness<'_, State> {
         self.step();
     }
 
+    fn click_at(&mut self, target: egui::Pos2) {
+        self.hover_at(target);
+        self.step();
+        queue_primary_clicks(self, target, 1);
+        self.step();
+    }
+
     fn double_click_at(&mut self, target: egui::Pos2) {
         self.hover_at(target);
         self.step();
-        for _ in 0..2 {
-            for pressed in [true, false] {
-                self.input_mut().events.push(egui::Event::PointerButton {
-                    pos: target,
-                    button: egui::PointerButton::Primary,
-                    pressed,
-                    modifiers: egui::Modifiers::NONE,
-                });
-            }
-        }
+        queue_primary_clicks(self, target, 2);
         self.step();
     }
 
