@@ -153,9 +153,11 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  # clang-format and clang-tidy for the C and C++ SDKs.
+  # clang-format and clang-tidy for the C and C++ SDKs, rustfmt and clippy for
+  # the fuzz workspace. The fuzz workspace is isolated: ci.yml runs its cargo
+  # commands over the root workspace alone.
   lint-sdk:
-    name: SDK Lint / C & C++
+    name: SDK Lint
     runs-on: ubuntu-latest
     needs: [changes, build-c-lib]
     if: needs.changes.outputs.sdk == 'true'
@@ -165,6 +167,12 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
 
       # The LLVM major must match the one the SDK dev image installs (Dockerfile,
       # sdk-dev stage): clang-format output differs between majors. setup-cpp
@@ -195,6 +203,12 @@ jobs:
         env:
           GEOTRACE_C_LIB_DIR: ${{ github.workspace }}/target/release
         run: bash scripts/lint-cpp.sh
+
+      - name: Check fuzz workspace formatting
+        run: cargo fmt --manifest-path sdk/rust/geotrace-sdk/fuzz/Cargo.toml --check
+
+      - name: Lint fuzz workspace
+        run: cargo clippy --manifest-path sdk/rust/geotrace-sdk/fuzz/Cargo.toml --workspace --no-deps --all-targets -- -D warnings
 
   # Verify that geotrace-sdk compiles and its tests pass on its declared MSRV.
   # The SDK is a separately published crate with a lower MSRV than the main app.
@@ -449,6 +463,7 @@ jobs:
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
         with:
           toolchain: stable
+          components: clippy, rustfmt
 
       # The Python version is not part of the cache key, so one leg writes for all.
       - name: Cache Cargo (geotrace-py workspace)
@@ -463,6 +478,15 @@ jobs:
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: ${{ matrix.python-version }}
+
+      # geotrace-py is its own cargo workspace: ci.yml runs its cargo commands
+      # over the root workspace alone. These two steps read the interpreter set
+      # up above.
+      - name: Check formatting
+        run: cargo fmt --manifest-path sdk/python/geotrace-py/Cargo.toml --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path sdk/python/geotrace-py/Cargo.toml --workspace --no-deps --all-targets -- -D warnings
 
       - name: Set up uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
