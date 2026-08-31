@@ -25,11 +25,17 @@ pub(crate) fn start() -> DateTime<Utc> {
 /// A log of `count` entries, one per second from [`start`], in the ISO format
 /// the parser detects from the head of the log.
 pub(crate) fn parsed_log(count: usize) -> ParsedLog {
+    parsed_log_of_service("navsyncd", count)
+}
+
+/// [`parsed_log`] with `service` writing the entries, which is what makes two
+/// fixture logs differ in content.
+pub(crate) fn parsed_log_of_service(service: &str, count: usize) -> ParsedLog {
     let text: String = (0..count)
         .map(|second| {
             let time = start() + Duration::seconds(second as i64);
             format!(
-                "{} navsyncd: entry {second}\n",
+                "{} {service}: entry {second}\n",
                 time.format("%Y-%m-%d %H:%M:%S")
             )
         })
@@ -46,6 +52,16 @@ pub(crate) fn log_of(count: usize) -> LoadedLog {
     LoadedLog::new(
         Some("navsyncd.log".to_owned()),
         parsed_log(count),
+        association_window(),
+    )
+}
+
+/// A log of `count` entries written by `service`, which
+/// [`LoadedLogs::push`](crate::LoadedLogs::push) tells apart from [`log_of`].
+pub(crate) fn log_of_service(service: &str, count: usize) -> LoadedLog {
+    LoadedLog::new(
+        Some(format!("{service}.log")),
+        parsed_log_of_service(service, count),
         association_window(),
     )
 }

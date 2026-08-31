@@ -24,7 +24,7 @@ use gt_test_utils::{
 };
 use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::{FileSource, Latitude, Longitude};
-use gt_ui_types::{HoveredLogGlyph, LogMatchColor, LogMatchHover};
+use gt_ui_types::{HoveredLogGlyph, LoadedLogId, LogMatchColor, LogMatchHover};
 
 use super::{
     AssociationWindowUnit, LOG_VIEWER_TITLE, LogViewerContext, LogViewerRequests, LogViewerWindow,
@@ -68,7 +68,7 @@ const INTERPOLATED_ENTRY_TIMESTAMP: &str = "≈2026-05-29 18:48:26";
 
 /// A log that was never loaded here, standing in for one the viewer is not
 /// showing.
-const UNLOADED_LOG: gt_ui_types::LoadedLogId = gt_ui_types::LoadedLogId::new(7);
+const UNLOADED_LOG: LoadedLogId = LoadedLogId::new(7);
 
 /// The association window a freshly loaded log starts with, matching the app's
 /// default.
@@ -102,7 +102,14 @@ struct ViewerState {
 
 impl ViewerState {
     fn shown_log(&self) -> Option<&LoadedLog> {
-        self.logs.get(self.viewer.selected_log_index())
+        self.viewer
+            .selected_log()
+            .and_then(|id| self.logs.get_by_id(id))
+    }
+
+    /// The log that loaded first, which every single-log fixture is.
+    fn first_loaded_log(&self) -> LoadedLogId {
+        self.logs.first_id().expect("a fixture log is loaded")
     }
 }
 
@@ -190,6 +197,7 @@ fn viewer_state(recordings: Vec<gt_types::LoadedFile>, logs: &[(&str, &str)]) ->
         loaded_recordings.push(file, FileHistory::None);
     }
     let mut loaded_logs = LoadedLogs::default();
+    let mut last_loaded = None;
     for (name, text) in logs {
         let parsed = gt_logfile::parse_log((*text).into(), log_start())
             .unwrap_or_else(|error| panic!("the fixture log parses: {error}"));
@@ -202,12 +210,14 @@ fn viewer_state(recordings: Vec<gt_types::LoadedFile>, logs: &[(&str, &str)]) ->
             .rank_association_candidates(&loaded_recordings.view())
             .unambiguous_target();
         log.associate_with(target, &loaded_recordings.view());
-        loaded_logs.push(log);
+        last_loaded = Some(loaded_logs.push(log).id());
     }
 
     let logs = loaded_logs;
     let mut viewer = LogViewerWindow::new();
-    viewer.open_on_newly_loaded_log(&logs);
+    if let Some(id) = last_loaded {
+        viewer.open_on_log(id);
+    }
 
     ViewerState {
         viewer,
@@ -460,12 +470,7 @@ fn a_hovered_hexagon_marks_its_own_lines_in_the_table() {
         .get_by_label(INTERPOLATED_ENTRY_TIMESTAMP)
         .rect();
     let before = harness.inner.render().expect("the harness renders a frame");
-    let shown_log = harness
-        .state()
-        .logs
-        .get_with_id(0)
-        .map(|(id, _)| id)
-        .expect("the fixture log is loaded");
+    let shown_log = harness.state().first_loaded_log();
 
     harness.state_mut().log_hover.glyph = Some(HoveredLogGlyph {
         log: shown_log,
@@ -509,8 +514,8 @@ fn a_hovered_hexagon_of_another_log_leaves_the_shown_one_alone() {
         pixels_per_point
     ));
     assert_eq!(
-        harness.state().viewer.selected_log_index(),
-        0,
+        harness.state().viewer.selected_log(),
+        Some(harness.state().first_loaded_log()),
         "the viewer stays on the log it was showing"
     );
 }
@@ -572,12 +577,7 @@ fn the_footer_reads_the_association_window_in_the_unit_its_dropdown_shows() {
 #[test]
 fn the_footer_requests_the_association_dialog_for_the_shown_log() {
     let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
-    let shown = harness
-        .state()
-        .logs
-        .get_with_id(0)
-        .map(|(id, _)| id)
-        .expect("the fixture log is loaded");
+    let shown = harness.state().first_loaded_log();
 
     harness.get_by_label(super::ATTACH_LABEL).click();
     harness.run_steps(2);
@@ -603,12 +603,7 @@ fn an_attachment_is_shown_and_removable_only_while_the_log_has_one() {
     );
     assert!(harness.query_by_label(super::ICON_PAPERCLIP).is_none());
 
-    let shown = harness
-        .state()
-        .logs
-        .get_with_id(0)
-        .map(|(id, _)| id)
-        .expect("the fixture log is loaded");
+    let shown = harness.state().first_loaded_log();
     if let Some(log) = harness.state_mut().logs.get_mut_by_id(shown) {
         log.record_attachment(attachment_ref(), Vec::new());
     }
@@ -626,12 +621,7 @@ fn an_attachment_is_shown_and_removable_only_while_the_log_has_one() {
 #[test]
 fn the_attachment_controls_are_grayed_in_a_read_only_session() {
     let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
-    let shown = harness
-        .state()
-        .logs
-        .get_with_id(0)
-        .map(|(id, _)| id)
-        .expect("the fixture log is loaded");
+    let shown = harness.state().first_loaded_log();
     if let Some(log) = harness.state_mut().logs.get_mut_by_id(shown) {
         log.record_attachment(attachment_ref(), Vec::new());
     }
@@ -663,6 +653,50 @@ fn unloading_the_shown_log_leaves_the_viewer_on_its_empty_state() {
 
     assert_eq!(harness.state().logs.len(), 0);
     harness.get_by_label(super::LOG_LOAD_HINT);
+}
+
+/// The viewer follows the log it was showing, wherever that log sits among the
+/// loaded ones.
+#[test]
+fn unloading_another_log_leaves_the_viewer_on_the_one_it_shows() {
+    let mut harness = harness_of(
+        Vec::new(),
+        &[
+            ("navsyncd.log", LOG_WITH_EVERY_ROW_KIND),
+            ("hal-powerd.log", SECOND_LOG),
+        ],
+    );
+    let shown = harness.state().viewer.selected_log();
+    let other = harness.state().first_loaded_log();
+
+    harness.state_mut().logs.remove_by_id(other);
+    harness.run_steps(3);
+
+    assert_eq!(harness.state().viewer.selected_log(), shown);
+    assert_eq!(
+        harness.state().shown_log().map(LoadedLog::name),
+        Some("hal-powerd.log")
+    );
+}
+
+#[test]
+fn unloading_the_shown_log_leaves_the_viewer_on_the_log_that_loaded_first() {
+    let mut harness = harness_of(
+        Vec::new(),
+        &[
+            ("navsyncd.log", LOG_WITH_EVERY_ROW_KIND),
+            ("hal-powerd.log", SECOND_LOG),
+        ],
+    );
+
+    harness.get_by_label(super::ICON_X).click();
+    harness.run_steps(3);
+
+    assert_eq!(harness.state().logs.len(), 1);
+    assert_eq!(
+        harness.state().shown_log().map(LoadedLog::name),
+        Some("navsyncd.log")
+    );
 }
 
 /// Runs until every scan the shown log's filters started has landed: they run
@@ -979,8 +1013,8 @@ fn the_live_filter_belongs_to_the_log_it_was_written_for() {
         ],
     );
     assert_eq!(
-        harness.state().viewer.selected_log_index(),
-        1,
+        harness.state().shown_log().map(LoadedLog::name),
+        Some("hal-powerd.log"),
         "the viewer opens on the log that loaded last"
     );
 

@@ -10,6 +10,7 @@ use egui_phosphor::regular::X as ICON_X;
 use gt_log_view::{
     FilterChip, FilterChipId, FilterChipMode, FilterStack, LayerColorSlots, LoadedLogs,
 };
+use gt_ui_types::LoadedLogId;
 
 use super::LogViewerWindow;
 
@@ -114,9 +115,13 @@ enum FilterEdit {
 
 impl LogViewerWindow {
     /// The live filter over the shown log, and the chips added from it.
-    pub(super) fn filters_ui(&mut self, ui: &mut egui::Ui, logs: &mut LoadedLogs) {
-        let selected = self.selected;
-        let Some(log) = logs.get(selected) else {
+    pub(super) fn filters_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        logs: &mut LoadedLogs,
+        shown: LoadedLogId,
+    ) {
+        let Some(log) = logs.get_by_id(shown) else {
             return;
         };
         let filters = log.filters();
@@ -124,7 +129,7 @@ impl LogViewerWindow {
             .filter_row_ui(ui, filters)
             .or_else(|| chip_row_ui(ui, filters, logs.layer_color_slots()));
 
-        let (Some(edit), Some((stack, slots))) = (edit, logs.filter_stack_mut(selected)) else {
+        let (Some(edit), Some((stack, slots))) = (edit, logs.filter_stack_mut_by_id(shown)) else {
             return;
         };
         match edit {

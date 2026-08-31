@@ -4,7 +4,7 @@ use std::{fmt::Write as _, mem, sync::Arc};
 
 use chrono::Duration;
 use gt_fmt::MIDDLE_DOT;
-use gt_history_types::StoredLogFilter;
+use gt_history_types::{LogContentHash, StoredLogFilter};
 use gt_loaded_files::{LoadedFileId, LoadedFilesView};
 use gt_logfile::ParsedLog;
 use gt_types::{Latitude, Longitude, TimeRange, mercator};
@@ -32,6 +32,10 @@ pub struct LoadedLog {
 
     /// Shared with the workers scanning the log for its filters.
     parsed: Arc<ParsedLog>,
+
+    /// Over the text the parse read, which is what tells this log apart from
+    /// every other loaded one and from the attachments of a recording.
+    content_hash: LogContentHash,
 
     entry_time_range: Option<TimeRange>,
     association: Association,
@@ -65,6 +69,7 @@ impl LoadedLog {
         let parsed = Arc::new(parsed);
         Self {
             name,
+            content_hash: LogContentHash::of_log_bytes(parsed.text().as_bytes()),
             entry_time_range: parsed.time_range(),
             filters: FilterStack::new(Arc::clone(&parsed)),
             parsed,
@@ -140,9 +145,13 @@ impl LoadedLog {
         &self.parsed
     }
 
+    pub fn content_hash(&self) -> LogContentHash {
+        self.content_hash
+    }
+
     /// The filters over this log. Mutating them goes through
-    /// [`LoadedLogs::filter_stack_mut`], which hands out the palette slots the
-    /// layer chips share with every other log.
+    /// [`LoadedLogs::filter_stack_mut_by_id`], which hands out the palette
+    /// slots the layer chips share with every other log.
     pub fn filters(&self) -> &FilterStack {
         &self.filters
     }
@@ -334,8 +343,26 @@ impl StoredLog {
     }
 }
 
-/// Every log loaded in this session, in load order. The same log may be loaded
-/// more than once: the copies are separate logs.
+/// What [`LoadedLogs::push`] did with the log it was handed. Both variants
+/// name the log the session holds that content under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogPushOutcome {
+    NewlyLoaded(LoadedLogId),
+
+    /// A log with the same content hash was loaded already, and the pushed one
+    /// was dropped.
+    AlreadyLoaded(LoadedLogId),
+}
+
+impl LogPushOutcome {
+    pub fn id(self) -> LoadedLogId {
+        match self {
+            Self::NewlyLoaded(id) | Self::AlreadyLoaded(id) => id,
+        }
+    }
+}
+
+/// Every log loaded in this session, in load order, one per content hash.
 #[derive(Debug, Default)]
 pub struct LoadedLogs {
     logs: Vec<StoredLog>,
@@ -370,31 +397,42 @@ impl LoadedLogs {
         self.logs.iter().map(|stored| &stored.log)
     }
 
-    pub fn get(&self, index: usize) -> Option<&LoadedLog> {
-        self.logs.get(index).map(|stored| &stored.log)
+    /// Every loaded log under the identity it was loaded with, in load order.
+    pub fn iter_with_ids(&self) -> impl Iterator<Item = (LoadedLogId, &LoadedLog)> {
+        self.logs.iter().map(|stored| (stored.id, &stored.log))
     }
 
-    pub fn get_mut(&mut self, index: usize) -> Option<&mut LoadedLog> {
-        self.map_matches_stale = true;
-        self.logs.get_mut(index).map(|stored| &mut stored.log)
+    /// The log that loaded first, which is what the viewer falls back to when
+    /// the log it was showing unloads.
+    pub fn first_id(&self) -> Option<LoadedLogId> {
+        self.logs.first().map(|stored| stored.id)
     }
 
-    /// The log at `index` under the identity it was loaded with, which the
-    /// map's hexagons name their log by.
-    pub fn get_with_id(&self, index: usize) -> Option<(LoadedLogId, &LoadedLog)> {
-        self.logs.get(index).map(|stored| (stored.id, &stored.log))
+    /// The loaded log whose text hashes to `content_hash`, `None` while no
+    /// loaded log holds that content.
+    pub fn id_of_content(&self, content_hash: LogContentHash) -> Option<LoadedLogId> {
+        self.logs
+            .iter()
+            .find(|stored| stored.log.content_hash == content_hash)
+            .map(|stored| stored.id)
     }
 
     /// Loads `log` under a fresh identity, taking a colour slot for each layer
-    /// chip it arrives with, and returns the identity it took.
-    pub fn push(&mut self, mut log: LoadedLog) -> LoadedLogId {
+    /// chip it arrives with.
+    ///
+    /// Content already loaded is refused: the answer names the log the session
+    /// holds it under, and `log` is dropped.
+    pub fn push(&mut self, mut log: LoadedLog) -> LogPushOutcome {
+        if let Some(loaded) = self.id_of_content(log.content_hash) {
+            return LogPushOutcome::AlreadyLoaded(loaded);
+        }
         log.filters
             .take_layer_color_slots(&mut self.layer_color_slots);
         let id = self.next_id;
         self.logs.push(StoredLog { id, log });
         self.next_id = self.next_id.next();
         self.map_matches_stale = true;
-        id
+        LogPushOutcome::NewlyLoaded(id)
     }
 
     pub fn get_by_id(&self, id: LoadedLogId) -> Option<&LoadedLog> {
@@ -412,10 +450,11 @@ impl LoadedLogs {
             .map(|stored| &mut stored.log)
     }
 
-    /// Unloads the log at `index`, freeing the colour slots its layer chips
+    /// Unloads the log `id` names, freeing the colour slots its layer chips
     /// held.
-    pub fn remove(&mut self, index: usize) -> Option<LoadedLog> {
-        let removed = (index < self.logs.len()).then(|| self.logs.remove(index))?;
+    pub fn remove_by_id(&mut self, id: LoadedLogId) -> Option<LoadedLog> {
+        let index = self.logs.iter().position(|stored| stored.id == id)?;
+        let removed = self.logs.remove(index);
         removed
             .log
             .filters
@@ -424,14 +463,14 @@ impl LoadedLogs {
         Some(removed.log)
     }
 
-    /// The filter stack of the log at `index`, with the palette its layer chips
+    /// The filter stack of the log `id` names, with the palette its layer chips
     /// take their colours from.
-    pub fn filter_stack_mut(
+    pub fn filter_stack_mut_by_id(
         &mut self,
-        index: usize,
+        id: LoadedLogId,
     ) -> Option<(&mut FilterStack, &mut LayerColorSlots)> {
         self.map_matches_stale = true;
-        let stored = self.logs.get_mut(index)?;
+        let stored = self.logs.iter_mut().find(|stored| stored.id == id)?;
         Some((&mut stored.log.filters, &mut self.layer_color_slots))
     }
 
@@ -525,7 +564,8 @@ mod tests {
     use crate::{
         LayerColorSlot,
         test_fixtures::{
-            association_window, id_of, loaded, log_of, parsed_log, recording_at, start,
+            association_window, id_of, loaded, log_of, log_of_service, parsed_log, recording_at,
+            start,
         },
     };
 
@@ -544,25 +584,26 @@ mod tests {
     /// Waits for every log's filter scans, as the viewer's per-frame polling
     /// does once they land.
     fn wait_for_scans(logs: &mut LoadedLogs) {
-        for index in 0..logs.len() {
-            if let Some((stack, _)) = logs.filter_stack_mut(index) {
+        let ids: Vec<LoadedLogId> = logs.iter_with_ids().map(|(id, _)| id).collect();
+        for id in ids {
+            if let Some((stack, _)) = logs.filter_stack_mut_by_id(id) {
                 stack.wait_for_queries();
             }
         }
     }
 
-    /// Adds the live filter of the log at `index` as a layer chip, and answers
+    /// Adds the live filter of the log `id` names as a layer chip, and answers
     /// with the palette colour that chip took.
-    fn add_layer_chip(logs: &mut LoadedLogs, index: usize, text: &str) -> Option<usize> {
-        let (stack, slots) = logs.filter_stack_mut(index)?;
+    fn add_layer_chip(logs: &mut LoadedLogs, id: LoadedLogId, text: &str) -> Option<usize> {
+        let (stack, slots) = logs.filter_stack_mut_by_id(id)?;
         stack.set_live_filter_text(text);
-        let id = stack.add_live_filter_as_chip(slots)?;
-        stack.chip(id)?.layer_slot().map(LayerColorSlot::index)
+        let chip = stack.add_live_filter_as_chip(slots)?;
+        stack.chip(chip)?.layer_slot().map(LayerColorSlot::index)
     }
 
-    /// The palette colour the first chip of the log at `index` draws in.
-    fn first_chip_slot(logs: &LoadedLogs, index: usize) -> Option<usize> {
-        logs.get(index)?
+    /// The palette colour the first chip of the log `id` names draws in.
+    fn first_chip_slot(logs: &LoadedLogs, id: LoadedLogId) -> Option<usize> {
+        logs.get_by_id(id)?
             .filters()
             .chips()
             .first()?
@@ -613,12 +654,12 @@ mod tests {
         let mut logs = LoadedLogs::default();
         let mut log = log_of(10);
         log.associate_with(Some(id_of(&files, 1)), &files.view());
-        logs.push(log);
+        let id = logs.push(log).id();
 
         files.remove_file(1);
         logs.reassociate_all(&files.view());
 
-        let log = logs.get(0).expect("the log stays loaded");
+        let log = logs.get_by_id(id).expect("the log stays loaded");
         assert_eq!(log.association_target(), None);
         assert_eq!(log.associated_entry_count(), 0);
         assert_eq!(log.entry_position(0), None);
@@ -679,9 +720,9 @@ mod tests {
         let mut logs = LoadedLogs::default();
         let mut log = log_of(10);
         log.associate_with(Some(id_of(&files, 0)), &files.view());
-        logs.push(log);
+        let id = logs.push(log).id();
 
-        add_layer_chip(&mut logs, 0, "entry 1");
+        add_layer_chip(&mut logs, id, "entry 1");
         wait_for_scans(&mut logs);
 
         let matches = logs.map_matches();
@@ -705,9 +746,9 @@ mod tests {
     #[test]
     fn an_unassociated_log_draws_nothing() {
         let mut logs = LoadedLogs::default();
-        logs.push(log_of(10));
+        let id = logs.push(log_of(10)).id();
 
-        add_layer_chip(&mut logs, 0, "entry");
+        add_layer_chip(&mut logs, id, "entry");
         wait_for_scans(&mut logs);
 
         assert!(logs.map_matches().is_empty());
@@ -721,17 +762,17 @@ mod tests {
         let mut logs = LoadedLogs::default();
         let mut log = log_of(10);
         log.associate_with(Some(id_of(&files, 0)), &files.view());
-        logs.push(log);
-        add_layer_chip(&mut logs, 0, "entry");
+        let id = logs.push(log).id();
+        add_layer_chip(&mut logs, id, "entry");
         wait_for_scans(&mut logs);
         assert_eq!(logs.map_matches().match_count(), 10);
 
-        if let Some(log) = logs.get_mut(0) {
+        if let Some(log) = logs.get_mut_by_id(id) {
             log.set_visible(false);
         }
         assert!(logs.map_matches().is_empty());
 
-        if let Some(log) = logs.get_mut(0) {
+        if let Some(log) = logs.get_mut_by_id(id) {
             log.set_visible(true);
         }
         assert_eq!(logs.map_matches().match_count(), 10);
@@ -745,13 +786,13 @@ mod tests {
         let mut logs = LoadedLogs::default();
         let mut log = log_of(10);
         log.associate_with(Some(id_of(&files, 0)), &files.view());
-        logs.push(log);
-        add_layer_chip(&mut logs, 0, "entry 2");
-        if let Some((stack, slots)) = logs.filter_stack_mut(0) {
+        let id = logs.push(log).id();
+        add_layer_chip(&mut logs, id, "entry 2");
+        if let Some((stack, slots)) = logs.filter_stack_mut_by_id(id) {
             stack.set_live_filter_text("entry 3");
             let refined = stack.add_live_filter_as_chip(slots);
-            if let Some(id) = refined {
-                stack.switch_chip_to_refine_mode(id, slots);
+            if let Some(chip) = refined {
+                stack.switch_chip_to_refine_mode(chip, slots);
             }
             stack.set_live_filter_text("entry");
         }
@@ -781,17 +822,18 @@ mod tests {
     fn unloading_a_log_takes_its_layers_off_the_map() {
         let files = loaded(vec![recording_at(55.0, 10)]);
         let mut logs = LoadedLogs::default();
-        for _ in 0..2 {
-            let mut log = log_of(10);
-            log.associate_with(Some(id_of(&files, 0)), &files.view());
-            logs.push(log);
-        }
-        add_layer_chip(&mut logs, 0, "entry 1");
-        add_layer_chip(&mut logs, 1, "entry");
+        let mut kept = log_of(10);
+        kept.associate_with(Some(id_of(&files, 0)), &files.view());
+        let kept = logs.push(kept).id();
+        let mut unloaded = log_of_service("hal-powerd", 10);
+        unloaded.associate_with(Some(id_of(&files, 0)), &files.view());
+        let unloaded = logs.push(unloaded).id();
+        add_layer_chip(&mut logs, kept, "entry 1");
+        add_layer_chip(&mut logs, unloaded, "entry");
         wait_for_scans(&mut logs);
         assert_eq!(logs.map_matches().match_count(), 11);
 
-        logs.remove(1);
+        logs.remove_by_id(unloaded);
 
         assert_eq!(
             logs.map_matches().match_count(),
@@ -808,8 +850,8 @@ mod tests {
         let mut logs = LoadedLogs::default();
         let mut log = log_of(10);
         log.associate_with(Some(id_of(&files, 0)), &files.view());
-        logs.push(log);
-        add_layer_chip(&mut logs, 0, "entry");
+        let id = logs.push(log).id();
+        add_layer_chip(&mut logs, id, "entry");
         wait_for_scans(&mut logs);
         assert_eq!(logs.map_matches().match_count(), 10);
 
@@ -825,23 +867,23 @@ mod tests {
     fn every_layer_names_the_log_it_was_filtered_out_of() {
         let files = loaded(vec![recording_at(55.0, 10)]);
         let mut logs = LoadedLogs::default();
-        for _ in 0..2 {
-            let mut log = log_of(10);
+        let mut ids = Vec::new();
+        for service in ["navsyncd", "hal-powerd"] {
+            let mut log = log_of_service(service, 10);
             log.associate_with(Some(id_of(&files, 0)), &files.view());
-            logs.push(log);
+            ids.push(logs.push(log).id());
         }
-        add_layer_chip(&mut logs, 0, "entry 1");
-        add_layer_chip(&mut logs, 1, "entry 2");
+        if let [first, second] = ids.as_slice() {
+            add_layer_chip(&mut logs, *first, "entry 1");
+            add_layer_chip(&mut logs, *second, "entry 2");
+        }
         wait_for_scans(&mut logs);
-        let ids: Vec<Option<LoadedLogId>> = (0..2)
-            .map(|index| logs.get_with_id(index).map(|(id, _)| id))
-            .collect();
 
-        let layer_logs: Vec<Option<LoadedLogId>> = logs
+        let layer_logs: Vec<LoadedLogId> = logs
             .map_matches()
             .layers()
             .iter()
-            .map(|layer| Some(layer.log.id))
+            .map(|layer| layer.log.id)
             .collect();
 
         assert_eq!(layer_logs, ids, "one layer per log, each naming its own");
@@ -852,21 +894,19 @@ mod tests {
     #[test]
     fn an_unloaded_logs_identity_is_never_handed_out_again() {
         let mut logs = LoadedLogs::default();
-        logs.push(log_of(3));
-        logs.push(log_of(3));
-        let unloaded = logs.get_with_id(0).map(|(id, _)| id);
-        let kept = logs.get_with_id(1).map(|(id, _)| id);
+        let unloaded = logs.push(log_of(3)).id();
+        let kept = logs.push(log_of_service("hal-powerd", 3)).id();
         assert_ne!(unloaded, kept);
 
-        logs.remove(0);
-        logs.push(log_of(3));
+        logs.remove_by_id(unloaded);
+        let loaded_after = logs.push(log_of_service("telemetryd", 3)).id();
 
         assert_eq!(
-            logs.get_with_id(0).map(|(id, _)| id),
-            kept,
-            "the log that stayed keeps its identity where it moved to"
+            logs.iter_with_ids().map(|(id, _)| id).collect::<Vec<_>>(),
+            [kept, loaded_after],
+            "the log that stayed keeps its identity, and the new one takes its own"
         );
-        assert_ne!(logs.get_with_id(1).map(|(id, _)| id), unloaded);
+        assert_ne!(loaded_after, unloaded);
     }
 
     /// The second log's first layer chip takes the colour after the first
@@ -874,16 +914,16 @@ mod tests {
     #[test]
     fn layer_colours_are_handed_out_across_every_loaded_log() {
         let mut logs = LoadedLogs::default();
-        logs.push(log_of(3));
-        logs.push(log_of(3));
+        let first = logs.push(log_of(3)).id();
+        let second = logs.push(log_of_service("hal-powerd", 3)).id();
 
-        assert_eq!(add_layer_chip(&mut logs, 0, "entry 0"), Some(0));
-        assert_eq!(add_layer_chip(&mut logs, 1, "entry 1"), Some(1));
+        assert_eq!(add_layer_chip(&mut logs, first, "entry 0"), Some(0));
+        assert_eq!(add_layer_chip(&mut logs, second, "entry 1"), Some(1));
 
-        logs.remove(0);
+        logs.remove_by_id(first);
 
         assert_eq!(
-            add_layer_chip(&mut logs, 0, "entry 2"),
+            add_layer_chip(&mut logs, second, "entry 2"),
             Some(0),
             "unloading a log frees the colours its chips held"
         );
@@ -894,21 +934,21 @@ mod tests {
     #[test]
     fn a_log_loaded_again_takes_colours_for_the_chips_it_kept() {
         let mut logs = LoadedLogs::default();
-        logs.push(log_of(3));
-        logs.push(log_of(3));
-        add_layer_chip(&mut logs, 0, "entry 0");
-        add_layer_chip(&mut logs, 1, "entry 1");
+        let first = logs.push(log_of(3)).id();
+        let second = logs.push(log_of_service("hal-powerd", 3)).id();
+        add_layer_chip(&mut logs, first, "entry 0");
+        add_layer_chip(&mut logs, second, "entry 1");
 
-        let unloaded = logs.remove(0).expect("the log is loaded");
-        logs.push(unloaded);
+        let unloaded = logs.remove_by_id(first).expect("the log is loaded");
+        let loaded_again = logs.push(unloaded).id();
 
         assert_eq!(
-            first_chip_slot(&logs, 0),
+            first_chip_slot(&logs, second),
             Some(1),
             "the log that stayed loaded keeps the colour it had"
         );
         assert_eq!(
-            first_chip_slot(&logs, 1),
+            first_chip_slot(&logs, loaded_again),
             Some(0),
             "the colour the unloaded log freed is the lowest one free again"
         );
@@ -922,14 +962,14 @@ mod tests {
         let mut logs = LoadedLogs::default();
         let mut log = log_of(10);
         log.record_attachment(attachment.clone(), Vec::new());
-        let id = logs.push(log);
+        let id = logs.push(log).id();
 
         assert!(
             logs.take_filter_stack_edits_to_store().is_empty(),
             "the database holds the stack the log was attached with"
         );
 
-        add_layer_chip(&mut logs, 0, "entry 1");
+        add_layer_chip(&mut logs, id, "entry 1");
 
         let edits = logs.take_filter_stack_edits_to_store();
         assert_eq!(
@@ -983,7 +1023,7 @@ mod tests {
         let mut logs = LoadedLogs::default();
         let mut log = log_of(10);
         log.restore_attachment(attachment.clone(), stored.clone());
-        let id = logs.push(log);
+        let id = logs.push(log).id();
         wait_for_scans(&mut logs);
 
         let log = logs.get_by_id(id).expect("the restored log is loaded");
@@ -999,38 +1039,56 @@ mod tests {
         );
     }
 
-    /// The same log may be loaded twice: the two are separate logs with
-    /// separate targets, visibility, and lifetimes.
+    /// One log per content: a second copy of a text the session already holds
+    /// is refused, whatever name it arrived under.
     #[test]
-    fn the_same_log_loaded_twice_stays_two_independent_logs() {
-        let files = loaded(vec![recording_at(55.0, 10), recording_at(60.0, 10)]);
+    fn pushing_content_that_is_already_loaded_answers_with_the_loaded_log() {
         let mut logs = LoadedLogs::default();
-        logs.push(log_of(10));
-        logs.push(log_of(10));
+        let loaded = logs.push(log_of(10));
 
-        if let Some(first) = logs.get_mut(0) {
-            first.associate_with(Some(id_of(&files, 0)), &files.view());
-            first.set_visible(false);
-        }
-        if let Some(second) = logs.get_mut(1) {
-            second.associate_with(Some(id_of(&files, 1)), &files.view());
-        }
+        let second = logs.push(LoadedLog::new(
+            Some("copy-of-navsyncd.log".to_owned()),
+            parsed_log(10),
+            association_window(),
+        ));
 
-        assert_eq!(logs.len(), 2);
-        assert_eq!(
-            logs.get(0).map(LoadedLog::is_visible),
-            Some(false),
-            "hiding one log leaves the other shown"
-        );
-        assert_eq!(logs.get(1).map(LoadedLog::is_visible), Some(true));
-
-        logs.remove(0);
-
+        assert_eq!(second, LogPushOutcome::AlreadyLoaded(loaded.id()));
         assert_eq!(logs.len(), 1);
         assert_eq!(
-            logs.get(0).and_then(LoadedLog::association_target),
-            Some(id_of(&files, 1)),
-            "removing a log leaves the remaining one associated as it was"
+            logs.get_by_id(loaded.id()).map(LoadedLog::name),
+            Some("navsyncd.log"),
+            "the loaded log keeps the name it was loaded under"
+        );
+    }
+
+    /// The refused copy leaves the loaded log as it was, chips and colour slots
+    /// included.
+    #[test]
+    fn a_refused_copy_takes_no_colour_slot_from_the_loaded_log() {
+        let mut logs = LoadedLogs::default();
+        let id = logs.push(log_of(10)).id();
+        add_layer_chip(&mut logs, id, "entry 1");
+
+        let stored = vec![StoredLogFilter {
+            text: "entry 2".to_owned(),
+            regex: false,
+            enabled: true,
+            mode: StoredLogFilterMode::Layer { color_slot: 1 },
+        }];
+        let mut copy = log_of(10);
+        copy.restore_attachment(attachment_ref(), stored);
+        logs.push(copy);
+
+        assert_eq!(first_chip_slot(&logs, id), Some(0));
+        assert_eq!(
+            logs.get_by_id(id).and_then(LoadedLog::attachment),
+            None,
+            "the loaded log took nothing from the copy that was refused"
+        );
+        assert_eq!(
+            add_layer_chip(&mut logs, id, "entry 2"),
+            Some(1),
+            "the refused copy left the palette as the loaded log had it"
         );
     }
 }

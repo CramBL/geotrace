@@ -59,7 +59,8 @@ use gt_fetch::TransportSource;
 use gt_filter::GlobalFilter;
 use gt_instance_lock::{DataDirectoryLock, DataDirectoryOwnership};
 use gt_loaded_files::{LoadedFileId, LoadedFiles};
-use gt_log_view::{LoadedLog, LoadedLogs};
+use gt_log_view::{LoadedLog, LoadedLogs, LogPushOutcome};
+use gt_logfile::ParsedLog;
 use gt_map::NavMap;
 use gt_map::mapbox_tiles;
 use gt_pending_writes::PendingWrites;
@@ -953,49 +954,7 @@ impl App {
                 parsed,
                 restored,
             }) => {
-                let window = chrono::Duration::seconds(
-                    i64::try_from(self.assoc_config.log_association_window_s).unwrap_or(i64::MAX),
-                );
-                let mut log = LoadedLog::new(filename, parsed, window);
-                let mut restored_target = None;
-                let restored_from_history = restored.is_some();
-                if let Some(restore) = restored {
-                    restored_target = self.loaded_recording_id(&restore.attachment.recording);
-                    log.restore_attachment(restore.attachment, restore.filters);
-                }
-                // Associating runs on the UI thread, as the spatial-index
-                // rebuild after a recording load does: one binary search per
-                // entry, spread over gt-logfile's workers.
-                let shared = self.shared.borrow();
-                let recordings = shared.loaded_files.view();
-                let unambiguous = log
-                    .rank_association_candidates(&recordings)
-                    .unambiguous_target();
-                let ask = self.ask_log_association_target
-                    && !restored_from_history
-                    && !recordings.is_empty();
-                // Anchoring without the user choosing is safe only where there
-                // is nothing to choose between, and the dialog is that choice.
-                let target = if restored_from_history {
-                    restored_target
-                } else if ask {
-                    None
-                } else {
-                    unambiguous
-                };
-                log.associate_with(target, &recordings);
-                drop(shared);
-                log::info!(
-                    "Loaded log {:?}: {} entries, {} of them associated",
-                    log.name(),
-                    log.parsed().entries().len(),
-                    log.associated_entry_count()
-                );
-                let log_id = self.logs.push(log);
-                self.log_viewer.open_on_newly_loaded_log(&self.logs);
-                if ask {
-                    self.association_dialog = Some(LogAssociationDialog::new(log_id, unambiguous));
-                }
+                self.load_parsed_log(filename, parsed, restored);
                 self.load_error = None;
                 self.loader.finishing_jobs.push(FinishedJob {
                     filename: completed.filename,
@@ -1006,6 +965,82 @@ impl App {
             Err(e) => {
                 log::error!("Background load failed: {e}");
                 self.load_error = Some(e);
+            }
+        }
+    }
+
+    /// Loads a log the worker finished parsing, associates it, and shows it in
+    /// the viewer.
+    ///
+    /// The session holds one log per content: text it already holds is not
+    /// loaded a second time.
+    fn load_parsed_log(
+        &mut self,
+        filename: Option<String>,
+        parsed: ParsedLog,
+        restored: Option<loader::AttachedLogRestore>,
+    ) {
+        let window = chrono::Duration::seconds(
+            i64::try_from(self.assoc_config.log_association_window_s).unwrap_or(i64::MAX),
+        );
+        let mut log = LoadedLog::new(filename, parsed, window);
+        let restored_from_history = restored.is_some();
+        if restored_from_history && self.logs.id_of_content(log.content_hash()).is_some() {
+            log::info!(
+                "Skipped the attachment {:?}: this session holds that log already",
+                log.name()
+            );
+            return;
+        }
+        let mut restored_target = None;
+        if let Some(restore) = restored {
+            restored_target = self.loaded_recording_id(&restore.attachment.recording);
+            log.restore_attachment(restore.attachment, restore.filters);
+        }
+        // Associating runs on the UI thread, as the spatial-index rebuild
+        // after a recording load does: one binary search per entry, spread
+        // over gt-logfile's workers.
+        let shared = self.shared.borrow();
+        let recordings = shared.loaded_files.view();
+        let unambiguous = log
+            .rank_association_candidates(&recordings)
+            .unambiguous_target();
+        let ask =
+            self.ask_log_association_target && !restored_from_history && !recordings.is_empty();
+        // Anchoring without the user choosing is safe only where there is
+        // nothing to choose between, and the dialog is that choice.
+        let target = if restored_from_history {
+            restored_target
+        } else if ask {
+            None
+        } else {
+            unambiguous
+        };
+        log.associate_with(target, &recordings);
+        drop(shared);
+        let entry_count = log.parsed().entries().len();
+        let associated_entry_count = log.associated_entry_count();
+        let name = log.name().to_owned();
+        match self.logs.push(log) {
+            LogPushOutcome::NewlyLoaded(id) => {
+                log::info!(
+                    "Loaded log {name:?}: {entry_count} entries, {associated_entry_count} of them associated"
+                );
+                self.log_viewer.open_on_log(id);
+                if ask {
+                    self.association_dialog = Some(LogAssociationDialog::new(id, unambiguous));
+                }
+            }
+            LogPushOutcome::AlreadyLoaded(id) => {
+                let loaded_name = self
+                    .logs
+                    .get_by_id(id)
+                    .map_or(name.as_str(), LoadedLog::name);
+                log::info!(
+                    "Did not load a second copy of {loaded_name:?}: this session holds that log already"
+                );
+                self.toasts.info(format!("{loaded_name} is already loaded"));
+                self.log_viewer.open_on_log(id);
             }
         }
     }

@@ -18,6 +18,8 @@
 ### Changed
 
 - **Interface:** A duration under a second now reads in tenths of a second, from "0.1s" to "0.9s".
+- **Log Viewer:** Opening, dropping or pasting a log whose text is already loaded now selects the loaded log and toasts its name.
+- **Log Viewer:** Opening a recording now skips its attached logs whose text is already loaded.
 - **Map & Tracks:** A recording with an event marker style naming an unknown icon, or a color that is not a #RRGGBB value, now loads with that marker drawn as a pin or in gray, and the recorded value named in the data quality warnings.
 - **Map & Tracks:** A recording with marker or event marker text that is not valid UTF-8 is now rejected with an error naming the field.
 
