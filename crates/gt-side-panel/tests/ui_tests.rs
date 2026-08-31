@@ -228,6 +228,58 @@ fn snapshot_one_file_expanded() {
     harness.snapshot("side_panel_file_expanded");
 }
 
+/// The tree's track rows line up in the same columns as the Visible section:
+/// a track of over an hour and tens of kilometres above one of half a minute.
+#[test]
+fn snapshot_tree_track_columns_across_magnitudes() {
+    let mut files = LoadedFiles::new();
+    files.push(
+        build_file(
+            "commute.gtd",
+            &gt_test_utils::nav_data_with_gap(4_000, 30),
+            gt_track_builder::FileMeta::default(),
+            vec![],
+        ),
+        FileHistory::None,
+    );
+    let mut state = make_state_from_files(files);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    let mut harness = make_harness(state);
+    harness.run();
+    harness.snapshot("side_panel_tree_track_columns");
+}
+
+/// One set of column widths over every expanded recording: the second
+/// recording's tracks line up under the first's.
+#[test]
+fn snapshot_tree_track_columns_across_two_expanded_recordings() {
+    let mut files = LoadedFiles::new();
+    files.push(
+        build_file(
+            "commute.gtd",
+            &gt_test_utils::nav_data_with_gap(4_000, 30),
+            gt_track_builder::FileMeta::default(),
+            vec![],
+        ),
+        FileHistory::None,
+    );
+    files.push(
+        build_file(
+            "paused.gtd",
+            &gt_test_utils::nav_data_with_gap(60, 60),
+            gt_track_builder::FileMeta::default(),
+            vec![],
+        ),
+        FileHistory::None,
+    );
+    let mut state = make_state_from_files(files);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    state.tree.toggle_expand_file(FileIdx::new(1));
+    let mut harness = make_harness_with_a_tall_panel(state);
+    harness.run();
+    harness.snapshot("side_panel_tree_track_columns_two_recordings");
+}
+
 #[test]
 fn snapshot_masked_categories_show_hint() {
     // Categories hidden by the map display toggles get a trailing
@@ -1136,6 +1188,23 @@ fn expand_file_is_reflected_in_tree_state() {
     harness.state_mut().tree.toggle_expand_file(FileIdx::new(0));
     harness.run();
     assert!(harness.state().tree.files[0].expanded);
+}
+
+/// The tree's track row is one surface over its whole width: a click past its
+/// columns expands the track.
+#[test]
+fn clicking_a_tree_track_row_past_its_columns_expands_the_track() {
+    let mut state = make_state(1);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    let mut harness = make_harness(state);
+    harness.run();
+    let row = tree_row(&harness, "#1  4.6 km").rect();
+
+    harness
+        .inner
+        .click_at(egui::pos2(row.right() - 2.0, row.center().y));
+
+    assert!(harness.state().tree.files[0].tracks[0].expanded);
 }
 
 #[test]

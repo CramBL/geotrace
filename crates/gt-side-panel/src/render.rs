@@ -1,4 +1,4 @@
-use egui::{Button, InteractOptions, Label, RichText, ScrollArea, Sides, TextEdit};
+use egui::{Button, Label, RichText, ScrollArea, Sides, TextEdit};
 use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::CLOCK as ICON_CLOCK;
 use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
@@ -23,11 +23,12 @@ use gt_ui_types::{
 use rustc_hash::FxHashMap;
 
 use crate::filter::{FilterPanelState, render_filter_panel};
+use crate::track_columns::{self, TrackColumnCells, TrackColumnWidths, TrackRowCellColor};
 use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TreeState};
 use crate::widgets::{
     CHECKBOX_PADDING, MetadataView, PointClickRequests, checkbox_width, expand_arrow,
-    has_metadata_details, paint_map_hover_bg, point_item_row, recording_tooltip_rows,
-    track_row_label, track_tooltip_rows, tri_checkbox,
+    expand_arrow_width, has_metadata_details, paint_map_hover_bg, point_item_row,
+    recording_tooltip_rows, tri_checkbox,
 };
 
 /// A recording's metadata, captured when its note icon is clicked so the app can
@@ -345,11 +346,12 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
                 .min_scrolled_height(0.0)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    let columns = TreeTrackColumns::measure(ui, ctx);
                     let names = ctx.recording_names;
                     for fi in 0..ctx.files().len() {
                         let fi = FileIdx::new(fi);
                         let display_name = names.get(fi).unwrap_or_default();
-                        render_file_row(ui, fi, display_name, scope, ctx);
+                        render_file_row(ui, fi, display_name, scope, &columns, ctx);
                     }
                 });
         });
@@ -450,160 +452,11 @@ const VISIBLE_SECTION_ROW_SPACING: f32 = 1.0;
 /// label.
 const VISIBLE_SECTION_ICON_WIDTH: f32 = 10.0;
 
-/// The header over the track numbers, which are drawn bare.
-const NUMBER_COLUMN_HEADER: &str = "#";
-
-/// The header over the distances, which are drawn without their unit.
-const DISTANCE_COLUMN_HEADER: &str = "km";
-
-/// The header over the durations, which are drawn as `h:mm:ss`.
-const DURATION_COLUMN_HEADER: &str = ICON_CLOCK;
-
 /// A track row of the section. The cells are built before any row draws: the
 /// column widths come from measuring them.
 struct VisibleTrackRow {
     track_ref: TrackRef,
     cells: TrackColumnCells,
-}
-
-/// The cells of one track row. The units are stated once in the header row,
-/// not repeated per cell.
-struct TrackColumnCells {
-    number: String,
-    /// `None` for a track with no measured geometry, drawn as an em dash.
-    distance_km: Option<String>,
-    duration: String,
-}
-
-impl TrackColumnCells {
-    fn for_track(track: &LoadedTrack) -> Self {
-        Self {
-            number: track.metadata.index.to_string(),
-            distance_km: track
-                .geometry
-                .measured()
-                .map(|geometry| gt_fmt::format_kilometers(geometry.distance_km)),
-            duration: gt_fmt::DurationClockFormat::HoursMinutesSeconds
-                .format_seconds(track.metadata.duration.num_seconds()),
-        }
-    }
-
-    fn distance(&self) -> &str {
-        self.distance_km.as_deref().unwrap_or(gt_ui_theme::EM_DASH)
-    }
-
-    /// What a screen reader announces for the row: the drawn cells, the
-    /// distance with the unit its header states.
-    fn accessibility_label(&self) -> String {
-        let distance = match &self.distance_km {
-            Some(km) => format!("{km} km"),
-            None => self.distance().to_owned(),
-        };
-        format!("#{}  {distance}  {}", self.number, self.duration)
-    }
-
-    fn paint(
-        &self,
-        ui: &mut egui::Ui,
-        TrackColumnWidths {
-            number,
-            distance,
-            duration,
-        }: TrackColumnWidths,
-        color: egui::Color32,
-    ) {
-        let font = egui::TextStyle::Body.resolve(ui.style());
-        let align = egui::Align2::RIGHT_CENTER;
-        paint_column_cell(ui, number, &self.number, &font, color, align);
-        paint_column_cell(ui, distance, self.distance(), &font, color, align);
-        paint_column_cell(ui, duration, &self.duration, &font, color, align);
-    }
-}
-
-#[derive(Clone, Copy)]
-struct TrackColumnWidths {
-    number: f32,
-    distance: f32,
-    duration: f32,
-}
-
-impl TrackColumnWidths {
-    /// The width of the widest cell of each column, over the header and the
-    /// tracks the section shows.
-    fn measure<'c>(ui: &egui::Ui, cells: impl Iterator<Item = &'c TrackColumnCells>) -> Self {
-        let cell_font = egui::TextStyle::Body.resolve(ui.style());
-        let header_font = egui::TextStyle::Small.resolve(ui.style());
-        let width = |text: &str, font: &egui::FontId| {
-            ui.painter()
-                .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::PLACEHOLDER)
-                .size()
-                .x
-        };
-        let mut widths = Self {
-            number: width(NUMBER_COLUMN_HEADER, &header_font),
-            distance: width(DISTANCE_COLUMN_HEADER, &header_font),
-            duration: width(DURATION_COLUMN_HEADER, &header_font),
-        };
-        let Self {
-            number,
-            distance,
-            duration,
-        } = &mut widths;
-        for row in cells {
-            *number = number.max(width(&row.number, &cell_font));
-            *distance = distance.max(width(row.distance(), &cell_font));
-            *duration = duration.max(width(&row.duration, &cell_font));
-        }
-        widths
-    }
-}
-
-/// Paints `text` at `align` in a cell `width` wide and returns the cell. The
-/// values of a column line up under each other: the row's layout advances past
-/// each cell.
-fn paint_column_cell(
-    ui: &mut egui::Ui,
-    width: f32,
-    text: &str,
-    font: &egui::FontId,
-    color: egui::Color32,
-    align: egui::Align2,
-) -> egui::Rect {
-    let (_, rect) = ui.allocate_space(egui::vec2(width, ui.spacing().interact_size.y));
-    ui.painter()
-        .text(align.pos_in_rect(&rect), align, text, font.clone(), color);
-    rect
-}
-
-/// The section's header row, over the columns of the track rows below it. A
-/// hairline under it spans the columns, from the number column's left edge to
-/// the duration column's right edge. The leading space is the track rows'
-/// indent plus their checkbox plus the gap after it, which puts the headers
-/// over the columns.
-fn render_visible_column_header(
-    ui: &mut egui::Ui,
-    TrackColumnWidths {
-        number,
-        distance,
-        duration,
-    }: TrackColumnWidths,
-) {
-    let font = egui::TextStyle::Small.resolve(ui.style());
-    let color = ui.visuals().text_color();
-    let align = egui::Align2::CENTER_CENTER;
-    let row = ui.horizontal(|ui| {
-        let leading_space = ui.spacing().indent + checkbox_width(ui) + ui.spacing().item_spacing.x;
-        ui.add_space(leading_space);
-        let first = paint_column_cell(ui, number, NUMBER_COLUMN_HEADER, &font, color, align);
-        paint_column_cell(ui, distance, DISTANCE_COLUMN_HEADER, &font, color, align);
-        let last = paint_column_cell(ui, duration, DURATION_COLUMN_HEADER, &font, color, align);
-        first.left()..=last.right()
-    });
-    ui.painter().hline(
-        row.inner,
-        row.response.rect.bottom(),
-        ui.visuals().widgets.noninteractive.bg_stroke,
-    );
 }
 
 /// The visible-tracks section above the tree: the recordings and the tracks
@@ -660,7 +513,9 @@ fn render_visible_tracks_section(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) 
                         });
                         return;
                     }
-                    render_visible_column_header(ui, column_widths);
+                    let leading_space =
+                        ui.spacing().indent + checkbox_width(ui) + ui.spacing().item_spacing.x;
+                    track_columns::render_header(ui, leading_space, column_widths);
                     let names = ctx.recording_names;
                     for (group, rows) in groups.iter().zip(&rows) {
                         let display_name = names.get(group.file).unwrap_or_default();
@@ -738,61 +593,20 @@ fn render_visible_track_row(
     let panel_hovered = ctx.highlight.hovers_the_whole_track(track_ref);
     let map_hovered = ctx.highlight.hovers_a_point_of_track(track_ref);
     let is_selected = ctx.tree.selection.contains(&key);
-    let cell_color = if panel_hovered {
-        gt_ui_theme::HIGHLIGHT_BLUE
-    } else if is_selected {
-        ui.visuals().selection.stroke.color
-    } else if passes {
-        ui.visuals().text_color()
-    } else {
-        ui.visuals().weak_text_color()
-    };
+    let cell_color = TrackRowCellColor {
+        panel_hovered,
+        selected: is_selected,
+        passes_filter: passes,
+    }
+    .resolve(ui);
 
-    // Claimed before the row draws: its fill belongs behind the cells.
-    let background = ui.painter().add(egui::Shape::Noop);
-    let row_width = ui.available_width();
-    let row = ui
-        .horizontal(|ui| {
-            ui.set_min_width(row_width);
+    let (response, ()) =
+        track_columns::render_row_as_one_surface(ui, &track.metadata, cells, is_selected, |ui| {
             if tri_checkbox(ui, CheckState::On).clicked() {
                 ctx.tree.hide_track(track_ref);
             }
             cells.paint(ui, column_widths, cell_color);
-        })
-        .response;
-    // The row's sense registers below the checkbox it holds: the checkbox takes
-    // its own clicks, the row takes the rest of its width.
-    let response = ui
-        .interact_opt(
-            row.rect,
-            row.id,
-            egui::Sense::click(),
-            InteractOptions { move_to_top: false },
-        )
-        .on_hover_ui(|ui| track_tooltip_rows(ui, &track.metadata));
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(
-            egui::WidgetType::SelectableLabel,
-            true,
-            is_selected,
-            cells.accessibility_label(),
-        )
-    });
-
-    let row_fill = if is_selected {
-        Some(ui.visuals().selection.bg_fill)
-    } else if response.hovered() {
-        Some(ui.visuals().widgets.hovered.weak_bg_fill)
-    } else {
-        None
-    };
-    if let Some(fill) = row_fill {
-        let corner_radius = ui.visuals().widgets.hovered.corner_radius;
-        ui.painter().set(
-            background,
-            egui::Shape::rect_filled(response.rect, corner_radius, fill),
-        );
-    }
+        });
     if map_hovered {
         paint_map_hover_bg(
             ui,
@@ -823,11 +637,58 @@ fn render_visible_track_row(
     });
 }
 
+/// The track rows the tree draws right now. The columns line up across
+/// recordings: one set of widths is measured over the cells of every expanded
+/// recording's tracks.
+struct TreeTrackColumns {
+    cells: FxHashMap<TrackRef, TrackColumnCells>,
+    widths: TrackColumnWidths,
+    arrow_width: f32,
+    /// The first expanded recording with a track. The header row is drawn
+    /// above that recording's track rows, once for the whole tree, and is
+    /// `None` while the tree shows no track row.
+    header_file: Option<FileIdx>,
+}
+
+impl TreeTrackColumns {
+    fn measure(ui: &egui::Ui, ctx: &PanelContext<'_>) -> Self {
+        let mut cells = Vec::new();
+        let mut header_file = None;
+        for (fi, file) in ctx.files().iter().enumerate() {
+            let fi = FileIdx::new(fi);
+            if !ctx.tree.file_node(fi).is_some_and(|node| node.expanded) {
+                continue;
+            }
+            if !file.tracks.is_empty() {
+                header_file.get_or_insert(fi);
+            }
+            for (ti, track) in file.tracks.iter().enumerate() {
+                let track_ref = TrackRef::new(fi, TrackIdx::new(ti));
+                cells.push((track_ref, TrackColumnCells::for_track(track)));
+            }
+        }
+        let widths = TrackColumnWidths::measure(ui, cells.iter().map(|(_, cells)| cells));
+        Self {
+            cells: cells.into_iter().collect(),
+            widths,
+            arrow_width: expand_arrow_width(ui),
+            header_file,
+        }
+    }
+
+    /// What a track row draws before its first column: the checkbox and the
+    /// expand arrow, each followed by the layout's gap.
+    fn leading_space(&self, ui: &egui::Ui) -> f32 {
+        checkbox_width(ui) + self.arrow_width + 2.0 * ui.spacing().item_spacing.x
+    }
+}
+
 fn render_file_row(
     ui: &mut egui::Ui,
     fi: FileIdx,
     display_name: &str,
     scope: MapScope<'_>,
+    columns: &TreeTrackColumns,
     ctx: &mut PanelContext<'_>,
 ) {
     let Some(file) = ctx.file(fi) else {
@@ -961,9 +822,12 @@ fn render_file_row(
 
     if is_expanded {
         ui.indent(format!("file_{fi}"), |ui| {
+            if columns.header_file == Some(fi) {
+                track_columns::render_header(ui, columns.leading_space(ui), columns.widths);
+            }
             let track_count = ctx.file(fi).map_or(0, |f| f.tracks.len());
             for ti in 0..track_count {
-                render_track_row(ui, fi, TrackIdx::new(ti), scope, ctx);
+                render_track_row(ui, fi, TrackIdx::new(ti), scope, columns, ctx);
             }
         });
     }
@@ -1422,9 +1286,13 @@ fn render_track_row(
     fi: FileIdx,
     ti: TrackIdx,
     scope: MapScope<'_>,
+    columns: &TreeTrackColumns,
     ctx: &mut PanelContext<'_>,
 ) {
     let track_ref = TrackRef::new(fi, ti);
+    let Some(cells) = columns.cells.get(&track_ref) else {
+        return;
+    };
     let (track, passes, is_expanded, panel_hovered, map_hovered, key) = {
         let Some(file) = ctx.file(fi) else {
             return;
@@ -1457,39 +1325,44 @@ fn render_track_row(
         .track_node(track_ref)
         .map_or(CheckState::On, |t| t.check);
 
-    let row_response = ui.horizontal(|ui| {
-        let chk_resp = tri_checkbox(ui, check);
-        if chk_resp.clicked() {
-            ctx.tree.toggle_track_check(track_ref);
-        }
-        let newly_enabled =
-            chk_resp.clicked() && matches!(check, CheckState::Off | CheckState::Mixed);
-        let arrow = expand_arrow(is_expanded);
-        let mut text = RichText::new(format!("{arrow} {}", track_row_label(&track)));
-        if !passes {
-            text = text.weak();
-        }
-        if panel_hovered {
-            text = text.color(gt_ui_theme::HIGHLIGHT_BLUE);
-        }
-        let is_selected = ctx.tree.selection.contains(&key);
-        let resp = ui.selectable_label(is_selected, text);
-        let resp = resp.on_hover_ui(|ui| track_tooltip_rows(ui, &track.metadata));
-        if let Some(warning) = CoordinateWarning::for_track(&track) {
-            ui.label(
-                RichText::new(ICON_WARNING)
-                    .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
-            )
-            .on_hover_text(warning.hover_text());
-        }
-        snap_control(ui, track_ref, ctx);
-        (resp, newly_enabled)
-    });
+    let is_selected = ctx.tree.selection.contains(&key);
+    let cell_color = TrackRowCellColor {
+        panel_hovered,
+        selected: is_selected,
+        passes_filter: passes,
+    }
+    .resolve(ui);
+
+    let (response, newly_enabled) =
+        track_columns::render_row_as_one_surface(ui, &track.metadata, cells, is_selected, |ui| {
+            let chk_resp = tri_checkbox(ui, check);
+            if chk_resp.clicked() {
+                ctx.tree.toggle_track_check(track_ref);
+            }
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            track_columns::paint_column_cell(
+                ui,
+                columns.arrow_width,
+                expand_arrow(is_expanded),
+                &font,
+                cell_color,
+                egui::Align2::CENTER_CENTER,
+            );
+            cells.paint(ui, columns.widths, cell_color);
+            if let Some(warning) = CoordinateWarning::for_track(&track) {
+                ui.label(
+                    RichText::new(ICON_WARNING)
+                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                )
+                .on_hover_text(warning.hover_text());
+            }
+            snap_control(ui, track_ref, ctx);
+            chk_resp.clicked() && matches!(check, CheckState::Off | CheckState::Mixed)
+        });
 
     if map_hovered {
-        paint_map_hover_bg(ui, row_response.response.rect, map_hover_bg);
+        paint_map_hover_bg(ui, response.rect, map_hover_bg);
     }
-    let (response, newly_enabled) = row_response.inner;
     if ctx.tree.reveal_request == Some(key) {
         response.scroll_to_me(Some(egui::Align::Center));
     }
