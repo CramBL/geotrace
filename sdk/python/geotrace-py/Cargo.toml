@@ -10,7 +10,7 @@ repository = "https://github.com/CramBL/geotrace"
 
 # Isolated workspace - not a member of the root workspace: a PyO3 cdylib needs
 # unwinding, which the root's `panic = "abort"` release profile takes away.
-# maturin builds it, and the root justfile's gates run over it by manifest path.
+# maturin builds it, and the justfile's checks run over it by manifest path.
 [workspace]
 
 [lib]
