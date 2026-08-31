@@ -867,6 +867,7 @@ impl App {
                     log_hover,
                     requests: &mut self.log_viewer_requests,
                     write_access: self.pending_writes.write_access(),
+                    history_available: self.history.available(),
                     dialog_open: self.association_dialog.is_some(),
                 },
             );

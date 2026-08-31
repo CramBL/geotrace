@@ -27,16 +27,40 @@ pub(in crate::app) const LOAD_ATTACHMENT_LABEL: &str = "Load";
 
 const LOAD_ATTACHMENT_HOVER: &str = "Read this log back out of the recording and load it";
 
-/// One group of the list: a loaded recording with the logs anchored to it and
-/// the attachments it holds that are not loaded, or the logs anchored to no
-/// recording.
+/// One group of the list: the rows sharing a [`LogGroupHeading`].
 #[derive(Debug, PartialEq)]
 pub(super) struct LogGroup {
-    /// How the app names the recording these rows belong to, `None` for the
-    /// group of logs anchored to no recording.
-    pub recording: Option<String>,
+    pub heading: LogGroupHeading,
 
     pub rows: Vec<LogRow>,
+}
+
+/// What the rows of a group have in common, as the list heads them.
+#[derive(Debug, PartialEq)]
+pub(super) enum LogGroupHeading {
+    /// A recording of this session, under the name the app gives it, with the
+    /// logs anchored to it and the attachments it holds that are not loaded.
+    LoadedRecording(String),
+
+    /// A recording that is not loaded, under the display form of its identity
+    /// in the history database, with the logs anchored to it.
+    RecordingNotLoaded(String),
+
+    /// The logs anchored to no recording.
+    NotAnchored,
+}
+
+impl LogGroupHeading {
+    /// The text over the group's rows.
+    pub(super) fn text(&self) -> String {
+        match self {
+            Self::LoadedRecording(recording) => recording.clone(),
+            Self::RecordingNotLoaded(recording) => {
+                format!("{recording} ({})", super::NOT_LOADED_MARKER)
+            }
+            Self::NotAnchored => NOT_ANCHORED_HEADING.to_owned(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -75,7 +99,8 @@ pub(super) struct LogListActions {
 }
 
 /// Every loaded log under the recording it is anchored to, in the order the
-/// recordings loaded, followed by the logs anchored to no recording.
+/// recordings loaded, then the logs whose recording is not loaded, then the
+/// logs anchored to no recording.
 pub(super) fn group_logs_by_recording(
     logs: &LoadedLogs,
     recordings: LoadedFilesView<'_>,
@@ -114,20 +139,37 @@ pub(super) fn group_logs_by_recording(
         }
         if !rows.is_empty() {
             groups.push(LogGroup {
-                recording: Some(recording),
+                heading: LogGroupHeading::LoadedRecording(recording),
                 rows,
             });
         }
     }
 
-    let anchorless: Vec<LogRow> = logs
-        .iter_with_ids()
-        .filter(|(id, _)| !grouped.contains(id))
-        .map(|(id, log)| LogRow::of_loaded_log(id, log, None))
-        .collect();
+    let mut not_loaded: Vec<(RecordingKey, String, Vec<LogRow>)> = Vec::new();
+    let mut anchorless: Vec<LogRow> = Vec::new();
+    for (id, log) in logs.iter_with_ids().filter(|(id, _)| !grouped.contains(id)) {
+        let Some(key) = log.anchor_key() else {
+            anchorless.push(LogRow::of_loaded_log(id, log, None));
+            continue;
+        };
+        let recording = key.database_ref().map_or(EM_DASH, |db_ref| {
+            gt_loaded_files::display_identity(&db_ref.identity).0
+        });
+        let row = LogRow::of_loaded_log(id, log, Some(recording));
+        match not_loaded.iter_mut().find(|(anchored, ..)| anchored == key) {
+            Some((.., rows)) => rows.push(row),
+            None => not_loaded.push((key.clone(), recording.to_owned(), vec![row])),
+        }
+    }
+    for (_, recording, rows) in not_loaded {
+        groups.push(LogGroup {
+            heading: LogGroupHeading::RecordingNotLoaded(recording),
+            rows,
+        });
+    }
     if !anchorless.is_empty() {
         groups.push(LogGroup {
-            recording: None,
+            heading: LogGroupHeading::NotAnchored,
             rows: anchorless,
         });
     }
@@ -150,9 +192,7 @@ pub(super) fn log_list_ui(
             rows_ui(ui, group, logs, selected, &mut actions);
             continue;
         }
-        ui.label(
-            RichText::new(group.recording.as_deref().unwrap_or(NOT_ANCHORED_HEADING)).strong(),
-        );
+        ui.label(RichText::new(group.heading.text()).strong());
         ui.indent(("log_viewer_group", index), |ui| {
             rows_ui(ui, group, logs, selected, &mut actions);
         });

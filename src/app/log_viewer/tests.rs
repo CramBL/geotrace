@@ -111,6 +111,9 @@ struct ViewerState {
     /// What the session may write, which is what grays the attachment
     /// controls.
     write_access: WriteAccess,
+    /// Whether the recordings database is open, which is what grays the
+    /// footer's "Load recording".
+    history_available: bool,
 }
 
 impl ViewerState {
@@ -202,6 +205,7 @@ fn viewer_ui(ui: &mut egui::Ui, state: &mut ViewerState) {
             map_center_request: &mut state.map_center,
             log_hover: &mut state.log_hover,
             requests: &mut state.requests,
+            history_available: state.history_available,
             dialog_open: false,
         },
     );
@@ -247,6 +251,7 @@ fn viewer_state(recordings: Vec<gt_types::LoadedFile>, logs: &[(&str, &str)]) ->
         log_hover: LogMatchHover::default(),
         requests: LogViewerRequests::default(),
         write_access: WriteAccess::Owner,
+        history_available: true,
     }
 }
 
@@ -864,12 +869,7 @@ fn listed_rows(state: &ViewerState) -> Vec<(String, Vec<String>)> {
                 log_list::LogRow::Available(available) => available.name.clone(),
             })
             .collect();
-        (
-            group
-                .recording
-                .unwrap_or_else(|| log_list::NOT_ANCHORED_HEADING.to_owned()),
-            rows,
-        )
+        (group.heading.text(), rows)
     })
     .collect()
 }
@@ -1004,6 +1004,58 @@ fn an_attachment_that_is_not_loaded_is_listed_with_a_load_button() {
     assert_eq!(requested.attachment.id, attachment.id);
     assert_eq!(requested.attachment.recording, stored_recording_ref());
     assert_eq!(requested.name, "navsyncd.log");
+}
+
+/// The viewer over the fixture log stored with a recording the session has not
+/// loaded, as opening that log from the history window leaves it.
+fn harness_over_a_log_whose_recording_is_not_loaded() -> Harness<'static, ViewerState> {
+    let mut state = viewer_state(Vec::new(), &[]);
+    load_the_stored_log(&mut state, &stored_attachment());
+    harness_from(state)
+}
+
+/// The heading the list gives the group of a recording that is not loaded, and
+/// the row the footer states it on.
+const NOT_LOADED_RECORDING: &str = "nav-devkit-mk2 (not loaded)";
+
+/// A log whose recording is not loaded is listed under that recording, and the
+/// footer states the anchor and offers to open the recording from history.
+#[test]
+fn the_footer_offers_the_recording_of_a_log_that_is_not_loaded() {
+    let mut harness = harness_over_a_log_whose_recording_is_not_loaded();
+    assert_eq!(
+        listed_rows(harness.state()),
+        [(
+            NOT_LOADED_RECORDING.to_owned(),
+            vec!["navsyncd.log".to_owned()]
+        )]
+    );
+    harness.get_by_label(format!("Anchored to {NOT_LOADED_RECORDING}").as_str());
+
+    harness.get_by_label(super::LOAD_RECORDING_LABEL).click();
+    harness.run_steps(2);
+
+    assert_eq!(
+        harness.state().requests.open_recording,
+        Some(stored_recording_ref())
+    );
+}
+
+/// Opening the recording reads it from the recordings database: with no
+/// database open there is nothing to read it from, and the button says so.
+#[test]
+fn loading_the_recording_is_grayed_while_no_recordings_database_is_open() {
+    let mut harness = harness_over_a_log_whose_recording_is_not_loaded();
+    harness.state_mut().history_available = false;
+    harness.run_steps(2);
+
+    let load = harness.get_by_label(super::LOAD_RECORDING_LABEL);
+    assert!(load.accesskit_node().is_disabled());
+    let position = load.rect().center();
+    harness.hover_at_and_settle(position, TOOLTIP_DELAY_FRAMES);
+
+    harness.get_by_label_contains(super::LOAD_RECORDING_NO_DATABASE_HOVER);
+    assert_eq!(harness.state().requests.open_recording, None);
 }
 
 /// Runs until every scan the shown log's filters started has landed: they run

@@ -69,7 +69,7 @@ use gt_side_panel::{FilterPanelState, TreeState};
 use gt_snap::wire::Costing;
 use gt_track_builder::SegmentationConfig;
 use gt_types::{AssociationConfig, LoadWarning, TrackRef};
-use gt_ui_types::{DisplayMask, MapHighlight, SkyGlyphVariant};
+use gt_ui_types::{DisplayMask, LoadedLogId, MapHighlight, SkyGlyphVariant};
 use loader::{CompletedLoad, FinishedJob, LoadJobs, LoadOutcome};
 use log_viewer::LogViewerRequests;
 use log_viewer::association_dialog::LogAssociationDialog;
@@ -935,6 +935,11 @@ impl App {
                 s.sync_tree_from_loaded_files();
                 s.plot_state.integrate_file(fi, series);
                 drop(s);
+                // Associates every loaded log again now that this recording is
+                // loaded, which gives a log anchored to it its positions.
+                let s = self.shared.borrow();
+                self.logs.reassociate_all(&s.loaded_files.view());
+                drop(s);
                 if !orphans.is_empty() {
                     self.orphaned_event_markers = Some(orphans);
                 }
@@ -1002,8 +1007,8 @@ impl App {
                 restore.attachment.clone(),
                 restore.filters.clone(),
             );
-            if requested_by == Some(loader::AttachedLogRequester::LogViewerList) {
-                self.log_viewer.open_on_log(loaded);
+            if requested_by == Some(loader::AttachedLogRequester::UserOpenedTheAttachment) {
+                self.show_the_log_this_content_is_already_loaded_as(loaded, log.name());
             }
             return;
         }
@@ -1039,7 +1044,7 @@ impl App {
                         .log_viewer
                         .restored_logs
                         .note_log_loaded_with_a_recording(),
-                    Some(loader::AttachedLogRequester::LogViewerList) => {
+                    Some(loader::AttachedLogRequester::UserOpenedTheAttachment) => {
                         self.log_viewer.open_on_log(id);
                     }
                     None => {
@@ -1052,17 +1057,22 @@ impl App {
                 }
             }
             LogPushOutcome::AlreadyLoaded(id) => {
-                let loaded_name = self
-                    .logs
-                    .get_by_id(id)
-                    .map_or(name.as_str(), LoadedLog::name);
-                log::info!(
-                    "Did not load a second copy of {loaded_name:?}: this session holds that log already"
-                );
-                self.toasts.info(format!("{loaded_name} is already loaded"));
-                self.log_viewer.open_on_log(id);
+                self.show_the_log_this_content_is_already_loaded_as(id, &name);
             }
         }
+    }
+
+    /// Opens the viewer on the log `id` names and toasts that the session
+    /// already holds its content. The toast names `name`, the name the refused
+    /// copy arrived under, when that log is no longer loaded.
+    fn show_the_log_this_content_is_already_loaded_as(&mut self, id: LoadedLogId, name: &str) {
+        let loaded_name = self.logs.get_by_id(id).map_or(name, LoadedLog::name);
+        log::info!(
+            "Did not load a second copy of {loaded_name:?}: this session holds that log already"
+        );
+        let toast = format!("{loaded_name} is already loaded");
+        self.toasts.info(toast);
+        self.log_viewer.open_on_log(id);
     }
 
     /// Unloads the logs of the recordings `removed` names and drops the

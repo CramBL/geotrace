@@ -38,15 +38,8 @@ struct RecordingAttachments {
 }
 
 impl RecordingAttachments {
-    /// Puts the entries in the order the viewer lists them: by name, and by id
-    /// for two attachments stored under one name.
     fn sort_by_name_then_id(&mut self) {
-        self.entries.sort_by(|left, right| {
-            left.attachment
-                .name
-                .cmp(&right.attachment.name)
-                .then(left.id.cmp(&right.id))
-        });
+        LogAttachmentEntry::sort_by_name_then_id(&mut self.entries);
     }
 }
 

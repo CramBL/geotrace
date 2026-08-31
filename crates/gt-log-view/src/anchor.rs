@@ -38,6 +38,15 @@ impl RecordingKey {
         }
     }
 
+    /// The history database entry this key identifies, `None` for a recording
+    /// the database does not hold.
+    pub fn database_ref(&self) -> Option<&DatabaseRef> {
+        match self {
+            Self::Stored(db_ref) => Some(db_ref),
+            Self::Session(_) => None,
+        }
+    }
+
     /// The loaded recording this key resolves to, `None` while no loaded
     /// recording matches it.
     pub(crate) fn loaded_recording<'a>(

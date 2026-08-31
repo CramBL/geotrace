@@ -212,6 +212,19 @@ pub struct LogAttachmentEntry {
     pub attachment: LogAttachment,
 }
 
+impl LogAttachmentEntry {
+    /// Puts a recording's attachments in the order every list of them shows:
+    /// by name, and by id for two attachments stored under one name.
+    pub fn sort_by_name_then_id(entries: &mut [Self]) {
+        entries.sort_by(|left, right| {
+            left.attachment
+                .name
+                .cmp(&right.attachment.name)
+                .then(left.id.cmp(&right.id))
+        });
+    }
+}
+
 /// Delete the stored logs of `ids`, carrying on past any that fail.
 ///
 /// A file that is already gone is not a failure.

@@ -1189,7 +1189,8 @@ pub(crate) fn snap_blob(
     Ok(dataset.read_raw::<u8>().ok())
 }
 
-/// Every log attached to a recording, sorted by id.
+/// Every log attached to a recording, in the order
+/// [`LogAttachmentEntry::sort_by_name_then_id`] puts them.
 pub(crate) fn log_attachments(
     db_path: &std::path::Path,
     identity: &str,
@@ -1199,13 +1200,19 @@ pub(crate) fn log_attachments(
     let by_id = file.group("by_identity")?;
     let id_grp = open_identity_group(&by_id, identity)?;
     let rec_grp = id_grp.group(group_name)?;
+    let attr_names = rec_grp.attr_names()?;
+    Ok(log_attachments_in_attrs(&rec_grp, attr_names))
+}
 
+/// The attachments the attributes `attr_names` of a recording hold, for a
+/// caller that has read those names already.
+fn log_attachments_in_attrs(rec_grp: &Group, attr_names: Vec<String>) -> Vec<LogAttachmentEntry> {
     let mut entries = Vec::new();
-    for key in rec_grp.attr_names()? {
+    for key in attr_names {
         let Some(id) = LogAttachmentId::from_attr_key(&key) else {
             continue;
         };
-        match read_group_string_attr(&rec_grp, &key) {
+        match read_group_string_attr(rec_grp, &key) {
             Ok(json) => {
                 if let Some(attachment) = LogAttachment::from_attribute_json(&json) {
                     entries.push(LogAttachmentEntry { id, attachment });
@@ -1214,8 +1221,8 @@ pub(crate) fn log_attachments(
             Err(err) => log::warn!("Ignoring the log attachment attribute {key:?}: {err}"),
         }
     }
-    entries.sort_unstable_by_key(|entry| entry.id);
-    Ok(entries)
+    LogAttachmentEntry::sort_by_name_then_id(&mut entries);
+    entries
 }
 
 /// Store one attachment's attribute JSON on a recording, replacing whatever
@@ -1329,6 +1336,15 @@ pub(crate) fn list_recordings(
                     };
                     let tracks = read_track_table(&rec_grp);
                     let hidden_tracks = tracks.iter().filter(|t| t.hidden).count();
+                    let log_attachments = match rec_grp.attr_names() {
+                        Ok(attr_names) => log_attachments_in_attrs(&rec_grp, attr_names),
+                        Err(err) => {
+                            log::error!(
+                                "Could not read the attributes of the history recording identity={identity:?}, group={rec_name:?}: it is listed with none of the logs stored with it: {err}"
+                            );
+                            Vec::new()
+                        }
+                    };
 
                     entries.push(RecordingEntry {
                         db_ref: gt_history_types::DatabaseRef {
@@ -1344,6 +1360,7 @@ pub(crate) fn list_recordings(
                         travel_mode: read_group_string_attr(&rec_grp, GTD_META_TRAVEL_MODE_ATTR)
                             .ok(),
                         channels: read_channel_summaries(&rec_grp),
+                        log_attachments,
                     });
                 }
             }
