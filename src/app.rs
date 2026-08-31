@@ -781,6 +781,7 @@ impl App {
             tec_heatmap_opacity_percent: self.map.tec_heatmap_opacity_percent().into(),
             theme,
             recording_name_template: s.recording_name_template.clone(),
+            visible_section_fraction: s.tree.visible_section_fraction().into(),
             track_split_gap_seconds: self
                 .processing_config
                 .track_layout

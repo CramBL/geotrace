@@ -201,6 +201,35 @@ impl MapHighlight {
         Some(TrackRef::new(fi, ti))
     }
 
+    /// Whether the hover is on `track` as a whole, and not on one of its
+    /// points or categories.
+    pub fn hovers_the_whole_track(&self, track: TrackRef) -> bool {
+        self.hover.is_some_and(
+            |scope| matches!(scope, HighlightScope::Track(hovered) if hovered == track),
+        )
+    }
+
+    /// Whether the hover or the plot cursor is on a point of `track`.
+    pub fn hovers_a_point_of_track(&self, track: TrackRef) -> bool {
+        self.hover.is_some_and(
+            |scope| matches!(scope, HighlightScope::Point(point) if point.track == track),
+        ) || self.snapped_plot_hover_track() == Some(track)
+    }
+
+    /// Whether the hover or the plot cursor is on anything belonging to
+    /// `file`.
+    pub fn hovers_anything_in_file(&self, file: FileIdx) -> bool {
+        self.hover.is_some_and(|scope| match scope {
+            HighlightScope::Point(point) => point.track.fi == file,
+            HighlightScope::Track(track) | HighlightScope::TrackCategory { track, .. } => {
+                track.fi == file
+            }
+            HighlightScope::File { file_index } => file_index == file,
+        }) || self
+            .snapped_plot_hover_track()
+            .is_some_and(|track| track.fi == file)
+    }
+
     /// What the pinned popup does this frame, dropping a pin whose element is
     /// gone. Called once per frame by the map, and by the headless tests.
     pub fn pin_this_frame(&mut self, scope: MapScope<'_>) -> Option<PinnedPopup> {
@@ -343,6 +372,50 @@ mod tests {
             Some(scope_fixture::point(1)),
             "a point that still exists keeps its pin"
         );
+    }
+
+    /// The recording a hover belongs to, over every scope the map and the plot
+    /// can report.
+    #[rstest::rstest]
+    #[case::point_of_the_file(Some(HighlightScope::Point(point(1))), false, true)]
+    #[case::track_of_the_file(
+        Some(HighlightScope::Track(TrackRef::new(FileIdx::new(0), TrackIdx::new(0)))),
+        false,
+        true
+    )]
+    #[case::category_of_a_track_of_the_file(
+        Some(HighlightScope::TrackCategory {
+            track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+            category: DataCategory::Tpv,
+        }),
+        false,
+        true
+    )]
+    #[case::the_file_itself(Some(HighlightScope::File { file_index: FileIdx::new(0) }), false, true)]
+    #[case::track_of_another_file(
+        Some(HighlightScope::Track(TrackRef::new(FileIdx::new(1), TrackIdx::new(0)))),
+        false,
+        false
+    )]
+    #[case::another_file(Some(HighlightScope::File { file_index: FileIdx::new(1) }), false, false)]
+    #[case::nothing_hovered(None, false, false)]
+    #[case::plot_cursor_on_a_track_of_the_file(None, true, true)]
+    fn hovers_anything_in_file_covers_every_hover_scope(
+        #[case] hover: Option<HighlightScope>,
+        #[case] plot_cursor_on_the_file: bool,
+        #[case] expected: bool,
+    ) {
+        let highlight = MapHighlight {
+            hover,
+            plot_hover_point: plot_cursor_on_the_file.then_some((
+                FileIdx::new(0),
+                TrackIdx::new(0),
+                PointIdx::new(1),
+            )),
+            plot_hover_snapped: plot_cursor_on_the_file,
+            ..MapHighlight::default()
+        };
+        assert_eq!(highlight.hovers_anything_in_file(FileIdx::new(0)), expected);
     }
 
     /// A pin whose element is gone is dropped, so a later load cannot rebind it

@@ -523,6 +523,10 @@ pub struct UiSettings {
     /// `{title}`, `{device}`, `{identity}` and `{filename}` tokens. See
     /// [`gt_fmt::render_name_template`].
     pub recording_name_template: String,
+    /// Share of the region the side panel's Visible section and its tree
+    /// divide that the section takes (0.0–1.0). Clamped to the divider's own
+    /// range when the panel renders.
+    pub visible_section_fraction: f32,
 }
 
 impl Default for UiSettings {
@@ -530,6 +534,7 @@ impl Default for UiSettings {
         Self {
             theme: ThemeSetting::System,
             recording_name_template: DEFAULT_RECORDING_NAME_TEMPLATE.to_owned(),
+            visible_section_fraction: gt_side_panel::VISIBLE_SECTION_DEFAULT_FRACTION,
         }
     }
 }
@@ -712,6 +717,30 @@ mod snap_settings_tests {
         assert!(
             !unset.contains("search_radius_m"),
             "unset options stay out of the file"
+        );
+    }
+
+    /// The Visible section's share of the side panel survives the settings
+    /// TOML, and a file written before the key existed opens the section at
+    /// the default share.
+    #[test]
+    fn the_visible_section_share_roundtrips_through_toml() {
+        let mut settings = Settings::default();
+        settings.ui.visible_section_fraction = 0.4;
+
+        let serialized = toml::to_string(&settings).expect("serialize");
+        let restored: Settings = toml::from_str(&serialized).expect("deserialize");
+        let stored_share = restored.ui.visible_section_fraction;
+        assert!(
+            (stored_share - 0.4).abs() < f32::EPSILON,
+            "the stored share came back as {stored_share}"
+        );
+
+        let older: Settings = toml::from_str("version = 1\n").expect("deserialize");
+        let default_share = older.ui.visible_section_fraction;
+        assert!(
+            (default_share - gt_side_panel::VISIBLE_SECTION_DEFAULT_FRACTION).abs() < f32::EPSILON,
+            "a file without the key opened the section at {default_share}"
         );
     }
 

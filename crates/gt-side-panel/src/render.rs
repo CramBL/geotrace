@@ -25,8 +25,9 @@ use rustc_hash::FxHashMap;
 use crate::filter::{FilterPanelState, render_filter_panel};
 use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TreeState};
 use crate::widgets::{
-    MetadataView, PointClickRequests, checkbox_width, expand_arrow, fix_stats_tooltip_row,
-    has_metadata_details, paint_map_hover_bg, point_item_row, tri_checkbox,
+    CHECKBOX_PADDING, MetadataView, PointClickRequests, checkbox_width, expand_arrow,
+    has_metadata_details, paint_map_hover_bg, point_item_row, recording_tooltip_rows,
+    track_row_label, track_tooltip_rows, tri_checkbox,
 };
 
 /// A recording's metadata, captured when its note icon is clicked so the app can
@@ -332,7 +333,11 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show(ui, |ui| {
+            render_visible_tracks_section(ui, ctx);
+            // A scroll area defaults to at least 64 points tall, which would
+            // push the tree past the height the section leaves it.
             ScrollArea::vertical()
+                .min_scrolled_height(0.0)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     let names = ctx.recording_names;
@@ -343,6 +348,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
                     }
                 });
         });
+    ctx.tree.reveal_request = None;
 }
 
 /// The global snap progress strip: the in-flight run with its chunk
@@ -410,6 +416,190 @@ const PROGRESS_BAR_HEIGHT: f32 = 4.0;
 /// Vertical padding above and below the strip contents.
 const STRIP_PADDING: f32 = 2.0;
 
+/// Spacing between a recording row's leading controls.
+const CHECKBOX_GROUP_SPACING: f32 = 2.0;
+
+/// Id of the visible-tracks panel. Its rows take their widget ids from it,
+/// which keeps them distinct from the tree row of the same track.
+const VISIBLE_SECTION_ID: &str = "visible_tracks_section";
+
+/// The share of the region the section and the tree divide that the section
+/// takes until the divider is dragged.
+pub const VISIBLE_SECTION_DEFAULT_FRACTION: f32 = 0.25;
+
+/// The largest share of that region the divider can give the section.
+const VISIBLE_SECTION_MAX_FRACTION: f32 = 0.75;
+
+/// The smallest section height, in track rows.
+const VISIBLE_SECTION_MIN_ROWS: f32 = 2.0;
+
+/// The interact height the section lays its rows out to, tighter than the
+/// tree's so more rows fit.
+const VISIBLE_SECTION_INTERACT_HEIGHT: f32 = 13.0;
+
+/// The vertical gap between the section's rows.
+const VISIBLE_SECTION_ROW_SPACING: f32 = 1.0;
+
+/// The icon width the section draws its checkboxes from. The glyph is drawn at
+/// the width plus four points, small enough that a row stays as tall as its
+/// label.
+const VISIBLE_SECTION_ICON_WIDTH: f32 = 10.0;
+
+/// The visible-tracks section above the tree: the recordings and the tracks
+/// toggled on right now, however far the tree is scrolled. Its height is a
+/// fixed share of the region it shares with the tree, changed only by dragging
+/// the divider on its lower edge. The share comes from
+/// [`TreeState::visible_section_fraction`], clamped to what the divider
+/// reaches, and this function writes the rendered share back there for the app
+/// to persist.
+fn render_visible_tracks_section(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
+    let groups = ctx.tree.visible_tracks_by_file();
+    let region_height = ui.available_height();
+    let row_pitch =
+        VISIBLE_SECTION_INTERACT_HEIGHT + CHECKBOX_PADDING + VISIBLE_SECTION_ROW_SPACING;
+    let min_height = row_pitch * VISIBLE_SECTION_MIN_ROWS;
+    let max_height = (region_height * VISIBLE_SECTION_MAX_FRACTION).max(min_height);
+    let stored_height =
+        (region_height * ctx.tree.visible_section_fraction()).clamp(min_height, max_height);
+
+    let section = egui::Panel::top(VISIBLE_SECTION_ID)
+        .resizable(true)
+        .frame(egui::Frame::side_top_panel(ui.style()).fill(ui.visuals().faint_bg_color))
+        .default_size(stored_height)
+        .size_range(min_height..=max_height)
+        .show(ui, |ui| {
+            let spacing = ui.spacing_mut();
+            spacing.item_spacing.y = VISIBLE_SECTION_ROW_SPACING;
+            spacing.interact_size.y = VISIBLE_SECTION_INTERACT_HEIGHT;
+            spacing.icon_width = VISIBLE_SECTION_ICON_WIDTH;
+
+            // The scroll area fills the section's height whatever it holds, so
+            // the tree below keeps its place when the last track is hidden.
+            ScrollArea::vertical()
+                .min_scrolled_height(0.0)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    if groups.is_empty() {
+                        ui.centered_and_justified(|ui| {
+                            ui.label(RichText::new("No tracks visible").weak());
+                        });
+                        return;
+                    }
+                    let names = ctx.recording_names;
+                    for group in &groups {
+                        let display_name = names.get(group.file).unwrap_or_default();
+                        render_visible_file_caption(ui, group.file, display_name, ctx);
+                        ui.indent(group.file, |ui| {
+                            for &track_ref in &group.tracks {
+                                render_visible_track_row(ui, track_ref, ctx);
+                            }
+                        });
+                    }
+                });
+        });
+
+    ctx.tree
+        .set_visible_section_fraction(section.response.rect.height() / region_height);
+}
+
+/// The "Show only this track" entry of a track row's context menu, in the tree
+/// and in the Visible section.
+fn show_only_track_menu_entry(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'_>) {
+    if ui.button("Show only this track").clicked() {
+        ctx.tree.show_only_track(track_ref);
+        *ctx.zoom_to_visible_request = true;
+        ui.close();
+    }
+}
+
+/// The line the section groups a recording's track rows under. It names the
+/// recording and takes the map hover, and has no control of its own.
+fn render_visible_file_caption(
+    ui: &mut egui::Ui,
+    fi: FileIdx,
+    display_name: &str,
+    ctx: &mut PanelContext<'_>,
+) {
+    let Some(file) = ctx.file(fi) else {
+        return;
+    };
+    let map_hovered = ctx.highlight.hovers_anything_in_file(fi);
+
+    let response = ui
+        .add(Label::new(RichText::new(display_name).small().weak()).truncate())
+        .on_hover_ui(|ui| recording_tooltip_rows(ui, &file.metadata));
+
+    if map_hovered {
+        paint_map_hover_bg(
+            ui,
+            response.rect,
+            gt_ui_theme::map_hover_color(ui.visuals().dark_mode),
+        );
+    }
+    if response.hovered() {
+        ctx.highlight.hover = Some(HighlightScope::File { file_index: fi });
+    }
+}
+
+fn render_visible_track_row(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'_>) {
+    let Some(track) = ctx
+        .file(track_ref.fi)
+        .and_then(|file| track_ref.index.get(&file.tracks))
+    else {
+        return;
+    };
+    let key = NodeKey::Track(track_ref);
+    let passes = gt_filter::track_passes_filter(track, ctx.filter);
+    let panel_hovered = ctx.highlight.hovers_the_whole_track(track_ref);
+    let map_hovered = ctx.highlight.hovers_a_point_of_track(track_ref);
+
+    let row_response = ui.horizontal(|ui| {
+        if tri_checkbox(ui, CheckState::On).clicked() {
+            ctx.tree.hide_track(track_ref);
+        }
+        let mut text = RichText::new(track_row_label(track));
+        if !passes {
+            text = text.weak();
+        }
+        if panel_hovered {
+            text = text.color(gt_ui_theme::HIGHLIGHT_BLUE);
+        }
+        let is_selected = ctx.tree.selection.contains(&key);
+        let resp = ui.selectable_label(is_selected, text);
+        resp.on_hover_ui(|ui| track_tooltip_rows(ui, &track.metadata))
+    });
+
+    if map_hovered {
+        paint_map_hover_bg(
+            ui,
+            row_response.response.rect,
+            gt_ui_theme::map_hover_color(ui.visuals().dark_mode),
+        );
+    }
+    let response = row_response.inner;
+    if response.hovered() {
+        ctx.highlight.hover = Some(HighlightScope::Track(track_ref));
+    }
+    if response.double_clicked() {
+        if let Some(center) = track_bounding_center(track) {
+            *ctx.map_center_request = Some(center);
+        }
+    } else if response.clicked() {
+        ctx.tree.reveal(key);
+    }
+    response.context_menu(|ui| {
+        show_only_track_menu_entry(ui, track_ref, ctx);
+        if ui.button("Hide").clicked() {
+            ctx.tree.hide_track(track_ref);
+            ui.close();
+        }
+        if ui.button("Hide recording").clicked() {
+            ctx.tree.hide_file(track_ref.fi);
+            ui.close();
+        }
+    });
+}
+
 fn render_file_row(
     ui: &mut egui::Ui,
     fi: FileIdx,
@@ -429,22 +619,12 @@ fn render_file_row(
 
     // The plot writes its hover after this panel renders: a plot hover marks the
     // row one frame later.
-    let file_map_hovered = ctx.highlight.hover.is_some_and(|s| match s {
-        HighlightScope::Point(r) => r.track.fi == fi,
-        HighlightScope::Track(track) | HighlightScope::TrackCategory { track, .. } => {
-            track.fi == fi
-        }
-        HighlightScope::File { file_index } => file_index == fi,
-    }) || ctx
-        .highlight
-        .snapped_plot_hover_track()
-        .is_some_and(|track| track.fi == fi);
+    let file_map_hovered = ctx.highlight.hovers_anything_in_file(fi);
 
     let map_hover_bg = gt_ui_theme::map_hover_color(ui.visuals().dark_mode);
 
     let row_response = ui.horizontal(|ui| {
-        // Keep the checkbox, note icon and expand arrow visually grouped.
-        ui.spacing_mut().item_spacing.x = 2.0;
+        ui.spacing_mut().item_spacing.x = CHECKBOX_GROUP_SPACING;
         let chk_resp = tri_checkbox(ui, check);
         if chk_resp.clicked() {
             ctx.tree.toggle_file_check(fi);
@@ -499,19 +679,13 @@ fn render_file_row(
                     .on_hover_text("Total distance");
             },
         );
-        let time_range =
-            gt_fmt::format_time_range(file.metadata.time_range.start, file.metadata.time_range.end);
-        resp.on_hover_ui(|ui| {
-            ui.label(file.metadata.filename.as_str());
-            ui.label(RichText::new(&time_range).strong());
-            ui.label(format!("Recorded time {dur}"));
-            if let Some(stats) = file.metadata.fix_stats {
-                fix_stats_tooltip_row(ui, stats);
-            }
-        })
+        resp.on_hover_ui(|ui| recording_tooltip_rows(ui, &file.metadata))
     });
 
     let file_label_resp = row_response.inner;
+    if ctx.tree.reveal_request == Some(file_key) {
+        file_label_resp.scroll_to_me(Some(egui::Align::Center));
+    }
     if file_map_hovered {
         paint_map_hover_bg(ui, row_response.response.rect, map_hover_bg);
     }
@@ -1037,17 +1211,10 @@ fn render_track_row(
         };
         let passes = gt_filter::track_passes_filter(track, ctx.filter);
         let is_expanded = ctx.tree.track_node(track_ref).is_some_and(|t| t.expanded);
-        let panel_hovered = ctx
-            .highlight
-            .hover
-            .is_some_and(|s| matches!(s, HighlightScope::Track(t) if t == track_ref));
+        let panel_hovered = ctx.highlight.hovers_the_whole_track(track_ref);
         // The plot writes its hover after this panel renders: a plot hover marks
         // the row one frame later.
-        let map_hovered = ctx
-            .highlight
-            .hover
-            .is_some_and(|s| matches!(s, HighlightScope::Point(r) if r.track == track_ref))
-            || ctx.highlight.snapped_plot_hover_track() == Some(track_ref);
+        let map_hovered = ctx.highlight.hovers_a_point_of_track(track_ref);
         let key = NodeKey::Track(track_ref);
         (
             track.clone(),
@@ -1075,13 +1242,7 @@ fn render_track_row(
         let newly_enabled =
             chk_resp.clicked() && matches!(check, CheckState::Off | CheckState::Mixed);
         let arrow = expand_arrow(is_expanded);
-        let dist = track.geometry.measured().map_or_else(
-            || gt_ui_theme::EM_DASH.to_owned(),
-            |geometry| gt_fmt::format_distance(geometry.distance_km),
-        );
-        let dur = gt_fmt::format_human_terse_duration(track.metadata.duration);
-        let label = format!("{arrow} #{}  {dist}  {dur}", track.metadata.index);
-        let mut text = RichText::new(label);
+        let mut text = RichText::new(format!("{arrow} {}", track_row_label(&track)));
         if !passes {
             text = text.weak();
         }
@@ -1090,20 +1251,7 @@ fn render_track_row(
         }
         let is_selected = ctx.tree.selection.contains(&key);
         let resp = ui.selectable_label(is_selected, text);
-        let time_header = gt_fmt::format_time_range(
-            track.metadata.time_range.start,
-            track.metadata.time_range.end,
-        );
-        let fix_stats = track.metadata.fix_stats;
-        let resp = resp.on_hover_ui(|ui| {
-            ui.label(RichText::new(&time_header).strong());
-            match fix_stats {
-                Some(stats) => fix_stats_tooltip_row(ui, stats),
-                None => {
-                    ui.label("No satellite data");
-                }
-            }
-        });
+        let resp = resp.on_hover_ui(|ui| track_tooltip_rows(ui, &track.metadata));
         if let Some(warning) = CoordinateWarning::for_track(&track) {
             ui.label(
                 RichText::new(ICON_WARNING)
@@ -1119,6 +1267,9 @@ fn render_track_row(
         paint_map_hover_bg(ui, row_response.response.rect, map_hover_bg);
     }
     let (response, newly_enabled) = row_response.inner;
+    if ctx.tree.reveal_request == Some(key) {
+        response.scroll_to_me(Some(egui::Align::Center));
+    }
     if newly_enabled && was_all_hidden {
         *ctx.zoom_to_visible_request = true;
     }
@@ -1127,11 +1278,8 @@ fn render_track_row(
     }
     let modifiers = ui.ctx().input(|i| i.modifiers);
     if response.double_clicked() {
-        // A track with no geometry is drawn nowhere: there is no centre to
-        // jump to.
-        if let Some(geometry) = track.geometry.measured() {
-            let (center_lat, center_lon) = geometry.bounding_box.center();
-            *ctx.map_center_request = Some((center_lat.as_degrees(), center_lon.as_degrees()));
+        if let Some(center) = track_bounding_center(&track) {
+            *ctx.map_center_request = Some(center);
         }
     } else if response.clicked() {
         if modifiers.ctrl || modifiers.shift {
@@ -1142,11 +1290,7 @@ fn render_track_row(
         }
     }
     response.context_menu(|ui| {
-        if ui.button("Show only this track").clicked() {
-            ctx.tree.show_only_track(track_ref);
-            *ctx.zoom_to_visible_request = true;
-            ui.close();
-        }
+        show_only_track_menu_entry(ui, track_ref, ctx);
         snap_menu_entry(ui, track_ref, ctx);
         if ui.button("Show sky trails…").clicked() {
             *ctx.sky_trails_request = Some(gt_ui_types::SkyTrailsRequest::whole_track(track_ref));
@@ -1750,6 +1894,12 @@ fn render_generated_markers_section(
             });
         }
     });
+}
+
+/// A track with no geometry is drawn nowhere: there is no centre to jump to.
+fn track_bounding_center(track: &LoadedTrack) -> Option<(f64, f64)> {
+    let (lat, lon) = track.geometry.measured()?.bounding_box.center();
+    Some((lat.as_degrees(), lon.as_degrees()))
 }
 
 fn file_bounding_center(file: Option<&LoadedFile>) -> Option<(f64, f64)> {

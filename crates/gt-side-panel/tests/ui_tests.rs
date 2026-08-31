@@ -4,25 +4,28 @@
 )]
 
 use egui::CentralPanel;
+use egui_phosphor::regular::CHECK_SQUARE as ICON_CHECK_SQUARE;
 use egui_phosphor::regular::LINE_SEGMENTS as ICON_LINE_SEGMENTS;
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use egui_phosphor::regular::PATH as ICON_PATH;
+use egui_phosphor::regular::SQUARE as ICON_SQUARE;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use std::path::PathBuf;
 
+use egui_kittest::Node;
 use egui_kittest::kittest::Queryable as _;
 use geotrace_sdk_units::Unit;
 use gt_filter::GlobalFilter;
 use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
 use gt_side_panel::{
-    FilterPanelState, PanelContext, SnapCostingTarget, SnapPanelView, SnapRowView, TreeState,
-    show_side_panel,
+    FilterPanelState, NodeKey, PanelContext, SnapCostingTarget, SnapPanelView, SnapRowView,
+    TreeState, show_side_panel,
 };
 use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
 use gt_types::{
     FileIdx, FixStats, LoadWarning, LoadedFile, NavPoint, PointIdx, TrackIdx, TrackRef,
 };
-use gt_ui_types::{DisplayCategory, DisplayMask, MapHighlight, SnapCosting};
+use gt_ui_types::{DisplayCategory, DisplayMask, HighlightScope, MapHighlight, SnapCosting};
 use rustc_hash::FxHashMap;
 
 struct State {
@@ -177,6 +180,36 @@ fn make_harness_sized(state: State, size: egui::Vec2) -> TestHarness<'static, St
         },
         state,
     )
+}
+
+/// The tree row for a label the Visible section repeats: the tree renders
+/// below the section.
+fn tree_row<'h>(harness: &'h TestHarness<'static, State>, label: &'h str) -> Node<'h> {
+    harness
+        .inner
+        .bottommost_matching(By::new().label_contains(label))
+}
+
+/// A point on the divider between the section and the tree, three points above
+/// the first tree row: the panel edge takes a drag within
+/// `interaction.resize_grab_radius_side` of it.
+fn divider_point(harness: &TestHarness<'static, State>) -> egui::Pos2 {
+    let row = tree_row(harness, "ride_0").rect();
+    egui::pos2(row.center().x, row.top() - 3.0)
+}
+
+/// The Visible section row for a label the tree repeats: the section renders
+/// above the tree.
+fn section_row<'h>(harness: &'h TestHarness<'static, State>, label: &'h str) -> Node<'h> {
+    harness
+        .inner
+        .topmost_matching(By::new().label_contains(label))
+}
+
+/// A panel tall enough for the visible-tracks section to hold several rows:
+/// the section takes a fixed share of the panel's height.
+fn make_harness_with_a_tall_panel(state: State) -> TestHarness<'static, State> {
+    make_harness_sized(state, egui::vec2(280.0, 900.0))
 }
 
 #[test]
@@ -561,10 +594,7 @@ fn context_menu_toggles_snapped_track_visibility() {
     let mut harness = make_harness(state);
     harness.run();
 
-    harness
-        .inner
-        .get_by_label_contains("#1  4.6 km")
-        .click_secondary();
+    tree_row(&harness, "#1  4.6 km").click_secondary();
     harness.run();
     harness.inner.get_by_label("Hide snapped track").click();
     harness.run();
@@ -584,10 +614,7 @@ fn costing_submenu_requests_the_chosen_costing() {
     let mut harness = make_harness(state);
     harness.run();
 
-    harness
-        .inner
-        .get_by_label_contains("#1  4.6 km")
-        .click_secondary();
+    tree_row(&harness, "#1  4.6 km").click_secondary();
     harness.run();
     harness
         .inner
@@ -611,10 +638,7 @@ fn recording_context_menu_requests_the_costing_for_the_recording() {
     let mut harness = make_harness(state);
     harness.run();
 
-    harness
-        .inner
-        .get_by_label_contains("ride_0")
-        .click_secondary();
+    tree_row(&harness, "ride_0").click_secondary();
     harness.run();
     harness
         .inner
@@ -673,10 +697,7 @@ fn unsnappable_rows_offer_the_costing_override() {
     let mut harness = make_harness(state);
     harness.run();
 
-    harness
-        .inner
-        .get_by_label_contains("#1  4.6 km")
-        .click_secondary();
+    tree_row(&harness, "#1  4.6 km").click_secondary();
     harness.run();
     harness
         .inner
@@ -703,10 +724,7 @@ fn snapshot_snap_costing_submenu() {
     let mut harness = make_harness_sized(state, egui::vec2(420.0, 600.0));
     harness.run();
 
-    harness
-        .inner
-        .get_by_label_contains("#1  4.6 km")
-        .click_secondary();
+    tree_row(&harness, "#1  4.6 km").click_secondary();
     harness.run();
     harness
         .inner
@@ -734,6 +752,291 @@ fn snapshot_generated_markers_grouped() {
     let mut harness = make_harness(state);
     harness.run();
     harness.snapshot("side_panel_generated_markers");
+}
+
+fn first_track() -> TrackRef {
+    TrackRef::new(FileIdx::new(0), TrackIdx::new(0))
+}
+
+/// A recording of two tracks. Hiding the first leaves the second in the
+/// Visible section.
+fn make_state_with_a_two_track_recording() -> State {
+    let mut files = LoadedFiles::new();
+    files.push(
+        build_file(
+            "paused.gtd",
+            &gt_test_utils::nav_data_with_gap(60, 60),
+            gt_track_builder::FileMeta::default(),
+            vec![],
+        ),
+        FileHistory::None,
+    );
+    make_state_from_files(files)
+}
+
+/// The Visible section groups the tracks toggled on under their recording's
+/// caption: the second recording's hidden track is left out.
+#[test]
+fn snapshot_visible_section_groups_the_tracks_under_their_recording() {
+    let mut files = LoadedFiles::new();
+    files.push(
+        build_file(
+            "ride.gtd",
+            &gt_test_utils::nav_test_data(),
+            gt_track_builder::FileMeta::default(),
+            vec![],
+        ),
+        FileHistory::None,
+    );
+    files.push(
+        build_file(
+            "paused.gtd",
+            &gt_test_utils::nav_data_with_gap(60, 60),
+            gt_track_builder::FileMeta::default(),
+            vec![],
+        ),
+        FileHistory::None,
+    );
+    let mut state = make_state_from_files(files);
+    state
+        .tree
+        .toggle_track_check(TrackRef::new(FileIdx::new(1), TrackIdx::new(1)));
+    let mut harness = make_harness_with_a_tall_panel(state);
+    harness.run();
+    harness.snapshot("side_panel_visible_section");
+}
+
+/// More tracks than the section's height holds scroll inside it, and the tree
+/// keeps the rest of the panel.
+#[test]
+fn snapshot_visible_section_scrolls_the_tracks_past_its_height() {
+    let mut harness = make_harness_with_a_tall_panel(make_state(8));
+    harness.run();
+    harness.snapshot("side_panel_visible_section_scrolling");
+}
+
+#[test]
+fn snapshot_visible_section_with_every_track_hidden() {
+    let mut state = make_state(2);
+    state.tree.set_all_enabled(false);
+    let mut harness = make_harness_with_a_tall_panel(state);
+    harness.run();
+    harness.snapshot("side_panel_visible_section_empty");
+}
+
+#[test]
+fn showing_a_hidden_recording_leaves_the_tree_rows_in_place() {
+    let mut state = make_state(2);
+    state.tree.toggle_file_check(FileIdx::new(0));
+    let mut harness = make_harness(state);
+    harness.run();
+    let before = tree_row(&harness, "ride_1").rect();
+
+    harness.inner.get_by_label(ICON_SQUARE).click();
+    harness.run();
+
+    assert!(harness.state().tree.visibility().files[0].enabled);
+    assert_eq!(tree_row(&harness, "ride_1").rect(), before);
+}
+
+/// The section packs its rows tighter than the tree, so its fixed height holds
+/// more of them.
+#[test]
+fn the_visible_section_rows_sit_closer_than_the_tree_rows() {
+    let mut state = make_state_with_a_two_track_recording();
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    let mut harness = make_harness_with_a_tall_panel(state);
+    harness.run();
+
+    let section_pitch =
+        section_row(&harness, "#2  ").rect().top() - section_row(&harness, "#1  ").rect().top();
+    let tree_pitch =
+        tree_row(&harness, "#2  ").rect().top() - tree_row(&harness, "#1  ").rect().top();
+
+    assert!(
+        section_pitch < tree_pitch * 0.8,
+        "section rows are {section_pitch} apart, tree rows {tree_pitch}"
+    );
+}
+
+#[test]
+fn hiding_every_track_leaves_the_tree_rows_in_place() {
+    let mut harness = make_harness(make_state(2));
+    harness.run();
+    let before = tree_row(&harness, "ride_1").rect();
+
+    harness.state_mut().tree.set_all_enabled(false);
+    harness.run();
+
+    assert_eq!(tree_row(&harness, "ride_1").rect(), before);
+}
+
+/// The section opens at the share the tree state holds, where the app puts the
+/// persisted share before the first frame.
+#[test]
+fn the_visible_section_opens_at_the_stored_share_of_the_region() {
+    let mut state = make_state(2);
+    state.tree.set_visible_section_fraction(0.5);
+    let mut harness = make_harness(state);
+    harness.run();
+
+    let share = harness.state().tree.visible_section_fraction();
+    assert!(
+        (share - 0.5).abs() < 0.02,
+        "the section opened at {share} of the region"
+    );
+}
+
+/// A stored share above the divider's maximum opens the section at that
+/// maximum, three quarters of the region.
+#[test]
+fn a_stored_share_above_the_maximum_opens_the_section_at_the_maximum() {
+    let mut state = make_state(2);
+    state.tree.set_visible_section_fraction(1.0);
+    let mut harness = make_harness(state);
+    harness.run();
+
+    let share = harness.state().tree.visible_section_fraction();
+    assert!(
+        (share - 0.75).abs() < 0.02,
+        "the section opened at {share} of the region"
+    );
+}
+
+/// Dragging the divider down writes the section's larger share back to the
+/// tree state, which is what the app persists.
+#[test]
+fn dragging_the_divider_writes_the_new_share_back() {
+    let mut harness = make_harness(make_state(2));
+    harness.run();
+    let before = harness.state().tree.visible_section_fraction();
+
+    let divider = divider_point(&harness);
+    harness
+        .inner
+        .press_drag_release(divider, egui::vec2(0.0, 100.0), 4);
+    harness.run();
+
+    let after = harness.state().tree.visible_section_fraction();
+    assert!(
+        after > before + 0.2,
+        "the section went from {before} to {after} of the region"
+    );
+}
+
+#[test]
+fn the_visible_section_checkbox_hides_one_track_of_a_fully_visible_recording() {
+    let mut harness = make_harness(make_state_with_a_two_track_recording());
+    harness.run();
+
+    // The highest checkbox on screen is the section's first track row: the
+    // tree below opens with its recordings collapsed.
+    harness
+        .inner
+        .topmost_matching(By::new().label(ICON_CHECK_SQUARE))
+        .click();
+    harness.run();
+
+    let visibility = harness.state().tree.visibility();
+    assert!(!visibility.files[0].tracks[0].enabled);
+    assert!(visibility.files[0].tracks[1].enabled);
+    assert!(
+        harness.inner.query_by_label_contains("#1  ").is_none(),
+        "the hidden track leaves the section"
+    );
+    let caption = section_row(&harness, "paused.gtd").rect();
+    let remaining_track = section_row(&harness, "#2  ").rect();
+    assert!(
+        caption.top() < remaining_track.top(),
+        "the caption stays above the track the recording has left"
+    );
+}
+
+#[test]
+fn clicking_a_visible_section_row_reveals_the_track_in_the_tree() {
+    let mut harness = make_harness(make_state(1));
+    harness.run();
+    assert!(!harness.state().tree.files[0].expanded);
+
+    section_row(&harness, "#1  4.6 km").click();
+    harness.run();
+
+    assert!(harness.state().tree.files[0].expanded);
+    assert!(
+        harness
+            .state()
+            .tree
+            .selection
+            .contains(&NodeKey::Track(first_track()))
+    );
+}
+
+#[test]
+fn the_visible_section_context_menu_hides_the_track_it_was_opened_on() {
+    let mut harness = make_harness(make_state(1));
+    harness.run();
+
+    section_row(&harness, "#1  4.6 km").click_secondary();
+    harness.run();
+    harness.inner.get_by_label("Hide").click();
+    harness.run();
+
+    assert!(!harness.state().tree.visibility().files[0].tracks[0].enabled);
+}
+
+#[test]
+fn the_visible_section_context_menu_hides_every_track_of_the_recording() {
+    let mut harness = make_harness(make_state_with_a_two_track_recording());
+    harness.run();
+
+    section_row(&harness, "#1  ").click_secondary();
+    harness.run();
+    harness.inner.get_by_label("Hide recording").click();
+    harness.run();
+
+    let visibility = harness.state().tree.visibility();
+    assert!(!visibility.files[0].enabled);
+    assert!(
+        visibility.files[0]
+            .tracks
+            .iter()
+            .all(|track| !track.enabled)
+    );
+}
+
+#[test]
+fn the_visible_section_context_menu_shows_only_the_track_it_was_opened_on() {
+    let mut harness = make_harness_with_a_tall_panel(make_state(2));
+    harness.run();
+
+    // One track row per recording, both the section's: the tree below opens
+    // with its recordings collapsed.
+    harness
+        .inner
+        .bottommost_matching(By::new().label_contains("#1  4.6 km"))
+        .click_secondary();
+    harness.run();
+    harness.inner.get_by_label("Show only this track").click();
+    harness.run();
+
+    let visibility = harness.state().tree.visibility();
+    assert!(!visibility.files[0].enabled);
+    assert!(visibility.files[1].tracks[0].enabled);
+    assert!(harness.state().zoom_to_visible);
+}
+
+#[test]
+fn hovering_a_visible_section_row_marks_its_track() {
+    let mut harness = make_harness(make_state(1));
+    harness.run();
+
+    let row = section_row(&harness, "#1  4.6 km").rect().center();
+    harness.inner.hover_at_and_settle(row, 3);
+
+    assert_eq!(
+        harness.state().highlight.hover,
+        Some(HighlightScope::Track(first_track()))
+    );
 }
 
 #[test]
@@ -830,11 +1133,7 @@ fn the_recording_row_hover_states_the_time_range_and_the_recorded_time() {
     let mut harness = make_harness(make_state_from_files(files));
     harness.run();
 
-    let row = harness
-        .inner
-        .get_by_label_contains("paused.gtd")
-        .rect()
-        .center();
+    let row = tree_row(&harness, "paused.gtd").rect().center();
     harness.inner.hover_at_and_settle(row, 3);
 
     assert!(
@@ -1374,9 +1673,9 @@ fn rows_repainted_by_plot_hover(PlotHoverSnapped(snapped): PlotHoverSnapped) -> 
     harness.run();
 
     let pixels_per_point = harness.inner.ctx.pixels_per_point();
-    let hovered_file = harness.inner.get_by_label_contains("ride_0").rect();
-    let hovered_track = harness.inner.get_by_label_contains("#1  4.6 km").rect();
-    let other_file = harness.inner.get_by_label_contains("ride_1").rect();
+    let hovered_file = tree_row(&harness, "ride_0").rect();
+    let hovered_track = tree_row(&harness, "#1  4.6 km").rect();
+    let other_file = tree_row(&harness, "ride_1").rect();
     let before = harness.inner.render().expect("the harness renders a frame");
 
     let highlight = &mut harness.state_mut().highlight;

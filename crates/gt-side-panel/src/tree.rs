@@ -15,6 +15,17 @@ pub enum CheckState {
     Mixed,
 }
 
+impl CheckState {
+    /// The state a click puts the node in: a partly checked node turns fully
+    /// on.
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::On => Self::Off,
+            Self::Off | Self::Mixed => Self::On,
+        }
+    }
+}
+
 /// A tree node that can be selected (for shift/ctrl-click).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum NodeKey {
@@ -66,11 +77,7 @@ impl EventPathTree {
     /// Cascades to all descendants, then recomputes all ancestors.
     pub fn toggle(&mut self, path: &str) {
         let current = self.nodes.get(path).copied().unwrap_or(CheckState::On);
-        let new_state = match current {
-            CheckState::On => CheckState::Off,
-            CheckState::Off | CheckState::Mixed => CheckState::On,
-        };
-        set_subtree(&mut self.nodes, path, new_state);
+        set_subtree(&mut self.nodes, path, current.toggled());
         recompute_ancestors(&mut self.nodes, path);
     }
 
@@ -178,6 +185,14 @@ impl FileNode {
     }
 }
 
+/// The tracks of one recording that are toggled on, as the Visible section
+/// lists them.
+#[derive(Debug)]
+pub struct VisibleTracksInFile {
+    pub file: FileIdx,
+    pub tracks: Vec<TrackRef>,
+}
+
 pub struct TreeState {
     pub files: Vec<FileNode>,
     pub selection: BTreeSet<NodeKey>,
@@ -187,6 +202,10 @@ pub struct TreeState {
     /// recordings stay in history). Consumed by the app each frame.
     pub pending_unload: Option<Vec<NodeKey>>,
     pub detached: bool,
+    /// The tree row to scroll into view, set by a click in the Visible section
+    /// and cleared once the tree has rendered.
+    pub reveal_request: Option<NodeKey>,
+    visible_section_fraction: f32,
     /// Derived from tree state, kept in sync.  Passed to gt-map renderers.
     visibility: TrackDataVisibility,
     /// Derived from tree state, kept in sync.  Passed to gt-map renderers.
@@ -210,9 +229,24 @@ impl TreeState {
             delete_confirm: None,
             pending_unload: None,
             detached: false,
+            reveal_request: None,
+            visible_section_fraction: crate::VISIBLE_SECTION_DEFAULT_FRACTION,
             visibility: TrackDataVisibility { files: Vec::new() },
             event_marker_visibility: EventMarkerVisibility::new(),
             generated_marker_visibility: GeneratedMarkerVisibility::new(),
+        }
+    }
+
+    /// The Visible section's share of the region it divides with the tree.
+    pub fn visible_section_fraction(&self) -> f32 {
+        self.visible_section_fraction
+    }
+
+    /// Keeps the previous share when `fraction` is outside `0.0..=1.0` or is
+    /// not a number.
+    pub fn set_visible_section_fraction(&mut self, fraction: f32) {
+        if (0.0..=1.0).contains(&fraction) {
+            self.visible_section_fraction = fraction;
         }
     }
 
@@ -279,36 +313,77 @@ impl TreeState {
         self.rebuild_generated_marker_visibility();
     }
 
-    /// Toggle a file's check state with cascade to all child tracks.
-    pub fn toggle_file_check(&mut self, fi: FileIdx) {
+    /// Set a file's check state with cascade to all child tracks.
+    fn set_file_check(&mut self, fi: FileIdx, check: CheckState) {
         let Some(file_node) = self.file_node_mut(fi) else {
             return;
         };
-        let new_state = match file_node.check {
-            CheckState::On => CheckState::Off,
-            CheckState::Off | CheckState::Mixed => CheckState::On,
-        };
-        file_node.check = new_state;
+        file_node.check = check;
         for track in &mut file_node.tracks {
-            track.check = new_state;
+            track.check = check;
         }
         self.rebuild_visibility();
     }
 
-    /// Toggle a track's check state and recompute the parent file's aggregate.
-    pub fn toggle_track_check(&mut self, track: TrackRef) {
+    /// Set one track's check state and recompute the parent file's aggregate.
+    fn set_track_check(&mut self, track: TrackRef, check: CheckState) {
         let Some(file_node) = self.file_node_mut(track.fi) else {
             return;
         };
         let Some(track_node) = track.index.get_mut(&mut file_node.tracks) else {
             return;
         };
-        track_node.check = match track_node.check {
-            CheckState::On => CheckState::Off,
-            CheckState::Off | CheckState::Mixed => CheckState::On,
-        };
+        track_node.check = check;
         file_node.recompute_check();
         self.rebuild_visibility();
+    }
+
+    /// Toggle a file's check state with cascade to all child tracks.
+    pub fn toggle_file_check(&mut self, fi: FileIdx) {
+        let Some(check) = self.file_node(fi).map(|file_node| file_node.check) else {
+            return;
+        };
+        self.set_file_check(fi, check.toggled());
+    }
+
+    /// Hide a recording and every track under it.
+    pub fn hide_file(&mut self, fi: FileIdx) {
+        self.set_file_check(fi, CheckState::Off);
+    }
+
+    /// Hide one track and recompute the parent file's aggregate.
+    pub fn hide_track(&mut self, track: TrackRef) {
+        self.set_track_check(track, CheckState::Off);
+    }
+
+    /// The tracks whose check is `On`, grouped by their recording, in tree
+    /// order. A recording whose check is `Off`, and one with no such track, is
+    /// left out.
+    pub fn visible_tracks_by_file(&self) -> Vec<VisibleTracksInFile> {
+        self.files
+            .iter()
+            .enumerate()
+            .filter(|(_, file_node)| file_node.check != CheckState::Off)
+            .filter_map(|(fi, file_node)| {
+                let file = FileIdx::new(fi);
+                let tracks: Vec<TrackRef> = file_node
+                    .tracks
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, track_node)| track_node.check == CheckState::On)
+                    .map(|(ti, _)| TrackRef::new(file, TrackIdx::new(ti)))
+                    .collect();
+                (!tracks.is_empty()).then_some(VisibleTracksInFile { file, tracks })
+            })
+            .collect()
+    }
+
+    /// Toggle a track's check state and recompute the parent file's aggregate.
+    pub fn toggle_track_check(&mut self, track: TrackRef) {
+        let Some(check) = self.track_node(track).map(|track_node| track_node.check) else {
+            return;
+        };
+        self.set_track_check(track, check.toggled());
     }
 
     /// Toggle a single event path node and recompute ancestors.
@@ -358,11 +433,7 @@ impl TreeState {
     pub fn toggle_all_event_paths(&mut self, track: TrackRef) {
         let agg = self.track_node(track).map(|t| t.event_paths.aggregate());
         let Some(agg) = agg else { return };
-        let new_state = match agg {
-            CheckState::On => CheckState::Off,
-            CheckState::Off | CheckState::Mixed => CheckState::On,
-        };
-        self.set_all_event_paths(track, new_state);
+        self.set_all_event_paths(track, agg.toggled());
     }
 
     fn set_all_event_paths(&mut self, track: TrackRef, state: CheckState) {
@@ -404,6 +475,23 @@ impl TreeState {
     pub fn toggle_expand_file(&mut self, fi: FileIdx) {
         if let Some(file_node) = self.file_node_mut(fi) {
             file_node.expanded = !file_node.expanded;
+        }
+    }
+
+    /// Expand, select and scroll to the row for `key`, which renders further
+    /// down this frame.
+    pub fn reveal(&mut self, key: NodeKey) {
+        self.expand_file(match key {
+            NodeKey::File(fi) => fi,
+            NodeKey::Track(track_ref) => track_ref.fi,
+        });
+        self.apply_click(key, false, false);
+        self.reveal_request = Some(key);
+    }
+
+    pub fn expand_file(&mut self, fi: FileIdx) {
+        if let Some(file_node) = self.file_node_mut(fi) {
+            file_node.expanded = true;
         }
     }
 
