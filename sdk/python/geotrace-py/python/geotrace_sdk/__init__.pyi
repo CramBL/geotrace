@@ -537,8 +537,18 @@ class EventMarkerStyle:
     def icon(self) -> MarkerIcon | None:
         """Icon shape.
 
-        ``None`` for the application default and for an icon name outside the
-        known set.
+        ``None`` for the application default and for an icon name this build
+        does not have. :attr:`icon_name` holds such a name.
+        """
+        ...
+
+    @property
+    def icon_name(self) -> str | None:
+        """The stored name of :attr:`icon`.
+
+        ``None`` where the style leaves the icon to the application. For an icon
+        name this build does not have, this property holds the name verbatim.
+        :attr:`icon` reads as ``None`` for it.
         """
         ...
 
@@ -626,8 +636,7 @@ class NavFile:
         """Per-variant style overrides stored in the file.
 
         Raises a ``UserWarning`` for a style naming an icon this build does not
-        have, whose ``icon`` reads as ``None``: :class:`MarkerIcon` has no member
-        for that name.
+        have. Its ``icon`` reads as ``None``. Its ``icon_name`` holds the name.
         """
         ...
 

@@ -7,6 +7,11 @@ the app).
 
 ## [unreleased]
 
+### Added
+
+- Rust `EventMarkerIconChoice::wire_name` returns the `icon_name` wire value the choice writes: the empty name for `Auto`, the icon's name for `Icon`, and the stored name for `Unrecognized`.
+- Python `EventMarkerStyle.icon_name`, a read-only property holding the stored name of `icon`: `None` where the style leaves the icon to the application, and the name verbatim where it is outside the `MarkerIcon` set. `NavFileBuilder.add_event_marker_style` writes such a name back unchanged.
+
 ### Changed
 
 - `geotrace/geotrace.hpp` uses an include guard instead of `#pragma once`, matching `geotrace/unit_catalog.hpp`.

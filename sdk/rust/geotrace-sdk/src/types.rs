@@ -750,6 +750,17 @@ pub enum EventMarkerIconChoice {
 }
 
 impl EventMarkerIconChoice {
+    /// The `icon_name` wire value this choice writes: the empty name for
+    /// [`EventMarkerIconChoice::Auto`]. Inverse of
+    /// [`EventMarkerIconChoice::from_wire_name`].
+    pub fn wire_name(&self) -> &str {
+        match self {
+            Self::Auto => "",
+            Self::Icon(icon) => icon.name(),
+            Self::Unrecognized(name) => name,
+        }
+    }
+
     /// Reads an `icon_name` wire value: an empty name gives
     /// [`EventMarkerIconChoice::Auto`], a name in the [`MarkerIcon`] set
     /// [`EventMarkerIconChoice::Icon`], and any other name
@@ -807,6 +818,20 @@ mod event_marker_style_wire_tests {
         #[case] expected: EventMarkerIconChoice,
     ) {
         assert_eq!(EventMarkerIconChoice::from_wire_name(wire), expected);
+    }
+
+    #[rstest]
+    #[case(EventMarkerIconChoice::Auto, "")]
+    #[case(
+        EventMarkerIconChoice::Icon(MarkerIcon::SatelliteLost),
+        "satellite_lost"
+    )]
+    #[case(EventMarkerIconChoice::Unrecognized("hovercraft".to_owned()), "hovercraft")]
+    fn wire_name_writes_an_icon_name_field(
+        #[case] choice: EventMarkerIconChoice,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(choice.wire_name(), expected);
     }
 
     #[test]
