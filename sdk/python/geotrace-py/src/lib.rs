@@ -696,13 +696,15 @@ impl PyNavFix {
         self.inner.lon.as_degrees()
     }
 
-    /// GPS-domain timestamp (timezone-aware UTC), or `None`.
+    /// GPS-receiver timestamp (timezone-aware UTC), or `None` when the receiver
+    /// had no lock.
     #[getter]
     fn gps_time(&self) -> Option<DateTime<FixedOffset>> {
         self.inner.gps_time.map(to_fixed)
     }
 
-    /// System-clock timestamp (timezone-aware UTC), or `None`.
+    /// System-clock timestamp (timezone-aware UTC), or `None` when the recorder
+    /// did not supply one.
     #[getter]
     fn sys_time(&self) -> Option<DateTime<FixedOffset>> {
         self.inner.sys_time.map(to_fixed)
@@ -906,13 +908,15 @@ impl PyNavPoint {
         self.inner.fix.lon.as_degrees()
     }
 
-    /// GPS-domain timestamp (timezone-aware UTC), or `None`.
+    /// GPS-receiver timestamp (timezone-aware UTC), or `None` when the receiver
+    /// had no lock.
     #[getter]
     fn gps_time(&self) -> Option<DateTime<FixedOffset>> {
         self.inner.fix.gps_time.map(to_fixed)
     }
 
-    /// System-clock timestamp (timezone-aware UTC), or `None`.
+    /// System-clock timestamp (timezone-aware UTC), or `None` when the recorder
+    /// did not supply one.
     #[getter]
     fn sys_time(&self) -> Option<DateTime<FixedOffset>> {
         self.inner.fix.sys_time.map(to_fixed)

@@ -111,6 +111,38 @@ def test_roundtrip_sys_time_preserved() -> None:
     assert delta < 0.001
 
 
+def test_roundtrip_fix_without_a_lock_keeps_gps_time_none() -> None:
+    b = NavFileBuilder()
+    b.add(NavFix(lat=51.50, lon=-0.10, gps_time=T0, sys_time=T0))
+    b.add(NavFix(lat=51.51, lon=-0.11, sys_time=T1))
+    nav_file = _write_and_read(b)
+
+    assert len(nav_file.points) == 2
+    receiver_stamped, host_stamped = nav_file.points
+
+    assert abs(receiver_stamped.lat - 51.50) < 1e-5
+    assert receiver_stamped.gps_time is not None
+    assert abs((receiver_stamped.gps_time - T0).total_seconds()) < 0.001
+    assert receiver_stamped.sys_time is not None
+    assert abs((receiver_stamped.sys_time - T0).total_seconds()) < 0.001
+
+    assert abs(host_stamped.lat - 51.51) < 1e-5
+    assert host_stamped.gps_time is None
+    assert host_stamped.sys_time is not None
+    assert abs((host_stamped.sys_time - T1).total_seconds()) < 0.001
+
+
+def test_roundtrip_fix_without_any_timestamp_keeps_both_none() -> None:
+    b = NavFileBuilder()
+    b.add(NavFix(lat=51.5, lon=-0.1))
+    nav_file = _write_and_read(b)
+
+    assert len(nav_file.points) == 1
+    pt = nav_file.points[0]
+    assert pt.gps_time is None
+    assert pt.sys_time is None
+
+
 def test_roundtrip_satellites() -> None:
     b = NavFileBuilder()
     b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
