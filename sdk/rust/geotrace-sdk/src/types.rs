@@ -199,7 +199,7 @@ impl Constellation {
 
 /// A user-defined map annotation with an optional label and icon.
 ///
-/// `Annotation::builder().build()` is the only way in, and it refuses a label
+/// `Annotation::builder().build()` is the only way in, and it rejects a label
 /// past the capacity of `markers/label`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Annotation {
@@ -855,9 +855,9 @@ mod event_marker_style_wire_tests {
     }
 
     #[test]
-    fn try_from_refuses_a_value_that_is_not_rrggbb() {
+    fn try_from_rejects_a_value_that_is_not_rrggbb() {
         let err = EventMarkerColor::try_from("FF9900".to_owned())
-            .expect_err("a value that is not #RRGGBB is refused");
+            .expect_err("a value that is not #RRGGBB is rejected");
         assert_eq!(
             err.to_string(),
             "failed to parse EventMarkerColor (hex) from \"FF9900\": expected #RRGGBB format"

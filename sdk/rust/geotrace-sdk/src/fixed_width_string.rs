@@ -6,7 +6,7 @@ use std::str::Utf8Error;
 /// A UTF-8 string stored in a `.gtd` field of `ROW_BYTES` bytes: the content,
 /// a nul terminator, then nul padding out to the row width.
 ///
-/// [`FixedWidthString::new`] is the only way in, and it refuses a value the
+/// [`FixedWidthString::new`] is the only way in, and it rejects a value the
 /// row cannot hold and a value containing a nul byte. Every value that
 /// constructs therefore survives [`FixedWidthString::encode_row`] followed by
 /// [`FixedWidthString::decode_row`] unchanged.

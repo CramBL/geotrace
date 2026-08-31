@@ -198,7 +198,7 @@ def test_style_color_outside_the_known_form_survives_the_read() -> None:
     assert style.color == "FFAA00"
 
 
-def test_style_color_outside_the_known_form_is_refused_when_written_back() -> None:
+def test_style_color_outside_the_known_form_is_rejected_when_written_back() -> None:
     loaded = NavFile.open(UNRECOGNIZED_STYLE_FIXTURE)
     with pytest.warns(UserWarning):
         style = loaded.event_marker_styles[0]

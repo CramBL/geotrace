@@ -438,7 +438,7 @@ mod tests {
 
         let error = FixtureTiles::new(directory.path().to_owned(), Context::default())
             .err()
-            .expect("a directory without a manifest is refused");
+            .expect("a directory without a manifest is rejected");
 
         assert!(matches!(error, TileFixtureManifestError::File { .. }));
     }
@@ -461,9 +461,9 @@ mod tests {
     #[case::too_many_fields("3/4/5/6")]
     #[case::not_a_number("3/x/5")]
     #[case::zoom_past_a_byte("300/4/5")]
-    fn a_malformed_tile_id_is_refused(#[case] text: &str) {
+    fn a_malformed_tile_id_is_rejected(#[case] text: &str) {
         text.parse::<FixtureTileId>()
-            .expect_err("a malformed tile id is refused");
+            .expect_err("a malformed tile id is rejected");
     }
 
     proptest::proptest! {

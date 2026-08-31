@@ -10,8 +10,8 @@
 //!  "status":["def","def"]}
 //! ```
 //!
-//! Arrays that disagree in length leave every sample after the disagreement
-//! unattributable, so any such response is refused whole. A `null` in the
+//! The parser rejects the whole response when its arrays disagree in length:
+//! every sample after the disagreement would be unattributable. A `null` in the
 //! value array is a period the service published no value for, and parses as
 //! a sample without one.
 
@@ -332,10 +332,10 @@ mod tests {
         assert_eq!(parse_hp30_series(json).unwrap().samples.len(), 1);
     }
 
-    /// Kp is defined up to 9, Hp30 is not, so the same value is refused for
-    /// one index and accepted for the other.
+    /// The same value is rejected for Kp and accepted for Hp30, whose
+    /// published range does not stop at 9.
     #[test]
-    fn a_kp_value_above_nine_is_refused() {
+    fn a_kp_value_above_nine_is_rejected() {
         let json = r#"{"Kp":[11.333],"datetime":["2024-05-10T00:00:00Z"],"status":["def"]}"#;
         assert_eq!(
             parse_kp_series(json).unwrap_err().to_string(),
@@ -391,7 +391,7 @@ mod tests {
     #[case::an_array("[1,2,3]")]
     #[case::no_datetime_field(r#"{"Kp":[2.667],"status":["def"]}"#)]
     #[case::a_worded_timestamp_array(r#"{"Kp":[2.667],"datetime":"2024-05-10T00:00:00Z"}"#)]
-    fn a_response_that_is_not_the_published_shape_is_refused(#[case] json: &str) {
+    fn a_response_that_is_not_the_published_shape_is_rejected(#[case] json: &str) {
         let error = parse_kp_series(json).unwrap_err();
         assert!(
             matches!(error, ParseError::Json(_)),

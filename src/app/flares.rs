@@ -83,7 +83,7 @@ pub struct SolarFlareScheduler {
     day_index_read: DayIndexReadRetry,
     /// The flares of the archived days the plot shows, read once per day.
     markers: ContextSampleCache<MarkedFlare>,
-    /// Registers every archive insert, and refuses the ones that would start
+    /// Registers every archive insert, and rejects the ones that would start
     /// after shutdown began.
     pending_writes: PendingWrites,
 }
@@ -850,12 +850,12 @@ mod tests {
         );
     }
 
-    /// A day queued while the registry refuses writes stays queued: no worker
-    /// starts a download whose archive insert would be refused.
+    /// A day queued while the registry rejects writes stays queued: no worker
+    /// starts a download whose archive insert would be rejected.
     #[rstest]
     #[case::shutting_down(pending_writes::shutting_down_registry())]
     #[case::read_only_session(PendingWrites::new(WriteAccess::ReadOnly))]
-    fn no_day_is_dispatched_while_writes_are_refused(#[case] pending_writes: PendingWrites) {
+    fn no_day_is_dispatched_while_writes_are_rejected(#[case] pending_writes: PendingWrites) {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.pending_writes = pending_writes;
 
@@ -865,7 +865,7 @@ mod tests {
         assert!(!scheduler.days.is_fetching());
     }
 
-    /// A download that finishes where the insert is refused is discarded, and
+    /// A download that finishes where the insert is rejected is discarded, and
     /// says which refusal discarded it.
     #[rstest]
     #[case::shutting_down(pending_writes::shutting_down_registry(), WriteRefusal::ShuttingDown)]
@@ -873,7 +873,7 @@ mod tests {
         PendingWrites::new(WriteAccess::ReadOnly),
         WriteRefusal::ReadOnlySession
     )]
-    fn a_day_downloaded_where_the_insert_is_refused_is_discarded(
+    fn a_day_downloaded_where_the_insert_is_rejected_is_discarded(
         #[case] pending_writes: PendingWrites,
         #[case] expected: WriteRefusal,
     ) {
@@ -890,7 +890,7 @@ mod tests {
         );
 
         let FlareDayMessage::Unarchived(UnarchivedDay::Refused { refusal, .. }) = message else {
-            panic!("the day was archived where the insert is refused");
+            panic!("the day was archived where the insert is rejected");
         };
         assert_eq!(refusal, expected);
         assert!(store.read().archived_days().expect("days").is_empty());
@@ -1027,7 +1027,7 @@ mod tests {
         let message = ingest(&transport, &writable(&store), &endpoint(), day(2024, 5, 9));
 
         let FlareDayMessage::Unarchived(UnarchivedDay::Failed { detail, .. }) = message else {
-            panic!("the transport refused every attempt");
+            panic!("the transport failed every attempt");
         };
         assert!(!detail.contains(TEST_KEY), "{detail}");
         assert!(detail.contains(gt_flare::REDACTED_KEY), "{detail}");

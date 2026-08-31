@@ -119,7 +119,7 @@ mod tests {
     #[rstest]
     #[case(WriteRefusal::ReadOnlySession)]
     #[case(WriteRefusal::ShuttingDown)]
-    fn a_refused_write_never_reaches_the_archive(#[case] refusal: WriteRefusal) {
+    fn a_rejected_write_never_reaches_the_archive(#[case] refusal: WriteRefusal) {
         let pending_writes = match refusal {
             WriteRefusal::ReadOnlySession => PendingWrites::new(WriteAccess::ReadOnly),
             WriteRefusal::ShuttingDown => {

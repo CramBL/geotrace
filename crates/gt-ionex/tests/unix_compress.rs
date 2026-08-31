@@ -56,7 +56,7 @@ fn the_decoded_capture_parses_as_the_file_it_came_from() {
 /// A crafted stream expands far beyond its own length, so the decode stops
 /// instead of growing the output until the allocator fails.
 #[test]
-fn a_stream_past_the_output_limit_is_refused() {
+fn a_stream_past_the_output_limit_is_rejected() {
     let compressed =
         support::compressed_fixture("past-output-limit.Z").expect("the fixture is generated");
 

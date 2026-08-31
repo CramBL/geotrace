@@ -81,12 +81,13 @@ fn a_buffer_without_a_trailing_newline_runs() {
 }
 
 /// Only whitespace is not a query, and neither is only a comment: nothing runs
-/// and the map stays untouched.
+/// and the map stays untouched. The panel's `run: refused` line is
+/// `RunAttempt::Refused`'s display text.
 #[rstest]
 #[case::blank("   \n\t\n  ")]
 #[case::comment_only("# nothing to see here\n")]
 #[case::empty("")]
-fn a_buffer_with_no_query_refuses_to_run(#[case] text: &str) {
+fn a_buffer_with_no_query_is_rejected(#[case] text: &str) {
     let mut scenario = scenario();
     scenario.run(text);
     insta::allow_duplicates! {
@@ -97,6 +98,6 @@ fn a_buffer_with_no_query_refuses_to_run(#[case] text: &str) {
     }
     assert!(
         scenario.matches().is_none(),
-        "refusing to run leaves the map alone"
+        "a rejected run leaves the map alone"
     );
 }

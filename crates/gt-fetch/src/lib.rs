@@ -569,7 +569,7 @@ mod tests {
     }
 
     #[test]
-    fn the_offline_source_refuses_every_request() {
+    fn the_offline_source_rejects_every_request() {
         let transport = TransportSource::Offline
             .connect(None)
             .expect("the offline source connects");
@@ -577,12 +577,12 @@ mod tests {
             &transport,
             &HttpRequest::get("https://example.invalid/dataset"),
         )
-        .expect_err("offline transport refuses");
+        .expect_err("the offline transport rejects the request");
         assert!(err.detail.contains(OFFLINE_DETAIL));
     }
 
     #[test]
-    fn the_offline_source_refuses_a_bytes_request_too() {
+    fn the_offline_source_rejects_a_bytes_request_too() {
         let transport = TransportSource::Offline
             .connect(None)
             .expect("the offline source connects");
@@ -590,7 +590,7 @@ mod tests {
             &transport,
             &HttpRequest::get("https://example.invalid/file.gz"),
         )
-        .expect_err("offline transport refuses");
+        .expect_err("the offline transport rejects the request");
         assert!(err.detail.contains(OFFLINE_DETAIL));
     }
 

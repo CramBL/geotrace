@@ -322,7 +322,7 @@ mod tests {
     /// The first code of a stream stands for a single byte: the table holds
     /// nothing else yet.
     #[test]
-    fn a_first_code_above_the_single_bytes_is_refused() {
+    fn a_first_code_above_the_single_bytes_is_rejected() {
         assert_eq!(
             decompress(&nine_bit_stream(BLOCK_MODE_AT_SIXTEEN_BITS, &[300])),
             Err(UnixCompressError::UndefinedCode { code: 300 })
@@ -330,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn a_code_the_table_does_not_hold_is_refused() {
+    fn a_code_the_table_does_not_hold_is_rejected() {
         assert_eq!(
             decompress(&nine_bit_stream(
                 BLOCK_MODE_AT_SIXTEEN_BITS,

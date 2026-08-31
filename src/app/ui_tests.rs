@@ -4821,7 +4821,7 @@ fn a_storage_open_that_never_reports_still_runs_the_loads_that_waited() {
 /// The app started on `data_directory`, which the caller's own
 /// [`DataDirectoryLock`] holds, with the files a command line named.
 ///
-/// The app takes its own lock on that very directory, which is refused for as
+/// The app takes its own lock on that very directory, which is rejected for as
 /// long as the caller keeps its lock - the same answer a second GeoTrace gets
 /// from the first.
 fn lock_on_a_directory_another_instance_holds(data_directory: &Path) -> DataDirectoryLock {
@@ -5401,7 +5401,7 @@ fn taking_over_records_the_take_over_in_the_data_directory() {
 }
 
 /// A read-only session never reaches the wait's take-over: the registry
-/// refusing the write is the guard this exercises.
+/// rejecting the write is the guard this exercises.
 #[test]
 fn a_take_over_in_a_read_only_session_records_nothing() {
     let directory = tempfile::tempdir().expect("temp dir");
@@ -5782,7 +5782,7 @@ fn app_asking_about_the_archives_under<'a>(
 }
 
 /// The same, for findings this process cannot produce on its own: libhdf5
-/// hands one process the same open file twice rather than refusing it.
+/// hands one process the same open file twice rather than rejecting it.
 fn app_asking_about<'a>(inspected: InspectedArchives) -> Harness<'a, App> {
     let (mut harness, _databases) = app_with_the_databases_still_opening(&[]);
     harness
@@ -6332,7 +6332,7 @@ fn a_failed_retry_restores_the_prompt() {
     assert!(harness.state().history.path().is_none());
 }
 
-/// A shutdown that has begun refuses all three recovery paths: each writes to
+/// A shutdown that has begun rejects all three recovery paths: each writes to
 /// the recordings database. `recreate_history_database` renames the file before
 /// it reopens it, and a quit in between leaves no database.
 #[rstest::rstest]
@@ -6345,7 +6345,7 @@ fn a_failed_retry_restores_the_prompt() {
 #[case::recreate(|app: &mut App, path: &Path, ctx: &egui::Context| {
     app.recreate_history_database(path, true, ctx);
 })]
-fn a_history_database_recovery_is_refused_once_shutdown_has_begun(
+fn a_history_database_recovery_is_rejected_once_shutdown_has_begun(
     #[case] recover: fn(&mut App, &Path, &egui::Context),
 ) {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -6377,12 +6377,12 @@ fn a_history_database_recovery_is_refused_once_shutdown_has_begun(
 
     assert!(
         harness.state().history.path().is_none(),
-        "the refused recovery opened the recordings database"
+        "the rejected recovery opened the recordings database"
     );
     assert_eq!(
         files_in_the_data_directory(),
         before,
-        "the refused recovery renamed, removed or created a file"
+        "the rejected recovery renamed, removed or created a file"
     );
 }
 
@@ -10234,7 +10234,7 @@ mod log_association {
             harness.step_until(|harness| harness
                 .query_by_label_contains("Could not attach navsyncd.log")
                 .is_some()),
-            "the viewer reports what the database refused"
+            "the viewer reports what the database rejected"
         );
         assert_eq!(harness.state().logs.len(), 1);
         assert!(

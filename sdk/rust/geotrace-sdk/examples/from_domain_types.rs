@@ -6,7 +6,7 @@
 //! implement `From` for each SDK type once.
 //! After that, [`NavRecorder::add_nav_fix`] and [`NavRecorder::add_satellite_report`]
 //! accept your types directly. [`Annotation`] takes `TryFrom` instead: a label
-//! past the capacity of `markers/label` is refused.
+//! past the capacity of `markers/label` is rejected.
 
 // Examples favour brevity: the core's robustness restriction lints (no
 // unwrap/expect/panic/indexing, no std::env::temp_dir) are not enforced on
@@ -262,7 +262,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // The typed add_* methods accept `impl Into<…>`, so the domain types feed in
     // directly via their From impls. An annotation converts through TryFrom,
-    // which refuses a label past the capacity of `markers/label`.
+    // which rejects a label past the capacity of `markers/label`.
     for fix in fixes {
         recorder.add_nav_fix(fix);
     }

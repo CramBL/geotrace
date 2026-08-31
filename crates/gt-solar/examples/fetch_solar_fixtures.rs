@@ -114,7 +114,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 wire::parse_hp30_series(&body).map(|series| series.samples.len())
             }
         }
-        .map_err(|err| format!("{}: refusing to write, {err}", fixture.name))?;
+        .map_err(|err| format!("{}: not written, {err}", fixture.name))?;
         println!("  {samples} samples");
         fs::write(dir.join(fixture.file_name()), &body)?;
 

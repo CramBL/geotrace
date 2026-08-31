@@ -91,7 +91,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         // Written only once it parses, so a fixture on disk is always one the
         // parser accepts.
         let maps = parse::global_ionosphere_maps(&text)
-            .map_err(|err| format!("{}: refusing to write, {err}", fixture.name))?;
+            .map_err(|err| format!("{}: not written, {err}", fixture.name))?;
         println!(
             "  {} maps, {} by {} nodes, peak {:?} TECU",
             maps.maps().len(),

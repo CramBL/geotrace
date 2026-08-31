@@ -135,7 +135,7 @@ impl TecInstantSelection {
     }
 
     /// Move one step by the interval the shown day's maps are published at.
-    /// A non-positive interval is refused, which keeps a corrupt archived day
+    /// A non-positive interval is rejected, which keeps a corrupt archived day
     /// from stalling the stepper.
     pub fn set_map_interval(&mut self, interval: TimeDelta) {
         if interval > TimeDelta::zero() {
@@ -315,7 +315,7 @@ mod tests {
     #[rstest]
     #[case::zero(TimeDelta::zero())]
     #[case::negative(TimeDelta::hours(-2))]
-    fn an_interval_that_is_not_a_step_is_refused(#[case] interval: TimeDelta) {
+    fn an_interval_that_is_not_a_step_is_rejected(#[case] interval: TimeDelta) {
         let mut selection = selection(at(2024, 5, 10, 18, 0));
         selection.set_map_interval(interval);
         selection.step_back();

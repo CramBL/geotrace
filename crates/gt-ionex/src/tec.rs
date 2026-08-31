@@ -115,7 +115,7 @@ mod tests {
     #[case::far_below_the_range(-11)]
     #[case::far_above_the_range(11)]
     #[case::the_smallest_integer(i32::MIN)]
-    fn an_exponent_outside_the_published_range_is_refused(#[case] exponent: i32) {
+    fn an_exponent_outside_the_published_range_is_rejected(#[case] exponent: i32) {
         assert_eq!(ScalingExponent::new(exponent), None);
     }
 

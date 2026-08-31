@@ -153,7 +153,7 @@ pub(crate) fn rename_identity(
         return Ok(());
     }
     if new.trim().is_empty() {
-        log::warn!("rename_identity: refusing to rename {old:?} to an empty identity");
+        log::warn!("rename_identity: not renaming {old:?} to an empty identity");
         return Ok(());
     }
 
@@ -173,7 +173,7 @@ pub(crate) fn rename_identity(
     };
 
     let rec_names = src.member_names()?;
-    // Refuse before touching anything if any recording would overwrite one under
+    // Reject before touching anything if any recording would overwrite one under
     // the destination (group names are UUID-suffixed, so unreachable in practice
     // - but never silently drop data). The copy-then-unlink below is not atomic,
     // so this must be checked up front.
@@ -1396,10 +1396,10 @@ mod tests {
     /// The repair round trip: flags set by an interrupted writer are cleared,
     /// the superblock checksum is left valid, and the file still opens.
     ///
-    /// Deliberately does not assert that the flagged file is refused before
+    /// Deliberately does not assert that the flagged file is rejected before
     /// clearing. libhdf5 opens a flagged v2 superblock read-write, which is
-    /// what [`create_native_file`] writes; only the v3 superblock refuses. The
-    /// path that reaches [`crate::classify_open_error`] for these files is
+    /// what [`create_native_file`] writes. Only a v3 superblock is rejected.
+    /// The path that reaches [`crate::classify_open_error`] for these files is
     /// covered by `clear_write_lock_repairs_an_unreadable_superblock` in
     /// `gt-history`.
     #[test]

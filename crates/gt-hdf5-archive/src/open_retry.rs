@@ -1,4 +1,4 @@
-//! Opening an archive again after libhdf5 refused the open because another
+//! Opening an archive again after libhdf5 rejected the open because another
 //! process had the file open.
 
 use std::thread;

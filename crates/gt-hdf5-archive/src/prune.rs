@@ -598,7 +598,7 @@ impl ColumnValues {
     }
 }
 
-/// Read the rows `ranges` cover, refusing a range past the end of `dataset`.
+/// Read the rows `ranges` cover, rejecting a range past the end of `dataset`.
 fn read_ranges<T: hdf5::H5Type + Clone>(
     dataset: &Dataset,
     ranges: &[Range<usize>],

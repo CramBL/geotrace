@@ -123,9 +123,11 @@ pub fn format_timeline_offset(d: chrono::Duration) -> String {
 /// - Seconds are shown only when the total duration is under 2 minutes.
 /// - Minutes are shown only when the whole hours is less than 3.
 /// - Zero-valued components are omitted entirely.
+/// - A duration between zero and a second is shown in tenths of a second,
+///   rounded up and capped at `"0.9s"`, so it never reads as no time at all.
 /// - Zero duration returns `"0s"` to avoid an empty string.
 ///
-/// Examples: `"20m"`, `"1h28m"`, `"3h"`, `"1m30s"`, `"45s"`, `"2d5h"`.
+/// Examples: `"20m"`, `"1h28m"`, `"3h"`, `"1m30s"`, `"45s"`, `"0.4s"`, `"2d5h"`.
 #[expect(
     clippy::let_underscore_must_use,
     reason = "writing to String cannot fail"
@@ -134,7 +136,12 @@ pub fn format_human_terse_duration(d: chrono::Duration) -> String {
     let total_secs = d.num_seconds();
 
     if total_secs == 0 {
-        return "0s".to_owned();
+        let millis = d.num_milliseconds();
+        return if millis <= 0 {
+            "0s".to_owned()
+        } else {
+            format!("0.{}s", millis.unsigned_abs().div_ceil(100).min(9))
+        };
     }
 
     let h = d.num_hours();
@@ -583,6 +590,33 @@ mod tests {
     #[test]
     fn zero_duration() {
         assert_eq!(format_human_terse_duration(dur(0, 0, 0)), "0s");
+    }
+
+    #[rstest::rstest]
+    #[case::one_millisecond(1, "0.1s")]
+    #[case::a_third_of_a_second(333, "0.4s")]
+    #[case::just_under_a_second(999, "0.9s")]
+    fn a_duration_under_a_second_reads_in_tenths(#[case] millis: i64, #[case] expected: &str) {
+        assert_eq!(
+            format_human_terse_duration(Duration::milliseconds(millis)),
+            expected
+        );
+    }
+
+    #[test]
+    fn exactly_one_second_shows_whole_seconds() {
+        assert_eq!(
+            format_human_terse_duration(Duration::milliseconds(1_000)),
+            "1s"
+        );
+    }
+
+    #[test]
+    fn a_negative_duration_under_a_second_reads_as_zero() {
+        assert_eq!(
+            format_human_terse_duration(Duration::milliseconds(-500)),
+            "0s"
+        );
     }
 
     #[test]

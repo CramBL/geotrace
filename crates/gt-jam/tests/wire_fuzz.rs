@@ -62,7 +62,7 @@ fn check_observations(observations: &[HexObservation]) -> Result<(), TestCaseErr
 }
 
 proptest::proptest! {
-    /// Any input at all. Most cases are refused at the header.
+    /// Any input at all. Most cases are rejected at the header.
     #[test]
     fn arbitrary_input_yields_only_usable_observations(csv in ".{0,2048}") {
         let reporter = ParseWarningReporter::default();

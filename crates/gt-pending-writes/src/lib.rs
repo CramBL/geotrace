@@ -2,9 +2,9 @@
 //!
 //! A write registers itself through [`PendingWrites::try_begin`] and stays
 //! registered until its [`PendingWriteGuard`] drops. Shutdown calls
-//! [`PendingWrites::begin_shutdown`], which refuses every write that has not
+//! [`PendingWrites::begin_shutdown`], which rejects every write that has not
 //! started, and then waits for the ones that have. A registry in
-//! [`WriteAccess::ReadOnly`] refuses every write for the rest of the run.
+//! [`WriteAccess::ReadOnly`] rejects every write for the rest of the run.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
@@ -190,7 +190,7 @@ impl PendingWrites {
         self.0.state.lock().write_access
     }
 
-    /// Refuses every write from here to the end of the run.
+    /// Rejects every write from here to the end of the run.
     ///
     /// There is no way back, which is what the user chose: a session started
     /// read-only beside the instance that owns the data directory stays
@@ -237,7 +237,7 @@ impl PendingWrites {
     }
 
     /// Register a write shutdown itself performs, which [`Self::try_begin`]
-    /// refuses by design, or [`None`] in a read-only session, whose shutdown
+    /// rejects by design, or [`None`] in a read-only session, whose shutdown
     /// writes nothing either.
     pub fn try_begin_shutdown_write(
         &self,
@@ -275,7 +275,7 @@ impl PendingWrites {
         }
     }
 
-    /// Refuse every write that has not started yet.
+    /// Reject every write that has not started yet.
     pub fn begin_shutdown(&self) {
         self.0.state.lock().shutting_down = true;
     }
@@ -392,7 +392,7 @@ mod tests {
     }
 
     #[test]
-    fn a_write_starting_after_shutdown_is_refused() {
+    fn a_write_starting_after_shutdown_is_rejected() {
         let writes = PendingWrites::default();
         writes.begin_shutdown();
 
@@ -423,7 +423,7 @@ mod tests {
     #[case(WriteKind::DatabaseOpen)]
     #[case(WriteKind::RecordingDatabase)]
     #[case(WriteKind::Settings)]
-    fn a_read_only_session_refuses_every_kind_of_write(#[case] kind: WriteKind) {
+    fn a_read_only_session_rejects_every_kind_of_write(#[case] kind: WriteKind) {
         let writes = PendingWrites::new(WriteAccess::ReadOnly);
 
         assert_eq!(
@@ -457,7 +457,7 @@ mod tests {
     }
 
     #[test]
-    fn a_session_that_turned_read_only_refuses_the_writes_it_took_before() {
+    fn a_session_that_turned_read_only_rejects_the_writes_it_took_before() {
         let writes = PendingWrites::new(WriteAccess::Owner);
         let started_as_owner =
             writes.try_begin("Storing a recording", WriteKind::RecordingDatabase);

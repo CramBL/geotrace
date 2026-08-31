@@ -274,7 +274,7 @@ mod tests {
         assert_eq!(
             class_type
                 .parse::<FlareClassification>()
-                .expect_err("refused")
+                .expect_err("rejected")
                 .to_string(),
             expected
         );

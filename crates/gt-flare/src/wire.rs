@@ -12,9 +12,9 @@
 //! The times are written to the minute, which is not RFC 3339, so
 //! [`parse_flare_time`] reads that one format. `endTime`, `sourceLocation`
 //! and `activeRegionNum` arrive as `null` on events the catalog left them off,
-//! and parse as absent. An event the parser cannot read refuses the whole
-//! response: an event silently dropped is a flare missing from the plot with
-//! nothing saying so.
+//! and parse as absent. The parser rejects the whole response where one event
+//! cannot be read: an event silently dropped is a flare missing from the plot
+//! with nothing saying so.
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::Deserialize;
@@ -262,7 +262,7 @@ mod tests {
     )]
     fn a_malformed_event_names_what_is_wrong(#[case] json: &str, #[case] expected: &str) {
         assert_eq!(
-            parse_flares(json).expect_err("refused").to_string(),
+            parse_flares(json).expect_err("rejected").to_string(),
             expected
         );
     }
@@ -280,8 +280,8 @@ mod tests {
         r#"[{"flrID":"f","beginTime":"2024-05-09T08:45Z","peakTime":"2024-05-09T09:13Z",
             "classType":2.2}]"#
     )]
-    fn a_response_that_is_not_the_published_shape_is_refused(#[case] json: &str) {
-        let error = parse_flares(json).expect_err("refused");
+    fn a_response_that_is_not_the_published_shape_is_rejected(#[case] json: &str) {
+        let error = parse_flares(json).expect_err("rejected");
         assert!(
             matches!(error, ParseError::Json(_)),
             "{json:?} produced {error:?}"

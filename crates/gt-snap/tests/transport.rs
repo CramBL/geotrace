@@ -289,14 +289,14 @@ proptest::proptest! {
 
 /// The offline source connects. Every send fails.
 #[test]
-fn the_offline_source_refuses_every_request() {
+fn the_offline_source_rejects_every_request() {
     let transport = TransportSource::Offline
         .connect(None)
         .expect("the offline source connects");
     let request = HttpRequest::post_json(DEFAULT_SERVER_URL, "{}");
 
-    let err =
-        Transport::<String>::send(&transport, &request).expect_err("offline transport refuses");
+    let err = Transport::<String>::send(&transport, &request)
+        .expect_err("the offline transport rejects the request");
     assert!(err.detail.contains(gt_fetch::OFFLINE_DETAIL));
 }
 

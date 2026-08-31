@@ -572,7 +572,7 @@ fn an_interrupted_delete_drops_every_day() {
 /// Two days claiming the same rows is a state no archive writes, and a delete
 /// that moved them would hand one day the other's rows.
 #[test]
-fn overlapping_days_are_refused() {
+fn overlapping_days_are_rejected() {
     let archive = TestArchive::create().expect("archive");
     for offset in 0..3 {
         archive.insert_day(day(offset), 5).expect("insert");
@@ -592,7 +592,7 @@ fn overlapping_days_are_refused() {
 
 /// A day index cut short of the days it holds cannot say where they sit.
 #[test]
-fn an_index_column_that_lost_rows_is_refused() {
+fn an_index_column_that_lost_rows_is_rejected() {
     let archive = TestArchive::create().expect("archive");
     archive.insert_days(&STORED_DAYS).expect("insert");
     let days = archive.group(DAYS).expect("days group");

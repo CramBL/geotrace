@@ -234,7 +234,7 @@ impl App {
     /// Writes the settings file with the write registered for as long as it
     /// runs.
     ///
-    /// The registry refuses the write in a read-only session and once
+    /// The registry rejects the write in a read-only session and once
     /// `PendingWrites::begin_shutdown` has run, which leaves
     /// [`App::flush_settings_during_shutdown`] as the last settings write of
     /// the run. A session that took write access from an instance still
@@ -258,7 +258,7 @@ impl App {
     }
 
     /// Writes the settings file as part of the shutdown, which
-    /// [`App::flush_settings`] cannot do: `try_begin` refuses every write
+    /// [`App::flush_settings`] cannot do: `try_begin` rejects every write
     /// once the shutdown has begun.
     pub(in crate::app) fn flush_settings_during_shutdown(&self) {
         let Some(_settings_write) = self

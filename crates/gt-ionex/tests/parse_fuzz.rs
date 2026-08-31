@@ -79,7 +79,7 @@ fn check_values(maps: &GlobalIonosphereMaps) -> Result<(), TestCaseError> {
 }
 
 proptest::proptest! {
-    /// Any input at all. Most cases are refused for having no header end.
+    /// Any input at all. Most cases are rejected for having no header end.
     #[test]
     fn arbitrary_input_yields_only_finite_values(text in ".{0,2048}") {
         if let Ok(maps) = parse::global_ionosphere_maps(&text) {
@@ -110,7 +110,7 @@ proptest::proptest! {
     /// A capture with one line rewritten, which reaches the record readers
     /// far more often than arbitrary text does.
     #[test]
-    fn a_capture_with_a_rewritten_line_is_read_or_refused(
+    fn a_capture_with_a_rewritten_line_is_read_or_rejected(
         rewritten_line in 0_usize..MAX_REWRITTEN_LINE,
         replacement in ".{0,80}",
     ) {

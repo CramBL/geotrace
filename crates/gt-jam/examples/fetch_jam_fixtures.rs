@@ -123,7 +123,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let reporter = ParseWarningReporter::default();
             let observations = wire::parse_dataset(&body, &reporter).map_err(|err| {
                 format!(
-                    "{}: refusing to write, the response did not parse: {err}",
+                    "{}: not written, the response did not parse: {err}",
                     fixture.day
                 )
             })?;

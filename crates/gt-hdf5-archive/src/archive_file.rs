@@ -120,7 +120,7 @@ impl ArchiveFile {
         Ok(FileSpaceMigration::Rebuilt)
     }
 
-    /// Refuse an archive that cannot be read as it stands, which is what an
+    /// Reject an archive that cannot be read as it stands, which is what an
     /// open that may not write to the file checks before handing it over.
     ///
     /// An interrupted delete leaves the day index part-way through a move,
@@ -142,7 +142,7 @@ impl ArchiveFile {
         Ok(())
     }
 
-    /// Refuse an archive whose `attribute` names a schema newer than
+    /// Reject an archive whose `attribute` names a schema newer than
     /// `supported`. An archive without the attribute reads as version 0.
     pub fn validate_schema_version(
         &mut self,
@@ -253,7 +253,7 @@ fn copy_object(
 
 /// Copy the attributes an archive holds itself, which the copy of its members
 /// does not reach. An archive writes whole numbers there, and an attribute of
-/// any other type is refused.
+/// any other type is rejected.
 fn copy_i64_attributes(
     CopiedFrom(source): CopiedFrom<'_>,
     CopiedInto(target): CopiedInto<'_>,

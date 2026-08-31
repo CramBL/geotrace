@@ -227,7 +227,7 @@ fn loading_an_attached_log_that_is_gone_reports_it_missing() {
     );
 }
 
-/// A stored log that is no longer the one attached is refused.
+/// A stored log that is no longer the one attached is rejected.
 #[test_log::test]
 fn an_attached_log_replaced_on_disk_reports_a_content_hash_mismatch() {
     let mut recorded = RecordedStore::new();

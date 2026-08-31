@@ -52,7 +52,7 @@ use crate::app::background_thread;
 /// configured default costing, and declarations without a road-network
 /// counterpart (boat, rail, aircraft) make the track unsnappable (`None`).
 /// Unknown declarations fall back to the configured default - an
-/// unrecognized platform is no reason to refuse a manual snap.
+/// unrecognized platform is no reason to reject a manual snap.
 pub fn resolve_costing(declared: Option<&TravelMode>, configured: Costing) -> Option<Costing> {
     match declared {
         None | Some(TravelMode::Unknown(_)) => Some(configured),
