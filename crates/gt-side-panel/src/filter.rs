@@ -6,7 +6,7 @@ use egui_phosphor::regular::ARROWS_OUT_SIMPLE as ICON_ARROWS_OUT_SIMPLE;
 use egui_phosphor::regular::BOUNDING_BOX as ICON_BOUNDING_BOX;
 use egui_phosphor::regular::CLOCK as ICON_CLOCK;
 use gt_filter::GlobalFilter;
-use gt_types::{LoadedFile, MarkerRequirement};
+use gt_types::{LoadedFile, MarkerRequirement, TimeRange};
 use gt_ui_theme::EM_DASH;
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
@@ -21,7 +21,7 @@ pub struct FilterPanelState {
     /// Stable viewport for the secondary (zoomed) time range bar.
     /// Initialised from the active data range the first time the secondary bar
     /// appears. Reset when the primary bar changes or filters are cleared.
-    pub secondary_zoom: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    pub secondary_zoom: Option<TimeRange>,
 }
 
 /// Render the global-filter controls. Returns `true` when the user clicked
@@ -37,17 +37,13 @@ pub fn render_filter_panel(
     let full_range = compute_full_time_range(files);
     let filtered_range = compute_filtered_time_range(files, filter);
 
-    if let Some((range_start, range_end)) = full_range {
-        let sel_start = filter.time_start.unwrap_or(range_start);
-        let sel_end = filter.time_end.unwrap_or(range_end);
+    if let Some(full_range) = full_range {
+        let sel_start = filter.time_start.unwrap_or(full_range.start);
+        let sel_end = filter.time_end.unwrap_or(full_range.end);
         let dur_str = gt_fmt::format_human_terse_duration(sel_end - sel_start);
         ui.label(format!("Time range {EM_DASH} {dur_str}"));
-        let primary_changed = time_range_bar(
-            ui,
-            (range_start, range_end),
-            &mut filter.time_start,
-            &mut filter.time_end,
-        );
+        let primary_changed =
+            time_range_bar(ui, full_range, &mut filter.time_start, &mut filter.time_end);
         if primary_changed {
             state.secondary_zoom = None;
         }
@@ -56,26 +52,16 @@ pub fn render_filter_panel(
         // is much narrower than the full range (e.g. one 30-minute track among
         // several days). Uses a stable stored viewport so that dragging its
         // handles doesn't shift the viewport under the cursor.
-        if let Some((filt_start, filt_end)) = filtered_range {
-            let full_secs = (range_end - range_start).num_seconds();
-            let filt_secs = (filt_end - filt_start).num_seconds();
-            if full_secs > 0 && filt_secs * 5 < full_secs {
-                if state.secondary_zoom.is_none() {
-                    state.secondary_zoom = Some(expand_range(
-                        (filt_start, filt_end),
-                        (range_start, range_end),
-                    ));
-                }
-                if let Some((zoom_start, zoom_end)) = state.secondary_zoom {
-                    let zoom_dur = gt_fmt::format_human_terse_duration(zoom_end - zoom_start);
-                    ui.label(format!("Active range {EM_DASH} {zoom_dur}"));
-                    time_range_bar(
-                        ui,
-                        (zoom_start, zoom_end),
-                        &mut filter.time_start,
-                        &mut filter.time_end,
-                    );
-                }
+        if let Some(filtered_range) = filtered_range {
+            let full_seconds = full_range.duration().as_seconds_f64();
+            let filtered_seconds = filtered_range.duration().as_seconds_f64();
+            if full_seconds > 0.0 && filtered_seconds * 5.0 < full_seconds {
+                let zoom_range = *state
+                    .secondary_zoom
+                    .get_or_insert_with(|| expand_range(filtered_range, full_range));
+                let zoom_dur = gt_fmt::format_human_terse_duration(zoom_range.duration());
+                ui.label(format!("Active range {EM_DASH} {zoom_dur}"));
+                time_range_bar(ui, zoom_range, &mut filter.time_start, &mut filter.time_end);
             } else {
                 state.secondary_zoom = None;
             }
@@ -173,7 +159,7 @@ pub fn render_filter_panel(
     false
 }
 
-fn compute_full_time_range(files: &[LoadedFile]) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+fn compute_full_time_range(files: &[LoadedFile]) -> Option<TimeRange> {
     let mut min: Option<DateTime<Utc>> = None;
     let mut max: Option<DateTime<Utc>> = None;
     for file in files {
@@ -182,20 +168,53 @@ fn compute_full_time_range(files: &[LoadedFile]) -> Option<(DateTime<Utc>, DateT
         min = Some(min.map_or(start, |m: DateTime<Utc>| m.min(start)));
         max = Some(max.map_or(end, |m: DateTime<Utc>| m.max(end)));
     }
-    min.zip(max)
+    min.zip(max).map(|(start, end)| TimeRange::new(start, end))
+}
+
+/// Converts between an instant and its fraction of a time range bar's span,
+/// in both directions.
+#[derive(Debug, Clone, Copy)]
+struct TimeRangeBarScale {
+    range: TimeRange,
+    span_seconds: f64,
+}
+
+impl TimeRangeBarScale {
+    /// `None` for a range that ends where it begins or before it, which no bar
+    /// can lay out.
+    fn new(range: TimeRange) -> Option<Self> {
+        let span_seconds = range.duration().as_seconds_f64();
+        (span_seconds > 0.0).then_some(Self {
+            range,
+            span_seconds,
+        })
+    }
+
+    fn fraction_at_instant(self, instant: DateTime<Utc>) -> f64 {
+        (instant - self.range.start).as_seconds_f64() / self.span_seconds
+    }
+
+    /// The instant `fraction` of the way through the range, clamped to its
+    /// ends. Resolved to the millisecond, the finest step an `i64` holds over
+    /// the whole `DateTime<Utc>` range of ±262 000 years.
+    fn instant_at_fraction(self, fraction: f64) -> DateTime<Utc> {
+        let milliseconds = fraction.clamp(0.0, 1.0) * self.span_seconds * 1_000.0;
+        self.range
+            .start
+            .checked_add_signed(Duration::milliseconds(milliseconds as i64))
+            .unwrap_or(self.range.end)
+    }
 }
 
 fn time_range_bar(
     ui: &mut Ui,
-    full_range: (DateTime<Utc>, DateTime<Utc>),
+    full_range: TimeRange,
     selected_start: &mut Option<DateTime<Utc>>,
     selected_end: &mut Option<DateTime<Utc>>,
 ) -> bool {
-    let (full_start, full_end) = full_range;
-    let total_secs = (full_end - full_start).num_seconds() as f64;
-    if total_secs <= 0.0 {
+    let Some(scale) = TimeRangeBarScale::new(full_range) else {
         return false;
-    }
+    };
 
     let desired_size = egui::vec2(ui.available_width(), 24.0);
     let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
@@ -213,13 +232,10 @@ fn time_range_bar(
     );
 
     let to_x = |dt: DateTime<Utc>| -> f32 {
-        let offset = (dt - full_start).num_seconds() as f64 / total_secs;
-        track_left + (offset as f32) * track_width
+        track_left + (scale.fraction_at_instant(dt) as f32) * track_width
     };
     let to_dt = |x: f32| -> DateTime<Utc> {
-        let frac = ((x - track_left) / track_width).clamp(0.0, 1.0) as f64;
-        let secs = (frac * total_secs) as i64;
-        full_start + Duration::seconds(secs)
+        scale.instant_at_fraction(f64::from((x - track_left) / track_width))
     };
 
     let start_x = selected_start.map_or(track_left, to_x);
@@ -243,15 +259,15 @@ fn time_range_bar(
         let dist_start = (pointer.x - start_x).abs();
         let dist_end = (pointer.x - end_x).abs();
         if dist_start < dist_end {
-            let new_dt = to_dt(pointer.x).min(selected_end.unwrap_or(full_end));
-            *selected_start = if new_dt <= full_start {
+            let new_dt = to_dt(pointer.x).min(selected_end.unwrap_or(full_range.end));
+            *selected_start = if new_dt <= full_range.start {
                 None
             } else {
                 Some(new_dt)
             };
         } else {
-            let new_dt = to_dt(pointer.x).max(selected_start.unwrap_or(full_start));
-            *selected_end = if new_dt >= full_end {
+            let new_dt = to_dt(pointer.x).max(selected_start.unwrap_or(full_range.start));
+            *selected_end = if new_dt >= full_range.end {
                 None
             } else {
                 Some(new_dt)
@@ -267,21 +283,18 @@ fn time_range_bar(
     }
 
     let start_label = selected_start.map_or_else(
-        || full_start.format("%m/%d %H:%M").to_string(),
+        || full_range.start.format("%m/%d %H:%M").to_string(),
         |dt| dt.format("%m/%d %H:%M").to_string(),
     );
     let end_label = selected_end.map_or_else(
-        || full_end.format("%m/%d %H:%M").to_string(),
+        || full_range.end.format("%m/%d %H:%M").to_string(),
         |dt| dt.format("%m/%d %H:%M").to_string(),
     );
     ui.label(format!("{start_label} {EM_DASH} {end_label}"));
     changed
 }
 
-fn compute_filtered_time_range(
-    files: &[LoadedFile],
-    filter: &GlobalFilter,
-) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+fn compute_filtered_time_range(files: &[LoadedFile], filter: &GlobalFilter) -> Option<TimeRange> {
     let mut min: Option<DateTime<Utc>> = None;
     let mut max: Option<DateTime<Utc>> = None;
     for file in files {
@@ -294,20 +307,16 @@ fn compute_filtered_time_range(
             }
         }
     }
-    min.zip(max)
+    min.zip(max).map(|(start, end)| TimeRange::new(start, end))
 }
 
-fn expand_range(
-    range: (DateTime<Utc>, DateTime<Utc>),
-    full: (DateTime<Utc>, DateTime<Utc>),
-) -> (DateTime<Utc>, DateTime<Utc>) {
-    let (start, end) = range;
-    let (full_start, full_end) = full;
-    let span_secs = (end - start).num_seconds().max(60);
+fn expand_range(range: TimeRange, full: TimeRange) -> TimeRange {
+    let span_secs = range.duration().num_seconds().max(60);
     let padding = Duration::seconds(span_secs / 5);
-    let expanded_start = (start - padding).max(full_start);
-    let expanded_end = (end + padding).min(full_end);
-    (expanded_start, expanded_end)
+    TimeRange::new(
+        (range.start - padding).max(full.start),
+        (range.end + padding).min(full.end),
+    )
 }
 
 fn parse_duration_input(s: &str) -> Option<Duration> {
@@ -346,7 +355,6 @@ mod tests {
     use std::fmt::Write as _;
     use std::path::PathBuf;
 
-    use gt_types::TimeRange;
     use rustc_hash::FxHashMap;
 
     use super::*;
@@ -428,10 +436,63 @@ mod tests {
             source: gt_types::FileSource::GtdPath(PathBuf::from("test.gtd")),
             load_warnings: vec![],
         };
-        let range = compute_full_time_range(&[file]);
-        assert!(range.is_some());
-        let (start, end) = range.expect("some");
-        assert_eq!(start.timestamp(), 0);
-        assert_eq!(end.timestamp(), 60);
+        let range = compute_full_time_range(&[file]).expect("one file has a time range");
+        assert_eq!(range.start.timestamp(), 0);
+        assert_eq!(range.end.timestamp(), 60);
+    }
+
+    /// Ten fixes at 10 Hz cover 900 ms, the span of a bar whose every handle
+    /// position is a fraction of a second.
+    fn sub_second_range() -> TimeRange {
+        let start = DateTime::UNIX_EPOCH;
+        TimeRange::new(start, start + Duration::milliseconds(900))
+    }
+
+    #[test]
+    fn a_range_under_a_second_has_a_scale() {
+        assert!(TimeRangeBarScale::new(sub_second_range()).is_some());
+    }
+
+    #[test]
+    fn a_range_that_ends_where_it_begins_has_no_scale() {
+        let start = DateTime::UNIX_EPOCH;
+        assert!(TimeRangeBarScale::new(TimeRange::new(start, start)).is_none());
+    }
+
+    #[test]
+    fn fraction_at_instant_keeps_the_sub_second_part() {
+        let range = sub_second_range();
+        let scale = TimeRangeBarScale::new(range).expect("a 900 ms range has a scale");
+        let halfway = range.start + Duration::milliseconds(450);
+        assert!((scale.fraction_at_instant(halfway) - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn instant_at_fraction_keeps_the_sub_second_part() {
+        let range = sub_second_range();
+        let scale = TimeRangeBarScale::new(range).expect("a 900 ms range has a scale");
+        assert_eq!(
+            scale.instant_at_fraction(0.5),
+            range.start + Duration::milliseconds(450)
+        );
+    }
+
+    #[test]
+    fn instant_at_fraction_clamps_to_the_ends_of_the_range() {
+        let range = sub_second_range();
+        let scale = TimeRangeBarScale::new(range).expect("a 900 ms range has a scale");
+        assert_eq!(scale.instant_at_fraction(-0.5), range.start);
+        assert_eq!(scale.instant_at_fraction(1.5), range.end);
+    }
+
+    /// A range of every instant `DateTime<Utc>` can hold, far longer than any
+    /// recording, still lands within a second of its end.
+    #[test]
+    fn instant_at_fraction_stays_in_a_range_of_the_whole_datetime_span() {
+        let range = TimeRange::new(DateTime::<Utc>::MIN_UTC, DateTime::<Utc>::MAX_UTC);
+        let scale = TimeRangeBarScale::new(range).expect("the widest range has a scale");
+        let end = scale.instant_at_fraction(1.0);
+        assert!(end <= range.end);
+        assert!(range.end - end < Duration::seconds(1));
     }
 }

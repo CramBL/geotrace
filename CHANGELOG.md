@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- **Interface:** Fixed the time range filter drawing no bar for a recording shorter than a second, and its handles moving in whole-second steps: the bar is now drawn for any recording and its handles select to the millisecond.
 - **Log Viewer:** Fixed a log entry between two fixes across the antimeridian being placed half a world away from both.
 - **Map & Tracks:** Fixed a recording whose event marker style names an icon this version does not have, or a color that is not a #RRGGBB value, loading as if the style had named neither: those markers are now drawn as a pin or in gray, and the data quality warnings name the variant path and the recorded value.
 - **Map & Tracks:** Fixed the sky trails plot shifting and resizing as the satellite counts beside it gained or lost the parenthesised total for hidden satellites.
