@@ -46,8 +46,13 @@ const TABLE_ROWS_THE_HEADER_LEAVES: usize = 3;
 
 const SUMMARY_HOVER: &str = "Show what the parse read from this log";
 
-const ASSOCIATION_WINDOW_HOVER: &str = "Furthest a line's timestamp may be from a fix of the association target for \
-     the line to take its position";
+const ASSOCIATION_WINDOW_HOVER: &str = "Furthest a line's timestamp may be from a fix of the anchored recording for the line \
+     to take its position";
+
+const NO_RECORDING_HOVER: &str = "Take this log's positions from no recording";
+
+const NO_RECORDING_ATTACHED_HOVER: &str =
+    "Remove the attachment first: this log is stored with a recording in history";
 
 /// Why a recording that ran at no time the log covers is still a choice: a
 /// clock-skewed source is a recording too.
@@ -125,7 +130,7 @@ struct SelectorRow {
 }
 
 /// What the viewer requests of the app for the log it is showing. The app owns
-/// the history database, the dialog, and the log's association target.
+/// the history database, the dialog, and the recording a log is anchored to.
 #[derive(Debug, Default)]
 pub(super) struct LogViewerRequests {
     /// Open the association dialog on this log.
@@ -384,8 +389,8 @@ impl LogViewerWindow {
         }
     }
 
-    /// The association target the log takes its positions from, and how far an
-    /// entry may be from a fix to take one.
+    /// The recording the log takes its positions from, and how far an entry may
+    /// be from a fix to take one.
     fn footer_ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -399,7 +404,7 @@ impl LogViewerWindow {
         let Some(log) = selected.and_then(|id| logs.get_by_id(id)) else {
             return;
         };
-        let target = log.association_target();
+        let target = log.associated_recording();
         let candidates = log.rank_association_candidates(&recordings);
         let entered_unit = self.association_window_unit;
         let mut value = entered_unit.measure(log.association_window());
@@ -421,13 +426,14 @@ impl LogViewerWindow {
                             .unwrap_or(EM_DASH),
                     )
                     .show_ui(ui, |ui| {
-                        if ui
-                            .selectable_label(target.is_none(), EM_DASH)
-                            .on_hover_text("Take this log's positions from no recording")
-                            .clicked()
-                        {
+                        let no_recording = ui
+                            .add_enabled(!attached, Button::selectable(target.is_none(), EM_DASH));
+                        if no_recording.clicked() {
                             chosen_target = None;
                         }
+                        no_recording
+                            .on_hover_text(NO_RECORDING_HOVER)
+                            .on_disabled_hover_text(NO_RECORDING_ATTACHED_HOVER);
                         for candidate in ranked {
                             let name = names.get(&candidate.recording).copied().unwrap_or(EM_DASH);
                             let overlapping = candidate.overlaps_the_log();
@@ -510,13 +516,13 @@ impl LogViewerWindow {
             log.set_association_window(entered_unit.window_of(value), &recordings);
         }
         if chosen_target != target {
-            log.associate_with(chosen_target, &recordings);
+            log.anchor_to_loaded_recording(chosen_target, &recordings);
         }
     }
 }
 
-/// The name each loaded recording goes by, under the identity a log names its
-/// association target with.
+/// The name each loaded recording goes by, under the identity the footer's
+/// association controls name it with.
 fn recording_names_by_id<'a>(
     recordings: LoadedFilesView<'a>,
     recording_names: &'a RecordingNames,

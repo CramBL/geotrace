@@ -1,13 +1,14 @@
 //! Logs and recordings the crate's tests associate against each other.
 
 use chrono::{DateTime, Duration, TimeZone as _, Utc};
+use gt_history_types::{DatabaseRef, RecordingMeta};
 use gt_loaded_files::{FileHistory, LoadedFileId, LoadedFiles};
 use gt_logfile::ParsedLog;
 use gt_test_utils::{empty_file_metadata, loaded_track_with_points, nav_points_walking_from};
 use gt_types::{FileMetadata, FileSource, Latitude, LoadedFile, Longitude, NavPoint, TimeRange};
 use rustc_hash::FxHashMap;
 
-use crate::LoadedLog;
+use crate::{LoadedLog, RecordingKey};
 
 /// The window the tests associate with, matching the app's default.
 pub(crate) fn association_window() -> Duration {
@@ -122,4 +123,45 @@ pub(crate) fn id_of(files: &LoadedFiles, index: usize) -> LoadedFileId {
         .get(index)
         .map(|entry| entry.id())
         .expect("the fixture file is loaded")
+}
+
+/// The key the fixture recording at `index` is anchored under.
+pub(crate) fn key_of(files: &LoadedFiles, index: usize) -> RecordingKey {
+    files
+        .view()
+        .get(index)
+        .map(RecordingKey::of_loaded_recording)
+        .expect("the fixture file is loaded")
+}
+
+/// Anchors `log` to the fixture recording at `index`, as choosing that
+/// recording in the viewer does.
+pub(crate) fn anchor_to(log: &mut LoadedLog, files: &LoadedFiles, index: usize) {
+    log.anchor_to(key_of(files, index), &files.view());
+}
+
+/// The recording in the history database the crate's tests anchor a stored log
+/// to.
+pub(crate) fn stored_recording_ref() -> DatabaseRef {
+    DatabaseRef {
+        identity: "nav-devkit-mk2".to_owned(),
+        group_name: "2026-01-01T14-02-11".to_owned(),
+    }
+}
+
+/// The session sidecar of a recording the history database holds as `db_ref`.
+pub(crate) fn stored_in_history(db_ref: &DatabaseRef) -> FileHistory {
+    FileHistory::recording(
+        db_ref.identity.clone(),
+        RecordingMeta {
+            start_us: 0,
+            end_us: 0,
+            nav_point_count: 0,
+            sat_report_count: 0,
+            marker_count: 0,
+            event_marker_count: 0,
+            gtd_size_bytes: 0,
+        },
+        Some(db_ref.clone()),
+    )
 }

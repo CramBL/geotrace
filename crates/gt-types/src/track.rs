@@ -587,8 +587,8 @@ pub struct FileMetadata {
 #[serde(default)]
 pub struct AssociationConfig {
     /// Association window a freshly loaded log starts with: the time an entry
-    /// may be away from the nearest fix of its association target and still
-    /// take a position from it. Adjustable per log afterwards.
+    /// may be away from the nearest fix of the recording it is anchored to and
+    /// still take a position from it. Adjustable per log afterwards.
     pub log_association_window_s: u64,
 }
 

@@ -9383,7 +9383,7 @@ fn a_log_loaded_without_a_recording_stays_untargeted_and_raises_no_dialog() {
         harness
             .state()
             .first_log()
-            .and_then(gt_log_view::LoadedLog::association_target),
+            .and_then(gt_log_view::LoadedLog::associated_recording),
         None
     );
     assert!(harness.state_mut().logs.map_matches().is_empty());
@@ -9766,6 +9766,33 @@ fn snapshot_app_log_map_hexagons() {
     harness.snapshot_loose("app_log_map_hexagons");
 }
 
+/// A recording the history database does not hold is named by the identity it
+/// keeps for as long as it stays loaded: unloading it takes the logs anchored
+/// to it with it.
+#[test]
+fn unloading_a_recording_outside_history_unloads_the_logs_anchored_to_it() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+    drop_log_and_associate_it(&mut harness, &synthetic_log(8 * 1024), "navsyncd.log");
+    harness.run_steps(3);
+    assert!(
+        matches!(
+            harness.state().first_log().and_then(LoadedLog::anchor_key),
+            Some(gt_log_view::RecordingKey::Session(_))
+        ),
+        "the recording is in no history database"
+    );
+
+    harness.state_mut().shared.borrow_mut().tree.pending_unload =
+        Some(vec![gt_side_panel::NodeKey::File(FileIdx::new(0))]);
+    harness.run_steps(3);
+
+    assert_eq!(harness.state().shared.borrow().loaded_files.len(), 0);
+    assert_eq!(harness.state().logs.len(), 0);
+}
+
 #[test]
 fn choosing_a_target_in_the_footer_associates_the_log_against_it() {
     let mut harness = Harness::builder()
@@ -9789,7 +9816,7 @@ fn choosing_a_target_in_the_footer_associates_the_log_against_it() {
         harness
             .state()
             .first_log()
-            .and_then(|log| log.association_target()),
+            .and_then(|log| log.associated_recording()),
         None,
         "two overlapping recordings leave the choice to the user"
     );
@@ -9881,7 +9908,7 @@ mod log_association {
         harness
             .state()
             .first_log()
-            .and_then(gt_log_view::LoadedLog::association_target)
+            .and_then(gt_log_view::LoadedLog::associated_recording)
     }
 
     /// Every attachment the recording carries, as the database holds it.
@@ -10208,10 +10235,62 @@ mod log_association {
             harness
                 .state()
                 .first_log()
-                .is_some_and(|log| log.association_target().is_some()),
+                .is_some_and(|log| log.associated_recording().is_some()),
             "a restored log is associated with the recording that carried it"
         );
         assert!(harness.state().log_viewer.open);
+    }
+
+    /// Opens the remove confirmation on the recording the session loaded
+    /// first, with the permanent-delete box ticked when `permanently`.
+    fn open_the_remove_confirmation(harness: &mut Harness<App>, permanently: bool) {
+        harness.state_mut().shared.borrow_mut().tree.delete_confirm =
+            Some(gt_side_panel::DeleteConfirmState {
+                items: vec![gt_side_panel::NodeKey::File(FileIdx::new(0))],
+                delete_permanently: permanently,
+            });
+        harness.run_steps(3);
+    }
+
+    /// A recording leaving the session takes its attached logs with it, and the
+    /// dialog says so before the user confirms.
+    #[test]
+    fn removing_a_recording_unloads_the_logs_it_holds() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("geotrace.h5");
+        let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
+        attach_the_log(&mut harness, &db_path, &db_ref);
+
+        open_the_remove_confirmation(&mut harness, false);
+        harness.get_by_label_contains("Unloads 1 attached log");
+
+        harness.get_by_label("Remove").click();
+        harness.run_steps(3);
+
+        assert_eq!(harness.state().logs.len(), 0);
+        assert_eq!(harness.state().shared.borrow().loaded_files.len(), 0);
+    }
+
+    /// Deleting the recording permanently takes its attached logs out of the
+    /// session with it, and the dialog counts them before the user confirms.
+    #[test]
+    fn permanently_deleting_a_recording_states_the_attached_logs_it_deletes() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("geotrace.h5");
+        let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
+        attach_the_log(&mut harness, &db_path, &db_ref);
+
+        open_the_remove_confirmation(&mut harness, true);
+        harness.get_by_label_contains("Deletes 1 attached log with them");
+
+        harness.get_by_label("Remove").click();
+        harness.run_steps(3);
+
+        assert_eq!(harness.state().logs.len(), 0);
+        assert!(
+            harness.step_until(|_| stored_attachments(&db_path, &db_ref).is_empty()),
+            "the deleted recording took its attachment with it"
+        );
     }
 
     /// The recording is opened again while its log is still loaded: the

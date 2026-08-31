@@ -13,6 +13,7 @@ use gt_ui_types::{
 };
 
 use crate::{
+    anchor::{LogAnchor, RecordingKey},
     association::AssociationCandidates,
     attachment::{LogAttachmentRef, LogAttachmentState},
     filter::{EntryMatches, FilterStack, LayerColorSlots},
@@ -24,8 +25,8 @@ const UNNAMED_LOG_NAME_PREFIX: &str = "pasted";
 
 const UNNAMED_LOG_NAME_TIME_FORMAT: &str = "%H:%M:%S";
 
-/// One loaded log: the text it was parsed from, the recording it is associated
-/// against, the filters over it, and whether it draws on the map.
+/// One loaded log: the text it was parsed from, the recording it is anchored
+/// to, the filters over it, and whether it draws on the map.
 #[derive(Debug)]
 pub struct LoadedLog {
     name: String,
@@ -38,26 +39,25 @@ pub struct LoadedLog {
     content_hash: LogContentHash,
 
     entry_time_range: Option<TimeRange>,
+    anchor: LogAnchor,
     association: Association,
     filters: FilterStack,
     visible: bool,
-
-    /// Set while this log is stored with a recording in history. Unloading the
-    /// log leaves the attachment in place: only detaching removes it.
-    attachment: Option<LogAttachmentState>,
 }
 
-/// What a log is associated against, and what that association produced.
+/// What the log's anchor produced, under the window it was associated with.
 #[derive(Debug)]
 struct Association {
-    target: Option<LoadedFileId>,
     window: Duration,
 
-    /// One slot per entry of the log, in entry order. Empty while the log has
-    /// no association target.
+    /// One slot per entry of the log, in entry order. Empty while the anchor
+    /// names no loaded recording.
     entry_positions: Vec<Option<(Latitude, Longitude)>>,
 
     associated_entry_count: usize,
+
+    /// The loaded recording the anchor last resolved to.
+    recording: Option<LoadedFileId>,
 }
 
 impl LoadedLog {
@@ -73,19 +73,19 @@ impl LoadedLog {
             entry_time_range: parsed.time_range(),
             filters: FilterStack::new(Arc::clone(&parsed)),
             parsed,
+            anchor: LogAnchor::None,
             association: Association {
-                target: None,
                 window: association_window,
                 entry_positions: Vec::new(),
                 associated_entry_count: 0,
+                recording: None,
             },
             visible: true,
-            attachment: None,
         }
     }
 
-    /// Puts back the filter stack this log was stored with, and points its
-    /// later filter edits at the attachment it came from.
+    /// Puts back the filter stack this log was stored with, and anchors it to
+    /// the recording holding `attachment`.
     ///
     /// The restored layer chips take their palette slots when the log is
     /// loaded with [`LoadedLogs::push`].
@@ -93,34 +93,51 @@ impl LoadedLog {
         &mut self,
         attachment: LogAttachmentRef,
         stored_filters: Vec<StoredLogFilter>,
+        recordings: &LoadedFilesView<'_>,
     ) {
         self.filters = FilterStack::from_stored_filters(Arc::clone(&self.parsed), &stored_filters);
-        self.record_attachment(attachment, stored_filters);
+        self.record_attachment(attachment, stored_filters, recordings);
     }
 
     /// Notes that this log is now stored as `attachment`, holding
-    /// `stored_filters`.
+    /// `stored_filters`, and anchors it to the recording holding it.
     pub fn record_attachment(
         &mut self,
         attachment: LogAttachmentRef,
         stored_filters: Vec<StoredLogFilter>,
+        recordings: &LoadedFilesView<'_>,
     ) {
-        self.attachment = Some(LogAttachmentState {
-            reference: attachment,
-            stored_filters,
-        });
+        self.anchor = LogAnchor::Recording {
+            key: RecordingKey::Stored(attachment.recording.clone()),
+            attachment: Some(LogAttachmentState {
+                reference: attachment,
+                stored_filters,
+            }),
+        };
+        self.reassociate(recordings);
     }
 
     /// The attachment this log is stored as, `None` for one that lives only in
     /// this session.
     pub fn attachment(&self) -> Option<&LogAttachmentRef> {
-        self.attachment.as_ref().map(|state| &state.reference)
+        match &self.anchor {
+            LogAnchor::None
+            | LogAnchor::Recording {
+                attachment: None, ..
+            } => None,
+            LogAnchor::Recording {
+                attachment: Some(state),
+                ..
+            } => Some(&state.reference),
+        }
     }
 
-    /// Drops the attachment, leaving the log loaded: what "Remove attachment"
-    /// does once the database has removed it.
+    /// Drops the attachment and leaves the log anchored to the recording that
+    /// held it: what "Remove attachment" does once the database has removed it.
     pub fn forget_attachment(&mut self) {
-        self.attachment = None;
+        if let LogAnchor::Recording { attachment, .. } = &mut self.anchor {
+            *attachment = None;
+        }
     }
 
     /// The filter-stack edits this log's attachment has yet to be written,
@@ -128,7 +145,13 @@ impl LoadedLog {
     pub fn take_filter_stack_edits_to_store(
         &mut self,
     ) -> Option<(LogAttachmentRef, Vec<StoredLogFilter>)> {
-        let state = self.attachment.as_mut()?;
+        let LogAnchor::Recording {
+            attachment: Some(state),
+            ..
+        } = &mut self.anchor
+        else {
+            return None;
+        };
         let filters = self.filters.to_stored_filters();
         if filters == state.stored_filters {
             return None;
@@ -213,8 +236,23 @@ impl LoadedLog {
         self.visible = visible;
     }
 
-    pub fn association_target(&self) -> Option<LoadedFileId> {
-        self.association.target
+    /// The recording this log is anchored to, `None` for a log that takes its
+    /// positions from no recording.
+    pub fn anchor_key(&self) -> Option<&RecordingKey> {
+        match &self.anchor {
+            LogAnchor::None => None,
+            LogAnchor::Recording { key, .. } => Some(key),
+        }
+    }
+
+    pub fn is_anchored_to(&self, recording_key: &RecordingKey) -> bool {
+        self.anchor_key() == Some(recording_key)
+    }
+
+    /// The loaded recording the anchor resolved to, `None` while the anchored
+    /// recording is not loaded.
+    pub fn associated_recording(&self) -> Option<LoadedFileId> {
+        self.association.recording
     }
 
     pub fn association_window(&self) -> Duration {
@@ -242,15 +280,50 @@ impl LoadedLog {
             .saturating_sub(self.association.associated_entry_count)
     }
 
-    /// Points the log at `target` and associates every entry against it, or
-    /// drops the association when `target` is `None`.
-    pub fn associate_with(
+    /// Anchors the log to the recording `recording_key` names and associates
+    /// every entry against it, keeping the attachment the log is stored as.
+    pub fn anchor_to(&mut self, recording_key: RecordingKey, recordings: &LoadedFilesView<'_>) {
+        match &mut self.anchor {
+            LogAnchor::Recording { key, .. } => *key = recording_key,
+            anchor @ LogAnchor::None => {
+                *anchor = LogAnchor::Recording {
+                    key: recording_key,
+                    attachment: None,
+                };
+            }
+        }
+        self.reassociate(recordings);
+    }
+
+    /// Anchors the log to the loaded recording `chosen` names, and removes its
+    /// anchor when `chosen` is `None`: what a choice among the loaded
+    /// recordings does.
+    pub fn anchor_to_loaded_recording(
         &mut self,
-        target: Option<LoadedFileId>,
+        chosen: Option<LoadedFileId>,
         recordings: &LoadedFilesView<'_>,
     ) {
-        self.association.target = target;
-        self.reassociate(recordings);
+        match chosen.and_then(|id| recordings.entry_for_id(id)) {
+            Some(entry) => self.anchor_to(RecordingKey::of_loaded_recording(entry), recordings),
+            None => self.remove_anchor(),
+        }
+    }
+
+    /// Takes the anchor off a log stored nowhere, leaving its entries without a
+    /// position.
+    ///
+    /// An attached log keeps its anchor: a log stored with a recording takes
+    /// its positions from one, until the attachment is removed.
+    pub fn remove_anchor(&mut self) {
+        if self.attachment().is_some() {
+            log::warn!(
+                "Kept the recording of the log {:?}: it is stored with a recording in history",
+                self.name
+            );
+            return;
+        }
+        self.anchor = LogAnchor::None;
+        self.clear_entry_positions();
     }
 
     /// Sets how far an entry may be from a fix to take its position, and
@@ -260,25 +333,22 @@ impl LoadedLog {
         self.reassociate(recordings);
     }
 
-    /// Associates every entry against the log's target again, after the loaded
-    /// recordings changed.
+    /// Associates every entry against the recording the anchor names, after the
+    /// loaded recordings changed.
     ///
-    /// A target that is no longer loaded clears the association: no log ever
-    /// re-anchors to another recording without being pointed at it.
+    /// An anchor naming no loaded recording leaves the entries without a
+    /// position and stays: no log ever re-anchors to another recording without
+    /// being pointed at it.
     pub fn reassociate(&mut self, recordings: &LoadedFilesView<'_>) {
-        let Some(target) = self.association.target else {
+        let anchored = match &self.anchor {
+            LogAnchor::None => None,
+            LogAnchor::Recording { key, .. } => key.loaded_recording(recordings),
+        };
+        let Some(recording) = anchored else {
             self.clear_entry_positions();
             return;
         };
-        let Some(recording) = recordings.entry_for_id(target) else {
-            log::info!(
-                "Log {:?} lost its association target: that recording is no longer loaded",
-                self.name
-            );
-            self.association.target = None;
-            self.clear_entry_positions();
-            return;
-        };
+        self.association.recording = Some(recording.id());
         let entry_positions = gt_logfile::associate_entries(
             self.parsed.entries(),
             &recording.placed_points(),
@@ -322,6 +392,7 @@ impl LoadedLog {
     fn clear_entry_positions(&mut self) {
         self.association.entry_positions = Vec::new();
         self.association.associated_entry_count = 0;
+        self.association.recording = None;
     }
 }
 
@@ -450,6 +521,32 @@ impl LoadedLogs {
             .map(|stored| &mut stored.log)
     }
 
+    /// Every loaded log anchored to one of `recording_keys`, in load order.
+    pub fn anchored_to<'a>(
+        &'a self,
+        recording_keys: &'a [RecordingKey],
+    ) -> impl Iterator<Item = (LoadedLogId, &'a LoadedLog)> {
+        self.logs
+            .iter()
+            .filter(|stored| {
+                recording_keys
+                    .iter()
+                    .any(|key| stored.log.is_anchored_to(key))
+            })
+            .map(|stored| (stored.id, &stored.log))
+    }
+
+    /// Unloads every log anchored to one of `recording_keys`, freeing the
+    /// colour slots their layer chips held.
+    pub fn unload_anchored_to(&mut self, recording_keys: &[RecordingKey]) -> Vec<LoadedLog> {
+        let unloading: Vec<LoadedLogId> =
+            self.anchored_to(recording_keys).map(|(id, _)| id).collect();
+        unloading
+            .into_iter()
+            .filter_map(|id| self.remove_by_id(id))
+            .collect()
+    }
+
     /// Unloads the log `id` names, freeing the colour slots its layer chips
     /// held.
     pub fn remove_by_id(&mut self, id: LoadedLogId) -> Option<LoadedLog> {
@@ -560,12 +657,13 @@ fn name_from_first_anchored_entry(parsed: &ParsedLog) -> String {
 #[cfg(test)]
 mod tests {
     use gt_history_types::{DatabaseRef, LogAttachmentId, StoredLogFilterMode};
+    use gt_loaded_files::LoadedFiles;
 
     use crate::{
         LayerColorSlot,
         test_fixtures::{
-            association_window, id_of, loaded, log_of, log_of_service, parsed_log, recording_at,
-            start,
+            anchor_to, association_window, id_of, key_of, loaded, log_of, log_of_service,
+            parsed_log, recording_at, start, stored_in_history, stored_recording_ref,
         },
     };
 
@@ -618,7 +716,7 @@ mod tests {
         let files = loaded(vec![recording_at(55.0, 10), recording_at(60.0, 10)]);
         let mut log = log_of(10);
 
-        log.associate_with(Some(id_of(&files, 1)), &files.view());
+        anchor_to(&mut log, &files, 1);
 
         assert_eq!(log.associated_entry_count(), 10);
         let latitudes: Vec<f64> = (0..10)
@@ -637,7 +735,7 @@ mod tests {
         let mut log = log_of(10);
 
         log.set_association_window(Duration::seconds(1), &files.view());
-        log.associate_with(Some(id_of(&files, 0)), &files.view());
+        anchor_to(&mut log, &files, 0);
         assert_eq!(log.associated_entry_count(), 4);
         assert_eq!(log.unassociated_entry_count(), 6);
 
@@ -646,23 +744,111 @@ mod tests {
         assert_eq!(log.unassociated_entry_count(), 0);
     }
 
-    /// Unloading the target strands the log, and never hands it to the other
-    /// loaded recording.
+    /// Unloading the anchored recording strands the log, and never hands it to
+    /// the other loaded recording.
     #[test]
-    fn removing_the_target_clears_the_association_without_re_anchoring() {
+    fn unloading_the_anchored_recording_leaves_the_log_anchored_without_positions() {
         let mut files = loaded(vec![recording_at(55.0, 10), recording_at(60.0, 10)]);
+        let anchored = key_of(&files, 1);
         let mut logs = LoadedLogs::default();
         let mut log = log_of(10);
-        log.associate_with(Some(id_of(&files, 1)), &files.view());
+        anchor_to(&mut log, &files, 1);
         let id = logs.push(log).id();
 
         files.remove_file(1);
         logs.reassociate_all(&files.view());
 
         let log = logs.get_by_id(id).expect("the log stays loaded");
-        assert_eq!(log.association_target(), None);
+        assert_eq!(log.anchor_key(), Some(&anchored));
+        assert_eq!(log.associated_recording(), None);
         assert_eq!(log.associated_entry_count(), 0);
         assert_eq!(log.entry_position(0), None);
+    }
+
+    /// A recording in history is the same recording every time it is opened,
+    /// however many session identities it goes through.
+    #[test]
+    fn a_log_anchored_to_a_stored_recording_associates_again_when_it_is_opened_again() {
+        let db_ref = stored_recording_ref();
+        let mut files = LoadedFiles::new();
+        files.push(recording_at(55.0, 10), stored_in_history(&db_ref));
+        let first_load = id_of(&files, 0);
+        let mut log = log_of(10);
+        anchor_to(&mut log, &files, 0);
+        assert_eq!(log.associated_entry_count(), 10);
+
+        files.remove_file(0);
+        log.reassociate(&files.view());
+        assert_eq!(log.associated_entry_count(), 0);
+
+        files.push(recording_at(55.0, 10), stored_in_history(&db_ref));
+        log.reassociate(&files.view());
+
+        assert_eq!(log.anchor_key(), Some(&RecordingKey::Stored(db_ref)));
+        assert_eq!(log.associated_entry_count(), 10);
+        assert_eq!(log.associated_recording(), Some(id_of(&files, 0)));
+        assert_ne!(
+            log.associated_recording(),
+            Some(first_load),
+            "the recording came back under a session identity of its own"
+        );
+    }
+
+    /// The recording an attached log is stored with is the recording it takes
+    /// its positions from, until the attachment is removed.
+    #[test]
+    fn an_attached_log_keeps_its_anchor() {
+        let files = loaded(vec![recording_at(55.0, 10)]);
+        let mut log = log_of(10);
+        anchor_to(&mut log, &files, 0);
+        log.record_attachment(attachment_ref(), Vec::new(), &files.view());
+        let anchored = log.anchor_key().cloned();
+
+        log.remove_anchor();
+
+        assert_eq!(log.anchor_key(), anchored.as_ref());
+
+        log.forget_attachment();
+        log.remove_anchor();
+
+        assert_eq!(log.anchor_key(), None);
+    }
+
+    /// A recording leaving the session takes the logs anchored to it with it,
+    /// and leaves the rest of the session's logs loaded.
+    #[test]
+    fn unloading_a_recording_unloads_the_logs_anchored_to_it() {
+        let files = loaded(vec![recording_at(55.0, 10), recording_at(60.0, 10)]);
+        let mut logs = LoadedLogs::default();
+        let mut anchored = log_of(10);
+        anchor_to(&mut anchored, &files, 0);
+        let anchored = logs.push(anchored).id();
+        let mut elsewhere = log_of_service("hal-powerd", 10);
+        anchor_to(&mut elsewhere, &files, 1);
+        let elsewhere = logs.push(elsewhere).id();
+        add_layer_chip(&mut logs, anchored, "entry 1");
+        add_layer_chip(&mut logs, elsewhere, "entry 2");
+
+        let unloaded = logs.unload_anchored_to(&[key_of(&files, 0)]);
+
+        assert_eq!(
+            unloaded.iter().map(LoadedLog::name).collect::<Vec<_>>(),
+            ["navsyncd.log"]
+        );
+        assert_eq!(
+            logs.iter_with_ids().map(|(id, _)| id).collect::<Vec<_>>(),
+            [elsewhere]
+        );
+        assert_eq!(
+            first_chip_slot(&logs, elsewhere),
+            Some(1),
+            "the log that stayed keeps the colour it drew in"
+        );
+        assert_eq!(
+            add_layer_chip(&mut logs, elsewhere, "entry 3"),
+            Some(0),
+            "the unloaded log handed its colour back"
+        );
     }
 
     #[test]
@@ -675,7 +861,7 @@ mod tests {
             "ISO 8601 · 10 entries · 1 boot · 10 unassociated"
         );
 
-        log.associate_with(Some(id_of(&files, 0)), &files.view());
+        anchor_to(&mut log, &files, 0);
 
         assert_eq!(
             log.parse_summary_line(),
@@ -719,7 +905,7 @@ mod tests {
         let files = loaded(vec![recording_at(55.0, 10)]);
         let mut logs = LoadedLogs::default();
         let mut log = log_of(10);
-        log.associate_with(Some(id_of(&files, 0)), &files.view());
+        anchor_to(&mut log, &files, 0);
         let id = logs.push(log).id();
 
         add_layer_chip(&mut logs, id, "entry 1");
@@ -741,7 +927,7 @@ mod tests {
         assert_eq!(matches.match_count(), 1, "\"entry 1\" matches one line");
     }
 
-    /// A log with no association target has nothing to put on the map, however
+    /// A log anchored to no recording has nothing to put on the map, however
     /// much its filters match.
     #[test]
     fn an_unassociated_log_draws_nothing() {
@@ -761,7 +947,7 @@ mod tests {
         let files = loaded(vec![recording_at(55.0, 10)]);
         let mut logs = LoadedLogs::default();
         let mut log = log_of(10);
-        log.associate_with(Some(id_of(&files, 0)), &files.view());
+        anchor_to(&mut log, &files, 0);
         let id = logs.push(log).id();
         add_layer_chip(&mut logs, id, "entry");
         wait_for_scans(&mut logs);
@@ -785,7 +971,7 @@ mod tests {
         let files = loaded(vec![recording_at(55.0, 10)]);
         let mut logs = LoadedLogs::default();
         let mut log = log_of(10);
-        log.associate_with(Some(id_of(&files, 0)), &files.view());
+        anchor_to(&mut log, &files, 0);
         let id = logs.push(log).id();
         add_layer_chip(&mut logs, id, "entry 2");
         if let Some((stack, slots)) = logs.filter_stack_mut_by_id(id) {
@@ -823,10 +1009,10 @@ mod tests {
         let files = loaded(vec![recording_at(55.0, 10)]);
         let mut logs = LoadedLogs::default();
         let mut kept = log_of(10);
-        kept.associate_with(Some(id_of(&files, 0)), &files.view());
+        anchor_to(&mut kept, &files, 0);
         let kept = logs.push(kept).id();
         let mut unloaded = log_of_service("hal-powerd", 10);
-        unloaded.associate_with(Some(id_of(&files, 0)), &files.view());
+        anchor_to(&mut unloaded, &files, 0);
         let unloaded = logs.push(unloaded).id();
         add_layer_chip(&mut logs, kept, "entry 1");
         add_layer_chip(&mut logs, unloaded, "entry");
@@ -842,14 +1028,14 @@ mod tests {
         );
     }
 
-    /// Losing the association target strands the log's layers: nothing draws
+    /// Unloading the anchored recording strands the log's layers: nothing draws
     /// where no fix says it was.
     #[test]
     fn re_association_after_a_recording_is_unloaded_empties_the_map() {
         let mut files = loaded(vec![recording_at(55.0, 10)]);
         let mut logs = LoadedLogs::default();
         let mut log = log_of(10);
-        log.associate_with(Some(id_of(&files, 0)), &files.view());
+        anchor_to(&mut log, &files, 0);
         let id = logs.push(log).id();
         add_layer_chip(&mut logs, id, "entry");
         wait_for_scans(&mut logs);
@@ -870,7 +1056,7 @@ mod tests {
         let mut ids = Vec::new();
         for service in ["navsyncd", "hal-powerd"] {
             let mut log = log_of_service(service, 10);
-            log.associate_with(Some(id_of(&files, 0)), &files.view());
+            anchor_to(&mut log, &files, 0);
             ids.push(logs.push(log).id());
         }
         if let [first, second] = ids.as_slice() {
@@ -959,9 +1145,10 @@ mod tests {
     #[test]
     fn an_attached_log_reports_the_filter_stack_edits_the_database_has_not_seen() {
         let attachment = attachment_ref();
+        let recordings = loaded(Vec::new());
         let mut logs = LoadedLogs::default();
         let mut log = log_of(10);
-        log.record_attachment(attachment.clone(), Vec::new());
+        log.record_attachment(attachment.clone(), Vec::new(), &recordings.view());
         let id = logs.push(log).id();
 
         assert!(
@@ -1020,9 +1207,10 @@ mod tests {
             },
         ];
         let attachment = attachment_ref();
+        let recordings = loaded(Vec::new());
         let mut logs = LoadedLogs::default();
         let mut log = log_of(10);
-        log.restore_attachment(attachment.clone(), stored.clone());
+        log.restore_attachment(attachment.clone(), stored.clone(), &recordings.view());
         let id = logs.push(log).id();
         wait_for_scans(&mut logs);
 
@@ -1076,7 +1264,7 @@ mod tests {
             mode: StoredLogFilterMode::Layer { color_slot: 1 },
         }];
         let mut copy = log_of(10);
-        copy.restore_attachment(attachment_ref(), stored);
+        copy.restore_attachment(attachment_ref(), stored, &loaded(Vec::new()).view());
         logs.push(copy);
 
         assert_eq!(first_chip_slot(&logs, id), Some(0));

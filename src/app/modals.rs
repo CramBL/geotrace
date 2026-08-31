@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use gt_jam::text::{ATTRIBUTION, PUBLISHER_URL, UPSTREAM_URL};
+use gt_log_view::{LoadedLogs, RecordingKey};
 use gt_map::{MapLayer, NavMap};
 use gt_pending_writes::WriteAccess;
 use gt_side_panel::{NodeKey, RecordingDetails, TreeState};
@@ -39,6 +40,9 @@ pub struct RemoveOutcome {
     /// `true` to permanently delete the affected tracks from the originals,
     /// `false` to hide them.
     pub permanent: bool,
+    /// The recordings the remove took out of the session, named as a log's
+    /// anchor names them.
+    pub removed_recordings: Vec<RecordingKey>,
 }
 
 /// Show the delete-confirmation dialog.
@@ -175,6 +179,7 @@ pub fn show_delete_confirmation(
     tree: &mut TreeState,
     loaded_files: &mut LoadedFiles,
     recording_names: &RecordingNames,
+    logs: &LoadedLogs,
     write_access: WriteAccess,
 ) -> Option<RemoveOutcome> {
     let Some(confirm) = &tree.delete_confirm else {
@@ -187,6 +192,11 @@ pub fn show_delete_confirmation(
     let removals = track_removals(&confirm.items, loaded_files.view());
     let affected_recordings = removals.len();
     let affected_tracks: usize = removals.iter().map(|r| r.track_indices.len()).sum();
+    let removed_recordings = removed_recording_keys(&confirm.items, loaded_files.view());
+    let attached_logs = logs
+        .anchored_to(&removed_recordings)
+        .filter(|(_, log)| log.attachment().is_some())
+        .count();
 
     let enter_pressed = ui
         .ctx()
@@ -280,6 +290,18 @@ pub fn show_delete_confirmation(
                         };
                         ui.label(RichText::new(detail).weak().small());
                     }
+                    if attached_logs > 0 {
+                        let log_label = gt_fmt::pluralize(attached_logs, "log", "logs");
+                        let line = if permanent {
+                            format!("Deletes {attached_logs} attached {log_label} with them.")
+                        } else {
+                            format!(
+                                "Unloads {attached_logs} attached {log_label}. They come back when \
+                                 the recording is opened again."
+                            )
+                        };
+                        ui.label(RichText::new(line).weak().small());
+                    }
                 }),
                 DialogActions::new(|ui| {
                     if ui.button("Remove").clicked() {
@@ -306,6 +328,7 @@ pub fn show_delete_confirmation(
         return Some(RemoveOutcome {
             affected,
             permanent,
+            removed_recordings,
         });
     }
     // Keep the checkbox state across frames while the dialog stays open.
@@ -313,6 +336,19 @@ pub fn show_delete_confirmation(
         c.delete_permanently = permanent;
     }
     None
+}
+
+/// The recordings removing `keys` takes out of the session, named as a log's
+/// anchor names them.
+pub fn removed_recording_keys(
+    keys: &[NodeKey],
+    loaded_files: LoadedFilesView<'_>,
+) -> Vec<RecordingKey> {
+    files_fully_removed(keys, loaded_files)
+        .iter()
+        .filter_map(|fi| loaded_files.get(*fi))
+        .map(RecordingKey::of_loaded_recording)
+        .collect()
 }
 
 /// Indices of files that removing `keys` would empty entirely - either selected
@@ -1234,13 +1270,13 @@ mod tests {
 
     use super::{
         CoveredDayCounts, EnvironmentArchive, EnvironmentPruneChoice, EnvironmentPrunePrompt,
-        ForceQuitChoice, MapLayer, MapboxTokenField, NavMap, NodeKey, PERMANENT_DELETE_LABEL,
-        PruneRequest, PruneScope, PrunedDays, RecordingDetails, SnapScopeCounts, TrackRef,
-        files_fully_removed, prune_scope_line, show_about_dialog, show_delete_confirmation,
-        show_environment_prune_confirmation, show_force_quit_confirmation,
-        show_load_warnings_dialog, show_mapbox_token_dialog, show_orphaned_event_markers_popup,
-        show_recording_details_dialog, show_snap_auto_prompt, show_snap_consent_dialog,
-        show_snap_replace_dialog, show_snap_scope_dialog, track_removals,
+        ForceQuitChoice, LoadedLogs, MapLayer, MapboxTokenField, NavMap, NodeKey,
+        PERMANENT_DELETE_LABEL, PruneRequest, PruneScope, PrunedDays, RecordingDetails,
+        SnapScopeCounts, TrackRef, files_fully_removed, prune_scope_line, show_about_dialog,
+        show_delete_confirmation, show_environment_prune_confirmation,
+        show_force_quit_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
+        show_orphaned_event_markers_popup, show_recording_details_dialog, show_snap_auto_prompt,
+        show_snap_consent_dialog, show_snap_replace_dialog, show_snap_scope_dialog, track_removals,
     };
     use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
     use gt_side_panel::{DeleteConfirmState, TreeState};
@@ -1626,6 +1662,7 @@ mod tests {
             &mut state.tree,
             &mut state.loaded_files,
             &names,
+            &LoadedLogs::default(),
             state.write_access,
         );
     }
@@ -1900,6 +1937,7 @@ mod tests {
                     &mut state.tree,
                     &mut state.loaded_files,
                     &names,
+                    &LoadedLogs::default(),
                     WriteAccess::Owner,
                 );
             }
