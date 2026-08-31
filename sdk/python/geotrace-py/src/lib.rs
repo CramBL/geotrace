@@ -1014,7 +1014,8 @@ impl PyMarker {
 /// sentinel) to silently skip this marker.
 /// Allowed characters: ASCII alphanumeric, hyphen, underscore, and slash.
 /// No leading or trailing slash. No empty segments (``//``). Max 255 bytes.
-/// ``annotation`` holds at most 511 bytes, checked when the file is written.
+/// ``annotation`` holds at most 511 bytes, checked when ``NavFileBuilder.add()``
+/// takes the marker.
 ///
 /// ``sys_time`` must be a timezone-aware ``datetime.datetime``.
 #[pyclass(skip_from_py_object, name = "EventMarker")]
@@ -1079,13 +1080,13 @@ impl PyEventMarker {
 /// Per-variant icon and color style stored in the file.
 ///
 /// ``variant_path`` must exactly match a path used in an event marker.
-/// ``icon`` is a :class:`MarkerIcon` value, or ``None`` for the default (auto color).
+/// ``icon`` is a :class:`MarkerIcon` value, or ``None`` for the application default (Pin).
 /// ``color`` is ``#RRGGBB``, e.g. ``"#FF9900"``, or ``None`` for the deterministic hash color.
 #[pyclass(skip_from_py_object, name = "EventMarkerStyle")]
 #[derive(Debug, Clone)]
 pub struct PyEventMarkerStyle {
     variant_path: String,
-    icon: Option<PyMarkerIcon>,
+    icon: EventMarkerIconChoice,
     color: Option<String>,
 }
 
@@ -1096,7 +1097,7 @@ impl PyEventMarkerStyle {
     fn new(variant_path: String, icon: Option<PyMarkerIcon>, color: Option<String>) -> Self {
         Self {
             variant_path,
-            icon,
+            icon: EventMarkerIconChoice::from(icon.map(MarkerIcon::from)),
             color,
         }
     }
@@ -1107,10 +1108,23 @@ impl PyEventMarkerStyle {
     }
 
     /// Icon shape, or ``None`` for the application default and for an icon name
-    /// this build does not have.
+    /// this build does not have. :attr:`icon_name` holds such a name.
     #[getter]
     fn icon(&self) -> Option<PyMarkerIcon> {
-        self.icon
+        match &self.icon {
+            EventMarkerIconChoice::Icon(icon) => Some(PyMarkerIcon::from(*icon)),
+            EventMarkerIconChoice::Auto | EventMarkerIconChoice::Unrecognized(_) => None,
+        }
+    }
+
+    /// The stored name of :attr:`icon`, or ``None`` where the style leaves the
+    /// icon to the application.
+    ///
+    /// For an icon name this build does not have, this property holds the name
+    /// verbatim. :attr:`icon` reads as ``None`` for it.
+    #[getter]
+    fn icon_name(&self) -> Option<&str> {
+        Some(self.icon.wire_name()).filter(|name| !name.is_empty())
     }
 
     /// Fill color as ``#RRGGBB``, or ``None`` for the deterministic hash color.
@@ -1271,30 +1285,25 @@ impl PyNavFile {
     /// Per-variant style overrides stored in the file.
     ///
     /// A style naming an icon this build does not have raises a
-    /// ``UserWarning`` and its ``icon`` reads as ``None``: ``MarkerIcon`` has no
-    /// member for that name.
+    /// ``UserWarning``. Its ``icon`` reads as ``None``. Its ``icon_name`` holds
+    /// the name.
     #[getter]
     fn event_marker_styles(&self, py: Python<'_>) -> PyResult<Vec<PyEventMarkerStyle>> {
         let styles = self.inner.event_marker_styles();
         let mut converted = Vec::with_capacity(styles.len());
         for s in styles {
-            let icon = match &s.icon {
-                EventMarkerIconChoice::Auto => None,
-                EventMarkerIconChoice::Icon(icon) => Some(PyMarkerIcon::from(*icon)),
-                EventMarkerIconChoice::Unrecognized(name) => {
-                    let message = CString::new(format!(
-                        "event marker style {:?} names the icon {name:?}, which this build \
-                         does not have: icon reads as None",
-                        s.variant_path
-                    ))
-                    .map_err(|err| PyValueError::new_err(err.to_string()))?;
-                    PyErr::warn(py, &py.get_type::<PyUserWarning>(), &message, 1)?;
-                    None
-                }
-            };
+            if let EventMarkerIconChoice::Unrecognized(name) = &s.icon {
+                let message = CString::new(format!(
+                    "event marker style {:?} names the icon {name:?}, which this build does not \
+                     have: icon reads as None, icon_name holds the name",
+                    s.variant_path
+                ))
+                .map_err(|err| PyValueError::new_err(err.to_string()))?;
+                PyErr::warn(py, &py.get_type::<PyUserWarning>(), &message, 1)?;
+            }
             converted.push(PyEventMarkerStyle {
                 variant_path: s.variant_path.clone(),
-                icon,
+                icon: s.icon.clone(),
                 color: match &s.color {
                     EventMarkerColor::Auto => None,
                     EventMarkerColor::Hex(h) | EventMarkerColor::Unrecognized(h) => {
@@ -1486,11 +1495,7 @@ impl PyNavFileBuilder {
             recorder.add_event_marker_style(
                 EventMarkerStyle::builder()
                     .variant_path(style.variant_path.clone())
-                    .maybe_icon(
-                        style
-                            .icon
-                            .map(|i| EventMarkerIconChoice::Icon(MarkerIcon::from(i))),
-                    )
+                    .icon(style.icon.clone())
                     .maybe_color(style.color.clone())
                     .build()
                     .map_err(file_err)?,

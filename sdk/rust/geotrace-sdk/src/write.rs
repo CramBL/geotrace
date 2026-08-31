@@ -6,7 +6,7 @@ use crate::fixed_width_string::{
     AnnotationField, ColorHexField, FixedWidthString, FixedWidthStringError, IconNameField,
     VariantPathField,
 };
-use crate::types::{Constellation, EventMarkerColor, EventMarkerIconChoice, MarkerIcon, NavFile};
+use crate::types::{Constellation, EventMarkerColor, MarkerIcon, NavFile};
 
 /// Number of elements per chunk for 1-D compressed datasets.
 ///
@@ -569,17 +569,12 @@ fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), E
                 VariantPathField::new(&s.variant_path),
             )?);
 
-            let icon_name = match &s.icon {
-                EventMarkerIconChoice::Auto => "",
-                EventMarkerIconChoice::Icon(icon) => icon.name(),
-                EventMarkerIconChoice::Unrecognized(name) => name.as_str(),
-            };
             icon_flat.extend_from_slice(&encode_field_row(
                 FieldLocation {
                     group: "event_marker_styles",
                     dataset: "icon_name",
                 },
-                IconNameField::new(icon_name),
+                IconNameField::new(s.icon.wire_name()),
             )?);
 
             let color_hex = match &s.color {

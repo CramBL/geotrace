@@ -175,6 +175,22 @@ def test_style_icon_outside_the_known_set_reads_as_none_with_a_warning() -> None
     assert style.icon is None
 
 
+def test_style_icon_name_holds_a_name_outside_the_known_set() -> None:
+    loaded = NavFile.open(UNRECOGNIZED_STYLE_FIXTURE)
+    with pytest.warns(UserWarning, match="hovercraft"):
+        style = loaded.event_marker_styles[0]
+    assert style.icon_name == "hovercraft"
+
+
+@pytest.mark.parametrize(
+    ("icon", "expected"), [(MarkerIcon.SATELLITE_LOST, "satellite_lost"), (None, None)]
+)
+def test_style_icon_name_is_the_wire_name_of_its_icon(
+    icon: MarkerIcon | None, expected: str | None
+) -> None:
+    assert EventMarkerStyle("power/boot", icon=icon).icon_name == expected
+
+
 def test_style_color_outside_the_known_form_survives_the_read() -> None:
     loaded = NavFile.open(UNRECOGNIZED_STYLE_FIXTURE)
     with pytest.warns(UserWarning):

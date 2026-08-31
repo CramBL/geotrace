@@ -44,6 +44,7 @@ pub enum GtdStatus {
     ErrUtf8 = 8,
     ErrParse = 9,
     ErrInvalidChannel = 10,
+    ErrFieldTooLong = 11,
     ErrInternal = 99,
 }
 
@@ -62,6 +63,7 @@ const _: () = {
     assert!(GtdStatus::ErrUtf8 as u32 == 8);
     assert!(GtdStatus::ErrParse as u32 == 9);
     assert!(GtdStatus::ErrInvalidChannel as u32 == 10);
+    assert!(GtdStatus::ErrFieldTooLong as u32 == 11);
     assert!(GtdStatus::ErrInternal as u32 == 99);
 };
 
@@ -80,7 +82,23 @@ pub(crate) fn status_for_error(e: &geotrace_sdk::Error) -> GtdStatus {
         | Error::UnknownMarkerIcon { .. }
         | Error::ParseError { .. }
         | Error::UnreadableField { .. } => GtdStatus::ErrParse,
-        // Every field this covers belongs to an event marker or to its style.
-        Error::UnwritableField { .. } => GtdStatus::ErrInvalidPath,
+        Error::UnwritableField { .. } => GtdStatus::ErrFieldTooLong,
+    }
+}
+
+/// Map an event marker build error to its C status code: a value past the
+/// capacity of the field that holds it gets `ErrFieldTooLong`, a malformed
+/// variant path `ErrInvalidPath`.
+pub(crate) fn status_for_event_marker_error(e: &geotrace_sdk::EventMarkerError) -> GtdStatus {
+    use geotrace_sdk::EventMarkerError;
+    match e {
+        EventMarkerError::TooLong { .. } | EventMarkerError::UnwritableAnnotation { .. } => {
+            GtdStatus::ErrFieldTooLong
+        }
+        EventMarkerError::Empty { .. }
+        | EventMarkerError::LeadingSlash { .. }
+        | EventMarkerError::TrailingSlash { .. }
+        | EventMarkerError::EmptySegment { .. }
+        | EventMarkerError::InvalidChars { .. } => GtdStatus::ErrInvalidPath,
     }
 }

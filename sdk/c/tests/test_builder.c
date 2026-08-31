@@ -218,6 +218,60 @@ Test(builder, event_marker) {
     gtd_nav_file_destroy(f);
 }
 
+Test(builder, event_marker_variant_path_past_its_field_is_too_long) {
+    GtdFileBuilder *b = gtd_builder_create();
+    cr_assert_not_null(b);
+
+    GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
+
+    char variant_path[257];
+    memset(variant_path, 'a', sizeof(variant_path) - 1);
+    variant_path[sizeof(variant_path) - 1] = '\0';
+
+    cr_assert_eq(gtd_builder_add_event_marker(b, variant_path, t, NULL), GTD_ERR_FIELD_TOO_LONG);
+
+    gtd_builder_destroy(b);
+}
+
+Test(builder, event_marker_annotation_past_its_field_is_too_long) {
+    GtdFileBuilder *b = gtd_builder_create();
+    cr_assert_not_null(b);
+
+    GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
+
+    char annotation[513];
+    memset(annotation, 'a', sizeof(annotation) - 1);
+    annotation[sizeof(annotation) - 1] = '\0';
+
+    cr_assert_eq(gtd_builder_add_event_marker(b, "system/startup", t, annotation),
+                 GTD_ERR_FIELD_TOO_LONG);
+
+    gtd_builder_destroy(b);
+}
+
+Test(builder, event_marker_style_color_past_its_field_is_too_long_when_written) {
+    GtdFileBuilder *b = gtd_builder_create();
+    cr_assert_not_null(b);
+
+    GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
+
+    cr_assert_eq(gtd_builder_add_nav_fix(b, t, gtd_ts_none(), 35.6762, 139.6503, GTD_NONE_F64,
+                                         GTD_NONE_F64, GTD_NONE_F64),
+                 GTD_OK);
+    cr_assert_eq(
+        gtd_builder_add_event_marker_style(b, "system/startup", GTD_ICON_AUTO, "#00FF00FF"),
+        GTD_OK);
+
+    GtdNavFile *f = NULL;
+    cr_assert_eq(gtd_builder_finish(b, &f), GTD_OK);
+
+    uint8_t *buf = NULL;
+    size_t len = 0;
+    cr_assert_eq(gtd_nav_file_to_bytes(f, &buf, &len), GTD_ERR_FIELD_TOO_LONG);
+
+    gtd_nav_file_destroy(f);
+}
+
 #ifdef GTD_FIXTURE_PATH
 Test(builder, open_fixture) {
     GtdNavFile *f = NULL;
