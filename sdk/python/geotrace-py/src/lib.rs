@@ -1014,7 +1014,8 @@ impl PyMarker {
 /// sentinel) to silently skip this marker.
 /// Allowed characters: ASCII alphanumeric, hyphen, underscore, and slash.
 /// No leading or trailing slash. No empty segments (``//``). Max 255 bytes.
-/// ``annotation`` holds at most 511 bytes, checked when the file is written.
+/// ``annotation`` holds at most 511 bytes, checked when ``NavFileBuilder.add()``
+/// takes the marker.
 ///
 /// ``sys_time`` must be a timezone-aware ``datetime.datetime``.
 #[pyclass(skip_from_py_object, name = "EventMarker")]
@@ -1079,7 +1080,7 @@ impl PyEventMarker {
 /// Per-variant icon and color style stored in the file.
 ///
 /// ``variant_path`` must exactly match a path used in an event marker.
-/// ``icon`` is a :class:`MarkerIcon` value, or ``None`` for the default (auto color).
+/// ``icon`` is a :class:`MarkerIcon` value, or ``None`` for the application default (Pin).
 /// ``color`` is ``#RRGGBB``, e.g. ``"#FF9900"``, or ``None`` for the deterministic hash color.
 #[pyclass(skip_from_py_object, name = "EventMarkerStyle")]
 #[derive(Debug, Clone)]
