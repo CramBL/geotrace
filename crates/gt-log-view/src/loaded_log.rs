@@ -51,7 +51,7 @@ struct Association {
     window: Duration,
 
     /// One slot per entry of the log, in entry order. Empty while the anchor
-    /// names no loaded recording.
+    /// resolves to no loaded recording.
     entry_positions: Vec<Option<(Latitude, Longitude)>>,
 
     associated_entry_count: usize,
@@ -280,8 +280,9 @@ impl LoadedLog {
             .saturating_sub(self.association.associated_entry_count)
     }
 
-    /// Anchors the log to the recording `recording_key` names and associates
-    /// every entry against it, keeping the attachment the log is stored as.
+    /// Anchors the log to the recording `recording_key` identifies and
+    /// associates every entry against it, keeping the attachment the log is
+    /// stored as.
     pub fn anchor_to(&mut self, recording_key: RecordingKey, recordings: &LoadedFilesView<'_>) {
         match &mut self.anchor {
             LogAnchor::Recording { key, .. } => *key = recording_key,
@@ -295,8 +296,8 @@ impl LoadedLog {
         self.reassociate(recordings);
     }
 
-    /// Anchors the log to the loaded recording `chosen` names, and removes its
-    /// anchor when `chosen` is `None`: what a choice among the loaded
+    /// Anchors the log to the loaded recording `chosen` identifies, and removes
+    /// its anchor when `chosen` is `None`: what a choice among the loaded
     /// recordings does.
     pub fn anchor_to_loaded_recording(
         &mut self,
@@ -333,12 +334,12 @@ impl LoadedLog {
         self.reassociate(recordings);
     }
 
-    /// Associates every entry against the recording the anchor names, after the
-    /// loaded recordings changed.
+    /// Associates every entry against the recording the anchor resolves to,
+    /// after the loaded recordings changed.
     ///
-    /// An anchor naming no loaded recording leaves the entries without a
-    /// position and stays: no log ever re-anchors to another recording without
-    /// being pointed at it.
+    /// An anchor that resolves to no loaded recording leaves the entries
+    /// without a position and stays: no log ever re-anchors to another
+    /// recording without being pointed at it.
     pub fn reassociate(&mut self, recordings: &LoadedFilesView<'_>) {
         let anchored = match &self.anchor {
             LogAnchor::None => None,

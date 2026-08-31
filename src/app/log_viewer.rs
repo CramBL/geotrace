@@ -521,8 +521,7 @@ impl LogViewerWindow {
     }
 }
 
-/// The name each loaded recording goes by, under the identity the footer's
-/// association controls name it with.
+/// The name each loaded recording goes by, keyed by its session identity.
 fn recording_names_by_id<'a>(
     recordings: LoadedFilesView<'a>,
     recording_names: &'a RecordingNames,

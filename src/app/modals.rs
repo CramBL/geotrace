@@ -40,8 +40,8 @@ pub struct RemoveOutcome {
     /// `true` to permanently delete the affected tracks from the originals,
     /// `false` to hide them.
     pub permanent: bool,
-    /// The recordings the remove took out of the session, named as a log's
-    /// anchor names them.
+    /// The [`RecordingKey`] of every recording the remove took out of the
+    /// session.
     pub removed_recordings: Vec<RecordingKey>,
 }
 
@@ -338,8 +338,8 @@ pub fn show_delete_confirmation(
     None
 }
 
-/// The recordings removing `keys` takes out of the session, named as a log's
-/// anchor names them.
+/// The [`RecordingKey`] of every recording removing `keys` takes out of the
+/// session.
 pub fn removed_recording_keys(
     keys: &[NodeKey],
     loaded_files: LoadedFilesView<'_>,

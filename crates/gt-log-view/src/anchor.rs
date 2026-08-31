@@ -1,4 +1,4 @@
-//! The recording a log is anchored to, and what names that recording.
+//! The recording a log is anchored to, and what identifies that recording.
 
 use gt_history_types::DatabaseRef;
 use gt_loaded_files::{LoadedFileEntry, LoadedFileId, LoadedFilesView};
@@ -16,12 +16,12 @@ pub(crate) enum LogAnchor {
     },
 }
 
-/// What a log's anchor names its recording by.
+/// Identifies the recording a log is anchored to.
 ///
 /// A log anchored to a recording in the history database finds that recording
 /// again across an unload and the next load: the [`DatabaseRef`] is the same
-/// both times. A recording that is not in the database is named by the identity
-/// it holds for as long as it stays loaded.
+/// both times. A recording that is not in the database is identified by the
+/// session identity it holds for as long as it stays loaded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecordingKey {
     Stored(DatabaseRef),
@@ -38,8 +38,8 @@ impl RecordingKey {
         }
     }
 
-    /// The loaded recording this key names, `None` while no loaded recording
-    /// matches it.
+    /// The loaded recording this key resolves to, `None` while no loaded
+    /// recording matches it.
     pub(crate) fn loaded_recording<'a>(
         &self,
         recordings: &LoadedFilesView<'a>,

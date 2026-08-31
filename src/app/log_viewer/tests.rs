@@ -257,8 +257,8 @@ fn attachment_ref() -> gt_log_view::LogAttachmentRef {
     }
 }
 
-/// Stores the shown log with the recording [`attachment_ref`] names, as the app
-/// notes it once the database has written it.
+/// Stores the shown log with the recording [`attachment_ref`] identifies, as
+/// the app notes it once the database has written it.
 fn attach_the_shown_log(harness: &mut Harness<ViewerState>) {
     let shown = harness.state().first_loaded_log();
     let state = harness.state_mut();

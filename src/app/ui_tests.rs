@@ -9799,9 +9799,9 @@ fn snapshot_app_log_map_hexagons() {
     harness.snapshot_loose("app_log_map_hexagons");
 }
 
-/// A recording the history database does not hold is named by the identity it
-/// keeps for as long as it stays loaded: unloading it takes the logs anchored
-/// to it with it.
+/// A recording the history database does not hold is identified by the session
+/// identity it keeps for as long as it stays loaded: unloading it takes the logs
+/// anchored to it with it.
 #[test]
 fn unloading_a_recording_outside_history_unloads_the_logs_anchored_to_it() {
     let mut harness = Harness::builder()
