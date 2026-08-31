@@ -71,7 +71,7 @@ impl MapScenario {
     }
 
     /// Run whatever is in the editor to completion, or record that the session
-    /// refused (a failing or empty editor, or a mixed channel source).
+    /// rejected the run (a failing or empty editor, or a mixed channel source).
     pub fn run_current(&mut self) -> &mut Self {
         let Self {
             dataset,

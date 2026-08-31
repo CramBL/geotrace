@@ -169,7 +169,7 @@ pub struct JammingScheduler {
     day_index_read: DayIndexReadRetry,
     /// The day the overlay draws, and its cells, loaded from the archive on
     /// demand and kept until the shown day changes. A day is never
-    /// re-ingested - `insert_day` refuses one already stored - so a loaded
+    /// re-ingested - `insert_day` rejects one already stored - so a loaded
     /// day cannot go out of date.
     shown: Option<(NaiveDate, JamDataset)>,
     /// Which day the overlay shows, and the stepper's bounds.
@@ -184,7 +184,7 @@ pub struct JammingScheduler {
     /// When the last request was handed to a worker, so [`REQUEST_INTERVAL`]
     /// is honoured across days.
     last_request: Option<Instant>,
-    /// Registers every archive insert, and refuses the ones that would start
+    /// Registers every archive insert, and rejects the ones that would start
     /// after shutdown began.
     pending_writes: PendingWrites,
 }
@@ -996,7 +996,7 @@ mod tests {
         );
     }
 
-    /// A refused insert is not a fetch failure: the day was downloaded and
+    /// A rejected insert is not a fetch failure: the day was downloaded and
     /// discarded, and the settings page has nothing to report about it.
     #[test]
     fn a_day_discarded_unarchived_is_not_reported_as_a_failure() {
@@ -1011,12 +1011,12 @@ mod tests {
         assert!(scheduler.days.failures().is_empty());
     }
 
-    /// A day queued while the registry refuses writes stays queued: no worker
-    /// starts a download whose archive insert would be refused.
+    /// A day queued while the registry rejects writes stays queued: no worker
+    /// starts a download whose archive insert would be rejected.
     #[rstest]
     #[case::shutting_down(pending_writes::shutting_down_registry())]
     #[case::read_only_session(PendingWrites::new(WriteAccess::ReadOnly))]
-    fn no_day_is_dispatched_while_writes_are_refused(#[case] pending_writes: PendingWrites) {
+    fn no_day_is_dispatched_while_writes_are_rejected(#[case] pending_writes: PendingWrites) {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.pending_writes = pending_writes;
 
@@ -1049,7 +1049,7 @@ mod tests {
         assert!(!scheduler.days.is_fetching());
     }
 
-    /// A download that finishes where the insert is refused is discarded, and
+    /// A download that finishes where the insert is rejected is discarded, and
     /// says which refusal discarded it.
     #[rstest]
     #[case::shutting_down(pending_writes::shutting_down_registry(), WriteRefusal::ShuttingDown)]
@@ -1057,7 +1057,7 @@ mod tests {
         PendingWrites::new(WriteAccess::ReadOnly),
         WriteRefusal::ReadOnlySession
     )]
-    fn a_day_downloaded_where_the_insert_is_refused_is_discarded(
+    fn a_day_downloaded_where_the_insert_is_rejected_is_discarded(
         #[case] pending_writes: PendingWrites,
         #[case] expected: WriteRefusal,
     ) {
@@ -1078,7 +1078,7 @@ mod tests {
         );
 
         let JamMessage::Unarchived(UnarchivedDay::Refused { refusal, .. }) = message else {
-            panic!("the day was archived where the insert is refused");
+            panic!("the day was archived where the insert is rejected");
         };
         assert_eq!(refusal, expected);
         assert!(store.read().days().expect("days").is_empty());
@@ -1149,7 +1149,7 @@ mod tests {
     fn only_fetchable_unarchived_days_are_queued() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
 
-        // Before coverage: refused by the calendar, never requested.
+        // Before coverage: rejected by the calendar, never requested.
         scheduler.request_days_for(range(at(2020, 1, 1, 0), at(2020, 1, 1, 1)));
         assert_eq!(scheduler.days.queued(), 0);
 

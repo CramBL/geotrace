@@ -748,7 +748,7 @@ mod tests {
     }
 
     /// The lock is on the open file, not on the process: a second attempt
-    /// from this very process is refused just as another process's is.
+    /// from this very process is rejected just as another process's is.
     #[test]
     fn a_directory_already_marked_is_left_to_the_instance_holding_it() {
         let directory = tempfile::tempdir().expect("temp dir");

@@ -221,7 +221,7 @@ mod tests {
         assert_eq!(
             selection.day(),
             Some(COVERAGE_START),
-            "a refused step leaves the day, and an earlier default still wins"
+            "a step at the coverage edge leaves the day, and an earlier default still wins"
         );
     }
 

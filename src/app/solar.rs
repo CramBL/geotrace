@@ -96,7 +96,7 @@ pub struct GeomagneticIndexScheduler {
     /// again when that window or the archived days covering it move, so the
     /// assessment does not reach the archive every frame.
     activity_before_peaks: FxHashMap<TrackRef, ResolvedActivityBeforePeak>,
-    /// Registers every archive insert, and refuses the ones that would start
+    /// Registers every archive insert, and rejects the ones that would start
     /// after shutdown began.
     pending_writes: PendingWrites,
 }
@@ -1426,12 +1426,12 @@ mod tests {
         }
     }
 
-    /// A day queued while the registry refuses writes stays queued: no worker
-    /// starts a download whose archive insert would be refused.
+    /// A day queued while the registry rejects writes stays queued: no worker
+    /// starts a download whose archive insert would be rejected.
     #[rstest]
     #[case::shutting_down(pending_writes::shutting_down_registry())]
     #[case::read_only_session(PendingWrites::new(WriteAccess::ReadOnly))]
-    fn no_day_is_dispatched_while_writes_are_refused(#[case] pending_writes: PendingWrites) {
+    fn no_day_is_dispatched_while_writes_are_rejected(#[case] pending_writes: PendingWrites) {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.pending_writes = pending_writes;
 
@@ -1442,7 +1442,7 @@ mod tests {
     }
 
     /// One guard covers both index inserts, so a day downloaded where the
-    /// insert is refused archives neither, and says which refusal discarded
+    /// insert is rejected archives neither, and says which refusal discarded
     /// it.
     #[rstest]
     #[case::shutting_down(pending_writes::shutting_down_registry(), WriteRefusal::ShuttingDown)]
@@ -1450,7 +1450,7 @@ mod tests {
         PendingWrites::new(WriteAccess::ReadOnly),
         WriteRefusal::ReadOnlySession
     )]
-    fn a_day_downloaded_where_the_insert_is_refused_archives_no_index(
+    fn a_day_downloaded_where_the_insert_is_rejected_archives_no_index(
         #[case] pending_writes: PendingWrites,
         #[case] expected: WriteRefusal,
     ) {
@@ -1468,7 +1468,7 @@ mod tests {
         );
 
         let IndexDayMessage::Unarchived(UnarchivedDay::Refused { refusal, .. }) = message else {
-            panic!("the day was archived where the insert is refused");
+            panic!("the day was archived where the insert is rejected");
         };
         assert_eq!(refusal, expected);
         for index in [GeomagneticIndex::Kp, GeomagneticIndex::Hp30] {

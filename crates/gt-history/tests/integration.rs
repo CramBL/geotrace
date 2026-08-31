@@ -1280,7 +1280,7 @@ fn rename_identity_merges_into_a_legacy_raw_named_target() {
 /// and the recordings survive.
 ///
 /// Writing the status-flags byte without recomputing the checksum is what
-/// makes libhdf5 refuse this file, so the failure here is
+/// makes libhdf5 reject this file, so the failure here is
 /// `DbError::Backend`, not [`DbError::WriteLocked`]. Setting the flag with a
 /// valid checksum does not stop libhdf5 opening a v2 superblock at all - see
 /// `clearing_the_write_lock_resets_the_status_flags` in the backend crate.
@@ -1311,7 +1311,7 @@ fn clear_write_lock_repairs_an_unreadable_superblock() {
     }
     assert!(
         hdf5::File::open(&db_path).is_err(),
-        "libhdf5 should refuse the locked file before recovery"
+        "libhdf5 rejects the locked file before recovery"
     );
 
     // Clearing the lock recomputes the superblock checksum so the file opens.
@@ -2410,7 +2410,7 @@ fn clearing_the_write_lock_on_a_healthy_database_is_harmless() {
 }
 
 /// A live writer still holding the file is [`DbError::Busy`], not a stale lock
-/// to clear: the repair refuses rather than pulling the file out from under it.
+/// to clear: the repair stops rather than pulling the file out from under it.
 #[cfg(feature = "backend-pure")]
 #[test_log::test]
 fn clearing_the_write_lock_under_a_live_writer_reports_busy() {
@@ -2434,7 +2434,7 @@ fn clearing_the_write_lock_under_a_live_writer_reports_busy() {
 /// file.
 #[cfg(feature = "backend-pure")]
 #[test_log::test]
-fn a_write_locked_database_is_refused_and_repaired_on_the_pure_backend() {
+fn a_write_locked_database_is_rejected_and_repaired_on_the_pure_backend() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("recordings.h5");
     {
@@ -2740,7 +2740,7 @@ fn attachment_attributes_stay_out_of_the_reconstructed_gtd() {
 /// it does not support. Its shape is the one both `create_new`s write: the
 /// attribute plus the `by_identity` and `meta` groups.
 #[test_log::test]
-fn a_read_only_open_refuses_a_schema_newer_than_supported() {
+fn a_read_only_open_rejects_a_schema_newer_than_supported() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("recordings.h5");
     let newer = CURRENT_SCHEMA_VERSION + 1;

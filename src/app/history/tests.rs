@@ -235,7 +235,7 @@ fn no_rename_editor_opens_in_a_read_only_session() {
             .get_by_label("Rename")
             .accesskit_node()
             .is_disabled(),
-        "the read-only session offers a rename that would be refused"
+        "the read-only session offers a rename that would be rejected"
     );
 }
 

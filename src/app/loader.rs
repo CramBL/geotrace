@@ -172,7 +172,7 @@ pub(super) struct LoadJobs {
     /// with the plot state's analysis config by the app.
     pub analysis_config: AnalysisConfig,
     /// Registers every recording-database write a load thread makes, and
-    /// refuses the ones that would start after shutdown began.
+    /// rejects the ones that would start after shutdown began.
     pending_writes: PendingWrites,
 }
 

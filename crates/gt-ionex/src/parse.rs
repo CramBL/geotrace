@@ -1000,7 +1000,7 @@ mod tests {
     }
 
     #[test]
-    fn an_rms_block_that_never_ends_is_refused() {
+    fn an_rms_block_that_never_ends_is_rejected() {
         let lines: Vec<String> = header_lines()
             .into_iter()
             .chain(tec_map_lines(FIRST_MAP))
@@ -1133,7 +1133,7 @@ mod tests {
     #[rstest]
     #[case::an_empty_file("")]
     #[case::one_header_record("     1.0            IONOSPHERE MAPS     GPS")]
-    fn a_file_without_a_header_end_is_refused(#[case] text: &str) {
+    fn a_file_without_a_header_end_is_rejected(#[case] text: &str) {
         assert_eq!(
             global_ionosphere_maps(text).unwrap_err().to_string(),
             "the file has no END OF HEADER record"
@@ -1157,9 +1157,9 @@ mod tests {
     }
 
     /// A band's values must follow its own record: a record of the next band
-    /// standing there is refused.
+    /// standing there is rejected.
     #[test]
-    fn a_map_missing_a_value_row_is_refused() {
+    fn a_map_missing_a_value_row_is_rejected() {
         let mut lines = published_lines();
         lines.remove(13);
         assert_eq!(
@@ -1171,7 +1171,7 @@ mod tests {
     }
 
     #[test]
-    fn a_file_ending_inside_a_map_is_refused() {
+    fn a_file_ending_inside_a_map_is_rejected() {
         let lines = published_lines();
         assert_eq!(
             global_ionosphere_maps(&file_text(&lines[..13]))

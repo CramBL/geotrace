@@ -1,5 +1,5 @@
 //! The fixed-width string fields of the `.gtd` format: the builder and the
-//! writer refusing a value past a field's capacity, the reader refusing a field
+//! writer rejecting a value past a field's capacity, the reader rejecting a field
 //! row that is not UTF-8, and the reader preserving a well-formed value it does
 //! not recognize. The write tests reach a field by a path that skips the checks
 //! in `EventMarker::builder().build()`.
@@ -110,12 +110,12 @@ fn a_marker_at_the_label_capacity_round_trips() {
 #[case::a_two_byte_character_across_the_capacity(
     format!("{}é", "l".repeat(MarkerLabelField::CONTENT_CAPACITY - 1))
 )]
-fn a_label_past_the_field_capacity_is_refused(#[case] label: String) {
+fn a_label_past_the_field_capacity_is_rejected(#[case] label: String) {
     let refusal = Annotation::builder()
         .time(t(0))
         .label(label.clone())
         .build()
-        .expect_err("a label past the field capacity is refused")
+        .expect_err("a label past the field capacity is rejected")
         .to_string();
     assert_eq!(
         refusal,

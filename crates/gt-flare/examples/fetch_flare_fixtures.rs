@@ -123,7 +123,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         // Written only once it parses, so a fixture on disk is always one the
         // parser accepts.
         let flares = wire::parse_flares(&body)
-            .map_err(|err| format!("{}: refusing to write, {err}", fixture.name))?;
+            .map_err(|err| format!("{}: not written, {err}", fixture.name))?;
         let strongest = flares
             .iter()
             .map(|flare| flare.classification)

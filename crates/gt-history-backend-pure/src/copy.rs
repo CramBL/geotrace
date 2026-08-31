@@ -563,7 +563,7 @@ pub(crate) fn rename_identity(
         return Ok(());
     }
     if new.trim().is_empty() {
-        log::warn!("rename_identity: refusing to rename {old:?} to an empty identity");
+        log::warn!("rename_identity: not renaming {old:?} to an empty identity");
         return Ok(());
     }
 
@@ -592,7 +592,7 @@ pub(crate) fn rename_identity(
         Some(target) => {
             // Merge into the existing target identity group. A recording-group
             // name collision would overwrite one recording with another, so it
-            // is refused. Group names are UUID-suffixed, so this is unreachable
+            // is rejected. Group names are UUID-suffixed, so this is unreachable
             // in practice, and the whole file is untouched because `write_db`
             // has not run yet.
             if let Some(dup) = old_node

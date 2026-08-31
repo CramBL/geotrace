@@ -34,9 +34,9 @@ fn check_within_the_limit(decompressed: &[u8]) -> Result<(), TestCaseError> {
 }
 
 proptest::proptest! {
-    /// Any input at all. Most cases are refused for having no magic.
+    /// Any input at all. Most cases are rejected for having no magic.
     #[test]
-    fn arbitrary_input_is_decoded_or_refused(
+    fn arbitrary_input_is_decoded_or_rejected(
         compressed in proptest::collection::vec(any::<u8>(), 0..2048)
     ) {
         if let Ok(decompressed) = unix_compress::decompress(&compressed) {
@@ -47,7 +47,7 @@ proptest::proptest! {
     /// Arbitrary codes behind a header the decoder accepts, which reaches the
     /// table and the code widths far more often than arbitrary bytes do.
     #[test]
-    fn an_arbitrary_payload_behind_a_header_is_decoded_or_refused(
+    fn an_arbitrary_payload_behind_a_header_is_decoded_or_rejected(
         flags in 9_u8..=16,
         block_mode in any::<bool>(),
         payload in proptest::collection::vec(any::<u8>(), 0..2048),

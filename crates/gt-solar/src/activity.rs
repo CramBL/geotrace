@@ -191,7 +191,7 @@ mod tests {
     #[case::negative_hp30(GeomagneticIndex::Hp30, -1.0)]
     #[case::not_a_number(GeomagneticIndex::Kp, f64::NAN)]
     #[case::infinite(GeomagneticIndex::Hp30, f64::INFINITY)]
-    fn a_value_outside_the_published_range_is_refused(
+    fn a_value_outside_the_published_range_is_rejected(
         #[case] index: GeomagneticIndex,
         #[case] value: f64,
     ) {
@@ -202,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn hp30_accepts_what_kp_refuses() {
+    fn hp30_accepts_what_kp_rejects() {
         let value = 11.333;
         assert!(GeomagneticActivity::from_published_value(GeomagneticIndex::Hp30, value).is_some());
         assert_eq!(

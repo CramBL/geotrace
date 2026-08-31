@@ -10,7 +10,7 @@
 //!
 //! A [`WriteRequest`] runs on [`RecordingsHandle::writer`] and under a
 //! [`PendingWrites`] guard, so the process waits for it on the way out. A
-//! read-only session has no writer, and a refused write is answered with
+//! read-only session has no writer, and a rejected write is answered with
 //! [`Response::WriteRefused`] holding the [`WriteRefusal`].
 
 use std::collections::HashSet;
@@ -1029,7 +1029,7 @@ mod tests {
         PendingWrites::new(WriteAccess::ReadOnly),
         WriteRefusal::ReadOnlySession
     )]
-    fn a_refused_mutation_is_answered_with_its_reason_and_leaves_the_database_alone(
+    fn a_rejected_mutation_is_answered_with_its_reason_and_leaves_the_database_alone(
         #[case] pending_writes: PendingWrites,
         #[case] expected: WriteRefusal,
     ) {
@@ -1047,13 +1047,13 @@ mod tests {
         worker.set_tracks_hidden(db_ref, vec![0], true);
 
         let Response::WriteRefused { label, refusal } = next_response(&worker) else {
-            panic!("expected the write to be refused");
+            panic!("expected the write to be rejected");
         };
         assert_eq!(refusal, expected);
         assert_eq!(label, "Hiding tracks in recording history");
         assert!(pending_writes.is_idle());
 
-        // Reads still answer, and report a database the refused write left alone.
+        // Reads still answer, and report a database the rejected write left alone.
         worker.list();
         let Response::Listed(Ok(entries)) = next_response(&worker) else {
             panic!("expected a Listed response");
@@ -1065,7 +1065,7 @@ mod tests {
     /// The write registry allows this session's writes, and the read-only
     /// handle still has no [`RecordingsHandle::writer`] to run one on.
     #[test]
-    fn a_write_on_a_read_only_handle_is_refused_where_the_registry_allows_it() {
+    fn a_write_on_a_read_only_handle_is_rejected_where_the_registry_allows_it() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
         seed_two_track_recording(&path);
@@ -1081,17 +1081,17 @@ mod tests {
         worker.set_tracks_hidden(db_ref, vec![0], true);
 
         let Response::WriteRefused { label, refusal } = next_response(&worker) else {
-            panic!("expected the write to be refused");
+            panic!("expected the write to be rejected");
         };
         assert_eq!(refusal, WriteRefusal::ReadOnlySession);
         assert_eq!(label, "Hiding tracks in recording history");
         assert_eq!(
             pending_writes.snapshot().recently_finished,
             Vec::<String>::new(),
-            "the refused write registered with the write registry"
+            "the rejected write registered with the write registry"
         );
 
-        // Reads still answer, and report a database the refused write left alone.
+        // Reads still answer, and report a database the rejected write left alone.
         worker.list();
         let Response::Listed(Ok(entries)) = next_response(&worker) else {
             panic!("expected a Listed response");

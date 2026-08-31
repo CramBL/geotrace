@@ -105,7 +105,7 @@ pub enum ArchivePruneOutcome {
     Removed(usize),
     /// What the archive said when its rewrite failed.
     Failed(String),
-    /// The archive kept its days: the registry refused the rewrite before it
+    /// The archive kept its days: the registry rejected the rewrite before it
     /// started.
     Skipped(WriteRefusal),
 }
@@ -157,7 +157,7 @@ impl PruneReport {
         ))
     }
 
-    /// The archives the delete was refused on, and why, or [`None`] where it
+    /// The archives the delete was rejected on, and why, or [`None`] where it
     /// reached every one of them.
     pub fn skipped_line(&self) -> Option<String> {
         let skipped: Vec<(&str, WriteRefusal)> = self
@@ -653,7 +653,7 @@ mod tests {
     /// registered in `pending_writes`, and nothing else opened.
     ///
     /// The three days are archived through a registry of their own, so a
-    /// `pending_writes` that refuses writes still gets days to delete.
+    /// `pending_writes` that rejects writes still gets days to delete.
     fn archives_with_interference(pending_writes: &PendingWrites) -> TestArchives {
         let dir = tempfile::tempdir().expect("temp dir");
         let interference = gt_store::Store::open_in(dir.path())

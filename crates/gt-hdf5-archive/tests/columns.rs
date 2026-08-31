@@ -60,7 +60,7 @@ fn a_column_holds_everything_appended_to_it() {
 /// HDF5 returns fewer values than requested for an out-of-range slice, which
 /// would silently shorten a day.
 #[test]
-fn reading_past_the_end_of_a_column_is_refused() {
+fn reading_past_the_end_of_a_column_is_rejected() {
     let (_dir, file) = archive().unwrap();
     let group = value_column(&file).unwrap();
     let column = Column::new(&group, VALUES);

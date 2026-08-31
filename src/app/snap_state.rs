@@ -442,7 +442,7 @@ impl App {
     /// with transient activity (queued, in flight, failed) are left alone
     /// by the scheduler, and stale runs are re-run manually only.
     pub(super) fn queue_auto_snaps(&mut self) {
-        // Offline pauses auto mode entirely (the scheduler would refuse
+        // Offline pauses auto mode entirely (the scheduler would reject
         // each request anyway). Skipping saves the per-track planning work.
         if self.offline || !self.snap_settings.auto_snap_active() {
             return;

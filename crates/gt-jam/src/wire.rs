@@ -224,8 +224,8 @@ impl ParseWarningReporter {
 
 /// Parse one day's dataset, in published row order.
 ///
-/// Unusable rows go to `reporter` and are skipped. Only an unexpected header
-/// refuses the whole dataset.
+/// Unusable rows go to `reporter` and are skipped. The parser rejects the whole
+/// dataset only for an unexpected header.
 pub fn parse_dataset(
     csv: &str,
     reporter: &ParseWarningReporter,
@@ -421,7 +421,7 @@ mod tests {
     #[case::extra_column("hex,count_good_aircraft,count_bad_aircraft,count_unknown")]
     #[case::missing_column("hex,count_good_aircraft")]
     #[case::data_row_instead_of_header("84005c7ffffffff,412,3")]
-    fn a_header_that_is_not_the_published_one_refuses_the_dataset(#[case] header: &str) {
+    fn a_header_that_is_not_the_published_one_is_rejected(#[case] header: &str) {
         let reporter = ParseWarningReporter::default();
         let csv = format!("{header}\n{GOOD_CELL},412,3\n");
         assert_eq!(

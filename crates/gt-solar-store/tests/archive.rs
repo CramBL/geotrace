@@ -322,9 +322,9 @@ fn any_date_round_trips_through_the_day_index(#[case] date: Option<NaiveDate>) {
     );
 }
 
-/// An archive written by a newer build is refused.
+/// An archive written by a newer build is rejected.
 #[test]
-fn a_newer_schema_is_refused() {
+fn a_newer_schema_is_rejected() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join(FILE_NAME);
     SolarStore::open_or_create(&path).expect("create");
@@ -334,7 +334,7 @@ fn a_newer_schema_is_refused() {
         attr.write_scalar(&(schema::CURRENT_SCHEMA_VERSION + 1))
             .expect("bump");
     }
-    let err = SolarStore::open_or_create(&path).expect_err("refuse");
+    let err = SolarStore::open_or_create(&path).expect_err("reject");
     assert!(
         matches!(err, SolarStoreError::SchemaTooNew { found, supported }
             if found == schema::CURRENT_SCHEMA_VERSION + 1

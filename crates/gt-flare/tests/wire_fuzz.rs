@@ -58,7 +58,7 @@ fn time_strategy() -> impl proptest::strategy::Strategy<Value = String> {
     ]
 }
 
-/// Class strings that land on a published class as often as they are refused.
+/// Class strings that land on a published class as often as they are rejected.
 fn class_strategy() -> impl proptest::strategy::Strategy<Value = String> {
     proptest::prop_oneof![
         proptest::strategy::Just("X2.2".to_owned()),
@@ -68,7 +68,7 @@ fn class_strategy() -> impl proptest::strategy::Strategy<Value = String> {
 }
 
 proptest::proptest! {
-    /// Any input at all. Most cases are refused as not being JSON.
+    /// Any input at all. Most cases are rejected as not being JSON.
     #[test]
     fn arbitrary_input_yields_only_publishable_events(json in ".{0,2048}") {
         if let Ok(flares) = wire::parse_flares(&json) {

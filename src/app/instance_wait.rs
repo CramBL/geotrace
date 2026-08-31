@@ -616,7 +616,7 @@ impl App {
     /// Records this take-over in the data directory, and reports the
     /// take-over recorded there before it.
     ///
-    /// A read-only session records nothing: the registry refuses the write.
+    /// A read-only session records nothing: the registry rejects the write.
     fn record_take_over(&self, taken_over: TakenOverInstance) -> Option<TakeOverRecord> {
         match self
             .pending_writes
