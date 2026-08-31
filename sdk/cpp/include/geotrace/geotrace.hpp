@@ -160,6 +160,11 @@ struct InvalidPathError : Error {
     using Error::Error;
 };
 
+/** A string is longer than the `.gtd` field that holds it. */
+struct FieldTooLongError : Error {
+    using Error::Error;
+};
+
 /** Malformed or corrupt `.gtd` file content (decode failed). */
 struct ParseError : Error {
     using Error::Error;
@@ -199,6 +204,8 @@ namespace detail {
         throw AnnotationsOutOfRangeError(0, msg);
     case GTD_ERR_INVALID_PATH:
         throw InvalidPathError(msg);
+    case GTD_ERR_FIELD_TOO_LONG:
+        throw FieldTooLongError(msg);
     case GTD_ERR_IO:
         throw IoError(msg);
     case GTD_ERR_HDF5:
@@ -1063,6 +1070,8 @@ class FileBuilder {
     /**
      * Add a structured event marker.
      * @throws InvalidPathError if `variant_path` is malformed.
+     * @throws FieldTooLongError if `variant_path` is longer than 255 bytes, or
+     *         `annotation` longer than 511 bytes.
      */
     FileBuilder &add_event_marker(const EventMarker &marker) {
         const char *ann = marker.annotation.empty() ? nullptr : marker.annotation.c_str();
@@ -1071,6 +1080,13 @@ class FileBuilder {
         return *this;
     }
 
+    /**
+     * Register a display style for an event marker variant.
+     *
+     * The style is checked when the file is written: a `variant_path` past 255
+     * bytes or a `color_hex` past 7 bytes fails there with a
+     * `FieldTooLongError`.
+     */
     FileBuilder &add_event_marker_style(const EventMarkerStyle &style) {
         const char *color = style.color_hex.empty() ? nullptr : style.color_hex.c_str();
         record(::gtd_builder_add_event_marker_style(impl_.get(), style.variant_path.c_str(),
@@ -1272,6 +1288,8 @@ class NavFile {
     /**
      * Write the file to disk. The `.gtd` extension is appended if the path has none.
      * @throws IoError, Hdf5Error on failure.
+     * @throws FieldTooLongError if an event marker style holds a variant path or
+     *         color longer than its field.
      */
     void write_to_file(const std::filesystem::path &p) const {
         try_write_to_file(p).throw_on_failure();
@@ -1292,6 +1310,8 @@ class NavFile {
     /**
      * Serialise to a byte vector.
      * @throws IoError, Hdf5Error on failure.
+     * @throws FieldTooLongError if an event marker style holds a variant path or
+     *         color longer than its field.
      */
     std::vector<std::uint8_t> to_bytes() const { return try_to_bytes().value_or_throw(); }
 

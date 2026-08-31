@@ -14,6 +14,7 @@ the app).
 - Python `NavFile.event_marker_styles` raises a `UserWarning` for a style naming an icon outside the `MarkerIcon` set, whose `icon` reads as `None`. `EventMarkerStyle.color` reads back a color that is not `#RRGGBB` verbatim, and `NavFileBuilder.add_event_marker_style` raises `ValueError` for such a color.
 - An event marker whose variant path is longer than the 255 bytes that field holds is rejected where it is built: Rust `EventMarker::builder().build()`, C `gtd_builder_add_event_marker`, C++ `FileBuilder::add_event_marker`, and the Python `EventMarker` constructor.
 - Rust `EventMarker::builder().build()`, C `gtd_builder_add_event_marker`, and C++ `FileBuilder::add_event_marker` reject an annotation longer than the 511 bytes that field holds.
+- C returns the new `GTD_ERR_FIELD_TOO_LONG` (11) where a string is longer than the `.gtd` field that holds it: an event marker variant path past 255 bytes or annotation past 511 bytes at `gtd_builder_add_event_marker`, and an event marker style variant path or color past its field at `gtd_nav_file_write_to_path` and `gtd_nav_file_to_bytes`. `GTD_ERR_INVALID_PATH` covers only a malformed variant path now. C++ throws the matching new `geotrace::FieldTooLongError`, which derives `geotrace::Error`.
 
 ### Fixed
 

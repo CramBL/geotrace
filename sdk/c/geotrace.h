@@ -66,6 +66,7 @@ typedef enum {
     GTD_ERR_UTF8 = 8,             /**< String argument contained invalid UTF-8. */
     GTD_ERR_PARSE = 9,            /**< Malformed or corrupt .gtd file (decode failed). */
     GTD_ERR_INVALID_CHANNEL = 10, /**< Malformed channel (bad name/component or length mismatch). */
+    GTD_ERR_FIELD_TOO_LONG = 11,  /**< A string is longer than the `.gtd` field that holds it. */
     GTD_ERR_INTERNAL = 99,        /**< Internal error (bug in the SDK). */
 } GtdStatus;
 
@@ -538,8 +539,9 @@ GtdStatus gtd_builder_add_annotation(GtdFileBuilder *b, GtdTimestamp time, const
  * @param sys_time     Time of the event.  Must not be `gtd_ts_none()`.
  * @param annotation   Optional human-readable text.  Pass NULL for none.
  *
- * @return `GTD_ERR_INVALID_PATH` if @p variant_path is malformed, or if
- *         @p annotation is longer than 511 bytes.
+ * @return `GTD_ERR_INVALID_PATH` if @p variant_path is malformed.
+ * @return `GTD_ERR_FIELD_TOO_LONG` if @p variant_path is longer than 255 bytes,
+ *         or @p annotation longer than 511 bytes.
  */
 GtdStatus gtd_builder_add_event_marker(GtdFileBuilder *b, const char *variant_path,
                                        GtdTimestamp sys_time, const char *annotation);
@@ -558,7 +560,7 @@ GtdStatus gtd_builder_add_event_marker(GtdFileBuilder *b, const char *variant_pa
  *
  * @note The style is checked when the file is written: a @p variant_path past
  *       255 bytes or a @p color_hex past 7 bytes fails there with
- *       `GTD_ERR_INVALID_PATH`.
+ *       `GTD_ERR_FIELD_TOO_LONG`.
  */
 GtdStatus gtd_builder_add_event_marker_style(GtdFileBuilder *b, const char *variant_path,
                                              GtdMarkerIcon icon, const char *color_hex);
@@ -628,7 +630,7 @@ GtdStatus gtd_builder_finish(GtdFileBuilder *b, GtdNavFile **out);
  * @param f    File handle (not consumed - caller must still call `gtd_nav_file_destroy()`).
  * @param path Destination file path.
  *
- * @return `GTD_ERR_INVALID_PATH` if an event marker style holds a variant path
+ * @return `GTD_ERR_FIELD_TOO_LONG` if an event marker style holds a variant path
  *         or color longer than its field.
  */
 GtdStatus gtd_nav_file_write_to_path(const GtdNavFile *f, const char *path);
@@ -643,7 +645,7 @@ GtdStatus gtd_nav_file_write_to_path(const GtdNavFile *f, const char *path);
  * @param buf Output: pointer to the allocated buffer.
  * @param len Output: number of bytes in the buffer.
  *
- * @return `GTD_ERR_INVALID_PATH` if an event marker style holds a variant path
+ * @return `GTD_ERR_FIELD_TOO_LONG` if an event marker style holds a variant path
  *         or color longer than its field.
  */
 GtdStatus gtd_nav_file_to_bytes(const GtdNavFile *f, uint8_t **buf, size_t *len);

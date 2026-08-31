@@ -21,6 +21,7 @@ const STATUS_CODES: &[(&str, u32)] = &[
     ("GTD_ERR_UTF8", 8),
     ("GTD_ERR_PARSE", 9),
     ("GTD_ERR_INVALID_CHANNEL", 10),
+    ("GTD_ERR_FIELD_TOO_LONG", 11),
     ("GTD_ERR_INTERNAL", 99),
 ];
 

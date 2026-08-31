@@ -5,7 +5,7 @@ use geotrace_sdk::{
     EventMarkerStyle, NavFileBuilder, NavRecorder, SatelliteReport, TravelMode, Velocity,
 };
 
-use crate::error::{GtdStatus, run_catching_panics, set_last_error};
+use crate::error::{GtdStatus, run_catching_panics, set_last_error, status_for_event_marker_error};
 use crate::{
     GtdChannel, GtdMarkerIcon, GtdNavFile, GtdOptF64, GtdSatellite, GtdTimestamp, GtdTravelMode,
     ts_to_datetime,
@@ -321,8 +321,9 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker(
         {
             Ok(m) => m,
             Err(e) => {
+                let status = status_for_event_marker_error(&e);
                 set_last_error(e);
-                return GtdStatus::ErrInvalidPath;
+                return status;
             }
         };
         b.recorder_mut().add_event_marker(marker);
