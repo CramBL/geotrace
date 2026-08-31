@@ -206,10 +206,11 @@ fn viewer_state(recordings: Vec<gt_types::LoadedFile>, logs: &[(&str, &str)]) ->
             parsed,
             Duration::seconds(ASSOCIATION_WINDOW_SECS),
         );
-        let target = log
-            .rank_association_candidates(&loaded_recordings.view())
+        let recordings = loaded_recordings.view();
+        let unambiguous = log
+            .rank_association_candidates(&recordings)
             .unambiguous_target();
-        log.associate_with(target, &loaded_recordings.view());
+        log.anchor_to_loaded_recording(unambiguous, &recordings);
         last_loaded = Some(loaded_logs.push(log).id());
     }
 
@@ -254,6 +255,18 @@ fn attachment_ref() -> gt_log_view::LogAttachmentRef {
         },
         id: gt_store::LogAttachmentId::new_random(),
     }
+}
+
+/// Stores the shown log with the recording [`attachment_ref`] names, as the app
+/// notes it once the database has written it.
+fn attach_the_shown_log(harness: &mut Harness<ViewerState>) {
+    let shown = harness.state().first_loaded_log();
+    let state = harness.state_mut();
+    let recordings = state.recordings.view();
+    if let Some(log) = state.logs.get_mut_by_id(shown) {
+        log.record_attachment(attachment_ref(), Vec::new(), &recordings);
+    }
+    harness.run_steps(2);
 }
 
 /// The position the map draws its cross-highlight ring at.
@@ -323,7 +336,7 @@ fn clicking_a_line_with_a_position_asks_the_map_to_centre_on_it() {
             .state()
             .shown_log()
             .is_some_and(|log| log.associated_entry_count() > 0),
-        "the one overlapping recording is the log's association target"
+        "the log is anchored to the one overlapping recording"
     );
 
     click_line(&mut harness, FIRST_ENTRY_TIMESTAMP);
@@ -604,10 +617,7 @@ fn an_attachment_is_shown_and_removable_only_while_the_log_has_one() {
     assert!(harness.query_by_label(super::ICON_PAPERCLIP).is_none());
 
     let shown = harness.state().first_loaded_log();
-    if let Some(log) = harness.state_mut().logs.get_mut_by_id(shown) {
-        log.record_attachment(attachment_ref(), Vec::new());
-    }
-    harness.run_steps(2);
+    attach_the_shown_log(&mut harness);
 
     harness.get_by_label(super::ICON_PAPERCLIP);
     harness.get_by_label(super::DETACH_LABEL).click();
@@ -616,15 +626,37 @@ fn an_attachment_is_shown_and_removable_only_while_the_log_has_one() {
     assert_eq!(harness.state().requests.detach, Some(shown));
 }
 
+/// The recording an attached log is stored with is the recording it takes its
+/// positions from: the footer offers "no recording" only once the attachment is
+/// removed.
+#[test]
+fn the_footer_takes_no_recording_off_an_attached_log() {
+    let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
+    attach_the_shown_log(&mut harness);
+
+    harness.get(By::new().value(gt_ui_theme::EM_DASH)).click();
+    harness.run_steps(2);
+    let no_recording = harness.bottommost_matching(By::new().label(gt_ui_theme::EM_DASH));
+    let position = no_recording.rect().center();
+
+    assert!(no_recording.accesskit_node().is_disabled());
+    harness.hover_at_and_settle(position, TOOLTIP_DELAY_FRAMES);
+    harness.get_by_label_contains(super::NO_RECORDING_ATTACHED_HOVER);
+    assert!(
+        harness
+            .state()
+            .shown_log()
+            .is_some_and(|log| log.anchor_key().is_some()),
+        "the log stays anchored to the recording it is stored with"
+    );
+}
+
 /// Attaching a log to a recording and taking it back out both write to the
 /// recording history: a read-only session offers neither, and says why.
 #[test]
 fn the_attachment_controls_are_grayed_in_a_read_only_session() {
     let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
-    let shown = harness.state().first_loaded_log();
-    if let Some(log) = harness.state_mut().logs.get_mut_by_id(shown) {
-        log.record_attachment(attachment_ref(), Vec::new());
-    }
+    attach_the_shown_log(&mut harness);
     harness.state_mut().write_access = WriteAccess::ReadOnly;
     harness.run_steps(2);
 

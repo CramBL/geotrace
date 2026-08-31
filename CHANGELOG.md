@@ -20,6 +20,9 @@
 - **Interface:** A duration under a second now reads in tenths of a second, from "0.1s" to "0.9s".
 - **Log Viewer:** Opening, dropping or pasting a log whose text is already loaded now selects the loaded log and toasts its name.
 - **Log Viewer:** Opening a recording now skips its attached logs whose text is already loaded.
+- **Log Viewer:** Removing or unloading a recording now unloads the logs that take their positions from it, and an attached log comes back when that recording is opened again.
+- **Log Viewer:** The remove dialog now states how many attached logs the removal unloads.
+- **Log Viewer:** The log viewer now grays out the "no recording" choice for a log attached to a recording.
 - **Map & Tracks:** A recording with an event marker style naming an unknown icon, or a color that is not a #RRGGBB value, now loads with that marker drawn as a pin or in gray, and the recorded value named in the data quality warnings.
 - **Map & Tracks:** A recording with marker or event marker text that is not valid UTF-8 is now rejected with an error naming the field.
 

@@ -58,8 +58,8 @@ use egui_tiles::{Container, Linear, LinearDir, Tile, TileId, Tiles, Tree};
 use gt_fetch::TransportSource;
 use gt_filter::GlobalFilter;
 use gt_instance_lock::{DataDirectoryLock, DataDirectoryOwnership};
-use gt_loaded_files::{LoadedFileId, LoadedFiles};
-use gt_log_view::{LoadedLog, LoadedLogs, LogPushOutcome};
+use gt_loaded_files::LoadedFiles;
+use gt_log_view::{LoadedLog, LoadedLogs, LogPushOutcome, RecordingKey};
 use gt_logfile::ParsedLog;
 use gt_map::NavMap;
 use gt_map::mapbox_tiles;
@@ -992,16 +992,14 @@ impl App {
             );
             return;
         }
-        let mut restored_target = None;
-        if let Some(restore) = restored {
-            restored_target = self.loaded_recording_id(&restore.attachment.recording);
-            log.restore_attachment(restore.attachment, restore.filters);
-        }
         // Associating runs on the UI thread, as the spatial-index rebuild
         // after a recording load does: one binary search per entry, spread
         // over gt-logfile's workers.
         let shared = self.shared.borrow();
         let recordings = shared.loaded_files.view();
+        if let Some(restore) = restored {
+            log.restore_attachment(restore.attachment, restore.filters, &recordings);
+        }
         let unambiguous = log
             .rank_association_candidates(&recordings)
             .unambiguous_target();
@@ -1009,14 +1007,9 @@ impl App {
             self.ask_log_association_target && !restored_from_history && !recordings.is_empty();
         // Anchoring without the user choosing is safe only where there is
         // nothing to choose between, and the dialog is that choice.
-        let target = if restored_from_history {
-            restored_target
-        } else if ask {
-            None
-        } else {
-            unambiguous
-        };
-        log.associate_with(target, &recordings);
+        if !restored_from_history && !ask {
+            log.anchor_to_loaded_recording(unambiguous, &recordings);
+        }
         drop(shared);
         let entry_count = log.parsed().entries().len();
         let associated_entry_count = log.associated_entry_count();
@@ -1045,15 +1038,10 @@ impl App {
         }
     }
 
-    /// The loaded recording stored as `recording`, or `None` once it has been
-    /// unloaded.
-    fn loaded_recording_id(&self, recording: &gt_store::DatabaseRef) -> Option<LoadedFileId> {
-        let shared = self.shared.borrow();
-        let recordings = shared.loaded_files.view();
-        recordings
-            .entries()
-            .find(|entry| entry.history().db_ref() == Some(recording))
-            .map(|entry| entry.id())
+    fn unload_logs_of_removed_recordings(&mut self, removed: &[RecordingKey]) {
+        for log in self.logs.unload_anchored_to(removed) {
+            log::info!("Unloaded the log {:?} with its recording", log.name());
+        }
     }
 
     /// Bookkeeping after any structural change to `loaded_files` (removal,

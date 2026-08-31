@@ -30,7 +30,7 @@ pub fn display_identity(identity: &str) -> (&str, bool) {
 /// Unlike [`FileIdx`], which is a position and shifts when an earlier file is
 /// removed, an id names the same file for as long as it stays loaded and is
 /// never handed out twice. State that must not silently follow a shifted index
-/// onto a different recording - a log's association target above all - keys off
+/// onto a different recording - a log's anchor above all - keys off
 /// this instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LoadedFileId(u64);

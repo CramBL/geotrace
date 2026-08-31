@@ -116,10 +116,17 @@ impl App {
             Ok(StoredLogAttachment {
                 attachment,
                 filters,
-            }) => match self.logs.get_mut_by_id(log_id) {
-                Some(log) => log.record_attachment(attachment, filters),
-                None => log::info!("The log {name:?} was unloaded before it finished attaching"),
-            },
+            }) => {
+                let shared = self.shared.borrow();
+                match self.logs.get_mut_by_id(log_id) {
+                    Some(log) => {
+                        log.record_attachment(attachment, filters, &shared.loaded_files.view());
+                    }
+                    None => {
+                        log::info!("The log {name:?} was unloaded before it finished attaching")
+                    }
+                }
+            }
             Err(err) => self
                 .log_viewer
                 .report_warning(format!("Could not attach {name} {EM_DASH} {err}")),
@@ -175,7 +182,7 @@ impl App {
     fn open_log_association_dialog(&mut self, log_id: LoadedLogId) {
         let shared = self.shared.borrow();
         let selected = self.logs.get_by_id(log_id).and_then(|log| {
-            log.association_target().or_else(|| {
+            log.associated_recording().or_else(|| {
                 log.rank_association_candidates(&shared.loaded_files.view())
                     .unambiguous_target()
             })
@@ -197,8 +204,9 @@ impl App {
         };
         let log_id = dialog.log();
         let shared = self.shared.borrow();
+        let recordings = shared.loaded_files.view();
         if let Some(log) = self.logs.get_mut_by_id(log_id) {
-            log.associate_with(target, &shared.loaded_files.view());
+            log.anchor_to_loaded_recording(target, &recordings);
         }
         drop(shared);
         if attach {

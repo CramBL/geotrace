@@ -549,8 +549,8 @@ pub struct ProcessingSettings {
     /// Gap between consecutive GPS points that triggers a new track segment, in seconds.
     pub track_split_gap_seconds: u64,
     /// Association window a freshly loaded log starts with, in seconds: how far
-    /// an entry may be from the nearest fix of its association target and still
-    /// take a position from it.
+    /// an entry may be from the nearest fix of the recording it is anchored to
+    /// and still take a position from it.
     #[serde(alias = "log_marker_window_s")]
     pub log_association_window_s: u64,
     /// Whether a loading log raises the dialog choosing the recording it

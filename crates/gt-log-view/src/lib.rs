@@ -1,5 +1,5 @@
 //! The session model of the log layer: the logs loaded alongside the
-//! recordings, and the one recording each of them is associated against.
+//! recordings, and the one recording each of them is anchored to.
 //!
 //! A log is a layer over time: the session keeps its full text, and every entry
 //! carries the position of the fix nearest in time in the one recording the
@@ -10,6 +10,7 @@
 //! filter stack: the live filter the user is typing, and the chips added from
 //! it.
 
+mod anchor;
 mod association;
 mod attachment;
 mod filter;
@@ -17,6 +18,7 @@ mod loaded_log;
 #[cfg(test)]
 mod test_fixtures;
 
+pub use anchor::RecordingKey;
 pub use association::{AssociationCandidate, AssociationCandidates};
 pub use attachment::LogAttachmentRef;
 pub use filter::{

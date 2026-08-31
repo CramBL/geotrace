@@ -1081,20 +1081,24 @@ impl App {
             let mut refmut = self.shared.borrow_mut();
             let s = &mut *refmut;
             if let Some(items) = s.tree.pending_unload.take() {
+                let removed_recordings =
+                    modals::removed_recording_keys(&items, s.loaded_files.view());
                 modals::execute_delete(&items, &mut s.loaded_files, &mut s.tree);
                 s.plot_state.rebuild_all(&s.loaded_files);
-                Some(items.len())
+                Some((items.len(), removed_recordings))
             } else {
                 None
             }
         };
-        if let Some(count) = unloaded {
+        if let Some((count, removed_recordings)) = unloaded {
+            self.unload_logs_of_removed_recordings(&removed_recordings);
             self.on_track_indices_changed();
             log::info!("Unloaded {count} item(s) from view");
         }
 
         let remove_outcome = {
             let write_access = self.pending_writes.write_access();
+            let logs = &self.logs;
             let mut refmut = self.shared.borrow_mut();
             let s = &mut *refmut;
             // Resolved only while the dialog is up. The map and plot resolve
@@ -1107,6 +1111,7 @@ impl App {
                     &mut s.tree,
                     &mut s.loaded_files,
                     &recording_names,
+                    logs,
                     write_access,
                 )
             });
@@ -1117,6 +1122,7 @@ impl App {
             outcome
         };
         if let Some(outcome) = remove_outcome {
+            self.unload_logs_of_removed_recordings(&outcome.removed_recordings);
             self.on_track_indices_changed();
             self.apply_remove_outcome(&outcome);
         }

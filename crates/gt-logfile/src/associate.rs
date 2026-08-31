@@ -65,8 +65,8 @@ pub fn associate_position(
 /// The position of every entry of `entries` against `fixes`, in entry order,
 /// `None` for an entry no fix lies within `window` of.
 ///
-/// `fixes` are those of the log's association target alone: a log is never
-/// associated against the fixes of several recordings at once.
+/// `fixes` are those of the recording the log is anchored to alone: a log is
+/// never associated against the fixes of several recordings at once.
 pub fn associate_entries(
     entries: &[LogEntry],
     fixes: &[PlacedPoint<'_>],
