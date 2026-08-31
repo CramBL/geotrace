@@ -7,9 +7,8 @@ edition = "2021"
 [package.metadata]
 cargo-fuzz = true
 
-[dependencies]
-libfuzzer-sys = "0.4"
-geotrace-sdk = { path = ".." }
+# The parent workspace lists its members explicitly and never includes this one.
+[workspace]
 
 [[bin]]
 name = "decode"
@@ -18,5 +17,6 @@ test = false
 doc = false
 bench = false
 
-# Its own workspace so the parent (explicit members) never pulls it in.
-[workspace]
+[dependencies]
+geotrace-sdk = { path = ".." }
+libfuzzer-sys = "0.4"

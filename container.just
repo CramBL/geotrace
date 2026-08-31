@@ -118,12 +118,20 @@ build-images: build-image build-sdk-image
 osv-scanner:
     #!/usr/bin/env bash
     set -euo pipefail
+    # The two committed lockfiles. cargo-fuzz regenerates the fuzz workspace's
+    # own, and git ignores it, so a checkout has no resolution there to scan.
     if command -v osv-scanner >/dev/null 2>&1; then
-        osv-scanner scan --lockfile Cargo.lock --config osv-scanner.toml
+        osv-scanner scan \
+            --lockfile Cargo.lock \
+            --lockfile sdk/python/geotrace-py/Cargo.lock \
+            --config osv-scanner.toml
     else
         just _require-runner
         {{ RUNNER }} run --rm \
             -v "{{ justfile_directory() }}:/src:ro" \
             ghcr.io/google/osv-scanner:latest \
-            scan --lockfile /src/Cargo.lock --config /src/osv-scanner.toml
+            scan \
+            --lockfile /src/Cargo.lock \
+            --lockfile /src/sdk/python/geotrace-py/Cargo.lock \
+            --config /src/osv-scanner.toml
     fi
