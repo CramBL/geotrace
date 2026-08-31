@@ -396,14 +396,18 @@ fn read_event_marker_styles(file: &File) -> Result<Vec<EventMarkerStyle>, Error>
         let Some(variant_path) = variant_path.into_string_unless_empty() else {
             continue;
         };
-        let icon = icon_name
-            .into_string_unless_empty()
-            .and_then(|name| MarkerIcon::try_from_lower_case(&name).ok())
-            .map_or(EventMarkerIconChoice::Auto, EventMarkerIconChoice::Icon);
-        let color = color_hex
-            .into_string_unless_empty()
-            .filter(|hex| hex.starts_with('#'))
-            .map_or(EventMarkerColor::Auto, EventMarkerColor::Hex);
+        let icon = EventMarkerIconChoice::from_wire_name(icon_name);
+        if let EventMarkerIconChoice::Unrecognized(name) = &icon {
+            log::warn!(
+                "unrecognized event_marker_styles/icon_name value {name:?}, preserving it as-is"
+            );
+        }
+        let color = EventMarkerColor::from_wire_value(color_hex);
+        if let EventMarkerColor::Unrecognized(value) = &color {
+            log::warn!(
+                "unrecognized event_marker_styles/color_hex value {value:?}, preserving it as-is"
+            );
+        }
         styles.push(EventMarkerStyle {
             variant_path,
             icon,

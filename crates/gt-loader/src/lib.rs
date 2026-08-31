@@ -374,14 +374,14 @@ impl fmt::Display for MergedSatelliteRows {
     }
 }
 
-/// An event marker style whose color field the loader could not read as a
-/// `#RRGGBB` hex value.
-struct UnreadableEventMarkerColor {
+/// An event marker style holding a color field that is not a `#RRGGBB` hex
+/// value.
+struct UnrecognizedEventMarkerColor {
     variant_path: String,
     written_color: String,
 }
 
-impl fmt::Display for UnreadableEventMarkerColor {
+impl fmt::Display for UnrecognizedEventMarkerColor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
             variant_path,
@@ -389,6 +389,30 @@ impl fmt::Display for UnreadableEventMarkerColor {
         } = self;
         write!(f, "{variant_path:?}: {written_color:?}")
     }
+}
+
+/// An event marker style naming an icon outside the set this build draws.
+struct UnrecognizedEventMarkerIcon {
+    variant_path: String,
+    written_icon_name: String,
+}
+
+impl fmt::Display for UnrecognizedEventMarkerIcon {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            variant_path,
+            written_icon_name,
+        } = self;
+        write!(f, "{variant_path:?}: {written_icon_name:?}")
+    }
+}
+
+/// What the loader changed about a recording's event marker styles. The
+/// load-warnings dialog lists each change.
+#[derive(Default)]
+struct EventMarkerStyleAlterations {
+    unrecognized_icons: Vec<UnrecognizedEventMarkerIcon>,
+    unrecognized_colors: Vec<UnrecognizedEventMarkerColor>,
 }
 
 /// What the loader changed about the satellite rows a recording holds, so the
@@ -437,6 +461,12 @@ const DISCARDED_SNR_SENTINELS: AlterationWording = AlterationWording {
     consequence: "Those satellites are drawn and listed with no signal strength: an SNR \
         of ≈ 99 dB-Hz is the firmware sentinel for an unavailable measurement, not a \
         reading.",
+};
+
+const REPLACED_EVENT_MARKER_ICONS: AlterationWording = AlterationWording {
+    issue: "event marker icon(s) replaced with the pin",
+    consequence: "Those markers are drawn as a pin: the style names an icon this version \
+        of GeoTrace does not have.",
 };
 
 const REPLACED_EVENT_MARKER_COLORS: AlterationWording = AlterationWording {
@@ -511,11 +541,11 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
         }
     }
 
-    let mut unreadable_event_marker_colors = Vec::new();
+    let mut style_alterations = EventMarkerStyleAlterations::default();
     let event_marker_styles = nav_file
         .event_marker_styles()
         .iter()
-        .map(|style| convert_event_marker_style(style, &mut unreadable_event_marker_colors))
+        .map(|style| convert_event_marker_style(style, &mut style_alterations))
         .collect();
 
     let channels = nav_file.channels().iter().map(convert_channel).collect();
@@ -534,7 +564,8 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
         MERGED_SATELLITE_ROWS
             .load_warning(&satellite_alterations.satellites_merged_from_several_rows),
         DISCARDED_SNR_SENTINELS.load_warning(&satellite_alterations.discarded_snr_sentinels),
-        REPLACED_EVENT_MARKER_COLORS.load_warning(&unreadable_event_marker_colors),
+        REPLACED_EVENT_MARKER_ICONS.load_warning(&style_alterations.unrecognized_icons),
+        REPLACED_EVENT_MARKER_COLORS.load_warning(&style_alterations.unrecognized_colors),
     ]
     .into_iter()
     .flatten()
@@ -584,27 +615,40 @@ fn convert_event_marker(m: &EventMarkerPoint) -> Result<EventMarker, DroppedMark
 
 /// Drawn for an event marker whose style holds a color field that is not a
 /// `#RRGGBB` hex value.
-const UNREADABLE_COLOR_REPLACEMENT: MarkerColor = MarkerColor::new(128, 128, 128);
+const UNRECOGNIZED_COLOR_REPLACEMENT: MarkerColor = MarkerColor::new(128, 128, 128);
 
 fn convert_event_marker_style(
     s: &SdkEventMarkerStyle,
-    unreadable_colors: &mut Vec<UnreadableEventMarkerColor>,
+    alterations: &mut EventMarkerStyleAlterations,
 ) -> EventMarkerStyle {
-    let icon = match s.icon {
+    let icon = match &s.icon {
         SdkEventMarkerIconChoice::Auto => MarkerIcon::Pin,
-        SdkEventMarkerIconChoice::Icon(i) => convert_icon(i),
+        SdkEventMarkerIconChoice::Icon(icon) => convert_icon(*icon),
+        SdkEventMarkerIconChoice::Unrecognized(name) => {
+            alterations
+                .unrecognized_icons
+                .push(UnrecognizedEventMarkerIcon {
+                    variant_path: s.variant_path.clone(),
+                    written_icon_name: name.clone(),
+                });
+            MarkerIcon::Pin
+        }
     };
     let color = match &s.color {
         SdkEventMarkerColor::Auto => {
             gt_types::markers::event_marker_fallback_color(&s.variant_path)
         }
-        SdkEventMarkerColor::Hex(hex) => parse_hex_color(hex).unwrap_or_else(|| {
-            unreadable_colors.push(UnreadableEventMarkerColor {
-                variant_path: s.variant_path.clone(),
-                written_color: hex.clone(),
-            });
-            UNREADABLE_COLOR_REPLACEMENT
-        }),
+        SdkEventMarkerColor::Hex(hex) | SdkEventMarkerColor::Unrecognized(hex) => {
+            parse_hex_color(hex).unwrap_or_else(|| {
+                alterations
+                    .unrecognized_colors
+                    .push(UnrecognizedEventMarkerColor {
+                        variant_path: s.variant_path.clone(),
+                        written_color: hex.clone(),
+                    });
+                UNRECOGNIZED_COLOR_REPLACEMENT
+            })
+        }
     };
     EventMarkerStyle {
         variant_path: s.variant_path.clone(),

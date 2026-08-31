@@ -374,8 +374,6 @@ fn add_event_icon_survives_round_trip() {
     );
 }
 
-/// A style read from a newer file keeps the icon name and color that file held,
-/// so writing the recording out again holds them still.
 #[test]
 fn an_icon_name_and_color_outside_the_known_sets_are_written_back_verbatim() {
     let mut recorder = NavFileBuilder::new().open();
@@ -383,7 +381,7 @@ fn an_icon_name_and_color_outside_the_known_sets_are_written_back_verbatim() {
     recorder.add_event_marker_style(EventMarkerStyle {
         variant_path: "power/on".to_owned(),
         icon: EventMarkerIconChoice::Unrecognized("hovercraft".to_owned()),
-        color: EventMarkerColor::Unrecognized("cornflower".to_owned()),
+        color: EventMarkerColor::Unrecognized("FFAA00".to_owned()),
     });
 
     let mut bytes = Vec::new();
@@ -397,6 +395,6 @@ fn an_icon_name_and_color_outside_the_known_sets_are_written_back_verbatim() {
     );
     assert_eq!(
         styles[0].color,
-        EventMarkerColor::Unrecognized("cornflower".to_owned())
+        EventMarkerColor::Unrecognized("FFAA00".to_owned())
     );
 }

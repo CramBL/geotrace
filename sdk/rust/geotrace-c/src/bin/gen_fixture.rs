@@ -12,8 +12,8 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use geotrace_sdk::{
-    Angle, Constellation, DateTime, Duration, NavFile, NavFileBuilder, NavFix, Satellite,
-    SatelliteReport, Velocity,
+    Angle, Constellation, DateTime, Duration, EventMarkerColor, EventMarkerIconChoice,
+    EventMarkerStyle, NavFile, NavFileBuilder, NavFix, Satellite, SatelliteReport, Velocity,
 };
 
 fn main() {
@@ -23,6 +23,10 @@ fn main() {
     write_fixture(
         &out_of_range_values(),
         &fixtures.join("out_of_range_values.gtd"),
+    );
+    write_fixture(
+        &unrecognized_style_values(),
+        &fixtures.join("unrecognized_style_values.gtd"),
     );
 }
 
@@ -135,6 +139,36 @@ fn out_of_range_values() -> NavFile {
         heading: Some(Angle::degrees(675.0)),
         speed: None,
         eph_m: None,
+    });
+
+    recorder.finish().expect("gen_fixture: build failed")
+}
+
+/// A file as a newer build would write it: an event marker style naming an icon
+/// outside the [`MarkerIcon`](geotrace_sdk::MarkerIcon) set, and a color that is
+/// not `#RRGGBB`.
+fn unrecognized_style_values() -> NavFile {
+    let t0 = DateTime::from_timestamp_micros(1_700_000_000_000_000).expect("valid timestamp");
+
+    let mut recorder = NavFileBuilder::new()
+        .with_title("unrecognized style values fixture")
+        .with_device("gen_fixture")
+        .open();
+
+    recorder.add_nav_fix(NavFix {
+        gps_time: Some(t0),
+        sys_time: None,
+        lat: Angle::degrees(51.5074),
+        lon: Angle::degrees(-0.1278),
+        heading: Some(Angle::degrees(90.0)),
+        speed: Some(Velocity::meter_per_second(5.0)),
+        eph_m: None,
+    });
+
+    recorder.add_event_marker_style(EventMarkerStyle {
+        variant_path: "power/boot".to_owned(),
+        icon: EventMarkerIconChoice::Unrecognized("hovercraft".to_owned()),
+        color: EventMarkerColor::Unrecognized("FFAA00".to_owned()),
     });
 
     recorder.finish().expect("gen_fixture: build failed")

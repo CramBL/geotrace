@@ -535,12 +535,20 @@ class EventMarkerStyle:
     def variant_path(self) -> str: ...
     @property
     def icon(self) -> MarkerIcon | None:
-        """Icon shape, or ``None`` for the default."""
+        """Icon shape.
+
+        ``None`` for the application default and for an icon name outside the
+        known set.
+        """
         ...
 
     @property
     def color(self) -> str | None:
-        """Fill color as ``#RRGGBB``, or ``None`` for the hash-derived color."""
+        """Fill color as ``#RRGGBB``, or ``None`` for the hash-derived color.
+
+        A file written by a newer build can hold a color in another notation.
+        Such a color reads back verbatim.
+        """
         ...
 
 @final
@@ -615,7 +623,12 @@ class NavFile:
 
     @property
     def event_marker_styles(self) -> list[EventMarkerStyle]:
-        """Per-variant style overrides stored in the file."""
+        """Per-variant style overrides stored in the file.
+
+        Raises a ``UserWarning`` for a style naming an icon this build does not
+        have, whose ``icon`` reads as ``None``: :class:`MarkerIcon` has no member
+        for that name.
+        """
         ...
 
     @property

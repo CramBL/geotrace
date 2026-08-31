@@ -11,6 +11,7 @@ from geotrace_sdk import (
     EventMarkerPoint,
     EventMarkerStyle,
     MarkerIcon,
+    NavFile,
     NavFileBuilder,
     NavFix,
     event_kind,
@@ -156,6 +157,39 @@ def test_event_marker_style_round_trips(tmp_path: Path) -> None:
     s = loaded.event_marker_styles[0]
     assert s.icon == MarkerIcon.CHECK
     assert s.color == "#FF0000"
+
+
+UNRECOGNIZED_STYLE_FIXTURE = (
+    Path(__file__).resolve().parents[3]
+    / "c"
+    / "tests"
+    / "fixtures"
+    / "unrecognized_style_values.gtd"
+)
+
+
+def test_style_icon_outside_the_known_set_reads_as_none_with_a_warning() -> None:
+    loaded = NavFile.open(UNRECOGNIZED_STYLE_FIXTURE)
+    with pytest.warns(UserWarning, match="hovercraft"):
+        style = loaded.event_marker_styles[0]
+    assert style.icon is None
+
+
+def test_style_color_outside_the_known_form_survives_the_read() -> None:
+    loaded = NavFile.open(UNRECOGNIZED_STYLE_FIXTURE)
+    with pytest.warns(UserWarning):
+        style = loaded.event_marker_styles[0]
+    assert style.color == "FFAA00"
+
+
+def test_style_color_outside_the_known_form_is_refused_when_written_back() -> None:
+    loaded = NavFile.open(UNRECOGNIZED_STYLE_FIXTURE)
+    with pytest.warns(UserWarning):
+        style = loaded.event_marker_styles[0]
+
+    b = _builder_with_fixes()
+    with pytest.raises(ValueError, match="#RRGGBB"):
+        b.add_event_marker_style(style)
 
 
 def test_style_variant_path_past_the_field_capacity_raises_on_write() -> None:

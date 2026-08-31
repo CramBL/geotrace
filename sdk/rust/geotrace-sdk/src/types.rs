@@ -689,6 +689,9 @@ pub enum EventMarkerColor {
     Auto,
     /// Explicit `#RRGGBB` hex color, e.g. `"#FF9900"`.
     Hex(String),
+    /// A `color_hex` wire value that is not the `#RRGGBB` form, read from a
+    /// file and preserved verbatim.
+    Unrecognized(String),
 }
 
 impl EventMarkerColor {
@@ -696,23 +699,37 @@ impl EventMarkerColor {
     pub fn hex(s: impl Into<String>) -> Self {
         Self::Hex(s.into())
     }
+
+    /// Reads a `color_hex` wire value: an empty value gives
+    /// [`EventMarkerColor::Auto`], the `#RRGGBB` form
+    /// [`EventMarkerColor::Hex`], and any other value
+    /// [`EventMarkerColor::Unrecognized`].
+    pub fn from_wire_value(s: impl Into<String>) -> Self {
+        let s = s.into();
+        if s.is_empty() {
+            Self::Auto
+        } else if s.len() == 7
+            && s.starts_with('#')
+            && s.chars().skip(1).all(|c| c.is_ascii_hexdigit())
+        {
+            Self::Hex(s)
+        } else {
+            Self::Unrecognized(s)
+        }
+    }
 }
 
 impl TryFrom<String> for EventMarkerColor {
     type Error = Error;
 
     fn try_from(s: String) -> Result<Self, Self::Error> {
-        if s.is_empty() {
-            return Ok(Self::Auto);
-        }
-        if s.len() == 7 && s.starts_with('#') && s.chars().skip(1).all(|c| c.is_ascii_hexdigit()) {
-            Ok(Self::Hex(s))
-        } else {
-            Err(Error::ParseError {
+        match Self::from_wire_value(s) {
+            Self::Unrecognized(input) => Err(Error::ParseError {
                 unit: "EventMarkerColor (hex)",
-                input: s,
+                input,
                 reason: "expected #RRGGBB format".to_owned(),
-            })
+            }),
+            color => Ok(color),
         }
     }
 }
@@ -720,13 +737,33 @@ impl TryFrom<String> for EventMarkerColor {
 /// Icon shape for an event marker variant.
 ///
 /// `Auto` resolves to `MarkerIcon::Pin` when the file is loaded.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum EventMarkerIconChoice {
     /// Use the application default (currently `MarkerIcon::Pin`).
     #[default]
     Auto,
     /// Explicit icon choice.
     Icon(MarkerIcon),
+    /// An `icon_name` wire value outside the [`MarkerIcon`] set, read from a
+    /// file and preserved verbatim.
+    Unrecognized(String),
+}
+
+impl EventMarkerIconChoice {
+    /// Reads an `icon_name` wire value: an empty name gives
+    /// [`EventMarkerIconChoice::Auto`], a name in the [`MarkerIcon`] set
+    /// [`EventMarkerIconChoice::Icon`], and any other name
+    /// [`EventMarkerIconChoice::Unrecognized`].
+    pub fn from_wire_name(name: impl Into<String>) -> Self {
+        let name = name.into();
+        if name.is_empty() {
+            return Self::Auto;
+        }
+        match MarkerIcon::try_from_lower_case(&name) {
+            Ok(icon) => Self::Icon(icon),
+            Err(_) => Self::Unrecognized(name),
+        }
+    }
 }
 
 impl From<MarkerIcon> for EventMarkerIconChoice {
@@ -738,6 +775,48 @@ impl From<MarkerIcon> for EventMarkerIconChoice {
 impl From<Option<MarkerIcon>> for EventMarkerIconChoice {
     fn from(icon: Option<MarkerIcon>) -> Self {
         icon.map_or(Self::Auto, Self::Icon)
+    }
+}
+
+#[cfg(test)]
+mod event_marker_style_wire_tests {
+    use rstest::rstest;
+
+    use super::*;
+
+    #[rstest]
+    #[case("", EventMarkerColor::Auto)]
+    #[case("#ff9900", EventMarkerColor::Hex("#ff9900".to_owned()))]
+    #[case("#FF990", EventMarkerColor::Unrecognized("#FF990".to_owned()))]
+    #[case("#GG9900", EventMarkerColor::Unrecognized("#GG9900".to_owned()))]
+    #[case("FF9900", EventMarkerColor::Unrecognized("FF9900".to_owned()))]
+    fn from_wire_value_reads_a_color_hex_field(
+        #[case] wire: &str,
+        #[case] expected: EventMarkerColor,
+    ) {
+        assert_eq!(EventMarkerColor::from_wire_value(wire), expected);
+    }
+
+    #[rstest]
+    #[case("", EventMarkerIconChoice::Auto)]
+    #[case("wrench", EventMarkerIconChoice::Icon(MarkerIcon::Wrench))]
+    #[case("Wrench", EventMarkerIconChoice::Unrecognized("Wrench".to_owned()))]
+    #[case("hovercraft", EventMarkerIconChoice::Unrecognized("hovercraft".to_owned()))]
+    fn from_wire_name_reads_an_icon_name_field(
+        #[case] wire: &str,
+        #[case] expected: EventMarkerIconChoice,
+    ) {
+        assert_eq!(EventMarkerIconChoice::from_wire_name(wire), expected);
+    }
+
+    #[test]
+    fn try_from_refuses_a_value_that_is_not_rrggbb() {
+        let err = EventMarkerColor::try_from("FF9900".to_owned())
+            .expect_err("a value that is not #RRGGBB is refused");
+        assert_eq!(
+            err.to_string(),
+            "failed to parse EventMarkerColor (hex) from \"FF9900\": expected #RRGGBB format"
+        );
     }
 }
 

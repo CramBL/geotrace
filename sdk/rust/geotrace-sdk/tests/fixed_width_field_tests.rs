@@ -306,7 +306,7 @@ fn well_formed_fixed_width_field_rows_read_back() {
 }
 
 #[test]
-fn an_icon_name_outside_the_known_set_reads_back_as_the_name_the_file_holds() {
+fn an_icon_name_outside_the_known_set_survives_the_read() {
     let bytes = gtd_bytes_with_field_rows(FixedWidthFieldRows {
         style_icon_name: nul_padded_row(b"hovercraft", ICON_NAME_ROW_BYTES),
         ..FixedWidthFieldRows::default()
@@ -325,7 +325,7 @@ fn an_icon_name_outside_the_known_set_reads_back_as_the_name_the_file_holds() {
 }
 
 #[test]
-fn a_color_that_is_not_rrggbb_reads_back_as_the_value_the_file_holds() {
+fn a_color_that_is_not_rrggbb_survives_the_read() {
     let bytes = gtd_bytes_with_field_rows(FixedWidthFieldRows {
         style_color_hex: nul_padded_row(b"FFAA00", COLOR_HEX_ROW_BYTES),
         ..FixedWidthFieldRows::default()
