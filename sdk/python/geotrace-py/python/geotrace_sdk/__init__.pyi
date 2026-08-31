@@ -308,12 +308,16 @@ class NavFix:
 
     @property
     def gps_time(self) -> datetime | None:
-        """GPS-domain timestamp (timezone-aware UTC), or ``None``."""
+        """GPS-receiver timestamp (timezone-aware UTC), or ``None`` when the
+        receiver had no lock.
+        """
         ...
 
     @property
     def sys_time(self) -> datetime | None:
-        """System-clock timestamp (timezone-aware UTC), or ``None``."""
+        """System-clock timestamp (timezone-aware UTC), or ``None`` when the
+        recorder did not supply one.
+        """
         ...
 
     @property
@@ -432,12 +436,16 @@ class NavPoint:
 
     @property
     def gps_time(self) -> datetime | None:
-        """GPS-domain timestamp (timezone-aware UTC), or ``None``."""
+        """GPS-receiver timestamp (timezone-aware UTC), or ``None`` when the
+        receiver had no lock.
+        """
         ...
 
     @property
     def sys_time(self) -> datetime | None:
-        """System-clock timestamp (timezone-aware UTC), or ``None``."""
+        """System-clock timestamp (timezone-aware UTC), or ``None`` when the
+        recorder did not supply one.
+        """
         ...
 
     @property
