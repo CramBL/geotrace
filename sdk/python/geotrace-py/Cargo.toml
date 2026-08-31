@@ -1,6 +1,3 @@
-# Isolated workspace - not a member of the root workspace.
-# Built exclusively by maturin. The Python CI job handles it separately.
-[workspace]
 
 [package]
 name = "geotrace-py"
@@ -10,6 +7,10 @@ license = "MIT"
 description = "Python bindings for geotrace-sdk"
 homepage = "https://github.com/CramBL/geotrace"
 repository = "https://github.com/CramBL/geotrace"
+
+# Isolated workspace - not a member of the root workspace.
+# Built exclusively by maturin. The Python CI job handles it separately.
+[workspace]
 
 [lib]
 name = "_geotrace_sdk"

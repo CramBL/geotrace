@@ -24,6 +24,10 @@ fn to_fixed(dt: DateTime<Utc>) -> DateTime<FixedOffset> {
     dt.fixed_offset()
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "called as `map_err(build_err)`, which passes the error by value"
+)]
 fn build_err(e: BuildError) -> PyErr {
     PyValueError::new_err(e.to_string())
 }
@@ -32,6 +36,10 @@ fn build_err(e: BuildError) -> PyErr {
 // become OSError (IOError). Bad file content (invalid HDF5 container, wrong
 // version, or a decode failure) and a value too long for the field that holds
 // it become ValueError. Exhaustive, so a new variant must be classified.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "called as `map_err(file_err)`, which passes the error by value"
+)]
 fn file_err(e: geotrace_sdk::Error) -> PyErr {
     use geotrace_sdk::Error;
     let msg = e.to_string();
@@ -375,7 +383,7 @@ impl PySatelliteReport {
         sys_time: Option<DateTime<FixedOffset>>,
     ) -> Self {
         let inner = SatelliteReport::builder()
-            .tracked(tracked.iter().map(|s| s.inner).collect())
+            .tracked(tracked.into_iter().map(|s| s.inner).collect())
             .maybe_gps_time(gps_time.map(|t| t.to_utc()))
             .maybe_sys_time(sys_time.map(|t| t.to_utc()))
             .build();
@@ -677,8 +685,8 @@ impl PyNavFix {
             .lon(Angle::degrees(lon))
             .maybe_gps_time(gps_time.map(|t| t.to_utc()))
             .maybe_sys_time(sys_time.map(|t| t.to_utc()))
-            .maybe_heading(heading.map(|h| Angle::degrees(h)))
-            .maybe_speed(speed_mps.map(|s| Velocity::meter_per_second(s)))
+            .maybe_heading(heading.map(Angle::degrees))
+            .maybe_speed(speed_mps.map(Velocity::meter_per_second))
             .maybe_eph_m(eph_m)
             .build();
         Self { inner }
@@ -1213,6 +1221,10 @@ impl PyNavFile {
     ///
     /// Accepts any path-like value: `str`, `bytes`, or a `pathlib.Path` object.
     #[staticmethod]
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 extracts an owned PathBuf from str, bytes and os.PathLike: &Path has no FromPyObject impl"
+    )]
     fn open(path: PathBuf) -> PyResult<Self> {
         NavFile::open(&path)
             .map(|f| Self { inner: f })
@@ -1231,6 +1243,10 @@ impl PyNavFile {
     ///
     /// Accepts any path-like value: `str`, `bytes`, or a `pathlib.Path` object.
     /// Appends `.gtd` if `path` has no extension.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 extracts an owned PathBuf from str, bytes and os.PathLike: &Path has no FromPyObject impl"
+    )]
     fn write_to_file(&self, path: PathBuf) -> PyResult<()> {
         self.inner.write_to_file(&path).map_err(file_err)
     }
@@ -1314,9 +1330,7 @@ impl PyNavFile {
                 icon: s.icon.clone(),
                 color: match &s.color {
                     EventMarkerColor::Auto => None,
-                    EventMarkerColor::Hex(h) | EventMarkerColor::Unrecognized(h) => {
-                        Some(h.clone())
-                    }
+                    EventMarkerColor::Hex(h) | EventMarkerColor::Unrecognized(h) => Some(h.clone()),
                 },
             });
         }
