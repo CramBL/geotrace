@@ -10273,6 +10273,116 @@ mod log_association {
         );
     }
 
+    /// A log the recording holds is listed under it as soon as it is unloaded,
+    /// and its load button reads it back with its anchor, its attachment and
+    /// the filters it was stored with.
+    #[test]
+    fn an_unloaded_attachment_is_listed_under_its_recording_and_loads_back() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("geotrace.h5");
+        let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
+        attach_the_log(&mut harness, &db_path, &db_ref);
+        add_log_filter_in(&mut harness, "kernel");
+        assert!(
+            harness.step_until(|_| stored_attachments(&db_path, &db_ref)
+                .first()
+                .is_some_and(|entry| entry.attachment.filters.len() == 1)),
+            "the chip reached the stored attachment"
+        );
+        let stored = stored_attachments(&db_path, &db_ref)
+            .first()
+            .map(|entry| entry.id)
+            .expect("the attachment was stored");
+        assert!(
+            harness
+                .query_by_label(log_viewer::log_list::LOAD_ATTACHMENT_LABEL)
+                .is_none(),
+            "a log that is loaded is listed as the loaded log it is"
+        );
+
+        unload_the_log(&mut harness);
+        assert_eq!(harness.state().logs.len(), 0);
+
+        harness
+            .get_by_label(log_viewer::log_list::LOAD_ATTACHMENT_LABEL)
+            .click();
+        assert!(
+            harness.step_until(|harness| harness.state().logs.len() == 1),
+            "the attachment came back as a loaded log"
+        );
+
+        assert_eq!(
+            harness
+                .state()
+                .first_log()
+                .and_then(LoadedLog::attachment)
+                .map(|attachment| attachment.id),
+            Some(stored),
+            "the log that came back is the one the recording holds"
+        );
+        assert!(
+            harness
+                .state()
+                .first_log()
+                .is_some_and(|log| log.associated_recording().is_some()),
+            "the log takes its positions from the recording that holds it"
+        );
+        assert_eq!(
+            harness
+                .state()
+                .first_log()
+                .map(|log| log
+                    .filters()
+                    .chips()
+                    .iter()
+                    .map(|chip| chip.pattern().text.clone())
+                    .collect::<Vec<_>>())
+                .unwrap_or_default(),
+            ["kernel".to_owned()],
+            "the log came back under the stack it was stored with"
+        );
+        assert!(
+            harness
+                .query_by_label(log_viewer::log_list::LOAD_ATTACHMENT_LABEL)
+                .is_none(),
+            "the attachment is the loaded log's now"
+        );
+    }
+
+    /// A recording leaving the session takes the logs it holds off the list
+    /// with it.
+    #[test]
+    fn the_unloaded_attachments_of_a_removed_recording_leave_the_list() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("geotrace.h5");
+        let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
+        attach_the_log(&mut harness, &db_path, &db_ref);
+        unload_the_log(&mut harness);
+        assert!(
+            harness
+                .query_by_label(log_viewer::log_list::LOAD_ATTACHMENT_LABEL)
+                .is_some()
+        );
+
+        open_the_remove_confirmation(&mut harness, false);
+        harness.get_by_label("Remove").click();
+        harness.run_steps(3);
+
+        assert!(
+            harness
+                .query_by_label(log_viewer::log_list::LOAD_ATTACHMENT_LABEL)
+                .is_none(),
+            "the recording that held the log is gone from the session"
+        );
+        assert!(
+            harness
+                .state()
+                .log_attachments
+                .of_recording(&db_ref)
+                .is_empty()
+        );
+    }
+
     /// Opens the remove confirmation on the recording the session loaded
     /// first, with the permanent-delete box ticked when `permanently`.
     fn open_the_remove_confirmation(harness: &mut Harness<App>, permanently: bool) {
@@ -10526,6 +10636,7 @@ mod log_association {
                 id: entry.id,
             },
             filters: entry.attachment.filters.clone(),
+            requested_by: crate::app::loader::AttachedLogRequester::RecordingLoad,
         };
         harness.state_mut().load_parsed_log(
             Some(entry.attachment.name.clone()),

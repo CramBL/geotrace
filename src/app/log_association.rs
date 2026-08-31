@@ -7,12 +7,14 @@ use std::sync::Arc;
 
 use gt_loaded_files::{LoadedFileId, RecordingNames};
 use gt_log_view::{LogAttachmentRef, RestoredAttachmentAdoption};
-use gt_store::{DatabaseRef, DbError, LogAttachmentError, StoredLogFilter};
+use gt_store::{AttachedLog, DatabaseRef, DbError, LogAttachmentError, StoredLogFilter};
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::LoadedLogId;
 
 use super::App;
 use super::history_db::{ExistingLogAttachment, RestoredLogAttachment, StoredLogAttachment};
+use super::loader;
+use super::log_viewer::AttachmentToLoad;
 use super::log_viewer::association_dialog::{LogAssociationChoice, LogAssociationDialog};
 
 impl App {
@@ -61,6 +63,9 @@ impl App {
         if let Some(log_id) = requests.detach {
             self.detach_log(log_id);
         }
+        if let Some(AttachmentToLoad { attachment, name }) = requests.load_attachment {
+            self.history.load_attached_log(attachment, name);
+        }
     }
 
     /// Writes back every attachment whose stored filter stack is behind the
@@ -72,8 +77,8 @@ impl App {
         }
     }
 
-    /// Loads the logs a recording opened from history carries, and reports the
-    /// ones it could not read back.
+    /// Lists the attachments a recording opened from history holds, loads each
+    /// of them, and reports the ones it could not read back.
     pub(super) fn restore_attached_logs(
         &mut self,
         recording: &DatabaseRef,
@@ -86,22 +91,59 @@ impl App {
                 return;
             }
         };
-        for RestoredLogAttachment { id, name, log } in attachments {
-            match log {
-                Ok(attached) => self.loader.spawn_attached_log(
-                    attached,
-                    LogAttachmentRef {
-                        recording: recording.clone(),
-                        id,
-                    },
-                ),
-                Err(LogAttachmentError::MissingLog { .. }) => self
-                    .log_viewer
-                    .report_warning(format!("{name} {EM_DASH} attachment missing")),
-                Err(err) => self
-                    .log_viewer
-                    .report_warning(format!("{name} {EM_DASH} {err}")),
-            }
+        self.log_attachments.set_attachments_of(
+            recording.clone(),
+            attachments
+                .iter()
+                .map(|restored| restored.entry.clone())
+                .collect(),
+        );
+        for RestoredLogAttachment { entry, log } in attachments {
+            self.load_attachment_that_was_read_back(
+                LogAttachmentRef {
+                    recording: recording.clone(),
+                    id: entry.id,
+                },
+                &entry.attachment.name,
+                log,
+                loader::AttachedLogRequester::RecordingLoad,
+            );
+        }
+    }
+
+    /// Loads the one attachment the viewer's list requested, or reports why it
+    /// did not come back.
+    pub(super) fn load_attachment_chosen_in_the_log_viewer(
+        &mut self,
+        attachment: LogAttachmentRef,
+        name: &str,
+        log: Result<AttachedLog, LogAttachmentError>,
+    ) {
+        self.load_attachment_that_was_read_back(
+            attachment,
+            name,
+            log,
+            loader::AttachedLogRequester::LogViewerList,
+        );
+    }
+
+    fn load_attachment_that_was_read_back(
+        &mut self,
+        attachment: LogAttachmentRef,
+        name: &str,
+        log: Result<AttachedLog, LogAttachmentError>,
+        requested_by: loader::AttachedLogRequester,
+    ) {
+        match log {
+            Ok(attached) => self
+                .loader
+                .spawn_attached_log(attached, attachment, requested_by),
+            Err(LogAttachmentError::MissingLog { .. }) => self
+                .log_viewer
+                .report_warning(format!("{name} {EM_DASH} attachment missing")),
+            Err(err) => self
+                .log_viewer
+                .report_warning(format!("{name} {EM_DASH} {err}")),
         }
     }
 
@@ -147,10 +189,13 @@ impl App {
         result: Result<StoredLogAttachment, LogAttachmentError>,
     ) {
         match result {
-            Ok(StoredLogAttachment {
-                attachment,
-                filters,
-            }) => {
+            Ok(StoredLogAttachment { recording, entry }) => {
+                let attachment = LogAttachmentRef {
+                    recording: recording.clone(),
+                    id: entry.id,
+                };
+                let filters = entry.attachment.filters.clone();
+                self.log_attachments.record_attachment(recording, entry);
                 let shared = self.shared.borrow();
                 match self.logs.get_mut_by_id(log_id) {
                     Some(log) => {
@@ -171,12 +216,14 @@ impl App {
     /// The log stays loaded either way.
     pub(super) fn apply_log_detach_outcome(
         &mut self,
+        attachment: &LogAttachmentRef,
         log_id: LoadedLogId,
         name: &str,
         result: Result<(), LogAttachmentError>,
     ) {
         match result {
             Ok(()) => {
+                self.log_attachments.remove_attachment(attachment);
                 if let Some(log) = self.logs.get_mut_by_id(log_id) {
                     log.forget_attachment();
                 }

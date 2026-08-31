@@ -84,6 +84,7 @@ impl RecordedStore {
                 },
             )
             .expect("attach")
+            .id
     }
 
     fn log_path(&self, id: LogAttachmentId) -> PathBuf {
@@ -138,6 +139,32 @@ fn an_attached_log_comes_back_with_its_name_text_and_filters() {
     assert_eq!(attached.name, "navsyncd.log");
     assert_eq!(attached.text, LOG_TEXT);
     assert_eq!(attached.filters, log_filters());
+}
+
+/// The attach returns the entry the recording now lists.
+#[test_log::test]
+fn attaching_returns_the_attachment_the_recording_now_lists() {
+    let mut recorded = RecordedStore::new();
+
+    let attached = recorded
+        .recordings
+        .attach_log(
+            &recorded.recording,
+            &LogToAttach {
+                name: "navsyncd.log",
+                text: LOG_TEXT,
+                filters: log_filters(),
+            },
+        )
+        .expect("attach");
+
+    assert_eq!(
+        recorded
+            .recordings
+            .log_attachments(&recorded.recording)
+            .expect("list"),
+        vec![attached]
+    );
 }
 
 #[test_log::test]

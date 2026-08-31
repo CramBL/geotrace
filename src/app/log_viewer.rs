@@ -5,18 +5,16 @@ pub(super) mod association_dialog;
 mod association_window;
 pub(super) mod filters;
 mod line_table;
+pub(super) mod log_list;
 pub(super) mod restored_logs_badge;
 mod summary_panel;
 #[cfg(test)]
 mod tests;
 
-use egui::{Button, ComboBox, DragValue, Label, RichText, Sides, Window};
-use egui_phosphor::regular::EYE as ICON_EYE;
-use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
-use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
+use egui::{Button, ComboBox, DragValue, Label, RichText, Window};
 use egui_phosphor::regular::X as ICON_X;
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
-use gt_log_view::{LoadedLog, LoadedLogs};
+use gt_log_view::{LoadedLog, LoadedLogs, LogAttachmentRef, SessionLogAttachments};
 use gt_pending_writes::WriteAccess;
 use gt_types::FileIdx;
 use gt_ui_theme::EM_DASH;
@@ -113,6 +111,11 @@ pub(super) struct LogViewerWindow {
 pub(super) struct LogViewerContext<'a> {
     pub recordings: LoadedFilesView<'a>,
     pub recording_names: &'a RecordingNames,
+
+    /// The attachments the loaded recordings hold in the history database,
+    /// shown beside the loaded logs.
+    pub attachments: &'a SessionLogAttachments,
+
     pub map_center_request: &'a mut Option<(f64, f64)>,
     /// The hexagon the map found under the cursor, and the row this viewer
     /// puts under it in return.
@@ -128,13 +131,6 @@ pub(super) struct LogViewerContext<'a> {
     pub dialog_open: bool,
 }
 
-/// What the selector row left behind: the log it now shows, and whether its
-/// unload button was pressed.
-struct SelectorRow {
-    shown: LoadedLogId,
-    unload_requested: bool,
-}
-
 /// What the viewer requests of the app for the log it is showing. The app owns
 /// the history database, the dialog, and the recording a log is anchored to.
 #[derive(Debug, Default)]
@@ -144,6 +140,20 @@ pub(super) struct LogViewerRequests {
 
     /// Remove this log's attachment from the history database.
     pub detach: Option<LoadedLogId>,
+
+    /// Read this attachment back out of the history database and load it as a
+    /// log.
+    pub load_attachment: Option<AttachmentToLoad>,
+}
+
+/// One of a loaded recording's attachments, as the viewer's list requested it.
+#[derive(Debug)]
+pub(super) struct AttachmentToLoad {
+    pub attachment: LogAttachmentRef,
+
+    /// The name the list drew, which names the attachment in a warning when it
+    /// does not come back.
+    pub name: String,
 }
 
 impl LogViewerWindow {
@@ -194,14 +204,13 @@ impl LogViewerWindow {
         self.selected
     }
 
-    /// The log this frame draws, which is the selected one while it stays
-    /// loaded and the log that loaded first otherwise.
-    fn resolve_selected_log(&mut self, logs: &LoadedLogs) -> Option<LoadedLogId> {
+    /// Points the selection at the log this frame draws, which is the selected
+    /// one while it stays loaded and the log that loaded first otherwise.
+    fn resolve_selected_log(&mut self, logs: &LoadedLogs) {
         self.selected = self
             .selected
             .filter(|id| logs.get_by_id(*id).is_some())
             .or_else(|| logs.first_id());
-        self.selected
     }
 
     pub(super) fn show(
@@ -211,6 +220,7 @@ impl LogViewerWindow {
         LogViewerContext {
             recordings,
             recording_names,
+            attachments,
             map_center_request,
             log_hover,
             requests,
@@ -224,7 +234,7 @@ impl LogViewerWindow {
         // The ring on the map lives exactly as long as the cursor is on a
         // row: the rows below fill this in again while they draw.
         log_hover.row_position = None;
-        let selected = self.resolve_selected_log(logs);
+        self.resolve_selected_log(logs);
         if !self.open {
             return;
         }
@@ -252,7 +262,7 @@ impl LogViewerWindow {
                             write_access,
                         );
                     });
-                // Notices, the selector, the parse summary and the filter rows
+                // Notices, the list, the parse summary and the filter rows
                 // scroll among themselves once they need more room than the
                 // window can spare, leaving the table
                 // `TABLE_ROWS_THE_HEADER_LEAVES` rows to draw in.
@@ -263,15 +273,21 @@ impl LogViewerWindow {
                     .max_height((ui.available_height() - reserved_for_the_table).max(0.0))
                     .show(ui, |ui| {
                         self.notices_ui(ui);
-                        let Some(selected) = selected else {
+                        let actions =
+                            self.log_list_ui(ui, logs, recordings, recording_names, attachments);
+                        unload = actions.unload;
+                        if let Some(chosen) = actions.load_attachment {
+                            requests.load_attachment = Some(chosen);
+                        }
+                        if logs.is_empty() {
                             ui.label(RichText::new(LOG_LOAD_HINT).weak());
+                        }
+                        let Some(shown) = self.selected else {
                             return;
                         };
-                        let row = self.selector_row_ui(ui, logs, selected);
-                        if row.unload_requested {
-                            unload = Some(selected);
+                        if let Some(log) = logs.get_by_id(shown) {
+                            self.parse_summary_row_ui(ui, log);
                         }
-                        let shown = row.shown;
                         if self.summary_expanded
                             && let Some(log) = logs.get_by_id(shown)
                         {
@@ -336,78 +352,32 @@ impl LogViewerWindow {
         }
     }
 
-    /// The log being shown, the actions on it, and the parse summary that
-    /// unfolds the summary panel.
-    fn selector_row_ui(
+    /// The loaded logs and the available attachments, grouped by recording.
+    fn log_list_ui(
         &mut self,
         ui: &mut egui::Ui,
         logs: &mut LoadedLogs,
-        selected: LoadedLogId,
-    ) -> SelectorRow {
-        let summary = logs
-            .get_by_id(selected)
-            .map(LoadedLog::parse_summary_line)
-            .unwrap_or_default();
-        let selected_name = logs
-            .get_by_id(selected)
-            .map_or(EM_DASH, LoadedLog::name)
-            .to_owned();
-        let visible = logs.get_by_id(selected).is_some_and(LoadedLog::is_visible);
+        recordings: LoadedFilesView<'_>,
+        recording_names: &RecordingNames,
+        attachments: &SessionLogAttachments,
+    ) -> log_list::LogListActions {
+        let groups =
+            log_list::group_logs_by_recording(logs, recordings, recording_names, attachments);
+        log_list::log_list_ui(ui, &groups, logs, &mut self.selected)
+    }
 
-        let mut chosen = selected;
-        let mut summary_expanded = self.summary_expanded;
-        let mut unload_requested = false;
-        // The summary yields before the log's name and controls do: it is the
-        // one part of the row a narrow window can shorten.
-        Sides::new().shrink_right().truncate().show(
-            ui,
-            |ui| {
-                if logs.len() > 1 {
-                    ComboBox::from_id_salt("log_viewer_selected_log")
-                        .selected_text(&selected_name)
-                        .show_ui(ui, |ui| {
-                            for (id, log) in logs.iter_with_ids() {
-                                ui.selectable_value(&mut chosen, id, log.name());
-                            }
-                        });
-                } else {
-                    ui.strong(&selected_name);
-                }
-                let eye = if visible { ICON_EYE } else { ICON_EYE_SLASH };
-                if ui
-                    .selectable_label(visible, eye)
-                    .on_hover_text("Draw this log's matches on the map")
-                    .clicked()
-                    && let Some(log) = logs.get_mut_by_id(selected)
-                {
-                    log.set_visible(!visible);
-                }
-                if let Some(attachment) = logs.get_by_id(selected).and_then(LoadedLog::attachment) {
-                    let (recording, _) =
-                        gt_loaded_files::display_identity(&attachment.recording.identity);
-                    ui.label(ICON_PAPERCLIP)
-                        .on_hover_text(format!("Stored with the recording {recording}"));
-                }
-                unload_requested = ui
-                    .small_button(ICON_X)
-                    .on_hover_text("Unload this log")
-                    .clicked();
-            },
-            |ui| {
-                if ui
-                    .add(Label::new(RichText::new(summary).weak()).sense(egui::Sense::click()))
-                    .on_hover_text(SUMMARY_HOVER)
-                    .clicked()
-                {
-                    summary_expanded = !summary_expanded;
-                }
-            },
-        );
-        self.selected = Some(chosen);
-        self.summary_expanded = summary_expanded;
-        SelectorRow {
-            shown: chosen,
-            unload_requested,
+    /// The parse summary of the shown log, which unfolds the summary panel.
+    fn parse_summary_row_ui(&mut self, ui: &mut egui::Ui, log: &LoadedLog) {
+        if ui
+            .add(
+                Label::new(RichText::new(log.parse_summary_line()).weak())
+                    .truncate()
+                    .sense(egui::Sense::click()),
+            )
+            .on_hover_text(SUMMARY_HOVER)
+            .clicked()
+        {
+            self.summary_expanded = !self.summary_expanded;
         }
     }
 

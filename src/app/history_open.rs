@@ -343,8 +343,18 @@ impl App {
                     log::warn!("Storing an attached log's filters failed: {e}");
                 }
             }
-            Response::LogDetached { log, name, result } => {
-                self.apply_log_detach_outcome(log, &name, result);
+            Response::AttachedLogLoaded {
+                attachment,
+                name,
+                log,
+            } => self.load_attachment_chosen_in_the_log_viewer(attachment, &name, log),
+            Response::LogDetached {
+                attachment,
+                log,
+                name,
+                result,
+            } => {
+                self.apply_log_detach_outcome(&attachment, log, &name, result);
             }
             Response::DuplicateAttachmentFound {
                 log,

@@ -24,10 +24,10 @@ use egui::Context;
 use gt_log_view::LogAttachmentRef;
 use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteKind, WriteRejection};
 use gt_store::{
-    AttachedLog, DatabaseRef, DbError, HistoryDatabase, LogAttachmentError, LogAttachmentId,
-    LogAttachments as _, LogContentHash, LogToAttach, PruneMode, ReadOnlyHistoryDatabase,
-    ReadOnlyLogAttachments as _, ReadOnlyRecordings, RecordingEntry, Recordings, RecordingsHandle,
-    StoredLogFilter, StoredRecording, TrackRange,
+    AttachedLog, DatabaseRef, DbError, HistoryDatabase, LogAttachmentEntry, LogAttachmentError,
+    LogAttachmentId, LogAttachments as _, LogContentHash, LogToAttach, PruneMode,
+    ReadOnlyHistoryDatabase, ReadOnlyLogAttachments as _, ReadOnlyRecordings, RecordingEntry,
+    Recordings, RecordingsHandle, StoredLogFilter, StoredRecording, TrackRange,
 };
 use gt_track_builder::SegmentationConfig;
 use gt_ui_types::LoadedLogId;
@@ -83,6 +83,12 @@ enum ReadRequest {
     LoadSnapRuns(DatabaseRef),
     /// Read back every log attached to a recording that just opened.
     LoadAttachedLogs(DatabaseRef),
+    /// Read back the one log `attachment` names, which the log viewer requests
+    /// when the user loads it from the list.
+    LoadAttachedLog {
+        attachment: LogAttachmentRef,
+        name: String,
+    },
     /// Whether a recording already holds this exact log.
     FindDuplicateAttachment {
         db_ref: DatabaseRef,
@@ -163,18 +169,19 @@ impl WriteRequest {
     }
 }
 
-/// One of a recording's attachments, as the worker read it back. `name` comes
-/// from the attribute, so a log that could not be read is still nameable.
+/// One of a recording's attachments, as the worker read it back. The entry
+/// comes from the attribute, so a log that could not be read is still listed
+/// and named.
 pub struct RestoredLogAttachment {
-    pub id: LogAttachmentId,
-    pub name: String,
+    pub entry: LogAttachmentEntry,
     pub log: Result<AttachedLog, LogAttachmentError>,
 }
 
-/// A log the worker stored with a recording, and the stack it stored with it.
+/// A log the worker stored with a recording, and the attachment it wrote for
+/// it.
 pub struct StoredLogAttachment {
-    pub attachment: LogAttachmentRef,
-    pub filters: Vec<StoredLogFilter>,
+    pub recording: DatabaseRef,
+    pub entry: LogAttachmentEntry,
 }
 
 /// The attachment a recording already holds a log as, found by content hash.
@@ -216,11 +223,18 @@ pub enum Response {
         db_ref: DatabaseRef,
         attachments: Result<Vec<RestoredLogAttachment>, DbError>,
     },
+    /// The one log the viewer requested out of a recording.
+    AttachedLogLoaded {
+        attachment: LogAttachmentRef,
+        name: String,
+        log: Result<AttachedLog, LogAttachmentError>,
+    },
     /// Outcome of a filter-stack write. A failure costs only the stored copy:
     /// the loaded log keeps the stack the user is looking at.
     AttachedLogFiltersStored(Result<(), LogAttachmentError>),
     /// Outcome of removing an attachment.
     LogDetached {
+        attachment: LogAttachmentRef,
         log: LoadedLogId,
         name: String,
         result: Result<(), LogAttachmentError>,
@@ -405,6 +419,10 @@ impl HistoryWorker {
         self.send_read(ReadRequest::LoadAttachedLogs(db_ref));
     }
 
+    pub fn load_attached_log(&self, attachment: LogAttachmentRef, name: String) {
+        self.send_read(ReadRequest::LoadAttachedLog { attachment, name });
+    }
+
     pub fn set_attached_log_filters(
         &self,
         attachment: LogAttachmentRef,
@@ -549,15 +567,22 @@ fn handle_read_request(db: &ReadOnlyRecordings, req: ReadRequest) -> Response {
                 entries
                     .into_iter()
                     .map(|entry| RestoredLogAttachment {
-                        id: entry.id,
-                        name: entry.attachment.name,
                         log: db.load_attached_log(&db_ref, entry.id),
+                        entry,
                     })
                     .collect()
             });
             Response::AttachedLogsLoaded {
                 db_ref,
                 attachments,
+            }
+        }
+        ReadRequest::LoadAttachedLog { attachment, name } => {
+            let log = db.load_attached_log(&attachment.recording, attachment.id);
+            Response::AttachedLogLoaded {
+                attachment,
+                name,
+                log,
             }
         }
         ReadRequest::FindDuplicateAttachment { db_ref, log, text } => {
@@ -644,15 +669,12 @@ fn handle_write_request(db: &mut Recordings, req: WriteRequest) -> Response {
                     &LogToAttach {
                         name: &name,
                         text: &text,
-                        filters: filters.clone(),
+                        filters,
                     },
                 )
-                .map(|id| StoredLogAttachment {
-                    attachment: LogAttachmentRef {
-                        recording: db_ref,
-                        id,
-                    },
-                    filters,
+                .map(|entry| StoredLogAttachment {
+                    recording: db_ref,
+                    entry,
                 });
             Response::LogAttached { log, name, result }
         }
@@ -670,7 +692,12 @@ fn handle_write_request(db: &mut Recordings, req: WriteRequest) -> Response {
             name,
         } => {
             let result = db.detach_log(&attachment.recording, attachment.id);
-            Response::LogDetached { log, name, result }
+            Response::LogDetached {
+                attachment,
+                log,
+                name,
+                result,
+            }
         }
     }
 }

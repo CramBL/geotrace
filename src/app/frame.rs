@@ -862,6 +862,7 @@ impl App {
                 LogViewerContext {
                     recordings: loaded_files.view(),
                     recording_names: &recording_names,
+                    attachments: &self.log_attachments,
                     map_center_request,
                     log_hover,
                     requests: &mut self.log_viewer_requests,
@@ -1084,7 +1085,7 @@ impl App {
             }
         };
         if let Some((count, removed_recordings)) = unloaded {
-            self.unload_logs_of_removed_recordings(&removed_recordings);
+            self.unload_logs_and_forget_attachments_of(&removed_recordings);
             self.on_track_indices_changed();
             log::info!("Unloaded {count} item(s) from view");
         }
@@ -1115,7 +1116,7 @@ impl App {
             outcome
         };
         if let Some(outcome) = remove_outcome {
-            self.unload_logs_of_removed_recordings(&outcome.removed_recordings);
+            self.unload_logs_and_forget_attachments_of(&outcome.removed_recordings);
             self.on_track_indices_changed();
             self.apply_remove_outcome(&outcome);
         }
