@@ -59,7 +59,7 @@ fn a_blank_line_inside_a_query_splits_it_into_a_failing_chunk() {
     chunks: 2
       0..33 ok
       35..41 error: a query starts with a source: points or a channel like @accel
-    run: refused
+    run: rejected
     ");
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  ....
@@ -81,8 +81,8 @@ fn a_buffer_without_a_trailing_newline_runs() {
 }
 
 /// Only whitespace is not a query, and neither is only a comment: nothing runs
-/// and the map stays untouched. The panel's `run: refused` line is
-/// `RunAttempt::Refused`'s display text.
+/// and the map stays untouched. The panel's `run: rejected` line is
+/// `RunAttempt::Rejected`'s display text.
 #[rstest]
 #[case::blank("   \n\t\n  ")]
 #[case::comment_only("# nothing to see here\n")]
@@ -93,7 +93,7 @@ fn a_buffer_with_no_query_is_rejected(#[case] text: &str) {
     insta::allow_duplicates! {
         insta::assert_snapshot!(scenario.panel(), @"
         chunks: 0
-        run: refused
+        run: rejected
         ");
     }
     assert!(

@@ -1,5 +1,5 @@
 //! Write registries in each of the states that reject a write, for the tests
-//! that check both refusals side by side.
+//! that check both rejections side by side.
 
 use gt_pending_writes::PendingWrites;
 

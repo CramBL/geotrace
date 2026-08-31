@@ -24,7 +24,8 @@ pub struct DayFetch<W> {
 
 impl<W> DayFetch<W> {
     /// The next day to fetch, or [`None`] when `archive` is [`None`],
-    /// [`PendingWrites::refusal`] holds a refusal, or `days` has no day ready.
+    /// [`PendingWrites::rejection`] holds a rejection, or `days` has no day
+    /// ready.
     ///
     /// A scheduler with further conditions of its own checks those before
     /// calling this: a returned day stays in flight in `days` until
@@ -36,7 +37,7 @@ impl<W> DayFetch<W> {
         transport: &mut DayFetchTransport,
     ) -> Option<Self> {
         let archive = archive?;
-        if pending_writes.refusal().is_some() {
+        if pending_writes.rejection().is_some() {
             return None;
         }
         let day = days.take_next_day()?;

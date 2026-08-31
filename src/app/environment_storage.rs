@@ -8,7 +8,7 @@ use std::sync::mpsc;
 
 use chrono::{Months, NaiveDate, Utc};
 use egui::Context;
-use gt_pending_writes::{WriteRefusal, WriteRegistration};
+use gt_pending_writes::{WriteRegistration, WriteRejection};
 use gt_store::{
     ArchiveUsage, EnvironmentArchive, FlareStore, IonexStore, JamStore, PerArchive, PruneProgress,
     PruneProgressSink, SolarStore, StoredDayArchive, WritableArchive,
@@ -107,7 +107,7 @@ pub enum ArchivePruneOutcome {
     Failed(String),
     /// The archive kept its days: the registry rejected the rewrite before it
     /// started.
-    Skipped(WriteRefusal),
+    Skipped(WriteRejection),
 }
 
 impl ArchivePruneOutcome {
@@ -160,25 +160,25 @@ impl PruneReport {
     /// The archives the delete was rejected on, and why, or [`None`] where it
     /// reached every one of them.
     pub fn skipped_line(&self) -> Option<String> {
-        let skipped: Vec<(&str, WriteRefusal)> = self
+        let skipped: Vec<(&str, WriteRejection)> = self
             .archives
             .iter()
             .filter_map(|report| match report.outcome {
-                ArchivePruneOutcome::Skipped(refusal) => {
-                    Some((report.archive.label_in_sentence(), refusal))
+                ArchivePruneOutcome::Skipped(rejection) => {
+                    Some((report.archive.label_in_sentence(), rejection))
                 }
                 ArchivePruneOutcome::Removed(_) | ArchivePruneOutcome::Failed(_) => None,
             })
             .collect();
-        let (_, refusal) = *skipped.first()?;
+        let (_, rejection) = *skipped.first()?;
         debug_assert!(
-            skipped.iter().all(|(_, one)| *one == refusal),
-            "a delete stops at the first refusal, and every archive it did not reach keeps that \
+            skipped.iter().all(|(_, one)| *one == rejection),
+            "a delete stops at the first rejection, and every archive it did not reach keeps that \
              one reason"
         );
         let archives: Vec<&str> = skipped.iter().map(|(archive, _)| *archive).collect();
         Some(format!(
-            "Not deleting archived days from {}: {refusal}",
+            "Not deleting archived days from {}: {rejection}",
             archives.join(", ")
         ))
     }
@@ -257,7 +257,7 @@ trait RegisteredDayDeletion {
         &self,
         pruned: PrunedDays,
         registration: WriteRegistration,
-    ) -> Result<ArchivePruneOutcome, WriteRefusal>;
+    ) -> Result<ArchivePruneOutcome, WriteRejection>;
 }
 
 impl<W: ArchivedDayDeletion> RegisteredDayDeletion for WritableArchive<W> {
@@ -265,7 +265,7 @@ impl<W: ArchivedDayDeletion> RegisteredDayDeletion for WritableArchive<W> {
         &self,
         pruned: PrunedDays,
         registration: WriteRegistration,
-    ) -> Result<ArchivePruneOutcome, WriteRefusal> {
+    ) -> Result<ArchivePruneOutcome, WriteRejection> {
         self.write_reporting_progress(registration, |archive, write| {
             let report = |progress: PruneProgress| write.set_progress(progress.fraction());
             match archive.delete_pruned_days(pruned, Some(&report)) {
@@ -351,14 +351,14 @@ fn prune(archives: &OpenEnvironmentArchives, request: PruneRequest) -> PruneRepo
                 archive: *archive,
                 outcome,
             }),
-            Err(refusal) => {
+            Err(rejection) => {
                 reports.extend(
                     covered
                         .iter()
                         .skip(index)
                         .map(|(archive, _)| ArchivePruneReport {
                             archive: *archive,
-                            outcome: ArchivePruneOutcome::Skipped(refusal),
+                            outcome: ArchivePruneOutcome::Skipped(rejection),
                         }),
                 );
                 break;
@@ -511,8 +511,8 @@ impl App {
         if self.environment_prune.is_running() {
             return;
         }
-        if let Some(refusal) = self.pending_writes.refusal() {
-            log::debug!("Not deleting archived environment days: {refusal}");
+        if let Some(rejection) = self.pending_writes.rejection() {
+            log::debug!("Not deleting archived environment days: {rejection}");
             return;
         }
         let archives = self.open_environment_archives();
@@ -850,9 +850,12 @@ mod tests {
             vec![
                 skipped(
                     EnvironmentArchive::AircraftInterference,
-                    WriteRefusal::ShuttingDown
+                    WriteRejection::ShuttingDown
                 ),
-                skipped(EnvironmentArchive::SolarFlares, WriteRefusal::ShuttingDown),
+                skipped(
+                    EnvironmentArchive::SolarFlares,
+                    WriteRejection::ShuttingDown
+                ),
             ]
         );
         assert_eq!(report.days_removed(), 0);
@@ -880,11 +883,11 @@ mod tests {
             vec![
                 skipped(
                     EnvironmentArchive::AircraftInterference,
-                    WriteRefusal::ReadOnlySession
+                    WriteRejection::ReadOnlySession
                 ),
                 skipped(
                     EnvironmentArchive::SolarFlares,
-                    WriteRefusal::ReadOnlySession
+                    WriteRejection::ReadOnlySession
                 ),
             ]
         );
@@ -927,10 +930,10 @@ mod tests {
         }
     }
 
-    fn skipped(archive: EnvironmentArchive, refusal: WriteRefusal) -> ArchivePruneReport {
+    fn skipped(archive: EnvironmentArchive, rejection: WriteRejection) -> ArchivePruneReport {
         ArchivePruneReport {
             archive,
-            outcome: ArchivePruneOutcome::Skipped(refusal),
+            outcome: ArchivePruneOutcome::Skipped(rejection),
         }
     }
 
@@ -991,8 +994,8 @@ mod tests {
     #[case::two_archives_skipped(
         vec![
             removed(EnvironmentArchive::AircraftInterference, 3),
-            skipped(EnvironmentArchive::GeomagneticIndices, WriteRefusal::ShuttingDown),
-            skipped(EnvironmentArchive::IonosphericTec, WriteRefusal::ShuttingDown),
+            skipped(EnvironmentArchive::GeomagneticIndices, WriteRejection::ShuttingDown),
+            skipped(EnvironmentArchive::IonosphericTec, WriteRejection::ShuttingDown),
         ],
         Some(
             "Not deleting archived days from geomagnetic indices, ionospheric TEC: \
@@ -1002,7 +1005,7 @@ mod tests {
     #[case::read_only_session(
         vec![skipped(
             EnvironmentArchive::AircraftInterference,
-            WriteRefusal::ReadOnlySession,
+            WriteRejection::ReadOnlySession,
         )],
         Some("Not deleting archived days from aircraft interference: this session is read-only")
     )]
@@ -1042,7 +1045,10 @@ mod tests {
             archives: vec![
                 removed(EnvironmentArchive::AircraftInterference, 4),
                 failed(EnvironmentArchive::IonosphericTec),
-                skipped(EnvironmentArchive::SolarFlares, WriteRefusal::ShuttingDown),
+                skipped(
+                    EnvironmentArchive::SolarFlares,
+                    WriteRejection::ShuttingDown,
+                ),
             ],
         };
 

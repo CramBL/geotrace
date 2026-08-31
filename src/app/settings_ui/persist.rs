@@ -1,6 +1,6 @@
 //! Loading the persisted settings into the app and writing them back out.
 
-use gt_pending_writes::{WriteKind, WriteRefusal};
+use gt_pending_writes::{WriteKind, WriteRejection};
 use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig};
 use gt_types::AssociationConfig;
 use strum::IntoEnumIterator;
@@ -253,7 +253,7 @@ impl App {
             .try_begin(SETTINGS_FLUSH_LABEL, WriteKind::Settings)
         {
             Ok(_settings_write) => self.write_settings_file(),
-            Err(refusal) => log::debug!("Settings are not saved: {refusal}"),
+            Err(rejection) => log::debug!("Settings are not saved: {rejection}"),
         }
     }
 
@@ -265,7 +265,10 @@ impl App {
             .pending_writes
             .try_begin_shutdown_write(SETTINGS_FLUSH_LABEL, WriteKind::Settings)
         else {
-            log::debug!("Settings are not saved: {}", WriteRefusal::ReadOnlySession);
+            log::debug!(
+                "Settings are not saved: {}",
+                WriteRejection::ReadOnlySession
+            );
             return;
         };
         self.write_settings_file();

@@ -68,7 +68,7 @@ impl App {
         self.toasts.info(toast);
     }
 
-    /// Registers a write to the recordings database, logging a refusal at
+    /// Registers a write to the recordings database, logging a rejection at
     /// debug level.
     fn try_begin_recording_history_write(&self, label: &'static str) -> Option<PendingWriteGuard> {
         match self
@@ -76,8 +76,8 @@ impl App {
             .try_begin(label, WriteKind::RecordingDatabase)
         {
             Ok(write) => Some(write),
-            Err(refusal) => {
-                log::debug!("Did not run {label:?}: {refusal}");
+            Err(rejection) => {
+                log::debug!("Did not run {label:?}: {rejection}");
                 None
             }
         }
@@ -351,8 +351,8 @@ impl App {
                 recording,
                 existing,
             } => self.set_duplicate_log_attachment(log, &recording, existing),
-            Response::WriteRefused { label, refusal } => {
-                log::debug!("Did not run {label:?}: {refusal}");
+            Response::WriteRejected { label, rejection } => {
+                log::debug!("Did not run {label:?}: {rejection}");
             }
         }
     }

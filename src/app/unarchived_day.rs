@@ -1,5 +1,5 @@
 use chrono::NaiveDate;
-use gt_pending_writes::WriteRefusal;
+use gt_pending_writes::WriteRejection;
 
 use super::day_fetch_queue::DayFetchQueue;
 
@@ -10,10 +10,10 @@ pub enum UnarchivedDay {
     /// The fetch, the parse or the insert returned an error.
     Failed { day: NaiveDate, detail: String },
     /// The day was downloaded, then discarded unarchived because
-    /// [`gt_store::WritableArchive::write`] returned a [`WriteRefusal`].
-    Refused {
+    /// [`gt_store::WritableArchive::write`] returned a [`WriteRejection`].
+    Rejected {
         day: NaiveDate,
-        refusal: WriteRefusal,
+        rejection: WriteRejection,
     },
 }
 
@@ -22,13 +22,13 @@ impl UnarchivedDay {
         Self::Failed { day, detail }
     }
 
-    pub fn refused(day: NaiveDate, refusal: WriteRefusal) -> Self {
-        Self::Refused { day, refusal }
+    pub fn rejected(day: NaiveDate, rejection: WriteRejection) -> Self {
+        Self::Rejected { day, rejection }
     }
 
     pub fn day(&self) -> NaiveDate {
         match *self {
-            Self::Failed { day, .. } | Self::Refused { day, .. } => day,
+            Self::Failed { day, .. } | Self::Rejected { day, .. } => day,
         }
     }
 
@@ -43,8 +43,8 @@ impl UnarchivedDay {
                 log::error!("No {dataset} archived for {day}: {detail}");
                 days.report_failure(day, detail);
             }
-            Self::Refused { day, refusal } => {
-                log::debug!("No {dataset} archived for {day}: {refusal}");
+            Self::Rejected { day, rejection } => {
+                log::debug!("No {dataset} archived for {day}: {rejection}");
             }
         }
     }

@@ -497,7 +497,7 @@ fn ingest(
                 }
             },
         )
-        .unwrap_or_else(|refusal| UnarchivedDay::refused(day, refusal).into())
+        .unwrap_or_else(|rejection| UnarchivedDay::rejected(day, rejection).into())
 }
 
 #[cfg(test)]
@@ -510,7 +510,7 @@ mod tests {
 
     use gt_fetch::HttpResponse;
     use gt_flare::DEFAULT_BASE_URL;
-    use gt_pending_writes::{WriteAccess, WriteRefusal};
+    use gt_pending_writes::{WriteAccess, WriteRejection};
     use gt_store::Store;
     use gt_test_utils::{ScriptedTransport, pending_writes};
     use gt_types::{Latitude, Longitude};
@@ -866,16 +866,16 @@ mod tests {
     }
 
     /// A download that finishes where the insert is rejected is discarded, and
-    /// says which refusal discarded it.
+    /// says which rejection discarded it.
     #[rstest]
-    #[case::shutting_down(pending_writes::shutting_down_registry(), WriteRefusal::ShuttingDown)]
+    #[case::shutting_down(pending_writes::shutting_down_registry(), WriteRejection::ShuttingDown)]
     #[case::read_only_session(
         PendingWrites::new(WriteAccess::ReadOnly),
-        WriteRefusal::ReadOnlySession
+        WriteRejection::ReadOnlySession
     )]
     fn a_day_downloaded_where_the_insert_is_rejected_is_discarded(
         #[case] pending_writes: PendingWrites,
-        #[case] expected: WriteRefusal,
+        #[case] expected: WriteRejection,
     ) {
         let (_dir, store) = archive();
         let transport = serving(ONE_FLARE);
@@ -889,10 +889,10 @@ mod tests {
             day(2024, 5, 9),
         );
 
-        let FlareDayMessage::Unarchived(UnarchivedDay::Refused { refusal, .. }) = message else {
+        let FlareDayMessage::Unarchived(UnarchivedDay::Rejected { rejection, .. }) = message else {
             panic!("the day was archived where the insert is rejected");
         };
-        assert_eq!(refusal, expected);
+        assert_eq!(rejection, expected);
         assert!(store.read().archived_days().expect("days").is_empty());
     }
 

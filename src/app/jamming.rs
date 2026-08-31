@@ -681,7 +681,7 @@ fn ingest(
                         Err(err) => UnarchivedDay::failed(day, err.to_string()).into(),
                     },
                 )
-                .unwrap_or_else(|refusal| UnarchivedDay::refused(day, refusal).into())
+                .unwrap_or_else(|rejection| UnarchivedDay::rejected(day, rejection).into())
         }
         FetchOutcome::Missing => JamMessage::Missing {
             day,
@@ -699,7 +699,7 @@ mod tests {
 
     use gt_fetch::HttpResponse;
     use gt_jam::DEFAULT_BASE_URL;
-    use gt_pending_writes::{WriteAccess, WriteRefusal};
+    use gt_pending_writes::{WriteAccess, WriteRejection};
     use gt_store::WritableDayArchive as _;
     use gt_test_utils::ScriptedTransport;
     use gt_test_utils::pending_writes;
@@ -828,7 +828,7 @@ mod tests {
     #[case::stored(JamMessage::Stored { day: day(2026, 7, 20), cells: 1 })]
     #[case::missing(JamMessage::Missing { day: day(2026, 7, 20), pending: false })]
     #[case::failed(UnarchivedDay::failed(day(2026, 7, 20), "boom".to_owned()).into())]
-    #[case::refused(UnarchivedDay::refused(day(2026, 7, 20), WriteRefusal::ShuttingDown).into())]
+    #[case::rejected(UnarchivedDay::rejected(day(2026, 7, 20), WriteRejection::ShuttingDown).into())]
     fn progress_advances_on_every_outcome(#[case] message: JamMessage) {
         let mut scheduler = scheduler();
         let days = [day(2026, 7, 20), day(2026, 7, 21)];
@@ -1003,7 +1003,7 @@ mod tests {
         let mut scheduler = scheduler();
         scheduler
             .tx
-            .send(UnarchivedDay::refused(day(2026, 7, 20), WriteRefusal::ReadOnlySession).into())
+            .send(UnarchivedDay::rejected(day(2026, 7, 20), WriteRejection::ReadOnlySession).into())
             .expect("send");
 
         scheduler.poll();
@@ -1050,16 +1050,16 @@ mod tests {
     }
 
     /// A download that finishes where the insert is rejected is discarded, and
-    /// says which refusal discarded it.
+    /// says which rejection discarded it.
     #[rstest]
-    #[case::shutting_down(pending_writes::shutting_down_registry(), WriteRefusal::ShuttingDown)]
+    #[case::shutting_down(pending_writes::shutting_down_registry(), WriteRejection::ShuttingDown)]
     #[case::read_only_session(
         PendingWrites::new(WriteAccess::ReadOnly),
-        WriteRefusal::ReadOnlySession
+        WriteRejection::ReadOnlySession
     )]
     fn a_day_downloaded_where_the_insert_is_rejected_is_discarded(
         #[case] pending_writes: PendingWrites,
-        #[case] expected: WriteRefusal,
+        #[case] expected: WriteRejection,
     ) {
         let (_dir, store) = archive();
         let day = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
@@ -1077,10 +1077,10 @@ mod tests {
             day,
         );
 
-        let JamMessage::Unarchived(UnarchivedDay::Refused { refusal, .. }) = message else {
+        let JamMessage::Unarchived(UnarchivedDay::Rejected { rejection, .. }) = message else {
             panic!("the day was archived where the insert is rejected");
         };
-        assert_eq!(refusal, expected);
+        assert_eq!(rejection, expected);
         assert!(store.read().days().expect("days").is_empty());
     }
 

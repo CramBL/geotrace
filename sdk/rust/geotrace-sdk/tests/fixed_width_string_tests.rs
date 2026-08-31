@@ -49,10 +49,10 @@ fn encode_row_writes_the_content_then_nul_padding(
 )]
 #[case::a_nul_byte_in_the_value("ab\0cd", "\"ab\\0cd\" has a nul byte at offset 2")]
 fn a_value_the_row_cannot_hold_is_rejected(#[case] value: &str, #[case] expected: &str) {
-    let refusal = FixedWidthString::<8>::new(value)
+    let error_message = FixedWidthString::<8>::new(value)
         .err()
         .map(|error| error.to_string());
-    assert_eq!(refusal.as_deref(), Some(expected));
+    assert_eq!(error_message.as_deref(), Some(expected));
 }
 
 #[test]
@@ -79,10 +79,10 @@ fn an_all_nul_row_decodes_to_an_empty_value() -> Result<(), FixedWidthStringErro
     "the field row is not UTF-8: invalid utf-8 sequence of 1 bytes from index 1"
 )]
 fn a_row_no_writer_could_have_written_is_rejected(#[case] row: &[u8], #[case] expected: &str) {
-    let refusal = FixedWidthString::<8>::decode_row(row)
+    let error_message = FixedWidthString::<8>::decode_row(row)
         .err()
         .map(|error| error.to_string());
-    assert_eq!(refusal.as_deref(), Some(expected));
+    assert_eq!(error_message.as_deref(), Some(expected));
 }
 
 #[test]

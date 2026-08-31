@@ -788,8 +788,8 @@ fn recalculate_stored_tracks(
         WriteKind::RecordingDatabase,
     ) {
         Ok(write) => write,
-        Err(refusal) => {
-            log::debug!("Not recalculating the stored tracks of '{filename}': {refusal}");
+        Err(rejection) => {
+            log::debug!("Not recalculating the stored tracks of '{filename}': {rejection}");
             return;
         }
     };
@@ -859,8 +859,8 @@ impl HistoryInsert<'_> {
             WriteKind::RecordingDatabase,
         ) {
             Ok(write) => write,
-            Err(refusal) => {
-                log::debug!("Not storing '{filename}' in history: {refusal}");
+            Err(rejection) => {
+                log::debug!("Not storing '{filename}' in history: {rejection}");
                 return None;
             }
         };
