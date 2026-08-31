@@ -5,6 +5,7 @@ pub(super) mod association_dialog;
 mod association_window;
 pub(super) mod filters;
 mod line_table;
+pub(super) mod restored_logs_badge;
 mod summary_panel;
 #[cfg(test)]
 mod tests;
@@ -25,6 +26,7 @@ use strum::IntoEnumIterator as _;
 
 use association_window::AssociationWindowUnit;
 use line_table::LineTableRequests;
+use restored_logs_badge::RestoredLogsBadge;
 
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 
@@ -101,6 +103,10 @@ pub(super) struct LogViewerWindow {
 
     /// What went wrong with this session's attachments, shown until dismissed.
     notices: Vec<String>,
+
+    /// The logs that came back with a recording since this window was last
+    /// open, announced on the toolbar's log button.
+    pub(super) restored_logs: RestoredLogsBadge,
 }
 
 /// The app state the viewer reads and writes while it renders.
@@ -150,6 +156,21 @@ impl LogViewerWindow {
             query_pending_since: None,
             scroll_to_row: None,
             notices: Vec::new(),
+            restored_logs: RestoredLogsBadge::default(),
+        }
+    }
+
+    /// Draws the toolbar's log button, which opens and closes this window and
+    /// counts the logs that came back with a recording while it was closed.
+    pub(super) fn toolbar_button_ui(&mut self, ui: &mut egui::Ui) {
+        let label = self.restored_logs.toolbar_label(ui);
+        let hover = self.restored_logs.toolbar_hover_text();
+        if ui
+            .selectable_label(self.open, label)
+            .on_hover_text(hover)
+            .clicked()
+        {
+            self.open = !self.open;
         }
     }
 
@@ -207,6 +228,7 @@ impl LogViewerWindow {
         if !self.open {
             return;
         }
+        self.restored_logs.clear();
 
         let mut open = self.open;
         let mut unload = None;

@@ -10271,7 +10271,6 @@ mod log_association {
                 .is_some_and(|log| log.associated_recording().is_some()),
             "a restored log is associated with the recording that carried it"
         );
-        assert!(harness.state().log_viewer.open);
     }
 
     /// Opens the remove confirmation on the recording the session loaded
@@ -10327,7 +10326,7 @@ mod log_association {
     }
 
     /// The recording is opened again while its log is still loaded: the
-    /// attachment is skipped, and the session keeps the one log.
+    /// session keeps the one log, which keeps the attachment it holds.
     #[test]
     fn a_recording_opened_again_restores_no_attachment_that_is_already_loaded() {
         let dir = tempfile::tempdir().expect("temp dir");
@@ -10343,6 +10342,165 @@ mod log_association {
             harness.state().logs.first_id(),
             loaded,
             "the loaded log kept its identity"
+        );
+    }
+
+    /// A log loaded on its own and anchored to the recording takes the
+    /// attachment that recording carries, and no second copy is loaded.
+    #[test]
+    fn a_restored_attachment_reaches_the_loaded_log_anchored_to_that_recording() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("geotrace.h5");
+        let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
+        attach_the_log(&mut harness, &db_path, &db_ref);
+        let stored = stored_attachments(&db_path, &db_ref)
+            .first()
+            .map(|entry| entry.id)
+            .expect("the attachment was stored");
+
+        // The same text, loaded by itself and anchored to the recording that
+        // holds the attachment in the database.
+        unload_the_log(&mut harness);
+        drop_the_log(&mut harness);
+        confirm(&mut harness);
+        let loaded = harness.state().logs.first_id();
+        assert_eq!(
+            harness.state().first_log().and_then(LoadedLog::attachment),
+            None,
+            "a log the user loaded is stored nowhere"
+        );
+
+        restore_the_stored_attachment(&mut harness, &db_path, &db_ref);
+
+        assert_eq!(harness.state().logs.len(), 1, "no second copy was loaded");
+        assert_eq!(harness.state().logs.first_id(), loaded);
+        assert_eq!(
+            harness
+                .state()
+                .first_log()
+                .and_then(LoadedLog::attachment)
+                .map(|attachment| attachment.id),
+            Some(stored),
+            "the loaded log is now the log the recording carries"
+        );
+    }
+
+    /// The toolbar's log button counts a log that comes back with a recording,
+    /// and the viewer stays closed on the log it was showing.
+    #[test]
+    fn the_toolbar_counts_a_log_restored_with_a_recording_until_the_viewer_opens() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("geotrace.h5");
+        let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
+        attach_the_log(&mut harness, &db_path, &db_ref);
+        unload_the_log(&mut harness);
+        drop_a_log(&mut harness, FIXTURE_LOG_SEED + 1);
+        cancel(&mut harness);
+        let shown = harness.state().log_viewer.selected_log();
+        harness.state_mut().log_viewer.open = false;
+        harness.run_steps(2);
+
+        restore_the_stored_attachment(&mut harness, &db_path, &db_ref);
+
+        assert_eq!(harness.state().logs.len(), 2, "the attachment came back");
+        assert!(!harness.state().log_viewer.open, "the viewer stays closed");
+        assert_eq!(
+            harness.state().log_viewer.selected_log(),
+            shown,
+            "the viewer still shows the log the user was reading"
+        );
+        assert_eq!(harness.state().log_viewer.restored_logs.count(), 1);
+        assert!(harness.state().log_viewer.restored_logs.is_pulsing());
+        harness.get_by_label(format!("{ICON_ARTICLE} 1").as_str());
+
+        // The harness clock ticks a quarter second per frame, past the two
+        // seconds the pulse runs for.
+        harness.run_steps(12);
+
+        assert!(
+            !harness.state().log_viewer.restored_logs.is_pulsing(),
+            "the pulse ends by itself"
+        );
+        assert_eq!(
+            harness.state().log_viewer.restored_logs.count(),
+            1,
+            "the count stands until the viewer is opened"
+        );
+
+        harness
+            .get_by_label(format!("{ICON_ARTICLE} 1").as_str())
+            .click();
+        harness.run_steps(3);
+
+        assert!(harness.state().log_viewer.open);
+        assert_eq!(harness.state().log_viewer.restored_logs.count(), 0);
+        harness.get_by_label(ICON_ARTICLE);
+    }
+
+    /// Attaching a log the recording already holds writes no second
+    /// attachment: the loaded log takes the stored one, and the app writes its
+    /// filter stack to that attachment.
+    #[test]
+    fn attaching_a_log_the_recording_already_holds_reuses_the_stored_attachment() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("geotrace.h5");
+        let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
+        attach_the_log(&mut harness, &db_path, &db_ref);
+        add_log_filter_in(&mut harness, "kernel");
+        assert!(
+            harness.step_until(|_| stored_attachments(&db_path, &db_ref)
+                .first()
+                .is_some_and(|entry| entry.attachment.filters.len() == 1)),
+            "the chip reached the stored attachment"
+        );
+        let stored = stored_attachments(&db_path, &db_ref)
+            .first()
+            .map(|entry| entry.id)
+            .expect("the attachment was stored");
+
+        // The same text loaded again, filtered by none of the chips the stored
+        // attachment holds.
+        unload_the_log(&mut harness);
+        drop_the_log(&mut harness);
+        harness
+            .get_by_label(association_dialog::ATTACH_LABEL)
+            .click();
+        harness.run_steps(2);
+        assert!(
+            harness.step_until(|harness| harness
+                .query_by_label_contains("Attaching reuses that attachment")
+                .is_some()),
+            "the dialog states what the recording already holds"
+        );
+        harness.state_mut().toasts.dismiss_all_toasts();
+        confirm(&mut harness);
+
+        assert!(
+            harness.step_until(|_| stored_attachments(&db_path, &db_ref)
+                .first()
+                .is_some_and(|entry| entry.attachment.filters.is_empty())),
+            "the stack of the loaded log reached the attachment it took"
+        );
+        assert_eq!(
+            stored_attachments(&db_path, &db_ref)
+                .iter()
+                .map(|entry| entry.id)
+                .collect::<Vec<_>>(),
+            [stored],
+            "the recording holds the one attachment it held before"
+        );
+        assert_eq!(
+            harness
+                .state()
+                .first_log()
+                .and_then(LoadedLog::attachment)
+                .map(|attachment| attachment.id),
+            Some(stored)
+        );
+        assert_eq!(
+            harness.state().toasts.len(),
+            1,
+            "the reuse is answered with a toast"
         );
     }
 
@@ -10476,26 +10634,6 @@ mod log_association {
                 .first_log()
                 .is_some_and(|log| log.attachment().is_none()),
             "nothing about the loaded log changed"
-        );
-    }
-
-    /// A log attached twice to the same recording is a duplicate the dialog
-    /// warns about before it happens.
-    #[test]
-    fn a_recording_that_already_holds_the_log_warns_in_the_dialog() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let db_path = dir.path().join("geotrace.h5");
-        let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
-        attach_the_log(&mut harness, &db_path, &db_ref);
-
-        harness.get_by_label(log_viewer::ATTACH_LABEL).click();
-        harness.run_steps(3);
-
-        assert!(
-            harness.step_until(|harness| harness
-                .query_by_label_contains("already holds this log")
-                .is_some()),
-            "the dialog warns before the same log is attached twice"
         );
     }
 

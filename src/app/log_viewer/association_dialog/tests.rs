@@ -10,8 +10,9 @@ use gt_loaded_files::{FileHistory, LoadedFileId, LoadedFiles, RecordingNames};
 use gt_log_view::LoadedLog;
 use gt_pending_writes::WriteAccess;
 
+use crate::app::history_db::ExistingLogAttachment;
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
-use gt_store::{DatabaseRef, RecordingMeta};
+use gt_store::{DatabaseRef, LogAttachmentId, RecordingMeta};
 use gt_test_utils::window_fit::{
     CRAMPED_VIEWPORT, NARROW_VIEWPORT, OVERSIZED_ROW_COUNT, SHORT_VIEWPORT,
 };
@@ -352,9 +353,10 @@ fn switching_to_a_recording_outside_history_clears_the_attach_tickbox() {
     );
 }
 
-/// The same log attached twice is allowed, and warned about first.
+/// Attaching a log the recording already holds offers the stored attachment
+/// for reuse: the dialog states that, and hands the attachment to the app.
 #[test]
-fn a_recording_that_already_holds_this_log_warns_before_it_is_attached_again() {
+fn a_recording_that_already_holds_this_log_offers_that_attachment_for_reuse() {
     let mut harness = harness_over(vec![(
         recording("stored.gtd", Duration::zero(), 10),
         stored_in_history("nav-devkit-mk2"),
@@ -366,13 +368,34 @@ fn a_recording_that_already_holds_this_log_warns_before_it_is_attached_again() {
         queried.is_some(),
         "a recording in the database is queried once it is selected"
     );
-    harness
-        .state_mut()
-        .dialog
-        .set_duplicate_attachment(&stored_db_ref(), Some("navsyncd.log".to_owned()));
+    let existing = LogAttachmentId::new_random();
+    harness.state_mut().dialog.set_duplicate_attachment(
+        &stored_db_ref(),
+        Some(ExistingLogAttachment {
+            id: existing,
+            name: "navsyncd.log".to_owned(),
+        }),
+    );
     harness.run_steps(2);
 
-    harness.get_by_label_contains("already holds this log");
+    harness.get_by_label_contains("Attaching reuses that attachment");
+    assert_eq!(
+        harness
+            .state()
+            .dialog
+            .duplicate_attachment_of(&stored_db_ref())
+            .map(|attachment| attachment.id),
+        Some(existing)
+    );
+    assert_eq!(
+        harness
+            .state()
+            .dialog
+            .duplicate_attachment_of(&another_db_ref())
+            .map(|attachment| attachment.id),
+        None,
+        "the answer stands for the recording it was queried about"
+    );
 }
 
 /// The dialog queries the database about each recording once, not once a
@@ -411,6 +434,14 @@ fn stored_db_ref() -> DatabaseRef {
     DatabaseRef {
         identity: "nav-devkit-mk2".to_owned(),
         group_name: "2026-05-29T18-48-25".to_owned(),
+    }
+}
+
+/// A recording of the database other than the one the dialog is selected on.
+fn another_db_ref() -> DatabaseRef {
+    DatabaseRef {
+        identity: "nav-devkit-mk2".to_owned(),
+        group_name: "2026-05-29T19-13-40".to_owned(),
     }
 }
 

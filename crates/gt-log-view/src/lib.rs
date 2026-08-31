@@ -25,4 +25,4 @@ pub use filter::{
     EntryMatches, FilterChip, FilterChipId, FilterChipMode, FilterPattern, FilterStack,
     InvalidFilterPattern, LAYER_COLOR_SLOT_COUNT, LayerColorSlot, LayerColorSlots, VisibleEntries,
 };
-pub use loaded_log::{LoadedLog, LoadedLogs, LogPushOutcome};
+pub use loaded_log::{LoadedLog, LoadedLogs, LogPushOutcome, RestoredAttachmentAdoption};

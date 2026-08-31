@@ -117,6 +117,26 @@ impl LoadedLog {
         self.reassociate(recordings);
     }
 
+    /// Records `attachment` on this log. The log's text is assumed to already
+    /// match what is stored under `attachment`.
+    ///
+    /// The log keeps the filter stack the user is reading it under.
+    pub fn adopt_restored_attachment(
+        &mut self,
+        attachment: LogAttachmentRef,
+        stored_filters: Vec<StoredLogFilter>,
+        recordings: &LoadedFilesView<'_>,
+    ) -> RestoredAttachmentAdoption {
+        if self.attachment().is_some() {
+            return RestoredAttachmentAdoption::AlreadyAttached;
+        }
+        if !self.is_anchored_to(&RecordingKey::Stored(attachment.recording.clone())) {
+            return RestoredAttachmentAdoption::NotAnchoredToThatRecording;
+        }
+        self.record_attachment(attachment, stored_filters, recordings);
+        RestoredAttachmentAdoption::Recorded
+    }
+
     /// The attachment this log is stored as, `None` for one that lives only in
     /// this session.
     pub fn attachment(&self) -> Option<&LogAttachmentRef> {
@@ -397,6 +417,20 @@ impl LoadedLog {
     }
 }
 
+/// What [`LoadedLog::adopt_restored_attachment`] left the loaded log as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestoredAttachmentAdoption {
+    /// The log holds the attachment and the filter stack stored with it.
+    Recorded,
+
+    /// The log is anchored to another recording, or to none at all, and kept
+    /// that anchor.
+    NotAnchoredToThatRecording,
+
+    /// The log already holds an attachment of its own, and kept it.
+    AlreadyAttached,
+}
+
 /// One loaded log under the identity it was loaded with.
 #[derive(Debug)]
 struct StoredLog {
@@ -658,7 +692,7 @@ fn name_from_first_anchored_entry(parsed: &ParsedLog) -> String {
 #[cfg(test)]
 mod tests {
     use gt_history_types::{DatabaseRef, LogAttachmentId, StoredLogFilterMode};
-    use gt_loaded_files::LoadedFiles;
+    use gt_loaded_files::{FileHistory, LoadedFiles};
 
     use crate::{
         LayerColorSlot,
@@ -1225,6 +1259,123 @@ mod tests {
         assert!(
             logs.take_filter_stack_edits_to_store().is_empty(),
             "a stack that came back as it was stored needs no write-back"
+        );
+    }
+
+    /// The anchor and attachment the loaded log holds when
+    /// [`LoadedLog::adopt_restored_attachment`] is called on it.
+    #[derive(Debug, Clone, Copy)]
+    enum LoadedLogBeforeTheRestore {
+        AnchoredToTheRestoringRecording,
+        AnchoredToAnotherRecording,
+        HoldingAnAttachmentOfItsOwn,
+    }
+
+    /// A recording load reads back an attachment holding the text of a log the
+    /// session already has. That log takes the attachment where it is anchored
+    /// to that recording and holds none: an anchor moves only where the user
+    /// moves it.
+    #[rstest::rstest]
+    #[case(
+        LoadedLogBeforeTheRestore::AnchoredToTheRestoringRecording,
+        RestoredAttachmentAdoption::Recorded
+    )]
+    #[case(
+        LoadedLogBeforeTheRestore::AnchoredToAnotherRecording,
+        RestoredAttachmentAdoption::NotAnchoredToThatRecording
+    )]
+    #[case(
+        LoadedLogBeforeTheRestore::HoldingAnAttachmentOfItsOwn,
+        RestoredAttachmentAdoption::AlreadyAttached
+    )]
+    fn a_restored_attachment_reaches_the_loaded_log_anchored_to_the_recording_holding_it(
+        #[case] before: LoadedLogBeforeTheRestore,
+        #[case] expected: RestoredAttachmentAdoption,
+    ) {
+        let db_ref = stored_recording_ref();
+        let mut files = LoadedFiles::new();
+        files.push(recording_at(55.0, 10), stored_in_history(&db_ref));
+        files.push(recording_at(60.0, 10), FileHistory::None);
+        let restored = LogAttachmentRef {
+            recording: db_ref.clone(),
+            id: LogAttachmentId::new_random(),
+        };
+        let mut log = log_of(10);
+        match before {
+            LoadedLogBeforeTheRestore::AnchoredToTheRestoringRecording => {
+                log.anchor_to(RecordingKey::Stored(db_ref), &files.view());
+            }
+            LoadedLogBeforeTheRestore::AnchoredToAnotherRecording => {
+                anchor_to(&mut log, &files, 1);
+            }
+            LoadedLogBeforeTheRestore::HoldingAnAttachmentOfItsOwn => {
+                log.record_attachment(attachment_ref(), Vec::new(), &files.view());
+            }
+        }
+        let anchored_before = log.anchor_key().cloned();
+
+        let adoption = log.adopt_restored_attachment(restored.clone(), Vec::new(), &files.view());
+
+        assert_eq!(adoption, expected);
+        assert_eq!(
+            log.attachment() == Some(&restored),
+            expected == RestoredAttachmentAdoption::Recorded,
+            "only the log anchored to that recording takes the attachment"
+        );
+        assert_eq!(
+            log.anchor_key(),
+            anchored_before.as_ref(),
+            "the log keeps the anchor it had either way"
+        );
+    }
+
+    /// The adopting log keeps the chips the user is reading it under, and
+    /// writes that stack to the attachment it took.
+    #[test]
+    fn a_log_that_takes_a_restored_attachment_keeps_its_own_filter_stack() {
+        let db_ref = stored_recording_ref();
+        let mut files = LoadedFiles::new();
+        files.push(recording_at(55.0, 10), stored_in_history(&db_ref));
+        let mut logs = LoadedLogs::default();
+        let mut log = log_of(10);
+        log.anchor_to(RecordingKey::Stored(db_ref.clone()), &files.view());
+        let id = logs.push(log).id();
+        add_layer_chip(&mut logs, id, "entry 1");
+        let stored = vec![StoredLogFilter {
+            text: "entry 2".to_owned(),
+            regex: false,
+            enabled: true,
+            mode: StoredLogFilterMode::Layer { color_slot: 0 },
+        }];
+        let restored = LogAttachmentRef {
+            recording: db_ref,
+            id: LogAttachmentId::new_random(),
+        };
+
+        if let Some(log) = logs.get_mut_by_id(id) {
+            log.adopt_restored_attachment(restored.clone(), stored, &files.view());
+        }
+
+        assert_eq!(
+            logs.get_by_id(id)
+                .map(|log| log.filters().to_stored_filters()),
+            Some(vec![StoredLogFilter {
+                text: "entry 1".to_owned(),
+                regex: false,
+                enabled: true,
+                mode: StoredLogFilterMode::Layer { color_slot: 0 },
+            }])
+        );
+        assert_eq!(
+            logs.take_filter_stack_edits_to_store()
+                .into_iter()
+                .map(|(attachment, filters)| (
+                    attachment,
+                    filters.into_iter().map(|filter| filter.text).collect()
+                ))
+                .collect::<Vec<(LogAttachmentRef, Vec<String>)>>(),
+            [(restored, vec!["entry 1".to_owned()])],
+            "the stack the user is reading is what the attachment is written"
         );
     }
 

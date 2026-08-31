@@ -20,7 +20,9 @@
 
 - **Interface:** A duration under a second now reads in tenths of a second, from "0.1s" to "0.9s".
 - **Log Viewer:** Opening, dropping or pasting a log whose text is already loaded now selects the loaded log and toasts its name.
-- **Log Viewer:** Opening a recording now skips its attached logs whose text is already loaded.
+- **Log Viewer:** Opening a recording no longer loads an attached log whose text is already loaded, and that loaded log takes the attachment when it is anchored to the recording.
+- **Log Viewer:** Attaching a log to a recording that already holds it now reuses the stored attachment.
+- **Log Viewer:** A log that comes back with a recording no longer opens the log viewer, and the toolbar's log button shows an amber count of the logs loaded with recordings since the viewer was last open.
 - **Log Viewer:** Removing or unloading a recording now unloads the logs that take their positions from it, and an attached log comes back when that recording is opened again.
 - **Log Viewer:** The remove dialog now states how many attached logs the removal unloads.
 - **Log Viewer:** The log viewer now grays out the "no recording" choice for a log attached to a recording.
