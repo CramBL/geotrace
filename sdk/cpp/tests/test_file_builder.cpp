@@ -2,6 +2,7 @@
 #include <geotrace/geotrace.hpp>
 
 #include <cstddef>
+#include <string>
 #include <utility>
 
 #if defined(__GNUC__) && !defined(__clang__)
@@ -19,6 +20,7 @@ using geotrace::Annotation;
 using geotrace::Constellation;
 using geotrace::EventMarker;
 using geotrace::EventMarkerStyle;
+using geotrace::FieldTooLongError;
 using geotrace::FileBuilder;
 using geotrace::InvalidPathError;
 using geotrace::MarkerIcon;
@@ -192,6 +194,15 @@ TEST_CASE("FileBuilder: NoNavFixesError thrown when annotations exist but no fix
     ann.label = "unreachable";
     b.add_annotation(ann);
     CHECK_THROWS_AS(b.finish(), NoNavFixesError);
+}
+
+TEST_CASE("FileBuilder: FieldTooLongError thrown for a label past the field capacity") {
+    FileBuilder b;
+    Annotation ann{};
+    ann.time = t0;
+    ann.label = std::string(256, 'l');
+
+    CHECK_THROWS_AS(b.add_annotation(ann), FieldTooLongError);
 }
 
 TEST_CASE("FileBuilder: InvalidPathError thrown for malformed variant path") {

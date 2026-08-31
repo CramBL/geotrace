@@ -249,6 +249,21 @@ Test(builder, event_marker_annotation_past_its_field_is_too_long) {
     gtd_builder_destroy(b);
 }
 
+Test(builder, annotation_label_past_its_field_is_too_long) {
+    GtdFileBuilder *b = gtd_builder_create();
+    cr_assert_not_null(b);
+
+    GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
+
+    char label[257];
+    memset(label, 'l', sizeof(label) - 1);
+    label[sizeof(label) - 1] = '\0';
+
+    cr_assert_eq(gtd_builder_add_annotation(b, t, label, GTD_ICON_AUTO), GTD_ERR_FIELD_TOO_LONG);
+
+    gtd_builder_destroy(b);
+}
+
 Test(builder, event_marker_style_color_past_its_field_is_too_long_when_written) {
     GtdFileBuilder *b = gtd_builder_create();
     cr_assert_not_null(b);

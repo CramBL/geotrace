@@ -142,6 +142,11 @@ def test_annotation_all_fields() -> None:
     assert ann.icon == MarkerIcon.CHECK
 
 
+def test_annotation_label_past_the_field_capacity_raises() -> None:
+    with pytest.raises(ValueError, match="markers/label"):
+        Annotation(T0, label="l" * 256)
+
+
 def test_annotation_eq() -> None:
     ann_a = Annotation(T0, label="Stop", icon=MarkerIcon.PIN)
     ann_b = Annotation(T0, label="Stop", icon=MarkerIcon.PIN)

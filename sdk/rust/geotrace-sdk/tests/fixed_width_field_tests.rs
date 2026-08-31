@@ -1,11 +1,11 @@
-//! The fixed-width string fields of the `.gtd` format: the writer refusing a
-//! value past a field's capacity, the reader refusing a field row that is not
-//! UTF-8, and the reader preserving a well-formed value it does not recognize.
-//! The write tests go through the paths that reach those fields without passing
-//! `EventMarker::builder().build()`.
+//! The fixed-width string fields of the `.gtd` format: the builder and the
+//! writer refusing a value past a field's capacity, the reader refusing a field
+//! row that is not UTF-8, and the reader preserving a well-formed value it does
+//! not recognize. The write tests reach a field by a path that skips the checks
+//! in `EventMarker::builder().build()` and `Annotation::builder().build()`.
 
 use geotrace_sdk::{
-    Angle, AnnotationField, ColorHexField, DateTime, Duration, EventKind, EventMarker,
+    Angle, Annotation, AnnotationField, ColorHexField, DateTime, Duration, EventKind, EventMarker,
     EventMarkerColor, EventMarkerIconChoice, EventMarkerStyle, IconNameField, MarkerIcon,
     MarkerLabelField, NavFile, NavFileBuilder, NavFix, NavRecorder, Utc, VariantPathField,
 };
@@ -67,6 +67,69 @@ fn an_event_marker_at_the_field_capacities_round_trips() {
         .expect("the file holds the marker");
     assert_eq!(marker.variant_path, variant_path);
     assert_eq!(marker.annotation.as_deref(), Some(annotation.as_str()));
+}
+
+#[test]
+fn a_marker_at_the_label_capacity_round_trips() {
+    let label = "l".repeat(MarkerLabelField::CONTENT_CAPACITY);
+    let mut recorder = recorder_with_one_fix();
+    recorder.add_annotation(
+        Annotation::builder()
+            .time(t(0))
+            .label(label.clone())
+            .build()
+            .expect("a label at the field capacity is accepted"),
+    );
+    let mut bytes = Vec::new();
+    recorder
+        .finish()
+        .expect("the recording builds")
+        .write(&mut bytes)
+        .expect("a label at the field capacity is written");
+
+    let loaded = NavFile::read(bytes.as_slice()).expect("the written file reads back");
+    let marker = loaded.markers().first().expect("the file holds the marker");
+    assert_eq!(marker.annotation.label.as_deref(), Some(label.as_str()));
+}
+
+#[rstest]
+#[case::one_ascii_byte_past_the_capacity("l".repeat(MarkerLabelField::CONTENT_CAPACITY + 1))]
+#[case::a_two_byte_character_across_the_capacity(
+    format!("{}é", "l".repeat(MarkerLabelField::CONTENT_CAPACITY - 1))
+)]
+fn a_label_past_the_field_capacity_is_refused(#[case] label: String) {
+    let refusal = Annotation::builder()
+        .time(t(0))
+        .label(label.clone())
+        .build()
+        .expect_err("a label past the field capacity is refused")
+        .to_string();
+    assert_eq!(
+        refusal,
+        format!("markers/label: {label:?} is 256 bytes, past the 255 bytes the field holds")
+    );
+}
+
+#[test]
+fn a_marker_label_one_byte_past_the_capacity_stops_the_write() {
+    let label = "l".repeat(MarkerLabelField::CONTENT_CAPACITY + 1);
+    let mut recorder = recorder_with_one_fix();
+    recorder.add_annotation(Annotation {
+        time: t(0),
+        label: Some(label.clone()),
+        icon: None,
+    });
+
+    let refusal = recorder
+        .finish()
+        .expect("the recording builds")
+        .write(Vec::new())
+        .expect_err("a label past the field capacity stops the write")
+        .to_string();
+    assert_eq!(
+        refusal,
+        format!("markers/label: {label:?} is 256 bytes, past the 255 bytes the field holds")
+    );
 }
 
 #[test]
