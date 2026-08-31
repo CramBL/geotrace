@@ -5,8 +5,17 @@ use egui_kittest::{Harness, SnapshotOptions};
 pub use egui_kittest::kittest::{By, Queryable};
 use std::path::{Path, PathBuf};
 
+/// Pixel-count tolerance for [`TestHarness::snapshot`]. Anti-aliased edges
+/// differ by a gray level or two between driver versions: on three
+/// `gt-side-panel` baselines 769 to 1582 pixels differed, 1 to 2 of them past
+/// the 0.6 threshold. The smallest deliberate UI change measured against those
+/// baselines, a 0.05 alpha step on one status glyph, put 8 pixels past it.
+const STRICT_PIXEL_COUNT_TOLERANCE: usize = 4;
+
 fn snapshot_options() -> SnapshotOptions {
-    SnapshotOptions::new().threshold(0.6_f32)
+    SnapshotOptions::new()
+        .threshold(0.6_f32)
+        .max_failed_pixels(STRICT_PIXEL_COUNT_TOLERANCE)
 }
 
 /// Pixel-count tolerance for [`TestHarness::snapshot_loose`]. Live map/plot
