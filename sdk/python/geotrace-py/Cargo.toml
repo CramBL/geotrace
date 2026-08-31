@@ -25,7 +25,7 @@ geotrace-sdk = { path = "../../rust/geotrace-sdk" }
 # is intentionally NOT enabled here. maturin turns it on at build time via the
 # `[tool.maturin] features` key in pyproject.toml, which keeps plain `cargo`
 # builds (e.g. tests) able to link libpython.
-pyo3 = { version = "0.28.3", features = ["abi3-py312", "chrono"] }
+pyo3 = { version = "0.29", features = ["abi3-py312", "chrono"] }
 
 [lints.rust]
 unsafe_code = "warn"
