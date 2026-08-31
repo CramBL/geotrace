@@ -440,3 +440,84 @@ fn nav_file_with_label(label: Option<String>) -> Result<NavFile, Box<dyn std::er
     recorder.finish()?.write(&mut bytes)?;
     Ok(NavFile::read(bytes.as_slice())?)
 }
+
+#[test]
+fn a_fix_without_a_lock_writes_the_gps_time_sentinel_and_a_host_clock_time_axis()
+-> Result<(), Box<dyn std::error::Error>> {
+    let locked = t(0);
+    let host_only = t(1000);
+
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .gps_time(locked)
+            .sys_time(locked)
+            .lat(Angle::degrees(0.0))
+            .lon(Angle::degrees(0.0))
+            .build(),
+    );
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .sys_time(host_only)
+            .lat(Angle::degrees(0.0))
+            .lon(Angle::degrees(0.0))
+            .build(),
+    );
+    let bytes = to_bytes(&recorder.finish()?);
+
+    let grp = hdf5_pure::File::from_bytes(bytes)?.group("nav_points")?;
+    assert_eq!(
+        grp.dataset("gps_time_us")?.read_u64()?,
+        vec![locked.timestamp_micros().cast_unsigned(), u64::MAX]
+    );
+    assert_eq!(
+        grp.dataset("time")?.read_i64()?,
+        vec![locked.timestamp_micros(), host_only.timestamp_micros()]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_file_without_gps_time_us_reads_its_time_axis_as_the_receiver_timestamp()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fix_time = t(0);
+    let host_time = t(500);
+    let bytes = make_file_without_gps_time_us(
+        fix_time.timestamp_micros(),
+        host_time.timestamp_micros().cast_unsigned(),
+    );
+
+    let nav_file = NavFile::read(bytes.as_slice())?;
+    let fix = &nav_file.nav_points().first().ok_or("no nav point")?.fix;
+
+    assert_eq!(fix.gps_time, Some(fix_time));
+    assert_eq!(fix.sys_time, Some(host_time));
+    Ok(())
+}
+
+fn make_file_without_gps_time_us(time_us: i64, sys_time_us: u64) -> Vec<u8> {
+    let mut fb = FileBuilder::new();
+    fb.set_attr("geotrace_version", AttrValue::String("1".into()));
+    let mut np = fb.create_group("nav_points");
+    np.create_dataset("time")
+        .with_i64_data(&[time_us])
+        .with_shape(&[1]);
+    np.create_dataset("sys_time_us")
+        .with_u64_data(&[sys_time_us])
+        .with_shape(&[1]);
+    np.create_dataset("lat")
+        .with_f64_data(&[0.0])
+        .with_shape(&[1]);
+    np.create_dataset("lon")
+        .with_f64_data(&[0.0])
+        .with_shape(&[1]);
+    np.create_dataset("heading")
+        .with_f64_data(&[f64::NAN])
+        .with_shape(&[1]);
+    np.create_dataset("speed_mps")
+        .with_f64_data(&[f64::NAN])
+        .with_shape(&[1]);
+    fb.add_group(np.finish());
+    #[expect(clippy::expect_used, reason = "test helper")]
+    fb.finish().expect("build")
+}
