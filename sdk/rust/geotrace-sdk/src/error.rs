@@ -230,6 +230,23 @@ pub(crate) struct FieldLocation {
     pub(crate) dataset: &'static str,
 }
 
+/// The `markers/label` field, named both by `Annotation::builder().build()` and
+/// by the writer.
+pub(crate) const MARKER_LABEL_LOCATION: FieldLocation = FieldLocation {
+    group: "markers",
+    dataset: "label",
+};
+
+impl Error {
+    pub(crate) fn unwritable_field(location: FieldLocation, source: FixedWidthStringError) -> Self {
+        Self::UnwritableField {
+            group: location.group,
+            dataset: location.dataset,
+            source,
+        }
+    }
+}
+
 impl From<hdf5_pure::Error> for Error {
     fn from(e: hdf5_pure::Error) -> Self {
         Self::Hdf5(e.to_string())

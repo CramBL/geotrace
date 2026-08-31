@@ -371,7 +371,7 @@ fn load_markers(
                 .time(parse_time(cols[0]).expect("Marker time required"))
                 .maybe_label(Some(cols[1]))
                 .maybe_icon(MarkerIcon::try_from_lower_case(cols[2]).ok())
-                .build(),
+                .build()?,
         );
     }
     Ok(())

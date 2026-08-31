@@ -751,7 +751,8 @@ impl PyNavFix {
 
 /// A user-defined map annotation with an optional label and icon.
 ///
-/// `time` must be a timezone-aware `datetime.datetime`.
+/// `time` must be a timezone-aware `datetime.datetime`. A `label` longer than
+/// the 255 bytes the `markers/label` field holds raises `ValueError`.
 #[pyclass(skip_from_py_object, name = "Annotation")]
 #[derive(Debug, Clone)]
 pub struct PyAnnotation {
@@ -762,41 +763,44 @@ pub struct PyAnnotation {
 impl PyAnnotation {
     #[new]
     #[pyo3(signature = (time, *, label=None, icon=None))]
-    fn new(time: DateTime<FixedOffset>, label: Option<String>, icon: Option<PyMarkerIcon>) -> Self {
+    fn new(
+        time: DateTime<FixedOffset>,
+        label: Option<String>,
+        icon: Option<PyMarkerIcon>,
+    ) -> PyResult<Self> {
         let inner = Annotation::builder()
             .time(time.to_utc())
             .maybe_label(label)
             .maybe_icon(icon.map(MarkerIcon::from))
-            .build();
-        Self { inner }
+            .build()
+            .map_err(file_err)?;
+        Ok(Self { inner })
     }
 
     /// Timestamp (timezone-aware UTC).
     #[getter]
     fn time(&self) -> DateTime<FixedOffset> {
-        to_fixed(self.inner.time)
+        to_fixed(self.inner.time())
     }
 
     /// Display label, or `None`.
     #[getter]
     fn label(&self) -> Option<&str> {
-        self.inner.label.as_deref()
+        self.inner.label()
     }
 
     /// Visual icon, or `None` (defaults to `MarkerIcon.PIN` when rendered).
     #[getter]
     fn icon(&self) -> Option<PyMarkerIcon> {
-        self.inner.icon.map(PyMarkerIcon::from)
+        self.inner.icon().map(PyMarkerIcon::from)
     }
 
     fn __eq__(&self, other: &Self) -> bool {
-        self.inner.time == other.inner.time
-            && self.inner.label == other.inner.label
-            && self.inner.icon == other.inner.icon
+        self.inner == other.inner
     }
 
     fn __repr__(&self) -> String {
-        format!("Annotation(time={:?})", self.inner.time)
+        format!("Annotation(time={:?})", self.inner.time())
     }
 }
 
@@ -983,19 +987,19 @@ impl PyMarker {
     /// Display label from the annotation, or `None`.
     #[getter]
     fn label(&self) -> Option<&str> {
-        self.inner.annotation.label.as_deref()
+        self.inner.annotation.label()
     }
 
     /// Visual icon from the annotation, or `None`.
     #[getter]
     fn icon(&self) -> Option<PyMarkerIcon> {
-        self.inner.annotation.icon.map(PyMarkerIcon::from)
+        self.inner.annotation.icon().map(PyMarkerIcon::from)
     }
 
     /// Annotation timestamp (timezone-aware UTC).
     #[getter]
     fn time(&self) -> DateTime<FixedOffset> {
-        to_fixed(self.inner.annotation.time)
+        to_fixed(self.inner.annotation.time())
     }
 
     fn __repr__(&self) -> String {

@@ -199,7 +199,7 @@ fn load_markers(
                 .time(parse_time(cols[0]).expect("Marker time required"))
                 .maybe_label(Some(cols[1]))
                 .maybe_icon(MarkerIcon::try_from_lower_case(cols[2]).ok())
-                .build(),
+                .build()?,
         );
     }
     Ok(())
@@ -273,10 +273,10 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     assert_eq!(markers.len(), 15);
     // Check "File Boundary Start" at index 0
     assert_eq!(
-        markers[0].annotation.label.as_ref().unwrap(),
+        markers[0].annotation.label().unwrap(),
         "File Boundary Start"
     );
-    assert_eq!(markers[0].annotation.icon, Some(MarkerIcon::Check));
+    assert_eq!(markers[0].annotation.icon(), Some(MarkerIcon::Check));
 
     let events = file.event_markers();
     assert_eq!(events.len(), 6);

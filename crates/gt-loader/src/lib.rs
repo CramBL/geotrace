@@ -776,15 +776,15 @@ fn merge_rows_repeating_a_satellite(tracked: &[SdkSatellite]) -> Vec<MergedSatel
 }
 
 fn convert_marker(m: &SdkMarker) -> Result<CustomMarker, DroppedMarker> {
-    let label = m.annotation.label.as_deref().unwrap_or("").to_owned();
+    let label = m.annotation.label().unwrap_or("").to_owned();
     match (
         Latitude::try_new(m.lat.as_degrees()),
         Longitude::try_new(m.lon.as_degrees()),
     ) {
         (Ok(lat), Ok(lon)) => Ok(CustomMarker::new(
-            m.annotation.time,
+            m.annotation.time(),
             label,
-            m.annotation.icon.map_or(MarkerIcon::Pin, convert_icon),
+            m.annotation.icon().map_or(MarkerIcon::Pin, convert_icon),
             lat,
             lon,
         )),
@@ -1422,7 +1422,8 @@ mod tests {
         recorder.add_annotation(
             Annotation::builder()
                 .time(t0 + Duration::milliseconds(500))
-                .build(),
+                .build()
+                .unwrap(),
         );
         let (_, markers) = build(&recorder.finish().unwrap());
         assert_eq!(markers[0].label, "");
@@ -1439,7 +1440,8 @@ mod tests {
             Annotation::builder()
                 .time(t0 + Duration::milliseconds(500))
                 .label(String::new())
-                .build(),
+                .build()
+                .unwrap(),
         );
         let (_, markers) = build(&recorder.finish().unwrap());
         assert_eq!(markers[0].label, "");
@@ -1455,7 +1457,8 @@ mod tests {
         recorder.add_annotation(
             Annotation::builder()
                 .time(t0 + Duration::milliseconds(500))
-                .build(),
+                .build()
+                .unwrap(),
         );
         let (_, markers) = build(&recorder.finish().unwrap());
         assert_eq!(markers[0].icon, MarkerIcon::Pin);
@@ -1491,7 +1494,11 @@ mod tests {
     #[test]
     fn a_marker_outside_the_coordinate_range_is_dropped_and_named() {
         let marker = SdkMarker {
-            annotation: Annotation::builder().time(base()).label("launch").build(),
+            annotation: Annotation::builder()
+                .time(base())
+                .label("launch")
+                .build()
+                .unwrap(),
             lat: Angle::degrees(91.0),
             lon: Angle::degrees(12.0),
         };

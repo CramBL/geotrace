@@ -91,7 +91,8 @@ fn round_trip_from_gt_types_test_data() {
             .time(marker.time)
             .icon(sdk_icon(marker.icon))
             .maybe_label(label_opt)
-            .build();
+            .build()
+            .expect("the marker label fits its field");
         recorder.add_annotation(ann);
     }
 

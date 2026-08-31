@@ -510,7 +510,7 @@ fn annotation_interpolation_mid_interval() -> Result<(), Box<dyn std::error::Err
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    recorder.add_annotation(Annotation::builder().time(t(500)).label("mid").build());
+    recorder.add_annotation(Annotation::builder().time(t(500)).label("mid").build()?);
     let nav_file = recorder.finish()?;
     let m = &nav_file.markers()[0];
     assert!((m.lat.as_degrees() - 11.0).abs() < 1e-10);
@@ -522,7 +522,12 @@ fn annotation_interpolation_mid_interval() -> Result<(), Box<dyn std::error::Err
 fn annotation_before_first_fix_strict() {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(simple_fix(1000));
-    recorder.add_annotation(Annotation::builder().time(t(0)).build());
+    recorder.add_annotation(
+        Annotation::builder()
+            .time(t(0))
+            .build()
+            .expect("an annotation without a label is accepted"),
+    );
     assert!(matches!(
         recorder.finish(),
         Err(BuildError::AnnotationsOutsideRange { count: 1 })
@@ -541,7 +546,7 @@ fn annotation_before_first_fix_lenient() -> Result<(), Box<dyn std::error::Error
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    recorder.add_annotation(Annotation::builder().time(t(0)).build());
+    recorder.add_annotation(Annotation::builder().time(t(0)).build()?);
     let nav_file = recorder.finish()?;
     let m = &nav_file.markers()[0];
     assert!((m.lat.as_degrees() - 55.0).abs() < 1e-10);
@@ -561,7 +566,7 @@ fn annotation_after_last_fix_lenient() -> Result<(), Box<dyn std::error::Error>>
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    recorder.add_annotation(Annotation::builder().time(t(5000)).build());
+    recorder.add_annotation(Annotation::builder().time(t(5000)).build()?);
     let nav_file = recorder.finish()?;
     let m = &nav_file.markers()[0];
     assert!((m.lat.as_degrees() - 55.0).abs() < 1e-10);
@@ -578,7 +583,12 @@ fn annotation_out_of_range_strict_error() {
     recorder.add_satellite_report(simple_report(2000));
     recorder.add_satellite_report(simple_report(3000));
     // This annotation is before the first fix → error in strict mode.
-    recorder.add_annotation(Annotation::builder().time(t(-1000)).build());
+    recorder.add_annotation(
+        Annotation::builder()
+            .time(t(-1000))
+            .build()
+            .expect("an annotation without a label is accepted"),
+    );
 
     let err = recorder.finish().expect_err("should fail");
     assert!(matches!(
@@ -591,7 +601,12 @@ fn annotation_out_of_range_strict_error() {
 fn no_nav_fixes_with_annotations_lenient() {
     // NoNavFixes is returned even in lenient mode - positions cannot be interpolated at all.
     let mut recorder = NavFileBuilder::new().with_lenient_errors().open();
-    recorder.add_annotation(Annotation::builder().time(t(0)).build());
+    recorder.add_annotation(
+        Annotation::builder()
+            .time(t(0))
+            .build()
+            .expect("an annotation without a label is accepted"),
+    );
     assert!(matches!(recorder.finish(), Err(BuildError::NoNavFixes)));
 }
 
@@ -692,7 +707,13 @@ proptest! {
 #[test]
 fn add_dispatches_to_the_matching_typed_method() -> Result<(), BuildError> {
     // Same data, two fixes bracketing the annotation/event so both land in range.
-    let annotation = || Annotation::builder().time(t(500)).label("mid").build();
+    let annotation = || {
+        Annotation::builder()
+            .time(t(500))
+            .label("mid")
+            .build()
+            .expect("the marker label fits its field")
+    };
     let marker = || {
         EventMarker::builder()
             .variant_path("power/boot")

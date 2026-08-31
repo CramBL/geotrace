@@ -1,10 +1,10 @@
 use hdf5_pure::{AttrValue, FileBuilder};
 
 use crate::builder::{datetime_to_micros, opt_datetime_to_u64};
-use crate::error::{Error, FieldLocation};
+use crate::error::{Error, FieldLocation, MARKER_LABEL_LOCATION};
 use crate::fixed_width_string::{
     AnnotationField, ColorHexField, FixedWidthString, FixedWidthStringError, IconNameField,
-    VariantPathField,
+    MarkerLabelField, VariantPathField,
 };
 use crate::types::{Constellation, EventMarkerColor, MarkerIcon, NavFile};
 
@@ -378,7 +378,6 @@ fn write_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> 
     let mut lons: Vec<f64> = Vec::with_capacity(k);
     let mut icons: Vec<u8> = Vec::with_capacity(k);
     let mut label_flat: Vec<u8> = Vec::with_capacity(k * 256);
-    let mut any_truncated = false;
 
     for marker in markers {
         times.push(datetime_to_micros(marker.annotation.time));
@@ -386,16 +385,10 @@ fn write_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> 
         lons.push(marker.lon.as_degrees());
         icons.push(marker.annotation.icon.map_or(0, MarkerIcon::to_u8));
 
-        let label_str = marker.annotation.label.as_deref().unwrap_or("");
-        let truncated_str = truncate_utf8(label_str, 255, &mut any_truncated);
-        let truncated_bytes = truncated_str.as_bytes();
-
-        let mut row = [0u8; 256];
-        let len = truncated_bytes.len();
-        if let Some(dest) = row.get_mut(..len) {
-            dest.copy_from_slice(truncated_bytes);
-        }
-        label_flat.extend_from_slice(&row);
+        label_flat.extend_from_slice(&encode_field_row(
+            MARKER_LABEL_LOCATION,
+            MarkerLabelField::new(marker.annotation.label.as_deref().unwrap_or("")),
+        )?);
     }
 
     let k_chunk = CHUNK_SIZE.max(1);
@@ -445,7 +438,6 @@ fn write_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> 
             "encoding",
             AttrValue::String("UTF-8 null-padded to 256 bytes, max 255 content bytes".into()),
         )
-        .set_attr("truncated", AttrValue::I32(i32::from(any_truncated)))
         // Chunk by rows. Shuffle is a no-op for u8 (1-byte elements) so omit it.
         .with_chunks(&[label_row_chunk, 256])
         .with_deflate(6);
@@ -460,11 +452,7 @@ fn encode_field_row<const ROW_BYTES: usize>(
 ) -> Result<[u8; ROW_BYTES], Error> {
     field
         .map(|field| field.encode_row())
-        .map_err(|source| Error::UnwritableField {
-            group: location.group,
-            dataset: location.dataset,
-            source,
-        })
+        .map_err(|source| Error::unwritable_field(location, source))
 }
 
 fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> {
@@ -622,19 +610,6 @@ fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), E
     }
 
     Ok(())
-}
-
-/// Truncate `s` to at most `max_bytes` bytes on a valid UTF-8 boundary.
-fn truncate_utf8<'a>(s: &'a str, max_bytes: usize, truncated: &mut bool) -> &'a str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-    *truncated = true;
-    let mut end = max_bytes;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    s.get(..end).unwrap_or("")
 }
 
 pub(crate) fn decode_tracked_constellation(code: u8) -> Result<Constellation, Error> {

@@ -257,7 +257,7 @@ fn marker_icon_encoding() -> Result<(), Box<dyn std::error::Error>> {
                 .heading(Angle::degrees(0.0))
                 .build(),
         );
-        recorder.add_annotation(Annotation::builder().time(t(500)).icon(icon).build());
+        recorder.add_annotation(Annotation::builder().time(t(500)).icon(icon).build()?);
         let nav_file = recorder.finish()?;
         let bytes = to_bytes(&nav_file);
 
@@ -271,7 +271,7 @@ fn marker_icon_encoding() -> Result<(), Box<dyn std::error::Error>> {
         let mut bytes2 = Vec::new();
         nav_file.write(&mut bytes2)?;
         let rt = NavFile::read(bytes2.as_slice())?;
-        assert_eq!(rt.markers()[0].annotation.icon, Some(icon));
+        assert_eq!(rt.markers()[0].annotation.icon(), Some(icon));
     }
     Ok(())
 }
@@ -279,10 +279,7 @@ fn marker_icon_encoding() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn label_ascii() -> Result<(), Box<dyn std::error::Error>> {
     let rt = nav_file_with_label(Some("Hello, world!".into()))?;
-    assert_eq!(
-        rt.markers()[0].annotation.label.as_deref(),
-        Some("Hello, world!")
-    );
+    assert_eq!(rt.markers()[0].annotation.label(), Some("Hello, world!"));
     Ok(())
 }
 
@@ -290,7 +287,7 @@ fn label_ascii() -> Result<(), Box<dyn std::error::Error>> {
 fn label_multibyte_utf8() -> Result<(), Box<dyn std::error::Error>> {
     let label = "日本語テスト 🌍";
     let rt = nav_file_with_label(Some(label.into()))?;
-    assert_eq!(rt.markers()[0].annotation.label.as_deref(), Some(label));
+    assert_eq!(rt.markers()[0].annotation.label(), Some(label));
     Ok(())
 }
 
@@ -298,33 +295,7 @@ fn label_multibyte_utf8() -> Result<(), Box<dyn std::error::Error>> {
 fn label_none() -> Result<(), Box<dyn std::error::Error>> {
     // An all-zero label row decodes as None.
     let rt = nav_file_with_label(None)?;
-    assert_eq!(rt.markers()[0].annotation.label, None);
-    Ok(())
-}
-
-#[test]
-fn label_truncation() -> Result<(), Box<dyn std::error::Error>> {
-    // Labels longer than 255 bytes are truncated. The truncated attribute is set.
-    let long_label: String = "A".repeat(300);
-    let nav_file = build_nav_file_with_label(Some(long_label))?;
-    let bytes = to_bytes(&nav_file);
-
-    let file = hdf5_pure::File::from_bytes(bytes)?;
-    let attrs = file.group("markers")?.dataset("label")?.attrs()?;
-    // hdf5-pure reads all signed integer attrs as I64 regardless of write type.
-    let truncated = match attrs.get("truncated") {
-        Some(AttrValue::I32(v)) => i64::from(*v),
-        Some(AttrValue::I64(v)) => *v,
-        _ => 0,
-    };
-    assert_eq!(truncated, 1);
-
-    let mut bytes2 = Vec::new();
-    nav_file.write(&mut bytes2)?;
-    let rt = NavFile::read(bytes2.as_slice())?;
-    let label = rt.markers()[0].annotation.label.as_deref().unwrap_or("");
-    assert_eq!(label.len(), 255);
-    assert!(label.chars().all(|c| c == 'A'));
+    assert_eq!(rt.markers()[0].annotation.label(), None);
     Ok(())
 }
 
@@ -442,13 +413,6 @@ fn chunked_fixed_array_large_dataset_round_trips() -> Result<(), Box<dyn std::er
 }
 
 fn nav_file_with_label(label: Option<String>) -> Result<NavFile, Box<dyn std::error::Error>> {
-    let nav_file = build_nav_file_with_label(label)?;
-    let mut bytes = Vec::new();
-    nav_file.write(&mut bytes)?;
-    Ok(NavFile::read(bytes.as_slice())?)
-}
-
-fn build_nav_file_with_label(label: Option<String>) -> Result<NavFile, Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
@@ -466,11 +430,13 @@ fn build_nav_file_with_label(label: Option<String>) -> Result<NavFile, Box<dyn s
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    let ann = if let Some(l) = label {
-        Annotation::builder().time(t(500)).label(l).build()
-    } else {
-        Annotation::builder().time(t(500)).build()
-    };
-    recorder.add_annotation(ann);
-    Ok(recorder.finish()?)
+    recorder.add_annotation(
+        Annotation::builder()
+            .time(t(500))
+            .maybe_label(label)
+            .build()?,
+    );
+    let mut bytes = Vec::new();
+    recorder.finish()?.write(&mut bytes)?;
+    Ok(NavFile::read(bytes.as_slice())?)
 }

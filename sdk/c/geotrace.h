@@ -523,6 +523,8 @@ GtdStatus gtd_builder_add_satellite_report(GtdFileBuilder *b, GtdTimestamp gps_t
  * @param time  Timestamp of the annotation.  Must not be `gtd_ts_none()`.
  * @param label Human-readable label, or NULL for no label.
  * @param icon  Icon to display.  `GTD_ICON_AUTO` uses the application default (Pin).
+ *
+ * @return `GTD_ERR_FIELD_TOO_LONG` if @p label is longer than 255 bytes.
  */
 GtdStatus gtd_builder_add_annotation(GtdFileBuilder *b, GtdTimestamp time, const char *label,
                                      GtdMarkerIcon icon);
