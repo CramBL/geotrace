@@ -623,8 +623,8 @@ impl App {
             .try_begin(RECORDING_THE_TAKE_OVER, WriteKind::TakeOverRecord)
         {
             Ok(_write) => self.instance_lock.record_take_over(taken_over.process_id),
-            Err(refusal) => {
-                log::warn!("The take-over is not recorded in the data directory: {refusal}");
+            Err(rejection) => {
+                log::warn!("The take-over is not recorded in the data directory: {rejection}");
                 None
             }
         }

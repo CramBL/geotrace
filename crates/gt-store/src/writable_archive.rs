@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteRefusal, WriteRegistration};
+use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteRegistration, WriteRejection};
 
 /// An archive opened writable, together with the registry its writes are
 /// registered in.
@@ -35,12 +35,12 @@ impl<W> WritableArchive<W> {
     }
 
     /// Register `registration` and run `write` on the archive while it stays
-    /// registered, or report why [`PendingWrites`] turned the write away.
+    /// registered, or report why [`PendingWrites`] rejected the write.
     pub fn write<T>(
         &self,
         registration: WriteRegistration,
         write: impl FnOnce(&W) -> T,
-    ) -> Result<T, WriteRefusal> {
+    ) -> Result<T, WriteRejection> {
         self.write_reporting_progress(registration, |archive, _| write(archive))
     }
 
@@ -50,7 +50,7 @@ impl<W> WritableArchive<W> {
         &self,
         registration: WriteRegistration,
         write: impl FnOnce(&W, &PendingWriteGuard) -> T,
-    ) -> Result<T, WriteRefusal> {
+    ) -> Result<T, WriteRejection> {
         let guard = self
             .pending_writes
             .try_begin(registration.label, registration.kind)?;
@@ -117,12 +117,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case(WriteRefusal::ReadOnlySession)]
-    #[case(WriteRefusal::ShuttingDown)]
-    fn a_rejected_write_never_reaches_the_archive(#[case] refusal: WriteRefusal) {
-        let pending_writes = match refusal {
-            WriteRefusal::ReadOnlySession => PendingWrites::new(WriteAccess::ReadOnly),
-            WriteRefusal::ShuttingDown => {
+    #[case(WriteRejection::ReadOnlySession)]
+    #[case(WriteRejection::ShuttingDown)]
+    fn a_rejected_write_never_reaches_the_archive(#[case] rejection: WriteRejection) {
+        let pending_writes = match rejection {
+            WriteRejection::ReadOnlySession => PendingWrites::new(WriteAccess::ReadOnly),
+            WriteRejection::ShuttingDown => {
                 let owner = PendingWrites::new(WriteAccess::Owner);
                 owner.begin_shutdown();
                 owner
@@ -135,7 +135,7 @@ mod tests {
             reached.store(true, Ordering::Relaxed);
         });
 
-        assert_eq!(outcome, Err(refusal));
+        assert_eq!(outcome, Err(rejection));
         assert!(!reached.load(Ordering::Relaxed));
     }
 }

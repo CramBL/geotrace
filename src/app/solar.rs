@@ -688,7 +688,7 @@ fn ingest(
             EnvironmentArchive::GeomagneticIndices.day_insert_registration(day),
             |store| archive_fetched_indices(store, base_url, day, &fetched),
         )
-        .unwrap_or_else(|refusal| UnarchivedDay::refused(day, refusal).into())
+        .unwrap_or_else(|rejection| UnarchivedDay::rejected(day, rejection).into())
 }
 
 /// Insert every index `fetched` holds, which [`ingest`] runs as one
@@ -731,7 +731,7 @@ mod tests {
     use tempfile::TempDir;
 
     use gt_fetch::HttpResponse;
-    use gt_pending_writes::{WriteAccess, WriteRefusal};
+    use gt_pending_writes::{WriteAccess, WriteRejection};
     use gt_solar::DEFAULT_BASE_URL;
     use gt_solar::activity::GeomagneticStormClass;
     use gt_solar::series::{Hp30Sample, KpSample, KpStatus};
@@ -1253,7 +1253,7 @@ mod tests {
     #[rstest]
     #[case::stored(IndexDayMessage::Stored { day: day(2026, 7, 20), kp_samples: 8, hp30_samples: 48 })]
     #[case::failed(UnarchivedDay::failed(day(2026, 7, 20), "boom".to_owned()).into())]
-    #[case::refused(UnarchivedDay::refused(day(2026, 7, 20), WriteRefusal::ShuttingDown).into())]
+    #[case::rejected(UnarchivedDay::rejected(day(2026, 7, 20), WriteRejection::ShuttingDown).into())]
     fn progress_advances_on_every_outcome(#[case] message: IndexDayMessage) {
         let mut scheduler = scheduler_without_archive();
         scheduler
@@ -1442,17 +1442,17 @@ mod tests {
     }
 
     /// One guard covers both index inserts, so a day downloaded where the
-    /// insert is rejected archives neither, and says which refusal discarded
+    /// insert is rejected archives neither, and says which rejection discarded
     /// it.
     #[rstest]
-    #[case::shutting_down(pending_writes::shutting_down_registry(), WriteRefusal::ShuttingDown)]
+    #[case::shutting_down(pending_writes::shutting_down_registry(), WriteRejection::ShuttingDown)]
     #[case::read_only_session(
         PendingWrites::new(WriteAccess::ReadOnly),
-        WriteRefusal::ReadOnlySession
+        WriteRejection::ReadOnlySession
     )]
     fn a_day_downloaded_where_the_insert_is_rejected_archives_no_index(
         #[case] pending_writes: PendingWrites,
-        #[case] expected: WriteRefusal,
+        #[case] expected: WriteRejection,
     ) {
         let (_dir, store) = archive();
         let ingested = day(2026, 7, 20);
@@ -1467,10 +1467,10 @@ mod tests {
             ingested,
         );
 
-        let IndexDayMessage::Unarchived(UnarchivedDay::Refused { refusal, .. }) = message else {
+        let IndexDayMessage::Unarchived(UnarchivedDay::Rejected { rejection, .. }) = message else {
             panic!("the day was archived where the insert is rejected");
         };
-        assert_eq!(refusal, expected);
+        assert_eq!(rejection, expected);
         for index in [GeomagneticIndex::Kp, GeomagneticIndex::Hp30] {
             assert!(
                 store.read().archived_days(index).expect("days").is_empty(),

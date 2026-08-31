@@ -95,7 +95,7 @@ impl MapScenario {
                 session.finish_run(prepared.execute());
                 Some(RunAttempt::Completed)
             }
-            None => Some(RunAttempt::Refused),
+            None => Some(RunAttempt::Rejected),
         };
         // A new run relists the results, so the row the pointer was on is gone.
         self.highlight.hover_match = None;

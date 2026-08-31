@@ -7,16 +7,16 @@ use gt_query_run::{QueryChunk, RunResults};
 pub enum RunAttempt {
     /// The run evaluated and its results are current.
     Completed,
-    /// The session refused to start it: a failing or empty editor, or a channel
-    /// source mixed with other queries.
-    Refused,
+    /// The session rejected it: a failing or empty editor, or a channel source
+    /// mixed with other queries.
+    Rejected,
 }
 
 impl fmt::Display for RunAttempt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Completed => f.write_str("completed"),
-            Self::Refused => f.write_str("refused"),
+            Self::Rejected => f.write_str("rejected"),
         }
     }
 }

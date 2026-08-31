@@ -111,14 +111,14 @@ fn a_marker_at_the_label_capacity_round_trips() {
     format!("{}é", "l".repeat(MarkerLabelField::CONTENT_CAPACITY - 1))
 )]
 fn a_label_past_the_field_capacity_is_rejected(#[case] label: String) {
-    let refusal = Annotation::builder()
+    let error_message = Annotation::builder()
         .time(t(0))
         .label(label.clone())
         .build()
         .expect_err("a label past the field capacity is rejected")
         .to_string();
     assert_eq!(
-        refusal,
+        error_message,
         format!("markers/label: {label:?} is 256 bytes, past the 255 bytes the field holds")
     );
 }
@@ -129,14 +129,14 @@ fn a_note_one_byte_past_the_annotation_capacity_stops_the_write() {
     let mut recorder = recorder_with_one_fix();
     recorder.add_event_with_note(&PowerEvent::Boot, t(0), note.clone());
 
-    let refusal = recorder
+    let error_message = recorder
         .finish()
         .expect("the recording builds")
         .write(Vec::new())
         .expect_err("a note past the field capacity stops the write")
         .to_string();
     assert_eq!(
-        refusal,
+        error_message,
         format!(
             "event_markers/annotation: {note:?} is 512 bytes, past the 511 bytes the field holds"
         )
@@ -153,14 +153,14 @@ fn a_style_variant_path_one_byte_past_the_capacity_stops_the_write() {
         color: EventMarkerColor::Auto,
     });
 
-    let refusal = recorder
+    let error_message = recorder
         .finish()
         .expect("the recording builds")
         .write(Vec::new())
         .expect_err("a variant path past the field capacity stops the write")
         .to_string();
     assert_eq!(
-        refusal,
+        error_message,
         format!(
             "event_marker_styles/variant_path: {variant_path:?} is 256 bytes, past the 255 bytes the field holds"
         )
@@ -176,14 +176,14 @@ fn a_style_color_one_byte_past_the_capacity_stops_the_write() {
         color: EventMarkerColor::hex("#FFAA001"),
     });
 
-    let refusal = recorder
+    let error_message = recorder
         .finish()
         .expect("the recording builds")
         .write(Vec::new())
         .expect_err("a color past the field capacity stops the write")
         .to_string();
     assert_eq!(
-        refusal,
+        error_message,
         "event_marker_styles/color_hex: \"#FFAA001\" is 8 bytes, past the 7 bytes the field holds"
     );
 }
@@ -430,11 +430,11 @@ fn a_field_row_that_is_not_utf8_stops_the_read(
     make_row_invalid(&mut rows);
     let bytes = gtd_bytes_with_field_rows(rows);
 
-    let refusal = NavFile::read(bytes.as_slice())
+    let error_message = NavFile::read(bytes.as_slice())
         .expect_err("a field row that is not UTF-8 stops the read")
         .to_string();
     assert_eq!(
-        refusal,
+        error_message,
         format!(
             "{expected_field}: the field row is not UTF-8: invalid utf-8 sequence of 1 bytes from index 0"
         )

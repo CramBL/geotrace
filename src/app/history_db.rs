@@ -11,7 +11,7 @@
 //! A [`WriteRequest`] runs on [`RecordingsHandle::writer`] and under a
 //! [`PendingWrites`] guard, so the process waits for it on the way out. A
 //! read-only session has no writer, and a rejected write is answered with
-//! [`Response::WriteRefused`] holding the [`WriteRefusal`].
+//! [`Response::WriteRejected`] holding the [`WriteRejection`].
 
 use std::collections::HashSet;
 use std::ops::Range;
@@ -22,7 +22,7 @@ use std::thread::JoinHandle;
 
 use egui::Context;
 use gt_log_view::LogAttachmentRef;
-use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteKind, WriteRefusal};
+use gt_pending_writes::{PendingWriteGuard, PendingWrites, WriteKind, WriteRejection};
 use gt_store::{
     AttachedLog, DatabaseRef, DbError, HistoryDatabase, LogAttachmentError, LogAttachmentId,
     LogAttachments as _, LogContentHash, LogToAttach, PruneMode, ReadOnlyHistoryDatabase,
@@ -225,11 +225,11 @@ pub enum Response {
         recording: DatabaseRef,
         existing: Result<Option<String>, DbError>,
     },
-    /// The registry turned a write away, and the worker answered without
+    /// The registry rejected the write, and the worker answered without
     /// touching the database.
-    WriteRefused {
+    WriteRejected {
         label: &'static str,
-        refusal: WriteRefusal,
+        rejection: WriteRejection,
     },
 }
 
@@ -506,7 +506,7 @@ fn worker_loop(
 /// [`PendingWriteGuard`].
 ///
 /// A read-only session has no [`RecordingsHandle::writer`]: its writes are
-/// answered with [`WriteRefusal::ReadOnlySession`], which is what the write
+/// answered with [`WriteRejection::ReadOnlySession`], which is what the write
 /// registry answers them with in such a session.
 fn run_write_request(
     db: &mut RecordingsHandle,
@@ -515,14 +515,14 @@ fn run_write_request(
 ) -> Response {
     let label = req.database_write_label();
     let Some(db) = db.writer() else {
-        return Response::WriteRefused {
+        return Response::WriteRejected {
             label,
-            refusal: WriteRefusal::ReadOnlySession,
+            rejection: WriteRejection::ReadOnlySession,
         };
     };
     match pending_writes.try_begin(label, WriteKind::RecordingDatabase) {
         Ok(_write) => handle_write_request(db, req),
-        Err(refusal) => Response::WriteRefused { label, refusal },
+        Err(rejection) => Response::WriteRejected { label, rejection },
     }
 }
 
@@ -1024,14 +1024,14 @@ mod tests {
     }
 
     #[rstest]
-    #[case::shutting_down(pending_writes::shutting_down_registry(), WriteRefusal::ShuttingDown)]
+    #[case::shutting_down(pending_writes::shutting_down_registry(), WriteRejection::ShuttingDown)]
     #[case::read_only_session(
         PendingWrites::new(WriteAccess::ReadOnly),
-        WriteRefusal::ReadOnlySession
+        WriteRejection::ReadOnlySession
     )]
     fn a_rejected_mutation_is_answered_with_its_reason_and_leaves_the_database_alone(
         #[case] pending_writes: PendingWrites,
-        #[case] expected: WriteRefusal,
+        #[case] expected: WriteRejection,
     ) {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
@@ -1046,10 +1046,10 @@ mod tests {
 
         worker.set_tracks_hidden(db_ref, vec![0], true);
 
-        let Response::WriteRefused { label, refusal } = next_response(&worker) else {
+        let Response::WriteRejected { label, rejection } = next_response(&worker) else {
             panic!("expected the write to be rejected");
         };
-        assert_eq!(refusal, expected);
+        assert_eq!(rejection, expected);
         assert_eq!(label, "Hiding tracks in recording history");
         assert!(pending_writes.is_idle());
 
@@ -1080,10 +1080,10 @@ mod tests {
 
         worker.set_tracks_hidden(db_ref, vec![0], true);
 
-        let Response::WriteRefused { label, refusal } = next_response(&worker) else {
+        let Response::WriteRejected { label, rejection } = next_response(&worker) else {
             panic!("expected the write to be rejected");
         };
-        assert_eq!(refusal, WriteRefusal::ReadOnlySession);
+        assert_eq!(rejection, WriteRejection::ReadOnlySession);
         assert_eq!(label, "Hiding tracks in recording history");
         assert_eq!(
             pending_writes.snapshot().recently_finished,

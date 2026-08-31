@@ -35,14 +35,14 @@ impl WriteAccess {
     }
 }
 
-/// Why the registry turned a write away.
+/// Why the registry rejects a write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WriteRefusal {
+pub enum WriteRejection {
     ShuttingDown,
     ReadOnlySession,
 }
 
-impl fmt::Display for WriteRefusal {
+impl fmt::Display for WriteRejection {
     /// The reason clause a log line states after its colon, as in
     /// `PruneReport::skipped_line`. The UI wording for a read-only session is
     /// in the `app::read_only_session` constants.
@@ -202,21 +202,20 @@ impl PendingWrites {
         self.0.state.lock().write_access = WriteAccess::ReadOnly;
     }
 
-    /// Why a write starting now is turned away, or [`None`] while the
-    /// registry takes them.
+    /// Why a write starting now is rejected, or [`None`] while the registry
+    /// takes them.
     ///
     /// A read-only session names itself even once it is shutting down: the
     /// write was never going to run in it.
-    pub fn refusal(&self) -> Option<WriteRefusal> {
+    pub fn rejection(&self) -> Option<WriteRejection> {
         let state = self.0.state.lock();
         match state.write_access {
-            WriteAccess::ReadOnly => Some(WriteRefusal::ReadOnlySession),
-            WriteAccess::Owner => state.shutting_down.then_some(WriteRefusal::ShuttingDown),
+            WriteAccess::ReadOnly => Some(WriteRejection::ReadOnlySession),
+            WriteAccess::Owner => state.shutting_down.then_some(WriteRejection::ShuttingDown),
         }
     }
 
-    /// Register a write about to start, or report why the registry turned it
-    /// away.
+    /// Register a write about to start, or report why the registry rejects it.
     ///
     /// The flag is read and the write registered under one lock, so a write
     /// that got a guard is always one [`Self::wait_until_idle_for`] waits
@@ -225,13 +224,13 @@ impl PendingWrites {
         &self,
         label: impl Into<String>,
         kind: WriteKind,
-    ) -> Result<PendingWriteGuard, WriteRefusal> {
+    ) -> Result<PendingWriteGuard, WriteRejection> {
         let mut state = self.0.state.lock();
         if state.write_access == WriteAccess::ReadOnly {
-            return Err(WriteRefusal::ReadOnlySession);
+            return Err(WriteRejection::ReadOnlySession);
         }
         if state.shutting_down {
-            return Err(WriteRefusal::ShuttingDown);
+            return Err(WriteRejection::ShuttingDown);
         }
         Ok(self.register(&mut state, label.into(), kind))
     }
@@ -385,7 +384,7 @@ mod tests {
 
         writes.begin_shutdown();
 
-        assert_eq!(writes.refusal(), Some(WriteRefusal::ShuttingDown));
+        assert_eq!(writes.rejection(), Some(WriteRejection::ShuttingDown));
         assert!(!writes.is_idle(), "the write that started is still running");
         drop(guard);
         assert!(writes.is_idle());
@@ -398,7 +397,7 @@ mod tests {
 
         assert_eq!(
             writes.try_begin("Compacting the TEC archive", TEC).err(),
-            Some(WriteRefusal::ShuttingDown)
+            Some(WriteRejection::ShuttingDown)
         );
         assert!(writes.is_idle());
     }
@@ -428,7 +427,7 @@ mod tests {
 
         assert_eq!(
             writes.try_begin("A write of some kind", kind).err(),
-            Some(WriteRefusal::ReadOnlySession)
+            Some(WriteRejection::ReadOnlySession)
         );
         assert!(
             writes
@@ -440,19 +439,19 @@ mod tests {
     }
 
     /// The reason a read-only session gives never becomes "shutting down":
-    /// the write it turned away was never going to run.
+    /// the write it rejected was never going to run.
     #[test]
     fn a_read_only_session_that_begins_shutting_down_still_names_itself() {
         let writes = PendingWrites::new(WriteAccess::ReadOnly);
 
         writes.begin_shutdown();
 
-        assert_eq!(writes.refusal(), Some(WriteRefusal::ReadOnlySession));
+        assert_eq!(writes.rejection(), Some(WriteRejection::ReadOnlySession));
         assert_eq!(
             writes
                 .try_begin("Saving settings", WriteKind::Settings)
                 .err(),
-            Some(WriteRefusal::ReadOnlySession)
+            Some(WriteRejection::ReadOnlySession)
         );
     }
 
@@ -465,12 +464,12 @@ mod tests {
         writes.become_read_only_for_the_rest_of_the_run();
 
         assert_eq!(writes.write_access(), WriteAccess::ReadOnly);
-        assert_eq!(writes.refusal(), Some(WriteRefusal::ReadOnlySession));
+        assert_eq!(writes.rejection(), Some(WriteRejection::ReadOnlySession));
         assert_eq!(
             writes
                 .try_begin("Storing a recording", WriteKind::RecordingDatabase)
                 .err(),
-            Some(WriteRefusal::ReadOnlySession)
+            Some(WriteRejection::ReadOnlySession)
         );
         assert!(
             !writes.is_idle(),
@@ -484,7 +483,7 @@ mod tests {
     fn a_session_that_owns_the_data_directory_takes_writes() {
         let writes = PendingWrites::new(WriteAccess::Owner);
 
-        assert_eq!(writes.refusal(), None);
+        assert_eq!(writes.rejection(), None);
         assert_eq!(
             writes
                 .try_begin("Saving settings", WriteKind::Settings)
@@ -494,13 +493,13 @@ mod tests {
     }
 
     #[rstest]
-    #[case(WriteRefusal::ShuttingDown, "shutting down")]
-    #[case(WriteRefusal::ReadOnlySession, "this session is read-only")]
-    fn each_refusal_reads_as_a_reason_clause(
-        #[case] refusal: WriteRefusal,
+    #[case(WriteRejection::ShuttingDown, "shutting down")]
+    #[case(WriteRejection::ReadOnlySession, "this session is read-only")]
+    fn each_rejection_reads_as_a_reason_clause(
+        #[case] rejection: WriteRejection,
         #[case] expected: &str,
     ) {
-        assert_eq!(refusal.to_string(), expected);
+        assert_eq!(rejection.to_string(), expected);
     }
 
     #[test]
