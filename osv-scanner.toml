@@ -7,3 +7,16 @@ ignoreUntil = "2026-10-01T00:00:00Z"
 id = "RUSTSEC-2026-0186"
 reason = "Pending update for memmap2 (v0.5.10, v0.9.10)"
 ignoreUntil = "2026-10-01T00:00:00Z"
+
+# Two pyo3 0.28.3 advisories, both fixed in 0.29.0: taking that release means
+# migrating geotrace-py to the 0.29 API. Neither reaches these bindings, which
+# call no PyList/PyTuple iterator and create no PyCFunction closure.
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0176"
+reason = "Out-of-bounds read in PyList/PyTuple iterator nth: geotrace-py iterates no Python sequence directly"
+ignoreUntil = "2026-10-01T00:00:00Z"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0177"
+reason = "Missing Sync bound on PyCFunction::new_closure: geotrace-py creates no closure callable"
+ignoreUntil = "2026-10-01T00:00:00Z"
