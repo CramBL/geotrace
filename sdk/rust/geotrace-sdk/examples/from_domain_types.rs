@@ -4,8 +4,9 @@
 //! a hardware driver, a third-party library, or your own domain model.
 //! Rather than reconstructing each field through SDK builders at every call site,
 //! implement `From` for each SDK type once.
-//! After that, [`NavRecorder::add_nav_fix`], [`NavRecorder::add_satellite_report`],
-//! and [`NavRecorder::add_annotation`] all accept your types directly.
+//! After that, [`NavRecorder::add_nav_fix`] and [`NavRecorder::add_satellite_report`]
+//! accept your types directly. [`Annotation`] takes `TryFrom` instead: a label
+//! past the capacity of `markers/label` is refused.
 
 // Examples favour brevity: the core's robustness restriction lints (no
 // unwrap/expect/panic/indexing, no std::env::temp_dir) are not enforced on
@@ -108,8 +109,10 @@ impl From<SatReport> for SatelliteReport {
     }
 }
 
-impl From<LogEntry> for Annotation {
-    fn from(e: LogEntry) -> Self {
+impl TryFrom<LogEntry> for Annotation {
+    type Error = geotrace_sdk::Error;
+
+    fn try_from(e: LogEntry) -> Result<Self, Self::Error> {
         Annotation::builder()
             .time(Timestamp::from_unix_millis(e.unix_ms))
             .label(e.text)
@@ -258,7 +261,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut recorder = NavFileBuilder::new().open();
 
     // The typed add_* methods accept `impl Into<…>`, so the domain types feed in
-    // directly via their From impls, no manual conversion at the call site.
+    // directly via their From impls. An annotation converts through TryFrom,
+    // which refuses a label past the capacity of `markers/label`.
     for fix in fixes {
         recorder.add_nav_fix(fix);
     }
@@ -266,7 +270,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         recorder.add_satellite_report(report);
     }
     for entry in log_entries {
-        recorder.add_annotation(entry);
+        recorder.add_annotation(Annotation::try_from(entry)?);
     }
 
     let nav_file = recorder.finish()?;

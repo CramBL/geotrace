@@ -78,7 +78,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .time(t("2024-06-01T08:00:00Z"))
             .label("Start point")
             .icon(MarkerIcon::Pin)
-            .build(),
+            .build()?,
     );
 
     let nav_file = recorder.finish()?;

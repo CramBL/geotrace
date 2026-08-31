@@ -1060,6 +1060,10 @@ class FileBuilder {
         return *this;
     }
 
+    /**
+     * Add a legacy map-pin annotation.
+     * @throws FieldTooLongError if `label` is longer than 255 bytes.
+     */
     FileBuilder &add_annotation(const Annotation &ann) {
         const char *label = ann.label.empty() ? nullptr : ann.label.c_str();
         record(::gtd_builder_add_annotation(impl_.get(), detail::to_c(ann.time), label,

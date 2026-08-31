@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .time(time)
                 .label(label)
                 .icon(icon)
-                .build(),
+                .build()?,
         );
     }
 

@@ -165,14 +165,16 @@ fn build_snapshot_bytes() -> Vec<u8> {
             .time(offset(base, 75))
             .icon(SdkIcon::Pin)
             .maybe_label(Some("Bike lock spot".to_owned()))
-            .build(),
+            .build()
+            .expect("the marker label fits its field"),
     );
     recorder.add_annotation(
         Annotation::builder()
             .time(offset(base, 225))
             .icon(SdkIcon::Circle)
             .maybe_label(Some("Coffee stop".to_owned()))
-            .build(),
+            .build()
+            .expect("the marker label fits its field"),
     );
 
     // Track 1: 8 points, starts 7 min after Track 0 ends (t+330 → t+750)
@@ -218,7 +220,8 @@ fn build_snapshot_bytes() -> Vec<u8> {
             .time(offset(base, 780))
             .icon(SdkIcon::Check)
             .maybe_label(Some("Checkpoint".to_owned()))
-            .build(),
+            .build()
+            .expect("the marker label fits its field"),
     );
 
     let nav_file = recorder

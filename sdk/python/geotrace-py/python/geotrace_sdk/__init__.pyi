@@ -343,6 +343,10 @@ class Annotation:
         time: Timezone-aware timestamp.
         label: Display label, or ``None`` to render as unlabelled.
         icon: Visual icon, or ``None`` to default to :attr:`MarkerIcon.PIN`.
+
+    Raises:
+        ValueError: If ``label`` is longer than the 255 bytes the
+            ``markers/label`` field holds.
     """
 
     def __init__(

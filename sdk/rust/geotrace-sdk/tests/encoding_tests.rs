@@ -257,7 +257,7 @@ fn marker_icon_encoding() -> Result<(), Box<dyn std::error::Error>> {
                 .heading(Angle::degrees(0.0))
                 .build(),
         );
-        recorder.add_annotation(Annotation::builder().time(t(500)).icon(icon).build());
+        recorder.add_annotation(Annotation::builder().time(t(500)).icon(icon).build()?);
         let nav_file = recorder.finish()?;
         let bytes = to_bytes(&nav_file);
 
@@ -271,7 +271,7 @@ fn marker_icon_encoding() -> Result<(), Box<dyn std::error::Error>> {
         let mut bytes2 = Vec::new();
         nav_file.write(&mut bytes2)?;
         let rt = NavFile::read(bytes2.as_slice())?;
-        assert_eq!(rt.markers()[0].annotation.icon, Some(icon));
+        assert_eq!(rt.markers()[0].annotation.icon(), Some(icon));
     }
     Ok(())
 }
@@ -279,10 +279,7 @@ fn marker_icon_encoding() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn label_ascii() -> Result<(), Box<dyn std::error::Error>> {
     let rt = nav_file_with_label(Some("Hello, world!".into()))?;
-    assert_eq!(
-        rt.markers()[0].annotation.label.as_deref(),
-        Some("Hello, world!")
-    );
+    assert_eq!(rt.markers()[0].annotation.label(), Some("Hello, world!"));
     Ok(())
 }
 
@@ -290,7 +287,7 @@ fn label_ascii() -> Result<(), Box<dyn std::error::Error>> {
 fn label_multibyte_utf8() -> Result<(), Box<dyn std::error::Error>> {
     let label = "日本語テスト 🌍";
     let rt = nav_file_with_label(Some(label.into()))?;
-    assert_eq!(rt.markers()[0].annotation.label.as_deref(), Some(label));
+    assert_eq!(rt.markers()[0].annotation.label(), Some(label));
     Ok(())
 }
 
@@ -298,7 +295,7 @@ fn label_multibyte_utf8() -> Result<(), Box<dyn std::error::Error>> {
 fn label_none() -> Result<(), Box<dyn std::error::Error>> {
     // An all-zero label row decodes as None.
     let rt = nav_file_with_label(None)?;
-    assert_eq!(rt.markers()[0].annotation.label, None);
+    assert_eq!(rt.markers()[0].annotation.label(), None);
     Ok(())
 }
 

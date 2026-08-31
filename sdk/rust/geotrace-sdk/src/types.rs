@@ -3,8 +3,8 @@ use std::{fs::File, io, path::Path};
 use chrono::{DateTime, Utc};
 use geotrace_sdk_units::{ChannelUnit, PhysicalQuantity};
 
-use crate::error::{ChannelError, Error, EventMarkerError};
-use crate::fixed_width_string::AnnotationField;
+use crate::error::{ChannelError, Error, EventMarkerError, MARKER_LABEL_LOCATION};
+use crate::fixed_width_string::{AnnotationField, MarkerLabelField};
 use crate::{Angle, Velocity};
 
 /// A single GPS/GNSS fix: position, heading, and optional speed at a point in time.
@@ -198,31 +198,51 @@ impl Constellation {
 }
 
 /// A user-defined map annotation with an optional label and icon.
+///
+/// `Annotation::builder().build()` is the only way in, and it refuses a label
+/// past the capacity of `markers/label`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Annotation {
-    /// Display label. `None` or empty string renders as unlabelled.
-    pub label: Option<String>,
-    /// Visual icon. `None` defaults to `MarkerIcon::Pin` when loaded.
-    pub icon: Option<MarkerIcon>,
-    pub time: DateTime<Utc>,
+    pub(crate) label: Option<String>,
+    pub(crate) icon: Option<MarkerIcon>,
+    pub(crate) time: DateTime<Utc>,
 }
 
 #[bon::bon]
 impl Annotation {
-    /// Build a new [`Annotation`].
+    /// Build a validated [`Annotation`].
     ///
-    /// Empty or whitespace-only labels are automatically converted to `None`.
+    /// An empty or whitespace-only `label` becomes `None`. Returns `Err` if
+    /// `label` does not fit a [`MarkerLabelField`](crate::MarkerLabelField).
     #[builder(finish_fn = build)]
     pub fn new(
         #[builder(into)] time: DateTime<Utc>,
         #[builder(into)] label: Option<String>,
         icon: Option<MarkerIcon>,
-    ) -> Self {
-        Self {
-            time,
-            label: label.filter(|s| !s.trim().is_empty()),
-            icon,
+    ) -> Result<Self, Error> {
+        let label = label.filter(|s| !s.trim().is_empty());
+        if let Some(label) = label.as_deref() {
+            MarkerLabelField::new(label)
+                .map_err(|source| Error::unwritable_field(MARKER_LABEL_LOCATION, source))?;
         }
+        Ok(Self { time, label, icon })
+    }
+}
+
+impl Annotation {
+    /// `None` for an annotation the map renders unlabelled.
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
+    }
+
+    /// `None` where the application picks the icon, which defaults to
+    /// [`MarkerIcon::Pin`].
+    pub fn icon(&self) -> Option<MarkerIcon> {
+        self.icon
+    }
+
+    pub fn time(&self) -> DateTime<Utc> {
+        self.time
     }
 }
 

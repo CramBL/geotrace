@@ -78,7 +78,7 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
             .time(tmid)
             .label("halfway")
             .icon(MarkerIcon::Warning)
-            .build(),
+            .build()?,
     );
 
     let nav_file = recorder.finish()?;
@@ -117,9 +117,9 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
 
     assert_eq!(rt.markers().len(), 1);
     let m = &rt.markers()[0];
-    assert_eq!(m.annotation.time, tmid);
-    assert_eq!(m.annotation.label.as_deref(), Some("halfway"));
-    assert_eq!(m.annotation.icon, Some(MarkerIcon::Warning));
+    assert_eq!(m.annotation.time(), tmid);
+    assert_eq!(m.annotation.label(), Some("halfway"));
+    assert_eq!(m.annotation.icon(), Some(MarkerIcon::Warning));
     assert!((m.lat.as_degrees() - (51.5 + 51.6) / 2.0).abs() < 1e-10);
     assert!((m.lon.as_degrees() - (-0.1 + -0.2) / 2.0).abs() < 1e-10);
 

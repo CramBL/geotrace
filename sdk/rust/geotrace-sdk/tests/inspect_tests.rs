@@ -78,7 +78,7 @@ fn snapshot_inspect_populated_file() -> Result<(), Box<dyn std::error::Error>> {
             .time(tmid)
             .label("midpoint")
             .icon(MarkerIcon::Warning)
-            .build(),
+            .build()?,
     );
 
     recorder.add_channel(
