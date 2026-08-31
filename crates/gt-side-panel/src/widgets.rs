@@ -4,7 +4,7 @@ use egui_phosphor::regular::CARET_RIGHT as ICON_CARET_RIGHT;
 use egui_phosphor::regular::CHECK_SQUARE as ICON_CHECK_SQUARE;
 use egui_phosphor::regular::MINUS_SQUARE as ICON_MINUS_SQUARE;
 use egui_phosphor::regular::SQUARE as ICON_SQUARE;
-use gt_types::{FileMetadata, FixStats, LoadedTrack, TrackMetadata, TravelMode};
+use gt_types::{FileMetadata, FixStats, TrackMetadata, TravelMode};
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, MapScope};
 
 use crate::tree::CheckState;
@@ -115,19 +115,6 @@ pub fn recording_time_detail_rows(ui: &mut egui::Ui, metadata: &FileMetadata) {
         });
 }
 
-/// A track drawn nowhere shows an em dash for the distance.
-pub fn track_row_label(track: &LoadedTrack) -> String {
-    let distance = track.geometry.measured().map_or_else(
-        || gt_ui_theme::EM_DASH.to_owned(),
-        |geometry| gt_fmt::format_distance(geometry.distance_km),
-    );
-    format!(
-        "#{}  {distance}  {}",
-        track.metadata.index,
-        gt_fmt::format_human_terse_duration(track.metadata.duration)
-    )
-}
-
 /// The hover text of a recording row, in the tree and in the Visible section.
 pub fn recording_tooltip_rows(ui: &mut egui::Ui, metadata: &FileMetadata) {
     ui.label(metadata.filename.as_str());
@@ -171,6 +158,21 @@ pub fn expand_arrow(expanded: bool) -> &'static str {
     } else {
         ICON_CARET_RIGHT
     }
+}
+
+pub fn text_width(ui: &egui::Ui, text: &str, font: &egui::FontId) -> f32 {
+    ui.painter()
+        .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::PLACEHOLDER)
+        .size()
+        .x
+}
+
+/// What follows the arrow starts at the same place whether the row is
+/// expanded or not: this is the width that fits either [`expand_arrow`]
+/// caret.
+pub fn expand_arrow_width(ui: &egui::Ui) -> f32 {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    text_width(ui, ICON_CARET_DOWN, &font).max(text_width(ui, ICON_CARET_RIGHT, &font))
 }
 
 /// How much larger than the interact height a [`tri_checkbox`] is drawn.
