@@ -1315,14 +1315,40 @@ fn track_values<'a>(
 
 #[cfg(test)]
 mod tests {
+    use gt_types::{Latitude, Longitude, ResolvedPosition};
+
     use super::*;
 
     #[test]
-    fn a_point_row_states_its_index_and_position() {
+    fn a_point_row_states_its_index_and_measured_position() {
         assert_eq!(
-            point_hover_text(150, Some((55.676_23, 12.568_9))),
+            point_hover_text(
+                150,
+                Some(ResolvedPosition::measured(
+                    Latitude::new(55.676_23),
+                    Longitude::new(12.568_9)
+                ))
+            ),
             "#150\n55.67623, 12.56890"
         );
+    }
+
+    #[test]
+    fn a_point_row_whose_fix_the_track_builder_placed_captions_the_position_as_drawn() {
+        assert_eq!(
+            point_hover_text(
+                150,
+                Some(ResolvedPosition::interpolated(
+                    Latitude::new(55.676_23),
+                    Longitude::new(12.568_9)
+                ))
+            ),
+            "#150\nDrawn at 55.67623, 12.56890\nInterpolated between the fixes around it"
+        );
+    }
+
+    #[test]
+    fn a_point_row_of_a_track_without_geometry_states_only_its_index() {
         assert_eq!(point_hover_text(150, None), "#150");
     }
 }
