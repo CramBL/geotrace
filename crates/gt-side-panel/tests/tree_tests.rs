@@ -1,5 +1,6 @@
 use gt_side_panel::tree::{CheckState, NodeKey, TreeState};
 use gt_types::{DataCategory, DataCategorySet, FileIdx, TrackIdx, TrackRef};
+use rstest::rstest;
 
 fn make_tree(file_count: usize, tracks_per_file: usize) -> TreeState {
     let mut tree = TreeState::new();
@@ -318,4 +319,74 @@ fn event_marker_visibility_synced_after_path_toggle() {
         TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
         "power/sleep"
     ));
+}
+
+#[test]
+fn the_visible_tracks_skip_the_hidden_tracks_and_the_recordings_without_one() {
+    let mut tree = make_tree(3, 2);
+    tree.toggle_track_check(TrackRef::new(FileIdx::new(0), TrackIdx::new(1)));
+    tree.toggle_file_check(FileIdx::new(1));
+
+    let visible: Vec<(FileIdx, Vec<TrackRef>)> = tree
+        .visible_tracks_by_file()
+        .into_iter()
+        .map(|group| (group.file, group.tracks))
+        .collect();
+
+    assert_eq!(
+        visible,
+        vec![
+            (
+                FileIdx::new(0),
+                vec![TrackRef::new(FileIdx::new(0), TrackIdx::new(0))]
+            ),
+            (
+                FileIdx::new(2),
+                vec![
+                    TrackRef::new(FileIdx::new(2), TrackIdx::new(0)),
+                    TrackRef::new(FileIdx::new(2), TrackIdx::new(1)),
+                ]
+            ),
+        ]
+    );
+}
+
+#[test]
+fn hide_file_hides_every_track_of_a_partly_hidden_recording() {
+    let mut tree = make_tree(1, 2);
+    tree.toggle_track_check(TrackRef::new(FileIdx::new(0), TrackIdx::new(1)));
+    assert_eq!(file_check(&tree, 0), CheckState::Mixed);
+
+    tree.hide_file(FileIdx::new(0));
+
+    assert_eq!(file_check(&tree, 0), CheckState::Off);
+    assert_eq!(track_check(&tree, 0, 0), CheckState::Off);
+    assert!(tree.visible_tracks_by_file().is_empty());
+}
+
+#[test]
+fn hide_track_hides_one_track_and_leaves_its_recording_mixed() {
+    let mut tree = make_tree(1, 2);
+
+    tree.hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(0)));
+
+    assert_eq!(track_check(&tree, 0, 0), CheckState::Off);
+    assert_eq!(track_check(&tree, 0, 1), CheckState::On);
+    assert_eq!(file_check(&tree, 0), CheckState::Mixed);
+}
+
+/// A hand-edited settings file cannot put the Visible section's divider
+/// outside the region it divides with the tree.
+#[rstest]
+#[case::above_the_region(1.5)]
+#[case::negative(-0.2)]
+#[case::not_a_number(f32::NAN)]
+fn a_share_outside_the_region_leaves_the_visible_section_where_it_is(#[case] share: f32) {
+    let mut tree = make_tree(1, 1);
+    tree.set_visible_section_fraction(0.5);
+
+    tree.set_visible_section_fraction(share);
+
+    let kept = tree.visible_section_fraction();
+    assert!((kept - 0.5).abs() < f32::EPSILON, "the share became {kept}");
 }

@@ -23,7 +23,7 @@ use std::{
     time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
+use egui_kittest::{Harness, Node, kittest::NodeT as _, kittest::Queryable as _};
 use geotrace_sdk::{Channel, ChannelUnit, DateTime, Duration, Unit, Utc};
 use gt_instance_lock::{
     DataDirectoryLock, DataDirectoryOwnership, InstanceState, InstanceStatus, InstanceStatusRead,
@@ -208,6 +208,13 @@ fn pin_settings_dates(app: &mut App) {
     app.solar_flare_backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(today);
     app.environment_storage_ui =
         crate::app::environment_storage_ui::EnvironmentStorageUi::with_today(today);
+}
+
+/// The second node labelled `label`, in render order. The side panel renders
+/// first and its Visible section names every recording drawn on the map: the
+/// first node is the panel's, the second the surface under test.
+fn node_outside_the_side_panel<'h>(harness: &'h Harness<'_, App>, label: &'h str) -> Node<'h> {
+    harness.nth_matching(By::new().label(label), 1)
 }
 
 /// App constructor for the functional (non-snapshot) tests that don't touch a
@@ -1885,7 +1892,7 @@ fn plot_legend_follows_the_recording_name_template() {
         "Rec: overlap_b.gtd",
         "Rec: overlap_c.gtd",
     ] {
-        harness.get_by_label(name);
+        node_outside_the_side_panel(&harness, name);
     }
     assert!(
         harness.query_by_label("overlap_a.gtd").is_none(),
@@ -2866,6 +2873,32 @@ fn channel_component_colors_persist_across_settings_roundtrip() {
         .expect("override survives the roundtrip");
     assert_eq!(colors.first(), Some(&None), "unset slots stay unset");
     assert_eq!(colors.get(1), Some(&Some(magenta)));
+}
+
+/// The side panel's Visible section opens at the share the settings file
+/// holds, and the app writes the rendered share back out.
+#[test]
+fn the_visible_section_opens_at_the_share_the_settings_file_holds() {
+    let config_dir = tempfile::tempdir().expect("temp config dir");
+    let config_path = config_dir.path().join("config.toml");
+    std::fs::write(&config_path, "[ui]\nvisible_section_fraction = 0.5\n")
+        .expect("write the settings file");
+
+    let built_from = config_path.clone();
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(move |cc| build_app(cc, &built_from, false));
+    harness.step();
+
+    let share = harness
+        .state()
+        .collect_settings_for_flush()
+        .ui
+        .visible_section_fraction;
+    assert!(
+        (share - 0.5).abs() < 0.02,
+        "the section opened at {share} of the region"
+    );
 }
 
 /// The display mask persists through the actual settings wire format:
@@ -4184,7 +4217,7 @@ fn name_template_guide_previews_the_loaded_recording() {
     harness.run_steps(3);
 
     harness.get_by_label("title - device");
-    harness.get_by_label("Morning ride - u-blox F9P");
+    node_outside_the_side_panel(&harness, "Morning ride - u-blox F9P");
 }
 
 /// With nothing loaded, the preview falls back to the most recent recording in
@@ -4241,7 +4274,7 @@ fn name_template_guide_previews_follow_the_typed_template() {
         "{title} - {device} ({identity})"
     );
     harness.get_by_label("title - device (identity)");
-    harness.get_by_label("Morning ride - u-blox F9P (ride.gtd)");
+    node_outside_the_side_panel(&harness, "Morning ride - u-blox F9P (ride.gtd)");
 }
 
 /// With no recording loaded and none in history, the preview line explains why

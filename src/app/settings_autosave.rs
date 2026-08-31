@@ -63,6 +63,7 @@ pub(super) struct AppSnapshot {
     pub tec_heatmap_opacity_percent: StableF32,
     pub theme: crate::settings::ThemeSetting,
     pub recording_name_template: String,
+    pub visible_section_fraction: StableF32,
     pub track_split_gap_seconds: u64,
     pub log_association_window_s: u64,
     pub ask_log_association_target: bool,
@@ -131,6 +132,9 @@ impl Default for AppSnapshot {
             tec_heatmap_opacity_percent: StableF32::from(gt_ui_theme::TEC_OPACITY_PERCENT_DEFAULT),
             theme: crate::settings::ThemeSetting::System,
             recording_name_template: crate::settings::DEFAULT_RECORDING_NAME_TEMPLATE.to_owned(),
+            visible_section_fraction: StableF32::from(
+                gt_side_panel::VISIBLE_SECTION_DEFAULT_FRACTION,
+            ),
             track_split_gap_seconds: 300,
             log_association_window_s: 60,
             ask_log_association_target: processing.ask_log_association_target,

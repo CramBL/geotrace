@@ -4,7 +4,7 @@ use egui_phosphor::regular::CARET_RIGHT as ICON_CARET_RIGHT;
 use egui_phosphor::regular::CHECK_SQUARE as ICON_CHECK_SQUARE;
 use egui_phosphor::regular::MINUS_SQUARE as ICON_MINUS_SQUARE;
 use egui_phosphor::regular::SQUARE as ICON_SQUARE;
-use gt_types::{FileMetadata, FixStats, TravelMode};
+use gt_types::{FileMetadata, FixStats, LoadedTrack, TrackMetadata, TravelMode};
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, MapScope};
 
 use crate::tree::CheckState;
@@ -115,6 +115,55 @@ pub fn recording_time_detail_rows(ui: &mut egui::Ui, metadata: &FileMetadata) {
         });
 }
 
+/// A track drawn nowhere shows an em dash for the distance.
+pub fn track_row_label(track: &LoadedTrack) -> String {
+    let distance = track.geometry.measured().map_or_else(
+        || gt_ui_theme::EM_DASH.to_owned(),
+        |geometry| gt_fmt::format_distance(geometry.distance_km),
+    );
+    format!(
+        "#{}  {distance}  {}",
+        track.metadata.index,
+        gt_fmt::format_human_terse_duration(track.metadata.duration)
+    )
+}
+
+/// The hover text of a recording row, in the tree and in the Visible section.
+pub fn recording_tooltip_rows(ui: &mut egui::Ui, metadata: &FileMetadata) {
+    ui.label(metadata.filename.as_str());
+    ui.label(
+        RichText::new(gt_fmt::format_time_range(
+            metadata.time_range.start,
+            metadata.time_range.end,
+        ))
+        .strong(),
+    );
+    ui.label(format!(
+        "Recorded time {}",
+        gt_fmt::format_human_terse_duration(metadata.total_duration)
+    ));
+    if let Some(stats) = metadata.fix_stats {
+        fix_stats_tooltip_row(ui, stats);
+    }
+}
+
+/// The hover text of a track row, in the tree and in the Visible section.
+pub fn track_tooltip_rows(ui: &mut egui::Ui, metadata: &TrackMetadata) {
+    ui.label(
+        RichText::new(gt_fmt::format_time_range(
+            metadata.time_range.start,
+            metadata.time_range.end,
+        ))
+        .strong(),
+    );
+    match metadata.fix_stats {
+        Some(stats) => fix_stats_tooltip_row(ui, stats),
+        None => {
+            ui.label("No satellite data");
+        }
+    }
+}
+
 /// Caret icon for an expand/collapse toggle.
 pub fn expand_arrow(expanded: bool) -> &'static str {
     if expanded {
@@ -124,10 +173,13 @@ pub fn expand_arrow(expanded: bool) -> &'static str {
     }
 }
 
+/// How much larger than the interact height a [`tri_checkbox`] is drawn.
+pub const CHECKBOX_PADDING: f32 = 4.0;
+
 /// Width of the tri-state checkbox column, for padding a checkbox-less row so it
 /// aligns with the checkboxed sections. Single source of truth for [`tri_checkbox`].
 pub fn checkbox_width(ui: &egui::Ui) -> f32 {
-    ui.spacing().interact_size.y + 4.0
+    ui.spacing().interact_size.y + CHECKBOX_PADDING
 }
 
 /// Frameless button showing On/Off/Mixed state with Phosphor icons.

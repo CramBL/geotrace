@@ -71,6 +71,9 @@ impl App {
             shared.sky_glyph_variant = s.map.sky_glyph_variant;
             shared.point_window_folds = s.map.point_window_folds;
             shared.recording_name_template = s.ui.recording_name_template.clone();
+            shared
+                .tree
+                .set_visible_section_fraction(s.ui.visible_section_fraction);
             shared.plot_state.show_grid = s.plot.show_grid;
             shared.plot_state.line_width = s.plot.line_width.clamp(
                 *gt_plot::PLOT_LINE_WIDTH_RANGE.start(),
@@ -175,6 +178,7 @@ impl App {
             ui: crate::settings::UiSettings {
                 theme,
                 recording_name_template: s.recording_name_template.clone(),
+                visible_section_fraction: s.tree.visible_section_fraction(),
             },
             processing: crate::settings::ProcessingSettings {
                 track_split_gap_seconds: self
