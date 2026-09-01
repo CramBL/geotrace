@@ -54,6 +54,8 @@ impl GlobalFilter {
 ///
 /// A track no fix of which has a valid position measures neither a distance
 /// nor a spread, so a minimum on either has nothing to compare and keeps it.
+///
+/// A time window whose start is after its end keeps no track.
 pub fn track_passes_filter(track: &LoadedTrack, filter: &GlobalFilter) -> bool {
     let meta = &track.metadata;
     let geometry = track.geometry.measured();

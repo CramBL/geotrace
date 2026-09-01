@@ -118,12 +118,18 @@ impl TimeRange {
     /// Returns `true` when `self` overlaps the optional `[window_start, window_end]` window.
     ///
     /// An absent bound is treated as unbounded (−∞ or +∞ respectively), so a
-    /// fully absent window matches every range.
+    /// fully absent window matches every range. A window whose start is after
+    /// its end overlaps no range: it selects no instant.
     pub fn overlaps_window(
         self,
         window_start: Option<DateTime<Utc>>,
         window_end: Option<DateTime<Utc>>,
     ) -> bool {
+        if let (Some(start), Some(end)) = (window_start, window_end)
+            && start > end
+        {
+            return false;
+        }
         if let Some(start) = window_start
             && self.end < start
         {
@@ -744,6 +750,28 @@ mod time_range_tests {
             other.intersection(day),
             expected,
             "the shared span does not depend on argument order"
+        );
+    }
+
+    #[rstest]
+    #[case::unbounded(None, None, true)]
+    #[case::a_window_ending_on_the_range_start(None, Some(8), true)]
+    #[case::a_window_ending_before_the_range(None, Some(7), false)]
+    #[case::a_window_starting_on_the_range_end(Some(17), None, true)]
+    #[case::a_window_starting_after_the_range(Some(18), None, false)]
+    #[case::a_window_inside_the_range(Some(10), Some(12), true)]
+    #[case::an_inverted_window_the_range_straddles(Some(12), Some(10), false)]
+    fn overlaps_window_is_true_only_for_a_window_sharing_an_instant_with_the_range(
+        #[case] window_start: Option<u32>,
+        #[case] window_end: Option<u32>,
+        #[case] expected: bool,
+    ) {
+        let hour_of_day = |hour: u32| at(2026, 7, 20, hour);
+        let range = TimeRange::new(hour_of_day(8), hour_of_day(17));
+
+        assert_eq!(
+            range.overlaps_window(window_start.map(hour_of_day), window_end.map(hour_of_day)),
+            expected
         );
     }
 
