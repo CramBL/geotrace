@@ -1,5 +1,5 @@
 ---
-source: crates/gt-query/src/lib.rs
+source: crates/gt-query/src/tests.rs
 expression: catalog
 ---
 [
@@ -141,11 +141,15 @@ expression: catalog
     ),
     (
         "points | table",
-        "14..14: expected a metric",
+        "14..14: expected a column: a metric, or an aggregate like max(@accel.x)",
+    ),
+    (
+        "points | table 5",
+        "15..16: expected a column: a metric, or an aggregate like max(@accel.x)",
     ),
     (
         "points | table velocity, | draw",
-        "25..26: expected a metric",
+        "25..26: expected a column: a metric, or an aggregate like max(@accel.x)",
     ),
     (
         "points | where (velocity > 0 km/h",

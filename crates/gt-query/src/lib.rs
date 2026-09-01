@@ -34,7 +34,10 @@ mod unit;
 mod wrap;
 
 pub use ast::{ParamName, Query, Span};
-pub use check::{ChannelConflict, ChannelInfo, ChannelSchema, CheckedQuery, Params, Window, check};
+pub use check::{
+    AggregateColumn, ChannelConflict, ChannelInfo, ChannelSchema, CheckedQuery, Params,
+    TableColumn, Window, check,
+};
 pub use construct::{Construct, ConstructKind, catalog, metric_documentation};
 pub use dimension::Dimension;
 pub use eval::{

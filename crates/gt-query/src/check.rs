@@ -143,7 +143,7 @@ pub struct CheckedQuery {
     pub(crate) window: Option<Window>,
     pub(crate) predicates: Vec<CExpr>,
     params: Params,
-    columns: Vec<QueryMetric>,
+    columns: Vec<TableColumn>,
     referenced: Vec<QueryMetric>,
     unused_params: Vec<ParamName>,
     mode: DisplayMode,
@@ -179,8 +179,17 @@ impl CheckedQuery {
     }
 
     /// Match-table columns, `time` first.
-    pub fn columns(&self) -> &[QueryMetric] {
+    pub fn columns(&self) -> &[TableColumn] {
         &self.columns
+    }
+
+    /// The metric columns, in table order. An aggregate column is left out: it
+    /// has one value for its whole match.
+    pub fn metric_columns(&self) -> Vec<QueryMetric> {
+        self.columns
+            .iter()
+            .filter_map(TableColumn::metric)
+            .collect()
     }
 
     /// Every metric the query touches (predicates and table columns), in
@@ -199,6 +208,62 @@ impl CheckedQuery {
     /// (only matching points shown), or `hide` (matching points hidden).
     pub fn mode(&self) -> DisplayMode {
         self.mode
+    }
+}
+
+/// One column of the match table.
+#[derive(Debug, Clone)]
+pub enum TableColumn {
+    /// A metric, valued at each point of a match.
+    Metric(QueryMetric),
+    /// An aggregate, valued once over a whole match.
+    Aggregate(AggregateColumn),
+}
+
+impl TableColumn {
+    /// The metric this column reads at each point, `None` for an aggregate
+    /// column.
+    pub fn metric(&self) -> Option<QueryMetric> {
+        match self {
+            TableColumn::Metric(metric) => Some(*metric),
+            TableColumn::Aggregate(_) => None,
+        }
+    }
+
+    /// The column as the query writes it: the metric's name, or the aggregate
+    /// call.
+    pub fn label(&self) -> String {
+        match self {
+            TableColumn::Metric(metric) => metric.to_string(),
+            TableColumn::Aggregate(column) => column.label.clone(),
+        }
+    }
+}
+
+/// An aggregate `table` column: its checked call, its label, and the quantity
+/// of its values.
+#[derive(Debug, Clone)]
+pub struct AggregateColumn {
+    label: String,
+    quantity: Option<Quantity>,
+    /// The timeline of a match's rows. On the points source the aggregate
+    /// reduces the match's nav points. On a channel source it reduces the
+    /// match's channel samples.
+    pub(crate) source: CheckedSource,
+    pub(crate) expr: CExpr,
+}
+
+impl AggregateColumn {
+    /// The call as the query writes it, e.g. `max(@accel.x)`.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// The quantity its values measure, in the evaluator's base units. `None`
+    /// for a bare number. `None` too for a dimension with no quantity name:
+    /// `var(velocity)` produces a squared speed.
+    pub fn quantity(&self) -> Option<Quantity> {
+        self.quantity
     }
 }
 
@@ -668,10 +733,7 @@ pub fn check(query: &Query, schema: &ChannelSchema) -> Result<CheckedQuery, Diag
 
     let mut checker = Checker {
         windowed: window.is_some(),
-        source_channel: match &source {
-            CheckedSource::Points => None,
-            CheckedSource::Channel(name) => Some(name.as_str()),
-        },
+        source: &source,
         referenced: Vec::new(),
         schema,
     };
@@ -687,17 +749,21 @@ pub fn check(query: &Query, schema: &ChannelSchema) -> Result<CheckedQuery, Diag
         predicates.push(cexpr);
     }
 
-    if let Some(table) = &query.table {
-        for column in &table.columns {
-            checker.reject_metric_on_channel_source(column.metric, column.span)?;
-            checker.referenced.push((column.metric, column.span));
+    let listed = match &query.table {
+        Some(table) => {
+            let mut listed = Vec::with_capacity(table.columns.len());
+            for column in &table.columns {
+                listed.push(checker.table_column(column)?);
+            }
+            Some(listed)
         }
-    }
+        None => None,
+    };
     let occurrences = checker.referenced;
     require_params(&occurrences, params)?;
 
     let referenced: Vec<QueryMetric> = dedup_metrics(occurrences.iter().map(|(m, _)| *m));
-    let columns = build_columns(query, &referenced);
+    let columns = build_columns(listed, &referenced);
     let unused_params = unused_params(&query.params, &referenced);
 
     Ok(CheckedQuery {
@@ -833,14 +899,27 @@ fn dedup_metrics(metrics: impl Iterator<Item = QueryMetric>) -> Vec<QueryMetric>
     out
 }
 
-/// `time` always comes first. Explicit `table` columns win over the default of
-/// every referenced metric in first-mention order.
-fn build_columns(query: &Query, referenced: &[QueryMetric]) -> Vec<QueryMetric> {
-    let listed: Vec<QueryMetric> = match &query.table {
-        Some(table) => table.columns.iter().map(|c| c.metric).collect(),
-        None => referenced.to_vec(),
-    };
-    dedup_metrics(std::iter::once(QueryMetric::Time).chain(listed))
+/// `time` always comes first, and no column repeats. The columns of a `table`
+/// stage win over the default of every referenced metric in first-mention
+/// order.
+fn build_columns(listed: Option<Vec<TableColumn>>, referenced: &[QueryMetric]) -> Vec<TableColumn> {
+    let listed = listed.unwrap_or_else(|| {
+        referenced
+            .iter()
+            .copied()
+            .map(TableColumn::Metric)
+            .collect()
+    });
+    let mut columns: Vec<TableColumn> = Vec::with_capacity(listed.len() + 1);
+    let mut labels: Vec<String> = Vec::with_capacity(listed.len() + 1);
+    for column in std::iter::once(TableColumn::Metric(QueryMetric::Time)).chain(listed) {
+        let label = column.label();
+        if !labels.contains(&label) {
+            labels.push(label);
+            columns.push(column);
+        }
+    }
+    columns
 }
 
 fn unused_params(decls: &[ParamDecl], referenced: &[QueryMetric]) -> Vec<ParamName> {
@@ -858,16 +937,23 @@ fn unused_params(decls: &[ParamDecl], referenced: &[QueryMetric]) -> Vec<ParamNa
 
 struct Checker<'a> {
     windowed: bool,
-    /// The source channel's name on a channel source, else `None` for the
-    /// points source. On a channel source the timeline is this channel's
-    /// samples, so a reference to it is per-sample (the match granularity).
-    source_channel: Option<&'a str>,
+    source: &'a CheckedSource,
     /// First occurrence of each referenced metric, in source order.
     referenced: Vec<(QueryMetric, Span)>,
     schema: &'a ChannelSchema,
 }
 
 impl Checker<'_> {
+    /// The source channel's name on a channel source, `None` on the points
+    /// source. On a channel source the timeline is this channel's samples, so a
+    /// reference to it is per-sample (the match granularity).
+    fn source_channel(&self) -> Option<&str> {
+        match self.source {
+            CheckedSource::Points => None,
+            CheckedSource::Channel(name) => Some(name),
+        }
+    }
+
     /// Reject a nav-point metric on a channel source, wherever it appears (a
     /// `where` expression or a `table` column). Interpolating a nav metric onto
     /// the channel's sample times is a later step.
@@ -876,7 +962,7 @@ impl Checker<'_> {
         metric: QueryMetric,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        if let Some(source) = self.source_channel {
+        if let Some(source) = self.source_channel() {
             return Err(err_hint(
                 span,
                 format!("{metric} is not available on a channel source"),
@@ -884,6 +970,39 @@ impl Checker<'_> {
             ));
         }
         Ok(())
+    }
+
+    /// Check one `table` column: a metric read at each point of a match, or an
+    /// aggregate reduced over the whole match. Type checking runs before the
+    /// shape check: a bare channel reference reports the per-sample rule.
+    fn table_column(&mut self, expr: &Expr) -> Result<TableColumn, Diagnostic> {
+        if let Expr::Metric(m) = expr {
+            self.reject_metric_on_channel_source(m.metric, m.span)?;
+            self.record_first_occurrence(m.metric, m.span);
+            return Ok(TableColumn::Metric(m.metric));
+        }
+        let (value_type, cexpr) = self.expr(expr, false)?;
+        if !matches!(cexpr, CExpr::Agg { .. }) {
+            return Err(err_hint(
+                expr.span(),
+                "a table column is a metric or an aggregate",
+                "try velocity, or max(@accel.x)",
+            ));
+        }
+        Ok(TableColumn::Aggregate(AggregateColumn {
+            label: expr.to_string(),
+            quantity: named_quantity(value_type),
+            source: self.source.clone(),
+            expr: cexpr,
+        }))
+    }
+
+    /// Record a metric at its first occurrence in source order, which is where
+    /// a missing-parameter error underlines it.
+    fn record_first_occurrence(&mut self, metric: QueryMetric, span: Span) {
+        if !self.referenced.iter().any(|(seen, _)| *seen == metric) {
+            self.referenced.push((metric, span));
+        }
     }
 
     fn expr(&mut self, expr: &Expr, in_agg: bool) -> Result<(ValueType, CExpr), Diagnostic> {
@@ -901,9 +1020,7 @@ impl Checker<'_> {
                         ),
                     ));
                 }
-                if !self.referenced.iter().any(|(seen, _)| *seen == m.metric) {
-                    self.referenced.push((m.metric, m.span));
-                }
+                self.record_first_occurrence(m.metric, m.span);
                 Ok((value_type(m.metric.quantity()), CExpr::Metric(m.metric)))
             }
             Expr::Channel(c) => self.channel(c, in_agg),
@@ -958,7 +1075,7 @@ impl Checker<'_> {
         span: Span,
         label: &str,
     ) -> Result<(), Diagnostic> {
-        if let Some(source) = self.source_channel {
+        if let Some(source) = self.source_channel() {
             if source != name {
                 return Err(err_hint(
                     span,
@@ -978,7 +1095,7 @@ impl Checker<'_> {
         // window, the hint names the two working forms: an aggregate alone
         // still needs a window, since the channel is on a finer clock than the
         // points. Windowed, on either source, an aggregate is the whole fix.
-        let help = if self.source_channel.is_none() && !self.windowed {
+        let help = if self.source_channel().is_none() && !self.windowed {
             format!("aggregate it over a window like max({label}), or query @{name} as the source")
         } else {
             format!("wrap it in an aggregate like max({label})")

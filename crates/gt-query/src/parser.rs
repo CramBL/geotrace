@@ -22,6 +22,9 @@ const MAX_DEPTH: usize = 64;
 const UNIT_HELP: &str =
     "units are deg, m, km, km/h, m/s, kn, m/s2, g, km/h/s, ms, s, min, h, %, per s/min/h";
 
+const TABLE_COLUMN_EXPECTED: &str =
+    "expected a column: a metric, or an aggregate like max(@accel.x)";
+
 pub fn parse(src: &str) -> Result<Query, Diagnostic> {
     let toks = lex(src)?;
     Parser {
@@ -313,7 +316,7 @@ impl<'src> Parser<'src> {
         }
         let mut columns = Vec::new();
         loop {
-            let column = self.metric_ref()?;
+            let column = self.table_column()?;
             columns.push(column);
             match self.peek() {
                 Some(t) if t.kind == Token::Comma => {
@@ -322,26 +325,22 @@ impl<'src> Parser<'src> {
                 _ => break,
             }
         }
-        let span = columns.last().map_or(kw_span, |c| kw_span.to(c.span));
+        let span = columns.last().map_or(kw_span, |c| kw_span.to(c.span()));
         query.table = Some(TableSpec { columns, span });
         Ok(())
     }
 
-    fn metric_ref(&mut self) -> Result<MetricRef, Diagnostic> {
+    /// One `table` column: a metric name, a function call, or a channel
+    /// reference. The checker decides which of them a column can be.
+    fn table_column(&mut self) -> Result<Expr, Diagnostic> {
         let Some(tok) = self.peek() else {
-            return Err(self.error(self.here(), "expected a metric"));
+            return Err(self.error(self.here(), TABLE_COLUMN_EXPECTED));
         };
-        if tok.kind != Token::Ident {
-            return Err(self.error(tok.span, "expected a metric"));
+        match tok.kind {
+            Token::Ident => self.func_call_or_metric(tok),
+            Token::Channel => Ok(self.channel_ref(tok)),
+            _ => Err(self.error(tok.span, TABLE_COLUMN_EXPECTED)),
         }
-        let Ok(metric) = QueryMetric::from_str(tok.text) else {
-            return Err(self.unknown_metric(tok));
-        };
-        self.advance();
-        Ok(MetricRef {
-            metric,
-            span: tok.span,
-        })
     }
 
     fn unknown_metric(&self, tok: Tok<'src>) -> Diagnostic {

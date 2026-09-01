@@ -116,7 +116,10 @@ pub struct NumberLit {
 /// `table col, col, …`
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableSpec {
-    pub columns: Vec<MetricRef>,
+    /// One column as written per entry. The parser accepts a metric name, a
+    /// function call, or a channel reference here. The checker takes the metric
+    /// and the aggregate call, and rejects the rest.
+    pub columns: Vec<Expr>,
     pub span: Span,
 }
 

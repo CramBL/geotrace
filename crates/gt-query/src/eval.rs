@@ -11,7 +11,9 @@ use std::ops::Range;
 use gt_types::TrackRef;
 
 use crate::ast::{Func, ParamName};
-use crate::check::{AggSource, ArithOp, CExpr, CheckedQuery, CheckedSource, CmpOp, Window};
+use crate::check::{
+    AggSource, AggregateColumn, ArithOp, CExpr, CheckedQuery, CheckedSource, CmpOp, Window,
+};
 use crate::metric::QueryMetric;
 use crate::wrap::WrapPeriod;
 
@@ -166,6 +168,8 @@ pub struct RunSummary {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunOutput {
     pub matches: Vec<TrackMatches>,
+    /// The metric columns of the match table.
+    /// [`AggregateColumn::value_over_match`] values an aggregate column.
     pub columns: Vec<QueryMetric>,
     pub summary: RunSummary,
 }
@@ -175,7 +179,7 @@ pub fn run<P: MetricProvider>(query: &CheckedQuery, tracks: &[TrackInput<'_, P>]
     run_cancellable(query, tracks, &never).unwrap_or_else(|| RunOutput {
         // Unreachable: the cancel check above never fires.
         matches: Vec::new(),
-        columns: query.columns().to_vec(),
+        columns: query.metric_columns(),
         summary: RunSummary::default(),
     })
 }
@@ -229,9 +233,64 @@ pub(crate) fn run_with_interval<P: MetricProvider>(
 
     Some(RunOutput {
         matches,
-        columns: query.columns().to_vec(),
+        columns: query.metric_columns(),
         summary,
     })
+}
+
+impl AggregateColumn {
+    /// This column's value over one match, reduced over the match's own extent.
+    /// On a points source that extent is the nav points in `rows`. On a channel
+    /// source it is the channel samples in `rows`.
+    ///
+    /// `None` for an empty match. `None` too when the aggregate reduces a
+    /// missing or non-finite value.
+    pub fn value_over_match<P: MetricProvider>(
+        &self,
+        provider: &P,
+        rows: Range<usize>,
+    ) -> Option<f64> {
+        if rows.is_empty() {
+            return None;
+        }
+        let mut ctx = Ctx {
+            provider,
+            missing: BTreeSet::new(),
+            missing_channels: BTreeSet::new(),
+            non_finite: false,
+        };
+        match &self.source {
+            CheckedSource::Points => {
+                // The channel span is the closed time extent of the match's
+                // points, as a count window's is.
+                let span = ctx
+                    .raw(QueryMetric::Time, rows.start)
+                    .zip(ctx.raw(QueryMetric::Time, rows.end - 1))
+                    .map(|(lo, hi)| TimeSpan { lo, hi });
+                let window = WindowScope {
+                    start: rows.start,
+                    end: rows.end,
+                    span,
+                };
+                eval_num(&mut ctx, &self.expr, Scope::Window(window))
+            }
+            CheckedSource::Channel(name) => {
+                let timeline = provider.channel_timeline(name);
+                let columns = timeline.columns.max(1);
+                let values = timeline
+                    .values
+                    .get(rows.start * columns..rows.end * columns)?;
+                eval_num(
+                    &mut ctx,
+                    &self.expr,
+                    Scope::SampleWindow {
+                        rows: values,
+                        columns,
+                    },
+                )
+            }
+        }
+    }
 }
 
 /// One track's evaluation: which points matched, plus the skip counts. The
