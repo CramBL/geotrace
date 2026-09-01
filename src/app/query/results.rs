@@ -3,6 +3,7 @@
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
+use std::ops::Range;
 
 use egui::{
     Align, Button, CursorIcon, Label, Layout, RichText, ScrollArea, Sense, TextStyle, TextWrapMode,
@@ -23,7 +24,9 @@ use gt_query_run::{
     TrackProvider, TrackQueryData,
 };
 use gt_side_panel::widgets::{PointClickRequests, apply_point_click};
-use gt_types::{DataCategory, LoadedFile, PlacedPoints, PointIdx, ResolvedPosition, TrackRef};
+use gt_types::{
+    Channel, DataCategory, LoadedFile, PlacedPoints, PointIdx, ResolvedPosition, TrackRef,
+};
 use gt_ui_theme::buttons::SortHeaderButton;
 use gt_ui_theme::labels::{CountLine, LabelWithHover};
 use gt_ui_types::{
@@ -32,6 +35,7 @@ use gt_ui_types::{
 };
 use strum::IntoEnumIterator as _;
 
+use super::aggregate_samples::{AggregateSampleExpansion, ReducedChannel};
 use super::column_format::{self, ColumnFormat};
 use super::match_row::{MatchColumn, MatchKey, MatchRow, MatchRows, MatchSort, RowNoun};
 use super::results_split::{MIN_SPLIT_ROWS, ResultsSplit, SplitGeometry};
@@ -86,8 +90,9 @@ pub(super) struct ResultsOutputs<'a, 'b> {
 }
 
 /// What the results tab keeps between frames: the order of the matches table,
-/// the match the points table follows, the ranges its bars scale to, and the
-/// share of the tab the matches table takes.
+/// the match the points table follows, the ranges its bars scale to, the
+/// samples listed under the picked match, and the share of the tab the matches
+/// table takes.
 #[derive(Debug, Default)]
 pub(super) struct ResultsState {
     sort: MatchSort,
@@ -95,15 +100,20 @@ pub(super) struct ResultsState {
     /// lists the first match.
     selected: Option<MatchKey>,
     column_ranges: RunColumnRanges,
+    expansion: AggregateSampleExpansion,
     split: ResultsSplit,
 }
 
-/// One query of the run: what it counted, the colour it draws in, and the
-/// columns its matches' rows read under.
+/// One query of the run: what it counted, the colour it draws in, the columns
+/// its matches' rows read under, and the channels its aggregate columns reduce.
 struct QuerySection<'a> {
     summary: &'a QuerySummary,
     color: Option<egui::Color32>,
     columns: Vec<ResultColumn<'a>>,
+    /// The channels this query's aggregate columns reduce, in table order and
+    /// without repeats. Empty for a query whose aggregate columns read no
+    /// channel, and for one with no aggregate column.
+    reduced_channels: Vec<&'a str>,
 }
 
 /// One column of the points table: what its header names, the documentation
@@ -163,9 +173,31 @@ struct TrackValues<'a> {
     /// neighbouring points.
     slice: SliceProvider<'a>,
     slice_start: usize,
+    /// The track's channels, which only the samples listed under a match are
+    /// read from.
+    channels: &'a [Channel],
 }
 
-impl TrackValues<'_> {
+impl<'a> TrackValues<'a> {
+    /// A provider reading the track's channels as well, for the samples an
+    /// aggregate reduced. The provider the rows read through leaves them out:
+    /// a table of metric columns reads no channel.
+    fn provider_with_channels(&self) -> TrackProvider<'a> {
+        self.provider.clone().with_channels(self.channels)
+    }
+
+    /// The closed time extent of the points in `rows`, in Unix seconds, which
+    /// is the extent an aggregate reduced a channel's samples over. `None` for
+    /// an empty range, and for one whose first or last point has no time.
+    fn time_extent(&self, rows: &Range<usize>) -> Option<(f64, f64)> {
+        if rows.is_empty() {
+            return None;
+        }
+        let last = rows.end.checked_sub(1)?;
+        let first_time = self.value(QueryMetric::Time, rows.start)?;
+        Some((first_time, self.value(QueryMetric::Time, last)?))
+    }
+
     /// The value a column shows for one point, derived through the same slice
     /// the run evaluated so a filtered first point shows what the predicate
     /// used.
@@ -191,7 +223,7 @@ enum RowSource<'a> {
         track_values: Vec<(TrackRef, TrackValues<'a>)>,
     },
     ChannelSamples {
-        tracks: &'a [ChannelTrackResult],
+        results: &'a ChannelResults,
     },
 }
 
@@ -210,17 +242,63 @@ impl RowSource<'_> {
             (_, ColumnSource::Aggregate(index)) => {
                 match_row.aggregates.get(index).copied().flatten()
             }
-            (Self::NavPoints { track_values }, ColumnSource::Metric(metric)) => track_values
-                .iter()
-                .find(|(candidate, _)| *candidate == track)
-                .and_then(|(_, values)| values.value(metric, source_index)),
-            (Self::ChannelSamples { tracks }, ColumnSource::SampleTime) => {
-                timeline_of(tracks, track)?.times.get(source_index).copied()
+            (Self::NavPoints { track_values }, ColumnSource::Metric(metric)) => {
+                values_of(track_values, track)?.value(metric, source_index)
             }
-            (Self::ChannelSamples { tracks }, ColumnSource::ChannelComponent(component)) => {
-                timeline_of(tracks, track)?.value(source_index, component)
+            (Self::ChannelSamples { results }, ColumnSource::SampleTime) => {
+                timeline_of(results, track)?
+                    .times
+                    .get(source_index)
+                    .copied()
+            }
+            (Self::ChannelSamples { results }, ColumnSource::ChannelComponent(component)) => {
+                timeline_of(results, track)?.value(source_index, component)
             }
             (Self::NavPoints { .. } | Self::ChannelSamples { .. }, _) => None,
+        }
+    }
+
+    /// The samples of `channel` that `match_row`'s aggregate columns reduced,
+    /// `None` where the run holds no rows for the match's track. On the points
+    /// source those are the channel's samples inside the closed time extent of
+    /// the match's points, and there are none of them for a track that recorded
+    /// no such channel. On a channel source they are the match's own rows of
+    /// the source timeline, which is the only channel a query on it reads.
+    fn reduced_channel(&self, match_row: &MatchRow, channel: &str) -> Option<ReducedChannel> {
+        match self {
+            Self::NavPoints { track_values } => {
+                let values = values_of(track_values, match_row.track)?;
+                let recorded = values
+                    .channels
+                    .iter()
+                    .find(|candidate| candidate.name == channel);
+                let samples = values.time_extent(&match_row.rows).map_or_else(
+                    ChannelTimeline::default,
+                    |(first_time, last_time)| {
+                        values
+                            .provider_with_channels()
+                            .channel_span_timeline(channel, first_time, last_time)
+                    },
+                );
+                Some(ReducedChannel::new(
+                    channel,
+                    recorded.map_or(&[], |recorded| recorded.components.as_slice()),
+                    recorded.and_then(|recorded| recorded.unit.clone()),
+                    samples,
+                ))
+            }
+            Self::ChannelSamples { results } => {
+                if results.channel != channel {
+                    return None;
+                }
+                let track_result = track_result_of(results, match_row.track)?;
+                Some(ReducedChannel::new(
+                    channel,
+                    &results.components,
+                    track_result.unit.clone(),
+                    track_result.timeline.slice_rows(match_row.rows.clone()),
+                ))
+            }
         }
     }
 
@@ -239,10 +317,9 @@ impl RowSource<'_> {
 
     fn resolved_position(&self, track: TrackRef, source_index: usize) -> Option<ResolvedPosition> {
         match self {
-            Self::NavPoints { track_values } => track_values
-                .iter()
-                .find(|(candidate, _)| *candidate == track)
-                .and_then(|(_, values)| values.resolved_position(source_index)),
+            Self::NavPoints { track_values } => {
+                values_of(track_values, track)?.resolved_position(source_index)
+            }
             Self::ChannelSamples { .. } => None,
         }
     }
@@ -268,11 +345,22 @@ impl RowSource<'_> {
     }
 }
 
-fn timeline_of(tracks: &[ChannelTrackResult], track: TrackRef) -> Option<&ChannelTimeline> {
-    tracks
+fn values_of<'a, 'b>(
+    track_values: &'a [(TrackRef, TrackValues<'b>)],
+    track: TrackRef,
+) -> Option<&'a TrackValues<'b>> {
+    track_values
         .iter()
-        .find(|result| result.track == track)
-        .map(|result| &result.timeline)
+        .find(|(candidate, _)| *candidate == track)
+        .map(|(_, values)| values)
+}
+
+fn timeline_of(results: &ChannelResults, track: TrackRef) -> Option<&ChannelTimeline> {
+    Some(&track_result_of(results, track)?.timeline)
+}
+
+fn track_result_of(results: &ChannelResults, track: TrackRef) -> Option<&ChannelTrackResult> {
+    results.tracks.iter().find(|result| result.track == track)
 }
 
 /// What a click in the points table requests from the app, applied once the
@@ -380,6 +468,7 @@ impl<'a> ResultsTables<'a> {
                     .color
                     .map(|color| gt_ui_theme::query_halo_color(color, stale)),
                 columns: result_columns(&query.columns),
+                reduced_channels: reduced_channels(gt_query::aggregate_columns(&query.columns)),
             })
             .collect();
         Self {
@@ -455,11 +544,10 @@ impl<'a> ResultsTables<'a> {
                     .first()
                     .map(|layer| gt_ui_theme::query_halo_color(layer.color, stale)),
                 columns,
+                reduced_channels: reduced_channels(channel.aggregate_columns.iter()),
             }],
             matches: MatchRows::of_channel_samples(channel),
-            source: RowSource::ChannelSamples {
-                tracks: &channel.tracks,
-            },
+            source: RowSource::ChannelSamples { results: channel },
             row_noun: RowNoun::Sample,
             draws_halos: channel.matches.has_halos(),
             stale,
@@ -484,6 +572,9 @@ impl<'a> ResultsTables<'a> {
         let selected = self.matches.selected(state.selected).cloned();
         if let Some(selected) = &selected {
             state.selected = Some(selected.key());
+            state
+                .expansion
+                .refresh(self.run, selected.key(), || self.reduced_channels(selected));
         }
         ui.scope(|ui| {
             // A stale run's rows reference indices that may no longer address
@@ -504,7 +595,11 @@ impl<'a> ResultsTables<'a> {
             let Some(selected) = &selected else {
                 return;
             };
-            self.caption_ui(ui, selected);
+            self.caption_ui(ui, selected, &mut state.expansion);
+            // The listing takes what is left over the points table's own
+            // minimum, and scrolls the samples that do not fit.
+            let room = (ui.available_height() - points_table_minimum(ui)).max(0.0);
+            state.expansion.ui(ui, room);
             self.points_table_ui(ui, selected, &state.column_ranges, scope, out);
         });
         if *popped_out {
@@ -543,7 +638,7 @@ impl<'a> ResultsTables<'a> {
                 self.matches_table_ui(ui, state, selected, out, body_height);
             }
             MatchListPlacement::ResultsTab => {
-                let geometry = self.split_geometry(ui);
+                let geometry = self.split_geometry(ui, state.expansion.wanted_height(ui));
                 let listed = state.split.matches_height(geometry);
                 let table = self.matches_table_ui(ui, state, selected, out, heights.body(listed));
                 let splitter = splitter_ui(ui);
@@ -601,25 +696,31 @@ impl<'a> ResultsTables<'a> {
         }
     }
 
-    /// What the results tab has to divide between its two tables, measured
-    /// before either one is laid out. Each line of text counts as the whole
-    /// pixels egui lays it out in, so a minimum really holds the rows it
-    /// counts.
-    fn split_geometry(&self, ui: &egui::Ui) -> SplitGeometry {
+    /// What the results tab has to divide between its two tables and the
+    /// samples listed between them, measured before any of the three is laid
+    /// out. A minimum holds the rows it counts: each line of text counts as
+    /// the whole pixels egui lays it out in.
+    ///
+    /// `listing_height` is the full height of the samples listed under the
+    /// picked match. The listing gets only what the two tables' minimums
+    /// leave, and scrolls the samples that do not fit.
+    fn split_geometry(&self, ui: &egui::Ui, listing_height: f32) -> SplitGeometry {
         let heights = MatchTableHeights::of(ui);
         let spacing = ui.spacing().item_spacing.y;
         let caption = ui.text_style_height(&TextStyle::Body).ceil() + spacing;
-        let point_row = ui.text_style_height(&TextStyle::Monospace).ceil() + ROW_PADDING + spacing;
+        let available = ui.available_height();
+        let splitter = SPLITTER_HEIGHT + 2.0 * spacing;
+        let matches_minimum = heights.listing(MIN_SPLIT_ROWS);
+        let points_minimum = caption + points_table_minimum(ui);
+        let listing =
+            listing_height.min((available - splitter - matches_minimum - points_minimum).max(0.0));
         SplitGeometry {
-            available: ui.available_height(),
-            matches_minimum: heights.listing(MIN_SPLIT_ROWS),
+            available,
+            matches_minimum,
             matches_content: heights.listing(self.matches.rows().len()),
             matches_default: heights.listing(VISIBLE_MATCH_ROWS),
-            points_minimum: caption
-                + column_format::header_height(ui)
-                + spacing
-                + point_row * MIN_SPLIT_ROWS as f32,
-            splitter: SPLITTER_HEIGHT + 2.0 * spacing,
+            points_minimum: points_minimum + listing,
+            splitter,
         }
     }
 
@@ -761,20 +862,52 @@ impl<'a> ResultsTables<'a> {
         )
     }
 
-    /// The line naming the match the points table lists below it.
-    fn caption_ui(&self, ui: &mut egui::Ui, selected: &MatchRow) {
+    /// The line naming the match the points table lists below it, with the
+    /// control listing the samples its aggregate columns reduced.
+    fn caption_ui(
+        &self,
+        ui: &mut egui::Ui,
+        selected: &MatchRow,
+        expansion: &mut AggregateSampleExpansion,
+    ) {
         let rows = selected.rows.len();
-        ui.label(
-            CountLine::new(ui)
-                .words("Match ")
-                .number(selected.number)
-                .dot()
-                .count(
-                    rows,
-                    gt_fmt::pluralize(rows, self.row_noun.singular(), self.row_noun.plural()),
-                )
-                .into_job(),
-        );
+        ui.horizontal(|ui| {
+            ui.label(
+                CountLine::new(ui)
+                    .words("Match ")
+                    .number(selected.number)
+                    .dot()
+                    .count(
+                        rows,
+                        gt_fmt::pluralize(rows, self.row_noun.singular(), self.row_noun.plural()),
+                    )
+                    .into_job(),
+            );
+            expansion.toggle_ui(ui, self.no_samples_reason(selected));
+        });
+    }
+
+    /// Why the picked match lists no samples under it, `None` where it lists
+    /// some.
+    fn no_samples_reason(&self, selected: &MatchRow) -> Option<&'static str> {
+        let reduces_a_channel = self
+            .queries
+            .get(selected.query_index)
+            .is_some_and(|query| !query.reduced_channels.is_empty());
+        (!reduces_a_channel).then_some("No aggregate column of this query reduces a channel")
+    }
+
+    /// The channels the picked match's aggregate columns reduced, each with the
+    /// samples it reduced over that match.
+    fn reduced_channels(&self, selected: &MatchRow) -> Vec<ReducedChannel> {
+        let Some(query) = self.queries.get(selected.query_index) else {
+            return Vec::new();
+        };
+        query
+            .reduced_channels
+            .iter()
+            .filter_map(|channel| self.source.reduced_channel(selected, channel))
+            .collect()
     }
 
     /// Every match of the run, one row each, ordered by the column the user
@@ -1298,6 +1431,14 @@ fn frame_match_on_map_button_ui(
     .inner
 }
 
+/// The points table's header and [`MIN_SPLIT_ROWS`] of its rows: what it keeps
+/// however the tab above it is divided.
+fn points_table_minimum(ui: &egui::Ui) -> f32 {
+    let spacing = ui.spacing().item_spacing.y;
+    let point_row = ui.text_style_height(&TextStyle::Monospace).ceil() + ROW_PADDING + spacing;
+    column_format::header_height(ui) + spacing + point_row * MIN_SPLIT_ROWS as f32
+}
+
 /// The side of the square painted in a draw query's halo colour.
 fn swatch_side(ui: &egui::Ui) -> f32 {
     TextStyle::Body.resolve(ui.style()).size
@@ -1335,6 +1476,18 @@ fn point_hover_text(point_index: usize, position: Option<ResolvedPosition>) -> S
     }
 }
 
+/// The channels `columns` reduce, in table order and without repeats: what the
+/// samples listed under a match of the query are gathered for.
+fn reduced_channels<'a>(columns: impl Iterator<Item = &'a AggregateColumn>) -> Vec<&'a str> {
+    let mut channels: Vec<&str> = Vec::new();
+    for channel in columns.filter_map(AggregateColumn::reduced_channel) {
+        if !channels.contains(&channel) {
+            channels.push(channel);
+        }
+    }
+    channels
+}
+
 /// The table columns of a query, in table order.
 fn result_columns(columns: &[TableColumn]) -> Vec<ResultColumn<'static>> {
     let mut aggregates = 0;
@@ -1360,11 +1513,13 @@ fn track_values<'a>(
     let loaded = track.resolve(files)?;
     let points = loaded.points.as_slice();
     let data = results.track_data(track);
-    // Match tables need no channel data: they read only metric columns.
+    // A table's rows read metric columns alone. The samples listed under a
+    // match read the channels through their own provider.
     let provider = TrackProvider::new(points, &[], data);
     let slice_start = data.map_or(0, TrackQueryData::slice_start);
     Some(TrackValues {
         placed: loaded.placed_points(),
+        channels: &loaded.channels,
         provider: provider.clone(),
         slice: SliceProvider::new(
             provider,

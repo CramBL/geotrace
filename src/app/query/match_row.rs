@@ -10,6 +10,8 @@ use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_phosphor::regular::CARET_UP as ICON_CARET_UP;
 use gt_fmt::DurationClockFormat;
 use gt_query_run::{ChannelResults, PointsResults};
+#[cfg(test)]
+use gt_types::{FileIdx, TrackIdx};
 use gt_types::{LoadedFile, TrackRef};
 use strum::EnumIter;
 
@@ -45,6 +47,18 @@ pub(super) struct MatchRow {
     /// When the match's last row was recorded, absent for a single-row match.
     end: Option<DateTime<Utc>>,
     duration_secs: Option<i64>,
+}
+
+#[cfg(test)]
+impl MatchKey {
+    /// A key naming the first track of the first file, for the tests of the
+    /// state keyed by a match.
+    pub(super) fn of_first_track(first_row: usize) -> Self {
+        Self {
+            track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+            first_row,
+        }
+    }
 }
 
 impl MatchRow {

@@ -289,7 +289,9 @@ impl PreparedRun {
             RunProduct::Channel(Box::new(ChannelRun {
                 channel: name.to_owned(),
                 components,
-                aggregate_columns: aggregate_columns(&output.columns).cloned().collect(),
+                aggregate_columns: gt_query::aggregate_columns(&output.columns)
+                    .cloned()
+                    .collect(),
                 summary: output.summary,
                 tracks: track_results,
                 matches,
@@ -455,19 +457,11 @@ fn matches_with_aggregates_valued(
         .iter()
         .map(|rows| MatchValues {
             rows: rows.clone(),
-            aggregates: aggregate_columns(columns)
+            aggregates: gt_query::aggregate_columns(columns)
                 .map(|column| column.value_over_match(provider, rows.clone()))
                 .collect(),
         })
         .collect()
-}
-
-/// The aggregate columns of a match table, in table order.
-fn aggregate_columns(columns: &[TableColumn]) -> impl Iterator<Item = &AggregateColumn> {
-    columns.iter().filter_map(|column| match column {
-        TableColumn::Metric(_) => None,
-        TableColumn::Aggregate(aggregate) => Some(aggregate),
-    })
 }
 
 /// A channel-source run's raw output, before the panel projection.

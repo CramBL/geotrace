@@ -591,6 +591,22 @@ fn a_table_column_takes_a_metric_aggregate() {
     assert_eq!(query.referenced_metrics(), [QueryMetric::Velocity]);
 }
 
+/// An aggregate reduces one timeline: a channel's samples, or the match's nav
+/// points. `norm` reduces the whole vector on the channel's own clock.
+#[rstest]
+#[case::component("max(@accel.x)", Some("accel"))]
+#[case::whole_vector("max(norm(@accel))", Some("accel"))]
+#[case::metric("avg(velocity)", None)]
+fn an_aggregate_column_names_the_channel_it_reduces(
+    #[case] call: &str,
+    #[case] channel: Option<&str>,
+) {
+    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let src = format!("points | window 3 | table {call}");
+    let query = check(&parse(&src).unwrap(), &schema).expect(&src);
+    assert_eq!(aggregate_column(&query, call).reduced_channel(), channel);
+}
+
 /// `var` squares its argument, and no quantity names a squared speed.
 #[test]
 fn an_aggregate_column_of_an_unnamed_dimension_has_no_quantity() {
@@ -1885,6 +1901,29 @@ fn a_duration_window_gathers_channel_samples_over_its_span() {
         &provider,
     );
     assert_eq!(output.matches[0].ranges, vec![0..2]);
+}
+
+/// A slice keeps whole rows: every column of a sample comes with its time.
+#[rstest]
+#[case::inside(1..3, vec![1.0, 2.0], vec![1.0, 1.1, 2.0, 2.1])]
+#[case::empty(1..1, vec![], vec![])]
+#[case::past_the_end(2..4, vec![], vec![])]
+fn a_timeline_slice_holds_the_rows_of_its_range(
+    #[case] rows: std::ops::Range<usize>,
+    #[case] times: Vec<f64>,
+    #[case] values: Vec<f64>,
+) {
+    let timeline = ChannelTimeline {
+        times: vec![0.0, 1.0, 2.0],
+        values: vec![0.0, 0.1, 1.0, 1.1, 2.0, 2.1],
+        columns: 2,
+    };
+
+    let slice = timeline.slice_rows(rows);
+
+    assert_eq!(slice.times, times);
+    assert_eq!(slice.values, values);
+    assert_eq!(slice.columns, 2);
 }
 
 #[test]

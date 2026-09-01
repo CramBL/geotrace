@@ -6,6 +6,7 @@
 
 - **Interface:** Added an `invalid_coordinates` query metric, counting a fix's coordinate axes outside their range.
 - **Interface:** A query's `table` stage now takes an aggregate column, such as `table max(@accel.x)`, and the results table shows its value on every row of the match.
+- **Interface:** A query match now lists the channel samples its aggregate columns reduced, each with its timestamp and component values.
 - **Interface:** The hover text of a query results row now gives where the map draws a dead-reckoned fix or a fix with a coordinate outside the valid range.
 - **Interface:** The time range filter now draws a bar for a recording shorter than a second, and its handles select to the millisecond.
 - **Map & Tracks:** The side panel now lists the tracks toggled on above the tree, grouped by recording, in columns of track number, distance in kilometres and duration under one header row, in a fixed area resized by dragging its divider and kept at that height across restarts, where a track can be hidden, hovered, revealed in the tree and centered on the map.
