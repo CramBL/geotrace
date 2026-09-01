@@ -85,7 +85,7 @@ expression: catalog
     ),
     (
         "points | where -heading < 10 deg",
-        "15..23: cannot negate a direction",
+        "15..23: cannot negate a wrapping angle",
     ),
     (
         "points | window 3 | where avg(avg(velocity)) > 0 km/h",
@@ -93,7 +93,7 @@ expression: catalog
     ),
     (
         "points | window 3 | where avg(heading) < 10 deg",
-        "26..38: avg on a direction is ambiguous | help: use spread, std, first, last, or delta",
+        "26..38: avg on a wrapping angle is ambiguous | help: use spread, std, first, last, or delta",
     ),
     (
         "points | window 3 | where spread(velocity) > 3 km/h and avg(velocity)",

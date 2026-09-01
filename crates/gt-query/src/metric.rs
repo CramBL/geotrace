@@ -82,7 +82,11 @@ pub enum QueryMetric {
 pub enum Quantity {
     Timestamp,
     Angle,
-    Direction,
+    /// An angle that repeats at a period: a heading, a longitude, a channel
+    /// declaring one. `spread`, `std` and `delta` reduce against that period,
+    /// and `avg`, `min` and `max` are rejected as ambiguous.
+    #[strum(serialize = "wrapping angle")]
+    WrappingAngle,
     Speed,
     Acceleration,
     Length,
@@ -106,7 +110,7 @@ impl Quantity {
     /// exponents cannot distinguish them: the checker's `Kind` tag does.
     pub fn dimension(self) -> Option<Dimension> {
         Some(match self {
-            Quantity::Angle | Quantity::Direction => Dimension::ANGLE,
+            Quantity::Angle | Quantity::WrappingAngle => Dimension::ANGLE,
             Quantity::Length => Dimension::LENGTH,
             Quantity::Speed => Dimension::SPEED,
             Quantity::Acceleration => Dimension::ACCELERATION,
@@ -122,9 +126,9 @@ impl QueryMetric {
     pub fn quantity(self) -> Quantity {
         match self {
             QueryMetric::Time | QueryMetric::SysTime => Quantity::Timestamp,
-            QueryMetric::Lat | QueryMetric::Lon => Quantity::Angle,
+            QueryMetric::Lat => Quantity::Angle,
+            QueryMetric::Lon | QueryMetric::Heading => Quantity::WrappingAngle,
             QueryMetric::Velocity => Quantity::Speed,
-            QueryMetric::Heading => Quantity::Direction,
             QueryMetric::Accel => Quantity::Acceleration,
             QueryMetric::Eph | QueryMetric::SnapError => Quantity::Length,
             QueryMetric::ClockDelta => Quantity::Duration,
@@ -254,7 +258,7 @@ mod tests {
     fn quantity_dimensions_are_pinned() {
         let dimensioned = [
             (Quantity::Angle, Dimension::ANGLE),
-            (Quantity::Direction, Dimension::ANGLE),
+            (Quantity::WrappingAngle, Dimension::ANGLE),
             (Quantity::Speed, Dimension::SPEED),
             (Quantity::Acceleration, Dimension::ACCELERATION),
             (Quantity::Length, Dimension::LENGTH),

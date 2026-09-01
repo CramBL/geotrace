@@ -19,6 +19,7 @@
 ### Changed
 
 - **Interface:** A duration under a second now reads in tenths of a second, from "0.1s" to "0.9s".
+- **Interface:** A query using `avg`, `min` or `max` on `lon`, or on a sensor channel that declares a wrap period, is now rejected as ambiguous.
 - **Log Viewer:** Opening, dropping or pasting a log whose text is already loaded now selects the loaded log and toasts its name.
 - **Log Viewer:** Opening a recording no longer loads an attached log whose text is already loaded, and that loaded log takes the attachment when it is anchored to the recording.
 - **Log Viewer:** Attaching a log to a recording that already holds it now reuses the stored attachment.
@@ -37,6 +38,8 @@
 ### Fixed
 
 - **Interface:** Fixed a rate a query computes, such as `velocity / eph`, comparing 60 times too small against a rate literal.
+- **Interface:** Fixed a query's `spread`, `std` and `delta` of `lon` measuring nearly a full turn across the antimeridian.
+- **Interface:** Fixed a query's `spread`, `std` and `delta` of a sensor channel ignoring its declared wrap period.
 - **Log Viewer:** Fixed a log entry between two fixes across the antimeridian being placed half a world away.
 - **Map & Tracks:** Fixed the sky trails plot shifting and resizing when the satellite counts beside it change width.
 - **Map & Tracks:** Fixed the window for a clicked fix drawing its content over its own title bar when scrolled.

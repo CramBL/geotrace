@@ -33,7 +33,7 @@ pub fn dimension(unit: Unit) -> Dimension {
 /// Example literal used in "needs a unit" error help, per quantity.
 pub fn example_literal(quantity: Quantity) -> Option<&'static str> {
     match quantity {
-        Quantity::Angle | Quantity::Direction => Some("10 deg"),
+        Quantity::Angle | Quantity::WrappingAngle => Some("10 deg"),
         Quantity::Speed => Some("30 km/h"),
         Quantity::Acceleration => Some("0.3 m/s2"),
         Quantity::Length => Some("20 m"),
@@ -48,7 +48,7 @@ pub fn example_literal(quantity: Quantity) -> Option<&'static str> {
 /// so the message remains short.
 pub fn unit_list(quantity: Quantity) -> Option<&'static str> {
     match quantity {
-        Quantity::Angle | Quantity::Direction => Some("deg"),
+        Quantity::Angle | Quantity::WrappingAngle => Some("deg"),
         Quantity::Speed => Some("km/h, m/s, kn"),
         Quantity::Acceleration => Some("m/s2, g, km/h/s"),
         Quantity::Length => Some("m, km"),

@@ -278,7 +278,7 @@ impl Func {
     pub fn result_quantity(self, arg: Quantity) -> Quantity {
         match self {
             Func::Spread | Func::Std | Func::Delta => match arg {
-                Quantity::Direction => Quantity::Angle,
+                Quantity::WrappingAngle => Quantity::Angle,
                 Quantity::Timestamp => Quantity::Duration,
                 other => other,
             },

@@ -309,19 +309,21 @@ fn in_comment(src: &str, byte: usize) -> bool {
 /// `@` prefix and the hover's "channel" label already say it is a channel, so
 /// this names only the kind of value.
 fn channel_summary(info: &ChannelInfo) -> String {
-    match (&info.unit, info.period_deg) {
-        (_, Some(_)) => "direction".to_owned(),
-        (Some(unit), None) => format!("in {unit}"),
-        (None, None) => "unitless".to_owned(),
+    if info.wrap_period().is_some() {
+        return "wrapping angle".to_owned();
+    }
+    match &info.unit {
+        Some(unit) => format!("in {unit}"),
+        None => "unitless".to_owned(),
     }
 }
 
 /// The unit names of a quantity, in catalog order, for filtering the unit
-/// slot. A direction is written in angle units (`heading > 90 deg`), so it
+/// slot. A wrapping angle is written in angle units (`heading > 90 deg`), so it
 /// maps to the angle set.
 fn units_of_quantity(quantity: Quantity) -> Vec<&'static str> {
     let quantity = match quantity {
-        Quantity::Direction => Quantity::Angle,
+        Quantity::WrappingAngle => Quantity::Angle,
         other => other,
     };
     Unit::CANONICAL
@@ -424,8 +426,8 @@ fn channel_quantity(text: &str, schema: &ChannelSchema) -> Option<Quantity> {
     let body = text.strip_prefix('@')?;
     let name = body.split_once('.').map_or(body, |(name, _)| name);
     let info = schema.get(name)?;
-    if info.period_deg.is_some() {
-        return Some(Quantity::Direction);
+    if info.wrap_period().is_some() {
+        return Some(Quantity::WrappingAngle);
     }
     Some(
         info.unit
@@ -435,7 +437,7 @@ fn channel_quantity(text: &str, schema: &ChannelSchema) -> Option<Quantity> {
     )
 }
 
-/// A value's effective quantity, accounting for a directly-wrapping aggregate:
+/// A value's effective quantity, accounting for a collapsing aggregate:
 /// `delta(time)` is a duration, `spread(heading)` an angle. The transform is
 /// [`Func::result_quantity`], shared with the checker.
 fn wrapped_quantity(toks: &[lexer::Tok<'_>], value_idx: usize, quantity: Quantity) -> Quantity {
@@ -969,8 +971,9 @@ mod tests {
         assert_eq!(fuzzy_score("", "anything"), Some(0));
     }
 
-    /// accel (m/s2), incline (unitless), bearing (a direction), and the vector
-    /// gyro - one of each shape the summary and the scalar filter distinguish.
+    /// accel (m/s2), incline (unitless), bearing (a wrapping angle), and the
+    /// vector gyro - one of each shape the summary and the scalar filter
+    /// distinguish.
     fn channel_schema() -> ChannelSchema {
         let mut schema = ChannelSchema::new();
         schema.insert(
@@ -1128,15 +1131,15 @@ mod tests {
         assert_eq!(hover.name, "accel");
         assert_eq!(hover.summary, "in m/s2");
 
-        // A direction channel reads as one; a position off any channel has no
+        // A wrapping channel reads as one. A position off any channel has no
         // hover.
-        let dir = "points | window 3 | where spread(@bearing) < 5 deg";
-        let bi = dir.find("@bearing").expect("has @bearing") + 2;
+        let bearing = "points | window 3 | where spread(@bearing) < 5 deg";
+        let bi = bearing.find("@bearing").expect("has @bearing") + 2;
         assert_eq!(
-            channel_at(dir, bi, &channel_schema()).map(|s| s.summary),
-            Some("direction".to_owned())
+            channel_at(bearing, bi, &channel_schema()).map(|s| s.summary),
+            Some("wrapping angle".to_owned())
         );
-        assert!(channel_at(dir, 0, &channel_schema()).is_none());
+        assert!(channel_at(bearing, 0, &channel_schema()).is_none());
     }
 
     #[test]

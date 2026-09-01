@@ -91,7 +91,7 @@ impl<'a> ColumnFormat<'a> {
     pub(super) fn of_metric(metric: QueryMetric) -> Self {
         match metric.quantity() {
             Quantity::Timestamp => Self::time_of_day(),
-            Quantity::Angle | Quantity::Direction => {
+            Quantity::Angle | Quantity::WrappingAngle => {
                 Self::number(Some(DEGREE_SIGN), Unit::DEG.from_base(), 1)
             }
             Quantity::Speed => Self::number(Some("km/h"), Unit::KM_PER_H.from_base(), 1),

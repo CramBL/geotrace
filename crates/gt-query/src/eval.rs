@@ -9,13 +9,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 use gt_types::TrackRef;
-use nalgebra::{Complex, UnitComplex};
 
 use crate::ast::{Func, ParamName};
 use crate::check::{AggSource, ArithOp, CExpr, CheckedQuery, CheckedSource, CmpOp, Window};
 use crate::metric::QueryMetric;
-
-const FULL_TURN_DEG: f64 = 360.0;
+use crate::wrap::WrapPeriod;
 
 /// Points evaluated between cancellation checks. Small enough to stop within
 /// a frame or two, large enough that the check never shows up in a profile.
@@ -844,10 +842,10 @@ fn eval_num<P: MetricProvider>(ctx: &mut Ctx<'_, P>, expr: &CExpr, scope: Scope)
         },
         CExpr::Agg {
             func,
-            circular,
+            wrap,
             source,
             arg,
-        } => aggregate(ctx, *func, *circular, source, arg, scope),
+        } => aggregate(ctx, *func, *wrap, source, arg, scope),
         CExpr::Abs(inner) => eval_num(ctx, inner, scope).map(f64::abs),
         CExpr::Sqrt(inner) => {
             let result = eval_num(ctx, inner, scope)?.sqrt();
@@ -917,7 +915,7 @@ fn reduce_channel<P: MetricProvider>(
 fn aggregate<P: MetricProvider>(
     ctx: &mut Ctx<'_, P>,
     func: Func,
-    circular: bool,
+    wrap: Option<WrapPeriod>,
     source: &AggSource,
     arg: &CExpr,
     scope: Scope,
@@ -945,14 +943,14 @@ fn aggregate<P: MetricProvider>(
         }
         Scope::Point(_) | Scope::Sample(_) => return None,
     };
-    reduce_values(func, circular, values, ctx)
+    reduce_values(func, wrap, values, ctx)
 }
 
 /// Reduce a window's gathered per-sample `values` by `func`. A non-finite
 /// result (overflow, or the circular-std singularity) poisons.
 fn reduce_values<P: MetricProvider>(
     func: Func,
-    circular: bool,
+    wrap: Option<WrapPeriod>,
     mut values: Vec<f64>,
     ctx: &mut Ctx<'_, P>,
 ) -> Option<f64> {
@@ -963,49 +961,29 @@ fn reduce_values<P: MetricProvider>(
         Func::Max => values.iter().copied().fold(f64::NEG_INFINITY, f64::max),
         Func::First => first,
         Func::Last => last,
-        Func::Delta => {
-            if circular {
-                circular_delta(first, last)
-            } else {
-                last - first
-            }
-        }
-        Func::Spread => {
-            if circular {
-                circular_spread(&mut values)
-            } else {
+        Func::Delta => match wrap {
+            Some(period) => period.delta(&values),
+            None => last - first,
+        },
+        Func::Spread => match wrap {
+            Some(period) => period.spread(&mut values),
+            None => {
                 let min = values.iter().copied().fold(f64::INFINITY, f64::min);
                 let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
                 max - min
             }
-        }
-        Func::Std => {
-            if circular {
-                circular_std(&values)
-            } else {
-                population_std(&values)
-            }
-        }
-        // The checker rejects var on a direction, so it is always linear.
+        },
+        Func::Std => match wrap {
+            Some(period) => period.std(&values),
+            None => population_std(&values),
+        },
+        // The checker rejects var on a wrapping angle, so it is always linear.
         Func::Var => population_variance(&values),
         // The checker never emits abs, sqrt, or norm as an aggregate. They are
         // their own scalar `CExpr` nodes.
         Func::Abs | Func::Sqrt | Func::Norm => return None,
     };
     ctx.finite_or_poison(value)
-}
-
-/// Signed shortest angular difference from `first` to `last`, in degrees,
-/// approximately in (-180, 180].
-///
-/// Expressed as the rotation carrying `first` onto `last`, which handles the
-/// wrap. At the exact antipode the sign is implementation-defined: the turn is
-/// equally short either way, and `angle()` resolves it by floating-point
-/// rounding.
-fn circular_delta(first: f64, last: f64) -> f64 {
-    let rotation =
-        UnitComplex::new(last.to_radians()) * UnitComplex::new(first.to_radians()).inverse();
-    rotation.angle().to_degrees()
 }
 
 /// Population standard deviation (divided by N) of the window's values.
@@ -1023,47 +1001,6 @@ fn population_variance(values: &[f64]) -> f64 {
     let n = values.len() as f64;
     let mean = values.iter().sum::<f64>() / n;
     values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n
-}
-
-/// Circular (population) standard deviation of directions given in degrees,
-/// returned in degrees.
-///
-/// Built from the mean resultant length R of the directions as unit vectors:
-/// `sqrt(-2 ln R)` (Mardia), which is robust across the 0/360 wrap where a
-/// linear standard deviation of the degrees is not. Identical directions give
-/// 0. As they spread toward uniform, R falls to 0 and the deviation grows
-/// without bound. At the R = 0 singularity the value is non-finite, which the
-/// [`aggregate`] boundary turns into a reported skip.
-fn circular_std(values: &[f64]) -> f64 {
-    let n = values.len() as f64;
-    let resultant = values.iter().fold(Complex::new(0.0, 0.0), |acc, deg| {
-        acc + UnitComplex::new(deg.to_radians()).into_inner()
-    });
-    // Clamp guards a floating-point overshoot above 1 when every direction is
-    // identical, which would make the log positive and the sqrt NaN.
-    let mean_resultant = (resultant.norm() / n).min(1.0);
-    (-2.0 * mean_resultant.ln()).sqrt().to_degrees()
-}
-
-/// Size of the smallest arc containing all directions: 360 minus the largest
-/// gap between neighboring values on the circle.
-fn circular_spread(values: &mut [f64]) -> f64 {
-    for value in values.iter_mut() {
-        *value = value.rem_euclid(FULL_TURN_DEG);
-    }
-    values.sort_unstable_by(f64::total_cmp);
-    let (Some(first), Some(last)) = (values.first().copied(), values.last().copied()) else {
-        return 0.0;
-    };
-    let wrap_gap = first + FULL_TURN_DEG - last;
-    let max_gap = values
-        .windows(2)
-        .filter_map(|pair| match pair {
-            [a, b] => Some(b - a),
-            _ => None,
-        })
-        .fold(wrap_gap, f64::max);
-    FULL_TURN_DEG - max_gap
 }
 
 /// Maximal runs of `true`.
@@ -1119,13 +1056,6 @@ mod tests {
     }
 
     #[test]
-    fn circular_delta_takes_the_short_way() {
-        assert!((circular_delta(350.0, 10.0) - 20.0).abs() < 1e-12);
-        assert!((circular_delta(10.0, 350.0) + 20.0).abs() < 1e-12);
-        assert!((circular_delta(0.0, 180.0) - 180.0).abs() < 1e-12);
-    }
-
-    #[test]
     fn population_std_divides_by_n() {
         // 2,4,4,4,5,5,7,9: mean 5, population variance 4, so std 2.
         let values = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
@@ -1137,27 +1067,6 @@ mod tests {
     }
 
     #[test]
-    fn circular_std_stays_small_across_the_wrap() {
-        // Headings clustered around north stay small.
-        assert!(circular_std(&[359.0, 0.0, 1.0]) < 2.0);
-        // Identical directions collapse to zero (within float noise).
-        assert!(circular_std(&[123.0, 123.0, 123.0]) < 1e-6);
-        assert!(circular_std(&[42.0]) < 1e-6);
-        // A wide scatter is a large deviation.
-        assert!(circular_std(&[0.0, 90.0, 180.0]) > 45.0);
-    }
-
-    #[test]
-    fn circular_spread_measures_across_the_wrap() {
-        let mut wrapped = vec![350.0, 10.0, 0.0];
-        assert!((circular_spread(&mut wrapped) - 20.0).abs() < 1e-12);
-        let mut plain = vec![10.0, 40.0];
-        assert!((circular_spread(&mut plain) - 30.0).abs() < 1e-12);
-        let mut single = vec![123.0];
-        assert!((circular_spread(&mut single)).abs() < 1e-12);
-    }
-
-    #[test]
     fn ranges_merge_consecutive_points() {
         assert_eq!(
             ranges_from(&[false, true, true, false, true]),
@@ -1165,43 +1074,5 @@ mod tests {
         );
         assert_eq!(ranges_from(&[true]), vec![0..1]);
         assert!(ranges_from(&[false, false]).is_empty());
-    }
-
-    mod properties {
-        use proptest::prelude::*;
-
-        use super::super::circular_std;
-
-        proptest! {
-            /// Circular std is invariant under a rigid rotation of all the
-            /// directions, including across the 0/360 wrap - the property that
-            /// justifies the whole helper. Tested on tight clusters (within
-            /// +/-30 deg) where the statistic is well conditioned, so the
-            /// invariant holds to a fine tolerance.
-            #[test]
-            fn circular_std_is_rotation_invariant(
-                deltas in proptest::collection::vec(-30.0f64..30.0, 1..20),
-                center in 0.0f64..360.0,
-                offset in 0.0f64..360.0,
-            ) {
-                let cluster = |base: f64| -> Vec<f64> {
-                    deltas.iter().map(|d| (base + d).rem_euclid(360.0)).collect()
-                };
-                let here = circular_std(&cluster(center));
-                let there = circular_std(&cluster(center + offset));
-                prop_assert!(here.is_finite() && here >= 0.0);
-                prop_assert!((here - there).abs() < 1e-6, "here {here} there {there}");
-            }
-
-            /// The R clamp keeps the statistic real over arbitrary directions:
-            /// never NaN, never negative.
-            #[test]
-            fn circular_std_is_never_nan(
-                angles in proptest::collection::vec(0.0f64..360.0, 1..50),
-            ) {
-                let std = circular_std(&angles);
-                prop_assert!(!std.is_nan() && std >= 0.0);
-            }
-        }
     }
 }

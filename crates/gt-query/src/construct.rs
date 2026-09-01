@@ -211,17 +211,18 @@ fn func_construct(func: Func) -> Construct {
         Func::Max => ("largest value in the window", "", &["max(eph) < 15 m"]),
         Func::Spread => (
             "range of values across the window",
-            "The largest value minus the smallest. On a direction (`heading`) \
-             it is circular: the smallest arc containing all the headings, so \
-             350 deg and 10 deg have a spread of 20 deg, not 340 deg.",
+            "The largest value minus the smallest. On a wrapping angle \
+             (`heading`, `lon`, a channel that declares a period) it is \
+             circular: the smallest arc containing all the values, so 350 deg \
+             and 10 deg have a spread of 20 deg, not 340 deg.",
             &["spread(heading) <= 10 deg"],
         ),
         Func::Std => (
             "standard deviation over the window",
             "The population standard deviation, divided by N. Same unit as the \
              values, so it compares directly against a threshold. On a \
-             direction (`heading`) it is circular, robust across the 0/360 \
-             wrap.",
+             wrapping angle (`heading`, `lon`, a channel that declares a \
+             period) it is circular, robust across the wrap.",
             &["std(heading) <= 3 deg", "std(velocity) < 2 km/h"],
         ),
         Func::Var => (
@@ -229,7 +230,8 @@ fn func_construct(func: Func) -> Construct {
             "The population variance, divided by N. Its unit is the square of \
              the values' unit, so it has no direct threshold: compare with \
              `std` (its square root) instead, or form a ratio of two \
-             variances. Not defined on a direction (`heading`) - use `std`.",
+             variances. Not defined on a wrapping angle (`heading`, `lon`) - \
+             use `std`.",
             &["var(sats_fix) < 4"],
         ),
         Func::First => (
@@ -244,9 +246,9 @@ fn func_construct(func: Func) -> Construct {
         ),
         Func::Delta => (
             "change across the window (last minus first)",
-            "Last value minus first. On a direction (`heading`) it is the \
-             signed shortest turn, in (-180, 180] degrees. On timestamps it \
-             yields a duration.",
+            "Last value minus first. On a wrapping angle (`heading`, `lon`, a \
+             channel that declares a period) it is the signed shortest turn \
+             across the wrap. On timestamps it gives a duration.",
             &["delta(velocity) > 10 km/h", "delta(time) <= 15 s"],
         ),
         Func::Abs => (
@@ -313,7 +315,7 @@ fn param_construct(param: ParamName) -> Construct {
 
 fn unit_construct(unit: Unit, name: &'static str) -> Construct {
     let (summary, doc): (_, &str) = match unit::quantity(unit) {
-        Quantity::Angle | Quantity::Direction => ("degrees", ""),
+        Quantity::Angle | Quantity::WrappingAngle => ("degrees", ""),
         Quantity::Length => ("length", ""),
         Quantity::Speed => ("speed", ""),
         Quantity::Acceleration => ("acceleration", ""),
@@ -382,8 +384,10 @@ fn metric_docs(metric: QueryMetric) -> (&'static str, &'static str, &'static [&'
         QueryMetric::Lon => (
             "longitude, degrees",
             "The longitude the receiver recorded, out of range or NaN when \
-             the receiver wrote such a value.",
-            &[],
+             the receiver wrote such a value. Wraps at the antimeridian. \
+             `spread`/`std`/`delta` measure across it. `avg`/`min`/`max` are \
+             rejected.",
+            &["spread(lon) < 1 deg"],
         ),
         QueryMetric::InvalidCoordinates => (
             "out-of-range coordinate axes of the fix",
@@ -397,8 +401,9 @@ fn metric_docs(metric: QueryMetric) -> (&'static str, &'static str, &'static [&'
         QueryMetric::Velocity => ("ground speed", "", &["velocity > 30 km/h"]),
         QueryMetric::Heading => (
             "compass heading, degrees",
-            "The direction of travel in [0, 360) degrees. A direction, so \
-             `spread`/`delta` treat it circularly. Missing on ghost fixes.",
+            "The direction of travel in [0, 360) degrees. A wrapping angle, \
+             so `spread`/`delta` treat it circularly. Missing on ghost \
+             fixes.",
             &["spread(heading) <= 10 deg"],
         ),
         QueryMetric::Accel => (
