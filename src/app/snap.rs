@@ -164,17 +164,29 @@ impl SnapRun {
         let segments = result
             .segments
             .iter()
-            .map(|segment| SnappedSegment {
-                points: segment.positions.iter().filter_map(&mut project).collect(),
-                edge_spans: segment
-                    .edge_spans
-                    .iter()
-                    .map(|span| SnappedEdgeSpan {
-                        start: span.start,
-                        end: span.end,
-                        edge: span.edge,
-                    })
-                    .collect(),
+            .map(|segment| {
+                let mut points = Vec::with_capacity(segment.positions.len());
+                let mut recorded_points = Vec::with_capacity(segment.recorded_points.len());
+                for (vertex, position) in segment.positions.iter().enumerate() {
+                    let Some(projected) = project(position) else {
+                        continue;
+                    };
+                    points.push(projected);
+                    recorded_points.extend(segment.recorded_points.get(vertex));
+                }
+                SnappedSegment {
+                    points,
+                    recorded_points,
+                    edge_spans: segment
+                        .edge_spans
+                        .iter()
+                        .map(|span| SnappedEdgeSpan {
+                            start: span.start,
+                            end: span.end,
+                            edge: span.edge,
+                        })
+                        .collect(),
+                }
             })
             .collect();
         let edges = result
@@ -1394,6 +1406,7 @@ mod tests {
                 },
             ],
             edge_spans: Vec::new(),
+            recorded_points: vec![PointIdx::new(3), PointIdx::new(4)],
         }];
         result.points = vec![SnapPoint {
             point: PointIdx::new(3),
@@ -1409,13 +1422,9 @@ mod tests {
 
         let run = SnapRun::new(result, Vec::new(), None);
 
-        assert_eq!(
-            run.geometry
-                .segments
-                .first()
-                .map(|segment| segment.points.len()),
-            Some(1)
-        );
+        let segment = run.geometry.segments.first().expect("one segment");
+        assert_eq!(segment.points.len(), 1);
+        assert_eq!(segment.recorded_points, vec![PointIdx::new(3)]);
         assert!(run.geometry.whiskers.is_empty());
     }
 

@@ -334,8 +334,10 @@ fn merge_chunk(
     }
 
     let (starts_snappable, ends_snappable) = owned_boundary_snappable(chunk, response);
+    let sent_points: Vec<PointIdx> = chunk.sent.iter().map(|sent| sent.point).collect();
     let contributed_geometry =
-        match snapped_track::snapped_track_segments_in(response, chunk.owned.clone()) {
+        match snapped_track::snapped_track_segments_in(response, &sent_points, chunk.owned.clone())
+        {
             Ok(mut segments) => {
                 // Chunk-local edge references become result-global, like
                 // the per-point edge indices below.
@@ -359,6 +361,7 @@ fn merge_chunk(
                 {
                     let offset = prev.positions.len();
                     prev.positions.extend(next.positions);
+                    prev.recorded_points.extend(next.recorded_points);
                     prev.edge_spans
                         .extend(next.edge_spans.into_iter().map(|span| {
                             snapped_track::SnappedEdgeSpan {

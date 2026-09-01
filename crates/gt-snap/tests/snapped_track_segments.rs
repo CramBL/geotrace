@@ -12,6 +12,7 @@ use gt_snap::snapped_track::{
     self, SHAPE_POLYLINE_PRECISION, SnappedTrackError, SnappedTrackSegment,
 };
 use gt_snap::wire::{SnapPointKind, TraceAttributesResponse};
+use gt_types::PointIdx;
 
 fn parse_response(scenario: &str) -> Result<TraceAttributesResponse, String> {
     let path = fixtures_dir().join(format!("{scenario}.response.json"));
@@ -155,6 +156,16 @@ fn point(kind: SnapPointKind, edge_index: Option<u64>) -> Value {
     })
 }
 
+/// A snapped point the server placed `distance_along_edge` of the way along
+/// its matched edge.
+fn point_along(kind: SnapPointKind, edge_index: u64, distance_along_edge: f64) -> Value {
+    json!({
+        "lat": 55.0, "lon": 12.0, "type": kind.to_string(),
+        "edge_index": edge_index,
+        "distance_along_edge": distance_along_edge,
+    })
+}
+
 fn flagged(point: Value, flag: &str) -> Value {
     let mut point = point;
     if let Value::Object(map) = &mut point {
@@ -254,6 +265,98 @@ fn shape_index_gaps_leave_vertices_uncovered() {
     };
     assert!(covered(0) && covered(1) && covered(3));
     assert!(!covered(2), "the gapped vertex stays uncovered");
+}
+
+/// Every vertex names the recorded point the server placed at or before it,
+/// and the vertices before the first placed point name that point.
+///
+/// The first point sits at the end of edge 0 (shape vertex 1), the second
+/// halfway along edge 1 (shape vertex 2.5), so vertices 0 to 2 are the first
+/// point's and vertex 3 is the second's.
+#[test]
+fn each_vertex_names_the_recorded_point_placed_at_or_before_it() {
+    let points = json!([
+        point_along(SnapPointKind::Snapped, 0, 1.0),
+        point_along(SnapPointKind::Snapped, 1, 0.5),
+    ]);
+    let response = synthetic_response(&points, &two_edges()).expect("synthetic response");
+
+    let segments = snapped_track::snapped_track_segments(&response).expect("assembles");
+
+    let segment = segments.first().expect("one segment");
+    assert_eq!(
+        segment.recorded_points,
+        vec![
+            PointIdx::new(0),
+            PointIdx::new(0),
+            PointIdx::new(0),
+            PointIdx::new(1),
+        ]
+    );
+}
+
+/// The server reports an interpolated point with no edge, which places it
+/// nowhere on the shape: no vertex names it.
+#[test]
+fn a_point_matched_to_no_edge_names_no_vertex() {
+    let points = json!([
+        point_along(SnapPointKind::Snapped, 0, 0.0),
+        point(SnapPointKind::Interpolated, None),
+        point_along(SnapPointKind::Snapped, 1, 1.0),
+    ]);
+    let response = synthetic_response(&points, &two_edges()).expect("synthetic response");
+
+    let segments = snapped_track::snapped_track_segments(&response).expect("assembles");
+
+    let segment = segments.first().expect("one segment");
+    assert_eq!(segment.recorded_points.len(), segment.positions.len());
+    assert!(
+        !segment.recorded_points.contains(&PointIdx::new(1)),
+        "got {:?}",
+        segment.recorded_points
+    );
+}
+
+/// Points the server placed at one spot resolve to the earliest of them: a
+/// response without `distance_along_edge` names one recorded point for the
+/// whole segment.
+#[test]
+fn vertices_name_the_earliest_of_the_points_placed_at_one_spot() {
+    let points = json!([
+        point(SnapPointKind::Snapped, Some(0)),
+        point(SnapPointKind::Snapped, Some(0)),
+    ]);
+    let edges = json!([{ "begin_shape_index": 0, "end_shape_index": 3 }]);
+    let response = synthetic_response(&points, &edges).expect("synthetic response");
+
+    let segments = snapped_track::snapped_track_segments(&response).expect("assembles");
+
+    let segment = segments.first().expect("one segment");
+    assert_eq!(segment.recorded_points, vec![PointIdx::new(0); 4]);
+}
+
+/// Every fixture's segments name one recorded point per vertex, in track
+/// order.
+#[rstest]
+#[case::clean_drive("clean_drive")]
+#[case::dense_10hz("dense_10hz")]
+#[case::partially_snappable("partially_snappable")]
+#[case::teleport_gap("teleport_gap")]
+fn fixture_segments_name_a_recorded_point_at_every_vertex(#[case] scenario: &str) {
+    let response = parse_response(scenario).expect("fixture parses");
+    let segments = snapped_track::snapped_track_segments(&response).expect("segments assemble");
+    assert!(!segments.is_empty());
+    for segment in &segments {
+        assert_eq!(segment.recorded_points.len(), segment.positions.len());
+        assert!(segment.recorded_points.is_sorted());
+        assert!(
+            segment
+                .recorded_points
+                .iter()
+                .all(|point| point.as_usize() < response.snapped_points.len()),
+            "every vertex names a point the request sent"
+        );
+    }
 }
 
 #[test]

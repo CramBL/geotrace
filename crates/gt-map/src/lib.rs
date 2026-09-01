@@ -935,6 +935,7 @@ impl NavMap {
             map = map.with_plugin(SnappedTrackRenderer::new(
                 snapped,
                 ctx.files,
+                ctx.filter,
                 pointer_ownership.snapped_track_hover_enabled(),
                 &self.snapped_edge_tooltip_shown,
             ));

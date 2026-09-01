@@ -67,6 +67,7 @@ fn exhaustive_result() -> SnapResult {
                 end: 2,
                 edge: 0,
             }],
+            recorded_points: vec![PointIdx::new(0), PointIdx::new(4)],
         }],
         edges: vec![
             Edge {

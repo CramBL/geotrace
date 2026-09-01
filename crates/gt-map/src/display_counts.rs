@@ -15,7 +15,7 @@
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
 
-use gt_filter::{GlobalFilter, point_passes_time_filter};
+use gt_filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
 use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef};
 use gt_ui_types::{
     DisplayCategory, EventMarkerVisibility, GeneratedMarkerVisibility, QueryMatches, SnappedTracks,
@@ -26,7 +26,8 @@ use rustc_hash::FxHasher;
 /// Counts the app supplies, not derived from the loaded recordings.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SuppliedCounts<'a> {
-    /// Snapped geometry, already scoped by the app.
+    /// Snapped geometry, already scoped by the app to the tree-visible
+    /// tracks whose run is shown. The filter is applied here.
     pub snapped_tracks: Option<&'a SnappedTracks>,
     /// Interference cells archived for the day the overlay shows.
     pub jamming_cells: usize,
@@ -108,13 +109,22 @@ impl DisplayCounts {
         query_matches: Option<&QueryMatches>,
         supplied: SuppliedCounts<'_>,
     ) -> Self {
-        // Snapped geometry arrives pre-scoped: the app applies tree visibility
-        // and the per-track glyph toggle before the map sees it.
         let mut counts = Self {
             jamming_hexes: supplied.jamming_cells,
             tec_heatmap: supplied.tec_nodes,
             log_matches: supplied.log_matches,
-            snapped_tracks: supplied.snapped_tracks.map_or(0, |s| s.len()),
+            // The count is per track, like "Tracks": how many snapped tracks
+            // are eligible to draw.
+            snapped_tracks: supplied.snapped_tracks.map_or(0, |snapped| {
+                snapped
+                    .iter()
+                    .filter(|(track_ref, _)| {
+                        track_ref
+                            .resolve(files)
+                            .is_some_and(|track| track_passes_filter(track, filter))
+                    })
+                    .count()
+            }),
             ..Self::default()
         };
         for (fi, file) in files.iter().enumerate() {
@@ -209,12 +219,12 @@ impl DisplayCounts {
 /// `files` is fingerprinted structurally from the per-track array lengths plus
 /// the file and track counts. Point and marker data is immutable once loaded,
 /// so those change exactly when a load, unload, or reload changes what could be
-/// counted. `snapped_tracks` collapses to its track count, the only thing
+/// counted. `snapped_tracks` collapses to the tracks it holds, the only thing
 /// `compute` reads from it.
 #[derive(Clone, PartialEq)]
 struct DisplayCountsKey {
     files_sig: u64,
-    snapped_len: usize,
+    snapped_track_refs: Vec<TrackRef>,
     jamming_cells: usize,
     tec_nodes: usize,
     log_matches: usize,
@@ -298,10 +308,13 @@ impl DisplayCountsCache {
         supplied: SuppliedCounts<'_>,
     ) -> DisplayCounts {
         let files_sig = files_signature(files);
-        let snapped_len = supplied.snapped_tracks.map_or(0, |s| s.len());
+        let snapped_track_refs: Vec<TrackRef> = supplied
+            .snapped_tracks
+            .map(|snapped| snapped.iter().map(|(track_ref, _)| track_ref).collect())
+            .unwrap_or_default();
         if let Some((key, counts)) = &self.cached
             && key.files_sig == files_sig
-            && key.snapped_len == snapped_len
+            && key.snapped_track_refs == snapped_track_refs
             && key.jamming_cells == supplied.jamming_cells
             && key.tec_nodes == supplied.tec_nodes
             && key.log_matches == supplied.log_matches
@@ -332,7 +345,7 @@ impl DisplayCountsCache {
                 tec_nodes: supplied.tec_nodes,
                 log_matches: supplied.log_matches,
                 files_sig,
-                snapped_len,
+                snapped_track_refs,
                 filter: *filter,
                 visibility: visibility.clone(),
                 event_marker_visibility: event_marker_visibility.clone(),
@@ -495,10 +508,23 @@ mod tests {
         }
     }
 
-    /// Snapped geometry is counted straight from the pre-scoped
-    /// [`SnappedTracks`] view: one per track with a shown run.
-    #[test]
-    fn snapped_tracks_are_counted_from_the_prescoped_view() {
+    /// Snapped geometry arrives pre-scoped by tree visibility and the
+    /// per-track toggle, and counts once per track whose recording the filter
+    /// keeps - the renderer's own gate.
+    #[rstest::rstest]
+    #[case::the_filter_keeps_the_recording(GlobalFilter::default(), 1)]
+    #[case::the_time_window_misses_the_recording(
+        GlobalFilter { time_start: Some(t(10)), ..GlobalFilter::default() },
+        0
+    )]
+    #[case::the_recording_is_shorter_than_the_minimum_duration(
+        GlobalFilter { min_duration: Some(Duration::seconds(60)), ..GlobalFilter::default() },
+        0
+    )]
+    fn snapped_tracks_are_counted_for_the_recordings_the_filter_keeps(
+        #[case] filter: GlobalFilter,
+        #[case] expected: usize,
+    ) {
         let files = vec![fixture()];
         let mut snapped = SnappedTracks::default();
         snapped.insert(
@@ -508,7 +534,7 @@ mod tests {
         let counts = DisplayCounts::compute(
             &files,
             &vis_all(),
-            &GlobalFilter::default(),
+            &filter,
             &EventMarkerVisibility::default(),
             &GeneratedMarkerVisibility::default(),
             None,
@@ -517,7 +543,7 @@ mod tests {
                 ..SuppliedCounts::default()
             },
         );
-        assert_eq!(counts.get(DisplayCategory::SnappedTracks), 1);
+        assert_eq!(counts.get(DisplayCategory::SnappedTracks), expected);
     }
 
     #[test]

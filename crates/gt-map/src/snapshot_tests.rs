@@ -782,6 +782,7 @@ fn snapshot_snapped_tracks(
                 .into_iter()
                 .map(|points| gt_ui_types::SnappedSegment {
                     points,
+                    recorded_points: Vec::new(),
                     edge_spans: Vec::new(),
                 })
                 .collect(),
@@ -941,6 +942,7 @@ fn snap_snapped_track_edge_hover() {
                             y: center.y,
                         },
                     ],
+                    recorded_points: Vec::new(),
                     edge_spans: vec![gt_ui_types::SnappedEdgeSpan {
                         start: 0,
                         end: 2,
@@ -977,6 +979,7 @@ fn whisker_geometry(drawn: &[MercPoint]) -> gt_ui_types::SnappedTrackGeometry {
     gt_ui_types::SnappedTrackGeometry {
         segments: vec![gt_ui_types::SnappedSegment {
             points: snapped.clone(),
+            recorded_points: (0..drawn.len()).map(PointIdx::new).collect(),
             edge_spans: Vec::new(),
         }],
         edges: Vec::new(),

@@ -12,6 +12,7 @@ use gt_snap::merge::{self, ChunkOutcome, SnapWarning, SnapWarningReporter};
 use gt_snap::request_plan::{CHUNK_POINTS, RequestPlan, SnapParams};
 use gt_snap::snapped_track::SHAPE_POLYLINE_PRECISION;
 use gt_snap::wire::{Costing, SnapPointKind, TraceAttributesResponse};
+use gt_types::PointIdx;
 
 /// The params every scenario in this file merges with: default advanced
 /// options, auto costing.
@@ -314,18 +315,20 @@ fn outcome_count_mismatch_is_a_bug() {
     merge::merge(&plan, auto_params(), &[], &reporter);
 }
 
-/// A success response carrying real geometry: `count` matched points all on
-/// one edge whose shape is a 4-position encoded polyline.
+/// A success response with real geometry: `count` matched points spread
+/// evenly along one edge whose shape is a 4-position encoded polyline.
 fn shaped_response(count: usize) -> Result<ChunkOutcome, String> {
     let line: geo_types::LineString<f64> =
         vec![(12.0, 55.0), (12.0, 55.001), (12.0, 55.002), (12.0, 55.003)].into();
     let shape = polyline::encode_coordinates(line, SHAPE_POLYLINE_PRECISION)
         .map_err(|err| err.to_string())?;
+    let last = count.saturating_sub(1).max(1) as f64;
     let matched_points: Vec<Value> = (0..count)
-        .map(|_| {
+        .map(|i| {
             json!({
                 "lat": 55.0, "lon": 12.0, "type": "matched",
                 "edge_index": 0,
+                "distance_along_edge": i as f64 / last,
                 "distance_from_trace_point": 1.0,
             })
         })
@@ -382,6 +385,21 @@ fn continuous_chunks_join_into_one_segment() {
     assert!(
         result.edges.get(last_span.edge).is_some(),
         "span references a result-global edge"
+    );
+
+    // The vertex attribution has track point indices: the joined segment's
+    // recorded points run from the first chunk's into the second chunk's.
+    assert_eq!(segment.recorded_points.len(), segment.positions.len());
+    assert!(
+        segment.recorded_points.is_sorted(),
+        "attribution follows the track order"
+    );
+    let first = segment.recorded_points.first().expect("attributed");
+    let last = segment.recorded_points.last().expect("attributed");
+    assert_eq!(*first, PointIdx::new(0));
+    assert!(
+        last.as_usize() >= CHUNK_POINTS,
+        "the joined tail names the second chunk's points, got {last:?}"
     );
 }
 

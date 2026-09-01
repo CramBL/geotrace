@@ -3,10 +3,15 @@
 //! to the recorded track it annotates.
 //!
 //! The geometry arrives pre-projected to normalized Mercator with per-vertex
-//! edge attribution (segments are immutable once a run completes; see
-//! [`gt_ui_types::SnappedTracks`]). Breaks between segments render as gaps -
-//! route discontinuities and unsnapped runs - and the recorded track
-//! underneath is never painted over or hidden.
+//! edge and recorded-point attribution (segments are immutable once a run
+//! completes: see [`gt_ui_types::SnappedTracks`]). Breaks between segments
+//! render as gaps - route discontinuities and unsnapped runs - and the
+//! recorded track underneath is never painted over or hidden.
+//!
+//! The global filter applies here as it does to the recorded track. A track
+//! it rejects draws nothing. A vertex or whisker whose recorded point falls
+//! outside the time window is neither drawn nor hoverable: it is left out of
+//! the projection.
 //!
 //! Dashing emits one shape per dash period of *screen-space* path length,
 //! which grows linearly with zoom regardless of the segment's vertex count.
@@ -24,7 +29,8 @@
 use std::cell::Cell;
 
 use egui::{Pos2, Rect, Response, RichText, Stroke, Ui};
-use gt_types::LoadedFile;
+use gt_filter::GlobalFilter;
+use gt_types::{LoadedFile, PointIdx};
 use gt_ui_types::{SnappedEdgeInfo, SnappedTracks};
 use walkers::{MapMemory, Plugin, Projector};
 
@@ -73,9 +79,10 @@ struct HoverHit {
 
 pub struct SnappedTrackRenderer<'a> {
     snapped: &'a SnappedTracks,
-    /// The loaded files, resolving whisker anchors to their recorded
-    /// points' positions.
+    /// The loaded files, resolving a snapped track's vertices and whisker
+    /// anchors to their recorded points.
     files: &'a [LoadedFile],
+    filter: &'a GlobalFilter,
     /// Hover is disabled while the recorded data owns the pointer (an
     /// active hover on recorded elements) - the primary data wins.
     hover_enabled: bool,
@@ -89,12 +96,14 @@ impl<'a> SnappedTrackRenderer<'a> {
     pub fn new(
         snapped: &'a SnappedTracks,
         files: &'a [LoadedFile],
+        filter: &'a GlobalFilter,
         hover_enabled: bool,
         edge_tooltip_shown: &'a Cell<bool>,
     ) -> Self {
         Self {
             snapped,
             files,
+            filter,
             hover_enabled,
             edge_tooltip_shown,
         }
@@ -120,14 +129,26 @@ impl Plugin for SnappedTrackRenderer<'_> {
         let draw_whiskers = transform.pixels_per_meter_at_center() >= WHISKER_MIN_PX_PER_METER;
 
         // Reused across segments so projection and key-stripping cost one
-        // allocation per frame, not one per segment or span.
-        let mut projected: Vec<Pos2> = Vec::new();
+        // allocation per frame, not one per segment or span. Each entry keeps
+        // its vertex index, which addresses the segment's edge spans.
+        let mut projected: Vec<(usize, Pos2)> = Vec::new();
         let mut span_points: Vec<Pos2> = Vec::new();
         // Order-independent: only a strictly nearer hit replaces `best`, so
         // the paint order never affects the result.
         let mut best: Option<HoverHit> = None;
 
         for (track_ref, geometry) in self.snapped.iter() {
+            let Some(track) = track_ref.resolve(self.files) else {
+                continue;
+            };
+            if !gt_filter::track_passes_filter(track, self.filter) {
+                continue;
+            }
+            let point_drawn = |point: PointIdx| {
+                point.get(&track.points).is_some_and(|fix| {
+                    gt_filter::point_passes_time_filter(fix.tpv.time().utc(), self.filter)
+                })
+            };
             let color =
                 gt_ui_theme::track_color(track_ref.fi.as_usize(), track_ref.index.as_usize())
                     .gamma_multiply(SNAPPED_ALPHA);
@@ -135,13 +156,12 @@ impl Plugin for SnappedTrackRenderer<'_> {
 
             // Error whiskers: recorded point to snapped position, gated on
             // scale and culled per pair like the dashing.
-            if draw_whiskers
-                && let Some(placed) = track_ref
-                    .resolve(self.files)
-                    .and_then(gt_types::LoadedTrack::placed_points)
-            {
+            if draw_whiskers && let Some(placed) = track.placed_points() {
                 let whisker_stroke = Stroke::new(WHISKER_STROKE_WIDTH, color);
                 for anchor in &geometry.whiskers {
+                    if !point_drawn(anchor.point) {
+                        continue;
+                    }
                     let Some(recorded) = placed.get(anchor.point.as_usize()) else {
                         continue;
                     };
@@ -156,7 +176,23 @@ impl Plugin for SnappedTrackRenderer<'_> {
 
             for (segment_index, segment) in geometry.segments.iter().enumerate() {
                 projected.clear();
-                projected.extend(segment.points.iter().map(|&merc| transform.to_screen(merc)));
+                projected.extend(
+                    segment
+                        .points
+                        .iter()
+                        .enumerate()
+                        .filter(|&(vertex, _)| {
+                            // A segment without attribution - a run stored
+                            // before the geometry included it - cannot be
+                            // trimmed, so it draws whole.
+                            segment
+                                .recorded_points
+                                .get(vertex)
+                                .copied()
+                                .is_none_or(&point_drawn)
+                        })
+                        .map(|(vertex, &merc)| (vertex, transform.to_screen(merc))),
+                );
 
                 if let (Some(cursor), Some(cursor_rect)) = (pointer, cursor_rect) {
                     hit_test(
@@ -170,7 +206,7 @@ impl Plugin for SnappedTrackRenderer<'_> {
                 }
 
                 // Segments carry no per-point styling, so the key is unit.
-                match visible_path(projected.iter().map(|&p| ((), p)), cull_rect) {
+                match visible_path(projected.iter().map(|&(_, pos)| ((), pos)), cull_rect) {
                     VisiblePath::OffScreen => {}
                     // A segment collapsed below one pixel (extreme zoom-out)
                     // stays discoverable as a dot, like the recorded track.
@@ -205,7 +241,7 @@ impl Plugin for SnappedTrackRenderer<'_> {
 /// segment. Same-side rejection against the small cursor rect keeps the
 /// per-frame cost proportional to the geometry near the pointer.
 fn hit_test(
-    projected: &[Pos2],
+    projected: &[(usize, Pos2)],
     cursor: Pos2,
     cursor_rect: Rect,
     track: gt_types::TrackRef,
@@ -213,8 +249,10 @@ fn hit_test(
     best: &mut Option<HoverHit>,
 ) {
     let radius_sq = SNAPPED_HOVER_RADIUS_PX * SNAPPED_HOVER_RADIUS_PX;
-    for (vertex, window) in projected.windows(2).enumerate() {
-        let [a, b] = window else { continue };
+    for window in projected.windows(2) {
+        let [(vertex, a), (_, b)] = window else {
+            continue;
+        };
         if segment_outside(*a, *b, cursor_rect) {
             continue;
         }
@@ -230,7 +268,7 @@ fn hit_test(
                 distance_sq,
                 track,
                 segment,
-                vertex,
+                vertex: *vertex,
             });
         }
     }

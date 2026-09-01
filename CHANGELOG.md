@@ -53,6 +53,7 @@
 - **Map & Tracks:** Fixed a recording that circles a pole being bounded by an arbitrary arc of longitudes.
 - **Map & Tracks:** Fixed a recording whose fixes are out of time order dropping markers and sensor samples that fall inside a track, and reporting a negative recorded time.
 - **Map & Tracks:** Fixed the map drawing a dead-reckoned fix on the preceding fix in a recording faster than 1 Hz, and off the great circle between the fixes around it across the antimeridian or near a pole.
+- **Map & Tracks:** Fixed the snapped track and its error whiskers being drawn for a recording the filter hides, and past the end of the time range filter.
 - **Map & Tracks:** Fixed zooming the map to a recording or track that crosses the antimeridian, circles a pole, or reaches high latitudes.
 - **Map & Tracks:** Fixed a track's length, spread, bounding box and zoom to fit measuring a dead-reckoned fix at its recorded coordinates.
 - **Map & Tracks:** Fixed an SNR of 99 dB-Hz, the firmware sentinel for "no measurement", being read as a signal strength.
