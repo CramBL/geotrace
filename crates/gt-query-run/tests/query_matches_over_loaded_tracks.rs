@@ -206,3 +206,16 @@ fn a_window_aggregate_reads_a_channel_the_file_stored_out_of_order() {
 
     assert_eq!(drawn_ranges(&session), vec![0..3]);
 }
+
+/// Both fixes of this 2 Hz track fall in the same whole second, with the
+/// matched sample at 250 ms between them.
+#[test]
+fn a_matched_sample_covers_the_two_fixes_around_it_at_two_hz() {
+    let channel = scalar_channel("accel", Some("g"), &[(250, 9.0)]);
+    let state = LoadedState::of(file_named("ride.gtd", fixes_at(&[0, 500]), vec![channel]));
+    let mut session = QuerySession::new();
+
+    run_text(&mut session, &state, "@accel | where @accel > 1 g | draw");
+
+    assert_eq!(drawn_ranges(&session), vec![0..2]);
+}

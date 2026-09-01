@@ -47,6 +47,7 @@
 - **Interface:** Fixed a query comparison placing a value of negative zero below zero.
 - **Interface:** Fixed a query aggregate over a sensor channel whose samples are out of time order reading the wrong samples.
 - **Interface:** Fixed the query results' map buttons framing matches the filter hides.
+- **Interface:** Fixed a sensor channel query drawing its match halo on the wrong fixes in a recording faster than 1 Hz.
 - **Log Viewer:** Fixed a log entry between two fixes across the antimeridian being placed half a world away.
 - **Map & Tracks:** Fixed the sky trails plot shifting and resizing when the satellite counts beside it change width.
 - **Map & Tracks:** Fixed the window for a clicked fix drawing its content over its own title bar when scrolled.
