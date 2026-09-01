@@ -78,11 +78,8 @@ fn file_named(filename: &str, points: Vec<NavPoint>, channels: Vec<Channel>) -> 
     let first = points
         .first()
         .map_or_else(Default::default, |p: &NavPoint| p.tpv.time().utc());
-    let last = points
-        .last()
-        .map_or_else(Default::default, |p: &NavPoint| p.tpv.time().utc());
     let metadata = TrackMetadata {
-        time_range: TimeRange::new(first, last),
+        time_range: TimeRange::spanning(first, points.iter().map(|p| p.tpv.time().utc())),
         tpv_count: points.len(),
         ..gt_test_utils::empty_track_metadata()
     };
@@ -218,4 +215,29 @@ fn a_matched_sample_covers_the_two_fixes_around_it_at_two_hz() {
     run_text(&mut session, &state, "@accel | where @accel > 1 g | draw");
 
     assert_eq!(drawn_ranges(&session), vec![0..2]);
+}
+
+/// Nothing sorts a recording's fixes, so a backwards clock step can leave a
+/// fix stamped past the window between two fixes inside it. The run evaluates
+/// the two inside the window, and the one outside it falls in no match.
+#[test]
+fn a_time_window_keeps_the_fixes_on_both_sides_of_a_backwards_clock_step() {
+    let mut state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at(&[0, 10_000, 1_000, 2_000]),
+        vec![],
+    ));
+    state.filter = GlobalFilter {
+        time_end: Some(utc(5_000)),
+        ..GlobalFilter::default()
+    };
+    let mut session = QuerySession::new();
+
+    run_text(
+        &mut session,
+        &state,
+        "points | where velocity > 1 km/h | draw",
+    );
+
+    assert_eq!(drawn_ranges(&session), vec![0..1, 2..4]);
 }

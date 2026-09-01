@@ -70,7 +70,7 @@ impl PointsResults {
         let slice_start = |track: TrackRef| {
             track_data
                 .get(&track)
-                .map_or(0, TrackQueryData::slice_start)
+                .map_or(0, |data| data.filtered_points().start())
         };
         let absolute = |tms: &[TrackMatches]| -> TrackRanges {
             tms.iter()

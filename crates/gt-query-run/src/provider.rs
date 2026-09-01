@@ -1,8 +1,10 @@
+use std::ops::Range;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use gt_analysis::loss_of_lock::{self, SECS_PER_MIN, SlipRatePerPoint};
 use gt_analysis::satellite_utilization::{self, UtilPerPoint};
+use gt_filter::GlobalFilter;
 use gt_query::{ChannelSamples, ChannelTimeline, MetricProvider, Params, QueryMetric, Unit};
 use gt_types::satellites::Constellation;
 use gt_types::{Channel, NavPoint};
@@ -38,22 +40,20 @@ pub struct TrackQueryData {
     geomagnetic: Option<Arc<Vec<GeomagneticPoint>>>,
     /// Dense per-point TEC values at spawn time.
     tec: Option<Arc<Vec<TecPoint>>>,
-    /// Index of the first point inside the global time filter - the offset
-    /// between slice-relative evaluation indices and absolute point indices.
-    slice_start: usize,
+    filtered_points: TimeFilteredPoints,
 }
 
 impl TrackQueryData {
     /// Derive the series `params` calls for, over the whole track.
     ///
-    /// `slice_start` is the first point inside the global time filter, kept so
-    /// results can shift evaluation indices back to absolute positions.
+    /// `filtered_points` is kept so results can shift evaluation indices back
+    /// to absolute positions.
     pub(crate) fn derive(
         points: &[NavPoint],
         params: Params,
         uses_util: bool,
         uses_slip: bool,
-        slice_start: usize,
+        filtered_points: TimeFilteredPoints,
         captured: CapturedTrackValues,
     ) -> Self {
         // gt_query::check::require_params guarantees these parameters whenever
@@ -84,14 +84,13 @@ impl TrackQueryData {
             util,
             slip,
             snap_error: captured.snap_error,
-            slice_start,
+            filtered_points,
         }
     }
 
-    /// Index of the first point inside the global time filter: the offset from
-    /// the evaluator's slice-relative indices to absolute point indices.
-    pub fn slice_start(&self) -> usize {
-        self.slice_start
+    /// The points the run evaluated this track over.
+    pub fn filtered_points(&self) -> &TimeFilteredPoints {
+        &self.filtered_points
     }
 }
 
@@ -163,6 +162,12 @@ impl<'a> TrackProvider<'a> {
         self.resolve_channel(name)
             .map(|resolved| resolved.timeline_in_span(t_lo, t_hi))
             .unwrap_or_default()
+    }
+
+    /// When the receiver stamped the point at `index`, `None` past the last
+    /// point of the track.
+    fn point_time(&self, index: usize) -> Option<DateTime<Utc>> {
+        Some(self.points.get(index)?.tpv.time().utc())
     }
 
     /// One index's value at `index`, as the service published it.
@@ -512,32 +517,90 @@ impl MetricProvider for TrackProvider<'_> {
     }
 }
 
+/// The points of one track a query runs over: the smallest contiguous range of
+/// track indices covering every point inside the global filter's time window,
+/// and the filter, which rejects the points that range covers without the
+/// window keeping them. The two differ only on a track whose timestamps step
+/// backwards.
+#[derive(Clone)]
+pub struct TimeFilteredPoints {
+    range: Range<usize>,
+    filter: GlobalFilter,
+}
+
+impl TimeFilteredPoints {
+    pub fn of(points: &[NavPoint], filter: &GlobalFilter) -> Self {
+        Self {
+            range: gt_filter::time_filtered_range(points, filter),
+            filter: *filter,
+        }
+    }
+
+    /// All `point_count` points of a track, for a caller with no filter.
+    pub fn whole_track(point_count: usize) -> Self {
+        Self {
+            range: 0..point_count,
+            filter: GlobalFilter::default(),
+        }
+    }
+
+    /// The track index the evaluator's index 0 stands for: the offset from
+    /// evaluation indices back to absolute point indices.
+    pub fn start(&self) -> usize {
+        self.range.start
+    }
+
+    fn len(&self) -> usize {
+        self.range.len()
+    }
+
+    fn window_keeps(&self, time: DateTime<Utc>) -> bool {
+        gt_filter::point_passes_time_filter(time, &self.filter)
+    }
+}
+
+impl Default for TimeFilteredPoints {
+    fn default() -> Self {
+        Self::whole_track(0)
+    }
+}
+
 /// A window onto another provider: the evaluator sees only the points inside
 /// the global time filter, while the inner [`TrackProvider`] (and the derived
 /// series it carries) stays indexed by absolute track position.
+///
+/// A point the range covers but the window rejects matches nothing and poisons
+/// a window stage it falls in: it has no value for any metric.
 pub struct SliceProvider<'a> {
     inner: TrackProvider<'a>,
-    start: usize,
-    len: usize,
+    points: TimeFilteredPoints,
 }
 
 impl<'a> SliceProvider<'a> {
-    /// A view of `inner` covering `len` points from absolute index `start`.
-    pub fn new(inner: TrackProvider<'a>, start: usize, len: usize) -> Self {
-        Self { inner, start, len }
+    pub fn new(inner: TrackProvider<'a>, points: TimeFilteredPoints) -> Self {
+        Self { inner, points }
+    }
+
+    /// The track index of the evaluator's `index`, `None` past the end of the
+    /// range and on a point the time window rejects.
+    fn absolute_index_inside_the_window(&self, index: usize) -> Option<usize> {
+        if index >= self.points.len() {
+            return None;
+        }
+        let absolute = self.points.start() + index;
+        let time = self.inner.point_time(absolute)?;
+        self.points.window_keeps(time).then_some(absolute)
     }
 }
 
 impl MetricProvider for SliceProvider<'_> {
     fn len(&self) -> usize {
-        self.len
+        self.points.len()
     }
 
     fn value(&self, metric: QueryMetric, index: usize) -> Option<f64> {
-        if index >= self.len {
-            return None;
-        }
-        self.inner.value(metric, self.start + index)
+        self.inner
+            .value(metric, self.absolute_index_inside_the_window(index)?)
     }
 
     fn channel_span(&self, name: &str, t_lo: f64, t_hi: f64) -> ChannelSamples {
@@ -555,7 +618,9 @@ impl MetricProvider for SliceProvider<'_> {
 
 #[cfg(test)]
 mod tests {
-    use gt_types::coordinates::{RecordedLatitude, RecordedLongitude};
+    use gt_types::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
+    use gt_types::time_types::GpsTime;
+    use gt_types::tpv::TimePositionVelocity;
     use gt_types::{FileIdx, TrackIdx, TrackRef};
     use rstest::rstest;
 
@@ -566,6 +631,16 @@ mod tests {
         TEST_EPOCH, file_with_channels, points_at_recorded_coordinates, rng, scalar_channel,
         test_points, vector_channel,
     };
+
+    /// The points of a track from the second one on, as a window starting at
+    /// the second point's timestamp selects them.
+    fn from_the_second_point(points: &[NavPoint]) -> TimeFilteredPoints {
+        let filter = GlobalFilter {
+            time_start: DateTime::from_timestamp(TEST_EPOCH + 1, 0),
+            ..GlobalFilter::default()
+        };
+        TimeFilteredPoints::of(points, &filter)
+    }
 
     /// A latitude and a longitude in range, for the fixes a test leaves valid.
     fn in_range() -> (RecordedLatitude, RecordedLongitude) {
@@ -621,7 +696,7 @@ mod tests {
             // Point 0 snapped with a 3.5 m error; point 1 carries no value
             // (unsnapped, thinned, or simply beyond the sent range).
             snap_error: Some(Arc::new(vec![Some(3.5), None])),
-            slice_start: 0,
+            filtered_points: TimeFilteredPoints::whole_track(points.len()),
         };
         let provider = TrackProvider::new(&points, &[], Some(&data));
 
@@ -864,11 +939,51 @@ mod tests {
     #[test]
     fn slice_provider_offsets_and_bounds() {
         let points = test_points();
-        let slice = SliceProvider::new(TrackProvider::new(&points, &[], None), 1, 1);
+        let slice = SliceProvider::new(
+            TrackProvider::new(&points, &[], None),
+            from_the_second_point(&points),
+        );
         assert_eq!(slice.len(), 1);
         // Index 0 of the slice is point 1 of the track (the bare point).
         assert_eq!(slice.value(QueryMetric::Lat, 0), Some(55.6));
         assert_eq!(slice.value(QueryMetric::Lat, 1), None, "out of the slice");
+    }
+
+    /// The range covers every point the window keeps, and on a track whose
+    /// timestamps step backwards it covers points the window rejects as well.
+    /// The rejected ones have no value for any metric, so nothing evaluates
+    /// them.
+    #[test]
+    fn a_point_the_time_window_rejects_has_no_value_inside_the_covering_range() {
+        let time = |secs: i64| {
+            GpsTime::from_utc(DateTime::from_timestamp(TEST_EPOCH + secs, 0).expect("valid"))
+        };
+        let fix = |secs: i64, lat: f64| {
+            NavPoint::new(
+                TimePositionVelocity::builder()
+                    .time(time(secs))
+                    .lat(Latitude::new(lat))
+                    .lon(Longitude::new(12.0))
+                    .build(),
+                None,
+            )
+        };
+        // The clock steps back at the second fix, which the window rejects
+        // while it keeps the two around it.
+        let points = vec![fix(0, 55.0), fix(600, 55.1), fix(1, 55.2)];
+        let filter = GlobalFilter {
+            time_end: DateTime::from_timestamp(TEST_EPOCH + 5, 0),
+            ..GlobalFilter::default()
+        };
+        let slice = SliceProvider::new(
+            TrackProvider::new(&points, &[], None),
+            TimeFilteredPoints::of(&points, &filter),
+        );
+
+        assert_eq!(slice.len(), 3);
+        assert_eq!(slice.value(QueryMetric::Lat, 0), Some(55.0));
+        assert_eq!(slice.value(QueryMetric::Lat, 1), None);
+        assert_eq!(slice.value(QueryMetric::Lat, 2), Some(55.2));
     }
 
     #[test]
@@ -1034,7 +1149,7 @@ mod tests {
         let channels = [accel];
         let points = test_points();
         let inner = TrackProvider::new(&points, &channels, None);
-        let slice = SliceProvider::new(inner.clone(), 1, 1);
+        let slice = SliceProvider::new(inner.clone(), from_the_second_point(&points));
 
         // The span [base, base+1] holds the first two samples through either
         // provider; the slice's start must not shift the time window.

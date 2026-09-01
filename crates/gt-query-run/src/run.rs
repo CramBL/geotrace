@@ -11,7 +11,9 @@ use gt_ui_types::QueryMatches;
 use rustc_hash::FxHashMap;
 
 use crate::fingerprint::RunInputs;
-use crate::provider::{CapturedTrackValues, SliceProvider, TrackProvider, TrackQueryData};
+use crate::provider::{
+    CapturedTrackValues, SliceProvider, TimeFilteredPoints, TrackProvider, TrackQueryData,
+};
 use crate::results::{
     ChannelTrackResult, MatchValues, TrackMatchValues, channel_query_matches, matched_point_ranges,
 };
@@ -65,12 +67,12 @@ impl RunHandle {
 }
 
 /// One track's owned data for a run: the full point vector and channels, plus
-/// the sub-range of points passing the time filter.
+/// the points the time filter's window keeps.
 struct TrackSnapshot {
     track_ref: TrackRef,
     points: Vec<NavPoint>,
     channels: Vec<Channel>,
-    slice: Range<usize>,
+    filtered_points: TimeFilteredPoints,
     /// The series captured when the run was prepared - queries stay
     /// synchronous over already-computed data and never trigger an upload.
     captured: CapturedTrackValues,
@@ -96,12 +98,11 @@ impl TrackSnapshot {
             .iter()
             .filter_map(|&track_ref| {
                 let track = track_ref.resolve(files)?;
-                let slice = gt_filter::time_filtered_range(&track.points, filter);
                 Some(Self {
                     track_ref,
+                    filtered_points: TimeFilteredPoints::of(&track.points, filter),
                     points: track.points.clone(),
                     channels: track.channels.clone(),
-                    slice,
                     captured: CapturedTrackValues {
                         snap_error: snap_errors.get(&track_ref).cloned(),
                         jamming: jamming.get(&track_ref).cloned(),
@@ -116,8 +117,7 @@ impl TrackSnapshot {
     fn slice_provider<'a>(&'a self, data: Option<&'a TrackQueryData>) -> SliceProvider<'a> {
         SliceProvider::new(
             TrackProvider::new(&self.points, &self.channels, data),
-            self.slice.start,
-            self.slice.len(),
+            self.filtered_points.clone(),
         )
     }
 }
@@ -189,7 +189,7 @@ impl PreparedRun {
                     params,
                     uses_util,
                     uses_slip,
-                    snapshot.slice.start,
+                    snapshot.filtered_points.clone(),
                     snapshot.captured.clone(),
                 ),
             );

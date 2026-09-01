@@ -9,22 +9,22 @@ pub fn point_passes_time_filter(time: DateTime<Utc>, filter: &GlobalFilter) -> b
     TimeRange::new(time, time).overlaps_window(filter.time_start, filter.time_end)
 }
 
-/// The contiguous sub-range of time-ordered `points` inside the filter's
-/// time window, agreeing point-for-point with [`point_passes_time_filter`]
-/// (pinned by a test below).
+/// The smallest contiguous range of `points` covering every point the filter's
+/// time window keeps.
 ///
-/// Because points are time-ordered within a track, the window selects one
-/// contiguous slice, so consumers evaluating over it keep true point adjacency.
+/// Nothing sorts a track's fixes by time, so on a track whose timestamps step
+/// backwards the range also covers points the window rejects. A consumer
+/// evaluating over the range applies [`point_passes_time_filter`] to each
+/// point it reads, which excludes those.
 pub fn time_filtered_range(points: &[NavPoint], filter: &GlobalFilter) -> Range<usize> {
-    let start = match filter.time_start {
-        Some(t0) => points.partition_point(|p| p.tpv.time().utc() < t0),
-        None => 0,
-    };
-    let end = match filter.time_end {
-        Some(t1) => points.partition_point(|p| p.tpv.time().utc() <= t1),
-        None => points.len(),
-    };
-    start..end.max(start)
+    let inside_window = |point: &NavPoint| point_passes_time_filter(point.tpv.time().utc(), filter);
+    match (
+        points.iter().position(inside_window),
+        points.iter().rposition(inside_window),
+    ) {
+        (Some(first), Some(last)) => first..last + 1,
+        _ => 0..0,
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -120,11 +120,11 @@ mod tests {
             .collect()
     }
 
-    /// The range form must agree point-for-point with the per-point
-    /// predicate - it exists so slicing consumers (the query evaluator)
-    /// cannot drift from what the map draws.
+    /// On time-ordered points the range covers exactly the points the
+    /// per-point predicate keeps, so a slicing consumer (the query evaluator)
+    /// selects what the map draws.
     #[test]
-    fn time_filtered_range_agrees_with_the_point_predicate() {
+    fn time_filtered_range_agrees_with_the_point_predicate_on_time_ordered_points() {
         let points = timed_points(8);
         let t = |i: usize| points.get(i).expect("in range").tpv.time().utc();
         let filters = [

@@ -21,7 +21,7 @@ use gt_query::{
 };
 use gt_query_run::{
     ChannelResults, ChannelTrackResult, PointsResults, QuerySummary, RunResults, SliceProvider,
-    TrackProvider, TrackQueryData,
+    TimeFilteredPoints, TrackProvider,
 };
 use gt_side_panel::widgets::{PointClickRequests, apply_point_click};
 use gt_types::{
@@ -1516,17 +1516,16 @@ fn track_values<'a>(
     // A table's rows read metric columns alone. The samples listed under a
     // match read the channels through their own provider.
     let provider = TrackProvider::new(points, &[], data);
-    let slice_start = data.map_or(0, TrackQueryData::slice_start);
+    let filtered_points = data.map_or_else(
+        || TimeFilteredPoints::whole_track(points.len()),
+        |data| data.filtered_points().clone(),
+    );
     Some(TrackValues {
         placed: loaded.placed_points(),
         channels: &loaded.channels,
         provider: provider.clone(),
-        slice: SliceProvider::new(
-            provider,
-            slice_start,
-            points.len().saturating_sub(slice_start),
-        ),
-        slice_start,
+        slice_start: filtered_points.start(),
+        slice: SliceProvider::new(provider, filtered_points),
     })
 }
 
