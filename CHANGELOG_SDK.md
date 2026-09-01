@@ -16,6 +16,7 @@ the app).
 ### Changed
 
 - `geotrace/geotrace.hpp` uses an include guard instead of `#pragma once`, matching `geotrace/unit_catalog.hpp`.
+- Updated the Python bindings' `pyo3` to 0.29, which fixes RUSTSEC-2026-0176 and RUSTSEC-2026-0177.
 - Rust `EventMarkerIconChoice` and `EventMarkerColor` each have a new `Unrecognized(String)` variant, which the reader produces for an `icon_name` outside the `MarkerIcon` set and for a `color_hex` that is not `#RRGGBB`, and which the writer writes back verbatim. `EventMarkerIconChoice` is no longer `Copy`.
 - Python `NavFile.event_marker_styles` raises a `UserWarning` for a style naming an icon outside the `MarkerIcon` set, whose `icon` reads as `None`. `EventMarkerStyle.color` reads back a color that is not `#RRGGBB` verbatim, and `NavFileBuilder.add_event_marker_style` raises `ValueError` for such a color.
 - An event marker whose variant path is longer than the 255 bytes that field holds is rejected where it is built: Rust `EventMarker::builder().build()`, C `gtd_builder_add_event_marker`, C++ `FileBuilder::add_event_marker`, and the Python `EventMarker` constructor.
