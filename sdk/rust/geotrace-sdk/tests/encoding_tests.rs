@@ -9,8 +9,8 @@
 
 use geotrace_sdk::{Angle, DateTime, Duration, Utc};
 use geotrace_sdk::{
-    Annotation, Constellation, Error, MarkerIcon, NavFile, NavFileBuilder, NavFix, Satellite,
-    SatelliteReport,
+    Annotation, ChannelUnit, Constellation, Error, MarkerIcon, NavFile, NavFileBuilder, NavFix,
+    Satellite, SatelliteReport,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 
@@ -347,6 +347,54 @@ fn make_file_with_version(version: &str) -> Vec<u8> {
     fb.add_group(np.finish());
     #[expect(clippy::expect_used, reason = "test helper")]
     fb.finish().expect("build")
+}
+
+/// h5py and the reference C library write a string attribute as `H5T_STRING`
+/// with `STRSIZE = H5T_VARIABLE`.
+#[test]
+fn variable_length_string_attributes_are_read() -> Result<(), Box<dyn std::error::Error>> {
+    let mut fb = FileBuilder::new();
+    fb.set_attr("geotrace_version", AttrValue::VarLenString("1".into()));
+    fb.set_attr("meta_title", AttrValue::VarLenString("Ride home".into()));
+
+    let mut np = fb.create_group("nav_points");
+    np.create_dataset("time")
+        .with_i64_data(&[])
+        .with_shape(&[0]);
+    np.create_dataset("lat").with_f64_data(&[]).with_shape(&[0]);
+    np.create_dataset("lon").with_f64_data(&[]).with_shape(&[0]);
+    np.create_dataset("heading")
+        .with_f64_data(&[])
+        .with_shape(&[0]);
+    np.create_dataset("speed_mps")
+        .with_f64_data(&[])
+        .with_shape(&[0]);
+    fb.add_group(np.finish());
+
+    let mut channels = fb.create_group("channels");
+    let mut accel = channels.create_group("accel");
+    accel.set_attr("unit", AttrValue::VarLenString("g".into()));
+    accel.set_attr(
+        "components",
+        AttrValue::VarLenStringArray(vec!["x".into(), "y".into()]),
+    );
+    accel
+        .create_dataset("time")
+        .with_i64_data(&[0])
+        .with_shape(&[1]);
+    accel
+        .create_dataset("value")
+        .with_f64_data(&[1.0, 2.0])
+        .with_shape(&[1, 2]);
+    channels.add_group(accel.finish());
+    fb.add_group(channels.finish());
+
+    let nav_file = NavFile::read(fb.finish()?.as_slice())?;
+    assert_eq!(nav_file.meta().title.as_deref(), Some("Ride home"));
+    let channel = nav_file.channels().first().ok_or("no channel")?;
+    assert_eq!(channel.components(), ["x", "y"]);
+    assert_eq!(channel.unit().map(ChannelUnit::label), Some("g"));
+    Ok(())
 }
 
 #[test]

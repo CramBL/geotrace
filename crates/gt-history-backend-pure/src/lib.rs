@@ -55,10 +55,10 @@ impl ReadOnlyPureDb {
         let root = file.root();
         let attrs = root.attrs().map_err(classify_hdf5_error)?;
 
-        let schema_version = match attrs.get(SCHEMA_VERSION_ATTR) {
-            Some(AttrValue::I64(v)) => *v,
-            _ => 0,
-        };
+        let schema_version = attrs
+            .get(SCHEMA_VERSION_ATTR)
+            .and_then(AttrValue::as_i64)
+            .unwrap_or(0);
 
         if schema_version > CURRENT_SCHEMA_VERSION {
             return Err(DbError::SchemaTooNew {
@@ -369,44 +369,39 @@ impl PureDb {
     }
 }
 
-fn string_attr(attrs: &std::collections::HashMap<String, AttrValue>, name: &str) -> Option<String> {
-    match attrs.get(name) {
-        Some(AttrValue::String(value)) => Some(value.clone()),
-        _ => None,
-    }
+/// A string attribute's value, or `None` when it is absent or another type.
+pub(crate) fn string_attr(
+    attrs: &std::collections::HashMap<String, AttrValue>,
+    name: &str,
+) -> Option<String> {
+    attrs
+        .get(name)
+        .and_then(AttrValue::as_str)
+        .map(str::to_owned)
 }
 
 fn recording_meta_from_attrs(
     attrs: &std::collections::HashMap<String, AttrValue>,
 ) -> Option<RecordingMeta> {
-    let start_us = match attrs.get(ATTR_START_US)? {
-        AttrValue::I64(v) => *v,
-        _ => return None,
-    };
-    let end_us = match attrs.get(ATTR_END_US) {
-        Some(AttrValue::I64(v)) => *v,
-        _ => start_us,
-    };
-    let nav_point_count = match attrs.get(ATTR_NAV_POINT_COUNT)? {
-        AttrValue::U64(v) => *v,
-        _ => return None,
-    };
-    let sat_report_count = match attrs.get(ATTR_SAT_REPORT_COUNT)? {
-        AttrValue::U64(v) => *v,
-        _ => return None,
-    };
-    let marker_count = match attrs.get(ATTR_MARKER_COUNT)? {
-        AttrValue::U64(v) => *v,
-        _ => return None,
-    };
-    let event_marker_count = match attrs.get(ATTR_EVENT_MARKER_COUNT)? {
-        AttrValue::U64(v) => *v,
-        _ => return None,
-    };
-    let gtd_size_bytes = match attrs.get(ATTR_GTD_SIZE_BYTES) {
-        Some(AttrValue::U64(v)) => *v,
-        _ => 0,
-    };
+    let start_us = attrs.get(ATTR_START_US).and_then(AttrValue::as_i64)?;
+    let end_us = attrs
+        .get(ATTR_END_US)
+        .and_then(AttrValue::as_i64)
+        .unwrap_or(start_us);
+    let nav_point_count = attrs
+        .get(ATTR_NAV_POINT_COUNT)
+        .and_then(AttrValue::as_u64)?;
+    let sat_report_count = attrs
+        .get(ATTR_SAT_REPORT_COUNT)
+        .and_then(AttrValue::as_u64)?;
+    let marker_count = attrs.get(ATTR_MARKER_COUNT).and_then(AttrValue::as_u64)?;
+    let event_marker_count = attrs
+        .get(ATTR_EVENT_MARKER_COUNT)
+        .and_then(AttrValue::as_u64)?;
+    let gtd_size_bytes = attrs
+        .get(ATTR_GTD_SIZE_BYTES)
+        .and_then(AttrValue::as_u64)
+        .unwrap_or(0);
     Some(RecordingMeta {
         start_us,
         end_us,
@@ -422,25 +417,24 @@ fn matches_attrs(
     meta: &RecordingMeta,
     attrs: &std::collections::HashMap<String, AttrValue>,
 ) -> bool {
-    let start_us = match attrs.get(ATTR_START_US) {
-        Some(AttrValue::I64(v)) => *v,
-        _ => return false,
+    let Some(start_us) = attrs.get(ATTR_START_US).and_then(AttrValue::as_i64) else {
+        return false;
     };
-    let nav_point_count = match attrs.get(ATTR_NAV_POINT_COUNT) {
-        Some(AttrValue::U64(v)) => *v,
-        _ => return false,
+    let Some(nav_point_count) = attrs.get(ATTR_NAV_POINT_COUNT).and_then(AttrValue::as_u64) else {
+        return false;
     };
-    let sat_report_count = match attrs.get(ATTR_SAT_REPORT_COUNT) {
-        Some(AttrValue::U64(v)) => *v,
-        _ => return false,
+    let Some(sat_report_count) = attrs.get(ATTR_SAT_REPORT_COUNT).and_then(AttrValue::as_u64)
+    else {
+        return false;
     };
-    let marker_count = match attrs.get(ATTR_MARKER_COUNT) {
-        Some(AttrValue::U64(v)) => *v,
-        _ => return false,
+    let Some(marker_count) = attrs.get(ATTR_MARKER_COUNT).and_then(AttrValue::as_u64) else {
+        return false;
     };
-    let event_marker_count = match attrs.get(ATTR_EVENT_MARKER_COUNT) {
-        Some(AttrValue::U64(v)) => *v,
-        _ => return false,
+    let Some(event_marker_count) = attrs
+        .get(ATTR_EVENT_MARKER_COUNT)
+        .and_then(AttrValue::as_u64)
+    else {
+        return false;
     };
     meta.matches(
         start_us,

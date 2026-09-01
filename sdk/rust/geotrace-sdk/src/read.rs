@@ -15,7 +15,7 @@ use crate::types::{
 use crate::write;
 use crate::{Angle, Velocity};
 use geotrace_sdk_units::ChannelUnit;
-use hdf5_pure::File;
+use hdf5_pure::{AttrValue, File};
 use strum::IntoEnumIterator;
 
 pub(crate) fn parse_hdf5(bytes: Vec<u8>) -> Result<NavFile, Error> {
@@ -23,9 +23,9 @@ pub(crate) fn parse_hdf5(bytes: Vec<u8>) -> Result<NavFile, Error> {
     let root = file.root();
 
     let attrs = root.attrs()?;
-    let version = match attrs.get("geotrace_version") {
-        Some(hdf5_pure::AttrValue::String(v)) => v.clone(),
-        _ => {
+    let version = match attrs.get("geotrace_version").and_then(AttrValue::as_str) {
+        Some(v) => v.to_owned(),
+        None => {
             return Err(Error::UnsupportedVersion {
                 version: "<missing>".into(),
             });
@@ -53,7 +53,7 @@ pub(crate) fn parse_hdf5(bytes: Vec<u8>) -> Result<NavFile, Error> {
     })
 }
 
-fn read_meta(attrs: &HashMap<String, hdf5_pure::AttrValue>) -> Meta {
+fn read_meta(attrs: &HashMap<String, AttrValue>) -> Meta {
     Meta {
         title: string_attr(attrs, "meta_title"),
         device: string_attr(attrs, "meta_device"),
@@ -69,32 +69,22 @@ fn read_meta(attrs: &HashMap<String, hdf5_pure::AttrValue>) -> Meta {
     }
 }
 
-fn string_attr(attrs: &HashMap<String, hdf5_pure::AttrValue>, key: &str) -> Option<String> {
-    match attrs.get(key) {
-        Some(hdf5_pure::AttrValue::String(s)) => Some(s.clone()),
-        _ => None,
-    }
+fn string_attr(attrs: &HashMap<String, AttrValue>, key: &str) -> Option<String> {
+    attrs
+        .get(key)
+        .and_then(AttrValue::as_str)
+        .map(str::to_owned)
 }
 
-fn f64_attr(attrs: &HashMap<String, hdf5_pure::AttrValue>, key: &str) -> Option<f64> {
-    match attrs.get(key) {
-        Some(hdf5_pure::AttrValue::F64(v)) => Some(*v),
-        _ => None,
-    }
+fn f64_attr(attrs: &HashMap<String, AttrValue>, key: &str) -> Option<f64> {
+    attrs.get(key).and_then(AttrValue::as_f64)
 }
 
-fn string_array_attr(
-    attrs: &HashMap<String, hdf5_pure::AttrValue>,
-    key: &str,
-) -> Option<Vec<String>> {
-    use hdf5_pure::AttrValue::{String as StringAttr, StringArray};
-    match attrs.get(key) {
-        Some(StringArray(v)) => Some(v.clone()),
-        // A single-element string array reads back as a plain `String`, so a
-        // one-component vector's `components` attribute arrives this way.
-        Some(StringAttr(s)) => Some(vec![s.clone()]),
-        _ => None,
-    }
+fn string_array_attr(attrs: &HashMap<String, AttrValue>, key: &str) -> Option<Vec<String>> {
+    attrs
+        .get(key)
+        .and_then(AttrValue::as_strings)
+        .map(<[String]>::to_vec)
 }
 
 fn read_nav_points(file: &File) -> Result<Vec<NavPoint>, Error> {
@@ -516,10 +506,10 @@ pub(crate) fn inspect_path(path: &Path) -> Result<String, Error> {
     let mut out = String::new();
     let sep = "─".repeat(60);
 
-    let version = match attrs.get("geotrace_version") {
-        Some(hdf5_pure::AttrValue::String(v)) => v.as_str().to_owned(),
-        _ => "<unknown>".into(),
-    };
+    let version = attrs
+        .get("geotrace_version")
+        .and_then(AttrValue::as_str)
+        .unwrap_or("<unknown>");
     writeln!(out, "GeoTrace Data File - version {version}").ok();
     writeln!(out, "{sep}").ok();
 
