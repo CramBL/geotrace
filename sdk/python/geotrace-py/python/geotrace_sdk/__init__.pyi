@@ -105,7 +105,8 @@ class Satellite:
 class SatelliteReport:
     """A set of satellites tracked at a point in time.
 
-    Supply at least one of ``gps_time`` or ``sys_time``.
+    Supply at least one of ``gps_time`` or ``sys_time``: a report with neither
+    is dropped by :meth:`NavFileBuilder.finish`.
     Both must be timezone-aware :class:`datetime.datetime` objects.
 
     Args:
@@ -125,12 +126,17 @@ class SatelliteReport:
     def tracked(self) -> list[Satellite]: ...
     @property
     def gps_time(self) -> datetime | None:
-        """GPS-domain timestamp (timezone-aware UTC), or ``None``."""
+        """GPS-domain timestamp (timezone-aware UTC), or ``None`` for a report
+        constructed without one, or read from a file that stores none.
+        """
         ...
 
     @property
     def sys_time(self) -> datetime | None:
-        """System-clock timestamp (timezone-aware UTC), or ``None``."""
+        """System-clock timestamp at capture time (timezone-aware UTC), or
+        ``None`` for a report constructed without one, or read from a file that
+        stores none.
+        """
         ...
 
     def __eq__(self, other: object) -> bool: ...

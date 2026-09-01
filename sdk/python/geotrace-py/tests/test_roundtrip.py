@@ -168,6 +168,19 @@ def test_roundtrip_satellites() -> None:
     assert abs(gps_sat.elevation - 60.0) < 0.1
 
 
+def test_roundtrip_satellite_report_with_only_a_sys_time_keeps_gps_time_none() -> None:
+    b = NavFileBuilder()
+    b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0, sys_time=T0))
+    b.add(SatelliteReport([Satellite(Constellation.GPS, 5, in_fix=True)], sys_time=T0))
+    nav_file = _write_and_read(b)
+
+    report = nav_file.points[0].satellites
+    assert report is not None
+    assert report.gps_time is None
+    assert report.sys_time is not None
+    assert abs((report.sys_time - T0).total_seconds()) < 0.001
+
+
 def test_roundtrip_annotation() -> None:
     b = NavFileBuilder()
     b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))

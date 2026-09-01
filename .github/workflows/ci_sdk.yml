@@ -565,6 +565,21 @@ jobs:
         working-directory: sdk/python/geotrace-py
         run: uv run pytest tests/ -v
 
+      # geotrace-py is an isolated workspace, so ci.yml's root `cargo nextest
+      # run` never reaches these tests. The test binary links libpython: pyo3
+      # configures against the venv interpreter through PYO3_PYTHON, and the
+      # loader finds libpython through LD_LIBRARY_PATH. One leg runs them: the
+      # tests assert Rust-side invariants that hold for every interpreter, and
+      # LD_LIBRARY_PATH is the Linux loader's variable alone. 3.12 is the abi3
+      # minimum the crate declares.
+      - name: Rust unit tests
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        working-directory: sdk/python/geotrace-py
+        run: |
+          interpreter="$PWD/.venv/bin/python"
+          libdir=$("$interpreter" -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')
+          PYO3_PYTHON="$interpreter" LD_LIBRARY_PATH="$libdir" cargo test
+
       - name: Run examples
         working-directory: sdk/python/geotrace-py
         run: |
