@@ -80,13 +80,8 @@ fn attr_string(attrs: &[(String, AttrValue)], name: &str) -> Option<String> {
     attrs
         .iter()
         .find(|entry| entry.0 == name)
-        .and_then(|entry| {
-            if let AttrValue::String(s) = &entry.1 {
-                Some(s.clone())
-            } else {
-                None
-            }
-        })
+        .and_then(|entry| entry.1.as_str())
+        .map(str::to_owned)
 }
 
 fn ensure_identity_node<'a>(
@@ -450,13 +445,8 @@ pub(crate) fn insert_recording(
                 let id_attrs = id_grp.attrs()?;
                 let existing_identity = id_attrs
                     .get(ATTR_IDENTITY)
-                    .and_then(|value| {
-                        if let AttrValue::String(s) = value {
-                            Some(s.clone())
-                        } else {
-                            None
-                        }
-                    })
+                    .and_then(AttrValue::as_str)
+                    .map(str::to_owned)
                     .or_else(|| identity_from_group_name(&storage_name))
                     .unwrap_or_else(|| storage_name.clone());
                 for rec_name in id_grp.groups()? {
@@ -768,7 +758,7 @@ pub(crate) fn log_attachments_in_attrs(
         let Some(id) = LogAttachmentId::from_attr_key(key) else {
             continue;
         };
-        let (AttrValue::String(json) | AttrValue::AsciiString(json)) = value else {
+        let Some(json) = value.as_str() else {
             log::warn!("Ignoring the log attachment attribute {key:?}, which is not a string");
             continue;
         };
@@ -877,8 +867,8 @@ pub(crate) fn read_channel_summaries(rec_grp: &Group) -> Vec<ChannelSummary> {
                 .unwrap_or(0);
             Some(ChannelSummary {
                 name,
-                unit: attr_string_value(&attrs, GTD_CHANNEL_UNIT_ATTR),
-                description: attr_string_value(&attrs, GTD_CHANNEL_DESCRIPTION_ATTR),
+                unit: crate::string_attr(&attrs, GTD_CHANNEL_UNIT_ATTR),
+                description: crate::string_attr(&attrs, GTD_CHANNEL_DESCRIPTION_ATTR),
                 components: attr_string_array_value(&attrs, GTD_CHANNEL_COMPONENTS_ATTR),
                 sample_count,
             })
@@ -888,52 +878,32 @@ pub(crate) fn read_channel_summaries(rec_grp: &Group) -> Vec<ChannelSummary> {
     summaries
 }
 
-/// A string attribute's value, or `None` when it is absent or another type.
-/// Accepts both string encodings hdf5-pure distinguishes.
-fn attr_string_value(
-    attrs: &std::collections::HashMap<String, AttrValue>,
-    name: &str,
-) -> Option<String> {
-    match attrs.get(name)? {
-        AttrValue::String(value) | AttrValue::AsciiString(value) => Some(value.clone()),
-        _ => None,
-    }
-}
-
 /// An array-of-strings attribute's values, or empty when it is absent or
 /// another type.
 fn attr_string_array_value(
     attrs: &std::collections::HashMap<String, AttrValue>,
     name: &str,
 ) -> Vec<String> {
-    match attrs.get(name) {
-        Some(AttrValue::StringArray(values) | AttrValue::AsciiStringArray(values)) => {
-            values.clone()
-        }
-        _ => Vec::new(),
-    }
+    attrs
+        .get(name)
+        .and_then(AttrValue::as_strings)
+        .map(<[String]>::to_vec)
+        .unwrap_or_default()
 }
 
 /// Read the stored segmentation settings from a recording's attrs, if present.
 fn read_segmentation(
     attrs: &std::collections::HashMap<String, AttrValue>,
 ) -> Option<StoredSegmentation> {
-    let gap = match attrs.get(ATTR_SEG_GAP_US)? {
-        AttrValue::I64(v) => *v,
-        _ => return None,
-    };
-    let detect = match attrs.get(ATTR_SEG_DETECT_CLOCK)? {
-        AttrValue::U64(v) => *v != 0,
-        _ => return None,
-    };
-    let sigmas = match attrs.get(ATTR_SEG_CLOCK_SIGMAS)? {
-        AttrValue::F64(v) => *v,
-        _ => return None,
-    };
     Some(StoredSegmentation {
-        track_split_gap_us: gap,
-        detect_clock_discontinuities: detect,
-        clock_discontinuity_sigmas: sigmas,
+        track_split_gap_us: attrs.get(ATTR_SEG_GAP_US).and_then(AttrValue::as_i64)?,
+        detect_clock_discontinuities: attrs
+            .get(ATTR_SEG_DETECT_CLOCK)
+            .and_then(AttrValue::as_u64)?
+            != 0,
+        clock_discontinuity_sigmas: attrs
+            .get(ATTR_SEG_CLOCK_SIGMAS)
+            .and_then(AttrValue::as_f64)?,
     })
 }
 
