@@ -274,6 +274,9 @@ pub struct MatchValues {
 /// `[t0, t1]` extends to the nav point at or before `t0` through the one at or
 /// after `t1`, so even a sub-interval match bands the segment it sits on.
 /// Returned sorted and merged (disjoint), as [`QueryMatches`] requires.
+///
+/// Fix and sample timestamps are compared as Unix seconds with the sub-second
+/// fraction, the unit of [`ChannelTimeline::times`].
 pub(crate) fn matched_point_ranges(
     points: &[NavPoint],
     timeline: &ChannelTimeline,
@@ -282,7 +285,10 @@ pub(crate) fn matched_point_ranges(
     let Some(last) = points.len().checked_sub(1) else {
         return Vec::new();
     };
-    let point_secs: Vec<f64> = points.iter().map(|p| p.tpv.time().as_secs_f64()).collect();
+    let point_secs: Vec<f64> = points
+        .iter()
+        .map(|p| p.tpv.time().as_secs_f64_with_subseconds())
+        .collect();
     let mut spans: Vec<Range<usize>> = matches
         .iter()
         .map(|matched| &matched.rows)
@@ -487,7 +493,7 @@ mod tests {
 
     use super::*;
     use crate::check::check_text;
-    use crate::test_fixtures::{TEST_EPOCH, matched_rows, rng, test_points};
+    use crate::test_fixtures::{TEST_EPOCH, matched_rows, points_at_millis, rng};
 
     #[test]
     fn summary_notes_every_skip_and_unused_param() {
@@ -605,22 +611,37 @@ mod tests {
         }
     }
 
-    #[test]
-    fn matched_point_ranges_band_the_covering_segment() {
-        // Points at 0 and 1 s; a channel sample matched at 0.5 s brackets to the
-        // segment between them, banding both nav points.
-        let base = TEST_EPOCH as f64;
-        let points = test_points();
+    /// A sample between two fixes bands both of them. A sample on a fix's own
+    /// timestamp bands that fix alone.
+    #[rstest]
+    #[case(250, rng(0, 2))]
+    #[case(500, rng(1, 2))]
+    fn matched_point_ranges_band_the_fixes_around_a_matched_sample(
+        #[case] sample_millis: i64,
+        #[case] expected: Range<usize>,
+    ) {
+        let points = points_at_millis(&[0, 500]);
         let timeline = ChannelTimeline {
-            times: vec![base + 0.5],
+            times: vec![TEST_EPOCH as f64 + sample_millis as f64 / 1_000.0],
             values: vec![9.8],
             columns: 1,
         };
+
         assert_eq!(
             matched_point_ranges(&points, &timeline, &[matched_rows(rng(0, 1))]),
-            vec![rng(0, 2)]
+            vec![expected]
         );
-        // No matched samples yields no bands.
+    }
+
+    #[test]
+    fn matched_point_ranges_are_empty_without_a_matched_sample() {
+        let points = points_at_millis(&[0, 500]);
+        let timeline = ChannelTimeline {
+            times: vec![TEST_EPOCH as f64 + 0.25],
+            values: vec![9.8],
+            columns: 1,
+        };
+
         assert!(matched_point_ranges(&points, &timeline, &[]).is_empty());
     }
 

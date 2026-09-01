@@ -76,6 +76,24 @@ pub(crate) fn test_points() -> Vec<NavPoint> {
     ]
 }
 
+/// One point per millisecond offset past [`TEST_EPOCH`], with no velocity,
+/// heading or satellite report.
+pub(crate) fn points_at_millis(offsets_millis: &[i64]) -> Vec<NavPoint> {
+    offsets_millis
+        .iter()
+        .map(|&millis| {
+            let time = DateTime::from_timestamp_millis(TEST_EPOCH * 1_000 + millis)
+                .expect("valid timestamp");
+            let tpv = TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(time))
+                .lat(Latitude::new(55.5))
+                .lon(Longitude::new(12.25))
+                .build();
+            NavPoint::new(tpv, None)
+        })
+        .collect()
+}
+
 /// One point per coordinate pair, a second apart from [`TEST_EPOCH`], with no
 /// velocity, heading or satellite report.
 pub(crate) fn points_at_recorded_coordinates(
