@@ -157,3 +157,22 @@ fn a_track_passes_a_window_that_its_recording_gap_covers_entirely() {
 
     assert!(track_passes_filter(&track, &filter));
 }
+
+/// A window whose start is after its end selects no instant at all: the
+/// per-point predicate rejects every fix of the track. The track-level clause
+/// must reject the track: it reads the same window.
+#[test]
+fn an_inverted_window_rejects_a_track_no_fix_of_which_it_keeps() {
+    let fixes = fixes_at(&[at(0), at(30), at(60)]);
+    let track = track_over(fixes.clone());
+    let filter = window(Some(at(40)), Some(at(20)));
+    assert!(
+        (0..fixes.len()).all(|index| !fix_passes(&fixes, index, &filter)),
+        "the inverted window keeps no fix: it selects no instant"
+    );
+
+    assert!(
+        !track_passes_filter(&track, &filter),
+        "the track passes a window that keeps none of its fixes"
+    );
+}
