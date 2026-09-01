@@ -16,6 +16,7 @@ the app).
 
 ### Changed
 
+- Rust `Unit::to_base` bases a rate on per second: `Unit::PER_S.to_base()` is `1.0`, `Unit::PER_MIN.to_base()` is `1/60`, and `Unit::PER_H.to_base()` is `1/3600`.
 - `geotrace/geotrace.hpp` uses an include guard instead of `#pragma once`, matching `geotrace/unit_catalog.hpp`.
 - Updated the Python bindings' `pyo3` to 0.29, which fixes RUSTSEC-2026-0176 and RUSTSEC-2026-0177.
 - Rust `EventMarkerIconChoice` and `EventMarkerColor` each have a new `Unrecognized(String)` variant, which the reader produces for an `icon_name` outside the `MarkerIcon` set and for a `color_hex` that is not `#RRGGBB`, and which the writer writes back verbatim. `EventMarkerIconChoice` is no longer `Copy`.

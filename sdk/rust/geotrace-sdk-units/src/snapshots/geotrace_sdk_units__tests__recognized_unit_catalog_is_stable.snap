@@ -28,6 +28,6 @@ s | S | S | S | Duration | 1.000000000000
 min | MIN | Min | MIN | Duration | 60.000000000000
 h | H | H | H | Duration | 3600.000000000000
 % | PERCENT | Percent | PERCENT | Ratio | 0.010000000000
-per s | PER_S | PerS | PER_S | Rate | 60.000000000000
-per min | PER_MIN | PerMin | PER_MIN | Rate | 1.000000000000
-per h | PER_H | PerH | PER_H | Rate | 0.016666666667
+per s | PER_S | PerS | PER_S | Rate | 1.000000000000
+per min | PER_MIN | PerMin | PER_MIN | Rate | 0.016666666667
+per h | PER_H | PerH | PER_H | Rate | 0.000277777778
