@@ -394,7 +394,7 @@ impl MetricProvider for TrackProvider<'_> {
         let point = self.points.get(index)?;
         let sats = point.satellites.as_ref();
         match metric {
-            QueryMetric::Time => Some(point.tpv.time().as_secs_f64()),
+            QueryMetric::Time => Some(point.tpv.time().as_secs_f64_with_subseconds()),
             QueryMetric::SysTime => point
                 .tpv
                 .sys_time()
@@ -487,10 +487,9 @@ impl MetricProvider for TrackProvider<'_> {
     /// channel), converted from the channel's stored unit to the evaluator's
     /// base units.
     ///
-    /// `t_lo`/`t_hi` arrive floored to whole seconds (the query engine's time
-    /// resolution, since nav-point time floors to whole seconds); the sub-second
-    /// precision of a sample's own timestamp only refines placement within that
-    /// grid.
+    /// A span between two fixes of one second selects the samples between those
+    /// two fixes. `t_lo`/`t_hi` and a sample's own timestamp both carry the
+    /// sub-second fraction.
     fn channel_span(&self, name: &str, t_lo: f64, t_hi: f64) -> ChannelSamples {
         self.resolve_channel(name)
             .map(|resolved| resolved.samples_in_span(t_lo, t_hi))
@@ -628,8 +627,8 @@ mod tests {
     use crate::check::check_text;
     use crate::schema::schema_from_files;
     use crate::test_fixtures::{
-        TEST_EPOCH, file_with_channels, points_at_recorded_coordinates, rng, scalar_channel,
-        test_points, vector_channel,
+        TEST_EPOCH, file_with_channels, points_at_millis, points_at_recorded_coordinates, rng,
+        scalar_channel, test_points, vector_channel,
     };
 
     /// The points of a track from the second one on, as a window starting at
@@ -836,6 +835,21 @@ mod tests {
     /// A track without a snap run resolves no `snap_error` values - the
     /// metric never invents data (and never triggers an upload; providers
     /// only read what the app captured).
+    #[test]
+    fn the_time_metric_keeps_the_sub_second_fraction_of_a_fix() {
+        let points = points_at_millis(&[0, 500]);
+        let provider = TrackProvider::new(&points, &[], None);
+
+        assert_eq!(
+            provider.value(QueryMetric::Time, 0),
+            Some(TEST_EPOCH as f64)
+        );
+        assert_eq!(
+            provider.value(QueryMetric::Time, 1),
+            Some(TEST_EPOCH as f64 + 0.5)
+        );
+    }
+
     #[test]
     fn snap_error_is_absent_without_a_run() {
         let points = test_points();

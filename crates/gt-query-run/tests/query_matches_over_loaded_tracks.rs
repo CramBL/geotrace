@@ -42,17 +42,26 @@ fn utc(millis: i64) -> DateTime<Utc> {
     DateTime::from_timestamp_millis(EPOCH * 1_000 + millis).expect("a valid timestamp")
 }
 
-/// One fix per millisecond offset past [`EPOCH`], each at 36 km/h, moving north
-/// so the track has a length.
+/// One fix per millisecond offset past [`EPOCH`], each at 36 km/h.
 fn fixes_at(offsets_millis: &[i64]) -> Vec<NavPoint> {
-    offsets_millis
+    let at_one_speed: Vec<(i64, f64)> = offsets_millis
         .iter()
-        .map(|&millis| {
+        .map(|&millis| (millis, 36.0))
+        .collect();
+    fixes_at_speeds(&at_one_speed)
+}
+
+/// One fix per millisecond offset past [`EPOCH`] and speed in km/h, moving north
+/// so the track has a length.
+fn fixes_at_speeds(fixes: &[(i64, f64)]) -> Vec<NavPoint> {
+    fixes
+        .iter()
+        .map(|&(millis, speed_kmh)| {
             let tpv = TimePositionVelocity::builder()
                 .time(GpsTime::from_utc(utc(millis)))
                 .lat(Latitude::new(55.0 + millis as f64 / 1_000_000.0))
                 .lon(Longitude::new(12.0))
-                .velocity(Velocity::new::<kilometer_per_hour>(36.0))
+                .velocity(Velocity::new::<kilometer_per_hour>(speed_kmh))
                 .build();
             NavPoint::new(tpv, None)
         })
@@ -240,4 +249,70 @@ fn a_time_window_keeps_the_fixes_on_both_sides_of_a_backwards_clock_step() {
     );
 
     assert_eq!(drawn_ranges(&session), vec![0..1, 2..4]);
+}
+
+/// `accel` at the second fix of this 2 Hz track is 20 m/s2. That fix is 0.5 s
+/// and 10 m/s past the first. The first fix has no predecessor to difference
+/// against.
+#[test]
+fn accel_is_valued_between_two_fixes_in_the_same_second() {
+    let state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at_speeds(&[(0, 36.0), (500, 72.0)]),
+        vec![],
+    ));
+    let mut session = QuerySession::new();
+
+    run_text(
+        &mut session,
+        &state,
+        "points | where accel > 15 m/s2 | draw",
+    );
+
+    assert_eq!(drawn_ranges(&session), vec![1..2]);
+}
+
+/// A count window's channel span holds the samples between its own two fixes.
+/// A window over this 2 Hz track spans half a second. The window at fixes 0 and
+/// 1 reads the sample at 0 ms and matches. The window at fixes 1 and 2 reads
+/// only the sample at 750 ms, which is under the bar.
+#[test]
+fn a_count_window_reads_the_channel_samples_between_its_own_fixes_at_two_hz() {
+    let channel = scalar_channel("sensor", None, &[(0, 100.0), (750, 1.0)]);
+    let state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at(&[0, 500, 1_000, 1_500]),
+        vec![channel],
+    ));
+    let mut session = QuerySession::new();
+
+    run_text(
+        &mut session,
+        &state,
+        "points | window 2 | where max(@sensor) > 50 | draw",
+    );
+
+    assert_eq!(drawn_ranges(&session), vec![0..2]);
+}
+
+/// A 1 s duration window over this 2 Hz track holds two fixes. The window at
+/// fix 0 averages 50 km/h over fixes 0 and 1, and the window at fix 1 averages
+/// 50 km/h over fixes 1 and 2. The windows at fixes 2 and 3 run past the last
+/// fix.
+#[test]
+fn a_duration_window_groups_the_fixes_of_its_own_span_at_two_hz() {
+    let state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at_speeds(&[(0, 100.0), (500, 0.0), (1_000, 100.0), (1_500, 0.0)]),
+        vec![],
+    ));
+    let mut session = QuerySession::new();
+
+    run_text(
+        &mut session,
+        &state,
+        "points | window 1 s | where avg(velocity) > 30 km/h | draw",
+    );
+
+    assert_eq!(drawn_ranges(&session), vec![0..3]);
 }
