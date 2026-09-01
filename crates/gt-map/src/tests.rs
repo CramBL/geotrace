@@ -698,13 +698,16 @@ fn matched_bounding_box_covers_only_the_drawn_matches() {
     ])];
     let matches = matches_of_run(1, TrackRef::new(FileIdx::new(0), TrackIdx::new(1)));
     assert_eq!(
-        matched_bounding_box(&files, &matches),
+        matched_bounding_box(&files, &matches, &GlobalFilter::default()),
         Some(GeoBounds::single_position(
             Latitude::new(56.0),
             Longitude::new(13.0)
         ))
     );
-    assert_eq!(matched_bounding_box(&files, &QueryMatches::default()), None);
+    assert_eq!(
+        matched_bounding_box(&files, &QueryMatches::default(), &GlobalFilter::default()),
+        None
+    );
 }
 
 /// Matches spread either side of the antimeridian are framed on the tight
@@ -734,7 +737,8 @@ fn matched_bounding_box_across_the_antimeridian_frames_the_arc_the_matches_cover
         ..QueryMatches::default()
     };
 
-    let bounds = matched_bounding_box(&files, &matches).expect("all three tracks are loaded");
+    let bounds = matched_bounding_box(&files, &matches, &GlobalFilter::default())
+        .expect("all three tracks are loaded");
     let (_, center_lon) = bounds.center();
     assert!(
         (bounds.lon.span_degrees() - 5.5).abs() < 1e-9,
@@ -755,16 +759,22 @@ fn match_bounding_box_covers_one_match() {
     let files = vec![file_with_tracks(vec![track_at(55.0, 12.0)])];
     let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
     assert_eq!(
-        match_bounding_box(&files, track, &(0..1)),
+        match_bounding_box(&files, track, &(0..1), &GlobalFilter::default()),
         Some(GeoBounds::single_position(
             Latitude::new(55.0),
             Longitude::new(12.0)
         ))
     );
     // A range reaching past the track frames nothing: its points are gone.
-    assert_eq!(match_bounding_box(&files, track, &(0..10_000)), None);
+    assert_eq!(
+        match_bounding_box(&files, track, &(0..10_000), &GlobalFilter::default()),
+        None
+    );
     let missing_file = TrackRef::new(FileIdx::new(9), TrackIdx::new(0));
-    assert_eq!(match_bounding_box(&files, missing_file, &(0..1)), None);
+    assert_eq!(
+        match_bounding_box(&files, missing_file, &(0..1), &GlobalFilter::default()),
+        None
+    );
 }
 
 /// Every framing fold covers where the points are drawn. A dead-reckoned fix
@@ -804,12 +814,16 @@ fn map_framing_covers_where_the_points_are_drawn() {
         "zoom to fit"
     );
     assert_eq!(
-        matched_bounding_box(&files, &matches_of_run(1, track_ref)),
+        matched_bounding_box(
+            &files,
+            &matches_of_run(1, track_ref),
+            &GlobalFilter::default()
+        ),
         expected,
         "the run's map button"
     );
     assert_eq!(
-        match_bounding_box(&files, track_ref, &(0..1)),
+        match_bounding_box(&files, track_ref, &(0..1), &GlobalFilter::default()),
         expected,
         "a match row's map button"
     );
