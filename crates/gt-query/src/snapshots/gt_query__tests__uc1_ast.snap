@@ -1,6 +1,5 @@
 ---
-source: crates/gt-query/src/lib.rs
-assertion_line: 1794
+source: crates/gt-query/src/tests.rs
 expression: query
 ---
 Query {
@@ -157,34 +156,42 @@ Query {
     table: Some(
         TableSpec {
             columns: [
-                MetricRef {
-                    metric: Time,
-                    span: Span {
-                        start: 131,
-                        end: 135,
+                Metric(
+                    MetricRef {
+                        metric: Time,
+                        span: Span {
+                            start: 131,
+                            end: 135,
+                        },
                     },
-                },
-                MetricRef {
-                    metric: Velocity,
-                    span: Span {
-                        start: 137,
-                        end: 145,
+                ),
+                Metric(
+                    MetricRef {
+                        metric: Velocity,
+                        span: Span {
+                            start: 137,
+                            end: 145,
+                        },
                     },
-                },
-                MetricRef {
-                    metric: Heading,
-                    span: Span {
-                        start: 147,
-                        end: 154,
+                ),
+                Metric(
+                    MetricRef {
+                        metric: Heading,
+                        span: Span {
+                            start: 147,
+                            end: 154,
+                        },
                     },
-                },
-                MetricRef {
-                    metric: Accel,
-                    span: Span {
-                        start: 156,
-                        end: 161,
+                ),
+                Metric(
+                    MetricRef {
+                        metric: Accel,
+                        span: Span {
+                            start: 156,
+                            end: 161,
+                        },
                     },
-                },
+                ),
             ],
             span: Span {
                 start: 125,

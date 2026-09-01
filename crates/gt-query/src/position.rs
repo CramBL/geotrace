@@ -492,7 +492,7 @@ enum Slot {
     Param,
     /// A metric or function (the start of a `where` atom).
     ValueName,
-    /// A `table` column - a metric only, never a function.
+    /// A `table` column - a metric or an aggregate.
     Column,
     /// A unit suffix (just after a number).
     Unit,
@@ -515,7 +515,7 @@ impl Slot {
                 matches!(kind, ConstructKind::Metric | ConstructKind::Function)
                     || construct.name == "not"
             }
-            Slot::Column => kind == ConstructKind::Metric,
+            Slot::Column => matches!(kind, ConstructKind::Metric | ConstructKind::Function),
             Slot::Unit => kind == ConstructKind::Unit,
             // `not` starts an atom, so after a complete one only `and`/`or`
             // fit.
@@ -587,8 +587,11 @@ fn slot_before(toks: &[lexer::Tok<'_>], word_start: usize) -> Slot {
             _ => Slot::Connective,
         },
         Token::Table => match prev {
-            // A column name at the start or after a comma.
+            // A column at the start or after a comma.
             Some(Token::Table | Token::Comma) => Slot::Column,
+            // Inside an aggregate's parentheses, where a value name stands as
+            // it does in a `where` atom.
+            Some(Token::LParen) => Slot::ValueName,
             _ => Slot::None,
         },
         Token::Window => match prev {
@@ -850,16 +853,23 @@ mod tests {
     #[test]
     fn columns_in_table() {
         // `table ` must not dump every metric unprompted - the popup waits
-        // for the first character, then offers only metrics.
+        // for the first character.
         assert!(names("points | where velocity > 30 km/h | table ").is_empty());
         let items = names("points | where velocity > 30 km/h | table v");
         assert!(items.contains(&"velocity"));
-        assert!(
-            !items.contains(&"avg"),
-            "columns are metrics, not functions"
-        );
+        // A column takes an aggregate as well as a metric.
+        assert!(names("points | window 5 | table a").contains(&"avg"));
         let after_comma = names("points | where velocity > 30 km/h | table time, h");
         assert!(after_comma.contains(&"heading"));
+    }
+
+    /// A column's aggregate takes a metric or a channel in its parentheses,
+    /// as a `where` atom does.
+    #[test]
+    fn values_inside_a_column_aggregate() {
+        assert!(names("points | window 5 | table max(v").contains(&"velocity"));
+        let src = "points | window 5 | table max(@acc";
+        assert_eq!(channel_names(src, src.len()), vec!["accel"]);
     }
 
     #[test]

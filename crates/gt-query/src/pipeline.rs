@@ -24,6 +24,7 @@ use crate::metric::QueryMetric;
 pub struct QueryOutput {
     pub mode: DisplayMode,
     pub matches: Vec<TrackMatches>,
+    /// The metric columns of the match table, as [`crate::RunOutput::columns`].
     pub columns: Vec<QueryMetric>,
     pub summary: RunSummary,
 }
@@ -263,7 +264,7 @@ impl QueryAccum {
     fn new(query: &CheckedQuery) -> Self {
         Self {
             mode: query.mode(),
-            columns: query.columns().to_vec(),
+            columns: query.metric_columns(),
             matches: Vec::new(),
             summary: RunSummary {
                 unused_params: query.unused_params().to_vec(),

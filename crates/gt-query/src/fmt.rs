@@ -40,7 +40,7 @@ impl fmt::Display for Query {
                 if index > 0 {
                     write!(f, ", ")?;
                 }
-                write!(f, "{}", column.metric)?;
+                write!(f, "{column}")?;
             }
         }
         Ok(())

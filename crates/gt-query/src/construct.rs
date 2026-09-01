@@ -134,10 +134,15 @@ const STAGES: &[Construct] = &[
         name: "table",
         kind: ConstructKind::Stage,
         summary: "choose the columns of the match table",
-        doc: "Sets which metrics appear, in order, in each match's point \
-              table. `time` is always the first column. Without it, the \
-              table shows every metric the query referenced.",
-        examples: &["points | where velocity > 30 km/h | table time, velocity, heading"],
+        doc: "Sets which columns appear, in order, in each match's point \
+              table. A column is a metric, valued at each point, or an \
+              aggregate, valued once over the whole match. `time` is always \
+              the first column. Without it, the table shows every metric the \
+              query referenced.",
+        examples: &[
+            "points | where velocity > 30 km/h | table time, velocity, heading",
+            "points | window 10 | where max(@accel.x) > 1 g | table max(@accel.x)",
+        ],
     },
 ];
 

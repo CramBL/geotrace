@@ -531,8 +531,8 @@ fn columns_default_to_time_plus_referenced_metrics() {
     let query =
         checked("points | window 5 | where spread(heading) <= 10 deg and avg(velocity) > 30 km/h");
     assert_eq!(
-        query.columns(),
-        &[
+        query.metric_columns(),
+        [
             QueryMetric::Time,
             QueryMetric::Heading,
             QueryMetric::Velocity
@@ -544,8 +544,8 @@ fn columns_default_to_time_plus_referenced_metrics() {
 fn explicit_table_controls_columns_time_stays_first() {
     let query = checked(UC1);
     assert_eq!(
-        query.columns(),
-        &[
+        query.metric_columns(),
+        [
             QueryMetric::Time,
             QueryMetric::Velocity,
             QueryMetric::Heading,
@@ -553,6 +553,98 @@ fn explicit_table_controls_columns_time_stays_first() {
         ]
     );
     assert_eq!(query.mode(), DisplayMode::Draw);
+}
+
+/// Every column of a checked query, in table order.
+fn column_labels(query: &CheckedQuery) -> Vec<String> {
+    query.columns().iter().map(TableColumn::label).collect()
+}
+
+/// The checked aggregate column written as `label`.
+fn aggregate_column<'a>(query: &'a CheckedQuery, label: &str) -> &'a AggregateColumn {
+    query
+        .columns()
+        .iter()
+        .find_map(|column| match column {
+            TableColumn::Aggregate(aggregate) if aggregate.label() == label => Some(aggregate),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("the query has no {label} column"))
+}
+
+#[test]
+fn a_table_column_takes_a_channel_aggregate() {
+    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let src = "points | window 3 | where max(@accel.x) > 1 g | table time, max(@accel.x)";
+    let query = check(&parse(src).unwrap(), &schema).expect(src);
+    assert_eq!(column_labels(&query), ["time", "max(@accel.x)"]);
+    // The column's values are accelerations in base units, and a table
+    // converts them out through the quantity.
+    assert_eq!(
+        aggregate_column(&query, "max(@accel.x)").quantity(),
+        Some(Quantity::Acceleration)
+    );
+    // Only `time` is valued per point.
+    assert_eq!(query.metric_columns(), [QueryMetric::Time]);
+}
+
+#[test]
+fn a_table_column_takes_a_metric_aggregate() {
+    let query = checked("points | window 3 | table avg(velocity)");
+    assert_eq!(column_labels(&query), ["time", "avg(velocity)"]);
+    assert_eq!(
+        aggregate_column(&query, "avg(velocity)").quantity(),
+        Some(Quantity::Speed)
+    );
+    // The runner derives the aggregate's metric: the aggregate counts as a
+    // reference to it.
+    assert_eq!(query.referenced_metrics(), [QueryMetric::Velocity]);
+}
+
+/// `var` squares its argument, and no quantity names a squared speed.
+#[test]
+fn an_aggregate_column_of_an_unnamed_dimension_has_no_quantity() {
+    let query = checked("points | window 3 | table var(velocity)");
+    assert_eq!(aggregate_column(&query, "var(velocity)").quantity(), None);
+}
+
+#[test]
+fn a_repeated_table_column_is_listed_once() {
+    let query = checked("points | window 3 | table avg(velocity), avg(velocity), time");
+    assert_eq!(column_labels(&query), ["time", "avg(velocity)"]);
+}
+
+#[rstest]
+// Windowed on the points source, an aggregate is the whole fix.
+#[case(
+    "points | window 3 | table @accel.x",
+    "wrap it in an aggregate like max(@accel.x)"
+)]
+// The hint names both working forms: unwindowed, an aggregate alone still
+// needs a window.
+#[case(
+    "points | table @accel.x",
+    "aggregate it over a window like max(@accel.x), or query @accel as the source"
+)]
+fn a_bare_channel_table_column_is_per_sample(#[case] src: &str, #[case] help: &str) {
+    let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+    let err = check(&parse(src).unwrap(), &schema).unwrap_err();
+    assert_eq!(err.message, "@accel.x is per sample");
+    assert_eq!(err.help.as_deref(), Some(help));
+    // The underline sits on the column, not on the stage or the query.
+    let at = src.find("@accel.x").expect("has the column");
+    assert_eq!(err.span, Span::new(at, at + "@accel.x".len()));
+}
+
+#[test]
+fn a_table_column_is_a_metric_or_an_aggregate() {
+    let err = check(
+        &parse("points | table abs(velocity)").unwrap(),
+        &ChannelSchema::new(),
+    )
+    .unwrap_err();
+    assert_eq!(err.message, "a table column is a metric or an aggregate");
+    assert_eq!(err.help.as_deref(), Some("try velocity, or max(@accel.x)"));
 }
 
 #[test]
@@ -1825,6 +1917,82 @@ fn a_channel_span_includes_samples_on_both_endpoints() {
 }
 
 #[test]
+fn a_channel_column_reduces_the_samples_of_its_match() {
+    // The column reduces the accel samples in [0, 2], the closed time extent
+    // of the match's points 0..3. Their peak is 10.8 m/s2.
+    let schema = schema_with("accel", Some("g"), None);
+    let provider = TestProvider::new(3).indexed_time().with_channel(
+        "accel",
+        vec![
+            (0.0, 9.6),
+            (0.5, 10.3),
+            (1.0, 10.8),
+            (1.5, 10.0),
+            (2.0, 9.7),
+        ],
+    );
+    let src = "points | window 3 | where max(@accel) > 1.0 g | table max(@accel)";
+    let query = check(&parse(src).unwrap(), &schema).expect(src);
+    let column = aggregate_column(&query, "max(@accel)");
+    assert_eq!(column.value_over_match(&provider, 0..3), Some(10.8));
+}
+
+#[test]
+fn a_metric_column_reduces_the_points_of_its_match() {
+    let provider = TestProvider::new(4).indexed_time().with(
+        QueryMetric::Velocity,
+        vec![Some(10.0), Some(20.0), Some(30.0), Some(400.0)],
+    );
+    let query = checked("points | window 2 | table avg(velocity)");
+    let column = aggregate_column(&query, "avg(velocity)");
+    // The match's own three points average to 20 m/s: the fourth point is
+    // outside it.
+    assert_eq!(column.value_over_match(&provider, 0..3), Some(20.0));
+}
+
+#[test]
+fn a_channel_source_column_reduces_the_samples_its_match_indexes() {
+    // On a channel source a match is a range of samples. The column reduces
+    // the rows of that range: x peaks at 3 over the first two samples.
+    let schema = vector_schema("accel", Some("g"), &["x", "y"]);
+    let provider = TestProvider::new(0).with_vector_channel(
+        "accel",
+        vec![
+            (0.0, vec![1.0, 2.0]),
+            (1.0, vec![3.0, 4.0]),
+            (2.0, vec![9.0, 0.0]),
+        ],
+    );
+    let src = "@accel | window 2 | where max(@accel.x) > 0 g | table max(@accel.x)";
+    let query = check(&parse(src).unwrap(), &schema).expect(src);
+    let column = aggregate_column(&query, "max(@accel.x)");
+    assert_eq!(column.value_over_match(&provider, 0..2), Some(3.0));
+}
+
+#[test]
+fn a_column_of_an_empty_match_has_no_value() {
+    let provider = TestProvider::new(2)
+        .indexed_time()
+        .with(QueryMetric::Velocity, vec![Some(10.0), Some(20.0)]);
+    let query = checked("points | window 2 | table avg(velocity)");
+    let column = aggregate_column(&query, "avg(velocity)");
+    assert_eq!(column.value_over_match(&provider, 1..1), None);
+}
+
+#[test]
+fn a_missing_value_leaves_the_column_without_one() {
+    // One point of the match has no velocity. A missing value poisons the
+    // column as it poisons a window in a run.
+    let provider = TestProvider::new(3)
+        .indexed_time()
+        .with(QueryMetric::Velocity, vec![Some(10.0), None, Some(30.0)]);
+    let query = checked("points | window 2 | table avg(velocity)");
+    let column = aggregate_column(&query, "avg(velocity)");
+    assert_eq!(column.value_over_match(&provider, 0..3), None);
+    assert_eq!(column.value_over_match(&provider, 2..3), Some(30.0));
+}
+
+#[test]
 fn sqrt_computes_a_magnitude() {
     // sqrt(lat² + lon²): sqrt(3² + 4²) = 5 clears 4.5, sqrt(0) does not.
     let provider = TestProvider::new(2)
@@ -1924,6 +2092,7 @@ fn error_catalog() {
         "points | with speed 3 | where velocity > 0 km/h",
         "points | Draw",
         "points | table",
+        "points | table 5",
         "points | table velocity, | draw",
         "points | where (velocity > 0 km/h",
         "points | where velocity > 2 per day",
@@ -2069,6 +2238,35 @@ mod properties {
         })
     }
 
+    /// One `table` column as the parser accepts it: a metric name, a channel
+    /// reference, or a call around either. A column never nests further, so
+    /// this strategy does not recurse.
+    fn table_column_strategy() -> impl Strategy<Value = Expr> {
+        let ident = "[a-z_][a-z0-9_]*";
+        let name = prop_oneof![
+            metric_strategy().prop_map(|metric| Expr::Metric(MetricRef {
+                metric,
+                span: span(),
+            })),
+            (ident, proptest::option::of(ident)).prop_map(|(name, component)| Expr::Channel(
+                ChannelRef {
+                    name,
+                    component,
+                    span: span(),
+                }
+            )),
+        ];
+        let funcs = proptest::sample::select(Func::iter().collect::<Vec<_>>());
+        prop_oneof![
+            name.clone(),
+            (name, funcs).prop_map(|(arg, func)| Expr::Call {
+                func,
+                arg: Box::new(arg),
+                span: span(),
+            }),
+        ]
+    }
+
     fn query_strategy() -> impl Strategy<Value = Query> {
         let params = proptest::collection::vec(
             (
@@ -2102,7 +2300,7 @@ mod properties {
         let mode = proptest::option::of(proptest::sample::select(
             DisplayMode::iter().collect::<Vec<_>>(),
         ));
-        let table = proptest::option::of(proptest::collection::vec(metric_strategy(), 1..4));
+        let table = proptest::option::of(proptest::collection::vec(table_column_strategy(), 1..4));
         (params, window, predicates, mode, table).prop_map(
             |(params, window, predicates, mode, table)| Query {
                 // The round-trip fuzz targets stage formatting. Channel-source
@@ -2119,14 +2317,8 @@ mod properties {
                 window,
                 predicates,
                 mode: mode.map(|mode| ModeStage { mode, span: span() }),
-                table: table.map(|metrics| TableSpec {
-                    columns: metrics
-                        .into_iter()
-                        .map(|metric| MetricRef {
-                            metric,
-                            span: span(),
-                        })
-                        .collect(),
+                table: table.map(|columns| TableSpec {
+                    columns,
                     span: span(),
                 }),
             },
