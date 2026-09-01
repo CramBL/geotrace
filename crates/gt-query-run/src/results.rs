@@ -336,36 +336,41 @@ pub(crate) fn complement_ranges(ranges: &[Range<usize>], len: usize) -> Vec<Rang
     gaps
 }
 
-/// Build the map effect for a channel-source run from each track's matched
-/// nav-point ranges and point count, honoring the query's display mode:
-/// `draw` halos the matched segments, `hide` breaks the polyline there, and
-/// `keep` breaks it everywhere else.
+/// One track's share of a channel-source run's map effect.
+///
+/// Every track the run read has one, with `matched` empty for a track the
+/// query matched nothing on: `keep` hides such a track over its whole length.
+pub(crate) struct MatchedTrackPoints {
+    /// Nav-point ranges the matched samples cover, sorted and disjoint.
+    pub(crate) matched: Vec<Range<usize>>,
+    pub(crate) point_count: usize,
+}
+
+/// Build the map effect for a channel-source run, honoring the query's display
+/// mode: `draw` halos the matched segments, `hide` breaks the polyline there,
+/// and `keep` breaks it everywhere else.
 pub(crate) fn channel_query_matches(
     mode: DisplayMode,
-    per_track: &FxHashMap<TrackRef, (Vec<Range<usize>>, usize)>,
+    per_track: &FxHashMap<TrackRef, MatchedTrackPoints>,
 ) -> QueryMatches {
-    let matched: TrackRanges = per_track
+    let ranges: TrackRanges = per_track
         .iter()
-        .map(|(track, (ranges, _))| (*track, ranges.clone()))
+        .map(|(track, points)| {
+            let ranges = match mode {
+                DisplayMode::Draw | DisplayMode::Hide => points.matched.clone(),
+                DisplayMode::Keep => complement_ranges(&points.matched, points.point_count),
+            };
+            (*track, ranges)
+        })
+        .filter(|(_, ranges)| !ranges.is_empty())
         .collect();
     match mode {
         DisplayMode::Draw => QueryMatches {
-            draws: vec![DrawLayer {
-                color: 0,
-                ranges: matched,
-            }],
+            draws: vec![DrawLayer { color: 0, ranges }],
             ..QueryMatches::default()
         },
-        DisplayMode::Hide => QueryMatches {
-            hidden: matched,
-            ..QueryMatches::default()
-        },
-        DisplayMode::Keep => QueryMatches {
-            hidden: per_track
-                .iter()
-                .map(|(track, (ranges, len))| (*track, complement_ranges(ranges, *len)))
-                .filter(|(_, gaps)| !gaps.is_empty())
-                .collect(),
+        DisplayMode::Hide | DisplayMode::Keep => QueryMatches {
+            hidden: ranges,
             ..QueryMatches::default()
         },
     }
@@ -665,7 +670,13 @@ mod tests {
     #[case(DisplayMode::Keep)]
     fn channel_query_matches_honors_the_mode(#[case] mode: DisplayMode) {
         let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
-        let per_track = FxHashMap::from_iter([(track, (vec![rng(1, 3)], 5usize))]);
+        let per_track = FxHashMap::from_iter([(
+            track,
+            MatchedTrackPoints {
+                matched: vec![rng(1, 3)],
+                point_count: 5,
+            },
+        )]);
         let matches = channel_query_matches(mode, &per_track);
         match mode {
             // Draw halos the matched segments.
@@ -684,5 +695,30 @@ mod tests {
                 assert!(matches.draws.is_empty());
             }
         }
+    }
+
+    /// `keep` hides a track that matched nothing over its whole length. `draw`
+    /// and `hide` leave such a track fully drawn.
+    #[rstest]
+    #[case(DisplayMode::Draw, &[])]
+    #[case(DisplayMode::Hide, &[])]
+    #[case(DisplayMode::Keep, &[rng(0, 5)])]
+    fn channel_query_matches_of_a_track_with_no_match(
+        #[case] mode: DisplayMode,
+        #[case] expected_hidden: &[Range<usize>],
+    ) {
+        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        let per_track = FxHashMap::from_iter([(
+            track,
+            MatchedTrackPoints {
+                matched: Vec::new(),
+                point_count: 5,
+            },
+        )]);
+
+        let matches = channel_query_matches(mode, &per_track);
+
+        assert_eq!(matches.hidden_ranges(track), expected_hidden);
+        assert!(!matches.has_halos());
     }
 }

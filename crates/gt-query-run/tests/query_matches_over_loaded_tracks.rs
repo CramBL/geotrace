@@ -164,6 +164,15 @@ fn run_text(session: &mut QuerySession, state: &LoadedState, text: &str) {
     session.finish_run(prepared.execute());
 }
 
+/// The hidden point ranges of the last run, for the one loaded track.
+fn hidden_ranges(session: &QuerySession) -> Vec<Range<usize>> {
+    session
+        .matches()
+        .expect("a completed run")
+        .hidden_ranges(track_zero())
+        .to_vec()
+}
+
 /// The first draw layer's point ranges of the last run, for the one loaded
 /// track.
 fn drawn_ranges(session: &QuerySession) -> Vec<Range<usize>> {
@@ -175,6 +184,39 @@ fn drawn_ranges(session: &QuerySession) -> Vec<Range<usize>> {
         .expect("a query that draws")
         .ranges_for(track_zero())
         .to_vec()
+}
+
+#[test]
+fn a_channel_keep_query_hides_a_track_with_no_match() {
+    let channel = scalar_channel("accel", Some("g"), &[(0, 0.1), (500, 0.2)]);
+    let state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at(&[0, 1_000, 2_000, 3_000]),
+        vec![channel],
+    ));
+    let mut session = QuerySession::new();
+
+    run_text(&mut session, &state, "@accel | where @accel > 5 g | keep");
+
+    assert_eq!(hidden_ranges(&session), vec![0..4]);
+}
+
+#[test]
+fn a_points_keep_query_hides_a_track_with_no_match() {
+    let state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at(&[0, 1_000, 2_000, 3_000]),
+        vec![],
+    ));
+    let mut session = QuerySession::new();
+
+    run_text(
+        &mut session,
+        &state,
+        "points | where velocity > 500 km/h | keep",
+    );
+
+    assert_eq!(hidden_ranges(&session), vec![0..4]);
 }
 
 /// The samples of a closed span are the ones whose timestamp lands inside it,
