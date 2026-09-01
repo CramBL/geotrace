@@ -280,6 +280,16 @@ def test_builder_with_satellite_reports() -> None:
     assert f.points[0].satellites is not None
 
 
+def test_builder_drops_a_satellite_report_without_a_timestamp() -> None:
+    b = NavFileBuilder()
+    b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
+    b.add(SatelliteReport([Satellite(Constellation.GPS, 3, in_fix=True)]))
+    f = b.finish()
+
+    assert len(f.points) == 1
+    assert f.points[0].satellites is None
+
+
 def test_builder_with_annotation() -> None:
     b = NavFileBuilder()
     b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))

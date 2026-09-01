@@ -365,7 +365,8 @@ impl PySatellite {
 
 /// A set of satellites tracked at a point in time.
 ///
-/// Supply at least one of `gps_time` or `sys_time`.
+/// Supply at least one of `gps_time` or `sys_time`: a report with neither is
+/// dropped by `NavFileBuilder.finish`.
 /// Both must be timezone-aware `datetime.datetime` objects.
 #[pyclass(skip_from_py_object, name = "SatelliteReport")]
 #[derive(Debug, Clone)]
@@ -400,13 +401,16 @@ impl PySatelliteReport {
             .collect()
     }
 
-    /// GPS-domain timestamp, or `None` if the receiver had no active fix.
+    /// GPS-domain timestamp (timezone-aware UTC), or `None` for a report
+    /// constructed without one, or read from a file that stores none.
     #[getter]
     fn gps_time(&self) -> Option<DateTime<FixedOffset>> {
         self.inner.gps_time.map(to_fixed)
     }
 
-    /// System-clock timestamp at capture time, or `None`.
+    /// System-clock timestamp at capture time (timezone-aware UTC), or `None`
+    /// for a report constructed without one, or read from a file that stores
+    /// none.
     #[getter]
     fn sys_time(&self) -> Option<DateTime<FixedOffset>> {
         self.inner.sys_time.map(to_fixed)
