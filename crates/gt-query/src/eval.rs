@@ -148,8 +148,9 @@ pub struct RunSummary {
     pub skipped: BTreeMap<QueryMetric, usize>,
     /// Windows skipped per channel that had no samples in the window's span.
     pub skipped_channels: BTreeMap<String, usize>,
-    /// Skips from non-finite arithmetic (e.g. division by zero) - kept
-    /// separate so they stay visible without a metric to blame.
+    /// Skips from a value that is NaN or infinite: undefined arithmetic, or a
+    /// channel sample the file recorded that way. Counted apart from
+    /// [`Self::skipped`]: no metric can be blamed for them.
     pub skipped_non_finite: usize,
     /// Tracks with no value at all for a referenced metric (no snap run, a run
     /// that left every point unsnapped, an eph-less receiver). Point-level
@@ -727,9 +728,10 @@ impl<P: MetricProvider> Ctx<'_, P> {
         raw_value(self.provider, metric, index)
     }
 
-    /// Undefined arithmetic (a negative radicand, a division by zero, an
-    /// absent sample) yields NaN or an infinity: the value drops out and the
-    /// point counts as skipped for non-finite arithmetic.
+    /// Returns `None` for a value that is NaN or infinite, and counts the
+    /// point as one non-finite skip. Such a value comes from undefined
+    /// arithmetic (a negative radicand, a division by zero) or from a channel
+    /// sample the file recorded as NaN or an infinity.
     fn finite_or_poison(&mut self, value: f64) -> Option<f64> {
         if value.is_finite() {
             Some(value)
@@ -784,7 +786,13 @@ fn eval_bool<P: MetricProvider>(ctx: &mut Ctx<'_, P>, expr: &CExpr, scope: Scope
         CExpr::Not(inner) => eval_bool(ctx, inner, scope).map(|b| !b),
         CExpr::Cmp { op, lhs, rhs } => {
             let (l, r) = both_nums(ctx, lhs, rhs, scope)?;
-            let ordering = l.total_cmp(&r);
+            // The two sides always order: `raw_value` and `finite_or_poison`
+            // filter NaN out of every value node. An unordered pair is a
+            // poisoned point with no metric to blame.
+            let Some(ordering) = l.partial_cmp(&r) else {
+                ctx.non_finite = true;
+                return None;
+            };
             Some(match op {
                 CmpOp::Lt => ordering == Ordering::Less,
                 CmpOp::Le => ordering != Ordering::Greater,
@@ -830,7 +838,10 @@ fn eval_num<P: MetricProvider>(ctx: &mut Ctx<'_, P>, expr: &CExpr, scope: Scope)
         // inside a channel aggregate (or per sample on a channel source); in any
         // other scope it has no value. The checker keeps the column in range.
         CExpr::Channel(key) => match scope {
-            Scope::Sample(row) => row.get(key.component.unwrap_or(0)).copied(),
+            Scope::Sample(row) => {
+                let value = row.get(key.component.unwrap_or(0)).copied()?;
+                ctx.finite_or_poison(value)
+            }
             Scope::Point(_) | Scope::Window(_) | Scope::SampleWindow { .. } => None,
         },
         // norm is the Euclidean magnitude of the whole sample row.
