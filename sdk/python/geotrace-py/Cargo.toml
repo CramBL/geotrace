@@ -20,12 +20,14 @@ crate-type = ["cdylib"]
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 geotrace-sdk = { path = "../../rust/geotrace-sdk" }
+log = "0.4"
 # abi3-py312: build a single stable-ABI wheel (cp312-abi3) that runs on 3.12 and
 # every later CPython, instead of one wheel per interpreter. `extension-module`
 # is intentionally NOT enabled here. maturin turns it on at build time via the
 # `[tool.maturin] features` key in pyproject.toml, which keeps plain `cargo`
 # builds (e.g. tests) able to link libpython.
 pyo3 = { version = "0.29", features = ["abi3-py312", "chrono"] }
+pyo3-log = "0.13"
 
 [lints.rust]
 unsafe_code = "warn"
