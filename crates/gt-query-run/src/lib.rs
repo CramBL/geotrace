@@ -42,7 +42,7 @@ mod test_fixtures;
 
 pub use check::{QueryChunk, analysis_context, check_all, check_text, split_queries};
 pub use fingerprint::{JammingValues, RunFingerprint, RunInputs, SnapErrorValues};
-pub use provider::{SliceProvider, TrackProvider, TrackQueryData};
+pub use provider::{SliceProvider, TimeFilteredPoints, TrackProvider, TrackQueryData};
 pub use results::{
     ChannelResults, ChannelTrackResult, HiddenPoints, MatchValues, PanelQuery, PointsResults,
     QuerySummary, RunResults, TrackMatchValues,
