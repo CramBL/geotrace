@@ -56,6 +56,7 @@ use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use std::cell::Cell;
 use std::collections::BTreeSet;
+use std::ops::RangeInclusive;
 
 /// Grid base-color intensity, as a multiplier on the theme text color.
 /// egui_plot fixes the grid stroke width at 1.0, so brightness is the only way
@@ -67,7 +68,7 @@ const GRID_COLOR_STRENGTH: f32 = 0.5;
 pub const DEFAULT_PLOT_LINE_WIDTH: f32 = 0.75;
 /// Allowed plot line width, shared by the display-settings slider and the
 /// clamp applied to persisted settings on load.
-pub const PLOT_LINE_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 0.5..=5.0;
+pub const PLOT_LINE_WIDTH_RANGE: RangeInclusive<f32> = 0.5..=5.0;
 /// Stroke width of the vertical seek lines (hovered match, map position). Above
 /// the data lines so the marker stays findable across a crowded plot.
 const SEEK_LINE_WIDTH: f32 = 1.5;
@@ -82,6 +83,83 @@ const RESET_X_MARGIN_MIN_SECS: f64 = 1.0;
 /// Fallback label for a file index with no loaded recording behind it, so a
 /// stale index still shows something readable.
 const UNKNOWN_RECORDING: &str = "Unknown file";
+
+/// The global filter's time window in Unix seconds. Everything the plot draws,
+/// fits and reports is clamped to it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct FilterTimeWindow {
+    start: Option<f64>,
+    end: Option<f64>,
+}
+
+impl From<&GlobalFilter> for FilterTimeWindow {
+    fn from(filter: &GlobalFilter) -> Self {
+        Self {
+            start: filter.time_start.map(|t| t.timestamp() as f64),
+            end: filter.time_end.map(|t| t.timestamp() as f64),
+        }
+    }
+}
+
+impl FilterTimeWindow {
+    /// The part of `seconds` inside the window, empty when the two do not
+    /// overlap.
+    fn intersection(self, seconds: RangeInclusive<f64>) -> RangeInclusive<f64> {
+        let start = self
+            .start
+            .map_or(*seconds.start(), |start| seconds.start().max(start));
+        let end = self
+            .end
+            .map_or(*seconds.end(), |end| seconds.end().min(end));
+        start..=end
+    }
+}
+
+/// What one fill of [`PlotState::level_cache`] read.
+///
+/// `cache_valid` compares every field exactly except `effective_x_min` and
+/// `effective_x_max`, which may move by up to ~10 pixels of line. The time
+/// window is one of the exact ones: a fix the window drops leaves the plot
+/// however small the move that dropped it.
+#[derive(Debug, Clone, Copy)]
+struct LevelCacheInputs {
+    effective_x_min: f64,
+    effective_x_max: f64,
+    time_window: FilterTimeWindow,
+    available_width_bits: u32,
+    sample_cap: usize,
+}
+
+/// The series the plot draws: those of a track the visibility and the filter
+/// both keep. `visible` is the per-series flag [`show_track_plot`] computes
+/// once a frame, in the order of `series_cache`.
+fn visible_series<'a>(
+    series_cache: &'a [PlacedTrackSeries],
+    visible: &'a [bool],
+) -> impl Iterator<Item = &'a PlacedTrackSeries> {
+    series_cache
+        .iter()
+        .zip(visible)
+        .filter_map(|(series, &is_vis)| is_vis.then_some(series))
+}
+
+/// The x range in Unix seconds a double-click resets the view to: the fixes
+/// of every visible series that the time window keeps, which is what the plot
+/// draws. [`None`] when the window leaves no fix of any of them.
+///
+/// Reads the precomputed [`crate::series::TrackSeries::x_range`] field - O(1)
+/// per series.
+fn reset_extent(
+    series_cache: &[PlacedTrackSeries],
+    visible: &[bool],
+    time_window: FilterTimeWindow,
+) -> Option<RangeInclusive<f64>> {
+    visible_series(series_cache, visible)
+        .filter_map(|series| series.series.x_range)
+        .map(|(lo, hi)| time_window.intersection(lo..=hi))
+        .filter(|inside_window| !inside_window.is_empty())
+        .reduce(|left, right| left.start().min(*right.start())..=left.end().max(*right.end()))
+}
 
 /// The recording's display name, as the side panel shows it.
 fn recording_name(names: &RecordingNames, fi: usize) -> &str {
@@ -193,15 +271,12 @@ pub struct PlotState {
     pub legend_hover_file: Option<usize>,
     /// Mipmap cascade for every track in every loaded file.
     pub(crate) series_cache: Vec<PlacedTrackSeries>,
-    /// Cached level selections, one entry per series.
-    /// Invalidated when the effective plot bounds or target sample count changes.
+    /// Cached level selections, one entry per series, filled from
+    /// [`LevelCacheInputs`].
     level_cache: Vec<TrackLevelCache>,
-    /// The `(eff_x_min, eff_x_max, plot_width_bits, sample_cap)` at which the
-    /// current `level_cache` was computed.  `None` forces a recompute on the
-    /// next frame.  Used for hysteresis: the cache is reused as long as the view
-    /// has not moved by more than ~10 pixels and neither the plot width nor the
-    /// per-track sample cap has changed since the last recompute.
-    last_computed_bounds: Option<(f64, f64, u32, usize)>,
+    /// What the current `level_cache` was computed from.  `None` forces a
+    /// recompute on the next frame.
+    last_level_cache_inputs: Option<LevelCacheInputs>,
     /// The map x-range (encoded as bit-pattern pairs) most recently applied to
     /// the plot via `set_plot_bounds_x`.  Used to detect changes and avoid
     /// re-applying the same range every frame (which would prevent manual zoom).
@@ -214,7 +289,7 @@ pub struct PlotState {
     context_caches: ContextPlotCaches,
     /// The x range in Unix seconds the plot drew on the last frame, which the
     /// app resolves the context lines over.
-    last_visible_x_range: Option<std::ops::RangeInclusive<f64>>,
+    last_visible_x_range: Option<RangeInclusive<f64>>,
     /// User-chosen component colors, keyed by channel name: one optional
     /// override per component, `None` = the derived hue. Edited through the
     /// chip's right-click menu; persisted with the plot settings.
@@ -251,7 +326,7 @@ impl Default for PlotState {
             legend_hover_file: None,
             series_cache: Vec::new(),
             level_cache: Vec::new(),
-            last_computed_bounds: None,
+            last_level_cache_inputs: None,
             applied_map_x_range: None,
             snap_error_cache: FxHashMap::default(),
             context_caches: ContextPlotCaches::default(),
@@ -314,12 +389,12 @@ impl PlotState {
     /// The x range in Unix seconds the plot drew on the last frame, which is
     /// the span the context lines are resolved over. [`None`] until the plot
     /// has drawn once.
-    pub fn visible_x_range(&self) -> Option<std::ops::RangeInclusive<f64>> {
+    pub fn visible_x_range(&self) -> Option<RangeInclusive<f64>> {
         self.last_visible_x_range.clone()
     }
 
     fn invalidate_level_cache(&mut self) {
-        self.last_computed_bounds = None;
+        self.last_level_cache_inputs = None;
         self.level_cache.clear();
     }
 }
@@ -405,34 +480,26 @@ pub fn show_track_plot(
             })
         })
         .collect();
-    let visible_files: Vec<usize> = {
-        let mut file_indices = BTreeSet::new();
-        for (series, &is_vis) in state.series_cache.iter().zip(visible.iter()) {
-            if is_vis {
-                file_indices.insert(series.fi);
-            }
-        }
-        file_indices.into_iter().collect()
-    };
+    let visible_files: Vec<usize> = visible_series(&state.series_cache, &visible)
+        .map(|series| series.fi)
+        .collect::<BTreeSet<usize>>()
+        .into_iter()
+        .collect();
 
-    // Constellations present anywhere in the loaded data.  Per-constellation
-    // chips and lines are gated on this so a constellation with no data (e.g.
-    // NavIC or QZSS in a GPS-only recording) never clutters the UI.
-    let present = state
-        .series_cache
-        .iter()
-        .fold(ConstellationSet::empty(), |acc, s| {
-            acc.union(s.series.present)
+    // A constellation with no data on the plot (e.g. NavIC or QZSS in a
+    // GPS-only recording) never clutters the UI: the per-constellation chips
+    // and lines are gated on the constellations present anywhere on the plot.
+    let present = visible_series(&state.series_cache, &visible)
+        .fold(ConstellationSet::empty(), |acc, series| {
+            acc.union(series.series.present)
         });
 
-    // Channels present anywhere in the loaded data, unioned like the
-    // constellations: the Channels toggle and chips render only when a track
-    // actually carries channels.
+    // Channels present anywhere on the plot, unioned like the constellations:
+    // the Channels toggle and chips render only when a track the plot draws
+    // carries channels.
     let channels = loaded_channels(
-        state
-            .series_cache
-            .iter()
-            .flat_map(|s| s.series.channels.iter()),
+        visible_series(&state.series_cache, &visible)
+            .flat_map(|series| series.series.channels.iter()),
     );
 
     // Whether any visible track has a completed snap run: gates the snap
@@ -441,21 +508,11 @@ pub fn show_track_plot(
     let snap_error_available = snap_error_available(&state.series_cache, &visible, snap_error);
     let jamming_available = jamming_available(&state.series_cache, &visible, jamming);
     let geomagnetic_available = geomagnetic_availability(
-        state
-            .series_cache
-            .iter()
-            .zip(&visible)
-            .filter(|&(_, &visible)| visible)
-            .map(|(entry, _)| entry.track_ref()),
+        visible_series(&state.series_cache, &visible).map(|series| series.track_ref()),
         geomagnetic,
     );
     let tec_available = tec_available(
-        state
-            .series_cache
-            .iter()
-            .zip(&visible)
-            .filter(|&(_, &visible)| visible)
-            .map(|(entry, _)| entry.track_ref()),
+        visible_series(&state.series_cache, &visible).map(|series| series.track_ref()),
         tec,
     );
 
@@ -492,34 +549,17 @@ pub fn show_track_plot(
     let available_width = ui.available_width();
     let sample_cap = budget_cap(available_width, visible_count);
 
-    // Filter time range → x-axis bounds for mipmap slice clamping.
-    let filter_x_min: Option<f64> = filter.time_start.map(|t| t.timestamp() as f64);
-    let filter_x_max: Option<f64> = filter.time_end.map(|t| t.timestamp() as f64);
+    let time_window = FilterTimeWindow::from(filter);
 
     // Format an x-axis tick label from a Unix timestamp.
-    let x_fmt = |mark: egui_plot::GridMark, _range: &std::ops::RangeInclusive<f64>| {
+    let x_fmt = |mark: egui_plot::GridMark, _range: &RangeInclusive<f64>| {
         let ts = mark.value as i64;
         DateTime::from_timestamp(ts, 0)
             .map(|dt| dt.format("%H:%M:%S").to_string())
             .unwrap_or_default()
     };
 
-    // Compute the full x range across all visible series so that double-click
-    // (which triggers auto-bounds reset) zooms to fit the complete dataset.
-    // Uses the precomputed `TrackSeries::x_range` field - O(1) per series.
-    let mut full_x_min = f64::INFINITY;
-    let mut full_x_max = f64::NEG_INFINITY;
-    for (series, &is_vis) in state.series_cache.iter().zip(visible.iter()) {
-        if !is_vis {
-            continue;
-        }
-
-        if let Some((lo, hi)) = series.series.x_range {
-            full_x_min = full_x_min.min(lo);
-            full_x_max = full_x_max.max(hi);
-        }
-    }
-    let has_full_range = full_x_min.is_finite() && full_x_max.is_finite();
+    let reset_extent = reset_extent(&state.series_cache, &visible, time_window);
 
     sync_snap_error_cache(&mut state.snap_error_cache, snap_error);
     state.context_caches.sync(archive.context_lines);
@@ -527,13 +567,13 @@ pub fn show_track_plot(
     // Split borrows: extract immutable refs to the caches and metric visibility
     // before the closure so the borrow checker can see they are disjoint from
     // the mutable fields written after the closure (`hovered_time`, `level_cache`,
-    // `last_computed_bounds`).
+    // `last_level_cache_inputs`).
     let series_cache = &state.series_cache;
     let snap_error_cache = &state.snap_error_cache;
     let context_caches = &state.context_caches;
     let channel_component_colors = &state.channel_component_colors;
     let level_cache = &state.level_cache;
-    let last_computed_bounds = state.last_computed_bounds;
+    let last_level_cache_inputs = state.last_level_cache_inputs;
     let metric_vis = &state.metric_vis;
     let channel_vis = &state.channel_vis;
     let show_channels = state.show_channels;
@@ -562,10 +602,10 @@ pub fn show_track_plot(
     let need_map_sync = map_x_key.is_some_and(|k| state.applied_map_x_range != Some(k));
 
     let mut new_hovered_time: Option<DateTime<Utc>> = None;
-    let mut new_computed_bounds: Option<(f64, f64, u32, usize)> = None;
+    let mut new_level_cache_inputs: Option<LevelCacheInputs> = None;
     let mut new_level_cache: Option<Vec<TrackLevelCache>> = None;
     let mut new_applied_map_x_range: Option<Option<(u64, u64)>> = None;
-    let mut new_visible_x_range: Option<std::ops::RangeInclusive<f64>> = None;
+    let mut new_visible_x_range: Option<RangeInclusive<f64>> = None;
     // The custom hover label to draw: the closest candidate offered by any
     // series of any recording inside the plot closure, turned into a tooltip
     // after it returns.
@@ -586,14 +626,13 @@ pub fn show_track_plot(
         .x_axis_formatter(x_fmt)
         .label_formatter(|pos| cursor_label(&custom_hover_label_shown, pos));
 
-    // The x extent a double-click resets to, set as the plot's fixed x
-    // bounds so the context lines, which span whatever the plot shows,
-    // cannot feed their own extent back into the fit and widen the view
-    // further every frame.
-    if has_full_range {
-        let margin =
-            ((full_x_max - full_x_min) * RESET_X_MARGIN_FRACTION).max(RESET_X_MARGIN_MIN_SECS);
-        plot = plot.default_x_bounds(full_x_min - margin, full_x_max + margin);
+    // Set as the plot's fixed x bounds so the context lines, which span
+    // whatever the plot shows, cannot feed their own extent back into the fit
+    // and widen the view further every frame.
+    if let Some(extent) = reset_extent {
+        let span = extent.end() - extent.start();
+        let margin = (span * RESET_X_MARGIN_FRACTION).max(RESET_X_MARGIN_MIN_SECS);
+        plot = plot.default_x_bounds(extent.start() - margin, extent.end() + margin);
     }
 
     let dark_mode = ui.visuals().dark_mode;
@@ -630,8 +669,16 @@ pub fn show_track_plot(
         // `eff_x_min`/`eff_x_max` may end up inverted when the active filter
         // and the visible viewport don't overlap.  `MipMap` normalizes that
         // into an empty-range query (see `select_level_bounds`).
-        let eff_x_min = filter_x_min.map_or(plot_x_min, |f| plot_x_min.max(f));
-        let eff_x_max = filter_x_max.map_or(plot_x_max, |f| plot_x_max.min(f));
+        let effective = time_window.intersection(plot_x_min..=plot_x_max);
+        let eff_x_min = *effective.start();
+        let eff_x_max = *effective.end();
+        let inputs = LevelCacheInputs {
+            effective_x_min: eff_x_min,
+            effective_x_max: eff_x_max,
+            time_window,
+            available_width_bits: available_width.to_bits(),
+            sample_cap,
+        };
 
         // Hysteresis: skip recompute when the view has moved less than ~10 px
         // since the last cache fill.  Converting to data space:
@@ -641,12 +688,13 @@ pub fn show_track_plot(
         // those are part of the validity check, not just the view bounds.
         let single = single_target(available_width);
         let threshold = 20.0 * (eff_x_max - eff_x_min) / single as f64;
-        let cache_valid = last_computed_bounds.is_some_and(|(lx_min, lx_max, lw, lcap)| {
-            lw == available_width.to_bits()
-                && lcap == sample_cap
+        let cache_valid = last_level_cache_inputs.is_some_and(|last| {
+            last.available_width_bits == inputs.available_width_bits
+                && last.sample_cap == inputs.sample_cap
+                && last.time_window == inputs.time_window
                 && level_cache.len() == series_cache.len()
-                && (eff_x_min - lx_min).abs() <= threshold
-                && (eff_x_max - lx_max).abs() <= threshold
+                && (inputs.effective_x_min - last.effective_x_min).abs() <= threshold
+                && (inputs.effective_x_max - last.effective_x_max).abs() <= threshold
         });
 
         // Recompute if the view changed enough since the last frame.
@@ -666,8 +714,7 @@ pub fn show_track_plot(
                     )
                 })
                 .collect();
-            new_computed_bounds =
-                Some((eff_x_min, eff_x_max, available_width.to_bits(), sample_cap));
+            new_level_cache_inputs = Some(inputs);
             std::borrow::Cow::Owned(fresh)
         };
 
@@ -835,8 +882,8 @@ pub fn show_track_plot(
     }
 
     // Persist the newly computed level cache (only when a recompute happened).
-    if let Some(bounds) = new_computed_bounds {
-        state.last_computed_bounds = Some(bounds);
+    if let Some(inputs) = new_level_cache_inputs {
+        state.last_level_cache_inputs = Some(inputs);
     }
     if let Some(cache) = new_level_cache {
         state.level_cache = cache;
