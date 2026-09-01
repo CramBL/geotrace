@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::num::NonZeroUsize;
 
 use geotrace_sdk_units::ChannelUnit;
 use gt_types::{DisplayMode, FileIdx, TrackIdx, TrackRef};
@@ -124,7 +125,7 @@ fn chk(query: &Query) -> Result<CheckedQuery, Diagnostic> {
 fn a_count_window_checks_to_window_count() {
     assert_eq!(
         checked("points | window 5 | where avg(velocity) > 30 km/h").window(),
-        Some(Window::Count(5))
+        Some(Window::Count(NonZeroUsize::new(5).unwrap()))
     );
     assert_eq!(checked("points | where velocity > 30 km/h").window(), None);
 }
@@ -2171,6 +2172,8 @@ fn diag_line(diagnostic: &Diagnostic) -> String {
 }
 
 mod properties {
+    use std::num::NonZeroU64;
+
     use proptest::prelude::*;
     use strum::IntoEnumIterator as _;
 
@@ -2309,7 +2312,9 @@ mod properties {
             0..3,
         );
         let window = proptest::option::of(prop_oneof![
-            (1u64..1000).prop_map(|len| Window::Count { len, span: span() }),
+            (1u64..1000)
+                .prop_filter_map("a window count is at least 1 point", NonZeroU64::new)
+                .prop_map(|len| Window::Count { len, span: span() }),
             (
                 1.0f64..1000.0,
                 prop_oneof![

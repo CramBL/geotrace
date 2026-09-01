@@ -3,6 +3,7 @@
 //! Hand-rolled so every error carries the exact wording and span the editor
 //! shows. Several messages are pinned verbatim by tests.
 
+use std::num::NonZeroU64;
 use std::str::FromStr as _;
 
 use gt_types::DisplayMode;
@@ -272,9 +273,9 @@ impl<'src> Parser<'src> {
         let Ok(len) = num_text.parse::<u64>() else {
             return Err(self.error(num_span, "window is too large"));
         };
-        if len == 0 {
+        let Some(len) = NonZeroU64::new(len) else {
             return Err(self.error(num_span, "window needs at least 1 point"));
-        }
+        };
         query.window = Some(Window::Count {
             len,
             span: kw_span.to(num_span),

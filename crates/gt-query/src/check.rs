@@ -5,6 +5,8 @@
 //! arithmetic. Several error messages here are user-facing UX pinned verbatim
 //! by tests - change them deliberately.
 
+use std::num::NonZeroUsize;
+
 use gt_types::DisplayMode;
 use rustc_hash::FxHashMap;
 
@@ -122,7 +124,7 @@ pub struct Params {
 pub enum Window {
     /// A span of `n` consecutive points: at anchor `i` the points `[i, i+n)` and
     /// the time extent `[t(i), t(i+n-1)]`.
-    Count(usize),
+    Count(NonZeroUsize),
     /// A span of a fixed duration in seconds: at anchor `i` the points whose
     /// time lands in `[t(i), t(i) + secs)`. Requires the full duration to fit.
     Duration(f64),
@@ -693,7 +695,8 @@ pub fn check(query: &Query, schema: &ChannelSchema) -> Result<CheckedQuery, Diag
         // The conversion only fails on targets where usize is narrower than
         // u64.
         Some(AstWindow::Count { len, span }) => {
-            let n = usize::try_from(len).map_err(|_overflow| err(span, "window is too large"))?;
+            let n = NonZeroUsize::try_from(len)
+                .map_err(|_overflow| err(span, "window is too large"))?;
             Some(Window::Count(n))
         }
         Some(AstWindow::Duration { value, unit, span }) => {
