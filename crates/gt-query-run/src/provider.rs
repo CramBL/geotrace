@@ -628,8 +628,8 @@ mod tests {
     use crate::check::check_text;
     use crate::schema::schema_from_files;
     use crate::test_fixtures::{
-        TEST_EPOCH, file_with_channels, points_at_recorded_coordinates, rng, scalar_channel,
-        test_points, vector_channel,
+        TEST_EPOCH, file_with_channels, points_at_millis, points_at_recorded_coordinates, rng,
+        scalar_channel, test_points, vector_channel,
     };
 
     /// The points of a track from the second one on, as a window starting at
@@ -836,6 +836,21 @@ mod tests {
     /// A track without a snap run resolves no `snap_error` values - the
     /// metric never invents data (and never triggers an upload; providers
     /// only read what the app captured).
+    #[test]
+    fn the_time_metric_keeps_the_sub_second_fraction_of_a_fix() {
+        let points = points_at_millis(&[0, 500]);
+        let provider = TrackProvider::new(&points, &[], None);
+
+        assert_eq!(
+            provider.value(QueryMetric::Time, 0),
+            Some(TEST_EPOCH as f64)
+        );
+        assert_eq!(
+            provider.value(QueryMetric::Time, 1),
+            Some(TEST_EPOCH as f64 + 0.5)
+        );
+    }
+
     #[test]
     fn snap_error_is_absent_without_a_run() {
         let points = test_points();
