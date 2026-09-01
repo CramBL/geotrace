@@ -18,6 +18,8 @@ use uom::si::angle::degree;
 use uom::si::f64::{Angle, Velocity};
 use uom::si::velocity::kilometer_per_hour;
 
+use crate::results::MatchValues;
+
 /// The Unix epoch the fixtures place their first point and sample at.
 pub(crate) const TEST_EPOCH: i64 = 1_700_000_000;
 
@@ -25,6 +27,14 @@ pub(crate) const TEST_EPOCH: i64 = 1_700_000_000;
 /// trip clippy's `single_range_in_vec_init`.
 pub(crate) fn rng(start: usize, end: usize) -> Range<usize> {
     start..end
+}
+
+/// A match over `rows` with no aggregate column valued.
+pub(crate) fn matched_rows(rows: Range<usize>) -> MatchValues {
+    MatchValues {
+        rows,
+        aggregates: Vec::new(),
+    }
 }
 
 /// One point with a satellite report at 36 km/h, one without any of it,

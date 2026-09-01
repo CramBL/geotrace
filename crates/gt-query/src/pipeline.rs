@@ -12,7 +12,7 @@ use std::ops::Range;
 
 use gt_types::{DisplayMode, TrackRef};
 
-use crate::check::CheckedQuery;
+use crate::check::{CheckedQuery, TableColumn};
 use crate::eval::{
     CANCEL_CHECK_INTERVAL, ChannelSamples, ChannelTimeline, MetricProvider, RunSummary, TrackInput,
     TrackMatches, evaluate_track, ranges_from,
@@ -24,8 +24,8 @@ use crate::metric::QueryMetric;
 pub struct QueryOutput {
     pub mode: DisplayMode,
     pub matches: Vec<TrackMatches>,
-    /// The metric columns of the match table, as [`crate::RunOutput::columns`].
-    pub columns: Vec<QueryMetric>,
+    /// The match table's columns, as [`crate::RunOutput::columns`].
+    pub columns: Vec<TableColumn>,
     pub summary: RunSummary,
 }
 
@@ -255,7 +255,7 @@ fn fold_track<P: MetricProvider>(
 /// Accumulates one query's contributions across tracks into a [`QueryOutput`].
 struct QueryAccum {
     mode: DisplayMode,
-    columns: Vec<QueryMetric>,
+    columns: Vec<TableColumn>,
     matches: Vec<TrackMatches>,
     summary: RunSummary,
 }
@@ -264,7 +264,7 @@ impl QueryAccum {
     fn new(query: &CheckedQuery) -> Self {
         Self {
             mode: query.mode(),
-            columns: query.metric_columns(),
+            columns: query.columns().to_vec(),
             matches: Vec::new(),
             summary: RunSummary {
                 unused_params: query.unused_params().to_vec(),

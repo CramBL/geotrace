@@ -3,13 +3,13 @@ use std::ops::Range;
 
 use geotrace_sdk_units::ChannelUnit;
 use gt_fmt::EM_DASH;
-use gt_query::{ChannelTimeline, PipelineOutput, QueryMetric, RunSummary, TrackMatches};
+use gt_query::{AggregateColumn, ChannelTimeline, RunSummary, TableColumn, TrackMatches};
 use gt_types::{DisplayMode, NavPoint, TrackRef};
 use gt_ui_types::{DrawLayer, DrawLayerMask, QueryMatches, TrackRanges};
 use rustc_hash::FxHashMap;
 
 use crate::provider::TrackQueryData;
-use crate::run::{ChannelRun, RunTrackData};
+use crate::run::{ChannelRun, PointsQueryRun, PointsRun, RunTrackData};
 
 /// What one run produced, dispatched on the source of its queries: either a
 /// points pipeline (map halos plus point match tables) or a channel-source run
@@ -63,17 +63,20 @@ pub struct PointsResults {
 }
 
 impl PointsResults {
-    /// Project a points [`PipelineOutput`] into the panel/map result. Evaluation
-    /// ran on each track's time-filtered slice, so point indices shift back to
-    /// absolute positions here.
-    pub(crate) fn project(output: &PipelineOutput, track_data: RunTrackData) -> Self {
+    /// Project a points run into the panel/map result. Point indices shift back
+    /// to absolute positions here: evaluation ran on each track's time-filtered
+    /// slice.
+    pub(crate) fn project(run: PointsRun, track_data: RunTrackData) -> Self {
+        let slice_start = |track: TrackRef| {
+            track_data
+                .get(&track)
+                .map_or(0, TrackQueryData::slice_start)
+        };
         let absolute = |tms: &[TrackMatches]| -> TrackRanges {
             tms.iter()
                 .filter(|tm| !tm.ranges.is_empty())
                 .map(|tm| {
-                    let start = track_data
-                        .get(&tm.track)
-                        .map_or(0, TrackQueryData::slice_start);
+                    let start = slice_start(tm.track);
                     let ranges = tm
                         .ranges
                         .iter()
@@ -86,17 +89,17 @@ impl PointsResults {
 
         // The point-key mask distinguishes only so many halo layers. Extra draw
         // queries beyond that cannot be rendered distinctly.
-        if output.draws.len() > DrawLayerMask::MAX_LAYERS {
+        if run.draws.len() > DrawLayerMask::MAX_LAYERS {
             log::warn!(
                 "query has {} draw stages: only the first {} render as halos",
-                output.draws.len(),
+                run.draws.len(),
                 DrawLayerMask::MAX_LAYERS
             );
         }
 
         // The i-th draw query gets palette color i. The map keys its halo layer
         // to the same order.
-        let draw_color: FxHashMap<usize, usize> = output
+        let draw_color: FxHashMap<usize, usize> = run
             .draws
             .iter()
             .take(DrawLayerMask::MAX_LAYERS)
@@ -105,8 +108,8 @@ impl PointsResults {
             .collect();
 
         let matches = QueryMatches {
-            hidden: absolute(&output.hidden),
-            draws: output
+            hidden: absolute(&run.hidden),
+            draws: run
                 .draws
                 .iter()
                 .take(DrawLayerMask::MAX_LAYERS)
@@ -119,24 +122,12 @@ impl PointsResults {
             stale: false,
             run: 0,
         };
-        let queries = output
+        let queries = run
             .queries
-            .iter()
+            .into_iter()
             .enumerate()
-            .map(|(qi, q)| PanelQuery {
-                color: draw_color.get(&qi).copied(),
-                summary: QuerySummary::of_points(&q.summary, q.mode),
-                columns: q.columns.clone(),
-                matches: q
-                    .matches
-                    .iter()
-                    .map(|tm| TrackMatches {
-                        track: tm.track,
-                        ranges: absolute(std::slice::from_ref(tm))
-                            .remove(&tm.track)
-                            .unwrap_or_default(),
-                    })
-                    .collect(),
+            .map(|(query_index, query)| {
+                PanelQuery::project(query, draw_color.get(&query_index).copied(), slice_start)
             })
             .collect();
 
@@ -163,6 +154,9 @@ pub struct ChannelResults {
     pub channel: String,
     /// Component labels for a vector channel, empty for a scalar.
     pub components: Vec<String>,
+    /// The query's aggregate `table` columns, in table order, valued once per
+    /// match. The sample time and the component columns are the channel's own.
+    pub aggregate_columns: Vec<AggregateColumn>,
     pub summary: QuerySummary,
     pub tracks: Vec<ChannelTrackResult>,
     /// The map effect: halos over the matched track segments, honoring the
@@ -174,17 +168,20 @@ impl ChannelResults {
     /// Project a channel-source run into its panel result. The matched ranges
     /// are sample indices into each track's timeline, kept as-is (no slice
     /// offset: a channel source is not sliced by the point time filter).
-    pub(crate) fn project(run: ChannelRun) -> Self {
-        let ChannelRun {
+    pub(crate) fn project(
+        ChannelRun {
             channel,
             components,
+            aggregate_columns,
             summary,
             tracks,
             matches,
-        } = run;
+        }: ChannelRun,
+    ) -> Self {
         Self {
             channel,
             components,
+            aggregate_columns,
             summary: QuerySummary::of_channel(&summary),
             tracks,
             matches,
@@ -198,8 +195,8 @@ pub struct ChannelTrackResult {
     /// This track's declared display unit. The evaluator timeline below is in
     /// base units; tables convert it back through this metadata.
     pub unit: Option<ChannelUnit>,
-    /// Matched sample-index ranges into `timeline`.
-    pub ranges: Vec<Range<usize>>,
+    /// Matched stretches of `timeline`, indexed by sample.
+    pub matches: Vec<MatchValues>,
     pub timeline: ChannelTimeline,
 }
 
@@ -209,9 +206,67 @@ pub struct PanelQuery {
     /// otherwise.
     pub color: Option<usize>,
     pub summary: QuerySummary,
-    pub columns: Vec<QueryMetric>,
-    /// Absolute point-index ranges this query matched.
-    pub matches: Vec<TrackMatches>,
+    /// The match table's columns, in table order.
+    pub columns: Vec<TableColumn>,
+    /// This query's matches, at absolute point indices.
+    pub matches: Vec<TrackMatchValues>,
+}
+
+impl PanelQuery {
+    /// Project one query of a points run into its panel result, shifting each
+    /// matched range by `slice_start` from the evaluated slice to absolute
+    /// point indices.
+    fn project(
+        PointsQueryRun {
+            mode,
+            columns,
+            summary,
+            matches,
+        }: PointsQueryRun,
+        color: Option<usize>,
+        slice_start: impl Fn(TrackRef) -> usize,
+    ) -> Self {
+        Self {
+            color,
+            summary: QuerySummary::of_points(&summary, mode),
+            columns,
+            matches: matches
+                .into_iter()
+                .map(|TrackMatchValues { track, matches }| {
+                    let start = slice_start(track);
+                    TrackMatchValues {
+                        track,
+                        matches: matches
+                            .into_iter()
+                            .map(|MatchValues { rows, aggregates }| MatchValues {
+                                rows: rows.start + start..rows.end + start,
+                                aggregates,
+                            })
+                            .collect(),
+                    }
+                })
+                .collect(),
+        }
+    }
+}
+
+/// One track's matches of one query.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrackMatchValues {
+    pub track: TrackRef,
+    pub matches: Vec<MatchValues>,
+}
+
+/// One match of a query: its extent in the source, and its aggregate columns'
+/// values over that extent.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchValues {
+    /// Indices into the match's source: a track's nav points, or a channel
+    /// timeline's samples.
+    pub rows: Range<usize>,
+    /// One value per aggregate column of the query, in table order. `None`
+    /// where the aggregate has no value over the match.
+    pub aggregates: Vec<Option<f64>>,
 }
 
 /// Map one track's matched sample ranges to enclosing nav-point index ranges,
@@ -222,14 +277,15 @@ pub struct PanelQuery {
 pub(crate) fn matched_point_ranges(
     points: &[NavPoint],
     timeline: &ChannelTimeline,
-    ranges: &[Range<usize>],
+    matches: &[MatchValues],
 ) -> Vec<Range<usize>> {
     let Some(last) = points.len().checked_sub(1) else {
         return Vec::new();
     };
     let point_secs: Vec<f64> = points.iter().map(|p| p.tpv.time().as_secs_f64()).collect();
-    let mut spans: Vec<Range<usize>> = ranges
+    let mut spans: Vec<Range<usize>> = matches
         .iter()
+        .map(|matched| &matched.rows)
         .filter_map(|r| {
             let t0 = *timeline.times.get(r.start)?;
             let t1 = *timeline.times.get(r.end.checked_sub(1)?)?;
@@ -425,13 +481,13 @@ impl fmt::Display for QuerySummary {
 
 #[cfg(test)]
 mod tests {
-    use gt_query::{MetricProvider, TrackInput};
+    use gt_query::{MetricProvider, QueryMetric, TrackInput};
     use gt_types::{FileIdx, TrackIdx};
     use rstest::rstest;
 
     use super::*;
     use crate::check::check_text;
-    use crate::test_fixtures::{TEST_EPOCH, rng, test_points};
+    use crate::test_fixtures::{TEST_EPOCH, matched_rows, rng, test_points};
 
     #[test]
     fn summary_notes_every_skip_and_unused_param() {
@@ -561,7 +617,7 @@ mod tests {
             columns: 1,
         };
         assert_eq!(
-            matched_point_ranges(&points, &timeline, &[rng(0, 1)]),
+            matched_point_ranges(&points, &timeline, &[matched_rows(rng(0, 1))]),
             vec![rng(0, 2)]
         );
         // No matched samples yields no bands.

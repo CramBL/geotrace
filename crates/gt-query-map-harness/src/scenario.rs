@@ -195,7 +195,11 @@ impl MapScenario {
                 query
                     .matches
                     .iter()
-                    .flat_map(|tm| tm.ranges.iter().map(|range| (tm.track, range.clone())))
+                    .flat_map(|tm| {
+                        tm.matches
+                            .iter()
+                            .map(|matched| (tm.track, matched.rows.clone()))
+                    })
                     .collect()
             })
             .unwrap_or_default()
