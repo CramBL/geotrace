@@ -4,14 +4,14 @@ use chrono::Duration;
 use gt_filter::GlobalFilter;
 use gt_map::display_counts::{DisplayCounts, SuppliedCounts};
 use gt_query_run::{QuerySession, RunInputs, RunResults, schema_from_files};
-use gt_types::{DataCategory, PointIdx, TrackRef};
+use gt_types::{DataCategory, FileIdx, PointIdx, TrackRef};
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
     MapHighlight, MapScope, MatchHighlight, PinnedPopup, QueryMatches, TrackDataVisibility,
 };
 
 use crate::classify::PointClass;
-use crate::dataset::{Dataset, epoch};
+use crate::dataset::{Dataset, FileSpec, epoch};
 use crate::panel::{PanelView, RunAttempt};
 use crate::picture::{MapPicture, TrackPicture};
 
@@ -123,6 +123,15 @@ impl MapScenario {
     /// Replace the whole global filter, for the conditions with no shorthand.
     pub fn set_filter(&mut self, filter: GlobalFilter) -> &mut Self {
         self.filter = filter;
+        self.sync()
+    }
+
+    /// Unload the file at `file` and load `spec` in its place, as closing a
+    /// recording and opening another does. Every track of the new file starts
+    /// enabled, the way a newly loaded recording does.
+    pub fn replace_file(&mut self, file: FileIdx, spec: &FileSpec) -> &mut Self {
+        self.dataset.replace_file(file, spec);
+        self.visibility = TrackDataVisibility::from_loaded(self.dataset.files().files());
         self.sync()
     }
 

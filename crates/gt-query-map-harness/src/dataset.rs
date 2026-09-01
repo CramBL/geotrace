@@ -1,3 +1,4 @@
+use std::mem;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -10,6 +11,7 @@ use gt_types::time_types::GpsTime;
 use gt_types::tpv::TimePositionVelocity;
 use gt_types::{FileIdx, FileSource, LoadedFile, NavPoint, TrackIdx, TrackRef};
 use gt_ui_types::{GeomagneticPoint, GeomagneticSeries, TecPoint, TecSeries};
+use rustc_hash::FxHashMap;
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Velocity};
 use uom::si::velocity::kilometer_per_hour;
@@ -243,38 +245,57 @@ pub struct Dataset {
 impl Dataset {
     /// A dataset of several files, in load order.
     pub fn of_files(specs: &[FileSpec]) -> Self {
-        let mut files = LoadedFiles::new();
-        let mut snap_errors = SnapErrorValues::default();
-        let mut jamming = JammingValues::default();
-        let mut geomagnetic = GeomagneticSeries::default();
-        let mut tec = TecSeries::default();
+        let mut dataset = Self {
+            files: LoadedFiles::new(),
+            snap_errors: SnapErrorValues::default(),
+            jamming: JammingValues::default(),
+            geomagnetic: GeomagneticSeries::default(),
+            tec: TecSeries::default(),
+        };
         for (fi, spec) in specs.iter().enumerate() {
-            files.push(spec.build(), FileHistory::None);
-            for (ti, track_spec) in spec.tracks.iter().enumerate() {
-                let track_ref = track(fi, ti);
-                if let Some(values) = &track_spec.snap_error {
-                    snap_errors.insert(track_ref, Arc::new(values.clone()));
-                }
-                if let Some(values) = &track_spec.jamming {
-                    jamming.insert(track_ref, Arc::new(values.clone()));
-                }
-                if let Some(points) = &track_spec.geomagnetic {
-                    geomagnetic
-                        .points_by_track
-                        .insert(track_ref, Arc::new(points.clone()));
-                }
-                if let Some(points) = &track_spec.tec {
-                    tec.points_by_track
-                        .insert(track_ref, Arc::new(points.clone()));
-                }
-            }
+            dataset.files.push(spec.build(), FileHistory::None);
+            dataset.insert_track_series(fi, spec);
         }
-        Self {
-            files,
-            snap_errors,
-            jamming,
-            geomagnetic,
-            tec,
+        dataset
+    }
+
+    /// Unload the file at `file`, then load `spec` in its place, as the app
+    /// does when the user closes a recording and opens another. The new file
+    /// goes last, like every newly loaded one, and the files after the
+    /// unloaded one move down one index together with their series.
+    pub fn replace_file(&mut self, file: FileIdx, spec: &FileSpec) {
+        assert!(
+            file.as_usize() < self.files.len(),
+            "file {file} is not loaded"
+        );
+        self.files.remove_file(file.as_usize());
+        drop_file_and_shift(&mut self.snap_errors, file);
+        drop_file_and_shift(&mut self.jamming, file);
+        drop_file_and_shift(&mut self.geomagnetic.points_by_track, file);
+        drop_file_and_shift(&mut self.tec.points_by_track, file);
+        self.files.push(spec.build(), FileHistory::None);
+        self.insert_track_series(self.files.len() - 1, spec);
+    }
+
+    fn insert_track_series(&mut self, fi: usize, spec: &FileSpec) {
+        for (ti, track_spec) in spec.tracks.iter().enumerate() {
+            let track_ref = track(fi, ti);
+            if let Some(values) = &track_spec.snap_error {
+                self.snap_errors.insert(track_ref, Arc::new(values.clone()));
+            }
+            if let Some(values) = &track_spec.jamming {
+                self.jamming.insert(track_ref, Arc::new(values.clone()));
+            }
+            if let Some(points) = &track_spec.geomagnetic {
+                self.geomagnetic
+                    .points_by_track
+                    .insert(track_ref, Arc::new(points.clone()));
+            }
+            if let Some(points) = &track_spec.tec {
+                self.tec
+                    .points_by_track
+                    .insert(track_ref, Arc::new(points.clone()));
+            }
         }
     }
 
@@ -327,6 +348,24 @@ impl Dataset {
             .map_or_else(String::new, |file| file.metadata.filename.clone());
         format!("{filename}#{}", track_ref.index)
     }
+}
+
+/// Drop the entries of the file at `removed` and move every later file's
+/// entries down one index, as unloading a file shifts the files after it. The
+/// surviving entries keep their `Arc`, so a run over them stays current.
+fn drop_file_and_shift<V>(series: &mut FxHashMap<TrackRef, Arc<V>>, removed: FileIdx) {
+    *series = mem::take(series)
+        .into_iter()
+        .filter(|(track_ref, _)| track_ref.fi != removed)
+        .map(|(track_ref, values)| {
+            let fi = if track_ref.fi > removed {
+                FileIdx::new(track_ref.fi.as_usize() - 1)
+            } else {
+                track_ref.fi
+            };
+            (TrackRef::new(fi, track_ref.index), values)
+        })
+        .collect();
 }
 
 #[cfg(test)]

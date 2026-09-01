@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use gt_filter::GlobalFilter;
-use gt_loaded_files::LoadedFilesView;
+use gt_loaded_files::{LoadedFileId, LoadedFilesView};
 use gt_types::{FileIdx, TrackIdx, TrackRef};
 use gt_ui_types::{ArcIdentity, GeomagneticSeries, TecSeries, TrackDataVisibility};
 use rustc_hash::FxHashMap;
@@ -36,7 +36,10 @@ pub struct RunInputs<'a> {
 /// gray out when the current state no longer matches the snapshot.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunFingerprint {
-    file_identities: Vec<String>,
+    /// The loaded files the run read, by session id. Loading a file again
+    /// gives it a new id, so results gray out when another file takes a
+    /// loaded one's place under the name it had.
+    files: Vec<LoadedFileId>,
     /// The tracks the run evaluated: enabled in the tree and passing the
     /// track-level global filter, in tree order.
     tracks: Vec<TrackRef>,
@@ -69,10 +72,10 @@ impl RunFingerprint {
             geomagnetic,
             tec,
         } = inputs;
-        let mut file_identities = Vec::with_capacity(loaded_files.entries().len());
+        let mut files = Vec::with_capacity(loaded_files.entries().len());
         let mut tracks = Vec::new();
         for (fi, entry) in loaded_files.entries().enumerate() {
-            file_identities.push(entry.identity_key().into_owned());
+            files.push(entry.id());
             let file = entry.file();
             let fi = FileIdx::new(fi);
             for (ti, track) in file.tracks.iter().enumerate() {
@@ -106,7 +109,7 @@ impl RunFingerprint {
             .map(|track_ref| tec.points_by_track.get(track_ref).map(ArcIdentity::of))
             .collect();
         Self {
-            file_identities,
+            files,
             tracks,
             filter: *filter,
             snap_runs,
