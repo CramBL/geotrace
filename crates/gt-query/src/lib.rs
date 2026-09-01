@@ -31,6 +31,7 @@ mod parser;
 mod pipeline;
 mod position;
 mod unit;
+mod wrap;
 
 pub use ast::{ParamName, Query, Span};
 pub use check::{ChannelConflict, ChannelInfo, ChannelSchema, CheckedQuery, Params, Window, check};

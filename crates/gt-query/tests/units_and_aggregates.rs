@@ -35,7 +35,10 @@ impl TrackData {
 
     fn indexed_time(self) -> Self {
         let len = self.len;
-        self.with(QueryMetric::Time, (0..len).map(|i| Some(i as f64)).collect())
+        self.with(
+            QueryMetric::Time,
+            (0..len).map(|i| Some(i as f64)).collect(),
+        )
     }
 
     fn with_channel(mut self, name: &str, samples: Vec<(f64, f64)>) -> Self {

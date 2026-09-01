@@ -19,6 +19,7 @@ use crate::dimension::Dimension;
 use crate::fmt::Superscript;
 use crate::metric::{Quantity, QueryMetric};
 use crate::unit::{self, example_literal, unit_list};
+use crate::wrap::WrapPeriod;
 
 /// What type-checking a reference to one ad-hoc channel requires.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -26,13 +27,30 @@ pub struct ChannelInfo {
     /// Recognized or custom unit. Custom labels are treated as bare numbers.
     pub unit: Option<ChannelUnit>,
     /// Wrap period in degrees for an angular channel, or `None` for a linear
-    /// value. A present period marks the channel circular (a direction).
+    /// value.
     pub period_deg: Option<f64>,
     /// Vector component labels (`["x", "y", "z"]`), or empty for a scalar
     /// channel.
     pub components: Vec<String>,
     /// Metadata disagreements found while merging loaded channel definitions.
     pub conflicts: Vec<ChannelConflict>,
+}
+
+impl ChannelInfo {
+    /// The period this channel's samples wrap at. `None` for a channel whose
+    /// unit is not an angle, whose declared period is absent, or whose
+    /// declared period is not finite and positive.
+    pub(crate) fn wrap_period(&self) -> Option<WrapPeriod> {
+        let quantity = self
+            .unit
+            .as_ref()
+            .and_then(ChannelUnit::as_recognized)
+            .map(unit::quantity)?;
+        if quantity.dimension() != Some(Dimension::ANGLE) {
+            return None;
+        }
+        WrapPeriod::from_degrees(self.period_deg?)
+    }
 }
 
 /// One incompatible metadata definition found for a shared channel name.
@@ -205,8 +223,8 @@ pub(crate) enum AggSource {
     Channel(String),
 }
 
-/// Checked expression: literals in base units, aggregates tagged circular
-/// where they run on a direction.
+/// Checked expression: literals in base units, aggregates tagged with the
+/// period their argument wraps at.
 #[derive(Debug, Clone)]
 pub(crate) enum CExpr {
     Const(f64),
@@ -221,7 +239,7 @@ pub(crate) enum CExpr {
     Norm(String),
     Agg {
         func: Func,
-        circular: bool,
+        wrap: Option<WrapPeriod>,
         source: AggSource,
         arg: Box<CExpr>,
     },
@@ -272,17 +290,17 @@ pub(crate) enum ArithOp {
 /// a [`Kind`] so a count, a ratio, and a bare number stay distinct despite
 /// sharing the zero dimension; `Timestamp` and `Condition` stand outside
 /// dimensional arithmetic.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum ValueType {
     Condition,
     Timestamp,
     /// A dimensioned value. The dimension is never dimensionless - that case is
-    /// [`ValueType::Dimensionless`]. `circular` marks a direction (a bearing
-    /// that wraps at 360) rather than a plain angle, and is only ever set when
-    /// the dimension is [`Dimension::ANGLE`].
+    /// [`ValueType::Dimensionless`]. `wrap` is the period the value repeats at,
+    /// `None` for a value that does not wrap, and is only ever set when the
+    /// dimension is [`Dimension::ANGLE`].
     Dimensioned {
         dim: Dimension,
-        circular: bool,
+        wrap: Option<WrapPeriod>,
     },
     Dimensionless(Kind),
 }
@@ -305,9 +323,14 @@ enum Kind {
 impl ValueType {
     /// A dimensioned value that never wraps.
     fn linear(dim: Dimension) -> ValueType {
-        ValueType::Dimensioned {
-            dim,
-            circular: false,
+        ValueType::Dimensioned { dim, wrap: None }
+    }
+
+    /// The period this value wraps at, `None` for every value that does not.
+    fn wrap(self) -> Option<WrapPeriod> {
+        match self {
+            ValueType::Dimensioned { wrap, .. } => wrap,
+            ValueType::Condition | ValueType::Timestamp | ValueType::Dimensionless(_) => None,
         }
     }
 
@@ -324,13 +347,13 @@ fn value_type(quantity: Quantity) -> ValueType {
         Quantity::Count => ValueType::Dimensionless(Kind::Count),
         Quantity::Ratio => ValueType::Dimensionless(Kind::Ratio),
         Quantity::Index => ValueType::Dimensionless(Kind::Index),
-        // Every remaining quantity is a dimensioned value; `Direction` is the
-        // only one that wraps. Its dimension is taken from the single source
-        // in `Quantity::dimension`.
+        // Every remaining quantity is a dimensioned value. `WrappingAngle` is
+        // the only one that wraps, at a full turn. Its dimension comes from the
+        // single source in `Quantity::dimension`.
         _ => match quantity.dimension() {
             Some(dim) => ValueType::Dimensioned {
                 dim,
-                circular: quantity == Quantity::Direction,
+                wrap: (quantity == Quantity::WrappingAngle).then_some(WrapPeriod::FULL_TURN),
             },
             None => {
                 debug_assert!(
@@ -354,14 +377,14 @@ fn named_quantity(vt: ValueType) -> Option<Quantity> {
         ValueType::Dimensionless(Kind::Ratio) => Quantity::Ratio,
         ValueType::Dimensionless(Kind::Index) => Quantity::Index,
         ValueType::Dimensionless(Kind::Number) => return None,
-        ValueType::Dimensioned { dim, circular } => return named_dimension(dim, circular),
+        ValueType::Dimensioned { dim, wrap } => return named_dimension(dim, wrap),
     })
 }
 
-fn named_dimension(dim: Dimension, circular: bool) -> Option<Quantity> {
+fn named_dimension(dim: Dimension, wrap: Option<WrapPeriod>) -> Option<Quantity> {
     Some(if dim == Dimension::ANGLE {
-        if circular {
-            Quantity::Direction
+        if wrap.is_some() {
+            Quantity::WrappingAngle
         } else {
             Quantity::Angle
         }
@@ -386,7 +409,7 @@ fn named_dimension(dim: Dimension, circular: bool) -> Option<Quantity> {
 fn type_label(vt: ValueType) -> String {
     match vt {
         ValueType::Dimensionless(Kind::Number) => "number".to_owned(),
-        ValueType::Dimensioned { dim, circular } => dimension_label(dim, circular),
+        ValueType::Dimensioned { dim, wrap } => dimension_label(dim, wrap),
         // Count, Ratio, Timestamp, and Condition all name a quantity.
         other => named_quantity(other).map_or_else(|| "value".to_owned(), |q| q.to_string()),
     }
@@ -395,8 +418,8 @@ fn type_label(vt: ValueType) -> String {
 /// A label for a dimension: its quantity name (`speed`), a whole power of one
 /// (`speed²`, the shape `var` and the power operator produce), or a fraction of
 /// the base dimensions (`length²/time`).
-fn dimension_label(dim: Dimension, circular: bool) -> String {
-    if let Some(quantity) = named_dimension(dim, circular) {
+fn dimension_label(dim: Dimension, wrap: Option<WrapPeriod>) -> String {
+    if let Some(quantity) = named_dimension(dim, wrap) {
         return quantity.to_string();
     }
     power_of_named(dim).unwrap_or_else(|| base_dimension_fraction(dim))
@@ -412,7 +435,7 @@ fn power_of_named(dim: Dimension) -> Option<String> {
                 time: dim.time / n,
                 angle: dim.angle / n,
             };
-            if let Some(quantity) = named_dimension(root, false) {
+            if let Some(quantity) = named_dimension(root, None) {
                 return Some(format!("{quantity}{}", Superscript(n)));
             }
         }
@@ -460,7 +483,7 @@ fn base_with_exponent(name: &str, exponent: i8) -> String {
 }
 
 /// The value type of a scalar channel from its schema entry. The unit fixes the
-/// dimension. An angular channel with a period wraps, making it a direction.
+/// dimension, and a declared period makes an angular channel wrap.
 ///
 /// A custom or absent unit resolves to a bare number. SDK writers require the
 /// custom-unit escape hatch explicitly; legacy file metadata can still arrive
@@ -474,18 +497,12 @@ fn channel_value_type(info: &ChannelInfo) -> ValueType {
     else {
         return ValueType::Dimensionless(Kind::Number);
     };
-    let vt = value_type(quantity);
-    // A period only means "wraps" for an angle. Ignoring it otherwise keeps the
-    // invariant that `circular` is set only when the dimension is ANGLE.
-    if info.period_deg.is_some()
-        && matches!(vt, ValueType::Dimensioned { dim, .. } if dim == Dimension::ANGLE)
-    {
-        ValueType::Dimensioned {
+    match info.wrap_period() {
+        Some(period) => ValueType::Dimensioned {
             dim: Dimension::ANGLE,
-            circular: true,
-        }
-    } else {
-        vt
+            wrap: Some(period),
+        },
+        None => value_type(quantity),
     }
 }
 
@@ -912,8 +929,8 @@ impl Checker<'_> {
         let result = match base_type {
             ValueType::Condition => return Err(err(span, "cannot raise a condition to a power")),
             ValueType::Timestamp => return Err(err(span, "timestamps do not support powers")),
-            // The power scales the dimension. The wrap flag drops, since a
-            // squared angle is no longer a direction.
+            // The power scales the dimension. The wrap drops, since a squared
+            // angle no longer repeats at its argument's period.
             ValueType::Dimensioned { dim, .. } => dimensioned(dim.powi(exponent)),
             // Any power of a dimensionless value is a bare number.
             ValueType::Dimensionless(_) => ValueType::Dimensionless(Kind::Number),
@@ -1043,8 +1060,8 @@ impl Checker<'_> {
                 let rejected = match value_type {
                     ValueType::Condition => Some("cannot negate a condition"),
                     ValueType::Timestamp => Some("cannot negate a timestamp"),
-                    ValueType::Dimensioned { circular: true, .. } => {
-                        Some("cannot negate a direction")
+                    ValueType::Dimensioned { wrap: Some(_), .. } => {
+                        Some("cannot negate a wrapping angle")
                     }
                     _ => None,
                 };
@@ -1114,21 +1131,21 @@ impl Checker<'_> {
         if value_type.is_condition() {
             return Err(err(span, format!("{func} needs a value, not a condition")));
         }
-        let circular = matches!(value_type, ValueType::Dimensioned { circular: true, .. });
-        // avg/min/max collapse a direction ambiguously. The rest are fine.
-        if circular && matches!(func, Func::Avg | Func::Min | Func::Max) {
+        let wrap = value_type.wrap();
+        // avg/min/max collapse a wrapping angle ambiguously. The rest are fine.
+        if wrap.is_some() && matches!(func, Func::Avg | Func::Min | Func::Max) {
             return Err(err_hint(
                 span,
-                format!("{func} on a direction is ambiguous"),
+                format!("{func} on a wrapping angle is ambiguous"),
                 "use spread, std, first, last, or delta",
             ));
         }
         // Circular variance is a unitless quantity in [0, 1], not a squared
         // angle.
-        if circular && func == Func::Var {
+        if wrap.is_some() && func == Func::Var {
             return Err(err_hint(
                 span,
-                "var is not defined for a direction",
+                "var is not defined for a wrapping angle",
                 "circular variance is unitless, not a squared angle - use std",
             ));
         }
@@ -1137,7 +1154,7 @@ impl Checker<'_> {
             agg_result(func, value_type),
             CExpr::Agg {
                 func,
-                circular,
+                wrap,
                 source,
                 arg: Box::new(cexpr),
             },
@@ -1270,28 +1287,36 @@ fn display_optional_unit(unit: Option<&ChannelUnit>) -> String {
 
 /// The value type an aggregate produces from its argument. Where the argument
 /// names a quantity, reuses [`Func::result_quantity`] - the single definition
-/// of the collapse rule (`spread`/`std`/`delta` turn a direction into a plain
-/// angle and a timestamp into a duration), shared with autocomplete. An exotic
-/// dimension has no quantity and passes straight through, since an aggregate
-/// keeps its argument's dimension.
+/// of the collapse rule (`spread`/`std`/`delta` turn a wrapping angle into a
+/// plain angle and a timestamp into a duration), shared with autocomplete. An
+/// exotic dimension has no quantity and passes straight through, since an
+/// aggregate keeps its argument's dimension.
 fn agg_result(func: Func, arg: ValueType) -> ValueType {
     if func == Func::Var {
         return var_result(arg);
     }
-    match named_quantity(arg) {
-        Some(quantity) => value_type(func.result_quantity(quantity)),
-        None => arg,
+    let Some(quantity) = named_quantity(arg) else {
+        return arg;
+    };
+    match (func.result_quantity(quantity), arg) {
+        // `value_type` gives every wrapping angle a full turn, so an aggregate
+        // that passes one through returns the argument unchanged.
+        (Quantity::WrappingAngle, arg @ ValueType::Dimensioned { wrap: Some(_), .. }) => arg,
+        (result, _) => value_type(result),
     }
 }
 
 /// The result type of `var`: the argument's dimension squared. A count or ratio
 /// squares to a bare number, and a timestamp's variance is a squared duration.
-/// The checker rejects `var` on a direction before this, so the argument is
-/// never circular.
+/// The checker rejects `var` on a wrapping angle before this, so the argument
+/// never wraps.
 fn var_result(arg: ValueType) -> ValueType {
     match arg {
-        ValueType::Dimensioned { dim, circular } => {
-            debug_assert!(!circular, "call rejects a direction before agg_result");
+        ValueType::Dimensioned { dim, wrap } => {
+            debug_assert!(
+                wrap.is_none(),
+                "call rejects a wrapping angle before agg_result"
+            );
             dimensioned(dim.powi(2))
         }
         ValueType::Timestamp => dimensioned(Dimension::TIME.powi(2)),
@@ -1382,7 +1407,8 @@ fn arith(
 }
 
 /// Addition and subtraction: both sides must share a dimension. Timestamps and
-/// directions have no meaningful sum, and are rejected with their own message.
+/// wrapping angles have no meaningful sum, and are rejected with their own
+/// message.
 fn add_sub(
     lhs: &Expr,
     lt: ValueType,
@@ -1393,8 +1419,8 @@ fn add_sub(
     for value_type in [lt, rt] {
         let rejected = match value_type {
             ValueType::Timestamp => Some("timestamps do not support + and -"),
-            ValueType::Dimensioned { circular: true, .. } => {
-                Some("directions do not support + and -")
+            ValueType::Dimensioned { wrap: Some(_), .. } => {
+                Some("wrapping angles do not support + and -")
             }
             _ => None,
         };
@@ -1438,13 +1464,13 @@ fn combine_kinds(a: Kind, b: Kind) -> Kind {
 }
 
 /// Product: dimensions multiply. Scaling a dimensioned value by a dimensionless
-/// one keeps its dimension (and its wrap flag). Two dimensionless values give a
+/// one keeps its dimension and its wrap period. Two dimensionless values give a
 /// bare number.
 fn multiply(lt: ValueType, rt: ValueType) -> ValueType {
     match (lt, rt) {
-        (ValueType::Dimensioned { dim, circular }, ValueType::Dimensionless(_))
-        | (ValueType::Dimensionless(_), ValueType::Dimensioned { dim, circular }) => {
-            ValueType::Dimensioned { dim, circular }
+        (ValueType::Dimensioned { dim, wrap }, ValueType::Dimensionless(_))
+        | (ValueType::Dimensionless(_), ValueType::Dimensioned { dim, wrap }) => {
+            ValueType::Dimensioned { dim, wrap }
         }
         (ValueType::Dimensioned { dim: a, .. }, ValueType::Dimensioned { dim: b, .. }) => {
             dimensioned(a * b)
@@ -1465,8 +1491,8 @@ fn multiply(lt: ValueType, rt: ValueType) -> ValueType {
 /// dimensionless result collapsing to a bare number.
 fn divide(lt: ValueType, rt: ValueType) -> ValueType {
     match (lt, rt) {
-        (ValueType::Dimensioned { dim, circular }, ValueType::Dimensionless(_)) => {
-            ValueType::Dimensioned { dim, circular }
+        (ValueType::Dimensioned { dim, wrap }, ValueType::Dimensionless(_)) => {
+            ValueType::Dimensioned { dim, wrap }
         }
         (ValueType::Dimensioned { dim: a, .. }, ValueType::Dimensioned { dim: b, .. }) => {
             dimensioned(a / b)
@@ -1486,7 +1512,7 @@ fn divide(lt: ValueType, rt: ValueType) -> ValueType {
 }
 
 /// Whether two value types can be compared. Dimensioned values compare when
-/// their dimensions match (so a plain angle and a direction, both `A`, do).
+/// their dimensions match (so a plain angle and a wrapping angle, both `A`, do).
 /// Dimensionless values compare when their kinds line up.
 fn compatible(a: ValueType, b: ValueType) -> bool {
     match (a, b) {
@@ -1655,6 +1681,16 @@ mod tests {
             covered += 1;
         }
         assert_eq!(covered, Quantity::COUNT);
+    }
+
+    #[test]
+    fn first_keeps_the_arguments_wrap_period() {
+        let period = WrapPeriod::from_degrees(180.0).expect("a positive period");
+        let arg = ValueType::Dimensioned {
+            dim: Dimension::ANGLE,
+            wrap: Some(period),
+        };
+        assert_eq!(agg_result(Func::First, arg).wrap(), Some(period));
     }
 
     /// A bare number pairs with a count and with an index, never a ratio.

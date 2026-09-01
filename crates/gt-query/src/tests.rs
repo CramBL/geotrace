@@ -725,9 +725,9 @@ fn arithmetic_accepts_well_formed_dimensions(#[case] src: &str) {
 }
 
 /// The rejected side of the algebra. A product or quotient with an exotic
-/// dimension type-checks but cannot compare to a bare number; addition
-/// still needs a shared dimension; timestamps, directions, and conditions
-/// reject arithmetic outright.
+/// dimension type-checks but cannot compare to a bare number. Addition needs a
+/// shared dimension. Timestamps, wrapping angles, and conditions reject
+/// arithmetic outright.
 #[rstest]
 #[case(
     "points | where velocity * eph > 3",
@@ -747,7 +747,7 @@ fn arithmetic_accepts_well_formed_dimensions(#[case] src: &str) {
 )]
 #[case(
     "points | where heading + 10 deg < 30 deg",
-    "directions do not support + and -"
+    "wrapping angles do not support + and -"
 )]
 #[case(
     "points | where (sats_fix == 1) + 1 > 1",
@@ -855,12 +855,22 @@ fn var_squares_the_dimension(#[case] src: &str, #[case] error: Option<&str>) {
 }
 
 #[test]
-fn var_on_a_direction_suggests_std() {
+fn var_on_a_wrapping_angle_suggests_std() {
     let err = chk(&parse("points | window 3 | where var(heading) < 1 deg").unwrap()).unwrap_err();
-    assert_eq!(err.message, "var is not defined for a direction");
+    assert_eq!(err.message, "var is not defined for a wrapping angle");
     assert_eq!(
         err.help.as_deref(),
         Some("circular variance is unitless, not a squared angle - use std")
+    );
+}
+
+#[test]
+fn min_of_longitude_is_rejected_as_ambiguous() {
+    let err = chk(&parse("points | window 3 | where min(lon) < 10 deg").unwrap()).unwrap_err();
+    assert_eq!(err.message, "min on a wrapping angle is ambiguous");
+    assert_eq!(
+        err.help.as_deref(),
+        Some("use spread, std, first, last, or delta")
     );
 }
 
@@ -1126,23 +1136,38 @@ fn a_scalar_channel_resolves_to_its_unit_dimension() {
 
 #[test]
 fn a_channel_with_a_period_is_circular_and_accepts_spread() {
-    // @heading (deg, period 360) is a direction, so spread accepts it.
+    // @heading (deg, period 360) is a wrapping angle, so spread accepts it.
     let schema = schema_with("heading", Some("deg"), Some(360.0));
     let ok = "points | window 10 | where spread(@heading) < 10 deg";
     check(&parse(ok).unwrap(), &schema).expect("checks with the schema");
 }
 
 #[rstest]
+#[case::a_period_on_a_length("m", Some(360.0), "points | window 10 | where avg(@sensor) > 1 m")]
+#[case::a_period_of_zero("deg", Some(0.0), "points | window 10 | where avg(@sensor) > 1 deg")]
+fn a_channel_that_does_not_wrap_accepts_avg(
+    #[case] unit: &str,
+    #[case] period_deg: Option<f64>,
+    #[case] src: &str,
+) {
+    let schema = schema_with("sensor", Some(unit), period_deg);
+    check(&parse(src).unwrap(), &schema).expect(src);
+}
+
+#[rstest]
 #[case("avg")]
 #[case("min")]
 #[case("max")]
-fn a_direction_channel_rejects_ambiguous_aggregates(#[case] func: &str) {
-    // avg/min/max collapse a direction ambiguously, the same rule the
-    // Direction nav metric follows.
+fn a_wrapping_channel_rejects_ambiguous_aggregates(#[case] func: &str) {
+    // avg/min/max collapse a wrapping angle ambiguously, the same rule
+    // `heading` and `lon` follow.
     let schema = schema_with("heading", Some("deg"), Some(360.0));
     let src = format!("points | window 10 | where {func}(@heading) < 10 deg");
     let err = check(&parse(&src).unwrap(), &schema).unwrap_err();
-    assert_eq!(err.message, format!("{func} on a direction is ambiguous"));
+    assert_eq!(
+        err.message,
+        format!("{func} on a wrapping angle is ambiguous")
+    );
 }
 
 #[rstest]
