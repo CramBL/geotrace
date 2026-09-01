@@ -398,6 +398,38 @@ fn a_recording_that_already_holds_this_log_offers_that_attachment_for_reuse() {
     );
 }
 
+/// The line about the attachment the recording already holds grows the
+/// dialog, which re-anchors around its centre on the next frame. A confirm
+/// click queued on that frame still reports the decision.
+#[test]
+fn confirming_as_the_stored_attachment_line_appears_reports_the_decision() {
+    let mut harness = harness_over(vec![(
+        recording("stored.gtd", Duration::zero(), 10),
+        stored_in_history("nav-devkit-mk2"),
+    )]);
+    select(&mut harness, "stored.gtd");
+    duplicate_query_to_send(&mut harness);
+    harness.state_mut().dialog.set_duplicate_attachment(
+        &stored_db_ref(),
+        Some(ExistingLogAttachment {
+            id: LogAttachmentId::new_random(),
+            name: "navsyncd.log".to_owned(),
+        }),
+    );
+    harness.step();
+
+    harness.click_after_the_layout_settles(By::new().label(CONFIRM_LABEL));
+    harness.run_steps(2);
+
+    assert_eq!(
+        harness.state().choice,
+        Some(LogAssociationChoice::Confirmed {
+            target: recording_id(&harness, 0),
+            attach: false,
+        })
+    );
+}
+
 /// The dialog queries the database about each recording once, not once a
 /// frame.
 #[test]
