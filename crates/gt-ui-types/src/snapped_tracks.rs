@@ -76,6 +76,10 @@ pub struct WhiskerAnchor {
 #[derive(Debug, Clone, Default)]
 pub struct SnappedSegment {
     pub points: Vec<MercPoint>,
+    /// The recorded point each vertex was matched from, one entry per vertex
+    /// of `points`. Empty for a snap run stored before the geometry included
+    /// the attribution: such a segment cannot be trimmed to a time window.
+    pub recorded_points: Vec<PointIdx>,
     /// Which edge each vertex run was matched to. Sorted by start; spans of
     /// adjacent edges overlap at their shared boundary vertex (lookups take
     /// the first covering span); vertices without edge coverage are simply
@@ -139,6 +143,7 @@ mod tests {
     fn edge_at_takes_the_first_covering_span() {
         let segment = SnappedSegment {
             points: Vec::new(),
+            recorded_points: Vec::new(),
             edge_spans: vec![
                 SnappedEdgeSpan {
                     start: 0,

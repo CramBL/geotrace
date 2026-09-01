@@ -8318,6 +8318,7 @@ fn inject_completed_run(harness: &mut Harness<'_, App>, track: gt_types::TrackRe
                 },
             ],
             edge_spans: Vec::new(),
+            recorded_points: Vec::new(),
         }],
         edges: Vec::new(),
         kind_counts: gt_snap::merge::SnapKindCounts::default(),

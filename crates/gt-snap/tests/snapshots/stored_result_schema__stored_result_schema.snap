@@ -91,6 +91,10 @@ expression: pretty
             "lat": 55.6779,
             "lon": 12.5654
           }
+        ],
+        "recorded_points": [
+          0,
+          4
         ]
       }
     ]
