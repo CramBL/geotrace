@@ -94,13 +94,14 @@ pub trait MetricProvider {
 
     fn value(&self, metric: QueryMetric, index: usize) -> Option<f64>;
 
-    /// A channel's native samples whose timestamp lands in the closed span
-    /// `[t_lo, t_hi]` (seconds), in the channel's native order, as row-major
-    /// values with one column per component (one column for a scalar channel).
-    /// Values are in the evaluator's base units, like [`value`](Self::value) -
-    /// the provider converts from the channel's stored unit. An unknown channel
-    /// or a span with no samples yields empty samples. Providers with no
-    /// channels use the default.
+    /// A channel's own samples whose timestamp lands in the closed span
+    /// `[t_lo, t_hi]` (seconds), in timestamp order, as row-major values with
+    /// one column per component (one column for a scalar channel). A provider
+    /// whose samples are stored in another order orders them here, since
+    /// `first`, `last` and `delta` read the order this returns. Values are in the evaluator's
+    /// base units, like [`value`](Self::value) - the provider converts from the
+    /// channel's stored unit. An unknown channel or a span with no samples
+    /// yields empty samples. Providers with no channels use the default.
     fn channel_span(&self, _name: &str, _t_lo: f64, _t_hi: f64) -> ChannelSamples {
         ChannelSamples::default()
     }
@@ -953,8 +954,8 @@ fn both_nums<P: MetricProvider>(
     Some((l?, r?))
 }
 
-/// Evaluate the aggregate argument once per native sample of channel `name` in
-/// the window's time span, each argument seeing that sample's whole row (so a
+/// Evaluate the aggregate argument once per sample of channel `name` in the
+/// window's time span, each argument seeing that sample's whole row (so a
 /// `@name.x`/`@name.y`/`norm` reads aligned columns). An absent span (a boundary
 /// point had no timestamp) reports a missing time. A span with no samples
 /// reports the missing channel. Either way the aggregate poisons.
@@ -980,7 +981,7 @@ fn reduce_channel<P: MetricProvider>(
     Some(values)
 }
 
-/// Reduce the aggregate argument over the window: a channel's native samples in
+/// Reduce the aggregate argument over the window: a channel's own samples in
 /// the time span, or the metric's values over the window's points, per the
 /// source the checker resolved. Any missing value poisons the whole aggregate.
 fn aggregate<P: MetricProvider>(

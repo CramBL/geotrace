@@ -62,12 +62,14 @@ impl MetricProvider for TrackData {
         let Some(samples) = self.channels.get(name) else {
             return ChannelSamples::default();
         };
+        let mut in_span: Vec<(f64, f64)> = samples
+            .iter()
+            .copied()
+            .filter(|(t, _)| *t >= t_lo && *t <= t_hi)
+            .collect();
+        in_span.sort_by(|(a, _), (b, _)| a.total_cmp(b));
         ChannelSamples {
-            values: samples
-                .iter()
-                .filter(|(t, _)| *t >= t_lo && *t <= t_hi)
-                .map(|(_, v)| *v)
-                .collect(),
+            values: in_span.iter().map(|(_, v)| *v).collect(),
             columns: 1,
         }
     }
