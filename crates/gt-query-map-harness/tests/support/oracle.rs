@@ -53,7 +53,7 @@ struct Values {
 impl Values {
     fn of(point: &NavPoint) -> Self {
         Self {
-            time_secs: point.tpv.time().as_secs_f64(),
+            time_secs: point.tpv.time().as_secs_f64_with_subseconds(),
             velocity_mps: point.tpv.velocity().map(|v| v.get::<meter_per_second>()),
             eph_m: point.tpv.eph_m().map(f64::from),
             heading_deg: point.tpv.heading().map(|h| h.get::<degree>()),

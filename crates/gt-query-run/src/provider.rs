@@ -394,7 +394,7 @@ impl MetricProvider for TrackProvider<'_> {
         let point = self.points.get(index)?;
         let sats = point.satellites.as_ref();
         match metric {
-            QueryMetric::Time => Some(point.tpv.time().as_secs_f64()),
+            QueryMetric::Time => Some(point.tpv.time().as_secs_f64_with_subseconds()),
             QueryMetric::SysTime => point
                 .tpv
                 .sys_time()
@@ -487,10 +487,9 @@ impl MetricProvider for TrackProvider<'_> {
     /// channel), converted from the channel's stored unit to the evaluator's
     /// base units.
     ///
-    /// `t_lo`/`t_hi` arrive floored to whole seconds (the query engine's time
-    /// resolution, since nav-point time floors to whole seconds); the sub-second
-    /// precision of a sample's own timestamp only refines placement within that
-    /// grid.
+    /// A span between two fixes of one second selects the samples between those
+    /// two fixes. `t_lo`/`t_hi` and a sample's own timestamp both carry the
+    /// sub-second fraction.
     fn channel_span(&self, name: &str, t_lo: f64, t_hi: f64) -> ChannelSamples {
         self.resolve_channel(name)
             .map(|resolved| resolved.samples_in_span(t_lo, t_hi))
