@@ -395,14 +395,12 @@ impl QuerySummary {
     }
 }
 
-/// The note for the rows non-finite arithmetic (e.g. a division by zero) left
-/// without a value. Kept apart from the per-metric skips: there is no metric to
-/// blame for them.
+/// The note for the rows the evaluator skipped on a value that is NaN or
+/// infinite. No metric is named for these skips: such a value comes from
+/// undefined arithmetic or from a channel sample the file recorded that way.
 fn push_non_finite_note(notes: &mut Vec<String>, skipped_non_finite: usize) {
     if skipped_non_finite > 0 {
-        notes.push(format!(
-            "{skipped_non_finite} skipped (undefined arithmetic)"
-        ));
+        notes.push(format!("{skipped_non_finite} skipped (non-finite value)"));
     }
 }
 
@@ -467,6 +465,17 @@ mod tests {
                 "snr_drop declared but unused",
             ]
         );
+    }
+
+    #[test]
+    fn summary_notes_a_non_finite_skip() {
+        let summary = RunSummary {
+            skipped_non_finite: 2,
+            ..RunSummary::default()
+        };
+        let points = QuerySummary::of_points(&summary, DisplayMode::Draw);
+        assert_eq!(points.notes, ["2 skipped (non-finite value)"]);
+        assert_eq!(points.skipped, 2);
     }
 
     #[test]
