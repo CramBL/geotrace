@@ -96,7 +96,7 @@ impl TrackQueryData {
 }
 
 /// Provider over one track's points plus the run's derived series, in the
-/// evaluator's base units (m/s, degrees, seconds, 0-1 ratios, per minute).
+/// evaluator's base units (m/s, degrees, seconds, 0-1 ratios, per second).
 #[derive(Clone, Copy)]
 pub struct TrackProvider<'a> {
     points: &'a [NavPoint],
@@ -167,8 +167,12 @@ impl<'a> TrackProvider<'a> {
         index: usize,
         series: impl Fn(&SlipRatePerPoint) -> &[Option<f64>],
     ) -> Option<f64> {
-        self.slip
-            .and_then(|s| series(s).get(index).copied().flatten())
+        let per_min = self
+            .slip
+            .and_then(|s| series(s).get(index).copied().flatten())?;
+        // gt-analysis reports slips per minute. The evaluator's rate base is
+        // per second, converted through the language's canonical factor.
+        Some(per_min * Unit::PER_MIN.to_base())
     }
 
     fn counts(&self, index: usize, constellation: Constellation) -> SatCounts {
@@ -479,7 +483,7 @@ mod tests {
             (QueryMetric::GalileoFix, 0, Some(1.0)),
             (QueryMetric::BeidouSeen, 0, Some(0.0)),
             (QueryMetric::UtilGps, 0, Some(0.5)), // 50 % as a fraction
-            (QueryMetric::SlipAll, 0, Some(2.0)), // already per minute
+            (QueryMetric::SlipAll, 0, Some(2.0 / 60.0)), // 2 per minute as a rate per second
             (QueryMetric::SnapError, 0, Some(3.5)), // already metres
             (QueryMetric::Jamming, 0, Some(0.1)), // 10 % as a fraction
             (QueryMetric::Hp30, 0, Some(11.333)), // the published index value

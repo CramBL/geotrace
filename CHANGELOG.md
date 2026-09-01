@@ -36,6 +36,7 @@
 
 ### Fixed
 
+- **Interface:** Fixed a rate a query computes, such as `velocity / eph`, comparing 60 times too small against a rate literal.
 - **Log Viewer:** Fixed a log entry between two fixes across the antimeridian being placed half a world away.
 - **Map & Tracks:** Fixed the sky trails plot shifting and resizing when the satellite counts beside it change width.
 - **Map & Tracks:** Fixed the window for a clicked fix drawing its content over its own title bar when scrolled.

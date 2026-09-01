@@ -37,7 +37,7 @@ It resolves aliases such as `degrees`, `kph`, `m/s²` and `µg` to catalog units
 
 Values stay in their declared scale when stored and plotted.
 A query converts a recognized channel to its quantity's base unit, compares it there, and formats each result back to the declared scale.
-The base units are degrees, meters, meters per second, meters per second squared, seconds, the unit fraction for a ratio (`100 %` is `1.0`), and per minute for a rate.
+The base units are degrees, meters, meters per second, meters per second squared, seconds, the unit fraction for a ratio (`100 %` is `1.0`), and per second for a rate.
 Custom and legacy values are read as plain numbers, so a unit literal cannot be compared against them.
 
 The catalog also covers prefixed sensor scales (`mm`, `ug`, `cm/s2`) that a query parses but the editor leaves out of its suggestions.

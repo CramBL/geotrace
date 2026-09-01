@@ -81,7 +81,7 @@ impl ChannelTimeline {
 ///
 /// Values are in the evaluator's base units: degrees, meters, m/s, m/s2,
 /// seconds (timestamps as Unix seconds), 0-1 fractions for ratios, and
-/// events per minute for rates. `None` means the point has no value for the
+/// events per second for rates. `None` means the point has no value for the
 /// metric. `accel` is derived by the evaluator itself and never requested
 /// from a provider.
 pub trait MetricProvider {

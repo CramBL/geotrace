@@ -290,7 +290,7 @@ mod tests {
     #[case::duration(QueryMetric::ClockDelta, 0.012_5, "0.013", Some("s"))]
     #[case::count(QueryMetric::SatsFix, 7.0, "7", None)]
     #[case::ratio(QueryMetric::UtilGps, 0.5, "50", Some("%"))]
-    #[case::rate(QueryMetric::SlipAll, 2.0, "2.00", Some("/min"))]
+    #[case::rate(QueryMetric::SlipAll, 2.0 / 60.0, "2.00", Some("/min"))]
     #[case::index(QueryMetric::Tec, 112.483_333_333_333_33, "112.483", None)]
     #[case::index_whole(QueryMetric::Kp, 5.0, "5.000", None)]
     fn a_metric_column_prints_its_value_without_the_unit(

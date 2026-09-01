@@ -70,7 +70,6 @@ use uom::si::velocity::{kilometer_per_hour, knot, meter_per_second};
 const S_PER_MIN: f64 = 60.0;
 const MIN_PER_H: f64 = 60.0;
 const PERCENT: f64 = 100.0;
-const PER_S_TO_PER_MIN: f64 = 60.0;
 
 /// The physical quantity represented by a recognized [`Unit`].
 ///
@@ -79,7 +78,7 @@ const PER_S_TO_PER_MIN: f64 = 60.0;
 /// meters per second for [`Speed`](Self::Speed), meters per second squared for
 /// [`Acceleration`](Self::Acceleration), seconds for
 /// [`Duration`](Self::Duration), the unit fraction for [`Ratio`](Self::Ratio)
-/// (`100 %` is `1.0`), and per minute for [`Rate`](Self::Rate).
+/// (`100 %` is `1.0`), and per second for [`Rate`](Self::Rate).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PhysicalQuantity {
     Angle,
@@ -190,7 +189,7 @@ impl BaseUnit {
     /// [`PhysicalQuantity`] lists the base unit of each quantity.
     pub fn to_base(self) -> f64 {
         match self {
-            Self::Deg | Self::M | Self::MPerS | Self::MPerS2 | Self::S | Self::PerMin => 1.0,
+            Self::Deg | Self::M | Self::MPerS | Self::MPerS2 | Self::S | Self::PerS => 1.0,
             Self::KmPerH | Self::KmPerHPerS => {
                 Velocity::new::<kilometer_per_hour>(1.0).get::<meter_per_second>()
             }
@@ -199,8 +198,8 @@ impl BaseUnit {
             Self::Min => S_PER_MIN,
             Self::H => S_PER_MIN * MIN_PER_H,
             Self::Percent => 1.0 / PERCENT,
-            Self::PerS => PER_S_TO_PER_MIN,
-            Self::PerH => 1.0 / MIN_PER_H,
+            Self::PerMin => 1.0 / S_PER_MIN,
+            Self::PerH => 1.0 / (S_PER_MIN * MIN_PER_H),
         }
     }
 
@@ -623,12 +622,12 @@ impl Unit {
     /// Factor from a value in this unit to its quantity's base unit.
     ///
     /// [`PhysicalQuantity`] lists the base unit of each quantity. A rate is
-    /// based on per minute and a ratio on the unit fraction:
+    /// based on per second and a ratio on the unit fraction:
     ///
     /// ```
     /// use geotrace_sdk_units::Unit;
     ///
-    /// assert_eq!(Unit::PER_S.to_base(), 60.0);
+    /// assert_eq!(Unit::PER_MIN.to_base(), 1.0 / 60.0);
     /// assert_eq!(Unit::PERCENT.to_base(), 0.01);
     /// ```
     pub fn to_base(self) -> f64 {
@@ -1119,9 +1118,9 @@ mod tests {
         assert!((Unit::MIN.to_base() - 60.0).abs() < f64::EPSILON);
         assert!((Unit::H.to_base() - 3600.0).abs() < f64::EPSILON);
         assert!((Unit::PERCENT.to_base() - 0.01).abs() < f64::EPSILON);
-        assert!((Unit::PER_S.to_base() - 60.0).abs() < f64::EPSILON);
-        assert!((Unit::PER_MIN.to_base() - 1.0).abs() < f64::EPSILON);
-        assert!((Unit::PER_H.to_base() - 1.0 / 60.0).abs() < 1e-12);
+        assert!((Unit::PER_S.to_base() - 1.0).abs() < f64::EPSILON);
+        assert!((Unit::PER_MIN.to_base() - 1.0 / 60.0).abs() < 1e-12);
+        assert!((Unit::PER_H.to_base() - 1.0 / 3600.0).abs() < 1e-12);
     }
 
     #[test]
