@@ -49,6 +49,7 @@
 - **Interface:** Fixed a query under the time range filter dropping the fixes after a backwards clock step, and matching a fix outside the filter.
 - **Interface:** Fixed the query results' map buttons framing matches the filter hides.
 - **Interface:** Fixed a sensor channel query drawing its match halo on the wrong fixes in a recording faster than 1 Hz.
+- **Interface:** Fixed a sensor channel query's `keep` leaving a track with no match fully drawn on the map.
 - **Interface:** Fixed a query's `accel` being absent between two fixes of the same second in a recording faster than 1 Hz.
 - **Interface:** Fixed a query window's aggregate over a sensor channel reading the samples before the window's first fix in a recording faster than 1 Hz.
 - **Interface:** Fixed a query's duration window covering every fix of a second in a recording faster than 1 Hz.

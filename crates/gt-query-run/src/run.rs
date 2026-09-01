@@ -15,7 +15,8 @@ use crate::provider::{
     CapturedTrackValues, SliceProvider, TimeFilteredPoints, TrackProvider, TrackQueryData,
 };
 use crate::results::{
-    ChannelTrackResult, MatchValues, TrackMatchValues, channel_query_matches, matched_point_ranges,
+    ChannelTrackResult, MatchValues, MatchedTrackPoints, TrackMatchValues, channel_query_matches,
+    matched_point_ranges,
 };
 
 /// Per-track derived series of one run, keyed by the track they came from.
@@ -272,15 +273,26 @@ impl PreparedRun {
             .collect();
 
         // Project each track's matched sample spans onto its nav points, for the
-        // map halos: a matched span bands the track segments it covers.
-        let per_track: FxHashMap<TrackRef, (Vec<Range<usize>>, usize)> = track_results
+        // map halos: a matched span bands the track segments it covers. Every
+        // track the run read is here, including one that matched nothing.
+        let per_track: FxHashMap<TrackRef, MatchedTrackPoints> = self
+            .tracks
             .iter()
-            .filter_map(|result| {
-                let snapshot = self.tracks.iter().find(|s| s.track_ref == result.track)?;
-                let point_ranges =
-                    matched_point_ranges(&snapshot.points, &result.timeline, &result.matches);
-                let len = snapshot.points.len();
-                (!point_ranges.is_empty()).then_some((result.track, (point_ranges, len)))
+            .map(|snapshot| {
+                let matched = track_results
+                    .iter()
+                    .find(|result| result.track == snapshot.track_ref)
+                    .map(|result| {
+                        matched_point_ranges(&snapshot.points, &result.timeline, &result.matches)
+                    })
+                    .unwrap_or_default();
+                (
+                    snapshot.track_ref,
+                    MatchedTrackPoints {
+                        matched,
+                        point_count: snapshot.points.len(),
+                    },
+                )
             })
             .collect();
         let matches = channel_query_matches(query.mode(), &per_track);
