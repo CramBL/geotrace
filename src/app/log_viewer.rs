@@ -14,8 +14,9 @@ mod tests;
 use egui::{Button, ComboBox, DragValue, Label, RichText, Window};
 use egui_phosphor::regular::X as ICON_X;
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
-use gt_log_view::{LoadedLog, LoadedLogs, LogAttachmentRef, SessionLogAttachments};
+use gt_log_view::{LoadedLog, LoadedLogs, LogAttachmentRef, RecordingKey, SessionLogAttachments};
 use gt_pending_writes::WriteAccess;
+use gt_store::DatabaseRef;
 use gt_types::FileIdx;
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::{LoadedLogId, LogMatchHover};
@@ -74,6 +75,17 @@ const DETACH_UNATTACHED_HOVER: &str = "This log is not stored with a recording i
 
 const NOTICE_DISMISS_HOVER: &str = "Dismiss this warning";
 
+/// What the list and the footer append to the name of a recording that is not
+/// loaded.
+pub(super) const NOT_LOADED_MARKER: &str = "not loaded";
+
+pub(in crate::app) const LOAD_RECORDING_LABEL: &str = "Load recording";
+
+const LOAD_RECORDING_HOVER: &str =
+    "Gives this log's lines positions by opening its recording from history";
+
+const LOAD_RECORDING_NO_DATABASE_HOVER: &str = "The recordings database is unavailable";
+
 /// Fixed width for the unit dropdown: a wider unit label must not shift the
 /// controls beside it.
 const UNIT_DROPDOWN_WIDTH_PX: f32 = 52.0;
@@ -126,6 +138,10 @@ pub(super) struct LogViewerContext<'a> {
     /// attaching a log to a recording and taking it back out do.
     pub write_access: WriteAccess,
 
+    /// Whether the recordings database is open, which is what grays the
+    /// footer's "Load recording" while it is not.
+    pub history_available: bool,
+
     /// Whether the association dialog is over the viewer, which then takes the
     /// Escape press for itself.
     pub dialog_open: bool,
@@ -144,6 +160,10 @@ pub(super) struct LogViewerRequests {
     /// Read this attachment back out of the history database and load it as a
     /// log.
     pub load_attachment: Option<AttachmentToLoad>,
+
+    /// Open this recording from history. The footer sets it while the shown
+    /// log's anchored recording is not loaded.
+    pub open_recording: Option<DatabaseRef>,
 }
 
 /// One of a loaded recording's attachments, as the viewer's list requested it.
@@ -225,6 +245,7 @@ impl LogViewerWindow {
             log_hover,
             requests,
             write_access,
+            history_available,
             dialog_open,
         }: LogViewerContext<'_>,
     ) {
@@ -259,7 +280,10 @@ impl LogViewerWindow {
                             recordings,
                             recording_names,
                             requests,
-                            write_access,
+                            FooterAccess {
+                                write_access,
+                                history_available,
+                            },
                         );
                     });
                 // Notices, the list, the parse summary and the filter rows
@@ -390,7 +414,10 @@ impl LogViewerWindow {
         recordings: LoadedFilesView<'_>,
         recording_names: &RecordingNames,
         requests: &mut LogViewerRequests,
-        write_access: WriteAccess,
+        FooterAccess {
+            write_access,
+            history_available,
+        }: FooterAccess,
     ) {
         let selected = self.selected;
         let Some(log) = selected.and_then(|id| logs.get_by_id(id)) else {
@@ -405,6 +432,13 @@ impl LogViewerWindow {
         let mut window_edited = false;
 
         let attached = log.attachment().is_some();
+        // The anchored recording while it is not loaded, which is always one of
+        // the history database's: a log anchored to a recording the database
+        // does not hold unloads with that recording.
+        let unresolved_anchor = match target {
+            Some(_) => None,
+            None => log.anchor_key().and_then(RecordingKey::database_ref),
+        };
         let names = recording_names_by_id(recordings, recording_names);
 
         ui.horizontal_wrapped(|ui| {
@@ -455,6 +489,19 @@ impl LogViewerWindow {
                     .response
                     .on_disabled_hover_text("Load a recording to associate this log against");
             });
+
+            if let Some(db_ref) = unresolved_anchor {
+                let recording = gt_loaded_files::display_identity(&db_ref.identity).0;
+                ui.label(
+                    RichText::new(format!("Anchored to {recording} ({NOT_LOADED_MARKER})")).weak(),
+                );
+                let load = ui.add_enabled(history_available, Button::new(LOAD_RECORDING_LABEL));
+                if load.clicked() {
+                    requests.open_recording = Some(db_ref.clone());
+                }
+                load.on_hover_text(LOAD_RECORDING_HOVER)
+                    .on_disabled_hover_text(LOAD_RECORDING_NO_DATABASE_HOVER);
+            }
 
             ui.separator();
             ui.label("Association window");
@@ -511,6 +558,13 @@ impl LogViewerWindow {
             log.anchor_to_loaded_recording(chosen_target, &recordings);
         }
     }
+}
+
+/// What the footer's attachment and recording controls are allowed to do in
+/// this session.
+struct FooterAccess {
+    write_access: WriteAccess,
+    history_available: bool,
 }
 
 /// The name each loaded recording goes by, keyed by its session identity.

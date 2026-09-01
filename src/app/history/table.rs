@@ -4,6 +4,8 @@ use chrono::{DateTime, Utc};
 use egui::{Button, Grid, Label, RichText, TextEdit};
 use egui_extras::{Column, TableBuilder, TableRow};
 use egui_phosphor::regular::NOTE as ICON_NOTE;
+use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
+use gt_log_view::LogAttachmentRef;
 use gt_pending_writes::WriteAccess;
 use gt_side_panel::widgets::{MetadataView, has_metadata_details, metadata_detail_rows};
 use gt_store::{ChannelSummary, RecordingEntry};
@@ -241,6 +243,10 @@ fn render_row(
     });
 
     row.col(|ui| {
+        attached_logs_cell(ui, entry, worker);
+    });
+
+    row.col(|ui| {
         let open = ui.add_enabled(!already_loaded, Button::new("Open").small());
         if already_loaded {
             open.on_hover_text("Already loaded");
@@ -257,6 +263,46 @@ fn render_row(
         }
     });
 }
+
+/// The Logs column of a History row: how many logs the recording stores, and
+/// the menu listing them by name with an action that loads one. A recording
+/// storing no log shows an empty cell.
+fn attached_logs_cell(ui: &mut egui::Ui, entry: &RecordingEntry, worker: &HistoryWorker) {
+    let count = entry.log_attachments.len();
+    if count == 0 {
+        return;
+    }
+    ui.menu_button(format!("{ICON_PAPERCLIP} {count}"), |ui| {
+        for listed in &entry.log_attachments {
+            ui.horizontal(|ui| {
+                let name = listed.attachment.name.as_str();
+                ui.add(Label::new(name).truncate());
+                if ui
+                    .button(OPEN_LOG_LABEL)
+                    .on_hover_text(OPEN_LOG_HOVER)
+                    .clicked()
+                {
+                    worker.load_attached_log(
+                        LogAttachmentRef {
+                            recording: entry.db_ref.clone(),
+                            id: listed.id,
+                        },
+                        name.to_owned(),
+                    );
+                    ui.close();
+                }
+            });
+        }
+    })
+    .response
+    .on_hover_text(ATTACHED_LOGS_HOVER);
+}
+
+pub(in crate::app) const OPEN_LOG_LABEL: &str = "Open log";
+
+const OPEN_LOG_HOVER: &str = "Load this log into the log viewer";
+
+const ATTACHED_LOGS_HOVER: &str = "The logs stored with this recording";
 
 /// Render one of a row's value cells and give the whole cell - the text and the
 /// blank space beside it - the recording's data breakdown as hover text.

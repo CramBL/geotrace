@@ -4184,6 +4184,7 @@ fn stored_recording_entry(identity: &str, title: &str) -> gt_store::RecordingEnt
         notes: None,
         travel_mode: None,
         channels: Vec::new(),
+        log_attachments: Vec::new(),
     }
 }
 
@@ -9150,23 +9151,26 @@ fn synthetic_log(approx_bytes: usize) -> String {
 /// A recording running from the moment the generated log starts, so the log
 /// finds it as an association candidate when it loads after it.
 fn recording_alongside_the_log(name: &str, start_lat_deg: f64) -> TestDroppedFile {
-    TestDroppedFile::bytes(
-        synthetic_gtd_bytes(SyntheticGtdSpec {
-            start: synthetic_log_start(),
-            point_count: 600,
-            step_secs: 1,
-            start_lat_deg,
-            start_lon_deg: 12.0,
-            lat_step_deg: 0.00005,
-            lon_step_deg: 0.00008,
-            heading_deg: 20.0,
-            speed_kmh: 28.0,
-            eph_m: 1.8,
-            sats_seen: 14,
-            sats_in_fix: 11,
-        }),
-        name,
-    )
+    TestDroppedFile::bytes(recording_bytes_alongside_the_log(start_lat_deg), name)
+}
+
+/// The GTD bytes [`recording_alongside_the_log`] drops as a file, for a test
+/// that stores the same recording in a database of its own instead.
+fn recording_bytes_alongside_the_log(start_lat_deg: f64) -> Vec<u8> {
+    synthetic_gtd_bytes(SyntheticGtdSpec {
+        start: synthetic_log_start(),
+        point_count: 600,
+        step_secs: 1,
+        start_lat_deg,
+        start_lon_deg: 12.0,
+        lat_step_deg: 0.00005,
+        lon_step_deg: 0.00008,
+        heading_deg: 20.0,
+        speed_kmh: 28.0,
+        eph_m: 1.8,
+        sats_seen: 14,
+        sats_in_fix: 11,
+    })
 }
 
 fn drop_log_and_wait_for_load(harness: &mut Harness<App>, text: &str, name: &str) {
@@ -9876,7 +9880,9 @@ fn choosing_a_target_in_the_footer_associates_the_log_against_it() {
 /// The dialog every loaded log raises while a recording is open, and what
 /// confirming it does.
 mod log_association {
-    use gt_store::{HistoryDatabase as _, LogAttachmentEntry, Recordings, StoredLogFilterMode};
+    use gt_store::{
+        HistoryDatabase as _, LogAttachmentEntry, Recordings, StoredLogFilter, StoredLogFilterMode,
+    };
 
     use gt_log_view::LogAttachmentRef;
 
@@ -9912,14 +9918,22 @@ mod log_association {
     /// Drops a log generated from `seed`. Two drops in one test need two
     /// seeds: the session holds one log per content.
     fn drop_a_log(harness: &mut Harness<App>, seed: u64) {
-        let text = synthetic_journald_log(SyntheticLogSpec {
+        drop_log_and_wait_for_load(harness, &fixture_log_text(seed), FIXTURE_LOG_NAME);
+        harness.run_steps(3);
+    }
+
+    /// The log text of `seed`, which is one log however often it is generated:
+    /// the session holds one log per content.
+    fn fixture_log_text(seed: u64) -> String {
+        synthetic_journald_log(SyntheticLogSpec {
             approx_bytes: 8 * 1024,
             seed,
             timestamps: SyntheticLogTimestamps::Iso8601Space,
-        });
-        drop_log_and_wait_for_load(harness, &text, "navsyncd.log");
-        harness.run_steps(3);
+        })
     }
+
+    /// The name the fixture log is loaded and stored under.
+    const FIXTURE_LOG_NAME: &str = "navsyncd.log";
 
     fn dialog_is_open(harness: &Harness<App>) -> bool {
         harness.state().association_dialog.is_some()
@@ -10614,6 +10628,193 @@ mod log_association {
         );
     }
 
+    /// A database holding the fixture recording and the fixture log stored
+    /// with it, as a session that attached the log left them.
+    fn seed_a_recording_and_the_log_stored_with_it(
+        db_path: &std::path::Path,
+    ) -> (gt_store::DatabaseRef, gt_store::LogAttachmentId) {
+        use gt_store::{LogAttachments as _, LogToAttach, TrackRange};
+
+        let bytes = recording_bytes_alongside_the_log(55.0);
+        let meta = gt_store::extract_meta(&bytes).expect("the fixture recording carries metadata");
+        let tracks = [TrackRange {
+            start: 0,
+            end: meta.nav_point_count,
+            hidden: false,
+        }];
+        let mut db = open_temporary_history_database(db_path);
+        let db_ref = db
+            .insert(
+                "walk.gtd",
+                &meta,
+                &tracks,
+                crate::app::loader::stored_segmentation_from_config(
+                    &gt_track_builder::SegmentationConfig::default(),
+                ),
+                &bytes,
+            )
+            .expect("the fixture recording is stored");
+        let stored = db
+            .attach_log(
+                &db_ref,
+                &LogToAttach {
+                    name: FIXTURE_LOG_NAME,
+                    text: &fixture_log_text(FIXTURE_LOG_SEED),
+                    filters: vec![StoredLogFilter {
+                        text: "kernel".to_owned(),
+                        regex: false,
+                        enabled: true,
+                        mode: StoredLogFilterMode::Layer { color_slot: 0 },
+                    }],
+                },
+            )
+            .expect("the fixture log is stored with the recording");
+        (db_ref, stored.id)
+    }
+
+    /// Opens one of a recording's stored logs, as the history window's
+    /// "Open log" does.
+    fn open_the_stored_log(
+        harness: &Harness<App>,
+        db_ref: &gt_store::DatabaseRef,
+        id: gt_store::LogAttachmentId,
+    ) {
+        harness.state().history.load_attached_log(
+            LogAttachmentRef {
+                recording: db_ref.clone(),
+                id,
+            },
+            FIXTURE_LOG_NAME.to_owned(),
+        );
+    }
+
+    /// The chips the shown log is filtered by, in stack order.
+    fn shown_log_chips(harness: &Harness<App>) -> Vec<String> {
+        harness
+            .state()
+            .first_log()
+            .map(|log| {
+                log.filters()
+                    .chips()
+                    .iter()
+                    .map(|chip| chip.pattern().text.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// A log opened out of history while its recording is not loaded: it comes
+    /// back attached, anchored to that recording, under the stack it was
+    /// stored with, and no line of it has a position.
+    #[test]
+    fn opening_a_stored_log_alone_loads_it_anchored_and_without_positions() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("geotrace.h5");
+        let (db_ref, stored) = seed_a_recording_and_the_log_stored_with_it(&db_path);
+        let mut harness = app_over_a_history_database(&db_path);
+
+        open_the_stored_log(&harness, &db_ref, stored);
+
+        assert!(
+            harness.step_until(|harness| harness.state().logs.len() == 1),
+            "the log the history window opened is loaded"
+        );
+        assert_eq!(
+            harness
+                .state()
+                .first_log()
+                .and_then(LoadedLog::attachment)
+                .map(|attachment| attachment.id),
+            Some(stored)
+        );
+        assert_eq!(
+            harness.state().first_log().and_then(LoadedLog::anchor_key),
+            Some(&gt_log_view::RecordingKey::Stored(db_ref)),
+            "the log is anchored to the recording that holds it"
+        );
+        assert_eq!(shown_log_chips(&harness), ["kernel".to_owned()]);
+        assert_eq!(
+            harness
+                .state()
+                .first_log()
+                .map(|log| (log.associated_recording(), log.associated_entry_count())),
+            Some((None, 0)),
+            "no line has a position while the anchored recording is not loaded"
+        );
+        assert!(harness.state().log_viewer.open);
+        assert_eq!(
+            harness.state().log_viewer.selected_log(),
+            harness.state().logs.first_id(),
+            "the viewer opens on the log the user asked for"
+        );
+    }
+
+    /// The same stored log opened twice: the session holds one log per
+    /// content, whichever way that content arrives.
+    #[test]
+    fn opening_a_stored_log_that_is_already_loaded_loads_no_second_copy() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("geotrace.h5");
+        let (db_ref, stored) = seed_a_recording_and_the_log_stored_with_it(&db_path);
+        let mut harness = app_over_a_history_database(&db_path);
+        open_the_stored_log(&harness, &db_ref, stored);
+        assert!(harness.step_until(|harness| harness.state().logs.len() == 1));
+        let loaded = harness.state().logs.first_id();
+        harness.state_mut().toasts.dismiss_all_toasts();
+
+        open_the_stored_log(&harness, &db_ref, stored);
+
+        assert!(
+            harness.step_until(|harness| harness.state().toasts.len() == 1),
+            "the second copy is answered with a toast"
+        );
+        assert_eq!(harness.state().logs.len(), 1);
+        assert_eq!(harness.state().logs.first_id(), loaded);
+        assert_eq!(harness.state().log_viewer.selected_log(), loaded);
+    }
+
+    /// The footer's "Load recording" opens the anchored recording from
+    /// history, and the log takes its positions from it as soon as it loads.
+    #[test]
+    fn loading_the_recording_of_a_stored_log_gives_its_lines_positions() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("geotrace.h5");
+        let (db_ref, stored) = seed_a_recording_and_the_log_stored_with_it(&db_path);
+        let mut harness = app_over_a_history_database(&db_path);
+        open_the_stored_log(&harness, &db_ref, stored);
+        assert!(harness.step_until(|harness| harness.state().logs.len() == 1));
+        harness.run_steps(3);
+        harness.get_by_label("Anchored to walk.gtd (not loaded)");
+
+        harness
+            .get_by_label(log_viewer::LOAD_RECORDING_LABEL)
+            .click();
+
+        assert!(
+            harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len() == 1),
+            "the recording the log is anchored to opened from history"
+        );
+        assert!(
+            harness.step_until(|harness| harness
+                .state()
+                .first_log()
+                .is_some_and(|log| log.associated_entry_count() > 0)),
+            "the lines take their positions from the recording that loaded"
+        );
+        assert!(
+            harness
+                .state()
+                .first_log()
+                .is_some_and(|log| log.associated_recording().is_some())
+        );
+        assert!(
+            harness
+                .query_by_label(log_viewer::LOAD_RECORDING_LABEL)
+                .is_none(),
+            "the footer states the loaded recording, with nothing left to open"
+        );
+    }
+
     /// Hands the app the attachment a recording load reads back, parsed as the
     /// loader's worker parses it.
     fn restore_the_stored_attachment(
@@ -10623,11 +10824,7 @@ mod log_association {
     ) {
         let stored = stored_attachments(db_path, db_ref);
         let entry = stored.first().expect("the attachment was stored");
-        let text = synthetic_journald_log(SyntheticLogSpec {
-            approx_bytes: 8 * 1024,
-            seed: FIXTURE_LOG_SEED,
-            timestamps: SyntheticLogTimestamps::Iso8601Space,
-        });
+        let text = fixture_log_text(FIXTURE_LOG_SEED);
         let parsed = gt_logfile::parse_log(text.as_str().into(), synthetic_log_start())
             .expect("the fixture log parses");
         let restore = AttachedLogRestore {

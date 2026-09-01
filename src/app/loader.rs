@@ -91,15 +91,16 @@ pub(super) struct AttachedLogRestore {
 }
 
 /// What requested an attachment to be read back. The app opens the viewer on
-/// the log it loads only for [`AttachedLogRequester::LogViewerList`].
+/// the log it loads only for [`AttachedLogRequester::UserOpenedTheAttachment`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AttachedLogRequester {
     /// The load of the recording holding the attachment, which reads back
     /// every log that recording holds.
     RecordingLoad,
 
-    /// The user, on the attachment's row in the log viewer's list.
-    LogViewerList,
+    /// The user, on the attachment's row in the log viewer's list or in the
+    /// history window.
+    UserOpenedTheAttachment,
 }
 
 /// Messages sent from background load threads to the UI thread via `mpsc`.

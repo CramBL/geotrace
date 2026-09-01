@@ -4,6 +4,8 @@
 //! types, manipulates that tree, then writes the whole thing to a new
 //! `FileBuilder` in one pass.
 
+use std::collections::HashMap;
+
 use crate::matches_attrs;
 use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
@@ -741,7 +743,8 @@ pub(crate) fn snap_blob(
     Ok(dataset.read_u8().ok())
 }
 
-/// Every log attached to a recording, sorted by id.
+/// Every log attached to a recording, in the order
+/// [`LogAttachmentEntry::sort_by_name_then_id`] puts them.
 pub(crate) fn log_attachments(
     db_path: &std::path::Path,
     identity: &str,
@@ -752,22 +755,29 @@ pub(crate) fn log_attachments(
     let by_id = root.group("by_identity")?;
     let id_grp = find_identity_group(&by_id, identity)?;
     let rec_grp = id_grp.group(group_name)?;
+    Ok(log_attachments_in_attrs(&rec_grp.attrs()?))
+}
 
+/// The attachments a recording's attributes hold, for a caller that has read
+/// those attributes already.
+pub(crate) fn log_attachments_in_attrs(
+    attrs: &HashMap<String, AttrValue>,
+) -> Vec<LogAttachmentEntry> {
     let mut entries = Vec::new();
-    for (key, value) in rec_grp.attrs()? {
-        let Some(id) = LogAttachmentId::from_attr_key(&key) else {
+    for (key, value) in attrs {
+        let Some(id) = LogAttachmentId::from_attr_key(key) else {
             continue;
         };
         let (AttrValue::String(json) | AttrValue::AsciiString(json)) = value else {
             log::warn!("Ignoring the log attachment attribute {key:?}, which is not a string");
             continue;
         };
-        if let Some(attachment) = LogAttachment::from_attribute_json(&json) {
+        if let Some(attachment) = LogAttachment::from_attribute_json(json) {
             entries.push(LogAttachmentEntry { id, attachment });
         }
     }
-    entries.sort_unstable_by_key(|entry| entry.id);
-    Ok(entries)
+    LogAttachmentEntry::sort_by_name_then_id(&mut entries);
+    entries
 }
 
 /// Store one attachment's attribute JSON on a recording, replacing whatever

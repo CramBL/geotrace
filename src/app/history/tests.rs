@@ -13,10 +13,12 @@ use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use crate::app::storage_controls::AUTO_STORE_LABEL;
 
 use egui_phosphor::regular::NOTE as ICON_NOTE;
+use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
 use gt_store::ChannelSummary;
 
 use super::table::{
-    MAX_HOVER_CHANNELS, breakdown_cell_id, channel_title, data_breakdown_ui, track_count_text,
+    MAX_HOVER_CHANNELS, OPEN_LOG_LABEL, breakdown_cell_id, channel_title, data_breakdown_ui,
+    track_count_text,
 };
 use super::{
     DELETE_HIDDEN_WINDOW_TITLE, DatabaseRef, HistorySort, HistoryWindow, HistoryWorker,
@@ -35,6 +37,9 @@ struct HistoryHarness {
     databases_opening: bool,
     /// What the session may write, which is what grays the controls that do.
     write_access: WriteAccess,
+    /// The log the worker last read back, in answer to the Logs menu's
+    /// "Open log".
+    opened_log: Option<gt_store::AttachedLog>,
     _dir: tempfile::TempDir,
 }
 
@@ -59,6 +64,7 @@ fn history_harness(entries: Vec<RecordingEntry>) -> HistoryHarness {
         },
         databases_opening: false,
         write_access: WriteAccess::Owner,
+        opened_log: None,
         _dir: dir,
     }
 }
@@ -74,10 +80,11 @@ fn show_history(ui: &mut egui::Ui, s: &mut HistoryHarness) {
     );
 }
 
-/// A harness backed by a real database holding one recording, with no
-/// pre-seeded entries - the list arrives from the worker (see [`pump_history`]).
-fn history_harness_with_recording(identity: &str) -> HistoryHarness {
-    use gt_store::{StoredSegmentation, TrackRange};
+/// A harness backed by a real database holding one recording with `stored_logs`
+/// attached to it, and no pre-seeded entries - the list arrives from the worker
+/// (see [`pump_history`]).
+fn history_harness_with_recording(identity: &str, stored_logs: &[&str]) -> HistoryHarness {
+    use gt_store::{LogAttachments as _, LogToAttach, StoredSegmentation, TrackRange};
 
     let dir = tempfile::tempdir().expect("temp dir");
     let mut db =
@@ -94,8 +101,20 @@ fn history_harness_with_recording(identity: &str) -> HistoryHarness {
         detect_clock_discontinuities: true,
         clock_discontinuity_sigmas: 5.0,
     };
-    db.insert(identity, &meta, &tracks, settings, bytes)
+    let db_ref = db
+        .insert(identity, &meta, &tracks, settings, bytes)
         .expect("insert recording");
+    for name in stored_logs {
+        db.attach_log(
+            &db_ref,
+            &LogToAttach {
+                name,
+                text: &stored_log_text(name),
+                filters: Vec::new(),
+            },
+        )
+        .expect("attach a log to the recording");
+    }
     let worker = HistoryWorker::spawn(
         RecordingsHandle::Owner(db),
         egui::Context::default(),
@@ -112,17 +131,26 @@ fn history_harness_with_recording(identity: &str) -> HistoryHarness {
         },
         databases_opening: false,
         write_access: WriteAccess::Owner,
+        opened_log: None,
         _dir: dir,
     }
 }
 
+/// A log read back is recognizable as the one that was opened: the one line it
+/// is stored with holds its name.
+fn stored_log_text(name: &str) -> String {
+    format!("2026-05-29 18:48:25 {name}: starting\n")
+}
+
 /// Drive one frame like the app does: drain the worker's responses into the
-/// window (list refresh, mutation acknowledgements) and then render it.
+/// window (list refresh, mutation acknowledgements, a log read back) and then
+/// render it.
 fn pump_history(ui: &mut egui::Ui, s: &mut HistoryHarness) {
     for resp in s.worker.poll() {
         match resp {
             Response::Listed(Ok(entries)) => s.window.set_entries(entries),
             Response::Mutated { result: Ok(()), .. } => s.window.invalidate(),
+            Response::AttachedLogLoaded { log: Ok(log), .. } => s.opened_log = Some(log),
             _ => {}
         }
     }
@@ -134,7 +162,7 @@ fn rename_workflow_updates_the_listed_identity_end_to_end() {
     // Full workflow against a real worker + database: the row lists, the user
     // edits the identity inline, and after the async rename the list shows the
     // new name.
-    let harness = history_harness_with_recording("auto:ride.gtd");
+    let harness = history_harness_with_recording("auto:ride.gtd", &[]);
     let mut h = TestHarness::builder()
         .size(egui::vec2(900.0, 500.0))
         .ui_state(pump_history, harness);
@@ -171,6 +199,65 @@ fn rename_workflow_updates_the_listed_identity_end_to_end() {
             .step_until(|h| h.query_by_label_contains("ride.gtd v2").is_some()),
         "the renamed identity should appear in the refreshed list"
     );
+}
+
+/// The Logs column over a real database: the count the row shows, the names
+/// the menu lists, and the log the database reads back for the row that was
+/// opened.
+#[test]
+fn the_logs_column_counts_the_stored_logs_and_opens_the_one_that_was_chosen() {
+    let harness =
+        history_harness_with_recording("auto:ride.gtd", &["navsyncd.log", "hal-powerd.log"]);
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(pump_history, harness);
+    let count = format!("{ICON_PAPERCLIP} 2");
+    assert!(
+        h.inner
+            .step_until(|h| h.query_by_label(count.as_str()).is_some()),
+        "the row should count the two logs the recording stores"
+    );
+
+    // The count sits where it is clicked once the table's columns settle over
+    // the frames after the list arrives.
+    for _ in 0..4 {
+        h.run();
+    }
+
+    h.inner.get_by_label(count.as_str()).click();
+    h.step();
+    h.inner.get_by_label("hal-powerd.log");
+    h.inner.get_by_label("navsyncd.log");
+    // The first row is "hal-powerd.log": the menu lists the attachments by
+    // name.
+    h.inner
+        .nth_matching(By::new().label(OPEN_LOG_LABEL), 0)
+        .click_accesskit();
+
+    assert!(
+        h.inner.step_until(|h| h.state().opened_log.is_some()),
+        "the row should ask the database for the log it names"
+    );
+    assert_eq!(
+        h.state()
+            .opened_log
+            .as_ref()
+            .map(|log| (log.name.as_str(), log.text.as_str())),
+        Some(("hal-powerd.log", stored_log_text("hal-powerd.log").as_str()))
+    );
+}
+
+/// A recording storing no log leaves its Logs cell empty: a count of zero is
+/// noise on every row of a database nobody attached a log in.
+#[test]
+fn a_recording_storing_no_log_shows_no_count() {
+    let harness = history_harness(vec![entry_with_identity("auto:ride.gtd")]);
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(show_history, harness);
+    h.run();
+
+    assert!(h.inner.query_by_label_contains(ICON_PAPERCLIP).is_none());
 }
 
 /// Never hidden, per DESIGN.md: in a read-only session the row's actions that
@@ -265,7 +352,7 @@ fn the_window_reports_the_databases_still_opening() {
 #[test]
 fn snapshot_history_window_table() {
     let mut harness = history_harness(vec![
-        entry_with_identity("auto:ride.gtd"),
+        with_stored_logs(entry_with_identity("auto:ride.gtd"), 2),
         entry_with_identity("a much longer recording identity that needs the room"),
         entry_with_identity("survey_flight_2026_07_15.gtd"),
     ]);
@@ -339,6 +426,7 @@ fn entry_with_identity(identity: &str) -> RecordingEntry {
         notes: None,
         travel_mode: None,
         channels: Vec::new(),
+        log_attachments: Vec::new(),
     }
 }
 
@@ -362,13 +450,29 @@ fn sortable_entry(
 
 /// Three entries whose columns disagree about the order, so sorting by any
 /// one of them produces a different sequence: `beta` is the oldest but the
-/// longest and biggest, `alpha` the newest but the shortest.
+/// longest and biggest, `alpha` the newest but the shortest and the only one
+/// storing no log.
 fn sortable_entries() -> Vec<RecordingEntry> {
     vec![
         sortable_entry("Alpha", 3_000, 10, 5, 50),
-        sortable_entry("beta", 1_000, 300, 100, 5_000),
-        sortable_entry("Gamma", 2_000, 60, 40, 400),
+        with_stored_logs(sortable_entry("beta", 1_000, 300, 100, 5_000), 2),
+        with_stored_logs(sortable_entry("Gamma", 2_000, 60, 40, 400), 1),
     ]
+}
+
+/// The entry with `count` logs stored with it, each under a name of its own.
+fn with_stored_logs(mut entry: RecordingEntry, count: usize) -> RecordingEntry {
+    entry.log_attachments = (0..count)
+        .map(|index| gt_store::LogAttachmentEntry {
+            id: gt_store::LogAttachmentId::new_random(),
+            attachment: gt_store::LogAttachment::new(
+                format!("navsyncd-{index}.log"),
+                gt_store::LogContentHash::of_log_bytes(&[]),
+                Vec::new(),
+            ),
+        })
+        .collect();
+    entry
 }
 
 /// The identities the sort produces, in list order.
@@ -392,6 +496,8 @@ fn sorted_identities(sort: HistorySort, entries: &[RecordingEntry]) -> Vec<&str>
 #[case(SortColumn::Points, SortDirection::Descending, ["beta", "Gamma", "Alpha"])]
 #[case(SortColumn::Size, SortDirection::Ascending, ["Alpha", "Gamma", "beta"])]
 #[case(SortColumn::Size, SortDirection::Descending, ["beta", "Gamma", "Alpha"])]
+#[case(SortColumn::Logs, SortDirection::Ascending, ["Alpha", "Gamma", "beta"])]
+#[case(SortColumn::Logs, SortDirection::Descending, ["beta", "Gamma", "Alpha"])]
 fn sorting_orders_by_the_chosen_column(
     #[case] column: SortColumn,
     #[case] direction: SortDirection,

@@ -66,6 +66,9 @@ impl App {
         if let Some(AttachmentToLoad { attachment, name }) = requests.load_attachment {
             self.history.load_attached_log(attachment, name);
         }
+        if let Some(db_ref) = requests.open_recording {
+            self.history.open(db_ref);
+        }
     }
 
     /// Writes back every attachment whose stored filter stack is behind the
@@ -111,9 +114,9 @@ impl App {
         }
     }
 
-    /// Loads the one attachment the viewer's list requested, or reports why it
-    /// did not come back.
-    pub(super) fn load_attachment_chosen_in_the_log_viewer(
+    /// Loads the one attachment the user opened in the viewer's list or in the
+    /// history window, or reports why it did not come back.
+    pub(super) fn load_the_attachment_the_user_opened(
         &mut self,
         attachment: LogAttachmentRef,
         name: &str,
@@ -123,7 +126,7 @@ impl App {
             attachment,
             name,
             log,
-            loader::AttachedLogRequester::LogViewerList,
+            loader::AttachedLogRequester::UserOpenedTheAttachment,
         );
     }
 

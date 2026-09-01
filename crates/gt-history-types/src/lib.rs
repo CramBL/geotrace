@@ -324,6 +324,11 @@ pub struct RecordingEntry {
     /// The recording's ad-hoc sensor channels, sorted by name. Empty for a
     /// recording that carries none.
     pub channels: Vec<ChannelSummary>,
+    /// The logs stored with the recording, in the order
+    /// [`LogAttachmentEntry::sort_by_name_then_id`] puts them. Empty for a
+    /// recording that holds none, and for one whose attributes the listing
+    /// could not read.
+    pub log_attachments: Vec<LogAttachmentEntry>,
 }
 
 /// A recording read back from history: the reconstructed GTD bytes plus the
@@ -426,7 +431,8 @@ pub trait ReadOnlyHistoryDatabase {
     /// none (never snapped, or stored before snap persistence existed).
     fn snap_blob(&self, db_ref: &DatabaseRef) -> Result<Option<Vec<u8>>, DbError>;
 
-    /// Every log attached to a recording, sorted by id.
+    /// Every log attached to a recording, in the order
+    /// [`LogAttachmentEntry::sort_by_name_then_id`] puts them.
     ///
     /// An attribute this build cannot decode is skipped with a warning. The
     /// recording's other attachments are still listed.

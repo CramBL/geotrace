@@ -28,6 +28,8 @@
 - **Log Viewer:** The log viewer now grays out the "no recording" choice for a log attached to a recording.
 - **Log Viewer:** The log viewer now lists every loaded log grouped by the recording it takes its positions from, each row with its own map visibility toggle.
 - **Log Viewer:** The log viewer now lists the logs a loaded recording holds that are not loaded, each with a "Load" button that loads it.
+- **Log Viewer:** The history window now counts the logs each recording stores and opens one by name, whether or not the recording is loaded.
+- **Log Viewer:** The log viewer now offers loading the recording of a log whose recording is not loaded.
 - **Map & Tracks:** A recording with an event marker style naming an unknown icon, or a color that is not a #RRGGBB value, now loads with that marker drawn as a pin or in gray, and the recorded value named in the data quality warnings.
 - **Map & Tracks:** A recording with marker or event marker text that is not valid UTF-8 is now rejected with an error naming the field.
 - **Map & Tracks:** The side panel's tree now draws a track row's number, distance in kilometres and duration in the same columns as the visible section above it, under one header row.

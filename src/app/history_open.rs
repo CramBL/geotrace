@@ -347,7 +347,7 @@ impl App {
                 attachment,
                 name,
                 log,
-            } => self.load_attachment_chosen_in_the_log_viewer(attachment, &name, log),
+            } => self.load_the_attachment_the_user_opened(attachment, &name, log),
             Response::LogDetached {
                 attachment,
                 log,

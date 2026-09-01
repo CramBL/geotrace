@@ -268,6 +268,7 @@ enum SortColumn {
     Duration,
     Points,
     Size,
+    Logs,
 }
 
 impl SortColumn {
@@ -279,6 +280,7 @@ impl SortColumn {
             Self::Duration => "Duration",
             Self::Points => "Points",
             Self::Size => "Size",
+            Self::Logs => "Logs",
         }
     }
 
@@ -287,7 +289,9 @@ impl SortColumn {
     fn initial_direction(self) -> SortDirection {
         match self {
             Self::Identity => SortDirection::Ascending,
-            Self::Date | Self::Duration | Self::Points | Self::Size => SortDirection::Descending,
+            Self::Date | Self::Duration | Self::Points | Self::Size | Self::Logs => {
+                SortDirection::Descending
+            }
         }
     }
 
@@ -299,12 +303,13 @@ impl SortColumn {
             (Self::Identity, SortDirection::Descending) => "Z to A",
             (Self::Date, SortDirection::Ascending) => "oldest first",
             (Self::Date, SortDirection::Descending) => "newest first",
-            (Self::Duration | Self::Points | Self::Size, SortDirection::Ascending) => {
+            (Self::Duration | Self::Points | Self::Size | Self::Logs, SortDirection::Ascending) => {
                 "smallest first"
             }
-            (Self::Duration | Self::Points | Self::Size, SortDirection::Descending) => {
-                "largest first"
-            }
+            (
+                Self::Duration | Self::Points | Self::Size | Self::Logs,
+                SortDirection::Descending,
+            ) => "largest first",
         }
     }
 
@@ -318,6 +323,7 @@ impl SortColumn {
             Self::Duration => duration_us(&a.meta).cmp(&duration_us(&b.meta)),
             Self::Points => a.meta.nav_point_count.cmp(&b.meta.nav_point_count),
             Self::Size => a.meta.gtd_size_bytes.cmp(&b.meta.gtd_size_bytes),
+            Self::Logs => a.log_attachments.len().cmp(&b.log_attachments.len()),
         }
     }
 }
