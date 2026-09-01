@@ -28,7 +28,7 @@ use gt_test_utils::{
 };
 use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::{FileSource, Latitude, Longitude};
-use gt_ui_types::{HoveredLogGlyph, LoadedLogId, LogMatchColor, LogMatchHover};
+use gt_ui_types::{LoadedLogId, LogMatchColor, LogMatchGlyph, LogMatchHover};
 
 use super::{
     AssociationWindowUnit, LOG_VIEWER_TITLE, LogViewerContext, LogViewerRequests, LogViewerWindow,
@@ -92,6 +92,13 @@ const TOOLTIP_DELAY_FRAMES: usize = 3;
 /// to sit on one row.
 const VIEWER_SIZE: egui::Vec2 = egui::vec2(760.0, 560.0);
 
+/// A scroll to one of [`long_log`]'s entries leaves the head of the log off
+/// screen: the log has more lines than the table draws at once.
+const LONG_LOG_ENTRIES: usize = 200;
+
+/// The first entry of [`long_log`] the map's clicked hexagon groups.
+const CLICKED_ENTRY: usize = 120;
+
 fn log_start() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 5, 29, 18, 48, 25)
         .single()
@@ -107,6 +114,8 @@ struct ViewerState {
     attachments: SessionLogAttachments,
     map_center: Option<(f64, f64)>,
     log_hover: LogMatchHover,
+    /// The hexagon the map was clicked on, which the viewer opens on.
+    clicked_glyph: Option<LogMatchGlyph>,
     requests: LogViewerRequests,
     /// What the session may write, which is what grays the attachment
     /// controls.
@@ -127,6 +136,27 @@ impl ViewerState {
     fn first_loaded_log(&self) -> LoadedLogId {
         self.logs.first_id().expect("a fixture log is loaded")
     }
+}
+
+/// A log of `count` entries, one per second from [`log_start`].
+fn long_log(count: usize) -> String {
+    (0..count)
+        .map(|second| {
+            format!(
+                "{} navsyncd: entry {second}\n",
+                (log_start() + Duration::seconds(second as i64)).format(super::TIMESTAMP_FORMAT)
+            )
+        })
+        .collect()
+}
+
+/// The timestamp column of entry `index` of [`long_log`], as the table writes
+/// it: an anchored timestamp is prefixed with a space.
+fn long_log_entry_timestamp(index: usize) -> String {
+    format!(
+        " {}",
+        (log_start() + Duration::seconds(index as i64)).format(super::TIMESTAMP_FORMAT)
+    )
 }
 
 /// A recording of ten minutes of walking from `first_lat_deg`, starting the
@@ -204,6 +234,7 @@ fn viewer_ui(ui: &mut egui::Ui, state: &mut ViewerState) {
             attachments: &state.attachments,
             map_center_request: &mut state.map_center,
             log_hover: &mut state.log_hover,
+            clicked_glyph: &mut state.clicked_glyph,
             requests: &mut state.requests,
             history_available: state.history_available,
             dialog_open: false,
@@ -249,6 +280,7 @@ fn viewer_state(recordings: Vec<gt_types::LoadedFile>, logs: &[(&str, &str)]) ->
         attachments: SessionLogAttachments::default(),
         map_center: None,
         log_hover: LogMatchHover::default(),
+        clicked_glyph: None,
         requests: LogViewerRequests::default(),
         write_access: WriteAccess::Owner,
         history_available: true,
@@ -509,7 +541,7 @@ fn a_hovered_hexagon_marks_its_own_lines_in_the_table() {
     let before = harness.inner.render().expect("the harness renders a frame");
     let shown_log = harness.state().first_loaded_log();
 
-    harness.state_mut().log_hover.glyph = Some(HoveredLogGlyph {
+    harness.state_mut().log_hover.glyph = Some(LogMatchGlyph {
         log: shown_log,
         color: LogMatchColor::LiveFilter,
         entry_indices: vec![0],
@@ -536,7 +568,7 @@ fn a_hovered_hexagon_of_another_log_leaves_the_shown_one_alone() {
     let first_row = harness.inner.get_by_label(FIRST_ENTRY_TIMESTAMP).rect();
     let before = harness.inner.render().expect("the harness renders a frame");
 
-    harness.state_mut().log_hover.glyph = Some(HoveredLogGlyph {
+    harness.state_mut().log_hover.glyph = Some(LogMatchGlyph {
         log: UNLOADED_LOG,
         color: LogMatchColor::LiveFilter,
         entry_indices: vec![0],
@@ -554,6 +586,90 @@ fn a_hovered_hexagon_of_another_log_leaves_the_shown_one_alone() {
         harness.state().viewer.selected_log(),
         Some(harness.state().first_loaded_log()),
         "the viewer stays on the log it was showing"
+    );
+}
+
+/// A click on a hexagon of a log the viewer is not showing switches to that
+/// log, opens the window, and scrolls the table to that hexagon's first line.
+#[test]
+fn clicking_a_hexagon_shows_its_log_at_the_first_line_it_groups() {
+    let long = long_log(LONG_LOG_ENTRIES);
+    let mut harness = harness_of(
+        vec![recording("walk.gtd", 55.0)],
+        &[
+            ("navsyncd.log", long.as_str()),
+            ("hal-powerd.log", SECOND_LOG),
+        ],
+    );
+    let clicked_log = harness.state().first_loaded_log();
+    harness.state_mut().viewer.open = false;
+    harness.run_steps(2);
+
+    harness.state_mut().clicked_glyph = Some(LogMatchGlyph {
+        log: clicked_log,
+        color: LogMatchColor::LiveFilter,
+        entry_indices: vec![CLICKED_ENTRY, CLICKED_ENTRY + 1],
+    });
+    harness.run_steps(3);
+
+    assert_eq!(harness.state().viewer.selected_log(), Some(clicked_log));
+    assert!(harness.state().viewer.open, "the click opens the window");
+    harness.get_by_label(long_log_entry_timestamp(CLICKED_ENTRY).as_str());
+    assert!(
+        harness.query_by_label(FIRST_ENTRY_TIMESTAMP).is_none(),
+        "the table scrolled away from the head of the log"
+    );
+}
+
+/// A hexagon of a log that unloaded before the viewer read the click leaves
+/// the window closed and the selection where it was.
+#[test]
+fn a_click_on_a_hexagon_of_an_unloaded_log_leaves_the_window_closed() {
+    let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
+    let shown = harness.state().first_loaded_log();
+    harness.state_mut().viewer.open = false;
+    harness.run_steps(2);
+
+    harness.state_mut().clicked_glyph = Some(LogMatchGlyph {
+        log: UNLOADED_LOG,
+        color: LogMatchColor::LiveFilter,
+        entry_indices: vec![0],
+    });
+    harness.run_steps(3);
+
+    assert!(!harness.state().viewer.open);
+    assert_eq!(harness.state().viewer.selected_log(), Some(shown));
+}
+
+/// The lines of the clicked hexagon stay marked once the cursor has left the
+/// map, which is where the reader looks for them.
+#[test]
+fn the_lines_of_a_clicked_hexagon_stay_marked_in_the_table() {
+    let mut harness = rendering_harness_with(vec![recording("walk.gtd", 55.0)]);
+    let pixels_per_point = harness.inner.ctx.pixels_per_point();
+    let marked_row = harness.inner.get_by_label(FIRST_ENTRY_TIMESTAMP).rect();
+    let other_row = harness
+        .inner
+        .get_by_label(INTERPOLATED_ENTRY_TIMESTAMP)
+        .rect();
+    let before = harness.inner.render().expect("the harness renders a frame");
+    let shown_log = harness.state().first_loaded_log();
+
+    harness.state_mut().clicked_glyph = Some(LogMatchGlyph {
+        log: shown_log,
+        color: LogMatchColor::LiveFilter,
+        entry_indices: vec![0],
+    });
+    harness.inner.run_steps(2);
+
+    let after = harness.inner.render().expect("the harness renders a frame");
+    assert!(
+        snapshot_harness::pixels_differ(&before, &after, marked_row, pixels_per_point),
+        "the clicked hexagon's line takes a background"
+    );
+    assert!(
+        !snapshot_harness::pixels_differ(&before, &after, other_row, pixels_per_point),
+        "a line the clicked hexagon does not group is left alone"
     );
 }
 

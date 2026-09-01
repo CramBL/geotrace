@@ -12,7 +12,7 @@ use gt_log_view::{EntryMatches, FilterStack, LoadedLog, VisibleEntries};
 use gt_logfile::{BootSession, LogEntry, ParsedLog, TimestampKind};
 use gt_types::{Latitude, Longitude, mercator};
 use gt_ui_theme::EM_DASH;
-use gt_ui_types::{HoveredLogGlyph, LoadedLogId, LogMatchHover};
+use gt_ui_types::{LoadedLogId, LogMatchGlyph, LogMatchHover};
 use rustc_hash::FxHashMap;
 
 use super::{AssociationWindowUnit, LogViewerWindow, TIMESTAMP_FORMAT};
@@ -43,9 +43,9 @@ const LAYER_COLUMN_WIDTH_PX: f32 = LAYER_BAR_WIDTH_PX + LAYER_BAR_GAP_PX;
 
 const GUTTER_MARKER_CORNER_RADIUS: u8 = 1;
 
-/// How strongly the rows of the map's hovered hexagon are tinted in that
-/// hexagon's colour: enough to find them in a scrolling table, light enough to
-/// read the line through.
+/// How strongly the rows of a marking hexagon are tinted in that hexagon's
+/// colour: enough to find them in a scrolling table, light enough to read the
+/// line through.
 const CROSS_HIGHLIGHT_ROW_ALPHA: f32 = 0.3;
 
 /// One row of the table: a boot session's divider, or one entry of the log.
@@ -177,19 +177,20 @@ pub(super) struct LineTableRequests<'a> {
     pub(super) hover: &'a mut LogMatchHover,
 }
 
-/// The rows the hexagon under the cursor on the map marks in the table.
+/// The rows a hexagon on the map marks in the table: the one under the cursor,
+/// or the one last clicked while the cursor is on none.
 ///
 /// A hexagon of another log than the one shown marks nothing: filter stacks
 /// are per log, and marking rows across a log switch the reader did not ask
 /// for would show them the wrong log's lines.
 struct CrossHighlightedRows<'a> {
-    glyph: Option<&'a HoveredLogGlyph>,
+    glyph: Option<&'a LogMatchGlyph>,
     shown_log: LoadedLogId,
     fill: Color32,
 }
 
 impl<'a> CrossHighlightedRows<'a> {
-    fn of(glyph: Option<&'a HoveredLogGlyph>, shown_log: LoadedLogId, dark_mode: bool) -> Self {
+    fn of(glyph: Option<&'a LogMatchGlyph>, shown_log: LoadedLogId, dark_mode: bool) -> Self {
         let fill = glyph.map_or(Color32::TRANSPARENT, |glyph| {
             gt_ui_theme::log_match_color(glyph.color, dark_mode)
                 .gamma_multiply(CROSS_HIGHLIGHT_ROW_ALPHA)
@@ -202,7 +203,7 @@ impl<'a> CrossHighlightedRows<'a> {
     }
 
     /// The background the row of `entry_index` draws behind it, `None` for a
-    /// row the hovered hexagon does not stand for.
+    /// row whose entry the marking hexagon does not group.
     fn fill_of(&self, entry_index: usize) -> Option<Color32> {
         self.glyph?
             .covers(self.shown_log, entry_index)
@@ -240,8 +241,12 @@ impl LogViewerWindow {
         let dark_mode = ui.visuals().dark_mode;
         let gutter = LayerGutter::of(filters, dark_mode);
         let highlight = gt_ui_theme::LOG_LIVE_FILTER.resolve(dark_mode);
-        let cross_highlighted =
-            CrossHighlightedRows::of(requests.hover.glyph.as_ref(), log_id, dark_mode);
+        let marking_hexagon = requests
+            .hover
+            .glyph
+            .as_ref()
+            .or(self.clicked_glyph.as_ref());
+        let cross_highlighted = CrossHighlightedRows::of(marking_hexagon, log_id, dark_mode);
         let mut hovered_row_position = None;
 
         ui.scope(|ui| {
@@ -677,7 +682,7 @@ mod tests {
     /// one while the cursor is on it.
     fn hovering(log: LoadedLogId, entry_indices: &[usize]) -> LogMatchHover {
         LogMatchHover {
-            glyph: Some(HoveredLogGlyph {
+            glyph: Some(LogMatchGlyph {
                 log,
                 color: LogMatchColor::LayerSlot {
                     index: 0,

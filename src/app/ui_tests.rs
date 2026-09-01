@@ -9214,6 +9214,19 @@ impl App {
     fn last_log(&self) -> Option<&LoadedLog> {
         self.logs.iter().last()
     }
+
+    /// How many lines the loaded logs put on the map, resolved against the
+    /// loaded recordings the way the frame does.
+    fn log_map_match_count(&mut self) -> usize {
+        let shared = self.shared.borrow();
+        let names = gt_loaded_files::RecordingNames::resolve(
+            shared.loaded_files.view(),
+            &shared.recording_name_template,
+        );
+        self.logs
+            .map_matches(shared.loaded_files.view(), &names)
+            .match_count()
+    }
 }
 
 fn parse_summary_of_the_shown_log(harness: &Harness<App>) -> String {
@@ -9423,7 +9436,7 @@ fn a_log_loaded_without_a_recording_stays_untargeted_and_raises_no_dialog() {
             .and_then(gt_log_view::LoadedLog::associated_recording),
         None
     );
-    assert!(harness.state_mut().logs.map_matches().is_empty());
+    assert_eq!(harness.state_mut().log_map_match_count(), 0);
     harness.get_by_label(parse_summary_of_the_shown_log(&harness).as_str());
 }
 
@@ -9750,14 +9763,15 @@ fn a_layer_chip_puts_the_lines_it_matched_on_the_map() {
     );
     drop_log_and_associate_it(&mut harness.inner, &synthetic_log(8 * 1024), "navsyncd.log");
     harness.inner.run_steps(5);
-    assert!(
-        harness.inner.state_mut().logs.map_matches().is_empty(),
+    assert_eq!(
+        harness.inner.state_mut().log_map_match_count(),
+        0,
         "a loaded log draws nothing until a filter selects lines"
     );
 
     add_log_filter(&mut harness, "gnss");
 
-    let matched = harness.inner.state_mut().logs.map_matches().match_count();
+    let matched = harness.inner.state_mut().log_map_match_count();
     assert!(matched > 0, "the chip's lines reach the map");
 
     let loaded = harness.inner.state().logs.first_id();
@@ -9765,8 +9779,9 @@ fn a_layer_chip_puts_the_lines_it_matched_on_the_map() {
         log.set_visible(false);
     }
     harness.inner.run_steps(2);
-    assert!(
-        harness.inner.state_mut().logs.map_matches().is_empty(),
+    assert_eq!(
+        harness.inner.state_mut().log_map_match_count(),
+        0,
         "hiding the log takes its layer off the map"
     );
 }

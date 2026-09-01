@@ -19,7 +19,7 @@ use gt_pending_writes::WriteAccess;
 use gt_store::DatabaseRef;
 use gt_types::FileIdx;
 use gt_ui_theme::EM_DASH;
-use gt_ui_types::{LoadedLogId, LogMatchHover};
+use gt_ui_types::{LoadedLogId, LogMatchGlyph, LogMatchHover};
 use rustc_hash::FxHashMap;
 use strum::IntoEnumIterator as _;
 
@@ -111,6 +111,10 @@ pub(super) struct LogViewerWindow {
     /// table on the frame after it was asked for.
     scroll_to_row: Option<usize>,
 
+    /// The hexagon the map was last clicked on. The table marks the rows of
+    /// its lines while it shows that hexagon's log.
+    clicked_glyph: Option<LogMatchGlyph>,
+
     /// What went wrong with this session's attachments, shown until dismissed.
     notices: Vec<String>,
 
@@ -132,6 +136,11 @@ pub(super) struct LogViewerContext<'a> {
     /// The hexagon the map found under the cursor, and the row this viewer
     /// puts under it in return.
     pub log_hover: &'a mut LogMatchHover,
+
+    /// The hexagon the map was clicked on, which this viewer takes and shows
+    /// the log of.
+    pub clicked_glyph: &'a mut Option<LogMatchGlyph>,
+
     pub requests: &'a mut LogViewerRequests,
 
     /// Whether this session writes to the recording history, which is what
@@ -185,6 +194,7 @@ impl LogViewerWindow {
             association_window_unit: AssociationWindowUnit::Seconds,
             query_pending_since: None,
             scroll_to_row: None,
+            clicked_glyph: None,
             notices: Vec::new(),
             restored_logs: RestoredLogsBadge::default(),
         }
@@ -218,6 +228,24 @@ impl LogViewerWindow {
         self.open = true;
     }
 
+    /// Shows the log the map's clicked hexagon draws matches of, with the table
+    /// scrolled to that hexagon's first line and the rows of all its lines
+    /// marked.
+    ///
+    /// A hexagon of a log that is no longer loaded leaves the window as it is.
+    fn open_on_clicked_glyph(&mut self, clicked: LogMatchGlyph, logs: &LoadedLogs) {
+        let Some(log) = logs.get_by_id(clicked.log) else {
+            return;
+        };
+        let rows = line_table::LineTableRows::of(log.parsed(), log.filters().visible_entries());
+        self.scroll_to_row = clicked
+            .entry_indices
+            .first()
+            .and_then(|&entry_index| rows.row_of_entry(entry_index));
+        self.open_on_log(clicked.log);
+        self.clicked_glyph = Some(clicked);
+    }
+
     /// Which of the loaded logs the window is showing, as of the last render.
     #[cfg(test)]
     pub(super) fn selected_log(&self) -> Option<LoadedLogId> {
@@ -243,6 +271,7 @@ impl LogViewerWindow {
             attachments,
             map_center_request,
             log_hover,
+            clicked_glyph,
             requests,
             write_access,
             history_available,
@@ -255,6 +284,9 @@ impl LogViewerWindow {
         // The ring on the map lives exactly as long as the cursor is on a
         // row: the rows below fill this in again while they draw.
         log_hover.row_position = None;
+        if let Some(clicked) = clicked_glyph.take() {
+            self.open_on_clicked_glyph(clicked, logs);
+        }
         self.resolve_selected_log(logs);
         if !self.open {
             return;

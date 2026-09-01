@@ -1223,6 +1223,7 @@ fn snapshot_log_source(entry_count: usize) -> gt_ui_types::LogMatchSource {
         parsed: std::sync::Arc::new(
             gt_logfile::parse_log(text.into(), start).expect("the fixture log parses"),
         ),
+        display_name: None,
     }
 }
 
@@ -1562,6 +1563,74 @@ fn hovering_a_hexagon_names_the_lines_of_the_topmost_layer_it_is_on() {
         glyph.entry_indices,
         (0..HOVERED_CLUSTER_ENTRIES).collect::<Vec<usize>>(),
         "the hexagon stands for every line its cluster collapsed"
+    );
+}
+
+/// The name the layers of the tooltip test were built with, as a session of
+/// two logs of one name gives it.
+const TOOLTIP_LOG_NAME: &str = "navsyncd.log · walk.gtd";
+
+/// The tooltip writes the name over the hexagon's lines while the layers were
+/// built with one, and the lines alone while they were not.
+#[rstest::rstest]
+#[case::several_logs_loaded(Some(TOOLTIP_LOG_NAME.to_owned()), true)]
+#[case::one_log_loaded(None, false)]
+fn a_hexagon_tooltip_shows_the_name_its_layer_was_built_with(
+    #[case] display_name: Option<String>,
+    #[case] shown: bool,
+) {
+    let (mut harness, _) = log_map_harness(|center| {
+        let mut source = snapshot_log_source(HOVERED_CLUSTER_ENTRIES);
+        source.display_name = display_name;
+        gt_ui_types::LogMatches::from_layers(vec![log_layer(
+            gt_ui_types::LogMatchColor::LiveFilter,
+            &source,
+            vec![center; HOVERED_CLUSTER_ENTRIES],
+        )])
+    });
+    harness.inner.hover_at(log_hover_canvas_center());
+    // Tooltips appear after egui's hover delay.
+    for _ in 0..60 {
+        harness.run();
+    }
+
+    assert_eq!(
+        harness.inner.query_by_label(TOOLTIP_LOG_NAME).is_some(),
+        shown
+    );
+}
+
+/// The cursor resting on a hexagon leaves the clicked glyph unset: a hover
+/// lists the lines in a tooltip and marks their rows, and leaves the log the
+/// viewer shows alone.
+#[test]
+fn hovering_a_hexagon_leaves_the_clicked_glyph_unset() {
+    let harness = log_hover_harness();
+
+    assert_eq!(harness.state().draw.clicked_log_glyph, None);
+}
+
+/// Clicking the hexagon under the cursor hands the viewer that hexagon's log
+/// and its lines, which the viewer opens on.
+#[test]
+fn clicking_a_hexagon_hands_its_log_and_lines_to_the_viewer() {
+    use gt_test_utils::HarnessInteraction as _;
+
+    let mut harness = log_hover_harness();
+
+    harness.inner.click_at(log_hover_canvas_center());
+
+    let clicked = harness
+        .state()
+        .draw
+        .clicked_log_glyph
+        .as_ref()
+        .expect("the click landed on the centre hexagon");
+    assert_eq!(clicked.log, gt_ui_types::LoadedLogId::new(0));
+    assert_eq!(
+        clicked.entry_indices,
+        (0..HOVERED_CLUSTER_ENTRIES).collect::<Vec<usize>>(),
+        "every line the clicked hexagon collapsed"
     );
 }
 

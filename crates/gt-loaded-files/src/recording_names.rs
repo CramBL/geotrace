@@ -3,7 +3,7 @@
 use gt_fmt::{NameFields, render_name_template};
 use gt_types::{FileIdx, LoadedFile, TrackRef};
 
-use crate::LoadedFilesView;
+use crate::{LoadedFileId, LoadedFilesView};
 
 /// The display name of every loaded file, resolved from the user's
 /// recording-name template.
@@ -12,7 +12,7 @@ use crate::LoadedFilesView;
 /// moves all of them together. The raw filename still shows where the file
 /// itself is the subject - a file row's hover path, the recording-details
 /// header - and those read `FileMetadata` directly.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecordingNames {
     names: Vec<String>,
 }
@@ -60,6 +60,25 @@ impl RecordingNames {
     /// The display name of `file`, or `None` when no such file is loaded.
     pub fn get(&self, file: FileIdx) -> Option<&str> {
         self.names.get(file.as_usize()).map(String::as_str)
+    }
+
+    /// The name a surface shows for `file`, falling back to the raw filename
+    /// where the template resolved nothing, and `None` when no such file is
+    /// loaded.
+    pub fn display_name<'a>(&'a self, files: &'a [LoadedFile], file: FileIdx) -> Option<&'a str> {
+        self.get(file)
+            .or_else(|| file.get(files).map(|file| file.metadata.filename.as_str()))
+    }
+
+    /// [`RecordingNames::display_name`] of the recording `id` identifies,
+    /// `None` once that recording is no longer loaded.
+    pub fn display_name_of_loaded_recording<'a>(
+        &'a self,
+        recordings: LoadedFilesView<'a>,
+        id: LoadedFileId,
+    ) -> Option<&'a str> {
+        let index = recordings.entries().position(|entry| entry.id() == id)?;
+        self.display_name(recordings.files(), FileIdx::new(index))
     }
 
     /// How a surface names one track: the recording's display name, with the
@@ -205,6 +224,34 @@ mod tests {
         files.push(file("/home/user/rec/a.gtd", None), FileHistory::None);
         files.push(file("/home/user/rec/b.gtd", None), FileHistory::None);
         assert_eq!(names("{filename}", &files), ["a.gtd", "b.gtd"]);
+    }
+
+    /// A surface holding a recording's session identity resolves the name
+    /// through the loaded recordings, and gets nothing once that recording has
+    /// unloaded.
+    #[test]
+    fn a_recording_is_named_by_its_session_identity_while_it_is_loaded() {
+        let mut files = LoadedFiles::new();
+        files.push(file("a.gtd", Some("Morning ride")), FileHistory::None);
+        files.push(file("b.gtd", Some("Evening ride")), FileHistory::None);
+        let evening = files
+            .view()
+            .get(1)
+            .map(|entry| entry.id())
+            .expect("the fixture file is loaded");
+        let names = RecordingNames::resolve(files.view(), "{title}");
+
+        assert_eq!(
+            names.display_name_of_loaded_recording(files.view(), evening),
+            Some("Evening ride")
+        );
+
+        files.remove_file(1);
+
+        assert_eq!(
+            names.display_name_of_loaded_recording(files.view(), evening),
+            None
+        );
     }
 
     #[test]

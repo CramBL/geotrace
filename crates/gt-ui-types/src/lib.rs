@@ -38,9 +38,9 @@ pub use highlight::{
     PinnedPopup,
 };
 pub use jamming_series::{JammingPoint, JammingSeries};
-pub use log_hover::{HoveredLogGlyph, LogMatchHover};
+pub use log_hover::LogMatchHover;
 pub use log_matches::{
-    LoadedLogId, LogMatch, LogMatchColor, LogMatchLayer, LogMatchSource, LogMatches,
+    LoadedLogId, LogMatch, LogMatchColor, LogMatchGlyph, LogMatchLayer, LogMatchSource, LogMatches,
 };
 pub use metric_chip_hover::MetricChipHover;
 pub use point_window::PointWindowFolds;
