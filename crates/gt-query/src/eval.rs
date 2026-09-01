@@ -76,6 +76,22 @@ impl ChannelTimeline {
     pub fn value(&self, sample: usize, component: usize) -> Option<f64> {
         self.row(sample)?.get(component).copied()
     }
+
+    /// The samples in `rows` as a timeline of their own, empty for a range that
+    /// runs past the end. The samples an aggregate reduced over a match of a
+    /// channel source are this range of its source timeline.
+    pub fn slice_rows(&self, rows: Range<usize>) -> Self {
+        let columns = self.columns.max(1);
+        let values = self
+            .values
+            .get(rows.start * columns..rows.end * columns)
+            .unwrap_or_default();
+        Self {
+            times: self.times.get(rows).unwrap_or_default().to_vec(),
+            values: values.to_vec(),
+            columns: self.columns,
+        }
+    }
 }
 
 /// Per-point metric access for one track.

@@ -30,6 +30,7 @@ use crate::settings::QueryHistoryEntry;
 
 use self::results::{ResultsOutputs, ResultsState, ResultsTables};
 
+pub(crate) mod aggregate_samples;
 mod column_format;
 mod match_row;
 pub(crate) mod results;

@@ -222,6 +222,14 @@ impl TableColumn {
     }
 }
 
+/// The aggregate columns of a match table, in table order.
+pub fn aggregate_columns(columns: &[TableColumn]) -> impl Iterator<Item = &AggregateColumn> {
+    columns.iter().filter_map(|column| match column {
+        TableColumn::Metric(_) => None,
+        TableColumn::Aggregate(aggregate) => Some(aggregate),
+    })
+}
+
 /// An aggregate `table` column: its checked call, its label, and the quantity
 /// of its values.
 #[derive(Debug, Clone, PartialEq)]
@@ -246,6 +254,18 @@ impl AggregateColumn {
     /// `var(velocity)` produces a squared speed.
     pub fn quantity(&self) -> Option<Quantity> {
         self.quantity
+    }
+
+    /// The channel whose samples this aggregate reduces, `None` for one that
+    /// reduces the match's nav points.
+    pub fn reduced_channel(&self) -> Option<&str> {
+        match &self.expr {
+            CExpr::Agg {
+                source: AggSource::Channel(name),
+                ..
+            } => Some(name),
+            _ => None,
+        }
     }
 }
 

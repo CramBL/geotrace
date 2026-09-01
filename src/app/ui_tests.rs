@@ -1529,9 +1529,8 @@ fn copied_text(harness: &Harness<'_, App>) -> String {
         .expect("nothing was copied")
 }
 
-/// The accel fixture with a channel-source query run over it: two stretches of
-/// matched samples for one table to list.
-fn channel_app_with_query_run() -> Harness<'static, App> {
+/// The accel fixture with the query window open over it.
+fn accel_app_with_query_window() -> Harness<'static, App> {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
@@ -1541,8 +1540,119 @@ fn channel_app_with_query_run() -> Harness<'static, App> {
     );
     harness.state_mut().query_window.open = true;
     harness.run_steps(3);
+    harness
+}
+
+/// The accel fixture with a channel-source query run over it: two stretches of
+/// matched samples for one table to list.
+fn channel_app_with_query_run() -> Harness<'static, App> {
+    let mut harness = accel_app_with_query_window();
     run_query(&mut harness, "@accel | where @accel.x > 1 g");
     harness
+}
+
+/// The x component the crafted stretches reach, as the listing prints it in the
+/// g the fixture declares.
+const ACCEL_HIGH_X_CELL: &str = "1.500";
+
+/// The accel fixture with a points query whose table holds an aggregate over
+/// the channel. Each match then has the samples that aggregate reduced under
+/// it.
+fn accel_points_query_with_aggregate() -> Harness<'static, App> {
+    let mut harness = accel_app_with_query_window();
+    run_query(
+        &mut harness,
+        "points | window 1 | where max(@accel.x) > 1 g | table time, max(@accel.x)",
+    );
+    harness
+}
+
+/// Open the samples listed under the picked match.
+fn open_samples_listing(harness: &mut Harness<'_, App>) {
+    harness
+        .get_by_label_contains(query::aggregate_samples::TOGGLE_LABEL)
+        .click();
+    harness.run_steps(3);
+}
+
+/// A points match's aggregate reduced the channel samples inside the match's
+/// time extent. The listing holds as many samples as the match holds points:
+/// the fixture records one sample per fix.
+#[test]
+fn expanding_a_points_match_lists_the_samples_its_aggregate_reduced() {
+    let mut harness = accel_points_query_with_aggregate();
+    let stretch = ACCEL_HIGH_RANGES.first().expect("two crafted stretches");
+
+    open_samples_listing(&mut harness);
+
+    harness.get_by_label_contains(&format!("@accel {MIDDLE_DOT} {} samples", stretch.len()));
+    assert!(
+        harness
+            .query_all_by_label_contains(ACCEL_HIGH_X_CELL)
+            .count()
+            > 0,
+        "the listing states each sample's x component in the unit the track declared"
+    );
+}
+
+/// The listing counts every sample the aggregate reduced and draws the rows it
+/// has room for, leaving the rest to its scroll bar.
+#[test]
+fn a_listing_of_more_samples_than_it_shows_draws_only_the_rows_that_fit() {
+    let mut harness = accel_points_query_with_aggregate();
+    let stretch = ACCEL_HIGH_RANGES.first().expect("two crafted stretches");
+
+    open_samples_listing(&mut harness);
+
+    // egui lays out the row straddling the bottom edge of the scroll area
+    // alongside the rows fully inside it.
+    let drawn = harness
+        .query_all_by_label_contains(ACCEL_HIGH_X_CELL)
+        .count();
+    assert!(
+        (1..=query::aggregate_samples::VISIBLE_SAMPLE_ROWS + 1).contains(&drawn),
+        "the listing drew {drawn} of the {} samples it counts",
+        stretch.len()
+    );
+}
+
+/// On a channel source the aggregate reduced the match's own rows of the
+/// source timeline, and those are what the listing holds.
+#[test]
+fn expanding_a_channel_match_lists_the_samples_of_its_matched_rows() {
+    let mut harness = accel_app_with_query_window();
+    run_query(
+        &mut harness,
+        "@accel | window 1 | where max(@accel.x) > 1 g | table max(@accel.x)",
+    );
+    let stretch = ACCEL_HIGH_RANGES.first().expect("two crafted stretches");
+
+    open_samples_listing(&mut harness);
+
+    harness.get_by_label_contains(&format!("@accel {MIDDLE_DOT} {} samples", stretch.len()));
+}
+
+/// A query whose table holds no aggregate over a channel has nothing to list,
+/// and its control says so.
+#[test]
+fn a_match_whose_query_reduces_no_channel_states_why_it_lists_nothing() {
+    let mut harness = demo_app_with_query_run(TWO_MATCH_QUERY);
+    let toggle = harness.get_by_label_contains(query::aggregate_samples::TOGGLE_LABEL);
+    assert!(
+        toggle.accesskit_node().is_disabled(),
+        "a match with no channel aggregate lists no samples"
+    );
+
+    let center = toggle.rect().center();
+    harness.hover_at_and_settle(center, 5);
+
+    assert_eq!(
+        harness
+            .query_all_by_label_contains("No aggregate column of this query reduces a channel")
+            .count(),
+        1,
+        "the disabled control states why"
+    );
 }
 
 /// A channel run lists a match per stretch of matched samples, and picking one
@@ -2641,6 +2751,52 @@ fn snapshot_app_query_points_with_channel() {
     harness.inner.run_steps(5);
 
     harness.snapshot_loose("app_query_points_with_channel");
+}
+
+/// A match expanded to the samples behind its aggregate column: the results tab
+/// lists the `@accel` samples the match's `max(@accel.x)` reduced between the
+/// line naming the match and the match's own rows.
+#[test]
+fn snapshot_app_query_match_samples() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        TestDroppedFile::bytes(accel_channel_gtd_bytes(28.0), "accel_demo.gtd"),
+    );
+
+    {
+        let mut state = harness.inner.state().shared.borrow_mut();
+        state.zoom_to_visible_request = true;
+    }
+    let app = harness.inner.state_mut();
+    app.query_window.open = true;
+    app.query_window.set_text(
+        "points | window 1 | where max(@accel.x) > 1 g | table time, max(@accel.x)".to_owned(),
+    );
+    harness.inner.run_steps(5);
+
+    harness
+        .inner
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
+        .click();
+    step_until_query_result(&mut harness.inner);
+    harness.inner.run_steps(60);
+
+    harness
+        .inner
+        .get_by_label_contains(query::aggregate_samples::TOGGLE_LABEL)
+        .click();
+    harness.inner.run_steps(5);
+
+    // No hover text covers the listing with the pointer parked off the tab.
+    harness.inner.hover_at(egui::pos2(1.0, 1.0));
+    harness.inner.run_steps(5);
+
+    harness.snapshot_loose("app_query_match_samples");
 }
 
 /// Several queries compose in one editor: a `hide` filter plus two colored

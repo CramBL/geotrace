@@ -132,8 +132,8 @@ impl<'a> TrackProvider<'a> {
     ) -> Self {
         Self {
             points,
-            channels,
-            channel_sample_orders: channels.iter().map(ChannelSampleOrder::of).collect(),
+            channels: &[],
+            channel_sample_orders: Vec::new(),
             util: data.and_then(|d| d.util.as_ref()),
             slip: data.and_then(|d| d.slip.as_ref()),
             snap_error: data.and_then(|d| d.snap_error.as_deref().map(Vec::as_slice)),
@@ -141,6 +141,28 @@ impl<'a> TrackProvider<'a> {
             geomagnetic: data.and_then(|d| d.geomagnetic.as_deref().map(Vec::as_slice)),
             tec: data.and_then(|d| d.tec.as_deref().map(Vec::as_slice)),
         }
+        .with_channels(channels)
+    }
+
+    /// The same provider reading `channels` as well, replacing the ones it
+    /// reads now. A caller that reads only metrics passes no channels and pays
+    /// no ordering cost: determining how a channel is searched by time sorts
+    /// the samples of one whose timestamps step backwards.
+    #[must_use]
+    pub fn with_channels(mut self, channels: &'a [Channel]) -> Self {
+        self.channels = channels;
+        self.channel_sample_orders = channels.iter().map(ChannelSampleOrder::of).collect();
+        self
+    }
+
+    /// The samples of `name` whose timestamp lands in the closed span
+    /// `[t_lo, t_hi]`, each with its own timestamp in Unix seconds and its
+    /// values in base units. [`MetricProvider::channel_span`] serves the same
+    /// samples without their timestamps, which the evaluator does not read.
+    pub fn channel_span_timeline(&self, name: &str, t_lo: f64, t_hi: f64) -> ChannelTimeline {
+        self.resolve_channel(name)
+            .map(|resolved| resolved.timeline_in_span(t_lo, t_hi))
+            .unwrap_or_default()
     }
 
     /// One index's value at `index`, as the service published it.
@@ -230,21 +252,21 @@ struct ResolvedChannel<'a> {
 }
 
 impl ResolvedChannel<'_> {
-    /// The samples whose timestamp lands in the closed span `[t_lo, t_hi]`, in
-    /// timestamp order, row-major and in base units. An inverted span (`t_lo >
-    /// t_hi`, possible when the track's time is non-monotonic) selects none.
-    fn samples_in_span(&self, t_lo: f64, t_hi: f64) -> ChannelSamples {
-        let values = match self.sample_order {
+    /// Every sample whose timestamp lands in the closed span `[t_lo, t_hi]`,
+    /// passed to `visit` by its position among the stored samples, in timestamp
+    /// order. An inverted span (`t_lo > t_hi`, possible when the track's time is
+    /// non-monotonic) selects none.
+    fn for_each_position_in_span(&self, t_lo: f64, t_hi: f64, mut visit: impl FnMut(usize)) {
+        match self.sample_order {
             ChannelSampleOrder::StoredOrderIsChronological => {
                 // The samples of the span are a contiguous row range, found by
                 // binary search over the stored timestamps.
-                let secs = |time: &DateTime<Utc>| time.timestamp_micros() as f64 / MICROS_PER_SEC;
                 let times = &self.channel.times;
-                let lo = times.partition_point(|time| secs(time) < t_lo);
-                let hi = times.partition_point(|time| secs(time) <= t_hi);
-                (lo..hi)
-                    .flat_map(|position| self.row_in_base_units(position))
-                    .collect()
+                let lo = times.partition_point(|time| unix_seconds(time) < t_lo);
+                let hi = times.partition_point(|time| unix_seconds(time) <= t_hi);
+                for position in lo..hi {
+                    visit(position);
+                }
             }
             ChannelSampleOrder::PositionsInTimeOrder(samples) => {
                 // The samples of the span are a contiguous range of the
@@ -252,15 +274,38 @@ impl ResolvedChannel<'_> {
                 // stored values.
                 let lo = samples.partition_point(|sample| sample.seconds < t_lo);
                 let hi = samples.partition_point(|sample| sample.seconds <= t_hi);
-                samples
-                    .get(lo..hi)
-                    .unwrap_or_default()
-                    .iter()
-                    .flat_map(|sample| self.row_in_base_units(sample.position))
-                    .collect()
+                for sample in samples.get(lo..hi).unwrap_or_default() {
+                    visit(sample.position);
+                }
             }
-        };
+        }
+    }
+
+    /// The samples of the span, row-major and in base units.
+    fn samples_in_span(&self, t_lo: f64, t_hi: f64) -> ChannelSamples {
+        let mut values = Vec::new();
+        self.for_each_position_in_span(t_lo, t_hi, |position| {
+            values.extend(self.row_in_base_units(position));
+        });
         ChannelSamples {
+            values,
+            columns: self.columns,
+        }
+    }
+
+    /// The samples of the span, each with its own timestamp in Unix seconds.
+    fn timeline_in_span(&self, t_lo: f64, t_hi: f64) -> ChannelTimeline {
+        let mut times = Vec::new();
+        let mut values = Vec::new();
+        self.for_each_position_in_span(t_lo, t_hi, |position| {
+            let Some(time) = self.channel.times.get(position) else {
+                return;
+            };
+            times.push(unix_seconds(time));
+            values.extend(self.row_in_base_units(position));
+        });
+        ChannelTimeline {
+            times,
             values,
             columns: self.columns,
         }
@@ -277,6 +322,11 @@ impl ResolvedChannel<'_> {
             .iter()
             .map(|value| value * self.to_base)
     }
+}
+
+/// A sample's timestamp as the evaluator's Unix seconds.
+fn unix_seconds(time: &DateTime<Utc>) -> f64 {
+    time.timestamp_micros() as f64 / MICROS_PER_SEC
 }
 
 /// How a channel's samples are found by time.
@@ -307,7 +357,7 @@ impl ChannelSampleOrder {
             .iter()
             .enumerate()
             .map(|(position, time)| SampleAtTime {
-                seconds: time.timestamp_micros() as f64 / MICROS_PER_SEC,
+                seconds: unix_seconds(time),
                 position,
             })
             .collect();
@@ -450,12 +500,7 @@ impl MetricProvider for TrackProvider<'_> {
             return ChannelTimeline::default();
         };
         ChannelTimeline {
-            times: resolved
-                .channel
-                .times
-                .iter()
-                .map(|t| t.timestamp_micros() as f64 / MICROS_PER_SEC)
-                .collect(),
+            times: resolved.channel.times.iter().map(unix_seconds).collect(),
             values: resolved
                 .channel
                 .values
@@ -923,6 +968,61 @@ mod tests {
 
         assert_eq!(got.columns, 3);
         assert_eq!(got.values, vec![0.0, 0.1, 0.2, 1.0, 1.1, 1.2]);
+    }
+
+    /// The timed span serves the samples [`MetricProvider::channel_span`]
+    /// serves, whatever order the file stored them in.
+    #[rstest]
+    #[case::stored_in_time_order(&[(0, 0.0), (1, 1.0), (2, 2.0)])]
+    #[case::stored_out_of_time_order(&[(2, 2.0), (0, 0.0), (1, 1.0)])]
+    fn a_timed_span_has_the_timestamp_of_every_sample_of_the_span(#[case] samples: &[(i64, f64)]) {
+        let base = TEST_EPOCH as f64;
+        let channels = [scalar_channel("accel", Some("g"), samples)];
+        let points = test_points();
+        let provider = TrackProvider::new(&points, &channels, None);
+
+        let timeline = provider.channel_span_timeline("accel", base, base + 1.0);
+
+        let g = Unit::G.to_base();
+        assert_eq!(timeline.columns, 1);
+        assert_eq!(timeline.times, vec![base, base + 1.0]);
+        assert_eq!(timeline.values, vec![0.0, g]);
+        assert_eq!(
+            timeline.values,
+            provider.channel_span("accel", base, base + 1.0).values
+        );
+    }
+
+    #[test]
+    fn a_timed_span_of_an_unknown_channel_is_empty() {
+        let channels = [scalar_channel("accel", Some("g"), &[(0, 1.0)])];
+        let points = test_points();
+        let provider = TrackProvider::new(&points, &channels, None);
+
+        let timeline = provider.channel_span_timeline("missing", 0.0, f64::MAX);
+
+        assert!(timeline.times.is_empty());
+        assert!(timeline.values.is_empty());
+    }
+
+    /// A provider built for metric columns alone reads no channel until one is
+    /// given to it.
+    #[test]
+    fn a_provider_given_channels_reads_them() {
+        let base = TEST_EPOCH as f64;
+        let channels = [scalar_channel("accel", Some("g"), &[(0, 1.0)])];
+        let points = test_points();
+        let without = TrackProvider::new(&points, &[], None);
+
+        assert!(without.channel_timeline("accel").times.is_empty());
+        assert_eq!(
+            without
+                .clone()
+                .with_channels(&channels)
+                .channel_span_timeline("accel", base, base)
+                .times,
+            vec![base]
+        );
     }
 
     #[test]
