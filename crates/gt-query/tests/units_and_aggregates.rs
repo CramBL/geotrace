@@ -164,6 +164,32 @@ fn the_spread_of_a_channel_uses_its_declared_period() {
     assert_eq!(matched_ranges(&output), vec![0..2]);
 }
 
+/// `max` skips the window that `avg` skips. Every aggregate reads the same
+/// samples.
+#[test]
+fn a_channel_sample_that_is_not_a_number_skips_the_window() {
+    let schema = scalar_channel_schema("sensor", None, None);
+    let provider = TrackData::new(2)
+        .indexed_time()
+        .with_channel("sensor", vec![(0.0, 5.0), (1.0, f64::NAN)]);
+    let output = run_with_schema(
+        "points | window 2 | where max(@sensor) < 10",
+        &schema,
+        &provider,
+    )
+    .expect("a well formed query");
+    assert_eq!(matched_ranges(&output), Vec::new());
+    assert_eq!(output.summary.skipped_non_finite, 1);
+}
+
+#[test]
+fn a_velocity_of_negative_zero_is_not_below_zero() {
+    let provider = TrackData::new(1).with(QueryMetric::Velocity, vec![Some(-0.0)]);
+    let output =
+        run_on_points("points | where velocity < 0 m/s", &provider).expect("a well formed query");
+    assert_eq!(matched_ranges(&output), Vec::new());
+}
+
 /// A bearing of 360° is the same direction as 0°.
 #[test]
 fn a_heading_of_a_full_turn_has_no_spread_against_north() {
