@@ -7,7 +7,7 @@ use std::ops::Range;
 use gt_filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
 use gt_types::{
     DataCategory, FileIdx, GeoBounds, Latitude, LoadedFile, LoadedTrack, Longitude, PlacedPoint,
-    PoleWinding, SpatialPoint, TrackIdx, TrackRef, mercator,
+    PlacedPoints, PoleWinding, SpatialPoint, TrackIdx, TrackRef, mercator,
 };
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, MapScope, QueryMatches, TrackDataVisibility,
@@ -251,7 +251,7 @@ pub(crate) fn compute_visible_bounding_box(
         .filter_map(|(track, _)| {
             let fixes = || {
                 points_displayed
-                    .then(|| drawn_fix_positions(track, filter))
+                    .then(|| drawn_fix_positions(track.placed_points().unwrap_or_default(), filter))
                     .into_iter()
                     .flatten()
             };
@@ -265,16 +265,14 @@ pub(crate) fn compute_visible_bounding_box(
         .reduce(GeoBounds::union)
 }
 
-/// Where the map draws the fixes of `track` that pass the time filter. Empty
-/// for a track with no geometry, which is drawn nowhere.
+/// Where the map draws the fixes of `placed` that pass the time filter. Empty
+/// for the points of a track with no geometry, which is drawn nowhere.
 fn drawn_fix_positions<'a>(
-    track: &'a LoadedTrack,
+    placed: PlacedPoints<'a>,
     filter: &'a GlobalFilter,
 ) -> impl Iterator<Item = (Latitude, Longitude)> + 'a {
-    track
-        .placed_points()
-        .into_iter()
-        .flat_map(|placed| placed.iter())
+    placed
+        .iter()
         .filter(|point| point_passes_time_filter(point.fix.tpv.time().utc(), filter))
         .map(PlacedPoint::resolved_position)
 }
@@ -290,12 +288,13 @@ fn drawn_custom_marker_positions<'a>(
         .map(|marker| (marker.lat, marker.lon))
 }
 
-/// Bounding box over the points every `draw` layer of `matches` covers, for
-/// framing the map on what a query run drew. `None` when no draw layer covers
-/// a point of a loaded track.
+/// Bounding box over the points every `draw` layer of `matches` covers that
+/// the filter keeps, for framing the map on what a query run drew. `None` when
+/// no draw layer covers a drawn point of a loaded track.
 pub(crate) fn matched_bounding_box(
     files: &[LoadedFile],
     matches: &QueryMatches,
+    filter: &GlobalFilter,
 ) -> Option<GeoBounds> {
     let mut matched_ranges: Vec<(TrackRef, &[Range<usize>])> = matches
         .draws
@@ -312,26 +311,32 @@ pub(crate) fn matched_bounding_box(
         matched_ranges
             .into_iter()
             .filter_map(|(track_ref, ranges)| Some((track_ref.resolve(files)?, ranges)))
+            .filter(|(track, _)| track_passes_filter(track, filter))
             .filter_map(|(track, ranges)| Some((track.placed_points()?, ranges)))
             .flat_map(|(placed, ranges)| {
                 ranges.iter().flat_map(move |range| {
-                    placed.range(range.clone()).unwrap_or_default().positions()
+                    drawn_fix_positions(placed.range(range.clone()).unwrap_or_default(), filter)
                 })
             }),
     )
 }
 
-/// Bounding box over the points of one match, for framing the map on the match
-/// a results row points at. `None` when its track is no longer loaded or the
-/// range reaches past it.
+/// Bounding box over the points of one match that the filter keeps, for
+/// framing the map on the match a results row points at. `None` when its track
+/// is no longer loaded, the range reaches past it, the filter rejects the
+/// track, or the time window hides every point of the range.
 pub(crate) fn match_bounding_box(
     files: &[LoadedFile],
     track_ref: TrackRef,
     points: &Range<usize>,
+    filter: &GlobalFilter,
 ) -> Option<GeoBounds> {
     let track = track_ref.resolve(files)?;
+    if !track_passes_filter(track, filter) {
+        return None;
+    }
     let matched = track.placed_points()?.range(points.clone())?;
-    GeoBounds::from_positions(matched.positions())
+    GeoBounds::from_positions(drawn_fix_positions(matched, filter))
 }
 
 /// Compute the geographic bounding box of the given map viewport rect.

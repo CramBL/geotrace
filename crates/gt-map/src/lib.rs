@@ -339,12 +339,15 @@ impl<'a> MapDrawContext<'a> {
     }
 
     /// The bounding box a reveal request frames: every match the run drew, or
-    /// the points of the one match the request names.
+    /// the points of the one match the request names. `None` when the filter
+    /// hides every one of them, which leaves the camera where it is.
     fn reveal_bounding_box(&self, target: &MatchRevealTarget) -> Option<GeoBounds> {
         match target {
-            MatchRevealTarget::WholeRun => matched_bounding_box(self.files, self.query_matches?),
+            MatchRevealTarget::WholeRun => {
+                matched_bounding_box(self.files, self.query_matches?, self.filter)
+            }
             MatchRevealTarget::OneMatch { track, points } => {
-                match_bounding_box(self.files, *track, points)
+                match_bounding_box(self.files, *track, points, self.filter)
             }
         }
     }
