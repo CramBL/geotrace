@@ -56,6 +56,22 @@ for point in nav_file.points:
     print(point.lat, point.lon, point.gps_time)
 ```
 
+## Logging
+
+The SDK does not raise when it drops or substitutes data.
+It drops a satellite report that has no timestamp, and it keeps an unknown `travel_mode` as it read it.
+In both cases the call succeeds and the SDK writes a `logging` record saying what it did.
+
+Each record goes to a logger named after the module that wrote it, such as `geotrace_sdk.builder`.
+All of them sit under `geotrace_sdk`, so a single handler there receives every one.
+
+```python
+import logging
+
+logging.basicConfig()
+logging.getLogger("geotrace_sdk").setLevel(logging.DEBUG)
+```
+
 ## Examples
 
 Runnable examples are in

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 import pytest
@@ -288,6 +289,47 @@ def test_builder_drops_a_satellite_report_without_a_timestamp() -> None:
 
     assert len(f.points) == 1
     assert f.points[0].satellites is None
+
+
+def test_builder_warns_on_the_geotrace_sdk_logger_when_it_drops_a_report(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    b = NavFileBuilder()
+    b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
+    b.add(SatelliteReport([Satellite(Constellation.GPS, 3, in_fix=True)]))
+
+    with caplog.at_level(logging.WARNING, logger="geotrace_sdk"):
+        b.finish()
+
+    assert [(r.name, r.levelname, r.getMessage()) for r in caplog.records] == [
+        (
+            "geotrace_sdk.builder",
+            "WARNING",
+            "satellite report with no timestamp dropped",
+        )
+    ]
+
+
+def test_a_log_level_lowered_after_the_first_record_applies(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    builder_dropping_a_report = NavFileBuilder()
+    builder_dropping_a_report.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
+    builder_dropping_a_report.add(
+        SatelliteReport([Satellite(Constellation.GPS, 3, in_fix=True)])
+    )
+    builder_dropping_a_report.finish()
+    caplog.clear()
+
+    builder_creating_a_ghost_fix = NavFileBuilder()
+    builder_creating_a_ghost_fix.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
+    builder_creating_a_ghost_fix.add(
+        SatelliteReport([Satellite(Constellation.GPS, 3, in_fix=True)], gps_time=T1)
+    )
+    with caplog.at_level(logging.DEBUG, logger="geotrace_sdk"):
+        builder_creating_a_ghost_fix.finish()
+
+    assert [r.levelname for r in caplog.records] == ["DEBUG"]
 
 
 def test_builder_with_annotation() -> None:

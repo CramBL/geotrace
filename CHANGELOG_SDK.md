@@ -12,6 +12,7 @@ the app).
 - The `nav_points/gps_time_us` dataset, holding each fix's GPS-receiver timestamp in microseconds since the Unix epoch, `u64::MAX` where the fix has none. The `nav_points/time` axis is unchanged.
 - Rust `EventMarkerIconChoice::wire_name` returns the `icon_name` wire value the choice writes: the empty name for `Auto`, the icon's name for `Icon`, and the stored name for `Unrecognized`.
 - Python `EventMarkerStyle.icon_name`, a read-only property holding the stored name of `icon`: `None` where the style leaves the icon to the application, and the name verbatim where it is outside the `MarkerIcon` set. `NavFileBuilder.add_event_marker_style` writes such a name back unchanged.
+- Python `logging` receives the SDK's diagnostics, such as a satellite report dropped for having no timestamp, on the `geotrace_sdk` logger and its per-module children.
 
 ### Changed
 

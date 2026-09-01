@@ -19,6 +19,7 @@ use geotrace_sdk::{
 use pyo3::exceptions::{PyIOError, PyRuntimeError, PyUserWarning, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
+use pyo3_log::{Caching, Logger};
 
 fn to_fixed(dt: DateTime<Utc>) -> DateTime<FixedOffset> {
     dt.fixed_offset()
@@ -1546,8 +1547,26 @@ impl PyNavFileBuilder {
     }
 }
 
+/// A record's Rust module path becomes its Python logger name.
+/// `geotrace_sdk::builder` writes to the `geotrace_sdk.builder` logger.
+///
+/// A `logging` level changed after the first record still takes effect.
+/// [`Caching::Loggers`] reads the Python logger's level again for every record.
+///
+/// Importing the module succeeds even when the install fails.
+fn install_python_logging_bridge(py: Python<'_>) {
+    let installed = Logger::new(py, Caching::Loggers)
+        .map_err(|e| e.to_string())
+        .and_then(|logger| logger.install().map_err(|e| e.to_string()));
+    if let Err(reason) = installed {
+        log::warn!("the sdk's log records stay off python's logging: {reason}");
+    }
+}
+
 #[pymodule]
 fn _geotrace_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    install_python_logging_bridge(m.py());
+
     m.add_class::<PyConstellation>()?;
     m.add_class::<PyMarkerIcon>()?;
     m.add_class::<PyTravelMode>()?;
