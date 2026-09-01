@@ -572,7 +572,7 @@ fn hover_labels_yield_to_the_popup_a_previous_multi_hover_or_a_log_hexagon(
             .keep_nearest(hover_ref(category));
     }
     if log_glyph_hovered {
-        state.log_hover.glyph = Some(gt_ui_types::HoveredLogGlyph {
+        state.log_hover.glyph = Some(gt_ui_types::LogMatchGlyph {
             log: gt_ui_types::LoadedLogId::new(0),
             color: gt_ui_types::LogMatchColor::LiveFilter,
             entry_indices: vec![0],

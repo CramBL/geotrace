@@ -14,16 +14,16 @@
 //!
 //! The cursor picks the hexagon of the topmost layer it is on. That hexagon
 //! lists its lines in a tooltip and takes the highlight ring, and the log
-//! viewer marks the rows of those same lines.
+//! viewer marks the rows of those same lines. Clicking it opens the log viewer
+//! on that log, at the first of those lines.
 
 use std::cell::RefCell;
 use std::num::NonZeroUsize;
 
 use egui::{Align2, Color32, FontId, Response, RichText, Ui, Vec2};
 use gt_fmt::ELLIPSIS;
-use gt_logfile::ParsedLog;
 use gt_types::MercPoint;
-use gt_ui_types::{HoveredLogGlyph, LogMatchColor, LogMatches};
+use gt_ui_types::{LogMatchColor, LogMatchGlyph, LogMatchSource, LogMatches};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::collision_grid;
@@ -96,15 +96,19 @@ pub(crate) struct LogMatchRenderer<'a> {
     hovered_row_position: Option<MercPoint>,
 
     /// Where the hexagon under the cursor is published for the viewer.
-    hovered_glyph: &'a RefCell<Option<HoveredLogGlyph>>,
+    hovered_glyph: &'a RefCell<Option<LogMatchGlyph>>,
+
+    /// Where a click on that hexagon is published for the viewer, which opens
+    /// on its log.
+    clicked_glyph: &'a RefCell<Option<LogMatchGlyph>>,
 }
 
 /// The hexagon the cursor is on, once every layer has drawn.
 struct HoveredHexagon<'a> {
     center: egui::Pos2,
     circumradius: f32,
-    parsed: &'a ParsedLog,
-    glyph: HoveredLogGlyph,
+    source: &'a LogMatchSource,
+    glyph: LogMatchGlyph,
 }
 
 impl Plugin for LogMatchRenderer<'_> {
@@ -149,8 +153,8 @@ impl Plugin for LogMatchRenderer<'_> {
                     hovered = Some(HoveredHexagon {
                         center,
                         circumradius,
-                        parsed: &layer.log.parsed,
-                        glyph: HoveredLogGlyph {
+                        source: &layer.log,
+                        glyph: LogMatchGlyph {
                             log: layer.log.id,
                             color: layer.color,
                             // The entries come out ascending: a layer's
@@ -219,7 +223,10 @@ impl Plugin for LogMatchRenderer<'_> {
                 egui::PopupAnchor::Pointer,
             )
             .gap(TOOLTIP_POINTER_GAP_PX)
-            .show(|ui| hovered_lines_ui(ui, hexagon.parsed, &hexagon.glyph.entry_indices));
+            .show(|ui| hovered_lines_ui(ui, hexagon.source, &hexagon.glyph.entry_indices));
+            if response.clicked() {
+                *self.clicked_glyph.borrow_mut() = Some(hexagon.glyph.clone());
+            }
             *self.hovered_glyph.borrow_mut() = Some(hexagon.glyph);
         }
     }
@@ -234,11 +241,15 @@ fn draw_hover_ring(ui: &Ui, center: egui::Pos2, circumradius: f32, color: Color3
     );
 }
 
-/// The lines the hovered hexagon stands for, the last row stating how many of
-/// them the tooltip left out.
-fn hovered_lines_ui(ui: &mut Ui, parsed: &ParsedLog, entry_indices: &[usize]) {
+/// The hovered hexagon's lines, under the log they were read out of, the last
+/// row stating how many of them the tooltip left out.
+fn hovered_lines_ui(ui: &mut Ui, source: &LogMatchSource, entry_indices: &[usize]) {
     // One line per row: a message is already cut to a width the tooltip fits.
     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+    if let Some(display_name) = &source.display_name {
+        ui.label(RichText::new(display_name).strong());
+    }
+    let parsed = &source.parsed;
     for entry in entry_indices
         .iter()
         .take(HOVER_LINE_CAP)

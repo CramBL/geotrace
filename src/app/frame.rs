@@ -716,7 +716,11 @@ impl App {
                     instant: tec_instant,
                     empty_reason: tec_empty,
                 } = self.tec_maps.overlay_layer();
-                let log_matches = self.logs.map_matches();
+                let map_recording_names =
+                    RecordingNames::resolve(s.loaded_files.view(), &s.recording_name_template);
+                let log_matches = self
+                    .logs
+                    .map_matches(s.loaded_files.view(), &map_recording_names);
                 let space_weather = gt_map::SpaceWeatherIndicator {
                     track_warnings: self.space_weather_warning.track_warnings(),
                     levels: &space_weather_warning::WARNING_LEVELS,
@@ -818,6 +822,7 @@ impl App {
                 reveal_query_matches_request,
                 plot_state,
                 log_hover,
+                clicked_log_glyph,
                 display_mask,
                 recording_name_template,
                 ..
@@ -865,6 +870,7 @@ impl App {
                     attachments: &self.log_attachments,
                     map_center_request,
                     log_hover,
+                    clicked_glyph: clicked_log_glyph,
                     requests: &mut self.log_viewer_requests,
                     write_access: self.pending_writes.write_access(),
                     history_available: self.history.available(),

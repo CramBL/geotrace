@@ -50,7 +50,7 @@ use gt_types::{DataCategory, FileIdx, GeoBounds, LoadedFile, SpatialPoint, Track
 use gt_ui_types::reference::ReferenceDocument;
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
-    HighlightScope, HoverCandidates, HoveredLogGlyph, LogMatchHover, LogMatches, MapHighlight,
+    HighlightScope, HoverCandidates, LogMatchGlyph, LogMatchHover, LogMatches, MapHighlight,
     MapScope, MatchRevealTarget, PinnedPopup, PointWindowFolds, QueryMatches, SkyGlyphVariant,
     SkyTrailsRequest, SnappedTracks, TrackDataVisibility,
 };
@@ -291,6 +291,10 @@ pub struct MapDrawContext<'a> {
     pub log_matches: &'a LogMatches,
     /// The log match under the cursor, on the map and in the viewer alike.
     pub log_hover: &'a mut LogMatchHover,
+    /// The hexagon the pointer clicked, which the log viewer opens on. The map
+    /// writes it while it draws, and the viewer - which draws after the map -
+    /// takes it in the same frame.
+    pub clicked_log_glyph: &'a mut Option<LogMatchGlyph>,
     pub empty_reason: Option<EmptyReason>,
     /// What the environment warning indicator in the map's top-right corner
     /// shows, which is drawn whether or not a metric warns.
@@ -450,7 +454,10 @@ pub struct NavMap {
     snapped_edge_tooltip_shown: Cell<bool>,
     /// The log hexagon the renderer found under the cursor, filled while the
     /// plugins draw and handed to the caller at the end of the frame.
-    hovered_log_glyph: RefCell<Option<HoveredLogGlyph>>,
+    hovered_log_glyph: RefCell<Option<LogMatchGlyph>>,
+    /// The log hexagon the renderer found clicked, filled and handed on the
+    /// same way.
+    clicked_log_glyph: RefCell<Option<LogMatchGlyph>>,
     /// How strongly the TEC heatmap is drawn, as the opacity control's
     /// percentage. A persisted preference, seeded from settings via
     /// [`NavMap::set_tec_heatmap_opacity_percent`].
@@ -500,6 +507,7 @@ impl NavMap {
             sky_glyph_scratch: sky_glyph_renderer::GlyphSelection::default(),
             snapped_edge_tooltip_shown: Cell::new(false),
             hovered_log_glyph: RefCell::new(None),
+            clicked_log_glyph: RefCell::new(None),
             tec_heatmap_opacity_percent: gt_ui_theme::TEC_OPACITY_PERCENT_DEFAULT,
         }
     }
@@ -657,6 +665,7 @@ impl NavMap {
         let plan = self.collect_viewport_points(ui.max_rect(), map_center, &ctx);
         let map_response = self.show_map(ui, &ctx, &plan, animation);
         ctx.log_hover.glyph = self.hovered_log_glyph.take();
+        *ctx.clicked_log_glyph = self.clicked_log_glyph.take();
 
         if map_response.double_clicked()
             && let Some(bbox) = ctx.visible_bounding_box()
@@ -945,6 +954,7 @@ impl NavMap {
                     .hover_enabled(pointer_ownership.log_hexagon_hover_enabled())
                     .maybe_hovered_row_position(ctx.log_hover.row_position)
                     .hovered_glyph(&self.hovered_log_glyph)
+                    .clicked_glyph(&self.clicked_log_glyph)
                     .build(),
             );
         }
@@ -1574,6 +1584,7 @@ struct DrawState {
     tec_instant: gt_ionex::TecInstantSelection,
     log_matches: LogMatches,
     log_hover: LogMatchHover,
+    clicked_log_glyph: Option<LogMatchGlyph>,
     space_weather_warning: Vec<gt_ui_types::TrackSpaceWeatherWarning>,
     space_weather_levels: Vec<gt_ui_types::WarningLevelExplanation>,
 }
@@ -1585,6 +1596,7 @@ impl Default for DrawState {
             recording_names: RecordingNames::default(),
             log_matches: LogMatches::default(),
             log_hover: LogMatchHover::default(),
+            clicked_log_glyph: None,
             space_weather_warning: Vec::new(),
             space_weather_levels: Vec::new(),
             filter: GlobalFilter::default(),
@@ -1622,6 +1634,7 @@ impl DrawState {
             query_matches: None,
             log_matches: &self.log_matches,
             log_hover: &mut self.log_hover,
+            clicked_log_glyph: &mut self.clicked_log_glyph,
             empty_reason: None,
             space_weather: SpaceWeatherIndicator {
                 track_warnings: &self.space_weather_warning,

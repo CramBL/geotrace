@@ -17,9 +17,7 @@ impl<'a> RecordingLabels<'a> {
     /// Falls back to the raw filename when the name template resolved nothing
     /// for this file.
     pub(crate) fn display_name(self, file: FileIdx) -> Option<&'a str> {
-        self.names
-            .get(file)
-            .or_else(|| file.get(self.files).map(|f| f.metadata.filename.as_str()))
+        self.names.display_name(self.files, file)
     }
 
     /// The name for a point tooltip's recording row, which stays empty while a

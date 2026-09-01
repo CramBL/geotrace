@@ -5,7 +5,7 @@ use std::{fmt::Write as _, mem, sync::Arc};
 use chrono::Duration;
 use gt_fmt::MIDDLE_DOT;
 use gt_history_types::{LogContentHash, StoredLogFilter};
-use gt_loaded_files::{LoadedFileId, LoadedFilesView};
+use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
 use gt_logfile::ParsedLog;
 use gt_types::{Latitude, Longitude, TimeRange, mercator};
 use gt_ui_types::{
@@ -439,12 +439,14 @@ struct StoredLog {
 }
 
 impl StoredLog {
-    /// What the map needs to read this log's hovered lines back: its identity
-    /// and the parse its layers' entries index into.
-    fn source(&self) -> LogMatchSource {
+    /// What the map needs to read this log's hovered lines back: its identity,
+    /// the parse its layers' entries index into, and what its tooltip
+    /// identifies the log by.
+    fn source(&self, display_name: Option<String>) -> LogMatchSource {
         LogMatchSource {
             id: self.id,
             parsed: Arc::clone(&self.log.parsed),
+            display_name,
         }
     }
 }
@@ -488,6 +490,11 @@ pub struct LoadedLogs {
     /// ones handing out `&mut` to a log or its filters. Cleared by
     /// [`LoadedLogs::map_matches`], which rebuilds what it stands for.
     map_matches_stale: bool,
+
+    /// The recording names the cached layers' display names were resolved
+    /// from. A name template change resolves other names, and the tooltips
+    /// follow it.
+    map_matches_recording_names: RecordingNames,
 }
 
 impl LoadedLogs {
@@ -631,32 +638,49 @@ impl LoadedLogs {
     /// The added filters draw first, in the order their colours were handed
     /// out, and the live filters over them: the filter being typed is the
     /// answer to what the user is doing right now.
-    pub fn map_matches(&mut self) -> &LogMatches {
-        if mem::take(&mut self.map_matches_stale) {
-            self.map_matches = self.build_map_matches();
+    pub fn map_matches(
+        &mut self,
+        recordings: LoadedFilesView<'_>,
+        recording_names: &RecordingNames,
+    ) -> &LogMatches {
+        if mem::take(&mut self.map_matches_stale)
+            || self.map_matches_recording_names != *recording_names
+        {
+            self.map_matches = self.build_map_matches(recordings, recording_names);
+            self.map_matches_recording_names = recording_names.clone();
         }
         &self.map_matches
     }
 
-    fn build_map_matches(&self) -> LogMatches {
-        let shown = || self.logs.iter().filter(|stored| stored.log.visible);
+    fn build_map_matches(
+        &self,
+        recordings: LoadedFilesView<'_>,
+        recording_names: &RecordingNames,
+    ) -> LogMatches {
+        let display_names = self.map_display_names(recordings, recording_names);
+        let shown = || {
+            self.logs
+                .iter()
+                .zip(&display_names)
+                .filter(|(stored, _)| stored.log.visible)
+        };
         let mut layers = Vec::new();
-        for stored in shown() {
+        for (stored, display_name) in shown() {
             for (slot, chip) in stored.log.filters.enabled_layer_chips() {
                 layers.push(LogMatchLayer {
                     color: LogMatchColor::LayerSlot {
                         index: slot.index(),
                         shared: self.layer_color_slots.is_shared(slot),
                     },
-                    log: stored.source(),
+                    log: stored.source(display_name.clone()),
                     matches: stored.log.matched_points(chip.matches()),
                 });
             }
         }
-        for stored in shown() {
+        for (stored, display_name) in shown() {
             layers.push(LogMatchLayer {
                 color: LogMatchColor::LiveFilter,
-                log: stored.source(),
+                log: stored.source(display_name.clone()),
                 matches: stored
                     .log
                     .matched_points(stored.log.filters.live_filter_matches()),
@@ -664,6 +688,44 @@ impl LoadedLogs {
         }
         layers.retain(|layer| !layer.matches.is_empty());
         LogMatches::from_layers(layers)
+    }
+
+    /// What a hexagon's tooltip identifies each loaded log by, in load order:
+    /// the log's name, with the recording it takes its positions from after a
+    /// middle dot where another loaded log has the same name.
+    ///
+    /// A session of one log gets `None`: its hexagons can belong to no other
+    /// log.
+    fn map_display_names(
+        &self,
+        recordings: LoadedFilesView<'_>,
+        recording_names: &RecordingNames,
+    ) -> Vec<Option<String>> {
+        if self.logs.len() < 2 {
+            return vec![None; self.logs.len()];
+        }
+        self.logs
+            .iter()
+            .map(|stored| {
+                let name = stored.log.name();
+                let shares_its_name = self
+                    .logs
+                    .iter()
+                    .filter(|other| other.log.name() == name)
+                    .count()
+                    > 1;
+                let recording = shares_its_name
+                    .then(|| stored.log.associated_recording())
+                    .flatten()
+                    .and_then(|recording| {
+                        recording_names.display_name_of_loaded_recording(recordings, recording)
+                    });
+                Some(match recording {
+                    Some(recording) => format!("{name} {MIDDLE_DOT} {recording}"),
+                    None => name.to_owned(),
+                })
+            })
+            .collect()
     }
 
     /// The filter-stack edits the attached logs have yet to be written, one
@@ -705,7 +767,8 @@ mod tests {
         LayerColorSlot,
         test_fixtures::{
             anchor_to, association_window, id_of, key_of, loaded, log_of, log_of_service,
-            parsed_log, recording_at, start, stored_in_history, stored_recording_ref,
+            map_matches, parsed_log, parsed_log_of_service, recording_at, recording_named, start,
+            stored_in_history, stored_recording_ref,
         },
     };
 
@@ -953,7 +1016,7 @@ mod tests {
         add_layer_chip(&mut logs, id, "entry 1");
         wait_for_scans(&mut logs);
 
-        let matches = logs.map_matches();
+        let matches = map_matches(&mut logs, &files);
         assert_eq!(
             matches.layers().len(),
             1,
@@ -973,13 +1036,14 @@ mod tests {
     /// much its filters match.
     #[test]
     fn an_unassociated_log_draws_nothing() {
+        let recordings = loaded(vec![recording_at(55.0, 10)]);
         let mut logs = LoadedLogs::default();
         let id = logs.push(log_of(10)).id();
 
         add_layer_chip(&mut logs, id, "entry");
         wait_for_scans(&mut logs);
 
-        assert!(logs.map_matches().is_empty());
+        assert!(map_matches(&mut logs, &recordings).is_empty());
     }
 
     /// The whole map contribution of a log switches off with the log, and comes
@@ -993,17 +1057,17 @@ mod tests {
         let id = logs.push(log).id();
         add_layer_chip(&mut logs, id, "entry");
         wait_for_scans(&mut logs);
-        assert_eq!(logs.map_matches().match_count(), 10);
+        assert_eq!(map_matches(&mut logs, &files).match_count(), 10);
 
         if let Some(log) = logs.get_mut_by_id(id) {
             log.set_visible(false);
         }
-        assert!(logs.map_matches().is_empty());
+        assert!(map_matches(&mut logs, &files).is_empty());
 
         if let Some(log) = logs.get_mut_by_id(id) {
             log.set_visible(true);
         }
-        assert_eq!(logs.map_matches().match_count(), 10);
+        assert_eq!(map_matches(&mut logs, &files).match_count(), 10);
     }
 
     /// A refine chip narrows the table, never the map: it has no colour to draw
@@ -1026,8 +1090,7 @@ mod tests {
         }
         wait_for_scans(&mut logs);
 
-        let colors: Vec<LogMatchColor> = logs
-            .map_matches()
+        let colors: Vec<LogMatchColor> = map_matches(&mut logs, &files)
             .layers()
             .iter()
             .map(|layer| layer.color)
@@ -1059,12 +1122,12 @@ mod tests {
         add_layer_chip(&mut logs, kept, "entry 1");
         add_layer_chip(&mut logs, unloaded, "entry");
         wait_for_scans(&mut logs);
-        assert_eq!(logs.map_matches().match_count(), 11);
+        assert_eq!(map_matches(&mut logs, &files).match_count(), 11);
 
         logs.remove_by_id(unloaded);
 
         assert_eq!(
-            logs.map_matches().match_count(),
+            map_matches(&mut logs, &files).match_count(),
             1,
             "only the log still loaded draws"
         );
@@ -1081,12 +1144,12 @@ mod tests {
         let id = logs.push(log).id();
         add_layer_chip(&mut logs, id, "entry");
         wait_for_scans(&mut logs);
-        assert_eq!(logs.map_matches().match_count(), 10);
+        assert_eq!(map_matches(&mut logs, &files).match_count(), 10);
 
         files.remove_file(0);
         logs.reassociate_all(&files.view());
 
-        assert!(logs.map_matches().is_empty());
+        assert!(map_matches(&mut logs, &files).is_empty());
     }
 
     /// Each layer names the log its filter read, which is how the map hands a
@@ -1107,14 +1170,110 @@ mod tests {
         }
         wait_for_scans(&mut logs);
 
-        let layer_logs: Vec<LoadedLogId> = logs
-            .map_matches()
+        let layer_logs: Vec<LoadedLogId> = map_matches(&mut logs, &files)
             .layers()
             .iter()
             .map(|layer| layer.log.id)
             .collect();
 
         assert_eq!(layer_logs, ids, "one layer per log, each naming its own");
+    }
+
+    /// What a hexagon's tooltip identifies its log by: nothing while the
+    /// session holds one log, the log's name once it holds a second, and the
+    /// anchored recording after that name where both logs go by it.
+    #[rstest::rstest]
+    #[case::one_loaded_log(&[("navsyncd.log", "navsyncd")], &[None])]
+    #[case::two_names(
+        &[("navsyncd.log", "navsyncd"), ("hal-powerd.log", "hal-powerd")],
+        &[Some("navsyncd.log"), Some("hal-powerd.log")]
+    )]
+    #[case::one_name_twice(
+        &[("navsyncd.log", "navsyncd"), ("navsyncd.log", "hal-powerd")],
+        &[Some("navsyncd.log · walk.gtd"), Some("navsyncd.log · drive.gtd")]
+    )]
+    fn a_hexagon_tooltip_identifies_its_log_once_a_second_log_is_loaded(
+        #[case] loaded_logs: &[(&str, &str)],
+        #[case] expected: &[Option<&str>],
+    ) {
+        let files = loaded(vec![
+            recording_named("walk.gtd", 55.0, 10),
+            recording_named("drive.gtd", 60.0, 10),
+        ]);
+        let mut logs = LoadedLogs::default();
+        for (index, (name, service)) in loaded_logs.iter().enumerate() {
+            let mut log = LoadedLog::new(
+                Some((*name).to_owned()),
+                parsed_log_of_service(service, 10),
+                association_window(),
+            );
+            anchor_to(&mut log, &files, index);
+            let id = logs.push(log).id();
+            add_layer_chip(&mut logs, id, "entry 1");
+        }
+        wait_for_scans(&mut logs);
+
+        let display_names: Vec<Option<String>> = map_matches(&mut logs, &files)
+            .layers()
+            .iter()
+            .map(|layer| layer.log.display_name.clone())
+            .collect();
+
+        assert_eq!(
+            display_names,
+            expected
+                .iter()
+                .map(|name| name.map(ToOwned::to_owned))
+                .collect::<Vec<Option<String>>>()
+        );
+    }
+
+    /// The recording in a tooltip is the name the app resolves now: a template
+    /// change reaches the layers the cache holds.
+    #[test]
+    fn a_name_template_change_resolves_the_tooltip_recordings_again() {
+        let files = loaded(vec![
+            recording_named("walk.gtd", 55.0, 10),
+            recording_named("drive.gtd", 60.0, 10),
+        ]);
+        let mut logs = LoadedLogs::default();
+        for index in 0..2 {
+            let service = ["navsyncd", "hal-powerd"].get(index).copied().unwrap_or("");
+            let mut log = LoadedLog::new(
+                Some("navsyncd.log".to_owned()),
+                parsed_log_of_service(service, 10),
+                association_window(),
+            );
+            anchor_to(&mut log, &files, index);
+            let id = logs.push(log).id();
+            add_layer_chip(&mut logs, id, "entry 1");
+        }
+        wait_for_scans(&mut logs);
+        assert_eq!(
+            first_layer_display_name(&mut logs, &files, "{filename}"),
+            Some("navsyncd.log · walk.gtd".to_owned())
+        );
+
+        assert_eq!(
+            first_layer_display_name(&mut logs, &files, "recording {filename}"),
+            Some("navsyncd.log · recording walk.gtd".to_owned())
+        );
+    }
+
+    /// What the first layer's tooltip identifies its log by, with the
+    /// recordings named under `template`.
+    fn first_layer_display_name(
+        logs: &mut LoadedLogs,
+        recordings: &LoadedFiles,
+        template: &str,
+    ) -> Option<String> {
+        let names = RecordingNames::resolve(recordings.view(), template);
+        logs.map_matches(recordings.view(), &names)
+            .layers()
+            .first()?
+            .log
+            .display_name
+            .clone()
     }
 
     /// A hexagon of an unloaded log never names the log that took its place in

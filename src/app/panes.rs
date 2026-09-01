@@ -89,6 +89,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                         query_matches: self.query_matches,
                         log_matches: self.log_matches,
                         log_hover: &mut s.log_hover,
+                        clicked_log_glyph: &mut s.clicked_log_glyph,
                         empty_reason: self.jamming_empty,
                         space_weather: self.space_weather,
                         filter: &s.filter,

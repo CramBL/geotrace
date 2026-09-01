@@ -54,6 +54,32 @@ pub struct LogMatch {
 pub struct LogMatchSource {
     pub id: LoadedLogId,
     pub parsed: Arc<ParsedLog>,
+
+    /// The name the map's tooltip shows above this log's lines: the log's name,
+    /// with the recording it is anchored to after a middle dot where another
+    /// loaded log has the same name. `None` while the session holds one log.
+    pub display_name: Option<String>,
+}
+
+/// One hexagon on the map: the log it draws matches of, the colour of the
+/// filter that selected them, and the entries it groups.
+///
+/// The map publishes the hexagon under the cursor and the one clicked. The
+/// viewer marks the rows of the entries of both, and shows the log of the
+/// clicked one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LogMatchGlyph {
+    pub log: LoadedLogId,
+    pub color: LogMatchColor,
+
+    /// Indices into [`ParsedLog::entries`] of the log, ascending.
+    pub entry_indices: Vec<usize>,
+}
+
+impl LogMatchGlyph {
+    pub fn covers(&self, log: LoadedLogId, entry_index: usize) -> bool {
+        self.log == log && self.entry_indices.binary_search(&entry_index).is_ok()
+    }
 }
 
 /// The matches of one filter, in file order.

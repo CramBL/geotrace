@@ -2,13 +2,18 @@
 
 use chrono::{DateTime, Duration, TimeZone as _, Utc};
 use gt_history_types::{DatabaseRef, RecordingMeta};
-use gt_loaded_files::{FileHistory, LoadedFileId, LoadedFiles};
+use gt_loaded_files::{FileHistory, LoadedFileId, LoadedFiles, RecordingNames};
 use gt_logfile::ParsedLog;
 use gt_test_utils::{empty_file_metadata, loaded_track_with_points, nav_points_walking_from};
 use gt_types::{FileMetadata, FileSource, Latitude, LoadedFile, Longitude, NavPoint, TimeRange};
+use gt_ui_types::LogMatches;
 use rustc_hash::FxHashMap;
 
-use crate::{LoadedLog, RecordingKey};
+use crate::{LoadedLog, LoadedLogs, RecordingKey};
+
+/// The template the fixtures resolve recording names under, as the app's
+/// default does.
+const RECORDING_NAME_TEMPLATE: &str = "{filename}";
 
 /// The window the tests associate with, matching the app's default.
 pub(crate) fn association_window() -> Duration {
@@ -77,6 +82,14 @@ pub(crate) fn recording_at(first_lat_deg: f64, count: usize) -> LoadedFile {
         Latitude::new(first_lat_deg),
         Longitude::new(12.0),
     ))
+}
+
+/// [`recording_at`] under `filename`, which is the name the fixture template
+/// resolves for it.
+pub(crate) fn recording_named(filename: &str, first_lat_deg: f64, count: usize) -> LoadedFile {
+    let mut recording = recording_at(first_lat_deg, count);
+    recording.metadata.filename = filename.to_owned();
+    recording
 }
 
 /// A recording of `count` fixes, one per second, starting `offset` after the
@@ -169,5 +182,16 @@ pub(crate) fn stored_in_history(db_ref: &DatabaseRef) -> FileHistory {
             gtd_size_bytes: 0,
         },
         Some(db_ref.clone()),
+    )
+}
+
+/// What `logs` put on the map, taking their recording names from `recordings`.
+pub(crate) fn map_matches<'a>(
+    logs: &'a mut LoadedLogs,
+    recordings: &LoadedFiles,
+) -> &'a LogMatches {
+    logs.map_matches(
+        recordings.view(),
+        &RecordingNames::resolve(recordings.view(), RECORDING_NAME_TEMPLATE),
     )
 }

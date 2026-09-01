@@ -101,6 +101,9 @@ struct SharedAppState {
     /// The log match under the cursor: the map writes the hexagon it is on,
     /// the log viewer the row it is on, and each reads what the other wrote.
     log_hover: gt_ui_types::LogMatchHover,
+    /// The hexagon the map was clicked on, taken by the log viewer in the same
+    /// frame to open on that log.
+    clicked_log_glyph: Option<gt_ui_types::LogMatchGlyph>,
     map_center_request: Option<(f64, f64)>,
     /// Requested screen position for the next sticky info popup, set by panel
     /// item clicks and consumed by `NavMap::draw` as the popup's default position.
@@ -595,6 +598,7 @@ impl App {
                 filter_state: FilterPanelState::default(),
                 plot_state: PlotState::default(),
                 log_hover: gt_ui_types::LogMatchHover::default(),
+                clicked_log_glyph: None,
                 map_center_request: None,
                 popup_pos_request: None,
                 zoom_to_visible_request: false,
