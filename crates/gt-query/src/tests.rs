@@ -530,27 +530,15 @@ fn unused_params_flow_into_the_summary() {
 fn columns_default_to_time_plus_referenced_metrics() {
     let query =
         checked("points | window 5 | where spread(heading) <= 10 deg and avg(velocity) > 30 km/h");
-    assert_eq!(
-        query.metric_columns(),
-        [
-            QueryMetric::Time,
-            QueryMetric::Heading,
-            QueryMetric::Velocity
-        ]
-    );
+    assert_eq!(column_labels(&query), ["time", "heading", "velocity"]);
 }
 
 #[test]
 fn explicit_table_controls_columns_time_stays_first() {
     let query = checked(UC1);
     assert_eq!(
-        query.metric_columns(),
-        [
-            QueryMetric::Time,
-            QueryMetric::Velocity,
-            QueryMetric::Heading,
-            QueryMetric::Accel,
-        ]
+        column_labels(&query),
+        ["time", "velocity", "heading", "accel"]
     );
     assert_eq!(query.mode(), DisplayMode::Draw);
 }
@@ -584,8 +572,6 @@ fn a_table_column_takes_a_channel_aggregate() {
         aggregate_column(&query, "max(@accel.x)").quantity(),
         Some(Quantity::Acceleration)
     );
-    // Only `time` is valued per point.
-    assert_eq!(query.metric_columns(), [QueryMetric::Time]);
 }
 
 #[test]

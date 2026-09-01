@@ -4,7 +4,7 @@
 use chrono::{DateTime, Utc};
 use egui::{Align, Label, Layout, RichText, TextStyle, TextWrapMode};
 use geotrace_sdk_units::{ChannelUnit, Unit};
-use gt_query::{Construct, Quantity, QueryMetric};
+use gt_query::{AggregateColumn, Construct, Quantity, QueryMetric};
 use gt_query_run::MICROS_PER_SEC;
 use gt_ui_theme::labels::LabelWithHover;
 use gt_ui_theme::{DEGREE_SIGN, EM_DASH};
@@ -13,6 +13,10 @@ use super::value_bar::ValueBar;
 
 /// Decimals a channel sample prints, matching the plot's channel readout.
 const CHANNEL_DECIMALS: usize = 3;
+
+/// Decimal places for a column with no quantity: a bare number, or an
+/// aggregate whose dimension has no quantity name (`var`'s squared result).
+const UNITLESS_DECIMALS: usize = 3;
 
 /// Integer digits a value column budgets for: its width is then the same
 /// whichever rows are on screen. Four covers every metric a column holds
@@ -89,7 +93,20 @@ impl<'a> ColumnFormat<'a> {
 
     /// How the column for `metric` prints, from the quantity it measures.
     pub(super) fn of_metric(metric: QueryMetric) -> Self {
-        match metric.quantity() {
+        Self::of_quantity(metric.quantity())
+    }
+
+    /// How an aggregate column prints. A column whose values have no quantity
+    /// reads as a bare number.
+    pub(super) fn of_aggregate(column: &AggregateColumn) -> Self {
+        column.quantity().map_or_else(
+            || Self::number(None, 1.0, UNITLESS_DECIMALS),
+            Self::of_quantity,
+        )
+    }
+
+    fn of_quantity(quantity: Quantity) -> Self {
+        match quantity {
             Quantity::Timestamp => Self::time_of_day(),
             Quantity::Angle | Quantity::WrappingAngle => {
                 Self::number(Some(DEGREE_SIGN), Unit::DEG.from_base(), 1)

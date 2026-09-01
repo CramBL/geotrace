@@ -27,7 +27,7 @@ pub(super) struct MatchKey {
 
 /// One row of the matches table: one match of a points query, or one track's
 /// matched stretch of channel samples.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(super) struct MatchRow {
     /// The query of the run that matched it: its swatch colour, and the columns
     /// the points table lists its rows under.
@@ -38,6 +38,9 @@ pub(super) struct MatchRow {
     /// Indices into the track's row source: its nav points, or the samples of
     /// the channel timeline.
     pub(super) rows: Range<usize>,
+    /// One value per aggregate column of the query, in table order. `None`
+    /// where the aggregate has no value over this match.
+    pub(super) aggregates: Vec<Option<f64>>,
     start: Option<DateTime<Utc>>,
     /// When the match's last row was recorded, absent for a single-row match.
     end: Option<DateTime<Utc>>,
@@ -119,7 +122,8 @@ impl MatchRows {
                         .and_then(|points| points.get(index))
                         .map(|point| point.tpv.time().utc())
                 };
-                for range in &track_matches.ranges {
+                for matched in &track_matches.matches {
+                    let range = &matched.rows;
                     rows.push(MatchRow {
                         query_index,
                         number: rows.len() + 1,
@@ -130,6 +134,7 @@ impl MatchRows {
                             .resolve(files)
                             .and_then(|track| gt_fmt::match_duration_seconds(track, range)),
                         rows: range.clone(),
+                        aggregates: matched.aggregates.clone(),
                     });
                 }
             }
@@ -143,7 +148,8 @@ impl MatchRows {
         let mut rows = Vec::new();
         for result in &results.tracks {
             let times = result.timeline.times.as_slice();
-            for range in &result.ranges {
+            for matched in &result.matches {
+                let range = &matched.rows;
                 let first = times.get(range.start).copied();
                 let last = gt_fmt::last_index_of_span(range)
                     .and_then(|last| times.get(last))
@@ -156,6 +162,7 @@ impl MatchRows {
                     end: last.and_then(column_format::wall_clock),
                     duration_secs: first.zip(last).map(|(first, last)| (last - first) as i64),
                     rows: range.clone(),
+                    aggregates: matched.aggregates.clone(),
                 });
             }
         }
@@ -163,21 +170,21 @@ impl MatchRows {
     }
 
     /// The range one column's values span over every matched row of the query
-    /// at `query_index`, valued by `value` from the row's track and its index
-    /// in that track's source. The bars behind that column's cells keep their
-    /// scale when another match is picked: the range covers all of the
+    /// at `query_index`, valued by `value` from the match it belongs to and its
+    /// index in that match's source. The bars behind that column's cells keep
+    /// their scale when another match is picked: the range covers all of the
     /// query's matches.
     pub(super) fn column_range(
         &self,
         query_index: usize,
-        value: impl Fn(TrackRef, usize) -> Option<f64>,
+        value: impl Fn(&MatchRow, usize) -> Option<f64>,
     ) -> Option<ColumnValueRange> {
         ColumnValueRange::of_values(
             self.rows
                 .iter()
                 .filter(|row| row.query_index == query_index)
-                .flat_map(|row| row.rows.clone().map(|index| (row.track, index)))
-                .filter_map(|(track, index)| value(track, index)),
+                .flat_map(|row| row.rows.clone().map(move |index| (row, index)))
+                .filter_map(|(row, index)| value(row, index)),
         )
     }
 
@@ -450,6 +457,7 @@ mod tests {
                 number: 1,
                 track: track(0),
                 rows: 0..62,
+                aggregates: Vec::new(),
                 start: at(14, 0, 18),
                 end: at(14, 1, 19),
                 duration_secs: Some(61),
@@ -459,6 +467,7 @@ mod tests {
                 number: 2,
                 track: track(1),
                 rows: 100..112,
+                aggregates: Vec::new(),
                 start: at(14, 2, 19),
                 end: at(14, 2, 31),
                 duration_secs: Some(12),
@@ -468,6 +477,7 @@ mod tests {
                 number: 3,
                 track: track(0),
                 rows: 200..201,
+                aggregates: Vec::new(),
                 start: at(14, 5, 0),
                 end: None,
                 duration_secs: None,
@@ -486,6 +496,7 @@ mod tests {
                     number: index + 1,
                     track: track(0),
                     rows: index..index + 2,
+                    aggregates: Vec::new(),
                     start: at(14, 0, 0),
                     end: at(14, 0, 0),
                     duration_secs: Some(*secs),
@@ -630,7 +641,7 @@ mod tests {
         // A range states which rows went into it: every row is valued by its
         // index in the track. Query 0 matched rows 0..62 and 100..112, query 1
         // the single row 200.
-        let value_of_index = |_track: TrackRef, index: usize| Some(index as f64);
+        let value_of_index = |_row: &MatchRow, index: usize| Some(index as f64);
         let range = rows
             .column_range(0, value_of_index)
             .expect("the query matched rows");

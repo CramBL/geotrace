@@ -209,9 +209,7 @@ impl QuerySession {
             return;
         };
         let mut results = match product {
-            RunProduct::Points(pipeline) => {
-                RunResults::Points(PointsResults::project(&pipeline, track_data))
-            }
+            RunProduct::Points(run) => RunResults::Points(PointsResults::project(run, track_data)),
             RunProduct::Channel(run) => RunResults::Channel(ChannelResults::project(*run)),
         };
         results.set_run(self.next_run);
@@ -282,14 +280,18 @@ impl QuerySession {
 mod tests {
     use gt_filter::GlobalFilter;
     use gt_loaded_files::{FileHistory, LoadedFiles};
+    use gt_query::{AggregateColumn, TableColumn};
     use gt_types::{FileIdx, TrackIdx, TrackRef};
     use gt_ui_types::{GeomagneticSeries, TecSeries, TrackDataVisibility};
     use rstest::rstest;
 
     use super::*;
     use crate::fingerprint::{JammingValues, SnapErrorValues};
+    use crate::results::MatchValues;
     use crate::schema::schema_from_files;
-    use crate::test_fixtures::{file_with_channels, rng, scalar_channel, vector_channel};
+    use crate::test_fixtures::{
+        file_with_channels, matched_rows, rng, scalar_channel, vector_channel,
+    };
 
     /// The loaded state a session runs against, owned so the borrowed
     /// [`RunInputs`] can be rebuilt per call.
@@ -573,10 +575,121 @@ mod tests {
         assert_eq!(results.channel, "accel");
         assert_eq!(results.components, ["x", "y", "z"]);
         assert_eq!(results.tracks.len(), 1);
-        assert_eq!(results.tracks[0].ranges, [rng(0, 1)]);
+        assert_eq!(results.tracks[0].matches, [matched_rows(rng(0, 1))]);
         assert_eq!(results.tracks[0].timeline.times.len(), 2);
         assert_eq!(results.matches.draws.len(), 1);
         assert_eq!(results.matches.draws[0].ranges_for(track), [rng(0, 1)]);
+    }
+
+    /// `g` in the evaluator's base unit, which channel samples are valued in.
+    fn gravity_in_base_units() -> f64 {
+        geotrace_sdk_units::Unit::from_label("g")
+            .expect("g is a recognized unit")
+            .to_base()
+    }
+
+    /// The aggregate values of every match of a points run, over its queries in
+    /// editor order.
+    fn points_aggregates(session: &QuerySession) -> Vec<Vec<Option<f64>>> {
+        let Some(RunResults::Points(results)) = session.results() else {
+            panic!("a points source produces points results");
+        };
+        results
+            .queries
+            .iter()
+            .flat_map(|query| &query.matches)
+            .flat_map(|track| &track.matches)
+            .map(|matched| matched.aggregates.clone())
+            .collect()
+    }
+
+    /// The match covers point 0 alone: it moves at 36 km/h, point 1 does not.
+    /// The aggregate reduces the one accel sample recorded in that second.
+    #[test]
+    fn a_points_table_values_an_aggregate_column_over_each_match() {
+        let state = LoadedState::with_channels(vec![vector_channel(
+            "accel",
+            Some("g"),
+            &["x", "y", "z"],
+            &[(0, [1.5, 0.0, 0.0]), (1, [0.2, 0.0, 0.0])],
+        )]);
+        let mut session = QuerySession::new();
+        run_text(
+            &mut session,
+            &state,
+            "points | window 1 | where avg(velocity) > 30 km/h | table time, max(@accel.x)",
+        );
+
+        let Some(RunResults::Points(results)) = session.results() else {
+            panic!("a points source produces points results");
+        };
+        let query = results.queries.first().expect("the run has one query");
+        assert_eq!(
+            query
+                .columns
+                .iter()
+                .map(TableColumn::label)
+                .collect::<Vec<_>>(),
+            ["time", "max(@accel.x)"]
+        );
+        assert_eq!(
+            points_aggregates(&session),
+            [vec![Some(1.5 * gravity_in_base_units())]]
+        );
+    }
+
+    /// The accel samples start a second after the match.
+    #[test]
+    fn an_aggregate_over_a_match_without_channel_samples_has_no_value() {
+        let state = LoadedState::with_channels(vec![vector_channel(
+            "accel",
+            Some("g"),
+            &["x", "y", "z"],
+            &[(1, [1.5, 0.0, 0.0])],
+        )]);
+        let mut session = QuerySession::new();
+        run_text(
+            &mut session,
+            &state,
+            "points | window 1 | where avg(velocity) > 30 km/h | table time, max(@accel.x)",
+        );
+        assert_eq!(points_aggregates(&session), [vec![None]]);
+    }
+
+    /// The match covers sample 0 alone: it clears 1 g, sample 1 does not.
+    #[test]
+    fn a_channel_table_values_an_aggregate_column_over_each_match() {
+        let state = LoadedState::with_channels(vec![vector_channel(
+            "accel",
+            Some("g"),
+            &["x", "y", "z"],
+            &[(0, [1.5, 0.0, 0.0]), (1, [0.2, 0.0, 0.0])],
+        )]);
+        let mut session = QuerySession::new();
+        run_text(
+            &mut session,
+            &state,
+            "@accel | window 1 | where max(norm(@accel)) > 1 g | table max(@accel.x)",
+        );
+
+        let Some(RunResults::Channel(results)) = session.results() else {
+            panic!("a channel source produces channel results");
+        };
+        assert_eq!(
+            results
+                .aggregate_columns
+                .iter()
+                .map(AggregateColumn::label)
+                .collect::<Vec<_>>(),
+            ["max(@accel.x)"]
+        );
+        assert_eq!(
+            results.tracks[0].matches,
+            [MatchValues {
+                rows: rng(0, 1),
+                aggregates: vec![Some(1.5 * gravity_in_base_units())],
+            }]
+        );
     }
 
     #[test]

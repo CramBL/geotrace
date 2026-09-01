@@ -2,14 +2,19 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use gt_query::{CheckedQuery, Params, PipelineOutput, RunSummary, TrackInput};
-use gt_types::{Channel, LoadedFile, NavPoint, TrackRef};
+use gt_query::{
+    AggregateColumn, CheckedQuery, DrawContribution, Params, PipelineOutput, QueryOutput,
+    RunSummary, TableColumn, TrackInput, TrackMatches,
+};
+use gt_types::{Channel, DisplayMode, LoadedFile, NavPoint, TrackRef};
 use gt_ui_types::QueryMatches;
 use rustc_hash::FxHashMap;
 
 use crate::fingerprint::RunInputs;
 use crate::provider::{CapturedTrackValues, SliceProvider, TrackProvider, TrackQueryData};
-use crate::results::{ChannelTrackResult, channel_query_matches, matched_point_ranges};
+use crate::results::{
+    ChannelTrackResult, MatchValues, TrackMatchValues, channel_query_matches, matched_point_ranges,
+};
 
 /// Per-track derived series of one run, keyed by the track they came from.
 pub(crate) type RunTrackData = FxHashMap<TrackRef, TrackQueryData>;
@@ -204,7 +209,10 @@ impl PreparedRun {
         let inputs = track_inputs(&providers);
 
         match gt_query::run_pipeline(&self.queries, &inputs, &cancelled) {
-            Some(pipeline) => RunOutcome::completed(RunProduct::Points(pipeline), track_data),
+            Some(pipeline) => RunOutcome::completed(
+                RunProduct::Points(PointsRun::with_aggregates_valued(pipeline, &providers)),
+                track_data,
+            ),
             None => RunOutcome::cancelled(),
         }
     }
@@ -242,12 +250,16 @@ impl PreparedRun {
         // Pair each track's matched sample ranges with its timeline, for the table.
         let track_results: Vec<ChannelTrackResult> = output
             .matches
-            .into_iter()
+            .iter()
             .filter_map(|tm| {
                 let provider = providers.iter().find(|(tr, _)| *tr == tm.track)?;
                 Some(ChannelTrackResult {
                     track: tm.track,
-                    ranges: tm.ranges,
+                    matches: matches_with_aggregates_valued(
+                        &tm.ranges,
+                        &output.columns,
+                        &provider.1,
+                    ),
                     timeline: gt_query::MetricProvider::channel_timeline(&provider.1, name),
                     unit: self
                         .tracks
@@ -266,7 +278,7 @@ impl PreparedRun {
             .filter_map(|result| {
                 let snapshot = self.tracks.iter().find(|s| s.track_ref == result.track)?;
                 let point_ranges =
-                    matched_point_ranges(&snapshot.points, &result.timeline, &result.ranges);
+                    matched_point_ranges(&snapshot.points, &result.timeline, &result.matches);
                 let len = snapshot.points.len();
                 (!point_ranges.is_empty()).then_some((result.track, (point_ranges, len)))
             })
@@ -277,6 +289,7 @@ impl PreparedRun {
             RunProduct::Channel(Box::new(ChannelRun {
                 channel: name.to_owned(),
                 components,
+                aggregate_columns: aggregate_columns(&output.columns).cloned().collect(),
                 summary: output.summary,
                 tracks: track_results,
                 matches,
@@ -354,10 +367,107 @@ impl RunOutcome {
 /// A run's product, dispatched on the source of its queries.
 pub(crate) enum RunProduct {
     /// A composed points pipeline.
-    Points(PipelineOutput),
+    Points(PointsRun),
     /// A standalone channel-source run. Boxed: several times the size of the
     /// pipeline variant.
     Channel(Box<ChannelRun>),
+}
+
+/// A points pipeline's output with every query's aggregate table columns
+/// valued over each of its matches, still at the evaluator's own point indices.
+pub(crate) struct PointsRun {
+    pub(crate) queries: Vec<PointsQueryRun>,
+    pub(crate) hidden: Vec<TrackMatches>,
+    pub(crate) draws: Vec<DrawContribution>,
+}
+
+impl PointsRun {
+    fn with_aggregates_valued(
+        PipelineOutput {
+            queries,
+            hidden,
+            draws,
+        }: PipelineOutput,
+        providers: &[(TrackRef, SliceProvider<'_>)],
+    ) -> Self {
+        Self {
+            queries: queries
+                .into_iter()
+                .map(|query| PointsQueryRun::with_aggregates_valued(query, providers))
+                .collect(),
+            hidden,
+            draws,
+        }
+    }
+}
+
+/// One query of a points pipeline: what it counted, how it changes the map, the
+/// columns its match table lists, and its matches with their aggregate values.
+pub(crate) struct PointsQueryRun {
+    pub(crate) mode: DisplayMode,
+    pub(crate) columns: Vec<TableColumn>,
+    pub(crate) summary: RunSummary,
+    pub(crate) matches: Vec<TrackMatchValues>,
+}
+
+impl PointsQueryRun {
+    fn with_aggregates_valued(
+        QueryOutput {
+            mode,
+            matches,
+            columns,
+            summary,
+        }: QueryOutput,
+        providers: &[(TrackRef, SliceProvider<'_>)],
+    ) -> Self {
+        Self {
+            matches: matches
+                .iter()
+                .filter_map(|track_matches| {
+                    let provider = providers
+                        .iter()
+                        .find(|(track, _)| *track == track_matches.track)?;
+                    Some(TrackMatchValues {
+                        track: track_matches.track,
+                        matches: matches_with_aggregates_valued(
+                            &track_matches.ranges,
+                            &columns,
+                            &provider.1,
+                        ),
+                    })
+                })
+                .collect(),
+            mode,
+            columns,
+            summary,
+        }
+    }
+}
+
+/// Each of `ranges` as a match, with every aggregate column of `columns`
+/// reduced over it.
+fn matches_with_aggregates_valued(
+    ranges: &[Range<usize>],
+    columns: &[TableColumn],
+    provider: &SliceProvider<'_>,
+) -> Vec<MatchValues> {
+    ranges
+        .iter()
+        .map(|rows| MatchValues {
+            rows: rows.clone(),
+            aggregates: aggregate_columns(columns)
+                .map(|column| column.value_over_match(provider, rows.clone()))
+                .collect(),
+        })
+        .collect()
+}
+
+/// The aggregate columns of a match table, in table order.
+fn aggregate_columns(columns: &[TableColumn]) -> impl Iterator<Item = &AggregateColumn> {
+    columns.iter().filter_map(|column| match column {
+        TableColumn::Metric(_) => None,
+        TableColumn::Aggregate(aggregate) => Some(aggregate),
+    })
 }
 
 /// A channel-source run's raw output, before the panel projection.
@@ -366,6 +476,8 @@ pub(crate) struct ChannelRun {
     /// Component labels for a vector channel (`["x","y","z"]`), empty for a
     /// scalar. Column headers for the sample table.
     pub(crate) components: Vec<String>,
+    /// The query's aggregate `table` columns, in table order.
+    pub(crate) aggregate_columns: Vec<AggregateColumn>,
     pub(crate) summary: RunSummary,
     pub(crate) tracks: Vec<ChannelTrackResult>,
     /// The map effect: matched sample spans projected onto the track as

@@ -12,7 +12,8 @@ use gt_types::TrackRef;
 
 use crate::ast::{Func, ParamName};
 use crate::check::{
-    AggSource, AggregateColumn, ArithOp, CExpr, CheckedQuery, CheckedSource, CmpOp, Window,
+    AggSource, AggregateColumn, ArithOp, CExpr, CheckedQuery, CheckedSource, CmpOp, TableColumn,
+    Window,
 };
 use crate::metric::QueryMetric;
 use crate::wrap::WrapPeriod;
@@ -168,9 +169,9 @@ pub struct RunSummary {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunOutput {
     pub matches: Vec<TrackMatches>,
-    /// The metric columns of the match table.
+    /// The match table's columns, in table order.
     /// [`AggregateColumn::value_over_match`] values an aggregate column.
-    pub columns: Vec<QueryMetric>,
+    pub columns: Vec<TableColumn>,
     pub summary: RunSummary,
 }
 
@@ -179,7 +180,7 @@ pub fn run<P: MetricProvider>(query: &CheckedQuery, tracks: &[TrackInput<'_, P>]
     run_cancellable(query, tracks, &never).unwrap_or_else(|| RunOutput {
         // Unreachable: the cancel check above never fires.
         matches: Vec::new(),
-        columns: query.metric_columns(),
+        columns: query.columns().to_vec(),
         summary: RunSummary::default(),
     })
 }
@@ -233,7 +234,7 @@ pub(crate) fn run_with_interval<P: MetricProvider>(
 
     Some(RunOutput {
         matches,
-        columns: query.metric_columns(),
+        columns: query.columns().to_vec(),
         summary,
     })
 }

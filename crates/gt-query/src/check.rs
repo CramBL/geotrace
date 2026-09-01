@@ -183,15 +183,6 @@ impl CheckedQuery {
         &self.columns
     }
 
-    /// The metric columns, in table order. An aggregate column is left out: it
-    /// has one value for its whole match.
-    pub fn metric_columns(&self) -> Vec<QueryMetric> {
-        self.columns
-            .iter()
-            .filter_map(TableColumn::metric)
-            .collect()
-    }
-
     /// Every metric the query touches (predicates and table columns), in
     /// first-mention order. Lets the runner compute expensive derived series
     /// (util/slip) only when actually used.
@@ -212,7 +203,7 @@ impl CheckedQuery {
 }
 
 /// One column of the match table.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TableColumn {
     /// A metric, valued at each point of a match.
     Metric(QueryMetric),
@@ -221,15 +212,6 @@ pub enum TableColumn {
 }
 
 impl TableColumn {
-    /// The metric this column reads at each point, `None` for an aggregate
-    /// column.
-    pub fn metric(&self) -> Option<QueryMetric> {
-        match self {
-            TableColumn::Metric(metric) => Some(*metric),
-            TableColumn::Aggregate(_) => None,
-        }
-    }
-
     /// The column as the query writes it: the metric's name, or the aggregate
     /// call.
     pub fn label(&self) -> String {
@@ -242,7 +224,7 @@ impl TableColumn {
 
 /// An aggregate `table` column: its checked call, its label, and the quantity
 /// of its values.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AggregateColumn {
     label: String,
     quantity: Option<Quantity>,
@@ -282,7 +264,7 @@ pub(crate) struct ChannelKey {
 /// components share a clock, so the timeline is the channel by name; each
 /// [`CExpr::Channel`]/[`CExpr::Norm`] node projects the column(s) it needs per
 /// sample. The checker resolves this once (see [`aggregate_source`]).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum AggSource {
     Points,
     Channel(String),
@@ -290,7 +272,7 @@ pub(crate) enum AggSource {
 
 /// Checked expression: literals in base units, aggregates tagged with the
 /// period their argument wraps at.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum CExpr {
     Const(f64),
     Metric(QueryMetric),

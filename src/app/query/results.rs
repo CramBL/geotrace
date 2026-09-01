@@ -15,7 +15,9 @@ use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_phosphor::regular::COPY as ICON_COPY;
 use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
 use egui_phosphor::regular::INFO as ICON_INFO;
-use gt_query::{ChannelTimeline, Construct, MetricProvider as _, QueryMetric};
+use gt_query::{
+    AggregateColumn, ChannelTimeline, Construct, MetricProvider as _, QueryMetric, TableColumn,
+};
 use gt_query_run::{
     ChannelResults, ChannelTrackResult, PointsResults, QuerySummary, RunResults, SliceProvider,
     TrackProvider, TrackQueryData,
@@ -101,31 +103,53 @@ pub(super) struct ResultsState {
 struct QuerySection<'a> {
     summary: &'a QuerySummary,
     color: Option<egui::Color32>,
-    columns: Vec<TableColumn<'a>>,
+    columns: Vec<ResultColumn<'a>>,
 }
 
 /// One column of the points table: what its header names, the documentation
 /// that header explains on hover, how its cells print, and where they read
 /// their value.
-struct TableColumn<'a> {
+struct ResultColumn<'a> {
     name: String,
     doc: Option<&'static Construct>,
     format: ColumnFormat<'a>,
     source: ColumnSource,
 }
 
+impl ResultColumn<'static> {
+    fn of_metric(metric: QueryMetric) -> Self {
+        Self {
+            name: metric.to_string(),
+            doc: gt_query::metric_documentation(metric),
+            format: ColumnFormat::of_metric(metric),
+            source: ColumnSource::Metric(metric),
+        }
+    }
+
+    /// The column for `aggregate`. `index` is its place among the query's
+    /// aggregate columns, and the place of its value in every match.
+    fn of_aggregate(aggregate: &AggregateColumn, index: usize) -> Self {
+        Self {
+            name: aggregate.label().to_owned(),
+            doc: None,
+            format: ColumnFormat::of_aggregate(aggregate),
+            source: ColumnSource::Aggregate(index),
+        }
+    }
+}
+
 /// Where one points-table column reads its value.
-#[derive(Debug, Clone, Copy)]
-#[expect(
-    variant_size_differences,
-    reason = "one value per column of one table, never one per row"
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColumnSource {
     Metric(QueryMetric),
     /// When a channel sample was recorded.
     SampleTime,
     /// One component of a channel, by its index into the sample's values.
     ChannelComponent(usize),
+    /// An aggregate valued once over a match, by its index among the query's
+    /// aggregate columns. The table shows that one value in every row of the
+    /// match.
+    Aggregate(usize),
 }
 
 /// One track's values, as the run computed them. A row reads its value without
@@ -172,9 +196,20 @@ enum RowSource<'a> {
 }
 
 impl RowSource<'_> {
-    /// The value under `column` of the row `source_index` addresses on `track`.
-    fn value(&self, track: TrackRef, source_index: usize, column: ColumnSource) -> Option<f64> {
+    /// The value under `column` of the row `source_index` addresses within
+    /// `match_row`. An aggregate column has one value per match, which the
+    /// table shows in every row of that match.
+    fn value(
+        &self,
+        match_row: &MatchRow,
+        source_index: usize,
+        column: ColumnSource,
+    ) -> Option<f64> {
+        let track = match_row.track;
         match (self, column) {
+            (_, ColumnSource::Aggregate(index)) => {
+                match_row.aggregates.get(index).copied().flatten()
+            }
             (Self::NavPoints { track_values }, ColumnSource::Metric(metric)) => track_values
                 .iter()
                 .find(|(candidate, _)| *candidate == track)
@@ -344,16 +379,7 @@ impl<'a> ResultsTables<'a> {
                 color: query
                     .color
                     .map(|color| gt_ui_theme::query_halo_color(color, stale)),
-                columns: query
-                    .columns
-                    .iter()
-                    .map(|metric| TableColumn {
-                        name: metric.to_string(),
-                        doc: gt_query::metric_documentation(*metric),
-                        format: ColumnFormat::of_metric(*metric),
-                        source: ColumnSource::Metric(*metric),
-                    })
-                    .collect(),
+                columns: result_columns(&query.columns),
             })
             .collect();
         Self {
@@ -385,7 +411,7 @@ impl<'a> ResultsTables<'a> {
         let stale = channel.matches.stale;
         // Samples are timed finer than points, so their times keep the
         // milliseconds the point tables leave out.
-        let mut columns = vec![TableColumn {
+        let mut columns = vec![ResultColumn {
             name: "time".to_owned(),
             doc: None,
             format: ColumnFormat::time_of_day_with_millis(),
@@ -404,12 +430,19 @@ impl<'a> ResultsTables<'a> {
             component_names
                 .iter()
                 .enumerate()
-                .map(|(component, name)| TableColumn {
+                .map(|(component, name)| ResultColumn {
                     name: name.clone(),
                     doc: None,
                     format: ColumnFormat::of_channel_unit(unit),
                     source: ColumnSource::ChannelComponent(component),
                 }),
+        );
+        columns.extend(
+            channel
+                .aggregate_columns
+                .iter()
+                .enumerate()
+                .map(|(index, aggregate)| ResultColumn::of_aggregate(aggregate, index)),
         );
         Self {
             files,
@@ -1027,7 +1060,7 @@ impl<'a> ResultsTables<'a> {
                         if let Some(taken) = self.point_row_ui(
                             &mut row,
                             &cells,
-                            selected.track,
+                            selected,
                             source_index,
                             out.highlight,
                         ) {
@@ -1058,16 +1091,17 @@ impl<'a> ResultsTables<'a> {
         &self,
         row: &mut TableRow<'_, '_>,
         cells: &PointColumns<'_>,
-        track: TrackRef,
+        match_row: &MatchRow,
         source_index: usize,
         highlight: &mut MapHighlight,
     ) -> Option<PointClick> {
+        let track = match_row.track;
         let point = self.source.map_point(track, source_index);
         row.set_selected(
             point.is_some_and(|point| highlight.sticky.is_some_and(|sticky| sticky == point)),
         );
         for (index, column) in cells.columns.iter().enumerate() {
-            let value = self.source.value(track, source_index, column.source);
+            let value = self.source.value(match_row, source_index, column.source);
             let bar = cells.bar(index, value);
             row.col(|ui| column.format.value_ui(ui, value, bar));
         }
@@ -1107,8 +1141,8 @@ impl<'a> ResultsTables<'a> {
                         if !column.format.holds_magnitudes() {
                             return None;
                         }
-                        self.matches.column_range(query_index, |track, index| {
-                            self.source.value(track, index, column.source)
+                        self.matches.column_range(query_index, |match_row, index| {
+                            self.source.value(match_row, index, column.source)
                         })
                     })
                     .collect()
@@ -1144,9 +1178,7 @@ impl<'a> ResultsTables<'a> {
                     write!(tsv, "{}\t{source_index}", match_row.number).ok();
                     for column in &query.columns {
                         tsv.push('\t');
-                        let value = self
-                            .source
-                            .value(match_row.track, source_index, column.source);
+                        let value = self.source.value(match_row, source_index, column.source);
                         if let Some(value) = value {
                             tsv.push_str(&column.format.cell_text(Some(value)));
                         }
@@ -1163,7 +1195,7 @@ impl<'a> ResultsTables<'a> {
 /// range each of them spans over the run, and the colour of the bars behind
 /// their cells.
 struct PointColumns<'a> {
-    columns: &'a [TableColumn<'a>],
+    columns: &'a [ResultColumn<'a>],
     /// One entry per column of `columns`, in the same order. Empty where the
     /// table paints no bars.
     ranges: &'a [Option<ColumnValueRange>],
@@ -1303,6 +1335,22 @@ fn point_hover_text(point_index: usize, position: Option<ResolvedPosition>) -> S
     }
 }
 
+/// The table columns of a query, in table order.
+fn result_columns(columns: &[TableColumn]) -> Vec<ResultColumn<'static>> {
+    let mut aggregates = 0;
+    columns
+        .iter()
+        .map(|column| match column {
+            TableColumn::Metric(metric) => ResultColumn::of_metric(*metric),
+            TableColumn::Aggregate(aggregate) => {
+                let column = ResultColumn::of_aggregate(aggregate, aggregates);
+                aggregates += 1;
+                column
+            }
+        })
+        .collect()
+}
+
 /// One track's providers, absent for a track that is no longer loaded.
 fn track_values<'a>(
     files: &'a [LoadedFile],
@@ -1329,9 +1377,80 @@ fn track_values<'a>(
 
 #[cfg(test)]
 mod tests {
+    use geotrace_sdk_units::ChannelUnit;
+    use gt_query::{ChannelInfo, ChannelSchema, CheckedQuery};
     use gt_types::{Latitude, Longitude};
+    use gt_ui_theme::EM_DASH;
+    use rstest::rstest;
 
     use super::*;
+
+    /// A checked query over a three-component `@accel` channel in g.
+    fn checked_query(text: &str) -> CheckedQuery {
+        let mut schema = ChannelSchema::new();
+        schema.insert(
+            "accel",
+            ChannelInfo {
+                unit: Some(ChannelUnit::from_file_label("g")),
+                components: ["x", "y", "z"].map(str::to_owned).to_vec(),
+                ..ChannelInfo::default()
+            },
+        );
+        gt_query_run::check_text(text, &schema).expect("the fixture query checks")
+    }
+
+    #[test]
+    fn a_table_lists_its_columns_in_query_order_and_numbers_its_aggregates() {
+        let query = checked_query(
+            "points | window 1 | where avg(velocity) > 1 km/h \
+             | table max(@accel.x), velocity, min(@accel.y)",
+        );
+        let columns = result_columns(query.columns());
+        assert_eq!(
+            columns
+                .iter()
+                .map(|column| column.name.clone())
+                .collect::<Vec<_>>(),
+            ["time", "max(@accel.x)", "velocity", "min(@accel.y)"]
+        );
+        assert_eq!(
+            columns
+                .iter()
+                .map(|column| column.source)
+                .collect::<Vec<_>>(),
+            [
+                ColumnSource::Metric(QueryMetric::Time),
+                ColumnSource::Aggregate(0),
+                ColumnSource::Metric(QueryMetric::Velocity),
+                ColumnSource::Aggregate(1),
+            ]
+        );
+    }
+
+    /// The table shows an aggregate column's value in the unit of the quantity
+    /// it measures, converted out of the evaluator's base units, and the em
+    /// dash where the match has no value. `var` reads unitless: a squared
+    /// speed has no quantity name.
+    #[rstest]
+    #[case::acceleration("max(@accel.x)", 9.806_65, "9.81", "max(@accel.x) (m/s²)")]
+    #[case::squared_speed("var(velocity)", 2.5, "2.500", "var(velocity)")]
+    fn an_aggregate_column_prints_in_the_unit_of_its_quantity(
+        #[case] call: &str,
+        #[case] base_value: f64,
+        #[case] cell: &str,
+        #[case] header: &str,
+    ) {
+        let query = checked_query(&format!(
+            "points | window 1 | where avg(velocity) > 1 km/h | table {call}"
+        ));
+        let columns = result_columns(query.columns());
+        let aggregate = columns
+            .get(1)
+            .expect("the table lists the aggregate after time");
+        assert_eq!(aggregate.format.cell_text(Some(base_value)), cell);
+        assert_eq!(aggregate.format.cell_text(None), EM_DASH);
+        assert_eq!(aggregate.format.header_with_unit(&aggregate.name), header);
+    }
 
     #[test]
     fn a_point_row_states_its_index_and_measured_position() {

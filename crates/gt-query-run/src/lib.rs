@@ -44,8 +44,8 @@ pub use check::{QueryChunk, analysis_context, check_all, check_text, split_queri
 pub use fingerprint::{JammingValues, RunFingerprint, RunInputs, SnapErrorValues};
 pub use provider::{SliceProvider, TrackProvider, TrackQueryData};
 pub use results::{
-    ChannelResults, ChannelTrackResult, HiddenPoints, PanelQuery, PointsResults, QuerySummary,
-    RunResults,
+    ChannelResults, ChannelTrackResult, HiddenPoints, MatchValues, PanelQuery, PointsResults,
+    QuerySummary, RunResults, TrackMatchValues,
 };
 pub use run::{PreparedRun, RunHandle, RunKind, RunOutcome};
 pub use schema::schema_from_files;
