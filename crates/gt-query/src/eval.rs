@@ -406,15 +406,15 @@ fn evaluate_points(
     match query.window() {
         // A count window at anchor `start` spans the points `[start, start+n)`.
         // Too few points for even one full window means nothing can match.
-        Some(Window::Count(n)) if len < n => {
+        Some(Window::Count(n)) if len < n.get() => {
             shorter_than_window = true;
         }
         Some(Window::Count(n)) => {
-            for start in 0..=(len - n) {
+            for start in 0..=(len - n.get()) {
                 if start % check_interval == 0 && should_cancel() {
                     return None;
                 }
-                let end = start + n;
+                let end = start + n.get();
                 // A count window's channel span is the closed time extent of
                 // its points, `[t(start), t(end-1)]`. A boundary point with no
                 // timestamp (never, for nav points) leaves the span absent.
@@ -576,9 +576,9 @@ fn evaluate_channel_source(
     let mut shorter_than_window = false;
 
     match query.window() {
-        Some(Window::Count(n)) if len < n => shorter_than_window = true,
+        Some(Window::Count(n)) if len < n.get() => shorter_than_window = true,
         Some(Window::Count(n)) => {
-            for start in 0..=(len - n) {
+            for start in 0..=(len - n.get()) {
                 if start % check_interval == 0 && should_cancel() {
                     return None;
                 }
@@ -588,7 +588,7 @@ fn evaluate_channel_source(
                     &mut matched,
                     &mut skips,
                     &timeline,
-                    start..start + n,
+                    start..start + n.get(),
                 );
             }
         }

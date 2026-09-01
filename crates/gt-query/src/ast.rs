@@ -1,5 +1,7 @@
 //! Syntax tree for a parsed query, produced by [`crate::parse`].
 
+use std::num::NonZeroU64;
+
 use gt_types::DisplayMode;
 
 use crate::metric::{Quantity, QueryMetric};
@@ -59,7 +61,7 @@ pub struct ModeStage {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Window {
     /// `window N` - N consecutive points.
-    Count { len: u64, span: Span },
+    Count { len: NonZeroU64, span: Span },
     /// `window Δ unit` - a time span. The checker converts `value` and `unit`
     /// to seconds and rejects a non-duration unit.
     Duration { value: f64, unit: Unit, span: Span },

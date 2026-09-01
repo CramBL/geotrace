@@ -203,3 +203,28 @@ fn a_heading_of_a_full_turn_has_no_spread_against_north() {
     .expect("a well formed query");
     assert_eq!(matched_ranges(&output), vec![0..2]);
 }
+
+/// A diagnostic's span is a byte range. The two-byte superscripts earlier in
+/// the query do not shift it.
+#[test]
+fn a_diagnostic_span_covers_the_offending_bytes() {
+    let src = "points | where velocity² > velocity² and eph > 3 s";
+    let error = parse(src)
+        .and_then(|query| check(&query, &ChannelSchema::new()).map(|_checked| ()))
+        .expect_err(src);
+    assert_eq!(src.get(error.span.start..error.span.end), Some("3 s"));
+}
+
+/// A window count is a [`std::num::NonZeroU64`], so one point is the smallest
+/// window a query can express.
+#[test]
+fn the_smallest_window_over_an_empty_track_matches_nothing() {
+    let provider = TrackData::new(0);
+    let output = run_on_points(
+        "points | window 1 | where avg(velocity) > 0 km/h",
+        &provider,
+    )
+    .expect("a well formed query");
+    assert_eq!(matched_ranges(&output), Vec::new());
+    assert_eq!(output.summary.tracks_shorter_than_window, 1);
+}
