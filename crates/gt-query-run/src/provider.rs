@@ -97,10 +97,14 @@ impl TrackQueryData {
 
 /// Provider over one track's points plus the run's derived series, in the
 /// evaluator's base units (m/s, degrees, seconds, 0-1 ratios, per second).
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct TrackProvider<'a> {
     points: &'a [NavPoint],
     channels: &'a [Channel],
+    /// How each channel of [`Self::channels`] is searched by time, one entry
+    /// per channel in the same order. Determined once here, since
+    /// [`MetricProvider::channel_span`] runs once per window.
+    channel_sample_orders: Vec<ChannelSampleOrder>,
     util: Option<&'a UtilPerPoint>,
     slip: Option<&'a SlipRatePerPoint>,
     /// Dense per-point snap error values (one slot per track point), from
@@ -129,6 +133,7 @@ impl<'a> TrackProvider<'a> {
         Self {
             points,
             channels,
+            channel_sample_orders: channels.iter().map(ChannelSampleOrder::of).collect(),
             util: data.and_then(|d| d.util.as_ref()),
             slip: data.and_then(|d| d.slip.as_ref()),
             snap_error: data.and_then(|d| d.snap_error.as_deref().map(Vec::as_slice)),
@@ -188,19 +193,134 @@ impl<'a> TrackProvider<'a> {
             })
     }
 
-    /// Locate channel `name` and the two things both channel readers need: its
-    /// column count and the factor converting its stored unit to base units. An
-    /// unknown or absent unit leaves values a bare number (factor 1.0), matching
-    /// how the checker types such a channel; components share the channel unit.
-    fn resolve_channel(&self, name: &str) -> Option<(&Channel, usize, f64)> {
-        let channel = self.channels.iter().find(|c| c.name == name)?;
+    /// Locate channel `name` and the three things both channel readers need: its
+    /// column count, the factor converting its stored unit to base units, and
+    /// how it is searched by time. An unknown or absent unit leaves values a
+    /// bare number (factor 1.0), matching how the checker types such a channel.
+    /// Components share the channel unit.
+    fn resolve_channel(&self, name: &str) -> Option<ResolvedChannel<'_>> {
+        let (position, channel) = self
+            .channels
+            .iter()
+            .enumerate()
+            .find(|(_, c)| c.name == name)?;
         let to_base = channel
             .unit
             .as_ref()
             .and_then(|unit| unit.as_recognized())
             .map_or(1.0, Unit::to_base);
-        Some((channel, channel.component_count(), to_base))
+        Some(ResolvedChannel {
+            channel,
+            columns: channel.component_count(),
+            to_base,
+            sample_order: self.channel_sample_orders.get(position)?,
+        })
     }
+}
+
+/// A channel a query named, with what the channel readers need beyond its
+/// samples.
+struct ResolvedChannel<'a> {
+    channel: &'a Channel,
+    /// Value columns per sample.
+    columns: usize,
+    /// Factor from the channel's stored unit to the evaluator's base units.
+    to_base: f64,
+    sample_order: &'a ChannelSampleOrder,
+}
+
+impl ResolvedChannel<'_> {
+    /// The samples whose timestamp lands in the closed span `[t_lo, t_hi]`, in
+    /// timestamp order, row-major and in base units. An inverted span (`t_lo >
+    /// t_hi`, possible when the track's time is non-monotonic) selects none.
+    fn samples_in_span(&self, t_lo: f64, t_hi: f64) -> ChannelSamples {
+        let values = match self.sample_order {
+            ChannelSampleOrder::StoredOrderIsChronological => {
+                // The samples of the span are a contiguous row range, found by
+                // binary search over the stored timestamps.
+                let secs = |time: &DateTime<Utc>| time.timestamp_micros() as f64 / MICROS_PER_SEC;
+                let times = &self.channel.times;
+                let lo = times.partition_point(|time| secs(time) < t_lo);
+                let hi = times.partition_point(|time| secs(time) <= t_hi);
+                (lo..hi)
+                    .flat_map(|position| self.row_in_base_units(position))
+                    .collect()
+            }
+            ChannelSampleOrder::PositionsInTimeOrder(samples) => {
+                // The samples of the span are a contiguous range of the
+                // time-ordered positions, each naming a row anywhere in the
+                // stored values.
+                let lo = samples.partition_point(|sample| sample.seconds < t_lo);
+                let hi = samples.partition_point(|sample| sample.seconds <= t_hi);
+                samples
+                    .get(lo..hi)
+                    .unwrap_or_default()
+                    .iter()
+                    .flat_map(|sample| self.row_in_base_units(sample.position))
+                    .collect()
+            }
+        };
+        ChannelSamples {
+            values,
+            columns: self.columns,
+        }
+    }
+
+    /// Sample `position`'s columns, converted to base units. Empty for a
+    /// position past the stored values. The values are row-major
+    /// `[rows, columns]`, so row `r`'s columns are `r*columns .. (r+1)*columns`.
+    fn row_in_base_units(&self, position: usize) -> impl Iterator<Item = f64> {
+        self.channel
+            .values
+            .get(position * self.columns..(position + 1) * self.columns)
+            .unwrap_or_default()
+            .iter()
+            .map(|value| value * self.to_base)
+    }
+}
+
+/// How a channel's samples are found by time.
+#[derive(Clone)]
+enum ChannelSampleOrder {
+    /// The stored timestamps never decrease, so a binary search over them
+    /// locates a time span.
+    StoredOrderIsChronological,
+    /// The sample positions in timestamp order, for a channel whose stored
+    /// timestamps step backwards somewhere. The channel itself keeps the order
+    /// the file gave it.
+    PositionsInTimeOrder(Vec<SampleAtTime>),
+}
+
+impl ChannelSampleOrder {
+    /// Determine how `channel` is searched, warning when its timestamps step
+    /// backwards.
+    fn of(channel: &Channel) -> Self {
+        if channel.times.is_sorted() {
+            return Self::StoredOrderIsChronological;
+        }
+        log::warn!(
+            "Channel {:?} has sample timestamps that step backwards - the recording clock stepped back while the channel was sampled",
+            channel.name
+        );
+        let mut samples: Vec<SampleAtTime> = channel
+            .times
+            .iter()
+            .enumerate()
+            .map(|(position, time)| SampleAtTime {
+                seconds: time.timestamp_micros() as f64 / MICROS_PER_SEC,
+                position,
+            })
+            .collect();
+        samples.sort_by(|a, b| a.seconds.total_cmp(&b.seconds));
+        Self::PositionsInTimeOrder(samples)
+    }
+}
+
+/// One sample's position within a channel, and its timestamp in Unix seconds.
+#[derive(Clone)]
+struct SampleAtTime {
+    seconds: f64,
+    position: usize,
 }
 
 /// Seen/in-fix satellite counts of one constellation at one point.
@@ -307,51 +427,42 @@ impl MetricProvider for TrackProvider<'_> {
         }
     }
 
-    /// A channel's samples whose timestamp lands in `[t_lo, t_hi]`, as row-major
-    /// rows (one column per component, one for a scalar channel), converted from
-    /// the channel's stored unit to the evaluator's base units.
+    /// A channel's samples whose timestamp lands in `[t_lo, t_hi]`, in timestamp
+    /// order, as row-major rows (one column per component, one for a scalar
+    /// channel), converted from the channel's stored unit to the evaluator's
+    /// base units.
     ///
     /// `t_lo`/`t_hi` arrive floored to whole seconds (the query engine's time
     /// resolution, since nav-point time floors to whole seconds); the sub-second
     /// precision of a sample's own timestamp only refines placement within that
     /// grid.
     fn channel_span(&self, name: &str, t_lo: f64, t_hi: f64) -> ChannelSamples {
-        let Some((channel, columns, to_base)) = self.resolve_channel(name) else {
-            return ChannelSamples::default();
-        };
-        // `times` is sorted ascending, so the samples in the closed span are a
-        // contiguous row range found by binary search. An inverted span (`t_lo >
-        // t_hi`, possible when the track's time is non-monotonic) makes the range
-        // empty rather than panicking. Values are row-major `[rows, columns]`, so
-        // row `r`'s columns are `r*columns .. (r+1)*columns`.
-        let secs = |time: &DateTime<Utc>| time.timestamp_micros() as f64 / MICROS_PER_SEC;
-        let lo = channel.times.partition_point(|time| secs(time) < t_lo);
-        let hi = channel.times.partition_point(|time| secs(time) <= t_hi);
-        let values = channel
-            .values
-            .get(lo * columns..hi * columns)
+        self.resolve_channel(name)
+            .map(|resolved| resolved.samples_in_span(t_lo, t_hi))
             .unwrap_or_default()
-            .iter()
-            .map(|value| value * to_base)
-            .collect();
-        ChannelSamples { values, columns }
     }
 
     /// The whole sample timeline of `name` in base units, for a query whose
     /// source is that channel. Each sample keeps its own (sub-second) time: the
     /// channel is the timeline here.
     fn channel_timeline(&self, name: &str) -> ChannelTimeline {
-        let Some((channel, columns, to_base)) = self.resolve_channel(name) else {
+        let Some(resolved) = self.resolve_channel(name) else {
             return ChannelTimeline::default();
         };
         ChannelTimeline {
-            times: channel
+            times: resolved
+                .channel
                 .times
                 .iter()
                 .map(|t| t.timestamp_micros() as f64 / MICROS_PER_SEC)
                 .collect(),
-            values: channel.values.iter().map(|value| value * to_base).collect(),
-            columns,
+            values: resolved
+                .channel
+                .values
+                .iter()
+                .map(|value| value * resolved.to_base)
+                .collect(),
+            columns: resolved.columns,
         }
     }
 }
@@ -772,6 +883,48 @@ mod tests {
         );
     }
 
+    #[rstest]
+    #[case::ascending(&[0, 1, 2], true)]
+    #[case::two_samples_at_one_timestamp(&[0, 1, 1], true)]
+    #[case::a_timestamp_before_the_sample_stored_ahead_of_it(&[0, 2, 1], false)]
+    fn a_channel_keeps_the_binary_search_while_its_stored_times_never_decrease(
+        #[case] offsets_secs: &[i64],
+        #[case] stored_order_is_chronological: bool,
+    ) {
+        let samples: Vec<(i64, f64)> = offsets_secs.iter().map(|&secs| (secs, 1.0)).collect();
+        let channel = scalar_channel("sensor", None, &samples);
+
+        let order = ChannelSampleOrder::of(&channel);
+
+        assert_eq!(
+            matches!(order, ChannelSampleOrder::StoredOrderIsChronological),
+            stored_order_is_chronological
+        );
+    }
+
+    #[test]
+    fn a_span_of_an_out_of_order_channel_yields_whole_rows_in_timestamp_order() {
+        let base = TEST_EPOCH as f64;
+        let accel = vector_channel(
+            "accel",
+            None,
+            &["x", "y", "z"],
+            &[
+                (2, [2.0, 2.1, 2.2]),
+                (0, [0.0, 0.1, 0.2]),
+                (1, [1.0, 1.1, 1.2]),
+            ],
+        );
+        let channels = [accel];
+        let points = test_points();
+        let provider = TrackProvider::new(&points, &channels, None);
+
+        let got = provider.channel_span("accel", base, base + 1.0);
+
+        assert_eq!(got.columns, 3);
+        assert_eq!(got.values, vec![0.0, 0.1, 0.2, 1.0, 1.1, 1.2]);
+    }
+
     #[test]
     fn slice_provider_channel_span_ignores_the_index_offset() {
         // Channels are absolute-time-keyed, so a SliceProvider selects the same
@@ -781,7 +934,7 @@ mod tests {
         let channels = [accel];
         let points = test_points();
         let inner = TrackProvider::new(&points, &channels, None);
-        let slice = SliceProvider::new(inner, 1, 1);
+        let slice = SliceProvider::new(inner.clone(), 1, 1);
 
         // The span [base, base+1] holds the first two samples through either
         // provider; the slice's start must not shift the time window.

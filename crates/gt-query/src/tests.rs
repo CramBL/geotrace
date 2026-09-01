@@ -82,9 +82,13 @@ impl MetricProvider for TestProvider {
             return ChannelSamples::default();
         };
         let columns = rows.first().map_or(1, |(_, row)| row.len());
-        let values = rows
+        let mut in_span: Vec<&(f64, Vec<f64>)> = rows
             .iter()
             .filter(|(t, _)| *t >= t_lo && *t <= t_hi)
+            .collect();
+        in_span.sort_by(|(a, _), (b, _)| a.total_cmp(b));
+        let values = in_span
+            .iter()
             .flat_map(|(_, row)| row.iter().copied())
             .collect();
         ChannelSamples { values, columns }

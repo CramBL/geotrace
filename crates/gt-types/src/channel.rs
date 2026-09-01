@@ -14,8 +14,9 @@ use uom::si::f64::Angle;
 ///
 /// `components` is empty for a scalar channel, or holds one label per column for
 /// a vector channel (`["x", "y", "z"]`). `values` is row-major: [`times`]`.len()`
-/// rows of [`component_count`](Self::component_count) columns each. `times` is
-/// sorted ascending.
+/// rows of [`component_count`](Self::component_count) columns each. [`times`]
+/// holds the timestamps in the order the file stored them. A recording whose
+/// clock stepped back leaves them out of order.
 ///
 /// [`times`]: Self::times
 #[derive(Debug, Clone, PartialEq)]
@@ -48,8 +49,8 @@ impl Channel {
     }
 
     /// The samples whose timestamp falls in `[start, end]`, as a new channel
-    /// with the same metadata. Assumes [`times`](Self::times) is sorted; keeps
-    /// each value row aligned with its timestamp.
+    /// with the same metadata, whatever order [`times`](Self::times) holds. Each
+    /// value row stays aligned with its timestamp.
     pub fn slice_time_range(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> Channel {
         let columns = self.component_count();
         debug_assert_eq!(
@@ -134,6 +135,20 @@ mod tests {
             sliced.unit.as_ref().map(ToString::to_string).as_deref(),
             Some("g")
         );
+    }
+
+    #[test]
+    fn slice_keeps_the_stored_order_of_a_channel_whose_times_step_backwards() {
+        let channel = Channel {
+            times: vec![at(2), at(0), at(1)],
+            values: vec![2.0, 2.1, 3.0, 0.0, 0.1, 1.0, 1.0, 1.1, 2.0],
+            ..vector_channel()
+        };
+
+        let sliced = channel.slice_time_range(at(1), at(2));
+
+        assert_eq!(sliced.times, vec![at(2), at(1)]);
+        assert_eq!(sliced.values, vec![2.0, 2.1, 3.0, 1.0, 1.1, 2.0]);
     }
 
     #[test]

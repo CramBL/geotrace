@@ -1365,7 +1365,7 @@ fn track_values<'a>(
     let slice_start = data.map_or(0, TrackQueryData::slice_start);
     Some(TrackValues {
         placed: loaded.placed_points(),
-        provider,
+        provider: provider.clone(),
         slice: SliceProvider::new(
             provider,
             slice_start,
