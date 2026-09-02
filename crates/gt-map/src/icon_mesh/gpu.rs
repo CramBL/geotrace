@@ -277,6 +277,21 @@ pub fn install(
     egui_ctx.data_mut(|d| d.insert_temp(installed_flag(), true));
 }
 
+/// [install], with the icon library embedded in the binary and dithering off,
+/// as a hook a snapshot harness hands its render state to: kittest's
+/// PREDICTABLE renderer options turn dithering off.
+///
+/// A blob that does not decode installs nothing and leaves the CPU mesh path
+/// in place. [NavMap::new](crate::NavMap::new) logs that decode failure.
+pub fn install_embedded_library_without_dithering(
+    egui_ctx: &egui::Context,
+    render_state: &RenderState,
+) {
+    if let Ok(library) = IconMeshLibrary::embedded() {
+        install(egui_ctx, render_state, &library, false);
+    }
+}
+
 /// One instanced-draw group inside a callback: every instance of one
 /// (icon, bucket) template, in first-push order.
 pub(crate) struct InstanceGroup {

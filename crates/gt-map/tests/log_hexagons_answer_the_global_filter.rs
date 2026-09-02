@@ -25,11 +25,10 @@ use gt_ui_types::{
     DisplayCategory, EventMarkerVisibility, GeneratedMarkerVisibility, LoadedLogId, LogMatch,
     LogMatchColor, LogMatchGlyph, LogMatchLayer, LogMatchSource, LogMatches, TrackDataVisibility,
 };
-use support::{Frame, HeadlessMap, WALKING_STEP_DEGREES, a_recording_of, epoch, window_ending_at};
-
-/// Frames a case runs before it reads what the map drew: the first one frames
-/// the recording, and the rest settle the load animation.
-const SETTLE_FRAMES: usize = 8;
+use support::{
+    FRAMES_TO_SETTLE, Frame, HeadlessMap, WALKING_STEP_DEGREES, a_recording_of, epoch,
+    window_ending_at,
+};
 
 /// Longitude between consecutive fixes of a recording made in one spot, about
 /// 6 cm. Every hexagon over such a recording collapses into one cluster.
@@ -123,7 +122,7 @@ fn matches_over(files: &[LoadedFile], log: &Arc<ParsedLog>, entries: Range<usize
 }
 
 /// The map every case drives: `files` framed with no filter active over
-/// `SETTLE_FRAMES` frames, holding `matches`, with `filter` set after that.
+/// `FRAMES_TO_SETTLE` frames, holding `matches`, with `filter` set after that.
 ///
 /// The app narrows the window the same way, while the user is looking at the
 /// track. The camera stays where those frames put it.
@@ -134,7 +133,7 @@ fn map_framed_on(
 ) -> HeadlessMap<'_> {
     let mut map = HeadlessMap::new(files, GlobalFilter::default());
     map.set_log_matches(matches);
-    for _ in 0..SETTLE_FRAMES {
+    for _ in 0..FRAMES_TO_SETTLE {
         map.draw(&Frame::default());
     }
     map.set_filter(filter);
