@@ -2351,7 +2351,8 @@ fn snapshot_space_weather_warning_toast() {
         .loaded_files
         .files()
         .first()
-        .map(|file| file.metadata.time_range.start.date_naive())
+        .and_then(|file| file.metadata.time_range)
+        .map(|range| range.start.date_naive())
         .expect("the gold recording is loaded");
     let dir = tempfile::tempdir().expect("temp dir");
     let store = gt_store::Store::open_in(dir.path())
@@ -9604,7 +9605,7 @@ fn snapshot_recording_details_dialog() {
                 device: Some("uBlox ZED-F9P".to_owned()),
                 notes: Some("Rooftop antenna, clear sky.".to_owned()),
                 travel_mode: Some(gt_types::TravelMode::Bicycle),
-                time_range: gt_types::TimeRange::new(morning, noon),
+                time_range: Some(gt_types::TimeRange::new(morning, noon)),
                 total_duration: chrono::TimeDelta::minutes(88),
                 ..gt_test_utils::empty_file_metadata()
             },

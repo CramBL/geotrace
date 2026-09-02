@@ -143,7 +143,7 @@ fn make_snapshot_file() -> gt_types::LoadedFile {
             filename: "snapshot_test.gtd".to_string(),
             total_distance: TotalDistance::Measured(Length::new::<kilometer>(5.0)),
             total_duration: chrono::Duration::seconds(n as i64),
-            time_range: TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64)),
+            time_range: Some(TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64))),
             ..gt_test_utils::empty_file_metadata()
         },
         tracks: vec![track],
@@ -1041,7 +1041,7 @@ fn make_short_walk_file() -> gt_types::LoadedFile {
     LoadedFile {
         metadata: FileMetadata {
             filename: "short_walk.gtd".to_string(),
-            time_range: TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64)),
+            time_range: Some(TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64))),
             ..gt_test_utils::empty_file_metadata()
         },
         tracks: vec![track],

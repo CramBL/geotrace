@@ -974,14 +974,10 @@ pub fn build_loaded_file(
         }
     };
 
-    let fallback = DateTime::<Utc>::UNIX_EPOCH;
-    let file_time_range = match (loaded_tracks.first(), loaded_tracks.last()) {
-        (Some(first), Some(last)) => TimeRange::new(
-            first.metadata.time_range.start,
-            last.metadata.time_range.end,
-        ),
-        _ => TimeRange::new(fallback, fallback),
-    };
+    let file_time_range = loaded_tracks
+        .iter()
+        .map(|track| track.metadata.time_range)
+        .reduce(TimeRange::union);
 
     LoadedFile {
         metadata: FileMetadata {
@@ -1630,6 +1626,7 @@ mod tests {
         );
         assert!(f.tracks.is_empty());
         assert_eq!(f.metadata.filename, "test.gtd");
+        assert_eq!(f.metadata.time_range, None);
     }
 
     const FIRST_STYLE_COLOR: MarkerColor = MarkerColor::new(0x11, 0x22, 0x33);

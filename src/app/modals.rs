@@ -1568,10 +1568,10 @@ mod tests {
     fn the_recording_details_dialog_states_the_time_range_and_the_recorded_time() {
         let mut metadata = gt_test_utils::empty_file_metadata();
         metadata.filename = "paused.gtd".to_owned();
-        metadata.time_range = TimeRange::new(
+        metadata.time_range = Some(TimeRange::new(
             chrono::DateTime::UNIX_EPOCH + chrono::TimeDelta::hours(12),
             chrono::DateTime::UNIX_EPOCH + chrono::TimeDelta::minutes(18 * 60 + 30),
-        );
+        ));
         metadata.total_duration = chrono::TimeDelta::minutes(88);
         let mut harness = TestHarness::builder()
             .size(egui::vec2(520.0, 320.0))

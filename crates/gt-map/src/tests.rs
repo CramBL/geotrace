@@ -38,7 +38,10 @@ fn make_file_from_points(points: Vec<gt_types::NavPoint>) -> LoadedFile {
             filename: format!("test_{n}.gtd"),
             total_distance: TotalDistance::Measured(Length::new::<kilometer>(1.0)),
             total_duration: chrono::Duration::seconds(n as i64),
-            time_range: TimeRange::new(now, now + chrono::Duration::seconds(n as i64)),
+            time_range: Some(TimeRange::new(
+                now,
+                now + chrono::Duration::seconds(n as i64),
+            )),
             ..gt_test_utils::empty_file_metadata()
         },
         tracks: vec![track],
@@ -646,7 +649,7 @@ fn candidate_label_generated_marker_matches_header() {
             filename: "test.gtd".to_string(),
             total_distance: TotalDistance::Measured(Length::new::<kilometer>(1.0)),
             total_duration: chrono::Duration::seconds(1),
-            time_range: TimeRange::new(now, now + chrono::Duration::seconds(1)),
+            time_range: Some(TimeRange::new(now, now + chrono::Duration::seconds(1))),
             ..gt_test_utils::empty_file_metadata()
         },
         tracks: vec![track],

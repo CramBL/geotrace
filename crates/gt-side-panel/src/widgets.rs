@@ -4,7 +4,7 @@ use egui_phosphor::regular::CARET_RIGHT as ICON_CARET_RIGHT;
 use egui_phosphor::regular::CHECK_SQUARE as ICON_CHECK_SQUARE;
 use egui_phosphor::regular::MINUS_SQUARE as ICON_MINUS_SQUARE;
 use egui_phosphor::regular::SQUARE as ICON_SQUARE;
-use gt_types::{FileMetadata, FixStats, TrackMetadata, TravelMode};
+use gt_types::{FileMetadata, FixStats, TimeRange, TrackMetadata, TravelMode};
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, MapScope};
 
 use crate::tree::CheckState;
@@ -93,6 +93,14 @@ pub fn metadata_detail_rows(ui: &mut egui::Ui, view: &MetadataView<'_>) {
         });
 }
 
+/// The span a recording covers, an em dash for a recording with no track.
+fn time_range_text(time_range: Option<TimeRange>) -> String {
+    time_range.map_or_else(
+        || gt_ui_theme::EM_DASH.to_owned(),
+        |range| gt_fmt::format_time_range(range.start, range.end),
+    )
+}
+
 /// Render a recording's time range and its recorded time as a two-column grid
 /// beside [`metadata_detail_rows`]. The recorded time is the sum of the track
 /// durations: it is shorter than the time range whenever the recording idled
@@ -102,11 +110,7 @@ pub fn recording_time_detail_rows(ui: &mut egui::Ui, metadata: &FileMetadata) {
         .num_columns(2)
         .spacing(DETAIL_GRID_SPACING)
         .show(ui, |ui| {
-            detail_row(
-                ui,
-                "Time range",
-                &gt_fmt::format_time_range(metadata.time_range.start, metadata.time_range.end),
-            );
+            detail_row(ui, "Time range", &time_range_text(metadata.time_range));
             detail_row(
                 ui,
                 "Recorded time",
@@ -118,13 +122,7 @@ pub fn recording_time_detail_rows(ui: &mut egui::Ui, metadata: &FileMetadata) {
 /// The hover text of a recording row, in the tree and in the Visible section.
 pub fn recording_tooltip_rows(ui: &mut egui::Ui, metadata: &FileMetadata) {
     ui.label(metadata.filename.as_str());
-    ui.label(
-        RichText::new(gt_fmt::format_time_range(
-            metadata.time_range.start,
-            metadata.time_range.end,
-        ))
-        .strong(),
-    );
+    ui.label(RichText::new(time_range_text(metadata.time_range)).strong());
     ui.label(format!(
         "Recorded time {}",
         gt_fmt::format_human_terse_duration(metadata.total_duration)

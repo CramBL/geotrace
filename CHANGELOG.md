@@ -60,6 +60,7 @@
 - **Interface:** Fixed the query results not graying out while the query window is closed.
 - **Interface:** Fixed a query's `sys_time` dropping the microseconds of a host timestamp.
 - **Interface:** Fixed a query's `clock_delta` dropping the microseconds of the GPS/host clock offset.
+- **Interface:** Fixed the time range filter's bar vanishing for a recording whose clock steps backwards, and spanning decades when a recording with no fixes is loaded beside it.
 - **Log Viewer:** Fixed a log entry between two fixes across the antimeridian being placed half a world away.
 - **Log Viewer:** Fixed log hexagons drawing, taking the pointer and being counted for recordings and lines the filter hides.
 - **Map & Tracks:** Fixed an event marker on a stretch of dead-reckoned fixes being drawn away from the track.

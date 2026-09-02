@@ -35,7 +35,7 @@ pub fn empty_track_metadata() -> gt_types::track::TrackMetadata {
     }
 }
 
-/// File metadata with an unnamed file and every measure zeroed, at the epoch,
+/// File metadata with an unnamed file, every measure zeroed and no time range,
 /// for tests that fill in only the fields they exercise.
 pub fn empty_file_metadata() -> gt_types::FileMetadata {
     gt_types::FileMetadata {
@@ -44,10 +44,7 @@ pub fn empty_file_metadata() -> gt_types::FileMetadata {
             Length::new::<uom::si::length::kilometer>(0.0),
         ),
         total_duration: Duration::zero(),
-        time_range: gt_types::track::TimeRange::new(
-            chrono::DateTime::UNIX_EPOCH,
-            chrono::DateTime::UNIX_EPOCH,
-        ),
+        time_range: None,
         fix_stats: None,
         title: None,
         device: None,

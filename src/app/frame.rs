@@ -593,9 +593,11 @@ impl App {
             let recordings: Vec<RecordingUnderAssessment<'_>> = loaded_files
                 .entries()
                 .enumerate()
-                .map(|(index, entry)| {
+                .filter_map(|(index, entry)| {
                     let file = entry.file();
-                    let span = file.metadata.time_range;
+                    // A recording with no track covers no span: it enters no
+                    // assessment.
+                    let span = file.metadata.time_range?;
                     let fi = FileIdx::new(index);
                     let tracks = file
                         .tracks
@@ -618,7 +620,7 @@ impl App {
                             }
                         })
                         .collect();
-                    RecordingUnderAssessment {
+                    Some(RecordingUnderAssessment {
                         id: entry.id(),
                         label: names
                             .get(fi)
@@ -628,7 +630,7 @@ impl App {
                         tracks,
                         archived_flare_days: self.solar_flares.archived_days_for(span),
                         positions: ArcIdentity::of(positions),
-                    }
+                    })
                 })
                 .collect();
             self.space_weather_warning.reassess(&recordings, |span| {
