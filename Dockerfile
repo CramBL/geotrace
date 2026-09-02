@@ -86,11 +86,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 # cmake is absent from the package list below because the Rust dev stage already
 # installs it (the default history backend builds libhdf5).
 #
-# clang-format 14, the version bookworm packages, reformats
-# sdk/cpp/include/geotrace/geotrace.hpp: it ignores
+# clang comes from apt.llvm.org: bookworm packages clang-format 14, which
+# reformats the committed sdk/cpp/include/geotrace/geotrace.hpp. It ignores
 # `AllowShortFunctionsOnASingleLine: Inline` for a function body inside the
-# `#else` branch of a preprocessor conditional. This major matches the one
-# .github/workflows/ci_sdk.yml pins as LLVM_CLANG_MAJOR.
+# `#else` branch of a preprocessor conditional. This major must equal
+# LLVM_CLANG_MAJOR in .github/workflows/ci_sdk.yml, which the CI lint jobs run.
 ENV LLVM_VERSION=22
 RUN curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
       -o /usr/share/keyrings/apt-llvm-org.asc \
@@ -113,6 +113,10 @@ RUN set -e; for tool in clang clang++ clang-format clang-tidy; do \
         update-alternatives --install "/usr/bin/${tool}" "${tool}" \
             "/usr/bin/${tool}-${LLVM_VERSION}" 100; \
     done
+
+RUN clang-format --version && clang-tidy --version \
+    && clang-format --version | grep -q "clang-format version ${LLVM_VERSION}\." \
+    && clang-tidy --version | grep -q "LLVM version ${LLVM_VERSION}\."
 
 RUN git clone --depth=1 https://github.com/microsoft/vcpkg /opt/vcpkg \
     && /opt/vcpkg/bootstrap-vcpkg.sh -disableMetrics
