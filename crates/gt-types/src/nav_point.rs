@@ -49,14 +49,16 @@ impl ProjectedPosition {
     }
 }
 
-/// Where the track builder placed a fix, and how it got there.
+/// Where the track builder placed a fix or an event marker, and how it got
+/// there.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ResolvedPosition {
-    /// The coordinates the receiver recorded, both inside their axis' range.
+    /// The coordinates the recording holds, both inside their axis' range.
     Measured(ProjectedPosition),
     /// A position the track builder derived, in time between the fixes around
-    /// it: a fix the receiver dead-reckoned, or one whose recorded coordinates
-    /// are out of range.
+    /// it: a fix the receiver dead-reckoned, one whose recorded coordinates
+    /// are out of range, or an event marker between two fixes when the builder
+    /// placed either of them away from its recorded coordinates.
     Interpolated(ProjectedPosition),
 }
 
