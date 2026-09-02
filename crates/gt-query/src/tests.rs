@@ -378,6 +378,100 @@ fn a_duration_window_survives_a_backward_time_step() {
 }
 
 #[test]
+fn a_duration_window_holds_the_points_of_one_chronological_run() {
+    // The clock steps back at point 3, from 2 s to 0.1 s. The window at point 0
+    // holds the points at 0 s and 1 s, both above the bar. The windows of the
+    // second run hold points below it, and the windows at points 1 and 2 have
+    // no room: their 2 s runs past 2 s, the last time of their own run.
+    let provider = TestProvider::new(7)
+        .with(
+            QueryMetric::Time,
+            vec![
+                Some(0.0),
+                Some(1.0),
+                Some(2.0),
+                Some(0.1),
+                Some(1.1),
+                Some(2.1),
+                Some(3.1),
+            ],
+        )
+        .with(
+            QueryMetric::Velocity,
+            vec![
+                Some(10.0),
+                Some(10.0),
+                Some(10.0),
+                Some(0.0),
+                Some(0.0),
+                Some(0.0),
+                Some(0.0),
+            ],
+        );
+    let output = run_one(
+        "points | window 2 s | where avg(velocity) > 5 km/h",
+        &provider,
+    );
+    assert_eq!(output.matches[0].ranges, vec![0..2]);
+}
+
+#[test]
+fn a_duration_window_has_no_room_in_a_run_shorter_than_itself() {
+    // The clock steps back at point 2, from 11 s to 0 s. No anchor of either run
+    // has room for a 2 s window: each run spans a second, however far the
+    // track's largest time reaches.
+    let provider = TestProvider::new(4)
+        .with(
+            QueryMetric::Time,
+            vec![Some(10.0), Some(11.0), Some(0.0), Some(1.0)],
+        )
+        .with(
+            QueryMetric::Velocity,
+            vec![Some(10.0), Some(10.0), Some(10.0), Some(10.0)],
+        );
+    let output = run_one(
+        "points | window 2 s | where avg(velocity) > 5 km/h",
+        &provider,
+    );
+    assert!(output.matches.is_empty());
+    assert_eq!(output.summary.tracks_with_no_room_for_the_window, 1);
+}
+
+#[test]
+fn a_channel_source_duration_window_holds_the_samples_of_one_chronological_run() {
+    // The channel's clock steps back at sample 3, from 2 s to 1 s, and only the
+    // samples after the step are above the bar. The windows at samples 3 and 4
+    // match. The windows at samples 5 and 6 have no room in their own run.
+    let provider = TestProvider::new(0).with_channel(
+        "sensor",
+        vec![
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (2.0, 0.0),
+            (1.0, 10.0),
+            (2.0, 10.0),
+            (3.0, 10.0),
+            (4.0, 10.0),
+        ],
+    );
+    let query = check(
+        &parse("@sensor | window 2 s | where max(@sensor) > 5").unwrap(),
+        &schema_with("sensor", None, None),
+    )
+    .unwrap();
+
+    let output = run(
+        &query,
+        &[TrackInput {
+            track: track_ref(),
+            provider: &provider,
+        }],
+    );
+
+    assert_eq!(output.matches[0].ranges, vec![3..6]);
+}
+
+#[test]
 fn a_duration_window_spans_real_time_not_point_count() {
     // Uneven spacing: points at 0, 1, 5, 6 s. A 2 s window at point 0 holds
     // only points 0 and 1 (point at 5 s is outside [0, 2)); the sparse
