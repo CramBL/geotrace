@@ -1,11 +1,12 @@
-//! Where the map draws an event marker along a stretch of fixes the builder
-//! re-placed.
+//! Where the map draws the fixes of a stretch the builder re-placed, and the
+//! event markers stamped along it.
 //!
-//! The builder places an event marker over the positions it draws the fixes
-//! around it at: the recorder interpolated the marker's coordinates over the
-//! recorded positions of those same fixes. A fix the receiver dead-reckoned is
-//! re-placed between the fixes around it, because the coordinates a receiver
-//! writes without a heading are often its own dead reckoning.
+//! The builder re-places a fix the receiver dead-reckoned between the fixes
+//! around it, and leaves a fix the receiver measured at the position it
+//! measured. Satellites in fix are what tells the two apart. An event marker
+//! is placed over the positions the fixes around it are drawn at: the recorder
+//! interpolated the marker's coordinates over the recorded positions of those
+//! same fixes.
 
 use std::path::PathBuf;
 
@@ -32,6 +33,11 @@ const SATELLITES_IN_VIEW: u32 = 4;
 
 /// Two positions this close are one place on the map.
 const POSITION_TOLERANCE_METERS: f64 = 0.1;
+
+/// Two longitudes this close are one meridian to within a millimetre, which
+/// covers the great circle's departure from a straight line over the steps
+/// these fixtures take.
+const POSITION_TOLERANCE_DEGREES: f64 = 1e-8;
 
 /// The longitudes alone distinguish the fixes: every fixture here shares this
 /// latitude unless it states another.
@@ -106,6 +112,30 @@ fn dead_reckoned_fix(millis: i64, lat: Latitude, lon: Longitude) -> NavPoint {
     )
 }
 
+/// A fix a receiver reports while it stands still: a full solution behind it,
+/// and no heading, because a receiver at rest has no course to report.
+fn fix_without_a_heading(millis: i64, lon: Longitude) -> NavPoint {
+    fix(
+        millis,
+        Latitude::new(LATITUDE_DEGREES),
+        lon,
+        None,
+        Some(satellite_report(millis, SATELLITES_IN_FIX, 0)),
+    )
+}
+
+/// A fix the receiver reports with a course but nothing in fix, which
+/// [`NavPoint::is_ghost_fix`] calls a ghost and the map draws hollow.
+fn fix_with_a_heading_and_nothing_in_fix(millis: i64, lon: Longitude) -> NavPoint {
+    fix(
+        millis,
+        Latitude::new(LATITUDE_DEGREES),
+        lon,
+        heading_east(),
+        Some(satellite_report(millis, 0, SATELLITES_IN_VIEW)),
+    )
+}
+
 fn event_marker(millis: i64, lat: Latitude, lon: Longitude) -> EventMarker {
     EventMarker::new(utc_time(millis), "marker/note".to_owned(), None, lat, lon)
 }
@@ -130,6 +160,16 @@ fn fix_drawn_at(file: &LoadedFile, index: usize) -> Option<(Latitude, Longitude)
     file.tracks
         .first()
         .and_then(|track| track.resolved_position_at(index))
+}
+
+/// Where the map draws the fix at `index` of the only track built from
+/// `points`.
+fn drawn_at(points: &[NavPoint], index: usize) -> Option<(Latitude, Longitude)> {
+    fix_drawn_at(&build(points, vec![]), index)
+}
+
+fn drawn_longitude_degrees(points: &[NavPoint], index: usize) -> Option<f64> {
+    Some(drawn_at(points, index)?.1.as_degrees())
 }
 
 /// Where the map draws the file's only event marker, read off the spatial
@@ -266,5 +306,179 @@ fn an_event_marker_among_measured_fixes_is_drawn_at_its_recorded_coordinates(
     assert!(
         offset_m < POSITION_TOLERANCE_METERS,
         "the marker is drawn {offset_m} m from the coordinates the recording holds for it"
+    );
+}
+
+/// A receiver reports satellites in fix whenever it measured the position it
+/// wrote. It reports no heading whenever it has no course to report.
+#[test]
+fn a_fix_with_satellites_in_fix_keeps_its_measured_position() {
+    let points = vec![
+        fix_without_a_heading(0, Longitude::new(0.0)),
+        fix_without_a_heading(1_000, Longitude::new(5.0)),
+        fix_without_a_heading(10_000, Longitude::new(10.0)),
+    ];
+
+    let longitude = drawn_longitude_degrees(&points, 1).expect("the fix is drawn");
+
+    assert!(
+        (longitude - 5.0).abs() < POSITION_TOLERANCE_DEGREES,
+        "the fix with {SATELLITES_IN_FIX} satellites in fix measured at lon 5.0 is drawn at \
+         lon {longitude}"
+    );
+}
+
+/// The first fix of a stop is where the receiver came to rest, and it is drawn
+/// there. Every fix of a stop has no heading: a receiver stops reporting a
+/// course as soon as it stands still.
+#[test]
+fn the_first_fix_after_the_receiver_stops_is_drawn_where_it_stopped() {
+    const STOP_LONGITUDE_DEGREES: f64 = 0.010;
+    let stop_longitude = Longitude::new(STOP_LONGITUDE_DEGREES);
+    let points = vec![
+        measured_fix(0, Longitude::new(0.000)),
+        measured_fix(10_000, Longitude::new(0.005)),
+        fix_without_a_heading(20_000, stop_longitude),
+        fix_without_a_heading(30_000, stop_longitude),
+        fix_without_a_heading(40_000, stop_longitude),
+    ];
+
+    let longitude = drawn_longitude_degrees(&points, 2).expect("the fix is drawn");
+
+    assert!(
+        (longitude - STOP_LONGITUDE_DEGREES).abs() < POSITION_TOLERANCE_DEGREES,
+        "the first fix of the stop is drawn at lon {longitude}, back along the road from the \
+         lon {STOP_LONGITUDE_DEGREES} it was measured at"
+    );
+}
+
+/// A fix whose share of its anchors' time span is negative is placed between
+/// them. A fix stamped before the one ahead of it keeps its place in the
+/// recording: nothing sorts the fixes.
+#[test]
+fn a_ghost_fix_stamped_before_its_anchors_is_placed_between_them() {
+    const FIRST_ANCHOR_LONGITUDE_DEGREES: f64 = 0.000;
+    const SECOND_ANCHOR_LONGITUDE_DEGREES: f64 = 0.001;
+    let points = vec![
+        measured_fix(300_000, Longitude::new(FIRST_ANCHOR_LONGITUDE_DEGREES)),
+        dead_reckoned_fix(
+            1_000,
+            Latitude::new(LATITUDE_DEGREES),
+            Longitude::new(FIRST_ANCHOR_LONGITUDE_DEGREES),
+        ),
+        measured_fix(300_500, Longitude::new(SECOND_ANCHOR_LONGITUDE_DEGREES)),
+    ];
+
+    let longitude = drawn_longitude_degrees(&points, 1).expect("the fix is drawn");
+
+    assert!(
+        (FIRST_ANCHOR_LONGITUDE_DEGREES..=SECOND_ANCHOR_LONGITUDE_DEGREES).contains(&longitude),
+        "the dead-reckoned fix is drawn at lon {longitude}, outside the \
+         lon {FIRST_ANCHOR_LONGITUDE_DEGREES} to {SECOND_ANCHOR_LONGITUDE_DEGREES} its anchors \
+         span"
+    );
+}
+
+/// The builder leaves this fix at the coordinates it was recorded with. A
+/// receiver that loses its solution keeps reporting a course from its own dead
+/// reckoning, and [`NavPoint::is_ghost_fix`] draws the fix hollow.
+#[test]
+fn a_fix_with_a_heading_and_nothing_in_fix_keeps_its_recorded_position() {
+    let points = vec![
+        measured_fix(0, Longitude::new(0.0)),
+        fix_with_a_heading_and_nothing_in_fix(10_000, Longitude::new(5.0)),
+        measured_fix(20_000, Longitude::new(1.0)),
+    ];
+
+    let longitude = drawn_longitude_degrees(&points, 1).expect("the fix is drawn");
+
+    assert!(
+        (longitude - 5.0).abs() < POSITION_TOLERANCE_DEGREES,
+        "the fix recorded at lon 5.0 is drawn at lon {longitude}"
+    );
+}
+
+/// Every fix keeps the coordinates it was written with. A recording that holds
+/// no satellite report holds nothing that tells a measured fix from a
+/// dead-reckoned one.
+#[test]
+fn a_track_without_a_satellite_report_keeps_every_recorded_position() {
+    let recorded_longitudes = [0.0, 5.0, 10.0];
+    let points: Vec<NavPoint> = [0, 1_000, 2_000]
+        .into_iter()
+        .zip(recorded_longitudes)
+        .map(|(millis, longitude_degrees)| {
+            fix(
+                millis,
+                Latitude::new(LATITUDE_DEGREES),
+                Longitude::new(longitude_degrees),
+                None,
+                None,
+            )
+        })
+        .collect();
+
+    let drawn: Vec<f64> = (0..points.len())
+        .map(|index| drawn_longitude_degrees(&points, index))
+        .collect::<Option<Vec<f64>>>()
+        .expect("every fix is drawn");
+
+    assert_eq!(drawn, recorded_longitudes.to_vec());
+}
+
+/// A dead-reckoned fix ahead of every anchor is drawn at the one anchor it
+/// has, with no span to sit inside. The SDK clamps an event marker recorded
+/// before the first fix the same way.
+#[test]
+fn a_ghost_fix_before_every_anchor_is_placed_at_the_first_anchor() {
+    const FIRST_ANCHOR_LONGITUDE_DEGREES: f64 = 0.0;
+    let points = vec![
+        dead_reckoned_fix(0, Latitude::new(LATITUDE_DEGREES), Longitude::new(9.0)),
+        measured_fix(10_000, Longitude::new(FIRST_ANCHOR_LONGITUDE_DEGREES)),
+        measured_fix(20_000, Longitude::new(1.0)),
+    ];
+
+    let longitude = drawn_longitude_degrees(&points, 0).expect("the fix is drawn");
+
+    assert!(
+        (longitude - FIRST_ANCHOR_LONGITUDE_DEGREES).abs() < POSITION_TOLERANCE_DEGREES,
+        "the leading dead-reckoned fix is drawn at lon {longitude}"
+    );
+}
+
+/// A dead-reckoned fix halfway in time between two anchors on opposite sides
+/// of a pole is placed over the pole, on the shorter great circle between
+/// them.
+#[test]
+fn a_ghost_fix_between_anchors_on_opposite_sides_of_a_pole_is_placed_between_them() {
+    const ANCHOR_LATITUDE_DEGREES: f64 = 89.9;
+    let anchor_latitude = Latitude::new(ANCHOR_LATITUDE_DEGREES);
+    let points = vec![
+        fix(
+            0,
+            anchor_latitude,
+            Longitude::new(0.0),
+            heading_east(),
+            Some(satellite_report(0, SATELLITES_IN_FIX, 0)),
+        ),
+        dead_reckoned_fix(10_000, Latitude::new(0.0), Longitude::new(0.0)),
+        fix(
+            20_000,
+            anchor_latitude,
+            Longitude::new(180.0),
+            heading_east(),
+            Some(satellite_report(20_000, SATELLITES_IN_FIX, 0)),
+        ),
+    ];
+
+    let latitude = drawn_at(&points, 1)
+        .expect("the fix is drawn")
+        .0
+        .as_degrees();
+
+    assert!(
+        latitude >= ANCHOR_LATITUDE_DEGREES,
+        "the dead-reckoned fix is drawn at lat {latitude}, below the \
+         lat {ANCHOR_LATITUDE_DEGREES} both of its anchors sit at"
     );
 }
