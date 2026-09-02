@@ -26,7 +26,8 @@ use uom::si::length::{kilometer, meter};
 /// Configuration that affects the track ranges produced by segmentation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrackLayoutConfig {
-    /// Timestamp gap between consecutive points that triggers a new track split.
+    /// Size of the timestamp step between consecutive points, in either
+    /// direction, that starts a new track.
     pub track_split_gap: Duration,
 }
 
@@ -106,9 +107,10 @@ pub const DEFAULT_SLIP_SNR_DROP_DB: f32 = 10.0;
 /// detector so the marker default and the plot default are one value.
 pub const DEFAULT_CLOCK_EXCURSION_THRESHOLD_S: f32 = clock_offset::DEFAULT_EXCURSION_THRESHOLD_S;
 
-/// Partitions `points` into contiguous track ranges. A new track begins when the
-/// timestamp gap between consecutive points reaches `config.track_split_gap`.
-/// Returns an empty vec for empty input.
+/// Partitions `points` into contiguous track ranges. A new track begins where
+/// the timestamp step between consecutive points reaches
+/// `config.track_split_gap` in either direction. Returns an empty vec for empty
+/// input.
 pub fn segment_tracks(points: &[NavPoint], config: &TrackLayoutConfig) -> Vec<Range<usize>> {
     if points.is_empty() {
         return Vec::new();
@@ -119,8 +121,8 @@ pub fn segment_tracks(points: &[NavPoint], config: &TrackLayoutConfig) -> Vec<Ra
 
     for (i, pair) in points.windows(2).enumerate() {
         if let [a, b] = pair {
-            let gap = b.tpv.time() - a.tpv.time();
-            if gap >= config.track_split_gap {
+            let step = b.tpv.time() - a.tpv.time();
+            if step.abs() >= config.track_split_gap {
                 ranges.push(start..i + 1);
                 start = i + 1;
             }
@@ -1321,12 +1323,20 @@ mod tests {
         assert_eq!(ranges, vec![0..5]);
     }
 
-    #[test]
-    fn segment_tracks_gap_exactly_300s_starts_new_trip() {
-        // [0s, 300s] → gap of exactly 300 s triggers a new track
-        let pts = vec![make_point_at(0), make_point_at(300), make_point_at(360)];
+    #[rstest]
+    #[case::forward_step_below_the_split_gap(299, vec![0..2])]
+    #[case::forward_step_at_the_split_gap(300, vec![0..1, 1..2])]
+    #[case::backward_step_below_the_split_gap(-299, vec![0..2])]
+    #[case::backward_step_at_the_split_gap(-300, vec![0..1, 1..2])]
+    fn segment_tracks_splits_on_a_step_reaching_the_split_gap_in_either_direction(
+        #[case] step_seconds: i64,
+        #[case] expected_ranges: Vec<Range<usize>>,
+    ) {
+        let pts = vec![make_point_at(1_000), make_point_at(1_000 + step_seconds)];
+
         let ranges = segment_tracks(&pts, &TrackLayoutConfig::default());
-        assert_eq!(ranges, vec![0..1, 1..3]);
+
+        assert_eq!(ranges, expected_ranges);
     }
 
     #[test]
