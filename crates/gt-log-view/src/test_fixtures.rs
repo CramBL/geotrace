@@ -122,17 +122,21 @@ fn recording_of(points: Vec<NavPoint>) -> LoadedFile {
     recording_of_tracks(vec![points])
 }
 
+/// A recording of no fixes at all: it holds no track and covers no span.
+pub(crate) fn recording_with_no_track() -> LoadedFile {
+    recording_of_tracks(Vec::new())
+}
+
 fn recording_of_tracks(tracks: Vec<Vec<NavPoint>>) -> LoadedFile {
-    let time_range = TimeRange::new(
-        tracks
-            .first()
-            .and_then(|points| points.first())
-            .map_or_else(start, |p| p.tpv.time().utc()),
-        tracks
-            .last()
-            .and_then(|points| points.last())
-            .map_or_else(start, |p| p.tpv.time().utc()),
-    );
+    let time_range = tracks
+        .iter()
+        .filter_map(|points| {
+            Some(TimeRange::new(
+                points.first()?.tpv.time().utc(),
+                points.last()?.tpv.time().utc(),
+            ))
+        })
+        .reduce(TimeRange::union);
     LoadedFile {
         metadata: FileMetadata {
             time_range,

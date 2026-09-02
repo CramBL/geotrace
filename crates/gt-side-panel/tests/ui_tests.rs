@@ -1274,6 +1274,30 @@ fn the_recording_row_hover_states_the_time_range_and_the_recorded_time() {
 }
 
 #[test]
+fn the_recording_row_hover_states_an_em_dash_for_a_recording_with_no_fixes() {
+    let mut files = LoadedFiles::new();
+    files.push(
+        build_file(
+            "no_fixes.gtd",
+            &[],
+            gt_track_builder::FileMeta::default(),
+            vec![],
+        ),
+        FileHistory::None,
+    );
+    let mut harness = make_harness(make_state_from_files(files));
+    harness.run();
+
+    let row = tree_row(&harness, "no_fixes.gtd").rect().center();
+    harness.inner.hover_at_and_settle(row, 3);
+
+    assert!(
+        harness.inner.query_by_label(gt_ui_theme::EM_DASH).is_some(),
+        "the hover text must state a recording with no track covers no span"
+    );
+}
+
+#[test]
 fn snapshot_fix_stats_tooltip_content() {
     let stats = FixStats {
         time_with_fix: chrono::Duration::seconds(4800), // 1h20m

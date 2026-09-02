@@ -84,18 +84,25 @@ fn recorded_time_spans_every_fix_when_one_steps_backwards() {
     assert_eq!(file.metadata.total_duration, Duration::seconds(10));
 }
 
+const HOUR_MILLIS: i64 = 3_600_000;
+
+/// A recording whose clock steps back an hour in the middle, which
+/// segmentation splits into a later track followed by an earlier one.
+fn recording_whose_clock_steps_back_an_hour() -> LoadedFile {
+    build(
+        &[
+            measured_fix_at(HOUR_MILLIS),
+            measured_fix_at(HOUR_MILLIS + 1_000),
+            measured_fix_at(0),
+            measured_fix_at(1_000),
+        ],
+        vec![],
+    )
+}
+
 #[test]
 fn a_backward_time_step_past_the_split_gap_starts_a_new_track() {
-    const HOUR_MILLIS: i64 = 3_600_000;
-
-    let points = vec![
-        measured_fix_at(HOUR_MILLIS),
-        measured_fix_at(HOUR_MILLIS + 1_000),
-        measured_fix_at(0),
-        measured_fix_at(1_000),
-    ];
-
-    let file = build(&points, vec![]);
+    let file = recording_whose_clock_steps_back_an_hour();
 
     let spans: Vec<(i64, i64)> = file
         .tracks
@@ -108,6 +115,17 @@ fn a_backward_time_step_past_the_split_gap_starts_a_new_track() {
         })
         .collect();
     assert_eq!(spans, vec![(HOUR_MILLIS, HOUR_MILLIS + 1_000), (0, 1_000)]);
+}
+
+#[test]
+fn the_file_time_range_spans_tracks_that_are_not_in_time_order() {
+    let file = recording_whose_clock_steps_back_an_hour();
+
+    let range = file.metadata.time_range.expect("the file holds two tracks");
+    assert_eq!(
+        (range.start.timestamp_millis(), range.end.timestamp_millis()),
+        (0, HOUR_MILLIS + 1_000)
+    );
 }
 
 proptest::proptest! {

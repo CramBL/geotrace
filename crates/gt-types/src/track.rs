@@ -107,6 +107,12 @@ impl TimeRange {
         (self.start..=self.end).contains(&instant)
     }
 
+    /// The smallest range covering both `self` and `other`, including any gap
+    /// between them.
+    pub fn union(self, other: Self) -> Self {
+        Self::new(self.start.min(other.start), self.end.max(other.end))
+    }
+
     /// The span `self` and `other` share, `None` when they are disjoint. Two
     /// ranges meeting at one instant share a zero-length range.
     pub fn intersection(self, other: Self) -> Option<Self> {
@@ -573,7 +579,10 @@ pub struct FileMetadata {
     pub filename: String,
     pub total_distance: TotalDistance,
     pub total_duration: Duration,
-    pub time_range: TimeRange,
+    /// The span from the earliest start to the latest end over every track of
+    /// the recording, whatever order the tracks are stored in. `None` when the
+    /// recording holds no track.
+    pub time_range: Option<TimeRange>,
     /// Aggregated fix stats across all tracks. `None` when no track has satellite reports.
     pub fix_stats: Option<FixStats>,
     /// Optional file title from the recording's SDK metadata.
@@ -716,6 +725,30 @@ mod time_range_tests {
                 at(2026, 7, 20, expected_start_hour),
                 at(2026, 7, 20, expected_end_hour)
             )
+        );
+    }
+
+    #[rstest]
+    #[case::in_order(8, 12, 17, 19)]
+    #[case::reversed(17, 19, 8, 12)]
+    fn union_covers_both_ranges(
+        #[case] first_start_hour: u32,
+        #[case] first_end_hour: u32,
+        #[case] second_start_hour: u32,
+        #[case] second_end_hour: u32,
+    ) {
+        let first = TimeRange::new(
+            at(2026, 7, 20, first_start_hour),
+            at(2026, 7, 20, first_end_hour),
+        );
+        let second = TimeRange::new(
+            at(2026, 7, 20, second_start_hour),
+            at(2026, 7, 20, second_end_hour),
+        );
+
+        assert_eq!(
+            first.union(second),
+            TimeRange::new(at(2026, 7, 20, 8), at(2026, 7, 20, 19))
         );
     }
 

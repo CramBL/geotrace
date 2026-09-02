@@ -16,7 +16,11 @@ impl AssociationCandidates {
             .map(|entry| {
                 AssociationCandidate::of_shared_span(
                     entry.id(),
-                    log_range.intersection(entry.file().metadata.time_range),
+                    entry
+                        .file()
+                        .metadata
+                        .time_range
+                        .and_then(|recorded| log_range.intersection(recorded)),
                     log_range,
                 )
             })
@@ -105,7 +109,7 @@ impl AssociationCandidate {
 mod tests {
     use rstest::rstest;
 
-    use crate::test_fixtures::{id_of, loaded, log_of, recording_from};
+    use crate::test_fixtures::{id_of, loaded, log_of, recording_from, recording_with_no_track};
 
     use super::*;
 
@@ -156,6 +160,27 @@ mod tests {
             Some(false),
             "a recording missing the log is listed, but is no candidate"
         );
+    }
+
+    #[test]
+    fn a_recording_with_no_track_is_listed_but_is_no_candidate() {
+        let files = loaded(vec![
+            recording_with_no_track(),
+            recording_from(Duration::zero(), 10),
+        ]);
+        let log = log_of(10);
+
+        let candidates = log.rank_association_candidates(&files.view());
+
+        assert_eq!(
+            candidates
+                .ranked()
+                .iter()
+                .find(|candidate| candidate.recording == id_of(&files, 0))
+                .map(|candidate| candidate.overlaps_the_log()),
+            Some(false)
+        );
+        assert_eq!(candidates.unambiguous_target(), Some(id_of(&files, 1)));
     }
 
     #[rstest]

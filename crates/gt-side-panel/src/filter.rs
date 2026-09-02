@@ -160,15 +160,10 @@ pub fn render_filter_panel(
 }
 
 fn compute_full_time_range(files: &[LoadedFile]) -> Option<TimeRange> {
-    let mut min: Option<DateTime<Utc>> = None;
-    let mut max: Option<DateTime<Utc>> = None;
-    for file in files {
-        let start = file.metadata.time_range.start;
-        let end = file.metadata.time_range.end;
-        min = Some(min.map_or(start, |m: DateTime<Utc>| m.min(start)));
-        max = Some(max.map_or(end, |m: DateTime<Utc>| m.max(end)));
-    }
-    min.zip(max).map(|(start, end)| TimeRange::new(start, end))
+    files
+        .iter()
+        .filter_map(|file| file.metadata.time_range)
+        .reduce(TimeRange::union)
 }
 
 /// Converts between an instant and its fraction of a time range bar's span,
@@ -295,19 +290,12 @@ fn time_range_bar(
 }
 
 fn compute_filtered_time_range(files: &[LoadedFile], filter: &GlobalFilter) -> Option<TimeRange> {
-    let mut min: Option<DateTime<Utc>> = None;
-    let mut max: Option<DateTime<Utc>> = None;
-    for file in files {
-        for track in &file.tracks {
-            if gt_filter::track_passes_filter(track, filter) {
-                let start = track.metadata.time_range.start;
-                let end = track.metadata.time_range.end;
-                min = Some(min.map_or(start, |m: DateTime<Utc>| m.min(start)));
-                max = Some(max.map_or(end, |m: DateTime<Utc>| m.max(end)));
-            }
-        }
-    }
-    min.zip(max).map(|(start, end)| TimeRange::new(start, end))
+    files
+        .iter()
+        .flat_map(|file| &file.tracks)
+        .filter(|track| gt_filter::track_passes_filter(track, filter))
+        .map(|track| track.metadata.time_range)
+        .reduce(TimeRange::union)
 }
 
 fn expand_range(range: TimeRange, full: TimeRange) -> TimeRange {
@@ -353,9 +341,6 @@ fn parse_duration_input(s: &str) -> Option<Duration> {
 #[cfg(test)]
 mod tests {
     use std::fmt::Write as _;
-    use std::path::PathBuf;
-
-    use rustc_hash::FxHashMap;
 
     use super::*;
 
@@ -413,32 +398,6 @@ mod tests {
     #[test]
     fn compute_range_empty_files() {
         assert!(compute_full_time_range(&[]).is_none());
-    }
-
-    #[test]
-    fn compute_range_single_file() {
-        use chrono::TimeZone;
-        use gt_types::track::{FileMetadata, LoadedFile, TotalDistance};
-        let file = LoadedFile {
-            metadata: FileMetadata {
-                filename: "test.gtd".to_owned(),
-                total_distance: TotalDistance::Measured(Length::new::<kilometer>(1.0)),
-                total_duration: Duration::seconds(60),
-                time_range: TimeRange::new(
-                    Utc.timestamp_opt(0, 0).single().expect("valid"),
-                    Utc.timestamp_opt(60, 0).single().expect("valid"),
-                ),
-                ..gt_test_utils::empty_file_metadata()
-            },
-            tracks: vec![],
-            event_marker_styles: FxHashMap::default(),
-            orphaned_event_markers: vec![],
-            source: gt_types::FileSource::GtdPath(PathBuf::from("test.gtd")),
-            load_warnings: vec![],
-        };
-        let range = compute_full_time_range(&[file]).expect("one file has a time range");
-        assert_eq!(range.start.timestamp(), 0);
-        assert_eq!(range.end.timestamp(), 60);
     }
 
     /// Ten fixes at 10 Hz cover 900 ms, the span of a bar whose every handle
