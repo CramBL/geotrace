@@ -226,5 +226,5 @@ fn the_smallest_window_over_an_empty_track_matches_nothing() {
     )
     .expect("a well formed query");
     assert_eq!(matched_ranges(&output), Vec::new());
-    assert_eq!(output.summary.tracks_shorter_than_window, 1);
+    assert_eq!(output.summary.tracks_with_no_room_for_the_window, 1);
 }

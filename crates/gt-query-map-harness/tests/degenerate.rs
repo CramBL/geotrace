@@ -60,8 +60,8 @@ fn a_single_point_track_has_no_acceleration() {
     ");
 }
 
-/// A window longer than the track matches nothing, and the summary reports the
-/// track as too short.
+/// A window longer than the track matches nothing, and the summary states the
+/// track had no room for it.
 #[test]
 fn a_track_shorter_than_the_window_reports_it() {
     let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(&[
@@ -76,7 +76,7 @@ fn a_track_shorter_than_the_window_reports_it() {
     chunks: 1
       0..55 ok
     run: completed
-      0 matches on 0 tracks — 1 track shorter than window
+      0 matches on 0 tracks — 1 track with no room for the window
     ");
 }
 

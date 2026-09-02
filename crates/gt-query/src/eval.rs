@@ -186,7 +186,9 @@ pub struct RunSummary {
     /// skips land in [`Self::skipped`]. Counted by value, not by cause: the
     /// summary must not claim "never snapped" for a run that produced nothing.
     pub tracks_without: BTreeMap<QueryMetric, usize>,
-    pub tracks_shorter_than_window: usize,
+    /// Tracks whose provider served a timeline with no room for one full
+    /// window.
+    pub tracks_with_no_room_for_the_window: usize,
     /// Declared `with` parameters no referenced metric needs.
     pub unused_params: Vec<ParamName>,
 }
@@ -331,8 +333,7 @@ pub(crate) struct TrackEval {
     /// Windows skipped per channel with no samples in the span.
     pub skipped_channels: BTreeMap<String, usize>,
     pub skipped_non_finite: usize,
-    /// The provider was shorter than the window, so nothing could match.
-    pub shorter_than_window: bool,
+    pub no_room_for_the_window: bool,
 }
 
 impl RunSummary {
@@ -346,7 +347,7 @@ impl RunSummary {
             *self.skipped_channels.entry(channel.clone()).or_insert(0) += count;
         }
         self.skipped_non_finite += eval.skipped_non_finite;
-        self.tracks_shorter_than_window += usize::from(eval.shorter_than_window);
+        self.tracks_with_no_room_for_the_window += usize::from(eval.no_room_for_the_window);
     }
 }
 
@@ -410,13 +411,13 @@ fn evaluate_points(
     };
     let mut matched = vec![false; len];
     let mut skips = Skips::default();
-    let mut shorter_than_window = false;
+    let mut no_room_for_the_window = false;
 
     match query.window() {
         // A count window at anchor `start` spans the points `[start, start+n)`.
         // Too few points for even one full window means nothing can match.
         Some(Window::Count(n)) if len < n.get() => {
-            shorter_than_window = true;
+            no_room_for_the_window = true;
         }
         Some(Window::Count(n)) => {
             // A backward time step moves a bound inside a window: each point's
@@ -436,7 +437,7 @@ fn evaluate_points(
             }
         }
         Some(Window::Duration(secs)) => {
-            shorter_than_window = duration_windows(
+            no_room_for_the_window = duration_windows(
                 query,
                 &mut ctx,
                 &mut matched,
@@ -464,7 +465,7 @@ fn evaluate_points(
         skipped: skips.per_metric,
         skipped_channels: skips.per_channel,
         skipped_non_finite: skips.non_finite,
-        shorter_than_window,
+        no_room_for_the_window,
     })
 }
 
@@ -495,8 +496,8 @@ fn apply_window<P: MetricProvider>(
 
 /// Evaluate every `secs`-long duration window: at each anchor the contiguous
 /// points whose time lands in `[t, t + secs)`, requiring the full duration to
-/// fit within the data. Returns `None` on cancellation, else whether the track
-/// was too short for any window to fit (the shorter-than-window flag).
+/// fit within the data. Returns `None` on cancellation, else whether no window
+/// fit.
 fn duration_windows<P: MetricProvider>(
     query: &CheckedQuery,
     ctx: &mut Ctx<'_, P>,
@@ -583,10 +584,10 @@ fn evaluate_channel_source(
     };
     let mut matched = vec![false; len];
     let mut skips = Skips::default();
-    let mut shorter_than_window = false;
+    let mut no_room_for_the_window = false;
 
     match query.window() {
-        Some(Window::Count(n)) if len < n.get() => shorter_than_window = true,
+        Some(Window::Count(n)) if len < n.get() => no_room_for_the_window = true,
         Some(Window::Count(n)) => {
             for start in 0..=(len - n.get()) {
                 if start % check_interval == 0 && should_cancel() {
@@ -603,7 +604,7 @@ fn evaluate_channel_source(
             }
         }
         Some(Window::Duration(secs)) => {
-            shorter_than_window = sample_duration_windows(
+            no_room_for_the_window = sample_duration_windows(
                 query,
                 &mut ctx,
                 &mut matched,
@@ -639,7 +640,7 @@ fn evaluate_channel_source(
         skipped: skips.per_metric,
         skipped_channels: skips.per_channel,
         skipped_non_finite: skips.non_finite,
-        shorter_than_window,
+        no_room_for_the_window,
     })
 }
 
@@ -674,8 +675,7 @@ fn apply_sample_window<P: MetricProvider>(
 /// Every `secs`-long duration window over a channel-source timeline: at each
 /// anchor the contiguous samples whose time lands in `[t, t + secs)`, requiring
 /// the full duration to fit. Mirrors [`duration_windows`] over the channel's
-/// sample times. Returns `None` on cancellation, else the shorter-than-window
-/// flag.
+/// sample times. Returns `None` on cancellation, else whether no window fit.
 #[expect(
     clippy::too_many_arguments,
     reason = "the channel-source window loop threads the same evaluation state as duration_windows, plus the sample timeline; a struct would not group anything meaningfully reusable"
