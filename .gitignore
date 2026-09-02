@@ -37,3 +37,7 @@ compile_commands.json
 
 # Just is becoming GNU Make here because the podman/docker caching is painfully slow
 .just-cache
+
+# Vale: synced packages, pinned by URL in .vale.ini. The project style and vocabulary are committed.
+.vale/styles/Slop/
+.vale/styles/.vale-config/

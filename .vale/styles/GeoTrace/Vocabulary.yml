@@ -1,0 +1,33 @@
+# The "Not ..." column of the vocabulary table in CODE_STYLE.md. The table
+# itself is exempt in .vale.ini.
+#
+# "trip" is the user's word for a journey: a recording may hold one, the
+# application shows tracks. "round trip", the verb "trip", and the demo_trip
+# example keep the word.
+extends: substitution
+message: "Vocabulary: '%s', not '%s' (CODE_STYLE.md)."
+level: error
+ignorecase: true
+nonword: false
+exceptions:
+  - '(?i)\bround[- ]trips?\b'
+  - '(?i)\btrips?\s+(?:clippy|on|the\s+invariant)\b'
+  - '(?i)\bdemo[-_ ]trip\b'
+swap:
+  'trips?': track
+  'effective duration': recorded time
+  'expanded rows?': reduced samples
+  'time warp': time-change pattern
+  'sort error': order anomaly
+  'frozen filter': filter chip
+  'pinned filter': filter chip
+  'linked file': anchor
+  'space weather event': space weather warning
+  'space weather data': environment data
+  'epilogue': summary block
+  'ghost track': snapped track
+  'log file layer': log
+  'saved log': attachment
+  'bound log': attachment
+  'separator line': structural line
+  'power cycle': boot session
