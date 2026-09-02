@@ -59,7 +59,45 @@ pub(super) fn dialog_button_row<R>(
     ui: &mut egui::Ui,
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
+    dialog_button_row_with_leading_control(ui, DialogRowLeadingControl::none(), add_contents)
+}
+
+/// The control at the left end of a dialog's button row, where a dialog puts a
+/// preference that outlives the action the row confirms.
+pub(super) struct DialogRowLeadingControl<F>(Option<F>);
+
+impl<F: FnOnce(&mut egui::Ui)> DialogRowLeadingControl<F> {
+    pub(super) fn new(control: F) -> Self {
+        Self(Some(control))
+    }
+}
+
+impl DialogRowLeadingControl<fn(&mut egui::Ui)> {
+    /// Nothing at the row's left end.
+    pub(super) fn none() -> Self {
+        Self(None)
+    }
+}
+
+/// [`dialog_button_row`] with `leading` at the left end of the row, drawn in
+/// the theme's weak text color.
+///
+/// The weak color separates it from a tickbox the body ends with: the body's
+/// tickbox applies to the one action the row confirms, the leading control to
+/// every dialog of its class.
+pub(super) fn dialog_button_row_with_leading_control<R>(
+    ui: &mut egui::Ui,
+    DialogRowLeadingControl(leading): DialogRowLeadingControl<impl FnOnce(&mut egui::Ui)>,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
     ui.horizontal(|ui| {
+        if let Some(leading) = leading {
+            ui.scope(|ui| {
+                let weak_text_color = ui.visuals().weak_text_color();
+                ui.visuals_mut().override_text_color = Some(weak_text_color);
+                leading(ui);
+            });
+        }
         ui.with_layout(
             egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
             add_contents,
@@ -83,7 +121,7 @@ impl<F: FnOnce(&mut egui::Ui)> DialogBody<F> {
 
 /// What a dialog keeps on screen below its body: the button row, or whatever
 /// arrangement the dialog puts its actions in.
-pub(super) struct DialogActions<F>(F);
+pub(super) struct DialogActions<F>(pub(super) F);
 
 impl<F: FnOnce(&mut egui::Ui) -> R, R> DialogActions<F> {
     pub(super) fn new(actions: F) -> Self {
@@ -100,6 +138,31 @@ impl<F: FnOnce(&mut egui::Ui) -> R, R> DialogActions<F> {
 /// next frame, which covers a row that wrapped onto a second line.
 pub(super) fn dialog_body_above_actions<R>(
     ui: &mut egui::Ui,
+    body: DialogBody<impl FnOnce(&mut egui::Ui)>,
+    actions: DialogActions<impl FnOnce(&mut egui::Ui) -> R>,
+) -> R {
+    dialog_body_above_actions_taking(ui, DialogBodyHeight::UpToWhatTheWindowLeaves, body, actions)
+}
+
+/// What a dialog's body does with the height above its actions.
+#[derive(Clone, Copy)]
+pub(super) enum DialogBodyHeight {
+    /// As much as its content needs, and it scrolls past what the window
+    /// leaves above the actions.
+    UpToWhatTheWindowLeaves,
+
+    /// As much as its content needs, in no scroll area, which is how a dialog
+    /// measures its own height on the frame it opens.
+    WhatItsContentNeeds,
+
+    /// The whole height above the actions, which keeps the actions at the
+    /// bottom edge of a window whose height is held.
+    TheHeldHeight,
+}
+
+pub(super) fn dialog_body_above_actions_taking<R>(
+    ui: &mut egui::Ui,
+    height: DialogBodyHeight,
     DialogBody(body): DialogBody<impl FnOnce(&mut egui::Ui)>,
     DialogActions(actions): DialogActions<impl FnOnce(&mut egui::Ui) -> R>,
 ) -> R {
@@ -108,10 +171,18 @@ pub(super) fn dialog_body_above_actions<R>(
         .data(|data| data.get_temp::<f32>(measured_height_id))
         .unwrap_or_else(|| ui.spacing().interact_size.y + DIALOG_ACTIONS_GAP)
         + ui.spacing().item_spacing.y;
-    ScrollArea::both()
-        .id_salt("dialog_body")
-        .max_height((ui.available_height() - reserved).max(0.0))
-        .show(ui, body);
+    match height {
+        DialogBodyHeight::WhatItsContentNeeds => {
+            ui.scope(body);
+        }
+        DialogBodyHeight::UpToWhatTheWindowLeaves | DialogBodyHeight::TheHeldHeight => {
+            ScrollArea::both()
+                .id_salt("dialog_body")
+                .auto_shrink(!matches!(height, DialogBodyHeight::TheHeldHeight))
+                .max_height((ui.available_height() - reserved).max(0.0))
+                .show(ui, body);
+        }
+    }
     let laid_out = ui.scope(|ui| {
         ui.add_space(DIALOG_ACTIONS_GAP);
         actions(ui)
@@ -153,6 +224,10 @@ pub(super) fn confirmation_dialog<'a, T>(
         .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         .then_some(escape_choice);
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "The shared `confirmation_dialog` window has not moved to AnchoredDialog"
+    )]
     Window::new(title)
         .collapsible(false)
         .resizable(false)
@@ -209,6 +284,7 @@ pub fn show_delete_confirmation(
     let mut do_cancel = escape_pressed;
 
     let item_label = if count == 1 { "item" } else { "items" };
+    #[expect(clippy::disallowed_methods, reason = "The removal confirmation has not moved to AnchoredDialog")]
     Window::new(format!("Remove {count} {item_label}?"))
         .collapsible(false)
         .resizable(true)
@@ -648,6 +724,10 @@ pub fn show_about_dialog(ui: &egui::Ui, open: &mut bool, version: &str) {
         .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
 
     let mut keep_open = true;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "The 'About GeoTrace' dialog has not moved to AnchoredDialog"
+    )]
     Window::new("About GeoTrace")
         .open(&mut keep_open)
         .collapsible(false)
@@ -735,6 +815,10 @@ pub fn show_snap_consent_dialog(
     }
 
     let mut open = true;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "The snap upload consent dialog has not moved to AnchoredDialog"
+    )]
     egui::Window::new("Snap to road")
         .collapsible(false)
         .resizable(false)
@@ -834,6 +918,10 @@ pub fn show_snap_replace_dialog(ui: &egui::Ui, costing_name: &str) -> Option<Sna
     }
 
     let mut open = true;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "The re-snap confirmation has not moved to AnchoredDialog"
+    )]
     egui::Window::new("Snap to road again?")
         .collapsible(false)
         .resizable(false)
@@ -919,6 +1007,7 @@ pub fn show_snap_scope_dialog(
     let mut choice = escape_pressed.then_some(SnapScopeChoice::Cancel);
 
     let mut open = true;
+    #[expect(clippy::disallowed_methods, reason = "The snap scope dialog has not moved to AnchoredDialog")]
     Window::new(format!("Snap to road as {costing_name}"))
         .collapsible(false)
         .resizable(false)
@@ -1019,6 +1108,10 @@ pub fn show_snap_auto_prompt(ui: &egui::Ui, server_url: &str) -> Option<SnapAuto
     }
 
     let mut open = true;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "The auto-snap dialog has not moved to AnchoredDialog"
+    )]
     egui::Window::new("Snap to road automatically?")
         .collapsible(false)
         .resizable(false)
@@ -1073,6 +1166,10 @@ pub fn show_mapbox_token_dialog(
     }
 
     let mut open = true;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "The Mapbox token dialog has not moved to AnchoredDialog"
+    )]
     let cancelled = Window::new("Mapbox API Token Required")
         .collapsible(false)
         .resizable(false)
@@ -1408,9 +1505,20 @@ mod tests {
         interruption_costs: &'a [String],
         choice: &'a std::cell::RefCell<Option<ForceQuitChoice>>,
     ) -> TestHarness<'a, ()> {
+        force_quit_dialog_over(interruption_costs, choice, |_| {})
+    }
+
+    /// [`force_quit_dialog`] with `shutdown_window` drawn behind the
+    /// confirmation: a press that misses the confirmation reaches it.
+    pub(super) fn force_quit_dialog_over<'a>(
+        interruption_costs: &'a [String],
+        choice: &'a std::cell::RefCell<Option<ForceQuitChoice>>,
+        mut shutdown_window: impl FnMut(&mut egui::Ui) + 'a,
+    ) -> TestHarness<'a, ()> {
         let mut harness = TestHarness::builder()
             .size(egui::vec2(520.0, 320.0))
-            .ui(|ui| {
+            .ui(move |ui| {
+                shutdown_window(ui);
                 if let Some(made) = show_force_quit_confirmation(ui, interruption_costs) {
                     *choice.borrow_mut() = Some(made);
                 }
@@ -2022,70 +2130,37 @@ mod tests {
 /// Where a dialog's controls are while its content changes size, and what a
 /// press aimed at one of them reaches.
 ///
-/// egui hit-tests a press against the widget rects of the previous frame, so a
-/// press that follows a pointer movement lands where the user aimed. The case
-/// these tests pin is the reverse: the pointer rests on a control for as long
-/// as the user takes to decide, and the dialog's content arrives in the
-/// meantime.
+/// These tests pin the case where the pointer rests on a control for as long
+/// as the user takes to decide and the dialog's content arrives in the
+/// meantime. [`crate::app::anchored_dialog`] states what egui does with such a
+/// press.
 #[cfg(test)]
 mod anchored_dialog_layout_tests {
     use std::cell::RefCell;
-    use std::path::PathBuf;
 
-    use chrono::{Duration, TimeZone as _};
-    use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
-    use gt_log_view::LoadedLog;
-    use gt_pending_writes::{WriteAccess, WriteKind};
-    use gt_store::{DatabaseRef, LogAttachmentId, RecordingMeta};
-    use gt_test_utils::{By, Queryable as _, TestHarness};
-    use gt_track_builder::{FileMeta, SegmentationConfig};
-    use gt_types::{FileSource, Latitude, Longitude};
-    use gt_ui_types::LoadedLogId;
+    use chrono::Duration;
+    use egui_kittest::Harness;
+    use gt_pending_writes::WriteKind;
+    use gt_test_utils::{By, HarnessInteraction as _, Queryable as _};
 
-    use crate::app::history_db::ExistingLogAttachment;
     use crate::app::log_viewer::association_dialog::{
-        LogAssociationChoice, LogAssociationDialog, TITLE as ASSOCIATION_TITLE,
+        self, CONFIRM_LABEL, LogAssociationChoice, TITLE as ASSOCIATION_TITLE, tests::DialogState,
     };
 
-    use super::{ForceQuitChoice, show_force_quit_confirmation};
+    use super::{ForceQuitChoice, tests};
 
-    /// Wider and taller than every dialog here, so a control moves only
-    /// because its own window moved it, never because the screen clipped it.
+    /// Wider and taller than every dialog here, for the reason
+    /// [`crate::app::anchored_dialog::tests`]'s viewport states.
     const VIEWPORT: egui::Vec2 = egui::vec2(640.0, 480.0);
 
     const CANCEL_LABEL: &str = "Cancel";
 
-    /// The attachment the history database reports for the chosen recording.
-    /// Its length decides how many lines the dialog's answer takes.
+    /// Fixes of each recording the association dialog lists.
+    const FIX_COUNT: usize = 10;
+
+    /// The attachment the history database reports for the chosen recording,
+    /// with a name long enough that the note about it wraps onto three lines.
     const STORED_ATTACHMENT_NAME: &str = "navsyncd-export-2026-05-29-evening-run.log";
-
-    /// Where the one control labelled `label` was drawn in the frame the
-    /// harness rendered last.
-    fn control_rect<State>(harness: &TestHarness<'_, State>, label: &str) -> egui::Rect {
-        harness.inner.get(By::new().label(label)).rect()
-    }
-
-    /// Presses and releases at `target` without moving the pointer there
-    /// first, which is what a user does whose pointer already rests on the
-    /// control they aimed at.
-    fn press_where_the_pointer_rests<State>(
-        harness: &mut TestHarness<'_, State>,
-        target: egui::Pos2,
-    ) {
-        for pressed in [true, false] {
-            harness
-                .inner
-                .input_mut()
-                .events
-                .push(egui::Event::PointerButton {
-                    pos: target,
-                    button: egui::PointerButton::Primary,
-                    pressed,
-                    modifiers: egui::Modifiers::NONE,
-                });
-        }
-        harness.inner.run_steps(2);
-    }
 
     /// The costs the force-quit confirmation lists while four writes run.
     fn four_write_costs() -> Vec<String> {
@@ -2097,232 +2172,112 @@ mod anchored_dialog_layout_tests {
         ]
     }
 
-    /// The force-quit confirmation over a cost list the test shortens between
-    /// frames, the way the registry shortens it as the writes finish.
-    fn force_quit_confirmation<'a>(
-        costs: &'a RefCell<Vec<String>>,
-        choice: &'a RefCell<Option<ForceQuitChoice>>,
-        background_pressed: &'a RefCell<bool>,
-    ) -> TestHarness<'a, ()> {
-        let mut harness = TestHarness::builder().size(VIEWPORT).ui(|ui| {
-            // The shutdown window the confirmation sits over. Its own actions
-            // are what a press that misses the confirmation reaches.
+    /// The press the association tests use, over a confirmation whose content
+    /// does not change: it reports Cancel and reaches nothing behind the
+    /// confirmation.
+    #[test]
+    fn a_press_where_the_pointer_rests_cancels_an_unchanged_force_quit_confirmation() {
+        let costs = four_write_costs();
+        let choice = RefCell::new(None);
+        let background_pressed = RefCell::new(false);
+        let mut harness = tests::force_quit_dialog_over(&costs, &choice, |ui| {
             if ui
                 .allocate_response(ui.available_size(), egui::Sense::click())
                 .clicked()
             {
                 *background_pressed.borrow_mut() = true;
             }
-            let listed = costs.borrow();
-            if let Some(made) = show_force_quit_confirmation(ui, &listed) {
-                *choice.borrow_mut() = Some(made);
-            }
         });
-        harness.inner.run_steps(4);
-        harness
-    }
-
-    /// The press the association tests use, over a confirmation whose content
-    /// does not change: it reports Cancel and reaches nothing behind the
-    /// confirmation.
-    #[test]
-    fn a_press_where_the_pointer_rests_cancels_an_unchanged_force_quit_confirmation() {
-        let costs = RefCell::new(four_write_costs());
-        let choice = RefCell::new(None);
-        let background_pressed = RefCell::new(false);
-        let mut harness = force_quit_confirmation(&costs, &choice, &background_pressed);
-        let aimed_at = control_rect(&harness, CANCEL_LABEL).center();
+        let aimed_at = harness
+            .inner
+            .get(By::new().label(CANCEL_LABEL))
+            .rect()
+            .center();
         harness.inner.hover_at(aimed_at);
         harness.inner.run_steps(4);
 
-        press_where_the_pointer_rests(&mut harness, aimed_at);
+        harness.inner.press_where_the_pointer_rests(aimed_at);
 
         assert!(matches!(*choice.borrow(), Some(ForceQuitChoice::Cancel)));
         assert!(!*background_pressed.borrow());
     }
 
-    /// A recording of ten fixes starting `offset` after the fixture log does.
-    fn recording(
-        filename: &str,
-        offset: Duration,
-        log_start: chrono::DateTime<chrono::Utc>,
-    ) -> gt_types::LoadedFile {
-        let points = gt_test_utils::nav_points_walking_from(
-            log_start + offset,
-            10,
-            1,
-            Latitude::new(55.0),
-            Longitude::new(12.0),
-        );
-        gt_track_builder::build_loaded_file(
-            filename.to_owned(),
-            &points,
-            &[],
-            Vec::new(),
-            Vec::new(),
-            &[],
-            &SegmentationConfig::default(),
-            FileSource::GtdPath(PathBuf::from(filename)),
-            FileMeta::default(),
-            Vec::new(),
+    /// The association dialog over two stored recordings: the second only
+    /// overlaps part of the log and is listed below the first.
+    fn association_dialog() -> Harness<'static, DialogState> {
+        association_dialog::tests::harness_over_sized(
+            vec![
+                (
+                    association_dialog::tests::recording(
+                        "alongside.gtd",
+                        Duration::zero(),
+                        FIX_COUNT,
+                    ),
+                    association_dialog::tests::stored_in_history("nav-devkit-mk2"),
+                ),
+                (
+                    association_dialog::tests::recording(
+                        "late.gtd",
+                        Duration::seconds(5),
+                        FIX_COUNT,
+                    ),
+                    association_dialog::tests::stored_in_history("nav-devkit-mk4"),
+                ),
+            ],
+            VIEWPORT,
         )
     }
 
-    /// How a recording the history database holds is filed in the session.
-    fn stored_in_history(identity: &str) -> FileHistory {
-        FileHistory::recording(
-            identity.to_owned(),
-            RecordingMeta {
-                start_us: 0,
-                end_us: 0,
-                nav_point_count: 0,
-                sat_report_count: 0,
-                marker_count: 0,
-                event_marker_count: 0,
-                gtd_size_bytes: 0,
-            },
-            Some(DatabaseRef {
-                identity: identity.to_owned(),
-                group_name: "2026-05-29T18-48-25".to_owned(),
-            }),
-        )
-    }
-
-    struct AssociationState {
-        dialog: LogAssociationDialog,
-        log: LoadedLog,
-        recordings: LoadedFiles,
-        choice: Option<LogAssociationChoice>,
-    }
-
-    /// Three log entries spanning nine seconds.
-    const LOG: &str = "\
-2026-05-29 18:48:25 navsyncd: starting
-2026-05-29 18:48:27 navsyncd: fix acquired
-2026-05-29 18:48:34 navsyncd: fix lost
-";
-
-    /// The association dialog over two stored recordings, the second of which
-    /// only overlaps part of the log and is therefore listed below the first.
-    fn association_dialog() -> TestHarness<'static, AssociationState> {
-        let log_start = chrono::Utc
-            .with_ymd_and_hms(2026, 5, 29, 18, 48, 25)
-            .single()
-            .unwrap_or_default();
-        let mut recordings = LoadedFiles::new();
-        recordings.push(
-            recording("alongside.gtd", Duration::zero(), log_start),
-            stored_in_history("nav-devkit-mk2"),
-        );
-        recordings.push(
-            recording("late.gtd", Duration::seconds(5), log_start),
-            stored_in_history("nav-devkit-mk4"),
-        );
-        let parsed = gt_logfile::parse_log(LOG.into(), log_start)
-            .unwrap_or_else(|error| panic!("the fixture log parses: {error}"));
-        let state = AssociationState {
-            dialog: LogAssociationDialog::new(LoadedLogId::new(0), None),
-            log: LoadedLog::new(
-                Some("navsyncd.log".to_owned()),
-                parsed,
-                Duration::seconds(60),
-            ),
-            recordings,
-            choice: None,
-        };
-        let mut harness = TestHarness::builder().size(VIEWPORT).ui_state(
-            |ui, state: &mut AssociationState| {
-                let names = RecordingNames::resolve(state.recordings.view(), "{filename}");
-                if let Some(made) = state.dialog.show(
-                    ui.ctx(),
-                    &state.log,
-                    state.recordings.view(),
-                    &names,
-                    WriteAccess::Owner,
-                ) {
-                    state.choice = Some(made);
-                }
-            },
-            state,
-        );
-        harness.inner.run_steps(4);
-        harness
-    }
-
-    /// The recording the dialog queried the history database about, taken the
-    /// way the app takes it after every frame the dialog draws.
-    fn duplicate_query_to_send(harness: &mut TestHarness<'_, AssociationState>) -> DatabaseRef {
-        let state = harness.inner.state_mut();
-        let recordings = state.recordings.view();
-        state
-            .dialog
-            .duplicate_query_to_send(recordings)
-            .unwrap_or_else(|| panic!("the chosen recording is queried about duplicates"))
-    }
-
-    /// Hands the dialog the answer that `recording` already holds this log.
-    fn deliver_the_stored_attachment(
-        harness: &mut TestHarness<'_, AssociationState>,
-        recording: &DatabaseRef,
-    ) {
-        harness.inner.state_mut().dialog.set_duplicate_attachment(
-            recording,
-            Some(ExistingLogAttachment {
-                id: LogAttachmentId::new_random(),
-                name: STORED_ATTACHMENT_NAME.to_owned(),
-            }),
-        );
-    }
-
-    /// Selecting a recording sends the duplicate-attachment query, and the
-    /// answer adds a line above the tickbox that stores the log. A press
-    /// aimed at a recording row must not tick that box: attaching writes the
-    /// log into the history database.
+    /// Selecting a recording sends the duplicate-attachment query. The dialog
+    /// draws a line above the checkbox that stores the log when the result
+    /// arrives. A press aimed at a recording row must not tick that box:
+    /// attaching writes the log into the history database.
     #[test]
     fn pressing_a_recording_row_while_the_stored_attachment_line_arrives_attaches_nothing() {
         let mut harness = association_dialog();
-        harness.inner.get(By::new().label("late.gtd")).click();
-        harness.inner.run_steps(3);
-        let queried = duplicate_query_to_send(&mut harness);
-        let aimed_at = control_rect(&harness, "late.gtd").center();
-        harness.inner.hover_at(aimed_at);
-        harness.inner.run_steps(2);
+        harness.get(By::new().label("late.gtd")).click();
+        harness.run_steps(3);
+        let aimed_at = harness.get(By::new().label("late.gtd")).rect().center();
+        harness.hover_at(aimed_at);
+        harness.run_steps(2);
 
-        deliver_the_stored_attachment(&mut harness, &queried);
-        harness.inner.run_steps(2);
-        press_where_the_pointer_rests(&mut harness, aimed_at);
-        harness.inner.get(By::new().label("Associate")).click();
-        harness.inner.run_steps(2);
+        association_dialog::tests::deliver_the_stored_attachment(
+            &mut harness,
+            STORED_ATTACHMENT_NAME,
+        );
+        harness.run_steps(2);
+        harness.press_where_the_pointer_rests(aimed_at);
+        harness.get(By::new().label(CONFIRM_LABEL)).click();
+        harness.run_steps(2);
 
         assert!(
             matches!(
-                harness.inner.state().choice,
+                harness.state().choice,
                 Some(LogAssociationChoice::Confirmed { attach: false, .. })
             ),
             "the press on a recording row reported {:?}",
-            harness.inner.state().choice,
+            harness.state().choice,
         );
     }
 
     #[test]
-    fn the_association_dialog_keeps_its_recording_rows_in_place_while_the_answer_arrives() {
+    fn the_association_dialog_keeps_its_recording_rows_in_place_while_the_result_arrives() {
         let mut harness = association_dialog();
-        harness.inner.get(By::new().label("late.gtd")).click();
-        harness.inner.run_steps(3);
-        let queried = duplicate_query_to_send(&mut harness);
-        let before = control_rect(&harness, "late.gtd");
+        harness.get(By::new().label("late.gtd")).click();
+        harness.run_steps(3);
+        let before = harness.get(By::new().label("late.gtd")).rect();
 
-        deliver_the_stored_attachment(&mut harness, &queried);
-        harness.inner.run_steps(4);
-        let after = control_rect(&harness, "late.gtd");
+        association_dialog::tests::deliver_the_stored_attachment(
+            &mut harness,
+            STORED_ATTACHMENT_NAME,
+        );
+        harness.run_steps(4);
+        let after = harness.get(By::new().label("late.gtd")).rect();
 
-        let moved = (after.center().y - before.center().y).abs();
-        assert!(
-            moved * 2.0 < before.height(),
-            "the row of the chosen recording moved {moved:.0} points in the \
-             {ASSOCIATION_TITLE} dialog, more than half of the {:.0} points it is tall: a \
-             press where the user aimed misses it",
-            before.height(),
+        assert_eq!(
+            after, before,
+            "the row of the chosen recording moved in the {ASSOCIATION_TITLE} dialog: a press \
+             where the user aimed misses it"
         );
     }
 }

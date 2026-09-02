@@ -177,6 +177,10 @@ impl UpdateChecker {
 
         let current_version = self.current_version;
         let install_status = self.install.lock();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "The 'Update available' dialog has not moved to AnchoredDialog"
+        )]
         Window::new("Update available")
             .collapsible(false)
             .resizable(false)

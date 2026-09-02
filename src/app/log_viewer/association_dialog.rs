@@ -1,7 +1,7 @@
 //! The dialog choosing the recording a log associates against, and whether the
 //! log is stored with that recording in history.
 
-use egui::{Checkbox, Grid, Label, RichText, Window};
+use egui::{Checkbox, Grid, Label, RichText};
 use gt_fmt::MIDDLE_DOT;
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
 use gt_log_view::{AssociationCandidate, LoadedLog};
@@ -10,12 +10,13 @@ use gt_store::DatabaseRef;
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::LoadedLogId;
 
+use crate::app::anchored_dialog::{AnchoredDialog, AnchoredDialogKind, DialogRegions};
 use crate::app::history_db::ExistingLogAttachment;
-use crate::app::modals::{self, DialogActions, DialogBody};
+use crate::app::modals::{DialogActions, DialogBody, DialogRowLeadingControl};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 
 #[cfg(test)]
-mod tests;
+pub(in crate::app) mod tests;
 
 use super::{NO_OVERLAP_HOVER, recording_names_by_id};
 
@@ -31,6 +32,18 @@ const CANCEL_LABEL: &str = "Cancel";
 
 pub(in crate::app) const NO_OVERLAP_LABEL: &str = "no overlap";
 
+/// The region of the body listing the recordings, which keeps the height it
+/// had when the dialog opened.
+const CANDIDATES_REGION: &str = "association_candidates";
+
+/// The region of the body the duplicate-attachment result lands in.
+const STORED_ATTACHMENT_REGION: &str = "stored_attachment_note";
+
+/// Lines the [`STORED_ATTACHMENT_REGION`] holds from the frame the dialog
+/// opens, which is what the note takes for an attachment name of ordinary
+/// length.
+const STORED_ATTACHMENT_LINES: u8 = 2;
+
 const ATTACH_HOVER: &str = "Store this log with the recording, so it comes back with its filters when the recording is \
      opened from history";
 
@@ -43,9 +56,6 @@ const DONT_SHOW_AGAIN_HOVER: &str = "Associate a loading log by itself when exac
      untargeted otherwise. Switchable back on under Processing in the settings.";
 
 const CONFIRM_HOVER: &str = "Take this log's positions from the chosen recording";
-
-/// Room for a recording name beside how much of the log it ran alongside.
-const WIDTH_PX: f32 = 460.0;
 
 /// What the user decided in the association dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,52 +178,53 @@ impl LogAssociationDialog {
         let mut open = true;
         // Read after the window renders: the body's tickbox writes `attach`.
         let mut confirmed = false;
-        Window::new(TITLE)
-            .collapsible(false)
-            .resizable(false)
-            .min_width(WIDTH_PX)
-            .open(&mut open)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                modals::dialog_body_above_buttons(
-                    ui,
-                    DialogBody::new(|ui| {
-                        ui.add(
-                            Label::new(format!(
-                                "Which recording should {} take its positions from?",
-                                log.name()
-                            ))
-                            .wrap(),
-                        );
-                        ui.add_space(4.0);
-                        Grid::new("log_association_candidates")
-                            .num_columns(2)
-                            .spacing([16.0, 4.0])
-                            .show(ui, |ui| {
-                                for candidate in candidates.ranked() {
-                                    let name =
-                                        names.get(&candidate.recording).copied().unwrap_or(EM_DASH);
-                                    self.candidate_row_ui(ui, candidate, name);
-                                }
-                            });
-                        ui.add_space(8.0);
-                        self.attach_ui(ui, attachable, write_access);
-                        ui.add_space(4.0);
-                        ui.checkbox(&mut self.dont_show_again, DONT_SHOW_AGAIN_LABEL)
-                            .on_hover_text(DONT_SHOW_AGAIN_HOVER);
-                    }),
-                    DialogActions::new(|ui| {
-                        confirmed = ui
-                            .button(CONFIRM_LABEL)
-                            .on_hover_text(CONFIRM_HOVER)
-                            .clicked();
-                        if ui.button(CANCEL_LABEL).clicked() {
-                            choice = Some(LogAssociationChoice::Cancelled);
-                        }
-                    }),
+        // The body borrows `self`: the action row's tickbox writes a local.
+        let mut dont_show_again = self.dont_show_again;
+        let dialog = AnchoredDialog::new(AnchoredDialogKind::AssociateLog, TITLE)
+            .with_close_button(&mut open);
+        let regions = dialog.regions();
+        dialog.show_with_action_row(
+            ctx,
+            DialogBody::new(|ui| {
+                ui.add(
+                    Label::new(format!(
+                        "Which recording should {} take its positions from?",
+                        log.name()
+                    ))
+                    .wrap(),
                 );
-            });
+                ui.add_space(4.0);
+                regions.frozen_at_open(ui, CANDIDATES_REGION, |ui| {
+                    Grid::new("log_association_candidates")
+                        .num_columns(2)
+                        .spacing([16.0, 4.0])
+                        .show(ui, |ui| {
+                            for candidate in candidates.ranked() {
+                                let name =
+                                    names.get(&candidate.recording).copied().unwrap_or(EM_DASH);
+                                self.candidate_row_ui(ui, candidate, name);
+                            }
+                        });
+                });
+                ui.add_space(8.0);
+                self.attach_ui(ui, regions, attachable, write_access);
+            }),
+            DialogRowLeadingControl::new(|ui| {
+                ui.checkbox(&mut dont_show_again, DONT_SHOW_AGAIN_LABEL)
+                    .on_hover_text(DONT_SHOW_AGAIN_HOVER);
+            }),
+            DialogActions::new(|ui| {
+                confirmed = ui
+                    .button(CONFIRM_LABEL)
+                    .on_hover_text(CONFIRM_HOVER)
+                    .clicked();
+                if ui.button(CANCEL_LABEL).clicked() {
+                    choice = Some(LogAssociationChoice::Cancelled);
+                }
+            }),
+        );
 
+        self.dont_show_again = dont_show_again;
         if confirmed {
             choice = Some(LogAssociationChoice::Confirmed {
                 target: self.selected,
@@ -267,9 +278,32 @@ impl LogAssociationDialog {
         ui.end_row();
     }
 
-    /// The attach tickbox, and what attaching does where the chosen recording
-    /// already holds this exact log.
-    fn attach_ui(&mut self, ui: &mut egui::Ui, attachable: bool, write_access: WriteAccess) {
+    /// The attach tickbox, under the note naming an attachment the chosen
+    /// recording already holds this log as.
+    fn attach_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        regions: DialogRegions,
+        attachable: bool,
+        write_access: WriteAccess,
+    ) {
+        regions.frozen_at_open_holding_lines(
+            ui,
+            STORED_ATTACHMENT_REGION,
+            STORED_ATTACHMENT_LINES,
+            |ui| {
+                if let Some(existing) = &self.duplicate {
+                    ui.add(
+                        Label::new(format!(
+                            "This recording already holds this log as \"{}\". Attaching reuses \
+                             that attachment.",
+                            existing.name
+                        ))
+                        .wrap(),
+                    );
+                }
+            },
+        );
         let attach = ui.add_enabled(attachable, Checkbox::new(&mut self.attach, ATTACH_LABEL));
         if attachable {
             attach.on_hover_text(ATTACH_HOVER);
@@ -279,16 +313,6 @@ impl LogAssociationDialog {
             attach.on_disabled_hover_text(ATTACH_UNSTORED_HOVER);
         } else {
             attach.on_disabled_hover_text(ATTACH_NO_TARGET_HOVER);
-        }
-        if let Some(existing) = &self.duplicate {
-            ui.add(
-                Label::new(format!(
-                    "This recording already holds this log as \"{}\". Attaching reuses that \
-                     attachment.",
-                    existing.name
-                ))
-                .wrap(),
-            );
         }
     }
 }

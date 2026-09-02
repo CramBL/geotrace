@@ -410,6 +410,7 @@ impl App {
                 .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             match &failure {
                 storage::HistoryFailure::Busy(_) => {
+                    #[expect(clippy::disallowed_methods, reason = "The 'History database in use' prompt has not moved to AnchoredDialog")]
                     Window::new("History database in use")
                         .collapsible(false)
                         .resizable(false)
@@ -449,6 +450,7 @@ impl App {
                     }
                 }
                 storage::HistoryFailure::Locked(_) => {
+                    #[expect(clippy::disallowed_methods, reason = "The 'History database locked' prompt has not moved to AnchoredDialog")]
                     Window::new("History database locked")
                         .collapsible(false)
                         .resizable(false)
@@ -493,6 +495,10 @@ impl App {
                 }
                 storage::HistoryFailure::Unreadable(_) => {
                     let mut keep_backup = self.keep_db_backup;
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "The 'History database is corrupted' prompt has not moved to AnchoredDialog"
+                    )]
                     Window::new("History database is corrupted")
                         .collapsible(false)
                         .resizable(false)
@@ -566,6 +572,7 @@ impl App {
                 "'{}' was stored with different track settings than the current ones.",
                 prompt.filename
             );
+            #[expect(clippy::disallowed_methods, reason = "The 'Track settings differ' dialog has not moved to AnchoredDialog")]
             Window::new("Track settings differ")
                 .collapsible(false)
                 .resizable(false)
@@ -672,6 +679,10 @@ impl App {
             let mut cancel = ui
                 .ctx()
                 .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "The auto-prune confirmation has not moved to AnchoredDialog"
+            )]
             Window::new("Auto-prune")
                 .resizable(false)
                 .collapsible(false)

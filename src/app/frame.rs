@@ -988,6 +988,10 @@ impl App {
             // Keep repainting while jobs are active or fading.
             ui.ctx().request_repaint();
 
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "AnchoredDialog has no bottom-right placement for the loading progress overlay"
+            )]
             Window::new("##loading_progress")
                 .title_bar(false)
                 .resizable(false)

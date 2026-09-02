@@ -12,11 +12,6 @@ use egui_kittest::{Harness, Node};
 const STEP_UNTIL_FRAME_BUDGET: usize = 200;
 const PAUSE_BETWEEN_FRAMES: Duration = Duration::from_millis(10);
 
-/// Frames [`HarnessInteraction::click_after_the_layout_settles`] runs while
-/// the control still moves. A window takes one frame to re-anchor after its
-/// content grew, and one more for every growth that follows.
-const LAYOUT_SETTLE_FRAME_BUDGET: usize = 8;
-
 /// Queues `clicks` primary press-and-release pairs at `target`, all read by
 /// the frame that runs next.
 fn queue_primary_clicks<State>(harness: &mut Harness<'_, State>, target: egui::Pos2, clicks: u8) {
@@ -67,14 +62,10 @@ pub trait HarnessInteraction {
     /// a click.
     fn click_at(&mut self, target: egui::Pos2);
 
-    /// Runs frames until the rect of the node matching `by` stops moving, then
-    /// clicks its centre.
-    ///
-    /// egui places an anchored window from the size it had on the previous
-    /// frame: it draws the controls at the old position on the frame the
-    /// content grows, and moves them on the frame after. A click queued at
-    /// the position of the growth frame lands beside the control.
-    fn click_after_the_layout_settles(&mut self, by: By<'_>);
+    /// [`HarnessInteraction::click_at`] without the pointer movement it makes
+    /// first: this is the press of a user whose pointer already rests on the
+    /// control they aimed at.
+    fn press_where_the_pointer_rests(&mut self, target: egui::Pos2);
 
     /// Presses and releases twice at `target` within one frame, which egui
     /// reads as a double click.
@@ -163,17 +154,9 @@ impl<State> HarnessInteraction for Harness<'_, State> {
         self.step();
     }
 
-    fn click_after_the_layout_settles(&mut self, by: By<'_>) {
-        let mut rect = self.get(by.clone()).rect();
-        for _ in 0..LAYOUT_SETTLE_FRAME_BUDGET {
-            self.step();
-            let stepped = self.get(by.clone()).rect();
-            if stepped == rect {
-                break;
-            }
-            rect = stepped;
-        }
-        self.click_at(rect.center());
+    fn press_where_the_pointer_rests(&mut self, target: egui::Pos2) {
+        queue_primary_clicks(self, target, 1);
+        self.run_steps(2);
     }
 
     fn double_click_at(&mut self, target: egui::Pos2) {
