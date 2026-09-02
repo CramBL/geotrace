@@ -18,8 +18,8 @@ use gt_filter::GlobalFilter;
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_query::{ChannelSchema, MetricProvider};
 use gt_query_run::{
-    JammingValues, QuerySession, RunInputs, RunResults, SnapErrorValues, TrackProvider,
-    schema_from_files,
+    ChannelTrackResult, JammingValues, QuerySession, RunInputs, RunResults, SnapErrorValues,
+    TrackProvider, schema_from_files,
 };
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::time_types::GpsTime;
@@ -241,6 +241,27 @@ fn first_match_aggregates(session: &QuerySession) -> Option<Vec<Option<f64>>> {
         .first()?
         .aggregates;
     Some(aggregates.clone())
+}
+
+/// The last run's channel-source result for the one loaded track, `None` when
+/// the run left that track without a match.
+fn channel_track_result(session: &QuerySession) -> Option<&ChannelTrackResult> {
+    let RunResults::Channel(results) = session.results()? else {
+        return None;
+    };
+    results.tracks.first()
+}
+
+/// The times of the samples a channel-source run matched, in seconds past
+/// [`EPOCH`], in match order.
+fn matched_sample_seconds(result: &ChannelTrackResult) -> Vec<f64> {
+    result
+        .matches
+        .iter()
+        .flat_map(|matched| matched.rows.clone())
+        .filter_map(|row| result.timeline.times.get(row).copied())
+        .map(|seconds| seconds - EPOCH as f64)
+        .collect()
 }
 
 #[test]
@@ -536,6 +557,111 @@ fn a_duration_window_groups_the_fixes_of_its_own_span_at_two_hz() {
     );
 
     assert_eq!(drawn_ranges(&session), vec![0..3]);
+}
+
+/// The time range filter ends at 5 s: the query matches the two samples before
+/// it, and the map bands the fixes around them.
+#[test]
+fn a_channel_query_matches_only_the_samples_inside_the_time_window() {
+    let channel = scalar_channel(
+        "sensor",
+        None,
+        &[(0, 10.0), (1_000, 10.0), (6_000, 10.0), (7_000, 10.0)],
+    );
+    let mut state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at(&[0, 2_000, 4_000, 6_000, 8_000]),
+        vec![channel],
+    ));
+    state.filter = GlobalFilter {
+        time_end: Some(utc(5_000)),
+        ..GlobalFilter::default()
+    };
+    let mut session = QuerySession::new();
+
+    run_text(&mut session, &state, "@sensor | where @sensor > 5 | draw");
+
+    let result = channel_track_result(&session).expect("a track with a match");
+    assert_eq!(matched_sample_seconds(result), vec![0.0, 1.0]);
+    assert_eq!(drawn_ranges(&session), vec![0..2]);
+}
+
+/// Both bounds of the time range filter are inclusive: a sample exactly at the
+/// start and one exactly at the end are both part of the run.
+#[test]
+fn a_channel_query_keeps_samples_at_each_bound_of_the_time_window() {
+    let channel = scalar_channel(
+        "sensor",
+        None,
+        &[
+            (0, 10.0),
+            (1_000, 10.0),
+            (2_000, 10.0),
+            (3_000, 10.0),
+            (4_000, 10.0),
+        ],
+    );
+    let mut state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at(&[0, 1_000, 2_000, 3_000, 4_000]),
+        vec![channel],
+    ));
+    state.filter = GlobalFilter {
+        time_start: Some(utc(1_000)),
+        time_end: Some(utc(3_000)),
+        ..GlobalFilter::default()
+    };
+    let mut session = QuerySession::new();
+
+    run_text(&mut session, &state, "@sensor | where @sensor > 5 | draw");
+
+    let result = channel_track_result(&session).expect("a track with a match");
+    assert_eq!(matched_sample_seconds(result), vec![1.0, 2.0, 3.0]);
+}
+
+/// A time range filter ending before the channel's first sample leaves the run
+/// no sample to read: the query matches nothing and the map draws no halo.
+#[test]
+fn a_channel_query_matches_nothing_under_a_time_window_holding_no_sample() {
+    let channel = scalar_channel("sensor", None, &[(6_000, 10.0), (7_000, 10.0)]);
+    let mut state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at(&[0, 2_000, 4_000, 6_000, 8_000]),
+        vec![channel],
+    ));
+    state.filter = GlobalFilter {
+        time_end: Some(utc(5_000)),
+        ..GlobalFilter::default()
+    };
+    let mut session = QuerySession::new();
+
+    run_text(&mut session, &state, "@sensor | where @sensor > 5 | draw");
+
+    assert_eq!(drawn_ranges(&session), Vec::<Range<usize>>::new());
+    assert!(channel_track_result(&session).is_none());
+}
+
+/// The run reads the two samples inside the window, and the one outside it
+/// falls in no match. Nothing sorts a channel's samples: a backward time step
+/// can leave a sample past the window between two samples inside it.
+#[test]
+fn a_channel_query_under_a_time_window_keeps_the_samples_around_a_backward_time_step() {
+    let channel = scalar_channel("sensor", None, &[(0, 10.0), (10_000, 10.0), (1_000, 10.0)]);
+    let mut state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at(&[0, 1_000, 2_000, 10_000]),
+        vec![channel],
+    ));
+    state.filter = GlobalFilter {
+        time_end: Some(utc(5_000)),
+        ..GlobalFilter::default()
+    };
+    let mut session = QuerySession::new();
+
+    run_text(&mut session, &state, "@sensor | where @sensor > 5 | draw");
+
+    let result = channel_track_result(&session).expect("a track with a match");
+    assert_eq!(matched_sample_seconds(result), vec![0.0, 1.0]);
 }
 
 #[test]

@@ -24,6 +24,7 @@
 
 - **Interface:** A duration under a second now reads in tenths of a second, from "0.1s" to "0.9s".
 - **Interface:** A query using `avg`, `min` or `max` on `lon`, or on a sensor channel that declares a wrap period, is now rejected as ambiguous.
+- **Interface:** A sensor channel query now matches only the samples inside the time range filter.
 - **Log Viewer:** Opening, dropping or pasting a log whose text is already loaded now selects the loaded log and toasts its name.
 - **Log Viewer:** Opening a recording no longer loads an attached log whose text is already loaded, and that loaded log takes the attachment when it is anchored to the recording.
 - **Log Viewer:** Attaching a log to a recording that already holds it now reuses the stored attachment.

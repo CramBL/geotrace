@@ -165,6 +165,19 @@ impl<'a> TrackProvider<'a> {
             .unwrap_or_default()
     }
 
+    /// The samples of `name` whose own timestamp the filter's time window
+    /// keeps, each with that timestamp in Unix seconds and its values in base
+    /// units, in the order the file stored them.
+    pub(crate) fn channel_timeline_inside_time_window(
+        &self,
+        name: &str,
+        filter: &GlobalFilter,
+    ) -> ChannelTimeline {
+        self.resolve_channel(name)
+            .map(|resolved| resolved.timeline_inside_time_window(filter))
+            .unwrap_or_default()
+    }
+
     /// When the receiver stamped the point at `index`, `None` past the last
     /// point of the track.
     fn point_time(&self, index: usize) -> Option<DateTime<Utc>> {
@@ -310,6 +323,25 @@ impl ResolvedChannel<'_> {
             times.push(unix_seconds(time));
             values.extend(self.row_in_base_units(position));
         });
+        ChannelTimeline {
+            times,
+            values,
+            columns: self.columns,
+        }
+    }
+
+    /// The samples the filter's time window keeps, each with its own timestamp
+    /// in Unix seconds, in the order the file stored them.
+    fn timeline_inside_time_window(&self, filter: &GlobalFilter) -> ChannelTimeline {
+        let mut times = Vec::new();
+        let mut values = Vec::new();
+        for (position, time) in self.channel.times.iter().enumerate() {
+            if !gt_filter::point_passes_time_filter(*time, filter) {
+                continue;
+            }
+            times.push(unix_seconds(time));
+            values.extend(self.row_in_base_units(position));
+        }
         ChannelTimeline {
             times,
             values,
@@ -499,19 +531,7 @@ impl MetricProvider for TrackProvider<'_> {
     /// source is that channel. Each sample keeps its own (sub-second) time: the
     /// channel is the timeline here.
     fn channel_timeline(&self, name: &str) -> ChannelTimeline {
-        let Some(resolved) = self.resolve_channel(name) else {
-            return ChannelTimeline::default();
-        };
-        ChannelTimeline {
-            times: resolved.channel.times.iter().map(unix_seconds).collect(),
-            values: resolved
-                .channel
-                .values
-                .iter()
-                .map(|value| value * resolved.to_base)
-                .collect(),
-            columns: resolved.columns,
-        }
+        self.channel_timeline_inside_time_window(name, &GlobalFilter::default())
     }
 }
 
@@ -555,6 +575,10 @@ impl TimeFilteredPoints {
     fn window_keeps(&self, time: DateTime<Utc>) -> bool {
         gt_filter::point_passes_time_filter(time, &self.filter)
     }
+
+    fn time_filter(&self) -> &GlobalFilter {
+        &self.filter
+    }
 }
 
 impl Default for TimeFilteredPoints {
@@ -569,6 +593,9 @@ impl Default for TimeFilteredPoints {
 ///
 /// A point the range covers but the window rejects matches nothing and poisons
 /// a window stage it falls in: it has no value for any metric.
+///
+/// The evaluator sees a channel sample by its own timestamp, whatever points it
+/// sits between: a channel's samples are on their own clock.
 pub struct SliceProvider<'a> {
     inner: TrackProvider<'a>,
     points: TimeFilteredPoints,
@@ -612,9 +639,8 @@ impl MetricProvider for SliceProvider<'_> {
     }
 
     fn channel_timeline(&self, name: &str) -> ChannelTimeline {
-        // A channel's own sample clock is independent of the point slice, so it
-        // forwards whole.
-        self.inner.channel_timeline(name)
+        self.inner
+            .channel_timeline_inside_time_window(name, self.points.time_filter())
     }
 }
 
@@ -1228,6 +1254,58 @@ mod tests {
         assert!((timeline.values[1] - 2.0 * g).abs() < 1e-9);
         // Unknown channel yields an empty timeline.
         assert!(provider.channel_timeline("missing").times.is_empty());
+    }
+
+    #[test]
+    fn a_slice_provider_drops_a_vector_sample_outside_the_time_window_row_by_row() {
+        let base = TEST_EPOCH as f64;
+        let channels = [vector_channel(
+            "accel",
+            None,
+            &["x", "y", "z"],
+            &[
+                (0, [0.0, 0.1, 0.2]),
+                (1, [1.0, 1.1, 1.2]),
+                (2, [2.0, 2.1, 2.2]),
+            ],
+        )];
+        let points = points_at_millis(&[0, 1_000, 2_000]);
+        let filter = GlobalFilter {
+            time_start: DateTime::from_timestamp(TEST_EPOCH + 2, 0),
+            ..GlobalFilter::default()
+        };
+        let slice = SliceProvider::new(
+            TrackProvider::new(&points, &channels, None),
+            TimeFilteredPoints::of(&points, &filter),
+        );
+
+        let timeline = slice.channel_timeline("accel");
+
+        assert_eq!(timeline.columns, 3);
+        assert_eq!(timeline.times, vec![base + 2.0]);
+        assert_eq!(timeline.values, vec![2.0, 2.1, 2.2]);
+    }
+
+    /// A channel sample is kept by its own timestamp, independent of the
+    /// points. This window keeps no point of the track and still keeps the
+    /// sample past its last fix.
+    #[test]
+    fn a_slice_provider_keeps_a_channel_sample_the_window_covers_without_a_point() {
+        let base = TEST_EPOCH as f64;
+        let channels = [scalar_channel("sensor", None, &[(0, 0.0), (5, 5.0)])];
+        let points = points_at_millis(&[0, 1_000]);
+        let filter = GlobalFilter {
+            time_start: DateTime::from_timestamp(TEST_EPOCH + 4, 0),
+            ..GlobalFilter::default()
+        };
+        let slice = SliceProvider::new(
+            TrackProvider::new(&points, &channels, None),
+            TimeFilteredPoints::of(&points, &filter),
+        );
+
+        assert_eq!(slice.len(), 0);
+        assert_eq!(slice.channel_timeline("sensor").times, vec![base + 5.0]);
+        assert_eq!(slice.channel_timeline("sensor").values, vec![5.0]);
     }
 
     #[test]
