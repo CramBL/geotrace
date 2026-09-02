@@ -1,3 +1,5 @@
+//! The `status` group of `geotrace.h`: the status codes and the last error message.
+
 use std::cell::RefCell;
 use std::ffi::{CString, c_char};
 
@@ -102,4 +104,11 @@ pub(crate) fn status_for_event_marker_error(e: &geotrace_sdk::EventMarkerError) 
         | EventMarkerError::EmptySegment { .. }
         | EventMarkerError::InvalidChars { .. } => GtdStatus::ErrInvalidPath,
     }
+}
+
+/// Returns the last error message for the current thread, or NULL if none.
+/// The pointer is valid until the next SDK call on this thread.
+#[unsafe(no_mangle)]
+pub extern "C" fn gtd_last_error() -> *const c_char {
+    last_error_ptr()
 }
