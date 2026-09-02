@@ -1,5 +1,6 @@
 use crate::coordinates::{Latitude, Longitude};
 use crate::mercator::MercPoint;
+use crate::nav_point::ResolvedPosition;
 use crate::satellites::SlipEvent;
 use chrono::{DateTime, Duration, Utc};
 
@@ -362,6 +363,10 @@ pub struct EventMarkerStyle {
 }
 
 /// A single event marker instance placed on the map.
+///
+/// `lat` and `lon` are the coordinates the recording holds, which the recorder
+/// interpolated over the coordinates the receiver wrote for the fixes around
+/// the marker.
 #[derive(Debug, Clone)]
 pub struct EventMarker {
     pub time: DateTime<Utc>,
@@ -369,8 +374,11 @@ pub struct EventMarker {
     pub annotation: Option<String>,
     pub lat: Latitude,
     pub lon: Longitude,
-    /// Pre-computed normalized Mercator coordinates, see [`crate::mercator`].
-    pub merc: MercPoint,
+    /// Where the map draws this marker. The track builder derives it from the
+    /// drawn positions of the fixes around this marker's timestamp. It equals
+    /// `lat` and `lon` when the builder drew those fixes at their recorded
+    /// coordinates.
+    pub resolved_position: ResolvedPosition,
 }
 
 impl EventMarker {
@@ -381,14 +389,13 @@ impl EventMarker {
         lat: Latitude,
         lon: Longitude,
     ) -> Self {
-        let merc = crate::mercator::normalize(lat, lon);
         Self {
             time,
             variant_path,
             annotation,
             lat,
             lon,
-            merc,
+            resolved_position: ResolvedPosition::measured(lat, lon),
         }
     }
 }

@@ -105,7 +105,7 @@ impl Plugin for EventMarkerRenderer<'_> {
             && let Some(track) = r.track.index.get(&file.tracks)
             && let Some(marker) = r.point_index.get(&track.event_markers)
         {
-            let pos = transform.to_screen(marker.merc);
+            let pos = transform.to_screen(marker.resolved_position.merc());
             show_tooltip(ui, r, marker, pos);
         }
     }

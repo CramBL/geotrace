@@ -852,6 +852,8 @@ pub fn build_loaded_file(
             orphaned_event_markers.push(unassigned);
         }
     }
+    place_event_markers(&mut loaded_tracks);
+
     // Back-fill event_marker_count now that assignment is done.
     for track in &mut loaded_tracks {
         track.metadata.event_marker_count = track.event_markers.len();
@@ -963,6 +965,37 @@ pub fn reassemble_channels(tracks: &[LoadedTrack]) -> Vec<Channel> {
     by_name
 }
 
+/// A position with the instant the recording holds it at.
+#[derive(Clone, Copy)]
+struct TimedPosition {
+    time: DateTime<Utc>,
+    position: (Latitude, Longitude),
+}
+
+/// The great circle from `start` to `end`, interpolated in proportion to the
+/// time between the two.
+#[derive(Clone, Copy)]
+struct TimedArc {
+    start: TimedPosition,
+    end: TimedPosition,
+}
+
+impl TimedArc {
+    /// Where `time` falls along the arc. `None` when both ends stamp one
+    /// instant, spanning no time to place `time` in.
+    fn position_at(self, time: DateTime<Utc>) -> Option<(Latitude, Longitude)> {
+        let Self { start, end } = self;
+        let span_secs = (end.time - start.time).as_seconds_f64();
+        (span_secs > 0.0).then(|| {
+            GreatCircleArc {
+                start: start.position,
+                end: end.position,
+            }
+            .position_at_ratio((time - start.time).as_seconds_f64() / span_secs)
+        })
+    }
+}
+
 /// A fix the receiver did not measure at the coordinates it holds, and what
 /// anchors the position the builder places it at.
 #[derive(Clone, Copy)]
@@ -1014,17 +1047,17 @@ impl UnmeasuredFix {
         let after = anchor(following);
 
         let interpolated = match (before, after) {
-            (Some((before, before_position)), Some((after, after_position))) => {
-                let anchor_span_secs = (after.tpv.time() - before.tpv.time()).as_seconds_f64();
-                let elapsed_secs = (point.tpv.time() - before.tpv.time()).as_seconds_f64();
-                (anchor_span_secs > 0.0).then(|| {
-                    GreatCircleArc {
-                        start: before_position.coordinates(),
-                        end: after_position.coordinates(),
-                    }
-                    .position_at_ratio(elapsed_secs / anchor_span_secs)
-                })
+            (Some((before, before_position)), Some((after, after_position))) => TimedArc {
+                start: TimedPosition {
+                    time: before.tpv.time().utc(),
+                    position: before_position.coordinates(),
+                },
+                end: TimedPosition {
+                    time: after.tpv.time().utc(),
+                    position: after_position.coordinates(),
+                },
             }
+            .position_at(point.tpv.time().utc()),
             (Some((_, position)), None) | (None, Some((_, position))) => {
                 Some(position.coordinates())
             }
@@ -1094,6 +1127,82 @@ fn nearest_anchors(
     following.reverse();
 
     preceding.into_iter().zip(following).collect()
+}
+
+/// Writes onto each event marker of `tracks` where the map draws it, which is
+/// where the builder drew the fixes its timestamp falls between.
+///
+/// Running this again over the same markers repeats the same placement: it
+/// reads the recorded coordinates of every marker and every fix.
+fn place_event_markers(tracks: &mut [LoadedTrack]) {
+    for track in tracks {
+        if track.event_markers.is_empty() {
+            continue;
+        }
+        let fixes = track
+            .placed_points()
+            .map(placed_fixes_in_time_order)
+            .unwrap_or_default();
+        for marker in &mut track.event_markers {
+            marker.resolved_position = position_between_placed_fixes(&fixes, marker.time)
+                .unwrap_or_else(|| ResolvedPosition::measured(marker.lat, marker.lon));
+        }
+    }
+}
+
+/// Every fix of `placed` with where the builder drew it, in ascending time
+/// order. A track holds its fixes in recording order, which a backward time
+/// step leaves out of time order.
+fn placed_fixes_in_time_order(placed: PlacedPoints<'_>) -> Vec<(DateTime<Utc>, ResolvedPosition)> {
+    let mut fixes: Vec<(DateTime<Utc>, ResolvedPosition)> = placed
+        .iter()
+        .map(|point| (point.fix.tpv.time().utc(), point.resolved()))
+        .collect();
+    fixes.sort_by_key(|&(time, _)| time);
+    fixes
+}
+
+/// Where `time` falls along the drawn track: on the great circle between the
+/// two fixes of `fixes` it lies between.
+///
+/// `None` leaves an event marker at the coordinates the recording holds for
+/// it, which is where a marker between two measured fixes already sits: the
+/// recorder interpolated it over those same two positions. A track with no
+/// drawn fix places no marker either.
+fn position_between_placed_fixes(
+    fixes: &[(DateTime<Utc>, ResolvedPosition)],
+    time: DateTime<Utc>,
+) -> Option<ResolvedPosition> {
+    let index = fixes.partition_point(|&(fix_time, _)| fix_time <= time);
+    let before = index.checked_sub(1).and_then(|i| fixes.get(i));
+    let after = fixes.get(index);
+
+    match (before, after) {
+        (Some(&(before_time, before_position)), Some(&(after_time, after_position))) => {
+            if matches!(before_position, ResolvedPosition::Measured(_))
+                && matches!(after_position, ResolvedPosition::Measured(_))
+            {
+                return None;
+            }
+            let (latitude, longitude) = TimedArc {
+                start: TimedPosition {
+                    time: before_time,
+                    position: before_position.coordinates(),
+                },
+                end: TimedPosition {
+                    time: after_time,
+                    position: after_position.coordinates(),
+                },
+            }
+            .position_at(time)?;
+            Some(ResolvedPosition::interpolated(latitude, longitude))
+        }
+        (Some(&(_, position)), None) | (None, Some(&(_, position))) => match position {
+            ResolvedPosition::Measured(_) => None,
+            ResolvedPosition::Interpolated(_) => Some(position),
+        },
+        (None, None) => None,
+    }
 }
 
 #[cfg(test)]

@@ -43,7 +43,7 @@ pub fn build_global_tree(files: &[LoadedFile]) -> rstar::RTree<SpatialPoint> {
             }
             for (pi, m) in track.event_markers.iter().enumerate() {
                 points.push(SpatialPoint {
-                    merc: m.merc,
+                    merc: m.resolved_position.merc(),
                     file_index,
                     track_index,
                     point_index: PointIdx::new(pi),
