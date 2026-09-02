@@ -10,14 +10,14 @@ use crate::matches_attrs;
 use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
-    ATTR_SEG_GAP_US, ATTR_START_US, CURRENT_SCHEMA_VERSION, ChannelSummary, DatabaseRef, DbError,
-    GTD_CHANNEL_COMPONENTS_ATTR, GTD_CHANNEL_DESCRIPTION_ATTR, GTD_CHANNEL_TIME_DATASET,
-    GTD_CHANNEL_UNIT_ATTR, GTD_CHANNELS_GROUP, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
-    LogAttachment, LogAttachmentEntry, LogAttachmentId, RecordingMeta, SCHEMA_VERSION_ATTR,
-    SNAP_BLOB_DATASET, SNAP_GROUP, StoredRecording, StoredSegmentation, TRACK_END_DATASET,
-    TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP, TrackRange, identity_from_group_name,
-    identity_group_name, is_db_internal_group, is_db_recording_attr, log_attachment,
-    make_group_name,
+    ATTR_SEG_GAP_US, ATTR_SEG_SPLIT_RULE, ATTR_START_US, CURRENT_SCHEMA_VERSION, ChannelSummary,
+    DatabaseRef, DbError, GTD_CHANNEL_COMPONENTS_ATTR, GTD_CHANNEL_DESCRIPTION_ATTR,
+    GTD_CHANNEL_TIME_DATASET, GTD_CHANNEL_UNIT_ATTR, GTD_CHANNELS_GROUP, GTD_VERSION_ATTR,
+    GTD_VERSION_FALLBACK, LogAttachment, LogAttachmentEntry, LogAttachmentId, RecordingMeta,
+    SCHEMA_VERSION_ATTR, SNAP_BLOB_DATASET, SNAP_GROUP, StoredRecording, StoredSegmentation,
+    StoredTrackSplitRule, TRACK_END_DATASET, TRACK_HIDDEN_DATASET, TRACK_START_DATASET,
+    TRACKS_GROUP, TrackRange, identity_from_group_name, identity_group_name, is_db_internal_group,
+    is_db_recording_attr, log_attachment, make_group_name,
 };
 use hdf5_pure::{AttrValue, DType, FileBuilder, Group, GroupBuilder};
 use thiserror::Error;
@@ -368,6 +368,10 @@ fn build_new_recording(
                 AttrValue::I64(settings.track_split_gap_us),
             ),
             (
+                ATTR_SEG_SPLIT_RULE.to_owned(),
+                AttrValue::I64(settings.track_split_rule.attribute_value()),
+            ),
+            (
                 ATTR_SEG_DETECT_CLOCK.to_owned(),
                 AttrValue::U64(u64::from(settings.detect_clock_discontinuities)),
             ),
@@ -670,11 +674,18 @@ pub(crate) fn set_tracks(
         rec.groups.retain(|g| g.name != TRACKS_GROUP);
         rec.groups.push(track_table_node(tracks));
         rec.attrs.retain(|(k, _)| {
-            k != ATTR_SEG_GAP_US && k != ATTR_SEG_DETECT_CLOCK && k != ATTR_SEG_CLOCK_SIGMAS
+            k != ATTR_SEG_GAP_US
+                && k != ATTR_SEG_SPLIT_RULE
+                && k != ATTR_SEG_DETECT_CLOCK
+                && k != ATTR_SEG_CLOCK_SIGMAS
         });
         rec.attrs.push((
             ATTR_SEG_GAP_US.to_owned(),
             AttrValue::I64(settings.track_split_gap_us),
+        ));
+        rec.attrs.push((
+            ATTR_SEG_SPLIT_RULE.to_owned(),
+            AttrValue::I64(settings.track_split_rule.attribute_value()),
         ));
         rec.attrs.push((
             ATTR_SEG_DETECT_CLOCK.to_owned(),
@@ -897,6 +908,9 @@ fn read_segmentation(
 ) -> Option<StoredSegmentation> {
     Some(StoredSegmentation {
         track_split_gap_us: attrs.get(ATTR_SEG_GAP_US).and_then(AttrValue::as_i64)?,
+        track_split_rule: StoredTrackSplitRule::from_attribute_value(
+            attrs.get(ATTR_SEG_SPLIT_RULE).and_then(AttrValue::as_i64),
+        ),
         detect_clock_discontinuities: attrs
             .get(ATTR_SEG_DETECT_CLOCK)
             .and_then(AttrValue::as_u64)?

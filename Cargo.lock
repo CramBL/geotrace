@@ -2582,6 +2582,7 @@ dependencies = [
  "hdf5-pure",
  "insta",
  "log",
+ "rstest",
  "tempfile",
  "test-log",
 ]

@@ -1,14 +1,15 @@
 use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
-    ATTR_SEG_GAP_US, ATTR_START_US, ChannelSummary, DatabaseRef, DbError,
+    ATTR_SEG_GAP_US, ATTR_SEG_SPLIT_RULE, ATTR_START_US, ChannelSummary, DatabaseRef, DbError,
     GTD_CHANNEL_COMPONENTS_ATTR, GTD_CHANNEL_DESCRIPTION_ATTR, GTD_CHANNEL_TIME_DATASET,
     GTD_CHANNEL_UNIT_ATTR, GTD_CHANNELS_GROUP, GTD_META_DEVICE_ATTR, GTD_META_NOTES_ATTR,
     GTD_META_TITLE_ATTR, GTD_META_TRAVEL_MODE_ATTR, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
     LogAttachment, LogAttachmentEntry, LogAttachmentId, RecordingEntry, RecordingMeta,
-    SNAP_BLOB_DATASET, SNAP_GROUP, StoredRecording, StoredSegmentation, TRACK_END_DATASET,
-    TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP, TrackRange, identity_from_group_name,
-    identity_group_name, is_db_internal_group, is_db_recording_attr, make_group_name,
+    SNAP_BLOB_DATASET, SNAP_GROUP, StoredRecording, StoredSegmentation, StoredTrackSplitRule,
+    TRACK_END_DATASET, TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP, TrackRange,
+    identity_from_group_name, identity_group_name, is_db_internal_group, is_db_recording_attr,
+    make_group_name,
 };
 use hdf5::Group;
 use std::path::Path;
@@ -706,6 +707,10 @@ fn write_segmentation_attrs(
         Ok(())
     };
     upsert_i64(ATTR_SEG_GAP_US, settings.track_split_gap_us)?;
+    upsert_i64(
+        ATTR_SEG_SPLIT_RULE,
+        settings.track_split_rule.attribute_value(),
+    )?;
     upsert_u64(
         ATTR_SEG_DETECT_CLOCK,
         u64::from(settings.detect_clock_discontinuities),
@@ -806,8 +811,13 @@ fn read_segmentation(rec_grp: &Group) -> Option<StoredSegmentation> {
         .attr(ATTR_SEG_CLOCK_SIGMAS)
         .and_then(|a| a.read_scalar::<f64>())
         .ok()?;
+    let rule = rec_grp
+        .attr(ATTR_SEG_SPLIT_RULE)
+        .and_then(|a| a.read_scalar::<i64>())
+        .ok();
     Some(StoredSegmentation {
         track_split_gap_us: gap,
+        track_split_rule: StoredTrackSplitRule::from_attribute_value(rule),
         detect_clock_discontinuities: detect != 0,
         clock_discontinuity_sigmas: sigmas,
     })

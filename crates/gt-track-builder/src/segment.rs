@@ -23,18 +23,44 @@ use std::ops::Range;
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
 
+/// The rule segmentation splits tracks by.
+///
+/// The history database holds the rule a recording's stored tracks were split
+/// by: re-running segmentation under that rule reproduces the stored ranges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TrackSplitRule {
+    /// A forward timestamp gap reaching `track_split_gap` starts a new track.
+    /// A recording stored by an earlier version was split by this rule.
+    ForwardGapOnly,
+    /// A timestamp step reaching `track_split_gap` in either direction starts a
+    /// new track.
+    #[default]
+    StepInEitherDirection,
+}
+
 /// Configuration that affects the track ranges produced by segmentation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrackLayoutConfig {
-    /// Size of the timestamp step between consecutive points, in either
-    /// direction, that starts a new track.
+    /// Size of the timestamp step between consecutive points that starts a new
+    /// track, in the directions `track_split_rule` covers.
     pub track_split_gap: Duration,
+    pub track_split_rule: TrackSplitRule,
 }
 
 impl Default for TrackLayoutConfig {
     fn default() -> Self {
         Self {
             track_split_gap: Duration::seconds(300),
+            track_split_rule: TrackSplitRule::default(),
+        }
+    }
+}
+
+impl TrackLayoutConfig {
+    fn starts_a_new_track(self, step: Duration) -> bool {
+        match self.track_split_rule {
+            TrackSplitRule::ForwardGapOnly => step >= self.track_split_gap,
+            TrackSplitRule::StepInEitherDirection => step.abs() >= self.track_split_gap,
         }
     }
 }
@@ -109,8 +135,8 @@ pub const DEFAULT_CLOCK_EXCURSION_THRESHOLD_S: f32 = clock_offset::DEFAULT_EXCUR
 
 /// Partitions `points` into contiguous track ranges. A new track begins where
 /// the timestamp step between consecutive points reaches
-/// `config.track_split_gap` in either direction. Returns an empty vec for empty
-/// input.
+/// `config.track_split_gap` in a direction `config.track_split_rule` covers.
+/// Returns an empty vec for empty input.
 pub fn segment_tracks(points: &[NavPoint], config: &TrackLayoutConfig) -> Vec<Range<usize>> {
     if points.is_empty() {
         return Vec::new();
@@ -120,12 +146,11 @@ pub fn segment_tracks(points: &[NavPoint], config: &TrackLayoutConfig) -> Vec<Ra
     let mut start = 0usize;
 
     for (i, pair) in points.windows(2).enumerate() {
-        if let [a, b] = pair {
-            let step = b.tpv.time() - a.tpv.time();
-            if step.abs() >= config.track_split_gap {
-                ranges.push(start..i + 1);
-                start = i + 1;
-            }
+        if let [a, b] = pair
+            && config.starts_a_new_track(b.tpv.time() - a.tpv.time())
+        {
+            ranges.push(start..i + 1);
+            start = i + 1;
         }
     }
     ranges.push(start..points.len());
@@ -1324,17 +1349,24 @@ mod tests {
     }
 
     #[rstest]
-    #[case::forward_step_below_the_split_gap(299, vec![0..2])]
-    #[case::forward_step_at_the_split_gap(300, vec![0..1, 1..2])]
-    #[case::backward_step_below_the_split_gap(-299, vec![0..2])]
-    #[case::backward_step_at_the_split_gap(-300, vec![0..1, 1..2])]
-    fn segment_tracks_splits_on_a_step_reaching_the_split_gap_in_either_direction(
+    #[case::forward_step_below_the_split_gap(TrackSplitRule::StepInEitherDirection, 299, vec![0..2])]
+    #[case::forward_step_at_the_split_gap(TrackSplitRule::StepInEitherDirection, 300, vec![0..1, 1..2])]
+    #[case::backward_step_below_the_split_gap(TrackSplitRule::StepInEitherDirection, -299, vec![0..2])]
+    #[case::backward_step_at_the_split_gap(TrackSplitRule::StepInEitherDirection, -300, vec![0..1, 1..2])]
+    #[case::forward_step_at_the_split_gap_under_forward_gaps_only(TrackSplitRule::ForwardGapOnly, 300, vec![0..1, 1..2])]
+    #[case::backward_step_at_the_split_gap_under_forward_gaps_only(TrackSplitRule::ForwardGapOnly, -300, vec![0..2])]
+    fn segment_tracks_applies_the_configured_split_rule(
+        #[case] track_split_rule: TrackSplitRule,
         #[case] step_seconds: i64,
         #[case] expected_ranges: Vec<Range<usize>>,
     ) {
         let pts = vec![make_point_at(1_000), make_point_at(1_000 + step_seconds)];
+        let config = TrackLayoutConfig {
+            track_split_rule,
+            ..TrackLayoutConfig::default()
+        };
 
-        let ranges = segment_tracks(&pts, &TrackLayoutConfig::default());
+        let ranges = segment_tracks(&pts, &config);
 
         assert_eq!(ranges, expected_ranges);
     }
