@@ -453,14 +453,14 @@ impl QueryWindow {
         // Collect a finished worker even while the window is closed, so its
         // results are there on reopen.
         self.drain_completed();
+        // Results gray out when anything they depend on changed: loaded files,
+        // track visibility, or the global filter. Refreshed while the window is
+        // closed too, since the map keeps drawing the results.
+        self.session.refresh_staleness(inputs);
 
         if !self.open {
             return;
         }
-
-        // Results gray out when anything they depend on changed: loaded
-        // files, track visibility, or the global filter.
-        self.session.refresh_staleness(inputs);
 
         let files = loaded_files.files();
         // The channels the editor checks `@name` against, gathered across every
