@@ -163,7 +163,10 @@ mod tests {
 
     /// The LOD of `points` taken as a track of their own.
     fn lod_of(points: &[NavPoint]) -> TrackLod {
-        let geometry = crate::segment::measure_track_geometry(points);
+        let geometry = crate::segment::measure_track_geometry(
+            points,
+            crate::segment::FixPlacementRule::default(),
+        );
         let placed = geometry
             .measured()
             .and_then(|measured| PlacedPoints::new(points, &measured.resolved_positions))

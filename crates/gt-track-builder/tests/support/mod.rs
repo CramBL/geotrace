@@ -12,5 +12,7 @@ use gt_types::track::MeasuredTrackGeometry;
 /// The geometry of `points` taken as a track of their own, `None` when the
 /// builder places no fix of them.
 pub fn measured_geometry(points: &[NavPoint]) -> Option<MeasuredTrackGeometry> {
-    segment::measure_track_geometry(points).measured().cloned()
+    segment::measure_track_geometry(points, segment::FixPlacementRule::default())
+        .measured()
+        .cloned()
 }

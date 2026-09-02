@@ -33,6 +33,9 @@ pub const ATTR_SEG_CLOCK_SIGMAS: &str = "seg_clock_discontinuity_sigmas";
 /// The [`StoredTrackSplitRule`] the stored tracks were split by, written as the
 /// rule's [`StoredTrackSplitRule::attribute_value`].
 pub const ATTR_SEG_SPLIT_RULE: &str = "seg_track_split_rule";
+/// The [`StoredFixPlacementRule`] the stored geometry was placed by, written as
+/// the rule's [`StoredFixPlacementRule::attribute_value`].
+pub const ATTR_SEG_PLACEMENT_RULE: &str = "seg_fix_placement_rule";
 
 /// DB-internal subgroup (under each recording group) holding the stored track
 /// ranges as parallel `start`/`end`/`hidden` datasets. The name is prefixed so
@@ -151,6 +154,7 @@ pub fn is_db_recording_attr(key: &str) -> bool {
             | ATTR_SEG_DETECT_CLOCK
             | ATTR_SEG_CLOCK_SIGMAS
             | ATTR_SEG_SPLIT_RULE
+            | ATTR_SEG_PLACEMENT_RULE
     ) || key.starts_with(LOG_ATTACHMENT_ATTR_PREFIX)
 }
 
@@ -218,19 +222,67 @@ impl StoredTrackSplitRule {
     }
 }
 
+/// The rule that turned a recording's fixes into the positions its tracks are
+/// drawn at.
+///
+/// The numbering is the on-disk one: a rule added later takes the next number,
+/// and a build with no variant for a number reads [`Self::Unrecognized`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredFixPlacementRule {
+    /// A fix with no heading was drawn between the fixes with a satellite in
+    /// fix around it, on the great circle through them continued past either
+    /// anchor for a fix stamped outside their time span.
+    MissingHeading,
+    /// A fix with no heading and no satellite in fix was drawn between the
+    /// fixes with a satellite in fix around it, and at the nearer of them for
+    /// a fix stamped outside their time span.
+    MissingHeadingAndNothingInFix,
+    /// A rule number this build has no variant for.
+    Unrecognized(i64),
+}
+
+impl StoredFixPlacementRule {
+    const MISSING_HEADING_VALUE: i64 = 0;
+    const MISSING_HEADING_AND_NOTHING_IN_FIX_VALUE: i64 = 1;
+
+    /// The rule an [`ATTR_SEG_PLACEMENT_RULE`] value names. An absent attribute
+    /// is [`Self::MissingHeading`]. Every build that wrote a recording without
+    /// this attribute placed its fixes by that rule.
+    pub fn from_attribute_value(value: Option<i64>) -> Self {
+        match value {
+            None | Some(Self::MISSING_HEADING_VALUE) => Self::MissingHeading,
+            Some(Self::MISSING_HEADING_AND_NOTHING_IN_FIX_VALUE) => {
+                Self::MissingHeadingAndNothingInFix
+            }
+            Some(other) => Self::Unrecognized(other),
+        }
+    }
+
+    pub fn attribute_value(self) -> i64 {
+        match self {
+            Self::MissingHeading => Self::MISSING_HEADING_VALUE,
+            Self::MissingHeadingAndNothingInFix => Self::MISSING_HEADING_AND_NOTHING_IN_FIX_VALUE,
+            Self::Unrecognized(value) => value,
+        }
+    }
+}
+
 /// History settings stored alongside a recording's track table.
 ///
 /// These are primitive persistence fields, intentionally independent of
 /// `gt-track-builder` runtime configuration types. `track_split_gap_us` and
 /// `track_split_rule` are the track-layout settings that determine whether
-/// stored track ranges can be reused safely. The clock marker fields are the
-/// generated-marker settings that this history schema persisted when the tracks
-/// were written. Newer generated-marker settings are supplied by the app's
-/// current processing config when the recording is opened.
+/// stored track ranges can be reused safely, and `fix_placement_rule` is the
+/// rule the positions those tracks are drawn at were placed by. The clock
+/// marker fields are the generated-marker settings that this history schema
+/// persisted when the tracks were written. Newer generated-marker settings are
+/// supplied by the app's current processing config when the recording is
+/// opened.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StoredSegmentation {
     pub track_split_gap_us: i64,
     pub track_split_rule: StoredTrackSplitRule,
+    pub fix_placement_rule: StoredFixPlacementRule,
     pub detect_clock_discontinuities: bool,
     pub clock_discontinuity_sigmas: f64,
 }

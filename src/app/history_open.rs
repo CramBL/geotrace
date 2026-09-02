@@ -2,13 +2,13 @@ use std::path::PathBuf;
 
 use egui::{Button, Grid, Label, RichText, Window};
 use gt_pending_writes::{PendingWriteGuard, WriteKind};
-use gt_store::{DbError, StoredTrackSplitRule};
+use gt_store::{DbError, StoredFixPlacementRule, StoredTrackSplitRule};
 
 use super::modals::{DialogActions, DialogBody};
 use super::{App, ResegmentPrompt, auto_prune, history, history_db, loader, modals, storage};
 
 /// Room for a recording name to wrap at a readable length beside the stored and
-/// current split settings.
+/// current track settings.
 const RESEGMENT_DIALOG_WIDTH: f32 = 480.0;
 
 /// Room for a recording identity and its group name on one line.
@@ -177,8 +177,8 @@ impl App {
 
     /// Begin opening a recording from history. Reproduces the stored tracks,
     /// re-applies the hidden ones, and regenerates markers with current settings.
-    /// When the stored track-splitting setting differs from the current one it
-    /// raises a prompt instead (recalculate vs. use the stored tracks).
+    /// When a stored track setting differs from the current one it raises a
+    /// prompt instead (recalculate vs. use the stored tracks).
     fn begin_history_open(
         &mut self,
         db_ref: gt_store::DatabaseRef,
@@ -201,11 +201,11 @@ impl App {
             .collect();
 
         match stored.segmentation {
-            // Stored track splitting differs from the current setting: let the
-            // user choose before changing track ranges that hidden-track state
-            // may refer to.
+            // A stored track setting differs from the current one: let the user
+            // choose before changing track ranges that hidden-track state may
+            // refer to, or the positions the fixes are drawn at.
             Some(stored_settings)
-                if !loader::track_split_matches_config(
+                if !loader::stored_tracks_match_config(
                     &stored_settings,
                     &self.processing_config,
                 ) && !stored.tracks.is_empty() =>
@@ -219,6 +219,13 @@ impl App {
                         "'{filename}' has tracks split by rule {rule}, which this version does not implement. They can only be recalculated."
                     );
                 }
+                if let StoredFixPlacementRule::Unrecognized(rule) =
+                    stored_settings.fix_placement_rule
+                {
+                    log::warn!(
+                        "'{filename}' has fixes placed by rule {rule}, which this version does not implement. They can only be recalculated."
+                    );
+                }
                 self.pending_resegment = Some(ResegmentPrompt {
                     db_ref,
                     filename,
@@ -228,8 +235,9 @@ impl App {
                     marker_settings_changed,
                 });
             }
-            // Track splitting matches: reproduce the stored tracks, re-apply
-            // hidden ones, and rebuild generated markers from current settings.
+            // Every stored track setting matches: reproduce the stored tracks,
+            // re-apply hidden ones, and rebuild generated markers from current
+            // settings.
             Some(stored_settings) => {
                 let marker_settings_changed = !loader::marker_settings_match_config(
                     &stored_settings,
@@ -527,7 +535,7 @@ impl App {
 
     pub(super) fn show_resegment_prompt(&mut self, ui: &egui::Ui) {
         // Re-segment prompt: a recording opened from history was stored with a
-        // different track-splitting setting than the current one.
+        // different track setting than the current one.
         if let Some(prompt) = self.pending_resegment.take() {
             let current = loader::stored_segmentation_from_config(&self.processing_config);
             let mut recalculate = false;
@@ -536,20 +544,29 @@ impl App {
                 .ctx()
                 .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             let fmt_gap = |us: i64| format!("{} s", us / 1_000_000);
-            let fmt_rule = |rule: StoredTrackSplitRule| match rule {
+            let fmt_split_rule = |rule: StoredTrackSplitRule| match rule {
                 StoredTrackSplitRule::ForwardGapOnly => "forward only".to_owned(),
                 StoredTrackSplitRule::StepInEitherDirection => "either direction".to_owned(),
                 StoredTrackSplitRule::Unrecognized(value) => {
                     format!("unknown rule {value}")
                 }
             };
+            let fmt_placement_rule = |rule: StoredFixPlacementRule| match rule {
+                StoredFixPlacementRule::MissingHeading => "no heading".to_owned(),
+                StoredFixPlacementRule::MissingHeadingAndNothingInFix => {
+                    "no heading, nothing in fix".to_owned()
+                }
+                StoredFixPlacementRule::Unrecognized(value) => {
+                    format!("unknown rule {value}")
+                }
+            };
             let stored_tracks_are_reproducible =
-                loader::stored_track_layout(&prompt.stored).is_some();
+                loader::stored_tracks_are_reproducible(&prompt.stored);
             let intro = format!(
-                "'{}' was stored with a different track-splitting setting than the current one.",
+                "'{}' was stored with different track settings than the current ones.",
                 prompt.filename
             );
-            Window::new("Track splitting differs")
+            Window::new("Track settings differ")
                 .collapsible(false)
                 .resizable(false)
                 // Wide enough for a recording name to wrap at a readable
@@ -575,8 +592,14 @@ impl App {
                                     ui.label(fmt_gap(current.track_split_gap_us));
                                     ui.end_row();
                                     ui.label("Split rule");
-                                    ui.label(fmt_rule(prompt.stored.track_split_rule));
-                                    ui.label(fmt_rule(current.track_split_rule));
+                                    ui.label(fmt_split_rule(prompt.stored.track_split_rule));
+                                    ui.label(fmt_split_rule(current.track_split_rule));
+                                    ui.end_row();
+                                    ui.label("Dead-reckoned fix");
+                                    ui.label(fmt_placement_rule(
+                                        prompt.stored.fix_placement_rule,
+                                    ));
+                                    ui.label(fmt_placement_rule(current.fix_placement_rule));
                                     ui.end_row();
                                 });
                         }),
@@ -597,7 +620,7 @@ impl App {
                                 )
                                 .on_hover_text("Open the tracks as stored, with their previous settings")
                                 .on_disabled_hover_text(
-                                    "This version cannot split tracks by the stored rule",
+                                    "This version does not implement a rule the recording was stored with",
                                 )
                                 .clicked()
                             {

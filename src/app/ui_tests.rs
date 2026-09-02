@@ -6684,6 +6684,7 @@ fn snapshot_history_resegment_dialog() {
         stored: gt_store::StoredSegmentation {
             track_split_gap_us: 60_000_000,
             track_split_rule: gt_store::StoredTrackSplitRule::ForwardGapOnly,
+            fix_placement_rule: gt_store::StoredFixPlacementRule::MissingHeading,
             detect_clock_discontinuities: false,
             clock_discontinuity_sigmas: 4.0,
         },
@@ -6694,12 +6695,14 @@ fn snapshot_history_resegment_dialog() {
     harness.snapshot_loose("history_resegment_dialog");
 }
 
-fn stored_segmentation_from_app_split_by(
+fn stored_segmentation_from_app_with_rules(
     app: &App,
     track_split_rule: gt_store::StoredTrackSplitRule,
+    fix_placement_rule: gt_store::StoredFixPlacementRule,
 ) -> gt_store::StoredSegmentation {
     gt_store::StoredSegmentation {
         track_split_rule,
+        fix_placement_rule,
         ..crate::app::loader::stored_segmentation_from_config(&app.processing_config)
     }
 }
@@ -6707,6 +6710,7 @@ fn stored_segmentation_from_app_split_by(
 fn resegment_prompt_for(
     app: &App,
     track_split_rule: gt_store::StoredTrackSplitRule,
+    fix_placement_rule: gt_store::StoredFixPlacementRule,
 ) -> super::ResegmentPrompt {
     super::ResegmentPrompt {
         db_ref: gt_store::DatabaseRef {
@@ -6715,18 +6719,41 @@ fn resegment_prompt_for(
         },
         filename: "ride.gtd".to_owned(),
         bytes: std::sync::Arc::from(minimal_gtd_bytes()),
-        stored: stored_segmentation_from_app_split_by(app, track_split_rule),
+        stored: stored_segmentation_from_app_with_rules(app, track_split_rule, fix_placement_rule),
         hidden_positions: vec![1],
         marker_settings_changed: false,
     }
 }
 
 #[rstest]
-#[case::the_forward_gap_only_rule(gt_store::StoredTrackSplitRule::ForwardGapOnly, true)]
-#[case::a_rule_this_build_does_not_implement(gt_store::StoredTrackSplitRule::Unrecognized(7), true)]
-#[case::the_current_rule(gt_store::StoredTrackSplitRule::StepInEitherDirection, false)]
-fn opening_a_recording_split_by_another_rule_raises_the_resegment_prompt(
-    #[case] stored_rule: gt_store::StoredTrackSplitRule,
+#[case::the_forward_gap_only_split_rule(
+    gt_store::StoredTrackSplitRule::ForwardGapOnly,
+    gt_store::StoredFixPlacementRule::MissingHeadingAndNothingInFix,
+    true
+)]
+#[case::a_split_rule_this_build_does_not_implement(
+    gt_store::StoredTrackSplitRule::Unrecognized(7),
+    gt_store::StoredFixPlacementRule::MissingHeadingAndNothingInFix,
+    true
+)]
+#[case::the_missing_heading_placement_rule(
+    gt_store::StoredTrackSplitRule::StepInEitherDirection,
+    gt_store::StoredFixPlacementRule::MissingHeading,
+    true
+)]
+#[case::a_placement_rule_this_build_does_not_implement(
+    gt_store::StoredTrackSplitRule::StepInEitherDirection,
+    gt_store::StoredFixPlacementRule::Unrecognized(7),
+    true
+)]
+#[case::the_current_rules(
+    gt_store::StoredTrackSplitRule::StepInEitherDirection,
+    gt_store::StoredFixPlacementRule::MissingHeadingAndNothingInFix,
+    false
+)]
+fn opening_a_recording_stored_by_another_rule_raises_the_resegment_prompt(
+    #[case] stored_split_rule: gt_store::StoredTrackSplitRule,
+    #[case] stored_placement_rule: gt_store::StoredFixPlacementRule,
     #[case] expected_prompt: bool,
 ) {
     let mut harness = Harness::builder()
@@ -6747,9 +6774,10 @@ fn opening_a_recording_split_by_another_rule_raises_the_resegment_prompt(
                 hidden: true,
             },
         ],
-        segmentation: Some(stored_segmentation_from_app_split_by(
+        segmentation: Some(stored_segmentation_from_app_with_rules(
             harness.state(),
-            stored_rule,
+            stored_split_rule,
+            stored_placement_rule,
         )),
     };
 
@@ -6767,17 +6795,36 @@ fn opening_a_recording_split_by_another_rule_raises_the_resegment_prompt(
 }
 
 #[rstest]
-#[case::the_forward_gap_only_rule(gt_store::StoredTrackSplitRule::ForwardGapOnly, false)]
-#[case::a_rule_this_build_does_not_implement(gt_store::StoredTrackSplitRule::Unrecognized(7), true)]
-fn the_resegment_prompt_offers_the_stored_tracks_only_for_a_rule_it_can_split_by(
-    #[case] stored_rule: gt_store::StoredTrackSplitRule,
+#[case::the_forward_gap_only_split_rule(
+    gt_store::StoredTrackSplitRule::ForwardGapOnly,
+    gt_store::StoredFixPlacementRule::MissingHeadingAndNothingInFix,
+    false
+)]
+#[case::a_split_rule_this_build_does_not_implement(
+    gt_store::StoredTrackSplitRule::Unrecognized(7),
+    gt_store::StoredFixPlacementRule::MissingHeadingAndNothingInFix,
+    true
+)]
+#[case::the_missing_heading_placement_rule(
+    gt_store::StoredTrackSplitRule::StepInEitherDirection,
+    gt_store::StoredFixPlacementRule::MissingHeading,
+    false
+)]
+#[case::a_placement_rule_this_build_does_not_implement(
+    gt_store::StoredTrackSplitRule::StepInEitherDirection,
+    gt_store::StoredFixPlacementRule::Unrecognized(7),
+    true
+)]
+fn the_resegment_prompt_offers_the_stored_tracks_only_for_rules_it_implements(
+    #[case] stored_split_rule: gt_store::StoredTrackSplitRule,
+    #[case] stored_placement_rule: gt_store::StoredFixPlacementRule,
     #[case] expected_disabled: bool,
 ) {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
     harness.step();
-    let prompt = resegment_prompt_for(harness.state(), stored_rule);
+    let prompt = resegment_prompt_for(harness.state(), stored_split_rule, stored_placement_rule);
     harness.state_mut().pending_resegment = Some(prompt);
     harness.run();
 
@@ -8472,6 +8519,7 @@ fn snap_runs_persist_and_restore_through_the_app() {
     let settings = StoredSegmentation {
         track_split_gap_us: 300_000_000,
         track_split_rule: gt_store::StoredTrackSplitRule::StepInEitherDirection,
+        fix_placement_rule: gt_store::StoredFixPlacementRule::MissingHeadingAndNothingInFix,
         detect_clock_discontinuities: false,
         clock_discontinuity_sigmas: 5.0,
     };
@@ -11271,7 +11319,7 @@ enum OversizedAppWindow {
     HistoryDatabaseInUse,
     HistoryDatabaseLocked,
     HistoryDatabaseCorrupted,
-    TrackSplittingDiffers,
+    TrackSettingsDiffer,
     AutoPrune,
     Settings,
     Query,
@@ -11291,8 +11339,8 @@ impl OversizedAppWindow {
             Self::HistoryDatabaseCorrupted => {
                 gt_test_utils::AuditedWindow::titled("History database is corrupted")
             }
-            Self::TrackSplittingDiffers => {
-                gt_test_utils::AuditedWindow::titled("Track splitting differs")
+            Self::TrackSettingsDiffer => {
+                gt_test_utils::AuditedWindow::titled("Track settings differ")
             }
             Self::AutoPrune => gt_test_utils::AuditedWindow::titled("Auto-prune"),
             Self::Settings => gt_test_utils::AuditedWindow::identified(
@@ -11315,7 +11363,7 @@ impl OversizedAppWindow {
             Self::HistoryDatabaseInUse => Some("Try again"),
             Self::HistoryDatabaseLocked
             | Self::HistoryDatabaseCorrupted
-            | Self::TrackSplittingDiffers
+            | Self::TrackSettingsDiffer
             | Self::AutoPrune => Some("Cancel"),
             Self::Settings | Self::Query | Self::TrackData | Self::LoadingProgress => None,
         }
@@ -11339,7 +11387,7 @@ impl OversizedAppWindow {
                     PathBuf::from(long),
                 ));
             }
-            Self::TrackSplittingDiffers => {
+            Self::TrackSettingsDiffer => {
                 app.pending_resegment = Some(super::ResegmentPrompt {
                     db_ref: gt_store::DatabaseRef {
                         identity: long.clone(),
@@ -11350,6 +11398,8 @@ impl OversizedAppWindow {
                     stored: gt_store::StoredSegmentation {
                         track_split_gap_us: 60_000_000,
                         track_split_rule: gt_store::StoredTrackSplitRule::StepInEitherDirection,
+                        fix_placement_rule:
+                            gt_store::StoredFixPlacementRule::MissingHeadingAndNothingInFix,
                         detect_clock_discontinuities: false,
                         clock_discontinuity_sigmas: 4.0,
                     },
@@ -11393,7 +11443,7 @@ fn every_app_window_fits_the_audit_viewports(
         OversizedAppWindow::HistoryDatabaseInUse,
         OversizedAppWindow::HistoryDatabaseLocked,
         OversizedAppWindow::HistoryDatabaseCorrupted,
-        OversizedAppWindow::TrackSplittingDiffers,
+        OversizedAppWindow::TrackSettingsDiffer,
         OversizedAppWindow::AutoPrune,
         OversizedAppWindow::Settings,
         OversizedAppWindow::Query,

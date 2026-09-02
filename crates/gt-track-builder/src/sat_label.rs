@@ -158,7 +158,10 @@ mod tests {
     /// The anchors of `points` taken as a track of their own, none for a track
     /// of no fixes.
     fn anchors_of(points: &[NavPoint]) -> Vec<SatLabelAnchor> {
-        let geometry = crate::segment::measure_track_geometry(points);
+        let geometry = crate::segment::measure_track_geometry(
+            points,
+            crate::segment::FixPlacementRule::default(),
+        );
         geometry
             .measured()
             .and_then(|measured| PlacedPoints::new(points, &measured.resolved_positions))

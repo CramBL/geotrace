@@ -137,9 +137,11 @@ impl SharedAppState {
     }
 }
 
-/// A recording opened from history whose stored track-splitting settings differ
-/// from the app's current ones. The user must choose to recalculate the tracks
-/// (current split setting) or use the stored tracks (previous split setting).
+/// A recording opened from history whose stored track settings differ from the
+/// app's current ones: the split gap, the split rule, or the fix placement
+/// rule. The user must choose to recalculate the tracks with the current
+/// settings or to use the stored tracks with the settings they were built
+/// with.
 struct ResegmentPrompt {
     db_ref: gt_store::DatabaseRef,
     filename: String,

@@ -2,9 +2,9 @@
 use geotrace_sdk::NavFile;
 use gt_history::{
     Database, DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentId,
-    LogContentHash, ReadOnlyDatabase, ReadOnlyHistoryDatabase, RecordingMeta, StoredLogFilter,
-    StoredLogFilterMode, StoredRecording, StoredSegmentation, StoredTrackSplitRule, TrackRange,
-    extract_meta,
+    LogContentHash, ReadOnlyDatabase, ReadOnlyHistoryDatabase, RecordingMeta,
+    StoredFixPlacementRule, StoredLogFilter, StoredLogFilterMode, StoredRecording,
+    StoredSegmentation, StoredTrackSplitRule, TrackRange, extract_meta,
 };
 #[cfg(feature = "backend-pure")]
 use gt_history_types::{
@@ -12,8 +12,8 @@ use gt_history_types::{
     TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP,
 };
 use gt_history_types::{
-    ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK, ATTR_SEG_GAP_US, ATTR_SEG_SPLIT_RULE,
-    CURRENT_SCHEMA_VERSION, SCHEMA_VERSION_ATTR,
+    ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK, ATTR_SEG_GAP_US, ATTR_SEG_PLACEMENT_RULE,
+    ATTR_SEG_SPLIT_RULE, CURRENT_SCHEMA_VERSION, SCHEMA_VERSION_ATTR,
 };
 use rstest::rstest;
 
@@ -22,6 +22,7 @@ fn test_settings() -> StoredSegmentation {
     StoredSegmentation {
         track_split_gap_us: 300_000_000,
         track_split_rule: StoredTrackSplitRule::StepInEitherDirection,
+        fix_placement_rule: StoredFixPlacementRule::MissingHeadingAndNothingInFix,
         detect_clock_discontinuities: true,
         clock_discontinuity_sigmas: 5.0,
     }
@@ -2250,6 +2251,7 @@ fn set_tracks_replaces_the_table_and_settings() {
     let new_settings = StoredSegmentation {
         track_split_gap_us: 42_000_000,
         track_split_rule: StoredTrackSplitRule::ForwardGapOnly,
+        fix_placement_rule: StoredFixPlacementRule::MissingHeading,
         detect_clock_discontinuities: false,
         clock_discontinuity_sigmas: 2.5,
     };
@@ -2276,10 +2278,17 @@ fn set_tracks_replaces_the_table_and_settings() {
 }
 
 #[rstest]
-#[case::forward_gap_only(StoredTrackSplitRule::ForwardGapOnly)]
-#[case::step_in_either_direction(StoredTrackSplitRule::StepInEitherDirection)]
-fn a_stored_recording_reads_back_the_split_rule_it_was_written_with(
+#[case::the_earlier_rules(
+    StoredTrackSplitRule::ForwardGapOnly,
+    StoredFixPlacementRule::MissingHeading
+)]
+#[case::the_current_rules(
+    StoredTrackSplitRule::StepInEitherDirection,
+    StoredFixPlacementRule::MissingHeadingAndNothingInFix
+)]
+fn a_stored_recording_reads_back_the_rules_it_was_written_with(
     #[case] track_split_rule: StoredTrackSplitRule,
+    #[case] fix_placement_rule: StoredFixPlacementRule,
 ) {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
@@ -2293,6 +2302,7 @@ fn a_stored_recording_reads_back_the_split_rule_it_was_written_with(
     }];
     let settings = StoredSegmentation {
         track_split_rule,
+        fix_placement_rule,
         ..test_settings()
     };
 
@@ -2323,6 +2333,7 @@ fn segmentation_attributes_stay_out_of_the_reconstructed_gtd() {
     for attr in [
         ATTR_SEG_GAP_US,
         ATTR_SEG_SPLIT_RULE,
+        ATTR_SEG_PLACEMENT_RULE,
         ATTR_SEG_DETECT_CLOCK,
         ATTR_SEG_CLOCK_SIGMAS,
     ] {
@@ -2335,8 +2346,10 @@ fn segmentation_attributes_stay_out_of_the_reconstructed_gtd() {
     }
 }
 
+/// A recording stored before either rule attribute existed reads back the rules
+/// the build that wrote it used.
 #[test_log::test]
-fn a_recording_stored_without_a_split_rule_reads_as_forward_gap_only() {
+fn a_recording_stored_without_the_rule_attributes_reads_as_the_earlier_rules() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("legacy.h5");
     write_pure_db_with_recording(&db_path, "auto:old.gtd", "2024-01-01T00:00:00Z", 5);
@@ -2345,12 +2358,14 @@ fn a_recording_stored_without_a_split_rule_reads_as_forward_gap_only() {
 
     let db_ref = db.list_recordings().expect("list")[0].db_ref.clone();
     let stored = db.load_full(&db_ref).expect("load");
+    let segmentation = stored.segmentation.expect("a stored segmentation");
     assert_eq!(
-        stored
-            .segmentation
-            .expect("a stored segmentation")
-            .track_split_rule,
+        segmentation.track_split_rule,
         StoredTrackSplitRule::ForwardGapOnly
+    );
+    assert_eq!(
+        segmentation.fix_placement_rule,
+        StoredFixPlacementRule::MissingHeading
     );
 }
 

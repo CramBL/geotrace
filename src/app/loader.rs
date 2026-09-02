@@ -11,9 +11,9 @@ use gt_log_view::LogAttachmentRef;
 use gt_logfile::{LogText, ParsedLog};
 use gt_pending_writes::{PendingWrites, WriteKind};
 use gt_plot::{AnalysisConfig, PreparedSeries};
-use gt_store::{AttachedLog, StoredLogFilter, StoredTrackSplitRule};
+use gt_store::{AttachedLog, StoredFixPlacementRule, StoredLogFilter, StoredTrackSplitRule};
 use gt_track_builder::{
-    GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig, TrackSplitRule,
+    FixPlacementRule, GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig, TrackSplitRule,
 };
 use gt_types::LoadedFile;
 
@@ -695,6 +695,12 @@ pub(crate) fn stored_segmentation_from_config(
             TrackSplitRule::ForwardGapOnly => StoredTrackSplitRule::ForwardGapOnly,
             TrackSplitRule::StepInEitherDirection => StoredTrackSplitRule::StepInEitherDirection,
         },
+        fix_placement_rule: match config.fix_placement_rule {
+            FixPlacementRule::MissingHeading => StoredFixPlacementRule::MissingHeading,
+            FixPlacementRule::MissingHeadingAndNothingInFix => {
+                StoredFixPlacementRule::MissingHeadingAndNothingInFix
+            }
+        },
         detect_clock_discontinuities: config.generated_markers.detect_clock_discontinuities,
         clock_discontinuity_sigmas: config.generated_markers.clock_discontinuity_sigmas,
     }
@@ -723,6 +729,26 @@ pub(crate) fn stored_track_layout(
     })
 }
 
+/// The rule that reproduces the positions a recording's stored tracks are
+/// drawn at, or `None` when this build does not implement it.
+pub(crate) fn stored_fix_placement_rule(
+    settings: &gt_store::StoredSegmentation,
+) -> Option<FixPlacementRule> {
+    match settings.fix_placement_rule {
+        StoredFixPlacementRule::MissingHeading => Some(FixPlacementRule::MissingHeading),
+        StoredFixPlacementRule::MissingHeadingAndNothingInFix => {
+            Some(FixPlacementRule::MissingHeadingAndNothingInFix)
+        }
+        StoredFixPlacementRule::Unrecognized(_) => None,
+    }
+}
+
+/// Whether this build implements both rules a recording was stored with, and
+/// can therefore reproduce its stored tracks and their geometry.
+pub(crate) fn stored_tracks_are_reproducible(settings: &gt_store::StoredSegmentation) -> bool {
+    stored_track_layout(settings).is_some() && stored_fix_placement_rule(settings).is_some()
+}
+
 fn generated_markers_from_stored(settings: &gt_store::StoredSegmentation) -> GeneratedMarkerConfig {
     GeneratedMarkerConfig {
         detect_clock_discontinuities: settings.detect_clock_discontinuities,
@@ -731,30 +757,35 @@ fn generated_markers_from_stored(settings: &gt_store::StoredSegmentation) -> Gen
     }
 }
 
-/// Returns `true` when the current app config's split gap and split rule
-/// reproduce the recording's stored track ranges. Generated-marker settings are
-/// excluded because they do not affect the track ranges.
-pub(crate) fn track_split_matches_config(
+/// Returns `true` when the current app config's split gap, split rule and fix
+/// placement rule reproduce the recording's stored track ranges and the
+/// positions those tracks are drawn at. Generated-marker settings are excluded
+/// because they change neither.
+pub(crate) fn stored_tracks_match_config(
     settings: &gt_store::StoredSegmentation,
     config: &SegmentationConfig,
 ) -> bool {
     stored_track_layout(settings) == Some(config.track_layout)
+        && stored_fix_placement_rule(settings) == Some(config.fix_placement_rule)
 }
 
 /// Rebuild a [`SegmentationConfig`] for opening stored history tracks.
 ///
 /// Hidden-track indices still line up with the stored track table because the
-/// stored track layout is kept. A history load takes the user's current marker
-/// toggles and slip thresholds from `current`. A recording split by a rule this
-/// build does not implement takes `current`'s track layout, since its stored
-/// ranges cannot be reproduced. The re-segment prompt then offers only
-/// recalculation for it.
+/// stored track layout is kept, and the fixes land where they were stored
+/// because the stored placement rule is kept. A history load takes the user's
+/// current marker toggles and slip thresholds from `current`. A recording
+/// stored by a rule this build does not implement takes that rule from
+/// `current`, since what it produced cannot be reproduced. The re-segment
+/// prompt then offers only recalculation for it.
 pub(crate) fn config_from_stored_segmentation(
     settings: &gt_store::StoredSegmentation,
     current: SegmentationConfig,
 ) -> SegmentationConfig {
     SegmentationConfig {
         track_layout: stored_track_layout(settings).unwrap_or(current.track_layout),
+        fix_placement_rule: stored_fix_placement_rule(settings)
+            .unwrap_or(current.fix_placement_rule),
         generated_markers: current.generated_markers,
     }
 }
@@ -990,6 +1021,7 @@ mod tests {
                 track_split_gap: chrono::Duration::milliseconds(42_500),
                 track_split_rule: TrackSplitRule::ForwardGapOnly,
             },
+            fix_placement_rule: FixPlacementRule::MissingHeading,
             generated_markers,
         };
         let stored = stored_segmentation_from_config(&config);
@@ -997,6 +1029,10 @@ mod tests {
         assert_eq!(
             stored.track_split_rule,
             StoredTrackSplitRule::ForwardGapOnly
+        );
+        assert_eq!(
+            stored.fix_placement_rule,
+            StoredFixPlacementRule::MissingHeading
         );
         assert!(!stored.detect_clock_discontinuities);
         assert_eq!(
@@ -1009,12 +1045,13 @@ mod tests {
     }
 
     #[test]
-    fn history_open_config_keeps_stored_track_split_and_current_marker_settings() {
+    fn history_open_config_keeps_the_stored_track_settings_and_the_current_marker_settings() {
         let stored_source = SegmentationConfig {
             track_layout: TrackLayoutConfig {
                 track_split_gap: chrono::Duration::milliseconds(42_500),
                 ..TrackLayoutConfig::default()
             },
+            fix_placement_rule: FixPlacementRule::MissingHeading,
             generated_markers: GeneratedMarkerConfig {
                 detect_clock_discontinuities: true,
                 clock_discontinuity_sigmas: 7.0,
@@ -1040,6 +1077,7 @@ mod tests {
         let back = config_from_stored_segmentation(&stored, current);
 
         assert_eq!(back.track_layout, stored_source.track_layout);
+        assert_eq!(back.fix_placement_rule, stored_source.fix_placement_rule);
         assert_eq!(back.generated_markers, current.generated_markers);
     }
 
@@ -1074,6 +1112,31 @@ mod tests {
                 track_split_rule,
             })
         );
+    }
+
+    /// Re-placing under the stored rule reproduces the positions the stored
+    /// tracks were drawn at. A rule this build does not implement has none:
+    /// those positions cannot be reproduced.
+    #[rstest]
+    #[case::the_missing_heading_rule(
+        StoredFixPlacementRule::MissingHeading,
+        Some(FixPlacementRule::MissingHeading)
+    )]
+    #[case::the_current_rule(
+        StoredFixPlacementRule::MissingHeadingAndNothingInFix,
+        Some(FixPlacementRule::MissingHeadingAndNothingInFix)
+    )]
+    #[case::a_rule_this_build_does_not_implement(StoredFixPlacementRule::Unrecognized(7), None)]
+    fn stored_fix_placement_rule_takes_the_rule_the_recording_was_placed_by(
+        #[case] stored_rule: StoredFixPlacementRule,
+        #[case] expected_rule: Option<FixPlacementRule>,
+    ) {
+        let settings = gt_store::StoredSegmentation {
+            fix_placement_rule: stored_rule,
+            ..stored_segmentation_from_config(&SegmentationConfig::default())
+        };
+
+        assert_eq!(stored_fix_placement_rule(&settings), expected_rule);
     }
 
     #[test]
