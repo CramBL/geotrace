@@ -1,14 +1,21 @@
-//! The `constellation` group of `geotrace.h`: the GNSS constellation identifier.
+//! The GNSS constellation identifier.
 
 /// GNSS constellation identifier.
+/// cbindgen:rename-all=QualifiedScreamingSnakeCase
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub enum GtdConstellation {
+    /// GPS (USA).
     Gps = 0,
+    /// GLONASS (Russia).
     Glonass = 1,
+    /// Galileo (EU).
     Galileo = 2,
+    /// BeiDou (China).
     Beidou = 3,
+    /// NavIC / IRNSS (India).
     Navic = 4,
+    /// QZSS (Japan).
     Qzss = 5,
 }
 

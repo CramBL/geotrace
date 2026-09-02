@@ -1,3 +1,4 @@
+__cplusplus
 accesskit
 accessor
 accessors
@@ -74,6 +75,7 @@ Downsampled
 downsamples
 downsampling
 Downsampling
+Doxygen
 draggable
 Earthdata
 eframe

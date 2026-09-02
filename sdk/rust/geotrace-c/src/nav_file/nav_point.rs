@@ -1,4 +1,4 @@
-//! The `navpoint` group of `geotrace.h` and the accessors of `navfile_read` that fill it.
+//! Nav point data and the accessors that fill it.
 
 use super::GtdNavFile;
 use crate::error::{self, GtdStatus};
@@ -6,20 +6,42 @@ use crate::optf64;
 use crate::timestamp;
 use crate::{GtdConstellation, GtdOptF64, GtdSatInfo, GtdTimestamp};
 
-/// Nav point data returned by `gtd_nav_file_get_nav_point`.
+/// Navigation fix data returned by `gtd_nav_file_get_nav_point()`.
+///
+/// All fields are caller-owned (no pointers to SDK memory).
+///
+/// The ranges on @ref lat_deg, @ref lon_deg and @ref heading_deg, and
+/// non-negative @ref speed_mps and @ref eph_m, are data quality expectations,
+/// not parse rules.
+/// The SDK returns @ref lat_deg and @ref lon_deg unchanged, NaN included.
+/// A NaN @ref heading_deg, @ref speed_mps or @ref eph_m is returned as
+/// `GTD_NONE_F64`: NaN is how the write path stores an absent one.
+/// Checking a value against its range is the caller's job.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct GtdNavPointInfo {
+    /// GPS time of the fix. Use `gtd_ts_is_none()` to check.
     pub gps_time: GtdTimestamp,
+    /// System (wall-clock) time of the fix.
     pub sys_time: GtdTimestamp,
+    /// WGS-84 latitude in degrees, expected in [-90, 90].
     pub lat_deg: f64,
+    /// WGS-84 longitude in degrees, expected in [-180, 180].
     pub lon_deg: f64,
+    /// Compass heading in degrees, expected in [0, 360), if known.
     pub heading_deg: GtdOptF64,
+    /// Ground speed in m/s, expected to be non-negative, if known.
     pub speed_mps: GtdOptF64,
+    /// Estimated horizontal position error in metres, expected to be
+    /// non-negative, if known.
     pub eph_m: GtdOptF64,
+    /// Number of tracked satellites (0 when no satellite report present).
     pub sat_count: usize,
 }
 
+/// Return the number of navigation fixes in the file.
+///
+/// @param f File handle. Returns 0 if NULL.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_nav_point_count(f: *const GtdNavFile) -> usize {
     if f.is_null() {
@@ -29,6 +51,13 @@ pub unsafe extern "C" fn gtd_nav_file_nav_point_count(f: *const GtdNavFile) -> u
     unsafe { (*f).file.nav_points().len() }
 }
 
+/// Fill @p out with data for the navigation fix at @p idx.
+///
+/// @param f   File handle.
+/// @param idx Zero-based index. Must be less than `gtd_nav_file_nav_point_count(f)`.
+/// @param out Caller-allocated struct to fill.
+///
+/// @return `GTD_ERR_NULL_ARGUMENT` if @p idx is out of range.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_get_nav_point(
     f: *const GtdNavFile,
@@ -41,7 +70,7 @@ pub unsafe extern "C" fn gtd_nav_file_get_nav_point(
 
         let Some(point) = f.file.nav_points().get(idx) else {
             error::set_last_error(format!("nav point index {idx} is out of range"));
-            return GtdStatus::ErrNullArgument;
+            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         };
 
         out.gps_time = point
@@ -66,10 +95,20 @@ pub unsafe extern "C" fn gtd_nav_file_get_nav_point(
             .map_or(optf64::opt_f64_none(), optf64::opt_f64_some);
         out.sat_count = point.satellites.as_ref().map_or(0, |r| r.tracked.len());
 
-        GtdStatus::Ok
+        GtdStatus::GTD_OK
     })
 }
 
+/// Fill @p out with satellite data for a specific satellite within a nav fix.
+///
+/// @param f       File handle.
+/// @param nav_idx Nav fix index.
+/// @param sat_idx Satellite index within that fix. Must be less than
+///                `GtdNavPointInfo::sat_count`.
+/// @param out     Caller-allocated struct to fill.
+///
+/// @return `GTD_ERR_NULL_ARGUMENT` if either index is out of range, or the nav
+///         fix has no satellite report.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_get_satellite(
     f: *const GtdNavFile,
@@ -83,17 +122,17 @@ pub unsafe extern "C" fn gtd_nav_file_get_satellite(
 
         let Some(point) = f.file.nav_points().get(nav_idx) else {
             error::set_last_error(format!("nav point index {nav_idx} is out of range"));
-            return GtdStatus::ErrNullArgument;
+            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         };
 
         let Some(report) = &point.satellites else {
             error::set_last_error(format!("nav point {nav_idx} has no satellite report"));
-            return GtdStatus::ErrNullArgument;
+            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         };
 
         let Some(sat) = report.tracked.get(sat_idx) else {
             error::set_last_error(format!("satellite index {sat_idx} is out of range"));
-            return GtdStatus::ErrNullArgument;
+            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         };
 
         out.constellation = GtdConstellation::from(sat.constellation);
@@ -109,6 +148,6 @@ pub unsafe extern "C" fn gtd_nav_file_get_satellite(
             optf64::opt_f64_some(f64::from(v))
         });
 
-        GtdStatus::Ok
+        GtdStatus::GTD_OK
     })
 }

@@ -7,6 +7,10 @@ the app).
 
 ## [unreleased]
 
+### Changed
+
+- C `gtd_builder_add_channel_with_unit_mode` takes `uint32_t unit_mode`, the parameter type `gtd_channel_unit_parse` already uses. A `GtdChannelUnitMode` value passes unchanged.
+
 ## [0.6.0] - 2026-09-03
 
 ### Added

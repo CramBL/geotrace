@@ -1,4 +1,4 @@
-//! The `status` group of `geotrace.h`: the status codes and the last error message.
+//! The status codes and the last error message.
 
 use std::cell::RefCell;
 use std::ffi::{CString, c_char};
@@ -27,46 +27,61 @@ pub(crate) fn run_catching_panics<F: FnOnce() -> GtdStatus>(f: F) -> GtdStatus {
         Ok(s) => s,
         Err(_) => {
             set_last_error("internal panic in geotrace-c");
-            GtdStatus::ErrInternal
+            GtdStatus::GTD_ERR_INTERNAL
         }
     }
 }
 
+/// Return code for all fallible SDK functions.
+///
+/// On failure, call `gtd_last_error()` for a human-readable description.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GtdStatus {
-    Ok = 0,
-    ErrNullArgument = 1,
-    ErrInvalidPath = 2,
-    ErrNoNavFixes = 3,
-    ErrAnnotationsOob = 4,
-    ErrIo = 5,
-    ErrHdf5 = 6,
-    ErrVersion = 7,
-    ErrUtf8 = 8,
-    ErrParse = 9,
-    ErrInvalidChannel = 10,
-    ErrFieldTooLong = 11,
-    ErrInternal = 99,
+    /// Success.
+    GTD_OK = 0,
+    /// A required pointer argument was NULL.
+    GTD_ERR_NULL_ARGUMENT = 1,
+    /// Malformed event-marker variant path.
+    GTD_ERR_INVALID_PATH = 2,
+    /// Builder finished with no nav fixes.
+    GTD_ERR_NO_NAV_FIXES = 3,
+    /// Annotation(s) outside the nav fix time range.
+    GTD_ERR_ANNOTATIONS_OOB = 4,
+    /// I/O error (file not found, permission denied, etc.).
+    GTD_ERR_IO = 5,
+    /// HDF5 library error.
+    GTD_ERR_HDF5 = 6,
+    /// Unsupported file format version.
+    GTD_ERR_VERSION = 7,
+    /// String argument contained invalid UTF-8.
+    GTD_ERR_UTF8 = 8,
+    /// Malformed or corrupt .gtd file (decode failed).
+    GTD_ERR_PARSE = 9,
+    /// Malformed channel (bad name/component or length mismatch).
+    GTD_ERR_INVALID_CHANNEL = 10,
+    /// A string is longer than the `.gtd` field that holds it.
+    GTD_ERR_FIELD_TOO_LONG = 11,
+    /// Internal error (bug in the SDK).
+    GTD_ERR_INTERNAL = 99,
 }
 
-// Pin every discriminant at compile time. These are the C ABI numbers and must
-// match `GtdStatus` in sdk/c/geotrace.h exactly. The build script (build.rs)
-// cross-checks the header so the two hand-written lists cannot drift.
+// Pin every discriminant at compile time. These are the C ABI numbers, which a
+// reordering of the variants must not change.
 const _: () = {
-    assert!(GtdStatus::Ok as u32 == 0);
-    assert!(GtdStatus::ErrNullArgument as u32 == 1);
-    assert!(GtdStatus::ErrInvalidPath as u32 == 2);
-    assert!(GtdStatus::ErrNoNavFixes as u32 == 3);
-    assert!(GtdStatus::ErrAnnotationsOob as u32 == 4);
-    assert!(GtdStatus::ErrIo as u32 == 5);
-    assert!(GtdStatus::ErrHdf5 as u32 == 6);
-    assert!(GtdStatus::ErrVersion as u32 == 7);
-    assert!(GtdStatus::ErrUtf8 as u32 == 8);
-    assert!(GtdStatus::ErrParse as u32 == 9);
-    assert!(GtdStatus::ErrInvalidChannel as u32 == 10);
-    assert!(GtdStatus::ErrFieldTooLong as u32 == 11);
-    assert!(GtdStatus::ErrInternal as u32 == 99);
+    assert!(GtdStatus::GTD_OK as u32 == 0);
+    assert!(GtdStatus::GTD_ERR_NULL_ARGUMENT as u32 == 1);
+    assert!(GtdStatus::GTD_ERR_INVALID_PATH as u32 == 2);
+    assert!(GtdStatus::GTD_ERR_NO_NAV_FIXES as u32 == 3);
+    assert!(GtdStatus::GTD_ERR_ANNOTATIONS_OOB as u32 == 4);
+    assert!(GtdStatus::GTD_ERR_IO as u32 == 5);
+    assert!(GtdStatus::GTD_ERR_HDF5 as u32 == 6);
+    assert!(GtdStatus::GTD_ERR_VERSION as u32 == 7);
+    assert!(GtdStatus::GTD_ERR_UTF8 as u32 == 8);
+    assert!(GtdStatus::GTD_ERR_PARSE as u32 == 9);
+    assert!(GtdStatus::GTD_ERR_INVALID_CHANNEL as u32 == 10);
+    assert!(GtdStatus::GTD_ERR_FIELD_TOO_LONG as u32 == 11);
+    assert!(GtdStatus::GTD_ERR_INTERNAL as u32 == 99);
 };
 
 /// Map a core SDK error to its C status code. Decode failures (malformed or
@@ -75,17 +90,17 @@ const _: () = {
 pub(crate) fn status_for_error(e: &geotrace_sdk::Error) -> GtdStatus {
     use geotrace_sdk::Error;
     match e {
-        Error::Io(_) => GtdStatus::ErrIo,
-        Error::Hdf5(_) => GtdStatus::ErrHdf5,
-        Error::UnsupportedVersion { .. } => GtdStatus::ErrVersion,
+        Error::Io(_) => GtdStatus::GTD_ERR_IO,
+        Error::Hdf5(_) => GtdStatus::GTD_ERR_HDF5,
+        Error::UnsupportedVersion { .. } => GtdStatus::GTD_ERR_VERSION,
         Error::UnknownConstellation { .. }
         | Error::ShapeMismatch { .. }
         | Error::UnknownConstellationName { .. }
         | Error::UnknownMarkerIcon { .. }
         | Error::ParseError { .. }
         | Error::UnreadableField { .. }
-        | Error::DatasetSizePastFileLength { .. } => GtdStatus::ErrParse,
-        Error::UnwritableField { .. } => GtdStatus::ErrFieldTooLong,
+        | Error::DatasetSizePastFileLength { .. } => GtdStatus::GTD_ERR_PARSE,
+        Error::UnwritableField { .. } => GtdStatus::GTD_ERR_FIELD_TOO_LONG,
     }
 }
 
@@ -96,17 +111,18 @@ pub(crate) fn status_for_event_marker_error(e: &geotrace_sdk::EventMarkerError) 
     use geotrace_sdk::EventMarkerError;
     match e {
         EventMarkerError::TooLong { .. } | EventMarkerError::UnwritableAnnotation { .. } => {
-            GtdStatus::ErrFieldTooLong
+            GtdStatus::GTD_ERR_FIELD_TOO_LONG
         }
         EventMarkerError::Empty { .. }
         | EventMarkerError::LeadingSlash { .. }
         | EventMarkerError::TrailingSlash { .. }
         | EventMarkerError::EmptySegment { .. }
-        | EventMarkerError::InvalidChars { .. } => GtdStatus::ErrInvalidPath,
+        | EventMarkerError::InvalidChars { .. } => GtdStatus::GTD_ERR_INVALID_PATH,
     }
 }
 
 /// Returns the last error message for the current thread, or NULL if none.
+///
 /// The pointer is valid until the next SDK call on this thread.
 #[unsafe(no_mangle)]
 pub extern "C" fn gtd_last_error() -> *const c_char {

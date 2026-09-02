@@ -1,4 +1,4 @@
-//! The `builder` group of `geotrace.h`: adding nav fixes, satellite reports, markers and channels.
+//! Adding nav fixes, satellite reports, markers and channels to a builder.
 
 use std::ffi::c_char;
 
@@ -10,8 +10,28 @@ use geotrace_sdk::{
 use super::GtdFileBuilder;
 use crate::error::{self, GtdStatus};
 use crate::timestamp;
-use crate::{GtdChannel, GtdMarkerIcon, GtdOptF64, GtdSatellite, GtdTimestamp};
+use crate::{GtdChannel, GtdChannelUnitMode, GtdMarkerIcon, GtdOptF64, GtdSatellite, GtdTimestamp};
 
+/// Add a GPS navigation fix.
+///
+/// At least one nav fix is required before `gtd_builder_finish()`.
+/// Fixes must be added in ascending time order.
+///
+/// The ranges named below are data quality expectations, not parse rules.
+/// The SDK records a value outside its range, NaN included, as given: a recorder
+/// that captured bad data must be able to write it.
+/// A NaN @p heading_deg, @p speed_mps or @p eph_m reads back as absent: the SDK
+/// stores `GTD_NONE_F64` as NaN.
+///
+/// @param b           Builder handle.
+/// @param gps_time    GPS time of the fix. Use `gtd_ts_none()` when unavailable.
+/// @param sys_time    System (wall-clock) time. Use `gtd_ts_none()` when unavailable.
+/// @param lat_deg     WGS-84 latitude in degrees, expected in [-90, 90].
+/// @param lon_deg     WGS-84 longitude in degrees, expected in [-180, 180].
+/// @param heading_deg Compass heading in degrees, expected in [0, 360), or `GTD_NONE_F64`.
+/// @param speed_mps   Ground speed in m/s, expected to be non-negative, or `GTD_NONE_F64`.
+/// @param eph_m       Estimated horizontal position error in metres, expected to be
+///                    non-negative, or `GTD_NONE_F64`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_nav_fix(
     b: *mut GtdFileBuilder,
@@ -34,10 +54,20 @@ pub unsafe extern "C" fn gtd_builder_add_nav_fix(
             speed: speed_mps.to_opt().map(Velocity::meter_per_second),
             eph_m: eph_m.to_opt(),
         });
-        GtdStatus::Ok
+        GtdStatus::GTD_OK
     })
 }
 
+/// Add a satellite visibility report.
+///
+/// The report is associated with the nearest preceding nav fix.
+/// Passing @p n_sats as zero with a NULL @p sats pointer records an empty report.
+///
+/// @param b        Builder handle.
+/// @param gps_time GPS time of the report. Use `gtd_ts_none()` when unavailable.
+/// @param sys_time System (wall-clock) time of the report.
+/// @param sats     Array of @p n_sats satellite entries.
+/// @param n_sats   Number of elements in @p sats.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_satellite_report(
     b: *mut GtdFileBuilder,
@@ -50,7 +80,7 @@ pub unsafe extern "C" fn gtd_builder_add_satellite_report(
         let b = nonnull_mut!(b);
         if n_sats > 0 && sats.is_null() {
             error::set_last_error("sats is null but n_sats > 0");
-            return GtdStatus::ErrNullArgument;
+            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         }
         let tracked: Vec<geotrace_sdk::Satellite> = if n_sats == 0 {
             Vec::new()
@@ -64,10 +94,20 @@ pub unsafe extern "C" fn gtd_builder_add_satellite_report(
             sys_time: timestamp::ts_to_datetime(sys_time),
             tracked,
         });
-        GtdStatus::Ok
+        GtdStatus::GTD_OK
     })
 }
 
+/// Add a legacy map-pin annotation (optional label + icon).
+///
+/// @p time must lie within the nav fix time range unless lenient mode is enabled.
+///
+/// @param b     Builder handle.
+/// @param time  Timestamp of the annotation. Must not be `gtd_ts_none()`.
+/// @param label Human-readable label, or NULL for no label.
+/// @param icon  Icon to display. `GTD_ICON_AUTO` uses the application default (Pin).
+///
+/// @return `GTD_ERR_FIELD_TOO_LONG` if @p label is longer than 255 bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_annotation(
     b: *mut GtdFileBuilder,
@@ -79,7 +119,7 @@ pub unsafe extern "C" fn gtd_builder_add_annotation(
         let b = nonnull_mut!(b);
         let Some(ann_time) = timestamp::ts_to_datetime(time) else {
             error::set_last_error("annotation time must not be gtd_ts_none()");
-            return GtdStatus::ErrNullArgument;
+            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         };
         let annotation = match Annotation::builder()
             .time(ann_time)
@@ -95,10 +135,24 @@ pub unsafe extern "C" fn gtd_builder_add_annotation(
             }
         };
         b.recorder_mut().add_annotation(annotation);
-        GtdStatus::Ok
+        GtdStatus::GTD_OK
     })
 }
 
+/// Add a structured event marker.
+///
+/// Event markers use a hierarchical variant path (e.g. `"system/startup"`) to
+/// identify the event type. Paths must be non-empty, consist of alphanumeric
+/// segments separated by `/`, and not exceed 255 bytes.
+///
+/// @param b            Builder handle.
+/// @param variant_path Hierarchical event type path.
+/// @param sys_time     Time of the event. Must not be `gtd_ts_none()`.
+/// @param annotation   Optional human-readable text. Pass NULL for none.
+///
+/// @return `GTD_ERR_INVALID_PATH` if @p variant_path is malformed.
+/// @return `GTD_ERR_FIELD_TOO_LONG` if @p variant_path is longer than 255 bytes,
+///         or @p annotation longer than 511 bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_event_marker(
     b: *mut GtdFileBuilder,
@@ -112,7 +166,7 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker(
         let ann = cstr_opt!(annotation).map(str::to_owned);
         let Some(dt) = timestamp::ts_to_datetime(sys_time) else {
             error::set_last_error("event marker sys_time must not be gtd_ts_none()");
-            return GtdStatus::ErrNullArgument;
+            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         };
         let marker = match EventMarker::builder()
             .variant_path(path)
@@ -128,10 +182,24 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker(
             }
         };
         b.recorder_mut().add_event_marker(marker);
-        GtdStatus::Ok
+        GtdStatus::GTD_OK
     })
 }
 
+/// Register a display style for an event marker variant.
+///
+/// Styles are per-variant, not per-event. Calling this multiple times for the
+/// same path overwrites the previous style.
+///
+/// @param b            Builder handle.
+/// @param variant_path Hierarchical event type path (same format as in
+///                     `gtd_builder_add_event_marker()`).
+/// @param icon         Icon to display. `GTD_ICON_AUTO` uses the application default.
+/// @param color_hex    Color as an `"#RRGGBB"` string, or NULL for automatic.
+///
+/// @note The style is checked when the file is written: a @p variant_path past
+///       255 bytes or a @p color_hex past 7 bytes fails there with
+///       `GTD_ERR_FIELD_TOO_LONG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_event_marker_style(
     b: *mut GtdFileBuilder,
@@ -152,10 +220,22 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker_style(
             icon: icon_choice,
             color,
         });
-        GtdStatus::Ok
+        GtdStatus::GTD_OK
     })
 }
 
+/// Add a scalar or vector sensor channel.
+///
+/// The channel keeps its own sample timestamps. It is correlated with the nav
+/// track by time at query time, not resampled here. See @ref GtdChannel for the
+/// field layout, including the row-major `values` convention.
+///
+/// @param b       Builder handle.
+/// @param channel Channel description. Not retained after the call returns.
+///
+/// @return `GTD_ERR_INVALID_CHANNEL` if the unit is unrecognized, the name or a
+///         component label is malformed, or `values` is not
+///         `n_times * max(n_components, 1)` long.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_channel(
     b: *mut GtdFileBuilder,
@@ -165,6 +245,22 @@ pub unsafe extern "C" fn gtd_builder_add_channel(
     unsafe { gtd_builder_add_channel_with_unit_mode(b, channel, 0) }
 }
 
+/// Add a channel with an explicit recognized/custom interpretation for its unit.
+///
+/// This entry point preserves the layout of @ref GtdChannel while allowing a
+/// display-only custom label through @ref GTD_CHANNEL_UNIT_CUSTOM.
+/// `gtd_builder_add_channel()` is this call with
+/// @ref GTD_CHANNEL_UNIT_RECOGNIZED. The label is validated and canonicalized as
+/// in @ref gtd_channel_unit_parse, so the file stores the canonical spelling. A
+/// NULL @ref GtdChannel::unit adds a channel without a unit, whatever
+/// @p unit_mode says.
+///
+/// @param b         Builder handle.
+/// @param channel   Channel description. Not retained after the call returns.
+/// @param unit_mode A @ref GtdChannelUnitMode value.
+///
+/// @return `GTD_ERR_INVALID_CHANNEL` for an invalid unit/mode combination or
+///         malformed channel metadata.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_channel_with_unit_mode(
     b: *mut GtdFileBuilder,
@@ -188,7 +284,7 @@ pub unsafe extern "C" fn gtd_builder_add_channel_with_unit_mode(
             None
         } else if ch.components.is_null() {
             error::set_last_error("components is null but n_components > 0");
-            return GtdStatus::ErrNullArgument;
+            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         } else {
             // SAFETY: components is non-null with `n_components` elements (checked).
             let ptrs = unsafe { std::slice::from_raw_parts(ch.components, ch.n_components) };
@@ -196,14 +292,14 @@ pub unsafe extern "C" fn gtd_builder_add_channel_with_unit_mode(
             for &ptr in ptrs {
                 if ptr.is_null() {
                     error::set_last_error("a component label pointer is null");
-                    return GtdStatus::ErrNullArgument;
+                    return GtdStatus::GTD_ERR_NULL_ARGUMENT;
                 }
                 // SAFETY: `ptr` is a non-null C string (checked).
                 match unsafe { std::ffi::CStr::from_ptr(ptr) }.to_str() {
                     Ok(label) => labels.push(label.to_owned()),
                     Err(_) => {
                         error::set_last_error("a component label is not valid UTF-8");
-                        return GtdStatus::ErrUtf8;
+                        return GtdStatus::GTD_ERR_UTF8;
                     }
                 }
             }
@@ -212,7 +308,7 @@ pub unsafe extern "C" fn gtd_builder_add_channel_with_unit_mode(
 
         if ch.n_times > 0 && ch.times.is_null() {
             error::set_last_error("times is null but n_times > 0");
-            return GtdStatus::ErrNullArgument;
+            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         }
         let time_slice = if ch.n_times == 0 {
             &[][..]
@@ -224,14 +320,14 @@ pub unsafe extern "C" fn gtd_builder_add_channel_with_unit_mode(
         for ts in time_slice {
             let Some(dt) = timestamp::ts_to_datetime(*ts) else {
                 error::set_last_error("channel timestamps must not be gtd_ts_none()");
-                return GtdStatus::ErrNullArgument;
+                return GtdStatus::GTD_ERR_NULL_ARGUMENT;
             };
             times.push(dt);
         }
 
         if ch.n_values > 0 && ch.values.is_null() {
             error::set_last_error("values is null but n_values > 0");
-            return GtdStatus::ErrNullArgument;
+            return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         }
         let values = if ch.n_values == 0 {
             Vec::new()
@@ -252,11 +348,11 @@ pub unsafe extern "C" fn gtd_builder_add_channel_with_unit_mode(
         match built {
             Ok(built) => {
                 b.recorder_mut().add_channel(built);
-                GtdStatus::Ok
+                GtdStatus::GTD_OK
             }
             Err(e) => {
                 error::set_last_error(e);
-                GtdStatus::ErrInvalidChannel
+                GtdStatus::GTD_ERR_INVALID_CHANNEL
             }
         }
     })
@@ -269,16 +365,12 @@ fn parse_channel_unit(
     let Some(label) = label else {
         return Ok(None);
     };
-    let parsed = match unit_mode {
-        0 => label.parse(),
-        1 => ChannelUnit::custom(label),
-        _ => {
-            error::set_last_error("unit_mode is not a valid GtdChannelUnitMode");
-            return Err(GtdStatus::ErrInvalidChannel);
-        }
+    let Some(unit_mode) = GtdChannelUnitMode::from_abi_value(unit_mode) else {
+        error::set_last_error("unit_mode is not a valid GtdChannelUnitMode");
+        return Err(GtdStatus::GTD_ERR_INVALID_CHANNEL);
     };
-    parsed.map(Some).map_err(|error| {
+    unit_mode.parse_label(label).map(Some).map_err(|error| {
         error::set_last_error(error);
-        GtdStatus::ErrInvalidChannel
+        GtdStatus::GTD_ERR_INVALID_CHANNEL
     })
 }

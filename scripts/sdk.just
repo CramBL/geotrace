@@ -4,6 +4,33 @@
 [group("container-sdk")]
 build-c: (_sdk "cargo build -p geotrace-c --release")
 
+# The `cbindgen` release sdk/c/geotrace.h is generated with. Install it natively
+# with `cargo install cbindgen --version 0.29.4 --locked`, or let the recipes
+# below run it in the container image.
+CBINDGEN_VERSION := "0.29.4"
+
+# Rewrite sdk/c/geotrace.h from the FFI declarations of sdk/rust/geotrace-c.
+[group("utils")]
+sdk-c-header: (_cbindgen "--output" "sdk/c/geotrace.h")
+
+# Fail when sdk/c/geotrace.h differs from what the FFI declarations generate.
+[group("ci")]
+check-c-header: (_cbindgen "--verify" "--output" "sdk/c/geotrace.h")
+
+# A `cbindgen` other than the pinned one lays the header out differently, which
+# would read as drift on the next `check-c-header`.
+[private]
+_cbindgen *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    FOUND=$(cbindgen --version 2>/dev/null | cut -d' ' -f2 || true)
+    if [[ -n "$FOUND" && "$FOUND" != "{{ CBINDGEN_VERSION }}" ]]; then
+        echo "error: cbindgen $FOUND is on PATH, sdk/c/geotrace.h is generated with {{ CBINDGEN_VERSION }}" >&2
+        echo "       cargo install cbindgen --version {{ CBINDGEN_VERSION }} --locked" >&2
+        exit 1
+    fi
+    just _native_or_dev cbindgen "cbindgen --config sdk/rust/geotrace-c/cbindgen.toml --crate geotrace-c {{ ARGS }}"
+
 # Regenerate C++ and Python recognized-unit catalogs from the Rust catalog.
 [group("utils")]
 generate-unit-bindings:

@@ -66,6 +66,7 @@ RUN curl -L --proto '=https' --tlsv1.2 -sSf \
 RUN cargo binstall --no-confirm --locked --maximum-resolution-timeout 60 \
     just \
     cargo-nextest \
+    cbindgen@0.29.4 \
     typos-cli \
     cargo-sort \
     cargo-shear \

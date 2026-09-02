@@ -1,0 +1,63 @@
+# Generates sdk/c/geotrace.h from this crate's FFI declarations.
+# `just sdk-c-header` writes the header, `just check-c-header` fails on drift.
+
+language = "C"
+style = "type"
+include_guard = "GEOTRACE_H"
+no_includes = true
+sys_includes = ["stddef.h", "stdint.h"]
+cpp_compat = true
+documentation = true
+documentation_style = "doxy"
+usize_is_size_t = true
+tab_width = 4
+line_length = 100
+# Declarations follow the order the modules declare them.
+sort_by = "None"
+
+# The banner carries the generated-file line: cbindgen writes `autogen_warning`
+# as a standalone comment between blank lines, which `just qa::check-all` reads
+# as a floating comment.
+header = """
+/**
+ * @file geotrace.h
+ * @brief GeoTrace C SDK - public API for reading and writing `.gtd` navigation data files.
+ *
+ * Generated from the Rust FFI crate `geotrace-c`. Do not edit.
+ *
+ * Link against `libgeotrace_c` and include this header.
+ *
+ * **Thread safety:** Handles (`GtdFileBuilder*`, `GtdNavFile*`) are not thread-safe.
+ * Serialise access to a single handle across threads.
+ * `gtd_last_error()` is thread-local and always safe to call.
+ *
+ * **Ownership:** Every function that returns a handle allocates heap memory.
+ * Destroy handles exactly once with the matching `gtd_*_destroy()` function.
+ * Passing a destroyed handle is undefined behaviour (same contract as `FILE*`).
+ */"""
+
+# The version macros and the two optional-double constructors have no Rust
+# declaration: a C compound literal is not expressible as an `extern "C"` item.
+# `just qa::bump-sdk` rewrites the version numbers here and in the header.
+after_includes = """
+
+/** SDK version string. */
+#define GEOTRACE_C_VERSION       "0.6.0"
+#define GEOTRACE_C_VERSION_MAJOR 0
+#define GEOTRACE_C_VERSION_MINOR 6
+#define GEOTRACE_C_VERSION_PATCH 0
+
+/** An absent optional double. */
+#define GTD_NONE_F64 ((GtdOptF64){.value = 0.0, .present = 0})
+
+/** An optional double with value @p v. */
+#define GTD_SOME_F64(v) ((GtdOptF64){.value = (v), .present = 1})"""
+
+[export]
+# No exported function takes a `GtdChannelUnitMode`: `gtd_channel_unit_parse`
+# and `gtd_builder_add_channel_with_unit_mode` take its value as a `uint32_t`,
+# so nothing else pulls the type into the header.
+include = ["GtdChannelUnitMode"]
+
+[parse]
+parse_deps = false

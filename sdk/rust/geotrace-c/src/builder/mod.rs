@@ -1,4 +1,4 @@
-//! The `handles` group of `geotrace.h`: the opaque handle for a file under construction.
+//! The opaque handle for a file under construction.
 
 mod finish;
 mod ingest;
@@ -55,11 +55,11 @@ impl GtdFileBuilder {
         match self.builder.take() {
             Some(b) => {
                 self.builder = Some(b.with_title(title));
-                GtdStatus::Ok
+                GtdStatus::GTD_OK
             }
             None => {
                 error::set_last_error("metadata must be set before adding data");
-                GtdStatus::ErrInternal
+                GtdStatus::GTD_ERR_INTERNAL
             }
         }
     }
@@ -68,11 +68,11 @@ impl GtdFileBuilder {
         match self.builder.take() {
             Some(b) => {
                 self.builder = Some(b.with_device(device));
-                GtdStatus::Ok
+                GtdStatus::GTD_OK
             }
             None => {
                 error::set_last_error("metadata must be set before adding data");
-                GtdStatus::ErrInternal
+                GtdStatus::GTD_ERR_INTERNAL
             }
         }
     }
@@ -81,11 +81,11 @@ impl GtdFileBuilder {
         match self.builder.take() {
             Some(b) => {
                 self.builder = Some(b.with_notes(notes));
-                GtdStatus::Ok
+                GtdStatus::GTD_OK
             }
             None => {
                 error::set_last_error("metadata must be set before adding data");
-                GtdStatus::ErrInternal
+                GtdStatus::GTD_ERR_INTERNAL
             }
         }
     }
@@ -94,11 +94,11 @@ impl GtdFileBuilder {
         match self.builder.take() {
             Some(b) => {
                 self.builder = Some(b.with_identity(identity));
-                GtdStatus::Ok
+                GtdStatus::GTD_OK
             }
             None => {
                 error::set_last_error("metadata must be set before adding data");
-                GtdStatus::ErrInternal
+                GtdStatus::GTD_ERR_INTERNAL
             }
         }
     }
@@ -107,11 +107,11 @@ impl GtdFileBuilder {
         match self.builder.take() {
             Some(b) => {
                 self.builder = Some(b.with_travel_mode(mode));
-                GtdStatus::Ok
+                GtdStatus::GTD_OK
             }
             None => {
                 error::set_last_error("metadata must be set before adding data");
-                GtdStatus::ErrInternal
+                GtdStatus::GTD_ERR_INTERNAL
             }
         }
     }

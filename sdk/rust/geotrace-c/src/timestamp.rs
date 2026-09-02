@@ -1,14 +1,15 @@
-//! The `timestamps` group of `geotrace.h`: the timestamp type and its constructors.
+//! The timestamp type and its constructors.
 
-/// Timestamp: UTC Unix epoch in microseconds.
-/// Use `gtd_ts_none()` for absent timestamps.
+/// UTC Unix epoch timestamp in microseconds.
+///
+/// Use `gtd_ts_none()` to represent an absent timestamp.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct GtdTimestamp {
     pub unix_micros: i64,
 }
 
-/// Sentinel value for an absent timestamp.
+/// The `unix_micros` value that marks an absent timestamp.
 const TS_NONE_SENTINEL: i64 = i64::MIN;
 
 pub(crate) fn ts_from_datetime(dt: chrono::DateTime<chrono::Utc>) -> GtdTimestamp {
@@ -25,6 +26,7 @@ pub(crate) fn ts_to_datetime(ts: GtdTimestamp) -> Option<chrono::DateTime<chrono
     }
 }
 
+/// Construct a timestamp from whole seconds since the Unix epoch.
 #[unsafe(no_mangle)]
 pub extern "C" fn gtd_ts_from_seconds(secs: u64) -> GtdTimestamp {
     GtdTimestamp {
@@ -32,6 +34,7 @@ pub extern "C" fn gtd_ts_from_seconds(secs: u64) -> GtdTimestamp {
     }
 }
 
+/// Construct a timestamp from milliseconds since the Unix epoch.
 #[unsafe(no_mangle)]
 pub extern "C" fn gtd_ts_from_millis(ms: u64) -> GtdTimestamp {
     GtdTimestamp {
@@ -39,6 +42,7 @@ pub extern "C" fn gtd_ts_from_millis(ms: u64) -> GtdTimestamp {
     }
 }
 
+/// Construct a timestamp from microseconds since the Unix epoch.
 #[unsafe(no_mangle)]
 pub extern "C" fn gtd_ts_from_micros(us: u64) -> GtdTimestamp {
     GtdTimestamp {
@@ -46,6 +50,7 @@ pub extern "C" fn gtd_ts_from_micros(us: u64) -> GtdTimestamp {
     }
 }
 
+/// Construct a timestamp from nanoseconds since the Unix epoch (truncated to µs).
 #[unsafe(no_mangle)]
 pub extern "C" fn gtd_ts_from_nanos(ns: u64) -> GtdTimestamp {
     GtdTimestamp {
@@ -53,6 +58,7 @@ pub extern "C" fn gtd_ts_from_nanos(ns: u64) -> GtdTimestamp {
     }
 }
 
+/// The timestamp value that represents an absent timestamp.
 #[unsafe(no_mangle)]
 pub extern "C" fn gtd_ts_none() -> GtdTimestamp {
     GtdTimestamp {
@@ -60,6 +66,7 @@ pub extern "C" fn gtd_ts_none() -> GtdTimestamp {
     }
 }
 
+/// Returns non-zero if @p ts is the absent timestamp.
 #[unsafe(no_mangle)]
 pub extern "C" fn gtd_ts_is_none(ts: GtdTimestamp) -> u8 {
     u8::from(ts.unix_micros == TS_NONE_SENTINEL)
