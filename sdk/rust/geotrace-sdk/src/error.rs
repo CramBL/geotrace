@@ -220,6 +220,15 @@ pub enum Error {
         dataset: &'static str,
         source: FixedWidthStringError,
     },
+
+    #[error(
+        "dataset {path:?} declares {declared_bytes} bytes of data, past what a {file_bytes}-byte file can hold"
+    )]
+    DatasetSizePastFileLength {
+        path: String,
+        declared_bytes: u128,
+        file_bytes: u64,
+    },
 }
 
 /// The group and dataset of one fixed-width string field, named by

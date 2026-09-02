@@ -54,7 +54,8 @@ fn file_err(e: geotrace_sdk::Error) -> PyErr {
         | Error::UnknownMarkerIcon { .. }
         | Error::ParseError { .. }
         | Error::UnwritableField { .. }
-        | Error::UnreadableField { .. } => PyValueError::new_err(msg),
+        | Error::UnreadableField { .. }
+        | Error::DatasetSizePastFileLength { .. } => PyValueError::new_err(msg),
     }
 }
 

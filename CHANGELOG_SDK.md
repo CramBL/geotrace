@@ -31,6 +31,7 @@ the app).
 
 ### Fixed
 
+- Fixed the reader allocating for a dataset's declared size before reading it: a file declaring more data than its own byte length can hold is rejected with an error naming the dataset.
 - Fixed the reader giving every fix a GPS-receiver timestamp: `NavFix::gps_time` reads `None` for a fix written without one. A file written before the `nav_points/gps_time_us` dataset existed reads its `time` axis as the receiver's timestamp.
 - The C gold example rejects a date or time number too large for an `int` instead of reading it with `sscanf`, which cannot report the overflow.
 - Fixed the reader reading an event marker style's icon name outside the `MarkerIcon` set, and a color that is not `#RRGGBB`, as the automatic style: both values now survive the read.
