@@ -389,7 +389,7 @@ mod tests {
 
     /// At the last epoch only the last map contributes, and it has no gap.
     #[test]
-    fn the_map_after_a_gap_answers_on_its_own_epoch() {
+    fn the_map_after_a_gap_returns_a_value_on_its_own_epoch() {
         let maps = maps_from(first_map_bands_with_a_gap());
         assert_eq!(value_at(&maps, 10.0, -180.0, epoch(2)), Some(20.0));
     }

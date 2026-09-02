@@ -280,7 +280,7 @@ mod terse_duration_with_microseconds_tests {
     }
 
     /// [`chrono::TimeDelta::num_microseconds`] overflows past about 292 000
-    /// years, where the terse reading answers on its own.
+    /// years, where the terse reading stands on its own.
     #[test]
     fn a_duration_past_the_microsecond_range_reads_in_days() {
         assert_eq!(

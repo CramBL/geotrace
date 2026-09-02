@@ -89,7 +89,7 @@ pub struct OpenStorage {
     pub tec_maps: Option<TecMapArchive>,
     /// [`None`] disables solar flare fetching and nothing else.
     pub solar_flares: Option<SolarFlareArchive>,
-    /// The archives this run opened nothing of on the user's answer, which
+    /// The archives this run opened nothing of on the user's choice, which
     /// the controls that need them explain themselves with.
     pub unavailable_archives: UnavailableArchives,
 }
@@ -132,9 +132,9 @@ pub(in crate::app) enum DatabasesPending {
     WaitingForTheDataDirectory,
     /// The open is running.
     Opening,
-    /// The open is waiting for the user to answer for an archive a delete was
-    /// interrupted in.
-    AwaitingAnInterruptedDeleteAnswer,
+    /// The open is waiting for the user's choice about an archive a delete
+    /// was interrupted in.
+    AwaitingAnInterruptedDeleteChoice,
 }
 
 /// How far the startup open has got.
@@ -153,8 +153,8 @@ pub(in crate::app) enum StorageOpen {
         inspected: mpsc::Receiver<InspectedArchives>,
         queued_loads: Vec<QueuedLoad>,
     },
-    /// Asking about each archive the inspection found an interrupted delete
-    /// in. No write guard is held here: the open waits on a person.
+    /// Asking the user about each archive the inspection found an interrupted
+    /// delete in. No write guard is held here: the open waits on a person.
     AskingAboutInterruptedDeletes {
         prompts: InterruptedDeletePrompts,
         queued_loads: Vec<QueuedLoad>,
@@ -181,14 +181,14 @@ impl StorageOpen {
     }
 
     /// Why the databases are not open yet, which grays the controls that
-    /// need them and tells each one what to say.
+    /// need them and gives each one its hover text.
     pub(in crate::app) fn databases_pending(&self) -> Option<DatabasesPending> {
         match self {
             Self::WaitingForTheDataDirectory { .. } => {
                 Some(DatabasesPending::WaitingForTheDataDirectory)
             }
             Self::AskingAboutInterruptedDeletes { .. } => {
-                Some(DatabasesPending::AwaitingAnInterruptedDeleteAnswer)
+                Some(DatabasesPending::AwaitingAnInterruptedDeleteChoice)
             }
             Self::InspectingArchives { .. } | Self::Opening { .. } => {
                 Some(DatabasesPending::Opening)
@@ -291,7 +291,7 @@ impl Storage {
     /// directory.
     ///
     /// This step writes nothing and opens no database: what it finds is put
-    /// to the user, and the answers start the open itself.
+    /// to the user, and the choices start the open itself.
     ///
     /// `previous_take_over` is the take-over recorded in the data directory
     /// before this one, which the prompts state.
@@ -335,8 +335,8 @@ impl Storage {
     }
 }
 
-/// Open every database under `root` on a thread of its own, answering the
-/// interrupted deletes it meets as `recovery` says. A [`None`] root opens
+/// Open every database under `root` on a thread of its own. `recovery` says
+/// what to do with the interrupted deletes it meets. A [`None`] root opens
 /// nothing, and its result is in the channel before the first frame.
 pub(in crate::app) fn open_in_background_under(
     root: Option<PathBuf>,
@@ -418,8 +418,8 @@ pub(crate) fn reopen_recordings(path: &Path) -> Result<Recordings, HistoryFailur
     Recordings::open_or_create(path).map_err(|err| classify_failure(&err, path.to_owned()))
 }
 
-/// Open every database under `store`, answering the interrupted deletes the
-/// archives hold as `recovery` says.
+/// Open every database under `store`. `recovery` says what to do with the
+/// interrupted deletes the archives hold.
 ///
 /// Each archive is opened whatever the recordings database did: one being
 /// unusable says nothing about the others.
@@ -468,8 +468,8 @@ pub(in crate::app) fn open_in(
 /// The recording history a read-only session reads, or a disabled worker
 /// where there is none to read.
 ///
-/// No failure is reported for the user to answer: every answer the failure
-/// prompt offers writes to the database.
+/// No failure is reported for the user to choose about: every choice the
+/// failure prompt offers writes to the database.
 fn open_recordings_read_only(
     store: &Store,
     ctx: &Context,
@@ -560,7 +560,7 @@ fn open_archive<A: StoredDayArchive>(
 impl App {
     /// Install the databases a [`Storage::open`] produced.
     ///
-    /// The schedulers read their archived days here: nothing may ask them what
+    /// The schedulers read their archived days here: nothing may read what
     /// they hold before this runs.
     pub(super) fn adopt_open_storage(&mut self, storage: OpenStorage) {
         debug_assert!(
@@ -778,8 +778,8 @@ mod tests {
             .expect("mark the delete");
     }
 
-    /// A run that has the data directory to itself answers to nobody: what an
-    /// instance that is gone left interrupted is recovered as the archive
+    /// A run that has the data directory to itself prompts for nothing: what
+    /// an instance that is gone left interrupted is recovered as the archive
     /// opens, which discards the days it holds.
     #[test]
     fn the_normal_open_recovers_an_interrupted_delete_without_asking() {
@@ -809,7 +809,7 @@ mod tests {
     }
 
     /// A read-only session leaves a data directory it finds nothing in
-    /// exactly as it found it, and each control that needs an archive is told
+    /// exactly as it found it, and each control that needs an archive states
     /// why it has none.
     #[test]
     fn a_read_only_open_creates_no_database_and_no_archive() {
@@ -1072,7 +1072,7 @@ mod tests {
 
         assert_eq!(
             opened.history_failure, None,
-            "a read-only session raised a prompt whose every answer would write"
+            "a read-only session raised a prompt whose every choice would write"
         );
         assert!(opened.history.path().is_none());
     }

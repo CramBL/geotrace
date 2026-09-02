@@ -1379,7 +1379,7 @@ mod tests {
         );
     }
 
-    /// A server answer holding a position outside the coordinate range keeps
+    /// A server response holding a position outside the coordinate range keeps
     /// the rest of the geometry and leaves that vertex out.
     #[test]
     fn snap_run_leaves_out_positions_outside_the_coordinate_range() {

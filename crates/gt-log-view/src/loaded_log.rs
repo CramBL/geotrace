@@ -536,7 +536,7 @@ impl LoadedLogs {
     /// Loads `log` under a fresh identity, taking a colour slot for each layer
     /// chip it arrives with.
     ///
-    /// Content already loaded is refused: the answer names the log the session
+    /// Content already loaded is refused: the outcome names the log the session
     /// holds it under, and `log` is dropped.
     pub fn push(&mut self, mut log: LoadedLog) -> LogPushOutcome {
         if let Some(loaded) = self.id_of_content(log.content_hash) {
@@ -639,8 +639,8 @@ impl LoadedLogs {
     /// something changed what that is.
     ///
     /// The added filters draw first, in the order their colours were handed
-    /// out, and the live filters over them: the filter being typed is the
-    /// answer to what the user is doing right now.
+    /// out, and the live filters over them: the filter being typed is what the
+    /// user is doing right now.
     pub fn map_matches(
         &mut self,
         recordings: LoadedFilesView<'_>,
@@ -799,8 +799,8 @@ mod tests {
         }
     }
 
-    /// Adds the live filter of the log `id` names as a layer chip, and answers
-    /// with the palette colour that chip took.
+    /// Adds the live filter of the log `id` names as a layer chip, and returns
+    /// the palette colour that chip took.
     fn add_layer_chip(logs: &mut LoadedLogs, id: LoadedLogId, text: &str) -> Option<usize> {
         let (stack, slots) = logs.filter_stack_mut_by_id(id)?;
         stack.set_live_filter_text(text);
@@ -1601,7 +1601,7 @@ mod tests {
     /// One log per content: a second copy of a text the session already holds
     /// is refused, whatever name it arrived under.
     #[test]
-    fn pushing_content_that_is_already_loaded_answers_with_the_loaded_log() {
+    fn pushing_content_that_is_already_loaded_returns_the_loaded_log() {
         let mut logs = LoadedLogs::default();
         let loaded = logs.push(log_of(10));
 

@@ -90,7 +90,7 @@ fn only_served_days_have_a_dataset_on_disk() {
 /// The refusal body is kept, so the transport is tested against a real
 /// refusal.
 #[test]
-fn a_refused_day_records_the_hosts_answer() {
+fn a_refused_day_records_the_hosts_response() {
     for fixture in refused_days() {
         let entry = support::manifest_entry(fixture.day).unwrap();
         assert!(

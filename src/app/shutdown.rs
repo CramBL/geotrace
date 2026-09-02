@@ -150,9 +150,9 @@ impl ForceQuitPrompt {
         Some(costs)
     }
 
-    /// Closes the confirmation on the user's answer, reporting a confirmed
+    /// Closes the confirmation on the user's choice, reporting a confirmed
     /// quit.
-    fn answer(&mut self, choice: ForceQuitChoice) -> Option<ForceQuit> {
+    fn record_choice(&mut self, choice: ForceQuitChoice) -> Option<ForceQuit> {
         self.open = false;
         match choice {
             ForceQuitChoice::Quit => Some(ForceQuit),
@@ -162,7 +162,7 @@ impl ForceQuitPrompt {
 }
 
 impl App {
-    /// Answers the window's close button and any termination signal, drives
+    /// Intercepts the window's close button and any termination signal, drives
     /// the shutdown they start, and returns what the app paints this frame.
     pub(in crate::app) fn intercept_close_request(&mut self, ui: &mut egui::Ui) -> FrameContents {
         match TERMINATION_SIGNAL_FLAG.take_action() {
@@ -284,7 +284,7 @@ impl App {
             .force_quit_prompt
             .interruption_costs_to_list(snapshot)?;
         let choice = modals::show_force_quit_confirmation(ui, &costs)?;
-        self.shutdown.force_quit_prompt.answer(choice)
+        self.shutdown.force_quit_prompt.record_choice(choice)
     }
 
     /// Ends the process with the registered writes unfinished, as the
@@ -433,7 +433,7 @@ mod tests {
     fn cancelling_the_force_quit_prompt_closes_it_without_quitting() {
         let mut prompt = opened_force_quit_prompt();
 
-        assert_eq!(prompt.answer(ForceQuitChoice::Cancel), None);
+        assert_eq!(prompt.record_choice(ForceQuitChoice::Cancel), None);
 
         assert_eq!(
             prompt.interruption_costs_to_list(&snapshot_of(&[TEC_COMPACTION])),
@@ -453,12 +453,12 @@ mod tests {
     fn confirming_the_force_quit_prompt_yields_the_quit_action() {
         let mut prompt = opened_force_quit_prompt();
 
-        assert_eq!(prompt.answer(ForceQuitChoice::Quit), Some(ForceQuit));
+        assert_eq!(prompt.record_choice(ForceQuitChoice::Quit), Some(ForceQuit));
 
         assert_eq!(
             prompt.interruption_costs_to_list(&snapshot_of(&[TEC_COMPACTION])),
             None,
-            "the answered prompt stayed open"
+            "the confirmed prompt stayed open"
         );
     }
 

@@ -40,6 +40,7 @@
 - **Map & Tracks:** A recording with an event marker style naming an unknown icon, or a color that is not a #RRGGBB value, now loads with that marker drawn as a pin or in gray, and the recorded value named in the data quality warnings.
 - **Map & Tracks:** A recording with marker or event marker text that is not valid UTF-8 is now rejected with an error naming the field.
 - **Map & Tracks:** The side panel's tree now draws a track row's number, distance in kilometres and duration in the same columns as the visible section above it, under one header row.
+- **Settings & Storage:** The environment data download and delete controls now read "Choose what to do about the interrupted delete" while that prompt is open.
 
 ### Fixed
 

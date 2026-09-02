@@ -394,7 +394,7 @@ fn a_recording_that_already_holds_this_log_offers_that_attachment_for_reuse() {
             .duplicate_attachment_of(&another_db_ref())
             .map(|attachment| attachment.id),
         None,
-        "the answer stands for the recording it was queried about"
+        "the result stands for the recording it was queried about"
     );
 }
 

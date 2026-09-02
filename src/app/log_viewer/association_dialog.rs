@@ -132,7 +132,7 @@ impl LogAssociationDialog {
     }
 
     /// The attachment `recording` already holds this log as, `None` while the
-    /// query for that recording is pending or answered with none.
+    /// query for that recording is pending or returned none.
     pub(in crate::app) fn duplicate_attachment_of(
         &self,
         recording: &DatabaseRef,

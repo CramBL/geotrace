@@ -893,8 +893,8 @@ fn a_track_without_geometry_is_left_out_of_every_drawing_pass() {
     );
 }
 
-/// The map answers the query window's map button by framing the matches,
-/// wherever the camera stood before.
+/// The query window's map button frames the map on the matches, wherever the
+/// camera stood before.
 #[test]
 fn revealing_matches_frames_the_map_on_them() {
     let files = vec![file_with_tracks(vec![

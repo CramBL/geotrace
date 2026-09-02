@@ -109,7 +109,7 @@ pub enum MapAction {
     ShowOnlyFile(FileIdx),
     /// Open the sky trails window, per the request's track and instant.
     ShowSkyTrails(SkyTrailsRequest),
-    /// Open the reference window on this document, asked for by a link in the
+    /// Open the reference window on this document, requested by a link in the
     /// environment warning indicator's popup.
     OpenReferenceDocument(ReferenceDocument),
 }
@@ -1055,8 +1055,8 @@ impl NavMap {
     /// toggle stacked above it in the bottom-right corner, and the environment
     /// warning indicator in the top-right one.
     ///
-    /// Returns the reference document a link in the indicator's popup asked
-    /// for.
+    /// Returns the reference document a link in the indicator's popup
+    /// requested.
     fn show_overlay_controls(
         &mut self,
         ui: &egui::Ui,
@@ -1489,7 +1489,7 @@ fn show_sticky_popup(
 /// annotation can be longer than the screen is wide and the frame around it is
 /// auto-sized.
 ///
-/// The categories [`sticky_uses_point_layout`] answers `true` for are laid out
+/// The categories [`sticky_uses_point_layout`] returns `true` for are laid out
 /// by [`show_point_window_body`] instead.
 fn show_marker_window_body(ui: &mut egui::Ui, files: &[LoadedFile], sticky_ref: DataPointRef) {
     egui::ScrollArea::both().show(ui, |ui| match sticky_ref.category {

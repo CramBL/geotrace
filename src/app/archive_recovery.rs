@@ -1,16 +1,16 @@
-//! Answering the interrupted deletes the day archives hold, after the user
-//! took write access from the instance holding the data directory.
+//! Asking the user about the interrupted deletes the day archives hold,
+//! after they took write access from the instance holding the data directory.
 //!
 //! Recovering an interrupted delete discards every archived day of the
-//! archive it is in. That is the right answer for a delete a process that is
-//! gone left behind, and the wrong one for a delete the instance the user
-//! just overrode may still be running. A taken-over open therefore asks per
-//! archive rather than recovering on its own.
+//! archive it is in. That is right for a delete a process that is gone left
+//! behind, and wrong for a delete the instance the user just overrode may
+//! still be running. A taken-over open therefore asks the user per archive
+//! and recovers nothing on its own.
 //!
 //! The open therefore runs in two steps, with no write guard held while the
 //! user decides: [`inspect_archives_under`] reads the archives and ends, the
 //! prompts run in the frames after it, and the open in
-//! [`super::storage::open_in`] follows with the answers.
+//! [`super::storage::open_in`] follows with the choices.
 
 use std::collections::VecDeque;
 use std::fs;
@@ -44,8 +44,8 @@ const PROMPT_MAX_WIDTH: f32 = 460.0;
 pub(in crate::app) const WRITE_ACCESS_TAKEN_FROM: &str =
     "Write access to this data directory was taken from";
 
-/// What reading one archive found, where it is something the user has to
-/// answer for.
+/// What reading one archive found, where the user has to choose what to do
+/// about it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::app) enum InterruptedDeleteFinding {
     /// A delete was interrupted part-way through the archive, leaving the
@@ -109,12 +109,13 @@ pub(in crate::app) struct InspectedArchives {
     /// Root the archives were read under, whose very files the open that
     /// follows opens. [`None`] for a run that opens nothing.
     root: Option<PathBuf>,
-    /// The archives to ask about, in the order the settings rows list them.
+    /// The archives to ask the user about, in the order the settings rows
+    /// list them.
     findings: Vec<(EnvironmentArchive, InterruptedDeleteFinding)>,
 }
 
 impl InspectedArchives {
-    /// A run with nothing to read and nothing to ask about.
+    /// A run with nothing to read and nothing to ask the user about.
     pub(in crate::app) const fn of_nothing() -> Self {
         Self {
             root: None,
@@ -173,8 +174,8 @@ pub(in crate::app) fn inspect_archives_under(
 }
 
 impl InterruptedDeleteFinding {
-    /// What archive `A` holds for the user to answer, or [`None`] where the
-    /// open needs no answer.
+    /// What archive `A` holds for the user to choose about, or [`None`] where
+    /// the open needs no choice.
     ///
     /// A failure that is neither an interrupted delete nor another process
     /// holding the file is left to the open to report: it fails there the
@@ -207,8 +208,8 @@ impl InterruptedDeleteFinding {
     }
 }
 
-/// Why an archive is closed for this session, as the user was told when they
-/// answered for it.
+/// Why an archive is closed for this session, as its prompt stated when the
+/// user chose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArchiveUnavailable {
     /// The archive keeps the days it holds: the user left the interrupted
@@ -268,67 +269,67 @@ impl ArchiveOpenPlan {
     }
 }
 
-/// How an open answers the interrupted deletes it meets.
+/// What an open does with the interrupted deletes it meets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::app) enum ArchiveRecovery {
     /// Recover whatever is found: the process that left it behind is gone,
     /// and this instance has the data directory to itself.
     Automatic,
-    /// Answer each archive the way the user did after taking write access.
-    AsTheUserChose(ArchiveRecoveryAnswers),
+    /// Follow the user's choice for each archive after taking write access.
+    AsTheUserChose(ArchiveRecoveryChoices),
 }
 
 impl ArchiveRecovery {
     pub(in crate::app) fn plan_for(self, archive: EnvironmentArchive) -> ArchiveOpenPlan {
         match self {
             Self::Automatic => ArchiveOpenPlan::Open(InterruptedDeleteRecovery::Recover),
-            Self::AsTheUserChose(answers) => answers[archive],
+            Self::AsTheUserChose(choices) => choices[archive],
         }
     }
 }
 
-/// What the user answered for each archive a taken-over open asked about.
-pub(in crate::app) type ArchiveRecoveryAnswers = PerArchive<ArchiveOpenPlan>;
+/// The open plan the user chose for each archive.
+pub(in crate::app) type ArchiveRecoveryChoices = PerArchive<ArchiveOpenPlan>;
 
-/// The archives a taken-over open has yet to ask about, and the answers it
-/// has so far.
+/// The archives a taken-over open has yet to ask the user about, and the
+/// choices it has so far.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::app) struct InterruptedDeletePrompts {
     root: Option<PathBuf>,
-    unanswered: VecDeque<(EnvironmentArchive, InterruptedDeleteFinding)>,
-    answers: ArchiveRecoveryAnswers,
+    without_a_choice: VecDeque<(EnvironmentArchive, InterruptedDeleteFinding)>,
+    choices: ArchiveRecoveryChoices,
 }
 
 impl InterruptedDeletePrompts {
     /// Every archive starts out declining whatever interrupted delete it turns
     /// out to hold: one that appeared since the inspection read the archives
-    /// is not recovered without the user answering for it.
+    /// is not recovered without a choice from the user.
     pub(in crate::app) fn asking_about(inspected: InspectedArchives) -> Self {
         let InspectedArchives { root, findings } = inspected;
         Self {
             root,
-            unanswered: findings.into(),
-            answers: ArchiveRecoveryAnswers::filled_with(ArchiveOpenPlan::Open(
+            without_a_choice: findings.into(),
+            choices: ArchiveRecoveryChoices::filled_with(ArchiveOpenPlan::Open(
                 InterruptedDeleteRecovery::Decline,
             )),
         }
     }
 
-    /// The archive the open is asking about, or [`None`] once every one of
-    /// them has an answer.
+    /// The archive the open is asking the user about, or [`None`] once every
+    /// one of them has a choice.
     fn being_asked_about(&self) -> Option<(EnvironmentArchive, InterruptedDeleteFinding)> {
-        self.unanswered.front().copied()
+        self.without_a_choice.front().copied()
     }
 
-    fn record(&mut self, archive: EnvironmentArchive, answer: InterruptedDeleteAnswer) {
-        self.answers[archive] = answer.open_plan();
-        self.unanswered.pop_front();
+    fn record(&mut self, archive: EnvironmentArchive, choice: InterruptedDeleteChoice) {
+        self.choices[archive] = choice.open_plan();
+        self.without_a_choice.pop_front();
     }
 }
 
-/// What the user answered about one archive.
+/// What the user chose for one archive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InterruptedDeleteAnswer {
+enum InterruptedDeleteChoice {
     /// Discard the archived days and open the archive.
     Recover,
     /// Keep the file as it is, which leaves the archive closed.
@@ -338,7 +339,7 @@ enum InterruptedDeleteAnswer {
     LeaveToTheOtherInstance,
 }
 
-impl InterruptedDeleteAnswer {
+impl InterruptedDeleteChoice {
     const fn open_plan(self) -> ArchiveOpenPlan {
         match self {
             Self::Recover => ArchiveOpenPlan::Open(InterruptedDeleteRecovery::Recover),
@@ -364,23 +365,23 @@ impl InterruptedDeleteAnswer {
     }
 }
 
-/// Ask about the interrupted delete in `archive`, naming what each answer
-/// costs.
+/// Ask the user about the interrupted delete in `archive`, naming what each
+/// choice costs.
 ///
-/// Returns the answer in the frame the user gives it, and [`None`] while the
-/// dialog is still open. Escape leaves the archive as it is: the answer that
+/// Returns the choice in the frame the user makes it, and [`None`] while the
+/// dialog is still open. Escape leaves the archive as it is: the choice that
 /// discards nothing.
 fn show_interrupted_delete_prompt(
     ui: &egui::Ui,
     archive: EnvironmentArchive,
     interrupted: InterruptedDelete,
     take_over: Option<TakeOverAfterTheArchiveWasLastWritten>,
-) -> Option<InterruptedDeleteAnswer> {
+) -> Option<InterruptedDeleteChoice> {
     modals::confirmation_dialog(
         ui,
         format!("Recover the {} archive?", archive.label_in_sentence()),
         PROMPT_MAX_WIDTH,
-        InterruptedDeleteAnswer::LeaveUnrecovered,
+        InterruptedDeleteChoice::LeaveUnrecovered,
         |ui| {
             ui.label(
                 "A delete was interrupted part-way through this archive, and GeoTrace cannot \
@@ -407,18 +408,18 @@ fn show_interrupted_delete_prompt(
             );
         },
         |ui| {
-            let mut answer = None;
+            let mut choice = None;
             if modals::destructive_button(ui, RECOVER_BUTTON_LABEL).clicked() {
-                answer = Some(InterruptedDeleteAnswer::Recover);
+                choice = Some(InterruptedDeleteChoice::Recover);
             }
             if ui
                 .button(LEAVE_UNRECOVERED_BUTTON_LABEL)
                 .on_hover_text("The archive keeps its days and stays closed this session")
                 .clicked()
             {
-                answer = Some(InterruptedDeleteAnswer::LeaveUnrecovered);
+                choice = Some(InterruptedDeleteChoice::LeaveUnrecovered);
             }
-            answer
+            choice
         },
     )
 }
@@ -426,17 +427,17 @@ fn show_interrupted_delete_prompt(
 /// Tell the user about an archive the other GeoTrace has open, which there is
 /// nothing to choose about: it cannot be read here.
 ///
-/// Returns the answer in the frame the user dismisses it, and [`None`] while
+/// Returns the choice in the frame the user dismisses it, and [`None`] while
 /// the dialog is still open.
 fn show_archive_held_by_the_other_instance(
     ui: &egui::Ui,
     archive: EnvironmentArchive,
-) -> Option<InterruptedDeleteAnswer> {
+) -> Option<InterruptedDeleteChoice> {
     modals::confirmation_dialog(
         ui,
         format!("The {} archive is in use", archive.label_in_sentence()),
         PROMPT_MAX_WIDTH,
-        InterruptedDeleteAnswer::LeaveToTheOtherInstance,
+        InterruptedDeleteChoice::LeaveToTheOtherInstance,
         |ui| {
             ui.label(
                 "GeoTrace cannot read this file here: the other GeoTrace still has it open. \
@@ -446,14 +447,14 @@ fn show_archive_held_by_the_other_instance(
         |ui| {
             ui.button(ARCHIVE_IN_USE_BUTTON_LABEL)
                 .clicked()
-                .then_some(InterruptedDeleteAnswer::LeaveToTheOtherInstance)
+                .then_some(InterruptedDeleteChoice::LeaveToTheOtherInstance)
         },
     )
 }
 
 impl App {
-    /// Take what the archive inspection found, and ask about each archive it
-    /// found something in.
+    /// Take what the archive inspection found, and ask the user about each
+    /// archive it found something in.
     ///
     /// An inspection that lands once the app is closing is left where it is:
     /// an app on its way out opens no database.
@@ -484,11 +485,11 @@ impl App {
             queued_loads: mem::take(queued_loads),
         };
         let ctx = self.ctx.clone();
-        self.open_the_archives_once_every_prompt_is_answered(&ctx);
+        self.open_the_archives_once_every_prompt_has_a_choice(&ctx);
     }
 
-    /// Show the prompt for the archive the open is asking about, and start
-    /// the open once the last one is answered.
+    /// Show the prompt for the archive the open is asking the user about, and
+    /// start the open once the last one has a choice.
     pub(in crate::app) fn show_interrupted_delete_prompts(&mut self, ui: &egui::Ui) {
         if self.shutdown.has_begun() {
             return;
@@ -500,7 +501,7 @@ impl App {
         let Some((archive, finding)) = prompts.being_asked_about() else {
             return;
         };
-        let answer = match finding {
+        let choice = match finding {
             InterruptedDeleteFinding::Interrupted {
                 interrupted,
                 take_over,
@@ -509,21 +510,21 @@ impl App {
                 show_archive_held_by_the_other_instance(ui, archive)
             }
         };
-        let Some(answer) = answer else {
+        let Some(choice) = choice else {
             return;
         };
         log::warn!(
             "The {} archive is {}",
             archive.label_in_sentence(),
-            answer.log_line()
+            choice.log_line()
         );
-        prompts.record(archive, answer);
-        self.open_the_archives_once_every_prompt_is_answered(ui.ctx());
+        prompts.record(archive, choice);
+        self.open_the_archives_once_every_prompt_has_a_choice(ui.ctx());
     }
 
-    /// Start the open the answers were gathered for, once no archive is left
-    /// to ask about.
-    fn open_the_archives_once_every_prompt_is_answered(&mut self, ctx: &egui::Context) {
+    /// Start the open the choices were gathered for, once no archive is left
+    /// to ask the user about.
+    fn open_the_archives_once_every_prompt_has_a_choice(&mut self, ctx: &egui::Context) {
         let StorageOpen::AskingAboutInterruptedDeletes {
             prompts,
             queued_loads,
@@ -536,10 +537,10 @@ impl App {
         }
         let queued_loads = mem::take(queued_loads);
         let root = prompts.root.take();
-        let answers = prompts.answers;
+        let choices = prompts.choices;
         self.storage_open = storage::open_in_background_under(
             root,
-            ArchiveRecovery::AsTheUserChose(answers),
+            ArchiveRecovery::AsTheUserChose(choices),
             ctx,
             self.pending_writes.clone(),
             queued_loads,

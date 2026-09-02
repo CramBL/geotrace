@@ -330,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn cell_at_answers_at_the_published_resolution() {
+    fn cell_at_returns_the_published_resolution() {
         let cell = cell_at(Latitude::new(55.68), Longitude::new(12.57)).unwrap();
         assert_eq!(cell.resolution(), H3_RESOLUTION);
     }

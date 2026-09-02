@@ -72,7 +72,7 @@ impl EntryMatches {
 
 /// The entries every one of `sets` matched, ascending. An empty `sets` matches
 /// no entry: an intersection of nothing narrows nothing, and the caller decides
-/// what that means before asking.
+/// what that means before the call.
 pub(crate) fn intersecting_entry_indices(sets: &[&EntryMatches]) -> Vec<usize> {
     let word_count = sets.iter().map(|set| set.words.len()).min().unwrap_or(0);
     let mut entry_indices = Vec::new();
@@ -184,7 +184,7 @@ mod tests {
     }
 
     #[test]
-    fn a_bitset_answers_for_an_entry_past_the_log() {
+    fn a_bitset_reports_no_match_for_an_entry_past_the_log() {
         let matches = matches_of(3, &[2]);
         assert!(!matches.contains(3));
         assert!(!matches.contains(usize::MAX));

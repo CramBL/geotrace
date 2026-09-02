@@ -578,7 +578,7 @@ impl<'a> ResultsTables<'a> {
         }
         ui.scope(|ui| {
             // A stale run's rows reference indices that may no longer address
-            // the same data: they are shown, but answer nothing.
+            // the same data: they are shown, and none of them acts.
             if self.stale {
                 ui.disable();
             }
@@ -1412,7 +1412,7 @@ fn splitter_ui(ui: &mut egui::Ui) -> egui::Response {
 }
 
 /// The button framing the map on one match, at the right end of its row.
-/// Disabled with the reason on hover where it cannot answer.
+/// Disabled with the reason on hover where it cannot act.
 fn frame_match_on_map_button_ui(
     ui: &mut egui::Ui,
     disabled_reason: Option<&str>,

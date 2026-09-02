@@ -15,7 +15,7 @@ const WITHOUT_TOKEN_HOVER: &str = "Enter a token to test it";
 const OFFLINE_HOVER: &str = "Testing is disabled in offline mode";
 const RUNNING_STATUS: &str = "Testing…";
 
-/// The statuses Mapbox answers with when it does not accept the token.
+/// The statuses Mapbox returns when it does not accept the token.
 const TOKEN_REJECTED_STATUSES: [u16; 2] = [401, 403];
 
 /// What the tile request reported.
@@ -199,26 +199,26 @@ mod tests {
 
     use egui_kittest::kittest::{NodeT as _, Queryable as _};
     use gt_fetch::{BytesResponse, TransportError};
-    use gt_test_utils::{ScriptedTransport, TestHarness, TransportAnswer};
+    use gt_test_utils::{ScriptedTransport, TestHarness, TransportResponse};
     use rstest::rstest;
 
     use super::*;
 
-    fn tile(status: u16) -> TransportAnswer<Vec<u8>> {
+    fn tile(status: u16) -> TransportResponse<Vec<u8>> {
         Ok(BytesResponse {
             status,
             body: Vec::new(),
         })
     }
 
-    fn unreachable_host() -> TransportAnswer<Vec<u8>> {
+    fn unreachable_host() -> TransportResponse<Vec<u8>> {
         Err(TransportError {
             detail: "connection refused".to_owned(),
         })
     }
 
-    /// Every answer one tile request can come back with, and the line the row
-    /// shows for it.
+    /// Every response one tile request can come back with, and the line the
+    /// row shows for it.
     #[rstest]
     #[case::fetched(tile(200), "Token accepted")]
     #[case::unauthorized(tile(401), "Mapbox rejected the token: 401 Unauthorized")]
@@ -226,11 +226,11 @@ mod tests {
     #[case::not_found(tile(404), "Tile request failed: 404 Not Found")]
     #[case::server_error(tile(503), "Tile request failed: 503 Service Unavailable")]
     #[case::unreachable(unreachable_host(), "Tile request failed: connection refused")]
-    fn the_result_reports_what_the_host_answered(
-        #[case] answer: TransportAnswer<Vec<u8>>,
+    fn the_result_reports_the_hosts_response(
+        #[case] response: TransportResponse<Vec<u8>>,
         #[case] expected: &str,
     ) {
-        let transport = ScriptedTransport::in_order(vec![answer]);
+        let transport = ScriptedTransport::in_order(vec![response]);
 
         let outcome = fetch_test_tile(&transport, "tok");
 

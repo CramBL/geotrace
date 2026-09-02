@@ -97,7 +97,7 @@ impl RestoredLogsBadge {
     }
 
     /// The pulse advanced to the frame drawn at `now`, in seconds of the egui
-    /// clock, answering how opaque the badge draws.
+    /// clock, which sets how opaque the badge draws.
     fn advance_pulse_to(&mut self, now: f64) -> f32 {
         let step = self.advanced_at.map_or(0.0, |last| (now - last).max(0.0));
         self.advanced_at = Some(now);

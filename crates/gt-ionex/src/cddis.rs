@@ -11,8 +11,8 @@
 //! https://cddis.nasa.gov/archive/gnss/products/ionex/2020/131/jplg1310.20i.Z
 //! ```
 //!
-//! The archive answers a request without an Earthdata bearer token with a
-//! redirect to the login service, so every request here is authenticated.
+//! The archive redirects a request without an Earthdata bearer token to the
+//! login service, so every request here is authenticated.
 
 use chrono::{Datelike as _, NaiveDate};
 

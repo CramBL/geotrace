@@ -45,8 +45,8 @@ pub enum DeleteBlocker {
     ArchivesUnreachable(ArchivesUnreachable),
     /// A delete is already rewriting the same columns.
     DeleteRunning,
-    /// This one archive is closed for the session, on the answer the user
-    /// gave for it.
+    /// This one archive is closed for the session, on the choice the user
+    /// made for it.
     ArchiveUnavailable(ArchiveUnavailable),
 }
 
@@ -58,8 +58,8 @@ impl DeleteBlocker {
                 ArchivesUnreachable::WaitingForTheDataDirectory => {
                     "Wait for the data directory to become available"
                 }
-                ArchivesUnreachable::AwaitingAnInterruptedDeleteAnswer => {
-                    "Answer the question about the interrupted delete"
+                ArchivesUnreachable::AwaitingAnInterruptedDeleteChoice => {
+                    "Choose what to do about the interrupted delete"
                 }
                 ArchivesUnreachable::ArchivesOpening => "Wait for the archives to finish opening",
             }

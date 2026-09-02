@@ -1,10 +1,9 @@
 //! The four day archives a [`Store`] holds: which they are, where each one is
 //! stored, and what its error reports.
 //!
-//! Each archive has its own error type, and a caller opening all four wants
-//! the same two answers from every one of them: whether another process has
-//! the file, and whether an open left an interrupted delete unrecovered
-//! because it was told to.
+//! Each archive has its own error type, and a caller opening all four reads
+//! the same two facts from every one of them: whether another process has the
+//! file, and whether an open declined to recover an interrupted delete.
 
 use std::path::PathBuf;
 
@@ -93,7 +92,7 @@ pub trait DayArchiveError: std::error::Error {
     /// until that process lets go.
     fn is_held_by_another_process(&self) -> bool;
 
-    /// The interrupted delete an open was told not to recover, which left the
+    /// The interrupted delete an open declined to recover, which left the
     /// file untouched, or [`None`] for any other failure.
     fn interrupted_delete_left_unrecovered(&self) -> Option<InterruptedDelete>;
 }
@@ -175,7 +174,7 @@ mod tests {
 
     const INTERRUPTED: InterruptedDelete = InterruptedDelete { archived_days: 3 };
 
-    fn answers<E: DayArchiveError>(err: &E) -> (bool, Option<InterruptedDelete>) {
+    fn held_and_unrecovered<E: DayArchiveError>(err: &E) -> (bool, Option<InterruptedDelete>) {
         (
             err.is_held_by_another_process(),
             err.interrupted_delete_left_unrecovered(),
@@ -183,29 +182,41 @@ mod tests {
     }
 
     #[test]
-    fn every_archive_answers_both_questions_through_its_own_error() {
+    fn every_archive_reports_both_failures_through_its_own_error() {
         let held = (true, None);
         let declined = (false, Some(INTERRUPTED));
 
-        assert_eq!(answers(&JamStoreError::HeldByAnotherProcess), held);
-        assert_eq!(answers(&SolarStoreError::HeldByAnotherProcess), held);
-        assert_eq!(answers(&IonexStoreError::HeldByAnotherProcess), held);
-        assert_eq!(answers(&FlareStoreError::HeldByAnotherProcess), held);
+        assert_eq!(
+            held_and_unrecovered(&JamStoreError::HeldByAnotherProcess),
+            held
+        );
+        assert_eq!(
+            held_and_unrecovered(&SolarStoreError::HeldByAnotherProcess),
+            held
+        );
+        assert_eq!(
+            held_and_unrecovered(&IonexStoreError::HeldByAnotherProcess),
+            held
+        );
+        assert_eq!(
+            held_and_unrecovered(&FlareStoreError::HeldByAnotherProcess),
+            held
+        );
 
         assert_eq!(
-            answers(&JamStoreError::from(DeclinedRecovery(INTERRUPTED))),
+            held_and_unrecovered(&JamStoreError::from(DeclinedRecovery(INTERRUPTED))),
             declined
         );
         assert_eq!(
-            answers(&SolarStoreError::from(DeclinedRecovery(INTERRUPTED))),
+            held_and_unrecovered(&SolarStoreError::from(DeclinedRecovery(INTERRUPTED))),
             declined
         );
         assert_eq!(
-            answers(&IonexStoreError::from(DeclinedRecovery(INTERRUPTED))),
+            held_and_unrecovered(&IonexStoreError::from(DeclinedRecovery(INTERRUPTED))),
             declined
         );
         assert_eq!(
-            answers(&FlareStoreError::from(DeclinedRecovery(INTERRUPTED))),
+            held_and_unrecovered(&FlareStoreError::from(DeclinedRecovery(INTERRUPTED))),
             declined
         );
     }

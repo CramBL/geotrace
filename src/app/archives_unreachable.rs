@@ -17,9 +17,9 @@ pub enum ArchivesUnreachable {
     /// This instance does not have the data directory, so it has opened no
     /// archive.
     WaitingForTheDataDirectory,
-    /// The open is waiting for the user to answer for an archive a delete was
-    /// interrupted in.
-    AwaitingAnInterruptedDeleteAnswer,
+    /// The open is waiting for the user's choice about an archive a delete
+    /// was interrupted in.
+    AwaitingAnInterruptedDeleteChoice,
     ArchivesOpening,
 }
 
@@ -33,8 +33,8 @@ impl App {
             DatabasesPending::WaitingForTheDataDirectory => {
                 Some(ArchivesUnreachable::WaitingForTheDataDirectory)
             }
-            DatabasesPending::AwaitingAnInterruptedDeleteAnswer => {
-                Some(ArchivesUnreachable::AwaitingAnInterruptedDeleteAnswer)
+            DatabasesPending::AwaitingAnInterruptedDeleteChoice => {
+                Some(ArchivesUnreachable::AwaitingAnInterruptedDeleteChoice)
             }
             DatabasesPending::Opening => Some(ArchivesUnreachable::ArchivesOpening),
         }

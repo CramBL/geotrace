@@ -68,7 +68,7 @@ pub struct SolarFlareScheduler {
     tx: mpsc::Sender<FlareDayMessage>,
     rx: mpsc::Receiver<FlareDayMessage>,
     base_url: String,
-    /// `None` disables fetching: the endpoint answers no request without a
+    /// `None` disables fetching: the endpoint rejects every request without a
     /// key.
     api_key: Option<ApiKey>,
     /// `None` disables fetching: no archive was opened. A read-only session
@@ -457,8 +457,8 @@ fn archived_days_of(store: &ReadOnlyFlareStore) -> Result<BTreeSet<NaiveDate>, F
 /// Fetch `day`, parse it, and add it to the archive.
 ///
 /// Only the flares beginning on `day` are stored, which is the day the
-/// catalog lists them under: an event answered outside the requested day
-/// would be archived twice once its own day is fetched.
+/// catalog lists them under: an event returned outside `day` would be
+/// archived twice once its own day is fetched.
 fn ingest(
     transport: &impl Transport,
     archive: &WritableArchive<FlareStore>,
@@ -522,7 +522,7 @@ mod tests {
 
     use super::*;
 
-    /// One day of the May 2024 storm, as the catalog answers it.
+    /// One day of the May 2024 storm, as the catalog returns it.
     const ONE_FLARE: &str = r#"[{"flrID":"2024-05-09T08:45:00-FLR-001",
         "beginTime":"2024-05-09T08:45Z","peakTime":"2024-05-09T09:13Z",
         "endTime":"2024-05-09T09:36Z","classType":"X2.2",
@@ -619,7 +619,7 @@ mod tests {
         TimeRange::new(at(2024, 5, 9, 8), at(2024, 5, 9, 17))
     }
 
-    /// Without a key the endpoint answers nothing, so nothing is requested and
+    /// Without a key the endpoint returns nothing, so nothing is requested and
     /// no failure is reported for a day that never went out.
     #[test]
     fn a_scheduler_without_a_key_queues_nothing() {
@@ -963,7 +963,7 @@ mod tests {
         assert_eq!(store.read().flares(ingested).expect("flares"), Some(vec![]));
     }
 
-    /// The catalog answers a window, and a window's ends can hold events of
+    /// The catalog returns a window, and a window's ends can hold events of
     /// the neighbouring days. Only the requested day's are archived under it.
     #[test]
     fn an_event_of_another_day_is_not_archived_under_this_one() {
