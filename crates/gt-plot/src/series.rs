@@ -412,6 +412,7 @@ fn build_track_series(
 #[cfg(test)]
 mod tests {
     use geotrace_sdk_units::Unit;
+    use gt_egui_mipmap::SelectionRange;
 
     use super::*;
 
@@ -441,8 +442,7 @@ mod tests {
         assert_eq!(labels, ["accel.x", "accel.y", "accel.z"]);
         // Each component line carries its column at the channel's timestamps.
         let full = series.components[1].mipmap.select_indices(
-            f64::NEG_INFINITY,
-            f64::INFINITY,
+            SelectionRange::within_viewport(f64::NEG_INFINITY..=f64::INFINITY),
             usize::MAX,
         );
         let pts = series.components[1].mipmap.slice_at(full);
@@ -476,10 +476,10 @@ mod tests {
 
     /// The y-extent of the clock offset line, over every point it carries.
     fn clock_delta_extent(series: &TrackSeries) -> (f64, f64) {
-        let full =
-            series
-                .clock_delta_ms
-                .select_indices(f64::NEG_INFINITY, f64::INFINITY, usize::MAX);
+        let full = series.clock_delta_ms.select_indices(
+            SelectionRange::within_viewport(f64::NEG_INFINITY..=f64::INFINITY),
+            usize::MAX,
+        );
         series
             .clock_delta_ms
             .slice_at(full)
@@ -578,6 +578,7 @@ mod tests {
 #[cfg(test)]
 mod heading_wrap {
     use geotrace_sdk_units::Unit;
+    use gt_egui_mipmap::SelectionRange;
     use gt_types::coordinates::{Latitude, Longitude};
     use gt_types::nav_point::NavPoint;
     use gt_types::time_types::GpsTime;
@@ -636,7 +637,10 @@ mod heading_wrap {
     /// The y values the plot draws for one series at the level a view wanting
     /// `target` samples selects, in the order they are drawn.
     fn drawn_values(mipmap: &MipMap, target: usize) -> Vec<f64> {
-        let level = mipmap.select_indices(f64::NEG_INFINITY, f64::INFINITY, target);
+        let level = mipmap.select_indices(
+            SelectionRange::within_viewport(f64::NEG_INFINITY..=f64::INFINITY),
+            target,
+        );
         mipmap.slice_at(level).iter().map(|p| p.y).collect()
     }
 

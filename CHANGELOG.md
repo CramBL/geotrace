@@ -69,6 +69,7 @@
 - **Map & Tracks:** Fixed an SNR of 99 dB-Hz, the firmware sentinel for "no measurement", being read as a signal strength.
 - **Map & Tracks:** Fixed a satellite listed on two rows of one satellite report counting twice in the map's satellite counts, its lost-lock slips and the satellite utilization rate.
 - **Map & Tracks:** Fixed the plot fitting its view past the time range filter, offering the chips of a recording the filter hides, and leaving its lines unchanged after a small move of the filter's end.
+- **Map & Tracks:** Fixed the plot drawing one fix past each edge of the time range filter, and a line across a filter window that holds no fix.
 
 ## 0.13.0 - 2026-08-25
 

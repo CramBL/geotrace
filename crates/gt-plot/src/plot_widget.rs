@@ -85,8 +85,9 @@ const RESET_X_MARGIN_MIN_SECS: f64 = 1.0;
 const UNKNOWN_RECORDING: &str = "Unknown file";
 
 /// The global filter's time window in Unix seconds. Everything the plot draws,
-/// fits and reports is clamped to it.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// fits and reports is clamped to it. The default is the window of
+/// [`GlobalFilter::default`]: open at both ends.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 struct FilterTimeWindow {
     start: Option<f64>,
     end: Option<f64>,
@@ -102,6 +103,12 @@ impl From<&GlobalFilter> for FilterTimeWindow {
 }
 
 impl FilterTimeWindow {
+    /// The window as the hard bound of a mipmap level selection, unbounded at
+    /// an edge the filter left open.
+    fn hard_bound(self) -> RangeInclusive<f64> {
+        self.start.unwrap_or(f64::NEG_INFINITY)..=self.end.unwrap_or(f64::INFINITY)
+    }
+
     /// The part of `seconds` inside the window, empty when the two do not
     /// overlap.
     fn intersection(self, seconds: RangeInclusive<f64>) -> RangeInclusive<f64> {
@@ -668,7 +675,7 @@ pub fn show_track_plot(
         //
         // `eff_x_min`/`eff_x_max` may end up inverted when the active filter
         // and the visible viewport don't overlap.  `MipMap` normalizes that
-        // into an empty-range query (see `select_level_bounds`).
+        // into an empty-range query (see `SelectionRange::counted_span`).
         let effective = time_window.intersection(plot_x_min..=plot_x_max);
         let eff_x_min = *effective.start();
         let eff_x_max = *effective.end();
@@ -678,6 +685,13 @@ pub fn show_track_plot(
             time_window,
             available_width_bits: available_width.to_bits(),
             sample_cap,
+        };
+        let line_viewport = LineViewport {
+            x_min: eff_x_min,
+            x_max: eff_x_max,
+            time_window,
+            width: available_width,
+            cap: sample_cap,
         };
 
         // Hysteresis: skip recompute when the view has moved less than ~10 px
@@ -704,15 +718,7 @@ pub fn show_track_plot(
         } else {
             let fresh: Vec<TrackLevelCache> = series_cache
                 .par_iter()
-                .map(|s| {
-                    compute_level_cache(
-                        &s.series,
-                        eff_x_min,
-                        eff_x_max,
-                        available_width,
-                        sample_cap,
-                    )
-                })
+                .map(|s| compute_level_cache(&s.series, line_viewport))
                 .collect();
             new_level_cache_inputs = Some(inputs);
             std::borrow::Cow::Owned(fresh)
@@ -768,12 +774,7 @@ pub fn show_track_plot(
                 available,
             },
             context_stroke,
-            LineViewport {
-                x_min: eff_x_min,
-                x_max: eff_x_max,
-                width: available_width,
-                cap: sample_cap,
-            },
+            line_viewport,
             series_pointer,
             &mut hovered_label,
         );
@@ -825,12 +826,7 @@ pub fn show_track_plot(
                 dark_mode,
                 snap_error_cache.get(&series.track_ref()),
                 series_pointer,
-                LineViewport {
-                    x_min: eff_x_min,
-                    x_max: eff_x_max,
-                    width: available_width,
-                    cap: sample_cap,
-                },
+                line_viewport,
                 &mut hovered_label,
             );
             add_clock_excursions(
