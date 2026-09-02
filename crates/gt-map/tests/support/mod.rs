@@ -1,5 +1,6 @@
 //! Shared fixture construction for the gt-map integration test binaries: the
-//! headless map they draw frames into, and the recordings they draw.
+//! headless map they draw frames into, the harness a rendered baseline comes
+//! from, and the recordings they draw.
 
 #![allow(dead_code, reason = "shared across binaries with different needs")]
 
@@ -7,7 +8,10 @@ use chrono::{DateTime, Duration, Utc};
 use gt_filter::GlobalFilter;
 use gt_jam::day_selection::DaySelection;
 use gt_loaded_files::RecordingNames;
-use gt_map::{MapDrawContext, NavMap, SpaceWeatherIndicator, TecLayer, TileAccess, ViewportBounds};
+use gt_map::{
+    MapDrawContext, NavMap, SpaceWeatherIndicator, TecLayer, TileAccess, ViewportBounds, icon_mesh,
+};
+use gt_test_utils::TestHarness;
 use gt_types::{
     FileIdx, FileSource, Latitude, LoadedFile, LoadedTrack, Longitude, NavPoint, TimeRange,
     TrackIdx, TrackRef,
@@ -20,6 +24,10 @@ use gt_ui_types::{
 
 /// The viewport every case draws into, in logical pixels.
 pub const VIEWPORT: egui::Vec2 = egui::vec2(800.0, 600.0);
+
+/// Frames a case runs before it reads what the map drew: the first one frames
+/// the recording, and the rest settle the load animation.
+pub const FRAMES_TO_SETTLE: usize = 8;
 
 /// The middle of the viewport, where the pointer reaches what the camera is
 /// centred on.
@@ -280,4 +288,26 @@ impl<'a> HeadlessMap<'a> {
     pub fn clicked_log_glyph(&self) -> Option<LogMatchGlyph> {
         self.state.clicked_log_glyph.clone()
     }
+}
+
+/// A harness that renders `files` into a map reaching no tile server, run
+/// until the camera settles on the fit a newly loaded recording gets.
+pub fn rendered_map(files: Vec<LoadedFile>) -> TestHarness<'static, Option<NavMap>> {
+    let visibility = TrackDataVisibility::from_loaded(&files);
+    let mut harness = TestHarness::builder()
+        .size(VIEWPORT)
+        .render_state_hook(icon_mesh::gpu::install_embedded_library_without_dithering)
+        .ui_state(
+            move |ui, map: &mut Option<NavMap>| {
+                let map =
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
+                let mut state = DrawState::new(GlobalFilter::default());
+                map.draw(ui, state.context(&files, &visibility));
+            },
+            None,
+        );
+    for _ in 0..FRAMES_TO_SETTLE {
+        harness.run();
+    }
+    harness
 }
