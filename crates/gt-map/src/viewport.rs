@@ -473,14 +473,8 @@ pub(crate) fn zoom_to_fit(
 
     // Mercator stretches latitude away from the equator: a degree at 80° N
     // stands 5.8 times as tall as one at the equator.
-    let north_edge = mercator::normalize(
-        bounds.lat.north().clamped_to_the_mercator_limit(),
-        center_lon,
-    );
-    let south_edge = mercator::normalize(
-        bounds.lat.south().clamped_to_the_mercator_limit(),
-        center_lon,
-    );
+    let north_edge = mercator::normalize(bounds.lat.north(), center_lon);
+    let south_edge = mercator::normalize(bounds.lat.south(), center_lon);
     let y_extent = (south_edge.y - north_edge.y).max(MIN_FIT_EXTENT_MERC);
 
     // The box fills FIT_FILL of the viewport once the world spans
