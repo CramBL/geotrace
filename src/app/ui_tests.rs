@@ -44,8 +44,9 @@ use gt_test_utils::{
     SyntheticLogTimestamps, TestHarness, WindowFitAssertions as _, synthetic_gtd_bytes,
     synthetic_journald_log, synthetic_log_start,
 };
-use gt_types::{FileIdx, LoadWarning, TrackIdx, TrackRef};
+use gt_types::{DataCategory, FileIdx, LoadWarning, TrackIdx, TrackRef};
 use gt_ui_theme::MIDDLE_DOT;
+use gt_ui_types::{DataPointRef, DisplayCategory, MapScope, PointVisibility};
 use rstest::rstest;
 use rustc_hash::FxHashMap;
 use strum::IntoEnumIterator as _;
@@ -649,6 +650,164 @@ fn query_point_row_click_pins_its_point() {
         TrackRef::new(FileIdx::new(0), TrackIdx::new(0))
     );
     assert_eq!(sticky.category, gt_types::DataCategory::Tpv);
+}
+
+/// What the map does with the fix the plot-hover cross-highlight names, judged
+/// by the map's own hit-test. `None` when the highlight names no fix.
+fn highlighted_fix_visibility(harness: &Harness<'_, App>) -> Option<PointVisibility> {
+    let app = harness.state();
+    let shared = app.shared.borrow();
+    let (fi, ti, pi) = shared.highlight.plot_hover_point?;
+    let scope = MapScope {
+        files: shared.loaded_files.files(),
+        visibility: shared.tree.visibility(),
+        filter: &shared.filter,
+        display_mask: shared.display_mask,
+        query_matches: app.query_window.matches(),
+    };
+    Some(scope.point_visibility(DataPointRef {
+        track: TrackRef::new(fi, ti),
+        category: DataCategory::Tpv,
+        point_index: pi,
+    }))
+}
+
+/// A point `fraction_across` of the way from the plot pane's left edge to its
+/// right, at half its height. The pane holds the whole recording's span.
+fn plot_pane_point(harness: &Harness<'_, App>, fraction_across: f32) -> egui::Pos2 {
+    let app = harness.state();
+    let rect = app
+        .tiles_tree
+        .tiles
+        .rect(app.plot_tile_id)
+        .expect("the plot pane is laid out");
+    egui::pos2(
+        rect.left() + rect.width() * fraction_across,
+        rect.center().y,
+    )
+}
+
+const PLOT_PANE_MIDDLE: f32 = 0.5;
+
+/// Well inside the later half of the span, which
+/// [`the_plot_cursor_over_a_hidden_stretch_reaches_for_no_drawn_fix`] hides.
+const PLOT_PANE_LATE: f32 = 0.9;
+
+/// Frames a cross-highlight takes to reach the map after the pointer moved.
+const HIGHLIGHT_SETTLE_FRAMES: usize = 2;
+
+/// The guard the row cases below rest on: hovering a point row cross-highlights
+/// that row's fix, which the map draws.
+#[test]
+fn a_hovered_point_row_highlights_its_own_fix() {
+    let mut harness = app_with_query_window_open();
+    run_query(&mut harness, "points | where velocity > 1 km/h");
+
+    let first_row = topmost_point_row(&harness).0.center();
+    harness.hover_at_and_settle(first_row, HIGHLIGHT_SETTLE_FRAMES);
+
+    assert_eq!(
+        highlighted_fix_visibility(&harness),
+        Some(PointVisibility::Shown)
+    );
+}
+
+#[rstest]
+#[case::a_query_hid_the_fix("points | where velocity > 1 km/h | hide", |_: &Harness<'_, App>| {})]
+#[case::the_display_mask_hides_the_track_points(
+    "points | where velocity > 1 km/h",
+    |harness: &Harness<'_, App>| {
+        harness
+            .state()
+            .shared
+            .borrow_mut()
+            .display_mask
+            .set_visible(DisplayCategory::TrackPoints, false);
+    }
+)]
+fn a_hovered_point_row_highlights_no_fix_the_map_leaves_out(
+    #[case] query: &str,
+    #[case] leave_the_fix_out: fn(&Harness<'_, App>),
+) {
+    let mut harness = app_with_query_window_open();
+    run_query(&mut harness, query);
+    leave_the_fix_out(&harness);
+    harness.run_steps(3);
+
+    let first_row = topmost_point_row(&harness).0.center();
+    harness.hover_at_and_settle(first_row, HIGHLIGHT_SETTLE_FRAMES);
+
+    assert_eq!(highlighted_fix_visibility(&harness), None);
+}
+
+/// The guard the plot-cursor cases below rest on: the cursor cross-highlights
+/// the fix it is over, which the map draws.
+#[test]
+fn the_plot_cursor_highlights_the_fix_it_is_over() {
+    let mut harness = app_with_a_recording();
+    harness.run_steps(3);
+
+    let middle = plot_pane_point(&harness, PLOT_PANE_MIDDLE);
+    harness.hover_at_and_settle(middle, HIGHLIGHT_SETTLE_FRAMES);
+
+    assert_eq!(
+        highlighted_fix_visibility(&harness),
+        Some(PointVisibility::Shown)
+    );
+}
+
+#[rstest]
+#[case::a_query_hid_the_fixes(|harness: &mut Harness<'static, App>| {
+    run_query(harness, "points | where velocity > 1 km/h | hide");
+})]
+#[case::the_display_mask_hides_the_track_points(|harness: &mut Harness<'static, App>| {
+    harness
+        .state()
+        .shared
+        .borrow_mut()
+        .display_mask
+        .set_visible(DisplayCategory::TrackPoints, false);
+})]
+#[case::the_track_hides_its_fixes(|harness: &mut Harness<'static, App>| {
+    harness
+        .state()
+        .shared
+        .borrow_mut()
+        .tree
+        .set_category_visible(
+            TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+            DataCategory::Tpv,
+            false,
+        );
+})]
+fn the_plot_cursor_over_fixes_the_map_leaves_out_highlights_nothing(
+    #[case] leave_the_fixes_out: fn(&mut Harness<'static, App>),
+) {
+    let mut harness = app_with_query_window_open();
+    leave_the_fixes_out(&mut harness);
+    // The query window sits over the plot pane the cursor has to reach.
+    harness.state_mut().query_window.open = false;
+    harness.run_steps(3);
+
+    let middle = plot_pane_point(&harness, PLOT_PANE_MIDDLE);
+    harness.hover_at_and_settle(middle, HIGHLIGHT_SETTLE_FRAMES);
+
+    assert_eq!(highlighted_fix_visibility(&harness), None);
+}
+
+/// The query below hides the later half of the span and leaves the earlier half
+/// drawn: the recording's fixes climb north by 0.0002 degrees each.
+#[test]
+fn the_plot_cursor_over_a_hidden_stretch_reaches_for_no_drawn_fix() {
+    let mut harness = app_with_query_window_open();
+    run_query(&mut harness, "points | where lat > 51.506 deg | hide");
+    harness.state_mut().query_window.open = false;
+    harness.run_steps(3);
+
+    let late = plot_pane_point(&harness, PLOT_PANE_LATE);
+    harness.hover_at_and_settle(late, HIGHLIGHT_SETTLE_FRAMES);
+
+    assert_eq!(highlighted_fix_visibility(&harness), None);
 }
 
 /// The matches table lists a track, times and counts, and the points table
@@ -3080,8 +3239,6 @@ fn the_visible_section_opens_at_the_share_the_settings_file_holds() {
 /// hidden categories survive the round trip, missing keys mean visible.
 #[test]
 fn display_mask_persists_across_settings_roundtrip() {
-    use gt_ui_types::DisplayCategory;
-
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
@@ -3135,8 +3292,6 @@ fn display_mask_persists_across_settings_roundtrip() {
 /// The interference layer is off until enabled, and stays on once it is.
 #[test]
 fn showing_the_interference_layer_persists_across_settings_roundtrip() {
-    use gt_ui_types::DisplayCategory;
-
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
@@ -3178,15 +3333,20 @@ fn showing_the_interference_layer_persists_across_settings_roundtrip() {
 
 /// Build an app with one loaded file and the query window open. Shared setup
 /// for the interactive query-history tests.
-fn app_with_query_window_open() -> Harness<'static, App> {
-    let gtd_bytes = minimal_gtd_bytes();
+fn app_with_a_recording() -> Harness<'static, App> {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
     drop_file_and_wait_for_load(
         &mut harness,
-        TestDroppedFile::bytes(gtd_bytes.as_slice(), "test.gtd"),
+        TestDroppedFile::bytes(minimal_gtd_bytes(), "test.gtd"),
     );
+    harness
+}
+
+/// [`app_with_a_recording`] with the query window open over it.
+fn app_with_query_window_open() -> Harness<'static, App> {
+    let mut harness = app_with_a_recording();
     harness.state_mut().query_window.open = true;
     harness.run_steps(3);
     harness
