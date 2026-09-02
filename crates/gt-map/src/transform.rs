@@ -126,7 +126,12 @@ impl MercTransform {
         // Latitude from `unproject` is always within ±90° (it comes from
         // `atan`), but longitude can land outside ±180° - see
         // `wrap_longitude_degrees`.
-        let merc_center = mercator::normalize(
+        //
+        // The centre keeps its latitude unclamped past the projection's
+        // limit: a drag over the top of the world puts it there, and this
+        // anchor has to hold the same position walkers projects the tiles
+        // from.
+        let merc_center = mercator::normalize_past_the_projection_limit(
             Latitude::new(center_ll.y()),
             Longitude::new(wrap_longitude_degrees(center_ll.x())),
         );
@@ -152,7 +157,7 @@ impl MercTransform {
         Self {
             clip_center_x: 0.0,
             clip_center_y: 0.0,
-            merc_center: mercator::normalize(lat, Longitude::new(0.0)),
+            merc_center: mercator::normalize_past_the_projection_limit(lat, Longitude::new(0.0)),
             scale: MapScale { total_px },
         }
     }
@@ -169,7 +174,7 @@ impl MercTransform {
         Self {
             clip_center_x: f64::from(clip_center.x),
             clip_center_y: f64::from(clip_center.y),
-            merc_center: mercator::normalize(lat, lon),
+            merc_center: mercator::normalize_past_the_projection_limit(lat, lon),
             scale: MapScale { total_px },
         }
     }

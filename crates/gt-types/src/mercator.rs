@@ -25,9 +25,13 @@ impl Latitude {
 
 /// A pre-computed normalized Web Mercator position.
 ///
-/// Both fields are in `[0.0, 1.0]`:
+/// [`normalize`] returns both fields in `[0.0, 1.0]`:
 /// - `x` increases west → east (0 = 180° W, 0.5 = 0°, 1 = 180° E)
 /// - `y` increases north → south (0 = top, 0.5 = equator, 1 = bottom)
+///
+/// A point taken from a viewport that reaches past the edge of the world, as
+/// [`normalize_past_the_projection_limit`] and [`denormalize`] accept, lies
+/// outside that range.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MercPoint {
     pub x: f64,
@@ -39,7 +43,19 @@ pub struct MercPoint {
 /// The anchor point (lon = 0°, lat = 0°) maps to exactly `(0.5, 0.5)`, which
 /// is used by the renderers to turn a single `projector.project(lat_lon(0,0))`
 /// call into the per-frame screen → Mercator offset.
+///
+/// A latitude past [`MAX_LATITUDE_DEGREES`] lands on that parallel, the edge
+/// of the world: the projection has no y for the poles. The fix keeps the
+/// latitude and longitude the receiver recorded.
 pub fn normalize(lat: Latitude, lon: Longitude) -> MercPoint {
+    normalize_past_the_projection_limit(lat.clamped_to_the_mercator_limit(), lon)
+}
+
+/// [`normalize`] with the latitude taken as given, for the centre of a
+/// viewport. A map dragged past the edge of the world has its centre past
+/// [`MAX_LATITUDE_DEGREES`]. The anchor the renderers project from follows
+/// it there, with a `y` outside `[0.0, 1.0]`.
+pub fn normalize_past_the_projection_limit(lat: Latitude, lon: Longitude) -> MercPoint {
     let x = lon.as_degrees().to_radians();
     let y = lat.as_degrees().to_radians().tan().asinh();
     MercPoint {
@@ -56,8 +72,9 @@ pub fn wrap_longitude_degrees(deg: f64) -> f64 {
     (deg + 180.0).rem_euclid(360.0) - 180.0
 }
 
-/// The inverse of [`normalize`]: a normalized Mercator position back to
-/// degrees, with the longitude wrapped into `[-180, 180]`.
+/// The inverse of [`normalize_past_the_projection_limit`]: a normalized
+/// Mercator position back to degrees, with the longitude wrapped into
+/// `[-180, 180]`.
 ///
 /// Latitude is not clamped: an x or y outside `[0.0, 1.0]` extrapolates past
 /// the projection's limits, which the viewport does when zoomed out far
@@ -72,18 +89,15 @@ pub fn denormalize(point: MercPoint) -> (f64, f64) {
 mod tests {
     use super::{
         Latitude, Longitude, MAX_LATITUDE_DEGREES, MercPoint, denormalize, normalize,
-        wrap_longitude_degrees,
+        normalize_past_the_projection_limit, wrap_longitude_degrees,
     };
 
     proptest::proptest! {
         /// `normalize` must never return NaN or Inf for any geographically valid input.
-        ///
-        /// Web Mercator is undefined above ≈85.05°. Lat is clamped to [-85, 85]
-        /// to stay within the finite range of `tan.asinh()`.
         #[test]
         fn normalize_is_finite_for_valid_inputs(
             lon in -180.0_f64..=180.0_f64,
-            lat in -85.0_f64..=85.0_f64,
+            lat in -90.0_f64..=90.0_f64,
         ) {
             let pt = normalize(Latitude::new(lat), Longitude::new(lon));
             proptest::prop_assert!(pt.x.is_finite(), "x is not finite for lon={lon}, lat={lat}");
@@ -97,9 +111,9 @@ mod tests {
             proptest::prop_assert!(pt.x >= 0.0 && pt.x <= 1.0, "x={} out of [0,1] for lon={lon}", pt.x);
         }
 
-        /// y must lie in [0, 1]: north (lat = 85) → near 0, south → near 1.
+        /// y must lie in [0, 1]: the north pole → 0, the south pole → 1.
         #[test]
-        fn normalize_y_in_unit_range(lat in -85.0_f64..=85.0_f64) {
+        fn normalize_y_in_unit_range(lat in -90.0_f64..=90.0_f64) {
             let pt = normalize(Latitude::new(lat), Longitude::new(0.0));
             proptest::prop_assert!(pt.y >= 0.0 && pt.y <= 1.0, "y={} out of [0,1] for lat={lat}", pt.y);
         }
@@ -111,6 +125,27 @@ mod tests {
         let south = normalize(Latitude::new(-MAX_LATITUDE_DEGREES), Longitude::new(0.0));
         assert!(north.y.abs() < 1e-12, "north edge at y={}", north.y);
         assert!((south.y - 1.0).abs() < 1e-12, "south edge at y={}", south.y);
+    }
+
+    #[rstest::rstest]
+    #[case::north(90.0, 0.0)]
+    #[case::south(-90.0, 1.0)]
+    fn a_fix_at_the_pole_projects_onto_the_edge_of_the_world(
+        #[case] latitude_degrees: f64,
+        #[case] expected_y: f64,
+    ) {
+        let pole = normalize(Latitude::new(latitude_degrees), Longitude::new(0.0));
+        assert!(
+            (pole.y - expected_y).abs() < 1e-12,
+            "y={} for latitude {latitude_degrees}",
+            pole.y
+        );
+    }
+
+    #[test]
+    fn normalize_past_the_projection_limit_places_the_pole_off_the_world() {
+        let pole = normalize_past_the_projection_limit(Latitude::new(90.0), Longitude::new(0.0));
+        assert!(pole.y < 0.0, "y={} for the north pole", pole.y);
     }
 
     #[test]

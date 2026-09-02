@@ -21,9 +21,9 @@ use walkers::{MapMemory, Plugin, Projector};
 use crate::hover_labels::TOOLTIP_POINTER_GAP_PX;
 use crate::transform::MercTransform;
 
-/// Latitude the Web Mercator projection is cut off at, which the published
-/// grid reaches past: its outermost nodes sit at 87.5 degrees.
-const MERCATOR_LATITUDE_LIMIT_DEGREES: f64 = 85.0;
+/// Latitude of the poles, which a node's half step reaches past: the
+/// published grid's outermost nodes sit at 87.5 degrees.
+const POLE_LATITUDE_DEGREES: f64 = 90.0;
 
 /// The maps the heatmap draws from and the instant it draws them at.
 #[derive(Debug, Clone, Copy)]
@@ -77,7 +77,8 @@ fn projected_longitude_degrees(declared: f64) -> f64 {
 }
 
 /// The area one node covers: half a grid step around it in each direction,
-/// held inside the world and the Mercator projection's latitude cut-off.
+/// held inside the world. `mercator::normalize` brings an area reaching past
+/// the projection's latitude limit back to the edge of the map.
 fn node_area(grid: MapGrid, point: GridPoint) -> Option<(MercPoint, MercPoint)> {
     let latitude_degrees = grid.latitudes.degrees_at(point.latitude_index)?;
     let longitude_degrees =
@@ -85,12 +86,8 @@ fn node_area(grid: MapGrid, point: GridPoint) -> Option<(MercPoint, MercPoint)> 
     let half_latitude_step = grid.latitudes.axis().step_degrees().abs() / 2.0;
     let half_longitude_step = grid.longitudes.axis().step_degrees().abs() / 2.0;
 
-    let latitude = |degrees: f64| {
-        Latitude::new(degrees.clamp(
-            -MERCATOR_LATITUDE_LIMIT_DEGREES,
-            MERCATOR_LATITUDE_LIMIT_DEGREES,
-        ))
-    };
+    let latitude =
+        |degrees: f64| Latitude::new(degrees.clamp(-POLE_LATITUDE_DEGREES, POLE_LATITUDE_DEGREES));
     let longitude = |degrees: f64| Longitude::new(degrees.clamp(-180.0, 180.0));
 
     Some((
@@ -456,7 +453,7 @@ mod tests {
         )
         .expect("the northernmost node");
         let limit = mercator::normalize(
-            Latitude::new(MERCATOR_LATITUDE_LIMIT_DEGREES),
+            Latitude::new(mercator::MAX_LATITUDE_DEGREES),
             Longitude::new(-180.0),
         );
         assert!(north_west.y.is_finite());

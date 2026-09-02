@@ -67,25 +67,28 @@ fn bounding_box_around_the_pole_holds_every_meridian_and_reaches_the_pole() {
 }
 
 /// The cap projects to the world's whole width, which the map culls tracks
-/// against. Mercator y grows southwards, which puts the pole at `y_min`.
-///
-/// Oracle: `mercator::normalize` on the two corners.
+/// against. Both of its Mercator edges are the northern edge of the world:
+/// the cap lies past `mercator::MAX_LATITUDE_DEGREES` from edge to edge.
 #[test]
-fn merc_bounds_around_the_pole_span_the_world_with_the_pole_at_y_min() {
+fn merc_bounds_around_the_pole_span_the_world_and_lie_on_its_northern_edge() {
     let merc_bounds = measured_geometry(&circumpolar_track())
         .expect("every fix has a recorded position")
         .merc_bounds;
-    let pole = mercator::normalize(Latitude::new(90.0), Longitude::new(-180.0));
-    let southern_edge = mercator::normalize(Latitude::new(89.9), Longitude::new(180.0));
+    let northern_edge = mercator::normalize(
+        Latitude::new(mercator::MAX_LATITUDE_DEGREES),
+        Longitude::new(0.0),
+    );
 
     assert!(merc_bounds.x_min.abs() < DEGREES_TOLERANCE, "x_min");
     assert!((merc_bounds.x_max - 1.0).abs() < DEGREES_TOLERANCE, "x_max");
     assert!(
-        (merc_bounds.y_min - pole.y).abs() < DEGREES_TOLERANCE,
-        "y_min"
+        (merc_bounds.y_min - northern_edge.y).abs() < DEGREES_TOLERANCE,
+        "y_min {}",
+        merc_bounds.y_min
     );
     assert!(
-        (merc_bounds.y_max - southern_edge.y).abs() < DEGREES_TOLERANCE,
-        "y_max"
+        (merc_bounds.y_max - northern_edge.y).abs() < DEGREES_TOLERANCE,
+        "y_max {}",
+        merc_bounds.y_max
     );
 }

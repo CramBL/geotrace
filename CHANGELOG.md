@@ -72,6 +72,7 @@
 - **Map & Tracks:** Fixed the map drawing a dead-reckoned fix on the preceding fix in a recording faster than 1 Hz, and off the great circle between the fixes around it across the antimeridian or near a pole.
 - **Map & Tracks:** Fixed the snapped track and its error whiskers being drawn for a recording the filter hides, and past the end of the time range filter.
 - **Map & Tracks:** Fixed zooming the map to a recording or track that crosses the antimeridian, circles a pole, or reaches high latitudes.
+- **Map & Tracks:** Fixed a fix being drawn far off the map when past 85° latitude, where the map projection ends.
 - **Map & Tracks:** Fixed a track's length, spread, bounding box and zoom to fit measuring a dead-reckoned fix at its recorded coordinates.
 - **Map & Tracks:** Fixed an SNR of 99 dB-Hz, the firmware sentinel for "no measurement", being read as a signal strength.
 - **Map & Tracks:** Fixed a satellite listed on two rows of one satellite report counting twice in the map's satellite counts, its lost-lock slips and the satellite utilization rate.
