@@ -6,13 +6,19 @@
 use std::io::Cursor;
 use std::path::Path;
 
-use geotrace_sdk::{Angle, DateTime, NavFile, NavFileBuilder, NavFix, Utc};
+use geotrace_sdk::{Angle, DateTime, Error, NavFile, NavFileBuilder, NavFix, Utc};
+
+fn fixture_bytes(relative_path: &str) -> std::io::Result<Vec<u8>> {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").map_err(std::io::Error::other)?;
+    let path = Path::new(&manifest_dir)
+        .join("../../../tests/fixtures")
+        .join(relative_path);
+    std::fs::read(path)
+}
 
 /// The committed gold fixture, the same seed the cargo-fuzz workflow uses.
 fn gold_bytes() -> std::io::Result<Vec<u8>> {
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").map_err(std::io::Error::other)?;
-    let path = Path::new(&manifest_dir).join("../../../tests/fixtures/gold_dataset/gold.gtd");
-    std::fs::read(path)
+    fixture_bytes("gold_dataset/gold.gtd")
 }
 
 fn valid_gtd_bytes() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -76,4 +82,18 @@ fn gold_corpus_truncations_and_mutations_never_panic() {
         mutated[i] ^= 0xff;
         read(mutated);
     }
+}
+
+/// The crash input from the 2026-09-02 scheduled fuzz run, whose
+/// `tracked_sats/sat_report_idx` declares 5 497 558 139 455 elements of 8 bytes.
+#[test]
+fn dataset_declaring_more_bytes_than_the_file_holds_is_rejected() {
+    let bytes = fixture_bytes("fuzz_regressions/dataset_size_past_file_length.gtd").unwrap();
+
+    let error = NavFile::read(Cursor::new(bytes)).unwrap_err();
+
+    assert!(
+        matches!(error, Error::DatasetSizePastFileLength { .. }),
+        "{error:#}"
+    );
 }

@@ -32,6 +32,7 @@ mod error;
 mod fixed_width_string;
 mod provenance;
 mod read;
+mod size_checked_file;
 mod time_types;
 mod types;
 mod units;

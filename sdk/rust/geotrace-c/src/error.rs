@@ -81,7 +81,8 @@ pub(crate) fn status_for_error(e: &geotrace_sdk::Error) -> GtdStatus {
         | Error::UnknownConstellationName { .. }
         | Error::UnknownMarkerIcon { .. }
         | Error::ParseError { .. }
-        | Error::UnreadableField { .. } => GtdStatus::ErrParse,
+        | Error::UnreadableField { .. }
+        | Error::DatasetSizePastFileLength { .. } => GtdStatus::ErrParse,
         Error::UnwritableField { .. } => GtdStatus::ErrFieldTooLong,
     }
 }

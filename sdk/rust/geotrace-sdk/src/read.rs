@@ -8,6 +8,7 @@ use crate::fixed_width_string::{
     VariantPathField,
 };
 use crate::provenance;
+use crate::size_checked_file::SizeCheckedFile;
 use crate::types::{
     Annotation, Channel, Constellation, EventMarkerColor, EventMarkerIconChoice, EventMarkerPoint,
     EventMarkerStyle, Marker, MarkerIcon, Meta, NavFile, NavFix, NavPoint, Satellite,
@@ -16,11 +17,11 @@ use crate::types::{
 use crate::write;
 use crate::{Angle, Velocity};
 use geotrace_sdk_units::ChannelUnit;
-use hdf5_pure::{AttrValue, File};
+use hdf5_pure::AttrValue;
 use strum::IntoEnumIterator;
 
 pub(crate) fn parse_hdf5(bytes: Vec<u8>) -> Result<NavFile, Error> {
-    let file = File::from_bytes(bytes)?;
+    let file = SizeCheckedFile::from_bytes(bytes)?;
     let root = file.root();
 
     let attrs = root.attrs()?;
@@ -92,7 +93,7 @@ fn string_array_attr(attrs: &HashMap<String, AttrValue>, key: &str) -> Option<Ve
         .map(<[String]>::to_vec)
 }
 
-fn read_nav_points(file: &File) -> Result<Vec<NavPoint>, Error> {
+fn read_nav_points(file: &SizeCheckedFile) -> Result<Vec<NavPoint>, Error> {
     let grp = file.group("nav_points")?;
 
     let times = grp.dataset("time")?.read_i64()?;
@@ -107,17 +108,20 @@ fn read_nav_points(file: &File) -> Result<Vec<NavPoint>, Error> {
     // the receiver's timestamp.
     let gps_times: Vec<u64> = grp
         .dataset("gps_time_us")
-        .and_then(|ds| ds.read_u64())
-        .unwrap_or_else(|_| times.iter().map(|&us| us.cast_unsigned()).collect());
+        .ok()
+        .and_then(|ds| ds.read_u64().ok())
+        .unwrap_or_else(|| times.iter().map(|&us| us.cast_unsigned()).collect());
     // sys_time_us and eph_m are absent in older files. Default to sentinel/NaN.
     let sys_times: Vec<u64> = grp
         .dataset("sys_time_us")
-        .and_then(|ds| ds.read_u64())
-        .unwrap_or_else(|_| vec![u64::MAX; times.len()]);
+        .ok()
+        .and_then(|ds| ds.read_u64().ok())
+        .unwrap_or_else(|| vec![u64::MAX; times.len()]);
     let ephs: Vec<f64> = grp
         .dataset("eph_m")
-        .and_then(|ds| ds.read_f64())
-        .unwrap_or_else(|_| vec![f64::NAN; times.len()]);
+        .ok()
+        .and_then(|ds| ds.read_f64().ok())
+        .unwrap_or_else(|| vec![f64::NAN; times.len()]);
 
     let n = times.len();
     check_len("nav_points", "gps_time_us", n, gps_times.len())?;
@@ -172,7 +176,7 @@ fn read_nav_points(file: &File) -> Result<Vec<NavPoint>, Error> {
 
 fn attach_satellite_data(
     mut nav_points: Vec<NavPoint>,
-    file: &File,
+    file: &SizeCheckedFile,
 ) -> Result<Vec<NavPoint>, Error> {
     let Ok(sat_grp) = file.group("sat_reports") else {
         return Ok(nav_points);
@@ -188,8 +192,9 @@ fn attach_satellite_data(
             let gps = ds.read_u64()?;
             let sys = sat_grp
                 .dataset("sys_time_us")
-                .and_then(|d| d.read_u64())
-                .unwrap_or_else(|_| vec![u64::MAX; r]);
+                .ok()
+                .and_then(|d| d.read_u64().ok())
+                .unwrap_or_else(|| vec![u64::MAX; r]);
             (gps, sys)
         } else {
             // v1 file: old "time" (i64) treated as gps_time. No sys_time.
@@ -254,7 +259,7 @@ fn attach_satellite_data(
     Ok(nav_points)
 }
 
-fn read_markers(file: &File) -> Result<Vec<Marker>, Error> {
+fn read_markers(file: &SizeCheckedFile) -> Result<Vec<Marker>, Error> {
     let Ok(grp) = file.group("markers") else {
         return Ok(Vec::new());
     };
@@ -300,7 +305,7 @@ fn read_markers(file: &File) -> Result<Vec<Marker>, Error> {
     Ok(markers)
 }
 
-fn read_event_markers(file: &File) -> Result<Vec<EventMarkerPoint>, Error> {
+fn read_event_markers(file: &SizeCheckedFile) -> Result<Vec<EventMarkerPoint>, Error> {
     let Ok(grp) = file.group("event_markers") else {
         return Ok(Vec::new());
     };
@@ -357,7 +362,7 @@ fn read_event_markers(file: &File) -> Result<Vec<EventMarkerPoint>, Error> {
     Ok(markers)
 }
 
-fn read_event_marker_styles(file: &File) -> Result<Vec<EventMarkerStyle>, Error> {
+fn read_event_marker_styles(file: &SizeCheckedFile) -> Result<Vec<EventMarkerStyle>, Error> {
     let Ok(grp) = file.group("event_marker_styles") else {
         return Ok(Vec::new());
     };
@@ -426,7 +431,7 @@ fn read_event_marker_styles(file: &File) -> Result<Vec<EventMarkerStyle>, Error>
 /// channels existed, in which case there are simply none. Channels are returned
 /// sorted by name for a deterministic order independent of how the producer
 /// added them.
-fn read_channels(file: &File) -> Result<Vec<Channel>, Error> {
+fn read_channels(file: &SizeCheckedFile) -> Result<Vec<Channel>, Error> {
     let Ok(root) = file.group("channels") else {
         return Ok(Vec::new());
     };
@@ -504,7 +509,7 @@ fn opt_f32(v: f32) -> Option<f32> {
 pub(crate) fn inspect_path(path: &Path) -> Result<String, Error> {
     use std::fmt::Write as _;
 
-    let file = File::open(path)?;
+    let file = SizeCheckedFile::open(path)?;
     let root = file.root();
     let attrs = root.attrs()?;
 
@@ -553,7 +558,7 @@ pub(crate) fn inspect_path(path: &Path) -> Result<String, Error> {
     Ok(out)
 }
 
-fn inspect_nav_points(file: &File, out: &mut String) -> u64 {
+fn inspect_nav_points(file: &SizeCheckedFile, out: &mut String) -> u64 {
     use std::fmt::Write as _;
 
     let Ok(grp) = file.group("nav_points") else {
@@ -563,8 +568,8 @@ fn inspect_nav_points(file: &File, out: &mut String) -> u64 {
 
     let n = grp
         .dataset("time")
-        .and_then(|ds| ds.shape())
         .ok()
+        .and_then(|ds| ds.shape().ok())
         .and_then(|s| s.first().copied())
         .unwrap_or(0);
 
@@ -574,7 +579,7 @@ fn inspect_nav_points(file: &File, out: &mut String) -> u64 {
         return 0;
     }
 
-    if let Ok(times) = grp.dataset("time").and_then(|ds| ds.read_i64())
+    if let Some(times) = grp.dataset("time").ok().and_then(|ds| ds.read_i64().ok())
         && let (Some(&first), Some(&last)) = (times.first(), times.last())
     {
         let t0 = micros_to_datetime(first);
@@ -594,7 +599,7 @@ fn inspect_nav_points(file: &File, out: &mut String) -> u64 {
         ("lon", "lon", 3),
         ("heading", "heading", 1),
     ] {
-        if let Ok(vals) = grp.dataset(ds_name).and_then(|ds| ds.read_f64()) {
+        if let Some(vals) = grp.dataset(ds_name).ok().and_then(|ds| ds.read_f64().ok()) {
             let (mn, mx) = min_max_f64(&vals);
             writeln!(
                 out,
@@ -608,7 +613,11 @@ fn inspect_nav_points(file: &File, out: &mut String) -> u64 {
         }
     }
 
-    if let Ok(vals) = grp.dataset("speed_mps").and_then(|ds| ds.read_f64()) {
+    if let Some(vals) = grp
+        .dataset("speed_mps")
+        .ok()
+        .and_then(|ds| ds.read_f64().ok())
+    {
         let (mn, mx, present) = min_max_present_f64(&vals);
         writeln!(
             out,
@@ -625,7 +634,7 @@ fn inspect_nav_points(file: &File, out: &mut String) -> u64 {
     n
 }
 
-fn inspect_satellite_reports(file: &File, n_nav_points: u64, out: &mut String) {
+fn inspect_satellite_reports(file: &SizeCheckedFile, n_nav_points: u64, out: &mut String) {
     use std::fmt::Write as _;
 
     let Ok(sat_grp) = file.group("sat_reports") else {
@@ -637,8 +646,8 @@ fn inspect_satellite_reports(file: &File, n_nav_points: u64, out: &mut String) {
     // whose name changed between v1 ("time") and v2 ("gps_time_us").
     let m = sat_grp
         .dataset("nav_point_idx")
-        .and_then(|ds| ds.shape())
         .ok()
+        .and_then(|ds| ds.shape().ok())
         .and_then(|s| s.first().copied())
         .unwrap_or(0);
 
@@ -663,8 +672,8 @@ fn inspect_satellite_reports(file: &File, n_nav_points: u64, out: &mut String) {
     let t = file
         .group("tracked_sats")
         .and_then(|g| g.dataset("sat_report_idx"))
-        .and_then(|ds| ds.shape())
         .ok()
+        .and_then(|ds| ds.shape().ok())
         .and_then(|s| s.first().copied())
         .unwrap_or(0);
 
@@ -679,13 +688,17 @@ fn inspect_satellite_reports(file: &File, n_nav_points: u64, out: &mut String) {
     .ok();
 
     if let Ok(ts_grp) = file.group("tracked_sats") {
-        if let Ok(codes) = ts_grp.dataset("constellation").and_then(|ds| ds.read_u8()) {
+        if let Some(codes) = ts_grp
+            .dataset("constellation")
+            .ok()
+            .and_then(|ds| ds.read_u8().ok())
+        {
             let list = constellation_names(&codes);
             if !list.is_empty() {
                 writeln!(out, "    {:<20}{}", "constellations", list.join(", ")).ok();
             }
         }
-        if let Ok(snr_vals) = ts_grp.dataset("snr").and_then(|ds| ds.read_f32()) {
+        if let Some(snr_vals) = ts_grp.dataset("snr").ok().and_then(|ds| ds.read_f32().ok()) {
             let (mn, mx, present) = min_max_present_f32(&snr_vals);
             writeln!(
                 out,
@@ -701,7 +714,10 @@ fn inspect_satellite_reports(file: &File, n_nav_points: u64, out: &mut String) {
     }
 
     if let Ok(ts_grp) = file.group("tracked_sats")
-        && let Ok(in_fix_vals) = ts_grp.dataset("in_fix").and_then(|ds| ds.read_u8())
+        && let Some(in_fix_vals) = ts_grp
+            .dataset("in_fix")
+            .ok()
+            .and_then(|ds| ds.read_u8().ok())
     {
         let fix_count: u64 = in_fix_vals.iter().filter(|&&v| v != 0).count() as u64;
         let avg_f = fix_count as f64 / m as f64;
@@ -716,7 +732,7 @@ fn inspect_satellite_reports(file: &File, n_nav_points: u64, out: &mut String) {
     }
 }
 
-fn inspect_markers(file: &File, out: &mut String) {
+fn inspect_markers(file: &SizeCheckedFile, out: &mut String) {
     use std::fmt::Write as _;
 
     let Ok(grp) = file.group("markers") else {
@@ -726,8 +742,8 @@ fn inspect_markers(file: &File, out: &mut String) {
 
     let k = grp
         .dataset("time")
-        .and_then(|ds| ds.shape())
         .ok()
+        .and_then(|ds| ds.shape().ok())
         .and_then(|s| s.first().copied())
         .unwrap_or(0);
 
@@ -737,14 +753,14 @@ fn inspect_markers(file: &File, out: &mut String) {
         return;
     }
 
-    if let Ok(icons) = grp.dataset("icon").and_then(|ds| ds.read_u8()) {
+    if let Some(icons) = grp.dataset("icon").ok().and_then(|ds| ds.read_u8().ok()) {
         let hist = icon_histogram(&icons);
         if !hist.is_empty() {
             writeln!(out, "  {:<22}{hist}", "icons").ok();
         }
     }
 
-    if let Ok(label_flat) = grp.dataset("label").and_then(|ds| ds.read_u8()) {
+    if let Some(label_flat) = grp.dataset("label").ok().and_then(|ds| ds.read_u8().ok()) {
         let preview = label_preview(&label_flat);
         if !preview.is_empty() {
             writeln!(out, "  {:<22}{preview}", "labels").ok();
@@ -752,7 +768,7 @@ fn inspect_markers(file: &File, out: &mut String) {
     }
 }
 
-fn inspect_channels(file: &File, out: &mut String) {
+fn inspect_channels(file: &SizeCheckedFile, out: &mut String) {
     use std::fmt::Write as _;
 
     let Ok(root) = file.group("channels") else {
@@ -775,8 +791,8 @@ fn inspect_channels(file: &File, out: &mut String) {
         };
         let samples = grp
             .dataset("value")
-            .and_then(|ds| ds.shape())
             .ok()
+            .and_then(|ds| ds.shape().ok())
             .and_then(|s| s.first().copied())
             .unwrap_or(0);
         let attrs = grp.attrs().ok();

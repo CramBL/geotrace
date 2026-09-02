@@ -40,12 +40,13 @@ jobs:
         with:
           tool: cargo-fuzz
 
-      - name: Seed the corpus with the gold fixtures
+      - name: Seed the corpus with the gold fixtures and the past crash inputs
         run: |
           set -euo pipefail
           dir=sdk/rust/geotrace-sdk/fuzz/corpus/decode
           mkdir -p "$dir"
           cp tests/fixtures/gold_dataset/*.gtd "$dir"/
+          cp tests/fixtures/fuzz_regressions/*.gtd "$dir"/
 
       - name: Run the decode fuzzer
         working-directory: sdk/rust/geotrace-sdk
