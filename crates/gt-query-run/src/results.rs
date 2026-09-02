@@ -166,8 +166,8 @@ pub struct ChannelResults {
 
 impl ChannelResults {
     /// Project a channel-source run into its panel result. The matched ranges
-    /// are sample indices into each track's timeline, kept as-is (no slice
-    /// offset: a channel source is not sliced by the point time filter).
+    /// index the timeline the run evaluated - the channel's samples inside the
+    /// filter's time window - and are kept as they are.
     pub(crate) fn project(
         ChannelRun {
             channel,

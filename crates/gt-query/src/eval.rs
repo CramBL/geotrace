@@ -54,8 +54,8 @@ impl ChannelSamples {
     }
 }
 
-/// A channel's full sample timeline, for a query whose source is that channel:
-/// each sample's time (seconds) and its row of component values, in base units.
+/// A channel's sample timeline, for a query whose source is that channel: each
+/// sample's time (seconds) and its row of component values, in base units.
 /// `times.len()` is the sample count; `values` is row-major with `columns` per
 /// row (one for a scalar channel). Empty when the channel is unknown.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -130,8 +130,9 @@ pub trait MetricProvider {
         ChannelSamples::default()
     }
 
-    /// The full sample timeline of `name`, for a query whose source is that
-    /// channel. Values are in base units. An unknown channel yields an empty
+    /// The samples of channel `name` that a channel-source query evaluates
+    /// over. A provider that filters samples out of the run leaves them out
+    /// here. Values are in base units. An unknown channel yields an empty
     /// timeline. Providers with no channels use the default.
     fn channel_timeline(&self, _name: &str) -> ChannelTimeline {
         ChannelTimeline::default()
