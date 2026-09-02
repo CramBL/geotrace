@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
 
 use geotrace_sdk_units::ChannelUnit;
@@ -27,6 +27,7 @@ struct TestProvider {
     len: usize,
     series: BTreeMap<QueryMetric, Vec<Option<f64>>>,
     channels: BTreeMap<String, Vec<(f64, Vec<f64>)>>,
+    filtered_out: BTreeSet<usize>,
 }
 
 impl TestProvider {
@@ -35,7 +36,15 @@ impl TestProvider {
             len,
             series: BTreeMap::new(),
             channels: BTreeMap::new(),
+            filtered_out: BTreeSet::new(),
         }
+    }
+
+    /// Filter `index` out of the run, as the global time window does in
+    /// `gt-query-run`: it has no value for any metric and falls in no match.
+    fn filtering_out(mut self, index: usize) -> Self {
+        self.filtered_out.insert(index);
+        self
     }
 
     fn with(mut self, metric: QueryMetric, values: Vec<Option<f64>>) -> Self {
@@ -73,9 +82,16 @@ impl MetricProvider for TestProvider {
     }
 
     fn value(&self, metric: QueryMetric, index: usize) -> Option<f64> {
+        if self.filtered_out.contains(&index) {
+            return None;
+        }
         self.series
             .get(&metric)
             .and_then(|values| values.get(index).copied().flatten())
+    }
+
+    fn point_can_match(&self, index: usize) -> bool {
+        index < self.len && !self.filtered_out.contains(&index)
     }
 
     fn channel_span(&self, name: &str, t_lo: f64, t_hi: f64) -> ChannelSamples {
@@ -1946,6 +1962,56 @@ fn a_channel_span_includes_samples_on_both_endpoints() {
     assert_eq!(output.matches[0].ranges, vec![0..3]);
 }
 
+/// The window's aggregate reads the sample at 5 s, between its points. The
+/// third point steps the clock back to 1 s, and the points run from 0 s to
+/// 10 s.
+#[test]
+fn a_count_window_spans_the_time_extent_of_its_points_across_a_backward_time_step() {
+    let schema = schema_with("sensor", None, None);
+    let provider = TestProvider::new(3)
+        .with(QueryMetric::Time, vec![Some(0.0), Some(10.0), Some(1.0)])
+        .with_channel("sensor", vec![(5.0, 10.0)]);
+    let output = run_channel(
+        "points | window 3 | where max(@sensor) > 5",
+        &schema,
+        &provider,
+    );
+    assert_eq!(output.matches[0].ranges, vec![0..3]);
+}
+
+/// Nothing but the provider keeps a filtered point out of the match: a window
+/// whose condition reads a channel aggregate alone reads none of its points.
+/// The window matches on the sample at 0.5 s and marks its other two points.
+#[test]
+fn a_window_marks_only_the_points_its_provider_offers() {
+    let schema = schema_with("sensor", None, None);
+    let provider = TestProvider::new(3)
+        .indexed_time()
+        .with_channel("sensor", vec![(0.5, 10.0)])
+        .filtering_out(1);
+    let output = run_channel(
+        "points | window 3 | where max(@sensor) > 5",
+        &schema,
+        &provider,
+    );
+    assert_eq!(output.matches[0].ranges, vec![0..1, 2..3]);
+}
+
+/// The window has no span to gather samples over: no point of it has a
+/// timestamp. Its channel aggregate reports a missing time.
+#[test]
+fn a_window_whose_points_have_no_time_skips_on_the_time_metric() {
+    let schema = schema_with("sensor", None, None);
+    let provider = TestProvider::new(2).with_channel("sensor", vec![(0.5, 10.0)]);
+    let output = run_channel(
+        "points | window 2 | where max(@sensor) > 5",
+        &schema,
+        &provider,
+    );
+    assert!(output.matches.is_empty());
+    assert_eq!(output.summary.skipped.get(&QueryMetric::Time), Some(&1));
+}
+
 #[test]
 fn a_channel_column_reduces_the_samples_of_its_match() {
     // The column reduces the accel samples in [0, 2], the closed time extent
@@ -1965,6 +2031,20 @@ fn a_channel_column_reduces_the_samples_of_its_match() {
     let query = check(&parse(src).unwrap(), &schema).expect(src);
     let column = aggregate_column(&query, "max(@accel)");
     assert_eq!(column.value_over_match(&provider, 0..3), Some(10.8));
+}
+
+/// The column reduces the sample at 5 s, between the match's points. The third
+/// point steps the clock back to 1 s, and the points run from 0 s to 10 s.
+#[test]
+fn a_channel_column_spans_the_time_extent_of_a_match_across_a_backward_time_step() {
+    let schema = schema_with("sensor", None, None);
+    let provider = TestProvider::new(3)
+        .with(QueryMetric::Time, vec![Some(0.0), Some(10.0), Some(1.0)])
+        .with_channel("sensor", vec![(5.0, 10.0)]);
+    let src = "points | window 3 | where max(@sensor) > 5 | table max(@sensor)";
+    let query = check(&parse(src).unwrap(), &schema).expect(src);
+    let column = aggregate_column(&query, "max(@sensor)");
+    assert_eq!(column.value_over_match(&provider, 0..3), Some(10.0));
 }
 
 #[test]
