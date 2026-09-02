@@ -2,6 +2,9 @@
 
 Covers Rust, Python, Just, CMake, C, and C++ files.
 
+The GeoTrace.Dash Vale rule bans the same characters. This check is the one
+that reads every tracked file: `just qa::vale-added` reads only added lines.
+
 Exempt a line with a qa-allow comment on the same line:
     // ── Section ── // [qa-allow-check-em-dash, reason = "why"]
 Multiple checks may share one comment:

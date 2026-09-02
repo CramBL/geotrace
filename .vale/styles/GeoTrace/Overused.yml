@@ -1,0 +1,66 @@
+# Fork of Slop.Overused (vale-llm-slop v0.1.0) with project exceptions.
+# The token list is upstream's, unchanged. Slop.Overused is disabled in
+# .vale.ini so the two never double-report.
+#
+# Each exception is a full phrase, matched only as a whole: the bare word
+# still reports. "Satellite utilization rate" is the analysis feature's name,
+# "robust statistics" and "robust standard deviation" are the statistics
+# terms, and "underscore" names the character in identifier grammars.
+extends: existence
+message: "Overused in generated prose: '%s'. Is it earning its place?"
+link: https://github.com/Syntaf/vale-llm-slop#slopoverused
+level: error
+ignorecase: true
+nonword: true
+exceptions:
+  - '[Ss]atellite\s+utilization'
+  - '[Uu]tilization[-\s]+rates?'
+  - '[Uu]tilization\s+point'
+  - '[Uu]tilization\s+line'
+  - '[Rr]obust[-\s]+statistics'
+  - '[Rr]obust\s+standard\s+deviations?'
+  - '[Rr]obust\s+spread'
+  - '[Rr]obust\s+estimate'
+  - '[Rr]obust\s+σ'
+  - 'hyphen(?:,?\s+(?:and\s+)?|/)underscores?'
+  - 'underscores?,\s+and'
+  - 'letter\s+or\s+underscore'
+  - 'digits,\s+or\s+underscores'
+  - 'clear,\s+elevated,\s+heavy'
+tokens:
+  - '\brobust\b'
+  - '\bseamless(?:ly)?\b'
+  - '\bholistic(?:ally)?\b'
+  - '\bmyriad\b'
+  - '\bplethora\b'
+  - '\bcutting[-\s]edge\b'
+  - '\bstate[-\s]of[-\s]the[-\s]art\b'
+  - '\bcomprehensive(?:ly)?\b'
+  - '\bmeticulous(?:ly)?\b'
+  - '\bprofound(?:ly)?\b'
+  - '\btransformative\b'
+  - '\bunprecedented\b'
+  - '\bintricate(?:ly)?\b'
+  - '\bmultifaceted\b'
+  - '\bnuanced\b'
+  - '\bpivotal\b'
+  - '\bcrucial(?:ly)?\b'
+  - '\bvital(?:ly)?\b'
+  - '\belevat(?:e|es|ed|ing)\b'
+  - '\bempower(?:s|ed|ing)?\b'
+  - '\bfoster(?:s|ed|ing)?\b'
+  - '\bfacilitat(?:e|es|ed|ing)\b'
+  - '\bunderscor(?:e|es|ed|ing)\b'
+  - '\bleverag(?:e|es|ed|ing)\b'
+  - '\butiliz(?:e|es|ed|ing|ation)\b'
+  - '\bshowcas(?:e|es|ed|ing)\b'
+  - '\bspearhead(?:s|ed|ing)?\b'
+  - '\bstreamlin(?:e|es|ed|ing)\b'
+  - '\bbolster(?:s|ed|ing)?\b'
+  - '\bgarner(?:s|ed|ing)?\b'
+  - '\bglean(?:s|ed|ing)?\b'
+  - '\ba\s+wealth\s+of\b'
+  - '\bplays\s+a\s+(?:key|crucial|vital|pivotal|critical)\s+role\b'
+  - '\bserves\s+as\s+a\b'
+  - '\bstands\s+as\s+a\b'
+  - '\bin\s+the\s+world\s+of\b'

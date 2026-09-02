@@ -126,7 +126,7 @@ doc:
 ci: build-images ci-essentials ci-extras ci-sdks
 
 [group("ci")]
-ci-essentials: fmt-check-all clippy-all check-all test examples qa::qa-lint qa::test qa::check-all qa::check-versions qa::check-app doc check-unit-bindings osv-scanner sort-check shear typos
+ci-essentials: fmt-check-all clippy-all check-all test examples qa::qa-lint qa::test qa::check-all qa::check-versions qa::check-app doc check-unit-bindings osv-scanner sort-check shear typos qa::vale-added
 
 [group("ci")]
 ci-extras: msrv sdk-msrv sdk-doc lychee

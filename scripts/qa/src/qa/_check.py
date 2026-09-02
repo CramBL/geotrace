@@ -99,14 +99,31 @@ def is_test_only_module(path: Path) -> bool:
     return False
 
 
-def hash_comment_files(root: Path) -> Iterator[Path]:
-    """Yield Python, Just, and CMake source files (uses # comments)."""
+def markdown_files(root: Path) -> Iterator[Path]:
+    for path in sorted(root.rglob("*.md")):
+        if not _is_excluded(root, path):
+            yield path
+
+
+def python_files(root: Path) -> Iterator[Path]:
+    for path in sorted(root.rglob("*.py")):
+        if not _is_excluded(root, path):
+            yield path
+
+
+def just_and_cmake_files(root: Path) -> Iterator[Path]:
+    """Yield justfiles and CMake files (both use # comments)."""
     seen: set[Path] = set()
-    for pattern in ("*.py", "*.just", "justfile", "CMakeLists.txt", "*.cmake"):
+    for pattern in ("*.just", "justfile", "CMakeLists.txt", "*.cmake"):
         for path in root.rglob(pattern):
             if not _is_excluded(root, path) and path not in seen:
                 seen.add(path)
     yield from sorted(seen)
+
+
+def hash_comment_files(root: Path) -> Iterator[Path]:
+    """Yield Python, Just, and CMake source files (uses # comments)."""
+    yield from sorted(set(python_files(root)) | set(just_and_cmake_files(root)))
 
 
 def c_family_files(root: Path) -> Iterator[Path]:

@@ -46,6 +46,40 @@ generate-gold:
 generate-unix-compress-fixtures:
     {{ _QA }} generate-unix-compress-fixtures
 
+# Download the style packages .vale.ini pins into .vale/styles/.
+[group("qa")]
+vale-sync:
+    {{ _QA }} lint-prose sync
+
+# Lint the tracked Markdown files.
+[group("qa")]
+vale-docs:
+    {{ _QA }} lint-prose docs
+
+# Lint the comments of the tracked Rust, Python, C and C++ files.
+[group("qa")]
+vale-source:
+    {{ _QA }} lint-prose source
+
+# Lint the comments of the justfiles, CMake files and workflow files.
+[group("qa")]
+vale-scripts:
+    {{ _QA }} lint-prose scripts
+
+# Lint every commit message in RANGE.
+[group("qa")]
+vale-commits RANGE="origin/trunk..HEAD":
+    {{ _QA }} lint-prose commits {{ RANGE }}
+
+# The gate: alerts on lines added since BASE, as GitHub annotations, failing on an error.
+[group("qa")]
+vale-added BASE="origin/trunk":
+    {{ _QA }} lint-prose added {{ BASE }}
+
+# Every surface, the whole backlog.
+[group("qa")]
+vale: vale-docs vale-source vale-scripts vale-commits
+
 # Run the QA Python unit tests.
 [group("qa")]
 test *ARGS:

@@ -1,0 +1,10 @@
+# The subject line is plain lowercase prose: no capital first letter and no
+# trailing period. A lowercase namespace prefix ("ci: ...", "sdk: ...") is fine.
+extends: existence
+message: "Commit subject: '%s'. Plain lowercase, no trailing period."
+level: error
+scope: raw
+nonword: true
+tokens:
+  - '\A[A-Z]'
+  - '\A[^\n]*\.(?:\n|\z)'
