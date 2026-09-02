@@ -20,7 +20,7 @@ _do-build-sdk-image: _require-runner
     {{ RUNNER }} build --target sdk-dev -t {{ SDK_IMAGE }} .
 
 [private]
-_build_if_needed IMAGE BUILD_RECIPE:
+_build_if_needed IMAGE BUILD_RECIPE: _require-runner
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -76,7 +76,7 @@ _dev *args:
     #!/usr/bin/env bash
     set -euo pipefail
     [[ "${IN_GEOTRACE_CONTAINER:-}" == "1" ]] && { {{ args }}; exit; }
-    just _require-runner
+    just build-image
     mkdir -p "$HOME/.cargo/registry" "$HOME/.cargo/git"
     echo "{{ GREEN }}{{ BOLD }}{{ args }}{{ NORMAL }}"
     {{ RUNNER }} run {{ COMMON_RUN_ARGS }} {{ IMAGE }} {{ args }}
@@ -88,18 +88,18 @@ _sdk *args:
     #!/usr/bin/env bash
     set -euo pipefail
     [[ "${IN_GEOTRACE_CONTAINER:-}" == "1" ]] && { {{ args }}; exit; }
-    just _require-runner
+    just build-sdk-image
     echo "{{ GREEN }}{{ BOLD }}{{ args }}{{ NORMAL }}"
     {{ RUNNER }} run {{ COMMON_RUN_ARGS }} {{ SDK_VOLUMES }} {{ SDK_IMAGE }} {{ args }}
 
 # Open an interactive shell inside the Rust dev container.
 [group("shells")]
-dev-shell: _require-runner
+dev-shell: build-image
     {{ RUNNER }} run -it {{ COMMON_RUN_ARGS }} {{ IMAGE }} bash
 
 # Open an interactive shell inside the SDK dev container.
 [group("shells")]
-dev-shell-sdk: _require-runner
+dev-shell-sdk: build-sdk-image
     {{ RUNNER }} run -it {{ COMMON_RUN_ARGS }} {{ SDK_VOLUMES }} {{ SDK_IMAGE }} bash
 
 # Build the Rust dev image (stage 1).
