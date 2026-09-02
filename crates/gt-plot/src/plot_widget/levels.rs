@@ -109,6 +109,10 @@ impl LineViewport {
     }
 }
 
+/// The mipmap level each chronological run of one channel component draws at,
+/// in the component's run order.
+type ComponentRunLevels = Vec<LevelSelection>;
+
 /// Cached level selections for every metric of one track's series, plus one
 /// per channel component (dynamic, hence no `Copy`).
 #[derive(Debug, Clone, Default)]
@@ -145,8 +149,9 @@ pub(super) struct TrackLevelCache {
     slip_beidou: LevelSelection,
     slip_navic: LevelSelection,
     slip_qzss: LevelSelection,
-    /// One selection per channel component (outer: channel, inner: component).
-    pub(super) channels: Vec<Vec<LevelSelection>>,
+    /// One entry per channel of the track, then one per component of that
+    /// channel.
+    pub(super) channels: Vec<Vec<ComponentRunLevels>>,
 }
 
 impl TrackLevelCache {
@@ -296,7 +301,13 @@ pub(super) fn compute_level_cache(series: &TrackSeries, viewport: LineViewport) 
         channels: series
             .channels
             .iter()
-            .map(|c| c.components.iter().map(|comp| sel(&comp.mipmap)).collect())
+            .map(|channel| {
+                channel
+                    .components
+                    .iter()
+                    .map(|component| viewport.select_run_levels(&component.runs))
+                    .collect()
+            })
             .collect(),
     }
 }

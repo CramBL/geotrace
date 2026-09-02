@@ -33,6 +33,7 @@ strum.workspace = true
 uom.workspace = true
 
 [dev-dependencies]
+gt-loader = { path = "../gt-loader" }
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
 rstest.workspace = true
 vec1.workspace = true

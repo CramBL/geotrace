@@ -2470,7 +2470,6 @@ dependencies = [
  "chrono",
  "gt-types",
  "proptest",
- "rstest",
  "vec1",
 ]
 
@@ -2742,8 +2741,10 @@ dependencies = [
 name = "gt-loader"
 version = "0.13.0"
 dependencies = [
+ "chrono",
  "geotrace-sdk",
  "gt-analysis",
+ "gt-fmt",
  "gt-test-utils",
  "gt-track-builder",
  "gt-types",
@@ -2868,6 +2869,7 @@ dependencies = [
  "gt-ionex",
  "gt-jam",
  "gt-loaded-files",
+ "gt-loader",
  "gt-solar",
  "gt-test-utils",
  "gt-types",

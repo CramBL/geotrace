@@ -1,4 +1,5 @@
 pub mod cargo_env;
+pub mod clock_reset_fixtures;
 #[cfg(feature = "archive")]
 pub mod day_archive;
 pub mod fixtures;
@@ -16,6 +17,7 @@ pub mod transport;
 pub mod window_fit;
 
 pub use cargo_env::cargo_manifest_dir;
+pub use clock_reset_fixtures::recording_whose_clock_restarts_at_every_boot;
 #[cfg(feature = "archive")]
 pub use day_archive::{ColumnName, GroupPath};
 pub use fixtures::{

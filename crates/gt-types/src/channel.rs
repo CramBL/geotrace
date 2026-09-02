@@ -6,7 +6,9 @@
 //! file-level from the `.gtd` reader and are partitioned to tracks by timestamp
 //! when a file is segmented.
 
-use chrono::{DateTime, Utc};
+use std::ops::Range;
+
+use chrono::{DateTime, Duration, Utc};
 use geotrace_sdk_units::ChannelUnit;
 use uom::si::f64::Angle;
 
@@ -36,7 +38,51 @@ pub struct Channel {
     pub values: Vec<f64>,
 }
 
+/// A channel sample whose timestamp lies before the previous sample's, from a
+/// recorder whose clock stepped back while the channel was sampled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BackwardTimeStep {
+    /// Position of the earlier-stamped sample among the channel's samples.
+    pub position: usize,
+    /// How far this sample's timestamp lies before the previous sample's.
+    pub step_back: Duration,
+}
+
 impl Channel {
+    /// Every sample whose timestamp lies before the previous sample's, in
+    /// stored order.
+    pub fn backward_time_steps(&self) -> Vec<BackwardTimeStep> {
+        self.times
+            .windows(2)
+            .enumerate()
+            .filter_map(|(index, pair)| match pair {
+                [previous, time] if time < previous => Some(BackwardTimeStep {
+                    position: index + 1,
+                    step_back: *previous - *time,
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The maximal stretches of samples whose timestamps never step backwards,
+    /// in stored order. A channel whose timestamps never step backwards yields
+    /// one range over all of them, an empty channel none. Two runs of a
+    /// recorder that restarted its clock cover the same wall clock times.
+    pub fn chronological_runs(&self) -> Vec<Range<usize>> {
+        if self.times.is_empty() {
+            return Vec::new();
+        }
+        let mut runs = Vec::new();
+        let mut start = 0;
+        for step in self.backward_time_steps() {
+            runs.push(start..step.position);
+            start = step.position;
+        }
+        runs.push(start..self.times.len());
+        runs
+    }
+
     /// Whether this is a vector channel (has named components).
     pub fn is_vector(&self) -> bool {
         !self.components.is_empty()
@@ -149,6 +195,68 @@ mod tests {
 
         assert_eq!(sliced.times, vec![at(2), at(1)]);
         assert_eq!(sliced.values, vec![2.0, 2.1, 3.0, 1.0, 1.1, 2.0]);
+    }
+
+    /// The shape a recorder whose clock restarts at every boot writes: each
+    /// run covers the same wall clock times as the one before it.
+    fn channel_restarting_its_clock() -> Channel {
+        Channel {
+            times: vec![at(0), at(1), at(2), at(0), at(1), at(0), at(3)],
+            values: (0..21).map(f64::from).collect(),
+            ..vector_channel()
+        }
+    }
+
+    #[test]
+    fn a_channel_whose_timestamps_never_step_backwards_is_one_run() {
+        let channel = vector_channel();
+        assert!(channel.backward_time_steps().is_empty());
+        assert_eq!(channel.chronological_runs(), vec![0..3]);
+    }
+
+    #[test]
+    fn an_empty_channel_has_no_run() {
+        let channel = Channel {
+            times: Vec::new(),
+            values: Vec::new(),
+            ..vector_channel()
+        };
+        assert!(channel.chronological_runs().is_empty());
+    }
+
+    #[test]
+    fn a_backward_step_names_the_earlier_stamped_sample_and_how_far_it_stepped() {
+        assert_eq!(
+            channel_restarting_its_clock().backward_time_steps(),
+            [
+                BackwardTimeStep {
+                    position: 3,
+                    step_back: Duration::seconds(2),
+                },
+                BackwardTimeStep {
+                    position: 5,
+                    step_back: Duration::seconds(1),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_run_ends_at_every_backward_step() {
+        assert_eq!(
+            channel_restarting_its_clock().chronological_runs(),
+            [0..3, 3..5, 5..7]
+        );
+    }
+
+    #[test]
+    fn a_repeated_timestamp_does_not_end_a_run() {
+        let channel = Channel {
+            times: vec![at(0), at(1), at(1)],
+            ..vector_channel()
+        };
+        assert!(channel.backward_time_steps().is_empty());
+        assert_eq!(channel.chronological_runs(), vec![0..3]);
     }
 
     #[test]

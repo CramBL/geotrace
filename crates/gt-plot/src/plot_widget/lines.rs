@@ -225,7 +225,8 @@ pub(super) fn add_series_lines<'a>(
             .unit
             .as_deref()
             .map_or(String::new(), |u| format!(" ({u})"));
-        for (index, (component, selection)) in channel.components.iter().zip(selections).enumerate()
+        for (index, (component, run_selections)) in
+            channel.components.iter().zip(selections).enumerate()
         {
             // Rotate before the hover treatment, so dimming applies to the
             // component's own hue.
@@ -233,12 +234,12 @@ pub(super) fn add_series_lines<'a>(
                 effective_component_color(component_colors, &channel.name, base, index),
                 is_hovered,
             );
-            add_line(
-                plot_ui,
-                component.mipmap.slice_at(*selection),
-                format!("{prefix}{}{unit_suffix}", component.label),
-                stroke,
-            );
+            let name = format!("{prefix}{}{unit_suffix}", component.label);
+            // No line joins the samples across a backward step in the
+            // channel's timestamps: one line is drawn per run.
+            for (run, selection) in component.runs.iter().zip(run_selections) {
+                add_line(plot_ui, run.slice_at(*selection), name.clone(), stroke);
+            }
         }
     }
 }

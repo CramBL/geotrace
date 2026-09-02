@@ -61,11 +61,13 @@ pub enum GeneratedMarkerKind {
         /// size of the jump).
         step: Duration,
     },
-    /// The GPS−system clock offset left the track's baseline for a sample or
-    /// two and returned - typically a receiver reporting a pre-gap GPS epoch
-    /// for its first fix after a recording gap, so the whole gap lands in one
-    /// sample's offset.  [`Self::ClockDiscontinuity`] covers the other shape,
-    /// an offset that steps and stays.
+    /// The GPS−system clock offset left the track's baseline and returned.
+    /// A whole recording gap lands in one sample's offset when the receiver
+    /// reports its pre-gap GPS epoch for the first fix after the gap.  A device
+    /// that holds its clock's boot default puts the offset between the two
+    /// epochs on every fix until the receiver corrects the clock.
+    /// [`Self::ClockDiscontinuity`] covers the other shape, an offset that
+    /// steps and stays.
     ClockOffsetExcursion {
         /// Signed departure from the track's baseline offset at the furthest
         /// sample of the excursion.
