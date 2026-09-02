@@ -1,12 +1,13 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use gt_analysis::loss_of_lock::{self, SECS_PER_MIN, SlipRatePerPoint};
 use gt_analysis::satellite_utilization::{self, UtilPerPoint};
 use gt_filter::GlobalFilter;
 use gt_query::{ChannelSamples, ChannelTimeline, MetricProvider, Params, QueryMetric, Unit};
 use gt_types::satellites::Constellation;
+use gt_types::time_types::SysTime;
 use gt_types::{Channel, NavPoint};
 use gt_ui_types::{GeomagneticPoint, TecPoint};
 use uom::si::angle::degree;
@@ -398,7 +399,7 @@ impl MetricProvider for TrackProvider<'_> {
             QueryMetric::SysTime => point
                 .tpv
                 .sys_time()
-                .map(|s| s.utc().timestamp_millis() as f64 / 1_000.0),
+                .map(SysTime::as_secs_f64_with_subseconds),
             QueryMetric::Lat => Some(point.tpv.lat().as_written()),
             QueryMetric::Lon => Some(point.tpv.lon().as_written()),
             QueryMetric::InvalidCoordinates => {
@@ -413,7 +414,7 @@ impl MetricProvider for TrackProvider<'_> {
             QueryMetric::ClockDelta => point
                 .tpv
                 .gps_system_clock_offset()
-                .map(|offset| offset.num_milliseconds() as f64 / 1_000.0),
+                .map(TimeDelta::as_seconds_f64),
             QueryMetric::SatsSeen => sats.map(|s| f64::from(s.satellite_count())),
             QueryMetric::SatsFix => sats.map(|s| f64::from(s.fix_count())),
             QueryMetric::GpsSeen => {
@@ -627,8 +628,9 @@ mod tests {
     use crate::check::check_text;
     use crate::schema::schema_from_files;
     use crate::test_fixtures::{
-        TEST_EPOCH, file_with_channels, points_at_millis, points_at_recorded_coordinates, rng,
-        scalar_channel, test_points, vector_channel,
+        FixClocksMicros, TEST_EPOCH, file_with_channels, points_at_millis,
+        points_at_recorded_coordinates, points_stamped_by_both_clocks, rng, scalar_channel,
+        test_points, vector_channel,
     };
 
     /// The points of a track from the second one on, as a window starting at
@@ -832,9 +834,6 @@ mod tests {
         assert_eq!(output.matches[0].ranges, vec![rng(2, POINT_COUNT)]);
     }
 
-    /// A track without a snap run resolves no `snap_error` values - the
-    /// metric never invents data (and never triggers an upload; providers
-    /// only read what the app captured).
     #[test]
     fn the_time_metric_keeps_the_sub_second_fraction_of_a_fix() {
         let points = points_at_millis(&[0, 500]);
@@ -850,6 +849,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_sys_time_metric_keeps_the_microseconds_of_a_host_timestamp() {
+        let points = points_stamped_by_both_clocks(&[FixClocksMicros {
+            receiver: 0,
+            host: 1_500,
+        }]);
+        let provider = TrackProvider::new(&points, &[], None);
+
+        assert_eq!(
+            provider.value(QueryMetric::SysTime, 0),
+            Some(TEST_EPOCH as f64 + 0.001_5)
+        );
+    }
+
+    #[test]
+    fn the_clock_delta_metric_keeps_the_microseconds_of_the_offset() {
+        let points = points_stamped_by_both_clocks(&[FixClocksMicros {
+            receiver: 1_500,
+            host: 0,
+        }]);
+        let provider = TrackProvider::new(&points, &[], None);
+
+        assert_eq!(provider.value(QueryMetric::ClockDelta, 0), Some(0.001_5));
+    }
+
+    /// A track without a snap run resolves no `snap_error` values - the
+    /// metric never invents data (and never triggers an upload; providers
+    /// only read what the app captured).
     #[test]
     fn snap_error_is_absent_without_a_run() {
         let points = test_points();
