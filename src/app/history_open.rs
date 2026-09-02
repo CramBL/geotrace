@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use egui::{Button, Grid, Label, RichText, Window};
 use gt_pending_writes::{PendingWriteGuard, WriteKind};
-use gt_store::DbError;
+use gt_store::{DbError, StoredTrackSplitRule};
 
 use super::modals::{DialogActions, DialogBody};
 use super::{App, ResegmentPrompt, auto_prune, history, history_db, loader, modals, storage};
@@ -214,6 +214,11 @@ impl App {
                     &stored_settings,
                     &self.processing_config,
                 );
+                if let StoredTrackSplitRule::Unrecognized(rule) = stored_settings.track_split_rule {
+                    log::warn!(
+                        "'{filename}' has tracks split by rule {rule}, which this version does not implement. They can only be recalculated."
+                    );
+                }
                 self.pending_resegment = Some(ResegmentPrompt {
                     db_ref,
                     filename,
@@ -531,6 +536,15 @@ impl App {
                 .ctx()
                 .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             let fmt_gap = |us: i64| format!("{} s", us / 1_000_000);
+            let fmt_rule = |rule: StoredTrackSplitRule| match rule {
+                StoredTrackSplitRule::ForwardGapOnly => "forward only".to_owned(),
+                StoredTrackSplitRule::StepInEitherDirection => "either direction".to_owned(),
+                StoredTrackSplitRule::Unrecognized(value) => {
+                    format!("unknown rule {value}")
+                }
+            };
+            let stored_tracks_are_reproducible =
+                loader::stored_track_layout(&prompt.stored).is_some();
             let intro = format!(
                 "'{}' was stored with a different track-splitting setting than the current one.",
                 prompt.filename
@@ -560,6 +574,10 @@ impl App {
                                     ui.label(fmt_gap(prompt.stored.track_split_gap_us));
                                     ui.label(fmt_gap(current.track_split_gap_us));
                                     ui.end_row();
+                                    ui.label("Split rule");
+                                    ui.label(fmt_rule(prompt.stored.track_split_rule));
+                                    ui.label(fmt_rule(current.track_split_rule));
+                                    ui.end_row();
                                 });
                         }),
                         DialogActions::new(|ui| {
@@ -573,8 +591,14 @@ impl App {
                                 recalculate = true;
                             }
                             if ui
-                                .button("Use stored tracks")
+                                .add_enabled(
+                                    stored_tracks_are_reproducible,
+                                    Button::new("Use stored tracks"),
+                                )
                                 .on_hover_text("Open the tracks as stored, with their previous settings")
+                                .on_disabled_hover_text(
+                                    "This version cannot split tracks by the stored rule",
+                                )
                                 .clicked()
                             {
                                 use_stored = true;

@@ -98,6 +98,7 @@ fn history_harness_with_recording(identity: &str, stored_logs: &[&str]) -> Histo
     }];
     let settings = StoredSegmentation {
         track_split_gap_us: 300_000_000,
+        track_split_rule: gt_store::StoredTrackSplitRule::StepInEitherDirection,
         detect_clock_discontinuities: true,
         clock_discontinuity_sigmas: 5.0,
     };

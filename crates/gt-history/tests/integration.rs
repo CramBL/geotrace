@@ -3,19 +3,25 @@ use geotrace_sdk::NavFile;
 use gt_history::{
     Database, DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentId,
     LogContentHash, ReadOnlyDatabase, ReadOnlyHistoryDatabase, RecordingMeta, StoredLogFilter,
-    StoredLogFilterMode, StoredRecording, StoredSegmentation, TrackRange, extract_meta,
+    StoredLogFilterMode, StoredRecording, StoredSegmentation, StoredTrackSplitRule, TrackRange,
+    extract_meta,
 };
 #[cfg(feature = "backend-pure")]
 use gt_history_types::{
     ATTR_GTD_SIZE_BYTES, ATTR_NAV_POINT_COUNT, ATTR_START_US, TRACK_END_DATASET,
     TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP,
 };
-use gt_history_types::{CURRENT_SCHEMA_VERSION, SCHEMA_VERSION_ATTR};
+use gt_history_types::{
+    ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK, ATTR_SEG_GAP_US, ATTR_SEG_SPLIT_RULE,
+    CURRENT_SCHEMA_VERSION, SCHEMA_VERSION_ATTR,
+};
+use rstest::rstest;
 
 /// Default segmentation settings for tests (mirrors `SegmentationConfig::default`).
 fn test_settings() -> StoredSegmentation {
     StoredSegmentation {
         track_split_gap_us: 300_000_000,
+        track_split_rule: StoredTrackSplitRule::StepInEitherDirection,
         detect_clock_discontinuities: true,
         clock_discontinuity_sigmas: 5.0,
     }
@@ -1323,7 +1329,10 @@ fn clear_write_lock_repairs_an_unreadable_superblock() {
 
 /// Write a database the way the old pure-Rust backend did, seeding one recording
 /// (`identity`/`rec_name`) with an `n`-point `nav_points/time` dataset.
-#[cfg(feature = "backend-sys")]
+///
+/// The recording's segmentation attributes are the split gap and the two
+/// clock-marker settings that an older build wrote. The write omits the
+/// split-rule attribute.
 #[expect(
     clippy::expect_used,
     reason = "test helper; panicking on I/O failure is the right behaviour"
@@ -1350,6 +1359,9 @@ fn write_pure_db_with_recording(db_path: &std::path::Path, identity: &str, rec_n
     rec.set_attr("event_marker_count", AttrValue::U64(0));
     rec.set_attr("gtd_size_bytes", AttrValue::U64(0));
     rec.set_attr("geotrace_version", AttrValue::String("1".to_owned()));
+    rec.set_attr("seg_track_split_gap_us", AttrValue::I64(300_000_000));
+    rec.set_attr("seg_detect_clock_discontinuities", AttrValue::U64(1));
+    rec.set_attr("seg_clock_discontinuity_sigmas", AttrValue::F64(5.0));
 
     let mut nav = rec.create_group("nav_points");
     let ds = nav.create_dataset("time");
@@ -2237,6 +2249,7 @@ fn set_tracks_replaces_the_table_and_settings() {
     ];
     let new_settings = StoredSegmentation {
         track_split_gap_us: 42_000_000,
+        track_split_rule: StoredTrackSplitRule::ForwardGapOnly,
         detect_clock_discontinuities: false,
         clock_discontinuity_sigmas: 2.5,
     };
@@ -2259,6 +2272,85 @@ fn set_tracks_replaces_the_table_and_settings() {
     assert_eq!(
         entry.hidden_tracks, 0,
         "the replacement clears the old hidden mark"
+    );
+}
+
+#[rstest]
+#[case::forward_gap_only(StoredTrackSplitRule::ForwardGapOnly)]
+#[case::step_in_either_direction(StoredTrackSplitRule::StepInEitherDirection)]
+fn a_stored_recording_reads_back_the_split_rule_it_was_written_with(
+    #[case] track_split_rule: StoredTrackSplitRule,
+) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+    let bytes = make_gtd_bytes(1_000, 4);
+    let meta = extract_meta(&bytes).expect("meta");
+    let tracks = [TrackRange {
+        start: 0,
+        end: meta.nav_point_count,
+        hidden: false,
+    }];
+    let settings = StoredSegmentation {
+        track_split_rule,
+        ..test_settings()
+    };
+
+    let db_ref = db
+        .insert("dev", &meta, &tracks, settings, &bytes)
+        .expect("insert");
+
+    let stored = db.load_full(&db_ref).expect("load");
+    assert_eq!(
+        stored.segmentation.expect("a stored segmentation"),
+        settings
+    );
+}
+
+/// The segmentation attributes are database bookkeeping, and the reconstruction
+/// never writes them into the GTD file.
+#[test_log::test]
+fn segmentation_attributes_stay_out_of_the_reconstructed_gtd() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+    let bytes = make_gtd_bytes(1_000, 4);
+    let meta = extract_meta(&bytes).expect("meta");
+    let db_ref = db.insert_simple("dev", &meta, &bytes).expect("insert");
+
+    let rebuilt = db.load_bytes(&db_ref).expect("load");
+
+    for attr in [
+        ATTR_SEG_GAP_US,
+        ATTR_SEG_SPLIT_RULE,
+        ATTR_SEG_DETECT_CLOCK,
+        ATTR_SEG_CLOCK_SIGMAS,
+    ] {
+        assert!(
+            !rebuilt
+                .windows(attr.len())
+                .any(|window| window == attr.as_bytes()),
+            "{attr} must not appear in the reconstructed GTD file"
+        );
+    }
+}
+
+#[test_log::test]
+fn a_recording_stored_without_a_split_rule_reads_as_forward_gap_only() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("legacy.h5");
+    write_pure_db_with_recording(&db_path, "auto:old.gtd", "2024-01-01T00:00:00Z", 5);
+
+    let db = Database::open_or_create(&db_path).expect("open");
+
+    let db_ref = db.list_recordings().expect("list")[0].db_ref.clone();
+    let stored = db.load_full(&db_ref).expect("load");
+    assert_eq!(
+        stored
+            .segmentation
+            .expect("a stored segmentation")
+            .track_split_rule,
+        StoredTrackSplitRule::ForwardGapOnly
     );
 }
 

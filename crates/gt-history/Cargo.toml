@@ -31,6 +31,7 @@ hdf5.workspace = true
 hdf5-pure.workspace = true
 insta.workspace = true
 log.workspace = true
+rstest.workspace = true
 tempfile.workspace = true
 test-log.workspace = true
 

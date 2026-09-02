@@ -214,6 +214,7 @@ mod tests {
         }];
         let settings = StoredSegmentation {
             track_split_gap_us: 300_000_000,
+            track_split_rule: gt_store::StoredTrackSplitRule::StepInEitherDirection,
             detect_clock_discontinuities: false,
             clock_discontinuity_sigmas: 5.0,
         };

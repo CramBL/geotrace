@@ -4,8 +4,6 @@ use std::{
     sync::{Arc, mpsc},
 };
 
-use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig};
-
 use chrono::Utc;
 use egui::Context;
 use gt_loaded_files::FileHistory;
@@ -13,7 +11,10 @@ use gt_log_view::LogAttachmentRef;
 use gt_logfile::{LogText, ParsedLog};
 use gt_pending_writes::{PendingWrites, WriteKind};
 use gt_plot::{AnalysisConfig, PreparedSeries};
-use gt_store::{AttachedLog, StoredLogFilter};
+use gt_store::{AttachedLog, StoredLogFilter, StoredTrackSplitRule};
+use gt_track_builder::{
+    GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig, TrackSplitRule,
+};
 use gt_types::LoadedFile;
 
 use crate::app::background_thread;
@@ -690,6 +691,10 @@ pub(crate) fn stored_segmentation_from_config(
 ) -> gt_store::StoredSegmentation {
     gt_store::StoredSegmentation {
         track_split_gap_us: track_split_gap_us(config.track_layout),
+        track_split_rule: match config.track_layout.track_split_rule {
+            TrackSplitRule::ForwardGapOnly => StoredTrackSplitRule::ForwardGapOnly,
+            TrackSplitRule::StepInEitherDirection => StoredTrackSplitRule::StepInEitherDirection,
+        },
         detect_clock_discontinuities: config.generated_markers.detect_clock_discontinuities,
         clock_discontinuity_sigmas: config.generated_markers.clock_discontinuity_sigmas,
     }
@@ -702,10 +707,20 @@ fn track_split_gap_us(config: TrackLayoutConfig) -> i64 {
         .unwrap_or(i64::MAX)
 }
 
-fn track_layout_from_stored(settings: &gt_store::StoredSegmentation) -> TrackLayoutConfig {
-    TrackLayoutConfig {
+/// The track layout that reproduces a recording's stored track ranges, or
+/// `None` when this build does not implement the rule they were split by.
+pub(crate) fn stored_track_layout(
+    settings: &gt_store::StoredSegmentation,
+) -> Option<TrackLayoutConfig> {
+    let track_split_rule = match settings.track_split_rule {
+        StoredTrackSplitRule::ForwardGapOnly => TrackSplitRule::ForwardGapOnly,
+        StoredTrackSplitRule::StepInEitherDirection => TrackSplitRule::StepInEitherDirection,
+        StoredTrackSplitRule::Unrecognized(_) => return None,
+    };
+    Some(TrackLayoutConfig {
         track_split_gap: chrono::Duration::microseconds(settings.track_split_gap_us),
-    }
+        track_split_rule,
+    })
 }
 
 fn generated_markers_from_stored(settings: &gt_store::StoredSegmentation) -> GeneratedMarkerConfig {
@@ -716,27 +731,30 @@ fn generated_markers_from_stored(settings: &gt_store::StoredSegmentation) -> Gen
     }
 }
 
-/// Returns `true` when the stored tracks were split with the same track-layout
-/// setting as the current app config. Generated-marker settings are intentionally
-/// ignored here because they do not affect the stored track ranges.
+/// Returns `true` when the current app config's split gap and split rule
+/// reproduce the recording's stored track ranges. Generated-marker settings are
+/// excluded because they do not affect the track ranges.
 pub(crate) fn track_split_matches_config(
     settings: &gt_store::StoredSegmentation,
     config: &SegmentationConfig,
 ) -> bool {
-    track_layout_from_stored(settings) == config.track_layout
+    stored_track_layout(settings) == Some(config.track_layout)
 }
 
 /// Rebuild a [`SegmentationConfig`] for opening stored history tracks.
 ///
-/// The stored track split gap is kept so hidden-track indices still line up with
-/// the stored track table. Generated-marker settings come from `current`, so a
-/// history load reflects the user's current marker toggles and slip thresholds.
+/// Hidden-track indices still line up with the stored track table because the
+/// stored track layout is kept. A history load takes the user's current marker
+/// toggles and slip thresholds from `current`. A recording split by a rule this
+/// build does not implement takes `current`'s track layout, since its stored
+/// ranges cannot be reproduced. The re-segment prompt then offers only
+/// recalculation for it.
 pub(crate) fn config_from_stored_segmentation(
     settings: &gt_store::StoredSegmentation,
     current: SegmentationConfig,
 ) -> SegmentationConfig {
     SegmentationConfig {
-        track_layout: track_layout_from_stored(settings),
+        track_layout: stored_track_layout(settings).unwrap_or(current.track_layout),
         generated_markers: current.generated_markers,
     }
 }
@@ -956,6 +974,7 @@ mod tests {
     use chrono::DateTime;
     use gt_store::{HistoryDatabase, ReadOnlyHistoryDatabase, Recordings};
     use gt_test_utils::{SyntheticGtdSpec, synthetic_gtd_bytes};
+    use rstest::rstest;
 
     use super::*;
 
@@ -969,11 +988,16 @@ mod tests {
         let config = SegmentationConfig {
             track_layout: TrackLayoutConfig {
                 track_split_gap: chrono::Duration::milliseconds(42_500),
+                track_split_rule: TrackSplitRule::ForwardGapOnly,
             },
             generated_markers,
         };
         let stored = stored_segmentation_from_config(&config);
         assert_eq!(stored.track_split_gap_us, 42_500_000);
+        assert_eq!(
+            stored.track_split_rule,
+            StoredTrackSplitRule::ForwardGapOnly
+        );
         assert!(!stored.detect_clock_discontinuities);
         assert_eq!(
             stored.clock_discontinuity_sigmas.to_bits(),
@@ -989,6 +1013,7 @@ mod tests {
         let stored_source = SegmentationConfig {
             track_layout: TrackLayoutConfig {
                 track_split_gap: chrono::Duration::milliseconds(42_500),
+                ..TrackLayoutConfig::default()
             },
             generated_markers: GeneratedMarkerConfig {
                 detect_clock_discontinuities: true,
@@ -1016,6 +1041,39 @@ mod tests {
 
         assert_eq!(back.track_layout, stored_source.track_layout);
         assert_eq!(back.generated_markers, current.generated_markers);
+    }
+
+    /// Re-splitting under the stored rule reproduces the stored track ranges.
+    /// A rule this build does not implement has no layout: those ranges cannot
+    /// be reproduced.
+    #[rstest]
+    #[case::the_forward_gap_only_rule(
+        StoredTrackSplitRule::ForwardGapOnly,
+        Some(TrackSplitRule::ForwardGapOnly)
+    )]
+    #[case::the_current_rule(
+        StoredTrackSplitRule::StepInEitherDirection,
+        Some(TrackSplitRule::StepInEitherDirection)
+    )]
+    #[case::a_rule_this_build_does_not_implement(StoredTrackSplitRule::Unrecognized(7), None)]
+    fn stored_track_layout_takes_the_rule_the_recording_was_split_by(
+        #[case] stored_rule: StoredTrackSplitRule,
+        #[case] expected_rule: Option<TrackSplitRule>,
+    ) {
+        let settings = gt_store::StoredSegmentation {
+            track_split_rule: stored_rule,
+            ..stored_segmentation_from_config(&SegmentationConfig::default())
+        };
+
+        let layout = stored_track_layout(&settings);
+
+        assert_eq!(
+            layout,
+            expected_rule.map(|track_split_rule| TrackLayoutConfig {
+                track_split_gap: SegmentationConfig::default().track_layout.track_split_gap,
+                track_split_rule,
+            })
+        );
     }
 
     #[test]
@@ -1270,6 +1328,7 @@ mod tests {
         let config = SegmentationConfig {
             track_layout: TrackLayoutConfig {
                 track_split_gap: chrono::Duration::milliseconds(42_500),
+                ..TrackLayoutConfig::default()
             },
             ..SegmentationConfig::default()
         };
@@ -1296,6 +1355,7 @@ mod tests {
         let config = SegmentationConfig {
             track_layout: TrackLayoutConfig {
                 track_split_gap: chrono::Duration::milliseconds(42_500),
+                ..TrackLayoutConfig::default()
             },
             ..SegmentationConfig::default()
         };

@@ -30,6 +30,9 @@ pub const ATTR_HIDDEN: &str = "hidden";
 pub const ATTR_SEG_GAP_US: &str = "seg_track_split_gap_us";
 pub const ATTR_SEG_DETECT_CLOCK: &str = "seg_detect_clock_discontinuities";
 pub const ATTR_SEG_CLOCK_SIGMAS: &str = "seg_clock_discontinuity_sigmas";
+/// The [`StoredTrackSplitRule`] the stored tracks were split by, written as the
+/// rule's [`StoredTrackSplitRule::attribute_value`].
+pub const ATTR_SEG_SPLIT_RULE: &str = "seg_track_split_rule";
 
 /// DB-internal subgroup (under each recording group) holding the stored track
 /// ranges as parallel `start`/`end`/`hidden` datasets. The name is prefixed so
@@ -147,6 +150,7 @@ pub fn is_db_recording_attr(key: &str) -> bool {
             | ATTR_SEG_GAP_US
             | ATTR_SEG_DETECT_CLOCK
             | ATTR_SEG_CLOCK_SIGMAS
+            | ATTR_SEG_SPLIT_RULE
     ) || key.starts_with(LOG_ATTACHMENT_ATTR_PREFIX)
 }
 
@@ -175,18 +179,58 @@ pub struct DatabaseRef {
     pub group_name: String,
 }
 
+/// The rule that turned a recording's fixes into its stored track ranges.
+///
+/// The numbering is the on-disk one: a rule added later takes the next number,
+/// and a build with no variant for a number reads [`Self::Unrecognized`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredTrackSplitRule {
+    /// A forward timestamp gap reaching the split gap starts a new track.
+    ForwardGapOnly,
+    /// A timestamp step reaching the split gap in either direction starts a new
+    /// track.
+    StepInEitherDirection,
+    /// A rule number this build has no variant for.
+    Unrecognized(i64),
+}
+
+impl StoredTrackSplitRule {
+    const FORWARD_GAP_ONLY_VALUE: i64 = 0;
+    const STEP_IN_EITHER_DIRECTION_VALUE: i64 = 1;
+
+    /// The rule an [`ATTR_SEG_SPLIT_RULE`] value names. An absent attribute is
+    /// [`Self::ForwardGapOnly`]. Every build that wrote a recording without
+    /// this attribute split its tracks by that rule.
+    pub fn from_attribute_value(value: Option<i64>) -> Self {
+        match value {
+            None | Some(Self::FORWARD_GAP_ONLY_VALUE) => Self::ForwardGapOnly,
+            Some(Self::STEP_IN_EITHER_DIRECTION_VALUE) => Self::StepInEitherDirection,
+            Some(other) => Self::Unrecognized(other),
+        }
+    }
+
+    pub fn attribute_value(self) -> i64 {
+        match self {
+            Self::ForwardGapOnly => Self::FORWARD_GAP_ONLY_VALUE,
+            Self::StepInEitherDirection => Self::STEP_IN_EITHER_DIRECTION_VALUE,
+            Self::Unrecognized(value) => value,
+        }
+    }
+}
+
 /// History settings stored alongside a recording's track table.
 ///
 /// These are primitive persistence fields, intentionally independent of
-/// `gt-track-builder` runtime configuration types. `track_split_gap_us` is the
-/// track-layout setting that determines whether stored track ranges can be
-/// reused safely. The clock marker fields are the generated-marker settings
-/// that this history schema persisted when the tracks were written. Newer
-/// generated-marker settings are supplied by the app's current processing config
-/// when the recording is opened.
+/// `gt-track-builder` runtime configuration types. `track_split_gap_us` and
+/// `track_split_rule` are the track-layout settings that determine whether
+/// stored track ranges can be reused safely. The clock marker fields are the
+/// generated-marker settings that this history schema persisted when the tracks
+/// were written. Newer generated-marker settings are supplied by the app's
+/// current processing config when the recording is opened.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StoredSegmentation {
     pub track_split_gap_us: i64,
+    pub track_split_rule: StoredTrackSplitRule,
     pub detect_clock_discontinuities: bool,
     pub clock_discontinuity_sigmas: f64,
 }

@@ -1,7 +1,9 @@
 //! Loading the persisted settings into the app and writing them back out.
 
 use gt_pending_writes::{WriteKind, WriteRejection};
-use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig};
+use gt_track_builder::{
+    GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig, TrackSplitRule,
+};
 use gt_types::AssociationConfig;
 use strum::IntoEnumIterator;
 
@@ -31,6 +33,7 @@ impl App {
                 track_split_gap: chrono::Duration::seconds(
                     s.processing.track_split_gap_seconds as i64,
                 ),
+                track_split_rule: TrackSplitRule::default(),
             },
             generated_markers: GeneratedMarkerConfig {
                 detect_gnss_fix_lost: s.processing.detect_gnss_fix_lost,

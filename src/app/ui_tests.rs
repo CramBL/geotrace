@@ -6683,6 +6683,7 @@ fn snapshot_history_resegment_dialog() {
         bytes: std::sync::Arc::from(Vec::<u8>::new()),
         stored: gt_store::StoredSegmentation {
             track_split_gap_us: 60_000_000,
+            track_split_rule: gt_store::StoredTrackSplitRule::ForwardGapOnly,
             detect_clock_discontinuities: false,
             clock_discontinuity_sigmas: 4.0,
         },
@@ -6691,6 +6692,98 @@ fn snapshot_history_resegment_dialog() {
     });
     harness.run();
     harness.snapshot_loose("history_resegment_dialog");
+}
+
+fn stored_segmentation_from_app_split_by(
+    app: &App,
+    track_split_rule: gt_store::StoredTrackSplitRule,
+) -> gt_store::StoredSegmentation {
+    gt_store::StoredSegmentation {
+        track_split_rule,
+        ..crate::app::loader::stored_segmentation_from_config(&app.processing_config)
+    }
+}
+
+fn resegment_prompt_for(
+    app: &App,
+    track_split_rule: gt_store::StoredTrackSplitRule,
+) -> super::ResegmentPrompt {
+    super::ResegmentPrompt {
+        db_ref: gt_store::DatabaseRef {
+            identity: "auto:ride.gtd".to_owned(),
+            group_name: "2025-05-23T10:00:00Z_a1b2".to_owned(),
+        },
+        filename: "ride.gtd".to_owned(),
+        bytes: std::sync::Arc::from(minimal_gtd_bytes()),
+        stored: stored_segmentation_from_app_split_by(app, track_split_rule),
+        hidden_positions: vec![1],
+        marker_settings_changed: false,
+    }
+}
+
+#[rstest]
+#[case::the_forward_gap_only_rule(gt_store::StoredTrackSplitRule::ForwardGapOnly, true)]
+#[case::a_rule_this_build_does_not_implement(gt_store::StoredTrackSplitRule::Unrecognized(7), true)]
+#[case::the_current_rule(gt_store::StoredTrackSplitRule::StepInEitherDirection, false)]
+fn opening_a_recording_split_by_another_rule_raises_the_resegment_prompt(
+    #[case] stored_rule: gt_store::StoredTrackSplitRule,
+    #[case] expected_prompt: bool,
+) {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    let stored = gt_store::StoredRecording {
+        bytes: minimal_gtd_bytes(),
+        tracks: vec![
+            gt_store::TrackRange {
+                start: 0,
+                end: 30,
+                hidden: false,
+            },
+            gt_store::TrackRange {
+                start: 30,
+                end: 61,
+                hidden: true,
+            },
+        ],
+        segmentation: Some(stored_segmentation_from_app_split_by(
+            harness.state(),
+            stored_rule,
+        )),
+    };
+
+    harness
+        .state_mut()
+        .handle_history_response(crate::app::history_db::Response::Opened {
+            db_ref: gt_store::DatabaseRef {
+                identity: "auto:ride.gtd".to_owned(),
+                group_name: "2025-05-23T10:00:00Z_a1b2".to_owned(),
+            },
+            result: Ok(stored),
+        });
+
+    assert_eq!(harness.state().pending_resegment.is_some(), expected_prompt);
+}
+
+#[rstest]
+#[case::the_forward_gap_only_rule(gt_store::StoredTrackSplitRule::ForwardGapOnly, false)]
+#[case::a_rule_this_build_does_not_implement(gt_store::StoredTrackSplitRule::Unrecognized(7), true)]
+fn the_resegment_prompt_offers_the_stored_tracks_only_for_a_rule_it_can_split_by(
+    #[case] stored_rule: gt_store::StoredTrackSplitRule,
+    #[case] expected_disabled: bool,
+) {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    let prompt = resegment_prompt_for(harness.state(), stored_rule);
+    harness.state_mut().pending_resegment = Some(prompt);
+    harness.run();
+
+    let button = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Use stored tracks");
+
+    assert_eq!(button.accesskit_node().is_disabled(), expected_disabled);
 }
 
 #[test]
@@ -8378,6 +8471,7 @@ fn snap_runs_persist_and_restore_through_the_app() {
     }];
     let settings = StoredSegmentation {
         track_split_gap_us: 300_000_000,
+        track_split_rule: gt_store::StoredTrackSplitRule::StepInEitherDirection,
         detect_clock_discontinuities: false,
         clock_discontinuity_sigmas: 5.0,
     };
@@ -11255,6 +11349,7 @@ impl OversizedAppWindow {
                     bytes: std::sync::Arc::from(Vec::<u8>::new()),
                     stored: gt_store::StoredSegmentation {
                         track_split_gap_us: 60_000_000,
+                        track_split_rule: gt_store::StoredTrackSplitRule::StepInEitherDirection,
                         detect_clock_discontinuities: false,
                         clock_discontinuity_sigmas: 4.0,
                     },
