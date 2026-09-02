@@ -12,6 +12,7 @@
 - **Map & Tracks:** The side panel now lists the tracks toggled on above the tree, grouped by recording, in columns of track number, distance in kilometres and duration under one header row, in a fixed area resized by dragging its divider and kept at that height across restarts, where a track can be hidden, hovered, revealed in the tree and centered on the map.
 - **Map & Tracks:** The map warns when a recording has fixes outside the map projection (past 85° latitude).
 - **Map & Tracks:** The data quality warnings now list what the app changed in a recording: the satellites merged from several rows of one report, the satellite SNR readings discarded as the no-data sentinel, the event marker colors replaced with gray, and the event marker styles dropped for a variant path with several.
+- **Map & Tracks:** The data quality warnings now list a sensor channel whose sample timestamps step backwards, with how many steps it holds and how far the largest steps back.
 - **Map & Tracks:** The side panel shows a warning glyph on a track with a fix whose coordinate is outside the valid range, and the map draws that fix in the warning color and marks it in its hover text.
 - **Map & Tracks:** The window for a clicked fix now shows the coordinates the receiver recorded, marking one outside the valid range, and where the map draws the fix.
 - **Map & Tracks:** A recording in which no fix has a valid position now loads, with its tracks drawn nowhere on the map.
@@ -72,6 +73,8 @@
 - **Map & Tracks:** Fixed a track's length, spread, bounding box and zoom to fit measuring a dead-reckoned fix at its recorded coordinates.
 - **Map & Tracks:** Fixed an SNR of 99 dB-Hz, the firmware sentinel for "no measurement", being read as a signal strength.
 - **Map & Tracks:** Fixed a satellite listed on two rows of one satellite report counting twice in the map's satellite counts, its lost-lock slips and the satellite utilization rate.
+- **Map & Tracks:** Fixed the plot drawing a sensor channel whose sample timestamps step backwards as one line through every step.
+- **Map & Tracks:** Fixed the plot's shared y-axis fitting the clock offset of fixes recorded before a device's clock was corrected.
 - **Map & Tracks:** Fixed the plot fitting its view past the time range filter, offering the chips of a recording the filter hides, and leaving its lines unchanged after a small move of the filter's end.
 - **Map & Tracks:** Fixed the plot drawing one fix past each edge of the time range filter, and a line across a filter window that holds no fix.
 

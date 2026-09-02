@@ -2,11 +2,11 @@
 //! whose GPS↔system offset left the track's baseline, plus its hover text.
 //!
 //! These samples are held out of the clock-offset line (see
-//! [`crate::series::TrackSeries::clock_delta_ms`]) because a single sample
-//! carrying a whole recording gap would set the auto-bounds of the y-axis every
-//! metric shares.  Each one is marked here at the edge it ran off, with its true
-//! offset on hover, and drawn in place once the view is zoomed out far enough to
-//! hold it.
+//! [`crate::series::TrackSeries::clock_delta_ms`]) because a departure of
+//! hours or days would set the auto-bounds of the y-axis every metric shares.
+//! Each one is marked here at the edge it ran off, with its true offset on
+//! hover, and drawn in place once the view is zoomed out far enough to hold
+//! it.
 
 use chrono::DateTime;
 use egui::epaint::{Shape, Stroke};

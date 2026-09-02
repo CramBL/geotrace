@@ -20,7 +20,7 @@ pub mod tpv;
 pub mod track;
 pub mod utc_days;
 
-pub use channel::Channel;
+pub use channel::{BackwardTimeStep, Channel};
 pub use coordinates::{
     Coordinate, CoordinateAxis, Latitude, Longitude, OutOfRange, RawDegrees, RecordedCoordinate,
     RecordedLatitude, RecordedLongitude,

@@ -41,6 +41,7 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
+use chrono::Duration;
 use geotrace_sdk::{
     Constellation as SdkConstellation, EventMarker as SdkEventMarker,
     EventMarkerColor as SdkEventMarkerColor, EventMarkerIconChoice as SdkEventMarkerIconChoice,
@@ -438,6 +439,57 @@ fn coordinates_out_of_range_warning(
     })
 }
 
+/// A channel whose sample timestamps step backwards, from a recorder whose
+/// clock stepped back while it was sampling.
+struct ChannelWithBackwardTimeSteps {
+    name: String,
+    steps: usize,
+    worst_step_back: Duration,
+}
+
+impl ChannelWithBackwardTimeSteps {
+    /// `None` for a channel whose sample timestamps never step backwards.
+    fn of(channel: &Channel) -> Option<Self> {
+        let steps = channel.backward_time_steps();
+        let worst_step_back = steps.iter().map(|step| step.step_back).max()?;
+        Some(Self {
+            name: channel.name.clone(),
+            steps: steps.len(),
+            worst_step_back,
+        })
+    }
+}
+
+impl fmt::Display for ChannelWithBackwardTimeSteps {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            name,
+            steps,
+            worst_step_back,
+        } = self;
+        write!(
+            f,
+            "{name:?}: {steps} backward {}, worst {} back",
+            gt_fmt::pluralize(*steps, "step", "steps"),
+            gt_fmt::format_human_terse_duration(*worst_step_back)
+        )
+    }
+}
+
+fn channels_with_backward_time_steps_warning(
+    channels: &[ChannelWithBackwardTimeSteps],
+) -> Option<LoadWarning> {
+    (!channels.is_empty()).then(|| LoadWarning {
+        count: u32::try_from(channels.len()).unwrap_or(u32::MAX),
+        issue: "sensor channel(s) whose sample timestamps step backwards".to_owned(),
+        description: format!(
+            "{}. The recorder's clock stepped back while the channel was sampled: the plot \
+            draws each stretch between two backward steps as its own line.",
+            load_warning::first_few_listed(channels)
+        ),
+    })
+}
+
 fn dropped_markers_warning(issue: &str, dropped: &[DroppedMarker]) -> Option<LoadWarning> {
     (!dropped.is_empty()).then(|| LoadWarning {
         count: u32::try_from(dropped.len()).unwrap_or(u32::MAX),
@@ -548,7 +600,11 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
         .map(|style| convert_event_marker_style(style, &mut style_alterations))
         .collect();
 
-    let channels = nav_file.channels().iter().map(convert_channel).collect();
+    let channels: Vec<Channel> = nav_file.channels().iter().map(convert_channel).collect();
+    let channels_with_backward_time_steps: Vec<ChannelWithBackwardTimeSteps> = channels
+        .iter()
+        .filter_map(ChannelWithBackwardTimeSteps::of)
+        .collect();
 
     let load_warnings = [
         coordinates_out_of_range_warning(CoordinateAxis::Latitude, &latitudes_out_of_range),
@@ -566,6 +622,7 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
         DISCARDED_SNR_SENTINELS.load_warning(&satellite_alterations.discarded_snr_sentinels),
         REPLACED_EVENT_MARKER_ICONS.load_warning(&style_alterations.unrecognized_icons),
         REPLACED_EVENT_MARKER_COLORS.load_warning(&style_alterations.unrecognized_colors),
+        channels_with_backward_time_steps_warning(&channels_with_backward_time_steps),
     ]
     .into_iter()
     .flatten()

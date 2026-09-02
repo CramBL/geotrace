@@ -1,15 +1,18 @@
-//! Clock offset excursions: samples whose GPS−system clock offset leaves the
-//! track's baseline and returns within a sample or two.
+//! Clock offset excursions: the samples whose GPS−system clock offset leaves
+//! the track's baseline and returns to it.
 //!
 //! A receiver resuming from a recording gap can report a pre-gap GPS epoch for
 //! its first fix while the host stamps that fix on resume, which puts the whole
-//! gap into a single sample's offset.  That offset is real and stays in the
-//! data.  It is separated here so a plot can keep it off the shared y-axis and
-//! mark it explicitly.
+//! gap into a single sample's offset.  A tracker whose clock starts each boot
+//! at its default holds that default over the fixes until the receiver corrects
+//! it.  Those offsets are real and stay in the data.  Separating them here lets
+//! a plot keep them off the shared y-axis and mark them explicitly.
 //!
-//! An offset that steps and stays is a clock discontinuity, not an excursion,
-//! and is deliberately not matched here.  The run-length cap keeps those level
-//! shifts on the line where they belong.
+//! An offset that steps and stays to the end of the track is a clock
+//! discontinuity, not an excursion, and is deliberately not matched here: a run
+//! of out-of-band samples is an excursion only when the offset returns to the
+//! baseline after it.  That leaves the level shifts on the line where they
+//! belong.
 
 use gt_types::nav_point::NavPoint;
 use vec1::Vec1;
@@ -21,12 +24,6 @@ use vec1::Vec1;
 /// offsets of a host clock left to drift, and far below the minutes-to-hours
 /// excursions a resume-from-gap sample produces.
 pub const DEFAULT_EXCURSION_THRESHOLD_S: f32 = 10.0;
-
-/// Longest run of consecutive out-of-band samples still treated as an
-/// excursion.  A longer run is a level shift in the offset, not an isolated
-/// departure, and is left on the plot line for the clock-discontinuity markers
-/// to explain.
-pub const MAX_EXCURSION_SAMPLES: usize = 3;
 
 /// Ceiling on the configured threshold, in seconds.  The clamp is what keeps
 /// the conversion to milliseconds in range.  Any deviation this large is beyond
@@ -44,7 +41,8 @@ pub struct ExcursionSample {
     pub offset_ms: i64,
 }
 
-/// A run of consecutive samples that departed from the track's baseline offset.
+/// A run of consecutive samples that departed from the track's baseline offset
+/// and returned to it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClockOffsetExcursion {
     /// The out-of-band samples, in ascending index order.
@@ -84,7 +82,10 @@ pub fn excursion_indices(excursions: &[ClockOffsetExcursion]) -> Vec<usize> {
 ///
 /// The baseline is the median offset over the whole track, so a large but
 /// *steady* offset (a host clock hours off all recording) sits at the baseline
-/// and is never flagged - only departures from a track's own normal are.
+/// and is never flagged - only departures from a track's own normal are.  A run
+/// of out-of-band samples counts as a departure only once an in-band sample
+/// follows it: a run that reaches the last sample is a level shift the line
+/// keeps.
 ///
 /// Returned in ascending sample order.  A track whose samples are more than
 /// half out-of-band yields nothing: with that little agreement there is no
@@ -103,11 +104,6 @@ pub fn detect_excursions(points: &[NavPoint], threshold_s: f32) -> Vec<ClockOffs
         .collect();
 
     let sample_count = samples.len();
-    let max_run = MAX_EXCURSION_SAMPLES.min(sample_count / 2);
-    if max_run == 0 {
-        return Vec::new();
-    }
-
     let offsets: Vec<i64> = samples.iter().map(|s| s.offset_ms).collect();
     let Some(baseline_ms) = crate::robust::median_i64(&offsets) else {
         return Vec::new();
@@ -121,42 +117,25 @@ pub fn detect_excursions(points: &[NavPoint], threshold_s: f32) -> Vec<ClockOffs
             run.push(sample);
             continue;
         }
-        push_run(
-            &mut excursions,
-            std::mem::take(&mut run),
-            baseline_ms,
-            max_run,
-        );
+        // The run before this sample departed and returned, now that this
+        // sample is back at the baseline.  A run still open when the loop ends
+        // never returned: that is a level shift, and the line keeps it.
+        if let Ok(samples) = Vec1::try_from_vec(std::mem::take(&mut run)) {
+            excursions.push(ClockOffsetExcursion {
+                samples,
+                baseline_ms,
+            });
+        }
     }
-    push_run(&mut excursions, run, baseline_ms, max_run);
 
-    // A median only stands for a baseline while most of the track lies near
-    // it.  On a track split evenly between two levels it lands between them and
-    // every run passes the per-run cap on its own, so check the total too.
+    // The total is checked too: a median only stands for a baseline while most
+    // of the track lies near it, and on a track split evenly between two levels
+    // the median lands between them and each run returns to it.
     let flagged: usize = excursions.iter().map(|e| e.samples.len()).sum();
     if flagged * 2 > sample_count {
         return Vec::new();
     }
     excursions
-}
-
-/// Keep `run` as an excursion when it is short enough to be an isolated
-/// departure rather than a shift in level.
-fn push_run(
-    excursions: &mut Vec<ClockOffsetExcursion>,
-    run: Vec<ExcursionSample>,
-    baseline_ms: i64,
-    max_run: usize,
-) {
-    if run.len() > max_run {
-        return;
-    }
-    if let Ok(samples) = Vec1::try_from_vec(run) {
-        excursions.push(ClockOffsetExcursion {
-            samples,
-            baseline_ms,
-        });
-    }
 }
 
 /// Signed departure of `offset_ms` from `baseline_ms`.  Saturating: offsets come
@@ -272,21 +251,19 @@ mod tests {
         assert!(detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S).is_empty());
     }
 
-    #[rstest::rstest]
-    #[case::one(1, 1)]
-    #[case::three(3, 1)]
-    #[case::four(4, 0)]
-    fn a_run_is_an_excursion_only_while_it_stays_short(
-        #[case] run_len: i64,
-        #[case] expected: usize,
-    ) {
-        let mut points: Vec<NavPoint> = (0..8).map(|i| point(1000 + i, 200)).collect();
-        points.extend((0..run_len).map(|i| point(1008 + i, 3_600_000)));
-        points.extend((0..8).map(|i| point(1008 + run_len + i, 200)));
-        assert_eq!(
-            detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S).len(),
-            expected
-        );
+    /// A tracker holds its RTC default for tens of fixes after each boot,
+    /// until the receiver corrects the host clock. Every one of those fixes
+    /// belongs to the same departure from the track's baseline.
+    #[test]
+    fn a_long_run_that_returns_to_the_baseline_is_one_excursion() {
+        const RUN_LEN: i64 = 40;
+        let mut points: Vec<NavPoint> = (0..RUN_LEN).map(|i| point(1000 + i, 3_600_000)).collect();
+        points.extend((0..160).map(|i| point(1000 + RUN_LEN + i, 200)));
+        let excursions = detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S);
+        let [excursion] = excursions.as_slice() else {
+            panic!("expected one excursion, got {}", excursions.len());
+        };
+        assert_eq!(excursion.samples.len() as i64, RUN_LEN);
     }
 
     #[test]
@@ -350,10 +327,10 @@ mod tests {
         assert_eq!(excursion.peak().index, 5, "index is into the nav points");
     }
 
-    /// On a short track the run cap comes from the sample count, not from
-    /// [`MAX_EXCURSION_SAMPLES`]: five samples allow a run of two, no more.
+    /// A track that opens out of band has no baseline sample before its first
+    /// run. The return after it is what makes that run an excursion.
     #[test]
-    fn a_short_track_caps_the_run_by_its_own_length() {
+    fn a_run_at_the_start_of_a_track_is_an_excursion() {
         let mut points: Vec<NavPoint> = (0..2).map(|i| point(1000 + i, 3_600_000)).collect();
         points.extend((0..3).map(|i| point(1002 + i, 200)));
         let excursions = detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S);
@@ -371,12 +348,13 @@ mod tests {
     }
 
     /// Which level is the baseline is determined by the majority, not by which
-    /// came first: three samples at one offset and two at another makes the two
+    /// came first: six samples at one offset and two at another makes the two
     /// the excursion, however large the gap between them.
     #[test]
     fn the_majority_of_a_track_defines_its_baseline() {
         let mut points: Vec<NavPoint> = (0..3).map(|i| point(1000 + i, 3_600_000)).collect();
         points.extend((0..2).map(|i| point(1003 + i, 200)));
+        points.extend((0..3).map(|i| point(1005 + i, 3_600_000)));
         let excursions = detect_excursions(&points, DEFAULT_EXCURSION_THRESHOLD_S);
         let [excursion] = excursions.as_slice() else {
             panic!("expected one excursion, got {}", excursions.len());

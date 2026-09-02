@@ -10,7 +10,9 @@ authors.workspace = true
 doctest = false
 
 [dependencies]
+chrono.workspace = true
 geotrace-sdk = { path = "../../sdk/rust/geotrace-sdk" }
+gt-fmt = { path = "../gt-fmt" }
 gt-track-builder = { path = "../gt-track-builder" }
 gt-types = { path = "../gt-types" }
 thiserror.workspace = true

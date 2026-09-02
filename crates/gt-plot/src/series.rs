@@ -63,14 +63,16 @@ pub(crate) struct TrackSeries {
     /// Positive = GPS clock ahead, negative = system clock ahead.
     /// Only present when the TPV record carries a system timestamp.
     ///
-    /// Excludes the samples in [`Self::clock_excursions`]: a single sample
-    /// carrying a whole recording gap would otherwise set the auto-bounds of
-    /// the y-axis every other metric shares, flattening the plot.  Those samples
-    /// are drawn by the off-scale indicator instead, never dropped.
+    /// Excludes the samples in [`Self::clock_excursions`]: an offset that
+    /// leaves the track's baseline and returns would otherwise set the
+    /// auto-bounds of the y-axis every other metric shares, flattening the
+    /// plot.  Those samples are drawn by the off-scale indicator instead, never
+    /// dropped.
     pub clock_delta_ms: MipMap,
-    /// Isolated departures of the clock offset from this track's baseline, kept
-    /// off [`Self::clock_delta_ms`] and marked on their own.  Threshold-
-    /// dependent: recomputed by [`TrackSeries::apply_analysis`].
+    /// The departures of the clock offset from this track's baseline that
+    /// returned to it, kept off [`Self::clock_delta_ms`] and marked on their
+    /// own.  Threshold-dependent: recomputed by
+    /// [`TrackSeries::apply_analysis`].
     pub clock_excursions: Vec<ClockOffsetExcursion>,
     /// Satellite utilization rate (percent), all constellations combined, and
     /// broken down per constellation.  Mask-dependent: recomputed by
@@ -117,12 +119,16 @@ pub(crate) struct ChannelSeries {
     pub components: Vec<ChannelComponentSeries>,
 }
 
-/// One channel component's line: its display label and mipmapped samples.
+/// One channel component's line: its display label and its mipmapped samples,
+/// one entry per chronological run of the channel.
 #[derive(Debug, Clone)]
 pub(crate) struct ChannelComponentSeries {
     /// `accel.x` for a vector component, `incline` for a scalar channel.
     pub label: String,
-    pub mipmap: MipMap,
+    /// The runs of [`gt_types::Channel::chronological_runs`], in stored order,
+    /// each mipmapped on its own: a mipmap level is searched by a binary search
+    /// over x.
+    pub runs: Vec<MipMap>,
 }
 
 /// Build the per-component plot series of one channel.
@@ -136,24 +142,30 @@ fn build_channel_series(channel: &gt_types::Channel) -> ChannelSeries {
         .iter()
         .map(|t| t.timestamp_micros() as f64 / MICROS_PER_SEC)
         .collect();
+    let runs = channel.chronological_runs();
     let components = (0..columns)
         .map(|col| {
-            let pts: Vec<[f64; 2]> = times
-                .iter()
-                .zip(channel.values.chunks(columns))
-                .filter_map(|(&t, row)| row.get(col).map(|&v| [t, v]))
-                .collect();
             let label = match channel.components.get(col) {
                 Some(component) => format!("{}.{component}", channel.name),
                 None => channel.name.clone(),
             };
-            ChannelComponentSeries {
-                label,
-                mipmap: match period {
-                    Some(period) => MipMap::build_wrapping(pts, period),
-                    None => MipMap::build(pts),
-                },
-            }
+            let runs = runs
+                .iter()
+                .map(|run| {
+                    let pts: Vec<[f64; 2]> = times
+                        .get(run.clone())
+                        .unwrap_or_default()
+                        .iter()
+                        .zip(channel.values.chunks(columns).skip(run.start))
+                        .filter_map(|(&t, row)| row.get(col).map(|&v| [t, v]))
+                        .collect();
+                    match period {
+                        Some(period) => MipMap::build_wrapping(pts, period),
+                        None => MipMap::build(pts),
+                    }
+                })
+                .collect();
+            ChannelComponentSeries { label, runs }
         })
         .collect();
     ChannelSeries {
@@ -409,20 +421,30 @@ fn build_track_series(
     }
 }
 
+/// The points one line draws at the level a view wanting `target` samples
+/// selects, in the order they are drawn.
+#[cfg(test)]
+fn drawn_points(mipmap: &MipMap, target: usize) -> Vec<(f64, f64)> {
+    let level = mipmap.select_indices(
+        gt_egui_mipmap::SelectionRange::within_viewport(f64::NEG_INFINITY..=f64::INFINITY),
+        target,
+    );
+    mipmap
+        .slice_at(level)
+        .iter()
+        .map(|point| (point.x, point.y))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use geotrace_sdk_units::Unit;
-    use gt_egui_mipmap::SelectionRange;
 
     use super::*;
 
     /// A vector channel becomes one line per component, on the channel's own
     /// sample clock - not resampled onto the nav points.
     #[test]
-    #[expect(
-        clippy::float_cmp,
-        reason = "the values pass through untransformed, so equality is exact"
-    )]
     fn a_vector_channel_builds_one_mipmap_per_component() {
         let t =
             |secs: i64| chrono::DateTime::from_timestamp(1_700_000_000 + secs, 0).expect("valid");
@@ -441,15 +463,54 @@ mod tests {
         let labels: Vec<&str> = series.components.iter().map(|c| c.label.as_str()).collect();
         assert_eq!(labels, ["accel.x", "accel.y", "accel.z"]);
         // Each component line carries its column at the channel's timestamps.
-        let full = series.components[1].mipmap.select_indices(
-            SelectionRange::within_viewport(f64::NEG_INFINITY..=f64::INFINITY),
-            usize::MAX,
+        let [run] = series.components[1].runs.as_slice() else {
+            panic!("a channel whose timestamps never step backwards is one run");
+        };
+        let pts = drawn_points(run, usize::MAX);
+        assert_eq!(
+            pts,
+            [(1_700_000_000.0, 0.2), (1_700_000_001.0, 0.5)],
+            "the y column at the channel's timestamps"
         );
-        let pts = series.components[1].mipmap.slice_at(full);
-        assert_eq!(pts.len(), 2);
-        assert_eq!(pts[0].x, 1_700_000_000.0);
-        assert_eq!(pts[0].y, 0.2, "y column, row 0");
-        assert_eq!(pts[1].y, 0.5, "y column, row 1");
+    }
+
+    /// Each stretch between two backward steps is mipmapped on its own and
+    /// drawn as its own line: mipmap level selection is a binary search over x,
+    /// and a recorder that restarts its clock stamps the samples after the
+    /// restart at times the samples before it already cover.
+    #[test]
+    fn a_channel_whose_timestamps_step_backwards_becomes_one_run_per_stretch() {
+        let t =
+            |secs: i64| chrono::DateTime::from_timestamp(1_700_000_000 + secs, 0).expect("valid");
+        let channel = gt_types::Channel {
+            name: "accel".to_owned(),
+            unit: Some(Unit::G.into()),
+            period: None,
+            description: None,
+            components: vec!["x".to_owned()],
+            times: vec![t(0), t(1), t(2), t(0), t(1)],
+            values: vec![0.0, 1.0, 2.0, 3.0, 4.0],
+        };
+        let series = build_channel_series(&channel);
+        let [component] = series.components.as_slice() else {
+            panic!("a one-component channel has one component series");
+        };
+        let drawn: Vec<Vec<(f64, f64)>> = component
+            .runs
+            .iter()
+            .map(|run| drawn_points(run, usize::MAX))
+            .collect();
+        assert_eq!(
+            drawn,
+            [
+                vec![
+                    (1_700_000_000.0, 0.0),
+                    (1_700_000_001.0, 1.0),
+                    (1_700_000_002.0, 2.0),
+                ],
+                vec![(1_700_000_000.0, 3.0), (1_700_000_001.0, 4.0)],
+            ]
+        );
     }
 
     /// A track at 1 Hz whose clock offset holds near −234 ms, with the sample
@@ -476,16 +537,10 @@ mod tests {
 
     /// The y-extent of the clock offset line, over every point it carries.
     fn clock_delta_extent(series: &TrackSeries) -> (f64, f64) {
-        let full = series.clock_delta_ms.select_indices(
-            SelectionRange::within_viewport(f64::NEG_INFINITY..=f64::INFINITY),
-            usize::MAX,
-        );
-        series
-            .clock_delta_ms
-            .slice_at(full)
-            .iter()
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
-                (lo.min(p.y), hi.max(p.y))
+        drawn_points(&series.clock_delta_ms, usize::MAX)
+            .into_iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), (_, y)| {
+                (lo.min(y), hi.max(y))
             })
     }
 
@@ -568,6 +623,108 @@ mod tests {
         assert_eq!(series.components.len(), 1);
         assert_eq!(series.components[0].label, "incline");
     }
+
+    /// A recording from a tracker whose clock restarts at every boot, loaded
+    /// the way the app loads one.
+    fn recording_whose_clock_restarts_at_every_boot() -> LoadedFile {
+        gt_loader::load_bytes(
+            &gt_test_utils::recording_whose_clock_restarts_at_every_boot(),
+            "clock_reset.gtd".to_owned(),
+        )
+        .expect("the fixture loads")
+    }
+
+    /// Sample target that selects a downsampled level of a run of a few
+    /// hundred samples.
+    const COARSE_TARGET: usize = 8;
+
+    #[test]
+    fn every_stretch_between_two_backward_steps_is_its_own_run() {
+        let file = recording_whose_clock_restarts_at_every_boot();
+        let series = build_file_series(&file, AnalysisConfig::default());
+        let with_channels: Vec<&TrackSeries> =
+            series.iter().filter(|s| !s.channels.is_empty()).collect();
+        let [track] = with_channels.as_slice() else {
+            panic!("the fixture's channel samples all fall in one track");
+        };
+        let [channel] = track.channels.as_slice() else {
+            panic!("the fixture holds one channel");
+        };
+        for component in &channel.components {
+            assert_eq!(
+                component
+                    .runs
+                    .iter()
+                    .map(MipMap::original_len)
+                    .collect::<Vec<_>>(),
+                [250, 200, 300, 250],
+                "{}",
+                component.label
+            );
+        }
+    }
+
+    /// Each run is drawn on its own, at every mipmap level. A line spanning two
+    /// runs would double back at the wrong place: mipmap level selection is a
+    /// binary search over x, and two runs of a recorder that restarted its
+    /// clock cover the same times.
+    #[test]
+    fn no_drawn_channel_line_steps_back_in_time() {
+        let file = recording_whose_clock_restarts_at_every_boot();
+        let series = build_file_series(&file, AnalysisConfig::default());
+        for track in &series {
+            for channel in &track.channels {
+                for component in &channel.components {
+                    for run in &component.runs {
+                        for target in [COARSE_TARGET, usize::MAX] {
+                            let drawn = drawn_points(run, target);
+                            assert!(
+                                drawn.windows(2).all(|pair| match pair {
+                                    [before, after] => before.0 <= after.0,
+                                    _ => true,
+                                }),
+                                "{} drew {drawn:?} for a target of {target}",
+                                component.label
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The tracker holds its RTC default for the fixes at the head of each
+    /// boot, which puts the whole offset between the two clock epochs on those
+    /// samples. The clock-offset line keeps to the track's baseline of a fifth
+    /// of a second: the excursions hold the departures.
+    #[test]
+    fn the_clock_offset_line_keeps_to_the_baseline_over_a_boot_clock_reset() {
+        let file = recording_whose_clock_restarts_at_every_boot();
+        let series = build_file_series(&file, AnalysisConfig::default());
+        for track in &series {
+            let drawn = drawn_points(&track.clock_delta_ms, usize::MAX);
+            assert!(
+                drawn
+                    .iter()
+                    .all(|&(_, offset_ms)| offset_ms.abs() <= 1_000.0),
+                "the clock offset line of track {} reaches {drawn:?}",
+                track.ti
+            );
+        }
+        let peaks: Vec<i64> = series
+            .iter()
+            .flat_map(|track| track.clock_excursions.iter())
+            .map(|excursion| excursion.peak().offset_ms)
+            .collect();
+        assert_eq!(peaks.len(), 4, "one excursion per boot");
+        let epoch_gap_ms =
+            gt_test_utils::clock_reset_fixtures::gap_between_the_clock_epochs().num_milliseconds();
+        assert!(
+            peaks.iter().all(|&offset_ms| offset_ms >= epoch_gap_ms),
+            "each excursion holds a boot's whole clock offset of at least \
+             {epoch_gap_ms} ms, peaks are {peaks:?}"
+        );
+    }
 }
 
 /// Heading, a quantity that wraps at 360°, from the fix values through the
@@ -578,7 +735,6 @@ mod tests {
 #[cfg(test)]
 mod heading_wrap {
     use geotrace_sdk_units::Unit;
-    use gt_egui_mipmap::SelectionRange;
     use gt_types::coordinates::{Latitude, Longitude};
     use gt_types::nav_point::NavPoint;
     use gt_types::time_types::GpsTime;
@@ -637,11 +793,10 @@ mod heading_wrap {
     /// The y values the plot draws for one series at the level a view wanting
     /// `target` samples selects, in the order they are drawn.
     fn drawn_values(mipmap: &MipMap, target: usize) -> Vec<f64> {
-        let level = mipmap.select_indices(
-            SelectionRange::within_viewport(f64::NEG_INFINITY..=f64::INFINITY),
-            target,
-        );
-        mipmap.slice_at(level).iter().map(|p| p.y).collect()
+        drawn_points(mipmap, target)
+            .into_iter()
+            .map(|(_, y)| y)
+            .collect()
     }
 
     /// The one component of a scalar channel's series.
@@ -650,7 +805,10 @@ mod heading_wrap {
         let [component] = series.components.as_slice() else {
             panic!("a scalar channel has one component");
         };
-        drawn_values(&component.mipmap, target)
+        let [run] = component.runs.as_slice() else {
+            panic!("a channel whose timestamps never step backwards is one run");
+        };
+        drawn_values(run, target)
     }
 
     /// Around north a bucket's linear minimum and maximum are ~0° and ~359°,

@@ -1193,7 +1193,6 @@ mod tests {
     #[test]
     fn loaded_channels_union_is_sorted_and_deduplicated() {
         use crate::series::{ChannelComponentSeries, ChannelSeries};
-        use gt_egui_mipmap::MipMap;
 
         let channel = |name: &str, unit: Option<&str>, components: usize| ChannelSeries {
             name: name.to_owned(),
@@ -1201,7 +1200,7 @@ mod tests {
             components: (0..components)
                 .map(|i| ChannelComponentSeries {
                     label: format!("{name}.{i}"),
-                    mipmap: MipMap::build(vec![]),
+                    runs: Vec::new(),
                 })
                 .collect(),
         };
