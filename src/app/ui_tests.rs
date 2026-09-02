@@ -4043,7 +4043,7 @@ impl SettingsPage {
     fn last_control_label(self) -> &'static str {
         match self {
             Self::Processing => "Restore defaults",
-            Self::Analysis => "Mark masked-out used satellites",
+            Self::Analysis => "Mark backward time steps",
             Self::AircraftInterference
             | Self::GeomagneticIndices
             | Self::IonosphericTec

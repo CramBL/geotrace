@@ -1203,6 +1203,7 @@ mod tests {
                     runs: Vec::new(),
                 })
                 .collect(),
+            backward_time_steps: Vec::new(),
         };
         // Two tracks' channel lists, flattened like the series cache is:
         // `accel` appears twice and must union to one entry - with the

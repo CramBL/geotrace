@@ -7,13 +7,14 @@
 //! covers it.
 
 use chrono::{DateTime, Utc};
+use egui::Color32;
 use egui::epaint::{Shape, Stroke};
-use egui::{Color32, Ui};
-use egui_plot::{PlotBounds, PlotGeometry, PlotItem, PlotItemBase, PlotPoint, PlotTransform, Span};
+use egui_plot::{PlotPoint, PlotTransform, Span};
 use gt_flare::text::{self, FormattedFlareTimes};
 use gt_flare::{MarkedFlare, SolarFlare};
 
 use super::lines::{self, NearestHoverLabel, PlotHoverLabel};
+use super::overlay::{OverlayItem, OverlayPainter};
 
 /// Stroke width of a marker line, above the data lines' default so a flare
 /// stays findable across a crowded plot.
@@ -26,13 +27,8 @@ const HOVER_RADIUS_PX: f32 = 5.0;
 /// the minute.
 const FLARE_TIME_FORMAT: &str = "%Y-%m-%dT%H:%M";
 
-/// The flare markers of one span, as a plot item that contributes nothing to
-/// the plot's auto-bounds.
-///
-/// The archive reaches beyond the loaded recordings, so letting a marker feed
-/// the bounds would widen the view to whatever was downloaded.
+/// The flare markers of one span.
 struct FlareMarkers {
-    base: PlotItemBase,
     /// Peak time in Unix seconds and the class colour, in the order they were
     /// offered.
     markers: Vec<(f64, Color32)>,
@@ -41,8 +37,12 @@ struct FlareMarkers {
     legend_color: Color32,
 }
 
-impl PlotItem for FlareMarkers {
-    fn shapes(&self, _ui: &Ui, transform: &PlotTransform, shapes: &mut Vec<Shape>) {
+impl OverlayPainter for FlareMarkers {
+    fn legend_color(&self) -> Color32 {
+        self.legend_color
+    }
+
+    fn paint(&self, transform: &PlotTransform, shapes: &mut Vec<Shape>) {
         let frame = *transform.frame();
         for &(peak_secs, color) in &self.markers {
             let x = transform
@@ -53,30 +53,6 @@ impl PlotItem for FlareMarkers {
                 Stroke::new(MARKER_WIDTH, color),
             ));
         }
-    }
-
-    fn initialize(&mut self, _x_range: std::ops::RangeInclusive<f64>) {}
-
-    fn color(&self) -> Color32 {
-        self.legend_color
-    }
-
-    /// No geometry: hovering is handled by [`SolarFlareHover`], which reports
-    /// the whole event rather than a point on a line.
-    fn geometry(&self) -> PlotGeometry<'_> {
-        PlotGeometry::None
-    }
-
-    fn bounds(&self) -> PlotBounds {
-        PlotBounds::NOTHING
-    }
-
-    fn base(&self) -> &PlotItemBase {
-        &self.base
-    }
-
-    fn base_mut(&mut self) -> &mut PlotItemBase {
-        &mut self.base
     }
 }
 
@@ -167,8 +143,7 @@ pub(super) fn add_flare_markers(
     );
 
     if !visible.is_empty() {
-        plot_ui.add(FlareMarkers {
-            base: PlotItemBase::new(text::LAYER_LABEL.to_owned()),
+        let markers = FlareMarkers {
             markers: visible
                 .iter()
                 .map(|marked| {
@@ -185,7 +160,8 @@ pub(super) fn add_flare_markers(
                 })
                 .collect(),
             legend_color: gt_ui_theme::FLARE_M_CLASS.resolve(viewport.dark_mode),
-        });
+        };
+        plot_ui.add(OverlayItem::new(text::LAYER_LABEL, markers));
     }
 
     if let Some((distance, marked)) = hovered {
@@ -414,7 +390,7 @@ mod tests {
 #[cfg(test)]
 mod snapshot_tests {
     use chrono::NaiveDate;
-    use egui_plot::{Line, PlotPoints};
+    use egui_plot::{Line, PlotBounds, PlotPoints};
     use gt_test_utils::TestHarness;
     use rstest::rstest;
 

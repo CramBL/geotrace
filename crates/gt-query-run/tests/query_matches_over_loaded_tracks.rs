@@ -306,11 +306,11 @@ fn a_matched_sample_covers_the_two_fixes_around_it_at_two_hz() {
     assert_eq!(drawn_ranges(&session), vec![0..2]);
 }
 
-/// Nothing sorts a recording's fixes, so a backwards clock step can leave a
-/// fix stamped past the window between two fixes inside it. The run evaluates
-/// the two inside the window, and the one outside it falls in no match.
+/// Nothing sorts a recording's fixes, so a backward time step can leave a fix
+/// stamped past the window between two fixes inside it. The run evaluates the
+/// two inside the window, and the one outside it falls in no match.
 #[test]
-fn a_time_window_keeps_the_fixes_on_both_sides_of_a_backwards_clock_step() {
+fn a_time_window_keeps_the_fixes_on_both_sides_of_a_backward_time_step() {
     let mut state = LoadedState::of(file_named(
         "ride.gtd",
         fixes_at(&[0, 10_000, 1_000, 2_000]),

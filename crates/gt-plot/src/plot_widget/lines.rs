@@ -11,6 +11,7 @@ use gt_ui_types::HighlightScope;
 use rustc_hash::FxHashMap;
 use strum::IntoEnumIterator;
 
+use super::backward_time_step::BackwardTimeStepHover;
 use super::chips::{
     ChannelVisibility, HoveredChip, LoadedChannel, MetricKindUi, MetricVisibility, SectionGates,
     metric_is_shown,
@@ -253,6 +254,7 @@ pub(super) enum PlotHoverLabel {
     Geomagnetic(GeomagneticHover),
     Tec(TecHover),
     ClockExcursion(ClockExcursionHover),
+    BackwardTimeStep(BackwardTimeStepHover),
     SolarFlare(SolarFlareHover),
 }
 
@@ -265,6 +267,7 @@ impl PlotHoverLabel {
             Self::Geomagnetic(hover) => hover.show(ui),
             Self::Tec(hover) => hover.show(ui),
             Self::ClockExcursion(hover) => hover.show(ui),
+            Self::BackwardTimeStep(hover) => hover.show(ui),
             Self::SolarFlare(hover) => hover.show(ui),
         }
     }

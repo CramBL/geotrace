@@ -65,6 +65,13 @@ impl Channel {
             .collect()
     }
 
+    /// Whether any sample's timestamp lies before the previous sample's. Stops
+    /// at the first one, where [`backward_time_steps`](Self::backward_time_steps)
+    /// collects every step.
+    pub fn has_a_backward_time_step(&self) -> bool {
+        !self.times.is_sorted()
+    }
+
     /// The maximal stretches of samples whose timestamps never step backwards,
     /// in stored order. A channel whose timestamps never step backwards yields
     /// one range over all of them, an empty channel none. Two runs of a
@@ -239,6 +246,23 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[rstest::rstest]
+    #[case::ascending_timestamps(&[0, 1, 2], false)]
+    #[case::a_repeated_timestamp(&[0, 1, 1], false)]
+    #[case::one_sample_stamped_before_the_previous_one(&[0, 2, 1], true)]
+    fn a_channel_has_a_backward_time_step_when_a_sample_is_stamped_before_the_previous_one(
+        #[case] offsets_secs: &[i64],
+        #[case] expected: bool,
+    ) {
+        let channel = Channel {
+            times: offsets_secs.iter().map(|&secs| at(secs)).collect(),
+            values: (0..offsets_secs.len() * 3).map(|v| v as f64).collect(),
+            ..vector_channel()
+        };
+
+        assert_eq!(channel.has_a_backward_time_step(), expected);
     }
 
     #[test]

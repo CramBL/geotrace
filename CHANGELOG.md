@@ -18,6 +18,7 @@
 - **Map & Tracks:** A recording in which no fix has a valid position now loads, with its tracks drawn nowhere on the map.
 - **Map & Tracks:** A recording with a fix whose latitude or longitude is outside the valid range now loads, with that fix drawn between the fixes around it.
 - **Map & Tracks:** Hovering or clicking a dead-reckoned fix on the map now selects it.
+- **Map & Tracks:** The plot now marks along its bottom edge where a sensor channel's sample timestamps step backwards, and hovering a mark names the channels and their two timestamps.
 
 ### Changed
 
@@ -47,7 +48,7 @@
 - **Interface:** Fixed a query's `min`, `max` and `spread` of a sensor channel ignoring a sample that is not a number.
 - **Interface:** Fixed a query comparison placing a value of negative zero below zero.
 - **Interface:** Fixed a query aggregate over a sensor channel whose samples are out of time order reading the wrong samples.
-- **Interface:** Fixed a query under the time range filter dropping the fixes after a backwards clock step, and matching a fix outside the filter.
+- **Interface:** Fixed a query under the time range filter dropping the fixes after a backward time step, and matching a fix outside the filter.
 - **Interface:** Fixed the query results' map buttons framing matches the filter hides.
 - **Interface:** Fixed a sensor channel query drawing its match halo on the wrong fixes in a recording faster than 1 Hz.
 - **Interface:** Fixed a sensor channel query's `keep` leaving a track with no match fully drawn on the map.

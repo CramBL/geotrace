@@ -1,6 +1,7 @@
 //! The track plot widget: [`PlotState`], the frame loop
 //! ([`show_track_plot`]), and the submodules it orchestrates.
 
+mod backward_time_step;
 mod chips;
 mod clock_excursion;
 mod context;
@@ -10,6 +11,7 @@ mod jamming;
 mod legend;
 mod levels;
 mod lines;
+mod overlay;
 #[cfg(test)]
 mod reference_illustration;
 mod snap_error;
@@ -19,6 +21,7 @@ mod tec;
 pub use chips::{ChannelVisibility, MetricVisibility};
 pub use legend::{LEGEND_DOCK_OFFSET, legend_is_docked};
 
+use backward_time_step::{BackwardTimeStepViewport, add_backward_time_steps};
 use chips::{
     FlareChipState, HoveredChip, MetricAvailability, SectionGates, loaded_channels,
     metric_filter_row,
@@ -254,6 +257,10 @@ pub struct PlotState {
     /// Whether to draw the masked-satellite anomaly markers (a used satellite
     /// below the elevation mask).  Toggled in Settings.
     pub mark_masked_fix: bool,
+    /// Whether to draw a mark wherever a channel's sample timestamps step
+    /// backwards.  Toggled in Settings.  The marks show with the channel
+    /// lines.
+    pub mark_backward_time_steps: bool,
     /// Whether the advanced analysis chips (satellite utilization) are revealed.
     /// Off by default - these metrics are hidden until the user opts in.
     pub show_advanced_metrics: bool,
@@ -323,6 +330,7 @@ impl Default for PlotState {
             line_width: DEFAULT_PLOT_LINE_WIDTH,
             sync_to_map: true,
             mark_masked_fix: true,
+            mark_backward_time_steps: true,
             show_advanced_metrics: false,
             show_channels: false,
             channel_vis: ChannelVisibility::default(),
@@ -596,6 +604,9 @@ pub fn show_track_plot(
     let show_advanced = state.show_advanced_metrics;
     let show_anomalies =
         show_advanced && state.mark_masked_fix && state.metric_vis.field(MetricKind::UtilAll);
+    // The backward time step marks follow the same Channels-section gate as the
+    // chips and lines they annotate.
+    let show_backward_time_step_marks = show_channels && state.mark_backward_time_steps;
     let effective_hover_scope = state
         .legend_hover_file
         .map(|fi| HighlightScope::File {
@@ -837,6 +848,20 @@ pub fn show_track_plot(
                     x_min: eff_x_min,
                     x_max: eff_x_max,
                     metric_vis,
+                    dark_mode,
+                },
+                series_pointer,
+                &mut hovered_label,
+            );
+            add_backward_time_steps(
+                plot_ui,
+                &series.series.channels,
+                track_label,
+                BackwardTimeStepViewport {
+                    x_min: eff_x_min,
+                    x_max: eff_x_max,
+                    marks_shown: show_backward_time_step_marks,
+                    channel_vis,
                     dark_mode,
                 },
                 series_pointer,

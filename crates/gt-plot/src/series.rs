@@ -1,4 +1,5 @@
 use crate::AnalysisConfig;
+use chrono::{DateTime, TimeDelta, Utc};
 use gt_analysis::clock_offset::ClockOffsetExcursion;
 use gt_analysis::satellite_utilization::UtilAnomaly;
 use gt_egui_mipmap::{MipMap, WrapPeriod};
@@ -117,6 +118,28 @@ pub(crate) struct ChannelSeries {
     /// One line per component, in channel order. A scalar channel is a
     /// single component labelled by the channel name alone.
     pub components: Vec<ChannelComponentSeries>,
+    /// The channel's backward time steps, ascending by the x each step is
+    /// marked at.
+    pub backward_time_steps: Vec<PlacedBackwardTimeStep>,
+}
+
+/// One backward time step of a channel: the two timestamps its hover text
+/// reads, and the plot x the overlay marks it at.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PlacedBackwardTimeStep {
+    /// Timestamp of the sample stored before the stepping one.
+    pub previous_time: DateTime<Utc>,
+    /// Timestamp of the stepping sample.
+    pub time: DateTime<Utc>,
+    /// [`Self::time`] in Unix seconds.
+    pub x_secs: f64,
+}
+
+impl PlacedBackwardTimeStep {
+    /// How far the clock stepped back, a positive duration.
+    pub fn step_back(self) -> TimeDelta {
+        self.previous_time - self.time
+    }
 }
 
 /// One channel component's line: its display label and its mipmapped samples,
@@ -168,10 +191,24 @@ fn build_channel_series(channel: &gt_types::Channel) -> ChannelSeries {
             ChannelComponentSeries { label, runs }
         })
         .collect();
+    let mut backward_time_steps: Vec<PlacedBackwardTimeStep> = channel
+        .backward_time_steps()
+        .into_iter()
+        .filter_map(|step| {
+            let time = *channel.times.get(step.position)?;
+            Some(PlacedBackwardTimeStep {
+                previous_time: time + step.step_back,
+                time,
+                x_secs: *times.get(step.position)?,
+            })
+        })
+        .collect();
+    backward_time_steps.sort_by(|a, b| a.x_secs.total_cmp(&b.x_secs));
     ChannelSeries {
         name: channel.name.clone(),
         unit: channel.unit.as_ref().map(ToString::to_string),
         components,
+        backward_time_steps,
     }
 }
 
@@ -603,6 +640,38 @@ mod tests {
         );
         assert!(series.clock_excursions.is_empty());
         assert_eq!(clock_delta_extent(&series).0, -4_127_054.0);
+    }
+
+    /// The steps leave the stored order for ascending x here: the overlay
+    /// clips its marks to the view with a binary search over x.
+    #[test]
+    fn build_channel_series_orders_the_backward_time_steps_by_the_timestamp_they_are_marked_at() {
+        let t =
+            |secs: i64| chrono::DateTime::from_timestamp(1_700_000_000 + secs, 0).expect("valid");
+        let channel = gt_types::Channel {
+            name: "incline".to_owned(),
+            unit: None,
+            period: None,
+            description: None,
+            components: vec![],
+            times: vec![t(0), t(30), t(12), t(20), t(4)],
+            values: vec![1.0, 2.0, 3.0, 4.0, 5.0],
+        };
+
+        let series = build_channel_series(&channel);
+
+        let stepped: Vec<(i64, i64)> = series
+            .backward_time_steps
+            .iter()
+            .map(|placed| (placed.previous_time.timestamp(), placed.time.timestamp()))
+            .collect();
+        assert_eq!(
+            stepped,
+            [
+                (t(20).timestamp(), t(4).timestamp()),
+                (t(30).timestamp(), t(12).timestamp()),
+            ]
+        );
     }
 
     /// A scalar channel is a single component labelled by the name alone.
