@@ -79,6 +79,10 @@ class Spot:
 
 _C_HEADER = "sdk/c/geotrace.h"
 _CPP_HEADER = "sdk/cpp/include/geotrace/geotrace.hpp"
+# `cbindgen` writes _C_HEADER from this config, whose `after_includes` block holds
+# the version macros verbatim. A bump that missed it would come back the next
+# time anyone ran `just sdk-c-header`.
+_C_CBINDGEN = "sdk/rust/geotrace-c/cbindgen.toml"
 
 # The two committed Cargo.lock files that pin the SDK crates. The root lock is
 # the main workspace (geotrace-c and its deps). The Python lock is an isolated
@@ -97,6 +101,7 @@ _SDK_SPOTS: list[Spot] = [
     Spot("sdk/python/geotrace-py/Cargo.toml", _TOML_VERSION),
     Spot("sdk/python/geotrace-py/pyproject.toml", _TOML_VERSION),
     Spot(_C_HEADER, _define_str("GEOTRACE_C_VERSION"), note="GEOTRACE_C_VERSION"),
+    Spot(_C_CBINDGEN, _define_str("GEOTRACE_C_VERSION"), note="GEOTRACE_C_VERSION"),
     Spot(_CPP_HEADER, _define_str("GEOTRACE_CPP_VERSION"), note="GEOTRACE_CPP_VERSION"),
     Spot("sdk/c/CMakeLists.txt", _cmake_project("GeoTraceC"), core=True),
     Spot("sdk/cpp/CMakeLists.txt", _cmake_project("GeoTraceCpp"), core=True),
@@ -214,6 +219,7 @@ _SDK_CHANGELOG = "CHANGELOG_SDK.md"
 # The numeric `*_MAJOR/MINOR/PATCH` macro triples (always the core version).
 _INT_TRIPLES: list[tuple[str, str]] = [
     (_C_HEADER, "GEOTRACE_C_VERSION"),
+    (_C_CBINDGEN, "GEOTRACE_C_VERSION"),
     (_CPP_HEADER, "GEOTRACE_CPP_VERSION"),
 ]
 

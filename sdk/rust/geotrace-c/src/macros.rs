@@ -1,10 +1,10 @@
 /// Checks a raw pointer for null. On null, sets the thread-local error and
-/// returns `GtdStatus::ErrNullArgument` from the enclosing closure.
+/// returns `GtdStatus::GTD_ERR_NULL_ARGUMENT` from the enclosing closure.
 macro_rules! nonnull_mut {
     ($ptr:expr) => {{
         if ($ptr).is_null() {
             $crate::error::set_last_error("null pointer argument");
-            return $crate::error::GtdStatus::ErrNullArgument;
+            return $crate::error::GtdStatus::GTD_ERR_NULL_ARGUMENT;
         }
         // SAFETY: checked non-null above. Caller is responsible for valid lifetime.
         unsafe { &mut *($ptr) }
@@ -16,7 +16,7 @@ macro_rules! nonnull_ref {
     ($ptr:expr) => {{
         if ($ptr).is_null() {
             $crate::error::set_last_error("null pointer argument");
-            return $crate::error::GtdStatus::ErrNullArgument;
+            return $crate::error::GtdStatus::GTD_ERR_NULL_ARGUMENT;
         }
         // SAFETY: checked non-null above. Caller is responsible for valid lifetime.
         unsafe { &*($ptr) }
@@ -29,14 +29,14 @@ macro_rules! cstr {
     ($ptr:expr) => {{
         if ($ptr).is_null() {
             $crate::error::set_last_error("null string argument");
-            return $crate::error::GtdStatus::ErrNullArgument;
+            return $crate::error::GtdStatus::GTD_ERR_NULL_ARGUMENT;
         }
         // SAFETY: checked non-null above. Caller guarantees null-terminated, valid lifetime.
         match unsafe { std::ffi::CStr::from_ptr($ptr) }.to_str() {
             Ok(s) => s,
             Err(_) => {
                 $crate::error::set_last_error("string argument is not valid UTF-8");
-                return $crate::error::GtdStatus::ErrUtf8;
+                return $crate::error::GtdStatus::GTD_ERR_UTF8;
             }
         }
     }};
@@ -54,7 +54,7 @@ macro_rules! cstr_opt {
                 Ok(s) => Some(s),
                 Err(_) => {
                     $crate::error::set_last_error("string argument is not valid UTF-8");
-                    return $crate::error::GtdStatus::ErrUtf8;
+                    return $crate::error::GtdStatus::GTD_ERR_UTF8;
                 }
             }
         }

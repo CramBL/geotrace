@@ -1,19 +1,27 @@
-//! The `travel_mode` group of `geotrace.h`: the recording platform and its wire name.
+//! The recording platform and its wire name.
 
 use std::ffi::{CStr, c_char};
 
 use crate::error::{self, GtdStatus};
 
 /// Platform a recording was made on, declared by the recorder.
+/// cbindgen:rename-all=QualifiedScreamingSnakeCase
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub enum GtdTravelMode {
+    /// Passenger car.
     Car = 0,
+    /// Motorcycle.
     Motorcycle = 1,
+    /// Bicycle.
     Bicycle = 2,
+    /// On foot.
     Pedestrian = 3,
+    /// Boat or ship.
     Boat = 4,
+    /// Train or tram.
     Rail = 5,
+    /// Aircraft.
     Aircraft = 6,
 }
 
@@ -50,6 +58,8 @@ impl GtdTravelMode {
 }
 
 /// Wire name of a travel mode, e.g. `GTD_TRAVEL_MODE_CAR` -> `"car"`.
+///
+/// The returned pointer is a static string and always valid.
 #[unsafe(no_mangle)]
 pub extern "C" fn gtd_travel_mode_name(mode: GtdTravelMode) -> *const c_char {
     let name: &'static CStr = match mode {
@@ -64,12 +74,13 @@ pub extern "C" fn gtd_travel_mode_name(mode: GtdTravelMode) -> *const c_char {
     name.as_ptr()
 }
 
-/// Parse a wire name (as produced by `gtd_travel_mode_name` or read from
-/// `gtd_nav_file_travel_mode`) back into a travel mode.
+/// Parse a wire name (as produced by `gtd_travel_mode_name()` or read from
+/// `gtd_nav_file_travel_mode()`) back into a travel mode.
 ///
-/// # Safety
+/// @param name Wire name, e.g. `"bicycle"`, NUL-terminated.
+/// @param out  Caller-allocated result, written on success.
 ///
-/// `name` must point to a NUL-terminated string and `out` must be writable.
+/// @return `GTD_ERR_PARSE` if @p name is not a known travel mode.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_travel_mode_from_name(
     name: *const c_char,
@@ -82,11 +93,11 @@ pub unsafe extern "C" fn gtd_travel_mode_from_name(
         match GtdTravelMode::from_travel_mode(&mode) {
             Some(mode) => {
                 *out = mode;
-                GtdStatus::Ok
+                GtdStatus::GTD_OK
             }
             None => {
                 error::set_last_error(format!("unknown travel mode name {name:?}"));
-                GtdStatus::ErrParse
+                GtdStatus::GTD_ERR_PARSE
             }
         }
     })

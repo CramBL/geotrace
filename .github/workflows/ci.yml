@@ -255,10 +255,12 @@ jobs:
           shared-key: app
           save-if: false
 
+      # `cbindgen` generates sdk/c/geotrace.h. Its version is pinned: another
+      # release lays the header out differently, which reads as drift.
       - name: Install tools
         uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
         with:
-          tool: just
+          tool: just,cbindgen@0.29.4
 
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
@@ -284,6 +286,9 @@ jobs:
         run: |
           just qa::check-all
           just qa::check-versions
+
+      - name: C header
+        run: just check-c-header
 
       - name: Docs
         run: just doc

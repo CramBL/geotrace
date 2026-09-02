@@ -1,16 +1,24 @@
-//! The `satellite` group of `geotrace.h`: the write-path satellite entry.
+//! The write-path satellite entry.
 
 use crate::{GtdConstellation, GtdOptF64};
 
 /// A satellite entry within a report (write path, input from C).
+///
+/// Pass an array of these to `gtd_builder_add_satellite_report()`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct GtdSatellite {
+    /// GNSS constellation.
     pub constellation: GtdConstellation,
+    /// Pseudo-random noise number (satellite ID).
     pub prn: u32,
+    /// Non-zero if this satellite contributed to the position fix.
     pub in_fix: u8,
+    /// Elevation above the horizon in degrees [0, 90].
     pub elevation_deg: GtdOptF64,
+    /// Azimuth from true north in degrees [0, 360).
     pub azimuth_deg: GtdOptF64,
+    /// Signal-to-noise ratio in dB·Hz.
     pub snr_dbhz: GtdOptF64,
 }
 

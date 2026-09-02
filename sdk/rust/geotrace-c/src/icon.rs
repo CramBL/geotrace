@@ -1,44 +1,59 @@
-//! The `icon` group of `geotrace.h`: the icon a map marker is drawn with.
+//! The icon a map marker is drawn with.
 
-/// Icon for map markers. GTD_ICON_AUTO (255) uses the application default.
+/// Icon for map markers. Use `GTD_ICON_AUTO` to let the application choose.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub enum GtdMarkerIcon {
-    Pin = 0,
-    Cross = 1,
-    Circle = 2,
-    Lightning = 3,
-    Warning = 4,
-    Error = 5,
-    Check = 6,
-    Satellite = 7,
-    SatelliteLost = 8,
-    Gear = 9,
-    Refresh = 10,
-    Download = 11,
-    Upload = 12,
-    Wrench = 13,
-    Auto = 255,
+    /// Map pin.
+    GTD_ICON_PIN = 0,
+    /// Cross / X mark.
+    GTD_ICON_CROSS = 1,
+    /// Circle.
+    GTD_ICON_CIRCLE = 2,
+    /// Lightning bolt.
+    GTD_ICON_LIGHTNING = 3,
+    /// Warning triangle.
+    GTD_ICON_WARNING = 4,
+    /// Error indicator.
+    GTD_ICON_ERROR = 5,
+    /// Check mark.
+    GTD_ICON_CHECK = 6,
+    /// Satellite with signal.
+    GTD_ICON_SATELLITE = 7,
+    /// Satellite without signal.
+    GTD_ICON_SATELLITE_LOST = 8,
+    /// Gear / settings.
+    GTD_ICON_GEAR = 9,
+    /// Refresh / reload.
+    GTD_ICON_REFRESH = 10,
+    /// Download arrow.
+    GTD_ICON_DOWNLOAD = 11,
+    /// Upload arrow.
+    GTD_ICON_UPLOAD = 12,
+    /// Wrench / tool.
+    GTD_ICON_WRENCH = 13,
+    /// Use the application default for this variant.
+    GTD_ICON_AUTO = 255,
 }
 
 impl GtdMarkerIcon {
     pub(crate) fn to_marker_icon(self) -> Option<geotrace_sdk::MarkerIcon> {
         match self {
-            Self::Pin => Some(geotrace_sdk::MarkerIcon::Pin),
-            Self::Cross => Some(geotrace_sdk::MarkerIcon::Cross),
-            Self::Circle => Some(geotrace_sdk::MarkerIcon::Circle),
-            Self::Lightning => Some(geotrace_sdk::MarkerIcon::Lightning),
-            Self::Warning => Some(geotrace_sdk::MarkerIcon::Warning),
-            Self::Error => Some(geotrace_sdk::MarkerIcon::Error),
-            Self::Check => Some(geotrace_sdk::MarkerIcon::Check),
-            Self::Satellite => Some(geotrace_sdk::MarkerIcon::Satellite),
-            Self::SatelliteLost => Some(geotrace_sdk::MarkerIcon::SatelliteLost),
-            Self::Gear => Some(geotrace_sdk::MarkerIcon::Gear),
-            Self::Refresh => Some(geotrace_sdk::MarkerIcon::Refresh),
-            Self::Download => Some(geotrace_sdk::MarkerIcon::Download),
-            Self::Upload => Some(geotrace_sdk::MarkerIcon::Upload),
-            Self::Wrench => Some(geotrace_sdk::MarkerIcon::Wrench),
-            Self::Auto => None,
+            Self::GTD_ICON_PIN => Some(geotrace_sdk::MarkerIcon::Pin),
+            Self::GTD_ICON_CROSS => Some(geotrace_sdk::MarkerIcon::Cross),
+            Self::GTD_ICON_CIRCLE => Some(geotrace_sdk::MarkerIcon::Circle),
+            Self::GTD_ICON_LIGHTNING => Some(geotrace_sdk::MarkerIcon::Lightning),
+            Self::GTD_ICON_WARNING => Some(geotrace_sdk::MarkerIcon::Warning),
+            Self::GTD_ICON_ERROR => Some(geotrace_sdk::MarkerIcon::Error),
+            Self::GTD_ICON_CHECK => Some(geotrace_sdk::MarkerIcon::Check),
+            Self::GTD_ICON_SATELLITE => Some(geotrace_sdk::MarkerIcon::Satellite),
+            Self::GTD_ICON_SATELLITE_LOST => Some(geotrace_sdk::MarkerIcon::SatelliteLost),
+            Self::GTD_ICON_GEAR => Some(geotrace_sdk::MarkerIcon::Gear),
+            Self::GTD_ICON_REFRESH => Some(geotrace_sdk::MarkerIcon::Refresh),
+            Self::GTD_ICON_DOWNLOAD => Some(geotrace_sdk::MarkerIcon::Download),
+            Self::GTD_ICON_UPLOAD => Some(geotrace_sdk::MarkerIcon::Upload),
+            Self::GTD_ICON_WRENCH => Some(geotrace_sdk::MarkerIcon::Wrench),
+            Self::GTD_ICON_AUTO => None,
         }
     }
 
@@ -53,20 +68,20 @@ impl GtdMarkerIcon {
 impl From<geotrace_sdk::MarkerIcon> for GtdMarkerIcon {
     fn from(icon: geotrace_sdk::MarkerIcon) -> Self {
         match icon {
-            geotrace_sdk::MarkerIcon::Pin => Self::Pin,
-            geotrace_sdk::MarkerIcon::Cross => Self::Cross,
-            geotrace_sdk::MarkerIcon::Circle => Self::Circle,
-            geotrace_sdk::MarkerIcon::Lightning => Self::Lightning,
-            geotrace_sdk::MarkerIcon::Warning => Self::Warning,
-            geotrace_sdk::MarkerIcon::Error => Self::Error,
-            geotrace_sdk::MarkerIcon::Check => Self::Check,
-            geotrace_sdk::MarkerIcon::Satellite => Self::Satellite,
-            geotrace_sdk::MarkerIcon::SatelliteLost => Self::SatelliteLost,
-            geotrace_sdk::MarkerIcon::Gear => Self::Gear,
-            geotrace_sdk::MarkerIcon::Refresh => Self::Refresh,
-            geotrace_sdk::MarkerIcon::Download => Self::Download,
-            geotrace_sdk::MarkerIcon::Upload => Self::Upload,
-            geotrace_sdk::MarkerIcon::Wrench => Self::Wrench,
+            geotrace_sdk::MarkerIcon::Pin => Self::GTD_ICON_PIN,
+            geotrace_sdk::MarkerIcon::Cross => Self::GTD_ICON_CROSS,
+            geotrace_sdk::MarkerIcon::Circle => Self::GTD_ICON_CIRCLE,
+            geotrace_sdk::MarkerIcon::Lightning => Self::GTD_ICON_LIGHTNING,
+            geotrace_sdk::MarkerIcon::Warning => Self::GTD_ICON_WARNING,
+            geotrace_sdk::MarkerIcon::Error => Self::GTD_ICON_ERROR,
+            geotrace_sdk::MarkerIcon::Check => Self::GTD_ICON_CHECK,
+            geotrace_sdk::MarkerIcon::Satellite => Self::GTD_ICON_SATELLITE,
+            geotrace_sdk::MarkerIcon::SatelliteLost => Self::GTD_ICON_SATELLITE_LOST,
+            geotrace_sdk::MarkerIcon::Gear => Self::GTD_ICON_GEAR,
+            geotrace_sdk::MarkerIcon::Refresh => Self::GTD_ICON_REFRESH,
+            geotrace_sdk::MarkerIcon::Download => Self::GTD_ICON_DOWNLOAD,
+            geotrace_sdk::MarkerIcon::Upload => Self::GTD_ICON_UPLOAD,
+            geotrace_sdk::MarkerIcon::Wrench => Self::GTD_ICON_WRENCH,
         }
     }
 }

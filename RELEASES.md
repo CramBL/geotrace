@@ -73,6 +73,8 @@ git tag geotrace-sdk-vX.Y.Z
 git push origin geotrace-sdk-vX.Y.Z
 ```
 
+`bump-sdk` rewrites the version macros in `sdk/rust/geotrace-c/cbindgen.toml` and in the header it generates, `sdk/c/geotrace.h`, leaving the two equal to what `just sdk-c-header` writes.
+
 `.github/workflows/release-sdk.yml` builds the C/C++ archives, publishes to crates.io and PyPI, updates the `geotrace-c` Homebrew formula, and publishes the GitHub release.
 A version guard fails the run before publishing if the manifests disagree or do not match the tag.
 Publishing is idempotent, so a partially failed run can be re-run safely.

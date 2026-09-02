@@ -1,4 +1,4 @@
-//! The `handles` group of `geotrace.h`: the opaque handle for a parsed or built nav file.
+//! The opaque handle for a parsed or built nav file.
 
 mod channel;
 mod event_marker;
@@ -18,7 +18,7 @@ pub use channel::GtdChannelInfo;
 pub use event_marker::GtdEventMarkerInfo;
 pub use nav_point::GtdNavPointInfo;
 
-/// Opaque handle for a parsed or freshly-built GeoTrace nav file.
+/// Opaque handle for a parsed or freshly-built navigation file.
 pub struct GtdNavFile {
     file: NavFile,
     title: Option<CString>,

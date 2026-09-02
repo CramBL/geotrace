@@ -1,6 +1,6 @@
-//! The `optf64` group of `geotrace.h`: the optional double and its constructors.
+//! The optional double.
 
-/// Optional f64 value.
+/// An optional `double` value. Use the macros below to construct values.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct GtdOptF64 {
