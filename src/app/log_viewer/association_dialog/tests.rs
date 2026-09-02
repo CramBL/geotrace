@@ -17,7 +17,7 @@ use gt_test_utils::window_fit::{
     CRAMPED_VIEWPORT, NARROW_VIEWPORT, OVERSIZED_ROW_COUNT, SHORT_VIEWPORT,
 };
 use gt_test_utils::{
-    AuditedWindow, By, ControlLabel, HarnessInteraction as _, WindowFitAssertions as _,
+    AuditedWindow, By, ControlLabel, HarnessInteraction as _, TestHarness, WindowFitAssertions as _,
 };
 use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::{FileSource, Latitude, Longitude};
@@ -112,13 +112,21 @@ fn harness_over_sized(
     recordings: Vec<(gt_types::LoadedFile, FileHistory)>,
     viewport: egui::Vec2,
 ) -> Harness<'static, DialogState> {
+    let mut harness = Harness::builder()
+        .with_size(viewport)
+        .build_ui_state(dialog_ui, dialog_state(recordings));
+    harness.run_steps(3);
+    harness
+}
+
+fn dialog_state(recordings: Vec<(gt_types::LoadedFile, FileHistory)>) -> DialogState {
     let mut loaded_recordings = LoadedFiles::new();
     for (file, history) in recordings {
         loaded_recordings.push(file, history);
     }
     let parsed = gt_logfile::parse_log(LOG.into(), log_start())
         .unwrap_or_else(|error| panic!("the fixture log parses: {error}"));
-    let state = DialogState {
+    DialogState {
         dialog: LogAssociationDialog::new(SHOWN_LOG, None),
         log: LoadedLog::new(
             Some("navsyncd.log".to_owned()),
@@ -128,11 +136,18 @@ fn harness_over_sized(
         recordings: loaded_recordings,
         choice: None,
         write_access: WriteAccess::Owner,
-    };
-    let mut harness = Harness::builder()
-        .with_size(viewport)
-        .build_ui_state(dialog_ui, state);
-    harness.run_steps(3);
+    }
+}
+
+/// The dialog in a harness that renders, which the snapshot needs and the
+/// harness the other tests build does not have.
+fn rendering_harness_over(
+    recordings: Vec<(gt_types::LoadedFile, FileHistory)>,
+) -> TestHarness<'static, DialogState> {
+    let mut harness = TestHarness::builder()
+        .size(DIALOG_SIZE)
+        .ui_state(dialog_ui, dialog_state(recordings));
+    harness.inner.run_steps(3);
     harness
 }
 
@@ -474,6 +489,30 @@ fn another_db_ref() -> DatabaseRef {
         identity: "nav-devkit-mk2".to_owned(),
         group_name: "2026-05-29T19-13-40".to_owned(),
     }
+}
+
+/// The dialog on a recording the history database has not yet answered about:
+/// the room the answer takes is part of the window from the frame it opens.
+#[test]
+fn snapshot_the_association_dialog_while_the_stored_attachment_answer_is_pending() {
+    let mut harness = rendering_harness_over(vec![
+        (
+            recording("alongside.gtd", Duration::zero(), 10),
+            stored_in_history("nav-devkit-mk2"),
+        ),
+        (
+            recording("late.gtd", Duration::seconds(5), 10),
+            stored_in_history("nav-devkit-mk4"),
+        ),
+    ]);
+    harness.inner.get_by_label("late.gtd").click();
+    harness.inner.run_steps(2);
+    let state = harness.inner.state_mut();
+    let recordings = state.recordings.view();
+    state.dialog.duplicate_query_to_send(recordings);
+    harness.inner.run_steps(2);
+
+    harness.snapshot("association_dialog_answer_pending");
 }
 
 /// The dialog keeps its confirm and cancel buttons reachable at any viewport,

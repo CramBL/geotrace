@@ -2018,3 +2018,311 @@ mod tests {
         }
     }
 }
+
+/// Where a dialog's controls are while its content changes size, and what a
+/// press aimed at one of them reaches.
+///
+/// egui hit-tests a press against the widget rects of the previous frame, so a
+/// press that follows a pointer movement lands where the user aimed. The case
+/// these tests pin is the reverse: the pointer rests on a control for as long
+/// as the user takes to decide, and the dialog's content arrives in the
+/// meantime.
+#[cfg(test)]
+mod anchored_dialog_layout_tests {
+    use std::cell::RefCell;
+    use std::path::PathBuf;
+
+    use chrono::{Duration, TimeZone as _};
+    use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
+    use gt_log_view::LoadedLog;
+    use gt_pending_writes::{WriteAccess, WriteKind};
+    use gt_store::{DatabaseRef, LogAttachmentId, RecordingMeta};
+    use gt_test_utils::{By, Queryable as _, TestHarness};
+    use gt_track_builder::{FileMeta, SegmentationConfig};
+    use gt_types::{FileSource, Latitude, Longitude};
+    use gt_ui_types::LoadedLogId;
+
+    use crate::app::history_db::ExistingLogAttachment;
+    use crate::app::log_viewer::association_dialog::{
+        LogAssociationChoice, LogAssociationDialog, TITLE as ASSOCIATION_TITLE,
+    };
+
+    use super::{ForceQuitChoice, show_force_quit_confirmation};
+
+    /// Wider and taller than every dialog here, so a control moves only
+    /// because its own window moved it, never because the screen clipped it.
+    const VIEWPORT: egui::Vec2 = egui::vec2(640.0, 480.0);
+
+    const CANCEL_LABEL: &str = "Cancel";
+
+    /// The attachment the history database reports for the chosen recording.
+    /// Its length decides how many lines the dialog's answer takes.
+    const STORED_ATTACHMENT_NAME: &str = "navsyncd-export-2026-05-29-evening-run.log";
+
+    /// Where the one control labelled `label` was drawn in the frame the
+    /// harness rendered last.
+    fn control_rect<State>(harness: &TestHarness<'_, State>, label: &str) -> egui::Rect {
+        harness.inner.get(By::new().label(label)).rect()
+    }
+
+    /// Presses and releases at `target` without moving the pointer there
+    /// first, which is what a user does whose pointer already rests on the
+    /// control they aimed at.
+    fn press_where_the_pointer_rests<State>(
+        harness: &mut TestHarness<'_, State>,
+        target: egui::Pos2,
+    ) {
+        for pressed in [true, false] {
+            harness
+                .inner
+                .input_mut()
+                .events
+                .push(egui::Event::PointerButton {
+                    pos: target,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+        }
+        harness.inner.run_steps(2);
+    }
+
+    /// The costs the force-quit confirmation lists while four writes run.
+    fn four_write_costs() -> Vec<String> {
+        vec![
+            WriteKind::Settings.interruption_cost(),
+            WriteKind::RecordingDatabase.interruption_cost(),
+            WriteKind::DatabaseOpen.interruption_cost(),
+            WriteKind::TakeOverRecord.interruption_cost(),
+        ]
+    }
+
+    /// The force-quit confirmation over a cost list the test shortens between
+    /// frames, the way the registry shortens it as the writes finish.
+    fn force_quit_confirmation<'a>(
+        costs: &'a RefCell<Vec<String>>,
+        choice: &'a RefCell<Option<ForceQuitChoice>>,
+        background_pressed: &'a RefCell<bool>,
+    ) -> TestHarness<'a, ()> {
+        let mut harness = TestHarness::builder().size(VIEWPORT).ui(|ui| {
+            // The shutdown window the confirmation sits over. Its own actions
+            // are what a press that misses the confirmation reaches.
+            if ui
+                .allocate_response(ui.available_size(), egui::Sense::click())
+                .clicked()
+            {
+                *background_pressed.borrow_mut() = true;
+            }
+            let listed = costs.borrow();
+            if let Some(made) = show_force_quit_confirmation(ui, &listed) {
+                *choice.borrow_mut() = Some(made);
+            }
+        });
+        harness.inner.run_steps(4);
+        harness
+    }
+
+    /// The press the association tests use, over a confirmation whose content
+    /// does not change: it reports Cancel and reaches nothing behind the
+    /// confirmation.
+    #[test]
+    fn a_press_where_the_pointer_rests_cancels_an_unchanged_force_quit_confirmation() {
+        let costs = RefCell::new(four_write_costs());
+        let choice = RefCell::new(None);
+        let background_pressed = RefCell::new(false);
+        let mut harness = force_quit_confirmation(&costs, &choice, &background_pressed);
+        let aimed_at = control_rect(&harness, CANCEL_LABEL).center();
+        harness.inner.hover_at(aimed_at);
+        harness.inner.run_steps(4);
+
+        press_where_the_pointer_rests(&mut harness, aimed_at);
+
+        assert!(matches!(*choice.borrow(), Some(ForceQuitChoice::Cancel)));
+        assert!(!*background_pressed.borrow());
+    }
+
+    /// A recording of ten fixes starting `offset` after the fixture log does.
+    fn recording(
+        filename: &str,
+        offset: Duration,
+        log_start: chrono::DateTime<chrono::Utc>,
+    ) -> gt_types::LoadedFile {
+        let points = gt_test_utils::nav_points_walking_from(
+            log_start + offset,
+            10,
+            1,
+            Latitude::new(55.0),
+            Longitude::new(12.0),
+        );
+        gt_track_builder::build_loaded_file(
+            filename.to_owned(),
+            &points,
+            &[],
+            Vec::new(),
+            Vec::new(),
+            &[],
+            &SegmentationConfig::default(),
+            FileSource::GtdPath(PathBuf::from(filename)),
+            FileMeta::default(),
+            Vec::new(),
+        )
+    }
+
+    /// How a recording the history database holds is filed in the session.
+    fn stored_in_history(identity: &str) -> FileHistory {
+        FileHistory::recording(
+            identity.to_owned(),
+            RecordingMeta {
+                start_us: 0,
+                end_us: 0,
+                nav_point_count: 0,
+                sat_report_count: 0,
+                marker_count: 0,
+                event_marker_count: 0,
+                gtd_size_bytes: 0,
+            },
+            Some(DatabaseRef {
+                identity: identity.to_owned(),
+                group_name: "2026-05-29T18-48-25".to_owned(),
+            }),
+        )
+    }
+
+    struct AssociationState {
+        dialog: LogAssociationDialog,
+        log: LoadedLog,
+        recordings: LoadedFiles,
+        choice: Option<LogAssociationChoice>,
+    }
+
+    /// Three log entries spanning nine seconds.
+    const LOG: &str = "\
+2026-05-29 18:48:25 navsyncd: starting
+2026-05-29 18:48:27 navsyncd: fix acquired
+2026-05-29 18:48:34 navsyncd: fix lost
+";
+
+    /// The association dialog over two stored recordings, the second of which
+    /// only overlaps part of the log and is therefore listed below the first.
+    fn association_dialog() -> TestHarness<'static, AssociationState> {
+        let log_start = chrono::Utc
+            .with_ymd_and_hms(2026, 5, 29, 18, 48, 25)
+            .single()
+            .unwrap_or_default();
+        let mut recordings = LoadedFiles::new();
+        recordings.push(
+            recording("alongside.gtd", Duration::zero(), log_start),
+            stored_in_history("nav-devkit-mk2"),
+        );
+        recordings.push(
+            recording("late.gtd", Duration::seconds(5), log_start),
+            stored_in_history("nav-devkit-mk4"),
+        );
+        let parsed = gt_logfile::parse_log(LOG.into(), log_start)
+            .unwrap_or_else(|error| panic!("the fixture log parses: {error}"));
+        let state = AssociationState {
+            dialog: LogAssociationDialog::new(LoadedLogId::new(0), None),
+            log: LoadedLog::new(
+                Some("navsyncd.log".to_owned()),
+                parsed,
+                Duration::seconds(60),
+            ),
+            recordings,
+            choice: None,
+        };
+        let mut harness = TestHarness::builder().size(VIEWPORT).ui_state(
+            |ui, state: &mut AssociationState| {
+                let names = RecordingNames::resolve(state.recordings.view(), "{filename}");
+                if let Some(made) = state.dialog.show(
+                    ui.ctx(),
+                    &state.log,
+                    state.recordings.view(),
+                    &names,
+                    WriteAccess::Owner,
+                ) {
+                    state.choice = Some(made);
+                }
+            },
+            state,
+        );
+        harness.inner.run_steps(4);
+        harness
+    }
+
+    /// The recording the dialog queried the history database about, taken the
+    /// way the app takes it after every frame the dialog draws.
+    fn duplicate_query_to_send(harness: &mut TestHarness<'_, AssociationState>) -> DatabaseRef {
+        let state = harness.inner.state_mut();
+        let recordings = state.recordings.view();
+        state
+            .dialog
+            .duplicate_query_to_send(recordings)
+            .unwrap_or_else(|| panic!("the chosen recording is queried about duplicates"))
+    }
+
+    /// Hands the dialog the answer that `recording` already holds this log.
+    fn deliver_the_stored_attachment(
+        harness: &mut TestHarness<'_, AssociationState>,
+        recording: &DatabaseRef,
+    ) {
+        harness.inner.state_mut().dialog.set_duplicate_attachment(
+            recording,
+            Some(ExistingLogAttachment {
+                id: LogAttachmentId::new_random(),
+                name: STORED_ATTACHMENT_NAME.to_owned(),
+            }),
+        );
+    }
+
+    /// Selecting a recording sends the duplicate-attachment query, and the
+    /// answer adds a line above the tickbox that stores the log. A press
+    /// aimed at a recording row must not tick that box: attaching writes the
+    /// log into the history database.
+    #[test]
+    fn pressing_a_recording_row_while_the_stored_attachment_line_arrives_attaches_nothing() {
+        let mut harness = association_dialog();
+        harness.inner.get(By::new().label("late.gtd")).click();
+        harness.inner.run_steps(3);
+        let queried = duplicate_query_to_send(&mut harness);
+        let aimed_at = control_rect(&harness, "late.gtd").center();
+        harness.inner.hover_at(aimed_at);
+        harness.inner.run_steps(2);
+
+        deliver_the_stored_attachment(&mut harness, &queried);
+        harness.inner.run_steps(2);
+        press_where_the_pointer_rests(&mut harness, aimed_at);
+        harness.inner.get(By::new().label("Associate")).click();
+        harness.inner.run_steps(2);
+
+        assert!(
+            matches!(
+                harness.inner.state().choice,
+                Some(LogAssociationChoice::Confirmed { attach: false, .. })
+            ),
+            "the press on a recording row reported {:?}",
+            harness.inner.state().choice,
+        );
+    }
+
+    #[test]
+    fn the_association_dialog_keeps_its_recording_rows_in_place_while_the_answer_arrives() {
+        let mut harness = association_dialog();
+        harness.inner.get(By::new().label("late.gtd")).click();
+        harness.inner.run_steps(3);
+        let queried = duplicate_query_to_send(&mut harness);
+        let before = control_rect(&harness, "late.gtd");
+
+        deliver_the_stored_attachment(&mut harness, &queried);
+        harness.inner.run_steps(4);
+        let after = control_rect(&harness, "late.gtd");
+
+        let moved = (after.center().y - before.center().y).abs();
+        assert!(
+            moved * 2.0 < before.height(),
+            "the row of the chosen recording moved {moved:.0} points in the \
+             {ASSOCIATION_TITLE} dialog, more than half of the {:.0} points it is tall: a \
+             press where the user aimed misses it",
+            before.height(),
+        );
+    }
+}
