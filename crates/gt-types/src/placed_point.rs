@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use crate::coordinates::{Latitude, Longitude};
+use crate::highlight::FixRef;
 use crate::mercator::MercPoint;
 use crate::nav_point::{NavPoint, ResolvedPosition};
 
@@ -25,6 +26,14 @@ impl PlacedPoint<'_> {
     pub fn merc(self) -> MercPoint {
         self.resolved.merc()
     }
+}
+
+/// A [`PlacedPoint`] under the address of the fix it holds, for callers
+/// walking the fixes of several tracks at once.
+#[derive(Debug, Clone, Copy)]
+pub struct AddressedFix<'a> {
+    pub fix: FixRef,
+    pub placed: PlacedPoint<'a>,
 }
 
 /// The fixes of a track that has a geometry, each paired with where it is

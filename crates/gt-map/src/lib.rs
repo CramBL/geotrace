@@ -953,6 +953,8 @@ impl NavMap {
             map = map.with_plugin(
                 log_match_renderer::LogMatchRenderer::builder()
                     .matches(ctx.log_matches)
+                    .files(ctx.files)
+                    .filter(ctx.filter)
                     .maybe_icon_meshes(self.icon_meshes.as_ref())
                     .dark_mode(ui.visuals().dark_mode)
                     .hover_enabled(pointer_ownership.log_hexagon_hover_enabled())
@@ -1107,7 +1109,7 @@ impl NavMap {
                         snapped_tracks: ctx.snapped_tracks,
                         jamming_cells: ctx.jamming_dataset.map_or(0, JamDataset::len),
                         tec_nodes,
-                        log_matches: ctx.log_matches.match_count(),
+                        log_matches: Some(ctx.log_matches),
                     },
                 )
             },

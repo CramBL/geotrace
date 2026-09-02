@@ -58,6 +58,7 @@
 - **Interface:** Fixed a query's `sys_time` dropping the microseconds of a host timestamp.
 - **Interface:** Fixed a query's `clock_delta` dropping the microseconds of the GPS/host clock offset.
 - **Log Viewer:** Fixed a log entry between two fixes across the antimeridian being placed half a world away.
+- **Log Viewer:** Fixed log hexagons drawing, taking the pointer and being counted for recordings and lines the filter hides.
 - **Map & Tracks:** Fixed the sky trails plot shifting and resizing when the satellite counts beside it change width.
 - **Map & Tracks:** Fixed the window for a clicked fix drawing its content over its own title bar when scrolled.
 - **Map & Tracks:** Fixed the side panel showing a distance of "-0 m" for a recording whose tracks are drawn nowhere.

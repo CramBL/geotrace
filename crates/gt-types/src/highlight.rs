@@ -103,6 +103,20 @@ impl TrackRef {
     }
 }
 
+/// Canonical address of a single recorded fix: which track and which of its
+/// points.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct FixRef {
+    pub track: TrackRef,
+    pub point: PointIdx,
+}
+
+impl FixRef {
+    pub fn new(track: TrackRef, point: PointIdx) -> Self {
+        Self { track, point }
+    }
+}
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, strum::EnumIter, strum::EnumCount,
 )]

@@ -18,8 +18,8 @@ use std::ops::Range;
 use gt_filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
 use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef};
 use gt_ui_types::{
-    DisplayCategory, EventMarkerVisibility, GeneratedMarkerVisibility, QueryMatches, SnappedTracks,
-    TrackDataVisibility, visibility,
+    DisplayCategory, EventMarkerVisibility, GeneratedMarkerVisibility, LogMatches, QueryMatches,
+    SnappedTracks, TrackDataVisibility, visibility,
 };
 use rustc_hash::FxHasher;
 
@@ -34,8 +34,9 @@ pub struct SuppliedCounts<'a> {
     /// Grid nodes archived for the day the heatmap shows.
     pub tec_nodes: usize,
     /// Hexagons the loaded logs' filters put on the map, already scoped by the
-    /// app: only shown logs and enabled filters reach here.
-    pub log_matches: usize,
+    /// app to the shown logs and enabled filters. The global filter is applied
+    /// by [`DisplayCounts::compute`], not before this field is filled.
+    pub log_matches: Option<&'a LogMatches>,
 }
 
 /// The in-scope element count of every [`DisplayCategory`].
@@ -58,7 +59,8 @@ pub struct DisplayCounts {
     jamming_hexes: usize,
     /// TEC grid nodes available for the shown instant, from the archive.
     tec_heatmap: usize,
-    /// Hexagons the loaded logs' filters selected, from the app.
+    /// Hexagons the loaded logs' filters selected, those the global filter
+    /// keeps.
     log_matches: usize,
 }
 
@@ -112,7 +114,9 @@ impl DisplayCounts {
         let mut counts = Self {
             jamming_hexes: supplied.jamming_cells,
             tec_heatmap: supplied.tec_nodes,
-            log_matches: supplied.log_matches,
+            log_matches: supplied
+                .log_matches
+                .map_or(0, |matches| matches.count_passing_filter(files, filter)),
             // The count is per track, like "Tracks": how many snapped tracks
             // are eligible to draw.
             snapped_tracks: supplied.snapped_tracks.map_or(0, |snapped| {
@@ -227,7 +231,7 @@ struct DisplayCountsKey {
     snapped_track_refs: Vec<TrackRef>,
     jamming_cells: usize,
     tec_nodes: usize,
-    log_matches: usize,
+    log_matches: Option<LogMatches>,
     filter: GlobalFilter,
     visibility: TrackDataVisibility,
     event_marker_visibility: EventMarkerVisibility,
@@ -317,7 +321,7 @@ impl DisplayCountsCache {
             && key.snapped_track_refs == snapped_track_refs
             && key.jamming_cells == supplied.jamming_cells
             && key.tec_nodes == supplied.tec_nodes
-            && key.log_matches == supplied.log_matches
+            && key.log_matches.as_ref() == supplied.log_matches
             && key.filter == *filter
             && key.visibility == *visibility
             && key.event_marker_visibility == *event_marker_visibility
@@ -343,7 +347,7 @@ impl DisplayCountsCache {
             DisplayCountsKey {
                 jamming_cells: supplied.jamming_cells,
                 tec_nodes: supplied.tec_nodes,
-                log_matches: supplied.log_matches,
+                log_matches: supplied.log_matches.cloned(),
                 files_sig,
                 snapped_track_refs,
                 filter: *filter,

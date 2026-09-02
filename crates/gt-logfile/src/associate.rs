@@ -1,10 +1,10 @@
 //! Placing a log entry on a recorded track: it takes the position of the fix
 //! nearest in time, interpolated along the great circle between the two fixes
-//! it falls between.
+//! it falls between, and is attributed to the nearer of those two.
 
 use chrono::{DateTime, Duration, Utc};
 use gt_geo_math::GreatCircleArc;
-use gt_types::{Latitude, Longitude, PlacedPoint};
+use gt_types::{AddressedFix, FixRef, Latitude, Longitude};
 use rayon::prelude::*;
 
 use crate::{parse::LogEntry, pool};
@@ -13,65 +13,83 @@ use crate::{parse::LogEntry, pool};
 /// handing it to [`pool::log_worker_pool`].
 const PARALLEL_ASSOCIATION_MIN_ENTRIES: usize = 16 * 1024;
 
-/// The recorded position at `time`, or `None` when no fix of `fixes` lies
-/// within `window` of it.
+/// Where an entry sits on the recording it was associated against.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EntryPlacement {
+    pub position: (Latitude, Longitude),
+
+    /// The fix the entry is attributed to: the one nearest in time, and the
+    /// earlier one when the entry falls exactly between two fixes.
+    pub fix: FixRef,
+}
+
+/// Where `time` sits on `fixes`, or `None` when no fix of `fixes` lies within
+/// `window` of it.
 ///
 /// `fixes` must be in ascending time order.
 pub fn associate_position(
     time: DateTime<Utc>,
-    fixes: &[PlacedPoint<'_>],
+    fixes: &[AddressedFix<'_>],
     window: Duration,
-) -> Option<(Latitude, Longitude)> {
-    let index = fixes.partition_point(|point| point.fix.tpv.time().utc() <= time);
+) -> Option<EntryPlacement> {
+    let fix_time = |fix: &AddressedFix<'_>| fix.placed.fix.tpv.time().utc();
+    let index = fixes.partition_point(|fix| fix_time(fix) <= time);
     let before = index.checked_sub(1).and_then(|i| fixes.get(i));
     let after = fixes.get(index);
 
     match (before, after) {
         (Some(before), Some(after)) => {
-            let gap_before = (time - before.fix.tpv.time().utc()).abs();
-            let gap_after = (after.fix.tpv.time().utc() - time).abs();
+            let gap_before = (time - fix_time(before)).abs();
+            let gap_after = (fix_time(after) - time).abs();
             if gap_before.min(gap_after) > window {
                 return None;
             }
-            let span = (after.fix.tpv.time() - before.fix.tpv.time())
+            let span = (fix_time(after) - fix_time(before))
                 .num_microseconds()
                 .unwrap_or(1);
-            let elapsed = (time - before.fix.tpv.time().utc())
-                .num_microseconds()
-                .unwrap_or(0);
+            let elapsed = (time - fix_time(before)).num_microseconds().unwrap_or(0);
             let fraction = if span == 0 {
                 0.0f64
             } else {
                 elapsed as f64 / span as f64
             };
-            Some(
-                GreatCircleArc {
-                    start: before.resolved_position(),
-                    end: after.resolved_position(),
+            let nearer = if gap_before <= gap_after {
+                before
+            } else {
+                after
+            };
+            Some(EntryPlacement {
+                position: GreatCircleArc {
+                    start: before.placed.resolved_position(),
+                    end: after.placed.resolved_position(),
                 }
                 .position_at_ratio(fraction),
-            )
+                fix: nearer.fix,
+            })
         }
         (Some(nearest), None) | (None, Some(nearest)) => {
-            if (time - nearest.fix.tpv.time().utc()).abs() > window {
+            if (time - fix_time(nearest)).abs() > window {
                 return None;
             }
-            Some(nearest.resolved_position())
+            Some(EntryPlacement {
+                position: nearest.placed.resolved_position(),
+                fix: nearest.fix,
+            })
         }
         (None, None) => None,
     }
 }
 
-/// The position of every entry of `entries` against `fixes`, in entry order,
-/// `None` for an entry no fix lies within `window` of.
+/// Where every entry of `entries` sits on `fixes`, in entry order, `None` for
+/// an entry no fix lies within `window` of.
 ///
 /// `fixes` are those of the recording the log is anchored to alone: a log is
 /// never associated against the fixes of several recordings at once.
 pub fn associate_entries(
     entries: &[LogEntry],
-    fixes: &[PlacedPoint<'_>],
+    fixes: &[AddressedFix<'_>],
     window: Duration,
-) -> Vec<Option<(Latitude, Longitude)>> {
+) -> Vec<Option<EntryPlacement>> {
     let position_of = |entry: &LogEntry| associate_position(entry.timestamp, fixes, window);
     match pool::log_worker_pool() {
         Some(pool) if entries.len() >= PARALLEL_ASSOCIATION_MIN_ENTRIES => {
@@ -85,7 +103,7 @@ pub fn associate_entries(
 mod tests {
     use chrono::TimeZone as _;
     use gt_test_utils::nav_points_from;
-    use gt_types::LoadedTrack;
+    use gt_types::{FileIdx, LoadedTrack, PointIdx, TrackIdx, TrackRef};
     use rstest::rstest;
 
     use super::*;
@@ -96,12 +114,21 @@ mod tests {
         gt_test_utils::loaded_track_with_points(nav_points_from(start(), count, 1))
     }
 
-    /// The track's fixes with where the builder places each of them.
-    fn placed_fixes(track: &LoadedTrack) -> Vec<PlacedPoint<'_>> {
+    /// The track's fixes with where the builder places each of them,
+    /// addressed as the only track of the only loaded recording.
+    fn placed_fixes(track: &LoadedTrack) -> Vec<AddressedFix<'_>> {
         track
             .placed_points()
             .expect("every fixture fix has a recorded position")
             .iter()
+            .enumerate()
+            .map(|(pi, placed)| AddressedFix {
+                fix: FixRef::new(
+                    TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+                    PointIdx::new(pi),
+                ),
+                placed,
+            })
             .collect()
     }
 
@@ -125,8 +152,9 @@ mod tests {
     fn a_time_between_two_fixes_lands_between_their_positions() {
         let track = track_of(5);
         let time = start() + Duration::milliseconds(500);
-        let (lat, lon) =
-            associate_position(time, &placed_fixes(&track), window()).expect("associates");
+        let (lat, lon) = associate_position(time, &placed_fixes(&track), window())
+            .expect("associates")
+            .position;
         assert!((lat.as_degrees() - 55.0005).abs() < POSITION_TOLERANCE_DEGREES);
         assert!((lon.as_degrees() - 12.0005).abs() < POSITION_TOLERANCE_DEGREES);
     }
@@ -150,8 +178,9 @@ mod tests {
     fn a_time_between_fixes_across_the_antimeridian_is_placed_between_them() {
         let track = track_across_the_antimeridian();
         let time = start() + Duration::milliseconds(500);
-        let (lat, lon) =
-            associate_position(time, &placed_fixes(&track), window()).expect("associates");
+        let (lat, lon) = associate_position(time, &placed_fixes(&track), window())
+            .expect("associates")
+            .position;
         let lon = lon.as_degrees();
         assert!(
             lon.abs() >= 179.9,
@@ -170,10 +199,29 @@ mod tests {
         #[case] track: LoadedTrack,
         #[case] (expected_lat, expected_lon): (Latitude, Longitude),
     ) {
-        let (lat, lon) =
-            associate_position(start(), &placed_fixes(&track), window()).expect("associates");
+        let (lat, lon) = associate_position(start(), &placed_fixes(&track), window())
+            .expect("associates")
+            .position;
         assert!((lat.as_degrees() - expected_lat.as_degrees()).abs() < POSITION_TOLERANCE_DEGREES);
         assert!((lon.as_degrees() - expected_lon.as_degrees()).abs() < POSITION_TOLERANCE_DEGREES);
+    }
+
+    /// The five fixes run from `start()` to `start() + 4 s`, and the entry
+    /// exactly between two of them takes the earlier one.
+    #[rstest]
+    #[case::nearer_the_fix_before(Duration::milliseconds(400), 0)]
+    #[case::nearer_the_fix_after(Duration::milliseconds(600), 1)]
+    #[case::exactly_between_two_fixes(Duration::milliseconds(500), 0)]
+    #[case::before_the_first_fix(Duration::seconds(-30), 0)]
+    #[case::after_the_last_fix(Duration::seconds(30), 4)]
+    fn an_entry_is_attributed_to_the_fix_nearest_in_time(
+        #[case] offset: Duration,
+        #[case] expected_point: usize,
+    ) {
+        let track = track_of(5);
+        let placement = associate_position(start() + offset, &placed_fixes(&track), window())
+            .expect("associates");
+        assert_eq!(placement.fix.point, PointIdx::new(expected_point));
     }
 
     /// The five fixes run from `start()` to `start() + 4 s`.

@@ -6,8 +6,8 @@ use chrono::Duration;
 use gt_fmt::MIDDLE_DOT;
 use gt_history_types::{LogContentHash, StoredLogFilter};
 use gt_loaded_files::{LoadedFileId, LoadedFilesView, RecordingNames};
-use gt_logfile::ParsedLog;
-use gt_types::{Latitude, Longitude, TimeRange, mercator};
+use gt_logfile::{EntryPlacement, ParsedLog};
+use gt_types::{TimeRange, mercator};
 use gt_ui_types::{
     LoadedLogId, LogMatch, LogMatchColor, LogMatchLayer, LogMatchSource, LogMatches,
 };
@@ -52,7 +52,7 @@ struct Association {
 
     /// One slot per entry of the log, in entry order. Empty while the anchor
     /// resolves to no loaded recording.
-    entry_positions: Vec<Option<(Latitude, Longitude)>>,
+    entry_placements: Vec<Option<EntryPlacement>>,
 
     associated_entry_count: usize,
 
@@ -76,7 +76,7 @@ impl LoadedLog {
             anchor: LogAnchor::None,
             association: Association {
                 window: association_window,
-                entry_positions: Vec::new(),
+                entry_placements: Vec::new(),
                 associated_entry_count: 0,
                 recording: None,
             },
@@ -279,11 +279,12 @@ impl LoadedLog {
         self.association.window
     }
 
-    /// The position of the entry at `entry_index` of [`ParsedLog::entries`],
-    /// `None` for an entry with no fix inside the association window.
-    pub fn entry_position(&self, entry_index: usize) -> Option<(Latitude, Longitude)> {
+    /// Where the entry at `entry_index` of [`ParsedLog::entries`] sits on the
+    /// recording this log is anchored to, `None` for an entry with no fix
+    /// inside the association window.
+    pub fn entry_placement(&self, entry_index: usize) -> Option<EntryPlacement> {
         self.association
-            .entry_positions
+            .entry_placements
             .get(entry_index)
             .copied()
             .flatten()
@@ -344,7 +345,7 @@ impl LoadedLog {
             return;
         }
         self.anchor = LogAnchor::None;
-        self.clear_entry_positions();
+        self.clear_entry_placements();
     }
 
     /// Sets how far an entry may be from a fix to take its position, and
@@ -366,20 +367,20 @@ impl LoadedLog {
             LogAnchor::Recording { key, .. } => key.loaded_recording(recordings),
         };
         let Some(recording) = anchored else {
-            self.clear_entry_positions();
+            self.clear_entry_placements();
             return;
         };
         self.association.recording = Some(recording.id());
-        let entry_positions = gt_logfile::associate_entries(
+        let entry_placements = gt_logfile::associate_entries(
             self.parsed.entries(),
-            &recording.placed_points(),
+            &recording.addressed_fixes(),
             self.association.window,
         );
-        self.association.associated_entry_count = entry_positions
+        self.association.associated_entry_count = entry_placements
             .iter()
-            .filter(|position| position.is_some())
+            .filter(|placement| placement.is_some())
             .count();
-        self.association.entry_positions = entry_positions;
+        self.association.entry_placements = entry_placements;
     }
 
     /// The loaded recordings this log could associate against, best first.
@@ -393,25 +394,27 @@ impl LoadedLog {
         }
     }
 
-    /// Where on the map the entries `matches` selected are, in file order.
-    /// Each position comes from the recording this log is associated against,
-    /// so an entry with no fix inside the association window contributes
-    /// nothing.
+    /// Where on the map the entries `matches` selected are, in file order,
+    /// each under the fix it is attributed to. Every position comes from the
+    /// recording this log is associated against: an entry with no fix inside
+    /// the association window contributes nothing.
     fn matched_points(&self, matches: &EntryMatches) -> Vec<LogMatch> {
         matches
             .matched_entry_indices()
             .filter_map(|entry_index| {
-                let (latitude, longitude) = self.entry_position(entry_index)?;
+                let placement = self.entry_placement(entry_index)?;
+                let (latitude, longitude) = placement.position;
                 Some(LogMatch {
                     merc: mercator::normalize(latitude, longitude),
                     entry_index,
+                    fix: placement.fix,
                 })
             })
             .collect()
     }
 
-    fn clear_entry_positions(&mut self) {
-        self.association.entry_positions = Vec::new();
+    fn clear_entry_placements(&mut self) {
+        self.association.entry_placements = Vec::new();
         self.association.associated_entry_count = 0;
         self.association.recording = None;
     }
@@ -762,13 +765,14 @@ fn name_from_first_anchored_entry(parsed: &ParsedLog) -> String {
 mod tests {
     use gt_history_types::{DatabaseRef, LogAttachmentId, StoredLogFilterMode};
     use gt_loaded_files::{FileHistory, LoadedFiles};
+    use gt_types::{FileIdx, FixRef, PointIdx, TrackIdx, TrackRef};
 
     use crate::{
         LayerColorSlot,
         test_fixtures::{
             anchor_to, association_window, id_of, key_of, loaded, log_of, log_of_service,
-            map_matches, parsed_log, parsed_log_of_service, recording_at, recording_named, start,
-            stored_in_history, stored_recording_ref,
+            map_matches, parsed_log, parsed_log_of_service, recording_at, recording_in_two_tracks,
+            recording_named, start, stored_in_history, stored_recording_ref,
         },
     };
 
@@ -825,8 +829,8 @@ mod tests {
 
         assert_eq!(log.associated_entry_count(), 10);
         let latitudes: Vec<f64> = (0..10)
-            .filter_map(|entry| log.entry_position(entry))
-            .map(|(lat, _)| lat.as_degrees())
+            .filter_map(|entry| log.entry_placement(entry))
+            .map(|placement| placement.position.0.as_degrees())
             .collect();
         assert!(
             latitudes.iter().all(|lat| *lat >= 60.0),
@@ -867,7 +871,7 @@ mod tests {
         assert_eq!(log.anchor_key(), Some(&anchored));
         assert_eq!(log.associated_recording(), None);
         assert_eq!(log.associated_entry_count(), 0);
-        assert_eq!(log.entry_position(0), None);
+        assert_eq!(log.entry_placement(0), None);
     }
 
     /// A recording in history is the same recording every time it is opened,
@@ -1030,6 +1034,55 @@ mod tests {
             })
         );
         assert_eq!(matches.match_count(), 1, "\"entry 1\" matches one line");
+    }
+
+    #[test]
+    fn a_map_match_names_the_fix_its_entry_was_placed_on() {
+        /// Fixes of the recording's first track, the rest being its second.
+        const FIRST_TRACK_FIXES: usize = 4;
+
+        /// Entries of the log, one per fix of the recording.
+        const ENTRIES: usize = 10;
+
+        let files = loaded(vec![recording_in_two_tracks(
+            FIRST_TRACK_FIXES,
+            ENTRIES - FIRST_TRACK_FIXES,
+        )]);
+        let mut logs = LoadedLogs::default();
+        let mut log = log_of(ENTRIES);
+        anchor_to(&mut log, &files, 0);
+        let id = logs.push(log).id();
+        add_layer_chip(&mut logs, id, "entry");
+        wait_for_scans(&mut logs);
+
+        let fixes: Vec<FixRef> = map_matches(&mut logs, &files)
+            .layers()
+            .first()
+            .map(|layer| {
+                layer
+                    .matches
+                    .iter()
+                    .map(|log_match| log_match.fix)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        assert_eq!(
+            fixes,
+            (0..ENTRIES)
+                .map(|entry| {
+                    let (ti, pi) = if entry < FIRST_TRACK_FIXES {
+                        (0, entry)
+                    } else {
+                        (1, entry - FIRST_TRACK_FIXES)
+                    };
+                    FixRef::new(
+                        TrackRef::new(FileIdx::new(0), TrackIdx::new(ti)),
+                        PointIdx::new(pi),
+                    )
+                })
+                .collect::<Vec<FixRef>>()
+        );
     }
 
     /// A log anchored to no recording has nothing to put on the map, however

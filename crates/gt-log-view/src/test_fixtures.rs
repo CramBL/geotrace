@@ -104,17 +104,41 @@ pub(crate) fn recording_from(offset: Duration, count: usize) -> LoadedFile {
     ))
 }
 
+/// A recording of `first_track + second_track` fixes, one per second from
+/// [`start`], cut into two tracks at `first_track`.
+pub(crate) fn recording_in_two_tracks(first_track: usize, second_track: usize) -> LoadedFile {
+    let points = nav_points_walking_from(
+        start(),
+        first_track + second_track,
+        1,
+        Latitude::new(55.0),
+        Longitude::new(12.0),
+    );
+    let (first, second) = points.split_at(first_track.min(points.len()));
+    recording_of_tracks(vec![first.to_vec(), second.to_vec()])
+}
+
 fn recording_of(points: Vec<NavPoint>) -> LoadedFile {
+    recording_of_tracks(vec![points])
+}
+
+fn recording_of_tracks(tracks: Vec<Vec<NavPoint>>) -> LoadedFile {
     let time_range = TimeRange::new(
-        points.first().map_or_else(start, |p| p.tpv.time().utc()),
-        points.last().map_or_else(start, |p| p.tpv.time().utc()),
+        tracks
+            .first()
+            .and_then(|points| points.first())
+            .map_or_else(start, |p| p.tpv.time().utc()),
+        tracks
+            .last()
+            .and_then(|points| points.last())
+            .map_or_else(start, |p| p.tpv.time().utc()),
     );
     LoadedFile {
         metadata: FileMetadata {
             time_range,
             ..empty_file_metadata()
         },
-        tracks: vec![loaded_track_with_points(points)],
+        tracks: tracks.into_iter().map(loaded_track_with_points).collect(),
         event_marker_styles: FxHashMap::default(),
         orphaned_event_markers: Vec::new(),
         source: FileSource::GtdPath(std::path::PathBuf::new()),

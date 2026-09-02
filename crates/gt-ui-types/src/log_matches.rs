@@ -8,8 +8,9 @@
 
 use std::sync::Arc;
 
+use gt_filter::GlobalFilter;
 use gt_logfile::ParsedLog;
-use gt_types::MercPoint;
+use gt_types::{FixRef, LoadedFile, MercPoint};
 
 /// Session-unique identity of a loaded log, handed out by `LoadedLogs`.
 ///
@@ -47,6 +48,10 @@ pub struct LogMatch {
 
     /// Index into [`ParsedLog::entries`] of the layer's log.
     pub entry_index: usize,
+
+    /// The fix the entry took its position from. The global filter keeps this
+    /// match according to that fix's track.
+    pub fix: FixRef,
 }
 
 /// The log a layer's matches were read out of.
@@ -90,6 +95,34 @@ pub struct LogMatchLayer {
     pub matches: Vec<LogMatch>,
 }
 
+impl LogMatchLayer {
+    /// The matches of this layer the global filter keeps, in file order: a
+    /// match draws where its entry's timestamp is inside the filter's time
+    /// window and its fix's track passes the filter.
+    ///
+    /// A match whose entry index or fix reference resolves to nothing is kept:
+    /// an entry the log no longer holds, or a fix on a track that is no longer
+    /// loaded, still draws.
+    pub fn matches_passing_filter<'a>(
+        &'a self,
+        files: &'a [LoadedFile],
+        filter: &'a GlobalFilter,
+    ) -> impl Iterator<Item = &'a LogMatch> {
+        self.matches.iter().filter(move |log_match| {
+            self.log
+                .parsed
+                .entries()
+                .get(log_match.entry_index)
+                .is_none_or(|entry| gt_filter::point_passes_time_filter(entry.timestamp, filter))
+                && log_match
+                    .fix
+                    .track
+                    .resolve(files)
+                    .is_none_or(|track| gt_filter::track_passes_filter(track, filter))
+        })
+    }
+}
+
 /// Every loaded log's map contribution, in draw order: later layers draw over
 /// earlier ones.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -110,10 +143,18 @@ impl LogMatches {
         self.layers.iter().all(|layer| layer.matches.is_empty())
     }
 
-    /// Matches across every layer, which the display toggle counts. An entry
-    /// matched by two filters counts once per filter: each draws its own
-    /// hexagon.
+    /// Matches across every layer. An entry matched by two filters counts once
+    /// per filter: each draws its own hexagon.
     pub fn match_count(&self) -> usize {
         self.layers.iter().map(|layer| layer.matches.len()).sum()
+    }
+
+    /// [`LogMatches::match_count`] over the matches the global filter keeps,
+    /// which the display toggle states beside "Log matches".
+    pub fn count_passing_filter(&self, files: &[LoadedFile], filter: &GlobalFilter) -> usize {
+        self.layers
+            .iter()
+            .map(|layer| layer.matches_passing_filter(files, filter).count())
+            .sum()
     }
 }

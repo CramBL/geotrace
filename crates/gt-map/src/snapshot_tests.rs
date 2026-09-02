@@ -1232,18 +1232,30 @@ fn snapshot_log_source(entry_count: usize) -> gt_ui_types::LogMatchSource {
 
 /// One filter's layer: its matches take the entries of `source` in order, so
 /// every hexagon stands for a line the tooltip can read back.
+///
+/// Every match is addressed to the first fix of the only track: these cases
+/// place their hexagons by position, and no filter is active to read the
+/// address.
 fn log_layer(
     color: gt_ui_types::LogMatchColor,
     source: &gt_ui_types::LogMatchSource,
     positions: Vec<MercPoint>,
 ) -> gt_ui_types::LogMatchLayer {
+    let fix = gt_types::FixRef::new(
+        gt_types::TrackRef::new(gt_types::FileIdx::new(0), gt_types::TrackIdx::new(0)),
+        gt_types::PointIdx::new(0),
+    );
     gt_ui_types::LogMatchLayer {
         color,
         log: source.clone(),
         matches: positions
             .into_iter()
             .enumerate()
-            .map(|(entry_index, merc)| gt_ui_types::LogMatch { merc, entry_index })
+            .map(|(entry_index, merc)| gt_ui_types::LogMatch {
+                merc,
+                entry_index,
+                fix,
+            })
             .collect(),
     }
 }

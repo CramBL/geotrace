@@ -16,14 +16,20 @@
 //! lists its lines in a tooltip and takes the highlight ring, and the log
 //! viewer marks the rows of those same lines. Clicking it opens the log viewer
 //! on that log, at the first of those lines.
+//!
+//! The global filter applies here as it does to the recorded track. Nothing
+//! draws for a match whose entry falls outside the time window, or whose fix
+//! sits on a track the filter rejects: such a match is left out of every
+//! cluster's count and takes no pointer.
 
 use std::cell::RefCell;
 use std::num::NonZeroUsize;
 
 use egui::{Align2, Color32, FontId, Response, RichText, Ui, Vec2};
+use gt_filter::GlobalFilter;
 use gt_fmt::ELLIPSIS;
-use gt_types::MercPoint;
-use gt_ui_types::{LogMatchColor, LogMatchGlyph, LogMatchSource, LogMatches};
+use gt_types::{LoadedFile, MercPoint};
+use gt_ui_types::{LogMatch, LogMatchColor, LogMatchGlyph, LogMatchSource, LogMatches};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::collision_grid;
@@ -85,6 +91,11 @@ const HOVER_TIME_FORMAT: &str = "%H:%M:%S";
 #[derive(bon::Builder)]
 pub(crate) struct LogMatchRenderer<'a> {
     matches: &'a LogMatches,
+
+    /// The loaded files, resolving a match's fix to the track it was recorded
+    /// on.
+    files: &'a [LoadedFile],
+    filter: &'a GlobalFilter,
     icon_meshes: Option<&'a IconMeshLibrary>,
     dark_mode: bool,
 
@@ -130,13 +141,17 @@ impl Plugin for LogMatchRenderer<'_> {
 
         let mut batch = IconMeshBatch::gpu_when_available(ui, self.icon_meshes);
         let mut counted_clusters: Vec<(egui::Pos2, usize)> = Vec::new();
+        // Reused across layers: one allocation per frame.
+        let mut drawn_matches: Vec<&LogMatch> = Vec::new();
         let mut hovered: Option<HoveredHexagon<'_>> = None;
         for layer in self.matches.layers() {
             let fill = gt_ui_theme::log_match_color(layer.color, self.dark_mode);
             let shared = matches!(layer.color, LogMatchColor::LayerSlot { shared: true, .. });
             counted_clusters.clear();
+            drawn_matches.clear();
+            drawn_matches.extend(layer.matches_passing_filter(self.files, self.filter));
             for cluster in collision_grid::cluster_positions(
-                layer.matches.iter().map(|entry| entry.merc),
+                drawn_matches.iter().map(|entry| entry.merc),
                 cluster_spacing_merc,
                 viewport,
             ) {
@@ -162,7 +177,7 @@ impl Plugin for LogMatchRenderer<'_> {
                             entry_indices: cluster
                                 .members
                                 .iter()
-                                .filter_map(|&member| Some(layer.matches.get(member)?.entry_index))
+                                .filter_map(|&member| Some(drawn_matches.get(member)?.entry_index))
                                 .collect(),
                         },
                     });
