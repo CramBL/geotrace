@@ -396,27 +396,8 @@ fn drag_drop_gtd_bytes_loads_file() {
 /// here via a global-filter edit - and recover when it changes back.
 #[test]
 fn query_results_go_stale_when_the_filter_changes() {
-    let gtd_bytes = minimal_gtd_bytes();
-    let mut harness = Harness::builder()
-        .with_wait_for_pending_images(false)
-        .build_eframe(transient_app);
-    drop_file_and_wait_for_load(
-        &mut harness,
-        TestDroppedFile::bytes(gtd_bytes.as_slice(), "test.gtd"),
-    );
-
-    {
-        let app = harness.state_mut();
-        app.query_window.open = true;
-        app.query_window
-            .set_text("points | where velocity > 1 km/h".to_owned());
-    }
-    harness.run_steps(3);
-    harness
-        .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
-        .click();
-    step_until_query_result(&mut harness);
-    harness.run_steps(3);
+    let mut harness = app_with_query_window_open();
+    run_query(&mut harness, "points | where velocity > 1 km/h");
     let stale_after_run = harness
         .state()
         .query_window
@@ -457,6 +438,44 @@ fn query_results_go_stale_when_the_filter_changes() {
         .expect("results kept")
         .stale;
     assert!(!stale_after_revert, "reverting the filter un-grays results");
+}
+
+/// The results gray out on a filter edit made with the query window closed,
+/// since the map draws the last run's matches whether or not it is open.
+#[test]
+fn query_results_go_stale_with_the_query_window_closed() {
+    let mut harness = app_with_query_window_open();
+    run_query(&mut harness, "points | where velocity > 1 km/h");
+    harness.state_mut().query_window.open = false;
+    harness.run_steps(3);
+    let stale_after_closing = harness
+        .state()
+        .query_window
+        .matches()
+        .expect("closing the window keeps the results")
+        .stale;
+    assert!(!stale_after_closing, "closing alone leaves results current");
+
+    // A minimum-distance filter changes the evaluated track set.
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .filter
+        .min_distance_km = Some(uom::si::f64::Length::new::<uom::si::length::kilometer>(
+        999.0,
+    ));
+    harness.run_steps(3);
+    let matches_stale = harness
+        .state()
+        .query_window
+        .matches()
+        .expect("results kept while stale")
+        .stale;
+    assert!(
+        matches_stale,
+        "results gray out with the query window closed"
+    );
 }
 
 /// Gives every loaded track interference query values: installs a scheduler
