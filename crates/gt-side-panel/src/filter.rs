@@ -24,6 +24,38 @@ pub struct FilterPanelState {
     pub secondary_zoom: Option<TimeRange>,
 }
 
+impl FilterPanelState {
+    /// The span the active range bar lays out, [`None`] when the panel shows
+    /// only the bar over the whole loaded time range.
+    ///
+    /// The panel shows it where `active_range` and
+    /// [`COARSE_BAR_MINIMUM_WINDOW_SPAN`] each fit
+    /// [`MINIMUM_WINDOW_SPAN_RATIO`] times inside `full_range`. The second
+    /// condition holds over a loaded time range of more than five days, where
+    /// a window the coarse bar writes still leaves the active range narrow
+    /// enough to keep this bar on screen.
+    fn active_range_bar_span(
+        &mut self,
+        full_range: TimeRange,
+        active_range: Option<TimeRange>,
+    ) -> Option<TimeRange> {
+        let fits_inside_the_loaded_range =
+            |span: Duration| span < full_range.duration() / MINIMUM_WINDOW_SPAN_RATIO;
+        let Some(active_range) = active_range.filter(|active_range| {
+            fits_inside_the_loaded_range(active_range.duration())
+                && fits_inside_the_loaded_range(COARSE_BAR_MINIMUM_WINDOW_SPAN)
+        }) else {
+            self.secondary_zoom = None;
+            return None;
+        };
+        Some(
+            *self
+                .secondary_zoom
+                .get_or_insert_with(|| expand_range(active_range, full_range)),
+        )
+    }
+}
+
 /// Render the global-filter controls. Returns `true` when the user clicked
 /// "Reset filters", so the caller can also clear dependent state (the query
 /// filter).
@@ -42,41 +74,46 @@ pub fn render_filter_panel(
         let sel_end = filter.time_end.unwrap_or(full_range.end);
         let dur_str = gt_fmt::format_human_terse_duration(sel_end - sel_start);
         ui.label(format!("Time range {EM_DASH} {dur_str}"));
+
+        let active_range_bar_span = state.active_range_bar_span(full_range, filtered_range);
+        let full_range_bar = BarSpan(full_range);
+        let full_range_bar_minimum =
+            full_range_bar.minimum_window_span(match active_range_bar_span {
+                Some(_) => COARSE_BAR_MINIMUM_WINDOW_SPAN,
+                None => FINE_BAR_MINIMUM_WINDOW_SPAN,
+            });
+        let coarse_hover_text = active_range_bar_span.is_some().then(|| {
+            format!(
+                "Sets a window of {} or more. The active range bar below sets a shorter one.",
+                gt_fmt::format_human_terse_duration(COARSE_BAR_MINIMUM_WINDOW_SPAN)
+            )
+        });
         let primary_changed = time_range_bar(
             ui,
-            BarSpan(full_range),
+            full_range_bar,
             LoadedTimeRange(full_range),
+            full_range_bar_minimum,
+            coarse_hover_text,
             &mut filter.time_start,
             &mut filter.time_end,
         );
-        if primary_changed {
-            state.secondary_zoom = None;
+
+        if let Some(zoom_range) = active_range_bar_span {
+            let zoom_dur = gt_fmt::format_human_terse_duration(zoom_range.duration());
+            ui.label(format!("Active range {EM_DASH} {zoom_dur}"));
+            let active_range_bar = BarSpan(zoom_range);
+            time_range_bar(
+                ui,
+                active_range_bar,
+                LoadedTimeRange(full_range),
+                active_range_bar.minimum_window_span(FINE_BAR_MINIMUM_WINDOW_SPAN),
+                None,
+                &mut filter.time_start,
+                &mut filter.time_end,
+            );
         }
 
-        // Secondary (zoomed) time range bar - shown when the active data range
-        // is much narrower than the full range (e.g. one 30-minute track among
-        // several days). Uses a stable stored viewport so that dragging its
-        // handles doesn't shift the viewport under the cursor.
-        if let Some(filtered_range) = filtered_range {
-            let full_seconds = full_range.duration().as_seconds_f64();
-            let filtered_seconds = filtered_range.duration().as_seconds_f64();
-            if full_seconds > 0.0 && filtered_seconds * 5.0 < full_seconds {
-                let zoom_range = *state
-                    .secondary_zoom
-                    .get_or_insert_with(|| expand_range(filtered_range, full_range));
-                let zoom_dur = gt_fmt::format_human_terse_duration(zoom_range.duration());
-                ui.label(format!("Active range {EM_DASH} {zoom_dur}"));
-                time_range_bar(
-                    ui,
-                    BarSpan(zoom_range),
-                    LoadedTimeRange(full_range),
-                    &mut filter.time_start,
-                    &mut filter.time_end,
-                );
-            } else {
-                state.secondary_zoom = None;
-            }
-        } else {
+        if primary_changed {
             state.secondary_zoom = None;
         }
     }
@@ -218,35 +255,76 @@ pub const TRACK_INSET_PX: f32 = 8.0;
 /// `chrono` format of the two window bounds stated under a bar.
 const BOUND_LABEL_FORMAT: &str = "%m/%d %H:%M";
 
+/// The span a drag on the fine bar leaves between the window's two bounds. A
+/// window this short still covers a fix: one second is the fix interval of a
+/// receiver logging at 1 Hz.
+pub const FINE_BAR_MINIMUM_WINDOW_SPAN: Duration = Duration::seconds(1);
+
+/// The span a drag on the coarse bar leaves between the window's two bounds.
+/// The bar over the whole loaded time range takes this minimum only while the
+/// active range bar is shown under it, and frames whole days for it.
+pub const COARSE_BAR_MINIMUM_WINDOW_SPAN: Duration = Duration::hours(24);
+
+/// How many times a minimum window span fits inside the span it applies to. A
+/// bar caps its own minimum at this fraction of the span it lays out, and the
+/// panel shows the active range bar only where the active range and
+/// [`COARSE_BAR_MINIMUM_WINDOW_SPAN`] each fit this many times inside the
+/// loaded time range.
+pub const MINIMUM_WINDOW_SPAN_RATIO: i32 = 5;
+
 /// The span a bar lays its track out over: the whole loaded time range for the
 /// primary bar, the zoom viewport for the secondary one.
 #[derive(Debug, Clone, Copy)]
 struct BarSpan(TimeRange);
+
+impl BarSpan {
+    /// `longest`, or one [`MINIMUM_WINDOW_SPAN_RATIO`]th of the span the bar
+    /// lays out when that is shorter, which leaves every bar a window it can
+    /// narrow.
+    fn minimum_window_span(self, longest: Duration) -> MinimumWindowSpan {
+        MinimumWindowSpan(longest.min(self.0.duration() / MINIMUM_WINDOW_SPAN_RATIO))
+    }
+}
+
+/// The span a drag on one bar leaves between the window's two bounds.
+#[derive(Debug, Clone, Copy)]
+struct MinimumWindowSpan(Duration);
 
 /// The span the window covers while a bound of it is absent, which is the
 /// whole loaded time range whichever bar is drawn.
 #[derive(Debug, Clone, Copy)]
 struct LoadedTimeRange(TimeRange);
 
-/// The window bound a press on a bar grabbed. The drag writes that bound until
-/// the pointer is released, including where the pointer passes the other
-/// handle.
+/// Which window bound a press on a bar grabbed.
 #[derive(Debug, Clone, Copy)]
 enum GrabbedBound {
     Start,
     End,
 }
 
+/// What a press on a bar latched: the bound it grabbed and the minimum window
+/// span the bar held at that moment. The drag writes that bound with that
+/// minimum until the pointer is released, including where the pointer passes
+/// the other handle and where the panel gains or loses its second bar.
+#[derive(Debug, Clone, Copy)]
+struct GrabbedHandle {
+    bound: GrabbedBound,
+    minimum_window_span: Duration,
+}
+
 /// A bar over `bar_span` with a handle for each bound of the window.
 ///
 /// A bound outside `bar_span` is drawn at the end of the track it lies beyond,
-/// and the label under the bar states the bound itself. A drag clears a bound
+/// and the label under the bar states the bound itself. A drag stops
+/// `minimum_span` short of the bound it did not grab. A drag clears a bound
 /// only at an end of `loaded_range`: on the secondary bar, whose span is
 /// narrower, a drag to the end of the track writes a bound at that instant.
 fn time_range_bar(
     ui: &mut Ui,
     BarSpan(bar_span): BarSpan,
     LoadedTimeRange(loaded_range): LoadedTimeRange,
+    MinimumWindowSpan(minimum_span): MinimumWindowSpan,
+    hover_text: Option<String>,
     selected_start: &mut Option<DateTime<Utc>>,
     selected_end: &mut Option<DateTime<Utc>>,
 ) -> bool {
@@ -296,33 +374,46 @@ fn time_range_bar(
     let mut changed = false;
     if let Some(pointer) = response.interact_pointer_pos() {
         let grabbed = ui.data_mut(|data| {
-            *data.get_temp_mut_or_insert_with(response.id, || {
-                if (pointer.x - start_x).abs() < (pointer.x - end_x).abs() {
+            *data.get_temp_mut_or_insert_with(response.id, || GrabbedHandle {
+                bound: if (pointer.x - start_x).abs() < (pointer.x - end_x).abs() {
                     GrabbedBound::Start
                 } else {
                     GrabbedBound::End
-                }
+                },
+                minimum_window_span: minimum_span,
             })
         });
-        match grabbed {
+        match grabbed.bound {
             GrabbedBound::Start => {
-                let start = to_dt(pointer.x).min(selected_end.unwrap_or(loaded_range.end));
+                let latest_start = selected_end
+                    .unwrap_or(loaded_range.end)
+                    .checked_sub_signed(grabbed.minimum_window_span)
+                    .unwrap_or(DateTime::<Utc>::MIN_UTC);
+                let start = to_dt(pointer.x).min(latest_start);
                 *selected_start = (start > loaded_range.start).then_some(start);
             }
             GrabbedBound::End => {
-                let end = to_dt(pointer.x).max(selected_start.unwrap_or(loaded_range.start));
+                let earliest_end = selected_start
+                    .unwrap_or(loaded_range.start)
+                    .checked_add_signed(grabbed.minimum_window_span)
+                    .unwrap_or(DateTime::<Utc>::MAX_UTC);
+                let end = to_dt(pointer.x).max(earliest_end);
                 *selected_end = (end < loaded_range.end).then_some(end);
             }
         }
         changed = true;
     } else {
-        ui.data_mut(|data| data.remove::<GrabbedBound>(response.id));
+        ui.data_mut(|data| data.remove::<GrabbedHandle>(response.id));
     }
 
     if response.double_clicked() {
         *selected_start = None;
         *selected_end = None;
         changed = true;
+    }
+
+    if let Some(hover_text) = hover_text {
+        response.on_hover_text(hover_text);
     }
 
     let start_label = selected_start
@@ -456,6 +547,15 @@ mod tests {
     #[test]
     fn a_range_under_a_second_has_a_scale() {
         assert!(TimeRangeBarScale::new(sub_second_range()).is_some());
+    }
+
+    /// Ten fixes at 10 Hz still select a window, at a fifth of the 900 ms the
+    /// bar lays out.
+    #[test]
+    fn a_minimum_window_span_shorter_than_a_fifth_of_the_bar_is_that_fifth() {
+        let MinimumWindowSpan(span) =
+            BarSpan(sub_second_range()).minimum_window_span(FINE_BAR_MINIMUM_WINDOW_SPAN);
+        assert_eq!(span, Duration::milliseconds(180));
     }
 
     #[test]
