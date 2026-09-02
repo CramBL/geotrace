@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 from qa import (
-    check_em_dash,
     check_floating_comments,
     check_narrative_comments,
     check_no_network,
@@ -14,7 +13,6 @@ from qa import (
 from qa._check import repo_root, run_check
 
 _CHECKS = [
-    check_em_dash.DEFINITION,
     check_floating_comments.DEFINITION,
     check_narrative_comments.DEFINITION,
     check_no_network.DEFINITION,

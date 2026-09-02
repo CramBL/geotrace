@@ -2,7 +2,7 @@
 
 Exemption syntax: // [qa-allow-<check>, reason = "explanation"]
 Multiple checks may share one comment:
-    // [qa-allow-check-em-dash, qa-allow-check-floating-comments, reason = "why"]
+    // [qa-allow-check-floating-comments, qa-allow-check-narrative-comments, reason = "why"]
 """
 
 import re

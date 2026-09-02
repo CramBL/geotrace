@@ -6,10 +6,6 @@ check-all:
     {{ _QA }} check-all
 
 [group("qa")]
-check-em-dash:
-    {{ _QA }} check-em-dash
-
-[group("qa")]
 check-floating-comments:
     {{ _QA }} check-floating-comments
 

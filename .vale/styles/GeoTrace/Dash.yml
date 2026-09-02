@@ -3,9 +3,8 @@
 # ("35–40 dB-Hz", "E01–E36", "0.0–1.0"). Box-drawing characters are
 # decoration, never a section header.
 #
-# The check-em-dash QA check bans the same box-drawing characters over every
-# tracked source file on every run. This rule is gated on added lines only,
-# until `just qa::vale` runs over the whole repository.
+# This rule is gated on added lines only, until `just qa::vale` runs over the
+# whole repository.
 extends: existence
 message: "Dash '%s': use a spaced hyphen in prose, an en dash only in a numeric range."
 level: error
