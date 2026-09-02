@@ -2,6 +2,7 @@
 
 use egui::{DragValue, Grid};
 use egui_phosphor::regular::CLOCK as ICON_CLOCK;
+use egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE as ICON_CLOCK_COUNTER_CLOCKWISE;
 use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use egui_phosphor::regular::WAVE_SINE as ICON_WAVE_SINE;
@@ -16,6 +17,7 @@ const SLIP_WINDOW_LABEL: &str = "Slip window";
 /// this label too, and reads the threshold from this page.
 pub(super) const CLOCK_OFFSET_EXCURSION_LABEL: &str = "Clock offset excursion";
 const MARK_MASKED_SATELLITES_LABEL: &str = "Mark masked-out used satellites";
+const MARK_BACKWARD_TIME_STEPS_LABEL: &str = "Mark backward time steps";
 
 pub(super) const SEARCHABLE_LABELS: &[&str] = &[
     ELEVATION_MASK_LABEL,
@@ -23,6 +25,7 @@ pub(super) const SEARCHABLE_LABELS: &[&str] = &[
     SLIP_WINDOW_LABEL,
     CLOCK_OFFSET_EXCURSION_LABEL,
     MARK_MASKED_SATELLITES_LABEL,
+    MARK_BACKWARD_TIME_STEPS_LABEL,
 ];
 
 impl App {
@@ -145,6 +148,26 @@ impl App {
                 let mut mark = self.shared.borrow().plot_state.mark_masked_fix;
                 if ui.checkbox(&mut mark, "").on_hover_text(mark_help).changed() {
                     self.shared.borrow_mut().plot_state.mark_masked_fix = mark;
+                }
+                ui.end_row();
+
+                let backward_step_help =
+                    "Place a mark at the bottom of the plot wherever a sensor channel's sample \
+                     timestamps step backwards - a clock problem in the recorder, not a damaged \
+                     file. Hover a mark for the channels it covers, the two timestamps and how \
+                     far the clock stepped back. The samples stay in the order the file stored \
+                     them, and the marks show with the channel lines.";
+                ui.label(format!(
+                    "{ICON_CLOCK_COUNTER_CLOCKWISE} {MARK_BACKWARD_TIME_STEPS_LABEL}"
+                ))
+                .on_hover_text(backward_step_help);
+                let mut mark_steps = self.shared.borrow().plot_state.mark_backward_time_steps;
+                if ui
+                    .checkbox(&mut mark_steps, "")
+                    .on_hover_text(backward_step_help)
+                    .changed()
+                {
+                    self.shared.borrow_mut().plot_state.mark_backward_time_steps = mark_steps;
                 }
                 ui.end_row();
             });

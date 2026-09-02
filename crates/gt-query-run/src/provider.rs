@@ -348,14 +348,12 @@ enum ChannelSampleOrder {
 }
 
 impl ChannelSampleOrder {
-    /// Determine how `channel` is searched, warning when its timestamps step
-    /// backwards.
     fn of(channel: &Channel) -> Self {
-        if channel.times.is_sorted() {
+        if !channel.has_a_backward_time_step() {
             return Self::StoredOrderIsChronological;
         }
-        log::warn!(
-            "Channel {:?} has sample timestamps that step backwards - the recording clock stepped back while the channel was sampled",
+        log::debug!(
+            "Sorting the sample positions of channel {:?} by timestamp: its stored timestamps step backwards",
             channel.name
         );
         let mut samples: Vec<SampleAtTime> = channel

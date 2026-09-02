@@ -10,8 +10,8 @@
 
 use chrono::DateTime;
 use egui::epaint::{Shape, Stroke};
-use egui::{Color32, Pos2, Ui, Vec2};
-use egui_plot::{PlotBounds, PlotGeometry, PlotItem, PlotItemBase, PlotPoint, PlotTransform};
+use egui::{Color32, Pos2, Vec2};
+use egui_plot::{PlotPoint, PlotTransform};
 use gt_analysis::clock_offset::{ClockOffsetExcursion, ExcursionSample};
 use gt_types::MetricKind;
 
@@ -19,21 +19,14 @@ use super::chips::MetricVisibility;
 use super::lines::{
     ANOMALY_HOVER_RADIUS_PX, ANOMALY_MARKER_RADIUS, NearestHoverLabel, PlotHoverLabel, visible_by_x,
 };
+use super::overlay::{EDGE_INSET, OverlayItem, OverlayPainter, TAIL_LENGTH};
 use crate::series::TrackSeries;
-
-/// How far inside the plot's edge an off-scale marker sits, as a fraction of
-/// the visible y range.  Keeps the whole glyph on screen.
-const EDGE_INSET: f64 = 0.03;
 
 /// Half-width of a marker glyph, in points.
 const MARKER_HALF_WIDTH: f32 = ANOMALY_MARKER_RADIUS;
 
 /// Width of the tail drawn behind an off-scale marker.
 const TAIL_WIDTH: f32 = 1.0;
-
-/// Length of that tail, in points.  Short on purpose: a full-height line would
-/// read as a cursor, and the plot already has two of those.
-const TAIL_LENGTH: f32 = 22.0;
 
 /// Where an excursion sample is drawn, once the current view is taken into
 /// account.
@@ -104,23 +97,19 @@ impl Placement {
     }
 }
 
-/// The excursion indicators of one track, as a plot item that contributes
-/// nothing to the plot's auto-bounds.
-///
-/// An off-scale marker is positioned from the edge of the current view, so
-/// letting it feed the bounds pushes that edge a little further out every
-/// frame and the view creeps outward for as long as the plot is open.
-/// `bounds()` returns [`PlotBounds::NOTHING`], as egui_plot's own `Span` does,
-/// which breaks the loop at the source.
+/// The excursion indicators of one track.
 struct OffScaleMarkers {
-    base: PlotItemBase,
     /// Placed markers, in ascending x.
     markers: Vec<(Placement, PlotPoint)>,
     color: Color32,
 }
 
-impl PlotItem for OffScaleMarkers {
-    fn shapes(&self, _ui: &Ui, transform: &PlotTransform, shapes: &mut Vec<Shape>) {
+impl OverlayPainter for OffScaleMarkers {
+    fn legend_color(&self) -> Color32 {
+        self.color
+    }
+
+    fn paint(&self, transform: &PlotTransform, shapes: &mut Vec<Shape>) {
         for &(placement, at) in &self.markers {
             let center = transform.position_from_point(&at);
             if let Some(tail) = placement.tail() {
@@ -135,30 +124,6 @@ impl PlotItem for OffScaleMarkers {
                 Stroke::NONE,
             ));
         }
-    }
-
-    fn initialize(&mut self, _x_range: std::ops::RangeInclusive<f64>) {}
-
-    fn color(&self) -> Color32 {
-        self.color
-    }
-
-    /// No geometry: hovering is handled by [`ClockExcursionHover`], which
-    /// reports the sample's real offset rather than the edge it is drawn at.
-    fn geometry(&self) -> PlotGeometry<'_> {
-        PlotGeometry::None
-    }
-
-    fn bounds(&self) -> PlotBounds {
-        PlotBounds::NOTHING
-    }
-
-    fn base(&self) -> &PlotItemBase {
-        &self.base
-    }
-
-    fn base_mut(&mut self) -> &mut PlotItemBase {
-        &mut self.base
     }
 }
 
@@ -222,11 +187,10 @@ pub(super) fn add_clock_excursions(
         return;
     }
 
-    plot_ui.add(OffScaleMarkers {
-        base: PlotItemBase::new("Clock offset excursion".to_owned()),
-        markers,
-        color,
-    });
+    plot_ui.add(OverlayItem::new(
+        "Clock offset excursion",
+        OffScaleMarkers { markers, color },
+    ));
 
     let Some(ptr) = pointer else {
         return;
@@ -317,20 +281,6 @@ mod tests {
             }],
             baseline_ms: -234,
         }
-    }
-
-    /// The overlay must stay out of the plot's auto-bounds.  An off-scale
-    /// marker is placed from the edge of the current view, so contributing that
-    /// position back to the bounds pushes the edge further out every frame and
-    /// the view creeps outward for as long as the plot is open.
-    #[test]
-    fn the_markers_contribute_no_bounds() {
-        let item = OffScaleMarkers {
-            base: PlotItemBase::new("Clock offset excursion".to_owned()),
-            markers: vec![(Placement::OffScaleBelow, PlotPoint::new(T, -4_127_054.0))],
-            color: egui::Color32::WHITE,
-        };
-        assert_eq!(item.bounds(), PlotBounds::NOTHING);
     }
 
     #[rstest::rstest]

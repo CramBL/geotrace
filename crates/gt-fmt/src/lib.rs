@@ -1,4 +1,9 @@
-use std::{borrow::Cow, fmt::Write, num::NonZeroUsize, ops::Range};
+use std::{
+    borrow::Cow,
+    fmt::{self, Write},
+    num::NonZeroUsize,
+    ops::Range,
+};
 
 use chrono::{DateTime, Utc};
 use gt_types::LoadedTrack;
@@ -180,6 +185,109 @@ pub fn format_human_terse_duration(d: chrono::Duration) -> String {
     }
 
     out
+}
+
+const MICROS_PER_MILLISECOND: u64 = 1_000;
+
+const MICROS_PER_SECOND: u64 = 1_000 * MICROS_PER_MILLISECOND;
+
+const MICROS_PER_MINUTE: u64 = 60 * MICROS_PER_SECOND;
+
+/// A magnitude as whole units and thousandths of a unit, written `4`, `4.5` or
+/// `4.512`.
+struct UnitsAndThousandths {
+    units: u64,
+    thousandths: u64,
+}
+
+impl fmt::Display for UnitsAndThousandths {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.thousandths == 0 {
+            return write!(f, "{}", self.units);
+        }
+        let fraction = format!("{:03}", self.thousandths);
+        write!(f, "{}.{}", self.units, fraction.trim_end_matches('0'))
+    }
+}
+
+/// Format a duration as [`format_human_terse_duration`] does, with everything
+/// under a minute resolved to the microsecond: `"900µs"`, `"4ms"`, `"4.5ms"`,
+/// `"1.5s"`, `"1m30s"`.
+///
+/// Under a second the reading is exact. From a second to a minute the fraction
+/// stops at milliseconds. From a minute up the reading is
+/// [`format_human_terse_duration`]'s. A negative duration is led by
+/// [`MINUS_SIGN`].
+pub fn format_human_terse_duration_with_microseconds(d: chrono::Duration) -> String {
+    let Some(micros) = d.num_microseconds() else {
+        return format_human_terse_duration(d);
+    };
+    let sign = if micros < 0 { MINUS_SIGN } else { "" };
+    let magnitude = micros.unsigned_abs();
+    if magnitude == 0 {
+        "0s".to_owned()
+    } else if magnitude < MICROS_PER_MILLISECOND {
+        format!("{sign}{magnitude}µs")
+    } else if magnitude < MICROS_PER_SECOND {
+        format!(
+            "{sign}{}ms",
+            UnitsAndThousandths {
+                units: magnitude / MICROS_PER_MILLISECOND,
+                thousandths: magnitude % MICROS_PER_MILLISECOND,
+            }
+        )
+    } else if magnitude < MICROS_PER_MINUTE {
+        format!(
+            "{sign}{}s",
+            UnitsAndThousandths {
+                units: magnitude / MICROS_PER_SECOND,
+                thousandths: (magnitude % MICROS_PER_SECOND) / MICROS_PER_MILLISECOND,
+            }
+        )
+    } else {
+        format!("{sign}{}", format_human_terse_duration(d.abs()))
+    }
+}
+
+#[cfg(test)]
+mod terse_duration_with_microseconds_tests {
+    use chrono::TimeDelta;
+    use rstest::rstest;
+
+    use super::{MINUS_SIGN, format_human_terse_duration_with_microseconds};
+
+    #[rstest]
+    #[case::zero(TimeDelta::zero(), "0s")]
+    #[case::one_microsecond(TimeDelta::microseconds(1), "1µs")]
+    #[case::sub_millisecond(TimeDelta::microseconds(900), "900µs")]
+    #[case::whole_milliseconds(TimeDelta::milliseconds(4), "4ms")]
+    #[case::milliseconds_with_a_fraction(TimeDelta::microseconds(4_500), "4.5ms")]
+    #[case::milliseconds_to_the_microsecond(TimeDelta::microseconds(250_125), "250.125ms")]
+    #[case::just_under_a_second(TimeDelta::microseconds(999_999), "999.999ms")]
+    #[case::whole_seconds(TimeDelta::seconds(4), "4s")]
+    #[case::seconds_with_a_fraction(TimeDelta::milliseconds(1_500), "1.5s")]
+    #[case::seconds_cut_at_milliseconds(TimeDelta::microseconds(1_500_400), "1.5s")]
+    #[case::just_under_a_minute(TimeDelta::microseconds(59_999_999), "59.999s")]
+    #[case::a_minute(TimeDelta::seconds(60), "1m")]
+    #[case::past_a_minute(TimeDelta::seconds(90), "1m30s")]
+    #[case::negative_microseconds(TimeDelta::microseconds(-900), &format!("{MINUS_SIGN}900µs"))]
+    #[case::negative_past_a_minute(TimeDelta::seconds(-90), &format!("{MINUS_SIGN}1m30s"))]
+    fn the_reading_keeps_every_scale(#[case] duration: TimeDelta, #[case] expected: &str) {
+        assert_eq!(
+            format_human_terse_duration_with_microseconds(duration),
+            expected
+        );
+    }
+
+    /// [`chrono::TimeDelta::num_microseconds`] overflows past about 292 000
+    /// years, where the terse reading answers on its own.
+    #[test]
+    fn a_duration_past_the_microsecond_range_reads_in_days() {
+        assert_eq!(
+            format_human_terse_duration_with_microseconds(TimeDelta::MAX),
+            "106751991167d7h"
+        );
+    }
 }
 
 /// Format a signed time delta, in milliseconds, for display beside a value.

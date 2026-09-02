@@ -280,6 +280,9 @@ pub struct AnalysisSettings {
     pub elevation_mask_deg: f32,
     /// Whether to mark epochs where a used satellite falls below the mask.
     pub mark_masked_fix: bool,
+    /// Whether to mark where a sensor channel's sample timestamps step
+    /// backwards.
+    pub mark_backward_time_steps: bool,
     /// SNR drop, in dB-Hz between consecutive epochs, above which a still-tracked
     /// satellite counts as having slipped.
     pub snr_drop_db: f32,
@@ -295,6 +298,7 @@ impl Default for AnalysisSettings {
         Self {
             elevation_mask_deg: gt_plot::DEFAULT_ELEVATION_MASK_DEG,
             mark_masked_fix: true,
+            mark_backward_time_steps: true,
             snr_drop_db: gt_plot::DEFAULT_SNR_DROP_DB,
             slip_window_min: gt_plot::DEFAULT_SLIP_WINDOW_MIN,
             clock_excursion_threshold_s: gt_plot::DEFAULT_CLOCK_EXCURSION_THRESHOLD_S,

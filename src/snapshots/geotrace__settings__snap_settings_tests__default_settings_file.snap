@@ -52,6 +52,7 @@ detect_slips = true
 [analysis]
 elevation_mask_deg = 15.0
 mark_masked_fix = true
+mark_backward_time_steps = true
 snr_drop_db = 10.0
 slip_window_min = 10.0
 clock_excursion_threshold_s = 10.0

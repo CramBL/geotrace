@@ -822,6 +822,7 @@ impl App {
             detect_slips: self.processing_config.generated_markers.detect_slips,
             elevation_mask_deg: s.plot_state.analysis.elevation_mask_deg.into(),
             mark_masked_fix: s.plot_state.mark_masked_fix,
+            mark_backward_time_steps: s.plot_state.mark_backward_time_steps,
             snr_drop_db: s.plot_state.analysis.snr_drop_db.into(),
             slip_window_min: s.plot_state.analysis.slip_window_min.into(),
             clock_excursion_threshold_s: s.plot_state.analysis.clock_excursion_threshold_s.into(),

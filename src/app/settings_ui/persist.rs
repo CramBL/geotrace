@@ -85,6 +85,7 @@ impl App {
             shared.plot_state.always_show_solar_flare_spans = s.plot.always_show_solar_flare_spans;
             shared.plot_state.analysis = analysis;
             shared.plot_state.mark_masked_fix = s.analysis.mark_masked_fix;
+            shared.plot_state.mark_backward_time_steps = s.analysis.mark_backward_time_steps;
             let vis = &mut shared.plot_state.metric_vis;
             for k in crate::settings::MetricKind::iter() {
                 vis.set(
@@ -214,6 +215,7 @@ impl App {
             analysis: crate::settings::AnalysisSettings {
                 elevation_mask_deg: s.plot_state.analysis.elevation_mask_deg,
                 mark_masked_fix: s.plot_state.mark_masked_fix,
+                mark_backward_time_steps: s.plot_state.mark_backward_time_steps,
                 snr_drop_db: s.plot_state.analysis.snr_drop_db,
                 slip_window_min: s.plot_state.analysis.slip_window_min,
                 clock_excursion_threshold_s: s.plot_state.analysis.clock_excursion_threshold_s,
