@@ -139,19 +139,19 @@ pub(super) fn dialog_body_above_buttons<R>(
 /// `width` is what the dialog takes, so its prose wraps at a readable length.
 /// A screen narrower than that takes precedence and the body scrolls sideways.
 ///
-/// Escape returns `escape_answer`: pass the answer that discards nothing.
+/// Escape returns `escape_choice`: pass the choice that discards nothing.
 pub(super) fn confirmation_dialog<'a, T>(
     ui: &egui::Ui,
     title: impl IntoAtoms<'a>,
     width: f32,
-    escape_answer: T,
+    escape_choice: T,
     body: impl FnOnce(&mut egui::Ui),
     buttons: impl FnOnce(&mut egui::Ui) -> Option<T>,
 ) -> Option<T> {
-    let mut answer = ui
+    let mut choice = ui
         .ctx()
         .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        .then_some(escape_answer);
+        .then_some(escape_choice);
 
     Window::new(title)
         .collapsible(false)
@@ -162,11 +162,11 @@ pub(super) fn confirmation_dialog<'a, T>(
             let clicked =
                 dialog_body_above_buttons(ui, DialogBody::new(body), DialogActions::new(buttons));
             if let Some(clicked) = clicked {
-                answer = Some(clicked);
+                choice = Some(clicked);
             }
         });
 
-    answer
+    choice
 }
 
 pub(super) fn destructive_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
@@ -691,8 +691,8 @@ pub fn show_about_dialog(ui: &egui::Ui, open: &mut bool, version: &str) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapConsentChoice {
     /// Uploads to the configured server's host are acknowledged. `auto_snap`
-    /// carries the mode choice when the dialog asked for one (`None` = the
-    /// choice was already made earlier and was not asked again).
+    /// holds the mode choice when the dialog asked the user for one (`None` =
+    /// the choice was already made earlier and the dialog left it out).
     Accepted { auto_snap: Option<bool> },
     /// No acknowledgment. The manual snap action stays available and
     /// re-prompts. Auto mode turns off - a declined consent must never
@@ -705,8 +705,8 @@ pub enum SnapConsentChoice {
 ///
 /// Recorded location data leaves the machine, so nothing is ever sent before
 /// this dialog has been accepted for the configured server's host (see
-/// `SnapSettings::consent_granted`). With `ask_auto` the dialog also asks
-/// whether tracks should snap automatically from now on - both agree
+/// `SnapSettings::consent_granted`). With `ask_auto` the dialog also asks the
+/// user whether tracks should snap automatically from now on - both agree
 /// buttons acknowledge uploads, they differ only in that choice. Escape,
 /// Cancel, and the close button all decline. The acknowledgment is not
 /// persisted on decline, so the next manual trigger re-prompts.
@@ -722,8 +722,8 @@ pub fn show_snap_consent_dialog(
         .ctx()
         .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
 
-    // Enter agrees with the default mode: automatic when the choice is
-    // being asked (the design default), unchanged otherwise.
+    // Enter agrees with the default mode: automatic when the dialog asks the
+    // user for the choice (the design default), unchanged otherwise.
     let mut choice = None;
     if enter_pressed {
         choice = Some(SnapConsentChoice::Accepted {
@@ -811,9 +811,9 @@ pub enum SnapReplaceChoice {
     Cancel,
 }
 
-/// Ask before a "Snap again as" choice replaces the result this track
-/// already has for `costing_name`. Returns `None` while the dialog stays
-/// open.
+/// Ask the user before a "Snap again as" choice replaces the result this
+/// track already has for `costing_name`. Returns `None` while the dialog
+/// stays open.
 ///
 /// Escape, Cancel, and the close button all keep the stored result: a
 /// dismissed dialog never uploads anything.
@@ -901,9 +901,9 @@ pub enum SnapScopeChoice {
     Cancel,
 }
 
-/// Ask which of a recording's tracks a "Snap again as" choice covers, and
-/// how many of them already have data for `costing_name`. Returns `None`
-/// while the dialog stays open.
+/// Ask the user which of a recording's tracks a "Snap again as" choice
+/// covers, and how many of them already have data for `costing_name`.
+/// Returns `None` while the dialog stays open.
 ///
 /// Escape, Cancel, and the close button all drop the choice: nothing is
 /// uploaded.
@@ -997,8 +997,8 @@ pub enum SnapAutoChoice {
 }
 
 /// One-time prompt for users who acknowledged uploads before auto mode
-/// existed: asks whether loaded tracks should snap automatically from now
-/// on. Returns `None` while the dialog stays open.
+/// existed: asks the user whether loaded tracks should snap automatically
+/// from now on. Returns `None` while the dialog stays open.
 ///
 /// Escape and the close button choose manual only - dismissing a dialog
 /// must never silently expand what gets uploaded.

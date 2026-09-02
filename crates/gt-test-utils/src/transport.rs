@@ -1,55 +1,56 @@
-//! A [`Transport`] that answers from a script, so a test never reaches a host.
+//! A [`Transport`] that responds from a script, so a test never reaches a host.
 
 use std::collections::VecDeque;
 
 use gt_fetch::{HttpRequest, HttpResponse, Transport, TransportError};
 use parking_lot::Mutex;
 
-/// What a scripted transport answers one request with: a response, or a
-/// failure below the HTTP layer.
-pub type TransportAnswer<B> = Result<HttpResponse<B>, TransportError>;
+/// What a scripted transport returns for one request: a response, or a failure
+/// below the HTTP layer.
+pub type TransportResponse<B> = Result<HttpResponse<B>, TransportError>;
 
-/// The two answers [`ScriptedTransport::by_url_prefix`] picks between, for a
+/// The two responses [`ScriptedTransport::by_url_prefix`] picks between, for a
 /// pipeline that tries several hosts.
-pub struct UrlPrefixAnswers<B> {
+pub struct UrlPrefixResponses<B> {
     pub prefix: String,
-    pub matching: TransportAnswer<B>,
-    pub other: TransportAnswer<B>,
+    pub matching: TransportResponse<B>,
+    pub other: TransportResponse<B>,
 }
 
-enum ScriptedAnswers<B> {
-    Always(TransportAnswer<B>),
-    InOrder(VecDeque<TransportAnswer<B>>),
-    ByUrlPrefix(UrlPrefixAnswers<B>),
+enum ScriptedResponses<B> {
+    Always(TransportResponse<B>),
+    InOrder(VecDeque<TransportResponse<B>>),
+    ByUrlPrefix(UrlPrefixResponses<B>),
 }
 
 /// Records every request it is sent, for tests asserting which URLs a pipeline
 /// requested and how many times.
 pub struct ScriptedTransport<B> {
-    answers: Mutex<ScriptedAnswers<B>>,
+    responses: Mutex<ScriptedResponses<B>>,
     requests: Mutex<Vec<HttpRequest>>,
 }
 
 impl<B> ScriptedTransport<B> {
-    /// Answers every request the same way, which covers a pipeline that sends
-    /// several requests per call (a retry, a second product, another mirror).
-    pub fn always(answer: TransportAnswer<B>) -> Self {
-        Self::new(ScriptedAnswers::Always(answer))
+    /// Returns the same response for every request, which covers a pipeline
+    /// that sends several requests per call (a retry, a second product,
+    /// another mirror).
+    pub fn always(response: TransportResponse<B>) -> Self {
+        Self::new(ScriptedResponses::Always(response))
     }
 
-    /// Answers requests in order, one script entry each. A request past the end
+    /// Returns one script entry per request, in order. A request past the end
     /// of the script fails, naming the test's under-declared script.
-    pub fn in_order(script: Vec<TransportAnswer<B>>) -> Self {
-        Self::new(ScriptedAnswers::InOrder(script.into()))
+    pub fn in_order(script: Vec<TransportResponse<B>>) -> Self {
+        Self::new(ScriptedResponses::InOrder(script.into()))
     }
 
-    pub fn by_url_prefix(answers: UrlPrefixAnswers<B>) -> Self {
-        Self::new(ScriptedAnswers::ByUrlPrefix(answers))
+    pub fn by_url_prefix(responses: UrlPrefixResponses<B>) -> Self {
+        Self::new(ScriptedResponses::ByUrlPrefix(responses))
     }
 
-    fn new(answers: ScriptedAnswers<B>) -> Self {
+    fn new(responses: ScriptedResponses<B>) -> Self {
         Self {
-            answers: Mutex::new(answers),
+            responses: Mutex::new(responses),
             requests: Mutex::new(Vec::new()),
         }
     }
@@ -69,20 +70,20 @@ impl<B> ScriptedTransport<B> {
 }
 
 impl<B: Clone> Transport<B> for ScriptedTransport<B> {
-    fn send(&self, request: &HttpRequest) -> TransportAnswer<B> {
+    fn send(&self, request: &HttpRequest) -> TransportResponse<B> {
         self.requests.lock().push(request.clone());
-        match &mut *self.answers.lock() {
-            ScriptedAnswers::Always(answer) => answer.clone(),
-            ScriptedAnswers::InOrder(script) => script.pop_front().unwrap_or_else(|| {
+        match &mut *self.responses.lock() {
+            ScriptedResponses::Always(response) => response.clone(),
+            ScriptedResponses::InOrder(script) => script.pop_front().unwrap_or_else(|| {
                 Err(TransportError {
                     detail: "the test under-declared its script".to_owned(),
                 })
             }),
-            ScriptedAnswers::ByUrlPrefix(answers) => {
-                if request.url().starts_with(&answers.prefix) {
-                    answers.matching.clone()
+            ScriptedResponses::ByUrlPrefix(responses) => {
+                if request.url().starts_with(&responses.prefix) {
+                    responses.matching.clone()
                 } else {
-                    answers.other.clone()
+                    responses.other.clone()
                 }
             }
         }

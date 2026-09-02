@@ -118,7 +118,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .map_err(reqwest::Error::without_url)?
             .to_vec();
         if !status.is_success() {
-            return Err(format!("{tile_id}: {HOST} answered HTTP {status}").into());
+            return Err(format!("{tile_id}: {HOST} returned HTTP {status}").into());
         }
         let format = CapturedTileFormat::from_content_type(&content_type).ok_or_else(|| {
             format!("{tile_id}: {HOST} served {content_type:?}, which is neither JPEG nor PNG")

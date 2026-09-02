@@ -271,7 +271,7 @@ fn a_query_on_a_node_and_an_epoch_reads_the_stored_value() {
 /// Both ends of the grid name the same meridian, and the file writes the same
 /// value at each.
 #[test]
-fn the_repeated_meridian_answers_the_same_from_both_ends() {
+fn the_repeated_meridian_returns_the_same_from_both_ends() {
     let maps = support::captured_maps(gt_ionex::STORM_CAPTURE).unwrap();
     assert_eq!(
         value_at(&maps, 87.5, 180.0, TimeDelta::zero()),

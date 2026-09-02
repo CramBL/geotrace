@@ -1,7 +1,7 @@
 //! Fetch one window of flare events and classify what the endpoint returned.
 //!
 //! [`gt_fetch::Transport`] sends the request. A window the catalog lists
-//! nothing for is answered with HTTP 200 and an empty array, so there is no
+//! nothing for comes back as HTTP 200 with an empty array, so there is no
 //! missing-window status to classify: every response outside 2xx is a failure,
 //! and a 5xx is retried once.
 //!
@@ -50,7 +50,7 @@ pub fn fetch_flare_window(
 }
 
 /// A 5xx is retried once. A 4xx is deterministic and is not: a rejected key
-/// answers 403 and answers it again.
+/// returns 403 and returns it again.
 fn classify(response: HttpResponse) -> Classified<Result<String, FetchFailure>> {
     if !response.status_is_valid() {
         return Classified::Outcome(Err(FetchFailure {

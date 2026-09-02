@@ -10,7 +10,7 @@
 //!
 //! A [`WriteRequest`] runs on [`RecordingsHandle::writer`] and under a
 //! [`PendingWrites`] guard, so the process waits for it on the way out. A
-//! read-only session has no writer, and a rejected write is answered with
+//! read-only session has no writer, and a rejected write comes back as
 //! [`Response::WriteRejected`] holding the [`WriteRejection`].
 
 use std::collections::HashSet;
@@ -73,7 +73,7 @@ enum Request {
     Write(WriteRequest),
 }
 
-/// A request answered from the read methods, which [`RecordingsHandle::read`]
+/// A request served from the read methods, which [`RecordingsHandle::read`]
 /// gives for either variant.
 enum ReadRequest {
     List,
@@ -245,7 +245,7 @@ pub enum Response {
         recording: DatabaseRef,
         existing: Result<Option<ExistingLogAttachment>, DbError>,
     },
-    /// The registry rejected the write, and the worker answered without
+    /// The registry rejected the write, and the worker returned without
     /// touching the database.
     WriteRejected {
         label: &'static str,
@@ -529,9 +529,9 @@ fn worker_loop(
 /// Run a write request on the writable database, under a
 /// [`PendingWriteGuard`].
 ///
-/// A read-only session has no [`RecordingsHandle::writer`]: its writes are
-/// answered with [`WriteRejection::ReadOnlySession`], which is what the write
-/// registry answers them with in such a session.
+/// A read-only session has no [`RecordingsHandle::writer`]: its writes come
+/// back as [`WriteRejection::ReadOnlySession`], which is what the write
+/// registry rejects them with in such a session.
 fn run_write_request(
     db: &mut RecordingsHandle,
     req: WriteRequest,
@@ -1069,7 +1069,7 @@ mod tests {
         PendingWrites::new(WriteAccess::ReadOnly),
         WriteRejection::ReadOnlySession
     )]
-    fn a_rejected_mutation_is_answered_with_its_reason_and_leaves_the_database_alone(
+    fn a_rejected_mutation_returns_its_reason_and_leaves_the_database_alone(
         #[case] pending_writes: PendingWrites,
         #[case] expected: WriteRejection,
     ) {
@@ -1093,7 +1093,7 @@ mod tests {
         assert_eq!(label, "Hiding tracks in recording history");
         assert!(pending_writes.is_idle());
 
-        // Reads still answer, and report a database the rejected write left alone.
+        // Reads still return, and report a database the rejected write left alone.
         worker.list();
         let Response::Listed(Ok(entries)) = next_response(&worker) else {
             panic!("expected a Listed response");
@@ -1131,7 +1131,7 @@ mod tests {
             "the rejected write registered with the write registry"
         );
 
-        // Reads still answer, and report a database the rejected write left alone.
+        // Reads still return, and report a database the rejected write left alone.
         worker.list();
         let Response::Listed(Ok(entries)) = next_response(&worker) else {
             panic!("expected a Listed response");

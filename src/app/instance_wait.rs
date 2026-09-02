@@ -110,9 +110,9 @@ enum DataDirectoryRetry {
     },
 }
 
-/// How the user answered the wait dialog this frame.
+/// What the user chose in the wait dialog this frame.
 #[derive(Debug, PartialEq, Eq)]
-enum WaitAnswer {
+enum WaitChoice {
     /// The dialog is up and the wait goes on.
     KeepWaiting,
     /// Open the databases here, overriding the instance holding the data
@@ -243,20 +243,20 @@ impl DataDirectoryWait {
         }
     }
 
-    /// Shows the wait, and reports the frame the user answers it.
+    /// Shows the wait, and reports the frame the user chooses in it.
     ///
     /// The confirmation stands in for the wait dialog while it is up: both
     /// are anchored to the center of the window, and the confirmation names
     /// the same holder state the wait dialog does.
-    fn ui(&mut self, ui: &egui::Ui) -> WaitAnswer {
+    fn ui(&mut self, ui: &egui::Ui) -> WaitChoice {
         if self.confirming_take_over {
             return match show_take_over_confirmation(ui, &self.unavailable) {
-                Some(TakeOverChoice::TakeOver) => WaitAnswer::TakeOverWriteAccess,
+                Some(TakeOverChoice::TakeOver) => WaitChoice::TakeOverWriteAccess,
                 Some(TakeOverChoice::Cancel) => {
                     self.confirming_take_over = false;
-                    WaitAnswer::KeepWaiting
+                    WaitChoice::KeepWaiting
                 }
-                None => WaitAnswer::KeepWaiting,
+                None => WaitChoice::KeepWaiting,
             };
         }
 
@@ -264,7 +264,7 @@ impl DataDirectoryWait {
             Some(note) => format!("{TAKE_OVER_BUTTON_HOVER}. {note}."),
             None => TAKE_OVER_BUTTON_HOVER.to_owned(),
         };
-        let mut answer = WaitAnswer::KeepWaiting;
+        let mut choice = WaitChoice::KeepWaiting;
         Window::new(self.unavailable.dialog_title())
             .collapsible(false)
             .resizable(false)
@@ -291,13 +291,13 @@ impl DataDirectoryWait {
                                 .on_hover_text(START_READ_ONLY_BUTTON_HOVER)
                                 .clicked()
                             {
-                                answer = WaitAnswer::StartReadOnly;
+                                choice = WaitChoice::StartReadOnly;
                             }
                         });
                     }),
                 );
             });
-        answer
+        choice
     }
 }
 
@@ -561,11 +561,11 @@ impl App {
                 self.open_the_databases_without_the_mark(ui.ctx(), None, queued_loads);
             }
             DataDirectoryRetry::StillWaiting => match wait.ui(ui) {
-                WaitAnswer::KeepWaiting => {
+                WaitChoice::KeepWaiting => {
                     ui.ctx()
                         .request_repaint_after(DATA_DIRECTORY_RETRY_INTERVAL);
                 }
-                WaitAnswer::TakeOverWriteAccess => {
+                WaitChoice::TakeOverWriteAccess => {
                     log::warn!(
                         "The user took write access: reading the archives for an interrupted \
                          delete while another instance still holds the data directory"
@@ -580,7 +580,7 @@ impl App {
                         queued_loads,
                     );
                 }
-                WaitAnswer::StartReadOnly => {
+                WaitChoice::StartReadOnly => {
                     let owner_process_id = wait.owner_process_id();
                     let queued_loads = mem::take(queued_loads);
                     self.start_read_only_session(ui.ctx(), owner_process_id, queued_loads);

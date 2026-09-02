@@ -38,8 +38,7 @@ pub struct Position {
 }
 
 impl Position {
-    /// `None` when the server answered with degrees outside their axis'
-    /// range.
+    /// `None` when the server returned degrees outside their axis' range.
     pub fn coordinates(self) -> Option<(Latitude, Longitude)> {
         Some((
             Latitude::try_new(self.lat).ok()?,

@@ -69,7 +69,7 @@ struct WireFlare {
 /// Parse a response into its events, ordered by peak time.
 ///
 /// The order is the one the plot places markers in, and it is not the order
-/// the catalog answers in: a long flare beginning before a short one can peak
+/// the catalog returns: a long flare beginning before a short one can peak
 /// after it.
 pub fn parse_flares(json: &str) -> Result<Vec<SolarFlare>, ParseError> {
     let mut flares: Vec<SolarFlare> = serde_json::from_str::<Vec<WireFlare>>(json)?
@@ -196,7 +196,7 @@ mod tests {
         assert_eq!(flare.classification.class(), FlareClass::C);
     }
 
-    /// The catalog answers in beginning order, and the plot marks peaks.
+    /// The catalog returns events in beginning order, and the plot marks peaks.
     #[test]
     fn events_come_back_ordered_by_peak() {
         let json = r#"[

@@ -37,8 +37,7 @@ struct HistoryHarness {
     databases_opening: bool,
     /// What the session may write, which is what grays the controls that do.
     write_access: WriteAccess,
-    /// The log the worker last read back, in answer to the Logs menu's
-    /// "Open log".
+    /// The log the worker last read back for the Logs menu's "Open log".
     opened_log: Option<gt_store::AttachedLog>,
     _dir: tempfile::TempDir,
 }
@@ -1256,8 +1255,7 @@ fn visible_tooltips(h: &TestHarness<HistoryHarness>) -> usize {
     })
 }
 
-/// A recording with no channels says so on hover rather than leaving the
-/// question unanswered.
+/// A recording with no channels says so on hover.
 #[test]
 fn hovering_a_channel_free_row_says_it_has_none() {
     let harness = history_harness(vec![sortable_entry(

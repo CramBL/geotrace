@@ -716,7 +716,7 @@ mod tests {
     use gt_ionex::{DEFAULT_BASE_URL, MirrorLayout};
     use gt_pending_writes::{WriteAccess, WriteRejection};
     use gt_store::Store;
-    use gt_test_utils::{ScriptedTransport, UrlPrefixAnswers, ionex_fixtures, pending_writes};
+    use gt_test_utils::{ScriptedTransport, UrlPrefixResponses, ionex_fixtures, pending_writes};
 
     use super::*;
 
@@ -1340,7 +1340,7 @@ mod tests {
     fn a_day_the_second_mirror_served_is_archived_under_that_mirror() {
         let (_dir, store) = archive();
         let ingested = day(2024, 5, 10);
-        let transport = ScriptedTransport::by_url_prefix(UrlPrefixAnswers {
+        let transport = ScriptedTransport::by_url_prefix(UrlPrefixResponses {
             prefix: "https://second.example".to_owned(),
             matching: Ok(BytesResponse {
                 status: 200,

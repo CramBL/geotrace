@@ -11,10 +11,10 @@
 //! https://api.nasa.gov/DONKI/FLR?startDate=2024-05-09&endDate=2024-05-09&api_key=KEY
 //! ```
 //!
-//! The endpoint answers with a JSON array of events, which [`wire`] parses
-//! into [`SolarFlare`]s, and with an empty array for a range it lists nothing
-//! for. The key is the user's own: [`ApiKey`] keeps it out of everything the
-//! app writes down.
+//! The endpoint returns a JSON array of events, which [`wire`] parses into
+//! [`SolarFlare`]s, and an empty array for a range it lists nothing for. The
+//! key is the user's own: [`ApiKey`] keeps it out of everything the app writes
+//! down.
 //!
 //! [`text`] holds the wording every surface showing a flare uses, and
 //! [`mod@reference`] the material the flare reference window renders.
@@ -134,7 +134,7 @@ pub const FIXTURE_WINDOWS: [FixtureWindow; 3] = [
         name: "before-coverage",
         start: "2009-01-01",
         end: "2009-12-31",
-        purpose: "a year before the catalog begins, answered with an empty array and HTTP 200",
+        purpose: "a year before the catalog begins, returned as an empty array with HTTP 200",
     },
 ];
 

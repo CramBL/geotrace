@@ -245,7 +245,7 @@ pub enum BackfillReadiness {
     /// There is nowhere to download to.
     ArchivesUnreachable(ArchivesUnreachable),
     /// There is nowhere to download to: the archive is closed for the
-    /// session, on the answer the user gave for it.
+    /// session, on the choice the user made for it.
     ArchiveUnavailable(ArchiveUnavailable),
     /// There is nowhere to download to: the archive could not be opened.
     WithoutArchive,
@@ -432,8 +432,8 @@ impl<D: BackfillDataset> BackfillUi<D> {
                     "GeoTrace is waiting for the data directory: the {} is not open here",
                     D::ARCHIVE_NAME
                 ),
-                ArchivesUnreachable::AwaitingAnInterruptedDeleteAnswer => {
-                    "Answer the question about the interrupted delete".to_owned()
+                ArchivesUnreachable::AwaitingAnInterruptedDeleteChoice => {
+                    "Choose what to do about the interrupted delete".to_owned()
                 }
                 ArchivesUnreachable::ArchivesOpening => {
                     format!("The {} is still opening", D::ARCHIVE_NAME)

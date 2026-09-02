@@ -291,7 +291,7 @@ impl FilterStack {
     }
 
     /// Reads in the scans that finished since the last call, replacing the
-    /// filters' matches, and answers whether any of them landed. Every filter
+    /// filters' matches, and returns whether any of them landed. Every filter
     /// keeps the matches it had until its own newer scan lands.
     pub fn apply_finished_queries(&mut self) -> bool {
         let live_landed = self.live.query.take_landed();

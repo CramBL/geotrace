@@ -143,7 +143,7 @@ mod tests {
         );
     }
 
-    /// Each case is read at the hour whose usual answer is the opposite:
+    /// Each case is read at the hour whose usual result is the opposite:
     /// polar day at midnight, polar night at midday, and the far side of
     /// Earth at midday.
     #[rstest]

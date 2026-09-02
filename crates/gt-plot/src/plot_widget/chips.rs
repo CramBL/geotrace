@@ -1278,7 +1278,7 @@ mod tests {
         assert_eq!(channel_color(0), channel_color(CHANNEL_PALETTE.len()));
     }
 
-    /// Every metric in the Environment group answers with the three scannable
+    /// Every metric in the Environment group hovers with the three scannable
     /// lines, not a paragraph of prose.
     #[test]
     fn every_environment_metric_hovers_with_scannable_lines() {

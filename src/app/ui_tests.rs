@@ -138,10 +138,10 @@ fn build_app_on_captured_tiles(
     )
 }
 
-/// Fails naming every captured tile the frame about to be snapshotted asked
-/// for and did not get, so no fixture-backed snapshot is recorded over blank
-/// ground. The record starts fresh and one more frame is drawn, so the check
-/// covers only that frame.
+/// Fails naming every captured tile the map requested while drawing the frame
+/// about to be snapshotted and did not get, so no fixture-backed snapshot is
+/// recorded over blank ground. The record starts fresh and one more frame is
+/// drawn, so the check covers only that frame.
 fn assert_the_capture_covers_the_map(harness: &mut TestHarness<'_, App>, snapshot_name: &str) {
     harness.inner.state_mut().map.forget_missing_fixture_tiles();
     harness.inner.step();
@@ -5027,7 +5027,7 @@ fn the_window_takes_input_while_the_databases_open_and_adopts_them_when_they_lan
     harness.step();
     assert!(
         harness.state().settings_open,
-        "the window answered a click while the databases were opening"
+        "the window took a click while the databases were opening"
     );
 
     land_the_databases(&mut harness, &databases, &store);
@@ -5192,8 +5192,8 @@ fn a_storage_open_that_never_reports_still_runs_the_loads_that_waited() {
 /// [`DataDirectoryLock`] holds, with the files a command line named.
 ///
 /// The app takes its own lock on that very directory, which is rejected for as
-/// long as the caller keeps its lock - the same answer a second GeoTrace gets
-/// from the first.
+/// long as the caller keeps its lock - the same rejection a second GeoTrace
+/// gets from the first.
 fn lock_on_a_directory_another_instance_holds(data_directory: &Path) -> DataDirectoryLock {
     let instance_lock = DataDirectoryLock::acquire(Some(data_directory));
     assert_eq!(
@@ -5266,7 +5266,7 @@ fn a_data_directory_another_instance_holds_is_waited_for_and_nothing_is_opened()
 
     assert!(
         harness.state().settings_open,
-        "the window answered a click while it waited for the data directory"
+        "the window took a click while it waited for the data directory"
     );
 }
 
@@ -5642,7 +5642,7 @@ fn the_take_over_confirmation_names_what_the_other_instance_is_doing() {
     assert_eq!(
         harness.state().storage_open.databases_pending(),
         Some(DatabasesPending::WaitingForTheDataDirectory),
-        "the databases opened before the user answered the confirmation"
+        "the databases opened before the user made a choice in the confirmation"
     );
 }
 
@@ -5676,8 +5676,8 @@ fn cancelling_the_take_over_returns_to_the_wait() {
     );
 }
 
-/// Escape answers the confirmation the way Cancel does, as it does for every
-/// other destructive confirmation.
+/// Escape makes the confirmation's Cancel choice, as it does for every other
+/// destructive confirmation.
 #[test]
 fn escape_cancels_the_take_over_confirmation() {
     let directory = tempfile::tempdir().expect("temp dir");
@@ -5788,8 +5788,8 @@ fn a_take_over_in_a_read_only_session_records_nothing() {
 }
 
 /// Taking over reads the archives before it opens any of them: the other
-/// instance may be part-way through a delete right now, and what that leaves
-/// is the user's to answer, not the open's to recover.
+/// instance may be part-way through a delete right now, and the user chooses
+/// what to do with what that leaves.
 #[test]
 fn taking_over_reads_the_archives_before_it_opens_them() {
     let directory = tempfile::tempdir().expect("temp dir");
@@ -6166,7 +6166,7 @@ fn app_asking_about<'a>(inspected: InspectedArchives) -> Harness<'a, App> {
 fn wait_for_the_archives_to_open(harness: &mut Harness<'_, App>) {
     assert!(
         harness.step_until(|harness| harness.state().storage_open.databases_pending().is_none()),
-        "the open the answers started never finished"
+        "the open the choices started never finished"
     );
 }
 
@@ -6256,8 +6256,8 @@ fn the_recovery_prompt_states_no_take_over_that_leaves_the_archive_unexplained(
 }
 
 /// Leaving it alone costs the archive for the session and nothing on disk:
-/// the file is byte-for-byte what it was, and the archives nobody was asked
-/// about open beside it.
+/// the file is byte-for-byte what it was, and the archives the user was never
+/// asked about open beside it.
 #[test]
 fn leaving_an_interrupted_delete_unrecovered_writes_nothing_to_the_archive() {
     let dir = data_directory_with_an_interrupted_interference_delete();
@@ -6292,8 +6292,8 @@ fn leaving_an_interrupted_delete_unrecovered_writes_nothing_to_the_archive() {
     );
 }
 
-/// Escape answers the way the button that discards nothing does, as it does
-/// for every other destructive confirmation.
+/// Escape makes the same choice as the button that discards nothing, as it
+/// does for every other destructive confirmation.
 #[test]
 fn escape_leaves_the_interrupted_delete_unrecovered() {
     let dir = data_directory_with_an_interrupted_interference_delete();
@@ -6346,8 +6346,8 @@ fn an_archive_the_other_instance_holds_is_reported_as_in_use() {
     );
 }
 
-/// Escape answers the in-use notice the way its one button does, so a stray
-/// keypress cannot open an archive the other GeoTrace holds.
+/// Escape makes the in-use notice's one choice, so a stray keypress cannot
+/// open an archive the other GeoTrace holds.
 #[test]
 fn escape_leaves_the_archive_the_other_instance_holds_alone() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -6373,8 +6373,8 @@ fn escape_leaves_the_archive_the_other_instance_holds_alone() {
 }
 
 /// A delete interrupted after the archives were read is not recovered behind
-/// the user's back: the open declines what nobody was asked about, and the
-/// archive keeps its days.
+/// the user's back: the open declines what the user was never asked about,
+/// and the archive keeps its days.
 #[test]
 fn an_interrupted_delete_nobody_was_asked_about_is_declined() {
     let dir = data_directory_with_an_interrupted_interference_delete();
@@ -7567,7 +7567,7 @@ const TEC_COMPACTION: gt_pending_writes::WriteKind =
         archive: "ionospheric TEC",
     };
 
-/// An app with a write running and nothing asked of it yet.
+/// An app with a write running and no close request yet.
 fn app_with_a_running_write<'a>() -> (Harness<'a, App>, gt_pending_writes::PendingWriteGuard) {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
@@ -7581,7 +7581,7 @@ fn app_with_a_running_write<'a>() -> (Harness<'a, App>, gt_pending_writes::Pendi
     (harness, compaction)
 }
 
-/// An app that answered a close request while a write is still running, on the
+/// An app that took a close request while a write is still running, on the
 /// frame shutdown began: the grace has not elapsed yet.
 fn app_closing_over_a_running_write<'a>() -> (Harness<'a, App>, gt_pending_writes::PendingWriteGuard)
 {
@@ -7781,8 +7781,8 @@ fn app_with_the_force_quit_confirmation_open<'a>()
     (harness, compaction)
 }
 
-/// "Force quit…" asks first, and the confirmation states what stopping the
-/// running write costs.
+/// "Force quit…" asks the user first, and the confirmation states what
+/// stopping the running write costs.
 #[test]
 fn force_quit_confirms_and_names_what_the_running_write_costs() {
     let (harness, compaction) = app_with_the_force_quit_confirmation_open();
@@ -9766,7 +9766,7 @@ fn dropping_a_log_the_session_already_holds_shows_the_loaded_one() {
     assert_eq!(
         harness.state().toasts.len(),
         1,
-        "the drop is answered with a toast naming the loaded log"
+        "the drop raises a toast naming the loaded log"
     );
 }
 
@@ -9901,8 +9901,8 @@ fn dropping_a_log_that_is_not_utf8_states_the_replacement_in_its_summary() {
     harness.get_by_label(summary.as_str());
 }
 
-/// With no recording loaded a log is still fully readable: nothing asks which
-/// recording it belongs to, and it puts nothing on the map.
+/// With no recording loaded a log is still fully readable: nothing asks the
+/// user which recording it belongs to, and it puts nothing on the map.
 #[test]
 fn a_log_loaded_without_a_recording_stays_untargeted_and_raises_no_dialog() {
     let mut harness = app_with_a_log_loaded();
@@ -11110,11 +11110,7 @@ mod log_association {
                 .map(|attachment| attachment.id),
             Some(stored)
         );
-        assert_eq!(
-            harness.state().toasts.len(),
-            1,
-            "the reuse is answered with a toast"
-        );
+        assert_eq!(harness.state().toasts.len(), 1, "the reuse raises a toast");
     }
 
     /// A database holding the fixture recording and the fixture log stored
@@ -11255,7 +11251,7 @@ mod log_association {
 
         assert!(
             harness.step_until(|harness| harness.state().toasts.len() == 1),
-            "the second copy is answered with a toast"
+            "the second copy raises a toast"
         );
         assert_eq!(harness.state().logs.len(), 1);
         assert_eq!(harness.state().logs.first_id(), loaded);
