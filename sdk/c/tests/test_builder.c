@@ -118,6 +118,37 @@ Test(builder, travel_mode_absent_is_null) {
     gtd_nav_file_destroy(f);
 }
 
+Test(builder, a_build_without_provenance_writes_only_the_sdk_version) {
+    GtdFileBuilder *b = gtd_builder_create();
+    cr_assert_not_null(b);
+
+    GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
+    cr_assert_eq(gtd_builder_add_nav_fix(b, t, gtd_ts_none(), 51.5074, -0.1278, GTD_NONE_F64,
+                                         GTD_NONE_F64, GTD_NONE_F64),
+                 GTD_OK);
+
+    GtdNavFile *f = NULL;
+    cr_assert_eq(gtd_builder_finish(b, &f), GTD_OK);
+
+    uint8_t *buf = NULL;
+    size_t len = 0;
+    cr_assert_eq(gtd_nav_file_to_bytes(f, &buf, &len), GTD_OK);
+    gtd_nav_file_destroy(f);
+
+    GtdNavFile *f2 = NULL;
+    cr_assert_eq(gtd_nav_file_from_bytes(buf, len, &f2), GTD_OK);
+
+    const char *version = gtd_nav_file_sdk_version(f2);
+    cr_assert_not_null(version);
+    cr_assert_str_eq(version, GEOTRACE_C_VERSION);
+
+    cr_assert_null(gtd_nav_file_sdk_git_commit(f2));
+    cr_assert(gtd_ts_is_none(gtd_nav_file_sdk_commit_time(f2)));
+
+    gtd_nav_file_destroy(f2);
+    gtd_free_bytes(buf, len);
+}
+
 Test(travel_mode, name_round_trips_through_from_name) {
     const GtdTravelMode all[] = {
         GTD_TRAVEL_MODE_CAR,      GTD_TRAVEL_MODE_MOTORCYCLE, GTD_TRAVEL_MODE_BICYCLE,

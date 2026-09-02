@@ -885,6 +885,25 @@ impl PyMeta {
         }
     }
 
+    /// Version of the SDK build that wrote the file, or `None`.
+    #[getter]
+    fn sdk_version(&self) -> Option<&str> {
+        self.inner.sdk_version()
+    }
+
+    /// Commit of the geotrace repository the writing SDK was built from, or
+    /// `None`.
+    #[getter]
+    fn sdk_git_commit(&self) -> Option<&str> {
+        self.inner.sdk_git_commit()
+    }
+
+    /// Committer timestamp of `sdk_git_commit` (timezone-aware UTC), or `None`.
+    #[getter]
+    fn sdk_commit_time(&self) -> Option<DateTime<FixedOffset>> {
+        self.inner.sdk_commit_time().map(to_fixed)
+    }
+
     fn __eq__(&self, other: &Self) -> bool {
         self.inner == other.inner
     }

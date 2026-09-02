@@ -6,7 +6,7 @@ use geotrace_sdk::NavFile;
 use crate::error::{GtdStatus, run_catching_panics, set_last_error, status_for_error};
 use crate::{
     GtdChannelInfo, GtdConstellation, GtdEventMarkerInfo, GtdNavPointInfo, GtdSatInfo,
-    GtdTimestamp, fill_c_str, opt_f64_none, opt_f64_some, ts_from_datetime,
+    GtdTimestamp, fill_c_str, gtd_ts_none, opt_f64_none, opt_f64_some, ts_from_datetime,
 };
 
 /// Opaque handle for a parsed or freshly-built GeoTrace nav file.
@@ -17,6 +17,9 @@ pub struct GtdNavFile {
     notes: Option<CString>,
     identity: Option<CString>,
     travel_mode: Option<CString>,
+    sdk_version: Option<CString>,
+    sdk_git_commit: Option<CString>,
+    sdk_commit_time: GtdTimestamp,
 }
 
 impl GtdNavFile {
@@ -33,6 +36,12 @@ impl GtdNavFile {
                 .as_ref()
                 .map(geotrace_sdk::TravelMode::name)
                 .and_then(to_cstring),
+            sdk_version: file.meta().sdk_version().and_then(to_cstring),
+            sdk_git_commit: file.meta().sdk_git_commit().and_then(to_cstring),
+            sdk_commit_time: file
+                .meta()
+                .sdk_commit_time()
+                .map_or_else(|| gtd_ts_none(), ts_from_datetime),
             file,
         }
     }
@@ -329,6 +338,41 @@ pub unsafe extern "C" fn gtd_nav_file_travel_mode(f: *const GtdNavFile) -> *cons
             .as_ref()
             .map_or(std::ptr::null(), |cs| cs.as_c_str().as_ptr())
     }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_nav_file_sdk_version(f: *const GtdNavFile) -> *const c_char {
+    if f.is_null() {
+        return std::ptr::null();
+    }
+    // SAFETY: same as gtd_nav_file_title
+    unsafe {
+        (*f).sdk_version
+            .as_ref()
+            .map_or(std::ptr::null(), |cs| cs.as_c_str().as_ptr())
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_nav_file_sdk_git_commit(f: *const GtdNavFile) -> *const c_char {
+    if f.is_null() {
+        return std::ptr::null();
+    }
+    // SAFETY: same as gtd_nav_file_title
+    unsafe {
+        (*f).sdk_git_commit
+            .as_ref()
+            .map_or(std::ptr::null(), |cs| cs.as_c_str().as_ptr())
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_nav_file_sdk_commit_time(f: *const GtdNavFile) -> GtdTimestamp {
+    if f.is_null() {
+        return gtd_ts_none();
+    }
+    // SAFETY: f is non-null
+    unsafe { (*f).sdk_commit_time }
 }
 
 // ── Event marker accessors ──────────────────────────────────────────────────── // [qa-allow-check-em-dash, qa-allow-check-floating-comments, reason = "C API section headers are an established convention in this FFI file"]

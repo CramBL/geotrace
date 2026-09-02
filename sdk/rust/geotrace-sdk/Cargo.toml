@@ -31,6 +31,9 @@ strum.workspace = true
 thiserror.workspace = true
 uom.workspace = true
 
+[build-dependencies]
+chrono.workspace = true
+
 [dev-dependencies]
 hdf5-pure.workspace = true
 insta.workspace = true

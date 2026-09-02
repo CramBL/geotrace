@@ -121,6 +121,10 @@ jobs:
         if: runner.os == 'Windows'
         run: rm -f /usr/bin/link.exe
 
+      - name: Record the build provenance
+        shell: bash
+        run: bash scripts/write-build-provenance.sh
+
       - name: Build geotrace-c (release, static)
         run: cargo build -p geotrace-c --release
 
@@ -268,6 +272,10 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Record the build provenance
+        shell: bash
+        run: bash scripts/write-build-provenance.sh
+
       - name: Publish crates # zizmor: ignore[use-trusted-publishing]
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_GEOTRACE_PUBLISH }}
@@ -281,12 +289,13 @@ jobs:
             if curl -fsS -A "geotrace-release (+https://github.com/CramBL/geotrace)" "https://crates.io/api/v1/crates/$1/$VERSION" >/dev/null 2>&1; then
               echo "$1 $VERSION already on crates.io, skipping"
             else
-              cargo publish -p "$1"
+              cargo publish -p "$1" "${@:2}"
             fi
           }
           publish geotrace-sdk-macros
           publish geotrace-sdk-units
-          publish geotrace-sdk
+          # geotrace-sdk holds the untracked build_provenance.txt this run wrote.
+          publish geotrace-sdk --allow-dirty
 
   # Build the Python wheels, one job per OS family.
   wheels-linux:
@@ -306,6 +315,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+      - name: Record the build provenance
+        shell: bash
+        run: bash scripts/write-build-provenance.sh
+
       - name: Build wheels
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
@@ -335,6 +348,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+      - name: Record the build provenance
+        shell: bash
+        run: bash scripts/write-build-provenance.sh
+
       - name: Build wheels
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
@@ -368,6 +385,10 @@ jobs:
         with:
           python-version: "3.13"
           architecture: ${{ matrix.platform.python_arch }}
+      - name: Record the build provenance
+        shell: bash
+        run: bash scripts/write-build-provenance.sh
+
       - name: Build wheels
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
@@ -398,6 +419,10 @@ jobs:
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
+      - name: Record the build provenance
+        shell: bash
+        run: bash scripts/write-build-provenance.sh
+
       - name: Build wheels
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
@@ -418,6 +443,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+      - name: Record the build provenance
+        shell: bash
+        run: bash scripts/write-build-provenance.sh
+
       - name: Build sdist
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:

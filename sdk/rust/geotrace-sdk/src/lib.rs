@@ -30,6 +30,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 mod builder;
 mod error;
 mod fixed_width_string;
+mod provenance;
 mod read;
 mod time_types;
 mod types;
@@ -49,6 +50,7 @@ pub use fixed_width_string::{
 pub use geotrace_sdk_units::{
     ChannelUnit, ChannelUnitKind, CustomUnit, PhysicalQuantity, Unit, UnitParseError,
 };
+pub use provenance::{SDK_COMMIT_TIME_ATTR, SDK_GIT_COMMIT_ATTR, SDK_VERSION_ATTR};
 pub use types::{
     Annotation, Channel, Constellation, EventMarker, EventMarkerColor, EventMarkerIconChoice,
     EventMarkerPoint, EventMarkerStyle, Marker, MarkerIcon, Meta, NavFile, NavFix, NavPoint,

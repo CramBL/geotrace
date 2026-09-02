@@ -7,8 +7,9 @@
 //! and `gold_py.gtd` are generated artifacts (gitignored), written by each
 //! SDK's `gold_dataset` example. `just test-gold-all` regenerates all four and
 //! then runs this test (`test-gold-compare`), so the comparison is enforced
-//! there. When the per-language files are absent (a plain `cargo test` checkout)
-//! the missing ones are skipped.
+//! there. It removes the three generated files once they match, and keeps them
+//! for inspection when they do not. When the per-language files are absent (a
+//! plain `cargo test` checkout) the missing ones are skipped.
 
 use std::env;
 use std::path::{Path, PathBuf};

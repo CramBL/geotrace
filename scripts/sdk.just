@@ -62,8 +62,13 @@ fmt-c: (_sdk "bash" "scripts/fmt-c.sh")
 [group("container-sdk")]
 fmt-cpp: (_sdk "bash" "scripts/fmt-cpp.sh")
 
+# Regenerate all four gold files, compare them, then delete the generated three.
 [group("container-sdk")]
 test-gold-all: test-gold-rs test-gold-c test-gold-cpp test-gold-py test-gold-compare
+    # A failed comparison stops before this, leaving the files to inspect.
+    rm -f tests/fixtures/gold_dataset/gold_c.gtd \
+        tests/fixtures/gold_dataset/gold_cpp.gtd \
+        tests/fixtures/gold_dataset/gold_py.gtd
 
 [group("container-sdk")]
 test-gold-rs: (_sdk "cargo run --example gold_dataset -p geotrace-sdk")

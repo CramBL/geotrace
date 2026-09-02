@@ -536,8 +536,11 @@ impl NavRecorder {
             return Err(BuildError::DuplicateChannelName { name });
         }
 
+        let mut meta = self.meta.unwrap_or_default();
+        meta.stamp_this_build();
+
         Ok(NavFile {
-            meta: self.meta.unwrap_or_default(),
+            meta,
             nav_points,
             markers,
             event_markers,

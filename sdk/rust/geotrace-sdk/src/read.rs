@@ -7,6 +7,7 @@ use crate::fixed_width_string::{
     AnnotationField, ColorHexField, FixedWidthString, IconNameField, MarkerLabelField,
     VariantPathField,
 };
+use crate::provenance;
 use crate::types::{
     Annotation, Channel, Constellation, EventMarkerColor, EventMarkerIconChoice, EventMarkerPoint,
     EventMarkerStyle, Marker, MarkerIcon, Meta, NavFile, NavFix, NavPoint, Satellite,
@@ -66,6 +67,10 @@ fn read_meta(attrs: &HashMap<String, AttrValue>) -> Meta {
             }
             mode
         }),
+        sdk_version: string_attr(attrs, provenance::SDK_VERSION_ATTR),
+        sdk_git_commit: string_attr(attrs, provenance::SDK_GIT_COMMIT_ATTR),
+        sdk_commit_time: string_attr(attrs, provenance::SDK_COMMIT_TIME_ATTR)
+            .and_then(|raw| provenance::parse_rfc3339("the sdk_commit_time attribute", &raw)),
     }
 }
 
