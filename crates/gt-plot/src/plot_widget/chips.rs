@@ -713,6 +713,43 @@ fn channel_chip_group(
     }
 }
 
+/// The visibility of every series the chip row currently offers. The
+/// show/hide-all button's icon states what a click on it changes: the icon
+/// reads this struct and the click writes it.
+struct ShownSeriesVisibility<'a> {
+    metrics: &'a mut MetricVisibility,
+    present: ConstellationSet,
+    show_advanced: bool,
+    /// Empty while the Channels section is collapsed.
+    channels: &'a [LoadedChannel],
+    channel_visibility: &'a mut ChannelVisibility,
+    /// The flare markers' flag, [`None`] while the flare chip is disabled for
+    /// want of an archived flare.
+    solar_flares: Option<&'a mut bool>,
+}
+
+impl ShownSeriesVisibility<'_> {
+    fn all_visible(&self) -> bool {
+        self.metrics.all_enabled(self.present, self.show_advanced)
+            && self
+                .channels
+                .iter()
+                .all(|channel| self.channel_visibility.is_visible(&channel.name))
+            && self.solar_flares.as_deref().is_none_or(|&visible| visible)
+    }
+
+    fn set_all_visible(&mut self, visible: bool) {
+        self.metrics
+            .set_all(visible, self.present, self.show_advanced);
+        for channel in self.channels {
+            self.channel_visibility.set(&channel.name, visible);
+        }
+        if let Some(solar_flares) = self.solar_flares.as_deref_mut() {
+            *solar_flares = visible;
+        }
+    }
+}
+
 /// Draw the per-metric filter controls above the track plot.
 ///
 /// All controls and metric chips share a single `horizontal_wrapped` row so they
@@ -741,7 +778,6 @@ pub(super) fn metric_filter_row(
     available: MetricAvailability,
     flares: FlareChipState<'_>,
 ) -> Option<HoveredChip> {
-    let all_on = vis.all_enabled(present, *show_advanced);
     let mut show_only = None;
     let mut show_only_channel: Option<String> = None;
     let mut hovered_chip = None;
@@ -773,18 +809,30 @@ pub(super) fn metric_filter_row(
         .response
         .on_hover_text("Plot display settings");
 
-        // Show/hide all (currently shown metrics only).
-        let eye_icon = if all_on { ICON_EYE_SLASH } else { ICON_EYE };
+        let mut shown_series = ShownSeriesVisibility {
+            metrics: &mut *vis,
+            present,
+            show_advanced: *show_advanced,
+            channels: if *show_channels { channels } else { &[] },
+            channel_visibility: &mut *channel_vis,
+            solar_flares: flares.available.then_some(&mut *flares.visible),
+        };
+        let all_visible = shown_series.all_visible();
+        let eye_icon = if all_visible {
+            ICON_EYE_SLASH
+        } else {
+            ICON_EYE
+        };
         if ui
             .small_button(eye_icon)
-            .on_hover_text(if all_on {
-                "Hide all metrics"
+            .on_hover_text(if all_visible {
+                "Hide every metric, channel and flare marker"
             } else {
-                "Show all metrics"
+                "Show every metric, channel and flare marker"
             })
             .clicked()
         {
-            vis.set_all(!all_on, present, *show_advanced);
+            shown_series.set_all_visible(!all_visible);
         }
 
         section_toggles(ui, show_advanced, show_channels, !channels.is_empty());

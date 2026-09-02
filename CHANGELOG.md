@@ -89,6 +89,7 @@
 - **Map & Tracks:** Fixed the plot drawing one fix past each edge of the time range filter, and a line across a filter window that holds no fix.
 - **Map & Tracks:** Fixed the map drawing a fix with satellites in fix away from the coordinates the receiver measured it at, and a fix stamped before both the fixes it is drawn between being drawn outside them.
 - **Map & Tracks:** Fixed the plot cursor and a hovered query results row highlighting a fix the map hides.
+- **Map & Tracks:** Fixed the plot's show/hide-all button leaving the sensor channel lines and the solar flare markers as they were.
 - **Settings & Storage:** Fixed a recording stored before a change to track splitting hiding the wrong tracks when it is opened.
 - **Settings & Storage:** Fixed a recording stored before a change to where dead-reckoned fixes are drawn opening with different distances and bounding boxes than it was stored with.
 
