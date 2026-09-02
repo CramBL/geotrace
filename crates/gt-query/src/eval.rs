@@ -8,7 +8,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
-use gt_types::TrackRef;
+use gt_types::{TrackRef, channel};
 
 use crate::ast::{Func, ParamName};
 use crate::check::{
@@ -495,9 +495,9 @@ fn apply_window<P: MetricProvider>(
 }
 
 /// Evaluate every `secs`-long duration window: at each anchor the contiguous
-/// points whose time lands in `[t, t + secs)`, requiring the full duration to
-/// fit within the data. Returns `None` on cancellation, else whether no window
-/// fit.
+/// points whose time lands in `[t, t + secs)`, within the anchor's own
+/// chronological run and requiring the full duration to fit in that run.
+/// Returns `None` on cancellation, else whether no window fit.
 fn duration_windows<P: MetricProvider>(
     query: &CheckedQuery,
     ctx: &mut Ctx<'_, P>,
@@ -510,55 +510,58 @@ fn duration_windows<P: MetricProvider>(
     let len = matched.len();
     // Each point's time places a window's span. A nav point always has one.
     let times: Vec<Option<f64>> = (0..len).map(|i| ctx.raw(QueryMetric::Time, i)).collect();
-    // How far the data reaches, which bounds where a full window fits.
-    // Per-track time is not assumed monotonic (see `derived_accel`, which flags
-    // backward steps), so this takes the max: a clock jump must not make later
-    // anchors vanish.
-    let max_time = times
-        .iter()
-        .flatten()
-        .copied()
-        .fold(f64::NEG_INFINITY, f64::max);
     let mut any_fit = false;
-    for start in 0..len {
-        if start % check_interval == 0 && should_cancel() {
-            return None;
-        }
-        let Some(t_start) = times.get(start).copied().flatten() else {
+    for run in channel::chronological_runs(times.iter().copied()) {
+        // A run's last point is how far it reaches, and how far a window
+        // anchored in it may reach: times never step backwards inside a run.
+        let Some(run_reach) = run
+            .end
+            .checked_sub(1)
+            .and_then(|last| times.get(last).copied().flatten())
+        else {
             continue;
         };
-        // The full duration must fit: the data has to reach `t_start + secs`.
-        // Skip (not break) an anchor whose window overruns, since without a
-        // monotonic-time assumption a later anchor may still fit.
-        if t_start + secs > max_time {
-            continue;
+        for start in run.clone() {
+            if start % check_interval == 0 && should_cancel() {
+                return None;
+            }
+            let Some(t_start) = times.get(start).copied().flatten() else {
+                continue;
+            };
+            // The full duration must fit inside the run: the points past a
+            // backward time step are stamped in another stretch of wall clock,
+            // and a window that declared a span reaching into them would hold
+            // none of them.
+            if t_start + secs > run_reach {
+                continue;
+            }
+            any_fit = true;
+            // The contiguous points of the run with time in `[t_start, t_start
+            // + secs)`. The anchor itself always fits.
+            let end_time = t_start + secs;
+            let mut end = start;
+            while end < run.end
+                && times
+                    .get(end)
+                    .copied()
+                    .flatten()
+                    .is_some_and(|t| t < end_time)
+            {
+                end += 1;
+            }
+            // The channel span is the window's declared time extent `[t_start,
+            // t_start + secs]`. Gathering is closed at the top, differing from
+            // the half-open point rule only at an exact-float boundary.
+            let window = WindowScope {
+                start,
+                end,
+                span: Some(TimeSpan {
+                    lo: t_start,
+                    hi: end_time,
+                }),
+            };
+            apply_window(query, ctx, matched, skips, window);
         }
-        any_fit = true;
-        // The contiguous points with time in `[t_start, t_start + secs)`; the
-        // anchor itself always fits.
-        let end_time = t_start + secs;
-        let mut end = start;
-        while end < len
-            && times
-                .get(end)
-                .copied()
-                .flatten()
-                .is_some_and(|t| t < end_time)
-        {
-            end += 1;
-        }
-        // The channel span is the window's declared time extent `[t_start,
-        // t_start + secs]`; gathering is closed at the top, differing from the
-        // half-open point rule only at an exact-float boundary.
-        let window = WindowScope {
-            start,
-            end,
-            span: Some(TimeSpan {
-                lo: t_start,
-                hi: end_time,
-            }),
-        };
-        apply_window(query, ctx, matched, skips, window);
     }
     Some(!any_fit)
 }
@@ -673,9 +676,10 @@ fn apply_sample_window<P: MetricProvider>(
 }
 
 /// Every `secs`-long duration window over a channel-source timeline: at each
-/// anchor the contiguous samples whose time lands in `[t, t + secs)`, requiring
-/// the full duration to fit. Mirrors [`duration_windows`] over the channel's
-/// sample times. Returns `None` on cancellation, else whether no window fit.
+/// anchor the contiguous samples whose time lands in `[t, t + secs)`, within the
+/// anchor's own chronological run and requiring the full duration to fit in that
+/// run. Mirrors [`duration_windows`] over the channel's sample times. Returns
+/// `None` on cancellation, else whether no window fit.
 #[expect(
     clippy::too_many_arguments,
     reason = "the channel-source window loop threads the same evaluation state as duration_windows, plus the sample timeline; a struct would not group anything meaningfully reusable"
@@ -690,32 +694,33 @@ fn sample_duration_windows<P: MetricProvider>(
     should_cancel: &impl Fn() -> bool,
     check_interval: usize,
 ) -> Option<bool> {
-    let len = timeline.times.len();
-    // As in duration_windows, the reach is the max time, not the last, since
-    // sample time is not assumed monotonic.
-    let max_time = timeline
-        .times
-        .iter()
-        .copied()
-        .fold(f64::NEG_INFINITY, f64::max);
     let mut any_fit = false;
-    for start in 0..len {
-        if start % check_interval == 0 && should_cancel() {
-            return None;
-        }
-        let Some(&t_start) = timeline.times.get(start) else {
+    for run in channel::chronological_runs(timeline.times.iter().copied().map(Some)) {
+        let Some(run_reach) = run
+            .end
+            .checked_sub(1)
+            .and_then(|last| timeline.times.get(last).copied())
+        else {
             continue;
         };
-        if t_start + secs > max_time {
-            continue;
+        for start in run.clone() {
+            if start % check_interval == 0 && should_cancel() {
+                return None;
+            }
+            let Some(&t_start) = timeline.times.get(start) else {
+                continue;
+            };
+            if t_start + secs > run_reach {
+                continue;
+            }
+            any_fit = true;
+            let end_time = t_start + secs;
+            let mut end = start;
+            while end < run.end && timeline.times.get(end).is_some_and(|&t| t < end_time) {
+                end += 1;
+            }
+            apply_sample_window(query, ctx, matched, skips, timeline, start..end);
         }
-        any_fit = true;
-        let end_time = t_start + secs;
-        let mut end = start;
-        while end < len && timeline.times.get(end).is_some_and(|&t| t < end_time) {
-            end += 1;
-        }
-        apply_sample_window(query, ctx, matched, skips, timeline, start..end);
     }
     Some(!any_fit)
 }

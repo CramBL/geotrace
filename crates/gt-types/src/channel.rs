@@ -38,6 +38,31 @@ pub struct Channel {
     pub values: Vec<f64>,
 }
 
+/// The maximal stretches of consecutive entries that all have a time and are
+/// never stamped before the entry before them, in the order given. An entry
+/// with no time belongs to no run. [`Channel::chronological_runs`] is this over
+/// a channel's own sample timestamps.
+pub fn chronological_runs<T: PartialOrd>(
+    times: impl IntoIterator<Item = Option<T>>,
+) -> Vec<Range<usize>> {
+    let mut runs: Vec<Range<usize>> = Vec::new();
+    let mut previous: Option<T> = None;
+    for (index, time) in times.into_iter().enumerate() {
+        let Some(time) = time else {
+            previous = None;
+            continue;
+        };
+        match runs.last_mut() {
+            Some(run) if previous.as_ref().is_some_and(|earlier| &time >= earlier) => {
+                run.end = index + 1;
+            }
+            _ => runs.push(index..index + 1),
+        }
+        previous = Some(time);
+    }
+    runs
+}
+
 /// A channel sample whose timestamp lies before the previous sample's, from a
 /// recorder whose clock stepped back while the channel was sampled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,17 +102,7 @@ impl Channel {
     /// one range over all of them, an empty channel none. Two runs of a
     /// recorder that restarted its clock cover the same wall clock times.
     pub fn chronological_runs(&self) -> Vec<Range<usize>> {
-        if self.times.is_empty() {
-            return Vec::new();
-        }
-        let mut runs = Vec::new();
-        let mut start = 0;
-        for step in self.backward_time_steps() {
-            runs.push(start..step.position);
-            start = step.position;
-        }
-        runs.push(start..self.times.len());
-        runs
+        self::chronological_runs(self.times.iter().copied().map(Some))
     }
 
     /// Whether this is a vector channel (has named components).
@@ -270,6 +285,14 @@ mod tests {
         assert_eq!(
             channel_restarting_its_clock().chronological_runs(),
             [0..3, 3..5, 5..7]
+        );
+    }
+
+    #[test]
+    fn an_entry_without_a_time_ends_a_run_and_belongs_to_none() {
+        assert_eq!(
+            chronological_runs([Some(0.0), None, Some(1.0), Some(0.0)]),
+            [0..1, 2..3, 3..4]
         );
     }
 

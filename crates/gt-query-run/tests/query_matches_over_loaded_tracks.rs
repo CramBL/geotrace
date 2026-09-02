@@ -572,6 +572,53 @@ fn a_duration_window_groups_the_fixes_of_its_own_span_at_two_hz() {
     assert_eq!(drawn_ranges(&session), vec![0..3]);
 }
 
+/// The clock steps back at the fourth fix, from 2 s to 0.1 s. A duration window
+/// holds the fixes of one chronological run: the window at the first fix holds
+/// the fixes at 0 s and 1 s, and the windows after the step hold the fixes of
+/// the second run. A window has room only where its full 2 s fits inside its own
+/// run, which leaves the last fix of each run in no window.
+#[test]
+fn a_duration_window_holds_the_fixes_of_one_chronological_run() {
+    let state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at(&[0, 1_000, 2_000, 100, 1_100, 2_100, 3_100, 4_100]),
+        vec![],
+    ));
+    let mut session = QuerySession::new();
+
+    run_text(
+        &mut session,
+        &state,
+        "points | window 2 s | where avg(velocity) > 1 km/h | draw",
+    );
+
+    assert_eq!(drawn_ranges(&session), vec![0..2, 3..7]);
+}
+
+/// The clock steps back at the fourth fix, from 2 s to 0.1 s, and the channel
+/// has one sample, at 2.5 s. No window anchored in the first run reaches that
+/// sample: the run's last fix is at 2 s, and a window's full 2 s has to fit
+/// inside its own run. The two windows of the second run whose span covers 2.5 s
+/// match.
+#[test]
+fn a_duration_window_reads_no_channel_sample_past_the_run_its_anchor_is_in() {
+    let channel = scalar_channel("sensor", None, &[(2_500, 10.0)]);
+    let state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at(&[0, 1_000, 2_000, 100, 1_100, 2_100, 3_100, 4_100]),
+        vec![channel],
+    ));
+    let mut session = QuerySession::new();
+
+    run_text(
+        &mut session,
+        &state,
+        "points | window 2 s | where max(@sensor) > 5 | draw",
+    );
+
+    assert_eq!(drawn_ranges(&session), vec![4..7]);
+}
+
 /// The fixes sit a second apart from 0 s to 4 s and the query's window spans
 /// 2 s.
 #[rstest]
@@ -633,6 +680,42 @@ fn a_channel_source_duration_window_matches_no_sample_past_the_filter_end() {
 
     let result = channel_track_result(&session).expect("a track with a match");
     assert_eq!(matched_sample_seconds(result), vec![0.0, 1.0]);
+}
+
+/// The channel's clock steps back at the fourth sample, from 2 s to 1 s, and
+/// only the samples after the step are above the bar. A duration window holds
+/// the samples of one chronological run, so no window over the quiet samples
+/// before the step reaches a loud one after it.
+#[test]
+fn a_channel_source_duration_window_holds_the_samples_of_one_chronological_run() {
+    let channel = scalar_channel(
+        "sensor",
+        None,
+        &[
+            (0, 0.0),
+            (1_000, 0.0),
+            (2_000, 0.0),
+            (1_000, 10.0),
+            (2_000, 10.0),
+            (3_000, 10.0),
+            (4_000, 10.0),
+        ],
+    );
+    let state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at(&[0, 1_000, 2_000, 3_000, 4_000]),
+        vec![channel],
+    ));
+    let mut session = QuerySession::new();
+
+    run_text(
+        &mut session,
+        &state,
+        "@sensor | window 2 s | where max(@sensor) > 5 | draw",
+    );
+
+    let result = channel_track_result(&session).expect("a track with a match");
+    assert_eq!(matched_sample_seconds(result), vec![1.0, 2.0, 3.0]);
 }
 
 /// The track spans 9 s and the window 5 s: the filter ending at 1 s is what
