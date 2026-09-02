@@ -402,9 +402,13 @@ pub fn nav_point_at_meters(x_m: f64, y_m: f64, satellites: Option<Satellites>) -
 }
 
 /// The geometry the track builder measures for `points` taken as a track of
-/// their own, for tests that assemble a [`gt_types::LoadedTrack`] by hand.
+/// their own under the current [`gt_track_builder::FixPlacementRule`], for
+/// tests that assemble a [`gt_types::LoadedTrack`] by hand.
 pub fn track_geometry(points: &[NavPoint]) -> gt_types::TrackGeometry {
-    gt_track_builder::segment::measure_track_geometry(points)
+    gt_track_builder::segment::measure_track_geometry(
+        points,
+        gt_track_builder::FixPlacementRule::default(),
+    )
 }
 
 /// A [`gt_types::LoadedTrack`] over the given points, with the geometry the

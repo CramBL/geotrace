@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use gt_store::{
     DatabaseRef, HistoryDatabase as _, LogAttachmentError, LogAttachmentId, LogAttachments as _,
     LogToAttach, ReadOnlyHistoryDatabase as _, ReadOnlyLogAttachments as _, RecordingMeta,
-    Recordings, Store, StoredLogFilter, StoredLogFilterMode, StoredSegmentation,
-    StoredTrackSplitRule, TrackRange,
+    Recordings, Store, StoredFixPlacementRule, StoredLogFilter, StoredLogFilterMode,
+    StoredSegmentation, StoredTrackSplitRule, TrackRange,
 };
 
 /// A journald-shaped log, long enough that its stored copy is visibly
@@ -106,6 +106,7 @@ fn segmentation() -> StoredSegmentation {
     StoredSegmentation {
         track_split_gap_us: 300_000_000,
         track_split_rule: StoredTrackSplitRule::StepInEitherDirection,
+        fix_placement_rule: StoredFixPlacementRule::MissingHeadingAndNothingInFix,
         detect_clock_discontinuities: true,
         clock_discontinuity_sigmas: 5.0,
     }

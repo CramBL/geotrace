@@ -25,9 +25,9 @@ pub use gt_hdf5_archive::{ArchiveUsage, ArchivedDaySpan, ReadOnlyDayArchive, Wri
 pub use gt_history::{
     ChannelSummary, DatabaseRef, DbError, HistoryDatabase, LOGS_DIRECTORY, LogAttachment,
     LogAttachmentEntry, LogAttachmentId, LogContentHash, PruneMode, ReadOnlyHistoryDatabase,
-    RecordingEntry, RecordingMeta, StoredLogFilter, StoredLogFilterMode, StoredRecording,
-    StoredSegmentation, StoredTrackSplitRule, TrackRange, extract_meta, format_count_suffix,
-    identity_from_group_name, identity_group_name, make_group_name,
+    RecordingEntry, RecordingMeta, StoredFixPlacementRule, StoredLogFilter, StoredLogFilterMode,
+    StoredRecording, StoredSegmentation, StoredTrackSplitRule, TrackRange, extract_meta,
+    format_count_suffix, identity_from_group_name, identity_group_name, make_group_name,
 };
 pub use gt_ionex_store::{ArchivedMapDay, IonexStore, IonexStoreError, ReadOnlyIonexStore};
 pub use gt_jam_store::{JamStore, JamStoreError, ReadOnlyJamStore, StoredDay};

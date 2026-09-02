@@ -854,6 +854,7 @@ mod tests {
         let settings = StoredSegmentation {
             track_split_gap_us: 300_000_000,
             track_split_rule: gt_store::StoredTrackSplitRule::StepInEitherDirection,
+            fix_placement_rule: gt_store::StoredFixPlacementRule::MissingHeadingAndNothingInFix,
             detect_clock_discontinuities: true,
             clock_discontinuity_sigmas: 5.0,
         };

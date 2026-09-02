@@ -65,6 +65,49 @@ impl TrackLayoutConfig {
     }
 }
 
+/// Which fixes the builder places between the fixes around them, and where it
+/// places one stamped outside the time span those two fixes cover.
+///
+/// The history database holds the rule a recording's stored geometry was
+/// placed by. Re-running the builder under that rule reproduces the positions
+/// its fixes are drawn at, and the distances and bounding boxes measured over
+/// them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FixPlacementRule {
+    /// A fix with no heading is dead-reckoned. One stamped outside its
+    /// anchors' time span is placed along the great circle through them,
+    /// continued past the anchor it is stamped beyond. A recording stored by
+    /// an earlier version was placed by this rule.
+    MissingHeading,
+    /// A fix with no heading and no satellite in fix is dead-reckoned. One
+    /// stamped outside its anchors' time span is placed at the anchor it is
+    /// stamped nearer to.
+    #[default]
+    MissingHeadingAndNothingInFix,
+}
+
+impl FixPlacementRule {
+    fn classifies_as_dead_reckoned(self, point: &NavPoint) -> bool {
+        match self {
+            Self::MissingHeading => point.tpv.heading().is_none(),
+            Self::MissingHeadingAndNothingInFix => {
+                point.tpv.heading().is_none() && point.fix_count() == 0
+            }
+        }
+    }
+
+    /// Where along its anchors' arc a fix is placed, given the share of their
+    /// time span that has passed at its own timestamp. A backward time step
+    /// under the split gap leaves a fix inside one track with a share below
+    /// zero, and a forward one with a share above one.
+    fn share_along_the_arc(self, elapsed_share: f64) -> f64 {
+        match self {
+            Self::MissingHeading => elapsed_share,
+            Self::MissingHeadingAndNothingInFix => elapsed_share.clamp(0.0, 1.0),
+        }
+    }
+}
+
 /// Configuration for per-kind generated-marker detection.
 ///
 /// These settings affect marker output only. They do not change track ranges
@@ -118,6 +161,7 @@ impl Default for GeneratedMarkerConfig {
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct SegmentationConfig {
     pub track_layout: TrackLayoutConfig,
+    pub fix_placement_rule: FixPlacementRule,
     pub generated_markers: GeneratedMarkerConfig,
 }
 
@@ -590,23 +634,28 @@ fn recorded_placements(points: &[NavPoint]) -> FixPlacements {
         .collect()
 }
 
-/// The geometry of `points` taken as a track on their own: every fix the
-/// receiver did not measure is placed from the fixes that have a recorded
+/// The geometry of `points` taken as a track on their own: every fix `rule`
+/// names as dead-reckoned is placed from the fixes that have a recorded
 /// position, and the geometry is measured over where they all landed.
 ///
 /// [`TrackGeometry::NoValidPosition`] when no fix of `points` has a recorded
 /// position, which leaves the whole track unplaced.
-pub fn measure_track_geometry(points: &[NavPoint]) -> TrackGeometry {
+pub fn measure_track_geometry(points: &[NavPoint], rule: FixPlacementRule) -> TrackGeometry {
     let mut placements = recorded_placements(points);
-    place_track_fixes(points, &mut placements);
+    place_track_fixes(points, &mut placements, rule);
     track_geometry(placements)
 }
 
 /// Places the fixes of one track from its own fixes: first those the receiver
 /// wrote no position for, then the ones it dead-reckoned.
-fn place_track_fixes(points: &[NavPoint], placements: &mut FixPlacements) {
-    place_fixes(points, placements, UnmeasuredFix::CoordinateOutOfRange);
-    place_fixes(points, placements, UnmeasuredFix::Ghost);
+fn place_track_fixes(points: &[NavPoint], placements: &mut FixPlacements, rule: FixPlacementRule) {
+    place_fixes(
+        points,
+        placements,
+        UnmeasuredFix::CoordinateOutOfRange,
+        rule,
+    );
+    place_fixes(points, placements, UnmeasuredFix::Ghost, rule);
 }
 
 fn track_geometry(placements: FixPlacements) -> TrackGeometry {
@@ -747,7 +796,12 @@ pub fn build_loaded_file(
     // first. The per-track pass below refines it from its own track's fixes,
     // and a track holding no fix with a position keeps this placement.
     let mut placements = recorded_placements(points);
-    place_fixes(points, &mut placements, UnmeasuredFix::CoordinateOutOfRange);
+    place_fixes(
+        points,
+        &mut placements,
+        UnmeasuredFix::CoordinateOutOfRange,
+        config.fix_placement_rule,
+    );
 
     let event_marker_styles =
         keep_the_last_event_marker_style_per_variant_path(event_marker_styles, &mut load_warnings);
@@ -773,7 +827,11 @@ pub fn build_loaded_file(
                 .get(range)
                 .expect("ranges from segment_tracks are in bounds")
                 .to_vec();
-            place_track_fixes(&track_points, &mut track_placements);
+            place_track_fixes(
+                &track_points,
+                &mut track_placements,
+                config.fix_placement_rule,
+            );
             let geometry = track_geometry(track_placements);
 
             let placed_points = geometry.measured().and_then(|measured| {
@@ -981,18 +1039,22 @@ struct TimedArc {
 }
 
 impl TimedArc {
-    /// Where `time` falls along the arc. `None` when both ends stamp one
-    /// instant, spanning no time to place `time` in.
-    fn position_at(self, time: DateTime<Utc>) -> Option<(Latitude, Longitude)> {
+    /// The share of the arc's time span that has passed at `time`: negative
+    /// before its start, above one after its end. `None` when both ends stamp
+    /// one instant, spanning no time to place `time` in.
+    fn elapsed_share(self, time: DateTime<Utc>) -> Option<f64> {
         let Self { start, end } = self;
         let span_secs = (end.time - start.time).as_seconds_f64();
-        (span_secs > 0.0).then(|| {
-            GreatCircleArc {
-                start: start.position,
-                end: end.position,
-            }
-            .position_at_ratio((time - start.time).as_seconds_f64() / span_secs)
-        })
+        (span_secs > 0.0).then(|| (time - start.time).as_seconds_f64() / span_secs)
+    }
+
+    fn position_at_share(self, share: f64) -> (Latitude, Longitude) {
+        let Self { start, end } = self;
+        GreatCircleArc {
+            start: start.position,
+            end: end.position,
+        }
+        .position_at_ratio(share)
     }
 }
 
@@ -1000,9 +1062,8 @@ impl TimedArc {
 /// anchors the position the builder places it at.
 #[derive(Clone, Copy)]
 enum UnmeasuredFix {
-    /// A fix with no heading, anchored by the fixes with a satellite in fix:
-    /// the coordinates a receiver reports without a heading are often its own
-    /// dead reckoning, as is a position it reports with nothing in fix.
+    /// A fix the receiver dead-reckoned, which [`FixPlacementRule`] names,
+    /// anchored by the fixes with a satellite in fix.
     Ghost,
     /// A fix with a recorded latitude or longitude outside its range, anchored
     /// by every fix that has a recorded position: it holds none of its own to
@@ -1011,9 +1072,11 @@ enum UnmeasuredFix {
 }
 
 impl UnmeasuredFix {
-    fn is_target(self, point: &NavPoint) -> bool {
+    fn is_target(self, point: &NavPoint, rule: FixPlacementRule) -> bool {
         match self {
-            Self::Ghost => point.tpv.position().is_some() && point.tpv.heading().is_none(),
+            Self::Ghost => {
+                point.tpv.position().is_some() && rule.classifies_as_dead_reckoned(point)
+            }
             Self::CoordinateOutOfRange => point.tpv.position().is_none(),
         }
     }
@@ -1038,6 +1101,7 @@ impl UnmeasuredFix {
         placements: &FixPlacements,
         point: &NavPoint,
         (preceding, following): (Option<usize>, Option<usize>),
+        rule: FixPlacementRule,
     ) -> Option<ResolvedPosition> {
         let anchor = |index: Option<usize>| {
             let index = index?;
@@ -1047,17 +1111,20 @@ impl UnmeasuredFix {
         let after = anchor(following);
 
         let interpolated = match (before, after) {
-            (Some((before, before_position)), Some((after, after_position))) => TimedArc {
-                start: TimedPosition {
-                    time: before.tpv.time().utc(),
-                    position: before_position.coordinates(),
-                },
-                end: TimedPosition {
-                    time: after.tpv.time().utc(),
-                    position: after_position.coordinates(),
-                },
+            (Some((before, before_position)), Some((after, after_position))) => {
+                let arc = TimedArc {
+                    start: TimedPosition {
+                        time: before.tpv.time().utc(),
+                        position: before_position.coordinates(),
+                    },
+                    end: TimedPosition {
+                        time: after.tpv.time().utc(),
+                        position: after_position.coordinates(),
+                    },
+                };
+                arc.elapsed_share(point.tpv.time().utc())
+                    .map(|share| arc.position_at_share(rule.share_along_the_arc(share)))
             }
-            .position_at(point.tpv.time().utc()),
             (Some((_, position)), None) | (None, Some((_, position))) => {
                 Some(position.coordinates())
             }
@@ -1082,16 +1149,24 @@ impl UnmeasuredFix {
 /// Running this again over the same placements repeats the same placement:
 /// both the targets and the anchors are read off the recorded coordinates.
 /// Runs in O(n) over the points.
-fn place_fixes(points: &[NavPoint], placements: &mut FixPlacements, kind: UnmeasuredFix) {
+fn place_fixes(
+    points: &[NavPoint],
+    placements: &mut FixPlacements,
+    kind: UnmeasuredFix,
+    rule: FixPlacementRule,
+) {
     let anchors = nearest_anchors(points, |point| kind.is_anchor(point));
 
     let placed: Vec<(usize, ResolvedPosition)> = points
         .iter()
         .enumerate()
         .zip(&anchors)
-        .filter(|((_, point), _)| kind.is_target(point))
+        .filter(|((_, point), _)| kind.is_target(point, rule))
         .filter_map(|((index, point), anchors)| {
-            Some((index, kind.placement(points, placements, point, *anchors)?))
+            Some((
+                index,
+                kind.placement(points, placements, point, *anchors, rule)?,
+            ))
         })
         .collect();
 
@@ -1184,7 +1259,7 @@ fn position_between_placed_fixes(
             {
                 return None;
             }
-            let (latitude, longitude) = TimedArc {
+            let arc = TimedArc {
                 start: TimedPosition {
                     time: before_time,
                     position: before_position.coordinates(),
@@ -1193,8 +1268,8 @@ fn position_between_placed_fixes(
                     time: after_time,
                     position: after_position.coordinates(),
                 },
-            }
-            .position_at(time)?;
+            };
+            let (latitude, longitude) = arc.position_at_share(arc.elapsed_share(time)?);
             Some(ResolvedPosition::interpolated(latitude, longitude))
         }
         (Some(&(_, position)), None) | (None, Some(&(_, position))) => match position {
@@ -1234,13 +1309,13 @@ mod tests {
         points: &[NavPoint],
         config: &GeneratedMarkerConfig,
     ) -> Vec<GeneratedMarker> {
-        let geometry = measure_track_geometry(points);
+        let geometry = measure_track_geometry(points, FixPlacementRule::default());
         placed(points, &geometry)
             .map_or_else(Vec::new, |placed| detect_generated_markers(placed, config))
     }
 
     fn clock_discontinuities_of(points: &[NavPoint], sigmas: f64) -> Vec<GeneratedMarker> {
-        let geometry = measure_track_geometry(points);
+        let geometry = measure_track_geometry(points, FixPlacementRule::default());
         placed(points, &geometry).map_or_else(Vec::new, |placed| {
             detect_clock_discontinuities(placed, sigmas, &[])
         })
@@ -1516,7 +1591,7 @@ mod tests {
         assert!(!meta.has_custom_markers);
         assert_eq!(meta.satellite_report_count, 0);
 
-        let distance_km = measure_track_geometry(&pts)
+        let distance_km = measure_track_geometry(&pts, FixPlacementRule::default())
             .measured()
             .expect("both fixes have a recorded position")
             .distance_km;
@@ -1532,7 +1607,7 @@ mod tests {
         let meta = compute_track_metadata(1, &pts, &[], &[]);
         assert_eq!(meta.duration.num_seconds(), 0);
 
-        let distance_km = measure_track_geometry(&pts)
+        let distance_km = measure_track_geometry(&pts, FixPlacementRule::default())
             .measured()
             .expect("the fix has a recorded position")
             .distance_km;
@@ -1964,7 +2039,7 @@ mod tests {
     /// Where the builder draws each fix of `points`, taken as a track of their
     /// own. Empty for a track it places no fix of.
     fn drawn_positions(points: &[NavPoint]) -> Vec<(Latitude, Longitude)> {
-        measure_track_geometry(points)
+        measure_track_geometry(points, FixPlacementRule::default())
             .measured()
             .map_or_else(Vec::new, |measured| {
                 measured
@@ -1986,7 +2061,10 @@ mod tests {
 
     #[test]
     fn a_track_of_no_fixes_has_no_geometry() {
-        assert_eq!(measure_track_geometry(&[]), TrackGeometry::NoValidPosition);
+        assert_eq!(
+            measure_track_geometry(&[], FixPlacementRule::default()),
+            TrackGeometry::NoValidPosition
+        );
     }
 
     #[test]

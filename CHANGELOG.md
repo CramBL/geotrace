@@ -82,7 +82,9 @@
 - **Map & Tracks:** Fixed the plot's shared y-axis fitting the clock offset of fixes recorded before a device's clock was corrected.
 - **Map & Tracks:** Fixed the plot fitting its view past the time range filter, offering the chips of a recording the filter hides, and leaving its lines unchanged after a small move of the filter's end.
 - **Map & Tracks:** Fixed the plot drawing one fix past each edge of the time range filter, and a line across a filter window that holds no fix.
+- **Map & Tracks:** Fixed the map drawing a fix with satellites in fix away from the coordinates the receiver measured it at, and a fix stamped before both the fixes it is drawn between being drawn outside them.
 - **Settings & Storage:** Fixed a recording stored before a change to track splitting hiding the wrong tracks when it is opened.
+- **Settings & Storage:** Fixed a recording stored before a change to where dead-reckoned fixes are drawn opening with different distances and bounding boxes than it was stored with.
 
 ## 0.13.0 - 2026-08-25
 

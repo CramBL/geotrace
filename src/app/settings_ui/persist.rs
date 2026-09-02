@@ -2,7 +2,7 @@
 
 use gt_pending_writes::{WriteKind, WriteRejection};
 use gt_track_builder::{
-    GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig, TrackSplitRule,
+    FixPlacementRule, GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig, TrackSplitRule,
 };
 use gt_types::AssociationConfig;
 use strum::IntoEnumIterator;
@@ -35,6 +35,7 @@ impl App {
                 ),
                 track_split_rule: TrackSplitRule::default(),
             },
+            fix_placement_rule: FixPlacementRule::default(),
             generated_markers: GeneratedMarkerConfig {
                 detect_gnss_fix_lost: s.processing.detect_gnss_fix_lost,
                 detect_gnss_fix_regained: s.processing.detect_gnss_fix_regained,

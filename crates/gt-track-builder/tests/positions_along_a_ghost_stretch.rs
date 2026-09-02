@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, Utc};
-use gt_track_builder::{FileMeta, SegmentationConfig};
+use gt_track_builder::{FileMeta, FixPlacementRule, SegmentationConfig};
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::highlight::DataCategory;
 use gt_types::markers::EventMarker;
@@ -140,7 +140,11 @@ fn event_marker(millis: i64, lat: Latitude, lon: Longitude) -> EventMarker {
     EventMarker::new(utc_time(millis), "marker/note".to_owned(), None, lat, lon)
 }
 
-fn build(points: &[NavPoint], event_markers: Vec<EventMarker>) -> LoadedFile {
+fn build_under(
+    points: &[NavPoint],
+    event_markers: Vec<EventMarker>,
+    rule: FixPlacementRule,
+) -> LoadedFile {
     gt_track_builder::build_loaded_file(
         "ghost_stretch.gtd".to_owned(),
         points,
@@ -148,11 +152,18 @@ fn build(points: &[NavPoint], event_markers: Vec<EventMarker>) -> LoadedFile {
         event_markers,
         vec![],
         &[],
-        &SegmentationConfig::default(),
+        &SegmentationConfig {
+            fix_placement_rule: rule,
+            ..SegmentationConfig::default()
+        },
         FileSource::GtdPath(PathBuf::from("ghost_stretch.gtd")),
         FileMeta::default(),
         vec![],
     )
+}
+
+fn build(points: &[NavPoint], event_markers: Vec<EventMarker>) -> LoadedFile {
+    build_under(points, event_markers, FixPlacementRule::default())
 }
 
 /// Where the map draws the fix at `index` of the file's only track.
@@ -170,6 +181,19 @@ fn drawn_at(points: &[NavPoint], index: usize) -> Option<(Latitude, Longitude)> 
 
 fn drawn_longitude_degrees(points: &[NavPoint], index: usize) -> Option<f64> {
     Some(drawn_at(points, index)?.1.as_degrees())
+}
+
+/// The longitude the fix at `index` is drawn at under `rule`.
+fn drawn_longitude_degrees_under(
+    points: &[NavPoint],
+    index: usize,
+    rule: FixPlacementRule,
+) -> Option<f64> {
+    Some(
+        fix_drawn_at(&build_under(points, vec![], rule), index)?
+            .1
+            .as_degrees(),
+    )
 }
 
 /// Where the map draws the file's only event marker, read off the spatial
@@ -480,5 +504,57 @@ fn a_ghost_fix_between_anchors_on_opposite_sides_of_a_pole_is_placed_between_the
         latitude >= ANCHOR_LATITUDE_DEGREES,
         "the dead-reckoned fix is drawn at lat {latitude}, below the \
          lat {ANCHOR_LATITUDE_DEGREES} both of its anchors sit at"
+    );
+}
+
+/// A recording stored before the placement rule changed opens with the
+/// geometry it was stored with. Under
+/// [`FixPlacementRule::MissingHeading`] a fix with satellites in fix and no
+/// heading is drawn between the fixes around it, a tenth of the way from the
+/// one at lon 0 towards the one at lon 10.
+#[test]
+fn the_missing_heading_rule_draws_a_fix_with_satellites_in_fix_between_its_neighbours() {
+    let points = vec![
+        fix_without_a_heading(0, Longitude::new(0.0)),
+        fix_without_a_heading(1_000, Longitude::new(5.0)),
+        fix_without_a_heading(10_000, Longitude::new(10.0)),
+    ];
+
+    let longitude = drawn_longitude_degrees_under(&points, 1, FixPlacementRule::MissingHeading)
+        .expect("the fix is drawn");
+
+    assert!(
+        (0.0..2.0).contains(&longitude),
+        "the fix measured at lon 5.0 is drawn at lon {longitude}, not a tenth of the way from \
+         lon 0.0 towards lon 10.0"
+    );
+}
+
+/// The same recording keeps the placement it was stored with along the arc:
+/// under [`FixPlacementRule::MissingHeading`] a fix stamped before both its
+/// anchors is drawn west of the pair, on the great circle through them
+/// continued past the first.
+#[test]
+fn the_missing_heading_rule_draws_a_fix_stamped_before_its_anchors_outside_them() {
+    const FIRST_ANCHOR_LONGITUDE_DEGREES: f64 = 0.000;
+    const SECOND_ANCHOR_LONGITUDE_DEGREES: f64 = 0.001;
+    let points = vec![
+        measured_fix(300_000, Longitude::new(FIRST_ANCHOR_LONGITUDE_DEGREES)),
+        dead_reckoned_fix(
+            1_000,
+            Latitude::new(LATITUDE_DEGREES),
+            Longitude::new(FIRST_ANCHOR_LONGITUDE_DEGREES),
+        ),
+        measured_fix(300_500, Longitude::new(SECOND_ANCHOR_LONGITUDE_DEGREES)),
+    ];
+
+    let longitude = drawn_longitude_degrees_under(&points, 1, FixPlacementRule::MissingHeading)
+        .expect("the fix is drawn");
+
+    assert!(
+        longitude < FIRST_ANCHOR_LONGITUDE_DEGREES,
+        "the dead-reckoned fix is drawn at lon {longitude}, inside the \
+         lon {FIRST_ANCHOR_LONGITUDE_DEGREES} to {SECOND_ANCHOR_LONGITUDE_DEGREES} its anchors \
+         span"
     );
 }
