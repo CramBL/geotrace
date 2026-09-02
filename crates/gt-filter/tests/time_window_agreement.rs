@@ -64,10 +64,10 @@ fn fix_passes(fixes: &[NavPoint], index: usize, filter: &GlobalFilter) -> bool {
         .is_some_and(|fix| point_passes_time_filter(fix.tpv.time().utc(), filter))
 }
 
-/// Nothing sorts the fixes a recording is read from, and a backward time step
-/// never splits a track, so a fix stamped before its predecessor reaches the
-/// filter. The fix at 1 s is inside the window that ends at 5 s, so the query
-/// must still evaluate it.
+/// A fix stamped before its predecessor reaches the filter: nothing sorts the
+/// fixes a recording is read from, and a backward time step smaller than the
+/// track split gap keeps its fixes in one track. The query must still evaluate
+/// the fix at 1 s, which is inside the window that ends at 5 s.
 #[test]
 fn a_fix_after_a_backward_time_step_stays_inside_the_filtered_range() {
     let fixes = fixes_at(&[at(0), at(10), at(1)]);

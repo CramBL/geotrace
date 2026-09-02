@@ -52,9 +52,11 @@ impl App {
             .show(ui, |ui| {
                 ui.label(format!("{ICON_SCISSORS} {TRACK_SPLIT_GAP_LABEL}"))
                     .on_hover_text(
-                        "Consecutive GPS points separated by more than this gap \
-                         start a new track. For example, with a gap of 5 min, two \
-                         fixes at 10:00 and 10:06 would be split into separate tracks.",
+                        "Consecutive GPS points whose timestamps differ by this gap \
+                         start a new track, whether the second is later or earlier \
+                         than the first. For example, with a gap of 5 min, two fixes \
+                         at 10:00 and 10:06 would be split into separate tracks, and \
+                         so would two at 10:06 and 10:00.",
                     );
                 let mut gap_secs = self
                     .processing_config
