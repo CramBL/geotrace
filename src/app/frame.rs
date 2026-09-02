@@ -17,8 +17,8 @@ use gt_side_panel::{PanelContext, SnapCostingTarget, SnapPanelView, show_side_pa
 use gt_track_builder::SegmentationConfig;
 use gt_types::{DataCategory, FileIdx, LoadedFile, TrackIdx, TrackRef};
 use gt_ui_types::{
-    ArcIdentity, ContextLines, GeomagneticSeries, HighlightScope, JammingSeries, MapHighlight,
-    TecSeries,
+    ArcIdentity, ContextLines, DataPointRef, GeomagneticSeries, HighlightScope, JammingSeries,
+    MapHighlight, MapScope, TecSeries,
 };
 use rustc_hash::FxHashMap;
 
@@ -772,12 +772,29 @@ impl App {
             let plot_visible = self.plot_is_visible();
             if plot_visible {
                 if let Some(cursor_time) = s.plot_state.hovered_time {
+                    let scope = MapScope {
+                        files: s.loaded_files.files(),
+                        visibility: s.tree.visibility(),
+                        filter: &s.filter,
+                        display_mask: s.display_mask,
+                        query_matches: self.query_window.matches(),
+                    };
+                    // `find_closest_tpv` applies the tree and the global
+                    // filter. The track's category toggle, the display mask
+                    // and a `keep`/`hide` query are the map's own gates.
                     let closest = gt_plot::find_closest_tpv(
                         &s.loaded_files,
                         s.tree.visibility(),
                         &s.filter,
                         cursor_time,
-                    );
+                    )
+                    .filter(|&(fi, ti, pi)| {
+                        scope.draws(DataPointRef {
+                            track: TrackRef::new(fi, ti),
+                            category: DataCategory::Tpv,
+                            point_index: pi,
+                        })
+                    });
                     s.highlight.plot_hover_time = closest.map(|_| cursor_time);
                     s.highlight.plot_hover_point = closest;
                     // `plot_cursor_snapped` is computed inside `show_track_plot`

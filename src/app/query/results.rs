@@ -1195,6 +1195,7 @@ impl<'a> ResultsTables<'a> {
                             &cells,
                             selected,
                             source_index,
+                            scope,
                             out.highlight,
                         ) {
                             click = Some(taken);
@@ -1226,6 +1227,7 @@ impl<'a> ResultsTables<'a> {
         cells: &PointColumns<'_>,
         match_row: &MatchRow,
         source_index: usize,
+        scope: MapScope<'_>,
         highlight: &mut MapHighlight,
     ) -> Option<PointClick> {
         let track = match_row.track;
@@ -1244,9 +1246,9 @@ impl<'a> ResultsTables<'a> {
             .response()
             .on_hover_text(self.source.row_hover_text(track, source_index));
         let point = point?;
-        if response.hovered() {
-            // The ring the plot cursor draws: the row and the map then agree
-            // on which point is meant.
+        if response.hovered() && scope.draws(point) {
+            // The ring the plot cursor draws, restricted to a point the map
+            // draws: the row and the map then agree on which point is meant.
             highlight.plot_hover_point = Some((track.fi, track.index, point.point_index));
         }
         if !response.clicked() && !response.double_clicked() {
