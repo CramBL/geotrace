@@ -14,6 +14,7 @@ use gt_ionex::quiet_time;
 use gt_types::MetricKind;
 use gt_ui_types::{ContextLines, TecContextSample};
 
+use super::FilterTimeWindow;
 use super::chips::{MetricAvailability, MetricVisibility};
 use super::context::{ContextLineGates, ContextPlotCaches, add_context_lines};
 use super::levels::LineViewport;
@@ -186,6 +187,7 @@ fn generate_tec_reference_plot() {
                                 LineViewport {
                                     x_min,
                                     x_max,
+                                    time_window: FilterTimeWindow::default(),
                                     width: CANVAS_SIZE.x,
                                     cap: samples.len(),
                                 },

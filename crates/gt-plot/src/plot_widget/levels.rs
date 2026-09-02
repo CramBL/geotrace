@@ -1,9 +1,10 @@
 //! Mipmap level selection: the per-frame sample budget and the cached
 //! per-track level choices every metric line draws from.
 
-use gt_egui_mipmap::{LevelSelection, MipMap};
+use gt_egui_mipmap::{LevelSelection, MipMap, SelectionRange};
 use gt_types::MetricKind;
 
+use super::FilterTimeWindow;
 use crate::series::TrackSeries;
 
 /// Overlap budget expressed as a multiple of the single-track target
@@ -66,30 +67,42 @@ pub(super) fn track_target(
 /// The viewport one line selects its mipmap levels against, shared by every
 /// metric whose line is built from per-fix values rather than from
 /// [`TrackSeries`].
+///
+/// `x_min` and `x_max` are the plot's visible x range intersected with
+/// `time_window`, and every marker overlay clips itself against them.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct LineViewport {
     pub(super) x_min: f64,
     pub(super) x_max: f64,
+    /// The global filter's window, passed on as the hard bound of every level
+    /// selection: a line ends at the window's edge.
+    pub(super) time_window: FilterTimeWindow,
     pub(super) width: f32,
     pub(super) cap: usize,
 }
 
 impl LineViewport {
+    pub(super) fn selection_range(self) -> SelectionRange {
+        SelectionRange::within_viewport(self.x_min..=self.x_max)
+            .bounded_by(self.time_window.hard_bound())
+    }
+
     /// The level each run draws at, in the order the runs are given.
     pub(super) fn select_run_levels(self, runs: &[MipMap]) -> Vec<LevelSelection> {
+        let range = self.selection_range();
         runs.iter()
             .map(|run| {
                 let target =
                     track_target(run.x_range(), self.x_min, self.x_max, self.width, self.cap);
-                run.select_indices(self.x_min, self.x_max, target)
+                run.select_indices(range, target)
             })
             .collect()
     }
 
     /// Whether any of `run` lies inside the viewport.
     ///
-    /// A selection always keeps one boundary point, so slice emptiness cannot
-    /// identify a run outside the viewport.
+    /// A run outside the viewport still selects the points around it, so slice
+    /// emptiness cannot identify one.
     pub(super) fn shows(self, run: &MipMap) -> bool {
         run.x_range()
             .is_some_and(|(lo, hi)| lo <= self.x_max && hi >= self.x_min)
@@ -237,15 +250,16 @@ impl crate::series::TrackSeries {
 /// The sample target is derived per track from how many pixels the track
 /// occupies in the current view ([`track_target`]), so a track that is only a
 /// few pixels wide selects a coarse mipmap level with just a few points.
-pub(super) fn compute_level_cache(
-    series: &TrackSeries,
-    x_min: f64,
-    x_max: f64,
-    available_width: f32,
-    sample_cap: usize,
-) -> TrackLevelCache {
-    let target = track_target(series.x_range, x_min, x_max, available_width, sample_cap);
-    let sel = |mm: &MipMap| mm.select_indices(x_min, x_max, target);
+pub(super) fn compute_level_cache(series: &TrackSeries, viewport: LineViewport) -> TrackLevelCache {
+    let target = track_target(
+        series.x_range,
+        viewport.x_min,
+        viewport.x_max,
+        viewport.width,
+        viewport.cap,
+    );
+    let range = viewport.selection_range();
+    let sel = |mm: &MipMap| mm.select_indices(range, target);
     TrackLevelCache {
         total_seen: sel(&series.total_seen),
         total_fix: sel(&series.total_fix),
@@ -289,7 +303,92 @@ pub(super) fn compute_level_cache(
 
 #[cfg(test)]
 mod tests {
+    use std::ops::RangeInclusive;
+
+    use chrono::{DateTime, Utc};
+    use gt_types::{FileSource, LoadedFile, NavPoint};
+    use rustc_hash::FxHashMap;
+
     use super::*;
+    use crate::AnalysisConfig;
+
+    /// Plot width in points. Wide enough that a window of a few seconds still
+    /// reads the finest mipmap level.
+    const PLOT_WIDTH_PX: f32 = 800.0;
+
+    /// 2024-01-15 12:00:00 UTC, the first fix of every track below.
+    const FIRST_FIX_SECS: i64 = 1_705_320_000;
+
+    fn at_second(offset: i64) -> DateTime<Utc> {
+        DateTime::from_timestamp(FIRST_FIX_SECS + offset, 0).expect("a valid timestamp")
+    }
+
+    /// A recording of one track over `points`.
+    fn recording(points: Vec<NavPoint>) -> LoadedFile {
+        LoadedFile {
+            metadata: gt_test_utils::empty_file_metadata(),
+            tracks: vec![gt_test_utils::loaded_track_with_points(points)],
+            event_marker_styles: FxHashMap::default(),
+            orphaned_event_markers: Vec::new(),
+            source: FileSource::GtdBytes([].into()),
+            load_warnings: Vec::new(),
+        }
+    }
+
+    /// The x values the velocity line of a plot over `points` draws from, in
+    /// seconds from the first fix, under a time `window` given in the same
+    /// seconds.
+    fn drawn_seconds(points: Vec<NavPoint>, window: RangeInclusive<i64>) -> Vec<i64> {
+        let files = [recording(points)];
+        let placed = crate::series::build_all_series(&files, AnalysisConfig::default());
+        let [placed] = placed.as_slice() else {
+            panic!("one track builds one series");
+        };
+        let (x_min, x_max) = (
+            at_second(*window.start()).timestamp() as f64,
+            at_second(*window.end()).timestamp() as f64,
+        );
+        let cache = compute_level_cache(
+            &placed.series,
+            LineViewport {
+                x_min,
+                x_max,
+                time_window: FilterTimeWindow {
+                    start: Some(x_min),
+                    end: Some(x_max),
+                },
+                width: PLOT_WIDTH_PX,
+                cap: single_target(PLOT_WIDTH_PX),
+            },
+        );
+        let level = cache
+            .level_for(MetricKind::Velocity)
+            .expect("velocity has a mipmap");
+        let mipmap = placed
+            .series
+            .mipmap_for(MetricKind::Velocity)
+            .expect("velocity has a mipmap");
+        mipmap
+            .slice_at(level)
+            .iter()
+            .map(|point| point.x as i64 - FIRST_FIX_SECS)
+            .collect()
+    }
+
+    /// `gt-map` draws exactly the fixes the window keeps, and the plot's line
+    /// draws the same fixes.
+    #[test]
+    fn a_fix_outside_the_time_window_is_not_drawn() {
+        let points = gt_test_utils::nav_points_from(at_second(0), 10, 1);
+        assert_eq!(drawn_seconds(points, 3..=5), [3, 4, 5]);
+    }
+
+    #[test]
+    fn a_window_inside_a_recording_gap_draws_no_line() {
+        let mut points = gt_test_utils::nav_points_from(at_second(0), 4, 1);
+        points.extend(gt_test_utils::nav_points_from(at_second(600), 4, 1));
+        assert_eq!(drawn_seconds(points, 300..=400), Vec::<i64>::new());
+    }
 
     #[test]
     fn track_target_scales_with_visible_pixels() {

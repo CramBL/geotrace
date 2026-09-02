@@ -21,10 +21,12 @@
 //! ## Selecting the right level
 //!
 //! `MipMap::select_slice` returns the coarsest level that has at least
-//! `target_count` data points within the requested x range.
-//! Caller passes the plot's current x bounds and approximately
-//! `screen_width_px * 2` as the target to keep rendering fast without
-//! sacrificing visual fidelity.
+//! `target_count` data points within the requested [`SelectionRange`].
+//! Caller passes the plot's current x bounds as the range's viewport and
+//! approximately `screen_width_px * 2` as the target to keep rendering fast
+//! without sacrificing visual fidelity. A caller drawing a filtered range
+//! passes that filter as the range's hard bound, which no selected point lies
+//! outside.
 //!
 //! ## Complexity
 //!
@@ -32,6 +34,8 @@
 //! |-----------------|---------------|------------|
 //! | `build`          | O(n)          | O(n)       |
 //! | `select_slice`   | O(log n)      | O(1)       |
+
+use std::ops::{Range, RangeInclusive};
 
 use egui_plot::PlotPoint;
 
@@ -94,6 +98,69 @@ impl WrapPeriod {
     /// Whether `value` lies within one period of the origin, `[0, period)`.
     fn contains(self, value: f64) -> bool {
         (0.0..self.0).contains(&value)
+    }
+}
+
+/// The x range one level selection reads, in two parts.
+///
+/// The selection extends one point past each edge of the viewport where the
+/// level has one, so a rendered line stays connected to the data outside the
+/// visible viewport. It holds no point outside the hard bound, at either edge,
+/// so a caller drawing a filtered range draws exactly the points inside it.
+#[derive(Debug, Clone, Copy)]
+pub struct SelectionRange {
+    viewport_min: f64,
+    viewport_max: f64,
+    hard_min: f64,
+    hard_max: f64,
+}
+
+impl SelectionRange {
+    /// A selection over `viewport`, bounded only by the data itself.
+    pub fn within_viewport(viewport: RangeInclusive<f64>) -> Self {
+        Self {
+            viewport_min: *viewport.start(),
+            viewport_max: *viewport.end(),
+            hard_min: f64::NEG_INFINITY,
+            hard_max: f64::INFINITY,
+        }
+    }
+
+    /// The same viewport under a bound the selection stays inside: the
+    /// one-point extension stops at an edge of `hard_bound`, and a point
+    /// outside it is never selected.
+    pub fn bounded_by(self, hard_bound: RangeInclusive<f64>) -> Self {
+        Self {
+            hard_min: *hard_bound.start(),
+            hard_max: *hard_bound.end(),
+            ..self
+        }
+    }
+
+    /// The part of the viewport inside the hard bound, which the level choice
+    /// counts its points over.
+    ///
+    /// A viewport inverted by a caller intersecting two ranges that do not
+    /// overlap, and a viewport disjoint from the hard bound, both collapse to
+    /// a single x - see `select_handles_inverted_and_disjoint_ranges_without_panic`.
+    fn counted_span(self) -> (f64, f64) {
+        let min = self.viewport_min.max(self.hard_min);
+        (min, self.viewport_max.min(self.hard_max).max(min))
+    }
+
+    /// `inner` extended by one point past each of its edges, cut back to the
+    /// points of `level` inside the hard bound.
+    fn extended_within_hard_bound(self, level: &[PlotPoint], inner: Range<usize>) -> Range<usize> {
+        let start = inner
+            .start
+            .saturating_sub(1)
+            .max(level.partition_point(|p| p.x < self.hard_min));
+        // `start` passes the end when the viewport lies wholly outside the
+        // hard bound, which selects no point at all.
+        let end = (inner.end + 1)
+            .min(level.partition_point(|p| p.x <= self.hard_max))
+            .max(start);
+        start..end
     }
 }
 
@@ -211,7 +278,7 @@ impl MipMap {
     }
 
     /// Return the coarsest mipmap level that has at least `target_count` data
-    /// points within `[x_min, x_max]`, clipped to that range.
+    /// points within `range`, clipped to that range.
     ///
     /// Falls back to the finest level when no level meets the target - this
     /// happens when the plot is zoomed into a very narrow time window.
@@ -219,19 +286,8 @@ impl MipMap {
     /// The returned slice borrows directly from the internal buffer, so it has
     /// the lifetime of `&self`.
     /// Pass it to [`egui_plot::PlotPoints::Borrowed`] for zero-copy rendering.
-    pub fn select_slice(&self, x_min: f64, x_max: f64, target_count: usize) -> &[PlotPoint] {
-        let (level_idx, inner_start, inner_end) =
-            self.select_level_bounds(x_min, x_max, target_count);
-        let level = self.levels.get(level_idx).map_or(&[][..], Vec::as_slice);
-        let start = inner_start.saturating_sub(1);
-        let end = (inner_end + 1).min(level.len());
-        // `start` and `end` are derived from `partition_point` results on this
-        // same level, clamped to `0..=level.len()`, so the slice is in bounds.
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "start and end are partition_point results clamped to 0..=level.len()"
-        )]
-        &level[start..end]
+    pub fn select_slice(&self, range: SelectionRange, target_count: usize) -> &[PlotPoint] {
+        self.slice_at(self.select_indices(range, target_count))
     }
 
     /// Compute a `LevelSelection` that records which level and which sub-range
@@ -242,22 +298,21 @@ impl MipMap {
     /// repeating the binary searches inside `select_slice` when the view bounds
     /// have not changed.
     ///
-    /// The selection always extends one point beyond each edge of `[x_min, x_max]`
-    /// when such a point exists, so the rendered line stays connected to the
-    /// data outside the visible viewport.
-    pub fn select_indices(&self, x_min: f64, x_max: f64, target_count: usize) -> LevelSelection {
+    /// The selection extends one point beyond each edge of the range's
+    /// viewport when such a point exists, so the rendered line stays connected
+    /// to the data outside the visible viewport. It stops at the range's hard
+    /// bound, which no selected point lies outside.
+    pub fn select_indices(&self, range: SelectionRange, target_count: usize) -> LevelSelection {
         if self.levels.is_empty() {
             return LevelSelection::default();
         }
-        let (level_idx, inner_start, inner_end) =
-            self.select_level_bounds(x_min, x_max, target_count);
+        let (level_idx, inner) = self.select_level_bounds(range, target_count);
         let level = self.levels.get(level_idx).map_or(&[][..], Vec::as_slice);
-        let clip_start = inner_start.saturating_sub(1);
-        let clip_end = (inner_end + 1).min(level.len());
+        let clipped = range.extended_within_hard_bound(level, inner);
         LevelSelection {
             level_idx,
-            clip_start,
-            clip_end,
+            clip_start: clipped.start,
+            clip_end: clipped.end,
         }
     }
 
@@ -282,38 +337,32 @@ impl MipMap {
         &level[start..end]
     }
 
-    /// Find the coarsest level with enough points in `[x_min, x_max]`, and
-    /// return `(level_idx, inner_start, inner_end)` where `inner_start`/
-    /// `inner_end` are that level's `partition_point` bounds for the range.
+    /// Find the coarsest level with enough points in the range's counted span,
+    /// and return its index with that level's `partition_point` bounds for the
+    /// span.
     ///
-    /// Returning the bounds alongside the index lets [`Self::select_slice`]
-    /// and [`Self::select_indices`] reuse them directly instead of repeating
-    /// the same two binary searches on the chosen level.
+    /// Returning the bounds alongside the index lets [`Self::select_indices`]
+    /// reuse them directly instead of repeating the same two binary searches on
+    /// the chosen level.
     ///
-    /// Falls back to `(0, inner_start, inner_end)` for the finest level when
-    /// no level meets the target - the reverse iteration always visits level 0
-    /// last, so its bounds are already on hand to serve as that fallback.
-    ///
-    /// Normalizes an inverted range (`x_min > x_max`) by raising `x_max` to
-    /// `x_min`, restoring the `inner_start <= inner_end` invariant
-    /// [`Self::select_slice`] / [`Self::select_indices`] rely on - see
-    /// `select_handles_inverted_and_disjoint_ranges_without_panic` for why
-    /// callers can end up passing such a range.
+    /// Falls back to the finest level's bounds when no level meets the target -
+    /// the reverse iteration always visits level 0 last, so its bounds are
+    /// already on hand to serve as that fallback.
     fn select_level_bounds(
         &self,
-        x_min: f64,
-        x_max: f64,
+        range: SelectionRange,
         target_count: usize,
-    ) -> (usize, usize, usize) {
-        let x_max = x_max.max(x_min);
+    ) -> (usize, Range<usize>) {
+        let (x_min, x_max) = range.counted_span();
         // Try from coarsest → finest. Use the coarsest level that is dense
         // enough for the target count in the visible range.
-        let mut bounds = (0, 0, 0);
+        let mut bounds = (0, 0..0);
         for (i, level) in self.levels.iter().enumerate().rev() {
-            let inner_start = level.partition_point(|p| p.x < x_min);
-            let inner_end = level.partition_point(|p| p.x <= x_max);
-            bounds = (i, inner_start, inner_end);
-            if inner_end.saturating_sub(inner_start) >= target_count {
+            let inner =
+                level.partition_point(|p| p.x < x_min)..level.partition_point(|p| p.x <= x_max);
+            let count = inner.len();
+            bounds = (i, inner);
+            if count >= target_count {
                 return bounds;
             }
         }
@@ -396,7 +445,10 @@ mod tests {
         assert!(m.is_empty());
         assert_eq!(m.original_len(), 0);
         let empty: &[PlotPoint] = &[];
-        assert_eq!(m.select_slice(0.0, 100.0, 10), empty);
+        assert_eq!(
+            m.select_slice(SelectionRange::within_viewport(0.0..=100.0), 10),
+            empty
+        );
     }
 
     #[test]
@@ -446,7 +498,7 @@ mod tests {
     fn select_slice_clips_to_range() {
         let data: Vec<[f64; 2]> = (0..1000).map(|i| [i as f64, i as f64]).collect();
         let m = MipMap::build(data);
-        let slice = m.select_slice(100.0, 200.0, 10);
+        let slice = m.select_slice(SelectionRange::within_viewport(100.0..=200.0), 10);
         // All returned points must come from the original data range (no garbage).
         assert!(slice.iter().all(|p| p.x >= 0.0 && p.x <= 999.0));
         // The slice must include points from within the viewport.
@@ -475,7 +527,7 @@ mod tests {
     fn select_uses_coarser_level_for_wide_view() {
         let data: Vec<[f64; 2]> = (0..10_000).map(|i| [i as f64, 1.0]).collect();
         let m = MipMap::build(data);
-        let total_range_slice = m.select_slice(0.0, 9_999.0, 50);
+        let total_range_slice = m.select_slice(SelectionRange::within_viewport(0.0..=9_999.0), 50);
         // With a small target (50) over the full range, a coarse level is
         // selected - far fewer than the 10_000 original points.
         assert!(
@@ -484,91 +536,90 @@ mod tests {
         );
     }
 
-    // --- Neighbor-inclusion regression tests (the "broken line at viewport edge" bug) ---
-    //
-    // When the plot is zoomed in so that the series extends beyond both sides of
-    // the viewport, the rendered line must include one point on each side of the
-    // visible range.  Without that, egui_plot draws the line only between the
-    // points that fall inside the viewport, producing a visually disconnected
-    // segment instead of a continuous line.
-    //
-    // These use a target larger than the data length so the finest level is
-    // selected (no coarse level can meet it), making the exact integer
-    // neighbours deterministic while still exercising the ±1 edge extension.
     fn int_data(n: usize) -> Vec<[f64; 2]> {
         (0..n).map(|i| [i as f64, i as f64]).collect()
     }
 
     /// Target that exceeds every `int_data` fixture below, forcing finest-level
-    /// selection.
+    /// selection: the exact integer x values a selection holds are then
+    /// deterministic while the ±1 edge extension still runs.
     const FINEST: usize = 100;
 
-    #[test]
-    fn select_slice_includes_left_neighbor() {
-        let m = MipMap::build(int_data(50));
-        // Viewport [10, 30]: point at x=9 must be included as the left neighbor.
-        let slice = m.select_slice(10.0, 30.0, FINEST);
-        assert!(
-            slice.iter().any(|p| p.x as i64 == 9),
-            "select_slice must include the point just left of x_min to keep the line connected"
-        );
+    /// The x values a selection over 50 points at x = 0 to 49 holds.
+    fn selected_x(range: SelectionRange) -> Vec<i64> {
+        MipMap::build(int_data(50))
+            .select_slice(range, FINEST)
+            .iter()
+            .map(|p| p.x as i64)
+            .collect()
     }
 
-    #[test]
-    fn select_slice_includes_right_neighbor() {
-        let m = MipMap::build(int_data(50));
-        // Viewport [10, 30]: point at x=31 must be included as the right neighbor.
-        let slice = m.select_slice(10.0, 30.0, FINEST);
-        assert!(
-            slice.iter().any(|p| p.x as i64 == 31),
-            "select_slice must include the point just right of x_max to keep the line connected"
-        );
+    /// The one point past each viewport edge keeps the rendered line connected
+    /// to the data outside the viewport: without it egui_plot draws the line
+    /// only between the points inside the viewport, and it ends short of the
+    /// edge.
+    #[rstest::rstest]
+    #[case::extends_one_point_past_each_edge(
+        SelectionRange::within_viewport(10.0..=12.0),
+        vec![9, 10, 11, 12, 13]
+    )]
+    #[case::no_point_before_the_first(
+        SelectionRange::within_viewport(0.0..=2.0),
+        vec![0, 1, 2, 3]
+    )]
+    #[case::no_point_after_the_last(
+        SelectionRange::within_viewport(47.0..=49.0),
+        vec![46, 47, 48, 49]
+    )]
+    #[case::a_wider_hard_bound_leaves_the_extension(
+        SelectionRange::within_viewport(10.0..=12.0).bounded_by(0.0..=49.0),
+        vec![9, 10, 11, 12, 13]
+    )]
+    #[case::the_hard_bound_edges_hold_their_own_points(
+        SelectionRange::within_viewport(0.0..=49.0).bounded_by(10.0..=12.0),
+        vec![10, 11, 12]
+    )]
+    #[case::the_hard_bound_edges_lie_between_points(
+        SelectionRange::within_viewport(0.0..=49.0).bounded_by(9.5..=12.5),
+        vec![10, 11, 12]
+    )]
+    #[case::the_hard_bound_lies_between_two_points(
+        SelectionRange::within_viewport(0.0..=49.0).bounded_by(20.2..=20.8),
+        vec![]
+    )]
+    #[case::the_hard_bound_lies_past_the_data(
+        SelectionRange::within_viewport(0.0..=49.0).bounded_by(60.0..=70.0),
+        vec![]
+    )]
+    #[case::the_viewport_lies_past_the_hard_bound(
+        SelectionRange::within_viewport(40.0..=49.0).bounded_by(0.0..=10.0),
+        vec![]
+    )]
+    fn a_selection_extends_past_the_viewport_and_stops_at_the_hard_bound(
+        #[case] range: SelectionRange,
+        #[case] expected: Vec<i64>,
+    ) {
+        assert_eq!(selected_x(range), expected);
     }
 
+    /// A coarse level keeps one point per extreme of each bucket, and a hard
+    /// bound inside a bucket cuts every point of that level outside it.
     #[test]
-    fn select_indices_includes_left_neighbor() {
-        let m = MipMap::build(int_data(50));
-        let sel = m.select_indices(10.0, 30.0, FINEST);
-        let slice = m.slice_at(sel);
+    fn a_coarse_level_holds_no_point_outside_the_hard_bound() {
+        let m = MipMap::build(int_data(10_000));
+        let bound = 100.0..=200.0;
+        let range = SelectionRange::within_viewport(0.0..=9_999.0).bounded_by(bound.clone());
+        let selection = m.select_indices(range, MIN_LEVEL_POINTS);
+        let slice = m.slice_at(selection);
         assert!(
-            slice.iter().any(|p| p.x as i64 == 9),
-            "select_indices/slice_at must include the point just left of x_min"
+            !selection.is_full_detail(),
+            "a target of {MIN_LEVEL_POINTS} over 10 000 points reads a downsampled level"
         );
-    }
-
-    #[test]
-    fn select_indices_includes_right_neighbor() {
-        let m = MipMap::build(int_data(50));
-        let sel = m.select_indices(10.0, 30.0, FINEST);
-        let slice = m.slice_at(sel);
         assert!(
-            slice.iter().any(|p| p.x as i64 == 31),
-            "select_indices/slice_at must include the point just right of x_max"
+            slice.iter().all(|p| bound.contains(&p.x)),
+            "every point must lie inside the hard bound, got {slice:?}"
         );
-    }
-
-    #[test]
-    fn select_slice_no_left_neighbor_at_start() {
-        // x_min is at the very beginning: no left neighbor exists, must not panic.
-        let m = MipMap::build(int_data(50));
-        let slice = m.select_slice(0.0, 10.0, FINEST);
-        assert!(
-            slice.iter().all(|p| p.x >= 0.0),
-            "must not include out-of-range left points"
-        );
-        assert!(slice.first().is_some_and(|p| p.x as i64 == 0));
-    }
-
-    #[test]
-    fn select_slice_no_right_neighbor_at_end() {
-        // x_max is at the very end: no right neighbor exists, must not panic.
-        let m = MipMap::build(int_data(50));
-        let slice = m.select_slice(40.0, 49.0, FINEST);
-        assert!(
-            slice.iter().all(|p| p.x <= 49.0),
-            "must not include out-of-range right points"
-        );
-        assert!(slice.last().is_some_and(|p| p.x as i64 == 49));
+        assert!(!slice.is_empty(), "the bound spans 101 of the input points");
     }
 
     // Inverted-range regression tests.
@@ -582,10 +633,10 @@ mod tests {
     // on an inverted slice index - see the `slice index starts at .. but ends
     // at ..` panic this guards against.
     //
-    // Each case below pins both halves of the fix: `select_level_bounds`
-    // must restore `clip_start <= clip_end` (the invariant `slice_at` relies
-    // on - see [`Self::select_level_bounds`]), and the resulting slice must
-    // stay within the original dataset.
+    // Each case below pins both halves of the fix: the counted span must
+    // restore `clip_start <= clip_end` (the invariant `slice_at` relies on -
+    // see `SelectionRange::counted_span`), and the resulting slice must stay
+    // within the original dataset.
     #[test]
     fn select_handles_inverted_and_disjoint_ranges_without_panic() {
         let small = MipMap::build(int_data(50));
@@ -622,12 +673,13 @@ mod tests {
             ),
         ];
         for (m, x_min, x_max, target_count, x_upper_bound, what) in cases {
-            let sel = m.select_indices(x_min, x_max, target_count);
+            let range = SelectionRange::within_viewport(x_min..=x_max);
+            let sel = m.select_indices(range, target_count);
             assert!(
                 sel.clip_start <= sel.clip_end,
                 "{what}: select_indices must restore clip_start <= clip_end, got {sel:?}"
             );
-            for slice in [m.select_slice(x_min, x_max, target_count), m.slice_at(sel)] {
+            for slice in [m.select_slice(range, target_count), m.slice_at(sel)] {
                 assert!(
                     slice.iter().all(|p| p.x >= 0.0 && p.x <= x_upper_bound),
                     "{what}: must not return out-of-range points, got {slice:?}"
@@ -637,27 +689,35 @@ mod tests {
     }
 
     proptest::proptest! {
-        /// `select_slice` and `select_indices`/`slice_at` must never panic and
-        /// must never return points outside the original dataset, for any
-        /// `(x_min, x_max)` pair - including reversed (`x_min > x_max`) and
-        /// wildly out-of-range ones. This is the property that the
-        /// inverted-range panic violated: two independent `.min()`/`.max()`
-        /// clamps on `x_min`/`x_max` don't compose into `inner_start <=
-        /// inner_end` on their own. Both APIs are driven here since
-        /// `slice_at` re-clamps `clip_start`/`clip_end` independently
+        /// `select_slice` and `select_indices`/`slice_at` must never panic,
+        /// must never return points outside the original dataset, and must
+        /// never return one outside the hard bound, for any viewport and hard
+        /// bound - including a reversed one and a wildly out-of-range one.
+        /// This is the property that the inverted-range panic violated: two
+        /// independent `.min()`/`.max()` clamps on a viewport's two edges do
+        /// not compose into a span whose start precedes its end, which
+        /// `SelectionRange::counted_span` restores. Both APIs are driven here
+        /// since `slice_at` re-clamps `clip_start`/`clip_end` independently
         /// (`.min(level.len())`) and could regress on its own.
         #[test]
         fn select_never_panics_for_arbitrary_ranges(
             x_min in -1.0e6_f64..1.0e6_f64,
             x_max in -1.0e6_f64..1.0e6_f64,
+            hard_min in -1.0e6_f64..1.0e6_f64,
+            hard_max in -1.0e6_f64..1.0e6_f64,
             target_count in 1_usize..100,
         ) {
             let m = MipMap::build(int_data(50));
+            let range = SelectionRange::within_viewport(x_min..=x_max)
+                .bounded_by(hard_min..=hard_max);
             for slice in [
-                m.select_slice(x_min, x_max, target_count),
-                m.slice_at(m.select_indices(x_min, x_max, target_count)),
+                m.select_slice(range, target_count),
+                m.slice_at(m.select_indices(range, target_count)),
             ] {
                 proptest::prop_assert!(slice.iter().all(|p| p.x >= 0.0 && p.x <= 49.0));
+                proptest::prop_assert!(
+                    slice.iter().all(|p| p.x >= hard_min && p.x <= hard_max)
+                );
             }
         }
     }

@@ -256,6 +256,7 @@ mod tests {
 
     use gt_types::{FileIdx, TrackIdx};
 
+    use super::super::FilterTimeWindow;
     use super::*;
 
     /// A viewport over `0..=x_max` seconds, `width` px wide, with the
@@ -264,6 +265,7 @@ mod tests {
         LineViewport {
             x_min: 0.0,
             x_max,
+            time_window: FilterTimeWindow::default(),
             width,
             cap,
         }
