@@ -8,8 +8,7 @@ Fix by removing the blank line between the comment and the code below it, conver
 to /// (Rust), or exempting with a qa-allow comment on the run's first line:
     // Floating label // [qa-allow-check-floating-comments, reason = "why"]
     # Floating label # [qa-allow-check-floating-comments, reason = "why"]
-Multiple checks may share one comment:
-    // Label // [qa-allow-check-em-dash, qa-allow-check-floating-comments, reason = "why"]
+One comment may exempt several checks at once, as `qa._allow` documents.
 """
 
 import re
