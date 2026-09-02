@@ -25,6 +25,12 @@ use std::ops::Sub;
 
 const NANOS_PER_SEC: f64 = 1e9;
 
+/// Unix seconds with the sub-second fraction, the conversion both clock types
+/// read their timestamps through.
+fn secs_f64_with_subseconds(dt: DateTime<Utc>) -> f64 {
+    dt.timestamp() as f64 + f64::from(dt.timestamp_subsec_nanos()) / NANOS_PER_SEC
+}
+
 /// A timestamp from the GPS receiver clock.
 ///
 /// GPS time and system time are different clocks. Use [`SysTime`] for host
@@ -78,7 +84,7 @@ impl GpsTime {
     /// needs. [`GpsTime::as_secs_f64`] is the whole-second form.
     #[inline]
     pub fn as_secs_f64_with_subseconds(self) -> f64 {
-        self.0.timestamp() as f64 + f64::from(self.0.timestamp_subsec_nanos()) / NANOS_PER_SEC
+        secs_f64_with_subseconds(self.0)
     }
 }
 
@@ -134,6 +140,15 @@ impl SysTime {
     #[inline]
     pub fn signed_duration_since(self, other: SysTime) -> Duration {
         self.0.signed_duration_since(other.0)
+    }
+
+    /// Unix timestamp as `f64` seconds, keeping the sub-second fraction.
+    ///
+    /// The same conversion as [`GpsTime::as_secs_f64_with_subseconds`]: a value
+    /// from either clock compares against the other.
+    #[inline]
+    pub fn as_secs_f64_with_subseconds(self) -> f64 {
+        secs_f64_with_subseconds(self.0)
     }
 }
 
@@ -233,6 +248,7 @@ mod tests {
         #[expect(clippy::float_cmp, reason = "every case is exact in binary")]
         {
             assert_eq!(gps(millis).as_secs_f64_with_subseconds(), expected_secs);
+            assert_eq!(sys(millis).as_secs_f64_with_subseconds(), expected_secs);
         }
     }
 

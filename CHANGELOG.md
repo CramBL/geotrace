@@ -55,6 +55,8 @@
 - **Interface:** Fixed a query's duration window covering every fix of a second in a recording faster than 1 Hz.
 - **Interface:** Fixed the query results not graying out when a recording of the same file name replaces the one the query ran over.
 - **Interface:** Fixed the query results not graying out while the query window is closed.
+- **Interface:** Fixed a query's `sys_time` dropping the microseconds of a host timestamp.
+- **Interface:** Fixed a query's `clock_delta` dropping the microseconds of the GPS/host clock offset.
 - **Log Viewer:** Fixed a log entry between two fixes across the antimeridian being placed half a world away.
 - **Map & Tracks:** Fixed the sky trails plot shifting and resizing when the satellite counts beside it change width.
 - **Map & Tracks:** Fixed the window for a clicked fix drawing its content over its own title bar when scrolled.

@@ -1,12 +1,13 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use gt_analysis::loss_of_lock::{self, SECS_PER_MIN, SlipRatePerPoint};
 use gt_analysis::satellite_utilization::{self, UtilPerPoint};
 use gt_filter::GlobalFilter;
 use gt_query::{ChannelSamples, ChannelTimeline, MetricProvider, Params, QueryMetric, Unit};
 use gt_types::satellites::Constellation;
+use gt_types::time_types::SysTime;
 use gt_types::{Channel, NavPoint};
 use gt_ui_types::{GeomagneticPoint, TecPoint};
 use uom::si::angle::degree;
@@ -398,7 +399,7 @@ impl MetricProvider for TrackProvider<'_> {
             QueryMetric::SysTime => point
                 .tpv
                 .sys_time()
-                .map(|s| s.utc().timestamp_millis() as f64 / 1_000.0),
+                .map(SysTime::as_secs_f64_with_subseconds),
             QueryMetric::Lat => Some(point.tpv.lat().as_written()),
             QueryMetric::Lon => Some(point.tpv.lon().as_written()),
             QueryMetric::InvalidCoordinates => {
@@ -413,7 +414,7 @@ impl MetricProvider for TrackProvider<'_> {
             QueryMetric::ClockDelta => point
                 .tpv
                 .gps_system_clock_offset()
-                .map(|offset| offset.num_milliseconds() as f64 / 1_000.0),
+                .map(TimeDelta::as_seconds_f64),
             QueryMetric::SatsSeen => sats.map(|s| f64::from(s.satellite_count())),
             QueryMetric::SatsFix => sats.map(|s| f64::from(s.fix_count())),
             QueryMetric::GpsSeen => {
