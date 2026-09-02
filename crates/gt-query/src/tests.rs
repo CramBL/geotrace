@@ -328,7 +328,7 @@ fn a_duration_window_longer_than_the_track_matches_nothing() {
         &provider,
     );
     assert!(output.matches.is_empty());
-    assert_eq!(output.summary.tracks_shorter_than_window, 1);
+    assert_eq!(output.summary.tracks_with_no_room_for_the_window, 1);
 }
 
 #[test]
@@ -488,7 +488,7 @@ fn short_track_is_reported_not_dropped() {
         &provider,
     );
     assert!(output.matches.is_empty());
-    assert_eq!(output.summary.tracks_shorter_than_window, 1);
+    assert_eq!(output.summary.tracks_with_no_room_for_the_window, 1);
 }
 
 #[test]

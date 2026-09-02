@@ -30,6 +30,7 @@ use gt_types::{
     TrackRef,
 };
 use gt_ui_types::{GeomagneticSeries, TecSeries, TrackDataVisibility};
+use rstest::rstest;
 use rustc_hash::FxHashMap;
 use uom::si::f64::Velocity;
 use uom::si::velocity::kilometer_per_hour;
@@ -241,6 +242,18 @@ fn first_match_aggregates(session: &QuerySession) -> Option<Vec<Option<f64>>> {
         .first()?
         .aggregates;
     Some(aggregates.clone())
+}
+
+/// The summary notes of the last run's first query.
+fn summary_notes(session: &QuerySession) -> Vec<String> {
+    let Some(RunResults::Points(results)) = session.results() else {
+        return Vec::new();
+    };
+    results
+        .queries
+        .first()
+        .map(|query| query.summary.notes.clone())
+        .unwrap_or_default()
 }
 
 /// The last run's channel-source result for the one loaded track, `None` when
@@ -557,6 +570,98 @@ fn a_duration_window_groups_the_fixes_of_its_own_span_at_two_hz() {
     );
 
     assert_eq!(drawn_ranges(&session), vec![0..3]);
+}
+
+/// The fixes sit a second apart from 0 s to 4 s and the query's window spans
+/// 2 s.
+#[rstest]
+#[case::an_unbounded_filter_end(None, 3_500, vec![2..4])]
+#[case::a_window_span_crossing_the_filter_end(Some(2_500), 3_500, vec![])]
+#[case::a_window_span_inside_the_filter(Some(2_500), 1_500, vec![0..2])]
+fn a_duration_window_reads_a_channel_only_where_its_full_span_fits_the_time_filter(
+    #[case] filter_end_millis: Option<i64>,
+    #[case] sample_millis: i64,
+    #[case] expected: Vec<Range<usize>>,
+) {
+    let channel = scalar_channel("sensor", None, &[(sample_millis, 100.0)]);
+    let mut state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at(&[0, 1_000, 2_000, 3_000, 4_000]),
+        vec![channel],
+    ));
+    state.filter = GlobalFilter {
+        time_end: filter_end_millis.map(utc),
+        ..GlobalFilter::default()
+    };
+    let mut session = QuerySession::new();
+
+    run_text(
+        &mut session,
+        &state,
+        "points | window 2 s | where max(@sensor) > 5 | draw",
+    );
+
+    assert_eq!(drawn_ranges(&session), expected);
+}
+
+/// The samples sit at 0 s, 1 s, 2 s and 3.5 s, the filter ends at 2.5 s and the
+/// window spans 2 s: the window anchored at the sample at 0 s is the only one
+/// that fits, and it holds the samples at 0 s and 1 s.
+#[test]
+fn a_channel_source_duration_window_matches_no_sample_past_the_filter_end() {
+    let channel = scalar_channel(
+        "sensor",
+        None,
+        &[(0, 100.0), (1_000, 100.0), (2_000, 100.0), (3_500, 100.0)],
+    );
+    let mut state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at(&[0, 1_000, 2_000, 3_000, 4_000]),
+        vec![channel],
+    ));
+    state.filter = GlobalFilter {
+        time_end: Some(utc(2_500)),
+        ..GlobalFilter::default()
+    };
+    let mut session = QuerySession::new();
+
+    run_text(
+        &mut session,
+        &state,
+        "@sensor | window 2 s | where max(@sensor) > 5 | draw",
+    );
+
+    let result = channel_track_result(&session).expect("a track with a match");
+    assert_eq!(matched_sample_seconds(result), vec![0.0, 1.0]);
+}
+
+/// The track spans 9 s and the window 5 s: the filter ending at 1 s is what
+/// leaves no room for a window here.
+#[test]
+fn a_time_filter_leaving_no_room_for_a_window_is_reported_without_calling_the_track_short() {
+    let mut state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at(&[
+            0, 1_000, 2_000, 3_000, 4_000, 5_000, 6_000, 7_000, 8_000, 9_000,
+        ]),
+        vec![],
+    ));
+    state.filter = GlobalFilter {
+        time_end: Some(utc(1_000)),
+        ..GlobalFilter::default()
+    };
+    let mut session = QuerySession::new();
+
+    run_text(
+        &mut session,
+        &state,
+        "points | window 5 s | where avg(velocity) > 1 km/h | draw",
+    );
+
+    assert_eq!(
+        summary_notes(&session),
+        vec!["1 track with no room for the window"]
+    );
 }
 
 /// The time range filter ends at 5 s: the query matches the two samples before

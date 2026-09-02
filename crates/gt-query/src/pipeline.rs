@@ -172,7 +172,7 @@ struct QueryContribution {
     /// track without a snap run lacks `snap_error` regardless of what an
     /// earlier stage hid.
     absent: Vec<QueryMetric>,
-    shorter_than_window: bool,
+    no_room_for_the_window: bool,
 }
 
 fn fold_track<P: MetricProvider>(
@@ -195,7 +195,7 @@ fn fold_track<P: MetricProvider>(
         let mut matched = vec![false; len];
         let mut skipped: BTreeMap<QueryMetric, usize> = BTreeMap::new();
         let mut skipped_non_finite = 0;
-        let mut run_long_enough = false;
+        let mut no_room_in_any_run = true;
 
         for run in &runs {
             let view = RunView {
@@ -213,7 +213,7 @@ fn fold_track<P: MetricProvider>(
                 *skipped.entry(metric).or_insert(0) += count;
             }
             skipped_non_finite += eval.skipped_non_finite;
-            run_long_enough |= !eval.shorter_than_window;
+            no_room_in_any_run &= eval.no_room_for_the_window;
         }
 
         let matched_points = matched.iter().filter(|m| **m).count();
@@ -224,7 +224,7 @@ fn fold_track<P: MetricProvider>(
             skipped,
             skipped_non_finite,
             absent: crate::eval::absent_metrics(query.referenced_metrics(), input.provider),
-            shorter_than_window: query.window().is_some() && !run_long_enough,
+            no_room_for_the_window: query.window().is_some() && no_room_in_any_run,
         });
 
         // `shows` is the shared keep/hide/draw truth table. Draw shows every
@@ -281,7 +281,8 @@ impl QueryAccum {
         self.summary.total_points += contrib.visible_points;
         self.summary.matched_points += contrib.matched_points;
         self.summary.skipped_non_finite += contrib.skipped_non_finite;
-        self.summary.tracks_shorter_than_window += usize::from(contrib.shorter_than_window);
+        self.summary.tracks_with_no_room_for_the_window +=
+            usize::from(contrib.no_room_for_the_window);
         for (metric, count) in contrib.skipped {
             *self.summary.skipped.entry(metric).or_insert(0) += count;
         }

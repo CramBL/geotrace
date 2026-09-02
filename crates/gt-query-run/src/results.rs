@@ -415,11 +415,15 @@ impl QuerySummary {
             ));
         }
         push_non_finite_note(&mut notes, summary.skipped_non_finite);
-        if summary.tracks_shorter_than_window > 0 {
+        if summary.tracks_with_no_room_for_the_window > 0 {
             notes.push(format!(
-                "{} {} shorter than window",
-                summary.tracks_shorter_than_window,
-                gt_fmt::pluralize(summary.tracks_shorter_than_window, "track", "tracks"),
+                "{} {} with no room for the window",
+                summary.tracks_with_no_room_for_the_window,
+                gt_fmt::pluralize(
+                    summary.tracks_with_no_room_for_the_window,
+                    "track",
+                    "tracks"
+                ),
             ));
         }
         for param in &summary.unused_params {
