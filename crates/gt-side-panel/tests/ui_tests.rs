@@ -1515,8 +1515,7 @@ fn make_state_with_metadata() -> State {
             vec![],
         );
         let meta = gt_history_types::RecordingMeta {
-            start_us: 0,
-            end_us: 0,
+            time_range: None,
             nav_point_count: 0,
             sat_report_count: 0,
             marker_count: 0,
@@ -1658,8 +1657,7 @@ fn clicking_note_icon_requests_recording_details() {
         vec![],
     );
     let meta = gt_history_types::RecordingMeta {
-        start_us: 0,
-        end_us: 0,
+        time_range: None,
         nav_point_count: 0,
         sat_report_count: 0,
         marker_count: 0,

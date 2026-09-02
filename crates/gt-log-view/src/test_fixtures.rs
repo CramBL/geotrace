@@ -201,8 +201,7 @@ pub(crate) fn stored_in_history(db_ref: &DatabaseRef) -> FileHistory {
     FileHistory::recording(
         db_ref.identity.clone(),
         RecordingMeta {
-            start_us: 0,
-            end_us: 0,
+            time_range: None,
             nav_point_count: 0,
             sat_report_count: 0,
             marker_count: 0,

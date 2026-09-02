@@ -342,8 +342,11 @@ fn build_new_recording(
                 ATTR_IDENTITY.to_owned(),
                 AttrValue::String(identity.to_owned()),
             ),
-            (ATTR_START_US.to_owned(), AttrValue::I64(meta.start_us)),
-            (ATTR_END_US.to_owned(), AttrValue::I64(meta.end_us)),
+            (
+                ATTR_START_US.to_owned(),
+                AttrValue::I64(meta.stored_start_us()),
+            ),
+            (ATTR_END_US.to_owned(), AttrValue::I64(meta.stored_end_us())),
             (
                 ATTR_NAV_POINT_COUNT.to_owned(),
                 AttrValue::U64(meta.nav_point_count),
@@ -486,7 +489,7 @@ pub(crate) fn insert_recording(
 
     let mut identity_nodes = snapshot_by_identity(&existing_db)?;
 
-    let rec_name = make_group_name(meta.start_us, &uuid::Uuid::new_v4().to_string());
+    let rec_name = make_group_name(meta.stored_start_us(), &uuid::Uuid::new_v4().to_string());
 
     let gtd_file = hdf5_pure::File::from_bytes(gtd_bytes.to_vec())?;
     let new_recording =

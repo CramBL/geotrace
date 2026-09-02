@@ -3,8 +3,8 @@ use gt_history_types::{
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US, CURRENT_SCHEMA_VERSION,
     DatabaseRef, DbError, GTD_META_DEVICE_ATTR, GTD_META_NOTES_ATTR, GTD_META_TITLE_ATTR,
     GTD_META_TRAVEL_MODE_ATTR, HistoryDatabase, LogAttachment, LogAttachmentEntry, LogAttachmentId,
-    ReadOnlyHistoryDatabase, RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR, StoredRecording,
-    StoredSegmentation, TrackRange, identity_from_group_name,
+    NavPointTimeRange, ReadOnlyHistoryDatabase, RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR,
+    StoredRecording, StoredSegmentation, TrackRange, identity_from_group_name,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 use parking_lot::Mutex;
@@ -134,7 +134,7 @@ impl ReadOnlyHistoryDatabase for ReadOnlyPureDb {
                 }
             }
         }
-        entries.sort_unstable_by_key(|e| std::cmp::Reverse(e.meta.start_us));
+        entries.sort_unstable_by_key(|e| std::cmp::Reverse(e.meta.stored_start_us()));
         Ok(entries)
     }
 
@@ -391,6 +391,7 @@ fn recording_meta_from_attrs(
     let nav_point_count = attrs
         .get(ATTR_NAV_POINT_COUNT)
         .and_then(AttrValue::as_u64)?;
+    let time_range = NavPointTimeRange::from_stored_attributes(nav_point_count, start_us..=end_us);
     let sat_report_count = attrs
         .get(ATTR_SAT_REPORT_COUNT)
         .and_then(AttrValue::as_u64)?;
@@ -403,8 +404,7 @@ fn recording_meta_from_attrs(
         .and_then(AttrValue::as_u64)
         .unwrap_or(0);
     Some(RecordingMeta {
-        start_us,
-        end_us,
+        time_range,
         nav_point_count,
         sat_report_count,
         marker_count,
@@ -457,17 +457,15 @@ pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
         .map_err(classify_hdf5_error)?;
     let nav_point_count = nav_shape.first().copied().unwrap_or(0);
 
-    let (start_us, end_us) = if nav_point_count > 0 {
+    let time_range = if nav_point_count > 0 {
         let times = nav_grp
             .dataset("time")
             .map_err(classify_hdf5_error)?
             .read_i64()
             .map_err(classify_hdf5_error)?;
-        let first = times.first().copied().unwrap_or(0);
-        let last = times.last().copied().unwrap_or(0);
-        (first, last)
+        NavPointTimeRange::covering(&times)
     } else {
-        (0, 0)
+        None
     };
 
     let sat_report_count = file
@@ -495,8 +493,7 @@ pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
         .unwrap_or(0);
 
     Ok(RecordingMeta {
-        start_us,
-        end_us,
+        time_range,
         nav_point_count,
         sat_report_count,
         marker_count,

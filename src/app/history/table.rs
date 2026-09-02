@@ -8,7 +8,7 @@ use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
 use gt_log_view::LogAttachmentRef;
 use gt_pending_writes::WriteAccess;
 use gt_side_panel::widgets::{MetadataView, has_metadata_details, metadata_detail_rows};
-use gt_store::{ChannelSummary, RecordingEntry};
+use gt_store::{ChannelSummary, NavPointTimeRange, RecordingEntry};
 use gt_ui_theme::EM_DASH;
 use gt_ui_theme::buttons::SortHeaderButton;
 use strum::{EnumCount as _, IntoEnumIterator as _};
@@ -216,16 +216,11 @@ fn render_row(
     });
 
     breakdown_cell(row, entry, SortColumn::Date, |ui| {
-        let ts = DateTime::<Utc>::from_timestamp_micros(entry.meta.start_us)
-            .unwrap_or_default()
-            .format("%Y-%m-%d %H:%M")
-            .to_string();
-        ui.label(ts);
+        ui.label(started_at_text(entry.meta.time_range));
     });
 
     breakdown_cell(row, entry, SortColumn::Duration, |ui| {
-        let dur = chrono::Duration::microseconds(super::duration_us(&entry.meta));
-        ui.label(super::format_duration(dur));
+        ui.label(duration_text(entry.meta.time_range));
     });
 
     breakdown_cell(row, entry, SortColumn::Points, |ui| {
@@ -304,6 +299,40 @@ const OPEN_LOG_HOVER: &str = "Load this log into the log viewer";
 
 const ATTACHED_LOGS_HOVER: &str = "The logs stored with this recording";
 
+/// When the recording started, an em dash for one with no time range.
+pub(super) fn started_at_text(time_range: Option<NavPointTimeRange>) -> String {
+    time_range.map_or_else(
+        || EM_DASH.to_owned(),
+        |range| {
+            DateTime::<Utc>::from_timestamp_micros(range.start_us())
+                .unwrap_or_default()
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        },
+    )
+}
+
+/// How long the recording ran, an em dash for one with no time range.
+pub(super) fn duration_text(time_range: Option<NavPointTimeRange>) -> String {
+    time_range.map_or_else(
+        || EM_DASH.to_owned(),
+        |range| super::format_duration(chrono::Duration::microseconds(range.duration_us())),
+    )
+}
+
+/// Both ends of the recording's time range, an em dash for one without.
+pub(super) fn time_range_text(time_range: Option<NavPointTimeRange>) -> String {
+    time_range.map_or_else(
+        || EM_DASH.to_owned(),
+        |range| {
+            let start =
+                DateTime::<Utc>::from_timestamp_micros(range.start_us()).unwrap_or_default();
+            let end = DateTime::<Utc>::from_timestamp_micros(range.end_us()).unwrap_or_default();
+            gt_fmt::format_time_range(start, end)
+        },
+    )
+}
+
 /// Render one of a row's value cells and give the whole cell - the text and the
 /// blank space beside it - the recording's data breakdown as hover text.
 ///
@@ -342,9 +371,7 @@ pub(super) fn breakdown_cell_id(entry: &RecordingEntry, column: SortColumn) -> e
 /// channels, which no table column reveals.
 pub(super) fn data_breakdown_ui(ui: &mut egui::Ui, entry: &RecordingEntry) {
     let meta = &entry.meta;
-    let start = DateTime::<Utc>::from_timestamp_micros(meta.start_us).unwrap_or_default();
-    let end = DateTime::<Utc>::from_timestamp_micros(meta.end_us).unwrap_or_default();
-    ui.label(gt_fmt::format_time_range(start, end));
+    ui.label(time_range_text(meta.time_range));
 
     Grid::new("history_breakdown_counts")
         .num_columns(2)
@@ -355,10 +382,7 @@ pub(super) fn data_breakdown_ui(ui: &mut egui::Ui, entry: &RecordingEntry) {
                 ui.label(value);
                 ui.end_row();
             };
-            row(
-                "Duration",
-                super::format_duration(chrono::Duration::microseconds(super::duration_us(meta))),
-            );
+            row("Duration", duration_text(meta.time_range));
             row("Size", gt_fmt::format_bytes(meta.gtd_size_bytes));
             row("Tracks", track_count_text(entry));
             row("Nav points", format_stored_count(meta.nav_point_count));

@@ -6,7 +6,7 @@ use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_phosphor::regular::CARET_UP as ICON_CARET_UP;
 use egui_phosphor::regular::X as ICON_X;
 use gt_pending_writes::WriteAccess;
-use gt_store::{DatabaseRef, PruneMode, RecordingEntry, RecordingMeta};
+use gt_store::{DatabaseRef, NavPointTimeRange, PruneMode, RecordingEntry, RecordingMeta};
 use gt_types::TravelMode;
 use gt_ui_theme::labels::LabelWithHover;
 use gt_ui_theme::warning_amber;
@@ -319,8 +319,16 @@ impl SortColumn {
     fn compare(self, a: &RecordingEntry, b: &RecordingEntry) -> Ordering {
         match self {
             Self::Identity => compare_identities(&a.db_ref.identity, &b.db_ref.identity),
-            Self::Date => a.meta.start_us.cmp(&b.meta.start_us),
-            Self::Duration => duration_us(&a.meta).cmp(&duration_us(&b.meta)),
+            Self::Date => a
+                .meta
+                .time_range
+                .map(NavPointTimeRange::start_us)
+                .cmp(&b.meta.time_range.map(NavPointTimeRange::start_us)),
+            Self::Duration => a
+                .meta
+                .time_range
+                .map(NavPointTimeRange::duration_us)
+                .cmp(&b.meta.time_range.map(NavPointTimeRange::duration_us)),
             Self::Points => a.meta.nav_point_count.cmp(&b.meta.nav_point_count),
             Self::Size => a.meta.gtd_size_bytes.cmp(&b.meta.gtd_size_bytes),
             Self::Logs => a.log_attachments.len().cmp(&b.log_attachments.len()),
@@ -416,12 +424,6 @@ fn compare_identities(a: &str, b: &str) -> Ordering {
         .cmp(b.chars().flat_map(char::to_lowercase))
 }
 
-/// A recording's span in microseconds, clamped at zero for a recording whose
-/// stored end precedes its start.
-fn duration_us(meta: &RecordingMeta) -> i64 {
-    meta.end_us.saturating_sub(meta.start_us).max(0)
-}
-
 pub struct HistoryWindow {
     pub open: bool,
     /// Cached recording list - `None` until the window is first shown.
@@ -507,8 +509,9 @@ impl HistoryWindow {
     pub fn latest_listed_recording(&self) -> Option<&RecordingEntry> {
         self.entries.as_ref()?.iter().max_by(|a, b| {
             a.meta
-                .start_us
-                .cmp(&b.meta.start_us)
+                .time_range
+                .map(NavPointTimeRange::start_us)
+                .cmp(&b.meta.time_range.map(NavPointTimeRange::start_us))
                 .then_with(|| a.db_ref.identity.cmp(&b.db_ref.identity))
                 .then_with(|| a.db_ref.group_name.cmp(&b.db_ref.group_name))
         })
@@ -657,10 +660,14 @@ impl HistoryWindow {
                         if filter_max_points.is_some_and(|max| e.meta.nav_point_count > max) {
                             return false;
                         }
-                        if filter_from_us.is_some_and(|from| e.meta.start_us < from) {
+                        let started_at = e.meta.time_range.map(NavPointTimeRange::start_us);
+                        if filter_from_us
+                            .is_some_and(|from| started_at.is_none_or(|start| start < from))
+                        {
                             return false;
                         }
-                        if filter_to_us.is_some_and(|to| e.meta.start_us > to) {
+                        if filter_to_us.is_some_and(|to| started_at.is_none_or(|start| start > to))
+                        {
                             return false;
                         }
                         true

@@ -6,14 +6,15 @@ use gt_history::{
     StoredFixPlacementRule, StoredLogFilter, StoredLogFilterMode, StoredRecording,
     StoredSegmentation, StoredTrackSplitRule, TrackRange, extract_meta,
 };
+use gt_history_types::{
+    ATTR_EVENT_MARKER_COUNT, ATTR_IDENTITY, ATTR_MARKER_COUNT, ATTR_NAV_POINT_COUNT,
+    ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK, ATTR_SEG_GAP_US,
+    ATTR_SEG_PLACEMENT_RULE, ATTR_SEG_SPLIT_RULE, ATTR_START_US, CURRENT_SCHEMA_VERSION,
+    SCHEMA_VERSION_ATTR,
+};
 #[cfg(feature = "backend-pure")]
 use gt_history_types::{
-    ATTR_GTD_SIZE_BYTES, ATTR_NAV_POINT_COUNT, ATTR_START_US, TRACK_END_DATASET,
-    TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP,
-};
-use gt_history_types::{
-    ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK, ATTR_SEG_GAP_US, ATTR_SEG_PLACEMENT_RULE,
-    ATTR_SEG_SPLIT_RULE, CURRENT_SCHEMA_VERSION, SCHEMA_VERSION_ATTR,
+    ATTR_GTD_SIZE_BYTES, TRACK_END_DATASET, TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP,
 };
 use rstest::rstest;
 
@@ -71,25 +72,31 @@ impl TestDbExt for Database {
     clippy::expect_used,
     reason = "test helper; panicking on I/O failure is the right behaviour"
 )]
-/// Build a minimal GTD file and return its raw bytes.
+/// Build a minimal GTD file whose `nav_points/time` dataset holds `times`, and
+/// return its raw bytes.
 ///
-/// The file has a single `nav_points/time` dataset with `n` entries starting
-/// at `start_us`.  All other data groups (sat_reports, markers, event_markers)
-/// are absent so their counts default to zero.
-fn make_gtd_bytes(start_us: i64, n: u64) -> Vec<u8> {
+/// All other data groups (`sat_reports`, `markers`, `event_markers`) are absent
+/// so their counts default to zero.
+fn make_gtd_bytes_from_times(times: &[i64]) -> Vec<u8> {
     let tmp = tempfile::NamedTempFile::new().expect("temp file");
-    let timestamps: Vec<i64> = (0..n).map(|i| start_us + i as i64).collect();
-    let shape = [n];
+    let shape = [times.len() as u64];
 
     let mut fb = hdf5_pure::FileBuilder::new();
     let mut nav_gb = fb.create_group("nav_points");
     let ds = nav_gb.create_dataset("time");
     ds.with_shape(&shape);
-    ds.with_i64_data(&timestamps);
+    ds.with_i64_data(times);
     fb.add_group(nav_gb.finish());
     fb.write(tmp.path()).expect("write temp gtd");
 
     std::fs::read(tmp.path()).expect("read temp gtd")
+}
+
+/// Build a minimal GTD file with `n` nav points one microsecond apart, the
+/// first at `start_us`.
+fn make_gtd_bytes(start_us: i64, n: u64) -> Vec<u8> {
+    let timestamps: Vec<i64> = (0..n).map(|i| start_us + i as i64).collect();
+    make_gtd_bytes_from_times(&timestamps)
 }
 
 /// Like [`make_gtd_bytes`] but sets the SDK metadata root attributes the History
@@ -577,6 +584,95 @@ fn nav_point_data_round_trips() {
     assert_eq!(stored, expected, "timestamps should round-trip losslessly");
 }
 
+/// A recorder that ran, rebooted to a clock an hour behind, and ran on. Its
+/// earliest and latest nav point times are neither the first nor the last nav
+/// point in file order.
+const CLOCK_STEP_BACK_TIMES: [i64; 4] = [
+    1_700_003_600_000_000,
+    1_700_003_660_000_000,
+    1_700_000_000_000_000,
+    1_700_000_060_000_000,
+];
+
+#[test_log::test]
+fn a_recording_whose_clock_steps_backwards_is_indexed_over_every_nav_point_time() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let bytes = make_gtd_bytes_from_times(&CLOCK_STEP_BACK_TIMES);
+    let meta = extract_meta(&bytes).expect("parse meta");
+    let time_range = meta.time_range.expect("the recording has nav points");
+    assert_eq!(time_range.start_us(), 1_700_000_000_000_000);
+    assert_eq!(time_range.end_us(), 1_700_003_660_000_000);
+
+    db.insert_simple("clock_step_back", &meta, &bytes)
+        .expect("insert");
+
+    let entries = db.list_recordings().expect("list");
+    assert_eq!(entries.len(), 1);
+    let listed = entries.first().expect("the inserted recording is listed");
+    assert_eq!(listed.meta.time_range, Some(time_range));
+}
+
+/// Write a database holding one recording group with a `start_us` attribute
+/// and no `end_us`, the shape of a recording stored before `end_us` existed.
+#[expect(
+    clippy::expect_used,
+    reason = "test helper; panicking on I/O failure is the right behaviour"
+)]
+fn write_db_with_a_recording_missing_its_end_attribute(db_path: &std::path::Path, start_us: i64) {
+    use hdf5_pure::AttrValue;
+
+    let mut fb = hdf5_pure::FileBuilder::new();
+    fb.set_attr(SCHEMA_VERSION_ATTR, AttrValue::I64(CURRENT_SCHEMA_VERSION));
+    let meta_gb = fb.create_group("meta");
+    fb.add_group(meta_gb.finish());
+
+    let mut by_id_gb = fb.create_group("by_identity");
+    let mut id_gb = by_id_gb.create_group(&gt_history::identity_group_name("dev"));
+    id_gb.set_attr(ATTR_IDENTITY, AttrValue::String("dev".to_owned()));
+
+    let mut rec_gb = id_gb.create_group(&gt_history::make_group_name(start_us, "0"));
+    rec_gb.set_attr(ATTR_IDENTITY, AttrValue::String("dev".to_owned()));
+    rec_gb.set_attr(ATTR_START_US, AttrValue::I64(start_us));
+    rec_gb.set_attr(ATTR_NAV_POINT_COUNT, AttrValue::U64(1));
+    for name in [
+        ATTR_SAT_REPORT_COUNT,
+        ATTR_MARKER_COUNT,
+        ATTR_EVENT_MARKER_COUNT,
+    ] {
+        rec_gb.set_attr(name, AttrValue::U64(0));
+    }
+    id_gb.add_group(rec_gb.finish());
+
+    by_id_gb.add_group(id_gb.finish());
+    fb.add_group(by_id_gb.finish());
+    fb.write(db_path).expect("write the database");
+}
+
+/// A recording whose group has no `end_us` attribute spans its `start_us`
+/// alone, so its date survives and its duration is zero.
+#[test_log::test]
+fn a_recording_missing_its_end_attribute_spans_its_start() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let start_us = 1_700_000_000_000_000_i64;
+    write_db_with_a_recording_missing_its_end_attribute(&db_path, start_us);
+
+    let db = Database::open_or_create(&db_path).expect("open");
+
+    let entries = db.list_recordings().expect("list");
+    assert_eq!(entries.len(), 1);
+    let listed = entries.first().expect("the recording is listed");
+    let time_range = listed
+        .meta
+        .time_range
+        .expect("the recording has a nav point");
+    assert_eq!(time_range.start_us(), start_us);
+    assert_eq!(time_range.end_us(), start_us);
+}
+
 #[test]
 fn list_recordings_returns_entries_sorted_descending() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -596,8 +692,8 @@ fn list_recordings_returns_entries_sorted_descending() {
     let entries = db.list_recordings().expect("list");
     assert_eq!(entries.len(), 2);
     assert!(
-        entries[0].meta.start_us >= entries[1].meta.start_us,
-        "entries should be sorted descending by start_us"
+        entries[0].meta.stored_start_us() >= entries[1].meta.stored_start_us(),
+        "entries should be sorted descending by their earliest nav point time"
     );
 }
 
@@ -1194,13 +1290,13 @@ fn open_repairs_absolute_identity_recording_stored_outside_by_identity() {
             .new_attr::<i64>()
             .create("start_us")
             .expect("start_us attr")
-            .write_scalar(&meta.start_us)
+            .write_scalar(&meta.stored_start_us())
             .expect("write start_us");
         rec_grp
             .new_attr::<i64>()
             .create("end_us")
             .expect("end_us attr")
-            .write_scalar(&meta.end_us)
+            .write_scalar(&meta.stored_end_us())
             .expect("write end_us");
         for (name, value) in [
             ("nav_point_count", meta.nav_point_count),
@@ -1539,12 +1635,13 @@ fn open_with_older_schema_version_migrates_data() {
 }
 
 #[test]
-fn meta_end_us_and_size_bytes_are_populated() {
+fn meta_time_range_and_size_bytes_are_populated() {
     let bytes = make_gtd_bytes(5_000, 10);
     let meta = extract_meta(&bytes).expect("meta");
 
-    assert_eq!(meta.start_us, 5_000);
-    assert_eq!(meta.end_us, 5_009, "end_us should be start + (n-1)");
+    let time_range = meta.time_range.expect("the recording has nav points");
+    assert_eq!(time_range.start_us(), 5_000);
+    assert_eq!(time_range.end_us(), 5_009);
     assert_eq!(meta.gtd_size_bytes, bytes.len() as u64);
 }
 
@@ -1862,7 +1959,7 @@ fn pure_backend_database_is_readable_by_metno() {
             .unwrap_or_else(|e| panic!("attribute {name}: {e}"))
     };
     assert_eq!(read_u64(ATTR_NAV_POINT_COUNT), meta.nav_point_count);
-    assert_eq!(read_i64(ATTR_START_US), meta.start_us);
+    assert_eq!(read_i64(ATTR_START_US), meta.stored_start_us());
     assert_eq!(read_u64(ATTR_GTD_SIZE_BYTES), bytes.len() as u64);
 
     let tracks_grp = rec_grp.group(TRACKS_GROUP).expect("track table missing");

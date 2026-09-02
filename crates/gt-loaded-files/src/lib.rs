@@ -413,8 +413,7 @@ mod tests {
 
     fn meta() -> RecordingMeta {
         RecordingMeta {
-            start_us: 0,
-            end_us: 0,
+            time_range: None,
             nav_point_count: 0,
             sat_report_count: 0,
             marker_count: 0,
