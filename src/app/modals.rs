@@ -1626,8 +1626,7 @@ mod tests {
                 FileHistory::recording(
                     "id".to_owned(),
                     gt_store::RecordingMeta {
-                        start_us: idx as i64,
-                        end_us: idx as i64,
+                        time_range: gt_store::NavPointTimeRange::covering(&[idx as i64]),
                         nav_point_count: 0,
                         sat_report_count: 0,
                         marker_count: 0,

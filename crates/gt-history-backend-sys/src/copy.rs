@@ -5,11 +5,11 @@ use gt_history_types::{
     DatabaseRef, DbError, GTD_CHANNEL_COMPONENTS_ATTR, GTD_CHANNEL_DESCRIPTION_ATTR,
     GTD_CHANNEL_TIME_DATASET, GTD_CHANNEL_UNIT_ATTR, GTD_CHANNELS_GROUP, GTD_META_DEVICE_ATTR,
     GTD_META_NOTES_ATTR, GTD_META_TITLE_ATTR, GTD_META_TRAVEL_MODE_ATTR, GTD_VERSION_ATTR,
-    GTD_VERSION_FALLBACK, LogAttachment, LogAttachmentEntry, LogAttachmentId, RecordingEntry,
-    RecordingMeta, SNAP_BLOB_DATASET, SNAP_GROUP, StoredFixPlacementRule, StoredRecording,
-    StoredSegmentation, StoredTrackSplitRule, TRACK_END_DATASET, TRACK_HIDDEN_DATASET,
-    TRACK_START_DATASET, TRACKS_GROUP, TrackRange, identity_from_group_name, identity_group_name,
-    is_db_internal_group, is_db_recording_attr, make_group_name,
+    GTD_VERSION_FALLBACK, LogAttachment, LogAttachmentEntry, LogAttachmentId, NavPointTimeRange,
+    RecordingEntry, RecordingMeta, SNAP_BLOB_DATASET, SNAP_GROUP, StoredFixPlacementRule,
+    StoredRecording, StoredSegmentation, StoredTrackSplitRule, TRACK_END_DATASET,
+    TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP, TrackRange, identity_from_group_name,
+    identity_group_name, is_db_internal_group, is_db_recording_attr, make_group_name,
 };
 use hdf5::Group;
 use std::path::Path;
@@ -69,10 +69,13 @@ fn read_recording_meta(group: &Group) -> Option<RecordingMeta> {
     let read_i64 = |name: &str| group.attr(name).and_then(|a| a.read_scalar::<i64>()).ok();
     let read_u64 = |name: &str| group.attr(name).and_then(|a| a.read_scalar::<u64>()).ok();
 
+    let start_us = read_i64(ATTR_START_US)?;
+    let end_us = read_i64(ATTR_END_US).unwrap_or(start_us);
+    let nav_point_count = read_u64(ATTR_NAV_POINT_COUNT)?;
+
     Some(RecordingMeta {
-        start_us: read_i64(ATTR_START_US)?,
-        end_us: read_i64(ATTR_END_US).unwrap_or(0),
-        nav_point_count: read_u64(ATTR_NAV_POINT_COUNT)?,
+        time_range: NavPointTimeRange::from_stored_attributes(nav_point_count, start_us..=end_us),
+        nav_point_count,
         sat_report_count: read_u64(ATTR_SAT_REPORT_COUNT)?,
         marker_count: read_u64(ATTR_MARKER_COUNT)?,
         event_marker_count: read_u64(ATTR_EVENT_MARKER_COUNT)?,
@@ -650,7 +653,7 @@ pub(crate) fn insert_recording(
 
     let by_id = file.group("by_identity")?;
     let id_grp = ensure_identity_group(&by_id, identity)?;
-    let group_name = make_group_name(meta.start_us, &uuid::Uuid::new_v4().to_string());
+    let group_name = make_group_name(meta.stored_start_us(), &uuid::Uuid::new_v4().to_string());
     let rec_grp = id_grp.create_group(&group_name)?;
 
     write_meta_attrs(&rec_grp, identity, meta)?;
@@ -861,8 +864,8 @@ fn write_meta_attrs(
     };
 
     write_str(ATTR_IDENTITY, identity)?;
-    write_i64(ATTR_START_US, meta.start_us)?;
-    write_i64(ATTR_END_US, meta.end_us)?;
+    write_i64(ATTR_START_US, meta.stored_start_us())?;
+    write_i64(ATTR_END_US, meta.stored_end_us())?;
     write_u64(ATTR_NAV_POINT_COUNT, meta.nav_point_count)?;
     write_u64(ATTR_SAT_REPORT_COUNT, meta.sat_report_count)?;
     write_u64(ATTR_MARKER_COUNT, meta.marker_count)?;
@@ -1385,7 +1388,7 @@ pub(crate) fn list_recordings(
             }
         }
     }
-    entries.sort_unstable_by_key(|e| std::cmp::Reverse(e.meta.start_us));
+    entries.sort_unstable_by_key(|e| std::cmp::Reverse(e.meta.stored_start_us()));
     Ok(entries)
 }
 

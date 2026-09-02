@@ -1,8 +1,9 @@
 use crate::copy::list_recordings;
 use gt_history_types::{
     CURRENT_SCHEMA_VERSION, DatabaseRef, DbError, HistoryDatabase, LogAttachment,
-    LogAttachmentEntry, LogAttachmentId, ReadOnlyHistoryDatabase, RecordingEntry, RecordingMeta,
-    SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation, TrackRange, log_attachment,
+    LogAttachmentEntry, LogAttachmentId, NavPointTimeRange, ReadOnlyHistoryDatabase,
+    RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation,
+    TrackRange, log_attachment,
 };
 
 use parking_lot::Mutex;
@@ -16,8 +17,8 @@ pub mod copy;
 /// Extract recording metadata from raw GTD file bytes.
 ///
 /// libhdf5 reads from a path rather than a byte slice, so the bytes are staged
-/// in a temporary file. Counts come from the relevant datasets' shapes. The
-/// time bounds from the first and last `nav_points/time` entries.
+/// in a temporary file. Each count comes from its dataset's shape, the time
+/// range from every `nav_points/time` entry.
 pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
     let tmp = tempfile::NamedTempFile::new()?;
     std::fs::write(tmp.path(), bytes)?;
@@ -31,16 +32,13 @@ pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
         .map_err(|e| DbError::Backend(e.to_string()))?;
     let nav_point_count = time.shape().first().copied().unwrap_or(0) as u64;
 
-    let (start_us, end_us) = if nav_point_count > 0 {
+    let time_range = if nav_point_count > 0 {
         let times: Vec<i64> = time
             .read_raw()
             .map_err(|e| DbError::Backend(e.to_string()))?;
-        (
-            times.first().copied().unwrap_or(0),
-            times.last().copied().unwrap_or(0),
-        )
+        NavPointTimeRange::covering(&times)
     } else {
-        (0, 0)
+        None
     };
 
     // Count rows in an optional data group's index dataset. Absent groups
@@ -54,8 +52,7 @@ pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
     };
 
     Ok(RecordingMeta {
-        start_us,
-        end_us,
+        time_range,
         nav_point_count,
         sat_report_count: count_rows("sat_reports", "nav_point_idx"),
         marker_count: count_rows("markers", "time"),

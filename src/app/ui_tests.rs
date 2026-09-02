@@ -4505,8 +4505,7 @@ fn stored_recording_entry(identity: &str, title: &str) -> gt_store::RecordingEnt
             group_name: "2026-01-01T00:00:00Z_0".to_owned(),
         },
         meta: gt_store::RecordingMeta {
-            start_us: 0,
-            end_us: 0,
+            time_range: None,
             nav_point_count: 0,
             sat_report_count: 0,
             marker_count: 0,
@@ -4568,9 +4567,9 @@ fn name_template_guide_previews_a_history_recording() {
     harness.step();
     {
         let mut older = stored_recording_entry("auto:older.gtd", "Older ride");
-        older.meta.start_us = 1_000;
+        older.meta.time_range = gt_store::NavPointTimeRange::covering(&[1_000]);
         let mut newest = stored_recording_entry("auto:newest.gtd", "Newest ride");
-        newest.meta.start_us = 2_000;
+        newest.meta.time_range = gt_store::NavPointTimeRange::covering(&[2_000]);
         harness
             .state_mut()
             .history_window

@@ -1,10 +1,10 @@
 pub use gt_history_types::{
     ChannelSummary, DatabaseRef, DbError, HistoryDatabase, LOGS_DIRECTORY, LogAttachment,
-    LogAttachmentEntry, LogAttachmentId, LogContentHash, PruneMode, ReadOnlyHistoryDatabase,
-    RecordingEntry, RecordingMeta, StoredFixPlacementRule, StoredLogFilter, StoredLogFilterMode,
-    StoredRecording, StoredSegmentation, StoredTrackSplitRule, TrackRange, format_count_suffix,
-    identity_from_group_name, identity_group_name, log_attachment, logs_directory_for_database,
-    make_group_name,
+    LogAttachmentEntry, LogAttachmentId, LogContentHash, NavPointTimeRange, PruneMode,
+    ReadOnlyHistoryDatabase, RecordingEntry, RecordingMeta, StoredFixPlacementRule,
+    StoredLogFilter, StoredLogFilterMode, StoredRecording, StoredSegmentation,
+    StoredTrackSplitRule, TrackRange, format_count_suffix, identity_from_group_name,
+    identity_group_name, log_attachment, logs_directory_for_database, make_group_name,
 };
 
 // Pure-Rust backend

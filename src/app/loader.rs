@@ -954,7 +954,7 @@ impl HistoryInsert<'_> {
         log::debug!(
             "Storing '{filename}' in history at {} with identity={identity:?}, start_us={}, nav_points={}, tracks={}",
             path.display(),
-            meta.start_us,
+            meta.stored_start_us(),
             meta.nav_point_count,
             tracks.len()
         );

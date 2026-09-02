@@ -891,8 +891,7 @@ fn stored_in_history() -> FileHistory {
     FileHistory::recording(
         stored_recording_ref().identity,
         gt_store::RecordingMeta {
-            start_us: 0,
-            end_us: 0,
+            time_range: None,
             nav_point_count: 0,
             sat_report_count: 0,
             marker_count: 0,

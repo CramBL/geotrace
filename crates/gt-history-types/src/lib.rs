@@ -1,4 +1,6 @@
+use std::ops::RangeInclusive;
 use std::path::Path;
+
 use thiserror::Error;
 
 pub mod log_attachment;
@@ -322,13 +324,65 @@ pub fn track_ranges_from_columns(
     Some(out)
 }
 
+/// The time a recording's nav points cover, in microseconds since epoch UTC:
+/// its earliest and its latest nav point time, whatever order it stores them
+/// in. `gt_types::TimeRange` is the same span over a loaded recording.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct NavPointTimeRange {
+    start_us: i64,
+    end_us: i64,
+}
+
+impl NavPointTimeRange {
+    /// The range covering every time in `nav_point_times`, `None` for a
+    /// recording with no nav point.
+    pub fn covering(nav_point_times: &[i64]) -> Option<Self> {
+        Some(Self {
+            start_us: *nav_point_times.iter().min()?,
+            end_us: *nav_point_times.iter().max()?,
+        })
+    }
+
+    /// The range a recording's stored [`ATTR_START_US`] and [`ATTR_END_US`]
+    /// attributes bound.
+    ///
+    /// `None` for a recording with no nav point (both attributes then hold 0).
+    /// Also `None` when the start of `bounds` is past its end, which names no
+    /// earliest and latest time.
+    pub fn from_stored_attributes(
+        nav_point_count: u64,
+        bounds: RangeInclusive<i64>,
+    ) -> Option<Self> {
+        if nav_point_count == 0 || bounds.is_empty() {
+            return None;
+        }
+        Some(Self {
+            start_us: *bounds.start(),
+            end_us: *bounds.end(),
+        })
+    }
+
+    pub fn start_us(self) -> i64 {
+        self.start_us
+    }
+
+    pub fn end_us(self) -> i64 {
+        self.end_us
+    }
+
+    /// The time from the earliest to the latest nav point, never negative.
+    pub fn duration_us(self) -> i64 {
+        self.end_us.saturating_sub(self.start_us)
+    }
+}
+
 /// Metadata for a recording - used for duplicate detection and indexing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RecordingMeta {
-    /// First nav-point timestamp in microseconds since epoch UTC.
-    pub start_us: i64,
-    /// Last nav-point timestamp in microseconds since epoch UTC.
-    pub end_us: i64,
+    /// The time the recording's nav points cover, `None` for a recording with
+    /// no nav point and for one whose stored bounds are inverted (see
+    /// [`NavPointTimeRange::from_stored_attributes`]).
+    pub time_range: Option<NavPointTimeRange>,
     pub nav_point_count: u64,
     pub sat_report_count: u64,
     pub marker_count: u64,
@@ -338,6 +392,18 @@ pub struct RecordingMeta {
 }
 
 impl RecordingMeta {
+    /// The recording's [`ATTR_START_US`] attribute: its earliest nav point
+    /// time, and 0 for a recording with no nav point.
+    pub fn stored_start_us(&self) -> i64 {
+        self.time_range.map_or(0, NavPointTimeRange::start_us)
+    }
+
+    /// The recording's [`ATTR_END_US`] attribute: its latest nav point time,
+    /// and 0 for a recording with no nav point.
+    pub fn stored_end_us(&self) -> i64 {
+        self.time_range.map_or(0, NavPointTimeRange::end_us)
+    }
+
     pub fn matches(
         &self,
         start_us: i64,
@@ -346,7 +412,7 @@ impl RecordingMeta {
         marker_count: u64,
         event_marker_count: u64,
     ) -> bool {
-        self.start_us == start_us
+        self.stored_start_us() == start_us
             && self.nav_point_count == nav_point_count
             && self.sat_report_count == sat_report_count
             && self.marker_count == marker_count
@@ -361,7 +427,7 @@ impl RecordingMeta {
     /// they were filed under.
     pub fn same_recording(&self, other: &RecordingMeta) -> bool {
         self.matches(
-            other.start_us,
+            other.stored_start_us(),
             other.nav_point_count,
             other.sat_report_count,
             other.marker_count,
@@ -478,14 +544,19 @@ impl PruneMode {
                 let threshold_us = now_us - (*max_age_secs as i64) * 1_000_000;
                 entries
                     .iter()
-                    .filter(|e| e.meta.end_us < threshold_us)
+                    .filter(|e| {
+                        e.meta
+                            .time_range
+                            .is_some_and(|range| range.end_us() < threshold_us)
+                    })
                     .map(|e| e.db_ref.clone())
                     .collect()
             }
             PruneMode::ByTotalSize { max_bytes } => {
                 let mut total: u64 = entries.iter().map(|e| e.meta.gtd_size_bytes).sum();
                 let mut to_delete = Vec::new();
-                // entries are sorted descending by start_us. Remove from the end (oldest first)
+                // Remove from the end (oldest first): entries are sorted
+                // descending by their stored start time.
                 for entry in entries.iter().rev() {
                     if total <= *max_bytes {
                         break;
@@ -692,8 +763,7 @@ mod tests {
 
     fn meta() -> RecordingMeta {
         RecordingMeta {
-            start_us: 1_000,
-            end_us: 5_000,
+            time_range: NavPointTimeRange::covering(&[1_000, 5_000]),
             nav_point_count: 100,
             sat_report_count: 20,
             marker_count: 3,
@@ -704,12 +774,12 @@ mod tests {
 
     #[test]
     fn same_recording_ignores_size_and_end() {
-        // end_us and gtd_size_bytes are not part of the content identity, so a
-        // recording re-read from history (which can differ in stored size or a
-        // recomputed end) still counts as the same recording.
+        // A recording re-read from history counts as the same recording with a
+        // different stored size or a recomputed end time: neither the latest
+        // nav point time nor `gtd_size_bytes` is part of the content identity.
         let a = meta();
         let b = RecordingMeta {
-            end_us: 9_999,
+            time_range: NavPointTimeRange::covering(&[1_000, 9_999]),
             gtd_size_bytes: 1,
             ..a
         };
@@ -721,7 +791,10 @@ mod tests {
     fn same_recording_distinguishes_content() {
         let a = meta();
         for b in [
-            RecordingMeta { start_us: 2, ..a },
+            RecordingMeta {
+                time_range: NavPointTimeRange::covering(&[2, 5_000]),
+                ..a
+            },
             RecordingMeta {
                 nav_point_count: 101,
                 ..a

@@ -15,15 +15,16 @@ use crate::app::storage_controls::AUTO_STORE_LABEL;
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
 use gt_store::ChannelSummary;
+use gt_ui_theme::EM_DASH;
 
 use super::table::{
     MAX_HOVER_CHANNELS, OPEN_LOG_LABEL, breakdown_cell_id, channel_title, data_breakdown_ui,
-    track_count_text,
+    duration_text, started_at_text, time_range_text, track_count_text,
 };
 use super::{
     DELETE_HIDDEN_WINDOW_TITLE, DatabaseRef, HistorySort, HistoryWindow, HistoryWorker,
-    ICON_CARET_DOWN, ICON_CARET_UP, PRUNE_WINDOW_TITLE, RecordingEntry, RecordingMeta, SortColumn,
-    SortDirection, identity_display_parts, travel_mode_display,
+    ICON_CARET_DOWN, ICON_CARET_UP, NavPointTimeRange, PRUNE_WINDOW_TITLE, RecordingEntry,
+    RecordingMeta, SortColumn, SortDirection, identity_display_parts, travel_mode_display,
 };
 use strum::{EnumCount as _, IntoEnumIterator as _};
 
@@ -412,8 +413,7 @@ fn entry_with_identity(identity: &str) -> RecordingEntry {
             group_name: "rec0".to_owned(),
         },
         meta: RecordingMeta {
-            start_us: 0,
-            end_us: 0,
+            time_range: None,
             nav_point_count: 0,
             sat_report_count: 0,
             marker_count: 0,
@@ -433,7 +433,7 @@ fn entry_with_identity(identity: &str) -> RecordingEntry {
 
 /// A listing entry with the four sortable value columns set, for the
 /// ordering tests. `duration_us` is added to `start_us` to give the entry
-/// its span.
+/// its time range.
 fn sortable_entry(
     identity: &str,
     start_us: i64,
@@ -442,8 +442,7 @@ fn sortable_entry(
     gtd_size_bytes: u64,
 ) -> RecordingEntry {
     let mut entry = entry_with_identity(identity);
-    entry.meta.start_us = start_us;
-    entry.meta.end_us = start_us + duration_us;
+    entry.meta.time_range = NavPointTimeRange::covering(&[start_us, start_us + duration_us]);
     entry.meta.nav_point_count = nav_point_count;
     entry.meta.gtd_size_bytes = gtd_size_bytes;
     entry
@@ -919,6 +918,85 @@ fn only_the_active_column_shows_a_direction_caret() {
     h.run();
     assert_eq!(h.inner.query_all_by_label(ICON_CARET_DOWN).count(), 0);
     assert_eq!(h.inner.query_all_by_label(ICON_CARET_UP).count(), 1);
+}
+
+/// The recording ran, rebooted to a clock an hour behind and ran on: its
+/// earliest and latest nav point times are neither the first nor the last nav
+/// point in file order.
+#[test]
+fn a_row_reads_its_date_duration_and_time_range_from_the_earliest_and_latest_nav_point() {
+    let time_range = NavPointTimeRange::covering(&[
+        1_700_003_600_000_000,
+        1_700_003_660_000_000,
+        1_700_000_000_000_000,
+        1_700_000_060_000_000,
+    ]);
+
+    assert_eq!(started_at_text(time_range), "2023-11-14 22:13");
+    assert_eq!(duration_text(time_range), "1h 01m");
+    assert_eq!(
+        time_range_text(time_range),
+        "2023-11-14 22:13:20 – 23:14:20"
+    );
+}
+
+/// The three texts are the row's date cell, its duration cell and the time
+/// range line of its breakdown.
+#[test]
+fn a_row_of_a_recording_with_no_time_range_reads_em_dashes() {
+    assert_eq!(started_at_text(None), EM_DASH);
+    assert_eq!(duration_text(None), EM_DASH);
+    assert_eq!(time_range_text(None), EM_DASH);
+}
+
+/// A recording with no time range has no date and no duration to order on, and
+/// sorts before every recording that has them.
+#[rstest::rstest]
+#[case(SortColumn::Date)]
+#[case(SortColumn::Duration)]
+fn a_recording_with_no_time_range_sorts_first_ascending(#[case] column: SortColumn) {
+    let mut entries = sortable_entries();
+    entries.push(entry_with_identity("no_time_range"));
+    let sort = HistorySort {
+        column,
+        direction: SortDirection::Ascending,
+    };
+
+    assert_eq!(
+        sorted_identities(sort, &entries).first().copied(),
+        Some("no_time_range")
+    );
+}
+
+#[rstest::rstest]
+#[case::from("2023-01-01", "")]
+#[case::to("", "2099-01-01")]
+fn a_date_filter_leaves_out_a_recording_with_no_time_range(
+    #[case] filter_date_from: &str,
+    #[case] filter_date_to: &str,
+) {
+    let dated = sortable_entry(
+        "auto:ride.gtd",
+        1_700_000_000_000_000,
+        60_000_000,
+        10,
+        1_024,
+    );
+    let mut harness = history_harness(vec![dated, entry_with_identity("auto:blank.gtd")]);
+    harness.window.filter_date_from = filter_date_from.to_owned();
+    harness.window.filter_date_to = filter_date_to.to_owned();
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(show_history, harness);
+    for _ in 0..4 {
+        h.run();
+    }
+
+    h.inner.get_by_label_contains("ride.gtd");
+    assert!(
+        h.inner.query_by_label_contains("blank.gtd").is_none(),
+        "a recording with no start date must not pass a date filter"
+    );
 }
 
 /// A recording carrying ad-hoc sensor channels: two of them, one vector and
