@@ -42,8 +42,13 @@ pub fn render_filter_panel(
         let sel_end = filter.time_end.unwrap_or(full_range.end);
         let dur_str = gt_fmt::format_human_terse_duration(sel_end - sel_start);
         ui.label(format!("Time range {EM_DASH} {dur_str}"));
-        let primary_changed =
-            time_range_bar(ui, full_range, &mut filter.time_start, &mut filter.time_end);
+        let primary_changed = time_range_bar(
+            ui,
+            BarSpan(full_range),
+            LoadedTimeRange(full_range),
+            &mut filter.time_start,
+            &mut filter.time_end,
+        );
         if primary_changed {
             state.secondary_zoom = None;
         }
@@ -61,7 +66,13 @@ pub fn render_filter_panel(
                     .get_or_insert_with(|| expand_range(filtered_range, full_range));
                 let zoom_dur = gt_fmt::format_human_terse_duration(zoom_range.duration());
                 ui.label(format!("Active range {EM_DASH} {zoom_dur}"));
-                time_range_bar(ui, zoom_range, &mut filter.time_start, &mut filter.time_end);
+                time_range_bar(
+                    ui,
+                    BarSpan(zoom_range),
+                    LoadedTimeRange(full_range),
+                    &mut filter.time_start,
+                    &mut filter.time_end,
+                );
             } else {
                 state.secondary_zoom = None;
             }
@@ -201,21 +212,53 @@ impl TimeRangeBarScale {
     }
 }
 
+/// Inset of a bar's track from either end of the rectangle the bar allocates.
+pub const TRACK_INSET_PX: f32 = 8.0;
+
+/// `chrono` format of the two window bounds stated under a bar.
+const BOUND_LABEL_FORMAT: &str = "%m/%d %H:%M";
+
+/// The span a bar lays its track out over: the whole loaded time range for the
+/// primary bar, the zoom viewport for the secondary one.
+#[derive(Debug, Clone, Copy)]
+struct BarSpan(TimeRange);
+
+/// The span the window covers while a bound of it is absent, which is the
+/// whole loaded time range whichever bar is drawn.
+#[derive(Debug, Clone, Copy)]
+struct LoadedTimeRange(TimeRange);
+
+/// The window bound a press on a bar grabbed. The drag writes that bound until
+/// the pointer is released, including where the pointer passes the other
+/// handle.
+#[derive(Debug, Clone, Copy)]
+enum GrabbedBound {
+    Start,
+    End,
+}
+
+/// A bar over `bar_span` with a handle for each bound of the window.
+///
+/// A bound outside `bar_span` is drawn at the end of the track it lies beyond,
+/// and the label under the bar states the bound itself. A drag clears a bound
+/// only at an end of `loaded_range`: on the secondary bar, whose span is
+/// narrower, a drag to the end of the track writes a bound at that instant.
 fn time_range_bar(
     ui: &mut Ui,
-    full_range: TimeRange,
+    BarSpan(bar_span): BarSpan,
+    LoadedTimeRange(loaded_range): LoadedTimeRange,
     selected_start: &mut Option<DateTime<Utc>>,
     selected_end: &mut Option<DateTime<Utc>>,
 ) -> bool {
-    let Some(scale) = TimeRangeBarScale::new(full_range) else {
+    let Some(scale) = TimeRangeBarScale::new(bar_span) else {
         return false;
     };
 
     let desired_size = egui::vec2(ui.available_width(), 24.0);
     let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
 
-    let track_left = rect.left() + 8.0;
-    let track_right = rect.right() - 8.0;
+    let track_left = rect.left() + TRACK_INSET_PX;
+    let track_right = rect.right() - TRACK_INSET_PX;
     let track_width = track_right - track_left;
     let track_y = rect.center().y;
 
@@ -227,14 +270,15 @@ fn time_range_bar(
     );
 
     let to_x = |dt: DateTime<Utc>| -> f32 {
-        track_left + (scale.fraction_at_instant(dt) as f32) * track_width
+        (track_left + (scale.fraction_at_instant(dt) as f32) * track_width)
+            .clamp(track_left, track_right)
     };
     let to_dt = |x: f32| -> DateTime<Utc> {
         scale.instant_at_fraction(f64::from((x - track_left) / track_width))
     };
 
-    let start_x = selected_start.map_or(track_left, to_x);
-    let end_x = selected_end.map_or(track_right, to_x);
+    let start_x = to_x(selected_start.unwrap_or(loaded_range.start));
+    let end_x = to_x(selected_end.unwrap_or(loaded_range.end));
 
     let fill_color = ui.visuals().selection.bg_fill;
     painter.rect_filled(
@@ -251,24 +295,28 @@ fn time_range_bar(
 
     let mut changed = false;
     if let Some(pointer) = response.interact_pointer_pos() {
-        let dist_start = (pointer.x - start_x).abs();
-        let dist_end = (pointer.x - end_x).abs();
-        if dist_start < dist_end {
-            let new_dt = to_dt(pointer.x).min(selected_end.unwrap_or(full_range.end));
-            *selected_start = if new_dt <= full_range.start {
-                None
-            } else {
-                Some(new_dt)
-            };
-        } else {
-            let new_dt = to_dt(pointer.x).max(selected_start.unwrap_or(full_range.start));
-            *selected_end = if new_dt >= full_range.end {
-                None
-            } else {
-                Some(new_dt)
-            };
+        let grabbed = ui.data_mut(|data| {
+            *data.get_temp_mut_or_insert_with(response.id, || {
+                if (pointer.x - start_x).abs() < (pointer.x - end_x).abs() {
+                    GrabbedBound::Start
+                } else {
+                    GrabbedBound::End
+                }
+            })
+        });
+        match grabbed {
+            GrabbedBound::Start => {
+                let start = to_dt(pointer.x).min(selected_end.unwrap_or(loaded_range.end));
+                *selected_start = (start > loaded_range.start).then_some(start);
+            }
+            GrabbedBound::End => {
+                let end = to_dt(pointer.x).max(selected_start.unwrap_or(loaded_range.start));
+                *selected_end = (end < loaded_range.end).then_some(end);
+            }
         }
         changed = true;
+    } else {
+        ui.data_mut(|data| data.remove::<GrabbedBound>(response.id));
     }
 
     if response.double_clicked() {
@@ -277,14 +325,12 @@ fn time_range_bar(
         changed = true;
     }
 
-    let start_label = selected_start.map_or_else(
-        || full_range.start.format("%m/%d %H:%M").to_string(),
-        |dt| dt.format("%m/%d %H:%M").to_string(),
-    );
-    let end_label = selected_end.map_or_else(
-        || full_range.end.format("%m/%d %H:%M").to_string(),
-        |dt| dt.format("%m/%d %H:%M").to_string(),
-    );
+    let start_label = selected_start
+        .unwrap_or(loaded_range.start)
+        .format(BOUND_LABEL_FORMAT);
+    let end_label = selected_end
+        .unwrap_or(loaded_range.end)
+        .format(BOUND_LABEL_FORMAT);
     ui.label(format!("{start_label} {EM_DASH} {end_label}"));
     changed
 }
