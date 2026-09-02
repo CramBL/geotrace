@@ -1,6 +1,7 @@
 //! What a run reports about the tracks it read: the samples the providers hand
-//! the evaluator, the point ranges the map paints for them, and the staleness
-//! flag that grays a run out once its inputs change.
+//! the evaluator, the point ranges the map paints for them, the values its
+//! aggregate columns reduce, and the staleness flag that grays a run out once
+//! its inputs change.
 
 #![expect(
     clippy::expect_used,
@@ -17,7 +18,8 @@ use gt_filter::GlobalFilter;
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_query::{ChannelSchema, MetricProvider};
 use gt_query_run::{
-    JammingValues, QuerySession, RunInputs, SnapErrorValues, TrackProvider, schema_from_files,
+    JammingValues, QuerySession, RunInputs, RunResults, SnapErrorValues, TrackProvider,
+    schema_from_files,
 };
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::time_types::GpsTime;
@@ -224,6 +226,23 @@ fn drawn_ranges(session: &QuerySession) -> Vec<Range<usize>> {
         .to_vec()
 }
 
+/// The aggregate columns' values over the first match of the last run, in
+/// table order. `None` when the run left the one loaded track without a match.
+fn first_match_aggregates(session: &QuerySession) -> Option<Vec<Option<f64>>> {
+    let RunResults::Points(results) = session.results()? else {
+        return None;
+    };
+    let aggregates = &results
+        .queries
+        .first()?
+        .matches
+        .first()?
+        .matches
+        .first()?
+        .aggregates;
+    Some(aggregates.clone())
+}
+
 #[test]
 fn a_channel_keep_query_hides_a_track_with_no_match() {
     let channel = scalar_channel("accel", Some("g"), &[(0, 0.1), (500, 0.2)]);
@@ -331,6 +350,84 @@ fn a_time_window_keeps_the_fixes_on_both_sides_of_a_backward_time_step() {
     assert_eq!(drawn_ranges(&session), vec![0..1, 2..4]);
 }
 
+/// The time window ends at 5 s and rejects the fix at 10 s, between the two
+/// fixes it keeps. A window stage whose condition reads a channel aggregate
+/// alone reads none of the fixes it covers.
+#[test]
+fn a_window_matching_on_a_channel_leaves_out_the_fix_the_time_window_rejects() {
+    let channel = scalar_channel("sensor", None, &[(500, 10.0)]);
+    let mut state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at(&[0, 10_000, 1_000]),
+        vec![channel],
+    ));
+    state.filter = GlobalFilter {
+        time_end: Some(utc(5_000)),
+        ..GlobalFilter::default()
+    };
+    let mut session = QuerySession::new();
+
+    run_text(
+        &mut session,
+        &state,
+        "points | window 3 | where max(@sensor) > 5 | draw",
+    );
+
+    assert_eq!(drawn_ranges(&session), vec![0..1, 2..3]);
+}
+
+/// No aggregate reads the sample at 8 s: it sits beside the fix at 10 s, which
+/// the time window ending at 5 s rejects. The window stage that would match on
+/// it matches nothing.
+#[test]
+fn a_channel_aggregate_leaves_out_a_sample_beside_a_fix_the_time_window_rejects() {
+    let channel = scalar_channel("sensor", None, &[(8_000, 10.0)]);
+    let mut state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at(&[0, 10_000, 1_000]),
+        vec![channel],
+    ));
+    state.filter = GlobalFilter {
+        time_end: Some(utc(5_000)),
+        ..GlobalFilter::default()
+    };
+    let mut session = QuerySession::new();
+
+    run_text(
+        &mut session,
+        &state,
+        "points | window 3 | where max(@sensor) > 5 | draw",
+    );
+
+    assert_eq!(drawn_ranges(&session), Vec::<Range<usize>>::new());
+}
+
+/// A time window starting at 1 s leaves the first fix out of the run. The
+/// window over the three fixes it keeps reads the sample at 1.5 s and not the
+/// one at 0.5 s, which sits beside the fix the window rejects.
+#[test]
+fn a_window_over_a_sliced_track_reads_the_samples_of_its_own_fixes() {
+    let channel = scalar_channel("sensor", None, &[(500, 100.0), (1_500, 10.0)]);
+    let mut state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at(&[0, 1_000, 2_000, 3_000]),
+        vec![channel],
+    ));
+    state.filter = GlobalFilter {
+        time_start: Some(utc(1_000)),
+        ..GlobalFilter::default()
+    };
+    let mut session = QuerySession::new();
+
+    run_text(
+        &mut session,
+        &state,
+        "points | window 3 | where max(@sensor) > 5 | draw",
+    );
+
+    assert_eq!(drawn_ranges(&session), vec![1..4]);
+}
+
 /// `accel` at the second fix of this 2 Hz track is 20 m/s2. That fix is 0.5 s
 /// and 10 m/s past the first. The first fix has no predecessor to difference
 /// against.
@@ -373,6 +470,50 @@ fn a_count_window_reads_the_channel_samples_between_its_own_fixes_at_two_hz() {
     );
 
     assert_eq!(drawn_ranges(&session), vec![0..2]);
+}
+
+/// The window's aggregate reads the sample at 5 s, between the first fix and
+/// the second. The third fix steps the clock back to 1 s, and the window's
+/// fixes run from 0 s to 10 s.
+#[test]
+fn a_count_window_reads_a_sample_beside_the_fix_a_backward_time_step_follows() {
+    let channel = scalar_channel("sensor", None, &[(5_000, 10.0)]);
+    let state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at(&[0, 10_000, 1_000]),
+        vec![channel],
+    ));
+    let mut session = QuerySession::new();
+
+    run_text(
+        &mut session,
+        &state,
+        "points | window 3 | where max(@sensor) > 5 | draw",
+    );
+
+    assert_eq!(drawn_ranges(&session), vec![0..3]);
+}
+
+/// The column reads the sample at 5 s, the only one between the match's fixes.
+/// A match's aggregate column reduces the samples of the match's own fixes,
+/// which run from 0 s to 10 s here.
+#[test]
+fn a_table_column_reads_a_sample_beside_the_fix_a_backward_time_step_follows() {
+    let channel = scalar_channel("sensor", None, &[(5_000, 10.0)]);
+    let state = LoadedState::of(file_named(
+        "ride.gtd",
+        fixes_at(&[0, 10_000, 1_000]),
+        vec![channel],
+    ));
+    let mut session = QuerySession::new();
+
+    run_text(
+        &mut session,
+        &state,
+        "points | window 3 | where avg(velocity) > 1 km/h | table max(@sensor) | draw",
+    );
+
+    assert_eq!(first_match_aggregates(&session), Some(vec![Some(10.0)]));
 }
 
 /// A 1 s duration window over this 2 Hz track holds two fixes. The window at

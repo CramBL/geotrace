@@ -72,6 +72,10 @@ impl<P: MetricProvider> MetricProvider for RunView<'_, P> {
         self.inner.value(metric, self.start + index)
     }
 
+    fn point_can_match(&self, index: usize) -> bool {
+        index < self.len && self.inner.point_can_match(self.start + index)
+    }
+
     fn channel_span(&self, name: &str, t_lo: f64, t_hi: f64) -> ChannelSamples {
         // Channel samples are keyed by absolute time, so the run's time window
         // selects them directly from the underlying provider - no index offset.

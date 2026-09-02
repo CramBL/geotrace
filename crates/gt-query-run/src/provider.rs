@@ -601,6 +601,10 @@ impl MetricProvider for SliceProvider<'_> {
             .value(metric, self.absolute_index_inside_the_window(index)?)
     }
 
+    fn point_can_match(&self, index: usize) -> bool {
+        self.absolute_index_inside_the_window(index).is_some()
+    }
+
     fn channel_span(&self, name: &str, t_lo: f64, t_hi: f64) -> ChannelSamples {
         // Channel samples are keyed by absolute time, so the slice's time span
         // selects them directly from the inner provider - no index offset.

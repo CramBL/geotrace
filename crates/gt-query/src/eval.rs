@@ -110,6 +110,14 @@ pub trait MetricProvider {
 
     fn value(&self, metric: QueryMetric, index: usize) -> Option<f64>;
 
+    /// Whether `index` may fall in a match. A provider that filters points out
+    /// of the run returns `false` for one it filtered: a window marks only the
+    /// points this returns `true` for, whatever the window's predicate read.
+    /// Providers that filter nothing use the default.
+    fn point_can_match(&self, _index: usize) -> bool {
+        true
+    }
+
     /// A channel's own samples whose timestamp lands in the closed span
     /// `[t_lo, t_hi]` (seconds), in timestamp order, as row-major values with
     /// one column per component (one column for a scalar channel). A provider
@@ -281,14 +289,14 @@ impl AggregateColumn {
             CheckedSource::Points => {
                 // The channel span is the closed time extent of the match's
                 // points, as a count window's is.
-                let span = ctx
-                    .raw(QueryMetric::Time, rows.start)
-                    .zip(ctx.raw(QueryMetric::Time, rows.end - 1))
-                    .map(|(lo, hi)| TimeSpan { lo, hi });
+                let point_times: Vec<Option<f64>> = rows
+                    .clone()
+                    .map(|index| ctx.raw(QueryMetric::Time, index))
+                    .collect();
                 let window = WindowScope {
                     start: rows.start,
                     end: rows.end,
-                    span,
+                    span: TimeSpan::covering(&point_times),
                 };
                 eval_num(&mut ctx, &self.expr, Scope::Window(window))
             }
@@ -410,19 +418,19 @@ fn evaluate_points(
             shorter_than_window = true;
         }
         Some(Window::Count(n)) => {
+            // A backward time step moves a bound inside a window: each point's
+            // time bounds the channel span of every window that holds it.
+            let times: Vec<Option<f64>> = (0..len).map(|i| ctx.raw(QueryMetric::Time, i)).collect();
             for start in 0..=(len - n.get()) {
                 if start % check_interval == 0 && should_cancel() {
                     return None;
                 }
                 let end = start + n.get();
-                // A count window's channel span is the closed time extent of
-                // its points, `[t(start), t(end-1)]`. A boundary point with no
-                // timestamp (never, for nav points) leaves the span absent.
-                let span = ctx
-                    .raw(QueryMetric::Time, start)
-                    .zip(ctx.raw(QueryMetric::Time, end - 1))
-                    .map(|(lo, hi)| TimeSpan { lo, hi });
-                let window = WindowScope { start, end, span };
+                let window = WindowScope {
+                    start,
+                    end,
+                    span: TimeSpan::covering(times.get(start..end).unwrap_or_default()),
+                };
                 apply_window(query, &mut ctx, &mut matched, &mut skips, window);
             }
         }
@@ -459,8 +467,8 @@ fn evaluate_points(
     })
 }
 
-/// Evaluate one window: mark its points on a match, record a skip on a poisoned
-/// window, do nothing on no-match.
+/// Evaluate one window: mark the points of a match its provider offers, record
+/// a skip on a poisoned window, do nothing on no-match.
 fn apply_window<P: MetricProvider>(
     query: &CheckedQuery,
     ctx: &mut Ctx<'_, P>,
@@ -470,12 +478,13 @@ fn apply_window<P: MetricProvider>(
 ) {
     match verdict(query, ctx, Scope::Window(window)) {
         Some(true) => {
-            for slot in matched
-                .iter_mut()
-                .skip(window.start)
-                .take(window.end - window.start)
-            {
-                *slot = true;
+            for index in window.start..window.end {
+                if !ctx.provider.point_can_match(index) {
+                    continue;
+                }
+                if let Some(slot) = matched.get_mut(index) {
+                    *slot = true;
+                }
             }
         }
         Some(false) => {}
@@ -762,8 +771,27 @@ struct TimeSpan {
     hi: f64,
 }
 
+impl TimeSpan {
+    /// The closed extent of the timestamps present in `point_times`, `None`
+    /// when none of the points has one.
+    fn covering(point_times: &[Option<f64>]) -> Option<Self> {
+        let mut present = point_times.iter().flatten().copied();
+        let first = present.next()?;
+        Some(present.fold(
+            Self {
+                lo: first,
+                hi: first,
+            },
+            |span, time| Self {
+                lo: span.lo.min(time),
+                hi: span.hi.max(time),
+            },
+        ))
+    }
+}
+
 /// A window over the points `start..end`, plus the time span its channel
-/// samples come from. The span is absent only when a boundary point has no
+/// samples come from. The span is absent only when no point of the window has a
 /// timestamp (never for nav points). A channel aggregate then reports a missing
 /// time.
 #[derive(Clone, Copy)]
@@ -972,8 +1000,8 @@ fn both_nums<P: MetricProvider>(
 
 /// Evaluate the aggregate argument once per sample of channel `name` in the
 /// window's time span, each argument seeing that sample's whole row (so a
-/// `@name.x`/`@name.y`/`norm` reads aligned columns). An absent span (a boundary
-/// point had no timestamp) reports a missing time. A span with no samples
+/// `@name.x`/`@name.y`/`norm` reads aligned columns). An absent span (no point
+/// of the window had a timestamp) reports a missing time. A span with no samples
 /// reports the missing channel. Either way the aggregate poisons.
 fn reduce_channel<P: MetricProvider>(
     ctx: &mut Ctx<'_, P>,

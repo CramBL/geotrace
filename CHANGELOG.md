@@ -54,6 +54,7 @@
 - **Interface:** Fixed a sensor channel query's `keep` leaving a track with no match fully drawn on the map.
 - **Interface:** Fixed a query's `accel` being absent between two fixes of the same second in a recording faster than 1 Hz.
 - **Interface:** Fixed a query window's aggregate over a sensor channel reading the samples before the window's first fix in a recording faster than 1 Hz.
+- **Interface:** Fixed a query window matching on a sensor channel drawing a fix outside the time range filter, and a query window's channel aggregate dropping the samples between its fixes across a backward time step.
 - **Interface:** Fixed a query's duration window covering every fix of a second in a recording faster than 1 Hz.
 - **Interface:** Fixed the query results not graying out when a recording of the same file name replaces the one the query ran over.
 - **Interface:** Fixed the query results not graying out while the query window is closed.
