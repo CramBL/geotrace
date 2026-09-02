@@ -2926,11 +2926,13 @@ name = "gt-query-run"
 version = "0.13.0"
 dependencies = [
  "chrono",
+ "geotrace-sdk",
  "geotrace-sdk-units",
  "gt-analysis",
  "gt-filter",
  "gt-fmt",
  "gt-loaded-files",
+ "gt-loader",
  "gt-query",
  "gt-test-utils",
  "gt-track-builder",

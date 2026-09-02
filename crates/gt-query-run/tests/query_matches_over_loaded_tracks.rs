@@ -11,6 +11,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use geotrace_sdk::{Angle, NavFileBuilder, NavFix};
 use geotrace_sdk_units::ChannelUnit;
 use gt_filter::GlobalFilter;
 use gt_loaded_files::{FileHistory, LoadedFiles};
@@ -67,6 +68,35 @@ fn fixes_at_speeds(fixes: &[(i64, f64)]) -> Vec<NavPoint> {
             NavPoint::new(tpv, None)
         })
         .collect()
+}
+
+fn utc_micros(micros: i64) -> DateTime<Utc> {
+    DateTime::from_timestamp_micros(EPOCH * 1_000_000 + micros).expect("a valid timestamp")
+}
+
+/// A one-track file written as `.gtd` bytes and read back through the loader.
+/// Three fixes sit a second apart, each stamped by the receiver on the whole
+/// second and by the host clock `micros_ahead` later.
+fn gtd_file_with_the_host_clock_ahead(micros_ahead: i64) -> LoadedFile {
+    let mut recorder = NavFileBuilder::new().open();
+    for second in 0..3 {
+        let receiver_micros = second * 1_000_000;
+        recorder.add_nav_fix(
+            NavFix::builder()
+                .gps_time(utc_micros(receiver_micros))
+                .sys_time(utc_micros(receiver_micros + micros_ahead))
+                .lat(Angle::degrees(55.0 + second as f64 / 1_000.0))
+                .lon(Angle::degrees(12.0))
+                .build(),
+        );
+    }
+    let mut bytes = Vec::new();
+    recorder
+        .finish()
+        .expect("the recorded fixes are valid")
+        .write(&mut bytes)
+        .expect("the file writes to memory");
+    gt_loader::load_bytes(&bytes, "ride.gtd".to_owned()).expect("the written file loads")
 }
 
 /// A scalar channel sampled at the given millisecond offsets past [`EPOCH`].
@@ -385,4 +415,32 @@ fn results_go_stale_when_another_file_of_the_same_name_replaces_the_loaded_one()
     session.refresh_staleness(state.inputs());
 
     assert!(session.results().expect("a completed run").stale());
+}
+
+#[test]
+fn sys_time_reads_past_time_for_a_fix_whose_host_clock_is_500_microseconds_ahead() {
+    let state = LoadedState::of(gtd_file_with_the_host_clock_ahead(500));
+    let mut session = QuerySession::new();
+
+    run_text(
+        &mut session,
+        &state,
+        "points | where time < sys_time | draw",
+    );
+
+    assert_eq!(drawn_ranges(&session), vec![0..3]);
+}
+
+#[test]
+fn clock_delta_reads_below_zero_for_a_fix_whose_host_clock_is_500_microseconds_ahead() {
+    let state = LoadedState::of(gtd_file_with_the_host_clock_ahead(500));
+    let mut session = QuerySession::new();
+
+    run_text(
+        &mut session,
+        &state,
+        "points | where clock_delta < 0 s | draw",
+    );
+
+    assert_eq!(drawn_ranges(&session), vec![0..3]);
 }

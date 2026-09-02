@@ -10,7 +10,7 @@ use geotrace_sdk_units::ChannelUnit;
 use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
 use gt_types::satellites::{Constellation, Satellite, Satellites};
-use gt_types::time_types::GpsTime;
+use gt_types::time_types::{GpsTime, SysTime};
 use gt_types::tpv::TimePositionVelocity;
 use gt_types::{Channel, FileSource, LoadedFile, LoadedTrack, NavPoint};
 use rustc_hash::FxHashMap;
@@ -88,6 +88,32 @@ pub(crate) fn points_at_millis(offsets_millis: &[i64]) -> Vec<NavPoint> {
                 .time(GpsTime::from_utc(time))
                 .lat(Latitude::new(55.5))
                 .lon(Longitude::new(12.25))
+                .build();
+            NavPoint::new(tpv, None)
+        })
+        .collect()
+}
+
+/// One fix's two clock readings, in microseconds past [`TEST_EPOCH`].
+pub(crate) struct FixClocksMicros {
+    pub(crate) receiver: i64,
+    pub(crate) host: i64,
+}
+
+/// One point per fix, stamped by the receiver clock and the host clock, with no
+/// velocity, heading or satellite report.
+pub(crate) fn points_stamped_by_both_clocks(fixes: &[FixClocksMicros]) -> Vec<NavPoint> {
+    let at = |micros: i64| {
+        DateTime::from_timestamp_micros(TEST_EPOCH * 1_000_000 + micros).expect("valid timestamp")
+    };
+    fixes
+        .iter()
+        .map(|fix| {
+            let tpv = TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(at(fix.receiver)))
+                .lat(Latitude::new(55.5))
+                .lon(Longitude::new(12.25))
+                .sys_time(SysTime::from_utc(at(fix.host)))
                 .build();
             NavPoint::new(tpv, None)
         })

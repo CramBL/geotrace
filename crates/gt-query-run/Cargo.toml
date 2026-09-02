@@ -25,6 +25,8 @@ rustc-hash.workspace = true
 uom.workspace = true
 
 [dev-dependencies]
+geotrace-sdk = { path = "../../sdk/rust/geotrace-sdk" }
+gt-loader = { path = "../gt-loader" }
 gt-test-utils = { path = "../gt-test-utils" }
 gt-track-builder = { path = "../gt-track-builder" }
 rstest.workspace = true
