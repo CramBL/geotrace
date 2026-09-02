@@ -1,5 +1,6 @@
 //! What a run reports about the tracks it read: the samples the providers hand
-//! the evaluator, and the point ranges the map paints for them.
+//! the evaluator, the point ranges the map paints for them, and the staleness
+//! flag that grays a run out once its inputs change.
 
 #![expect(
     clippy::expect_used,
@@ -135,6 +136,13 @@ impl LoadedState {
             geomagnetic: GeomagneticSeries::default(),
             tec: TecSeries::default(),
         }
+    }
+
+    /// Unload the loaded file, then load `file` in its place.
+    fn replace_with(&mut self, file: LoadedFile) {
+        self.files.remove_file(0);
+        self.files.push(file, FileHistory::None);
+        self.visibility = TrackDataVisibility::from_loaded(self.files.files());
     }
 
     fn inputs(&self) -> RunInputs<'_> {
@@ -357,4 +365,24 @@ fn a_duration_window_groups_the_fixes_of_its_own_span_at_two_hz() {
     );
 
     assert_eq!(drawn_ranges(&session), vec![0..3]);
+}
+
+#[test]
+fn results_go_stale_when_another_file_of_the_same_name_replaces_the_loaded_one() {
+    let mut state = LoadedState::of(file_named("ride.gtd", fixes_at(&[0, 1_000]), vec![]));
+    let mut session = QuerySession::new();
+    run_text(
+        &mut session,
+        &state,
+        "points | where velocity > 1 km/h | draw",
+    );
+
+    state.replace_with(file_named(
+        "ride.gtd",
+        fixes_at(&[10_000, 11_000, 12_000, 13_000]),
+        vec![],
+    ));
+    session.refresh_staleness(state.inputs());
+
+    assert!(session.results().expect("a completed run").stale());
 }

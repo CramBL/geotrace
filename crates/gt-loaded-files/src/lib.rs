@@ -85,18 +85,6 @@ impl FileHistory {
         }
     }
 
-    fn identity_key<'a>(&'a self, file: &'a LoadedFile) -> Cow<'a, str> {
-        match self {
-            Self::Recording { identity, .. } => Cow::Borrowed(identity.as_str()),
-            Self::None => Cow::Borrowed(file.metadata.filename.as_str()),
-        }
-    }
-
-    /// The recording identity, if this file has one. Unlike [`identity_key`],
-    /// returns `None` (rather than the filename) for files with no history
-    /// association, so callers can distinguish a real identity from a fallback.
-    ///
-    /// [`identity_key`]: Self::identity_key
     fn identity(&self) -> Option<&str> {
         match self {
             Self::Recording { identity, .. } => Some(identity.as_str()),
@@ -186,10 +174,6 @@ impl<'a> LoadedFileEntry<'a> {
 
     pub fn history(&self) -> &'a FileHistory {
         self.history
-    }
-
-    pub fn identity_key(&self) -> Cow<'a, str> {
-        self.history.identity_key(self.file)
     }
 
     /// The recording identity, or `None` for files not associated with history.

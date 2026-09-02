@@ -21,6 +21,7 @@ gt-query-run = { path = "../gt-query-run" }
 gt-track-builder = { path = "../gt-track-builder" }
 gt-types = { path = "../gt-types" }
 gt-ui-types = { path = "../gt-ui-types" }
+rustc-hash.workspace = true
 strum.workspace = true
 uom.workspace = true
 
