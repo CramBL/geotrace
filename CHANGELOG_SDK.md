@@ -9,6 +9,7 @@ the app).
 
 ### Added
 
+- The `sdk_version`, `sdk_git_commit` and `sdk_commit_time` file attributes, which a released SDK build stamps on the files it writes, read back through Rust `Meta::sdk_version()`, `Meta::sdk_git_commit()` and `Meta::sdk_commit_time()`, C `gtd_nav_file_sdk_version()`, `gtd_nav_file_sdk_git_commit()` and `gtd_nav_file_sdk_commit_time()`, the same three as C++ `NavFile` methods, and the Python `Meta.sdk_version`, `Meta.sdk_git_commit` and `Meta.sdk_commit_time` properties. Rust names the attributes with the `SDK_VERSION_ATTR`, `SDK_GIT_COMMIT_ATTR` and `SDK_COMMIT_TIME_ATTR` constants.
 - The `nav_points/gps_time_us` dataset, holding each fix's GPS-receiver timestamp in microseconds since the Unix epoch, `u64::MAX` where the fix has none. The `nav_points/time` axis is unchanged.
 - Rust `EventMarkerIconChoice::wire_name` returns the `icon_name` wire value the choice writes: the empty name for `Auto`, the icon's name for `Icon`, and the stored name for `Unrecognized`.
 - Python `EventMarkerStyle.icon_name`, a read-only property holding the stored name of `icon`: `None` where the style leaves the icon to the application, and the name verbatim where it is outside the `MarkerIcon` set. `NavFileBuilder.add_event_marker_style` writes such a name back unchanged.

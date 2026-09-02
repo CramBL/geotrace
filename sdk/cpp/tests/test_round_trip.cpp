@@ -169,6 +169,19 @@ TEST_CASE("round-trip: travel mode survives write → to_bytes → from_bytes") 
     CHECK(travel_mode_from_name(std::string{file2.travel_mode()}) == TravelMode::Rail);
 }
 
+TEST_CASE("a build without provenance writes only the sdk version") {
+    NavFix fix{};
+    fix.gps_time = T0;
+    fix.lat = Angle::degrees(LAT);
+    fix.lon = Angle::degrees(LON);
+
+    auto file = NavFile::from_bytes(FileBuilder{}.add_nav_fix(fix).finish().to_bytes());
+
+    CHECK(file.sdk_version() == GEOTRACE_CPP_VERSION);
+    CHECK(file.sdk_git_commit().empty());
+    CHECK(file.sdk_commit_time().is_none());
+}
+
 TEST_CASE("travel mode names round-trip through travel_mode_from_name") {
     for (auto mode :
          {TravelMode::Car, TravelMode::Motorcycle, TravelMode::Bicycle, TravelMode::Pedestrian,

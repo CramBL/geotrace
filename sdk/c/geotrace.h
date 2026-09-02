@@ -774,6 +774,28 @@ const char *gtd_nav_file_identity(const GtdNavFile *f);
 const char *gtd_nav_file_travel_mode(const GtdNavFile *f);
 
 /**
+ * Return the version of the SDK build that wrote the file, or NULL if not set.
+ *
+ * The returned pointer is valid for the lifetime of @p f.
+ */
+const char *gtd_nav_file_sdk_version(const GtdNavFile *f);
+
+/**
+ * Return the commit of the geotrace repository the writing SDK was built from,
+ * or NULL if not set.
+ *
+ * The returned pointer is valid for the lifetime of @p f.
+ */
+const char *gtd_nav_file_sdk_git_commit(const GtdNavFile *f);
+
+/**
+ * Return the committer timestamp of `gtd_nav_file_sdk_git_commit()`.
+ *
+ * `gtd_ts_none()` if not set.  Use `gtd_ts_is_none()` to check.
+ */
+GtdTimestamp gtd_nav_file_sdk_commit_time(const GtdNavFile *f);
+
+/**
  * Return the number of event markers in the file.
  *
  * @param f File handle.  Returns 0 if NULL.

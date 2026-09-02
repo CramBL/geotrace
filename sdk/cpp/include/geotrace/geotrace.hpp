@@ -1354,6 +1354,29 @@ class NavFile {
 
     ///@}
 
+    /** @name Provenance of the SDK build that wrote the file (empty or
+     * Timestamp::none() when absent). */
+    ///@{
+
+    /** Version of the SDK build that wrote the file. */
+    std::string_view sdk_version() const noexcept {
+        const char *s = ::gtd_nav_file_sdk_version(impl_.get());
+        return s ? std::string_view{s} : std::string_view{};
+    }
+
+    /** Commit of the geotrace repository the writing SDK was built from. */
+    std::string_view sdk_git_commit() const noexcept {
+        const char *s = ::gtd_nav_file_sdk_git_commit(impl_.get());
+        return s ? std::string_view{s} : std::string_view{};
+    }
+
+    /** Committer timestamp of sdk_git_commit(). */
+    Timestamp sdk_commit_time() const noexcept {
+        return detail::from_c(::gtd_nav_file_sdk_commit_time(impl_.get()));
+    }
+
+    ///@}
+
     /** Number of navigation fixes in the file. */
     std::size_t nav_point_count() const noexcept {
         return ::gtd_nav_file_nav_point_count(impl_.get());

@@ -5,6 +5,7 @@ use geotrace_sdk_units::{ChannelUnit, PhysicalQuantity};
 
 use crate::error::{ChannelError, Error, EventMarkerError, MARKER_LABEL_LOCATION};
 use crate::fixed_width_string::{AnnotationField, MarkerLabelField};
+use crate::provenance;
 use crate::{Angle, Velocity};
 
 /// A single GPS/GNSS fix: position, heading, and optional speed at a point in time.
@@ -589,6 +590,32 @@ pub struct Meta {
     pub identity: Option<String>,
     /// Platform the recording was made on.
     pub travel_mode: Option<TravelMode>,
+    pub(crate) sdk_version: Option<String>,
+    pub(crate) sdk_git_commit: Option<String>,
+    pub(crate) sdk_commit_time: Option<DateTime<Utc>>,
+}
+
+impl Meta {
+    /// Version of the SDK build that produced the file.
+    pub fn sdk_version(&self) -> Option<&str> {
+        self.sdk_version.as_deref()
+    }
+
+    /// Commit of the geotrace repository the writing SDK was built from.
+    pub fn sdk_git_commit(&self) -> Option<&str> {
+        self.sdk_git_commit.as_deref()
+    }
+
+    /// Committer timestamp of [`Meta::sdk_git_commit`], in UTC.
+    pub fn sdk_commit_time(&self) -> Option<DateTime<Utc>> {
+        self.sdk_commit_time
+    }
+
+    pub(crate) fn stamp_this_build(&mut self) {
+        self.sdk_version = Some(crate::VERSION.to_owned());
+        self.sdk_git_commit = provenance::PROVENANCE.map(|p| p.commit.to_owned());
+        self.sdk_commit_time = provenance::commit_time();
+    }
 }
 
 #[bon::bon]
@@ -610,6 +637,9 @@ impl Meta {
             notes: notes.filter(|s| !s.trim().is_empty()),
             identity: identity.filter(|s| !s.trim().is_empty()),
             travel_mode,
+            sdk_version: None,
+            sdk_git_commit: None,
+            sdk_commit_time: None,
         }
     }
 }

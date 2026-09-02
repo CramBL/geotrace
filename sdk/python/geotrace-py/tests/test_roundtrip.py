@@ -6,6 +6,7 @@ import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import geotrace_sdk
 import pytest
 from geotrace_sdk import (
     Annotation,
@@ -215,6 +216,16 @@ def test_roundtrip_to_bytes() -> None:
         assert abs(reopened.points[0].lat - 51.5) < 1e-5
     finally:
         Path(path).unlink()
+
+
+def test_a_build_without_provenance_writes_only_the_sdk_version() -> None:
+    b = NavFileBuilder()
+    b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
+    meta = _write_and_read(b).meta
+
+    assert meta.sdk_version == geotrace_sdk.__version__
+    assert meta.sdk_git_commit is None
+    assert meta.sdk_commit_time is None
 
 
 def test_roundtrip_travel_mode() -> None:
