@@ -27,7 +27,7 @@ pub use coordinates::{
 };
 pub use geo_bounds::{GeoBounds, LatRange, LonRange, PoleWinding};
 pub use geo_types::{Coord, Rect};
-pub use highlight::{DataCategory, DataCategorySet, FileIdx, PointIdx, TrackIdx, TrackRef};
+pub use highlight::{DataCategory, DataCategorySet, FileIdx, FixRef, PointIdx, TrackIdx, TrackRef};
 pub use markers::{
     CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind,
     GeneratedMarkerKindSet, GeneratedMarkerKindTag, MarkerColor, MarkerIcon,
@@ -36,7 +36,7 @@ pub use markers::{
 pub use mercator::MercPoint;
 pub use metrics::MetricKind;
 pub use nav_point::{FixQuality, NavPoint, ProjectedPosition, ResolvedPosition};
-pub use placed_point::{PlacedPoint, PlacedPoints};
+pub use placed_point::{AddressedFix, PlacedPoint, PlacedPoints};
 pub use query::DisplayMode;
 pub use sat_label::{SatLabelAnchor, SatLabelTier};
 pub use solar_position::SunlitSide;

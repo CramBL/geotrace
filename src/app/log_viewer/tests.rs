@@ -489,8 +489,11 @@ fn hovering_a_line_with_a_position_rings_it_on_the_map() {
     let position = harness
         .state()
         .shown_log()
-        .and_then(|log| log.entry_position(0))
-        .map(|(latitude, longitude)| gt_types::mercator::normalize(latitude, longitude));
+        .and_then(|log| log.entry_placement(0))
+        .map(|placement| {
+            let (latitude, longitude) = placement.position;
+            gt_types::mercator::normalize(latitude, longitude)
+        });
     assert!(
         position.is_some(),
         "the one overlapping recording gave the line a position"

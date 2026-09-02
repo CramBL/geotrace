@@ -284,7 +284,9 @@ impl LogViewerWindow {
                                     spans: filters.live_filter_match_spans(message),
                                     color: highlight,
                                 },
-                                position: log.entry_position(entry_index),
+                                position: log
+                                    .entry_placement(entry_index)
+                                    .map(|placement| placement.position),
                                 order_anomaly_step: anomaly_steps.get(&entry_index).copied(),
                                 association_window,
                                 gutter: &gutter,

@@ -13,13 +13,19 @@ use gt_types::{
     TrackIdx, TrackRef,
 };
 use gt_ui_types::{
-    DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, LogMatchHover, LogMatches,
-    MapHighlight, MatchRevealTarget, PointWindowFolds, QueryMatches, SkyGlyphVariant,
-    SnappedTracks, TrackDataVisibility,
+    DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility, LogMatchGlyph, LogMatchHover,
+    LogMatches, MapHighlight, MatchRevealTarget, PointWindowFolds, QueryMatches, SkyGlyphVariant,
+    SnappedTracks, TrackDataVisibility, TrackSpaceWeatherWarning, WarningLevelExplanation,
 };
 
 /// The viewport every case draws into, in logical pixels.
-const VIEWPORT: egui::Vec2 = egui::vec2(800.0, 600.0);
+pub const VIEWPORT: egui::Vec2 = egui::vec2(800.0, 600.0);
+
+/// The middle of the viewport, where the pointer reaches what the camera is
+/// centred on.
+pub fn viewport_center() -> egui::Pos2 {
+    egui::Rect::from_min_size(egui::Pos2::ZERO, VIEWPORT).center()
+}
 
 /// The map's own default centre, which it keeps while no fit runs.
 const CENTER_LAT: f64 = 55.676;
@@ -100,9 +106,13 @@ struct DrawState {
     tec_instant: gt_ionex::TecInstantSelection,
     log_matches: LogMatches,
     log_hover: LogMatchHover,
-    clicked_log_glyph: Option<gt_ui_types::LogMatchGlyph>,
-    space_weather_warnings: Vec<gt_ui_types::TrackSpaceWeatherWarning>,
-    space_weather_levels: Vec<gt_ui_types::WarningLevelExplanation>,
+    clicked_log_glyph: Option<LogMatchGlyph>,
+    space_weather_warnings: Vec<TrackSpaceWeatherWarning>,
+    space_weather_levels: Vec<WarningLevelExplanation>,
+
+    /// The position the camera is held on, `None` while it stays where the
+    /// frames so far put it.
+    center_request: Option<(f64, f64)>,
 }
 
 impl DrawState {
@@ -123,6 +133,7 @@ impl DrawState {
             clicked_log_glyph: None,
             space_weather_warnings: Vec::new(),
             space_weather_levels: Vec::new(),
+            center_request: None,
         }
     }
 
@@ -160,7 +171,7 @@ impl DrawState {
             highlight: &mut self.highlight,
             sky_glyph_variant: &mut self.sky_glyph_variant,
             point_window_folds: &mut self.point_window_folds,
-            center_request: None,
+            center_request: self.center_request,
             zoom_to_visible: false,
             reveal_query_matches: None,
             sticky_pos_override: None,
@@ -174,6 +185,9 @@ pub struct Frame<'a> {
     pub snapped_tracks: Option<&'a SnappedTracks>,
     pub query_matches: Option<&'a QueryMatches>,
     pub reveal: Option<MatchRevealTarget>,
+
+    /// The input this frame is read with: a pointer move, a button press.
+    pub events: Vec<egui::Event>,
 }
 
 /// A headless map over one set of recordings, drawn frame by frame. The map
@@ -207,6 +221,7 @@ impl<'a> HeadlessMap<'a> {
     pub fn draw(&mut self, frame: &Frame<'_>) -> usize {
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, VIEWPORT)),
+            events: frame.events.clone(),
             ..egui::RawInput::default()
         };
         let Self {
@@ -237,5 +252,32 @@ impl<'a> HeadlessMap<'a> {
     /// first frame.
     pub fn framed(&self) -> Option<ViewportBounds> {
         self.map.viewport_geo_bounds()
+    }
+
+    /// Narrows what the map draws from the next frame on, the way the side
+    /// panel's filter does.
+    pub fn set_filter(&mut self, filter: GlobalFilter) {
+        self.state.filter = filter;
+    }
+
+    /// Puts `matches` on the map from the next frame on, the way a log's
+    /// layer chips do.
+    pub fn set_log_matches(&mut self, matches: LogMatches) {
+        self.state.log_matches = matches;
+    }
+
+    /// Holds the camera on `position`, in degrees, from the next frame on.
+    pub fn center_on(&mut self, position: (f64, f64)) {
+        self.state.center_request = Some(position);
+    }
+
+    /// The log hexagon the last frame published under the cursor.
+    pub fn hovered_log_glyph(&self) -> Option<LogMatchGlyph> {
+        self.state.log_hover.glyph.clone()
+    }
+
+    /// The log hexagon a click published for the viewer to open on.
+    pub fn clicked_log_glyph(&self) -> Option<LogMatchGlyph> {
+        self.state.clicked_log_glyph.clone()
     }
 }

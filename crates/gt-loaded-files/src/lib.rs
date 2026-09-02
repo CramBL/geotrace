@@ -2,7 +2,9 @@ use std::borrow::Cow;
 use std::ops::{Deref, Index, IndexMut};
 
 use gt_history_types::{DatabaseRef, RecordingMeta};
-use gt_types::{FileIdx, LoadedFile, LoadedTrack, NavPoint, PlacedPoint};
+use gt_types::{
+    AddressedFix, FileIdx, FixRef, LoadedFile, LoadedTrack, NavPoint, PointIdx, TrackIdx, TrackRef,
+};
 
 mod recording_names;
 
@@ -109,6 +111,7 @@ pub struct LoadedFilesView<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct LoadedFileEntry<'a> {
     id: LoadedFileId,
+    fi: FileIdx,
     file: &'a LoadedFile,
     history: &'a FileHistory,
 }
@@ -130,7 +133,12 @@ impl<'a> LoadedFilesView<'a> {
         let id = *self.loaded_files.ids.get(index)?;
         let file = self.loaded_files.files.get(index)?;
         let history = self.loaded_files.history.get(index)?;
-        Some(LoadedFileEntry { id, file, history })
+        Some(LoadedFileEntry {
+            id,
+            fi: FileIdx::new(index),
+            file,
+            history,
+        })
     }
 
     pub fn entry_for(&self, file: FileIdx) -> Option<LoadedFileEntry<'a>> {
@@ -148,7 +156,13 @@ impl<'a> LoadedFilesView<'a> {
             .iter()
             .zip(&self.loaded_files.files)
             .zip(&self.loaded_files.history)
-            .map(|((&id, file), history)| LoadedFileEntry { id, file, history })
+            .enumerate()
+            .map(|(index, ((&id, file), history))| LoadedFileEntry {
+                id,
+                fi: FileIdx::new(index),
+                file,
+                history,
+            })
     }
 
     pub fn file_stored_in_history(&self, file: FileIdx) -> bool {
@@ -185,14 +199,25 @@ impl<'a> LoadedFileEntry<'a> {
         self.history.is_stored()
     }
 
-    /// [`LoadedFileEntry::nav_points`] with the position each fix is drawn at,
-    /// leaving out the fixes of a track that has no geometry.
-    pub fn placed_points(&self) -> Vec<PlacedPoint<'a>> {
+    /// [`LoadedFileEntry::nav_points`] with the position each fix is drawn at
+    /// and the address it is reached by, leaving out the fixes of a track that
+    /// has no geometry.
+    pub fn addressed_fixes(&self) -> Vec<AddressedFix<'a>> {
+        let fi = self.fi;
         self.file
             .tracks
             .iter()
-            .filter_map(|track| track.placed_points())
-            .flat_map(|placed| placed.iter())
+            .enumerate()
+            .filter_map(|(ti, track)| Some((TrackIdx::new(ti), track.placed_points()?)))
+            .flat_map(move |(ti, placed)| {
+                placed
+                    .iter()
+                    .enumerate()
+                    .map(move |(pi, placed)| AddressedFix {
+                        fix: FixRef::new(TrackRef::new(fi, ti), PointIdx::new(pi)),
+                        placed,
+                    })
+            })
             .collect()
     }
 
