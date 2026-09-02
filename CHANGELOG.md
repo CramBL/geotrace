@@ -25,6 +25,9 @@
 - **Interface:** A duration under a second now reads in tenths of a second, from "0.1s" to "0.9s".
 - **Interface:** A query using `avg`, `min` or `max` on `lon`, or on a sensor channel that declares a wrap period, is now rejected as ambiguous.
 - **Interface:** A sensor channel query now matches only the samples inside the time range filter.
+- **Interface:** A drag on a time range bar now keeps at least a second between the window's two bounds, and at least a day on the time range bar while the active range bar is shown under it.
+- **Interface:** The active range bar now appears only for a recording spanning more than five days.
+- **Interface:** The time range bar now states on hover that it sets a window of a day or more, and that the active range bar sets a shorter one.
 - **Log Viewer:** Opening, dropping or pasting a log whose text is already loaded now selects the loaded log and toasts its name.
 - **Log Viewer:** Opening a recording no longer loads an attached log whose text is already loaded, and that loaded log takes the attachment when it is anchored to the recording.
 - **Log Viewer:** Attaching a log to a recording that already holds it now reuses the stored attachment.

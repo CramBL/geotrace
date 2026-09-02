@@ -3,6 +3,7 @@
 
 mod support;
 
+use chrono::Duration;
 use gt_types::LoadedFile;
 use support::{FIXES_PER_TRACK, bar_rects, harness, label_text, recording, utc};
 
@@ -50,20 +51,24 @@ fn a_recording_with_no_fixes_stays_out_of_the_time_range_bar() {
 
 /// The active range lies past the end of the range the bars are laid out over,
 /// because one recording's tracks are not in time order.
+///
+/// The two recordings are six days apart, which is over the loaded time range
+/// the panel splits its bars at.
 #[test]
 fn the_active_range_heading_comes_with_a_bar_under_it() {
+    let six_days_on = Duration::days(6);
     let files = vec![
         recording("morning.gtd", &[(utc(0, 0, 0), FIXES_PER_TRACK)]),
         recording(
             "clock_step.gtd",
             &[
-                (utc(12, 0, 0), FIXES_PER_TRACK),
-                (utc(11, 0, 0), FIXES_PER_TRACK),
+                (utc(12, 0, 0) + six_days_on, FIXES_PER_TRACK),
+                (utc(11, 0, 0) + six_days_on, FIXES_PER_TRACK),
             ],
         ),
     ];
     let mut harness = harness(files);
-    harness.state_mut().filter.time_start = Some(utc(11, 30, 0));
+    harness.state_mut().filter.time_start = Some(utc(11, 30, 0) + six_days_on);
     harness.run();
     assert_eq!(
         bar_rects(&harness).len(),
