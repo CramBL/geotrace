@@ -5,6 +5,7 @@
 ### Changed
 
 - **Interface:** The remove confirmation now scrolls its list of items inside the dialog when the remove takes more than ten.
+- **Log Viewer:** The line table now draws each line's date and seconds in a quiet color and its hour and minute brighter where the clock moved on from the line above, and opens each new UTC day with a divider row naming the date.
 
 ### Fixed
 

@@ -48,6 +48,13 @@ const LOG_WITH_EVERY_ROW_KIND: &str = "\
 2026-05-29 18:48:40 navsyncd: fix acquired
 ";
 
+/// A log whose two lines fall on either side of midnight, for the divider the
+/// table opens the new day with.
+const LOG_ACROSS_MIDNIGHT: &str = "\
+2026-05-29 23:59:58 navsyncd: fix acquired
+2026-05-30 00:00:03 navsyncd: fix lost
+";
+
 /// A second log sharing none of the first one's messages: switching the
 /// selected row switches what the filter row shows.
 const SECOND_LOG: &str = "\
@@ -67,6 +74,10 @@ const FIRST_ENTRY_TIMESTAMP: &str = " 2026-05-29 18:48:25";
 
 /// The message of the log's first entry, which its last boot repeats.
 const FIRST_ENTRY_MESSAGE: &str = "navsyncd: starting";
+
+/// The timestamp column of the log's third entry, which follows the entry above
+/// it inside the same minute.
+const SAME_MINUTE_ENTRY_TIMESTAMP: &str = " 2026-05-29 18:48:27";
 
 /// The format the parse read the fixture log in, as the summary panel names
 /// it.
@@ -338,6 +349,61 @@ fn the_table_opens_each_boot_with_a_divider_and_marks_an_interpolated_timestamp(
     harness.get_by_label("Boot 2 · up 10s · 3 entries");
     // The line between 18:48:25 and 18:48:27 carries no timestamp of its own.
     harness.get_by_label("≈2026-05-29 18:48:26");
+}
+
+/// The date the table opens the second day of [`LOG_ACROSS_MIDNIGHT`] with.
+const SECOND_DAY_DIVIDER_LABEL: &str = "2026-05-30";
+
+/// The date the log's first line falls on, which no divider states: the table
+/// opens on that day.
+const FIRST_DAY_LABEL: &str = "2026-05-29";
+
+#[test]
+fn the_table_opens_a_new_day_with_a_divider_naming_its_date() {
+    let harness = harness_of(Vec::new(), &[("navsyncd.log", LOG_ACROSS_MIDNIGHT)]);
+
+    harness.get_by_label(SECOND_DAY_DIVIDER_LABEL);
+    assert!(
+        harness.query_by_label(FIRST_DAY_LABEL).is_none(),
+        "the day the log opens on has no line above it to differ from"
+    );
+}
+
+/// As choosing "no recording" in the footer does.
+fn take_the_recording_off_the_shown_log(harness: &mut Harness<ViewerState>) {
+    let shown = harness.state().first_loaded_log();
+    let state = harness.state_mut();
+    let recordings = state.recordings.view();
+    if let Some(log) = state.logs.get_mut_by_id(shown) {
+        log.anchor_to_loaded_recording(None, &recordings);
+    }
+    harness.run_steps(2);
+}
+
+/// Association is the stronger signal: a line left without a position draws its
+/// timestamp no brighter than a line whose minute is the one above it.
+#[test]
+fn a_line_that_loses_its_position_takes_its_timestamp_down_from_strong() {
+    let mut harness = rendering_harness_with(vec![recording("walk.gtd", 55.0)]);
+    let pixels_per_point = harness.inner.ctx.pixels_per_point();
+    let opening_line = harness.inner.get_by_label(FIRST_ENTRY_TIMESTAMP).rect();
+    let quiet_line = harness
+        .inner
+        .get_by_label(SAME_MINUTE_ENTRY_TIMESTAMP)
+        .rect();
+    let before = harness.inner.render().expect("the harness renders a frame");
+
+    take_the_recording_off_the_shown_log(&mut harness.inner);
+
+    let after = harness.inner.render().expect("the harness renders a frame");
+    assert!(
+        snapshot_harness::pixels_differ(&before, &after, opening_line, pixels_per_point),
+        "the line that opens the table drew strong while it had a position"
+    );
+    assert!(
+        !snapshot_harness::pixels_differ(&before, &after, quiet_line, pixels_per_point),
+        "a line already at the quiet level is drawn as it was"
+    );
 }
 
 /// The order-anomaly section is drawn only for a log the parse found one in,

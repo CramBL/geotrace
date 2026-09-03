@@ -6,12 +6,14 @@
 //! whitespace-separated terms that must all occur in the message. A regex
 //! filter matches the message as one pattern.
 
+mod clock_ticks;
 mod matches;
 mod pattern;
 mod query;
 mod slots;
 mod stack;
 
+pub use clock_ticks::{ClockTicks, DayDivider, TimestampTickLevel};
 pub use matches::EntryMatches;
 pub use pattern::{FilterPattern, InvalidFilterPattern};
 pub use slots::{LAYER_COLOR_SLOT_COUNT, LayerColorSlot, LayerColorSlots};

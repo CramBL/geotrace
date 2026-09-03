@@ -6,6 +6,7 @@ use gt_history_types::{StoredLogFilter, StoredLogFilterMode};
 use gt_logfile::ParsedLog;
 
 use crate::filter::{
+    clock_ticks::ClockTicks,
     matches::{self, EntryMatches},
     pattern::{CompiledFilter, FilterPattern, InvalidFilterPattern},
     query::FilterQuery,
@@ -86,18 +87,22 @@ pub struct FilterStack {
     chips: Vec<FilterChip>,
     next_chip_id: u64,
     visible: VisibleEntries,
+    clock_ticks: ClockTicks,
 }
 
 impl FilterStack {
     /// The unfiltered stack of a freshly loaded log.
     pub fn new(log: Arc<ParsedLog>) -> Self {
         let entry_count = log.entries().len();
+        let visible = VisibleEntries::All { entry_count };
+        let clock_ticks = ClockTicks::of(&log, &visible);
         Self {
             log,
             live: LogFilter::unwritten(entry_count),
             chips: Vec::new(),
             next_chip_id: 0,
-            visible: VisibleEntries::All { entry_count },
+            visible,
+            clock_ticks,
         }
     }
 
@@ -279,6 +284,12 @@ impl FilterStack {
         &self.visible
     }
 
+    /// What the clock did along the visible rows: the level each row's
+    /// timestamp draws at, and the rows a day divider opens.
+    pub fn clock_ticks(&self) -> &ClockTicks {
+        &self.clock_ticks
+    }
+
     /// Entries of the log, the count the viewer's "18 of 4,812" ends in.
     pub fn entry_count(&self) -> usize {
         self.log.entries().len()
@@ -390,6 +401,7 @@ impl FilterStack {
             true => VisibleEntries::All { entry_count },
             false => VisibleEntries::Matching(matches::intersecting_entry_indices(&narrowing)),
         };
+        self.clock_ticks = ClockTicks::of(&self.log, &visible);
         self.visible = visible;
     }
 }
