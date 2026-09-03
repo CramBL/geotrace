@@ -24,6 +24,6 @@ pub use attachment::{LogAttachmentRef, SessionLogAttachments};
 pub use filter::{
     ClockTicks, DayDivider, EntryMatches, FilterChip, FilterChipId, FilterChipMode, FilterPattern,
     FilterStack, InvalidFilterPattern, LAYER_COLOR_SLOT_COUNT, LayerColorSlot, LayerColorSlots,
-    TimestampTickLevel, VisibleEntries,
+    TimestampTick, VisibleEntries,
 };
 pub use loaded_log::{LoadedLog, LoadedLogs, LogPushOutcome, RestoredAttachmentAdoption};

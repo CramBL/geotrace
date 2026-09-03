@@ -13,7 +13,7 @@ mod query;
 mod slots;
 mod stack;
 
-pub use clock_ticks::{ClockTicks, DayDivider, TimestampTickLevel};
+pub use clock_ticks::{ClockTicks, DayDivider, TimestampTick};
 pub use matches::EntryMatches;
 pub use pattern::{FilterPattern, InvalidFilterPattern};
 pub use slots::{LAYER_COLOR_SLOT_COUNT, LayerColorSlot, LayerColorSlots};
