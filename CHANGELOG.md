@@ -4,100 +4,50 @@
 
 ### Added
 
-- **Interface:** Added an `invalid_coordinates` query metric, counting a fix's coordinate axes outside their range.
-- **Interface:** A query's `table` stage now takes an aggregate column, such as `table max(@accel.x)`, and the results table shows its value on every row of the match.
-- **Interface:** A query match now lists the channel samples its aggregate columns reduced, each with its timestamp and component values.
-- **Interface:** The hover text of a query results row now gives where the map draws a dead-reckoned fix or a fix with a coordinate outside the valid range.
-- **Interface:** The time range filter now draws a bar for a recording shorter than a second, and its handles select to the millisecond.
-- **Map & Tracks:** The side panel now lists the tracks toggled on above the tree, grouped by recording, in columns of track number, distance in kilometres and duration under one header row, in a fixed area resized by dragging its divider and kept at that height across restarts, where a track can be hidden, hovered, revealed in the tree and centered on the map.
-- **Map & Tracks:** The map warns when a recording has fixes outside the map projection (past 85° latitude).
-- **Map & Tracks:** The data quality warnings now list what the app changed in a recording: the satellites merged from several rows of one report, the satellite SNR readings discarded as the no-data sentinel, the event marker colors replaced with gray, and the event marker styles dropped for a variant path with several.
-- **Map & Tracks:** The data quality warnings now list a sensor channel whose sample timestamps step backwards, with how many steps it holds and how far the largest steps back.
-- **Map & Tracks:** The side panel shows a warning glyph on a track with a fix whose coordinate is outside the valid range, and the map draws that fix in the warning color and marks it in its hover text.
-- **Map & Tracks:** The window for a clicked fix now shows the coordinates the receiver recorded, marking one outside the valid range, and where the map draws the fix.
+- **Interface:** A query's `table` stage now takes an aggregate column, such as `table max(@accel.x)`, and a match lists the channel samples its aggregate columns reduced.
+- **Interface:** The time range filter now works below a second: it draws a bar for a recording shorter than a second, its handles select to the millisecond, and a duration under a second reads in tenths, from "0.1s" to "0.9s".
+- **Log Viewer:** The log viewer now lists every loaded log grouped by the recording it takes its positions from, each with its own map visibility toggle, and offers loading a listed log's recording. It also lists the logs a loaded recording stores that are not loaded, each with a "Load" button, and the history window counts the logs each recording stores and opens one by name.
+- **Log Viewer:** With several logs loaded, a log hexagon's hover text names its log, and clicking a hexagon opens the viewer on that log, scrolled to the hexagon's first line with its lines marked.
+- **Map & Tracks:** The side panel now lists the tracks toggled on above the tree, grouped by recording, in an area resized by dragging its divider and kept at that height across restarts. A listed track can be hidden, hovered, revealed in the tree and centered on the map. The list and the tree show track number, distance and duration in the same columns under one header row.
+- **Map & Tracks:** A recording with a fix whose latitude or longitude is outside the valid range now loads. The map draws that fix between the fixes around it in the warning color, the side panel shows a warning glyph on its track, and the `invalid_coordinates` query metric counts such fixes.
+- **Map & Tracks:** The window for a clicked fix and the hover text of a query results row now show the coordinates the receiver recorded, marking one outside the valid range, and where the map draws a dead-reckoned fix.
 - **Map & Tracks:** A recording in which no fix has a valid position now loads, with its tracks drawn nowhere on the map.
-- **Map & Tracks:** A recording with a fix whose latitude or longitude is outside the valid range now loads, with that fix drawn between the fixes around it.
 - **Map & Tracks:** Hovering or clicking a dead-reckoned fix on the map now selects it.
-- **Map & Tracks:** The plot now marks along its bottom edge where a sensor channel's sample timestamps step backwards, and hovering a mark names the channels and their two timestamps.
+- **Map & Tracks:** The map warns when a recording has fixes outside the map projection (past 85° latitude).
+- **Map & Tracks:** The data quality warnings now list what the app changed in a recording: satellites merged from several rows of one report, SNR readings of 99 dB-Hz discarded as no measurement, event marker styles replaced, and sensor channels whose sample timestamps step backwards. The plot marks those backward steps along its bottom edge, and hovering a mark names the channels and their two timestamps.
 
 ### Changed
 
-- **Interface:** A duration under a second now reads in tenths of a second, from "0.1s" to "0.9s".
 - **Interface:** A query using `avg`, `min` or `max` on `lon`, or on a sensor channel that declares a wrap period, is now rejected as ambiguous.
-- **Interface:** A sensor channel query now matches only the samples inside the time range filter.
-- **Interface:** A drag on a time range bar now keeps at least a second between the window's two bounds, and at least a day on the time range bar while the active range bar is shown under it.
-- **Interface:** The active range bar now appears only for a recording spanning more than five days.
-- **Interface:** The time range bar now states on hover that it sets a window of a day or more, and that the active range bar sets a shorter one.
-- **Log Viewer:** Opening, dropping or pasting a log whose text is already loaded now selects the loaded log and toasts its name.
-- **Log Viewer:** Opening a recording no longer loads an attached log whose text is already loaded, and that loaded log takes the attachment when it is anchored to the recording.
-- **Log Viewer:** Attaching a log to a recording that already holds it now reuses the stored attachment.
-- **Log Viewer:** A log that comes back with a recording no longer opens the log viewer, and the toolbar's log button shows an amber count of the logs loaded with recordings since the viewer was last open.
-- **Log Viewer:** Removing or unloading a recording now unloads the logs that take their positions from it, and an attached log comes back when that recording is opened again.
-- **Log Viewer:** The remove dialog now states how many attached logs the removal unloads.
-- **Log Viewer:** The log viewer now grays out the "no recording" choice for a log attached to a recording.
-- **Log Viewer:** The log viewer now lists every loaded log grouped by the recording it takes its positions from, each row with its own map visibility toggle.
-- **Log Viewer:** The log viewer now lists the logs a loaded recording holds that are not loaded, each with a "Load" button that loads it.
-- **Log Viewer:** The history window now counts the logs each recording stores and opens one by name, whether or not the recording is loaded.
-- **Log Viewer:** The log viewer now offers loading the recording of a log whose recording is not loaded.
-- **Log Viewer:** With several logs loaded, a log hexagon's hover text now includes the log's name, plus the recording it is anchored to when two logs share a name. Clicking a hexagon opens the viewer on that log, scrolled to the hexagon's first line and with the hexagon's lines marked.
-- **Map & Tracks:** A recording with an event marker style naming an unknown icon, or a color that is not a #RRGGBB value, now loads with that marker drawn as a pin or in gray, and the recorded value named in the data quality warnings.
-- **Map & Tracks:** A recording with marker or event marker text that is not valid UTF-8 is now rejected with an error naming the field.
-- **Map & Tracks:** The side panel's tree now draws a track row's number, distance in kilometres and duration in the same columns as the visible section above it, under one header row.
-- **Settings & Storage:** The environment data download and delete controls now read "Choose what to do about the interrupted delete" while that prompt is open.
+- **Interface:** The time range bar now sets a window of a day or more, and the active range bar, shown only for a recording spanning more than five days, sets one down to a second. Both state this on hover.
+- **Log Viewer:** A log now belongs to one recording. Opening that recording again loads its attached logs without opening the viewer, and the toolbar's log button shows an amber count of the logs loaded this way since the viewer was last open. Removing or unloading the recording unloads its logs, and the remove dialog states how many.
+- **Log Viewer:** Opening, dropping or pasting a log whose text is already loaded now selects the loaded log, and attaching a log to a recording that already holds it reuses the stored attachment.
+- **Map & Tracks:** A backward time step in a recording's fixes at least as long as the split gap now starts a new track.
+- **Map & Tracks:** A recording with an event marker style naming an unknown icon, or a color that is not a #RRGGBB value, now loads with that marker drawn as a pin or in gray, and the recorded value named in the data quality warnings. A recording with marker or event marker text that is not valid UTF-8 is rejected with an error naming the field.
 
 ### Fixed
 
 - **Interface:** Fixed a rate a query computes, such as `velocity / eph`, comparing 60 times too small against a rate literal.
-- **Interface:** Fixed a query's `spread`, `std` and `delta` of `lon` measuring nearly a full turn across the antimeridian.
-- **Interface:** Fixed a query's `spread`, `std` and `delta` of a sensor channel ignoring its declared wrap period.
-- **Interface:** Fixed a query's `min`, `max` and `spread` of a sensor channel ignoring a sample that is not a number.
-- **Interface:** Fixed a query comparison placing a value of negative zero below zero.
-- **Interface:** Fixed a query aggregate over a sensor channel whose samples are out of time order reading the wrong samples.
-- **Interface:** Fixed a query under the time range filter dropping the fixes after a backward time step, and matching a fix outside the filter.
-- **Interface:** Fixed the query results' map buttons framing matches the filter hides.
-- **Interface:** Fixed a sensor channel query drawing its match halo on the wrong fixes in a recording faster than 1 Hz.
+- **Interface:** Fixed a query's `spread`, `std` and `delta` of `lon` measuring nearly a full turn across the antimeridian, and of a sensor channel ignoring its declared wrap period.
+- **Interface:** Fixed a query's `min`, `max` and `spread` of a sensor channel ignoring a sample that is not a number, and a query aggregate over a channel whose samples are out of time order reading the wrong samples.
+- **Interface:** Fixed queries over a recording faster than 1 Hz: a duration window covered every fix of a second, `accel` was absent between two fixes of the same second, a window's channel aggregate read the samples before its first fix, and a sensor channel query drew its match halo on the wrong fixes.
+- **Interface:** Fixed queries across a backward time step: a duration window mixed the fixes on both sides of the step into one match, a window's channel aggregate dropped the samples between its fixes, and the time range filter dropped the fixes after the step.
 - **Interface:** Fixed a sensor channel query's `keep` leaving a track with no match fully drawn on the map.
-- **Interface:** Fixed a query's `accel` being absent between two fixes of the same second in a recording faster than 1 Hz.
-- **Interface:** Fixed a query window's aggregate over a sensor channel reading the samples before the window's first fix in a recording faster than 1 Hz.
-- **Interface:** Fixed a query window matching on a sensor channel drawing a fix outside the time range filter, and a query window's channel aggregate dropping the samples between its fixes across a backward time step.
-- **Interface:** Fixed a query's duration window covering every fix of a second in a recording faster than 1 Hz.
-- **Interface:** Fixed a query's duration window mixing the fixes on both sides of a backward time step into one match.
-- **Interface:** Fixed the query results calling a track shorter than the window when the time range filter is what leaves no room for one.
-- **Interface:** Fixed the query results not graying out when a recording of the same file name replaces the one the query ran over.
-- **Interface:** Fixed the query results not graying out while the query window is closed.
-- **Interface:** Fixed a query's `sys_time` dropping the microseconds of a host timestamp.
-- **Interface:** Fixed a query's `clock_delta` dropping the microseconds of the GPS/host clock offset.
+- **Interface:** Fixed the query results not graying out while the query window is closed, or when a recording of the same file name replaces the one the query ran over.
+- **Interface:** Fixed a query's `sys_time` and `clock_delta` dropping the microseconds of a host timestamp.
+- **Interface:** Fixed the time range and track filters not applying everywhere. A sensor channel query, the query results' map buttons, the snapped track and its error whiskers, the log hexagons, the plot's extent and chips, and the highlight of the plot cursor and of a hovered results row now leave out what the filter hides.
 - **Interface:** Fixed the time range filter's bar vanishing for a recording whose clock steps backwards, and spanning decades when a recording with no fixes is loaded beside it.
-- **Interface:** Fixed the active range bar dropping the time range filter's start or end when a handle is dragged to its end, and a drag past the other handle moving that other handle.
-- **Log Viewer:** Fixed a log entry between two fixes across the antimeridian being placed half a world away.
-- **Log Viewer:** Fixed the association dialog moving its recording rows and checkboxes when the history database returns whether the chosen recording already holds the log.
-- **Log Viewer:** Fixed log hexagons drawing, taking the pointer and being counted for recordings and lines the filter hides.
-- **Map & Tracks:** Fixed an event marker on a stretch of dead-reckoned fixes being drawn away from the track.
-- **Map & Tracks:** Fixed the sky trails plot shifting and resizing when the satellite counts beside it change width.
-- **Map & Tracks:** Fixed the window for a clicked fix drawing its content over its own title bar when scrolled.
-- **Map & Tracks:** Fixed the side panel showing a distance of "-0 m" for a recording whose tracks are drawn nowhere.
+- **Interface:** Fixed a drag of an active range bar handle to its end dropping the filter's bound, and a drag past the other handle moving that handle.
+- **Log Viewer:** Fixed the association dialog moving its rows when the history database reports that the chosen recording already holds the log.
+- **Map & Tracks:** Fixed a track that crosses the antimeridian, circles a pole or reaches past 85° latitude: the min spread filter understated its spread, its bounding box covered an arbitrary arc of longitudes, zooming the map to it missed, a dead-reckoned fix or a log entry between two fixes was placed half a world away, and a fix past 85° was drawn far off the map.
+- **Map & Tracks:** Fixed where a dead-reckoned fix is drawn: on the preceding fix in a recording faster than 1 Hz, an event marker on a dead-reckoned stretch drawn away from the track, and a track's length, spread and bounding box measured at the fix's recorded coordinates.
+- **Map & Tracks:** Fixed a recording whose clock steps backwards dropping markers and sensor samples inside a track, reporting a negative recorded time, and showing an inverted time range in the History window.
+- **Map & Tracks:** Fixed the plot drawing a sensor channel whose sample timestamps step backwards as one line through every step, and its shared y-axis fitting the clock offset of fixes recorded before the device's clock was corrected.
+- **Map & Tracks:** Fixed the plot drawing one fix past each edge of the time range filter, a line across a filter window that holds no fix, and leaving its lines unchanged after a small move of the filter's end.
 - **Map & Tracks:** Fixed a heading swing between two northward readings disappearing from the plot when zoomed out, and the same for a sensor channel that declares a wrap period.
-- **Map & Tracks:** Fixed the min spread filter understating the spread of a track that crosses the antimeridian or circles a pole.
-- **Map & Tracks:** Fixed a recording that circles a pole being bounded by an arbitrary arc of longitudes.
-- **Map & Tracks:** Fixed a recording whose fixes are out of time order dropping markers and sensor samples that fall inside a track, and reporting a negative recorded time.
-- **Map & Tracks:** Fixed a backward time step of any magnitude in a recording's fixes never starting a new track.
-- **Map & Tracks:** Fixed the map drawing a dead-reckoned fix on the preceding fix in a recording faster than 1 Hz, and off the great circle between the fixes around it across the antimeridian or near a pole.
-- **Map & Tracks:** Fixed the snapped track and its error whiskers being drawn for a recording the filter hides, and past the end of the time range filter.
-- **Map & Tracks:** Fixed zooming the map to a recording or track that crosses the antimeridian, circles a pole, or reaches high latitudes.
-- **Map & Tracks:** Fixed a fix being drawn far off the map when past 85° latitude, where the map projection ends.
-- **Map & Tracks:** Fixed a track's length, spread, bounding box and zoom to fit measuring a dead-reckoned fix at its recorded coordinates.
-- **Map & Tracks:** Fixed an SNR of 99 dB-Hz, the firmware sentinel for "no measurement", being read as a signal strength.
-- **Map & Tracks:** Fixed a satellite listed on two rows of one satellite report counting twice in the map's satellite counts, its lost-lock slips and the satellite utilization rate.
-- **Map & Tracks:** Fixed the plot drawing a sensor channel whose sample timestamps step backwards as one line through every step.
-- **Map & Tracks:** Fixed the plot's shared y-axis fitting the clock offset of fixes recorded before a device's clock was corrected.
-- **Map & Tracks:** Fixed the plot fitting its view past the time range filter, offering the chips of a recording the filter hides, and leaving its lines unchanged after a small move of the filter's end.
-- **Map & Tracks:** Fixed the plot drawing one fix past each edge of the time range filter, and a line across a filter window that holds no fix.
-- **Map & Tracks:** Fixed the map drawing a fix with satellites in fix away from the coordinates the receiver measured it at, and a fix stamped before both the fixes it is drawn between being drawn outside them.
-- **Map & Tracks:** Fixed the plot cursor and a hovered query results row highlighting a fix the map hides.
+- **Map & Tracks:** Fixed an SNR of 99 dB-Hz, which firmware writes for no measurement, counting as a signal strength, and a satellite listed on two rows of one report counting twice in the satellite counts, lost-lock slips and utilization rate.
 - **Map & Tracks:** Fixed the plot's show/hide-all button leaving the sensor channel lines and the solar flare markers as they were.
-- **Settings & Storage:** Fixed the History window stating an inverted time range for a recording whose clock stepped backwards.
-- **Settings & Storage:** Fixed a recording stored before a change to track splitting hiding the wrong tracks when it is opened.
-- **Settings & Storage:** Fixed a recording stored before a change to where dead-reckoned fixes are drawn opening with different distances and bounding boxes than it was stored with.
+- **Map & Tracks:** Fixed the sky trails plot shifting when the satellite counts beside it change width, and the window for a clicked fix drawing its content over its title bar when scrolled.
 
 ## 0.13.0 - 2026-08-25
 
