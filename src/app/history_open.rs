@@ -1,18 +1,29 @@
 use std::path::PathBuf;
 
-use egui::{Button, Grid, Label, RichText, Window};
+use egui::{Button, Grid, Label, RichText};
 use gt_pending_writes::{PendingWriteGuard, WriteKind};
 use gt_store::{DbError, StoredFixPlacementRule, StoredTrackSplitRule};
 
-use super::modals::{DialogActions, DialogBody};
+use super::anchored_dialog::{AnchoredDialogKind, HeldBodyLines};
 use super::{App, ResegmentPrompt, auto_prune, history, history_db, loader, modals, storage};
 
-/// Room for a recording name to wrap at a readable length beside the stored and
-/// current track settings.
-const RESEGMENT_DIALOG_WIDTH: f32 = 480.0;
+/// The region naming the recording the re-segment prompt is about.
+const RESEGMENT_INTRO_REGION: &str = "resegment_intro";
 
-/// Room for a recording identity and its group name on one line.
-const AUTO_PRUNE_DIALOG_WIDTH: f32 = 480.0;
+/// Lines the [`RESEGMENT_INTRO_REGION`] holds at most, however long the
+/// recording's name: the rest of the name scrolls inside it. Three is the one
+/// line the sentence takes on its own plus two for the name.
+const RESEGMENT_INTRO_MOST_LINES: u8 = 3;
+
+/// The region listing the recordings the prune deletes. A second set of
+/// candidates that arrives while the prompt is open replaces that list.
+const AUTO_PRUNE_RECORDINGS_REGION: &str = "auto_prune_recordings";
+
+/// Lines the [`AUTO_PRUNE_RECORDINGS_REGION`] holds at most, however many
+/// recordings the prune deletes: the rest of the rows scroll inside it. Twelve
+/// is the room ten rows take, each a line of body text with the spacing under
+/// it.
+pub(in crate::app) const AUTO_PRUNE_RECORDINGS_MOST_LINES: u8 = 12;
 
 const OPENING_THE_DATABASE: &str = "Opening the recording history database";
 
@@ -21,6 +32,43 @@ const CLEARING_THE_WRITE_LOCK: &str = "Clearing the recording history database's
 const RECREATING_THE_DATABASE: &str = "Recreating the recording history database";
 
 pub(in crate::app) const CLEAR_LOCK_BUTTON_LABEL: &str = "Clear lock and open";
+
+pub(in crate::app) const HISTORY_DATABASE_IN_USE_TITLE: &str = "History database in use";
+
+pub(in crate::app) const HISTORY_DATABASE_LOCKED_TITLE: &str = "History database locked";
+
+pub(in crate::app) const HISTORY_DATABASE_CORRUPTED_TITLE: &str = "History database is corrupted";
+
+pub(in crate::app) const TRACK_SETTINGS_DIFFER_TITLE: &str = "Track settings differ";
+
+pub(in crate::app) const AUTO_PRUNE_TITLE: &str = "Auto-prune";
+
+/// What the user chose in the prompt for a recordings database that would not
+/// open. Each failure offers one of the three remedies.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HistoryFailureChoice {
+    Reopen,
+    ClearTheWriteLock,
+    Recreate,
+    /// Go on with the database left as it is: recordings load but are not
+    /// stored.
+    Dismiss,
+}
+
+/// What the user chose in the "Track settings differ" prompt.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ResegmentChoice {
+    RecalculateWithCurrentSettings,
+    UseStoredTracks,
+    Cancel,
+}
+
+/// What the user chose in the auto-prune confirmation.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AutoPruneChoice {
+    Delete,
+    Cancel,
+}
 
 impl App {
     pub(super) fn sync_db_path(&mut self) {
@@ -401,245 +449,241 @@ impl App {
         // Prompts for a recordings database that would not open. Each
         // failure gets its own, because the remedies differ sharply: waiting,
         // a destructive lock clear, or a recreate.
-        if let Some(failure) = self.history_failure.clone() {
-            let path = failure.path().to_owned();
-            let taken_over = self.instance_taken_over_from;
-            let mut resolve = None;
-            let dismissed = ui
-                .ctx()
-                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            match &failure {
-                storage::HistoryFailure::Busy(_) => {
-                    #[expect(clippy::disallowed_methods, reason = "The 'History database in use' prompt has not moved to AnchoredDialog")]
-                    Window::new("History database in use")
-                        .collapsible(false)
-                        .resizable(false)
-                        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                        .show(ui.ctx(), |ui| {
-                            match taken_over {
-                                Some(instance) => {
-                                    ui.label(format!(
-                                        "{} still has the recording history database open.",
-                                        instance.sentence_subject()
-                                    ));
-                                    ui.label(
-                                        "Recordings load here, but are not stored until it exits.",
-                                    );
-                                }
-                                None => {
-                                    ui.label(
-                                        "Another process has the recording history database open, most likely a second GeoTrace instance.",
-                                    );
-                                    ui.label(
-                                        "Close it and try again. Recordings still load in the meantime, they are just not stored.",
-                                    );
-                                }
-                            }
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                if ui.button("Try again").clicked() {
-                                    resolve = Some(true);
-                                }
-                                if ui.button("Continue without storing").clicked() {
-                                    resolve = Some(false);
-                                }
-                            });
-                        });
-                    if resolve == Some(true) {
-                        self.reopen_history_database(&path, ui.ctx());
+        let Some(failure) = self.history_failure.clone() else {
+            return;
+        };
+        let path = failure.path().to_owned();
+        let taken_over = self.instance_taken_over_from;
+        let mut keep_backup = self.keep_db_backup;
+        let choice = match &failure {
+            storage::HistoryFailure::Busy(_) => modals::anchored_confirmation_dialog(
+                ui,
+                AnchoredDialogKind::HistoryDatabaseInUse,
+                HISTORY_DATABASE_IN_USE_TITLE,
+                HistoryFailureChoice::Dismiss,
+                |ui, _regions| match taken_over {
+                    Some(instance) => {
+                        ui.label(format!(
+                            "{} still has the recording history database open.",
+                            instance.sentence_subject()
+                        ));
+                        ui.label("Recordings load here, but are not stored until it exits.");
                     }
-                }
-                storage::HistoryFailure::Locked(_) => {
-                    #[expect(clippy::disallowed_methods, reason = "The 'History database locked' prompt has not moved to AnchoredDialog")]
-                    Window::new("History database locked")
-                        .collapsible(false)
-                        .resizable(false)
-                        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                        .show(ui.ctx(), |ui| {
-                            ui.label("The recording history is marked as open for write.");
-                            ui.label(
-                                "This usually means GeoTrace did not shut down cleanly, but another program may still have the database open.",
-                            );
-                            ui.add_space(4.0);
-                            ui.label(
-                                RichText::new(
-                                    "Only continue if no other program is using the database - otherwise it could be corrupted.",
-                                )
+                    None => {
+                        ui.label(
+                            "Another process has the recording history database open, most \
+                             likely a second GeoTrace instance.",
+                        );
+                        ui.label(
+                            "Close it and try again. Recordings still load in the meantime, they \
+                             are just not stored.",
+                        );
+                    }
+                },
+                |ui| {
+                    let mut choice = None;
+                    if ui.button("Try again").clicked() {
+                        choice = Some(HistoryFailureChoice::Reopen);
+                    }
+                    if ui.button("Continue without storing").clicked() {
+                        choice = Some(HistoryFailureChoice::Dismiss);
+                    }
+                    choice
+                },
+            ),
+            storage::HistoryFailure::Locked(_) => modals::anchored_confirmation_dialog(
+                ui,
+                AnchoredDialogKind::HistoryDatabaseLocked,
+                HISTORY_DATABASE_LOCKED_TITLE,
+                HistoryFailureChoice::Dismiss,
+                |ui, _regions| {
+                    ui.label("The recording history is marked as open for write.");
+                    ui.label(
+                        "This usually means GeoTrace did not shut down cleanly, but another \
+                         program may still have the database open.",
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(
+                            "Only continue if no other program is using the database - otherwise \
+                             it could be corrupted.",
+                        )
+                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                    );
+                },
+                |ui| {
+                    let mut choice = None;
+                    let clear = ui.add_enabled(
+                        taken_over.is_none(),
+                        Button::new(
+                            RichText::new(CLEAR_LOCK_BUTTON_LABEL)
                                 .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
-                            );
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                let clear = ui.add_enabled(
-                                    taken_over.is_none(),
-                                    Button::new(RichText::new(CLEAR_LOCK_BUTTON_LABEL).color(
-                                        gt_ui_theme::warning_amber(ui.visuals().dark_mode),
-                                    )),
-                                );
-                                if clear.clicked() {
-                                    resolve = Some(true);
-                                }
-                                if let Some(instance) = taken_over {
-                                    clear.on_disabled_hover_text(format!(
-                                        "{} still has the recording history database open: clearing the write lock while it writes can corrupt the database.",
-                                        instance.sentence_subject()
-                                    ));
-                                }
-                                if ui.button("Cancel").clicked() {
-                                    resolve = Some(false);
-                                }
-                            });
-                        });
-                    if resolve == Some(true) {
-                        self.recover_history_database(&path, ui.ctx());
+                        ),
+                    );
+                    if clear.clicked() {
+                        choice = Some(HistoryFailureChoice::ClearTheWriteLock);
                     }
-                }
-                storage::HistoryFailure::Unreadable(_) => {
-                    let mut keep_backup = self.keep_db_backup;
-                    #[expect(
-                        clippy::disallowed_methods,
-                        reason = "The 'History database is corrupted' prompt has not moved to AnchoredDialog"
-                    )]
-                    Window::new("History database is corrupted")
-                        .collapsible(false)
-                        .resizable(false)
-                        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                        .show(ui.ctx(), |ui| {
-                            ui.label("The recording history database could not be opened.");
-                            ui.label(
-                                "You can try to recover it manually, or recreate a fresh one.",
-                            );
-                            ui.add_space(4.0);
-                            ui.checkbox(&mut keep_backup, "Keep a backup of the original database");
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                if ui
-                                    .button(
-                                        RichText::new("Recreate database").color(
-                                            gt_ui_theme::warning_amber(ui.visuals().dark_mode),
-                                        ),
-                                    )
-                                    .clicked()
-                                {
-                                    resolve = Some(true);
-                                }
-                                if ui.button("Cancel").clicked() {
-                                    resolve = Some(false);
-                                }
-                            });
-                        });
-                    self.keep_db_backup = keep_backup;
-                    if resolve == Some(true) {
-                        self.recreate_history_database(&path, keep_backup, ui.ctx());
+                    if let Some(instance) = taken_over {
+                        clear.on_disabled_hover_text(format!(
+                            "{} still has the recording history database open: clearing the \
+                             write lock while it writes can corrupt the database.",
+                            instance.sentence_subject()
+                        ));
                     }
-                }
+                    if ui.button("Cancel").clicked() {
+                        choice = Some(HistoryFailureChoice::Dismiss);
+                    }
+                    choice
+                },
+            ),
+            storage::HistoryFailure::Unreadable(_) => modals::anchored_confirmation_dialog(
+                ui,
+                AnchoredDialogKind::HistoryDatabaseCorrupted,
+                HISTORY_DATABASE_CORRUPTED_TITLE,
+                HistoryFailureChoice::Dismiss,
+                |ui, _regions| {
+                    ui.label("The recording history database could not be opened.");
+                    ui.label("You can try to recover it manually, or recreate a fresh one.");
+                    ui.add_space(4.0);
+                    ui.checkbox(&mut keep_backup, "Keep a backup of the original database");
+                },
+                |ui| {
+                    let mut choice = None;
+                    if ui
+                        .button(
+                            RichText::new("Recreate database")
+                                .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                        )
+                        .clicked()
+                    {
+                        choice = Some(HistoryFailureChoice::Recreate);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        choice = Some(HistoryFailureChoice::Dismiss);
+                    }
+                    choice
+                },
+            ),
+        };
+        self.keep_db_backup = keep_backup;
+
+        let Some(choice) = choice else {
+            return;
+        };
+        match choice {
+            HistoryFailureChoice::Reopen => self.reopen_history_database(&path, ui.ctx()),
+            HistoryFailureChoice::ClearTheWriteLock => {
+                self.recover_history_database(&path, ui.ctx());
             }
-            if resolve.is_some() || dismissed {
-                self.history_failure = None;
+            HistoryFailureChoice::Recreate => {
+                self.recreate_history_database(&path, keep_backup, ui.ctx());
             }
+            HistoryFailureChoice::Dismiss => {}
         }
+        self.history_failure = None;
     }
 
     pub(super) fn show_resegment_prompt(&mut self, ui: &egui::Ui) {
         // Re-segment prompt: a recording opened from history was stored with a
         // different track setting than the current one.
-        if let Some(prompt) = self.pending_resegment.take() {
-            let current = loader::stored_segmentation_from_config(&self.processing_config);
-            let mut recalculate = false;
-            let mut use_stored = false;
-            let mut cancel = ui
-                .ctx()
-                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            let fmt_gap = |us: i64| format!("{} s", us / 1_000_000);
-            let fmt_split_rule = |rule: StoredTrackSplitRule| match rule {
-                StoredTrackSplitRule::ForwardGapOnly => "forward only".to_owned(),
-                StoredTrackSplitRule::StepInEitherDirection => "either direction".to_owned(),
-                StoredTrackSplitRule::Unrecognized(value) => {
-                    format!("unknown rule {value}")
+        let Some(prompt) = self.pending_resegment.take() else {
+            return;
+        };
+        let current = loader::stored_segmentation_from_config(&self.processing_config);
+        let stored = prompt.stored;
+        let fmt_gap = |us: i64| format!("{} s", us / 1_000_000);
+        let fmt_split_rule = |rule: StoredTrackSplitRule| match rule {
+            StoredTrackSplitRule::ForwardGapOnly => "forward only".to_owned(),
+            StoredTrackSplitRule::StepInEitherDirection => "either direction".to_owned(),
+            StoredTrackSplitRule::Unrecognized(value) => {
+                format!("unknown rule {value}")
+            }
+        };
+        let fmt_placement_rule = |rule: StoredFixPlacementRule| match rule {
+            StoredFixPlacementRule::MissingHeading => "no heading".to_owned(),
+            StoredFixPlacementRule::MissingHeadingAndNothingInFix => {
+                "no heading, nothing in fix".to_owned()
+            }
+            StoredFixPlacementRule::Unrecognized(value) => {
+                format!("unknown rule {value}")
+            }
+        };
+        let stored_tracks_are_reproducible = loader::stored_tracks_are_reproducible(&stored);
+        let intro = format!(
+            "'{}' was stored with different track settings than the current ones.",
+            prompt.filename
+        );
+        let choice = modals::anchored_confirmation_dialog(
+            ui,
+            AnchoredDialogKind::TrackSettingsDiffer,
+            TRACK_SETTINGS_DIFFER_TITLE,
+            ResegmentChoice::Cancel,
+            |ui, regions| {
+                regions.frozen_at_open(
+                    ui,
+                    RESEGMENT_INTRO_REGION,
+                    HeldBodyLines::what_the_content_took().and_at_most(RESEGMENT_INTRO_MOST_LINES),
+                    |ui| {
+                        ui.add(Label::new(intro).wrap());
+                    },
+                );
+                ui.add_space(4.0);
+                Grid::new("resegment_settings")
+                    .num_columns(3)
+                    .spacing([16.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label("");
+                        ui.strong("Stored");
+                        ui.strong("Current");
+                        ui.end_row();
+                        ui.label("Split gap");
+                        ui.label(fmt_gap(stored.track_split_gap_us));
+                        ui.label(fmt_gap(current.track_split_gap_us));
+                        ui.end_row();
+                        ui.label("Split rule");
+                        ui.label(fmt_split_rule(stored.track_split_rule));
+                        ui.label(fmt_split_rule(current.track_split_rule));
+                        ui.end_row();
+                        ui.label("Dead-reckoned fix");
+                        ui.label(fmt_placement_rule(stored.fix_placement_rule));
+                        ui.label(fmt_placement_rule(current.fix_placement_rule));
+                        ui.end_row();
+                    });
+            },
+            |ui| {
+                let mut choice = None;
+                if ui
+                    .button("Recalculate with current settings")
+                    .on_hover_text(
+                        "Re-split the recording with the current settings, replacing the stored \
+                         tracks",
+                    )
+                    .clicked()
+                {
+                    choice = Some(ResegmentChoice::RecalculateWithCurrentSettings);
                 }
-            };
-            let fmt_placement_rule = |rule: StoredFixPlacementRule| match rule {
-                StoredFixPlacementRule::MissingHeading => "no heading".to_owned(),
-                StoredFixPlacementRule::MissingHeadingAndNothingInFix => {
-                    "no heading, nothing in fix".to_owned()
+                if ui
+                    .add_enabled(
+                        stored_tracks_are_reproducible,
+                        Button::new("Use stored tracks"),
+                    )
+                    .on_hover_text("Open the tracks as stored, with their previous settings")
+                    .on_disabled_hover_text(
+                        "This version does not implement a rule the recording was stored with",
+                    )
+                    .clicked()
+                {
+                    choice = Some(ResegmentChoice::UseStoredTracks);
                 }
-                StoredFixPlacementRule::Unrecognized(value) => {
-                    format!("unknown rule {value}")
+                if ui.button("Cancel").clicked() {
+                    choice = Some(ResegmentChoice::Cancel);
                 }
-            };
-            let stored_tracks_are_reproducible =
-                loader::stored_tracks_are_reproducible(&prompt.stored);
-            let intro = format!(
-                "'{}' was stored with different track settings than the current ones.",
-                prompt.filename
-            );
-            #[expect(clippy::disallowed_methods, reason = "The 'Track settings differ' dialog has not moved to AnchoredDialog")]
-            Window::new("Track settings differ")
-                .collapsible(false)
-                .resizable(false)
-                // Wide enough for a recording name to wrap at a readable
-                // length.
-                .min_width(RESEGMENT_DIALOG_WIDTH)
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .show(ui.ctx(), |ui| {
-                    modals::dialog_body_above_buttons(
-                        ui,
-                        DialogBody::new(|ui| {
-                            ui.add(Label::new(intro).wrap());
-                            ui.add_space(4.0);
-                            Grid::new("resegment_settings")
-                                .num_columns(3)
-                                .spacing([16.0, 4.0])
-                                .show(ui, |ui| {
-                                    ui.label("");
-                                    ui.strong("Stored");
-                                    ui.strong("Current");
-                                    ui.end_row();
-                                    ui.label("Split gap");
-                                    ui.label(fmt_gap(prompt.stored.track_split_gap_us));
-                                    ui.label(fmt_gap(current.track_split_gap_us));
-                                    ui.end_row();
-                                    ui.label("Split rule");
-                                    ui.label(fmt_split_rule(prompt.stored.track_split_rule));
-                                    ui.label(fmt_split_rule(current.track_split_rule));
-                                    ui.end_row();
-                                    ui.label("Dead-reckoned fix");
-                                    ui.label(fmt_placement_rule(
-                                        prompt.stored.fix_placement_rule,
-                                    ));
-                                    ui.label(fmt_placement_rule(current.fix_placement_rule));
-                                    ui.end_row();
-                                });
-                        }),
-                        DialogActions::new(|ui| {
-                            if ui
-                                .button("Recalculate with current settings")
-                                .on_hover_text(
-                                    "Re-split the recording with the current settings, replacing the stored tracks",
-                                )
-                                .clicked()
-                            {
-                                recalculate = true;
-                            }
-                            if ui
-                                .add_enabled(
-                                    stored_tracks_are_reproducible,
-                                    Button::new("Use stored tracks"),
-                                )
-                                .on_hover_text("Open the tracks as stored, with their previous settings")
-                                .on_disabled_hover_text(
-                                    "This version does not implement a rule the recording was stored with",
-                                )
-                                .clicked()
-                            {
-                                use_stored = true;
-                            }
-                            if ui.button("Cancel").clicked() {
-                                cancel = true;
-                            }
-                        }),
-                    );
-                });
-            if recalculate {
+                choice
+            },
+        );
+
+        match choice {
+            Some(ResegmentChoice::RecalculateWithCurrentSettings) => {
                 self.loader.spawn_gtd_from_history(
                     prompt.bytes,
                     prompt.filename,
@@ -650,9 +694,10 @@ impl App {
                     },
                 );
                 self.history_window.invalidate();
-            } else if use_stored {
+            }
+            Some(ResegmentChoice::UseStoredTracks) => {
                 let config =
-                    loader::config_from_stored_segmentation(&prompt.stored, self.processing_config);
+                    loader::config_from_stored_segmentation(&stored, self.processing_config);
                 self.loader.spawn_gtd_from_history(
                     prompt.bytes,
                     prompt.filename,
@@ -663,73 +708,73 @@ impl App {
                         applied_current_marker_settings: prompt.marker_settings_changed,
                     },
                 );
-            } else if !cancel {
-                // No choice yet: keep the prompt open for the next frame.
-                self.pending_resegment = Some(prompt);
             }
+            Some(ResegmentChoice::Cancel) => {}
+            // No choice yet: keep the prompt open for the next frame.
+            None => self.pending_resegment = Some(prompt),
         }
     }
 
     pub(super) fn show_auto_prune_prompt(&mut self, ui: &egui::Ui) {
-        // Auto-prune confirmation dialog.
-        if let Some(refs) = &self.pending_auto_prune {
-            let limit = gt_fmt::format_bytes(self.storage_settings.auto_prune_max_bytes);
-            let n = refs.len();
-            let mut do_prune = false;
-            let mut cancel = ui
-                .ctx()
-                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "The auto-prune confirmation has not moved to AnchoredDialog"
-            )]
-            Window::new("Auto-prune")
-                .resizable(false)
-                .collapsible(false)
-                // Wide enough for a recording identity to read.
-                .min_width(AUTO_PRUNE_DIALOG_WIDTH)
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .show(ui.ctx(), |ui| {
-                    modals::dialog_body_above_buttons(
-                        ui,
-                        DialogBody::new(|ui| {
-                            let rec_label = gt_fmt::pluralize(n, "recording", "recordings");
-                            ui.add(
-                                Label::new(format!(
-                                    "{n} {rec_label} will be deleted to keep storage under {limit}"
-                                ))
-                                .wrap(),
-                            );
-                            ui.add_space(4.0);
-                            for r in refs {
-                                let label = format!("{}/{}", r.identity, r.group_name);
-                                ui.add(Label::new(label.as_str()).truncate());
-                            }
-                        }),
-                        DialogActions::new(|ui| {
-                            if ui
-                                .button(
-                                    RichText::new("Delete these recordings")
-                                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
-                                )
-                                .on_hover_text(history::DESTRUCTIVE_DELETE_HOVER)
-                                .clicked()
-                            {
-                                do_prune = true;
-                            }
-                            if ui.button("Cancel").clicked() {
-                                cancel = true;
-                            }
-                        }),
-                    );
-                });
-            if do_prune {
+        let Some(refs) = &self.pending_auto_prune else {
+            return;
+        };
+        let limit = gt_fmt::format_bytes(self.storage_settings.auto_prune_max_bytes);
+        let n = refs.len();
+        let choice = modals::anchored_confirmation_dialog(
+            ui,
+            AnchoredDialogKind::AutoPrune,
+            AUTO_PRUNE_TITLE,
+            AutoPruneChoice::Cancel,
+            |ui, regions| {
+                let rec_label = gt_fmt::pluralize(n, "recording", "recordings");
+                ui.add(
+                    Label::new(format!(
+                        "{n} {rec_label} will be deleted to keep storage under {limit}"
+                    ))
+                    .wrap(),
+                );
+                ui.add_space(4.0);
+                regions.frozen_at_open(
+                    ui,
+                    AUTO_PRUNE_RECORDINGS_REGION,
+                    HeldBodyLines::what_the_content_took()
+                        .and_at_most(AUTO_PRUNE_RECORDINGS_MOST_LINES),
+                    |ui| {
+                        for r in refs {
+                            let label = format!("{}/{}", r.identity, r.group_name);
+                            ui.add(Label::new(label.as_str()).truncate());
+                        }
+                    },
+                );
+            },
+            |ui| {
+                let mut choice = None;
+                if ui
+                    .button(
+                        RichText::new("Delete these recordings")
+                            .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                    )
+                    .on_hover_text(history::DESTRUCTIVE_DELETE_HOVER)
+                    .clicked()
+                {
+                    choice = Some(AutoPruneChoice::Delete);
+                }
+                if ui.button("Cancel").clicked() {
+                    choice = Some(AutoPruneChoice::Cancel);
+                }
+                choice
+            },
+        );
+
+        match choice {
+            Some(AutoPruneChoice::Delete) => {
                 let candidates = self.pending_auto_prune.take().unwrap_or_default();
                 self.history
                     .delete_recordings(candidates, history_db::DeleteReason::AutoPrune);
-            } else if cancel {
-                self.pending_auto_prune = None;
             }
+            Some(AutoPruneChoice::Cancel) => self.pending_auto_prune = None,
+            None => {}
         }
     }
 }

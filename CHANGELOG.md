@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Interface:** Fixed the auto-prune confirmation and the "Track settings differ" prompt moving their buttons while they are open.
+
 ## 0.14.0 - 2026-09-03
 
 ### Added
