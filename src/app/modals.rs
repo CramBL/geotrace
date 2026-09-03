@@ -1382,36 +1382,98 @@ fn prune_scope_line(request: PruneRequest) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ForceQuitChoice {
     Quit,
-    Cancel,
+    /// Close the confirmation and leave the process running.
+    Dismiss,
+}
+
+/// Whether the pointer rests over a dialog's own window this frame.
+///
+/// A caller that closes a dialog on its own reads this first: closing one out
+/// from under the pointer sends the press that follows to whatever the dialog
+/// was drawn over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PointerOverTheDialog {
+    Resting,
+    Away,
+}
+
+impl PointerOverTheDialog {
+    /// Where the pointer is against the layer `ui` draws in, which for a
+    /// dialog's body is the dialog's own window.
+    fn of(ui: &egui::Ui) -> Self {
+        let over_this_layer = ui
+            .ctx()
+            .pointer_latest_pos()
+            .and_then(|pos| ui.ctx().layer_id_at(pos))
+            .is_some_and(|layer| layer == ui.layer_id());
+        if over_this_layer {
+            Self::Resting
+        } else {
+            Self::Away
+        }
+    }
+}
+
+/// What the force-quit confirmation shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForceQuitPromptContents {
+    /// What interrupting each running write costs, one line each.
+    InterruptionCosts(Vec<String>),
+    /// Every write the confirmation listed has finished.
+    WritesFinished,
 }
 
 /// The region listing what each running write costs. The dialog drops the line
 /// for a write that finishes while it is open.
 const INTERRUPTION_COSTS_REGION: &str = "force_quit_interruption_costs";
 
+/// egui derives the confirmation's window id from its title, and one window
+/// draws both of [`ForceQuitPromptContents`]: the title stays put while the
+/// body and the actions change.
+const FORCE_QUIT_TITLE: &str = "Force quit?";
+
+const FORCE_QUIT_LABEL: &str = "Force quit";
+
+/// What the force-quit confirmation reports for the frame it drew.
+pub struct ForceQuitPromptResponse {
+    /// The choice in the frame the user makes it, and [`None`] on every other
+    /// frame the confirmation is up.
+    pub choice: Option<ForceQuitChoice>,
+    pub pointer: PointerOverTheDialog,
+}
+
 /// Confirm ending the process with the running writes unfinished, listing what
-/// each one costs.
-///
-/// Returns the choice in the frame the user makes it, and [`None`] while the
-/// dialog is still open.
+/// each one costs, or report that every one of them finished.
 pub fn show_force_quit_confirmation(
     ui: &egui::Ui,
-    interruption_costs: &[String],
-) -> Option<ForceQuitChoice> {
-    anchored_confirmation_dialog(
+    contents: &ForceQuitPromptContents,
+) -> ForceQuitPromptResponse {
+    let mut pointer = PointerOverTheDialog::Away;
+    let choice = anchored_confirmation_dialog(
         ui,
         AnchoredDialogKind::ForceQuit,
-        "Force quit?",
-        ForceQuitChoice::Cancel,
+        FORCE_QUIT_TITLE,
+        ForceQuitChoice::Dismiss,
         |ui, regions| {
-            ui.label("GeoTrace ends now, with the work it is still doing unfinished");
+            pointer = PointerOverTheDialog::of(ui);
+            match contents {
+                ForceQuitPromptContents::InterruptionCosts(_) => {
+                    ui.label("GeoTrace ends now, with the work it is still doing unfinished");
+                }
+                ForceQuitPromptContents::WritesFinished => {
+                    ui.label("The work finished: there is nothing left to interrupt");
+                }
+            }
             ui.add_space(4.0);
             regions.frozen_at_open(
                 ui,
                 INTERRUPTION_COSTS_REGION,
                 HeldBodyLines::what_the_content_took(),
                 |ui| {
-                    for cost in interruption_costs {
+                    let ForceQuitPromptContents::InterruptionCosts(costs) = contents else {
+                        return;
+                    };
+                    for cost in costs {
                         ui.add(Label::new(cost.as_str()).wrap());
                     }
                 },
@@ -1419,15 +1481,26 @@ pub fn show_force_quit_confirmation(
         },
         |ui| {
             let mut choice = None;
-            if destructive_button(ui, "Force quit").clicked() {
-                choice = Some(ForceQuitChoice::Quit);
-            }
-            if ui.button("Cancel").clicked() {
-                choice = Some(ForceQuitChoice::Cancel);
+            let dismiss = match contents {
+                ForceQuitPromptContents::InterruptionCosts(_) => {
+                    if destructive_button(ui, FORCE_QUIT_LABEL).clicked() {
+                        choice = Some(ForceQuitChoice::Quit);
+                    }
+                    ui.button("Cancel")
+                }
+                ForceQuitPromptContents::WritesFinished => {
+                    ui.add_enabled(false, Button::new(FORCE_QUIT_LABEL))
+                        .on_disabled_hover_text("The work has finished");
+                    ui.button("Close").on_hover_text("Closes GeoTrace now")
+                }
+            };
+            if dismiss.clicked() {
+                choice = Some(ForceQuitChoice::Dismiss);
             }
             choice
         },
-    )
+    );
+    ForceQuitPromptResponse { choice, pointer }
 }
 
 #[cfg(test)]
@@ -1455,14 +1528,15 @@ mod tests {
 
     use super::{
         CoveredDayCounts, DELETE_ARCHIVED_DAYS_TITLE, EnvironmentArchive, EnvironmentPruneChoice,
-        EnvironmentPrunePrompt, ForceQuitChoice, LoadedLogs, MapLayer, MapboxTokenField, NavMap,
-        NodeKey, PERMANENT_DELETE_LABEL, PruneRequest, PruneScope, PrunedDays,
-        REMOVED_ITEMS_MOST_LINES, RecordingDetails, SnapScopeChoice, SnapScopeCount,
-        SnapScopeCounts, TrackRef, files_fully_removed, prune_scope_line, show_about_dialog,
-        show_delete_confirmation, show_environment_prune_confirmation,
-        show_force_quit_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
-        show_orphaned_event_markers_popup, show_recording_details_dialog, show_snap_auto_prompt,
-        show_snap_consent_dialog, show_snap_replace_dialog, show_snap_scope_dialog, track_removals,
+        EnvironmentPrunePrompt, FORCE_QUIT_LABEL, ForceQuitChoice, ForceQuitPromptContents,
+        LoadedLogs, MapLayer, MapboxTokenField, NavMap, NodeKey, PERMANENT_DELETE_LABEL,
+        PruneRequest, PruneScope, PrunedDays, REMOVED_ITEMS_MOST_LINES, RecordingDetails,
+        SnapScopeChoice, SnapScopeCount, SnapScopeCounts, TrackRef, files_fully_removed,
+        prune_scope_line, show_about_dialog, show_delete_confirmation,
+        show_environment_prune_confirmation, show_force_quit_confirmation,
+        show_load_warnings_dialog, show_mapbox_token_dialog, show_orphaned_event_markers_popup,
+        show_recording_details_dialog, show_snap_auto_prompt, show_snap_consent_dialog,
+        show_snap_replace_dialog, show_snap_scope_dialog, track_removals,
     };
     use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
     use gt_side_panel::{DeleteConfirmState, TreeState};
@@ -1633,7 +1707,23 @@ mod tests {
     ) -> TestHarness<'a, ()> {
         let mut harness = TestHarness::builder().size(DIALOG_VIEWPORT).ui(move |ui| {
             shutdown_window(ui);
-            if let Some(made) = show_force_quit_confirmation(ui, &interruption_costs.borrow()) {
+            let contents =
+                ForceQuitPromptContents::InterruptionCosts(interruption_costs.borrow().clone());
+            if let Some(made) = show_force_quit_confirmation(ui, &contents).choice {
+                *choice.borrow_mut() = Some(made);
+            }
+        });
+        harness.run();
+        harness
+    }
+
+    fn force_quit_dialog_once_the_writes_finish(
+        choice: &RefCell<Option<ForceQuitChoice>>,
+    ) -> TestHarness<'_, ()> {
+        let mut harness = TestHarness::builder().size(DIALOG_VIEWPORT).ui(move |ui| {
+            let response =
+                show_force_quit_confirmation(ui, &ForceQuitPromptContents::WritesFinished);
+            if let Some(made) = response.choice {
                 *choice.borrow_mut() = Some(made);
             }
         });
@@ -1646,7 +1736,7 @@ mod tests {
         let costs = RefCell::new(vec![WriteKind::Settings.interruption_cost()]);
         let choice = RefCell::new(None);
         let mut harness = force_quit_dialog(&costs, &choice);
-        harness.inner.get_by_label("Force quit").click();
+        harness.inner.get_by_label(FORCE_QUIT_LABEL).click();
         harness.run();
         drop(harness);
 
@@ -1662,7 +1752,10 @@ mod tests {
         harness.run();
         drop(harness);
 
-        assert!(matches!(choice.into_inner(), Some(ForceQuitChoice::Cancel)));
+        assert!(matches!(
+            choice.into_inner(),
+            Some(ForceQuitChoice::Dismiss)
+        ));
     }
 
     #[test]
@@ -1674,7 +1767,38 @@ mod tests {
         harness.run();
         drop(harness);
 
-        assert!(matches!(choice.into_inner(), Some(ForceQuitChoice::Cancel)));
+        assert!(matches!(
+            choice.into_inner(),
+            Some(ForceQuitChoice::Dismiss)
+        ));
+    }
+
+    #[test]
+    fn the_force_quit_dialog_grays_its_quit_out_once_the_writes_finish() {
+        let choice = RefCell::new(None);
+        let harness = force_quit_dialog_once_the_writes_finish(&choice);
+
+        assert!(
+            harness
+                .inner
+                .get_by_label(FORCE_QUIT_LABEL)
+                .accesskit_node()
+                .is_disabled()
+        );
+    }
+
+    #[test]
+    fn closing_the_force_quit_dialog_once_the_writes_finish_quits_nothing() {
+        let choice = RefCell::new(None);
+        let mut harness = force_quit_dialog_once_the_writes_finish(&choice);
+        harness.inner.get_by_label("Close").click();
+        harness.run();
+        drop(harness);
+
+        assert!(matches!(
+            choice.into_inner(),
+            Some(ForceQuitChoice::Dismiss)
+        ));
     }
 
     #[rstest::rstest]
@@ -1737,6 +1861,13 @@ mod tests {
         let choice = RefCell::new(None);
         let mut harness = force_quit_dialog(&costs, &choice);
         harness.snapshot("force_quit_confirmation");
+    }
+
+    #[test]
+    fn snapshot_the_force_quit_confirmation_once_the_writes_finish() {
+        let choice = RefCell::new(None);
+        let mut harness = force_quit_dialog_once_the_writes_finish(&choice);
+        harness.snapshot("force_quit_confirmation_writes_finished");
     }
 
     #[test]
@@ -2311,7 +2442,10 @@ mod tests {
                 );
             }
             OversizedDialog::ForceQuit => {
-                show_force_quit_confirmation(ui, &state.interruption_costs);
+                show_force_quit_confirmation(
+                    ui,
+                    &ForceQuitPromptContents::InterruptionCosts(state.interruption_costs.clone()),
+                );
             }
         }
     }
@@ -2541,7 +2675,7 @@ mod anchored_dialog_layout_tests {
         harness.inner.press_where_the_pointer_rests(aimed_at);
 
         assert!(
-            matches!(*choice.borrow(), Some(ForceQuitChoice::Cancel)),
+            matches!(*choice.borrow(), Some(ForceQuitChoice::Dismiss)),
             "the press on Cancel did not report the cancel"
         );
     }
@@ -2632,7 +2766,7 @@ mod anchored_dialog_layout_tests {
 
         harness.inner.press_where_the_pointer_rests(aimed_at);
 
-        assert!(matches!(*choice.borrow(), Some(ForceQuitChoice::Cancel)));
+        assert!(matches!(*choice.borrow(), Some(ForceQuitChoice::Dismiss)));
         assert!(!*background_pressed.borrow());
     }
 

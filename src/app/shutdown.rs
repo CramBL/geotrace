@@ -11,7 +11,7 @@ use egui::{CentralPanel, Label, Panel, ProgressBar, RichText, ScrollArea, Sides}
 use egui_phosphor::regular::CHECK as ICON_CHECK;
 use gt_pending_writes::{PendingWriteStatus, PendingWrites, PendingWritesSnapshot, WriteKind};
 
-use super::modals::{self, ForceQuitChoice};
+use super::modals::{self, ForceQuitChoice, ForceQuitPromptContents, PointerOverTheDialog};
 use super::{App, history_db};
 use crate::termination_signal::{TERMINATION_SIGNAL_FLAG, TerminationSignalAction};
 
@@ -33,6 +33,10 @@ pub(crate) const FORCE_QUIT_EXIT_CODE: u8 = 3;
 pub(crate) const SECOND_SIGNAL_QUIT_CAUSE: &str = "Quitting on a second termination signal";
 
 const HISTORY_SHUTDOWN_LABEL: &str = "Finishing recording history work";
+
+/// The force-quit prompt closes this long after the last write finishes, which
+/// is long enough to read the one sentence it reports.
+const PROMPT_STAYS_UP_AFTER_THE_LAST_WRITE_FINISHES: Duration = Duration::from_secs(4);
 
 /// Reports the writes the process is about to abandon, wherever it ends
 /// before they finish.
@@ -104,8 +108,13 @@ impl ShutdownState {
         }
     }
 
+    /// The open force-quit prompt holds the close back: it reports the
+    /// finished writes before the window closes.
     pub(in crate::app) fn close_may_proceed(&self, registry_is_idle: bool) -> bool {
-        self.has_begun() && !self.close_allowed && registry_is_idle
+        self.has_begun()
+            && !self.close_allowed
+            && registry_is_idle
+            && !self.force_quit_prompt.is_up()
     }
 
     pub(in crate::app) fn elapsed_since_begin(&self, now: Instant) -> Option<Duration> {
@@ -119,44 +128,81 @@ impl ShutdownState {
 struct ForceQuit;
 
 /// The confirmation the shutdown window's "Force quit…" button raises.
-#[derive(Debug, Default)]
-struct ForceQuitPrompt {
-    open: bool,
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum ForceQuitPrompt {
+    #[default]
+    Closed,
+    ListingInterruptionCosts,
+    /// Reporting that every write finished, since `finished_at`. The prompt
+    /// never goes back to listing costs from here.
+    ReportingTheFinishedWrites {
+        finished_at: Instant,
+    },
 }
 
 impl ForceQuitPrompt {
     fn open(&mut self) {
-        self.open = true;
+        *self = Self::ListingInterruptionCosts;
     }
 
-    /// What the open confirmation lists, or [`None`] while it is closed.
+    fn is_up(self) -> bool {
+        !matches!(self, Self::Closed)
+    }
+
+    /// What the open confirmation shows, or [`None`] while it is closed.
     ///
-    /// The list is read from the registry every frame: a write that finished
-    /// since the confirmation opened is no longer a consequence of quitting,
-    /// and once none are left the confirmation closes - the shutdown window
-    /// closes the app on its own from there.
-    fn interruption_costs_to_list(
+    /// The costs are read from the registry every frame: a write that finished
+    /// since the confirmation opened is no longer a consequence of quitting.
+    fn contents_to_show(
         &mut self,
+        now: Instant,
         snapshot: &PendingWritesSnapshot,
-    ) -> Option<Vec<String>> {
-        if !self.open {
-            return None;
+    ) -> Option<ForceQuitPromptContents> {
+        match *self {
+            Self::Closed => None,
+            Self::ListingInterruptionCosts => {
+                let costs = snapshot.interruption_costs();
+                if costs.is_empty() {
+                    *self = Self::ReportingTheFinishedWrites { finished_at: now };
+                    return Some(ForceQuitPromptContents::WritesFinished);
+                }
+                Some(ForceQuitPromptContents::InterruptionCosts(costs))
+            }
+            Self::ReportingTheFinishedWrites { .. } => {
+                Some(ForceQuitPromptContents::WritesFinished)
+            }
         }
-        let costs = snapshot.interruption_costs();
-        if costs.is_empty() {
-            self.open = false;
-            return None;
-        }
-        Some(costs)
     }
 
     /// Closes the confirmation on the user's choice, reporting a confirmed
     /// quit.
     fn record_choice(&mut self, choice: ForceQuitChoice) -> Option<ForceQuit> {
-        self.open = false;
+        *self = Self::Closed;
         match choice {
             ForceQuitChoice::Quit => Some(ForceQuit),
-            ForceQuitChoice::Cancel => None,
+            ForceQuitChoice::Dismiss => None,
+        }
+    }
+
+    /// The pointer resting over the confirmation holds it up past
+    /// [`PROMPT_STAYS_UP_AFTER_THE_LAST_WRITE_FINISHES`]: closing it under the
+    /// pointer would send the press that follows to the shutdown window behind
+    /// it.
+    fn close_when_the_time_is_up_and_the_pointer_is_away(
+        &mut self,
+        now: Instant,
+        pointer: PointerOverTheDialog,
+    ) {
+        let Self::ReportingTheFinishedWrites { finished_at } = *self else {
+            return;
+        };
+        if pointer == PointerOverTheDialog::Resting {
+            return;
+        }
+        if now.saturating_duration_since(finished_at)
+            >= PROMPT_STAYS_UP_AFTER_THE_LAST_WRITE_FINISHES
+        {
+            *self = Self::Closed;
         }
     }
 }
@@ -200,7 +246,7 @@ impl App {
                 .report_shutdown_progress(&self.pending_writes);
             let snapshot = self.pending_writes.snapshot();
             self.show_shutdown_window(ui, now, &snapshot);
-            if self.show_force_quit_prompt(ui, &snapshot).is_some() {
+            if self.show_force_quit_prompt(ui, now, &snapshot).is_some() {
                 self.exit_leaving_writes_unfinished("Force quit");
             }
         }
@@ -277,14 +323,22 @@ impl App {
     fn show_force_quit_prompt(
         &mut self,
         ui: &egui::Ui,
+        now: Instant,
         snapshot: &PendingWritesSnapshot,
     ) -> Option<ForceQuit> {
-        let costs = self
+        let contents = self
             .shutdown
             .force_quit_prompt
-            .interruption_costs_to_list(snapshot)?;
-        let choice = modals::show_force_quit_confirmation(ui, &costs)?;
-        self.shutdown.force_quit_prompt.record_choice(choice)
+            .contents_to_show(now, snapshot)?;
+        let response = modals::show_force_quit_confirmation(ui, &contents);
+        let prompt = &mut self.shutdown.force_quit_prompt;
+        match response.choice {
+            Some(choice) => prompt.record_choice(choice),
+            None => {
+                prompt.close_when_the_time_is_up_and_the_pointer_is_away(now, response.pointer);
+                None
+            }
+        }
     }
 
     /// Ends the process with the registered writes unfinished, as the
@@ -350,6 +404,8 @@ fn running_write_ui(ui: &mut egui::Ui, status: &PendingWriteStatus) {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
     /// A write of each kind given, as the registry reports the running ones.
@@ -378,12 +434,24 @@ mod tests {
         prompt
     }
 
+    fn prompt_reporting_writes_finished_at(finished_at: Instant) -> ForceQuitPrompt {
+        let mut prompt = opened_force_quit_prompt();
+        prompt.contents_to_show(finished_at, &snapshot_of(&[]));
+        prompt
+    }
+
+    fn costs(kinds: &[WriteKind]) -> Option<ForceQuitPromptContents> {
+        Some(ForceQuitPromptContents::InterruptionCosts(
+            kinds.iter().map(|kind| kind.interruption_cost()).collect(),
+        ))
+    }
+
     #[test]
-    fn a_closed_force_quit_prompt_lists_nothing() {
+    fn a_closed_force_quit_prompt_shows_nothing() {
         let mut prompt = ForceQuitPrompt::default();
 
         assert_eq!(
-            prompt.interruption_costs_to_list(&snapshot_of(&[TEC_COMPACTION])),
+            prompt.contents_to_show(Instant::now(), &snapshot_of(&[TEC_COMPACTION])),
             None
         );
     }
@@ -393,11 +461,11 @@ mod tests {
         let mut prompt = opened_force_quit_prompt();
 
         assert_eq!(
-            prompt.interruption_costs_to_list(&snapshot_of(&[TEC_COMPACTION, WriteKind::Settings])),
-            Some(vec![
-                TEC_COMPACTION.interruption_cost(),
-                WriteKind::Settings.interruption_cost(),
-            ])
+            prompt.contents_to_show(
+                Instant::now(),
+                &snapshot_of(&[TEC_COMPACTION, WriteKind::Settings])
+            ),
+            costs(&[TEC_COMPACTION, WriteKind::Settings])
         );
     }
 
@@ -405,48 +473,93 @@ mod tests {
     /// list is read from the registry as it is now.
     #[test]
     fn a_write_that_finishes_while_the_prompt_is_open_drops_off_its_list() {
+        let now = Instant::now();
         let mut prompt = opened_force_quit_prompt();
-        prompt.interruption_costs_to_list(&snapshot_of(&[TEC_COMPACTION, WriteKind::Settings]));
+        prompt.contents_to_show(now, &snapshot_of(&[TEC_COMPACTION, WriteKind::Settings]));
 
         assert_eq!(
-            prompt.interruption_costs_to_list(&snapshot_of(&[WriteKind::Settings])),
-            Some(vec![WriteKind::Settings.interruption_cost()])
-        );
-    }
-
-    /// Nothing is left to interrupt once the last write finishes: the prompt
-    /// closes, and the shutdown window closes the app on its own.
-    #[test]
-    fn the_last_write_finishing_closes_the_open_force_quit_prompt() {
-        let mut prompt = opened_force_quit_prompt();
-
-        assert_eq!(prompt.interruption_costs_to_list(&snapshot_of(&[])), None);
-
-        assert_eq!(
-            prompt.interruption_costs_to_list(&snapshot_of(&[TEC_COMPACTION])),
-            None,
-            "the closed prompt came back up"
+            prompt.contents_to_show(now, &snapshot_of(&[WriteKind::Settings])),
+            costs(&[WriteKind::Settings])
         );
     }
 
     #[test]
-    fn cancelling_the_force_quit_prompt_closes_it_without_quitting() {
+    fn the_last_write_finishing_leaves_the_prompt_up_reporting_the_finished_writes() {
         let mut prompt = opened_force_quit_prompt();
 
-        assert_eq!(prompt.record_choice(ForceQuitChoice::Cancel), None);
+        assert_eq!(
+            prompt.contents_to_show(Instant::now(), &snapshot_of(&[])),
+            Some(ForceQuitPromptContents::WritesFinished)
+        );
+    }
+
+    #[test]
+    fn a_prompt_reporting_the_finished_writes_never_lists_costs_again() {
+        let mut prompt = prompt_reporting_writes_finished_at(Instant::now());
 
         assert_eq!(
-            prompt.interruption_costs_to_list(&snapshot_of(&[TEC_COMPACTION])),
-            None,
-            "the cancelled prompt stayed open"
+            prompt.contents_to_show(Instant::now(), &snapshot_of(&[TEC_COMPACTION])),
+            Some(ForceQuitPromptContents::WritesFinished)
         );
+    }
+
+    #[rstest]
+    #[case::the_time_is_up_and_the_pointer_is_away(
+        PROMPT_STAYS_UP_AFTER_THE_LAST_WRITE_FINISHES,
+        PointerOverTheDialog::Away,
+        false
+    )]
+    #[case::the_pointer_rests_over_the_prompt(
+        PROMPT_STAYS_UP_AFTER_THE_LAST_WRITE_FINISHES * 10,
+        PointerOverTheDialog::Resting,
+        true
+    )]
+    #[case::the_time_is_not_up_yet(
+        PROMPT_STAYS_UP_AFTER_THE_LAST_WRITE_FINISHES / 2,
+        PointerOverTheDialog::Away,
+        true
+    )]
+    fn the_prompt_reporting_the_finished_writes_closes_itself(
+        #[case] since_the_writes_finished: Duration,
+        #[case] pointer: PointerOverTheDialog,
+        #[case] expected_up: bool,
+    ) {
+        let finished_at = Instant::now();
+        let mut prompt = prompt_reporting_writes_finished_at(finished_at);
+
+        prompt.close_when_the_time_is_up_and_the_pointer_is_away(
+            finished_at + since_the_writes_finished,
+            pointer,
+        );
+
+        assert_eq!(prompt.is_up(), expected_up);
+    }
+
+    /// The window stays up while the prompt does: the close the app sends
+    /// itself would take the prompt with it.
+    #[test]
+    fn an_open_force_quit_prompt_holds_the_close_back() {
+        let mut state = started_at(Instant::now());
+        state.force_quit_prompt.open();
+
+        assert!(!state.close_may_proceed(true));
+
+        state
+            .force_quit_prompt
+            .record_choice(ForceQuitChoice::Dismiss);
+
+        assert!(state.close_may_proceed(true));
+    }
+
+    #[test]
+    fn dismissing_the_force_quit_prompt_closes_it_without_quitting() {
+        let mut prompt = opened_force_quit_prompt();
+
+        assert_eq!(prompt.record_choice(ForceQuitChoice::Dismiss), None);
+
+        assert!(!prompt.is_up());
         prompt.open();
-        assert!(
-            prompt
-                .interruption_costs_to_list(&snapshot_of(&[TEC_COMPACTION]))
-                .is_some(),
-            "the button no longer raises the prompt after a cancel"
-        );
+        assert!(prompt.is_up(), "the button no longer raises the prompt");
     }
 
     #[test]
@@ -455,11 +568,7 @@ mod tests {
 
         assert_eq!(prompt.record_choice(ForceQuitChoice::Quit), Some(ForceQuit));
 
-        assert_eq!(
-            prompt.interruption_costs_to_list(&snapshot_of(&[TEC_COMPACTION])),
-            None,
-            "the confirmed prompt stayed open"
-        );
+        assert!(!prompt.is_up());
     }
 
     fn started_at(begun_at: Instant) -> ShutdownState {
