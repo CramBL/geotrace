@@ -70,6 +70,7 @@
 - **Interface:** Fixed the time range filter's bar vanishing for a recording whose clock steps backwards, and spanning decades when a recording with no fixes is loaded beside it.
 - **Interface:** Fixed the active range bar dropping the time range filter's start or end when a handle is dragged to its end, and a drag past the other handle moving that other handle.
 - **Log Viewer:** Fixed a log entry between two fixes across the antimeridian being placed half a world away.
+- **Log Viewer:** Fixed the association dialog moving its recording rows and checkboxes when the history database returns whether the chosen recording already holds the log.
 - **Log Viewer:** Fixed log hexagons drawing, taking the pointer and being counted for recordings and lines the filter hides.
 - **Map & Tracks:** Fixed an event marker on a stretch of dead-reckoned fixes being drawn away from the track.
 - **Map & Tracks:** Fixed the sky trails plot shifting and resizing when the satellite counts beside it change width.

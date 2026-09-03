@@ -1,3 +1,4 @@
+mod anchored_dialog;
 mod archive_recovery;
 mod archives_unreachable;
 mod auto_prune;

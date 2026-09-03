@@ -17,7 +17,7 @@ use gt_test_utils::window_fit::{
     CRAMPED_VIEWPORT, NARROW_VIEWPORT, OVERSIZED_ROW_COUNT, SHORT_VIEWPORT,
 };
 use gt_test_utils::{
-    AuditedWindow, By, ControlLabel, HarnessInteraction as _, WindowFitAssertions as _,
+    AuditedWindow, By, ControlLabel, HarnessInteraction as _, TestHarness, WindowFitAssertions as _,
 };
 use gt_track_builder::{FileMeta, SegmentationConfig};
 use gt_types::{FileSource, Latitude, Longitude};
@@ -49,17 +49,21 @@ fn log_start() -> DateTime<Utc> {
         .unwrap_or_default()
 }
 
-struct DialogState {
+pub(in crate::app) struct DialogState {
     dialog: LogAssociationDialog,
     log: LoadedLog,
     recordings: LoadedFiles,
-    choice: Option<LogAssociationChoice>,
+    pub(in crate::app) choice: Option<LogAssociationChoice>,
     /// What the session may write, which is what grays the attach tickbox.
     write_access: WriteAccess,
 }
 
 /// A recording of `seconds` fixes starting `offset` after the log does.
-fn recording(filename: &str, offset: Duration, seconds: usize) -> gt_types::LoadedFile {
+pub(in crate::app) fn recording(
+    filename: &str,
+    offset: Duration,
+    seconds: usize,
+) -> gt_types::LoadedFile {
     let points = gt_test_utils::nav_points_walking_from(
         log_start() + offset,
         seconds,
@@ -82,7 +86,7 @@ fn recording(filename: &str, offset: Duration, seconds: usize) -> gt_types::Load
 }
 
 /// How a recording the history database holds is filed in the session.
-fn stored_in_history(identity: &str) -> FileHistory {
+pub(in crate::app) fn stored_in_history(identity: &str) -> FileHistory {
     FileHistory::recording(
         identity.to_owned(),
         RecordingMeta {
@@ -108,17 +112,25 @@ fn harness_over(
     harness_over_sized(recordings, DIALOG_SIZE)
 }
 
-fn harness_over_sized(
+pub(in crate::app) fn harness_over_sized(
     recordings: Vec<(gt_types::LoadedFile, FileHistory)>,
     viewport: egui::Vec2,
 ) -> Harness<'static, DialogState> {
+    let mut harness = Harness::builder()
+        .with_size(viewport)
+        .build_ui_state(dialog_ui, dialog_state(recordings));
+    harness.run_steps(3);
+    harness
+}
+
+fn dialog_state(recordings: Vec<(gt_types::LoadedFile, FileHistory)>) -> DialogState {
     let mut loaded_recordings = LoadedFiles::new();
     for (file, history) in recordings {
         loaded_recordings.push(file, history);
     }
     let parsed = gt_logfile::parse_log(LOG.into(), log_start())
         .unwrap_or_else(|error| panic!("the fixture log parses: {error}"));
-    let state = DialogState {
+    DialogState {
         dialog: LogAssociationDialog::new(SHOWN_LOG, None),
         log: LoadedLog::new(
             Some("navsyncd.log".to_owned()),
@@ -128,11 +140,17 @@ fn harness_over_sized(
         recordings: loaded_recordings,
         choice: None,
         write_access: WriteAccess::Owner,
-    };
-    let mut harness = Harness::builder()
-        .with_size(viewport)
-        .build_ui_state(dialog_ui, state);
-    harness.run_steps(3);
+    }
+}
+
+/// The dialog in a harness that renders, which the snapshot reads.
+fn rendering_harness_over(
+    recordings: Vec<(gt_types::LoadedFile, FileHistory)>,
+) -> TestHarness<'static, DialogState> {
+    let mut harness = TestHarness::builder()
+        .size(DIALOG_SIZE)
+        .ui_state(dialog_ui, dialog_state(recordings));
+    harness.inner.run_steps(3);
     harness
 }
 
@@ -166,6 +184,24 @@ fn duplicate_query_to_send(harness: &mut Harness<DialogState>) -> Option<Databas
     let state = harness.state_mut();
     let recordings = state.recordings.view();
     state.dialog.duplicate_query_to_send(recordings)
+}
+
+/// Sends the query the app sends for the chosen recording, and hands the
+/// dialog the result that this recording already holds the log under `name`.
+pub(in crate::app) fn deliver_the_stored_attachment(
+    harness: &mut Harness<DialogState>,
+    name: &str,
+) {
+    let Some(queried) = duplicate_query_to_send(harness) else {
+        panic!("the chosen recording is queried about duplicates");
+    };
+    harness.state_mut().dialog.set_duplicate_attachment(
+        &queried,
+        Some(ExistingLogAttachment {
+            id: LogAttachmentId::new_random(),
+            name: name.to_owned(),
+        }),
+    );
 }
 
 fn select(harness: &mut Harness<DialogState>, name: &str) {
@@ -397,9 +433,9 @@ fn a_recording_that_already_holds_this_log_offers_that_attachment_for_reuse() {
     );
 }
 
-/// The line about the attachment the recording already holds grows the
-/// dialog, which re-anchors around its centre on the next frame. A confirm
-/// click queued on that frame still reports the decision.
+/// A click queued on the frame the line about a stored attachment appears
+/// reports the decision: that line lands inside the room the dialog reserved
+/// and the confirm button stays where it was.
 #[test]
 fn confirming_as_the_stored_attachment_line_appears_reports_the_decision() {
     let mut harness = harness_over(vec![(
@@ -407,17 +443,11 @@ fn confirming_as_the_stored_attachment_line_appears_reports_the_decision() {
         stored_in_history("nav-devkit-mk2"),
     )]);
     select(&mut harness, "stored.gtd");
-    duplicate_query_to_send(&mut harness);
-    harness.state_mut().dialog.set_duplicate_attachment(
-        &stored_db_ref(),
-        Some(ExistingLogAttachment {
-            id: LogAttachmentId::new_random(),
-            name: "navsyncd.log".to_owned(),
-        }),
-    );
+    deliver_the_stored_attachment(&mut harness, "navsyncd.log");
     harness.step();
 
-    harness.click_after_the_layout_settles(By::new().label(CONFIRM_LABEL));
+    let confirm = harness.get(By::new().label(CONFIRM_LABEL)).rect().center();
+    harness.click_at(confirm);
     harness.run_steps(2);
 
     assert_eq!(
@@ -474,6 +504,31 @@ fn another_db_ref() -> DatabaseRef {
         identity: "nav-devkit-mk2".to_owned(),
         group_name: "2026-05-29T19-13-40".to_owned(),
     }
+}
+
+/// The dialog on a recording whose duplicate-attachment query has not returned
+/// yet: the room the result takes is part of the window from the frame it
+/// opens.
+#[test]
+fn snapshot_the_association_dialog_while_the_stored_attachment_result_is_pending() {
+    let mut harness = rendering_harness_over(vec![
+        (
+            recording("alongside.gtd", Duration::zero(), 10),
+            stored_in_history("nav-devkit-mk2"),
+        ),
+        (
+            recording("late.gtd", Duration::seconds(5), 10),
+            stored_in_history("nav-devkit-mk4"),
+        ),
+    ]);
+    harness.inner.get_by_label("late.gtd").click();
+    harness.inner.run_steps(2);
+    let state = harness.inner.state_mut();
+    let recordings = state.recordings.view();
+    state.dialog.duplicate_query_to_send(recordings);
+    harness.inner.run_steps(2);
+
+    harness.snapshot("association_dialog_answer_pending");
 }
 
 /// The dialog keeps its confirm and cancel buttons reachable at any viewport,

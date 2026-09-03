@@ -10433,7 +10433,9 @@ mod log_association {
     }
 
     fn confirm(harness: &mut Harness<App>) {
-        harness.click_after_the_layout_settles(By::new().label(association_dialog::CONFIRM_LABEL));
+        harness
+            .get(By::new().label(association_dialog::CONFIRM_LABEL))
+            .click();
         harness.run_steps(3);
     }
 
@@ -11083,7 +11085,9 @@ mod log_association {
                 .is_some()),
             "the dialog states what the recording already holds"
         );
-        harness.click_after_the_layout_settles(By::new().label(association_dialog::ATTACH_LABEL));
+        harness
+            .get(By::new().label(association_dialog::ATTACH_LABEL))
+            .click();
         harness.state_mut().toasts.dismiss_all_toasts();
         confirm(&mut harness);
 

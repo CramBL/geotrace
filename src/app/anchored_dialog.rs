@@ -1,0 +1,291 @@
+//! The window a dialog anchored over the app draws itself in.
+//!
+//! Every control keeps the place the user saw it in: [`AnchoredDialog`] fixes
+//! the window's position on the frame it opens, and each region of the body
+//! keeps the height it had then. egui places an anchored
+//! [`egui::Window`] from the size its content took on the previous frame, and
+//! hit-tests a press against the widget rects of that frame. A dialog that
+//! grows while the pointer rests on one of its controls moves that control out
+//! from under the pointer, and the press lands on whatever took its place.
+
+use std::collections::BTreeMap;
+
+use egui::emath::GuiRounding as _;
+use egui::{ScrollArea, TextStyle, Window};
+use strum::EnumIter;
+
+use crate::app::modals::{
+    self, DialogActions, DialogBody, DialogBodyHeight, DialogRowLeadingControl,
+};
+
+#[cfg(test)]
+mod tests;
+
+/// The share of the viewport a dialog may take before the user resizes it.
+const MAX_VIEWPORT_FRACTION: f32 = 0.9;
+
+/// Where a dialog's frozen region heights sit under its window id.
+const FROZEN_REGIONS: &str = "frozen_regions";
+
+/// Every dialog [`AnchoredDialog`] draws. A new dialog names itself here and
+/// the suite in `tests` then holds it to the layout guarantees.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
+pub(super) enum AnchoredDialogKind {
+    AssociateLog,
+}
+
+impl AnchoredDialogKind {
+    fn width(self) -> f32 {
+        match self {
+            // Room for a recording name beside how much of the log it ran
+            // alongside.
+            Self::AssociateLog => 460.0,
+        }
+    }
+}
+
+/// What one dialog holds from the pass it opened on.
+#[derive(Clone, Default)]
+struct HeldLayout {
+    /// The pass the dialog last drew on: a gap in the passes is a fresh open.
+    last_drawn_pass: u64,
+
+    /// The outer height the dialog's content took, and the left-top corner
+    /// centring it on the viewport. `None` until the opening pass ends.
+    size: Option<HeldSize>,
+}
+
+/// The window size and position the dialog measured on the pass it opened on.
+#[derive(Clone, Copy)]
+struct HeldSize {
+    height: f32,
+    position: egui::Pos2,
+
+    /// Whether egui's own height for the window has been held down to
+    /// [`HeldSize::height`] yet. The pass after the opening one holds that
+    /// height down: egui grows it towards the content and never back. On
+    /// every pass after that the user can drag the window larger.
+    capped: bool,
+}
+
+/// The height each region of one dialog's body holds, under the salt naming
+/// the region.
+#[derive(Clone, Default)]
+struct FrozenRegionHeights(BTreeMap<&'static str, f32>);
+
+/// The regions of one dialog's body. Each keeps the height it had on the frame
+/// the dialog opened, and content arriving after that scrolls inside it.
+#[derive(Clone, Copy)]
+pub(super) struct DialogRegions {
+    id: egui::Id,
+}
+
+impl DialogRegions {
+    /// Draws `content` at the height it took on the frame the dialog opened.
+    pub(super) fn frozen_at_open<R>(
+        self,
+        ui: &mut egui::Ui,
+        salt: &'static str,
+        content: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> R {
+        self.frozen_at_open_holding_lines(ui, salt, 0, content)
+    }
+
+    /// [`frozen_at_open`](Self::frozen_at_open) for a region whose content is
+    /// still on its way when the dialog opens: the region holds `lines` of
+    /// body text from that frame, and content taller than that scrolls inside
+    /// them.
+    pub(super) fn frozen_at_open_holding_lines<R>(
+        self,
+        ui: &mut egui::Ui,
+        salt: &'static str,
+        lines: u8,
+        content: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> R {
+        let frozen = ui.data(|data| {
+            data.get_temp::<FrozenRegionHeights>(self.id)
+                .and_then(|heights| heights.0.get(salt).copied())
+        });
+        if let Some(height) = frozen {
+            return ScrollArea::vertical()
+                .id_salt(salt)
+                .auto_shrink(false)
+                // A region shorter than 64 points would grow the dialog by
+                // the difference: egui keeps 64 points for a scroll area to
+                // scroll in.
+                .min_scrolled_height(0.0)
+                .max_height(height)
+                .show(ui, content)
+                .inner;
+        }
+        // The pass the dialog opened on, where the window has no height to
+        // fill yet and every region takes what its content needs.
+        let laid_out = ui.scope(content);
+        let drawn = laid_out.response.rect.height();
+        let held = drawn.max(f32::from(lines) * ui.text_style_height(&TextStyle::Body));
+        ui.add_space(held - drawn);
+        ui.data_mut(|data| {
+            data.get_temp_mut_or_default::<FrozenRegionHeights>(self.id)
+                .0
+                .insert(salt, held);
+        });
+        laid_out.inner
+    }
+}
+
+/// A dialog centred on the viewport, at the height its content took when it
+/// opened.
+pub(super) struct AnchoredDialog<'a> {
+    kind: AnchoredDialogKind,
+    title: String,
+    area_id: egui::Id,
+    open: Option<&'a mut bool>,
+}
+
+impl<'a> AnchoredDialog<'a> {
+    /// Two dialogs on screen at once need titles that differ: egui derives the
+    /// window's id from `title`, and the layout this holds is under that id.
+    pub(super) fn new(kind: AnchoredDialogKind, title: impl Into<String>) -> Self {
+        let title = title.into();
+        let area_id = egui::Id::new(Some(title.as_str()));
+        Self {
+            kind,
+            title,
+            area_id,
+            open: None,
+        }
+    }
+
+    /// Puts a close button in the title bar, which sets `open` to `false`.
+    pub(super) fn with_close_button(mut self, open: &'a mut bool) -> Self {
+        self.open = Some(open);
+        self
+    }
+
+    /// The regions of this dialog's body, taken before
+    /// [`show`](Self::show) so the body can draw into them.
+    pub(super) fn regions(&self) -> DialogRegions {
+        DialogRegions {
+            id: self.area_id.with(FROZEN_REGIONS),
+        }
+    }
+
+    /// Draws the dialog: `body` scrolls inside the held height, `actions` sit
+    /// at its bottom edge. Returns `None` once the close button has set the
+    /// flag given to [`with_close_button`](Self::with_close_button) to
+    /// `false`.
+    pub(super) fn show<R>(
+        self,
+        ctx: &egui::Context,
+        body: DialogBody<impl FnOnce(&mut egui::Ui)>,
+        actions: DialogActions<impl FnOnce(&mut egui::Ui) -> R>,
+    ) -> Option<R> {
+        let Self {
+            kind,
+            title,
+            area_id,
+            open,
+        } = self;
+        let held_id = area_id.with("held_layout");
+        let pass = ctx.cumulative_pass_nr();
+        let mut held = ctx
+            .data(|data| data.get_temp::<HeldLayout>(held_id))
+            .unwrap_or_default();
+        if held.last_drawn_pass + 1 < pass {
+            held = HeldLayout::default();
+            ctx.data_mut(|data| {
+                data.remove::<FrozenRegionHeights>(area_id.with(FROZEN_REGIONS));
+            });
+        }
+        held.last_drawn_pass = pass;
+
+        let viewport = ctx.content_rect();
+        let width = kind.width().min(viewport.width() * MAX_VIEWPORT_FRACTION);
+        let mut window = Window::new(title)
+            .id(area_id)
+            .collapsible(false)
+            .resizable(true)
+            .constrain_to(viewport)
+            .min_width(width)
+            // The height starts at nothing, and egui grows what it keeps for
+            // the window towards the content and never back: the pass the
+            // dialog opens on measures its content with no height to fill.
+            .default_size(egui::vec2(width, 0.0));
+        let cap = viewport.size() * MAX_VIEWPORT_FRACTION;
+        let body_height = match held.size {
+            Some(size) => {
+                let height = if size.capped { cap.y } else { size.height };
+                window = window
+                    .fixed_pos(size.position)
+                    .max_size(egui::vec2(cap.x, height));
+                DialogBodyHeight::TheHeldHeight
+            }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "AnchoredDialog is the wrapper this rule points at"
+            )]
+            None => {
+                window = window
+                    .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                    .max_size(cap);
+                DialogBodyHeight::WhatItsContentNeeds
+            }
+        };
+        if let Some(open) = open {
+            window = window.open(open);
+        }
+
+        let laid_out = window.show(ctx, |ui| {
+            modals::dialog_body_above_actions_taking(ui, body_height, body, actions)
+        });
+
+        match held.size {
+            // The opening pass has laid the content out: the window takes that
+            // height and the position centring it from here on.
+            None => {
+                if let Some(rect) = laid_out.as_ref().map(|window| window.response.rect) {
+                    let measured = rect.size().min(cap);
+                    held.size = Some(HeldSize {
+                        height: measured.y,
+                        position: egui::Rect::from_center_size(viewport.center(), measured)
+                            .left_top()
+                            .round_ui(),
+                        capped: false,
+                    });
+                }
+            }
+            Some(size) => {
+                held.size = Some(HeldSize {
+                    capped: true,
+                    ..size
+                })
+            }
+        }
+        ctx.data_mut(|data| data.insert_temp(held_id, held));
+        laid_out.and_then(|window| window.inner)
+    }
+
+    /// [`show`](Self::show) with the actions in the standard row: `leading` at
+    /// its left end and `buttons` right-aligned. A tickbox that stops the
+    /// dialog from opening again goes at that left end.
+    ///
+    /// A rule across the dialog's width divides the body from the row, so the
+    /// leading control reads as part of the row and not as the body's last
+    /// item.
+    pub(super) fn show_with_action_row<R>(
+        self,
+        ctx: &egui::Context,
+        body: DialogBody<impl FnOnce(&mut egui::Ui)>,
+        leading: DialogRowLeadingControl<impl FnOnce(&mut egui::Ui)>,
+        DialogActions(buttons): DialogActions<impl FnOnce(&mut egui::Ui) -> R>,
+    ) -> Option<R> {
+        self.show(
+            ctx,
+            body,
+            DialogActions::new(|ui| {
+                ui.separator();
+                modals::dialog_button_row_with_leading_control(ui, leading, buttons)
+            }),
+        )
+    }
+}

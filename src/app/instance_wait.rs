@@ -265,6 +265,10 @@ impl DataDirectoryWait {
             None => TAKE_OVER_BUTTON_HOVER.to_owned(),
         };
         let mut choice = WaitChoice::KeepWaiting;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "The instance wait dialog has not moved to AnchoredDialog"
+        )]
         Window::new(self.unavailable.dialog_title())
             .collapsible(false)
             .resizable(false)

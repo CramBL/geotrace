@@ -16,6 +16,7 @@ stack-size-threshold = 512000
 disallowed-methods = [
     { path = "std::env::temp_dir", reason = "Use the tempfile crate instead" },
     { path = "std::thread::spawn", reason = "Use a tokio task or `std::thread::Builder` and name the thread" },
+    { path = "egui::Window::anchor", reason = "Use AnchoredDialog, which holds the dialog's position and size once its content is laid out" },
 ]
 
 # https://rust-lang.github.io/rust-clippy/master/index.html#disallowed_types

@@ -763,6 +763,7 @@ impl HistoryWindow {
                 let mut do_delete = false;
                 let mut cancel =
                     ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+                #[expect(clippy::disallowed_methods, reason = "The delete-hidden-data confirmation has not moved to AnchoredDialog")]
                 Window::new(DELETE_HIDDEN_WINDOW_TITLE)
                     .collapsible(false)
                     .resizable(false)
