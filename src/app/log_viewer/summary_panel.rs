@@ -29,7 +29,7 @@ const GRID_SPACING: egui::Vec2 = egui::vec2(8.0, 2.0);
 impl LogViewerWindow {
     pub(super) fn summary_panel_ui(&mut self, ui: &mut egui::Ui, log: &LoadedLog) {
         let parsed = log.parsed();
-        let rows = LineTableRows::of(parsed, log.filters().visible_entries());
+        let rows = LineTableRows::of(log);
         Frame::group(ui.style()).show(ui, |ui| {
             ScrollArea::vertical()
                 .id_salt("log_viewer_summary_panel")
@@ -65,17 +65,17 @@ impl LogViewerWindow {
             .spacing(GRID_SPACING)
             .show(ui, |ui| {
                 for (session_index, session) in parsed.boot_sessions().iter().enumerate() {
-                    let separator_row = rows.row_of_boot_separator(session_index);
+                    let boot_divider_row = rows.row_of_boot_divider(session_index);
                     if ui
                         .add_enabled(
-                            separator_row.is_some(),
+                            boot_divider_row.is_some(),
                             Button::new(format!("Boot {}", session.boot_number)),
                         )
                         .on_hover_text("Scroll the table to this boot session")
                         .on_disabled_hover_text(FILTERED_OUT_HOVER)
                         .clicked()
                     {
-                        self.scroll_to_row = separator_row;
+                        self.scroll_to_row = boot_divider_row;
                     }
                     let uptime = session.uptime();
                     ui.add(

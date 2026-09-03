@@ -33,8 +33,13 @@ use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 /// drag-and-drop overlay alike.
 pub(super) const LOG_LOAD_HINT: &str = "Open a log file, drop it here, or paste log text (Ctrl+V)";
 
-/// How the viewer writes a moment, in the table and in the summary panel alike.
+/// How the summary panel writes a moment. The line table composes the same
+/// shape from one format constant per run of its timestamp column.
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+
+/// The date run of a timestamp, which the table's day divider states on its
+/// own.
+const DATE_FORMAT: &str = "%Y-%m-%d";
 
 pub(super) const LOG_VIEWER_TITLE: &str = "Log viewer";
 
@@ -237,7 +242,7 @@ impl LogViewerWindow {
         let Some(log) = logs.get_by_id(clicked.log) else {
             return;
         };
-        let rows = line_table::LineTableRows::of(log.parsed(), log.filters().visible_entries());
+        let rows = line_table::LineTableRows::of(log);
         self.scroll_to_row = clicked
             .entry_indices
             .first()

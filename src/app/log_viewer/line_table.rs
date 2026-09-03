@@ -1,24 +1,39 @@
 //! The virtualized line table: the entries of a log its filters leave visible,
-//! in file order, with a divider row opening each boot session.
+//! in file order, with a divider row opening each boot session and each UTC
+//! day.
 
 use std::ops::Range;
 
 use chrono::Duration;
 use egui::{
-    Color32, InteractOptions, Label, RichText, ScrollArea, Separator, Shape, text::LayoutJob,
+    Color32, InteractOptions, Label, RichText, ScrollArea, Separator, Shape, TextFormat,
+    text::LayoutJob,
 };
 use gt_fmt::MIDDLE_DOT;
-use gt_log_view::{EntryMatches, FilterStack, LoadedLog, VisibleEntries};
-use gt_logfile::{BootSession, LogEntry, ParsedLog, TimestampKind};
+use gt_log_view::{
+    DayDivider, EntryMatches, FilterStack, LoadedLog, TimestampTickLevel, VisibleEntries,
+};
+use gt_logfile::{BootSession, LogEntry, TimestampKind};
 use gt_types::{Latitude, Longitude, mercator};
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::{LoadedLogId, LogMatchGlyph, LogMatchHover};
 use rustc_hash::FxHashMap;
 
-use super::{AssociationWindowUnit, LogViewerWindow, TIMESTAMP_FORMAT};
+use super::{AssociationWindowUnit, DATE_FORMAT, LogViewerWindow};
 
 /// U+2248 ALMOST EQUAL TO, marking an interpolated timestamp.
 const ALMOST_EQUAL_TO: &str = "≈";
+
+/// The prefix of an anchored timestamp, as wide as the interpolated marker so
+/// that the timestamp column stays aligned.
+const ANCHORED_TIMESTAMP_PREFIX: &str = " ";
+
+/// The run of the timestamp column the tick level colours.
+const HOUR_MINUTE_FORMAT: &str = "%H:%M";
+
+/// The run of the timestamp column after the hour and the minute, always drawn
+/// in the quiet colour.
+const SECONDS_FORMAT: &str = ":%S";
 
 pub(super) const INTERPOLATED_TIMESTAMP_HOVER: &str =
     "Timestamp interpolated between neighbouring entries";
@@ -48,21 +63,41 @@ const GUTTER_MARKER_CORNER_RADIUS: u8 = 1;
 /// line through.
 const CROSS_HIGHLIGHT_ROW_ALPHA: f32 = 0.3;
 
-/// One row of the table: a boot session's divider, or one entry of the log.
+/// One row of the table: a boot session's divider, a new day's divider, or one
+/// entry of the log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum LineTableRow {
-    BootSeparator { session_index: usize },
-    Entry { entry_index: usize },
+    BootDivider {
+        session_index: usize,
+    },
+
+    /// The divider naming the UTC day the entry at `entry_index` opens.
+    DayDivider {
+        entry_index: usize,
+    },
+
+    Entry {
+        entry_index: usize,
+
+        /// The row of the visible set this entry occupies, which its tick
+        /// level is looked up by.
+        visible_row: usize,
+    },
 }
 
 /// The table's rows over one log: the entries its filters leave visible in file
-/// order, each boot session preceded by its divider row.
+/// order, each boot session preceded by its divider row, and each new UTC day
+/// by its own.
 ///
 /// A boot session whose every entry is filtered out drops out of the table
-/// along with its divider.
+/// along with its divider, and so does a day divider whose entry the filters
+/// hid.
 #[derive(Debug)]
 pub(super) struct LineTableRows<'a> {
     visible: &'a VisibleEntries,
+
+    /// Where a new UTC day opens, by ascending visible row.
+    day_dividers: &'a [DayDivider],
 
     /// The boot sessions holding at least one visible entry, in file order.
     shown_sessions: Vec<ShownBootSession>,
@@ -76,38 +111,73 @@ pub(super) struct LineTableRows<'a> {
 struct ShownBootSession {
     session_index: usize,
 
-    /// The table row this session's divider is drawn at.
-    separator_row: usize,
+    /// The first table row of this session: its day divider where the session
+    /// opens a new day, its boot divider otherwise.
+    start_row: usize,
+
+    /// The table row this session's boot divider is drawn at.
+    boot_divider_row: usize,
 
     /// The rows of the visible set holding this session's entries.
     visible_rows: Range<usize>,
+
+    /// Where this session's first entry sits among the visible rows and the
+    /// day dividers above it.
+    first_entry_row_with_day_dividers: usize,
 }
 
 impl<'a> LineTableRows<'a> {
-    pub(super) fn of(parsed: &ParsedLog, visible: &'a VisibleEntries) -> Self {
-        Self::over(parsed.boot_sessions(), visible)
+    pub(super) fn of(log: &'a LoadedLog) -> Self {
+        let filters = log.filters();
+        Self::over(
+            log.parsed().boot_sessions(),
+            filters.visible_entries(),
+            filters.clock_ticks().day_dividers(),
+        )
     }
 
-    fn over(boot_sessions: &[BootSession], visible: &'a VisibleEntries) -> Self {
+    fn over(
+        boot_sessions: &[BootSession],
+        visible: &'a VisibleEntries,
+        day_dividers: &'a [DayDivider],
+    ) -> Self {
         let mut shown_sessions = Vec::with_capacity(boot_sessions.len());
-        let mut row_count = 0;
+        let mut row_count: usize = 0;
         for (session_index, session) in boot_sessions.iter().enumerate() {
             let first = visible.row_at_or_after(session.entry_range.start);
             let past_last = visible.row_at_or_after(session.entry_range.end);
             if first >= past_last {
                 continue;
             }
+            let dividers_above =
+                day_dividers.partition_point(|divider| divider.visible_row < first);
+            let dividers_past =
+                day_dividers.partition_point(|divider| divider.visible_row < past_last);
+            let opens_a_day = usize::from(
+                day_dividers
+                    .get(dividers_above)
+                    .is_some_and(|divider| divider.visible_row == first),
+            );
+            let boot_divider_row = row_count.saturating_add(opens_a_day);
             shown_sessions.push(ShownBootSession {
                 session_index,
-                separator_row: row_count,
+                start_row: row_count,
+                boot_divider_row,
                 visible_rows: first..past_last,
+                first_entry_row_with_day_dividers: first
+                    .saturating_add(dividers_above)
+                    .saturating_add(opens_a_day),
             });
-            row_count = row_count
+            row_count = boot_divider_row
+                .saturating_add(1)
                 .saturating_add(past_last.saturating_sub(first))
-                .saturating_add(1);
+                .saturating_add(
+                    dividers_past.saturating_sub(dividers_above.saturating_add(opens_a_day)),
+                );
         }
         Self {
             visible,
+            day_dividers,
             shown_sessions,
             row_count,
         }
@@ -119,30 +189,53 @@ impl<'a> LineTableRows<'a> {
 
     pub(super) fn at(&self, row: usize) -> Option<LineTableRow> {
         let shown = self.shown_session_at(row)?;
-        if row == shown.separator_row {
-            return Some(LineTableRow::BootSeparator {
+        if row < shown.boot_divider_row {
+            let entry_index = self.visible.entry_index(shown.visible_rows.start)?;
+            return Some(LineTableRow::DayDivider { entry_index });
+        }
+        if row == shown.boot_divider_row {
+            return Some(LineTableRow::BootDivider {
                 session_index: shown.session_index,
             });
         }
-        let rows_into_session = row
-            .saturating_sub(shown.separator_row)
+        // Below the boot divider, the rows are the visible rows with the day
+        // dividers among them, which is the coordinate a divider states.
+        let row_with_day_dividers = row
+            .saturating_sub(shown.boot_divider_row)
             .saturating_sub(1)
-            .saturating_add(shown.visible_rows.start);
-        if rows_into_session >= shown.visible_rows.end {
+            .saturating_add(shown.first_entry_row_with_day_dividers);
+        let dividers_above = self
+            .day_dividers
+            .partition_point(|divider| divider.row_with_day_dividers <= row_with_day_dividers);
+        let drawn_divider = dividers_above
+            .checked_sub(1)
+            .and_then(|index| self.day_dividers.get(index))
+            .filter(|divider| divider.row_with_day_dividers == row_with_day_dividers);
+        if let Some(divider) = drawn_divider {
+            return self
+                .visible
+                .entry_index(divider.visible_row)
+                .map(|entry_index| LineTableRow::DayDivider { entry_index });
+        }
+        let visible_row = row_with_day_dividers.checked_sub(dividers_above)?;
+        if !shown.visible_rows.contains(&visible_row) {
             return None;
         }
         self.visible
-            .entry_index(rows_into_session)
-            .map(|entry_index| LineTableRow::Entry { entry_index })
+            .entry_index(visible_row)
+            .map(|entry_index| LineTableRow::Entry {
+                entry_index,
+                visible_row,
+            })
     }
 
-    /// The row the divider of `session_index` is drawn at, `None` for a session
-    /// the filters left nothing visible of.
-    pub(super) fn row_of_boot_separator(&self, session_index: usize) -> Option<usize> {
+    /// The row the boot divider of `session_index` is drawn at, `None` for a
+    /// session the filters left nothing visible of.
+    pub(super) fn row_of_boot_divider(&self, session_index: usize) -> Option<usize> {
         self.shown_sessions
             .iter()
             .find(|shown| shown.session_index == session_index)
-            .map(|shown| shown.separator_row)
+            .map(|shown| shown.boot_divider_row)
     }
 
     /// The row showing the first visible entry at or after `entry_index`,
@@ -153,19 +246,20 @@ impl<'a> LineTableRows<'a> {
             .shown_sessions
             .iter()
             .find(|shown| shown.visible_rows.contains(&visible_row))?;
-        Some(
-            shown
-                .separator_row
-                .saturating_add(1)
-                .saturating_add(visible_row.saturating_sub(shown.visible_rows.start)),
-        )
+        let dividers_above = self
+            .day_dividers
+            .partition_point(|divider| divider.visible_row <= visible_row);
+        let row_with_day_dividers = visible_row.saturating_add(dividers_above);
+        Some(shown.boot_divider_row.saturating_add(1).saturating_add(
+            row_with_day_dividers.saturating_sub(shown.first_entry_row_with_day_dividers),
+        ))
     }
 
-    /// The shown session whose divider or entries `row` falls in.
+    /// The shown session whose dividers or entries `row` falls in.
     fn shown_session_at(&self, row: usize) -> Option<&ShownBootSession> {
         let past_row = self
             .shown_sessions
-            .partition_point(|shown| shown.separator_row <= row);
+            .partition_point(|shown| shown.start_row <= row);
         self.shown_sessions.get(past_row.checked_sub(1)?)
     }
 }
@@ -223,7 +317,8 @@ impl LogViewerWindow {
     ) {
         let parsed = log.parsed();
         let filters = log.filters();
-        let rows = LineTableRows::of(parsed, filters.visible_entries());
+        let ticks = filters.clock_ticks();
+        let rows = LineTableRows::of(log);
         let anomaly_steps: FxHashMap<usize, Duration> = parsed
             .order_anomalies()
             .iter()
@@ -267,12 +362,21 @@ impl LogViewerWindow {
             scroll_area.show_rows(ui, row_height, rows.len(), |ui, shown| {
                 for row in shown {
                     match rows.at(row) {
-                        Some(LineTableRow::BootSeparator { session_index }) => {
+                        Some(LineTableRow::BootDivider { session_index }) => {
                             if let Some(session) = parsed.boot_sessions().get(session_index) {
-                                boot_separator_row_ui(ui, session);
+                                boot_divider_row_ui(ui, session);
                             }
                         }
-                        Some(LineTableRow::Entry { entry_index }) => {
+                        Some(LineTableRow::DayDivider { entry_index }) => {
+                            if let Some(entry) = parsed.entries().get(entry_index) {
+                                let date = entry.timestamp.format(DATE_FORMAT).to_string();
+                                divider_row_ui(ui, RichText::new(date).monospace());
+                            }
+                        }
+                        Some(LineTableRow::Entry {
+                            entry_index,
+                            visible_row,
+                        }) => {
                             let Some(entry) = parsed.entries().get(entry_index) else {
                                 continue;
                             };
@@ -291,6 +395,7 @@ impl LogViewerWindow {
                                 association_window,
                                 gutter: &gutter,
                                 entry_index,
+                                tick_level: ticks.level(visible_row),
                                 cross_highlight_fill: cross_highlighted.fill_of(entry_index),
                             }
                             .ui(ui, unit);
@@ -361,6 +466,9 @@ struct EntryRow<'a> {
     gutter: &'a LayerGutter<'a>,
     entry_index: usize,
 
+    /// The level this row's hour and minute draw at.
+    tick_level: TimestampTickLevel,
+
     /// The background of a row the map's hovered hexagon stands for.
     cross_highlight_fill: Option<Color32>,
 }
@@ -383,15 +491,11 @@ impl EntryRow<'_> {
     /// Renders the row, returning what the cursor did to it.
     fn ui(&self, ui: &mut egui::Ui, unit: AssociationWindowUnit) -> Option<RowInteraction> {
         let associated = self.position.is_some();
-        let timestamp = self.entry.timestamp.format(TIMESTAMP_FORMAT);
-        let (prefix, interpolated) = match self.entry.timestamp_kind {
-            TimestampKind::Anchored => (" ", false),
-            TimestampKind::Interpolated => (ALMOST_EQUAL_TO, true),
+        let interpolated = self.entry.timestamp_kind == TimestampKind::Interpolated;
+        let tick_level = match associated {
+            true => self.tick_level,
+            false => self.tick_level.min(TimestampTickLevel::Plain),
         };
-        let mut timestamp_text = RichText::new(format!("{prefix}{timestamp}")).monospace();
-        if interpolated || !associated {
-            timestamp_text = timestamp_text.weak();
-        }
         let message_color = match associated {
             true => ui.visuals().text_color(),
             false => ui.visuals().weak_text_color(),
@@ -402,7 +506,8 @@ impl EntryRow<'_> {
         let row = ui
             .horizontal(|ui| {
                 self.gutter_ui(ui);
-                let timestamp = ui.add(Label::new(timestamp_text).selectable(true));
+                let timestamp =
+                    ui.add(Label::new(self.timestamp_job(ui, tick_level)).selectable(true));
                 if interpolated {
                     timestamp.on_hover_text(INTERPOLATED_TIMESTAMP_HOVER);
                 }
@@ -447,6 +552,41 @@ impl EntryRow<'_> {
             longitude,
             clicked: row.clicked(),
         })
+    }
+
+    /// The timestamp column in three runs: the date, the hour and minute, and
+    /// the seconds. The date and the seconds are always drawn in the quiet
+    /// colour, and only the hour and minute take the tick level.
+    fn timestamp_job(&self, ui: &egui::Ui, tick_level: TimestampTickLevel) -> LayoutJob {
+        let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+        let quiet = ui.visuals().weak_text_color();
+        let moved = match tick_level {
+            TimestampTickLevel::Weak => ui.visuals().weak_text_color(),
+            TimestampTickLevel::Plain => ui.visuals().text_color(),
+            TimestampTickLevel::Strong => ui.visuals().strong_text_color(),
+        };
+        let prefix = match self.entry.timestamp_kind {
+            TimestampKind::Anchored => ANCHORED_TIMESTAMP_PREFIX,
+            TimestampKind::Interpolated => ALMOST_EQUAL_TO,
+        };
+        let timestamp = self.entry.timestamp;
+        let mut job = LayoutJob::default();
+        job.append(
+            &format!("{prefix}{} ", timestamp.format(DATE_FORMAT)),
+            0.0,
+            TextFormat::simple(font_id.clone(), quiet),
+        );
+        job.append(
+            &timestamp.format(HOUR_MINUTE_FORMAT).to_string(),
+            0.0,
+            TextFormat::simple(font_id.clone(), moved),
+        );
+        job.append(
+            &timestamp.format(SECONDS_FORMAT).to_string(),
+            0.0,
+            TextFormat::simple(font_id, quiet),
+        );
+        job
     }
 
     /// The message, with what the live filter matched painted in the colour
@@ -516,8 +656,17 @@ impl EntryRow<'_> {
     }
 }
 
+/// One divider row: what it names, and the rule running from it to the right
+/// edge of the table.
+fn divider_row_ui(ui: &mut egui::Ui, label: RichText) {
+    ui.horizontal(|ui| {
+        ui.add(Label::new(label).selectable(true));
+        ui.add(Separator::default().horizontal());
+    });
+}
+
 /// The divider opening one boot session, naming the run it starts.
-fn boot_separator_row_ui(ui: &mut egui::Ui, session: &BootSession) {
+fn boot_divider_row_ui(ui: &mut egui::Ui, session: &BootSession) {
     let uptime = session
         .uptime()
         .map_or_else(|| EM_DASH.to_owned(), gt_fmt::format_human_terse_duration);
@@ -528,10 +677,7 @@ fn boot_separator_row_ui(ui: &mut egui::Ui, session: &BootSession) {
         gt_fmt::format_count(entries),
         gt_fmt::pluralize(entries, "entry", "entries"),
     );
-    ui.horizontal(|ui| {
-        ui.add(Label::new(RichText::new(label).monospace().strong()).selectable(true));
-        ui.add(Separator::default().horizontal());
-    });
+    divider_row_ui(ui, RichText::new(label).monospace().strong());
 }
 
 #[cfg(test)]
@@ -544,6 +690,7 @@ mod tests {
     use gt_ui_types::LogMatchColor;
 
     use super::*;
+    use crate::app::log_viewer::TIMESTAMP_FORMAT;
 
     /// The log the viewer is showing in the cross-highlight cases.
     const SHOWN_LOG: LoadedLogId = LoadedLogId::new(1);
@@ -583,6 +730,26 @@ mod tests {
         }
     }
 
+    /// The three runs of the timestamp column write the moment the viewer
+    /// writes everywhere else.
+    #[test]
+    fn the_runs_of_the_timestamp_column_compose_the_viewers_timestamp() {
+        assert_eq!(
+            format!("{DATE_FORMAT} {HOUR_MINUTE_FORMAT}{SECONDS_FORMAT}"),
+            TIMESTAMP_FORMAT
+        );
+    }
+
+    /// The dividers a log opening a new UTC day at each of `visible_rows`
+    /// leaves for the table, as [`ClockTicks`] derives them.
+    fn day_dividers(visible_rows: &[usize]) -> Vec<DayDivider> {
+        let mut dividers = Vec::new();
+        for visible_row in visible_rows {
+            dividers.push(DayDivider::following(&dividers, *visible_row));
+        }
+        dividers
+    }
+
     fn drawn_rows(rows: &LineTableRows<'_>) -> Vec<LineTableRow> {
         (0..rows.len()).filter_map(|row| rows.at(row)).collect()
     }
@@ -593,13 +760,22 @@ mod tests {
         let visible = every_entry(&[2, 1]);
 
         assert_eq!(
-            drawn_rows(&LineTableRows::over(&boot_sessions, &visible)),
+            drawn_rows(&LineTableRows::over(&boot_sessions, &visible, &[])),
             [
-                LineTableRow::BootSeparator { session_index: 0 },
-                LineTableRow::Entry { entry_index: 0 },
-                LineTableRow::Entry { entry_index: 1 },
-                LineTableRow::BootSeparator { session_index: 1 },
-                LineTableRow::Entry { entry_index: 2 },
+                LineTableRow::BootDivider { session_index: 0 },
+                LineTableRow::Entry {
+                    entry_index: 0,
+                    visible_row: 0,
+                },
+                LineTableRow::Entry {
+                    entry_index: 1,
+                    visible_row: 1,
+                },
+                LineTableRow::BootDivider { session_index: 1 },
+                LineTableRow::Entry {
+                    entry_index: 2,
+                    visible_row: 2,
+                },
             ]
         );
     }
@@ -610,11 +786,17 @@ mod tests {
         let visible = every_entry(&[2]);
 
         assert_eq!(
-            drawn_rows(&LineTableRows::over(&boot_sessions, &visible)),
+            drawn_rows(&LineTableRows::over(&boot_sessions, &visible, &[])),
             [
-                LineTableRow::BootSeparator { session_index: 0 },
-                LineTableRow::Entry { entry_index: 0 },
-                LineTableRow::Entry { entry_index: 1 },
+                LineTableRow::BootDivider { session_index: 0 },
+                LineTableRow::Entry {
+                    entry_index: 0,
+                    visible_row: 0,
+                },
+                LineTableRow::Entry {
+                    entry_index: 1,
+                    visible_row: 1,
+                },
             ]
         );
     }
@@ -626,21 +808,30 @@ mod tests {
         let boot_sessions = sessions(&[2, 2, 2]);
         let visible = VisibleEntries::Matching(vec![1, 4, 5]);
 
-        let rows = LineTableRows::over(&boot_sessions, &visible);
+        let rows = LineTableRows::over(&boot_sessions, &visible, &[]);
 
         assert_eq!(
             drawn_rows(&rows),
             [
-                LineTableRow::BootSeparator { session_index: 0 },
-                LineTableRow::Entry { entry_index: 1 },
-                LineTableRow::BootSeparator { session_index: 2 },
-                LineTableRow::Entry { entry_index: 4 },
-                LineTableRow::Entry { entry_index: 5 },
+                LineTableRow::BootDivider { session_index: 0 },
+                LineTableRow::Entry {
+                    entry_index: 1,
+                    visible_row: 0,
+                },
+                LineTableRow::BootDivider { session_index: 2 },
+                LineTableRow::Entry {
+                    entry_index: 4,
+                    visible_row: 1,
+                },
+                LineTableRow::Entry {
+                    entry_index: 5,
+                    visible_row: 2,
+                },
             ]
         );
-        assert_eq!(rows.row_of_boot_separator(2), Some(2));
+        assert_eq!(rows.row_of_boot_divider(2), Some(2));
         assert_eq!(
-            rows.row_of_boot_separator(1),
+            rows.row_of_boot_divider(1),
             None,
             "the middle boot has no line the filters show"
         );
@@ -653,15 +844,21 @@ mod tests {
         let boot_sessions = sessions(&[2, 3]);
         let visible = every_entry(&[2, 3]);
 
-        let rows = LineTableRows::over(&boot_sessions, &visible);
+        let rows = LineTableRows::over(&boot_sessions, &visible, &[]);
 
-        assert_eq!(rows.row_of_boot_separator(1), Some(3));
+        assert_eq!(rows.row_of_boot_divider(1), Some(3));
         assert_eq!(
             rows.at(3),
-            Some(LineTableRow::BootSeparator { session_index: 1 })
+            Some(LineTableRow::BootDivider { session_index: 1 })
         );
         assert_eq!(rows.row_of_entry(4), Some(6));
-        assert_eq!(rows.at(6), Some(LineTableRow::Entry { entry_index: 4 }));
+        assert_eq!(
+            rows.at(6),
+            Some(LineTableRow::Entry {
+                entry_index: 4,
+                visible_row: 4,
+            })
+        );
         assert_eq!(rows.row_of_entry(5), None);
         assert_eq!(rows.at(7), None);
     }
@@ -673,11 +870,88 @@ mod tests {
         let boot_sessions = sessions(&[4]);
         let visible = VisibleEntries::Matching(vec![0, 3]);
 
-        let rows = LineTableRows::over(&boot_sessions, &visible);
+        let rows = LineTableRows::over(&boot_sessions, &visible, &[]);
 
         assert_eq!(rows.row_of_entry(0), Some(1));
         assert_eq!(rows.row_of_entry(1), Some(2), "entry 3 is the next visible");
         assert_eq!(rows.row_of_entry(3), Some(2));
+    }
+
+    /// The table opens each new UTC day with a divider above the first line of
+    /// that day, and the lines below it move down by one.
+    #[test]
+    fn a_new_day_opens_with_its_divider_above_the_first_line_of_that_day() {
+        let boot_sessions = sessions(&[5]);
+        let visible = every_entry(&[5]);
+        let dividers = day_dividers(&[2, 4]);
+
+        let rows = LineTableRows::over(&boot_sessions, &visible, &dividers);
+
+        assert_eq!(
+            drawn_rows(&rows),
+            [
+                LineTableRow::BootDivider { session_index: 0 },
+                LineTableRow::Entry {
+                    entry_index: 0,
+                    visible_row: 0,
+                },
+                LineTableRow::Entry {
+                    entry_index: 1,
+                    visible_row: 1,
+                },
+                LineTableRow::DayDivider { entry_index: 2 },
+                LineTableRow::Entry {
+                    entry_index: 2,
+                    visible_row: 2,
+                },
+                LineTableRow::Entry {
+                    entry_index: 3,
+                    visible_row: 3,
+                },
+                LineTableRow::DayDivider { entry_index: 4 },
+                LineTableRow::Entry {
+                    entry_index: 4,
+                    visible_row: 4,
+                },
+            ]
+        );
+        assert_eq!(rows.row_of_entry(2), Some(4));
+        assert_eq!(rows.row_of_entry(4), Some(7));
+    }
+
+    /// A boot session whose first line opens a new day draws the day divider
+    /// above its own boot divider. A session the filters emptied still takes no
+    /// row.
+    #[test]
+    fn a_boot_session_opening_a_new_day_draws_the_day_divider_above_its_own() {
+        let boot_sessions = sessions(&[2, 2, 2]);
+        let visible = VisibleEntries::Matching(vec![1, 4, 5]);
+        let dividers = day_dividers(&[1]);
+
+        let rows = LineTableRows::over(&boot_sessions, &visible, &dividers);
+
+        assert_eq!(
+            drawn_rows(&rows),
+            [
+                LineTableRow::BootDivider { session_index: 0 },
+                LineTableRow::Entry {
+                    entry_index: 1,
+                    visible_row: 0,
+                },
+                LineTableRow::DayDivider { entry_index: 4 },
+                LineTableRow::BootDivider { session_index: 2 },
+                LineTableRow::Entry {
+                    entry_index: 4,
+                    visible_row: 1,
+                },
+                LineTableRow::Entry {
+                    entry_index: 5,
+                    visible_row: 2,
+                },
+            ]
+        );
+        assert_eq!(rows.row_of_boot_divider(2), Some(3));
+        assert_eq!(rows.row_of_entry(4), Some(4));
     }
 
     /// A hexagon of `log` standing for `entry_indices`, as the map publishes
