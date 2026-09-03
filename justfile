@@ -29,6 +29,7 @@ fmt:
     cargo fmt --all
     cargo fmt --manifest-path sdk/python/geotrace-py/Cargo.toml --all
     cargo fmt --manifest-path sdk/rust/geotrace-sdk/fuzz/Cargo.toml --all
+    cargo fmt --manifest-path crates/gt-logfile/fuzz/Cargo.toml --all
 
 [group("native")]
 fmt-check:
@@ -38,6 +39,7 @@ fmt-check:
 fmt-check-sdk:
     cargo fmt --manifest-path sdk/python/geotrace-py/Cargo.toml --all --check
     cargo fmt --manifest-path sdk/rust/geotrace-sdk/fuzz/Cargo.toml --all --check
+    cargo fmt --manifest-path crates/gt-logfile/fuzz/Cargo.toml --all --check
 
 [group("native")]
 fmt-check-all: fmt-check fmt-check-sdk
@@ -53,6 +55,7 @@ check-sdk:
     # image's Python is 3.11.
     PYO3_BUILD_EXTENSION_MODULE=1 cargo check --manifest-path sdk/python/geotrace-py/Cargo.toml
     cargo check --manifest-path sdk/rust/geotrace-sdk/fuzz/Cargo.toml
+    cargo check --manifest-path crates/gt-logfile/fuzz/Cargo.toml
 
 [group("native")]
 check-all: check check-sdk
@@ -70,12 +73,13 @@ clippy:
     # The dist-only self-update code is feature-gated, so lint it explicitly too.
     cargo clippy --workspace --no-deps --features geotrace/self-update --tests -- -D warnings
 
-# The SDK workspaces declare their own lints at `warn` level in their manifests:
-# `-D warnings` is where CI turns those into errors.
+# The workspaces outside the root declare their own lints at `warn` level in
+# their manifests: `-D warnings` is where CI turns those into errors.
 [group("native")]
 clippy-sdk:
     PYO3_BUILD_EXTENSION_MODULE=1 cargo clippy --manifest-path sdk/python/geotrace-py/Cargo.toml --workspace --no-deps --all-targets -- -D warnings
     cargo clippy --manifest-path sdk/rust/geotrace-sdk/fuzz/Cargo.toml --workspace --no-deps --all-targets -- -D warnings
+    cargo clippy --manifest-path crates/gt-logfile/fuzz/Cargo.toml --workspace --no-deps --all-targets -- -D warnings
 
 [group("native")]
 clippy-all: clippy clippy-sdk
@@ -121,6 +125,7 @@ doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
     RUSTDOCFLAGS="-D warnings" PYO3_BUILD_EXTENSION_MODULE=1 cargo doc --manifest-path sdk/python/geotrace-py/Cargo.toml --workspace --no-deps
     RUSTDOCFLAGS="-D warnings" cargo doc --manifest-path sdk/rust/geotrace-sdk/fuzz/Cargo.toml --workspace --no-deps
+    RUSTDOCFLAGS="-D warnings" cargo doc --manifest-path crates/gt-logfile/fuzz/Cargo.toml --workspace --no-deps
 
 [group("ci")]
 ci: build-images ci-essentials ci-extras ci-sdks

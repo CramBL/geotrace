@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Datelike as _, Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumIter)]
 pub enum LogFormat {
     SyslogShort,
     SyslogShortMicro,
@@ -182,14 +182,22 @@ pub(crate) fn parse_line(
 #[cfg(test)]
 mod tests {
     use chrono::TimeZone as _;
+    use proptest::{prelude::*, proptest};
     use rstest::rstest;
 
     use super::*;
+    use crate::log_strategies::{self, GeneratedTimestamp};
 
     fn utc(y: i32, mo: u32, d: u32, h: u32, m: u32, s: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(y, mo, d, h, m, s)
             .single()
             .expect("valid")
+    }
+
+    /// A moment past every generated timestamp, so the year-less formats
+    /// resolve to the year the timestamp was generated in.
+    fn now() -> DateTime<Utc> {
+        utc(2030, 6, 1, 0, 0, 0)
     }
 
     #[rstest]
@@ -246,5 +254,30 @@ mod tests {
             NaiveTime::from_hms_opt(hour, minute, 0).expect("valid time"),
         );
         assert_eq!(infer_year(naive, now).year(), expected_year);
+    }
+
+    proptest! {
+        /// A line one format wrote is detected as that format, and writing the
+        /// moment it was read as back in that format restates its fields. Only
+        /// the month can come back in another case, which is the locale's.
+        #[test]
+        fn a_line_is_read_back_as_the_format_that_wrote_it(
+            timestamp in log_strategies::any_timestamp(),
+            message in log_strategies::any_message(),
+        ) {
+            let GeneratedTimestamp { format, text } = timestamp;
+            let line = format!("{text} {message}");
+
+            prop_assert_eq!(detect_format(&line), Some(format));
+            let Some((moment, rest)) = parse_line(&line, format, now()) else {
+                return Err(TestCaseError::fail(format!("{line:?} does not parse as {format:?}")));
+            };
+            prop_assert_eq!(rest, message.trim_start());
+            prop_assert!(
+                format.written_timestamp(moment).eq_ignore_ascii_case(&text),
+                "{format:?} wrote {:?} for the moment it read out of {text:?}",
+                format.written_timestamp(moment)
+            );
+        }
     }
 }

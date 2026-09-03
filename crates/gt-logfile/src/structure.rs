@@ -19,6 +19,12 @@ impl LineMatcher {
     }
 }
 
+/// The line a device's exporter writes where the device rebooted.
+pub(crate) const REBOOT_SEPARATOR_LINE: &str = "--- Device reboot ---";
+
+/// The line the exporter opens its trailing summary block with.
+pub(crate) const SUMMARY_BLOCK_HEADER_LINE: &str = "----------- Journal summary -----------";
+
 /// What a recognized non-entry line marks. Structural lines are kept out of the
 /// entries: they carry the log's structure instead of its content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,12 +53,12 @@ struct StructuralPattern {
 /// row here. A line matching no row is read as an entry.
 const STRUCTURAL_LINE_REGISTRY: &[StructuralPattern] = &[
     StructuralPattern {
-        matcher: LineMatcher::Exact("--- Device reboot ---"),
+        matcher: LineMatcher::Exact(REBOOT_SEPARATOR_LINE),
         kind: StructuralLineKind::RebootSeparator,
         extent: StructuralExtent::OwnLine,
     },
     StructuralPattern {
-        matcher: LineMatcher::Exact("----------- Journal summary -----------"),
+        matcher: LineMatcher::Exact(SUMMARY_BLOCK_HEADER_LINE),
         kind: StructuralLineKind::SummaryBlock,
         extent: StructuralExtent::ToEndOfLog,
     },

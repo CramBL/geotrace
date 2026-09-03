@@ -1,0 +1,30 @@
+[package]
+name = "gt-logfile-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# The parent workspace lists its members explicitly and never includes this one.
+[workspace]
+
+[[bin]]
+name = "parse_log"
+path = "fuzz_targets/parse_log.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "recognise_message"
+path = "fuzz_targets/recognise_message.rs"
+test = false
+doc = false
+bench = false
+
+[dependencies]
+chrono = "0.4"
+gt-logfile = { path = ".." }
+libfuzzer-sys = "0.4"

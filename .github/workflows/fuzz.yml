@@ -1,7 +1,9 @@
 name: Fuzz
 
 # Fuzz the `.gtd` decoder (geotrace-sdk's NavFile::read, the shared entry point
-# all SDKs decode through). A bounded run on PRs and pushes, a longer run weekly.
+# all SDKs decode through) and the log parser (gt-logfile's `parse_log` and the
+# recogniser it reads every message with). A bounded run on PRs and pushes, a
+# longer run weekly.
 on:
   push:
     branches: [trunk]
@@ -67,5 +69,52 @@ jobs:
         with:
           name: fuzz-artifacts
           path: sdk/rust/geotrace-sdk/fuzz/artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  log_parser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: nightly
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
+        with:
+          tool: cargo-fuzz
+
+      - name: Seed the corpus with the journal fixtures
+        run: |
+          set -euo pipefail
+          dir=crates/gt-logfile/fuzz/corpus/parse_log
+          mkdir -p "$dir"
+          cp crates/gt-logfile/tests/fixtures/*.log "$dir"/
+
+      - name: Run the log parser fuzzers
+        working-directory: crates/gt-logfile
+        run: |
+          set -euo pipefail
+          # A short run gates PRs/pushes, the weekly schedule fuzzes longer.
+          duration=60
+          [ "${{ github.event_name }}" = "schedule" ] && duration=600
+          # Pin the gnu target, for the reason the decode job above states.
+          for target in parse_log recognise_message; do
+            cargo +nightly fuzz run "$target" --target x86_64-unknown-linux-gnu -- \
+              -max_total_time="$duration" -rss_limit_mb=4096
+          done
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: log-parser-fuzz-artifacts
+          path: crates/gt-logfile/fuzz/artifacts/
           retention-days: 7
           if-no-files-found: ignore

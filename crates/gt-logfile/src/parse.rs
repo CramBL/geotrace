@@ -259,7 +259,9 @@ pub fn parse_log(text: LogText, now: DateTime<Utc>) -> Result<ParsedLog, LogPars
     parse_log_in_chunks_of(text, now, CHUNK_TARGET_BYTES)
 }
 
-fn parse_log_in_chunks_of(
+/// Reads `text` as [`parse_log`] does, over chunks of `chunk_target_bytes`, so
+/// a test drives the chunk merge over a log of any length.
+pub fn parse_log_in_chunks_of(
     text: LogText,
     now: DateTime<Utc>,
     chunk_target_bytes: NonZeroUsize,
@@ -792,13 +794,19 @@ fn positioned_lines(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use chrono::{Duration, TimeZone as _};
     use gt_test_utils::log_fixtures::{self, SyntheticLogSpec, SyntheticLogTimestamps};
-    use proptest::{prelude::*, prop_oneof, proptest};
+    use proptest::{prelude::*, proptest};
     use rstest::rstest;
 
     use super::*;
-    use crate::{recognise::RecognisedService, summary::ServiceCount};
+    use crate::{
+        log_strategies,
+        recognise::{RecognisedLevel, RecognisedService},
+        summary::ServiceCount,
+    };
 
     const REBOOT: &str = "--- Device reboot ---\n";
 
@@ -1332,37 +1340,86 @@ mod tests {
         );
     }
 
-    fn any_line() -> impl Strategy<Value = String> {
-        prop_oneof![
-            6 => r"\PC*",
-            6 => (0u32..24, 0u32..60, r"\PC*").prop_map(|(hour, minute, rest)| format!(
-                "2026-01-01 {hour:02}:{minute:02}:00 {rest}"
-            )),
-            6 => (1u32..29, r"\PC*").prop_map(|(day, rest)| format!("Jan {day:2} 00:00:00 {rest}")),
-            1 => Just("--- Device reboot ---".to_owned()),
-            1 => Just("----------- Journal summary -----------".to_owned()),
-        ]
+    /// The text a slice addresses, `None` where it addresses text outside the
+    /// log or splits a character in it.
+    fn sliced(slice: TextSlice, text: &str) -> Option<&str> {
+        let start = usize::try_from(slice.offset).ok()?;
+        text.get(start..start.checked_add(usize::try_from(slice.len).ok()?)?)
+    }
+
+    /// The trimmed line `line_number` names, empty where the log has no such
+    /// line.
+    fn line_of(text: &str, line_number: u32) -> &str {
+        let index = usize::try_from(line_number).unwrap_or(usize::MAX);
+        text.lines()
+            .nth(index.saturating_sub(1))
+            .unwrap_or_default()
+            .trim()
     }
 
     proptest! {
-        /// Whatever text a user drops on the app, every entry the parser emits
-        /// slices its own message back out of the log text.
+        /// A parse fails on one condition: no line before the summary block
+        /// carries a timestamp in the format the head of the log decided.
         #[test]
-        fn entries_of_any_text_index_it_consistently(
-            lines in prop::collection::vec(any_line(), 0..20),
+        fn a_log_parses_exactly_when_a_line_outside_its_summary_block_is_timestamped(
+            text in log_strategies::any_log_text(),
         ) {
-            let text = lines.join("\n");
+            let head_format = text
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .take(FORMAT_DETECTION_LINE_LIMIT)
+                .find_map(format::detect_format);
+
+            let mut anchored = false;
+            for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+                if head_format
+                    .is_some_and(|format| format::parse_line(line, format, now()).is_some())
+                {
+                    anchored = true;
+                    break;
+                }
+                if StructuralLineKind::matching_line(line)
+                    == Some(StructuralLineKind::SummaryBlock)
+                {
+                    break;
+                }
+            }
+
+            prop_assert_eq!(parse_log(text.as_str().into(), now()).is_ok(), anchored);
+        }
+
+        /// Whatever text a user drops on the app, every span the parse hands
+        /// out slices the text or the message it was read from.
+        #[test]
+        fn every_span_of_a_parsed_log_slices_the_text_it_was_indexed_from(
+            text in log_strategies::any_log_text(),
+        ) {
             let Ok(parsed) = parse_log(text.as_str().into(), now()) else {
                 return Ok(());
             };
-
             prop_assert_eq!(parsed.text().as_ref(), text.as_str());
-            prop_assert!(parsed.entries().is_sorted_by_key(|entry| entry.line_number));
 
             for entry in parsed.entries() {
                 let message = parsed.message(entry);
-                prop_assert_eq!(entry.message.in_text(&text), message);
+                prop_assert_eq!(sliced(entry.message, &text), Some(message));
                 prop_assert_eq!(message, message.trim());
+            }
+            for line in parsed.structural_lines() {
+                let structural = sliced(line.text, &text);
+                prop_assert_eq!(structural, Some(line.text.in_text(&text)));
+                prop_assert_ne!(structural, Some(""));
+            }
+            for (entry, recognised) in parsed.entries().iter().zip(parsed.recognised_messages()) {
+                let message = parsed.message(entry);
+                let spans = [
+                    recognised.hostname(),
+                    recognised.service().map(RecognisedService::span),
+                    recognised.level().map(RecognisedLevel::span),
+                ];
+                for span in spans.into_iter().flatten() {
+                    prop_assert!(message.get(span).is_some());
+                }
             }
         }
 
@@ -1370,9 +1427,8 @@ mod tests {
         /// and every entry in exactly one boot session.
         #[test]
         fn every_non_empty_line_is_counted_exactly_once(
-            lines in prop::collection::vec(any_line(), 0..20),
+            text in log_strategies::any_log_text(),
         ) {
-            let text = lines.join("\n");
             let Ok(parsed) = parse_log(text.as_str().into(), now()) else {
                 return Ok(());
             };
@@ -1398,14 +1454,195 @@ mod tests {
             prop_assert_eq!(next_entry, parsed.entries().len());
         }
 
+        /// Entries and structural lines each name one line of the log, in the
+        /// order the file wrote them.
+        #[test]
+        fn entries_and_structural_lines_are_in_strict_line_order(
+            text in log_strategies::any_log_text(),
+        ) {
+            let Ok(parsed) = parse_log(text.as_str().into(), now()) else {
+                return Ok(());
+            };
+
+            prop_assert!(
+                parsed
+                    .entries()
+                    .is_sorted_by(|before, after| before.line_number < after.line_number)
+            );
+            prop_assert!(
+                parsed
+                    .structural_lines()
+                    .is_sorted_by(|before, after| before.line_number < after.line_number)
+            );
+            for entry in parsed.entries() {
+                prop_assert!(!line_of(&text, entry.line_number).is_empty());
+            }
+        }
+
+        /// An entry is anchored exactly where its own line carries a timestamp
+        /// in the format the log was read in.
+        #[test]
+        fn an_entry_is_anchored_exactly_when_its_line_carries_a_timestamp(
+            text in log_strategies::any_log_text(),
+        ) {
+            let Ok(parsed) = parse_log(text.as_str().into(), now()) else {
+                return Ok(());
+            };
+
+            for entry in parsed.entries() {
+                let line = line_of(&text, entry.line_number);
+                prop_assert_eq!(
+                    entry.is_anchored(),
+                    format::parse_line(line, parsed.format(), now()).is_some(),
+                    "line {}: {:?}", entry.line_number, line
+                );
+            }
+        }
+
+        /// An interpolated entry lands between the anchored entries around it
+        /// in its own boot session, whichever way the clock stepped between
+        /// them. An entry with an anchored entry on one side only takes the
+        /// timestamp of that one.
+        #[test]
+        fn an_interpolated_entry_lies_between_the_anchors_of_its_session(
+            text in log_strategies::any_log_text(),
+        ) {
+            let Ok(parsed) = parse_log(text.as_str().into(), now()) else {
+                return Ok(());
+            };
+
+            for session in parsed.boot_sessions() {
+                let entries = parsed.session_entries(session);
+                for (index, entry) in entries.iter().enumerate() {
+                    if entry.is_anchored() {
+                        continue;
+                    }
+                    let before = entries
+                        .get(..index)
+                        .unwrap_or_default()
+                        .iter()
+                        .rfind(|entry| entry.is_anchored());
+                    let after = entries
+                        .get(index.saturating_add(1)..)
+                        .unwrap_or_default()
+                        .iter()
+                        .find(|entry| entry.is_anchored());
+                    match (before, after) {
+                        (Some(before), Some(after)) => {
+                            let earliest = before.timestamp.min(after.timestamp);
+                            let latest = before.timestamp.max(after.timestamp);
+                            prop_assert!((earliest..=latest).contains(&entry.timestamp));
+                        }
+                        (Some(anchor), None) | (None, Some(anchor)) => {
+                            prop_assert_eq!(entry.timestamp, anchor.timestamp);
+                        }
+                        (None, None) => {}
+                    }
+                }
+            }
+        }
+
+        /// An anomaly names an anchored entry of a boot session with an
+        /// anchored entry before it in that session: the step is measured
+        /// between the two.
+        #[test]
+        fn every_order_anomaly_names_an_anchored_entry_of_a_boot_session(
+            text in log_strategies::any_log_text(),
+        ) {
+            let Ok(parsed) = parse_log(text.as_str().into(), now()) else {
+                return Ok(());
+            };
+
+            for anomaly in parsed.order_anomalies() {
+                let index = parsed
+                    .entries()
+                    .iter()
+                    .position(|entry| entry.line_number == anomaly.line_number);
+                let Some(index) = index else {
+                    return Err(TestCaseError::fail(format!(
+                        "anomaly on line {} names no entry", anomaly.line_number
+                    )));
+                };
+                prop_assert!(parsed.entries().get(index).is_some_and(LogEntry::is_anchored));
+
+                let session = parsed
+                    .boot_sessions()
+                    .iter()
+                    .find(|session| session.entry_range.contains(&index));
+                let Some(session) = session else {
+                    return Err(TestCaseError::fail(format!(
+                        "entry {index} lies in no boot session"
+                    )));
+                };
+                prop_assert!(
+                    parsed
+                        .entries()
+                        .get(session.entry_range.start..index)
+                        .unwrap_or_default()
+                        .iter()
+                        .any(LogEntry::is_anchored)
+                );
+            }
+        }
+
+        /// One service takes one slot over the whole log, whichever chunk read
+        /// it, and its slot names it in the log's own service list.
+        #[test]
+        fn every_entry_naming_a_service_carries_that_services_slot(
+            text in log_strategies::any_log_text(),
+        ) {
+            let Ok(parsed) = parse_log(text.as_str().into(), now()) else {
+                return Ok(());
+            };
+            let names: Vec<&str> = parsed.services_by_first_appearance().collect();
+            let mut slot_of_token: HashMap<&str, u16> = HashMap::new();
+
+            for (entry, recognised) in parsed.entries().iter().zip(parsed.recognised_messages()) {
+                let Some(service) = recognised.service() else {
+                    continue;
+                };
+                let token = parsed.message(entry).get(service.span()).unwrap_or_default();
+                let name = names.get(usize::from(service.slot())).copied();
+                prop_assert!(
+                    name.is_some_and(|name| token.starts_with(name)),
+                    "slot {} of {names:?} does not name the service of {token:?}", service.slot()
+                );
+                let first_slot = *slot_of_token.entry(token).or_insert(service.slot());
+                prop_assert_eq!(service.slot(), first_slot, "two slots for {:?}", token);
+            }
+        }
+
+        /// The exporter's own entry count is held against the anchored entries
+        /// the parse read, and reported only where the two differ.
+        #[test]
+        fn an_entry_count_mismatch_is_reported_exactly_when_the_exporter_disagrees(
+            text in log_strategies::any_summarised_log(),
+        ) {
+            let Ok(parsed) = parse_log(text.as_str().into(), now()) else {
+                return Ok(());
+            };
+            let stated_by_exporter = parsed.summary_block().and_then(|block| block.entry_count);
+            let anchored_by_parse =
+                u64::try_from(parsed.anchored_entry_count()).unwrap_or(u64::MAX);
+
+            prop_assert_eq!(
+                parsed.exporter_entry_count_mismatch(),
+                stated_by_exporter
+                    .filter(|stated| *stated != anchored_by_parse)
+                    .map(|stated_by_exporter| EntryCountMismatch {
+                        stated_by_exporter,
+                        anchored_by_parse,
+                    })
+            );
+        }
+
         /// However badly a log is formed and wherever the chunk bounds fall
         /// in it, the chunked path returns what the one-chunk path returns.
         #[test]
         fn a_chunked_parse_of_any_text_matches_the_one_chunk_parse(
-            lines in prop::collection::vec(any_line(), 0..40),
+            text in log_strategies::any_log_text(),
             chunk_target_bytes in 1usize..64,
         ) {
-            let text = lines.join("\n");
             let one_chunk = parse_log_in_chunks_of(
                 text.as_str().into(),
                 now(),
