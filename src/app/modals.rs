@@ -282,6 +282,23 @@ pub(super) fn destructive_button(ui: &mut egui::Ui, label: &str) -> egui::Respon
         .on_hover_text("This cannot be undone")
 }
 
+/// The region listing the items the remove takes out of the view.
+const REMOVED_ITEMS_REGION: &str = "removed_items";
+
+/// Lines the [`REMOVED_ITEMS_REGION`] holds at most, however many items the
+/// remove takes: the rest of the rows scroll inside it. Twelve is the room ten
+/// item rows take, each a line of body text with the spacing under it.
+const REMOVED_ITEMS_MOST_LINES: u8 = 12;
+
+/// The region counting the logs attached to the recordings the remove takes
+/// out. A restored attachment that arrives while the dialog is open joins that
+/// count.
+const ATTACHED_LOGS_REGION: &str = "remove_attached_logs";
+
+/// Lines the [`ATTACHED_LOGS_REGION`] holds from the frame the dialog opens.
+/// The longer of its two wordings takes one line at this width.
+const ATTACHED_LOGS_LINES: u8 = 1;
+
 pub fn show_delete_confirmation(
     ui: &egui::Ui,
     tree: &mut TreeState,
@@ -317,16 +334,19 @@ pub fn show_delete_confirmation(
     let mut do_cancel = escape_pressed;
 
     let item_label = if count == 1 { "item" } else { "items" };
-    #[expect(clippy::disallowed_methods, reason = "The removal confirmation has not moved to AnchoredDialog")]
-    Window::new(format!("Remove {count} {item_label}?"))
-        .collapsible(false)
-        .resizable(true)
-        .min_width(420.0)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ui.ctx(), |ui| {
-            dialog_body_above_buttons(
+    let dialog = AnchoredDialog::new(
+        AnchoredDialogKind::RemoveItems,
+        format!("Remove {count} {item_label}?"),
+    );
+    let regions = dialog.regions();
+    dialog.show(
+        ui.ctx(),
+        DialogBody::new(|ui| {
+            regions.frozen_at_open(
                 ui,
-                DialogBody::new(|ui| {
+                REMOVED_ITEMS_REGION,
+                HeldBodyLines::what_the_content_took().and_at_most(REMOVED_ITEMS_MOST_LINES),
+                |ui| {
                     let items: Vec<_> = tree
                         .delete_confirm
                         .as_ref()
@@ -353,75 +373,88 @@ pub fn show_delete_confirmation(
                                         || gt_ui_theme::EM_DASH.to_owned(),
                                         |geometry| gt_fmt::format_distance(geometry.distance_km),
                                     );
-                                    let dur =
-                                        gt_fmt::format_human_terse_duration(track.metadata.duration);
-                                    let label =
-                                        format!("  {name} / #{}  {dist}  {dur}", track.metadata.index);
+                                    let dur = gt_fmt::format_human_terse_duration(
+                                        track.metadata.duration,
+                                    );
+                                    let label = format!(
+                                        "  {name} / #{}  {dist}  {dur}",
+                                        track.metadata.index
+                                    );
                                     ui.add(Label::new(label.as_str()).truncate());
                                 }
                             }
                         }
                     }
-                    ui.separator();
-                    if affected_tracks == 0 {
-                        ui.label(
-                            RichText::new("This only removes them from the current view.")
-                                .weak()
-                                .small(),
-                        );
-                    } else if !write_access.allows_writing() {
-                        permanent = false;
-                        ui.add_enabled(
-                            false,
-                            Checkbox::new(&mut permanent, PERMANENT_DELETE_LABEL),
-                        )
-                        .on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER);
-                        ui.label(
-                            RichText::new(
-                                "This only removes them from the current view: the session is read-only \
-                                 and leaves every recording in history as it is.",
-                            )
-                            .weak()
-                            .small(),
-                        );
-                    } else {
-                        ui.checkbox(&mut permanent, PERMANENT_DELETE_LABEL);
-                        let track_label = gt_fmt::pluralize(affected_tracks, "track", "tracks");
-                        let rec_label = gt_fmt::pluralize(affected_recordings, "recording", "recordings");
-                        let detail = if permanent {
-                            format!(
-                                "Removes them from the view and permanently deletes {affected_tracks} {track_label} from {affected_recordings} {rec_label} in history."
-                            )
-                        } else {
-                            format!(
-                                "Removes them from the view and hides {affected_tracks} {track_label} in {affected_recordings} {rec_label} in history."
-                            )
-                        };
-                        ui.label(RichText::new(detail).weak().small());
-                    }
-                    if attached_logs > 0 {
-                        let log_label = gt_fmt::pluralize(attached_logs, "log", "logs");
-                        let line = if permanent {
-                            format!("Deletes {attached_logs} attached {log_label} with them.")
-                        } else {
-                            format!(
-                                "Unloads {attached_logs} attached {log_label}. They come back when \
-                                 the recording is opened again."
-                            )
-                        };
-                        ui.label(RichText::new(line).weak().small());
-                    }
-                }),
-                DialogActions::new(|ui| {
-                    if ui.button("Remove").clicked() {
-                        do_delete = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        do_cancel = true;
-                    }
-                }),
+                },
             );
-        });
+            ui.separator();
+            if affected_tracks == 0 {
+                ui.label(
+                    RichText::new("This only removes them from the current view.")
+                        .weak()
+                        .small(),
+                );
+            } else if !write_access.allows_writing() {
+                permanent = false;
+                ui.add_enabled(false, Checkbox::new(&mut permanent, PERMANENT_DELETE_LABEL))
+                    .on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER);
+                ui.label(
+                    RichText::new(
+                        "This only removes them from the current view: the session is read-only \
+                         and leaves every recording in history as it is.",
+                    )
+                    .weak()
+                    .small(),
+                );
+            } else {
+                ui.checkbox(&mut permanent, PERMANENT_DELETE_LABEL);
+                let track_label = gt_fmt::pluralize(affected_tracks, "track", "tracks");
+                let rec_label = gt_fmt::pluralize(affected_recordings, "recording", "recordings");
+                let detail = if permanent {
+                    format!(
+                        "Removes them from the view and permanently deletes {affected_tracks} \
+                         {track_label} from {affected_recordings} {rec_label} in history."
+                    )
+                } else {
+                    format!(
+                        "Removes them from the view and hides {affected_tracks} {track_label} in \
+                         {affected_recordings} {rec_label} in history."
+                    )
+                };
+                ui.label(RichText::new(detail).weak().small());
+            }
+            regions.frozen_at_open(
+                ui,
+                ATTACHED_LOGS_REGION,
+                HeldBodyLines::at_least(ATTACHED_LOGS_LINES),
+                |ui| {
+                    if attached_logs == 0 {
+                        return;
+                    }
+                    let log_label = gt_fmt::pluralize(attached_logs, "log", "logs");
+                    let line = if permanent {
+                        format!("Deletes {attached_logs} attached {log_label} with them.")
+                    } else {
+                        format!(
+                            "Unloads {attached_logs} attached {log_label}. They come back when \
+                             the recording is opened again."
+                        )
+                    };
+                    ui.label(RichText::new(line).weak().small());
+                },
+            );
+        }),
+        DialogActions::new(|ui| {
+            dialog_button_row(ui, |ui| {
+                if ui.button("Remove").clicked() {
+                    do_delete = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    do_cancel = true;
+                }
+            });
+        }),
+    );
 
     if do_cancel {
         tree.delete_confirm = None;
@@ -739,8 +772,8 @@ pub fn show_recording_details_dialog(ui: &egui::Ui, request: &mut Option<Recordi
     }
 }
 
-/// Room for the attribution lines that pair a sentence with a link.
-const ABOUT_DIALOG_MIN_WIDTH: f32 = 400.0;
+/// The region holding the version and the attributions.
+const ABOUT_BODY_REGION: &str = "about_body";
 
 /// Show the About dialog: version and the data/service attributions.
 ///
@@ -757,48 +790,57 @@ pub fn show_about_dialog(ui: &egui::Ui, open: &mut bool, version: &str) {
         .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
 
     let mut keep_open = true;
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "The 'About GeoTrace' dialog has not moved to AnchoredDialog"
-    )]
-    Window::new("About GeoTrace")
-        .open(&mut keep_open)
-        .collapsible(false)
-        .resizable(false)
-        .min_width(ABOUT_DIALOG_MIN_WIDTH)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ui.ctx(), |ui| {
-            ScrollArea::both().show(ui, |ui| {
-                // Selectable: the version is what a bug report quotes.
-                ui.add(
-                    Label::new(RichText::new(format!("GeoTrace {version}")).strong())
-                        .selectable(true),
-                );
-                ui.label("GPS/GNSS navigation data visualizer");
-                ui.separator();
-                ui.label("Map tiles and road-network matching build on OpenStreetMap data");
-                ui.hyperlink_to(
-                    "© OpenStreetMap contributors",
-                    "https://www.openstreetmap.org/copyright",
-                );
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.label("The default snap to road server is hosted by");
-                    ui.hyperlink_to("FOSSGIS e.V.", "https://www.fossgis.de/");
-                });
-                ui.add_space(4.0);
-                ui.label(ATTRIBUTION);
-                ui.horizontal(|ui| {
-                    ui.hyperlink_to("gpsjam.org", PUBLISHER_URL);
-                    ui.hyperlink_to("adsbexchange.com", UPSTREAM_URL);
-                });
-            });
-        });
+    let dialog = AnchoredDialog::new(AnchoredDialogKind::AboutGeoTrace, "About GeoTrace")
+        .with_close_button(&mut keep_open);
+    let regions = dialog.regions();
+    dialog.show(
+        ui.ctx(),
+        DialogBody::new(|ui| {
+            regions.frozen_at_open(
+                ui,
+                ABOUT_BODY_REGION,
+                HeldBodyLines::what_the_content_took(),
+                |ui| {
+                    // Selectable: the version is what a bug report quotes.
+                    ui.add(
+                        Label::new(RichText::new(format!("GeoTrace {version}")).strong())
+                            .selectable(true),
+                    );
+                    ui.label("GPS/GNSS navigation data visualizer");
+                    ui.separator();
+                    ui.label("Map tiles and road-network matching build on OpenStreetMap data");
+                    ui.hyperlink_to(
+                        "© OpenStreetMap contributors",
+                        "https://www.openstreetmap.org/copyright",
+                    );
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label("The default snap to road server is hosted by");
+                        ui.hyperlink_to("FOSSGIS e.V.", "https://www.fossgis.de/");
+                    });
+                    ui.add_space(4.0);
+                    ui.label(ATTRIBUTION);
+                    ui.horizontal(|ui| {
+                        ui.hyperlink_to("gpsjam.org", PUBLISHER_URL);
+                        ui.hyperlink_to("adsbexchange.com", UPSTREAM_URL);
+                    });
+                },
+            );
+        }),
+        // The close button in the title bar and Escape dismiss the dialog,
+        // which has nothing to act on.
+        DialogActions::new(|_ui| {}),
+    );
 
     if !keep_open || escape_pressed {
         *open = false;
     }
 }
+
+/// The region holding what the dialog states about the upload. The service
+/// link shows only for the default host: pointing the setting at another
+/// server while the dialog is open takes that line away.
+const SNAP_CONSENT_BODY_REGION: &str = "snap_consent_body";
 
 /// The user's decision in the snap upload-consent dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -848,23 +890,21 @@ pub fn show_snap_consent_dialog(
     }
 
     let mut open = true;
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "The snap upload consent dialog has not moved to AnchoredDialog"
-    )]
-    egui::Window::new("Snap to road")
-        .collapsible(false)
-        .resizable(false)
-        .min_width(420.0)
-        .open(&mut open)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ui.ctx(), |ui| {
-            dialog_body_above_buttons(
+    let dialog = AnchoredDialog::new(AnchoredDialogKind::SnapToRoadConsent, "Snap to road")
+        .with_close_button(&mut open);
+    let regions = dialog.regions();
+    dialog.show(
+        ui.ctx(),
+        DialogBody::new(|ui| {
+            regions.frozen_at_open(
                 ui,
-                DialogBody::new(|ui| {
+                SNAP_CONSENT_BODY_REGION,
+                HeldBodyLines::what_the_content_took(),
+                |ui| {
                     ui.label(
-                "Snap to road matches a recorded track against the OpenStreetMap road network.",
-            );
+                        "Snap to road matches a recorded track against the OpenStreetMap road \
+                         network.",
+                    );
                     ui.add_space(4.0);
                     ui.label("The track's recorded positions and timestamps are uploaded to");
                     ui.monospace(server_url);
@@ -880,44 +920,51 @@ pub fn show_snap_consent_dialog(
                     }
                     ui.add_space(4.0);
                     ui.label(
-                "Nothing is uploaded until you agree. The acknowledgment is remembered for this \
-                 server and asked again when the server changes.",
-            );
+                        "Nothing is uploaded until you agree. The acknowledgment is remembered \
+                         for this server and asked again when the server changes.",
+                    );
                     if ask_auto {
                         ui.add_space(4.0);
                         ui.label(
-                    "Snapping can run automatically: every track you load and show on the map \
-                     is uploaded and matched without a click. Manual only uploads a track when \
-                     you trigger it. Changeable anytime in the settings.",
-                );
+                            "Snapping can run automatically: every track you load and show on \
+                             the map is uploaded and matched without a click. Manual only \
+                             uploads a track when you trigger it. Changeable anytime in the \
+                             settings.",
+                        );
                     }
-                }),
-                DialogActions::new(|ui| {
-                    if ask_auto {
-                        if ui.button("Agree - snap automatically").clicked() {
-                            choice = Some(SnapConsentChoice::Accepted {
-                                auto_snap: Some(true),
-                            });
-                        }
-                        if ui.button("Agree - manual only").clicked() {
-                            choice = Some(SnapConsentChoice::Accepted {
-                                auto_snap: Some(false),
-                            });
-                        }
-                    } else if ui.button("Agree").clicked() {
-                        choice = Some(SnapConsentChoice::Accepted { auto_snap: None });
-                    }
-                    if ui.button("Cancel").clicked() {
-                        choice = Some(SnapConsentChoice::Declined);
-                    }
-                }),
+                },
             );
-        });
+        }),
+        DialogActions::new(|ui| {
+            dialog_button_row(ui, |ui| {
+                if ask_auto {
+                    if ui.button("Agree - snap automatically").clicked() {
+                        choice = Some(SnapConsentChoice::Accepted {
+                            auto_snap: Some(true),
+                        });
+                    }
+                    if ui.button("Agree - manual only").clicked() {
+                        choice = Some(SnapConsentChoice::Accepted {
+                            auto_snap: Some(false),
+                        });
+                    }
+                } else if ui.button("Agree").clicked() {
+                    choice = Some(SnapConsentChoice::Accepted { auto_snap: None });
+                }
+                if ui.button("Cancel").clicked() {
+                    choice = Some(SnapConsentChoice::Declined);
+                }
+            });
+        }),
+    );
     if !open {
         choice = Some(SnapConsentChoice::Declined);
     }
     choice
 }
+
+/// The region stating what snapping again does to the stored result.
+const SNAP_REPLACE_BODY_REGION: &str = "snap_replace_body";
 
 /// The user's decision in the replace-cached-run confirmation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -951,39 +998,39 @@ pub fn show_snap_replace_dialog(ui: &egui::Ui, costing_name: &str) -> Option<Sna
     }
 
     let mut open = true;
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "The re-snap confirmation has not moved to AnchoredDialog"
-    )]
-    egui::Window::new("Snap to road again?")
-        .collapsible(false)
-        .resizable(false)
-        .min_width(380.0)
-        .open(&mut open)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ui.ctx(), |ui| {
-            dialog_body_above_buttons(
+    let dialog = AnchoredDialog::new(AnchoredDialogKind::SnapToRoadAgain, "Snap to road again?")
+        .with_close_button(&mut open);
+    let regions = dialog.regions();
+    dialog.show(
+        ui.ctx(),
+        DialogBody::new(|ui| {
+            regions.frozen_at_open(
                 ui,
-                DialogBody::new(|ui| {
+                SNAP_REPLACE_BODY_REGION,
+                HeldBodyLines::what_the_content_took(),
+                |ui| {
                     ui.label(format!(
                         "This track already has snap to road data for {costing_name}."
                     ));
                     ui.add_space(4.0);
                     ui.label(
-                "Snapping again uploads the track once more and replaces that result with the \
-                 new one.",
+                        "Snapping again uploads the track once more and replaces that result \
+                         with the new one.",
+                    );
+                },
             );
-                }),
-                DialogActions::new(|ui| {
-                    if ui.button("Snap again").clicked() {
-                        choice = Some(SnapReplaceChoice::SnapAgain);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        choice = Some(SnapReplaceChoice::Cancel);
-                    }
-                }),
-            );
-        });
+        }),
+        DialogActions::new(|ui| {
+            dialog_button_row(ui, |ui| {
+                if ui.button("Snap again").clicked() {
+                    choice = Some(SnapReplaceChoice::SnapAgain);
+                }
+                if ui.button("Cancel").clicked() {
+                    choice = Some(SnapReplaceChoice::Cancel);
+                }
+            });
+        }),
+    );
     if !open {
         choice = Some(SnapReplaceChoice::Cancel);
     }
@@ -1126,6 +1173,10 @@ fn scope_summary(count: SnapScopeCount, costing_name: &str) -> String {
     )
 }
 
+/// The region holding what the prompt states about automatic snapping and the
+/// server it uploads to.
+const SNAP_AUTO_PROMPT_BODY_REGION: &str = "snap_auto_prompt_body";
+
 /// The user's decision in the one-time auto-snap prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapAutoChoice {
@@ -1158,48 +1209,51 @@ pub fn show_snap_auto_prompt(ui: &egui::Ui, server_url: &str) -> Option<SnapAuto
     }
 
     let mut open = true;
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "The auto-snap dialog has not moved to AnchoredDialog"
-    )]
-    egui::Window::new("Snap to road automatically?")
-        .collapsible(false)
-        .resizable(false)
-        .min_width(420.0)
-        .open(&mut open)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ui.ctx(), |ui| {
-            dialog_body_above_buttons(
+    let dialog = AnchoredDialog::new(
+        AnchoredDialogKind::SnapToRoadAutomatically,
+        "Snap to road automatically?",
+    )
+    .with_close_button(&mut open);
+    let regions = dialog.regions();
+    dialog.show(
+        ui.ctx(),
+        DialogBody::new(|ui| {
+            regions.frozen_at_open(
                 ui,
-                DialogBody::new(|ui| {
+                SNAP_AUTO_PROMPT_BODY_REGION,
+                HeldBodyLines::what_the_content_took(),
+                |ui| {
                     ui.label(
-                "Snap to road can run automatically: every track you load and show on the map \
-                 is uploaded and matched without a click.",
-            );
+                        "Snap to road can run automatically: every track you load and show on \
+                         the map is uploaded and matched without a click.",
+                    );
                     ui.add_space(4.0);
                     ui.label("Your earlier acknowledgment still applies; uploads go to");
                     ui.monospace(server_url);
                     ui.add_space(4.0);
                     ui.label("Changeable anytime in the settings.");
-                }),
-                DialogActions::new(|ui| {
-                    if ui.button("Snap automatically").clicked() {
-                        choice = Some(SnapAutoChoice::Automatic);
-                    }
-                    if ui.button("Manual only").clicked() {
-                        choice = Some(SnapAutoChoice::ManualOnly);
-                    }
-                }),
+                },
             );
-        });
+        }),
+        DialogActions::new(|ui| {
+            dialog_button_row(ui, |ui| {
+                if ui.button("Snap automatically").clicked() {
+                    choice = Some(SnapAutoChoice::Automatic);
+                }
+                if ui.button("Manual only").clicked() {
+                    choice = Some(SnapAutoChoice::ManualOnly);
+                }
+            });
+        }),
+    );
     if !open {
         choice = Some(SnapAutoChoice::ManualOnly);
     }
     choice
 }
 
-/// Room for the token field between its label and the Apply button.
-const MAPBOX_TOKEN_DIALOG_MIN_WIDTH: f32 = 420.0;
+/// The region holding the token field and the two lines above it.
+const MAPBOX_TOKEN_BODY_REGION: &str = "mapbox_token_body";
 
 pub fn show_mapbox_token_dialog(
     ui: &egui::Ui,
@@ -1216,20 +1270,17 @@ pub fn show_mapbox_token_dialog(
     }
 
     let mut open = true;
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "The Mapbox token dialog has not moved to AnchoredDialog"
-    )]
-    let cancelled = Window::new("Mapbox API Token Required")
-        .collapsible(false)
-        .resizable(false)
-        .min_width(MAPBOX_TOKEN_DIALOG_MIN_WIDTH)
-        .open(&mut open)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ui.ctx(), |ui| {
-            dialog_body_above_buttons(
+    let dialog = AnchoredDialog::new(AnchoredDialogKind::MapboxToken, "Mapbox API Token Required")
+        .with_close_button(&mut open);
+    let regions = dialog.regions();
+    let cancelled = dialog.show(
+        ui.ctx(),
+        DialogBody::new(|ui| {
+            regions.frozen_at_open(
                 ui,
-                DialogBody::new(|ui| {
+                MAPBOX_TOKEN_BODY_REGION,
+                HeldBodyLines::what_the_content_took(),
+                |ui| {
                     ui.label("Satellite view requires a Mapbox API token");
                     ui.label("Get one free at mapbox.com");
                     ui.separator();
@@ -1240,13 +1291,16 @@ pub fn show_mapbox_token_dialog(
                             token_field.commit(map);
                         }
                     });
-                }),
-                DialogActions::new(|ui| ui.button("Cancel - use OpenStreetMap").clicked()),
-            )
-        });
+                },
+            );
+        }),
+        DialogActions::new(|ui| {
+            dialog_button_row(ui, |ui| ui.button("Cancel - use OpenStreetMap").clicked())
+        }),
+    );
 
     // The X button in the title bar is a cancel too.
-    if !open || cancelled.is_some_and(|response| response.inner == Some(true)) {
+    if !open || cancelled == Some(true) {
         map.set_layer(MapLayer::OpenStreetMap);
     }
 }
@@ -1450,13 +1504,13 @@ mod tests {
     use super::{
         CoveredDayCounts, DELETE_ARCHIVED_DAYS_TITLE, EnvironmentArchive, EnvironmentPruneChoice,
         EnvironmentPrunePrompt, ForceQuitChoice, LoadedLogs, MapLayer, MapboxTokenField, NavMap,
-        NodeKey, PERMANENT_DELETE_LABEL, PruneRequest, PruneScope, PrunedDays, RecordingDetails,
-        SnapScopeChoice, SnapScopeCount, SnapScopeCounts, TrackRef, files_fully_removed,
-        prune_scope_line, show_about_dialog, show_delete_confirmation,
-        show_environment_prune_confirmation, show_force_quit_confirmation,
-        show_load_warnings_dialog, show_mapbox_token_dialog, show_orphaned_event_markers_popup,
-        show_recording_details_dialog, show_snap_auto_prompt, show_snap_consent_dialog,
-        show_snap_replace_dialog, show_snap_scope_dialog, track_removals,
+        NodeKey, PERMANENT_DELETE_LABEL, PruneRequest, PruneScope, PrunedDays,
+        REMOVED_ITEMS_MOST_LINES, RecordingDetails, SnapScopeChoice, SnapScopeCount,
+        SnapScopeCounts, TrackRef, files_fully_removed, prune_scope_line, show_about_dialog,
+        show_delete_confirmation, show_environment_prune_confirmation,
+        show_force_quit_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
+        show_orphaned_event_markers_popup, show_recording_details_dialog, show_snap_auto_prompt,
+        show_snap_consent_dialog, show_snap_replace_dialog, show_snap_scope_dialog, track_removals,
     };
     use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
     use gt_side_panel::{DeleteConfirmState, TreeState};
@@ -1815,7 +1869,7 @@ mod tests {
         assert_eq!(harness.state().map.mapbox_token(), "typed");
     }
 
-    /// The dialog the satellite layer asks for a token in.
+    /// The dialog the satellite layer shows without a token.
     #[test]
     fn snapshot_the_mapbox_token_dialog() {
         let mut harness = token_dialog();
@@ -1963,25 +2017,68 @@ mod tests {
             .get_by_label_contains("the session is read-only");
     }
 
-    /// The confirmation over two tracks of a stored recording, with the
+    /// The confirmation over `count` tracks of one stored recording, with the
     /// permanent delete chosen.
-    #[test]
-    fn snapshot_the_remove_confirmation() {
+    fn remove_confirmation(count: usize) -> TestHarness<'static, DeleteConfirmationState> {
         let mut tree = TreeState::default();
         tree.delete_confirm = Some(DeleteConfirmState {
-            items: vec![track_key(0, 0), track_key(0, 1)],
+            items: (0..count).map(|ti| track_key(0, ti)).collect(),
             delete_permanently: true,
         });
         let mut harness = TestHarness::builder().size(DIALOG_VIEWPORT).ui_state(
             delete_confirmation_ui,
             DeleteConfirmationState {
                 tree,
-                loaded_files: make_loaded_files(&[(3, true)]),
+                loaded_files: make_loaded_files(&[(count + 1, true)]),
                 write_access: WriteAccess::Owner,
             },
         );
         harness.inner.run_steps(4);
+        harness
+    }
+
+    fn remove_confirmation_title(count: usize) -> String {
+        format!("Remove {count} items?")
+    }
+
+    #[test]
+    fn snapshot_the_remove_confirmation() {
+        let mut harness = remove_confirmation(2);
         harness.snapshot("remove_confirmation");
+    }
+
+    /// Items enough to fill the room the list caps at
+    /// [`REMOVED_ITEMS_MOST_LINES`].
+    const ITEMS_PAST_THE_CAPPED_ROOM: usize = 12;
+
+    const ITEMS_FAR_PAST_THE_CAPPED_ROOM: usize = 40;
+
+    /// The list past the room it caps at, scrolling inside that room.
+    #[test]
+    fn snapshot_the_remove_confirmation_past_the_capped_room() {
+        let mut harness = remove_confirmation(ITEMS_FAR_PAST_THE_CAPPED_ROOM);
+        harness.snapshot("remove_confirmation_past_the_capped_room");
+    }
+
+    #[test]
+    fn the_remove_confirmation_opens_at_one_height_for_every_list_past_the_capped_room() {
+        let past = remove_confirmation(ITEMS_PAST_THE_CAPPED_ROOM);
+        let far_past = remove_confirmation(ITEMS_FAR_PAST_THE_CAPPED_ROOM);
+
+        assert_eq!(
+            far_past
+                .inner
+                .window_rect(&remove_confirmation_title(ITEMS_FAR_PAST_THE_CAPPED_ROOM))
+                .expect("the remove confirmation is shown")
+                .size(),
+            past.inner
+                .window_rect(&remove_confirmation_title(ITEMS_PAST_THE_CAPPED_ROOM))
+                .expect("the remove confirmation is shown")
+                .size(),
+            "{ITEMS_FAR_PAST_THE_CAPPED_ROOM} removed items made the confirmation taller than \
+             {ITEMS_PAST_THE_CAPPED_ROOM} did: a list past the room it caps at \
+             {REMOVED_ITEMS_MOST_LINES} lines has to scroll inside that room"
+        );
     }
 
     fn track_key(fi: usize, ti: usize) -> NodeKey {
