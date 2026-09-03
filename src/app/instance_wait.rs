@@ -16,7 +16,7 @@
 use std::mem;
 use std::time::{Duration, Instant};
 
-use egui::{RichText, Window};
+use egui::RichText;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use gt_instance_lock::{
     DataDirectoryLock, DataDirectoryOwnership, InstanceState, InstanceStatusRead, StatusFreshness,
@@ -26,7 +26,8 @@ use gt_pending_writes::WriteKind;
 use gt_ui_theme::warning_amber;
 
 use super::App;
-use super::modals::{self, DialogActions, DialogBody};
+use super::anchored_dialog::{AnchoredDialog, AnchoredDialogKind, DialogRegions, HeldBodyLines};
+use super::modals::{self, DialogActionRow, DialogBody};
 use super::storage::{QueuedLoad, StorageOpen};
 
 /// How often the wait tries the data directory again, and with it re-reads
@@ -80,9 +81,31 @@ const OPENS_HERE_ONCE_THE_HOLDER_LETS_GO: &str =
 /// What the write recording a take-over registers under.
 const RECORDING_THE_TAKE_OVER: &str = "Recording the take-over";
 
-const WAIT_DIALOG_MIN_WIDTH: f32 = 360.0;
+/// The region of both dialogs that shows what the instance holding the data
+/// directory is doing. What it shows changes while either dialog is open: the
+/// wait re-reads the status file every [`DATA_DIRECTORY_RETRY_INTERVAL`].
+const HOLDER_STATE_REGION: &str = "holder_state";
 
-const TAKE_OVER_CONFIRMATION_MAX_WIDTH: f32 = 460.0;
+/// Lines [`HOLDER_STATE_REGION`] holds in the wait dialog: three for the
+/// longest of its statements, and two for the line marking the report as out
+/// of date, which appears once the other instance stops refreshing it.
+const WAIT_DIALOG_HOLDER_STATE_LEAST_LINES: u8 = 5;
+
+/// Lines [`HOLDER_STATE_REGION`] holds at most in the wait dialog: the five
+/// it reserves plus four for the writes a shutting-down instance lists. A
+/// status file that cannot be read gives an error, which scrolls inside that
+/// room.
+const WAIT_DIALOG_HOLDER_STATE_MOST_LINES: u8 = 9;
+
+/// Lines [`HOLDER_STATE_REGION`] holds in the take-over confirmation, which
+/// is wider than the wait dialog: two for the longest of its statements, and
+/// two for the line marking the report as out of date.
+const TAKE_OVER_HOLDER_STATE_LEAST_LINES: u8 = 4;
+
+/// Lines [`HOLDER_STATE_REGION`] holds at most in the take-over
+/// confirmation: the four it reserves plus four for the writes a
+/// shutting-down instance lists.
+const TAKE_OVER_HOLDER_STATE_MOST_LINES: u8 = 8;
 
 /// Why this instance does not have the data directory, as the wait last
 /// found it.
@@ -265,42 +288,31 @@ impl DataDirectoryWait {
             None => TAKE_OVER_BUTTON_HOVER.to_owned(),
         };
         let mut choice = WaitChoice::KeepWaiting;
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "The instance wait dialog has not moved to AnchoredDialog"
-        )]
-        Window::new(self.unavailable.dialog_title())
-            .collapsible(false)
-            .resizable(false)
-            .min_width(WAIT_DIALOG_MIN_WIDTH)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ui.ctx(), |ui| {
-                modals::dialog_body_above_actions(
-                    ui,
-                    DialogBody::new(|ui| self.unavailable.wait_dialog_ui(ui)),
-                    DialogActions::new(|ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.spinner();
-                            ui.label(RichText::new("Waiting for the data directory").weak());
-                            ui.add_space(8.0);
-                            if ui
-                                .button(TAKE_OVER_BUTTON_LABEL)
-                                .on_hover_text(&take_over_hover)
-                                .clicked()
-                            {
-                                self.confirming_take_over = true;
-                            }
-                            if ui
-                                .button(START_READ_ONLY_BUTTON_LABEL)
-                                .on_hover_text(START_READ_ONLY_BUTTON_HOVER)
-                                .clicked()
-                            {
-                                choice = WaitChoice::StartReadOnly;
-                            }
-                        });
-                    }),
-                );
-            });
+        let dialog = AnchoredDialog::new(
+            AnchoredDialogKind::WaitingForTheDataDirectory,
+            self.unavailable.dialog_title(),
+        );
+        let regions = dialog.regions();
+        dialog.show(
+            ui.ctx(),
+            DialogBody::new(|ui| self.unavailable.wait_dialog_ui(ui, regions)),
+            DialogActionRow::buttons(|ui| {
+                if ui
+                    .button(TAKE_OVER_BUTTON_LABEL)
+                    .on_hover_text(&take_over_hover)
+                    .clicked()
+                {
+                    self.confirming_take_over = true;
+                }
+                if ui
+                    .button(START_READ_ONLY_BUTTON_LABEL)
+                    .on_hover_text(START_READ_ONLY_BUTTON_HOVER)
+                    .clicked()
+                {
+                    choice = WaitChoice::StartReadOnly;
+                }
+            }),
+        );
         choice
     }
 }
@@ -358,7 +370,22 @@ impl DataDirectoryUnavailable {
         }
     }
 
-    fn wait_dialog_ui(&self, ui: &mut egui::Ui) {
+    fn wait_dialog_ui(&self, ui: &mut egui::Ui, regions: DialogRegions) {
+        regions.frozen_at_open(
+            ui,
+            HOLDER_STATE_REGION,
+            HeldBodyLines::at_least(WAIT_DIALOG_HOLDER_STATE_LEAST_LINES)
+                .and_at_most(WAIT_DIALOG_HOLDER_STATE_MOST_LINES),
+            |ui| self.holder_state_in_the_wait_dialog_ui(ui),
+        );
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(RichText::new("Waiting for the data directory").weak());
+        });
+    }
+
+    fn holder_state_in_the_wait_dialog_ui(&self, ui: &mut egui::Ui) {
         match self {
             Self::HeldByAnotherInstance(InstanceStatusRead::Status(status)) => match status.state {
                 InstanceState::Running => {
@@ -407,9 +434,19 @@ impl DataDirectoryUnavailable {
         self.freshness_note_ui(ui);
     }
 
+    fn take_over_confirmation_ui(&self, ui: &mut egui::Ui, regions: DialogRegions) {
+        regions.frozen_at_open(
+            ui,
+            HOLDER_STATE_REGION,
+            HeldBodyLines::at_least(TAKE_OVER_HOLDER_STATE_LEAST_LINES)
+                .and_at_most(TAKE_OVER_HOLDER_STATE_MOST_LINES),
+            |ui| self.holder_state_in_the_take_over_confirmation_ui(ui),
+        );
+    }
+
     /// What taking write access overrides, as the instance holding the data
     /// directory last reported it.
-    fn take_over_confirmation_ui(&self, ui: &mut egui::Ui) {
+    fn holder_state_in_the_take_over_confirmation_ui(&self, ui: &mut egui::Ui) {
         match self {
             Self::HeldByAnotherInstance(InstanceStatusRead::Status(status)) => match status.state {
                 InstanceState::Running => {
@@ -503,13 +540,13 @@ fn show_take_over_confirmation(
     ui: &egui::Ui,
     unavailable: &DataDirectoryUnavailable,
 ) -> Option<TakeOverChoice> {
-    modals::confirmation_dialog(
-        ui,
+    modals::anchored_confirmation_dialog(
+        ui.ctx(),
+        AnchoredDialogKind::TakeOverWriteAccess,
         TAKE_OVER_CONFIRMATION_TITLE,
-        TAKE_OVER_CONFIRMATION_MAX_WIDTH,
         TakeOverChoice::Cancel,
-        |ui| {
-            unavailable.take_over_confirmation_ui(ui);
+        |ui, regions| {
+            unavailable.take_over_confirmation_ui(ui, regions);
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(ICON_WARNING).color(warning_amber(ui.visuals().dark_mode)));

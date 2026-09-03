@@ -12,8 +12,9 @@ use gt_ui_theme::labels::LabelWithHover;
 use gt_ui_theme::warning_amber;
 use strum::{EnumCount, EnumIter};
 
+use crate::app::anchored_dialog::AnchoredDialogKind;
 use crate::app::history_db::{DeleteReason, HistoryWorker};
-use crate::app::modals::{self, DialogActions, DialogBody};
+use crate::app::modals::{self, DialogActionRow, DialogBody};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use crate::app::storage_controls;
 use crate::settings::StorageSettings;
@@ -41,6 +42,12 @@ pub(super) const DESTRUCTIVE_DELETE_HOVER: &str =
     "This cannot be undone. The original source files are unaffected.";
 
 const DELETE_HIDDEN_WINDOW_TITLE: &str = "Delete hidden data?";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DeleteHiddenTracksChoice {
+    Delete,
+    Cancel,
+}
 
 /// Floor on the listing's height, so a very short screen still shows part of
 /// the list.
@@ -205,10 +212,10 @@ impl PruneDialog {
                 // their own borrows of the dialog.
                 let previewed = self.preview.as_ref().map(Vec::len);
                 let preview_pending = self.preview_pending;
-                modals::dialog_body_above_buttons(
+                modals::dialog_body_above_the_action_row(
                     ui,
                     DialogBody::new(|ui| self.body_ui(ui)),
-                    DialogActions::new(|ui| match previewed {
+                    DialogActionRow::buttons(|ui| match previewed {
                         // A preview that found nothing, and one still being
                         // computed, leave nothing to act on.
                         Some(0) => {}
@@ -760,41 +767,46 @@ impl HistoryWindow {
             if hidden_count == 0 {
                 self.delete_hidden_confirm_open = false;
             } else {
-                let mut do_delete = false;
-                let mut cancel =
-                    ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-                #[expect(clippy::disallowed_methods, reason = "The delete-hidden-data confirmation has not moved to AnchoredDialog")]
-                Window::new(DELETE_HIDDEN_WINDOW_TITLE)
-                    .collapsible(false)
-                    .resizable(false)
-                    .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                    .show(ctx, |ui| {
+                let choice = modals::anchored_confirmation_dialog(
+                    ctx,
+                    AnchoredDialogKind::DeleteHiddenTracks,
+                    DELETE_HIDDEN_WINDOW_TITLE,
+                    DeleteHiddenTracksChoice::Cancel,
+                    |ui, _regions| {
                         let track_label = gt_fmt::pluralize(hidden_count, "track", "tracks");
-                        ui.label(format!(
-                            "{hidden_count} hidden {track_label} will be permanently removed from their recordings."
-                        ));
-                        ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            if ui
-                                .button(
-                                    RichText::new("Delete hidden tracks")
-                                        .color(warning_amber(ui.visuals().dark_mode)),
-                                )
-                                .on_hover_text(DESTRUCTIVE_DELETE_HOVER)
-                                .clicked()
-                            {
-                                do_delete = true;
-                            }
-                            if ui.button("Cancel").clicked() {
-                                cancel = true;
-                            }
-                        });
-                    });
-                if do_delete {
-                    worker.delete_hidden_tracks();
-                    self.delete_hidden_confirm_open = false;
-                } else if cancel {
-                    self.delete_hidden_confirm_open = false;
+                        let removal = format!(
+                            "{hidden_count} hidden {track_label} will be permanently removed from \
+                             their recordings."
+                        );
+                        ui.add(Label::new(removal).wrap());
+                    },
+                    |ui| {
+                        let mut choice = None;
+                        if ui
+                            .button(
+                                RichText::new("Delete hidden tracks")
+                                    .color(warning_amber(ui.visuals().dark_mode)),
+                            )
+                            .on_hover_text(DESTRUCTIVE_DELETE_HOVER)
+                            .clicked()
+                        {
+                            choice = Some(DeleteHiddenTracksChoice::Delete);
+                        }
+                        if ui.button("Cancel").clicked() {
+                            choice = Some(DeleteHiddenTracksChoice::Cancel);
+                        }
+                        choice
+                    },
+                );
+                match choice {
+                    Some(DeleteHiddenTracksChoice::Delete) => {
+                        worker.delete_hidden_tracks();
+                        self.delete_hidden_confirm_open = false;
+                    }
+                    Some(DeleteHiddenTracksChoice::Cancel) => {
+                        self.delete_hidden_confirm_open = false;
+                    }
+                    None => {}
                 }
             }
         }

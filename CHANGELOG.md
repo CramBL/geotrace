@@ -5,11 +5,14 @@
 ### Changed
 
 - **Interface:** The remove confirmation now scrolls its list of items inside the dialog when the remove takes more than ten.
+- **Interface:** The update prompt now puts its buttons at the bottom right, like every other dialog.
 - **Log Viewer:** The line table now draws each line's date and seconds in a quiet color and its hour and minute brighter where the clock moved on from the line above, and opens each new UTC day with a divider row naming the date.
 
 ### Fixed
 
 - **Interface:** Fixed the auto-prune confirmation and the "Track settings differ" prompt moving their buttons while they are open.
+- **Interface:** Fixed a short dialog opening with a gap between its text and its buttons.
+- **Interface:** Fixed the wait for a data directory another GeoTrace is using, and its take-over confirmation, moving their buttons while the other GeoTrace reports on itself.
 - **Interface:** Fixed the remove confirmation moving its controls when a log stored with a recording it removes finishes loading.
 - **Map & Tracks:** Fixed a track row's hover text drawing over the hover text of the row's snap trigger, coordinate warning icon or hidden snapped track hint.
 
