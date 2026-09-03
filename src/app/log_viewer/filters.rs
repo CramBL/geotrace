@@ -47,6 +47,11 @@ const CLEAR_EMPTY_HOVER: &str = "The live filter is empty already";
 
 const MATCH_COUNT_HOVER: &str = "Lines the filters show, of the log's entries";
 
+pub(super) const COLOR_SERVICES_AND_LEVELS_LABEL: &str = "Colour services and levels";
+
+const COLOR_SERVICES_AND_LEVELS_HOVER: &str = "Draw each service name in a colour of its own, and each error, warning and debug level in \
+     the colour of its severity";
+
 /// What the viewer says while a scan of the log is still running. U+2026
 /// HORIZONTAL ELLIPSIS marks the work in flight.
 pub(in crate::app) const PENDING_NOTE: &str = "Filtering…";
@@ -205,6 +210,11 @@ impl LogViewerWindow {
             {
                 edit = Some(FilterEdit::ClearLiveFilter);
             }
+            ui.checkbox(
+                &mut self.color_services_and_levels,
+                COLOR_SERVICES_AND_LEVELS_LABEL,
+            )
+            .on_hover_text(COLOR_SERVICES_AND_LEVELS_HOVER);
             if let Some(note) = pending_note {
                 ui.label(RichText::new(note).weak());
             }

@@ -114,6 +114,8 @@ headlessly
 heatmap
 heatmaps
 Heliographic
+hostname
+hostnames
 hoverable
 impls
 injectable

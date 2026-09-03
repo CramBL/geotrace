@@ -406,6 +406,35 @@ fn a_line_that_loses_its_position_takes_its_timestamp_down_from_strong() {
     );
 }
 
+/// The colouring is one tickbox over the whole table: switched off, a service
+/// name draws in the colour the rest of its line does.
+#[test]
+fn switching_off_the_colouring_draws_a_service_like_the_rest_of_its_line() {
+    let mut harness = rendering_harness_with(vec![recording("walk.gtd", 55.0)]);
+    let pixels_per_point = harness.inner.ctx.pixels_per_point();
+    let message = harness
+        .inner
+        .topmost_matching(By::new().label(FIRST_ENTRY_MESSAGE))
+        .rect();
+    let coloured = harness.inner.render().expect("the harness renders a frame");
+
+    harness
+        .inner
+        .get_by_label(filters::COLOR_SERVICES_AND_LEVELS_LABEL)
+        .click();
+    harness.inner.run_steps(2);
+
+    assert!(
+        !harness.state().viewer.color_services_and_levels,
+        "the tickbox switched the colouring off"
+    );
+    let plain = harness.inner.render().expect("the harness renders a frame");
+    assert!(
+        snapshot_harness::pixels_differ(&coloured, &plain, message, pixels_per_point),
+        "the service name drew in its own colour while the tickbox was ticked"
+    );
+}
+
 /// The order-anomaly section is drawn only for a log the parse found one in,
 /// naming the line the unexplained backwards step lands on.
 #[test]
@@ -1340,6 +1369,15 @@ fn switch_chip_mode(harness: &mut Harness<ViewerState>, index: usize) {
     run_until_the_scans_land(harness);
 }
 
+/// Clicks the tickbox of the chip at `index`. The filter row's colouring
+/// tickbox is drawn above the chips and comes before every chip.
+fn toggle_chip(harness: &mut Harness<ViewerState>, index: usize) {
+    harness
+        .nth_matching(By::new().role(Role::CheckBox), index + 1)
+        .click();
+    run_until_the_scans_land(harness);
+}
+
 /// Clicks the ✕ of the chip at `index`. The selector row's unload button
 /// carries the same glyph and comes before every chip.
 fn remove_chip(harness: &mut Harness<ViewerState>, index: usize) {
@@ -1502,12 +1540,10 @@ fn unticking_a_chip_takes_it_out_of_the_table_and_ticking_it_puts_it_back() {
     switch_chip_mode(&mut harness, 0);
     assert_eq!(match_count(&harness), "2 of 6");
 
-    harness.get(By::new().role(Role::CheckBox)).click();
-    run_until_the_scans_land(&mut harness);
+    toggle_chip(&mut harness, 0);
     assert_eq!(match_count(&harness), "6 of 6");
 
-    harness.get(By::new().role(Role::CheckBox)).click();
-    run_until_the_scans_land(&mut harness);
+    toggle_chip(&mut harness, 0);
     assert_eq!(
         match_count(&harness),
         "2 of 6",

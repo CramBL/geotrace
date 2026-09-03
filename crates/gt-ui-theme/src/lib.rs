@@ -866,6 +866,55 @@ pub const LOG_LAYER_SLOTS: [ThemedColor; 5] = [
     ),
 ];
 
+/// The colours the log viewer draws service names in, indexed by the slot each
+/// service of a log holds.
+///
+/// Low-saturation hues throughout: a service name is a run inside a line of
+/// text. They are held apart from the layer slots above, which draw on the
+/// map, and from the semantic amber, red and green a level draws in.
+pub const LOG_SERVICE_SLOTS: [ThemedColor; 6] = [
+    // Slate blue.
+    ThemedColor::new(
+        Color32::from_rgb(128, 160, 220),
+        Color32::from_rgb(54, 84, 150),
+    ),
+    // Teal.
+    ThemedColor::new(
+        Color32::from_rgb(96, 190, 180),
+        Color32::from_rgb(20, 120, 110),
+    ),
+    // Olive.
+    ThemedColor::new(
+        Color32::from_rgb(170, 180, 100),
+        Color32::from_rgb(100, 110, 30),
+    ),
+    // Mauve.
+    ThemedColor::new(
+        Color32::from_rgb(190, 150, 190),
+        Color32::from_rgb(120, 70, 120),
+    ),
+    // Dusty cyan.
+    ThemedColor::new(
+        Color32::from_rgb(120, 190, 210),
+        Color32::from_rgb(30, 110, 140),
+    ),
+    // Warm grey.
+    ThemedColor::new(
+        Color32::from_rgb(190, 160, 140),
+        Color32::from_rgb(122, 90, 60),
+    ),
+];
+
+/// The colour of service palette slot `slot_index`. Slots past the last one
+/// cycle the palette, as the seventh and later service of a log does.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "the slot is reduced modulo the palette length, so always in bounds"
+)]
+pub fn log_service_slot_color(slot_index: usize) -> ThemedColor {
+    LOG_SERVICE_SLOTS[slot_index % LOG_SERVICE_SLOTS.len()]
+}
+
 /// Outline tone of the map's log hexagons. One dark tone separates a glyph
 /// from the track line and the tiles on either theme: the background here is
 /// the map's tiles, not the app's.
@@ -1063,6 +1112,9 @@ mod tests {
         for (slot, color) in LOG_LAYER_SLOTS.iter().enumerate() {
             all.push((format!("LOG_LAYER_SLOTS[{slot}]"), *color));
         }
+        for (slot, color) in LOG_SERVICE_SLOTS.iter().enumerate() {
+            all.push((format!("LOG_SERVICE_SLOTS[{slot}]"), *color));
+        }
         all
     }
 
@@ -1169,6 +1221,30 @@ mod tests {
     fn no_layer_colour_repeats_a_semantic_or_track_colour() {
         for color in LOG_LAYER_SLOTS {
             assert!(!TRACK_COLORS.contains(&color.dark()));
+            assert_ne!(color.dark(), WARNING_AMBER);
+            assert_ne!(color.dark(), ERROR_INDICATOR);
+            assert_ne!(color.dark(), SUCCESS_GREEN);
+        }
+    }
+
+    /// The seventh service of a log takes a slot past the palette, and draws
+    /// in the first colour again.
+    #[test]
+    fn a_service_slot_past_the_palette_cycles_it() {
+        assert_eq!(log_service_slot_color(0), log_service_slot_color(6));
+        assert_eq!(log_service_slot_color(1), log_service_slot_color(7));
+        assert_ne!(log_service_slot_color(0), log_service_slot_color(1));
+    }
+
+    /// A service name is drawn in the same table as a level token, a filter
+    /// match and a layer chip's gutter bar: none of those may be mistaken for
+    /// a service.
+    #[test]
+    fn no_service_colour_repeats_a_layer_semantic_or_track_colour() {
+        for color in LOG_SERVICE_SLOTS {
+            assert!(!TRACK_COLORS.contains(&color.dark()));
+            assert!(!LOG_LAYER_SLOTS.contains(&color));
+            assert_ne!(color, LOG_LIVE_FILTER);
             assert_ne!(color.dark(), WARNING_AMBER);
             assert_ne!(color.dark(), ERROR_INDICATOR);
             assert_ne!(color.dark(), SUCCESS_GREEN);

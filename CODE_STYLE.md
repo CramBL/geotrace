@@ -288,6 +288,9 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 | **environment data** | The four day-keyed archives downloaded for the days a recording spans: aircraft interference, geomagnetic indices, ionospheric TEC and solar flares. Their storage is managed together on Settings' Application page. Not "space weather data" - that names the warning. | `EnvironmentArchive`, `ArchiveUsage`, `app::environment_storage` |
 | **flare span** | The stretch from a solar flare's published begin to its end, closed off at the peak where the catalog left the decay open. Shaded across the plot while its peak marker or the solar flare chip is hovered. Not "duration" or "band". | `FlareSpan`, `FlareSpanMarking`, `solar_flare_span_fill` |
 | **attachment** | A log stored with a recording in the history database, restored when that recording is opened again. Not "saved log" or "bound log". | `LogAttachmentRef`, `AttachedLog`, `Store::logs_path` |
+| **service** | What wrote a log entry, named at the start of the entry's message up to its colon (`hal-gnss:`, `systemd[1223]:`). The process id is no part of it: one service keeps one colour across the process ids it logs under. Not "unit" or "tag". | `RecognisedService`, `services_by_first_appearance`, `ServiceCount` |
+| **level** | The severity an entry's message states, as a bracketed token (`[WARN can::session_pool]`) or a bare word before a colon (`INFO:`). Not "severity" on its own, and not "log level" - that is the application's own logging. | `LogLevelKind`, `RecognisedLevel` |
+| **hostname** | The host an entry came from, which `journalctl` writes before the service on every line and a device export leaves out. Decided once for the whole log. Not "host" or "machine". | `HostnameColumn`, `RecognisedMessage::hostname` |
 
 Terms to avoid and their replacements:
 
