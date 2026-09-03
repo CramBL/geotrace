@@ -7,7 +7,8 @@
 
 use std::ops::RangeInclusive;
 
-use egui::{Color32, Pos2, Shape, Stroke, Ui};
+use chrono::NaiveDate;
+use egui::{Color32, Pos2, RichText, Shape, Stroke, Ui};
 use gt_jam::dataset::JamDataset;
 use gt_jam::wire::HexObservation;
 use gt_types::mercator::MercPoint;
@@ -17,7 +18,7 @@ use h3o::{CellIndex, LatLng};
 
 use walkers::{MapMemory, Plugin, Projector};
 
-use crate::hover_labels::TOOLTIP_POINTER_GAP_PX;
+use crate::hover_labels::{HoverLabelEntry, HoverLabelStack};
 use crate::transform::MercTransform;
 
 /// Aircraft below which a cell's share carries no weight and the cell draws
@@ -150,14 +151,52 @@ fn geographic_window(bounds: gt_types::MercBounds) -> (RangeInclusive<f64>, Rang
 /// sit beneath the track ink.
 pub(crate) struct JammingRenderer<'a> {
     dataset: &'a JamDataset,
-    hover_enabled: bool,
+    /// Where the cell under the pointer puts its label, under the labels of
+    /// every layer drawn over the cells.
+    hover_labels: &'a HoverLabelStack,
 }
 
 impl<'a> JammingRenderer<'a> {
-    pub(crate) const fn new(dataset: &'a JamDataset, hover_enabled: bool) -> Self {
+    pub(crate) const fn new(dataset: &'a JamDataset, hover_labels: &'a HoverLabelStack) -> Self {
         Self {
             dataset,
-            hover_enabled,
+            hover_labels,
+        }
+    }
+}
+
+/// The tally the cell under the pointer holds, as its label states it.
+pub(crate) struct InterferenceCellLabel {
+    observation: HexObservation,
+    low_sample: bool,
+    day: NaiveDate,
+}
+
+impl InterferenceCellLabel {
+    fn of(cell: &CellShape, day: NaiveDate) -> Self {
+        Self {
+            observation: cell.observation,
+            low_sample: cell.low_sample,
+            day,
+        }
+    }
+
+    /// The cell hover shows the counts behind the colour. The display
+    /// toggle's own hover describes the dataset.
+    pub(crate) fn show(&self, ui: &mut Ui) {
+        let Some(rate) = self.observation.rate() else {
+            return;
+        };
+        for line in gt_jam::text::cell_summary(
+            &self.day.to_string(),
+            self.observation.good,
+            self.observation.bad,
+            rate.percent(),
+        ) {
+            ui.label(line);
+        }
+        if self.low_sample {
+            ui.label(RichText::new(gt_jam::text::LOW_SAMPLE_CAVEAT).italics());
         }
     }
 }
@@ -179,25 +218,13 @@ impl Plugin for JammingRenderer<'_> {
         );
         draw_cells(ui, &cells);
 
-        // Cell hover is disabled while a track element is hovered: a cell
-        // covers the whole viewport at track zoom.
-        if !self.hover_enabled {
-            return;
-        }
         let Some(pointer) = response.hovered().then(|| response.hover_pos()).flatten() else {
             return;
         };
         if let Some(cell) = cell_at_pointer(&cells, pointer) {
-            // Anchored at the pointer: `response` is the whole map, so a
-            // response-anchored tooltip lands in the map's corner.
-            egui::Tooltip::always_open(
-                ui.ctx().clone(),
-                ui.layer_id(),
-                response.id,
-                egui::PopupAnchor::Pointer,
-            )
-            .gap(TOOLTIP_POINTER_GAP_PX)
-            .show(|ui| cell_tooltip(ui, cell, self.dataset.day()));
+            self.hover_labels.push(HoverLabelEntry::InterferenceCell(
+                InterferenceCellLabel::of(cell, self.dataset.day()),
+            ));
         }
     }
 }
@@ -216,26 +243,6 @@ fn contains_point(polygon: &[Pos2], point: Pos2) -> bool {
         return false;
     }
     inward_edges(polygon).all(|(vertex, inward)| (point - vertex).dot(inward) >= 0.0)
-}
-
-/// The cell hover shows the counts behind the colour. The display toggle's own
-/// hover describes the dataset.
-fn cell_tooltip(ui: &mut Ui, cell: &CellShape, day: chrono::NaiveDate) {
-    let observation = &cell.observation;
-    let Some(rate) = observation.rate() else {
-        return;
-    };
-    for line in gt_jam::text::cell_summary(
-        &day.to_string(),
-        observation.good,
-        observation.bad,
-        rate.percent(),
-    ) {
-        ui.label(line);
-    }
-    if cell.low_sample {
-        ui.label(egui::RichText::new(gt_jam::text::LOW_SAMPLE_CAVEAT).italics());
-    }
 }
 
 /// Paint the overlay beneath the track ink.
@@ -357,7 +364,6 @@ fn bounding_rect(outline: &[Pos2]) -> Option<egui::Rect> {
 mod tests {
     use std::str::FromStr as _;
 
-    use chrono::NaiveDate;
     use h3o::LatLng;
     use rstest::rstest;
 

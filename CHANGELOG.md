@@ -12,6 +12,7 @@
 - **Interface:** The remove confirmation now scrolls its list of items inside the dialog when the remove takes more than ten.
 - **Interface:** The update prompt now puts its buttons at the bottom right, like every other dialog.
 - **Log Viewer:** The line table now draws each line's date and seconds in a quiet color and its hour and minute brighter where the clock moved on from the line above, and opens each new UTC day with a divider row naming the date.
+- **Map & Tracks:** The map now stacks the hover text of everything under the pointer, the topmost layer's first, and shows the snap-to-road hover text in the map's bottom-left corner whenever the pointer is on a snapped track.
 
 ### Fixed
 

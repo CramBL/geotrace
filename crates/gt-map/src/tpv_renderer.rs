@@ -1,6 +1,6 @@
 use egui::epaint::{PathShape, PathStroke};
-use egui::{Color32, PopupAnchor, Pos2, Stroke, Ui, Vec2};
-use egui::{Grid, RichText, ScrollArea, Tooltip};
+use egui::{Color32, Pos2, Stroke, Ui, Vec2};
+use egui::{Grid, RichText, ScrollArea};
 use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::CHECK as ICON_CHECK;
 use gt_filter::{self as filter, GlobalFilter};
@@ -24,7 +24,6 @@ use uom::si::f64::Angle;
 use uom::si::length::meter;
 
 use crate::icon_mesh::{IconId, IconInstance, IconMeshBatch, IconMeshLibrary};
-use crate::recording_labels::RecordingLabels;
 use crate::transform::MapScale;
 
 /// Local on-screen fix spacing, in units of the icon size, at which a fix
@@ -322,52 +321,6 @@ pub(crate) fn draw_track_icons(
         );
     }
     batch.paint(ui.painter());
-}
-
-/// Show the hover tooltip for the TPV point at `point_ref`. When the point
-/// lies inside a query match, `match_header` renders the match context above
-/// the point table.
-pub(crate) fn show_tooltip(
-    ui: &Ui,
-    files: &[LoadedFile],
-    recording_labels: RecordingLabels<'_>,
-    point_ref: DataPointRef,
-    match_header: Option<impl FnOnce(&mut Ui)>,
-) {
-    let Some(file) = point_ref.track.fi.get(files) else {
-        return;
-    };
-    let Some(track) = point_ref.track.index.get(&file.tracks) else {
-        return;
-    };
-    let Some(point) = track
-        .placed_points()
-        .and_then(|placed| placed.get(point_ref.point_index.as_usize()))
-    else {
-        return;
-    };
-    let tooltip_id = ui
-        .id()
-        .with("tpv_hover")
-        .with(point_ref.track)
-        .with(point_ref.point_index);
-    Tooltip::always_open(
-        ui.ctx().clone(),
-        ui.layer_id(),
-        tooltip_id,
-        PopupAnchor::Pointer,
-    )
-    .show(|ui| {
-        if let Some(header) = match_header {
-            header(ui);
-        }
-        show_hover_table(
-            ui,
-            point,
-            &SkySection::resolve(track, point_ref.point_index),
-            recording_labels.name_when_several_files_loaded(point_ref.track.fi),
-        );
-    });
 }
 
 /// The sky column of the hover badge.

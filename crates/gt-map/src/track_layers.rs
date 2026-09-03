@@ -8,8 +8,8 @@
 
 use egui::{Color32, Response, Stroke, Ui};
 use gt_filter::GlobalFilter;
-use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef};
-use gt_ui_types::{DrawLayerMask, HighlightScope, MapHighlight, QueryMatches, SkyGlyphVariant};
+use gt_types::{FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef};
+use gt_ui_types::{DrawLayerMask, MapHighlight, QueryMatches, SkyGlyphVariant};
 use rustc_hash::FxHashMap;
 use walkers::{MapMemory, Plugin, Projector};
 
@@ -18,7 +18,6 @@ use crate::icon_mesh::IconMeshLibrary;
 use crate::match_reveal::HaloStyle;
 use crate::polyline::{CULL_MARGIN_PX, VisiblePath, visible_path};
 use crate::query_match_renderer;
-use crate::recording_labels::RecordingLabels;
 use crate::sat_labels::{self, LabelSelection};
 use crate::sky_glyph_renderer::{self, GlyphSelection};
 use crate::tpv_renderer::{
@@ -133,10 +132,7 @@ pub struct TrackLayers<'a> {
     sat_label_scratch: &'a mut LabelSelection,
     /// Reused decimation scratch for the sky-glyph selection.
     sky_glyph_scratch: &'a mut GlyphSelection,
-    recording_labels: RecordingLabels<'a>,
 }
-
-impl<'a> TrackLayers<'a> {}
 
 impl Plugin for TrackLayers<'_> {
     fn run(
@@ -244,7 +240,7 @@ impl Plugin for TrackLayers<'_> {
             );
         }
 
-        self.show_hover_overlays(ui, &style, &transform);
+        tpv_renderer::draw_plot_hover_overlay(ui, self.files, self.highlight, &style, &transform);
     }
 }
 
@@ -649,38 +645,6 @@ impl<'a> TrackLayers<'a> {
                 tpv_renderer::draw_sat_labels(ui, geo.track, label_indices, style, transform);
             }
         }
-    }
-
-    /// Show the hover artifacts that sit on top of all layers: the TPV
-    /// tooltip for the hovered point (set by NavMap the previous frame) and
-    /// the plot-cursor cross-highlight ring.
-    fn show_hover_overlays(&self, ui: &Ui, style: &TpvDrawStyle, transform: &MercTransform) {
-        if let Some(HighlightScope::Point(r)) = self.highlight.hover
-            && r.category == DataCategory::Tpv
-            && self
-                .highlight
-                .shows_hover_label(r, ui.ctx().any_popup_open())
-        {
-            // Hovering a matched point adds the match context above the
-            // standard point table.
-            let match_header = self.query_matches.and_then(|matches| {
-                let range = matches
-                    .header_range(r.track, r.point_index.as_usize())?
-                    .clone();
-                Some(move |ui: &mut Ui| {
-                    query_match_renderer::match_header_ui(
-                        ui,
-                        self.files,
-                        r.track,
-                        &range,
-                        matches.stale,
-                    );
-                })
-            });
-            tpv_renderer::show_tooltip(ui, self.files, self.recording_labels, r, match_header);
-        }
-
-        tpv_renderer::draw_plot_hover_overlay(ui, self.files, self.highlight, style, transform);
     }
 }
 

@@ -1,8 +1,10 @@
-//! Hover and disambiguation label UI shared by the map's hit-test layer:
-//! compound multi-hover labels, candidate resolution, and row rendering
-//! for the click-disambiguation popup.
+//! The map's hover labels: the stack every layer under the pointer writes
+//! into, the compound label several recorded elements share, candidate
+//! resolution, and the rows of the click-disambiguation popup.
 
-use egui::Frame;
+use std::cell::RefCell;
+
+use egui::{Frame, PopupAnchor, Style, Tooltip};
 use egui_phosphor::regular::ARROWS_SPLIT as ICON_ARROWS_SPLIT;
 use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
 use egui_phosphor::regular::FLAG as ICON_FLAG;
@@ -12,53 +14,249 @@ use gt_types::{
     PointIdx,
 };
 use gt_ui_theme::EM_DASH;
-use gt_ui_types::{DataPointRef, HoverCandidates};
+use gt_ui_types::{DataPointRef, HoverCandidates, MapHighlight, QueryMatches};
 
+use crate::jamming_renderer::InterferenceCellLabel;
+use crate::log_match_renderer::LogHexagonLabel;
 use crate::recording_labels::RecordingLabels;
+use crate::tec_renderer::TecNodeLabel;
+use crate::{
+    event_marker_renderer, generated_marker_renderer, marker_renderer, query_match_renderer,
+    tpv_renderer,
+};
 
-/// Which map layer owns the pointer, determining whose hover label draws.
-///
-/// Recorded elements come first, then the log hexagons over the track line,
-/// then the snapped track, then the interference cells beneath all of them: a
-/// layer yields to everything above it so only one hover label draws at a
-/// time. The flags describe the previous frame, since a layer's own hit test
-/// runs after the layers beneath it have already drawn.
-#[derive(Clone, Copy, Default)]
-pub(crate) struct PointerOwnership {
-    pub(crate) recorded_element_hovered: bool,
-    /// Whether a marker was under the pointer, whose pin draws over the log
-    /// hexagons and takes the hover from them.
-    pub(crate) marker_hovered: bool,
-    pub(crate) snapped_edge_tooltip_shown: bool,
-    /// Whether the interference layer is drawing, whose cells sit over the TEC
-    /// grid and take the hover in its place.
-    pub(crate) interference_layer_drawn: bool,
+/// The parent widget id the stacked labels share, which is what makes egui
+/// place each of them below the ones already shown. It is the stack's own and
+/// not the map response's: the snapped edge's label is anchored at that
+/// response, and would otherwise push the stack below the map.
+const HOVER_LABEL_STACK_ID: &str = "map_hover_label_stack";
+
+/// The map layer a hover label comes from. The declaration order is the
+/// order the map registers its plugins in, reversed: the marker pins drawn
+/// last are at the top of the stack and the TEC grid drawn first at its
+/// bottom.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum HoverLabelLayer {
+    Marker,
+    LogHexagon,
+    Fix,
+    InterferenceCell,
+    TecNode,
 }
 
-impl PointerOwnership {
-    pub(crate) fn snapped_track_hover_enabled(self) -> bool {
-        !self.recorded_element_hovered
+/// What the stack reads a recorded element's label out of once the map has
+/// drawn.
+#[derive(Clone, Copy)]
+pub(crate) struct HoverLabelSources<'a> {
+    pub(crate) files: &'a [LoadedFile],
+    pub(crate) recording_labels: RecordingLabels<'a>,
+    pub(crate) query_matches: Option<&'a QueryMatches>,
+}
+
+impl HoverLabelSources<'_> {
+    /// The header of the match a hovered fix lies in, above that fix's table.
+    fn show_match_header(self, ui: &mut egui::Ui, candidate: DataPointRef) {
+        let Some(matches) = self.query_matches else {
+            return;
+        };
+        let Some(range) = matches.header_range(candidate.track, candidate.point_index.as_usize())
+        else {
+            return;
+        };
+        query_match_renderer::match_header_ui(
+            ui,
+            self.files,
+            candidate.track,
+            range,
+            matches.stale,
+        );
+    }
+}
+
+/// One layer's label, holding what that layer found under the pointer.
+pub(crate) enum HoverLabelEntry {
+    RecordedElement(RecordedElementLabel),
+    LogHexagon(LogHexagonLabel),
+    InterferenceCell(InterferenceCellLabel),
+    TecNode(TecNodeLabel),
+}
+
+impl HoverLabelEntry {
+    fn layer(&self) -> HoverLabelLayer {
+        match self {
+            Self::RecordedElement(RecordedElementLabel::Compound(_)) => HoverLabelLayer::Marker,
+            Self::RecordedElement(RecordedElementLabel::One(candidate)) => {
+                match candidate.category {
+                    DataCategory::Tpv | DataCategory::SatelliteReport => HoverLabelLayer::Fix,
+                    DataCategory::EventMarker
+                    | DataCategory::CustomMarker
+                    | DataCategory::GeneratedMarker
+                    | DataCategory::Track => HoverLabelLayer::Marker,
+                }
+            }
+            Self::LogHexagon(_) => HoverLabelLayer::LogHexagon,
+            Self::InterferenceCell(_) => HoverLabelLayer::InterferenceCell,
+            Self::TecNode(_) => HoverLabelLayer::TecNode,
+        }
     }
 
-    pub(crate) fn log_hexagon_hover_enabled(self) -> bool {
-        !self.marker_hovered
+    /// The frame the stack draws this entry's tooltip in. The compound label
+    /// draws a card per element it stands for, and takes none of its own.
+    fn frame(&self, style: &Style) -> Frame {
+        match self {
+            Self::RecordedElement(RecordedElementLabel::Compound(_)) => Frame::NONE,
+            Self::RecordedElement(RecordedElementLabel::One(_))
+            | Self::LogHexagon(_)
+            | Self::InterferenceCell(_)
+            | Self::TecNode(_) => Frame::popup(style),
+        }
     }
 
-    pub(crate) fn jamming_cell_hover_enabled(self) -> bool {
-        !self.recorded_element_hovered && !self.snapped_edge_tooltip_shown
+    fn show(self, ui: &mut egui::Ui, sources: HoverLabelSources<'_>) {
+        match self {
+            Self::RecordedElement(label) => label.show(ui, sources),
+            Self::LogHexagon(label) => label.show(ui),
+            Self::InterferenceCell(label) => label.show(ui),
+            Self::TecNode(label) => label.show(ui),
+        }
+    }
+}
+
+/// What the recorded elements under the pointer show: the compound label when
+/// several of them are there, and the one element's own label otherwise.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RecordedElementLabel {
+    Compound(HoverCandidates),
+    One(DataPointRef),
+}
+
+impl RecordedElementLabel {
+    fn show(self, ui: &mut egui::Ui, sources: HoverLabelSources<'_>) {
+        match self {
+            Self::Compound(candidates) => {
+                draw_multi_hover_label_contents(
+                    ui,
+                    candidates,
+                    sources.files,
+                    sources.recording_labels,
+                );
+            }
+            Self::One(candidate) => show_element_label(ui, candidate, sources),
+        }
+    }
+}
+
+/// The label of the one recorded element under the pointer, as its own
+/// renderer writes it.
+fn show_element_label(ui: &mut egui::Ui, candidate: DataPointRef, sources: HoverLabelSources<'_>) {
+    let recording_name = sources
+        .recording_labels
+        .name_when_several_files_loaded(candidate.track.fi);
+    match resolve_candidate(candidate, sources.files) {
+        None => {}
+        Some(ResolvedCandidate::Tpv {
+            point,
+            track,
+            point_index,
+        }) => {
+            sources.show_match_header(ui, candidate);
+            tpv_renderer::show_hover_table(
+                ui,
+                point,
+                &tpv_renderer::SkySection::resolve(track, point_index),
+                recording_name,
+            );
+        }
+        Some(ResolvedCandidate::EventMarker(marker)) => {
+            event_marker_renderer::show_hover_label(ui, marker);
+        }
+        Some(ResolvedCandidate::CustomMarker(marker)) => {
+            marker_renderer::show_hover_label(ui, marker);
+        }
+        Some(ResolvedCandidate::GeneratedMarker { marker, track }) => {
+            generated_marker_renderer::show_hover_label(ui, track, marker, recording_name);
+        }
+    }
+}
+
+/// Which popups stand between an element under the pointer and its label.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct OpenPopups {
+    /// The map's own disambiguation popup, which lists the candidates a click
+    /// could not resolve.
+    pub(crate) disambiguation: bool,
+    /// Any egui popup, which the map's context menu is one of.
+    pub(crate) egui_popup: bool,
+}
+
+/// Which recorded element's label the stack takes this frame, and `None`
+/// where none of them shows one.
+///
+/// An individual label states what [`MapHighlight::hover_candidates`] holds,
+/// which is the previous frame's hit test. `current_candidates` are this
+/// frame's. The two kinds of label are never drawn together: the compound
+/// label replaces the individual ones only once both frames have several
+/// elements under the pointer.
+pub(crate) fn recorded_element_label(
+    highlight: &MapHighlight,
+    current_candidates: HoverCandidates,
+    popups: OpenPopups,
+) -> Option<RecordedElementLabel> {
+    if current_candidates.is_ambiguous()
+        && highlight.suppress_hover_labels
+        && !popups.disambiguation
+    {
+        return Some(RecordedElementLabel::Compound(current_candidates));
+    }
+    let candidate = highlight.hover_candidates.primary()?;
+    highlight
+        .shows_hover_label(candidate, popups.egui_popup)
+        .then_some(RecordedElementLabel::One(candidate))
+}
+
+/// The labels one frame has under the pointer: the overlay plugins push while
+/// they draw, and the map pushes the recorded element's own once its hit test
+/// has run.
+#[derive(Default)]
+pub(crate) struct HoverLabelStack {
+    entries: RefCell<Vec<HoverLabelEntry>>,
+}
+
+impl HoverLabelStack {
+    pub(crate) fn push(&self, entry: HoverLabelEntry) {
+        self.entries.borrow_mut().push(entry);
     }
 
-    pub(crate) fn tec_node_hover_enabled(self) -> bool {
-        self.jamming_cell_hover_enabled() && !self.interference_layer_drawn
+    /// Draws the frame's labels stacked at the pointer, the topmost layer's
+    /// first, and empties the stack for the next frame.
+    ///
+    /// The call order is the stacking order: egui places each further
+    /// tooltip of one parent widget below the bounding rect of the ones
+    /// already shown for it. A stack too tall for the room below the pointer
+    /// is cut off by the screen.
+    pub(crate) fn show_at_the_pointer(&self, ui: &egui::Ui, sources: HoverLabelSources<'_>) {
+        let mut entries = self.entries.take();
+        entries.sort_by_key(HoverLabelEntry::layer);
+        for entry in entries {
+            let mut tooltip = Tooltip::always_open(
+                ui.ctx().clone(),
+                ui.layer_id(),
+                egui::Id::new(HOVER_LABEL_STACK_ID),
+                PopupAnchor::Pointer,
+            )
+            .gap(TOOLTIP_POINTER_GAP_PX);
+            tooltip.popup = tooltip.popup.frame(entry.frame(ui.style()));
+            tooltip.show(|ui| entry.show(ui, sources));
+        }
     }
 }
 
 /// Spacing between an icon and the text following it in labels.
 const ICON_GAP: &str = "  ";
 
-/// Gap between the pointer and a tooltip anchored at it, matching egui's own
-/// tooltips.
-pub(crate) const TOOLTIP_POINTER_GAP_PX: f32 = 12.0;
+/// Gap between the pointer and the first label of the stack, and between one
+/// stacked label and the next.
+const TOOLTIP_POINTER_GAP_PX: f32 = 12.0;
 
 /// Alpha of the hover band drawn over a sky-plot highlight target, low enough
 /// to keep the text underneath legible.
@@ -110,27 +308,11 @@ fn paint_hover_band(ui: &egui::Ui, rect: egui::Rect) {
     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
 }
 
-/// Returns `true` when the multi-hover compound label should be drawn.
-///
-/// False on the transition frame so the compound label and the individual
-/// renderer tooltips never appear simultaneously.
-#[expect(
-    clippy::fn_params_excessive_bools,
-    reason = "three independent boolean inputs to the guard"
-)]
-pub(crate) fn should_show_compound_label(
-    current_multi_hover: bool,
-    disambig_open: bool,
-    suppress_hover_labels: bool,
-) -> bool {
-    current_multi_hover && !disambig_open && suppress_hover_labels
-}
-
 /// Renders the sections of a multi-hover stacked label into `ui`.
 ///
 /// Each section is wrapped in its own `Frame::popup` so the items appear as
-/// distinct opaque cards. The caller should NOT wrap this in an outer frame,
-/// the popup frames provide all the visual containment needed.
+/// distinct opaque cards, which is the containment they need: the caller adds
+/// no frame of its own around them.
 pub(crate) fn draw_multi_hover_label_contents(
     ui: &mut egui::Ui,
     candidates: HoverCandidates,
@@ -150,7 +332,12 @@ enum ResolvedCandidate<'a> {
         track: &'a LoadedTrack,
         point_index: PointIdx,
     },
-    GeneratedMarker(&'a GeneratedMarker),
+    GeneratedMarker {
+        marker: &'a GeneratedMarker,
+        /// The track the marker was derived from, whose fix at the marker's
+        /// instant its label states.
+        track: &'a LoadedTrack,
+    },
     EventMarker(&'a EventMarker),
     CustomMarker(&'a CustomMarker),
 }
@@ -169,9 +356,10 @@ fn resolve_candidate<'a>(
             track,
             point_index: candidate.point_index,
         },
-        DataCategory::GeneratedMarker => {
-            ResolvedCandidate::GeneratedMarker(candidate.point_index.get(&track.generated_markers)?)
-        }
+        DataCategory::GeneratedMarker => ResolvedCandidate::GeneratedMarker {
+            marker: candidate.point_index.get(&track.generated_markers)?,
+            track,
+        },
         DataCategory::EventMarker => {
             ResolvedCandidate::EventMarker(candidate.point_index.get(&track.event_markers)?)
         }
@@ -209,17 +397,17 @@ fn draw_candidate_section(
                 "{icon}{ICON_GAP}GNSS fix{ICON_GAP}{}",
                 point.fix.tpv.time().utc().format("%H:%M:%S")
             ));
-            crate::tpv_renderer::show_hover_table(
+            tpv_renderer::show_hover_table(
                 ui,
                 point,
-                &crate::tpv_renderer::SkySection::resolve(track, point_index),
+                &tpv_renderer::SkySection::resolve(track, point_index),
                 recording_labels.name_when_several_files_loaded(candidate.track.fi),
             );
         }
-        Some(ResolvedCandidate::GeneratedMarker(marker)) => {
+        Some(ResolvedCandidate::GeneratedMarker { marker, .. }) => {
             ui.strong(format!(
                 "{icon}{ICON_GAP}{}",
-                crate::generated_marker_renderer::generated_marker_header(&marker.kind)
+                generated_marker_renderer::generated_marker_header(&marker.kind)
             ));
         }
         Some(ResolvedCandidate::EventMarker(m)) => match &m.annotation {
@@ -305,113 +493,116 @@ pub(crate) fn candidate_label(candidate: DataPointRef, files: &[LoadedFile]) -> 
             _ => m.variant_path.clone(),
         },
         Some(ResolvedCandidate::CustomMarker(m)) => m.label.clone(),
-        Some(ResolvedCandidate::GeneratedMarker(m)) => {
-            crate::generated_marker_renderer::generated_marker_header(&m.kind)
+        Some(ResolvedCandidate::GeneratedMarker { marker, .. }) => {
+            generated_marker_renderer::generated_marker_header(&marker.kind)
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use gt_types::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
+    use gt_ui_types::{DataPointRef, HoverCandidates, MapHighlight};
     use rstest::rstest;
 
-    use super::PointerOwnership;
+    use super::{OpenPopups, RecordedElementLabel, recorded_element_label};
 
-    struct Expected {
-        snapped_hover: bool,
-        jamming_hover: bool,
-        tec_hover: bool,
-        log_hexagon_hover: bool,
+    const FIX: DataCategory = DataCategory::Tpv;
+    const EVENT_MARKER: DataCategory = DataCategory::EventMarker;
+
+    fn candidate(category: DataCategory) -> DataPointRef {
+        DataPointRef {
+            track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+            category,
+            point_index: PointIdx::new(0),
+        }
+    }
+
+    fn candidates(categories: &[DataCategory]) -> HoverCandidates {
+        let mut candidates = HoverCandidates::default();
+        for &category in categories {
+            candidates.keep_nearest(candidate(category));
+        }
+        candidates
+    }
+
+    /// What a case varies beside the candidates of the two frames.
+    #[derive(Default)]
+    struct FrameInputs {
+        /// Whether several elements were under the pointer on the previous
+        /// frame, which is what the map suppresses the individual labels on.
+        settled_multi_hover: bool,
+        pinned: Option<DataPointRef>,
+        popups: OpenPopups,
     }
 
     #[rstest]
-    #[case::nothing_hovered(
-        PointerOwnership::default(),
-        Expected {
-            snapped_hover: true,
-            jamming_hover: true,
-            tec_hover: true,
-            log_hexagon_hover: true,
-        }
+    #[case::nothing_under_the_pointer(&[], &[], FrameInputs::default(), None)]
+    #[case::one_element(
+        &[FIX],
+        &[FIX],
+        FrameInputs::default(),
+        Some(RecordedElementLabel::One(candidate(FIX)))
     )]
-    #[case::snapped_edge_hovered(
-        PointerOwnership {
-            snapped_edge_tooltip_shown: true,
-            ..PointerOwnership::default()
+    #[case::the_element_under_the_pointer_is_pinned(
+        &[FIX],
+        &[FIX],
+        FrameInputs { pinned: Some(candidate(FIX)), ..FrameInputs::default() },
+        None
+    )]
+    #[case::another_element_is_pinned(
+        &[FIX],
+        &[FIX],
+        FrameInputs { pinned: Some(candidate(EVENT_MARKER)), ..FrameInputs::default() },
+        Some(RecordedElementLabel::One(candidate(FIX)))
+    )]
+    #[case::the_context_menu_is_open(
+        &[FIX],
+        &[FIX],
+        FrameInputs {
+            popups: OpenPopups { egui_popup: true, ..OpenPopups::default() },
+            ..FrameInputs::default()
         },
-        Expected {
-            snapped_hover: true,
-            jamming_hover: false,
-            tec_hover: false,
-            log_hexagon_hover: true,
-        }
+        None
     )]
-    #[case::recorded_element_hovered(
-        PointerOwnership {
-            recorded_element_hovered: true,
-            ..PointerOwnership::default()
+    #[case::two_elements_on_the_frame_the_pointer_reaches_them(
+        &[],
+        &[FIX, EVENT_MARKER],
+        FrameInputs::default(),
+        None
+    )]
+    #[case::two_elements_once_settled(
+        &[FIX, EVENT_MARKER],
+        &[FIX, EVENT_MARKER],
+        FrameInputs { settled_multi_hover: true, ..FrameInputs::default() },
+        Some(RecordedElementLabel::Compound(candidates(&[FIX, EVENT_MARKER])))
+    )]
+    #[case::two_elements_under_the_disambiguation_popup(
+        &[FIX, EVENT_MARKER],
+        &[FIX, EVENT_MARKER],
+        FrameInputs {
+            settled_multi_hover: true,
+            popups: OpenPopups { disambiguation: true, ..OpenPopups::default() },
+            ..FrameInputs::default()
         },
-        Expected {
-            snapped_hover: false,
-            jamming_hover: false,
-            tec_hover: false,
-            log_hexagon_hover: true,
-        }
+        None
     )]
-    #[case::recorded_element_over_a_snapped_edge(
-        PointerOwnership {
-            recorded_element_hovered: true,
-            snapped_edge_tooltip_shown: true,
-            ..PointerOwnership::default()
-        },
-        Expected {
-            snapped_hover: false,
-            jamming_hover: false,
-            tec_hover: false,
-            log_hexagon_hover: true,
-        }
-    )]
-    #[case::the_interference_layer_over_the_grid(
-        PointerOwnership {
-            interference_layer_drawn: true,
-            ..PointerOwnership::default()
-        },
-        Expected {
-            snapped_hover: true,
-            jamming_hover: true,
-            tec_hover: false,
-            log_hexagon_hover: true,
-        }
-    )]
-    #[case::a_marker_over_a_hexagon(
-        PointerOwnership {
-            recorded_element_hovered: true,
-            marker_hovered: true,
-            ..PointerOwnership::default()
-        },
-        Expected {
-            snapped_hover: false,
-            jamming_hover: false,
-            tec_hover: false,
-            log_hexagon_hover: false,
-        }
-    )]
-    fn overlay_hovers_yield_to_the_layers_above_them(
-        #[case] ownership: PointerOwnership,
-        #[case] expected: Expected,
+    fn the_stack_takes_the_compound_label_only_once_several_candidates_have_settled(
+        #[case] previous_categories: &[DataCategory],
+        #[case] current_categories: &[DataCategory],
+        #[case] frame: FrameInputs,
+        #[case] expected: Option<RecordedElementLabel>,
     ) {
+        let highlight = MapHighlight {
+            hover_candidates: candidates(previous_categories),
+            sticky: frame.pinned,
+            suppress_hover_labels: frame.settled_multi_hover || frame.popups.disambiguation,
+            ..MapHighlight::default()
+        };
+
         assert_eq!(
-            ownership.snapped_track_hover_enabled(),
-            expected.snapped_hover
-        );
-        assert_eq!(
-            ownership.jamming_cell_hover_enabled(),
-            expected.jamming_hover
-        );
-        assert_eq!(ownership.tec_node_hover_enabled(), expected.tec_hover);
-        assert_eq!(
-            ownership.log_hexagon_hover_enabled(),
-            expected.log_hexagon_hover
+            recorded_element_label(&highlight, candidates(current_categories), frame.popups),
+            expected
         );
     }
 }

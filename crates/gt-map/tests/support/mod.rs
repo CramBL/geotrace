@@ -685,6 +685,18 @@ impl RenderedMap {
             .collect()
     }
 
+    /// The texts of the labels the last frame left open, the topmost on the
+    /// screen first, which is the order the map stacks them in.
+    ///
+    /// Only a frame that had every one of those labels open already reads
+    /// this way: a label of a tooltip that opened this frame is laid out away
+    /// from where the tooltip will be drawn.
+    pub fn hover_label_texts_top_to_bottom(&self) -> Vec<String> {
+        let mut labels = self.hover_labels();
+        labels.sort_by(|left, right| left.rect.top().total_cmp(&right.rect.top()));
+        labels.into_iter().map(|label| label.text).collect()
+    }
+
     pub fn snapshot(&mut self, name: &str) {
         self.harness.snapshot_loose(name);
     }

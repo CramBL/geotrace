@@ -2,6 +2,7 @@
 //! labelled synthetic tiles, or the captured Mapbox tiles where the imagery
 //! under the track is part of what the baseline shows.
 
+use std::cell::Cell;
 use std::path::PathBuf;
 
 use egui_kittest::kittest::Queryable as _;
@@ -172,7 +173,7 @@ fn snap_multi_hover_stacked_label() {
         .ui(move |ui| {
             let names = RecordingNames::default();
             let labels = RecordingLabels::new(&files, &names);
-            draw_multi_hover_label_contents(ui, candidates, &files, labels);
+            hover_labels::draw_multi_hover_label_contents(ui, candidates, &files, labels);
         });
 
     harness.fit_contents();
@@ -197,7 +198,7 @@ fn snap_multi_hover_tpv_and_generated_marker() {
         .ui(move |ui| {
             let names = RecordingNames::default();
             let labels = RecordingLabels::new(&files, &names);
-            draw_multi_hover_label_contents(ui, candidates, &files, labels);
+            hover_labels::draw_multi_hover_label_contents(ui, candidates, &files, labels);
         });
 
     harness.fit_contents();
@@ -233,7 +234,7 @@ fn snap_multi_hover_stacked_label_two_files() {
         .ui(move |ui| {
             let names = RecordingNames::resolve(loaded.view(), "{filename}");
             let labels = RecordingLabels::new(loaded.files(), &names);
-            draw_multi_hover_label_contents(ui, candidates, loaded.files(), labels);
+            hover_labels::draw_multi_hover_label_contents(ui, candidates, loaded.files(), labels);
         });
 
     harness.fit_contents();
@@ -256,7 +257,7 @@ fn multi_hover_names_the_hovered_fixs_recording() {
         .ui(move |ui| {
             let names = RecordingNames::resolve(loaded.view(), "{filename}");
             let labels = RecordingLabels::new(loaded.files(), &names);
-            draw_multi_hover_label_contents(ui, candidates, loaded.files(), labels);
+            hover_labels::draw_multi_hover_label_contents(ui, candidates, loaded.files(), labels);
         });
     harness.run();
 

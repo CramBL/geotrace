@@ -2,7 +2,10 @@ use egui::Grid;
 use egui::{Color32, Pos2, Response, Stroke, Ui};
 use egui_phosphor::regular::ARROW_RIGHT as ICON_ARROW_RIGHT;
 use gt_filter::GlobalFilter;
-use gt_types::{DataCategory, LoadedFile, PointIdx, SpatialPoint};
+use gt_types::{
+    DataCategory, GeneratedMarker, GeneratedMarkerKind, LoadedFile, LoadedTrack, PointIdx,
+    SpatialPoint,
+};
 use gt_ui_types::{
     DataPointRef, GeneratedMarkerVisibility, HighlightScope, MapHighlight, TrackDataVisibility,
     visibility,
@@ -10,8 +13,7 @@ use gt_ui_types::{
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::icon_mesh::{IconId, IconInstance, IconMeshBatch, IconMeshLibrary};
-use crate::recording_labels::RecordingLabels;
-use crate::track_renderer;
+use crate::{tpv_renderer, track_renderer};
 
 #[derive(bon::Builder)]
 pub struct GeneratedMarkerRenderer<'a> {
@@ -22,7 +24,6 @@ pub struct GeneratedMarkerRenderer<'a> {
     generated_vis: &'a GeneratedMarkerVisibility,
     visible_generated: &'a [SpatialPoint],
     icon_meshes: Option<&'a IconMeshLibrary>,
-    recording_labels: RecordingLabels<'a>,
 }
 
 impl<'a> GeneratedMarkerRenderer<'a> {
@@ -39,62 +40,46 @@ impl<'a> GeneratedMarkerRenderer<'a> {
             _ => false,
         }
     }
+}
 
-    fn show_tooltip(&self, ui: &Ui, point_ref: DataPointRef, pos: Pos2) {
-        let Some(file) = point_ref.track.fi.get(self.files) else {
-            return;
-        };
-        let Some(track) = point_ref.track.index.get(&file.tracks) else {
-            return;
-        };
-        let Some(marker) = point_ref.point_index.get(&track.generated_markers) else {
-            return;
-        };
-        let hit_rect = egui::Rect::from_center_size(pos, egui::vec2(20.0, 20.0));
-        let response = ui.interact(
-            hit_rect,
-            ui.id()
-                .with("gen_marker_hover")
-                .with(point_ref.track)
-                .with(point_ref.point_index),
-            egui::Sense::hover(),
-        );
-        response.show_tooltip_ui(|ui| {
-            ui.strong(generated_marker_header(&marker.kind));
-            match &marker.kind {
-                // A slip groups the satellites that lost lock at this epoch, so
-                // show what changed for each (geometry and signal,
-                // before/after).
-                gt_types::GeneratedMarkerKind::Slip(event) => {
-                    ui.separator();
-                    show_slip_table(ui, event);
-                }
-                // Fix-lost and clock-discontinuity markers sit on a specific
-                // anomalous sample, so also show that point's data.
-                gt_types::GeneratedMarkerKind::GnssFixLost
-                | gt_types::GeneratedMarkerKind::ClockDiscontinuity { .. }
-                | gt_types::GeneratedMarkerKind::ClockOffsetExcursion { .. } => {
-                    if let Some(index) = track
-                        .points
-                        .iter()
-                        .position(|p| p.tpv.time().utc() == marker.time)
-                        && let Some(point) =
-                            track.placed_points().and_then(|placed| placed.get(index))
-                    {
-                        ui.separator();
-                        crate::tpv_renderer::show_hover_table(
-                            ui,
-                            point,
-                            &crate::tpv_renderer::SkySection::resolve(track, PointIdx::new(index)),
-                            self.recording_labels
-                                .name_when_several_files_loaded(point_ref.track.fi),
-                        );
-                    }
-                }
-                // Fix-regained is a transition with no single underlying point.
-                gt_types::GeneratedMarkerKind::GnssFixRegained { .. } => {}
+/// A marker sitting on an anomalous sample states that fix's data too:
+/// `recording_name` names its recording while several files are loaded.
+pub(crate) fn show_hover_label(
+    ui: &mut Ui,
+    track: &LoadedTrack,
+    marker: &GeneratedMarker,
+    recording_name: Option<&str>,
+) {
+    ui.strong(generated_marker_header(&marker.kind));
+    match &marker.kind {
+        // A slip groups the satellites that lost lock at this epoch, so show
+        // what changed for each (geometry and signal, before/after).
+        GeneratedMarkerKind::Slip(event) => {
+            ui.separator();
+            show_slip_table(ui, event);
+        }
+        // Fix-lost and clock-discontinuity markers sit on a specific anomalous
+        // sample, so also show that point's data.
+        GeneratedMarkerKind::GnssFixLost
+        | GeneratedMarkerKind::ClockDiscontinuity { .. }
+        | GeneratedMarkerKind::ClockOffsetExcursion { .. } => {
+            if let Some(index) = track
+                .points
+                .iter()
+                .position(|point| point.tpv.time().utc() == marker.time)
+                && let Some(point) = track.placed_points().and_then(|placed| placed.get(index))
+            {
+                ui.separator();
+                tpv_renderer::show_hover_table(
+                    ui,
+                    point,
+                    &tpv_renderer::SkySection::resolve(track, PointIdx::new(index)),
+                    recording_name,
+                );
             }
-        });
+        }
+        // Fix-regained is a transition with no single underlying point.
+        GeneratedMarkerKind::GnssFixRegained { .. } => {}
     }
 }
 
@@ -150,36 +135,23 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
                 fade,
             );
         }
-
-        // A TPV tooltip already shows this marker's data at the same position.
-        if !self.highlight.primary_hover_is_tpv()
-            && let Some(r) = self.highlight.hover_candidates.generated_marker
-            && self
-                .highlight
-                .shows_hover_label(r, ui.ctx().any_popup_open())
-            && let Some(file) = r.track.fi.get(self.files)
-            && let Some(track) = r.track.index.get(&file.tracks)
-            && let Some(marker) = r.point_index.get(&track.generated_markers)
-        {
-            let pos = transform.to_screen(marker.merc);
-            self.show_tooltip(ui, r, pos);
-        }
     }
 }
 
 /// Centralises the `GNSS fix regained after <duration>` formatting so both
-/// the live tooltip (`show_tooltip`) and the multi-hover compound label
+/// the marker's own hover label (`show_hover_label`) and the multi-hover
+/// compound label
 /// (`draw_candidate_section`) always produce identical text.
-pub(crate) fn generated_marker_header(kind: &gt_types::GeneratedMarkerKind) -> String {
+pub(crate) fn generated_marker_header(kind: &GeneratedMarkerKind) -> String {
     match kind {
-        gt_types::GeneratedMarkerKind::GnssFixRegained { fix_lost_duration } => format!(
+        GeneratedMarkerKind::GnssFixRegained { fix_lost_duration } => format!(
             "{kind} after {}",
             format_fix_duration(fix_lost_duration.num_milliseconds())
         ),
-        gt_types::GeneratedMarkerKind::ClockDiscontinuity { step } => {
+        GeneratedMarkerKind::ClockDiscontinuity { step } => {
             format!("{kind} ({})", signed_offset(step.num_milliseconds()))
         }
-        gt_types::GeneratedMarkerKind::ClockOffsetExcursion {
+        GeneratedMarkerKind::ClockOffsetExcursion {
             deviation, samples, ..
         } => {
             let magnitude = signed_offset(deviation.num_milliseconds());
@@ -191,7 +163,7 @@ pub(crate) fn generated_marker_header(kind: &gt_types::GeneratedMarkerKind) -> S
         }
         // One satellite: name it inline. Several: the per-satellite detail is in
         // the table below, so the header just gives the count.
-        gt_types::GeneratedMarkerKind::Slip(event) => match event.slips.as_slice() {
+        GeneratedMarkerKind::Slip(event) => match event.slips.as_slice() {
             [slip] => format!(
                 "{kind}: {} {:02} ({})",
                 slip.constellation.display_name(),
@@ -200,7 +172,7 @@ pub(crate) fn generated_marker_header(kind: &gt_types::GeneratedMarkerKind) -> S
             ),
             slips => format!("{kind} ({})", slips.len()),
         },
-        gt_types::GeneratedMarkerKind::GnssFixLost => kind.to_string(),
+        GeneratedMarkerKind::GnssFixLost => kind.to_string(),
     }
 }
 
@@ -309,29 +281,27 @@ fn draw_generated_marker(
     ui: &Ui,
     icon_meshes: Option<&IconMeshLibrary>,
     center: Pos2,
-    kind: &gt_types::GeneratedMarkerKind,
+    kind: &GeneratedMarkerKind,
     highlighted: bool,
     fade: f32,
 ) {
     let painter = ui.painter();
     let (bg, stroke_color) = match kind {
-        gt_types::GeneratedMarkerKind::GnssFixLost => {
-            (Color32::from_rgb(219, 68, 55), Color32::WHITE)
-        }
-        gt_types::GeneratedMarkerKind::GnssFixRegained { .. } => {
+        GeneratedMarkerKind::GnssFixLost => (Color32::from_rgb(219, 68, 55), Color32::WHITE),
+        GeneratedMarkerKind::GnssFixRegained { .. } => {
             (Color32::from_rgb(15, 157, 88), Color32::WHITE)
         }
-        gt_types::GeneratedMarkerKind::ClockDiscontinuity { .. } => {
+        GeneratedMarkerKind::ClockDiscontinuity { .. } => {
             (Color32::from_rgb(255, 149, 0), Color32::WHITE)
         }
         // Yellow with a dark glyph: a clock anomaly like the discontinuity, but
         // not to be confused with it at disc size.
-        gt_types::GeneratedMarkerKind::ClockOffsetExcursion { .. } => (
+        GeneratedMarkerKind::ClockOffsetExcursion { .. } => (
             Color32::from_rgb(255, 202, 40),
             Color32::from_rgb(40, 32, 0),
         ),
         // Orchid: distinct from the fix-lost red and clock-discontinuity orange.
-        gt_types::GeneratedMarkerKind::Slip(_) => (Color32::from_rgb(186, 85, 211), Color32::WHITE),
+        GeneratedMarkerKind::Slip(_) => (Color32::from_rgb(186, 85, 211), Color32::WHITE),
     };
     let faded_bg = track_renderer::apply_fade_alpha(bg, fade);
     let faded_stroke = track_renderer::apply_fade_alpha(stroke_color, fade);
@@ -347,12 +317,12 @@ fn draw_generated_marker(
     }
     let s = 4.0;
     match kind {
-        gt_types::GeneratedMarkerKind::GnssFixLost => {
+        GeneratedMarkerKind::GnssFixLost => {
             let st = Stroke::new(2.0_f32, faded_stroke);
             painter.line_segment([center - egui::vec2(s, s), center + egui::vec2(s, s)], st);
             painter.line_segment([center + egui::vec2(-s, s), center + egui::vec2(s, -s)], st);
         }
-        gt_types::GeneratedMarkerKind::GnssFixRegained { .. } => {
+        GeneratedMarkerKind::GnssFixRegained { .. } => {
             let st = Stroke::new(2.0_f32, faded_stroke);
             painter.line_segment(
                 [
@@ -366,7 +336,7 @@ fn draw_generated_marker(
                 st,
             );
         }
-        gt_types::GeneratedMarkerKind::ClockDiscontinuity { .. } => {
+        GeneratedMarkerKind::ClockDiscontinuity { .. } => {
             // Exclamation mark.
             let st = Stroke::new(2.0_f32, faded_stroke);
             painter.line_segment(
@@ -378,7 +348,7 @@ fn draw_generated_marker(
             );
             painter.circle_filled(center + egui::vec2(0.0, s * 0.85), 1.3, faded_stroke);
         }
-        gt_types::GeneratedMarkerKind::ClockOffsetExcursion { .. } => {
+        GeneratedMarkerKind::ClockOffsetExcursion { .. } => {
             // A spike off a flat baseline.
             let st = Stroke::new(2.0_f32, faded_stroke);
             let base_y = s * 0.55;
@@ -395,7 +365,7 @@ fn draw_generated_marker(
                 }
             }
         }
-        gt_types::GeneratedMarkerKind::Slip(_) => {
+        GeneratedMarkerKind::Slip(_) => {
             // Broken chain link: a lost connection (loss of lock). Sized to
             // nearly fill the disc - the chain detail needs more room than the
             // simple line glyphs above to read.

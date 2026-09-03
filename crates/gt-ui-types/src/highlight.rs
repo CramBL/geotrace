@@ -106,14 +106,6 @@ impl HoverCandidates {
         self.iter().count() > 1
     }
 
-    /// Whether a marker of any kind is under the cursor. A marker takes the
-    /// hover from the log hexagons: its pin draws over them.
-    pub fn any_marker(&self) -> bool {
-        self.event_marker.is_some()
-            || self.custom_marker.is_some()
-            || self.generated_marker.is_some()
-    }
-
     pub fn every_category_filled(&self) -> bool {
         self.tpv_or_satellite_report.is_some()
             && self.event_marker.is_some()
@@ -150,12 +142,13 @@ pub struct MapHighlight {
     /// not driving a scrub. Set by that window and read one frame behind (it
     /// draws after the plot), the same way [`Self::hover_match`] is.
     pub scrub_time: Option<DateTime<Utc>>,
-    /// When `true`, renderers must not draw their individual hover labels.
+    /// When `true`, the map draws no label of its own for the recorded element
+    /// under the pointer.
     ///
-    /// Set by `NavMap` in two situations: when the disambiguation popup is open
-    /// (the popup occupies that screen region) and when multiple hover candidates
-    /// are active simultaneously (the map layer draws a single compact stacked
-    /// label instead of having each renderer place one near the cursor).
+    /// Set by `NavMap` in two situations: while the disambiguation popup is
+    /// open, which occupies that screen region, and while several elements
+    /// were under the pointer on the previous frame, which the compound label
+    /// states together.
     pub suppress_hover_labels: bool,
     /// When `false`, the track/map fading animation and background dimming are
     /// disabled.
@@ -183,15 +176,11 @@ impl MapHighlight {
         scope.draws(point_ref) && self.toggle_sticky(point_ref)
     }
 
-    /// Whether a renderer draws its own hover label for `candidate`. The pinned
-    /// popup, any open popup, and the compound multi-hover label each take that
-    /// label's place.
+    /// Whether the map stacks `candidate`'s own hover label at the pointer.
+    /// The pinned point's window, any open popup, and the compound label each
+    /// take that label's place.
     pub fn shows_hover_label(&self, candidate: DataPointRef, any_popup_open: bool) -> bool {
         self.sticky != Some(candidate) && !any_popup_open && !self.suppress_hover_labels
-    }
-
-    pub fn primary_hover_is_tpv(&self) -> bool {
-        matches!(self.hover, Some(HighlightScope::Point(r)) if r.category == DataCategory::Tpv)
     }
 
     /// The track the plot cursor points at, and `None` until the cursor has

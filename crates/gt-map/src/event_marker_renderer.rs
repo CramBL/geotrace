@@ -1,7 +1,7 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui, Vec2};
 use gt_filter::GlobalFilter;
 use gt_fmt::UTC_SECOND_FORMAT;
-use gt_types::{DataCategory, EventMarkerStyle, LoadedFile, MarkerIcon, SpatialPoint};
+use gt_types::{DataCategory, EventMarker, EventMarkerStyle, LoadedFile, MarkerIcon, SpatialPoint};
 use gt_ui_theme::HIGHLIGHT_BLUE;
 use gt_ui_types::{
     DataPointRef, EventMarkerVisibility, HighlightScope, MapHighlight, TrackDataVisibility,
@@ -97,25 +97,19 @@ impl Plugin for EventMarkerRenderer<'_> {
             draw_event_marker(ui, &mut batch, screen_pos, icon, color, highlighted, fade);
         }
         batch.paint(ui.painter());
-
-        if let Some(r) = self.highlight.hover_candidates.event_marker
-            && self
-                .highlight
-                .shows_hover_label(r, ui.ctx().any_popup_open())
-            && let Some(file) = r.track.fi.get(self.files)
-            && let Some(track) = r.track.index.get(&file.tracks)
-            && let Some(marker) = r.point_index.get(&track.event_markers)
-        {
-            let pos = transform.to_screen(marker.resolved_position.merc());
-            show_tooltip(ui, r, marker, pos);
-        }
     }
 }
 
-fn resolve_color(
-    marker: &gt_types::EventMarker,
-    style_map: &FxHashMap<String, EventMarkerStyle>,
-) -> Color32 {
+pub(crate) fn show_hover_label(ui: &mut Ui, marker: &EventMarker) {
+    ui.strong(&marker.variant_path);
+    ui.label(marker.time.format(UTC_SECOND_FORMAT).to_string());
+    if let Some(annotation) = &marker.annotation {
+        ui.separator();
+        ui.label(annotation);
+    }
+}
+
+fn resolve_color(marker: &EventMarker, style_map: &FxHashMap<String, EventMarkerStyle>) -> Color32 {
     let c = if let Some(style) = style_map.get(marker.variant_path.as_str()) {
         style.color
     } else {
@@ -328,27 +322,4 @@ mod snapshot_tests {
         // Linux baseline and the macOS CI runner's Metal backend.
         harness.snapshot_loose("all_marker_icons");
     }
-}
-
-fn show_tooltip(ui: &Ui, point_ref: DataPointRef, marker: &gt_types::EventMarker, pos: Pos2) {
-    let hit_rect = egui::Rect::from_center_size(
-        pos,
-        Vec2::splat(2.0 * crate::icon_mesh::ICON_HALF_EXTENT_LARGE_PT),
-    );
-    let response = ui.interact(
-        hit_rect,
-        ui.id()
-            .with("event_marker_hover")
-            .with(point_ref.track)
-            .with(point_ref.point_index),
-        egui::Sense::hover(),
-    );
-    response.show_tooltip_ui(|ui| {
-        ui.strong(&marker.variant_path);
-        ui.label(marker.time.format(UTC_SECOND_FORMAT).to_string());
-        if let Some(ann) = &marker.annotation {
-            ui.separator();
-            ui.label(ann);
-        }
-    });
 }
