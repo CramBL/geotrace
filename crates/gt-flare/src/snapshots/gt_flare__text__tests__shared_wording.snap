@@ -5,11 +5,11 @@ expression: wording
 label: Solar flares
 events: solar flare events
 archive: solar flare archive
-source caveat: The catalog lists every flare the Sun produced, so a flare raises the ionization above a receiver only where the Sun was up at the time.
-below the scale: Below the radio blackout scale
-no end time: no end published
-receiver sunlit: The receiver was on the sunlit side
-receiver on the night side: The receiver was on the night side
+source caveat: Lists every flare on the Sun. Only one on the receiver's sunlit side raises the ionization above it.
+below the scale: Below R1
+no end time: end not published
+receiver sunlit: Receiver: sunlit side
+receiver on the night side: Receiver: night side
 plot hover: Solar flares from the NASA DONKI catalog, marked at their peak.
 One vertical line at each peak, coloured by class, X ten times M.
 More: 'How do solar flares affect GNSS?' in Settings.

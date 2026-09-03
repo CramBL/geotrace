@@ -8,6 +8,8 @@
 
 use std::sync::LazyLock;
 
+use chrono::{DateTime, Utc};
+use gt_fmt::UTC_MINUTE_FORMAT;
 use gt_ui_types::MetricChipHover;
 
 use crate::GeomagneticIndex;
@@ -38,11 +40,12 @@ pub const SCALE_CAVEAT: &str = "The scale is quasi logarithmic and published in 
 pub const NO_VALUE_CAVEAT: &str = "No value was published for this period.";
 
 /// The lines describing one period, leading with the value that classified
-/// it. `period_start` is the formatted UTC time the period begins at.
+/// it. `period_start` is the UTC time the period begins at, which the service
+/// publishes to the minute.
 pub fn period_summary(
     index: GeomagneticIndex,
     activity: Option<GeomagneticActivity>,
-    period_start: &str,
+    period_start: DateTime<Utc>,
 ) -> Vec<String> {
     let mut lines = match activity {
         Some(activity) => vec![
@@ -52,8 +55,9 @@ pub fn period_summary(
         None => vec![format!("{index} not published"), NO_VALUE_CAVEAT.to_owned()],
     };
     lines.push(format!(
-        "{} from {period_start} (UTC)",
-        index.period_length_words()
+        "{} from {} UTC",
+        index.period_length_with_unit_symbol(),
+        period_start.format(UTC_MINUTE_FORMAT)
     ));
     lines
 }
@@ -155,29 +159,41 @@ mod tests {
         GeomagneticActivity::from_published_value(GeomagneticIndex::Kp, value)
     }
 
+    /// A period start, as the service publishes them.
+    fn period_start(year: i32, month: u32, day: u32, hour: u32) -> DateTime<Utc> {
+        chrono::NaiveDate::from_ymd_opt(year, month, day)
+            .and_then(|day| day.and_hms_opt(hour, 0, 0))
+            .map(|naive| naive.and_utc())
+            .unwrap_or_default()
+    }
+
     /// One period's hover lines: the value, its class, then what it covers.
     #[test]
     fn period_summary_leads_with_the_value() {
-        let lines = period_summary(GeomagneticIndex::Kp, kp(8.667), "2024-05-10T18:00:00");
+        let lines = period_summary(
+            GeomagneticIndex::Kp,
+            kp(8.667),
+            period_start(2024, 5, 10, 18),
+        );
         insta::assert_debug_snapshot!("period_summary", lines);
     }
 
     #[test]
     fn period_summary_states_a_missing_value_as_such() {
-        let lines = period_summary(GeomagneticIndex::Hp30, None, "1980-01-01T00:00:00");
+        let lines = period_summary(GeomagneticIndex::Hp30, None, period_start(1980, 1, 1, 0));
         insta::assert_debug_snapshot!("period_summary_without_a_value", lines);
     }
 
     #[test]
     fn period_summary_names_the_class_of_a_quiet_period() {
-        let lines = period_summary(GeomagneticIndex::Kp, kp(1.667), "2024-04-01T00:00:00");
+        let lines = period_summary(GeomagneticIndex::Kp, kp(1.667), period_start(2024, 4, 1, 0));
         assert_eq!(lines.get(1).map(String::as_str), Some("Quiet"));
     }
 
     /// The class line is the one the storm class supplies.
     #[test]
     fn period_summary_names_the_storm_class() {
-        let lines = period_summary(GeomagneticIndex::Kp, kp(9.0), "2024-05-11T00:00:00");
+        let lines = period_summary(GeomagneticIndex::Kp, kp(9.0), period_start(2024, 5, 11, 0));
         assert_eq!(
             lines.get(1).map(String::as_str),
             Some(GeomagneticStormClass::Extreme.display_name())

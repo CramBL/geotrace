@@ -35,7 +35,7 @@ pub(super) const LOG_LOAD_HINT: &str = "Open a log file, drop it here, or paste 
 
 /// How the summary panel writes a moment. The line table composes the same
 /// shape from one format constant per run of its timestamp column.
-const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+const TIMESTAMP_FORMAT: &str = gt_fmt::UTC_SECOND_FORMAT;
 
 /// The date run of a timestamp, which the table's day divider states on its
 /// own.

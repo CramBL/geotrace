@@ -43,6 +43,7 @@ use std::path::PathBuf;
 use egui::Context;
 
 use gt_filter::GlobalFilter;
+use gt_fmt::UTC_SECOND_FORMAT;
 use gt_jam::dataset::JamDataset;
 use gt_jam::day_selection::{DaySelection, EmptyReason};
 use gt_loaded_files::RecordingNames;
@@ -1389,7 +1390,7 @@ fn show_sticky_popup(
             .and_then(|t| sticky_ref.point_index.get(&t.points))
             .map_or_else(
                 || "GNSS fix".to_string(),
-                |p| p.tpv.time().utc().format("%Y-%m-%d %H:%M:%S").to_string(),
+                |p| p.tpv.time().utc().format(UTC_SECOND_FORMAT).to_string(),
             ),
         DataCategory::SatelliteReport => sticky_ref
             .track
@@ -1403,7 +1404,7 @@ fn show_sticky_popup(
                 |sats| {
                     sats.best_time().map_or_else(
                         || "Satellite report".to_string(),
-                        |t| t.format("%Y-%m-%d %H:%M:%S").to_string(),
+                        |t| t.format(UTC_SECOND_FORMAT).to_string(),
                     )
                 },
             ),
@@ -1415,7 +1416,7 @@ fn show_sticky_popup(
             .and_then(|t| sticky_ref.point_index.get(&t.generated_markers))
             .map_or_else(
                 || "GNSS event".to_string(),
-                |m| m.time.format("%Y-%m-%d %H:%M:%S").to_string(),
+                |m| m.time.format(UTC_SECOND_FORMAT).to_string(),
             ),
         DataCategory::EventMarker => sticky_ref
             .track
@@ -1425,7 +1426,7 @@ fn show_sticky_popup(
             .and_then(|t| sticky_ref.point_index.get(&t.event_markers))
             .map_or_else(
                 || "Event".to_string(),
-                |m| m.time.format("%Y-%m-%d %H:%M:%S").to_string(),
+                |m| m.time.format(UTC_SECOND_FORMAT).to_string(),
             ),
         DataCategory::CustomMarker => sticky_ref
             .track
@@ -1435,7 +1436,7 @@ fn show_sticky_popup(
             .and_then(|t| sticky_ref.point_index.get(&t.custom_markers))
             .map_or_else(
                 || "Custom marker".to_string(),
-                |m| m.time.format("%Y-%m-%d %H:%M:%S").to_string(),
+                |m| m.time.format(UTC_SECOND_FORMAT).to_string(),
             ),
         DataCategory::Track => String::new(),
     };

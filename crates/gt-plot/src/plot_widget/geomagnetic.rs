@@ -10,8 +10,6 @@ use gt_solar::activity::GeomagneticActivity;
 use gt_types::TrackRef;
 use gt_ui_types::{GeomagneticSeries, IndexContextSample};
 
-use super::lines::HOVER_INSTANT_FORMAT;
-
 /// Which index lines have values for the visible tracks, gating their chips.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct GeomagneticAvailability {
@@ -50,14 +48,13 @@ pub(super) struct GeomagneticHover {
 
 impl GeomagneticHover {
     pub(super) fn of_archived_period(index: GeomagneticIndex, sample: IndexContextSample) -> Self {
-        let period_start = DateTime::from_timestamp(sample.start_secs as i64, 0)
-            .map(|start| start.format(HOVER_INSTANT_FORMAT).to_string())
-            .unwrap_or_default();
+        let period_start =
+            DateTime::from_timestamp(sample.start_secs as i64, 0).unwrap_or_default();
         let activity = sample
             .value
             .and_then(|value| GeomagneticActivity::from_published_value(index, value));
         Self {
-            lines: gt_solar::text::period_summary(index, activity, &period_start),
+            lines: gt_solar::text::period_summary(index, activity, period_start),
         }
     }
 
@@ -131,7 +128,7 @@ mod tests {
             [
                 "Hp30 11.333",
                 "G5 extreme storm",
-                "30 minutes from 2024-05-10T18:00:00 (UTC)",
+                "30min from 2024-05-10 18:00 UTC",
             ]
         );
     }

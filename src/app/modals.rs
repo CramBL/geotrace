@@ -3,6 +3,7 @@ use egui_phosphor::regular::WARNING as ICON_WARNING;
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
+use gt_fmt::UTC_SECOND_FORMAT;
 use gt_jam::text::{ATTRIBUTION, PUBLISHER_URL, UPSTREAM_URL};
 use gt_log_view::{LoadedLogs, RecordingKey};
 use gt_map::{MapLayer, NavMap};
@@ -618,7 +619,7 @@ pub fn show_orphaned_event_markers_popup(
                         {
                             ui.separator();
                         }
-                        let line = format!("{}  {}", ts.format("%Y-%m-%d %H:%M:%S"), path);
+                        let line = format!("{}  {}", ts.format(UTC_SECOND_FORMAT), path);
                         ui.add(Label::new(RichText::new(&line).monospace()).truncate());
                         prev_ts = Some(*ts);
                     }

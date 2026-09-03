@@ -4,6 +4,7 @@ use egui::{Grid, RichText, ScrollArea, Tooltip};
 use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::CHECK as ICON_CHECK;
 use gt_filter::{self as filter, GlobalFilter};
+use gt_fmt::UTC_SECOND_FORMAT;
 use gt_sky::{SkyHighlight, SkyPlot, SkyPlotSize};
 use gt_types::coordinates::{Coordinate, RecordedCoordinate};
 use gt_types::satellites::{Constellation, Satellite};
@@ -617,7 +618,7 @@ fn hover_grid_ui(ui: &mut Ui, point: PlacedPoint<'_>, recording_name: Option<&st
             recording_row_ui(ui, recording_name);
 
             ui.label("Time");
-            ui.label(fix.tpv.time().utc().format("%Y-%m-%d %H:%M:%S").to_string());
+            ui.label(fix.tpv.time().utc().format(UTC_SECOND_FORMAT).to_string());
             ui.end_row();
 
             position_rows_ui(ui, fix, FixPlacement::Placed(point.resolved()));

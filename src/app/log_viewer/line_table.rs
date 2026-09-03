@@ -15,14 +15,12 @@ use gt_log_view::{
 };
 use gt_logfile::{BootSession, LogEntry, TimestampKind};
 use gt_types::{Latitude, Longitude, mercator};
+use gt_ui_theme::ALMOST_EQUAL_TO;
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::{LoadedLogId, LogMatchGlyph, LogMatchHover};
 use rustc_hash::FxHashMap;
 
 use super::{AssociationWindowUnit, DATE_FORMAT, LogViewerWindow};
-
-/// U+2248 ALMOST EQUAL TO, marking an interpolated timestamp.
-const ALMOST_EQUAL_TO: &str = "≈";
 
 /// The prefix of an anchored timestamp, as wide as the interpolated marker so
 /// that the timestamp column stays aligned.

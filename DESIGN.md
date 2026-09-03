@@ -22,6 +22,11 @@ Three kinds of unit keep the space: a token longer than two letters (`48 TECU`, 
 The reference documents (`reference.rs` in each crate) keep the space throughout.
 A query's text follows the language's own syntax (`velocity > 30 km/h`).
 
+#### Dates and times
+Write an instant as `2024-05-10 14:32 UTC`, and to the second (`2024-05-10 14:32:05 UTC`) where it is a fix or a plot sample.
+No `T` between the date and the time, and no parentheses around `UTC`.
+The two formats are `gt_fmt::UTC_MINUTE_FORMAT` and `gt_fmt::UTC_SECOND_FORMAT`.
+
 #### Dashes
 Use a spaced hyphen (` - `) for parenthetical breaks in prose (docs, comments, log messages).
 Em dashes (`—`) are reserved for UI display only (e.g. as a placeholder for absent values via `gt_ui_theme::EM_DASH`).

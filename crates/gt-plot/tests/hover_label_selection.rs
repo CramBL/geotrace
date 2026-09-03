@@ -187,10 +187,10 @@ impl PlotScene {
 /// assert.
 const THE_FLARE_HOVER_LABEL: &str = "X2.2 solar flare\n\
     R3 strong radio blackout\n\
-    Peaked at 2024-01-15T12:00 (UTC)\n\
-    Began 2024-01-15T11:32, ended 2024-01-15T12:23\n\
-    The catalog lists every flare the Sun produced, so a flare raises the \
-    ionization above a receiver only where the Sun was up at the time.";
+    Peak: 2024-01-15 12:00 UTC\n\
+    11:32–12:23 UTC\n\
+    Lists every flare on the Sun. Only one on the receiver's sunlit side raises the \
+    ionization above it.";
 
 /// The label names the channel's first sample and the rulers draw at it, far
 /// to the left of the pointer. The channel's two samples draw one segment
@@ -326,12 +326,12 @@ fn snapshot_the_plot_labels_a_flare_from_its_x_alone() {
 #[rstest]
 #[case::hp30(
     GeomagneticIndex::Hp30,
-    "Geomagnetic activity\nHp30 4.667\nActive\n30 minutes from 2024-01-15T12:30:00 (UTC)",
+    "Geomagnetic activity\nHp30 4.667\nActive\n30min from 2024-01-15 12:30 UTC",
     "hover_mid_step_of_the_hp30_line"
 )]
 #[case::kp(
     GeomagneticIndex::Kp,
-    "Geomagnetic activity\nKp 4.667\nActive\n3 hours from 2024-01-15T15:00:00 (UTC)",
+    "Geomagnetic activity\nKp 4.667\nActive\n3h from 2024-01-15 15:00 UTC",
     "hover_mid_step_of_the_kp_line"
 )]
 fn snapshot_the_plot_labels_the_period_the_pointer_rests_in(
@@ -401,8 +401,8 @@ fn snapshot_the_plot_labels_the_tec_interpolated_at_the_pointer() {
         plot.hover_label(),
         "Ionospheric TEC\n\
          TEC 15.0 TECU\n\
-         L1 delay about 2.4m\n\
-         Interpolated between maps at 2024-01-15T13:00:00 (UTC)"
+         L1 delay ≈2.4m\n\
+         Interpolated at 2024-01-15 13:00:00 UTC"
     );
     plot.snapshot("hover_the_tec_line_between_two_epochs");
 }

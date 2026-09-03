@@ -36,6 +36,18 @@ pub const EN_DASH: &str = "–";
 /// U+2192 RIGHTWARDS ARROW, leading from where a span starts to where it ends.
 pub const RIGHTWARDS_ARROW: &str = "→";
 
+/// U+2248 ALMOST EQUAL TO, marking a value that stands for another.
+pub const ALMOST_EQUAL_TO: &str = "≈";
+
+/// A UTC instant to the minute, the precision the solar flare, geomagnetic
+/// index and TEC map archives publish. The surface showing it writes `UTC`
+/// after it.
+pub const UTC_MINUTE_FORMAT: &str = "%Y-%m-%d %H:%M";
+
+/// A UTC instant to the second, the precision a fix or a plot sample has.
+/// The surface showing it writes `UTC` after it.
+pub const UTC_SECOND_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+
 /// Two spaces, U+00B7 MIDDLE DOT, two spaces, joins fields inside tooltip strings.
 const TOOLTIP_JOINER: &str = "  ·  ";
 
@@ -365,11 +377,11 @@ mod signed_delta_tests {
 /// end time - including the end date as well when the span crosses midnight
 /// into a different day. Times are UTC, matching the rest of the UI.
 pub fn format_time_range(start: DateTime<Utc>, end: DateTime<Utc>) -> String {
-    let start_str = start.format("%Y-%m-%d %H:%M:%S");
+    let start_str = start.format(UTC_SECOND_FORMAT);
     if start.date_naive() == end.date_naive() {
         format!("{start_str} – {}", end.format("%H:%M:%S"))
     } else {
-        format!("{start_str} – {}", end.format("%Y-%m-%d %H:%M:%S"))
+        format!("{start_str} – {}", end.format(UTC_SECOND_FORMAT))
     }
 }
 

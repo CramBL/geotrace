@@ -9,6 +9,8 @@
 
 use std::sync::LazyLock;
 
+use chrono::{DateTime, Utc};
+use gt_fmt::{ALMOST_EQUAL_TO, UTC_MINUTE_FORMAT, UTC_SECOND_FORMAT};
 use gt_types::{Latitude, Longitude};
 use gt_ui_types::MetricChipHover;
 
@@ -30,10 +32,6 @@ pub const LAYER_LABEL: &str = "Ionospheric TEC";
 /// display-toggle row.
 pub const LAYER_SUMMARY: &str = "Colours the published grid by vertical total electron content at \
                                  the instant shown, under the tracks.";
-
-/// Format the map heatmap writes the instant it shows in, matching the epochs
-/// the archived files declare.
-pub const INSTANT_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
 
 /// Unit the legend labels its scale in.
 pub const LEGEND_UNIT: &str = "TECU";
@@ -71,26 +69,30 @@ pub static SCALE_CAVEAT: LazyLock<String> = LazyLock::new(|| {
 });
 
 /// The lines describing one value, leading with the value itself. `instant`
-/// is the formatted UTC time it was interpolated at.
-pub fn value_summary(content: TotalElectronContent, instant: &str) -> Vec<String> {
+/// is the UTC time it was interpolated at.
+pub fn value_summary(content: TotalElectronContent, instant: DateTime<Utc>) -> Vec<String> {
     let mut lines = value_lines(content);
-    lines.push(format!("Interpolated between maps at {instant} (UTC)"));
+    lines.push(format!(
+        "Interpolated at {} UTC",
+        instant.format(UTC_SECOND_FORMAT)
+    ));
     lines
 }
 
 /// The lines describing one grid node of the map heatmap, leading with the
-/// value. `instant` is the formatted UTC time the two bracketing maps were
-/// interpolated to.
-pub fn grid_node_summary(
+/// value. `instant` is the UTC time the two bracketing maps were interpolated
+/// to, which the archives publish to the minute.
+pub fn node_summary(
     content: TotalElectronContent,
-    instant: &str,
+    instant: DateTime<Utc>,
     latitude: Latitude,
     longitude: Longitude,
 ) -> Vec<String> {
     let mut lines = value_lines(content);
     lines.push(format!(
-        "Grid node {} at {instant} (UTC)",
-        node_position(latitude, longitude)
+        "Node {}, {} UTC",
+        node_position(latitude, longitude),
+        instant.format(UTC_MINUTE_FORMAT)
     ));
     lines
 }
@@ -99,7 +101,10 @@ pub fn grid_node_summary(
 fn value_lines(content: TotalElectronContent) -> Vec<String> {
     vec![
         format!("TEC {:.1} TECU", content.tecu()),
-        format!("L1 delay about {:.1}m", content.l1_delay_meters()),
+        format!(
+            "L1 delay {ALMOST_EQUAL_TO}{:.1}m",
+            content.l1_delay_meters()
+        ),
     ]
 }
 
@@ -197,19 +202,29 @@ pub static DEVIATION_REFERENCE_CAVEAT: LazyLock<String> = LazyLock::new(|| {
 
 #[cfg(test)]
 mod tests {
+    use chrono::NaiveDate;
+
     use super::*;
+
+    /// A map epoch, as the archived files declare them.
+    fn epoch(hour: u32, minute: u32) -> DateTime<Utc> {
+        NaiveDate::from_ymd_opt(2024, 5, 10)
+            .and_then(|day| day.and_hms_opt(hour, minute, 0))
+            .map(|naive| naive.and_utc())
+            .unwrap_or_default()
+    }
 
     /// One value's hover lines: the value, the range it delays L1 by, then
     /// the instant it was interpolated at.
     #[test]
     fn value_summary_leads_with_the_value() {
-        let lines = value_summary(TotalElectronContent::from_tecu(42.3), "2024-05-10T18:30:00");
+        let lines = value_summary(TotalElectronContent::from_tecu(42.3), epoch(18, 30));
         assert_eq!(
             lines,
             [
                 "TEC 42.3 TECU",
-                "L1 delay about 6.9m",
-                "Interpolated between maps at 2024-05-10T18:30:00 (UTC)",
+                "L1 delay ≈6.9m",
+                "Interpolated at 2024-05-10 18:30:00 UTC",
             ]
         );
     }
@@ -217,10 +232,10 @@ mod tests {
     /// A node's hover lines name the value, the delay, and where the node
     /// sits, with the hemisphere letters of a southwestern position.
     #[test]
-    fn grid_node_summary_names_the_node_it_read() {
-        let lines = grid_node_summary(
+    fn node_summary_names_the_node_it_read() {
+        let lines = node_summary(
             TotalElectronContent::from_tecu(175.4),
-            "2024-05-10T18:00:00",
+            epoch(18, 0),
             Latitude::new(-12.5),
             Longitude::new(-75.0),
         );
@@ -228,8 +243,8 @@ mod tests {
             lines,
             [
                 "TEC 175.4 TECU",
-                "L1 delay about 28.5m",
-                "Grid node 12.5°S, 75.0°W at 2024-05-10T18:00:00 (UTC)",
+                "L1 delay ≈28.5m",
+                "Node 12.5°S, 75.0°W, 2024-05-10 18:00 UTC",
             ]
         );
     }

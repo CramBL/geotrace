@@ -5,6 +5,7 @@ use egui::{Button, Grid, Label, RichText, TextEdit};
 use egui_extras::{Column, TableBuilder, TableRow};
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
+use gt_fmt::UTC_MINUTE_FORMAT;
 use gt_log_view::LogAttachmentRef;
 use gt_pending_writes::WriteAccess;
 use gt_side_panel::widgets::{MetadataView, has_metadata_details, metadata_detail_rows};
@@ -306,7 +307,7 @@ pub(super) fn started_at_text(time_range: Option<NavPointTimeRange>) -> String {
         |range| {
             DateTime::<Utc>::from_timestamp_micros(range.start_us())
                 .unwrap_or_default()
-                .format("%Y-%m-%d %H:%M")
+                .format(UTC_MINUTE_FORMAT)
                 .to_string()
         },
     )

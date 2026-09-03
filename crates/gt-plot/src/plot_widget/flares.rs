@@ -6,11 +6,10 @@
 //! like the context metric lines, so a flare shows even where no recording
 //! covers it.
 
-use chrono::{DateTime, Utc};
 use egui::Color32;
 use egui::epaint::{Shape, Stroke};
 use egui_plot::{PlotPoint, PlotTransform, Span};
-use gt_flare::text::{self, FormattedFlareTimes};
+use gt_flare::text;
 use gt_flare::{MarkedFlare, SolarFlare};
 
 use super::lines::{self, NearestHoverLabel, PlotHoverLabel};
@@ -22,10 +21,6 @@ const MARKER_WIDTH: f32 = 1.5;
 
 /// Pixel distance from a marker within which the pointer is hovering it.
 const HOVER_RADIUS_PX: f32 = 5.0;
-
-/// How the marker hover writes the three times. The catalog publishes them to
-/// the minute.
-const FLARE_TIME_FORMAT: &str = "%Y-%m-%dT%H:%M";
 
 /// The flare markers of one span.
 struct FlareMarkers {
@@ -221,18 +216,8 @@ pub(super) struct SolarFlareHover {
 
 impl SolarFlareHover {
     fn of_archived_flare(marked: &MarkedFlare) -> Self {
-        let formatted = |time: DateTime<Utc>| time.format(FLARE_TIME_FORMAT).to_string();
-        let flare = &marked.flare;
-        let end = flare.end.map(formatted);
         Self {
-            lines: text::flare_summary(
-                marked,
-                FormattedFlareTimes {
-                    begin: &formatted(flare.begin),
-                    peak: &formatted(flare.peak),
-                    end: end.as_deref(),
-                },
-            ),
+            lines: text::flare_summary(marked),
         }
     }
 
@@ -251,7 +236,7 @@ impl SolarFlareHover {
 
 #[cfg(test)]
 mod tests {
-    use chrono::NaiveDate;
+    use chrono::{DateTime, NaiveDate, Utc};
     use gt_flare::FlareClass;
     use gt_types::SunlitSide;
     use rstest::rstest;
@@ -378,10 +363,10 @@ mod tests {
             [
                 "X2.2 solar flare",
                 "R3 strong radio blackout",
-                "Peaked at 2024-05-09T09:13 (UTC)",
-                "Began 2024-05-09T08:45, ended 2024-05-09T09:36",
-                "Active region 13664 at S20W25",
-                "The receiver was on the sunlit side",
+                "Peak: 2024-05-09 09:13 UTC",
+                "08:45–09:36 UTC",
+                "AR 13664, S20W25",
+                "Receiver: sunlit side",
             ]
         );
     }

@@ -235,10 +235,7 @@ fn cell_at_pointer(cells: &[NodeCell], pointer: Pos2) -> Option<&NodeCell> {
 /// The node hover shows the value behind the fill. The display toggle's own
 /// hover describes the layer.
 fn node_tooltip(ui: &mut Ui, cell: &NodeCell, instant: DateTime<Utc>) {
-    let instant = instant.format(gt_ionex::text::INSTANT_FORMAT).to_string();
-    for line in
-        gt_ionex::text::grid_node_summary(cell.content, &instant, cell.latitude, cell.longitude)
-    {
+    for line in gt_ionex::text::node_summary(cell.content, instant, cell.latitude, cell.longitude) {
         ui.label(line);
     }
 }

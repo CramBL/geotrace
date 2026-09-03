@@ -21,6 +21,7 @@ use std::sync::mpsc;
 use chrono::DateTime;
 use egui::RichText;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
+use gt_fmt::UTC_MINUTE_FORMAT;
 use gt_instance_lock::TakeOverRecord;
 use gt_store::{
     DayArchiveError as _, EnvironmentArchive, FlareStore, InterruptedDelete,
@@ -96,7 +97,7 @@ impl TakeOverAfterTheArchiveWasLastWritten {
             .written_at
             .and_then(|written_at| i64::try_from(written_at).ok())
             .and_then(|seconds| DateTime::from_timestamp(seconds, 0))
-            .map(|written_at| format!(" on {}", written_at.format("%Y-%m-%d %H:%M UTC")))
+            .map(|written_at| format!(" on {} UTC", written_at.format(UTC_MINUTE_FORMAT)))
             .unwrap_or_default();
         format!("{WRITE_ACCESS_TAKEN_FROM} {taken_from}{when}.")
     }

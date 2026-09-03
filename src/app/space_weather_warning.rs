@@ -14,6 +14,7 @@ use std::sync::{Arc, LazyLock};
 
 use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use gt_flare::{FlareClassification, MarkedFlare, RadioBlackoutClass};
+use gt_fmt::UTC_MINUTE_FORMAT;
 use gt_ionex::quiet_time::{self, QuietTimeDeviation, QuietTimeDeviationPeak};
 use gt_loaded_files::LoadedFileId;
 use gt_solar::GeomagneticIndex;
@@ -61,10 +62,6 @@ const GEOMAGNETIC_LOOKBACK_HOURS: i64 = 48;
 /// Closes the solar flare line's limit. Only a flare that peaked while the
 /// receiver was in daylight counts.
 const SUNLIT_RECEIVER: &str = "sunlit";
-
-/// How the flare line writes a peak instant, which the catalog publishes to
-/// the minute.
-const FLARE_PEAK_FORMAT: &str = "%Y-%m-%d %H:%M";
 
 /// The weakest flare classification the NOAA radio blackout scale covers, as
 /// the catalog writes it. The scale's own floor is a peak flux rather than a
@@ -539,7 +536,7 @@ impl SunlitFlarePeak {
             finding: format!(
                 "{} at {} UTC, {}",
                 self.classification,
-                self.peak.format(FLARE_PEAK_FORMAT),
+                self.peak.format(UTC_MINUTE_FORMAT),
                 self.blackout.scale_name()
             ),
         }
