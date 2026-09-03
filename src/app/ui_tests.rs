@@ -8201,8 +8201,10 @@ fn the_force_quit_confirmation_takes_the_press_aimed_at_it_when_the_last_write_f
     harness.run_steps(2);
 
     drop(compaction);
+    // The button's label counts the seconds down, and the hover text of that
+    // same button opens with "Close" too.
     assert!(
-        harness.step_until(|harness| harness.query_by_label("Close").is_some()),
+        harness.step_until(|harness| harness.query_by_label_contains("Close (").is_some()),
         "the confirmation never reported the finished writes"
     );
     assert!(
@@ -8219,7 +8221,7 @@ fn the_force_quit_confirmation_takes_the_press_aimed_at_it_when_the_last_write_f
     harness.press_where_the_pointer_rests(aimed_at);
 
     assert!(
-        harness.query_by_label("Close").is_none(),
+        harness.query_by_label_contains("Close (").is_none(),
         "the press aimed at Cancel missed the Close button that took its place"
     );
     assert!(

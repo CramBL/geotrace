@@ -1,6 +1,7 @@
 use egui::{Button, Checkbox, Grid, Label, RichText, ScrollArea, Window};
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use gt_fmt::UTC_SECOND_FORMAT;
@@ -1420,7 +1421,21 @@ pub enum ForceQuitPromptContents {
     /// What interrupting each running write costs, one line each.
     InterruptionCosts(Vec<String>),
     /// Every write the confirmation listed has finished.
-    WritesFinished,
+    WritesFinished(TimeUntilTheClose),
+}
+
+/// How long the confirmation reporting the finished writes has left before it
+/// closes itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimeUntilTheClose(pub Duration);
+
+impl TimeUntilTheClose {
+    /// The label counts the whole seconds left, rounded up, so it reads `1s`
+    /// through the whole last second of the count.
+    fn close_button_label(self) -> String {
+        let seconds = self.0.as_secs() + u64::from(self.0.subsec_nanos() > 0);
+        format!("Close ({seconds}s)")
+    }
 }
 
 /// The region listing what each running write costs. The dialog drops the line
@@ -1433,6 +1448,10 @@ const INTERRUPTION_COSTS_REGION: &str = "force_quit_interruption_costs";
 const FORCE_QUIT_TITLE: &str = "Force quit?";
 
 const FORCE_QUIT_LABEL: &str = "Force quit";
+
+const CLOSE_BUTTON_HOVER: &str = "Closes GeoTrace now. GeoTrace closes on its own when the count \
+                                  reaches zero. The count holds while the pointer is over this \
+                                  window.";
 
 /// What the force-quit confirmation reports for the frame it drew.
 pub struct ForceQuitPromptResponse {
@@ -1460,7 +1479,7 @@ pub fn show_force_quit_confirmation(
                 ForceQuitPromptContents::InterruptionCosts(_) => {
                     ui.label("GeoTrace ends now, with the work it is still doing unfinished");
                 }
-                ForceQuitPromptContents::WritesFinished => {
+                ForceQuitPromptContents::WritesFinished(_) => {
                     ui.label("The work finished: there is nothing left to interrupt");
                 }
             }
@@ -1488,10 +1507,11 @@ pub fn show_force_quit_confirmation(
                     }
                     ui.button("Cancel")
                 }
-                ForceQuitPromptContents::WritesFinished => {
+                ForceQuitPromptContents::WritesFinished(time_until_the_close) => {
                     ui.add_enabled(false, Button::new(FORCE_QUIT_LABEL))
                         .on_disabled_hover_text("The work has finished");
-                    ui.button("Close").on_hover_text("Closes GeoTrace now")
+                    ui.button(time_until_the_close.close_button_label())
+                        .on_hover_text(CLOSE_BUTTON_HOVER)
                 }
             };
             if dismiss.clicked() {
@@ -1527,16 +1547,16 @@ mod tests {
     use rustc_hash::FxHashMap;
 
     use super::{
-        CoveredDayCounts, DELETE_ARCHIVED_DAYS_TITLE, EnvironmentArchive, EnvironmentPruneChoice,
-        EnvironmentPrunePrompt, FORCE_QUIT_LABEL, ForceQuitChoice, ForceQuitPromptContents,
-        LoadedLogs, MapLayer, MapboxTokenField, NavMap, NodeKey, PERMANENT_DELETE_LABEL,
-        PruneRequest, PruneScope, PrunedDays, REMOVED_ITEMS_MOST_LINES, RecordingDetails,
-        SnapScopeChoice, SnapScopeCount, SnapScopeCounts, TrackRef, files_fully_removed,
-        prune_scope_line, show_about_dialog, show_delete_confirmation,
-        show_environment_prune_confirmation, show_force_quit_confirmation,
-        show_load_warnings_dialog, show_mapbox_token_dialog, show_orphaned_event_markers_popup,
-        show_recording_details_dialog, show_snap_auto_prompt, show_snap_consent_dialog,
-        show_snap_replace_dialog, show_snap_scope_dialog, track_removals,
+        CoveredDayCounts, DELETE_ARCHIVED_DAYS_TITLE, Duration, EnvironmentArchive,
+        EnvironmentPruneChoice, EnvironmentPrunePrompt, FORCE_QUIT_LABEL, ForceQuitChoice,
+        ForceQuitPromptContents, LoadedLogs, MapLayer, MapboxTokenField, NavMap, NodeKey,
+        PERMANENT_DELETE_LABEL, PruneRequest, PruneScope, PrunedDays, REMOVED_ITEMS_MOST_LINES,
+        RecordingDetails, SnapScopeChoice, SnapScopeCount, SnapScopeCounts, TimeUntilTheClose,
+        TrackRef, files_fully_removed, prune_scope_line, show_about_dialog,
+        show_delete_confirmation, show_environment_prune_confirmation,
+        show_force_quit_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
+        show_orphaned_event_markers_popup, show_recording_details_dialog, show_snap_auto_prompt,
+        show_snap_consent_dialog, show_snap_replace_dialog, show_snap_scope_dialog, track_removals,
     };
     use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
     use gt_side_panel::{DeleteConfirmState, TreeState};
@@ -1717,18 +1737,36 @@ mod tests {
         harness
     }
 
+    const TIME_UNTIL_THE_CLOSE: TimeUntilTheClose = TimeUntilTheClose(Duration::from_secs(4));
+
     fn force_quit_dialog_once_the_writes_finish(
         choice: &RefCell<Option<ForceQuitChoice>>,
     ) -> TestHarness<'_, ()> {
         let mut harness = TestHarness::builder().size(DIALOG_VIEWPORT).ui(move |ui| {
-            let response =
-                show_force_quit_confirmation(ui, &ForceQuitPromptContents::WritesFinished);
+            let response = show_force_quit_confirmation(
+                ui,
+                &ForceQuitPromptContents::WritesFinished(TIME_UNTIL_THE_CLOSE),
+            );
             if let Some(made) = response.choice {
                 *choice.borrow_mut() = Some(made);
             }
         });
         harness.run();
         harness
+    }
+
+    #[rstest::rstest]
+    #[case::the_whole_count(Duration::from_secs(4), "Close (4s)")]
+    #[case::part_way_through_a_second(Duration::from_millis(2500), "Close (3s)")]
+    #[case::the_last_moment_of_the_count(Duration::from_millis(1), "Close (1s)")]
+    fn the_close_button_counts_the_seconds_left(
+        #[case] time_until_the_close: Duration,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(
+            TimeUntilTheClose(time_until_the_close).close_button_label(),
+            expected
+        );
     }
 
     #[test]
@@ -1791,7 +1829,10 @@ mod tests {
     fn closing_the_force_quit_dialog_once_the_writes_finish_quits_nothing() {
         let choice = RefCell::new(None);
         let mut harness = force_quit_dialog_once_the_writes_finish(&choice);
-        harness.inner.get_by_label("Close").click();
+        harness
+            .inner
+            .get_by_label(&TIME_UNTIL_THE_CLOSE.close_button_label())
+            .click();
         harness.run();
         drop(harness);
 
