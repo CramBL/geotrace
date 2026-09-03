@@ -16,6 +16,12 @@ We only use Title Casing for company and product names (Rerun, Rerun Viewer, Dis
 Good: `log("File saved")`
 Bad: `log("file saved.")`
 
+#### Units
+Write a number and its unit without a space: `30%`, `2h`, `5min`, `22km`, `0.16m`, `48.9°N`.
+Three kinds of unit keep the space: a token longer than two letters (`48 TECU`, `40 dB-Hz`), a data size (`126.6 MB`), and a unit written with a slash (`5.0 km/h`, `2 m/s`).
+The reference documents (`reference.rs` in each crate) keep the space throughout.
+A query's text follows the language's own syntax (`velocity > 30 km/h`).
+
 #### Dashes
 Use a spaced hyphen (` - `) for parenthetical breaks in prose (docs, comments, log messages).
 Em dashes (`—`) are reserved for UI display only (e.g. as a placeholder for absent values via `gt_ui_theme::EM_DASH`).
