@@ -1,6 +1,6 @@
 # geotrace-sdk
 
-The official Rust SDK for generating and reading `.gtd` data files compatible with Geotrace.
+The official Rust SDK for generating and reading `.gtd` data files compatible with GeoTrace.
 
 ```rust
 use geotrace_sdk::{Angle, NavFileBuilder, NavFix, Utc};
@@ -55,6 +55,6 @@ Unknown labels in existing files are matched against recognized aliases first an
 This SDK is licensed under the **MIT License**.
 
 You are free to use, modify, and distribute this SDK in both open-source and closed-source commercial projects.
-Using this crate to generate data files does not subject your application to the AGPL license used by the main Geotrace application.
+Using this crate to generate data files does not subject your application to the AGPL license used by the main GeoTrace application.
 
 See the [LICENSE](./LICENSE) file for details.

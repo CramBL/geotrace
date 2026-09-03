@@ -58,7 +58,7 @@ fn nan_for_absent_speed() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn nan_for_absent_satellite_fields() -> Result<(), Box<dyn std::error::Error>> {
-    // elevation, azimuth, snr all None → NaN on disk, None on read-back
+    // `elevation`, `azimuth` and `snr` all `None` → NaN on disk, `None` on read-back
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
@@ -439,7 +439,7 @@ fn make_file_with_shape_mismatch() -> Vec<u8> {
 #[test]
 fn chunked_fixed_array_large_dataset_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     // hdf5-pure ≤ 0.5.0 could not read datasets whose Fixed Array chunk index
-    // used the "paged" variant, triggered when num_chunks > 1024. Using
+    // used the "paged" variant, triggered when `num_chunks` > 1024. Using
     // chunk_size=1 with 1025 elements forces this path.
     const N: usize = 1025;
     let data: Vec<f64> = (0..N).map(|i| i as f64).collect();

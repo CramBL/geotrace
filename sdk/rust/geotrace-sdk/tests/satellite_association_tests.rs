@@ -45,7 +45,7 @@ fn report_gps(offset_ms: i64) -> SatelliteReport {
 }
 
 /// `SatelliteReport` with `gps_time = t(offset_ms)` and a single satellite
-/// of the requested constellation.
+/// of `constellation` with PRN `prn`.
 fn report_with(offset_ms: i64, constellation: Constellation, prn: u32) -> SatelliteReport {
     SatelliteReport::builder()
         .gps_time(t(offset_ms))
@@ -213,17 +213,17 @@ fn four_reports_matched_to_four_fixes_no_ghosts() -> Result<(), BuildError> {
 /// When a report supplies only `sys_time` (no `gps_time`), `sys_time` is used
 /// as the comparison timestamp.  If `sys_time` happens to place the report
 /// within the window of a fix (e.g. when the clocks agree), the report is
-/// assigned rather than orphaned.
+/// assigned to that fix.
 #[test]
 fn sys_time_only_report_within_window_is_assigned() -> Result<(), BuildError> {
     let mut recorder = NavFileBuilder::new().open();
-    // Fix with gps_time = t(0).  The fix effective_time is t(0).
+    // Fix with `gps_time` = t(0).  The fix `effective_time` is t(0).
     recorder.add_nav_fix(fix_at(0, 55.0, 12.0));
-    // Report with only sys_time = t(200).  rep_us = sys_time = t(200).
+    // Report with only `sys_time` = t(200).  `rep_us` = `sys_time` = t(200).
     // Distance to fix: 200 ms - inside the 500 ms window.
     recorder.add_satellite_report(
         SatelliteReport::builder()
-            .sys_time(t(200)) // no gps_time
+            .sys_time(t(200)) // no `gps_time`
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -251,7 +251,7 @@ fn sys_time_only_report_within_window_is_assigned() -> Result<(), BuildError> {
 ///   Fix A  at t=0
 ///   Fix B  at t=2 000 ms
 ///   Report: gps_time=t(200) [200 ms from A - inside window]
-///           sys_time=t(1800) [200 ms from B - inside window if sys_time were used]
+///           sys_time=t(1800) [200 ms from B - inside window if `sys_time` were used]
 ///
 /// If `gps_time` is preferred, the report goes to Fix A.
 /// If `sys_time` were used instead, it would go to Fix B.
@@ -264,7 +264,7 @@ fn gps_time_is_preferred_over_sys_time_for_comparison() -> Result<(), BuildError
     recorder.add_satellite_report(
         SatelliteReport::builder()
             .gps_time(t(200)) // 200 ms from fix A → inside window
-            .sys_time(t(1800)) // 200 ms from fix B → would go to B if sys_time were used
+            .sys_time(t(1800)) // 200 ms from fix B → would go to B if `sys_time` were used
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -298,7 +298,7 @@ fn report_with_no_timestamp_is_discarded() -> Result<(), BuildError> {
     recorder.add_nav_fix(fix_at(0, 55.0, 12.0));
     recorder.add_satellite_report(
         SatelliteReport::builder()
-            // neither gps_time nor sys_time - dropped in finish()
+            // neither `gps_time` nor `sys_time` - dropped in finish()
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -514,8 +514,8 @@ fn second_ghost_after_last_fix_is_further_than_first() -> Result<(), BuildError>
 /// Setup:
 ///   Fix B: gps_time=t(0),      sys_time=t(1 000) → delta = −1 000 ms
 ///   Fix A: gps_time=t(10 000), sys_time=t(11 000) → delta = −1 000 ms
-///   Report: sys_time=t(5 000), no gps_time
-///     corrected GPS time = sys_time + delta = 5 000 − 1 000 = 4 000 ms
+///   Report: sys_time=t(5 000), no `gps_time`
+///     corrected GPS time = `sys_time` + delta = 5 000 − 1 000 = 4 000 ms
 ///     fraction = 4 000 / 10 000 = 0.40
 ///
 /// Fix B = (lat=0, lon=0), Fix A = (lat=10, lon=0).
@@ -524,7 +524,7 @@ fn second_ghost_after_last_fix_is_further_than_first() -> Result<(), BuildError>
 fn between_fix_ghost_interpolated_at_correct_fraction() -> Result<(), BuildError> {
     let mut recorder = NavFileBuilder::new().open();
 
-    // Fix B: gps ahead of sys by 1 000 ms.
+    // Fix B: `gps_time` ahead of `sys_time` by 1 000 ms.
     recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t(0))
@@ -545,10 +545,10 @@ fn between_fix_ghost_interpolated_at_correct_fraction() -> Result<(), BuildError
             .build(),
     );
 
-    // Report: sys_time only.  Corrected GPS time = t(4 000) → frac = 0.40.
+    // Report: `sys_time` only.  Corrected GPS time = t(4 000) → `frac` = 0.40.
     recorder.add_satellite_report(
         SatelliteReport::builder()
-            .sys_time(t(5000)) // no gps_time; 5 000 ms from both fixes' gps_time → orphan
+            .sys_time(t(5000)) // no `gps_time`, and 5 000 ms from both fixes' `gps_time` → orphan
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -600,7 +600,7 @@ fn between_fix_ghost_interpolated_at_correct_fraction() -> Result<(), BuildError
 fn between_fix_ghosts_evenly_distributed_when_no_delta_available() -> Result<(), BuildError> {
     let mut recorder = NavFileBuilder::new().open();
 
-    // Fixes with gps_time only - no sys_time, so no delta anchors.
+    // Fixes with `gps_time` only - no `sys_time`, so no delta anchors.
     recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t(0))
@@ -618,8 +618,8 @@ fn between_fix_ghosts_evenly_distributed_when_no_delta_available() -> Result<(),
             .build(),
     );
 
-    // Two reports with sys_time only - no gps_time, no delta → even distribution.
-    // sys_time values are clustered near the end, but the ghost positions must
+    // Two reports with `sys_time` only - no `gps_time`, no delta → even distribution.
+    // `sys_time` values are clustered near the end, but the ghost positions must
     // ignore that and distribute evenly at fractions 1/3 and 2/3.
     for sys_offset_ms in [8000_i64, 9000] {
         recorder.add_satellite_report(
@@ -734,7 +734,7 @@ fn ghost_after_fix_with_no_heading_does_not_panic() -> Result<(), BuildError> {
 /// Expected: all 3 SAT reports assigned. Exactly 3 nav points (no ghost fixes).
 #[test]
 fn no_filter_sys_time_only_with_large_gps_offset_are_associated() -> Result<(), BuildError> {
-    const GPS_SYS_OFFSET_MS: i64 = 2_000; // sys_time is 2 s ahead of gps_time
+    const GPS_SYS_OFFSET_MS: i64 = 2_000; // `sys_time` is 2 s ahead of `gps_time`
 
     let mut recorder = NavFileBuilder::new().open();
     for i in 0..3_i64 {
@@ -747,7 +747,7 @@ fn no_filter_sys_time_only_with_large_gps_offset_are_associated() -> Result<(), 
                 .heading(Angle::degrees(0.0))
                 .build(),
         );
-        // SAT record: only sys_time, at the same moment as the fix's sys_time.
+        // SAT record: only `sys_time`, at the same moment as the fix's `sys_time`.
         recorder.add_satellite_report(
             SatelliteReport::builder()
                 .sys_time(t(i * 1_000 + GPS_SYS_OFFSET_MS))
@@ -837,19 +837,19 @@ fn no_filter_1hz_all_sat_associated_with_large_gps_offset() -> Result<(), BuildE
 /// ## Root-cause sketch
 /// `best_guess_gps_us` corrects `SAT.sys_time` into the GPS domain by adding
 /// the delta from the nearest anchor (nearest by anchor-sys_time distance,
-/// where anchor_sys_time = anchor_gps_time − delta).
+/// where `anchor_sys_time = anchor_gps_time − delta`).
 ///
 /// When GPS is ahead by D and the TPV + SAT messages for one epoch are logged
 /// with a small real-time gap ε between them:
 ///
-///   Fix i:  gps_time = t(i·1000),  sys_time = t(i·1000 − D)
-///   SAT i:  sys_time = t(i·1000 − D + ε)
+///   Fix i:  `gps_time` = t(i·1000),  `sys_time` = t(i·1000 − D)
+///   SAT i:  `sys_time` = t(i·1000 − D + ε)
 ///
-///   corrected(SAT i) = sys_time + D = t(i·1000 + ε)   → distance ε from Fix i ✓
+///   corrected(SAT i) = `sys_time` + D = t(i·1000 + ε)   → distance ε from Fix i ✓
 ///
 /// But anchor selection is "nearest by sys-clock distance".  The anchor for Fix i
-/// has anchor_sys_time = t(i·1000 − D).  If ε > D/2 = 300 ms, the SAT's
-/// sys_time is closer (in sys-clock space) to Fix i+1's anchor than to Fix i's
+/// has `anchor_sys_time` = t(i·1000 − D).  If ε > D/2 = 300 ms, the SAT's
+/// `sys_time` is closer (in sys-clock space) to Fix i+1's anchor than to Fix i's
 /// anchor - but the delta values are identical so the corrected time is still
 /// t(i·1000 + ε).  The distance to Fix i is ε, still within the window.
 ///
@@ -859,12 +859,12 @@ fn no_filter_1hz_all_sat_associated_with_large_gps_offset() -> Result<(), BuildE
 /// This test covers the common case (ε ≈ sys-time logging jitter, a few ms)
 /// and verifies correct constellation-per-fix assignment.
 ///
-/// Layout (D = 600 ms, GPS 600 ms ahead of sys, ε ≈ 0 ms):
+/// Layout (D = 600 ms, GPS 600 ms ahead of `sys_time`, ε ≈ 0 ms):
 ///   Fix 0:  gps=t(0),    sys=t(−600)  - GPS
 ///   Fix 1:  gps=t(1000), sys=t(400)   - Galileo
 ///   Fix 2:  gps=t(2000), sys=t(1400)  - GLONASS
 ///   Fix 3:  gps=t(3000), sys=t(2400)  - BeiDou
-///   SAT i:  sys_time = Fix[i].sys_time  (same host-clock moment as the fix)
+///   SAT i:  `sys_time = Fix[i].sys_time`  (same host-clock moment as the fix)
 ///
 /// Expected: Fix[i] carries SAT[i]'s constellation. 4 nav points, no ghosts.
 #[test]
@@ -1052,8 +1052,8 @@ fn gps_ahead_600ms_sat_at_499ms_delay_still_correct() -> Result<(), BuildError> 
     Ok(())
 }
 
-/// At exactly 500 ms delay the two anchors and the two fixes are all equidistant;
-/// the tie-breaking rules (first anchor wins, earlier fix wins) conspire to give
+/// At exactly 500 ms delay the two anchors and the two fixes are all equidistant.
+/// The tie-breaking rules (first anchor wins, earlier fix wins) conspire to give
 /// the correct result.  This confirms the window boundary is ≤, not <.
 #[test]
 fn gps_ahead_600ms_sat_at_exactly_500ms_delay_boundary() -> Result<(), BuildError> {
@@ -1114,20 +1114,19 @@ fn gps_ahead_600ms_sat_at_exactly_500ms_delay_boundary() -> Result<(), BuildErro
 }
 
 /// When both the report and the candidate fix have `sys_time`, the association
-/// distance is computed as `|report.sys_time − fix.sys_time|` directly instead
-/// of going through the GPS-domain projection.
+/// distance is computed as `|report.sys_time − fix.sys_time|` directly.
 ///
-/// This matters when the GPS/sys-clock offset drifts across a trip: a single
+/// This matters when the GPS/sys-clock offset drifts across a track: a single
 /// delta anchor would introduce approximation error in the distance to the
-/// non-nearest candidate.  Direct sys_time comparison is always exact.
+/// non-nearest candidate.  Direct `sys_time` comparison is always exact.
 ///
 /// Setup - GPS/sys offset changes from fix to fix:
-///   Fix 0: gps=t(0),    sys=t(100)   (GPS 100 ms behind sys)  - GPS
-///   Fix 1: gps=t(1000), sys=t(1600)  (GPS 600 ms behind sys)  - Galileo
-///   Fix 2: gps=t(2000), sys=t(2250)  (GPS 250 ms behind sys)  - GLONASS
-///   Fix 3: gps=t(3000), sys=t(3450)  (GPS 450 ms behind sys)  - BeiDou
+///   Fix 0: gps=t(0),    sys=t(100)   (GPS 100 ms behind `sys_time`)  - GPS
+///   Fix 1: gps=t(1000), sys=t(1600)  (GPS 600 ms behind `sys_time`)  - Galileo
+///   Fix 2: gps=t(2000), sys=t(2250)  (GPS 250 ms behind `sys_time`)  - GLONASS
+///   Fix 3: gps=t(3000), sys=t(3450)  (GPS 450 ms behind `sys_time`)  - BeiDou
 ///
-/// Each SAT report's sys_time matches its fix's sys_time exactly (ε = 0).
+/// Each SAT report's `sys_time` matches its fix's `sys_time` exactly (ε = 0).
 /// Expected: all 4 reports assigned to their own fix with no ghost fixes.
 #[test]
 fn sys_time_direct_comparison_with_drifting_gps_offset() -> Result<(), BuildError> {
@@ -1147,7 +1146,7 @@ fn sys_time_direct_comparison_with_drifting_gps_offset() -> Result<(), BuildErro
         recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(t(i * 1_000))
-                .sys_time(t(i * 1_000 + off)) // sys ahead of GPS by `off`
+                .sys_time(t(i * 1_000 + off)) // `sys_time` ahead of GPS by `off`
                 .lat(Angle::degrees(55.0 + i as f64 * 0.01))
                 .lon(Angle::degrees(12.0))
                 .heading(Angle::degrees(0.0))
@@ -1188,11 +1187,11 @@ fn sys_time_direct_comparison_with_drifting_gps_offset() -> Result<(), BuildErro
 }
 
 /// Like the previous test but with a non-zero SAT logging delay (200 ms after
-/// the fix's sys_time), modelling the realistic case where GPGSV sentences
+/// the fix's `sys_time`), modelling the realistic case where GPGSV sentences
 /// arrive after the GGA sentence on the same serial port.
 ///
 /// With drifting offsets the GPS-domain corrected estimate would compute a
-/// different rep_us for each epoch. The sys_time comparison is always exact.
+/// different `rep_us` for each epoch. The `sys_time` comparison is always exact.
 #[test]
 fn sys_time_direct_comparison_drifting_offset_with_sat_delay() -> Result<(), BuildError> {
     const SAT_DELAY_MS: i64 = 200; // realistic GPGSV logging delay
@@ -1218,7 +1217,7 @@ fn sys_time_direct_comparison_drifting_offset_with_sat_delay() -> Result<(), Bui
                 .heading(Angle::degrees(0.0))
                 .build(),
         );
-        // SAT arrives SAT_DELAY_MS after the TPV's sys_time - still well inside the window.
+        // SAT arrives `SAT_DELAY_MS` after the TPV's `sys_time` - still well inside the window.
         recorder.add_satellite_report(
             SatelliteReport::builder()
                 .sys_time(t(i * 1_000 + off + SAT_DELAY_MS))

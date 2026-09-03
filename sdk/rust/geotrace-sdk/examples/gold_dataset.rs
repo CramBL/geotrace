@@ -320,7 +320,7 @@ fn load_channels(
     base_dir: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // One accumulator per channel, keyed by name in first-seen order. Each CSV
-    // row is one sample; the metadata columns repeat and are read once.
+    // row is one sample. The metadata columns repeat and are read once.
     struct Acc {
         unit: Option<ChannelUnit>,
         period_deg: Option<f64>,
@@ -348,7 +348,7 @@ fn load_channels(
         let acc = if let Some(existing) = channels.iter_mut().find(|(n, _)| n.as_str() == cols[0]) {
             &mut existing.1
         } else {
-            // No per-component trim: the other SDK ports split on ';' without
+            // No per-component trim: the other SDK ports split on `;` without
             // trimming, so keep this byte-identical for the gold fixture.
             let split = |s: &str| s.split(';').map(str::to_string).collect::<Vec<_>>();
             channels.push((

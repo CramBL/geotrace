@@ -83,8 +83,8 @@ impl From<Timestamp> for chrono::DateTime<chrono::Utc> {
 
 /// An angle, stored internally as degrees.
 ///
-/// Construct with [`Angle::degrees`] or [`Angle::radians`];
-/// read back with [`Angle::as_degrees`] or [`Angle::as_radians`].
+/// Construct with [`Angle::degrees`] or [`Angle::radians`].
+/// Read back with [`Angle::as_degrees`] or [`Angle::as_radians`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Angle(f64);
 

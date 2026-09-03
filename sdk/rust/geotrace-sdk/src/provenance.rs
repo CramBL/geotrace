@@ -13,7 +13,7 @@ pub const SDK_COMMIT_TIME_ATTR: &str = "sdk_commit_time";
 /// [`NavFileBuilder::with_scrubbed_provenance`](crate::NavFileBuilder::with_scrubbed_provenance).
 pub const SCRUBBED_SDK_VERSION: &str = "<scrubbed>";
 
-/// The geotrace commit a released SDK build was made from, and its committer
+/// The GeoTrace commit a released SDK build was made from, and its committer
 /// timestamp in RFC 3339.
 #[derive(Clone, Copy)]
 pub(crate) struct BuildProvenance {

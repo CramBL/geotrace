@@ -344,12 +344,12 @@ fn multiple_contested_losers_all_become_ghosts() -> Result<(), BuildError> {
 /// This tests the even-distribution fallback: reports supply only `sys_time` and
 /// the surrounding real fixes carry no `sys_time`, so no GPS/system-clock delta
 /// can be computed.  Each ghost is placed at equal fractional steps (1/4, 2/4, 3/4)
-/// regardless of the raw sys_time values.
+/// regardless of the raw `sys_time` values.
 #[test]
 fn ghost_points_between_fixes_are_evenly_distributed() -> Result<(), BuildError> {
-    // Real fix A: t=0 s, (lat=10.0, lon=20.0) -- no sys_time.
-    // Real fix B: t=120 s, (lat=10.0, lon=22.0) -- no sys_time.
-    // Three satellite reports with sys_time only, clustered near B:
+    // Real fix A: t=0 s, (lat=10.0, lon=20.0) -- no `sys_time`.
+    // Real fix B: t=120 s, (lat=10.0, lon=22.0) -- no `sys_time`.
+    // Three satellite reports with `sys_time` only, clustered near B:
     //   sys=110 s, sys=115 s, sys=117 s  (all > 500 ms from both fixes → ghost).
     //
     // Because no delta can be computed, even distribution must place the ghosts
@@ -373,7 +373,7 @@ fn ghost_points_between_fixes_are_evenly_distributed() -> Result<(), BuildError>
             .build(),
     );
 
-    // sys_time only -- no gps_time, no nav-fix sys_time -- triggers even-distribution fallback.
+    // `sys_time` only -- no `gps_time`, no nav-fix `sys_time` -- triggers even-distribution fallback.
     for offset_ms in [110_000_i64, 115_000, 117_000] {
         recorder.add_satellite_report(
             SatelliteReport::builder()

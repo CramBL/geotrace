@@ -18,7 +18,7 @@ fn fix() -> NavFix {
         .build()
 }
 
-// Unit variants produce the snake_case segment.
+// Unit variants produce the `snake_case` segment.
 #[derive(EventKind)]
 #[event_kind(note = none)]
 enum FlatEvent {
@@ -149,7 +149,7 @@ fn skip_variant_returns_none() {
     assert!(SkipEvent::Internal.variant_path().is_none());
 }
 
-// add_event silently no-ops when variant returns None.
+// `add_event` silently no-ops when the variant returns `None`.
 #[test]
 fn add_event_noop_on_skip_variant() {
     let mut recorder = NavFileBuilder::new().open();

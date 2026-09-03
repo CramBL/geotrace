@@ -221,7 +221,7 @@ const ACCEL_RATE_HZ: i64 = 25;
 const TRIP_DURATION_S: i64 = 150;
 /// Standard gravity, m/s².
 const STANDARD_GRAVITY: f64 = 9.806_65;
-/// Vibration amplitude in g at [`VIBRATION_REFERENCE_SPEED_MPS`]; scales
+/// Vibration amplitude in g at [`VIBRATION_REFERENCE_SPEED_MPS`]. Scales
 /// linearly with speed - a parked IMU is quiet.
 const VIBRATION_AT_REFERENCE_SPEED_G: f64 = 0.03;
 /// Speed the vibration amplitude is calibrated at, m/s.
@@ -231,7 +231,7 @@ const VERTICAL_VIBRATION_SCALE: f64 = 0.5;
 
 /// Derive a device-frame `accel` channel from the trip's own dynamics, at
 /// [`ACCEL_RATE_HZ`] across the whole trip - tunnel included, an IMU does
-/// not lose the sky; that stretch is one long quiet segment between its
+/// not lose the sky. That stretch is one long quiet segment between its
 /// bracketing fixes. The fixes are smoothed first: the scripted
 /// reacquisition carries jumpy GPS speeds (that noise is its storyline),
 /// and an IMU measures the true motion, not the fix error.

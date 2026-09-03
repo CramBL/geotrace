@@ -12,7 +12,7 @@ use crate::{Angle, Velocity};
 ///
 /// `heading` is `None` for synthetic/ghost fixes where the actual direction is
 /// unknown (e.g., dead-reckoned positions emitted only to carry satellite reports).
-/// The app renders those as circles rather than directional arrows.
+/// The app renders those as circles.
 ///
 /// `gps_time` is the GPS-receiver timestamp. It is `None` when the receiver had no
 /// lock at the time of this record.
@@ -96,7 +96,7 @@ pub struct Satellite {
     /// Signal-to-noise ratio in dB-Hz.
     ///
     /// An unavailable SNR is `None`. Never encode one as `0.0`, which readers
-    /// take as a measured 0 dB-Hz, nor as a sentinel such as 99 dB-Hz.
+    /// take as a measured 0 dB-Hz, nor as a sentinel value such as 99 dB-Hz.
     pub snr: Option<f32>,
 }
 
@@ -104,11 +104,11 @@ pub struct Satellite {
 const SNR_NO_DATA_SENTINEL_DB_HZ: f32 = 99.0;
 
 /// How far from [`SNR_NO_DATA_SENTINEL_DB_HZ`] a reported SNR still counts as
-/// the sentinel, in dB-Hz.
+/// the sentinel value, in dB-Hz.
 const SNR_NO_DATA_SENTINEL_TOLERANCE_DB_HZ: f32 = 0.5;
 
 impl Satellite {
-    /// Whether `snr` holds ≈99 dB-Hz, the firmware sentinel for "no data".
+    /// Whether `snr` holds ≈99 dB-Hz, the sentinel value firmware reports for "no data".
     ///
     /// The SDK reads and writes the value unchanged and only counts it among
     /// [`crate::NavFileBuilder`]'s satellite warnings: interpreting it is left
@@ -174,7 +174,7 @@ impl Constellation {
     ///
     /// Single source of truth for the constellation's display spelling - every
     /// other call site (UI labels, `read::constellation_names`, Python bindings)
-    /// should format through this rather than re-typing the name.
+    /// formats through this.
     pub fn display_name(self) -> &'static str {
         match self {
             Constellation::Gps => "GPS",
@@ -249,7 +249,7 @@ impl Annotation {
 
 /// Icon displayed for a map marker.
 ///
-/// `Display`/`FromStr` (via `strum`) give the lower snake_case wire form used by
+/// `Display`/`FromStr` (via `strum`) give the lower `snake_case` wire form used by
 /// `MarkerIcon::name` and [`MarkerIcon::try_from_lower_case`] - the variant name
 /// and its string form are derived from a single definition, so adding, renaming,
 /// or removing a variant cannot desync the two.
@@ -323,7 +323,7 @@ impl MarkerIcon {
         }
     }
 
-    /// Lower snake_case wire form, e.g. `MarkerIcon::SatelliteLost.name() == "satellite_lost"`.
+    /// Lower `snake_case` wire form, e.g. `MarkerIcon::SatelliteLost.name() == "satellite_lost"`.
     ///
     /// Inverse of [`MarkerIcon::try_from_lower_case`]. Both are derived from the
     /// variant names via `strum`, so they always agree.
@@ -331,7 +331,7 @@ impl MarkerIcon {
         self.into()
     }
 
-    /// Parses the lower snake_case wire form produced by `MarkerIcon::name`.
+    /// Parses the lower `snake_case` wire form produced by `MarkerIcon::name`.
     pub fn try_from_lower_case(s: impl AsRef<str>) -> Result<Self, Error> {
         let s = s.as_ref();
         // strum::ParseError carries no information beyond "no variant matched" -
@@ -362,7 +362,7 @@ mod marker_icon_tests {
     /// The wire form is part of the on-disk `.gtd` format
     /// (`Annotation::icon`/`EventMarkerIconChoice::Icon`). Pin it down so a
     /// rename of a variant - which would silently change `strum`'s derived
-    /// snake_case form - is caught here rather than at file-read time.
+    /// `snake_case` form - is caught by this test.
     #[test]
     fn name_is_stable_wire_form() {
         assert_eq!(MarkerIcon::Pin.name(), "pin");
@@ -396,7 +396,7 @@ mod travel_mode_tests {
 
     /// The wire form is part of the on-disk `.gtd` format (`meta_travel_mode`).
     /// Pin it down so a variant rename - which would silently change `strum`'s
-    /// derived snake_case form - is caught here rather than at file-read time.
+    /// derived `snake_case` form - is caught by this test.
     #[test]
     fn name_is_stable_wire_form() {
         let known = [
@@ -458,7 +458,7 @@ mod constellation_tests {
     /// The lowercase wire form is part of the on-disk `.gtd` format
     /// (`tracked_sats/constellation` group attributes). Pin it down so a rename
     /// of a variant - which would silently change `strum`'s derived lowercase
-    /// form - is caught here rather than at file-read time.
+    /// form - is caught by this test.
     #[test]
     fn try_from_lower_case_accepts_stable_wire_form() {
         for (lower, expected) in [
@@ -514,10 +514,10 @@ mod constellation_tests {
 /// should process the data - consumers derive their own behavior from it
 /// (the GeoTrace app, for example, picks a snap-to-road costing).
 ///
-/// `Display`/`FromStr` (via `strum`) give the lower snake_case wire form used
+/// `Display`/`FromStr` (via `strum`) give the lower `snake_case` wire form used
 /// by [`TravelMode::name`] and [`TravelMode::from_lower_case`]. Wire values
 /// outside the known set parse into [`TravelMode::Unknown`] so they survive a
-/// read-write round trip instead of being dropped.
+/// read-write round trip.
 #[derive(
     Debug,
     Clone,
@@ -543,7 +543,7 @@ pub enum TravelMode {
 }
 
 impl TravelMode {
-    /// Lower snake_case wire form, e.g. `TravelMode::Car.name() == "car"`.
+    /// Lower `snake_case` wire form, e.g. `TravelMode::Car.name() == "car"`.
     ///
     /// For [`TravelMode::Unknown`] this is the preserved original wire value.
     /// Inverse of [`TravelMode::from_lower_case`].
@@ -560,7 +560,7 @@ impl TravelMode {
         }
     }
 
-    /// Parses the lower snake_case wire form produced by [`TravelMode::name`].
+    /// Parses the lower `snake_case` wire form produced by [`TravelMode::name`].
     ///
     /// Never fails: values outside the known set become
     /// [`TravelMode::Unknown`], preserving the input verbatim.
@@ -568,8 +568,8 @@ impl TravelMode {
         let s = s.as_ref();
         match s.parse() {
             Ok(mode) => mode,
-            // `#[strum(default)]` makes parsing infallible; keep the explicit
-            // fallback so removing the default cannot introduce a panic here.
+            // `#[strum(default)]` makes parsing infallible. The explicit
+            // fallback keeps that true if the default is ever removed.
             Err(_) => TravelMode::Unknown(s.to_owned()),
         }
     }
@@ -601,7 +601,7 @@ impl Meta {
         self.sdk_version.as_deref()
     }
 
-    /// Commit of the geotrace repository the writing SDK was built from.
+    /// Commit of the GeoTrace repository the writing SDK was built from.
     pub fn sdk_git_commit(&self) -> Option<&str> {
         self.sdk_git_commit.as_deref()
     }
@@ -673,8 +673,6 @@ impl NavFix {
     ///
     /// Returns `gps_time` when the receiver had an active lock, otherwise falls
     /// back to `sys_time`, then to the Unix epoch as a last resort.
-    /// Use this instead of accessing `gps_time` directly when you need a
-    /// concrete timestamp regardless of whether a GPS lock was present.
     pub fn effective_gps_time(&self) -> DateTime<Utc> {
         self.gps_time.or(self.sys_time).unwrap_or_default()
     }
@@ -994,7 +992,7 @@ impl Channel {
     ///
     /// `name` must be a lowercase identifier, since queries reference it as
     /// `@name`. Pass `components` (e.g. `["x", "y", "z"]`) to make a vector
-    /// channel whose `value` dataset has one column per component; each label
+    /// channel whose `value` dataset has one column per component. Each label
     /// must be a unique identifier, referenced as `@name.label`. Omit it for a
     /// scalar channel. Use a recognized [`ChannelUnit`] when GeoTrace should
     /// scale and dimension-check the values. Use [`ChannelUnit::custom`] for a
@@ -1026,7 +1024,7 @@ impl Channel {
                 unit: unit.to_string(),
             });
         }
-        // `None` is a scalar channel; `Some(list)` is a vector channel, and an
+        // `None` is a scalar channel. `Some(list)` is a vector channel, and an
         // explicitly empty list is rejected by `validate_components`.
         let components = match components {
             None => Vec::new(),
@@ -1118,7 +1116,7 @@ impl Channel {
 
     /// The sample values, in [`unit`](Self::unit), in row-major order:
     /// `times.len()` rows of [`component_count`](Self::component_count) columns.
-    /// For a scalar channel this is one value per timestamp; see
+    /// For a scalar channel this is one value per timestamp. See
     /// [`rows`](Self::rows) to iterate per sample.
     pub fn values(&self) -> &[f64] {
         &self.values
@@ -1193,7 +1191,7 @@ impl NavFile {
             && *channels == other.channels
     }
 
-    /// Serialise the file to the provided writer.
+    /// Serialise the file to `writer`.
     pub fn write<W: io::Write>(&self, mut writer: W) -> Result<(), crate::error::Error> {
         let bytes = crate::write::build_hdf5(self)?;
         writer.write_all(&bytes)?;
@@ -1211,7 +1209,7 @@ impl NavFile {
         self.write(File::create(dest)?)
     }
 
-    /// Read a `.gtd` file from the provided reader.
+    /// Read a `.gtd` file from `reader`.
     pub fn read<R: io::Read>(mut reader: R) -> Result<Self, crate::error::Error> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes)?;
@@ -1223,7 +1221,7 @@ impl NavFile {
         Self::read(File::open(path)?)
     }
 
-    /// Pretty-print a summary of a `.gtd` file at the given path.
+    /// Pretty-print a summary of the `.gtd` file at `path`.
     pub fn inspect(path: impl AsRef<std::path::Path>) -> Result<String, crate::error::Error> {
         crate::read::inspect_path(path.as_ref())
     }
