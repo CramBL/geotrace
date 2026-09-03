@@ -31,15 +31,27 @@ const FROZEN_REGIONS: &str = "frozen_regions";
 /// the suite in `tests` then holds it to the layout guarantees.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
 pub(super) enum AnchoredDialogKind {
+    AboutGeoTrace,
     AssociateLog,
     DeleteArchivedDays,
     ForceQuit,
+    MapboxToken,
+    RemoveItems,
+    SnapToRoadAgain,
+    SnapToRoadAutomatically,
+    SnapToRoadConsent,
     SnapToRoadScope,
 }
 
 impl AnchoredDialogKind {
+    #[expect(
+        clippy::match_same_arms,
+        reason = "Each dialog states the width its own content needs"
+    )]
     fn width(self) -> f32 {
         match self {
+            // Room for the attribution lines that pair a sentence with a link.
+            Self::AboutGeoTrace => 400.0,
             // Room for a recording name beside how much of the log it ran
             // alongside.
             Self::AssociateLog => 460.0,
@@ -48,6 +60,20 @@ impl AnchoredDialogKind {
             Self::DeleteArchivedDays => 480.0,
             // Fits inside the window that shutdown sizes itself down to.
             Self::ForceQuit => 360.0,
+            // Room for the token field between its label and the Apply button.
+            Self::MapboxToken => 420.0,
+            // Room for a track's name beside its number, distance and
+            // duration, and for the line stating what the remove does in
+            // history.
+            Self::RemoveItems => 420.0,
+            // Room for the statement about replacing the stored result on two
+            // lines.
+            Self::SnapToRoadAgain => 380.0,
+            // Room for the default server's URL on one line.
+            Self::SnapToRoadAutomatically => 420.0,
+            // Room for the default server's URL on one line, and for the three
+            // buttons on one row.
+            Self::SnapToRoadConsent => 420.0,
             // Room for the two scope rows, and for the statement about
             // replacing data on two lines under them.
             Self::SnapToRoadScope => 380.0,
@@ -184,11 +210,17 @@ impl DialogRegions {
         let drawn = laid_out.response.rect.height();
         let held = drawn.max(f32::from(lines.at_least) * line_height);
         ui.add_space(held - drawn);
-        ui.data_mut(|data| {
-            data.get_temp_mut_or_default::<FrozenRegionHeights>(self.id)
-                .0
-                .insert(salt, held);
-        });
+        // A window with no size of its own is measured on a sizing pass first,
+        // where every widget takes its minimum height. The region holds the
+        // height its content takes on the pass after that one, where a row
+        // takes the height it interacts at.
+        if !ui.is_sizing_pass() {
+            ui.data_mut(|data| {
+                data.get_temp_mut_or_default::<FrozenRegionHeights>(self.id)
+                    .0
+                    .insert(salt, held);
+            });
+        }
         laid_out.inner
     }
 }
