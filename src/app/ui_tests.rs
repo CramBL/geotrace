@@ -4745,6 +4745,24 @@ fn snapshot_update_prompt_self_update() {
     harness.snapshot_loose("update_prompt_self_update");
 }
 
+/// What the prompt shows once the install it started has failed: the reason
+/// in the body, and a manual download beside the dismissal.
+#[cfg(feature = "self-update")]
+#[test]
+fn snapshot_update_prompt_install_failed() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(640.0, 400.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness.inner.state_mut().update_checker =
+        super::update::UpdateChecker::failed_install_for_test(
+            "0.2.0",
+            "the release asset could not be downloaded",
+        );
+    harness.run();
+    harness.snapshot_loose("update_prompt_install_failed");
+}
+
 /// A non-self-updatable build (Homebrew / MSI / manual download) shows no
 /// dialog. It exposes the available version for the subtle menu-bar badge.
 #[cfg(feature = "self-update")]
@@ -5649,6 +5667,53 @@ fn the_take_over_confirmation_names_what_the_other_instance_is_doing() {
     );
 }
 
+/// The wait over a data directory held by a GeoTrace that reported a shutdown
+/// [`STALE_STATUS_WRITTEN_SECONDS_AGO`] ago and has not reported since. That
+/// state fills both dialogs: a statement, the write the other instance is
+/// finishing, and the note marking the report as out of date.
+fn app_waiting_on_a_stale_shutdown_report(directory: &Path) -> TestHarness<'static, App> {
+    let written_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("the clock is past the Unix epoch")
+        .as_secs()
+        - STALE_STATUS_WRITTEN_SECONDS_AGO;
+    write_a_shutting_down_status(directory, Some(written_at));
+    let instance_lock = lock_on_a_directory_another_instance_holds(directory);
+    let harness = Harness::builder()
+        .with_size(egui::vec2(640.0, 420.0))
+        .with_wait_for_pending_images(false)
+        .build_eframe(move |cc| {
+            transient_app_with_the_instance_lock(cc, &[], instance_lock, PendingWrites::default())
+        });
+    let mut harness = TestHarness::from_harness(harness);
+    harness.inner.run_steps(4);
+    harness
+}
+
+#[test]
+fn snapshot_data_directory_wait_dialog() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_on_a_stale_shutdown_report(directory.path());
+
+    harness.snapshot_loose("data_directory_wait_dialog");
+}
+
+#[test]
+fn snapshot_take_over_confirmation() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_on_a_stale_shutdown_report(directory.path());
+
+    harness
+        .inner
+        .get_by_label_contains(TAKE_OVER_BUTTON_LABEL)
+        .click();
+    harness.inner.run_steps(4);
+
+    harness.snapshot_loose("take_over_confirmation");
+}
+
 /// Cancelling leaves everything as it was: the wait dialog is back and
 /// nothing has been opened.
 #[test]
@@ -6231,6 +6296,37 @@ fn the_recovery_prompt_states_the_take_over_the_archive_was_not_written_since() 
         "Write access to this data directory was taken from another GeoTrace (process 4321) on \
          2033-05-18 03:33 UTC.",
     );
+}
+
+#[test]
+fn snapshot_recover_archive_prompt() {
+    let dir = data_directory_with_an_interrupted_interference_delete();
+    let harness = app_asking_about_the_archives_under(
+        dir.path(),
+        Some(TakeOverRecord {
+            taken_by_process_id: 1234,
+            taken_from_process_id: Some(TAKEN_FROM_PROCESS_ID),
+            written_at: Some(TAKE_OVER_STAMPED_AHEAD_OF_THIS_MACHINES_CLOCK),
+        }),
+    );
+
+    let mut harness = TestHarness::from_harness(harness);
+    harness.snapshot_loose("recover_archive_prompt");
+}
+
+#[test]
+fn snapshot_archive_in_use_prompt() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let harness = app_asking_about(InspectedArchives::of_findings_under(
+        dir.path().to_owned(),
+        vec![(
+            EnvironmentArchive::AircraftInterference,
+            InterruptedDeleteFinding::HeldByTheOtherInstance,
+        )],
+    ));
+
+    let mut harness = TestHarness::from_harness(harness);
+    harness.snapshot_loose("archive_in_use_prompt");
 }
 
 /// A take-over the archive was written after says nothing about the state

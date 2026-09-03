@@ -116,6 +116,15 @@ impl UpdateChecker {
         checker
     }
 
+    /// Test-only: [`Self::available_for_test`] with the install the prompt
+    /// started reporting `error`.
+    #[cfg(test)]
+    pub fn failed_install_for_test(version: &str, error: &str) -> Self {
+        let checker = Self::available_for_test(version, true);
+        *checker.install.lock() = InstallStatus::Failed(error.to_owned());
+        checker
+    }
+
     /// Spawn the background check exactly once. Cheap to call every frame.
     pub fn start(&mut self, ctx: &egui::Context) {
         if self.started {
