@@ -10,6 +10,10 @@
 //! there. It removes the three generated files once they match, and keeps them
 //! for inspection when they do not. When the per-language files are absent (a
 //! plain `cargo test` checkout) the missing ones are skipped.
+//!
+//! The comparison leaves out the SDK build stamp: `gold.gtd` is committed, so
+//! the Rust example writes it with a scrubbed one, while each generated file
+//! holds the stamp of the build that wrote it.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -37,7 +41,7 @@ fn all_sdks_decode_to_the_same_nav_file() {
         }
         let other = NavFile::open(&path).unwrap();
         assert!(
-            canonical == other,
+            canonical.equals_ignoring_build_provenance(&other),
             "{name} decodes to a different NavFile than gold.gtd: cross-SDK drift. \
              Regenerate the gold fixtures with `just test-gold-all`."
         );

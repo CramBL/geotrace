@@ -9,6 +9,10 @@ pub const SDK_GIT_COMMIT_ATTR: &str = "sdk_git_commit";
 /// Name of the file attribute holding [`Meta::sdk_commit_time`](crate::Meta::sdk_commit_time).
 pub const SDK_COMMIT_TIME_ATTR: &str = "sdk_commit_time";
 
+/// The [`SDK_VERSION_ATTR`] value of a file written through
+/// [`NavFileBuilder::with_scrubbed_provenance`](crate::NavFileBuilder::with_scrubbed_provenance).
+pub const SCRUBBED_SDK_VERSION: &str = "<scrubbed>";
+
 /// The geotrace commit a released SDK build was made from, and its committer
 /// timestamp in RFC 3339.
 #[derive(Clone, Copy)]

@@ -34,6 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new()
         .with_lenient_errors()
         .with_meta(meta)
+        .with_scrubbed_provenance()
         .open();
 
     load_event_styles(&mut recorder, base_dir)?;

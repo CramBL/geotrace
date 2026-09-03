@@ -616,6 +616,30 @@ impl Meta {
         self.sdk_git_commit = provenance::PROVENANCE.map(|p| p.commit.to_owned());
         self.sdk_commit_time = provenance::commit_time();
     }
+
+    pub(crate) fn stamp_scrubbed_provenance(&mut self) {
+        self.sdk_version = Some(provenance::SCRUBBED_SDK_VERSION.to_owned());
+        self.sdk_git_commit = None;
+        self.sdk_commit_time = None;
+    }
+
+    fn equals_ignoring_build_provenance(&self, other: &Self) -> bool {
+        let Self {
+            title,
+            device,
+            notes,
+            identity,
+            travel_mode,
+            sdk_version: _,
+            sdk_git_commit: _,
+            sdk_commit_time: _,
+        } = self;
+        *title == other.title
+            && *device == other.device
+            && *notes == other.notes
+            && *identity == other.identity
+            && *travel_mode == other.travel_mode
+    }
 }
 
 #[bon::bon]
@@ -1146,6 +1170,29 @@ impl NavFile {
         &self.channels
     }
 
+    /// Compares two files' recorded content, ignoring their SDK build stamp.
+    ///
+    /// [`Meta::sdk_version`], [`Meta::sdk_git_commit`] and
+    /// [`Meta::sdk_commit_time`] name the SDK build that wrote a file, so `==`
+    /// reports two files of the same recording as unequal when different builds
+    /// wrote them.
+    pub fn equals_ignoring_build_provenance(&self, other: &Self) -> bool {
+        let Self {
+            meta,
+            nav_points,
+            markers,
+            event_markers,
+            event_marker_styles,
+            channels,
+        } = self;
+        meta.equals_ignoring_build_provenance(&other.meta)
+            && *nav_points == other.nav_points
+            && *markers == other.markers
+            && *event_markers == other.event_markers
+            && *event_marker_styles == other.event_marker_styles
+            && *channels == other.channels
+    }
+
     /// Serialise the file to the provided writer.
     pub fn write<W: io::Write>(&self, mut writer: W) -> Result<(), crate::error::Error> {
         let bytes = crate::write::build_hdf5(self)?;
@@ -1179,5 +1226,87 @@ impl NavFile {
     /// Pretty-print a summary of a `.gtd` file at the given path.
     pub fn inspect(path: impl AsRef<std::path::Path>) -> Result<String, crate::error::Error> {
         crate::read::inspect_path(path.as_ref())
+    }
+}
+
+#[cfg(test)]
+mod nav_file_comparison_tests {
+    use rstest::rstest;
+
+    use super::*;
+
+    fn a_nav_file() -> NavFile {
+        let time = DateTime::from_timestamp(1_748_000_000, 0).expect("a valid timestamp");
+        let lat = Angle::degrees(51.5);
+        let lon = Angle::degrees(-0.1);
+        NavFile {
+            meta: Meta::builder().title("A recording").build(),
+            nav_points: vec![NavPoint {
+                fix: NavFix::builder().gps_time(time).lat(lat).lon(lon).build(),
+                satellites: None,
+            }],
+            markers: vec![Marker {
+                annotation: Annotation::builder()
+                    .time(time)
+                    .label("Coffee stop")
+                    .build()
+                    .expect("the marker label fits its field"),
+                lat,
+                lon,
+            }],
+            event_markers: vec![EventMarkerPoint {
+                variant_path: "power/boot".to_owned(),
+                sys_time: time,
+                lat,
+                lon,
+                annotation: None,
+            }],
+            event_marker_styles: vec![
+                EventMarkerStyle::builder()
+                    .variant_path("power/boot")
+                    .build()
+                    .expect("the variant path fits its field"),
+            ],
+            channels: vec![
+                Channel::builder()
+                    .name("speed")
+                    .times(vec![time])
+                    .values(vec![3.0])
+                    .build()
+                    .expect("one value per timestamp"),
+            ],
+        }
+    }
+
+    #[test]
+    fn two_files_differing_only_in_their_build_stamp_are_equal_ignoring_it() {
+        let mut stamped = a_nav_file();
+        stamped.meta.stamp_this_build();
+        let mut scrubbed = a_nav_file();
+        scrubbed.meta.stamp_scrubbed_provenance();
+
+        assert!(stamped.equals_ignoring_build_provenance(&scrubbed));
+        assert_ne!(stamped, scrubbed);
+    }
+
+    #[rstest]
+    #[case::title(|file: &mut NavFile| file.meta.title = Some("Another recording".to_owned()))]
+    #[case::device(|file: &mut NavFile| file.meta.device = Some("Another device".to_owned()))]
+    #[case::notes(|file: &mut NavFile| file.meta.notes = Some("A note".to_owned()))]
+    #[case::identity(|file: &mut NavFile| file.meta.identity = Some("another-key".to_owned()))]
+    #[case::travel_mode(|file: &mut NavFile| file.meta.travel_mode = Some(TravelMode::Boat))]
+    #[case::nav_points(|file: &mut NavFile| file.nav_points.clear())]
+    #[case::markers(|file: &mut NavFile| file.markers.clear())]
+    #[case::event_markers(|file: &mut NavFile| file.event_markers.clear())]
+    #[case::event_marker_styles(|file: &mut NavFile| file.event_marker_styles.clear())]
+    #[case::channels(|file: &mut NavFile| file.channels.clear())]
+    fn two_files_differing_in_one_field_are_unequal_ignoring_the_build_stamp(
+        #[case] change: impl FnOnce(&mut NavFile),
+    ) {
+        let file = a_nav_file();
+        let mut changed = a_nav_file();
+        change(&mut changed);
+
+        assert!(!file.equals_ignoring_build_provenance(&changed));
     }
 }

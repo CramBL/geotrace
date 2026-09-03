@@ -130,6 +130,7 @@ pub struct NavFileBuilder {
     meta: Option<Meta>,
     satellite_window: Duration,
     continue_on_error: bool,
+    scrubbed_provenance: bool,
 }
 
 impl NavFileBuilder {
@@ -141,6 +142,7 @@ impl NavFileBuilder {
             meta: None,
             satellite_window: Duration::milliseconds(500),
             continue_on_error: false,
+            scrubbed_provenance: false,
         }
     }
 
@@ -205,6 +207,16 @@ impl NavFileBuilder {
         self
     }
 
+    /// Stamp `<scrubbed>` as the SDK version and no build commit at all.
+    ///
+    /// For a fixture or any other `.gtd` kept in version control: regenerating
+    /// it from a different SDK build then writes the same bytes. The file does
+    /// not record which SDK build wrote it.
+    pub fn with_scrubbed_provenance(mut self) -> Self {
+        self.scrubbed_provenance = true;
+        self
+    }
+
     /// Consume the configuration and return a [`NavRecorder`] ready for data.
     pub fn open(self) -> NavRecorder {
         NavRecorder {
@@ -218,6 +230,7 @@ impl NavFileBuilder {
             meta: self.meta,
             satellite_window: self.satellite_window,
             continue_on_error: self.continue_on_error,
+            scrubbed_provenance: self.scrubbed_provenance,
         }
     }
 }
@@ -243,6 +256,7 @@ pub struct NavRecorder {
     meta: Option<Meta>,
     satellite_window: Duration,
     continue_on_error: bool,
+    scrubbed_provenance: bool,
 }
 
 /// A timeline object that [`NavRecorder::add`] dispatches on.
@@ -537,7 +551,11 @@ impl NavRecorder {
         }
 
         let mut meta = self.meta.unwrap_or_default();
-        meta.stamp_this_build();
+        if self.scrubbed_provenance {
+            meta.stamp_scrubbed_provenance();
+        } else {
+            meta.stamp_this_build();
+        }
 
         Ok(NavFile {
             meta,
