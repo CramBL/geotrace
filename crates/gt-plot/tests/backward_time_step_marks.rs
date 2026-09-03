@@ -3,28 +3,15 @@
 //! setting behind them.
 
 use chrono::{DateTime, TimeDelta, Utc};
-use gt_filter::GlobalFilter;
-use gt_loaded_files::RecordingNames;
-use gt_plot::{ArchiveOverlays, PlotState};
-use gt_test_utils::TestHarness;
+use gt_plot::PlotState;
 use gt_types::{Channel, FileSource, LoadedFile, NavPoint, TimeRange};
-use gt_ui_types::{
-    ContextLines, GeomagneticSeries, JammingSeries, SnapErrorSeries, TecSeries, TrackDataVisibility,
-};
 use rustc_hash::FxHashMap;
+use support::{DrawnPlot, PlotSources, at_second, plot_area};
 
-/// 2024-01-15 12:00:00 UTC, the first fix of the recording below.
-const FIRST_FIX_SECS: i64 = 1_705_320_000;
+mod support;
 
 /// Fixes in the recording, one per second.
 const FIX_COUNT: usize = 60;
-
-/// Plot size in points. Wide enough that a chip row and a plot both lay out.
-const PLOT_SIZE: egui::Vec2 = egui::vec2(700.0, 400.0);
-
-fn at_second(offset: i64) -> DateTime<Utc> {
-    DateTime::UNIX_EPOCH + TimeDelta::seconds(FIRST_FIX_SECS + offset)
-}
 
 /// A recording of one track at 1 Hz carrying a scalar channel sampled at the
 /// same rate, whose timestamps step back by ten seconds halfway through.
@@ -68,70 +55,45 @@ struct MarkGates {
     mark_backward_time_steps: bool,
 }
 
-/// A harness that has drawn the plot over the recording under `gates`.
-fn drawn_plot(gates: MarkGates) -> TestHarness<'static, PlotState> {
-    let files = [recording_with_a_backward_time_step()];
-    let names = RecordingNames::default();
-    let visibility = TrackDataVisibility::from_loaded(&files);
-    let filter = GlobalFilter::default();
-    let snap_error = SnapErrorSeries::default();
-    let jamming = JammingSeries::default();
-    let geomagnetic = GeomagneticSeries::default();
-    let tec = TecSeries::default();
-    let context_lines = ContextLines::default();
-    let mut plot = PlotState::default();
-    plot.show_channels = gates.show_channels;
-    plot.mark_backward_time_steps = gates.mark_backward_time_steps;
-    plot.rebuild_all(&files);
-
-    let mut harness = TestHarness::builder().size(PLOT_SIZE).ui_state(
-        move |ui, plot: &mut PlotState| {
-            gt_plot::show_track_plot(
-                ui,
-                &files,
-                &names,
-                &visibility,
-                &filter,
-                None,
-                None,
-                None,
-                None,
-                &snap_error,
-                &jamming,
-                &geomagnetic,
-                &tec,
-                ArchiveOverlays {
-                    context_lines: &context_lines,
-                    solar_flares: &[],
-                },
-                plot,
-            );
-        },
-        plot,
-    );
-    harness.run();
-    harness
-}
-
-/// The area every comparison below reads: the whole plot, marks included.
-fn plot_area() -> egui::Rect {
-    egui::Rect::from_min_size(egui::Pos2::ZERO, PLOT_SIZE)
+impl MarkGates {
+    /// A harness that has drawn the plot over the recording under these gates.
+    fn draw(self) -> DrawnPlot {
+        let Self {
+            show_channels,
+            mark_backward_time_steps,
+        } = self;
+        let mut plot = PlotState::default();
+        plot.show_channels = show_channels;
+        plot.mark_backward_time_steps = mark_backward_time_steps;
+        support::drawn_plot(
+            vec![recording_with_a_backward_time_step()],
+            PlotSources::default(),
+            plot,
+        )
+    }
 }
 
 #[test]
 fn the_marks_draw_with_the_channels_revealed() {
-    let mut marked = drawn_plot(MarkGates {
+    let mut marked = MarkGates {
         show_channels: true,
         mark_backward_time_steps: true,
-    });
-    let mut unmarked = drawn_plot(MarkGates {
+    }
+    .draw();
+    let mut unmarked = MarkGates {
         show_channels: true,
         mark_backward_time_steps: false,
-    });
-    let pixels_per_point = marked.inner.ctx.pixels_per_point();
+    }
+    .draw();
+    let pixels_per_point = marked.harness.inner.ctx.pixels_per_point();
 
-    let with_marks = marked.inner.render().expect("the harness renders a frame");
+    let with_marks = marked
+        .harness
+        .inner
+        .render()
+        .expect("the harness renders a frame");
     let without_marks = unmarked
+        .harness
         .inner
         .render()
         .expect("the harness renders a frame");
@@ -151,21 +113,25 @@ fn the_marks_draw_with_the_channels_revealed() {
 /// leaves off the plot.
 #[test]
 fn a_collapsed_channels_section_draws_no_mark() {
-    let mut marks_on = drawn_plot(MarkGates {
+    let mut marks_on = MarkGates {
         show_channels: false,
         mark_backward_time_steps: true,
-    });
-    let mut marks_off = drawn_plot(MarkGates {
+    }
+    .draw();
+    let mut marks_off = MarkGates {
         show_channels: false,
         mark_backward_time_steps: false,
-    });
-    let pixels_per_point = marks_on.inner.ctx.pixels_per_point();
+    }
+    .draw();
+    let pixels_per_point = marks_on.harness.inner.ctx.pixels_per_point();
 
     let with_setting = marks_on
+        .harness
         .inner
         .render()
         .expect("the harness renders a frame");
     let without_setting = marks_off
+        .harness
         .inner
         .render()
         .expect("the harness renders a frame");

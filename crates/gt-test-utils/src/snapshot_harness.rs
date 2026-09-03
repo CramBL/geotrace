@@ -1,8 +1,9 @@
 use egui_kittest::{Harness, SnapshotOptions};
 
-/// Re-exported so crates using [`TestHarness`] can query widgets without each
-/// taking a direct `egui_kittest` dev-dependency of their own.
-pub use egui_kittest::kittest::{By, Queryable};
+/// Re-exported so crates using [`TestHarness`] can query widgets, and read the
+/// nodes they match, without each taking a direct `egui_kittest`
+/// dev-dependency of their own.
+pub use egui_kittest::kittest::{By, NodeT, Queryable};
 use std::path::{Path, PathBuf};
 
 /// Pixel-count tolerance for [`TestHarness::snapshot`]. Anti-aliased edges

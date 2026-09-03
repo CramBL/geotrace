@@ -3,7 +3,7 @@ mod series;
 
 pub use plot_widget::{
     ArchiveOverlays, DEFAULT_PLOT_LINE_WIDTH, LEGEND_DOCK_OFFSET, PLOT_LINE_WIDTH_RANGE, PlotState,
-    find_closest_tpv, legend_is_docked, show_track_plot,
+    TRACK_PLOT_ID_SALT, find_closest_tpv, legend_is_docked, show_track_plot,
 };
 
 /// Default elevation mask, in degrees, shared by the satellite utilization rate
