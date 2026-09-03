@@ -11,7 +11,7 @@ use egui::{
 };
 use gt_fmt::MIDDLE_DOT;
 use gt_log_view::{
-    DayDivider, EntryMatches, FilterStack, LoadedLog, TimestampTickLevel, VisibleEntries,
+    DayDivider, EntryMatches, FilterStack, LoadedLog, TimestampTick, VisibleEntries,
 };
 use gt_logfile::{BootSession, LogEntry, LogLevelKind, RecognisedMessage, TimestampKind};
 use gt_types::{Latitude, Longitude, mercator};
@@ -26,7 +26,7 @@ use super::{AssociationWindowUnit, DATE_FORMAT, LogViewerWindow};
 /// that the timestamp column stays aligned.
 const ANCHORED_TIMESTAMP_PREFIX: &str = " ";
 
-/// The run of the timestamp column the tick level colours.
+/// The run of the timestamp column the timestamp tick colours.
 const HOUR_MINUTE_FORMAT: &str = "%H:%M";
 
 /// The run of the timestamp column after the hour and the minute, always drawn
@@ -77,8 +77,8 @@ pub(super) enum LineTableRow {
     Entry {
         entry_index: usize,
 
-        /// The row of the visible set this entry occupies, which its tick
-        /// level is looked up by.
+        /// The row of the visible set this entry occupies, which its
+        /// timestamp tick is looked up by.
         visible_row: usize,
     },
 }
@@ -400,7 +400,7 @@ impl LogViewerWindow {
                                 association_window,
                                 gutter: &gutter,
                                 entry_index,
-                                tick_level: ticks.level(visible_row),
+                                tick: ticks.tick(visible_row),
                                 cross_highlight_fill: cross_highlighted.fill_of(entry_index),
                             }
                             .ui(ui, unit);
@@ -475,8 +475,8 @@ struct EntryRow<'a> {
     gutter: &'a LayerGutter<'a>,
     entry_index: usize,
 
-    /// The level this row's hour and minute draw at.
-    tick_level: TimestampTickLevel,
+    /// How strongly this row's hour and minute draw.
+    tick: TimestampTick,
 
     /// The background of a row the map's hovered hexagon stands for.
     cross_highlight_fill: Option<Color32>,
@@ -588,17 +588,16 @@ impl EntryRow<'_> {
     fn ui(&self, ui: &mut egui::Ui, unit: AssociationWindowUnit) -> Option<RowInteraction> {
         let associated = self.position.is_some();
         let interpolated = self.entry.timestamp_kind == TimestampKind::Interpolated;
-        let tick_level = match associated {
-            true => self.tick_level,
-            false => self.tick_level.min(TimestampTickLevel::Plain),
+        let tick = match associated {
+            true => self.tick,
+            false => self.tick.min(TimestampTick::Plain),
         };
         // Claimed before the row draws: the fill belongs behind its text.
         let background = ui.painter().add(Shape::Noop);
         let row = ui
             .horizontal(|ui| {
                 self.gutter_ui(ui);
-                let timestamp =
-                    ui.add(Label::new(self.timestamp_job(ui, tick_level)).selectable(true));
+                let timestamp = ui.add(Label::new(self.timestamp_job(ui, tick)).selectable(true));
                 if interpolated {
                     timestamp.on_hover_text(INTERPOLATED_TIMESTAMP_HOVER);
                 }
@@ -647,14 +646,14 @@ impl EntryRow<'_> {
 
     /// The timestamp column in three runs: the date, the hour and minute, and
     /// the seconds. The date and the seconds are always drawn in the quiet
-    /// colour, and only the hour and minute take the tick level.
-    fn timestamp_job(&self, ui: &egui::Ui, tick_level: TimestampTickLevel) -> LayoutJob {
+    /// colour, and only the hour and minute take the timestamp tick.
+    fn timestamp_job(&self, ui: &egui::Ui, tick: TimestampTick) -> LayoutJob {
         let font_id = egui::TextStyle::Monospace.resolve(ui.style());
         let quiet = ui.visuals().weak_text_color();
-        let moved = match tick_level {
-            TimestampTickLevel::Weak => ui.visuals().weak_text_color(),
-            TimestampTickLevel::Plain => ui.visuals().text_color(),
-            TimestampTickLevel::Strong => ui.visuals().strong_text_color(),
+        let moved = match tick {
+            TimestampTick::Weak => ui.visuals().weak_text_color(),
+            TimestampTick::Plain => ui.visuals().text_color(),
+            TimestampTick::Strong => ui.visuals().strong_text_color(),
         };
         let prefix = match self.entry.timestamp_kind {
             TimestampKind::Anchored => ANCHORED_TIMESTAMP_PREFIX,

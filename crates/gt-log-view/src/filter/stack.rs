@@ -284,7 +284,7 @@ impl FilterStack {
         &self.visible
     }
 
-    /// What the clock did along the visible rows: the level each row's
+    /// What the clock did along the visible rows: the tick each row's
     /// timestamp draws at, and the rows a day divider opens.
     pub fn clock_ticks(&self) -> &ClockTicks {
         &self.clock_ticks

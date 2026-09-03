@@ -2,7 +2,7 @@
 //! new UTC day opens.
 //!
 //! Both are derived once per rebuild of the visible set: a row that is drawn
-//! looks its level up, and never walks the log for it.
+//! looks its tick up, and never walks the log for it.
 
 use chrono::{DateTime, Utc};
 use gt_logfile::{BootSession, ParsedLog};
@@ -18,7 +18,7 @@ const SECONDS_PER_DAY: i64 = 24 * SECONDS_PER_HOUR;
 /// How strongly the line table draws one row's timestamp: the largest UTC
 /// wall-clock field that differs from the previous shown row picks it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub enum TimestampTickLevel {
+pub enum TimestampTick {
     /// Only the seconds differ, or nothing does.
     #[default]
     Weak,
@@ -50,13 +50,13 @@ impl ClockFields {
         }
     }
 
-    fn level_after(self, previous: Self) -> TimestampTickLevel {
+    fn tick_after(self, previous: Self) -> TimestampTick {
         if self.hour != previous.hour {
-            return TimestampTickLevel::Strong;
+            return TimestampTick::Strong;
         }
         match self.minute == previous.minute {
-            true => TimestampTickLevel::Weak,
-            false => TimestampTickLevel::Plain,
+            true => TimestampTick::Weak,
+            false => TimestampTick::Plain,
         }
     }
 }
@@ -84,14 +84,14 @@ impl DayDivider {
     }
 }
 
-/// What the clock did along the visible rows of one log: the level each row's
+/// What the clock did along the visible rows of one log: the tick each row's
 /// timestamp draws at, and the rows a day divider precedes.
 ///
 /// The filters that pick the visible set also pick what "the previous row"
 /// means: both are indexed by visible row.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ClockTicks {
-    levels: Vec<TimestampTickLevel>,
+    row_ticks: Vec<TimestampTick>,
     day_dividers: Vec<DayDivider>,
 }
 
@@ -100,7 +100,7 @@ impl ClockTicks {
         let entries = log.entries();
         let mut sessions = log.boot_sessions().iter();
         let mut session = sessions.next();
-        let mut levels = Vec::with_capacity(visible.len());
+        let mut row_ticks = Vec::with_capacity(visible.len());
         let mut day_dividers = Vec::new();
         let mut previous: Option<ClockFields> = None;
         for (visible_row, entry_index) in visible.entry_indices().enumerate() {
@@ -110,28 +110,28 @@ impl ClockTicks {
                 opens_a_session = true;
             }
             let Some(entry) = entries.get(entry_index) else {
-                levels.push(TimestampTickLevel::default());
+                row_ticks.push(TimestampTick::default());
                 continue;
             };
             let fields = ClockFields::of(entry.timestamp);
-            let level = match (previous, opens_a_session) {
-                (Some(previous), false) => fields.level_after(previous),
-                _ => TimestampTickLevel::Strong,
+            let tick = match (previous, opens_a_session) {
+                (Some(previous), false) => fields.tick_after(previous),
+                _ => TimestampTick::Strong,
             };
             if previous.is_some_and(|previous| previous.day != fields.day) {
                 day_dividers.push(DayDivider::following(&day_dividers, visible_row));
             }
-            levels.push(level);
+            row_ticks.push(tick);
             previous = Some(fields);
         }
         Self {
-            levels,
+            row_ticks,
             day_dividers,
         }
     }
 
-    pub fn level(&self, visible_row: usize) -> TimestampTickLevel {
-        self.levels.get(visible_row).copied().unwrap_or_default()
+    pub fn tick(&self, visible_row: usize) -> TimestampTick {
+        self.row_ticks.get(visible_row).copied().unwrap_or_default()
     }
 
     /// The day dividers of the table, by ascending visible row.
@@ -161,24 +161,20 @@ mod tests {
     }
 
     #[rstest]
-    #[case::the_same_second(START, START, TimestampTickLevel::Weak)]
-    #[case::another_second(START, "2026-01-01 14:02:12", TimestampTickLevel::Weak)]
-    #[case::another_minute(START, "2026-01-01 14:03:00", TimestampTickLevel::Plain)]
-    #[case::another_hour(START, "2026-01-01 15:00:00", TimestampTickLevel::Strong)]
-    #[case::another_day(START, "2026-01-02 14:02:11", TimestampTickLevel::Strong)]
-    #[case::the_clock_stepping_back_a_minute(
-        START,
-        "2026-01-01 14:01:59",
-        TimestampTickLevel::Plain
-    )]
-    #[case::the_clock_stepping_back_a_day(START, "2025-12-31 14:02:11", TimestampTickLevel::Strong)]
-    fn the_largest_wall_clock_field_that_differs_picks_the_level(
+    #[case::the_same_second(START, START, TimestampTick::Weak)]
+    #[case::another_second(START, "2026-01-01 14:02:12", TimestampTick::Weak)]
+    #[case::another_minute(START, "2026-01-01 14:03:00", TimestampTick::Plain)]
+    #[case::another_hour(START, "2026-01-01 15:00:00", TimestampTick::Strong)]
+    #[case::another_day(START, "2026-01-02 14:02:11", TimestampTick::Strong)]
+    #[case::the_clock_stepping_back_a_minute(START, "2026-01-01 14:01:59", TimestampTick::Plain)]
+    #[case::the_clock_stepping_back_a_day(START, "2025-12-31 14:02:11", TimestampTick::Strong)]
+    fn the_largest_wall_clock_field_that_differs_picks_the_tick(
         #[case] previous: &str,
         #[case] shown: &str,
-        #[case] expected: TimestampTickLevel,
+        #[case] expected: TimestampTick,
     ) {
         assert_eq!(
-            ClockFields::of(at(shown)).level_after(ClockFields::of(at(previous))),
+            ClockFields::of(at(shown)).tick_after(ClockFields::of(at(previous))),
             expected
         );
     }
@@ -190,8 +186,8 @@ mod tests {
         stack.clock_ticks().clone()
     }
 
-    fn levels(ticks: &ClockTicks) -> Vec<TimestampTickLevel> {
-        ticks.levels.clone()
+    fn ticks_by_row(ticks: &ClockTicks) -> Vec<TimestampTick> {
+        ticks.row_ticks.clone()
     }
 
     fn day_divider_rows(ticks: &ClockTicks) -> Vec<usize> {
@@ -205,7 +201,7 @@ mod tests {
     /// One log read row by row: the table opens strong, dims where only the
     /// seconds move, and lights up again at the minute and the hour.
     #[test]
-    fn every_row_takes_the_level_of_its_step_from_the_row_above() {
+    fn every_row_takes_the_tick_of_its_step_from_the_row_above() {
         let ticks = ticks_of(
             "\
 2026-01-01 14:02:11 navsyncd: gnss fix acquired
@@ -216,12 +212,12 @@ mod tests {
         );
 
         assert_eq!(
-            levels(&ticks),
+            ticks_by_row(&ticks),
             [
-                TimestampTickLevel::Strong,
-                TimestampTickLevel::Weak,
-                TimestampTickLevel::Plain,
-                TimestampTickLevel::Strong,
+                TimestampTick::Strong,
+                TimestampTick::Weak,
+                TimestampTick::Plain,
+                TimestampTick::Strong,
             ]
         );
         assert_eq!(day_divider_rows(&ticks), Vec::<usize>::new());
@@ -237,11 +233,11 @@ mod tests {
 2026-01-01 14:03:12 navsyncd: gnss fix lost
 ";
         assert_eq!(
-            levels(&ticks_of(text)),
+            ticks_by_row(&ticks_of(text)),
             [
-                TimestampTickLevel::Strong,
-                TimestampTickLevel::Plain,
-                TimestampTickLevel::Weak,
+                TimestampTick::Strong,
+                TimestampTick::Plain,
+                TimestampTick::Weak,
             ]
         );
 
@@ -250,8 +246,8 @@ mod tests {
         stack.wait_for_queries();
 
         assert_eq!(
-            levels(stack.clock_ticks()),
-            [TimestampTickLevel::Strong, TimestampTickLevel::Plain],
+            ticks_by_row(stack.clock_ticks()),
+            [TimestampTick::Strong, TimestampTick::Plain],
             "the two fix lines sit a minute apart once the battery line is filtered out"
         );
     }
@@ -269,11 +265,11 @@ mod tests {
 
         assert_eq!(day_divider_rows(&ticks), [2]);
         assert_eq!(
-            ticks.level(2),
-            TimestampTickLevel::Strong,
+            ticks.tick(2),
+            TimestampTick::Strong,
             "the first line of a new day differs in its day"
         );
-        assert_eq!(ticks.level(3), TimestampTickLevel::Weak);
+        assert_eq!(ticks.tick(3), TimestampTick::Weak);
     }
 
     /// A clock corrected back past midnight is compared like any other step:
@@ -339,11 +335,11 @@ mod tests {
 
         assert_eq!(day_divider_rows(&ticks), [1]);
         assert_eq!(
-            levels(&ticks),
+            ticks_by_row(&ticks),
             [
-                TimestampTickLevel::Strong,
-                TimestampTickLevel::Strong,
-                TimestampTickLevel::Weak,
+                TimestampTick::Strong,
+                TimestampTick::Strong,
+                TimestampTick::Weak,
             ]
         );
     }
@@ -361,8 +357,8 @@ mod tests {
         );
 
         assert_eq!(
-            levels(&ticks),
-            [TimestampTickLevel::Strong, TimestampTickLevel::Strong]
+            ticks_by_row(&ticks),
+            [TimestampTick::Strong, TimestampTick::Strong]
         );
         assert_eq!(day_divider_rows(&ticks), Vec::<usize>::new());
     }
@@ -396,7 +392,7 @@ mod tests {
     fn a_log_of_one_line_draws_it_strong_and_opens_no_day() {
         let ticks = ticks_of("2026-01-01 14:02:11 navsyncd: gnss fix acquired\n");
 
-        assert_eq!(levels(&ticks), [TimestampTickLevel::Strong]);
+        assert_eq!(ticks_by_row(&ticks), [TimestampTick::Strong]);
         assert_eq!(day_divider_rows(&ticks), Vec::<usize>::new());
     }
 
@@ -411,34 +407,34 @@ mod tests {
         stack.wait_for_queries();
 
         assert_eq!(
-            levels(stack.clock_ticks()),
-            Vec::<TimestampTickLevel>::new()
+            ticks_by_row(stack.clock_ticks()),
+            Vec::<TimestampTick>::new()
         );
         assert_eq!(day_divider_rows(stack.clock_ticks()), Vec::<usize>::new());
     }
 
-    /// The level of a row the table does not draw: the lookup stays inside the
+    /// The tick of a row the table does not draw: the lookup stays inside the
     /// visible set.
     #[test]
     fn a_row_past_the_visible_set_is_weak() {
         let ticks = ticks_of("2026-01-01 14:02:11 navsyncd: gnss fix acquired\n");
 
-        assert_eq!(ticks.level(9), TimestampTickLevel::Weak);
+        assert_eq!(ticks.tick(9), TimestampTick::Weak);
     }
 
     /// The unfiltered stack ticks its rows the moment the log is loaded.
     #[test]
-    fn a_freshly_loaded_log_has_a_level_for_every_line() {
+    fn a_freshly_loaded_log_has_a_tick_for_every_line() {
         let log = Arc::new(test_fixtures::parsed_log(3));
 
         let stack = FilterStack::new(log);
 
         assert_eq!(
-            levels(stack.clock_ticks()),
+            ticks_by_row(stack.clock_ticks()),
             [
-                TimestampTickLevel::Strong,
-                TimestampTickLevel::Weak,
-                TimestampTickLevel::Weak,
+                TimestampTick::Strong,
+                TimestampTick::Weak,
+                TimestampTick::Weak,
             ],
             "the fixture writes one entry a second"
         );
