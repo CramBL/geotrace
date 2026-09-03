@@ -58,14 +58,14 @@ pub const HIDDEN_LAYER_OPACITY: &str = "Show the TEC heatmap to change its opaci
 /// The standing caveat, shown wherever a value is. Never abbreviated, even
 /// when another surface already said it.
 pub const SOURCE_CAVEAT: &str = "Modelled from ground stations onto a global grid and published \
-                                 as vertical content on a 450 km shell, so a value describes the \
+                                 as vertical content on a 450km shell, so a value describes the \
                                  ionosphere over a region, not the slant path one receiver saw.";
 
 /// What the unit means, shown alongside the first value on a surface.
 pub static SCALE_CAVEAT: LazyLock<String> = LazyLock::new(|| {
     format!(
         "One TEC unit is 10¹⁶ electrons per square metre and adds about \
-         {L1_DELAY_METERS_PER_TECU:.2} m of range on L1. A quiet mid-latitude day stays under 20 \
+         {L1_DELAY_METERS_PER_TECU:.2}m of range on L1. A quiet mid-latitude day stays under 20 \
          TECU, and a storm reaches past 150."
     )
 });
@@ -99,7 +99,7 @@ pub fn grid_node_summary(
 fn value_lines(content: TotalElectronContent) -> Vec<String> {
     vec![
         format!("TEC {:.1} TECU", content.tecu()),
-        format!("L1 delay about {:.1} m", content.l1_delay_meters()),
+        format!("L1 delay about {:.1}m", content.l1_delay_meters()),
     ]
 }
 
@@ -110,7 +110,7 @@ fn node_position(latitude: Latitude, longitude: Longitude) -> String {
     let north_south = if degrees_north < 0.0 { 'S' } else { 'N' };
     let east_west = if degrees_east < 0.0 { 'W' } else { 'E' };
     format!(
-        "{:.1} {north_south}, {:.1} {east_west}",
+        "{:.1}°{north_south}, {:.1}°{east_west}",
         degrees_north.abs(),
         degrees_east.abs()
     )
@@ -118,7 +118,7 @@ fn node_position(latitude: Latitude, longitude: Longitude) -> String {
 
 pub static PLOT_HOVER: LazyLock<MetricChipHover> = LazyLock::new(|| MetricChipHover {
     definition: "Total electron content of the ionosphere above the fix's position.".to_owned(),
-    source_cadence_and_scale: "NASA JPL, maps every 1 to 2 h, vertical content in TECU.".to_owned(),
+    source_cadence_and_scale: "NASA JPL, maps every 1–2h, vertical content in TECU.".to_owned(),
     reference: IONOSPHERIC_TEC,
 });
 
@@ -174,8 +174,8 @@ pub static BACKGROUND_DAY_COVERAGE_HOVER: LazyLock<String> = LazyLock::new(|| {
 /// the quiet-time median that raises a warning.
 pub static DEVIATION_WARNING_TRIGGER: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "TEC: more than {:.0} % above or {:.0} % below the median of the {} days before, the \
-         moderate-storm grade of the planetary ionospheric storm index.",
+        "ΔTEC: >{:.0}% above or >{:.0}% below the {}-day median (moderate storm on the \
+         planetary ionospheric storm index).",
         QuietTimeDeviation::from_log_ratio(quiet_time::MODERATE_STORM_LOG_RATIO)
             .percent_from_median(),
         QuietTimeDeviation::from_log_ratio(-quiet_time::MODERATE_STORM_LOG_RATIO)
@@ -189,8 +189,8 @@ pub static DEVIATION_WARNING_TRIGGER: LazyLock<String> = LazyLock::new(|| {
 /// against the reference it is measured from.
 pub static DEVIATION_REFERENCE_CAVEAT: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "A TEC grade with no geomagnetic storm near it is a weaker signal: it measures departure \
-         from the median of the {} days before, and a disturbed month lifts that reference.",
+        "A TEC grade without a geomagnetic storm near it is weak evidence: it measures departure \
+         from the median of the {} days before, and a disturbed month lifts that median.",
         quiet_time::BACKGROUND_WINDOW_DAYS
     )
 });
@@ -208,7 +208,7 @@ mod tests {
             lines,
             [
                 "TEC 42.3 TECU",
-                "L1 delay about 6.9 m",
+                "L1 delay about 6.9m",
                 "Interpolated between maps at 2024-05-10T18:30:00 (UTC)",
             ]
         );
@@ -228,8 +228,8 @@ mod tests {
             lines,
             [
                 "TEC 175.4 TECU",
-                "L1 delay about 28.5 m",
-                "Grid node 12.5 S, 75.0 W at 2024-05-10T18:00:00 (UTC)",
+                "L1 delay about 28.5m",
+                "Grid node 12.5°S, 75.0°W at 2024-05-10T18:00:00 (UTC)",
             ]
         );
     }

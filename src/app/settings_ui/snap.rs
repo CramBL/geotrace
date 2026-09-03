@@ -109,7 +109,7 @@ impl App {
                                stale - re-run to apply.",
                         range: gt_snap::request_plan::SEARCH_RADIUS_RANGE_M,
                         enable_seed: SEARCH_RADIUS_SEED_M,
-                        suffix: " m",
+                        suffix: "m",
                     },
                 );
                 ui.end_row();
@@ -151,7 +151,7 @@ impl App {
                                existing results stale - re-run to apply.",
                         range: gt_snap::request_plan::GPS_ACCURACY_OVERRIDE_RANGE_M,
                         enable_seed: GPS_ACCURACY_SEED_M,
-                        suffix: " m",
+                        suffix: "m",
                     },
                 );
                 ui.end_row();

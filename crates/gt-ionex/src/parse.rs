@@ -101,7 +101,7 @@ pub enum ParseError {
     },
 
     #[error(
-        "line {line_number}: the heights {first_km} km to {last_km} km in steps of {step_km} km are not one shell"
+        "line {line_number}: the heights {first_km}km to {last_km}km in steps of {step_km}km are not one shell"
     )]
     UnsupportedHeightAxis {
         line_number: usize,
@@ -166,7 +166,7 @@ pub enum ParseError {
     BandLongitudesDiffer { line_number: usize },
 
     #[error(
-        "line {line_number}: the band's height of {found_km} km is not the shell at {expected_km} km"
+        "line {line_number}: the band's height of {found_km}km is not the shell at {expected_km}km"
     )]
     BandHeightDiffers {
         line_number: usize,
@@ -1044,7 +1044,7 @@ mod tests {
         HEIGHT_AXIS_LABEL,
         0,
         "   100.0 500.0 100.0",
-        "line 6: the heights 100 km to 500 km in steps of 100 km are not one shell"
+        "line 6: the heights 100km to 500km in steps of 100km are not one shell"
     )]
     #[case::a_latitude_step_that_does_not_divide_the_span(
         LATITUDE_AXIS_LABEL,
@@ -1074,7 +1074,7 @@ mod tests {
         LATITUDE_BAND_LABEL,
         0,
         "    87.5-180.0 180.0 180.0 350.0",
-        "line 13: the band's height of 350 km is not the shell at 450 km"
+        "line 13: the band's height of 350km is not the shell at 450km"
     )]
     #[case::a_band_at_another_latitude(
         LATITUDE_BAND_LABEL,

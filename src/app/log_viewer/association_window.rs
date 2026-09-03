@@ -74,12 +74,12 @@ impl AssociationWindowUnit {
         MAX_ASSOCIATION_WINDOW_NANOS / self.nanoseconds_each()
     }
 
-    /// The window written out for a hover text, e.g. "60 s". A window this unit
+    /// The window written out for a hover text, e.g. "60s". A window this unit
     /// does not divide evenly is rounded to [`DESCRIBED_DECIMALS`] decimals.
     pub(super) fn describe(self, window: Duration) -> String {
         let value = format!("{:.*}", DESCRIBED_DECIMALS, self.measure(window));
         let value = value.trim_end_matches('0').trim_end_matches('.');
-        format!("{value} {}", self.label())
+        format!("{value}{}", self.label())
     }
 }
 
@@ -116,7 +116,7 @@ mod tests {
         #[case] expected: Duration,
     ) {
         assert_eq!(unit.window_of(value), expected);
-        assert_eq!(unit.describe(expected), format!("{value} {}", unit.label()));
+        assert_eq!(unit.describe(expected), format!("{value}{}", unit.label()));
     }
 
     /// Every unit measures the same window: the dropdown only restates it.
@@ -140,7 +140,7 @@ mod tests {
     fn a_window_the_unit_does_not_divide_evenly_is_described_rounded() {
         assert_eq!(
             AssociationWindowUnit::Minutes.describe(Duration::seconds(61)),
-            "1.02 min"
+            "1.02min"
         );
     }
 }

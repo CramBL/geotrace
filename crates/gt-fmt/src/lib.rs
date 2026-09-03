@@ -106,9 +106,9 @@ pub fn format_fix_tooltip_details(stats: FixStats) -> String {
 pub fn format_distance(d: f64::Length) -> String {
     let km = d.get::<kilometer>();
     if km < 1.0 {
-        format!("{:.0} m", d.get::<meter>())
+        format!("{:.0}m", d.get::<meter>())
     } else {
-        format!("{km:.1} km")
+        format!("{km:.1}km")
     }
 }
 
@@ -388,12 +388,12 @@ pub fn match_duration_seconds(track: &LoadedTrack, range: &Range<usize>) -> Opti
     Some((last.tpv.time().utc() - first.tpv.time().utc()).num_seconds())
 }
 
-/// A match's duration, as `42 s` under a minute and `12:34 min` above it.
+/// A match's duration, as `42s` under a minute and `12:34min` above it.
 pub fn format_match_duration(secs: i64) -> String {
     if secs >= 60 {
-        format!("{}:{:02} min", secs / 60, secs % 60)
+        format!("{}:{:02}min", secs / 60, secs % 60)
     } else {
-        format!("{secs} s")
+        format!("{secs}s")
     }
 }
 
@@ -449,6 +449,7 @@ pub const BYTES_PER_GB: u64 = BYTES_PER_KB * BYTES_PER_KB * BYTES_PER_KB;
 
 /// Format a byte count in binary units (`1.5 KB`, `126.6 MB`, `10.0 GB`).
 ///
+/// Data sizes are the exception to the unit rule: they keep the space.
 /// Zero renders as an em dash, the table convention for an absent value.
 pub fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
@@ -511,11 +512,11 @@ mod tests {
     use chrono::Duration;
 
     #[rstest::rstest]
-    #[case(0, "0 s")]
-    #[case(42, "42 s")]
-    #[case(59, "59 s")]
-    #[case(60, "1:00 min")]
-    #[case(754, "12:34 min")]
+    #[case(0, "0s")]
+    #[case(42, "42s")]
+    #[case(59, "59s")]
+    #[case(60, "1:00min")]
+    #[case(754, "12:34min")]
     fn a_match_duration_reads_in_seconds_below_a_minute(#[case] secs: i64, #[case] text: &str) {
         assert_eq!(format_match_duration(secs), text);
     }

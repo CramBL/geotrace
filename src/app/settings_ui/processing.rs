@@ -54,7 +54,7 @@ impl App {
                     .on_hover_text(
                         "Consecutive GPS points whose timestamps differ by this gap \
                          start a new track, whether the second is later or earlier \
-                         than the first. For example, with a gap of 5 min, two fixes \
+                         than the first. For example, with a gap of 5min, two fixes \
                          at 10:00 and 10:06 would be split into separate tracks, and \
                          so would two at 10:06 and 10:00.",
                     );
@@ -78,7 +78,7 @@ impl App {
                     "Maximum time between a log entry's timestamp and the nearest \
                      fix of the recording the log is associated with for the entry \
                      to take a position from it. For example, with a window of \
-                     60 s, a log line at 10:00:30 can associate with a fix from \
+                     60s, a log line at 10:00:30 can associate with a fix from \
                      10:00:00 - but not one from 09:59:00.",
                 );
                 let mut window_s = self.assoc_config.log_association_window_s.clamp(1, 3600);
@@ -224,15 +224,15 @@ impl App {
                         .range(1.0..=20.0)
                         .speed(0.1)
                         .fixed_decimals(1)
-                        .suffix(" σ"),
+                        .suffix("σ"),
                     );
                     if detect_on {
                         sensitivity.on_hover_text(format!(
                             "Jump sensitivity: how far a jump must stand out from the track's \
                              normal clock variation to be flagged, in robust standard deviations. \
                              Lower flags more (smaller) jumps; higher flags only the most extreme.\
-                             \n\nFor example, on a steady recording {sigmas:.1} σ flags jumps \
-                             larger than about {floor_s:.1} s; on a noisier one the bar rises \
+                             \n\nFor example, on a steady recording {sigmas:.1}σ flags jumps \
+                             larger than about {floor_s:.1}s; on a noisier one the bar rises \
                              with the track's own variation.",
                         ));
                     } else {

@@ -1,3 +1,5 @@
+use std::fmt;
+
 use egui::{Button, Label, RichText, ScrollArea, Sides, TextEdit};
 use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::CLOCK as ICON_CLOCK;
@@ -389,22 +391,17 @@ fn snap_progress_strip(
                     let label = display_names
                         .track_label(files, run.track)
                         .unwrap_or_default();
-                    // Chunk currently being fetched, 1-based; a run only stays
-                    // in flight while at least one chunk remains.
-                    let current = (run.completed_chunks + 1).min(run.total_chunks);
-                    ui.add(
-                        Label::new(format!(
-                            "Snapping {label} - chunk {current}/{}",
-                            run.total_chunks
-                        ))
-                        .truncate(),
-                    );
+                    let progress = ChunkProgress {
+                        completed: run.completed_chunks,
+                        total: run.total_chunks,
+                    };
+                    ui.add(Label::new(format!("Snapping {label}: {progress}")).truncate());
                 }
                 // Queued work with nothing in flight: paused (offline) or the
                 // moment between dispatches. The label always states which.
                 None if snap.offline => {
                     ui.label(
-                        RichText::new("Snapping paused - offline")
+                        RichText::new("Snapping paused: offline")
                             .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
                     );
                 }
@@ -907,18 +904,23 @@ fn snap_action(row: &SnapRowView, snap: SnapPanelView<'_>) -> Option<SnapAction>
             total_chunks,
         } => SnapAction {
             enabled: false,
-            hover: format!("Snapping - completed {completed_chunks} of {total_chunks} chunks"),
+            hover: format!(
+                "Snapping: {}",
+                ChunkProgress {
+                    completed: *completed_chunks,
+                    total: *total_chunks,
+                }
+            ),
             consent_pending: false,
         },
         SnapRowView::Failed { error } => SnapAction {
             enabled: true,
-            hover: format!("Snap to road failed - {error}. Click to retry."),
+            hover: format!("Snap failed: {error}. Click to retry."),
             consent_pending: snap.consent_pending,
         },
         SnapRowView::Idle => SnapAction {
             enabled: true,
-            hover: "Snap to road - match this track against the OpenStreetMap road network"
-                .to_owned(),
+            hover: "Snap to road: match this track to the OpenStreetMap road network".to_owned(),
             consent_pending: snap.consent_pending,
         },
     };
@@ -941,6 +943,22 @@ fn costing_submenu_label(row: &SnapRowView) -> Option<&'static str> {
     }
 }
 
+/// How far a snap run in flight has got, written `chunk 3/5`.
+#[derive(Clone, Copy)]
+struct ChunkProgress {
+    completed: usize,
+    total: usize,
+}
+
+impl fmt::Display for ChunkProgress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // A run stays in flight while at least one chunk remains, so the
+        // chunk being fetched never passes the total.
+        let current = self.completed.saturating_add(1).min(self.total);
+        write!(f, "chunk {current}/{}", self.total)
+    }
+}
+
 /// Extra dimming applied to the status glyph while the snapped track is
 /// hidden, so the toggle state is readable at a glance.
 const HIDDEN_GLYPH_ALPHA: f32 = 0.5;
@@ -950,11 +968,11 @@ const HIDDEN_GLYPH_ALPHA: f32 = 0.5;
 const SNAP_AGAIN_AS_LABEL: &str = "Snap again as";
 
 /// Hover text of every snap control grayed out by offline mode.
-const OFFLINE_HOVER: &str = "Snapping is disabled in offline mode";
+const OFFLINE_HOVER: &str = "Snapping disabled: offline mode";
 
 /// Hover text of the snap control of a track with no fix worth sending.
 const NOTHING_TO_SEND_HOVER: &str =
-    "Nothing to snap - this track has no run of real fixes, only receiver dead-reckoning estimates";
+    "Nothing to snap: no measured fixes, only dead-reckoned estimates";
 
 /// The label with the `…` suffix while a click still needs the consent
 /// dialog (the suffix marks exactly that, per the design).
@@ -1295,13 +1313,11 @@ impl CoordinateWarning {
     fn hover_text(self) -> String {
         match self {
             Self::FixesOutOfRange(count) => format!(
-                "{count} {} with a coordinate out of range, drawn between the fixes around {}",
+                "{count} {} with a coordinate out of range: drawn between the fixes around {}",
                 gt_fmt::pluralize(count, "fix", "fixes"),
                 gt_fmt::pluralize(count, "it", "them")
             ),
-            Self::NoValidPosition => {
-                "No fix has a valid coordinate, so the track is not drawn on the map".to_owned()
-            }
+            Self::NoValidPosition => "Not drawn: no fix has a valid coordinate".to_owned(),
         }
     }
 }
@@ -2140,7 +2156,7 @@ mod snap_action_tests {
     /// offline switch for everything else.
     #[rstest]
     #[case(unsnappable(), "Boat")]
-    #[case(SnapRowView::NothingToSend, "no run of real fixes")]
+    #[case(SnapRowView::NothingToSend, "no measured fixes")]
     #[case(SnapRowView::Idle, "offline mode")]
     #[case(failed(), "offline mode")]
     fn offline_hover_names_the_blocking_condition(
@@ -2179,15 +2195,15 @@ mod coordinate_warning_tests {
     #[rstest]
     #[case::one_fix(
         CoordinateWarning::FixesOutOfRange(1),
-        "1 fix with a coordinate out of range, drawn between the fixes around it"
+        "1 fix with a coordinate out of range: drawn between the fixes around it"
     )]
     #[case::several_fixes(
         CoordinateWarning::FixesOutOfRange(2),
-        "2 fixes with a coordinate out of range, drawn between the fixes around them"
+        "2 fixes with a coordinate out of range: drawn between the fixes around them"
     )]
     #[case::no_valid_position(
         CoordinateWarning::NoValidPosition,
-        "No fix has a valid coordinate, so the track is not drawn on the map"
+        "Not drawn: no fix has a valid coordinate"
     )]
     fn a_coordinate_warning_states_what_is_wrong_with_the_track(
         #[case] warning: CoordinateWarning,

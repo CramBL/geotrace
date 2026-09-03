@@ -77,7 +77,7 @@ mod tests {
             hover.lines,
             [
                 "3 of 415 aircraft reported low navigation accuracy",
-                "0.7 % over 2024-05-10 (UTC)",
+                "0.7% over 2024-05-10 (UTC)",
             ]
         );
     }

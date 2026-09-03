@@ -155,7 +155,7 @@ impl QuietTimeDeviation {
 /// long one of that day's epochs covers.
 ///
 /// The run is measured from its first epoch to its last, so a run over every
-/// epoch of a day comes to 24 h and a run of one epoch to nothing at all.
+/// epoch of a day comes to 24h and a run of one epoch to nothing at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StormGradeRun {
     epoch_count: usize,
@@ -219,14 +219,14 @@ impl StormGradeRun {
     /// divides into them, minutes otherwise.
     fn hours_or_minutes(span: TimeDelta) -> String {
         if span.num_seconds() % TimeDelta::hours(1).num_seconds() == 0 {
-            return format!("{} h", span.num_hours());
+            return format!("{}h", span.num_hours());
         }
-        format!("{} min", span.num_minutes())
+        format!("{}min", span.num_minutes())
     }
 }
 
 /// How long the grade held, or the length of the single epoch it was read
-/// from: `8 h`, `one 2 h epoch`.
+/// from: `8h`, `one 2h epoch`.
 impl fmt::Display for StormGradeRun {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.epoch_count == 1 {
@@ -459,11 +459,11 @@ mod tests {
     /// stopped by a quiet epoch, by one the archive does not grade, and by
     /// both ends of the day. An epoch below the storm grade stands in no run.
     #[rstest]
-    #[case::a_single_epoch("....S....", 4, Some("one 2 h epoch"))]
-    #[case::bounded_by_quiet_epochs("..SSSSS..", 4, Some("8 h"))]
-    #[case::from_the_first_epoch_of_the_day("SSS......", 0, Some("4 h"))]
-    #[case::to_the_last_epoch_of_the_day("......SSS", 8, Some("4 h"))]
-    #[case::stopped_by_an_ungraded_epoch("SS?SSS...", 4, Some("4 h"))]
+    #[case::a_single_epoch("....S....", 4, Some("one 2h epoch"))]
+    #[case::bounded_by_quiet_epochs("..SSSSS..", 4, Some("8h"))]
+    #[case::from_the_first_epoch_of_the_day("SSS......", 0, Some("4h"))]
+    #[case::to_the_last_epoch_of_the_day("......SSS", 8, Some("4h"))]
+    #[case::stopped_by_an_ungraded_epoch("SS?SSS...", 4, Some("4h"))]
     #[case::a_quiet_epoch("..SSSSS..", 0, None)]
     #[case::past_the_days_epochs("..SSSSS..", 9, None)]
     fn a_run_holds_the_storm_grade_epochs_around_the_one_assessed(

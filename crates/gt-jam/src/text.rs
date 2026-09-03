@@ -32,9 +32,9 @@ pub const SOURCE_CAVEAT: &str = "Reported by aircraft in flight, not measured on
                                  clear cell is not a guarantee.";
 
 /// What one cell and one value cover.
-pub const RESOLUTION_CAVEAT: &str = "One cell spans roughly 22 km and one value covers a full \
-                                     24-hour UTC day, so neither the minute nor the kilometer of \
-                                     an event can be read from this.";
+pub const RESOLUTION_CAVEAT: &str = "One cell spans roughly 22km and one value covers a 24h UTC \
+                                     day, so neither the minute nor the kilometer of an event can \
+                                     be read from this.";
 
 /// Shown for cells whose aircraft count is too small for the share to mean
 /// anything, alongside their hatched fill on the map.
@@ -49,7 +49,7 @@ pub fn cell_summary(day: &str, good: u32, bad: u32, bad_percent: f64) -> Vec<Str
             "{bad} of {} aircraft reported low navigation accuracy",
             good.saturating_add(bad)
         ),
-        format!("{bad_percent:.1} % over {day} (UTC)"),
+        format!("{bad_percent:.1}% over {day} (UTC)"),
     ]
 }
 
@@ -65,7 +65,7 @@ pub static QUERY_DOC: LazyLock<String> = LazyLock::new(|| {
 pub static PLOT_HOVER: LazyLock<MetricChipHover> = LazyLock::new(|| MetricChipHover {
     definition: "Share of aircraft over the fix's cell that reported low navigation accuracy."
         .to_owned(),
-    source_cadence_and_scale: "gpsjam.org over ADS-B Exchange, one value per UTC day and 22 km \
+    source_cadence_and_scale: "gpsjam.org over ADS-B Exchange, one value per UTC day and 22km \
                                cell, percent."
         .to_owned(),
     reference: AIRCRAFT_INTERFERENCE,

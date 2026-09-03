@@ -91,7 +91,7 @@ impl App {
                         .range(1.0..=120.0)
                         .speed(1.0)
                         .fixed_decimals(0)
-                        .suffix(" min"),
+                        .suffix("min"),
                 )
                 .on_hover_text(window_help);
                 ui.end_row();
@@ -112,7 +112,7 @@ impl App {
                         .range(gt_plot::CLOCK_EXCURSION_THRESHOLD_RANGE_S)
                         .speed(1.0)
                         .fixed_decimals(0)
-                        .suffix(" s"),
+                        .suffix("s"),
                 )
                 .on_hover_text(excursion_help);
                 ui.end_row();

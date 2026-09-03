@@ -10,7 +10,7 @@ source caveat: Averaged over magnetometer stations worldwide, so a value describ
 scale caveat: The scale is quasi logarithmic and published in thirds of a unit. Storm levels start at 5 (G1), Kp stops at 9, and Hp30 keeps climbing past it in an extreme storm.
 no value caveat: No value was published for this period.
 Kp plot hover: Planetary geomagnetic disturbance index, 3-hour cadence.
-GFZ Potsdam, averaged over stations worldwide, 0 to 9 in thirds of a unit.
+GFZ Potsdam, averaged over stations worldwide, 0–9 in thirds of a unit.
 More: 'How does geomagnetic activity affect GNSS?' in Settings.
 Hp30 plot hover: Geomagnetic disturbance index like Kp, 30-minute cadence, open-ended scale.
 GFZ Potsdam, averaged over stations worldwide, thirds of a unit with no upper end.

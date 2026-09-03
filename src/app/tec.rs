@@ -1950,14 +1950,14 @@ mod tests {
         11,
         IonosphericStormGrade::IntenseStorm,
         12,
-        "22 h"
+        "22h"
     )]
     #[case::a_single_storm_epoch(
         gt_ionex::EUROPE_NODE,
         10,
         IonosphericStormGrade::ModerateStorm,
         1,
-        "one 2 h epoch"
+        "one 2h epoch"
     )]
     fn a_track_over_the_captured_storm_is_graded_as_the_capture_is(
         #[case] node: &str,

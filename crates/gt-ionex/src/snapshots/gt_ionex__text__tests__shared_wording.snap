@@ -6,12 +6,12 @@ label: Ionospheric TEC
 layer summary: Colours the published grid by vertical total electron content at the instant shown, under the tracks.
 maps: global ionosphere maps
 archive: TEC map archive
-source caveat: Modelled from ground stations onto a global grid and published as vertical content on a 450 km shell, so a value describes the ionosphere over a region, not the slant path one receiver saw.
-scale caveat: One TEC unit is 10¹⁶ electrons per square metre and adds about 0.16 m of range on L1. A quiet mid-latitude day stays under 20 TECU, and a storm reaches past 150.
+source caveat: Modelled from ground stations onto a global grid and published as vertical content on a 450km shell, so a value describes the ionosphere over a region, not the slant path one receiver saw.
+scale caveat: One TEC unit is 10¹⁶ electrons per square metre and adds about 0.16m of range on L1. A quiet mid-latitude day stays under 20 TECU, and a storm reaches past 150.
 plot hover: Total electron content of the ionosphere above the fix's position.
-NASA JPL, maps every 1 to 2 h, vertical content in TECU.
+NASA JPL, maps every 1–2h, vertical content in TECU.
 More: 'How does ionospheric TEC affect GNSS?' in Settings.
-query doc: Vertical total electron content over the fix's own position and UTC time, in TEC units, interpolated from the archived global ionosphere maps. Modelled from ground stations onto a global grid and published as vertical content on a 450 km shell, so a value describes the ionosphere over a region, not the slant path one receiver saw. One TEC unit is 10¹⁶ electrons per square metre and adds about 0.16 m of range on L1. A quiet mid-latitude day stays under 20 TECU, and a storm reaches past 150. Fixes whose day is not in the TEC map archive carry no value.
+query doc: Vertical total electron content over the fix's own position and UTC time, in TEC units, interpolated from the archived global ionosphere maps. Modelled from ground stations onto a global grid and published as vertical content on a 450km shell, so a value describes the ionosphere over a region, not the slant path one receiver saw. One TEC unit is 10¹⁶ electrons per square metre and adds about 0.16m of range on L1. A quiet mid-latitude day stays under 20 TECU, and a storm reaches past 150. Fixes whose day is not in the TEC map archive carry no value.
 legend unit: TECU
 instant hover: The map epoch the heatmap draws
 opacity hover: How strongly the heatmap is drawn over the base map
@@ -21,8 +21,8 @@ hidden layer opacity: Show the TEC heatmap to change its opacity
 fetch queue hover: Map days waiting to be downloaded. One day is requested at a time, and a day costs one request per mirror tried until one serves the file.
 recording day coverage hover: UTC days the recordings loaded this session span, and how many of them the archive holds maps for. Days downloaded by a backfill are not counted here.
 background day coverage hover: Days downloaded before the recording days, and how many of them the archive holds maps for. One recording day pulls in the 27 days before it, since the environment warning reads a recording's TEC against the median of those days.
-deviation warning trigger: TEC: more than 43 % above or 30 % below the median of the 27 days before, the moderate-storm grade of the planetary ionospheric storm index.
-deviation reference caveat: A TEC grade with no geomagnetic storm near it is a weaker signal: it measures departure from the median of the 27 days before, and a disturbed month lifts that reference.
+deviation warning trigger: ΔTEC: >43% above or >30% below the 27-day median (moderate storm on the planetary ionospheric storm index).
+deviation reference caveat: A TEC grade without a geomagnetic storm near it is weak evidence: it measures departure from the median of the 27 days before, and a disturbed month lifts that median.
 mirror skipped without a token: no Earthdata token set
 missing Earthdata token: GeoTrace skips this mirror until an Earthdata token is set: CDDIS serves the maps to registered callers only. Registering at https://urs.earthdata.nasa.gov is free.
 Earthdata signup: https://urs.earthdata.nasa.gov

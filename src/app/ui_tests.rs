@@ -9483,7 +9483,7 @@ fn a_storm_day_archived_after_the_load_warns_on_the_map() {
         listed_track_warnings(&harness),
         [(
             "ride.gtd".to_owned(),
-            vec!["Geomagnetic storm: Kp reached 5 (G1)".to_owned()]
+            vec!["Geomagnetic storm (≥5): Kp 5, G1".to_owned()]
         )],
         "the period the recording's fixes fall in is what it carries"
     );
@@ -9589,10 +9589,10 @@ fn a_tec_window_archived_after_the_load_warns_on_the_map() {
         [(
             "ride.gtd".to_owned(),
             vec![
-                "TEC deviation: +75 % from the 27-day median (warns from +43 %), moderate \
-                 ionospheric storm (W = 3), for 24 h"
+                "ΔTEC (>+43%): +75% from the 27-day median, moderate ionospheric storm \
+                 (W = 3), 24h"
                     .to_owned(),
-                "TEC over the track: 35 to 35 TECU".to_owned(),
+                "TEC over track: 35–35 TECU".to_owned(),
             ]
         )],
         "every epoch of the recording's day stands well above the median of the 27 days before it"
@@ -9626,10 +9626,10 @@ fn a_tec_window_archived_after_the_load_warns_on_the_map() {
         [(
             "ride.gtd".to_owned(),
             vec![
-                "TEC deviation: +75 % from the 27-day median (warns from +43 %), moderate \
-                 ionospheric storm (W = 3), for 24 h, after a G5 storm 21 h before"
+                "ΔTEC (>+43%): +75% from the 27-day median, moderate ionospheric storm \
+                 (W = 3), 24h, after a G5 storm 21h before"
                     .to_owned(),
-                "TEC over the track: 35 to 35 TECU".to_owned(),
+                "TEC over track: 35–35 TECU".to_owned(),
             ]
         )],
         "the day of indices archived after the load qualifies the deviation"

@@ -70,16 +70,16 @@ pub trait BackfillDataset {
         let seconds = days * Self::REQUESTS_PER_DAY * Self::REQUEST_INTERVAL.as_secs();
         let minutes = seconds.div_ceil(60);
         let duration = if seconds < MINUTES_CUTOFF_SECS {
-            format!("{seconds} s")
+            format!("{seconds}s")
         } else if minutes < HOURS_CUTOFF_MINS {
-            format!("{minutes} min")
+            format!("{minutes}min")
         } else {
             #[expect(
                 clippy::cast_precision_loss,
                 reason = "an estimate in hours needs its leading digits only"
             )]
             let hours = seconds as f64 / 3600.0;
-            format!("{hours:.1} h")
+            format!("{hours:.1}h")
         };
         format!(
             "{days} {}, about {duration} and {}",
@@ -564,10 +564,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case::one_day(1, "1 day, about 2 s and 81.0 KB")]
-    #[case::a_month(30, "30 days, about 60 s and 2.4 MB")]
-    #[case::a_year(365, "365 days, about 13 min and 28.9 MB")]
-    #[case::the_whole_archive(1600, "1600 days, about 54 min and 126.6 MB")]
+    #[case::one_day(1, "1 day, about 2s and 81.0 KB")]
+    #[case::a_month(30, "30 days, about 60s and 2.4 MB")]
+    #[case::a_year(365, "365 days, about 13min and 28.9 MB")]
+    #[case::the_whole_archive(1600, "1600 days, about 54min and 126.6 MB")]
     fn estimates_scale_from_seconds_to_minutes(#[case] days: usize, #[case] expected: &str) {
         assert_eq!(InterferenceBackfill::estimate(days), expected);
     }
@@ -575,9 +575,9 @@ mod tests {
     /// A day of indices costs two requests, and a range long enough to run
     /// for hours is stated in hours.
     #[rstest]
-    #[case::one_day(1, "1 day, about 4 s and 12.0 KB")]
-    #[case::a_year(365, "365 days, about 25 min and 4.3 MB")]
-    #[case::five_years(1825, "1825 days, about 2.0 h and 21.4 MB")]
+    #[case::one_day(1, "1 day, about 4s and 12.0 KB")]
+    #[case::a_year(365, "365 days, about 25min and 4.3 MB")]
+    #[case::five_years(1825, "1825 days, about 2.0h and 21.4 MB")]
     fn geomagnetic_estimates_count_a_request_per_index(
         #[case] days: usize,
         #[case] expected: &str,
@@ -588,8 +588,8 @@ mod tests {
     /// A map day costs one request, and its archived footprint dominates the
     /// estimate.
     #[rstest]
-    #[case::one_day(1, "1 day, about 2 s and 125.0 KB")]
-    #[case::five_years(1825, "1825 days, about 61 min and 222.8 MB")]
+    #[case::one_day(1, "1 day, about 2s and 125.0 KB")]
+    #[case::five_years(1825, "1825 days, about 61min and 222.8 MB")]
     fn tec_estimates_count_one_request_per_day(#[case] days: usize, #[case] expected: &str) {
         assert_eq!(TecMapBackfill::estimate(days), expected);
     }
@@ -730,7 +730,7 @@ mod tests {
     #[rstest]
     #[case::no_archive(None, "No interference archive to download into")]
     #[case::nothing_to_do(Some(0), "Every day in that range is already archived")]
-    #[case::a_month(Some(30), "Downloading 30 days, about 60 s and 2.4 MB")]
+    #[case::a_month(Some(30), "Downloading 30 days, about 60s and 2.4 MB")]
     fn the_outcome_line_reports_what_was_queued(
         #[case] queued: Option<usize>,
         #[case] expected: &str,
