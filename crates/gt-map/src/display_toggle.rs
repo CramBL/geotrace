@@ -20,6 +20,12 @@ use strum::IntoEnumIterator;
 
 use crate::display_counts::DisplayCounts;
 
+/// Id of the [`egui::Area`] the eye button is drawn in.
+pub const DISPLAY_TOGGLE_BUTTON_AREA_ID: &str = "display_toggle_button";
+
+/// Id of the [`egui::Area`] the category popup is drawn in while it is open.
+pub const DISPLAY_TOGGLE_POPUP_AREA_ID: &str = "display_toggle_popup";
+
 /// Width of the right-aligned count column, sized for the widest expected
 /// count (`999,999`) so the eye glyphs stay aligned across rows.
 const COUNT_COLUMN_WIDTH_PX: f32 = 48.0;
@@ -420,7 +426,7 @@ pub(crate) fn show_display_toggle(
     counts: impl FnOnce() -> DisplayCounts,
 ) {
     let gap = ui.style().spacing.item_spacing.y;
-    let button_response = Area::new(Id::new("display_toggle_button"))
+    let button_response = Area::new(Id::new(DISPLAY_TOGGLE_BUTTON_AREA_ID))
         .fixed_pos(egui::pos2(below_rect.right(), below_rect.top() - gap))
         .pivot(Align2::RIGHT_BOTTOM)
         .show(ui.ctx(), |ui| {
@@ -468,7 +474,7 @@ pub(crate) fn show_display_toggle(
     }
     let button_rect = button_response.response.rect;
     let counts = counts();
-    let popup_response = Area::new(Id::new("display_toggle_popup"))
+    let popup_response = Area::new(Id::new(DISPLAY_TOGGLE_POPUP_AREA_ID))
         .fixed_pos(egui::pos2(button_rect.right(), button_rect.top() - gap))
         .pivot(Align2::RIGHT_BOTTOM)
         .show(ui.ctx(), |ui| {

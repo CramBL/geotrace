@@ -38,9 +38,8 @@ pub struct LoadingJob {
     pub progress: f32,
     pub stage: &'static str,
     /// egui frame time (`Context::input().time`, seconds) when the job was
-    /// enqueued, used to display elapsed time. Frame time rather than
-    /// [`std::time::Instant`] for the same reason as
-    /// [`FinishedJob::completed_at`]: a wall-clock read leaks into snapshots
+    /// enqueued, used to display elapsed time. Must stay on the same clock as
+    /// [`FinishedJob::completed_at`]. A wall-clock read leaks into snapshots
     /// and makes them racy.
     pub started_at: f64,
 }

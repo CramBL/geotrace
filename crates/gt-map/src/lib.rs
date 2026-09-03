@@ -31,6 +31,7 @@ pub mod track_renderer;
 mod transform;
 mod viewport;
 
+pub use display_toggle::{DISPLAY_TOGGLE_BUTTON_AREA_ID, DISPLAY_TOGGLE_POPUP_AREA_ID};
 pub use sky_trails_window::SkyTrailsWindow;
 pub use space_weather_indicator::SpaceWeatherIndicator;
 pub use tec_renderer::{TecHeatmapSnapshot, TecLayer};
