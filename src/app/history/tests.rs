@@ -1678,7 +1678,7 @@ fn snapshot_listing_longer_than_the_screen() {
     for _ in 0..8 {
         h.run();
     }
-    h.snapshot("history_listing_longer_than_the_screen");
+    h.snapshot_loose("history_listing_longer_than_the_screen");
 }
 
 /// The History window after the user drags its bottom edge up while it lists
@@ -1702,5 +1702,5 @@ fn snapshot_window_dragged_shorter_than_its_listing() {
     // point is away from the rows.
     h.inner
         .hover_at_and_settle(egui::pos2(HEIGHT_AUDIT_VIEWPORT.x - 1.0, 1.0), 8);
-    h.snapshot("history_window_dragged_shorter");
+    h.snapshot_loose("history_window_dragged_shorter");
 }

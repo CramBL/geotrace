@@ -19,6 +19,13 @@ fn snapshot_options() -> SnapshotOptions {
         .max_failed_pixels(STRICT_PIXEL_COUNT_TOLERANCE)
 }
 
+/// Per-pixel color tolerance for [`TestHarness::snapshot_loose`], as a squared
+/// YIQ distance. 4.0 admits a difference of two gray levels per channel, which
+/// is how far apart the macOS and the Linux rasterizer place an anti-aliased
+/// edge. A one-pixel error in the History window's height put 10596 pixels
+/// past it.
+const LOOSE_PIXEL_COLOR_TOLERANCE: f32 = 4.0;
+
 /// Pixel-count tolerance for [`TestHarness::snapshot_loose`]. Live map/plot
 /// snapshots differ by a handful of pixels between GPU backends (the baselines
 /// are committed from Linux but CI compares them on the macOS runner), so a
@@ -98,14 +105,20 @@ impl<'a, State> TestHarness<'a, State> {
             .snapshot_options(snap_name(name), &snapshot_options());
     }
 
-    /// Like [`snapshot`] but with a higher pixel-diff tolerance.
+    /// Like [`TestHarness::snapshot`] but at [`LOOSE_PIXEL_COLOR_TOLERANCE`],
+    /// with a budget of [`LOOSE_PIXEL_COUNT_TOLERANCE`] pixels.
     ///
-    /// Use this for snapshots that include live-rendered content (plots, maps)
-    /// where minor floating-point layout differences produce a small number of
-    /// differing pixels across runs and across GPU backends (the committed
-    /// baselines are compared against the macOS runner).
+    /// Use it for live-rendered content (plots, maps), whose floating-point
+    /// layout differs by a few pixels between GPU backends. Use it also for an
+    /// image far larger than the 280x600 side-panel baselines
+    /// [`STRICT_PIXEL_COUNT_TOLERANCE`] was measured on: a larger image has
+    /// more anti-aliased edges.
     pub fn snapshot_loose(&mut self, name: &str) {
-        self.snapshot_with_tolerance(name, 4.0, LOOSE_PIXEL_COUNT_TOLERANCE);
+        self.snapshot_with_tolerance(
+            name,
+            LOOSE_PIXEL_COLOR_TOLERANCE,
+            LOOSE_PIXEL_COUNT_TOLERANCE,
+        );
     }
 
     pub fn snapshot_with_threshold(&mut self, name: &str, threshold: f32) {
