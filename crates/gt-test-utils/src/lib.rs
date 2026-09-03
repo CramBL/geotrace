@@ -35,7 +35,7 @@ pub use log_fixtures::{
 };
 pub use map_tile_fixtures::{assert_map_tile_fixture_is_complete, map_tile_fixture_dir};
 #[cfg(feature = "snapshot")]
-pub use snapshot_harness::{By, Queryable, TestHarness, TestHarnessBuilder};
+pub use snapshot_harness::{By, NodeT, Queryable, TestHarness, TestHarnessBuilder};
 pub use transport::{ScriptedTransport, TransportResponse, UrlPrefixResponses};
 #[cfg(feature = "snapshot")]
 pub use window_fit::{AuditedWindow, ControlLabel, WindowFitAssertions, oversized_text};

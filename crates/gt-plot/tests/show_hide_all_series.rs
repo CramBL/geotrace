@@ -5,20 +5,15 @@
 use chrono::{DateTime, TimeDelta, Utc};
 use egui_phosphor::regular::EYE as ICON_EYE;
 use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
-use gt_filter::GlobalFilter;
 use gt_flare::{MarkedFlare, SolarFlare};
-use gt_loaded_files::RecordingNames;
-use gt_plot::{ArchiveOverlays, PlotState};
-use gt_test_utils::{Queryable as _, TestHarness};
+use gt_plot::PlotState;
+use gt_test_utils::Queryable as _;
 use gt_types::{Channel, FileSource, LoadedFile, MetricKind, NavPoint, TimeRange};
-use gt_ui_types::{
-    ContextLines, GeomagneticSeries, JammingSeries, SnapErrorSeries, TecSeries, TrackDataVisibility,
-};
 use rstest::rstest;
 use rustc_hash::FxHashMap;
+use support::{DrawnPlot, PlotSources, at_second};
 
-/// 2024-01-15 12:00:00 UTC, the first fix of the recording below.
-const FIRST_FIX_SECS: i64 = 1_705_320_000;
+mod support;
 
 /// Fixes in the recording, one per second.
 const FIX_COUNT: usize = 60;
@@ -28,13 +23,6 @@ const CHANNEL_NAME: &str = "Incline";
 
 /// A channel of a recording this test never loads.
 const UNLOADED_CHANNEL_NAME: &str = "Brake pressure";
-
-/// Plot size in points. Wide enough that a chip row and a plot both lay out.
-const PLOT_SIZE: egui::Vec2 = egui::vec2(700.0, 400.0);
-
-fn at_second(offset: i64) -> DateTime<Utc> {
-    DateTime::UNIX_EPOCH + TimeDelta::seconds(FIRST_FIX_SECS + offset)
-}
 
 /// A recording of one track at 1 Hz carrying a scalar channel sampled at the
 /// same rate.
@@ -100,106 +88,75 @@ impl PlotScene {
             solar_flares: vec![archived_flare()],
         }
     }
-}
 
-/// A harness that has drawn the plot over the recording in `scene`.
-fn drawn_plot(scene: PlotScene) -> TestHarness<'static, PlotState> {
-    let PlotScene {
-        show_channels,
-        solar_flares,
-    } = scene;
-    let files = [recording_with_a_channel()];
-    let names = RecordingNames::default();
-    let visibility = TrackDataVisibility::from_loaded(&files);
-    let filter = GlobalFilter::default();
-    let snap_error = SnapErrorSeries::default();
-    let jamming = JammingSeries::default();
-    let geomagnetic = GeomagneticSeries::default();
-    let tec = TecSeries::default();
-    let context_lines = ContextLines::default();
-    let mut plot = PlotState::default();
-    plot.show_channels = show_channels;
-    plot.rebuild_all(&files);
-
-    let mut harness = TestHarness::builder().size(PLOT_SIZE).ui_state(
-        move |ui, plot: &mut PlotState| {
-            gt_plot::show_track_plot(
-                ui,
-                &files,
-                &names,
-                &visibility,
-                &filter,
-                None,
-                None,
-                None,
-                None,
-                &snap_error,
-                &jamming,
-                &geomagnetic,
-                &tec,
-                ArchiveOverlays {
-                    context_lines: &context_lines,
-                    solar_flares: &solar_flares,
-                },
-                plot,
-            );
-        },
-        plot,
-    );
-    harness.run();
-    harness
-}
-
-/// The icon on the show/hide-all button: the crossed-out eye while every
-/// series in scope is visible, the plain eye otherwise.
-fn show_hide_all_icon(harness: &TestHarness<'_, PlotState>) -> &'static str {
-    if harness.inner.query_by_label(ICON_EYE_SLASH).is_some() {
-        ICON_EYE_SLASH
-    } else {
-        ICON_EYE
+    /// A harness that has drawn the plot over the recording in this scene.
+    fn draw(self) -> DrawnPlot {
+        let Self {
+            show_channels,
+            solar_flares,
+        } = self;
+        let mut plot = PlotState::default();
+        plot.show_channels = show_channels;
+        support::drawn_plot(
+            vec![recording_with_a_channel()],
+            PlotSources {
+                solar_flares,
+                ..PlotSources::default()
+            },
+            plot,
+        )
     }
 }
 
-fn click_show_hide_all(harness: &mut TestHarness<'_, PlotState>) {
-    let icon = show_hide_all_icon(harness);
-    harness.inner.get_by_label(icon).click();
-    harness.run();
-}
+impl DrawnPlot {
+    /// The icon on the show/hide-all button: the crossed-out eye while every
+    /// series in scope is visible, the plain eye otherwise.
+    fn show_hide_all_icon(&self) -> &'static str {
+        if self.harness.inner.query_by_label(ICON_EYE_SLASH).is_some() {
+            ICON_EYE_SLASH
+        } else {
+            ICON_EYE
+        }
+    }
 
-/// The state a click reaches from the default: every series in scope visible,
-/// then every one of them hidden.
-fn show_all_then_hide_all(harness: &mut TestHarness<'_, PlotState>) {
-    click_show_hide_all(harness);
-    click_show_hide_all(harness);
+    fn click_show_hide_all(&mut self) {
+        let icon = self.show_hide_all_icon();
+        self.harness.inner.get_by_label(icon).click();
+        self.run();
+    }
+
+    /// The state a click reaches from the default: every series in scope
+    /// visible, then every one of them hidden.
+    fn show_all_then_hide_all(&mut self) {
+        self.click_show_hide_all();
+        self.click_show_hide_all();
+    }
 }
 
 #[test]
 fn showing_all_shows_a_hidden_metric_channel_and_the_flare_markers() {
-    let mut harness = drawn_plot(PlotScene::with_channels_and_a_flare());
-    harness
-        .state_mut()
-        .metric_vis
-        .set(MetricKind::Velocity, false);
-    harness.state_mut().channel_vis.set(CHANNEL_NAME, false);
-    harness.state_mut().show_solar_flares = false;
-    harness.run();
+    let mut plot = PlotScene::with_channels_and_a_flare().draw();
+    plot.state_mut().metric_vis.set(MetricKind::Velocity, false);
+    plot.state_mut().channel_vis.set(CHANNEL_NAME, false);
+    plot.state_mut().show_solar_flares = false;
+    plot.run();
 
-    click_show_hide_all(&mut harness);
+    plot.click_show_hide_all();
 
-    assert!(harness.state().metric_vis.field(MetricKind::Velocity));
-    assert!(harness.state().channel_vis.is_visible(CHANNEL_NAME));
-    assert!(harness.state().show_solar_flares);
+    assert!(plot.state().metric_vis.field(MetricKind::Velocity));
+    assert!(plot.state().channel_vis.is_visible(CHANNEL_NAME));
+    assert!(plot.state().show_solar_flares);
 }
 
 #[test]
 fn hiding_all_hides_the_metrics_the_channel_and_the_flare_markers() {
-    let mut harness = drawn_plot(PlotScene::with_channels_and_a_flare());
+    let mut plot = PlotScene::with_channels_and_a_flare().draw();
 
-    show_all_then_hide_all(&mut harness);
+    plot.show_all_then_hide_all();
 
-    assert!(!harness.state().metric_vis.field(MetricKind::Velocity));
-    assert!(!harness.state().channel_vis.is_visible(CHANNEL_NAME));
-    assert!(!harness.state().show_solar_flares);
+    assert!(!plot.state().metric_vis.field(MetricKind::Velocity));
+    assert!(!plot.state().channel_vis.is_visible(CHANNEL_NAME));
+    assert!(!plot.state().show_solar_flares);
 }
 
 /// A hidden series in scope leaves the button offering to show all, whichever
@@ -209,17 +166,17 @@ fn hiding_all_hides_the_metrics_the_channel_and_the_flare_markers() {
 #[case::a_hidden_channel(HiddenSeries::Channel, ICON_EYE)]
 #[case::hidden_flare_markers(HiddenSeries::FlareMarkers, ICON_EYE)]
 fn the_icon_states_what_a_click_changes(#[case] hidden: HiddenSeries, #[case] expected_icon: &str) {
-    let mut harness = drawn_plot(PlotScene::with_channels_and_a_flare());
-    click_show_hide_all(&mut harness);
+    let mut plot = PlotScene::with_channels_and_a_flare().draw();
+    plot.click_show_hide_all();
 
     match hidden {
         HiddenSeries::Nothing => {}
-        HiddenSeries::Channel => harness.state_mut().channel_vis.set(CHANNEL_NAME, false),
-        HiddenSeries::FlareMarkers => harness.state_mut().show_solar_flares = false,
+        HiddenSeries::Channel => plot.state_mut().channel_vis.set(CHANNEL_NAME, false),
+        HiddenSeries::FlareMarkers => plot.state_mut().show_solar_flares = false,
     }
-    harness.run();
+    plot.run();
 
-    assert_eq!(show_hide_all_icon(&harness), expected_icon);
+    assert_eq!(plot.show_hide_all_icon(), expected_icon);
 }
 
 /// Which series is hidden while every other one in scope is visible.
@@ -234,50 +191,47 @@ enum HiddenSeries {
 /// channels out of scope.
 #[test]
 fn hiding_all_leaves_the_channels_of_a_collapsed_section_visible() {
-    let mut harness = drawn_plot(PlotScene {
+    let mut plot = PlotScene {
         show_channels: false,
         solar_flares: vec![archived_flare()],
-    });
+    }
+    .draw();
 
-    show_all_then_hide_all(&mut harness);
+    plot.show_all_then_hide_all();
 
-    assert!(harness.state().channel_vis.is_visible(CHANNEL_NAME));
-    assert!(!harness.state().show_solar_flares);
+    assert!(plot.state().channel_vis.is_visible(CHANNEL_NAME));
+    assert!(!plot.state().show_solar_flares);
 }
 
 /// With no flare archived over the span the plot shows, the flare chip is
 /// disabled and its markers are out of scope.
 #[test]
 fn hiding_all_leaves_the_markers_of_a_disabled_flare_chip_shown() {
-    let mut harness = drawn_plot(PlotScene {
+    let mut plot = PlotScene {
         show_channels: true,
         solar_flares: Vec::new(),
-    });
+    }
+    .draw();
 
-    show_all_then_hide_all(&mut harness);
+    plot.show_all_then_hide_all();
 
-    assert!(harness.state().show_solar_flares);
-    assert!(!harness.state().channel_vis.is_visible(CHANNEL_NAME));
+    assert!(plot.state().show_solar_flares);
+    assert!(!plot.state().channel_vis.is_visible(CHANNEL_NAME));
 }
 
 /// A hide-all writes an entry for the loaded channels alone, so a channel of
 /// a recording loaded later is visible.
 #[test]
 fn hiding_all_writes_no_entry_for_a_channel_that_is_not_loaded() {
-    let mut harness = drawn_plot(PlotScene::with_channels_and_a_flare());
+    let mut plot = PlotScene::with_channels_and_a_flare().draw();
 
-    show_all_then_hide_all(&mut harness);
+    plot.show_all_then_hide_all();
 
     assert_eq!(
-        harness.state().channel_vis.entries(),
+        plot.state().channel_vis.entries(),
         vec![(CHANNEL_NAME.to_owned(), false)]
     );
-    assert!(
-        harness
-            .state()
-            .channel_vis
-            .is_visible(UNLOADED_CHANNEL_NAME)
-    );
+    assert!(plot.state().channel_vis.is_visible(UNLOADED_CHANNEL_NAME));
 }
 
 /// A metric with no chip in the row is out of scope: an advanced metric while
@@ -285,10 +239,10 @@ fn hiding_all_writes_no_entry_for_a_channel_that_is_not_loaded() {
 /// the recording has no satellite of.
 #[test]
 fn hiding_all_leaves_a_metric_with_no_chip_untouched() {
-    let mut harness = drawn_plot(PlotScene::with_channels_and_a_flare());
+    let mut plot = PlotScene::with_channels_and_a_flare().draw();
 
-    show_all_then_hide_all(&mut harness);
+    plot.show_all_then_hide_all();
 
-    assert!(harness.state().metric_vis.field(MetricKind::UtilAll));
-    assert!(harness.state().metric_vis.field(MetricKind::GpsSeen));
+    assert!(plot.state().metric_vis.field(MetricKind::UtilAll));
+    assert!(plot.state().metric_vis.field(MetricKind::GpsSeen));
 }

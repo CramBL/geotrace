@@ -76,6 +76,11 @@ pub const PLOT_LINE_WIDTH_RANGE: RangeInclusive<f32> = 0.5..=5.0;
 /// the data lines so the marker stays findable across a crowded plot.
 const SEEK_LINE_WIDTH: f32 = 1.5;
 
+/// The salt [`show_track_plot`] names its plot with. `egui_plot` derives the
+/// plot's memory id from it, which is how a test reads the transform of the
+/// frame the plot last drew.
+pub const TRACK_PLOT_ID_SALT: &str = "track_plot";
+
 /// Padding either side of the data when the view resets to fit it, as a
 /// fraction of the data's own span.
 const RESET_X_MARGIN_FRACTION: f64 = 0.05;
@@ -633,7 +638,7 @@ pub fn show_track_plot(
     // this flag is raised at the end of that closure.
     let custom_hover_label_shown = Cell::new(false);
 
-    let mut plot = egui_plot::Plot::new("track_plot")
+    let mut plot = egui_plot::Plot::new(TRACK_PLOT_ID_SALT)
         .height(ui.available_height())
         .show_grid(state.show_grid)
         .grid_color(

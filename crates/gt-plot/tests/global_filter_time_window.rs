@@ -15,16 +15,9 @@ use gt_ui_types::{
     ContextLines, GeomagneticSeries, JammingSeries, SnapErrorSeries, TecSeries, TrackDataVisibility,
 };
 use rustc_hash::FxHashMap;
+use support::{PLOT_SIZE, at_second, plot_area};
 
-/// 2024-01-15 12:00:00 UTC, the first fix of every recording below.
-const FIRST_FIX_SECS: i64 = 1_705_320_000;
-
-/// Plot size in points. Wide enough that a chip row and a plot both lay out.
-const PLOT_SIZE: egui::Vec2 = egui::vec2(700.0, 400.0);
-
-fn at_second(offset: i64) -> DateTime<Utc> {
-    DateTime::UNIX_EPOCH + TimeDelta::seconds(FIRST_FIX_SECS + offset)
-}
+mod support;
 
 /// A recording of one track, `count` fixes at 1 Hz from `start_offset`
 /// seconds, each carrying a satellite report of `constellation`.
@@ -269,7 +262,7 @@ fn a_small_move_of_the_window_end_redraws_the_lines() {
     let files = [recording(0, 3600, Constellation::Gps)];
     let mut harness = draw(&files, PlotUnderFilter::new(window(0, 3000)));
     let pixels_per_point = harness.inner.ctx.pixels_per_point();
-    let plot_area = egui::Rect::from_min_size(egui::Pos2::ZERO, PLOT_SIZE);
+    let plot_area = plot_area();
     let before = harness.inner.render().expect("the harness renders a frame");
 
     harness.state_mut().filter.time_end = Some(at_second(2960));
@@ -298,7 +291,7 @@ fn a_pinned_view_redraws_its_lines_when_the_window_end_moves() {
         PlotUnderFilter::pinned_to_map_view(window(0, 3000), 0..=3600),
     );
     let pixels_per_point = harness.inner.ctx.pixels_per_point();
-    let plot_area = egui::Rect::from_min_size(egui::Pos2::ZERO, PLOT_SIZE);
+    let plot_area = plot_area();
     let view = harness.state().plot.visible_x_range();
     let before = harness.inner.render().expect("the harness renders a frame");
 
