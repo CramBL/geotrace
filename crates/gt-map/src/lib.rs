@@ -885,6 +885,7 @@ impl NavMap {
         let pointer_ownership = PointerOwnership {
             recorded_element_hovered: ctx.highlight.hover.is_some(),
             marker_hovered: ctx.highlight.hover_candidates.any_marker(),
+            log_hexagon_hovered: ctx.log_hover.glyph.is_some(),
             snapped_edge_tooltip_shown: self.snapped_edge_tooltip_shown.replace(false),
             interference_layer_drawn: ctx.display_mask.is_visible(DisplayCategory::JammingHexes)
                 && ctx.jamming_dataset.is_some(),
@@ -935,7 +936,6 @@ impl NavMap {
             && let Some(snapped) = ctx.snapped_tracks
             && !snapped.is_empty()
         {
-            // Edge hover is disabled while a recorded element is hovered.
             map = map.with_plugin(SnappedTrackRenderer::new(
                 snapped,
                 ctx.files,

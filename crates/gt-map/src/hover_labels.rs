@@ -29,6 +29,7 @@ pub(crate) struct PointerOwnership {
     /// Whether a marker was under the pointer, whose pin draws over the log
     /// hexagons and takes the hover from them.
     pub(crate) marker_hovered: bool,
+    pub(crate) log_hexagon_hovered: bool,
     pub(crate) snapped_edge_tooltip_shown: bool,
     /// Whether the interference layer is drawing, whose cells sit over the TEC
     /// grid and take the hover in its place.
@@ -37,7 +38,7 @@ pub(crate) struct PointerOwnership {
 
 impl PointerOwnership {
     pub(crate) fn snapped_track_hover_enabled(self) -> bool {
-        !self.recorded_element_hovered
+        !self.recorded_element_hovered && !self.log_hexagon_hovered
     }
 
     pub(crate) fn log_hexagon_hover_enabled(self) -> bool {
@@ -45,7 +46,9 @@ impl PointerOwnership {
     }
 
     pub(crate) fn jamming_cell_hover_enabled(self) -> bool {
-        !self.recorded_element_hovered && !self.snapped_edge_tooltip_shown
+        !self.recorded_element_hovered
+            && !self.log_hexagon_hovered
+            && !self.snapped_edge_tooltip_shown
     }
 
     pub(crate) fn tec_node_hover_enabled(self) -> bool {
@@ -362,6 +365,18 @@ mod tests {
         PointerOwnership {
             recorded_element_hovered: true,
             snapped_edge_tooltip_shown: true,
+            ..PointerOwnership::default()
+        },
+        Expected {
+            snapped_hover: false,
+            jamming_hover: false,
+            tec_hover: false,
+            log_hexagon_hover: true,
+        }
+    )]
+    #[case::a_hexagon_over_the_snapped_track_and_the_cells(
+        PointerOwnership {
+            log_hexagon_hovered: true,
             ..PointerOwnership::default()
         },
         Expected {

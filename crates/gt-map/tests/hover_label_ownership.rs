@@ -89,9 +89,10 @@ enum TheLayerUnderTheHexagon {
     InterferenceCell,
 }
 
-/// The layer under a log hexagon keeps its own label: the hexagon yields only
-/// to a marker, and neither the snapped track nor the interference layer yields
-/// to it.
+/// The label of the layer under a log hexagon closes on the frame after the
+/// hexagon takes the pointer: both layers read the hexagon hit test of the
+/// previous frame. The arrival frame has both labels open. Neither paints on
+/// that frame.
 #[rstest]
 #[case::over_a_snapped_edge(
     TheLayerUnderTheHexagon::SnappedEdge,
@@ -103,9 +104,9 @@ enum TheLayerUnderTheHexagon {
     [THE_INTERFERENCE_CELL_LABEL, THE_LOG_HEXAGON_LABEL],
     "hover_label_a_log_hexagon_over_an_interference_cell"
 )]
-fn snapshot_a_log_hexagon_draws_its_label_beside_the_label_of_the_layer_under_it(
+fn snapshot_a_log_hexagon_takes_the_pointer_from_the_layer_under_it(
     #[case] under: TheLayerUnderTheHexagon,
-    #[case] expected_labels: [&str; 2],
+    #[case] labels_on_the_arrival_frame: [&str; 2],
     #[case] snapshot_name: &str,
 ) {
     let files = a_recording_of(FIX_COUNT, WALKING_STEP_DEGREES);
@@ -127,10 +128,10 @@ fn snapshot_a_log_hexagon_draws_its_label_beside_the_label_of_the_layer_under_it
     .draw();
 
     map.move_pointer_to(viewport_center());
-    assert_eq!(map.hover_label_texts(), expected_labels);
+    assert_eq!(map.hover_label_texts(), labels_on_the_arrival_frame);
 
     map.draw_one_more_frame();
-    assert_eq!(map.hover_label_texts(), expected_labels);
+    assert_eq!(map.hover_label_texts(), [THE_LOG_HEXAGON_LABEL]);
     map.snapshot(snapshot_name);
 }
 
