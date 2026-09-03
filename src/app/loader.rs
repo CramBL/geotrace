@@ -37,8 +37,12 @@ pub struct LoadingJob {
     pub filename: String,
     pub progress: f32,
     pub stage: &'static str,
-    /// Wall-clock time when the job was enqueued, used to display elapsed time.
-    pub started_at: std::time::Instant,
+    /// egui frame time (`Context::input().time`, seconds) when the job was
+    /// enqueued, used to display elapsed time. Frame time rather than
+    /// [`std::time::Instant`] for the same reason as
+    /// [`FinishedJob::completed_at`]: a wall-clock read leaks into snapshots
+    /// and makes them racy.
+    pub started_at: f64,
 }
 
 /// A load job that has finished and is waiting to be dismissed from the UI.
@@ -214,8 +218,13 @@ impl LoadJobs {
         id
     }
 
+    fn frame_time(&self) -> f64 {
+        self.ctx.input(|input| input.time)
+    }
+
     pub fn spawn_gtd_path(&mut self, path: PathBuf, config: SegmentationConfig) {
         let id = self.alloc_id();
+        let started_at = self.frame_time();
         let filename = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -226,7 +235,7 @@ impl LoadJobs {
             filename: filename.clone(),
             progress: 0.0,
             stage: STAGE_STARTING,
-            started_at: std::time::Instant::now(),
+            started_at,
         });
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
@@ -338,12 +347,13 @@ impl LoadJobs {
         open: Option<HistoryOpen>,
     ) {
         let id = self.alloc_id();
+        let started_at = self.frame_time();
         self.loading_jobs.push(LoadingJob {
             id,
             filename: filename.clone(),
             progress: 0.0,
             stage: STAGE_STARTING,
-            started_at: std::time::Instant::now(),
+            started_at,
         });
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
@@ -445,6 +455,7 @@ impl LoadJobs {
 
     pub fn spawn_log_path(&mut self, path: PathBuf) {
         let id = self.alloc_id();
+        let started_at = self.frame_time();
         let filename = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -455,7 +466,7 @@ impl LoadJobs {
             filename: filename.clone(),
             progress: 0.0,
             stage: STAGE_STARTING,
-            started_at: std::time::Instant::now(),
+            started_at,
         });
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
@@ -500,13 +511,14 @@ impl LoadJobs {
         decode: impl FnOnce() -> LogText + Send + 'static,
     ) {
         let id = self.alloc_id();
+        let started_at = self.frame_time();
         let job_name = filename.clone().unwrap_or_else(|| "log text".to_owned());
         self.loading_jobs.push(LoadingJob {
             id,
             filename: job_name.clone(),
             progress: 0.0,
             stage: STAGE_STARTING,
-            started_at: std::time::Instant::now(),
+            started_at,
         });
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
@@ -527,6 +539,7 @@ impl LoadJobs {
         requested_by: AttachedLogRequester,
     ) {
         let id = self.alloc_id();
+        let started_at = self.frame_time();
         let AttachedLog {
             name,
             text,
@@ -537,7 +550,7 @@ impl LoadJobs {
             filename: name.clone(),
             progress: 0.0,
             stage: STAGE_STARTING,
-            started_at: std::time::Instant::now(),
+            started_at,
         });
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
@@ -587,6 +600,7 @@ impl LoadJobs {
     /// Drain all pending channel messages. Updates `loading_jobs` for progress
     /// messages, returns one `CompletedLoad` per finished job.
     pub fn drain(&mut self) -> Vec<CompletedLoad> {
+        let frame_time = self.frame_time();
         let mut completed = Vec::new();
         while let Ok(msg) = self.load_rx.try_recv() {
             match msg {
@@ -605,7 +619,7 @@ impl LoadJobs {
                         .loading_jobs
                         .iter()
                         .find(|j| j.id == id)
-                        .map_or(0.0, |j| j.started_at.elapsed().as_secs_f32());
+                        .map_or(0.0, |j| (frame_time - j.started_at) as f32);
                     let filename = self
                         .loading_jobs
                         .iter()

@@ -1017,7 +1017,7 @@ impl App {
                     }
 
                     for job in &self.loader.loading_jobs {
-                        let elapsed = job.started_at.elapsed().as_secs_f32();
+                        let elapsed = (now - job.started_at) as f32;
                         Sides::new().shrink_left().truncate().show(
                             ui,
                             |ui| {

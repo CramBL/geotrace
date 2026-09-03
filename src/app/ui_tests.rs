@@ -11949,7 +11949,7 @@ impl OversizedAppWindow {
                         filename: format!("{long}/{index}"),
                         progress: 0.5,
                         stage: "reading",
-                        started_at: Instant::now(),
+                        started_at: 0.0,
                     })
                     .collect();
             }
@@ -12048,4 +12048,34 @@ fn the_match_list_window_fits_the_audit_viewports(
     harness.assert_window_fits_the_viewport(gt_test_utils::AuditedWindow::titled(
         query::results::MATCH_LIST_WINDOW_TITLE,
     ));
+}
+
+/// Recordings dropped in one batch, far more than the overlay lists at once.
+const BATCH_FAR_PAST_THE_LISTED_JOBS: usize = 44;
+
+/// The app while a batch of recordings loads, with the progress overlay in the
+/// bottom-right corner the map's layer and display toggles also sit in.
+fn app_loading_a_batch_of_recordings(count: usize) -> TestHarness<'static, App> {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+    let started_at = harness.inner.ctx.input(|input| input.time);
+    harness.state_mut().loader.loading_jobs = (0..count)
+        .map(|index| crate::app::loader::LoadingJob {
+            id: index as u64,
+            filename: format!("ride-2026-05-{:02}.gtd", index + 1),
+            progress: 0.2 + 0.15 * (index % 5) as f32,
+            stage: crate::app::loader::STAGE_READING,
+            started_at,
+        })
+        .collect();
+    harness.inner.run_steps(4);
+    harness
+}
+
+#[test]
+fn snapshot_loading_overlay_past_the_listed_jobs() {
+    let mut harness = app_loading_a_batch_of_recordings(BATCH_FAR_PAST_THE_LISTED_JOBS);
+    harness.snapshot_loose("loading_overlay_past_the_listed_jobs");
 }
