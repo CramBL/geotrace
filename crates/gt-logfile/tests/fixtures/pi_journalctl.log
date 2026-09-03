@@ -1,0 +1,68 @@
+Mar 13 15:35:10 pi kernel: [drm] Initialized v3d 1.0.0 for 1002000000.v3d on minor 0
+Mar 13 15:35:10 pi kernel: RCU Tasks Trace: Setting shift to 2 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=4.
+Mar 13 15:35:10 pi systemd[1]: Mounting Kernel Debug File System...
+Mar 13 15:35:11 pi (udev-worker)[244]: Network interface NamePolicy= disabled on kernel command line.
+Sep 02 18:33:30 pi home-persistent-clock[417]: Wed Sep  2 18:33:30 UTC 2026
+Sep 02 18:33:31 pi kernel[440]: klogd started: BusyBox v1.37.0 ()
+Sep 02 18:33:31 pi kernel[440]: [    0.000000] Booting Linux on physical CPU 0x0000000000 [0x414fd0b1]
+Sep 02 18:33:31 pi kernel[440]: [    3.540955] systemd[1]: Mounting Kernel Debug File System...
+Sep 02 18:33:31 pi (syslogd)[441]: busybox-syslog.service: Referenced but unset environment variable evaluates to an empty string: OPTIONS
+Sep 02 18:33:31 pi alsactl[438]: alsa-lib /usr/src/debug/alsa-lib/1.2.15.3/src/ucm/main.c:1804:(snd_use_case_mgr_open) [error.ucm] failed to import hw:0 use case configuration -2
+Sep 02 18:33:31 pi avahi-daemon[439]: Found user 'avahi' (UID 999) and group 'avahi' (GID 998).
+Sep 02 18:33:31 pi NetworkManager[493]: <info>  [1788374011.6111] NetworkManager (version 1.56.0) is starting... (boot:00000000-0000-0000-0000-000000000000)
+Sep 02 18:33:31 pi NetworkManager[493]: <info>  [1788374011.6115] Read config: /etc/NetworkManager/NetworkManager.conf
+Sep 02 18:33:31 pi NetworkManager[493]: <info>  [1788374011.6267] manager[0x0000aaaa00000000]: monitoring kernel firmware directory '/lib/firmware'.
+Sep 02 18:33:31 pi systemd[1]: Starting Bluetooth service...
+Sep 02 18:33:31 pi (bluetoothd)[489]: bluetooth.service: ConfigurationDirectory 'bluetooth' already exists but the mode is different. (File system: 755 ConfigurationDirectoryMode: 555)
+Sep 02 18:33:31 pi systemd[1]: Started Bluetooth service.
+Sep 02 18:33:31 pi systemd[1]: Starting RAUC Update Service...
+Sep 02 18:33:31 pi rauc[500]: Using central status file /data/central.raucs
+Sep 02 18:33:31 pi rauc[500]: Using system config file /usr/lib/rauc/system.conf
+Sep 02 18:33:31 pi rauc[500]: Booted into rootfs.1 (B)
+Sep 02 18:33:31 pi systemd[1]: Started RAUC Update Service.
+Sep 02 18:33:31 pi systemd[1]: Starting Backend that facilitates an HTTP API for managing firmware upgrades...
+Sep 02 18:33:31 pi fwu-backend[446]: 2026-09-02T18:33:31.345324Z  INFO fwu_backend: Starting FWU backend 1.0++git at http://0.0.0.0:9091...
+Sep 02 18:33:31 pi fwu-backend[446]: 2026-09-02T18:33:31.345358Z  INFO fwu_backend: See API docs at http://0.0.0.0:9091/docs
+Sep 02 18:33:31 pi fwu-backend[446]: Starting FWU backend 1.0++git at http://0.0.0.0:9091...
+Sep 02 18:33:31 pi fwu-backend[446]: 2026-09-02T18:33:31.349670Z  INFO fwu_backend::boot_monitor: Read bootargs bootargs="reboot=w coherent_pool=1M 8250.nr_uarts=1"
+Sep 02 18:33:31 pi fwu-backend[446]: 2026-09-02T18:33:31.514604Z  INFO fwu_backend::boot_monitor: Monitoring service: network-online.target (Step 1/3)
+Sep 02 18:33:31 pi systemd[1]: Started Backend that facilitates an HTTP API for managing firmware upgrades.
+Sep 02 18:33:31 pi sshd_check_keys[463]:   generating ssh RSA host key...
+Sep 02 18:33:32 pi systemd[1]: Starting The NGINX HTTP and reverse proxy server...
+Sep 02 18:33:32 pi nginx[540]: nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+Sep 02 18:33:32 pi nginx[540]: nginx: configuration file /etc/nginx/nginx.conf test is successful
+Sep 02 18:33:32 pi systemd[1]: Started The NGINX HTTP and reverse proxy server.
+Sep 02 18:33:32 pi qbee-agent[555]: 2026/09/02 18:33:32 [INFO] Preparing agent directories
+Sep 02 18:33:32 pi qbee-agent[555]: 2026/09/02 18:33:32 [INFO] starting agent scheduler
+Sep 02 18:33:32 pi fife[538]: Created TCP listener at 0.0.0.0:9193
+Sep 02 18:33:32 pi systemd[1]: Starting Music Player Daemon...
+Sep 02 18:33:32 pi mpd[539]: Ignoring the 'pid_file' setting in systemd mode
+Sep 02 18:33:34 pi sh[605]: Updating DB (#1) ...
+Sep 02 18:33:34 pi sh[605]: volume: 34%   repeat: off   random: off   single: off   consume: off
+Sep 02 18:33:34 pi mpc[609]: Updating DB (#1) ...
+Sep 02 18:33:34 pi systemd[1]: Started Music Player Daemon.
+Sep 02 18:33:36 pi deno[532]: Started POT server (v1.3.1) on on address [::]:4416
+Sep 02 18:33:38 pi systemd[1]: Starting API for searching videos and adding them to the MPD playlist...
+Sep 02 18:33:39 pi yt-service[618]: DATABASE_URL is not set: auth, sessions and logging are disabled
+Sep 02 18:33:39 pi yt-service[618]: Writing message to 10.0.0.20:6668 (Payload: "{"devId":"...000000"}", Command: DpQuery, Seq Nr: None, Return Code: None):
+Sep 02 18:33:39 pi yt-service[618]: Received 172 bytes
+Sep 02 18:33:39 pi yt-service[618]: Bluetooth pairing agent registered at /org/example/yt_service/bluetooth/agent (KeyboardDisplay)
+Sep 02 18:33:39 pi yt-service[618]: Watching bluetoothd for device and adapter changes
+Sep 02 18:33:39 pi yt-service[618]: Starting mpv CPU watchdog
+Sep 02 18:33:39 pi yt-service[618]: /home/pi/music/offline_audio/Genre/Artist/Album/04. Track.mp3 was left out of the scan: probing failed
+Sep 02 18:33:39 pi rauc[500]: Marked slot rootfs.1 as good
+Sep 02 18:33:39 pi rauc[500]: rauc mark: marked slot(s) rootfs.1 as good
+Sep 02 18:34:26 pi yt-service[618]: TCP Error: TcpStreamClosed
+Sep 02 18:40:12 pi yt-service[618]: could not list the formats of abc123XYZ-_: yt-dlp list-formats failed for abc123XYZ-_: ERROR: [youtube] abc123XYZ-_: Video unavailable
+Sep 02 19:02:26 pi yt-service[618]: request failed (client error)
+Sep 02 19:12:22 pi yt-service[618]: no mpv session is live: starting one
+Sep 02 19:12:23 pi yt-service[618]: mpv session started
+Sep 02 19:21:11 pi yt-service[618]: mpv CPU watchdog heartbeat
+Sep 03 10:34:31 pi deno[532]: Using challenge from the webpage
+Sep 03 10:34:31 pi deno[532]: libEGL warning: failed to get driver name for fd -1
+Sep 03 10:34:31 pi deno[532]: libEGL warning: MESA-LOADER: failed to retrieve device information
+Sep 03 10:34:31 pi deno[532]: Generating POT for abc123XYZ-_
+Sep 03 13:34:36 pi yt-service[618]: Resynchronizing playback clock
+Sep 03 20:37:11 pi systemd[1]: Starting Home network reachability watchdog...
+Sep 03 20:37:11 pi systemd[1]: home-network-watchdog.service: Deactivated successfully.
+Sep 03 20:37:11 pi systemd[1]: Finished Home network reachability watchdog.

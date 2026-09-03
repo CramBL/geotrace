@@ -1,9 +1,8 @@
 //! Reading the parts of an entry's message a reader scans for: the service
 //! that logged the line, the level it logged at, and the host it came from.
 //!
-//! The two known sources are a device's own journald export, whose messages
-//! open with the service, and a workstation's `journalctl`, whose messages open
-//! with the host.
+//! The known sources are a device's own journald export, whose messages open
+//! with the service, and `journalctl`, whose messages open with the host.
 
 use std::{
     num::{NonZeroU8, NonZeroU16, NonZeroUsize},
@@ -17,8 +16,28 @@ const SERVICE_LIMIT_BYTES: usize = 64;
 /// Bytes a hostname may take, past which the message opens with no host.
 const HOSTNAME_LIMIT_BYTES: usize = 64;
 
-/// Bytes after the service a level token is looked for in.
-const LEVEL_HEAD_BYTES: usize = 40;
+/// Bytes a level token is looked for in, past any inner timestamp.
+const LEVEL_TOKEN_HEAD_BYTES: usize = 40;
+
+/// Bytes the longest inner timestamp takes:
+/// `2026-09-02T18:33:31.123456789+02:00`.
+const INNER_TIMESTAMP_LIMIT_BYTES: usize = 35;
+
+/// Bytes after the service a level token is looked for in: an inner timestamp
+/// and the token past it.
+const LEVEL_HEAD_BYTES: usize = INNER_TIMESTAMP_LIMIT_BYTES + LEVEL_TOKEN_HEAD_BYTES;
+
+/// The shapes the date and time of an inner timestamp take, `N` standing for a
+/// digit and every other byte for itself: the ISO 8601 form a tracing
+/// subscriber writes, and the slash form a Go service writes.
+const DATE_TIME_SHAPES: [&[u8]; 2] = [b"NNNN-NN-NNTNN:NN:NN", b"NNNN/NN/NN NN:NN:NN"];
+
+/// The digits and colon an inner timestamp writes after its zone sign, as in
+/// `+02:00`.
+const ZONE_OFFSET_SHAPE: &[u8] = b"NN:NN";
+
+/// Digits of a second an inner timestamp's fraction is read to.
+const FRACTION_LIMIT_DIGITS: usize = 9;
 
 /// Bytes a level token may take, which is what its length field addresses.
 const LEVEL_LIMIT_BYTES: usize = u8::MAX as usize;
@@ -126,8 +145,9 @@ impl RecognisedService {
     }
 }
 
-/// The level token of a message: a bracketed `[WARN can::session_pool]` to its
-/// closing bracket, or a bare `INFO:` to its colon.
+/// The level token of a message: a delimited `[WARN can::session_pool]` or
+/// `<info>` to its closing delimiter, a bare `INFO:` to its colon, or the bare
+/// uppercase `INFO` a tracing subscriber writes before its target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecognisedLevel {
     start: u16,
@@ -223,39 +243,119 @@ fn process_id_end(bytes: &[u8], open: usize) -> Option<usize> {
 }
 
 /// The level token in the head of the message, which begins at `head_start`.
-/// The bare form is read first: it can only stand at the head, while a bracket
-/// stating a level may follow one that does not.
+/// A service that timestamps its own messages writes that timestamp before the
+/// level: the token is looked for past it.
+///
+/// The bare forms are read first: they can only stand where the token starts,
+/// while a delimiter stating a level may follow one that does not.
 fn level_token(bytes: &[u8], head_start: usize) -> Option<RecognisedLevel> {
     let from = past_spaces(bytes, head_start);
     let head_end = from.saturating_add(LEVEL_HEAD_BYTES).min(bytes.len());
-    let head = bytes.get(from..head_end)?;
-    if let Some(level) = bare_level(head, from) {
+    let token_start = past_spaces(bytes, inner_timestamp_end(bytes, from).unwrap_or(from));
+    let head = bytes.get(token_start..head_end)?;
+    if let Some(level) = bare_level(head, token_start) {
         return Some(level);
     }
-    // A bracket opening in the head is read to its closing bracket, which may
+    if let Some(level) = uppercase_word_level(head, token_start) {
+        return Some(level);
+    }
+    // A delimiter opening in the head is read to its closing one, which may
     // stand past the head.
-    memchr::memchr_iter(b'[', head)
-        .find_map(|open| bracketed_level(bytes, from.saturating_add(open)))
+    memchr::memchr2_iter(b'[', b'<', head)
+        .find_map(|open| delimited_level(bytes, token_start.saturating_add(open)))
+}
+
+/// The end of the timestamp a service wrote at `start` of its own message,
+/// `None` where the bytes there are no date and time. The fraction and the
+/// zone are optional: `2026-09-02T18:33:31.345324Z`, `2026/09/02 18:33:32`.
+fn inner_timestamp_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let shape = DATE_TIME_SHAPES
+        .into_iter()
+        .find(|shape| matches_shape(bytes, start, shape))?;
+    let after_fraction = fraction_end(bytes, start.saturating_add(shape.len()));
+    Some(zone_end(bytes, after_fraction))
+}
+
+fn matches_shape(bytes: &[u8], start: usize, shape: &[u8]) -> bool {
+    shape.iter().enumerate().all(|(offset, expected)| {
+        bytes
+            .get(start.saturating_add(offset))
+            .is_some_and(|byte| match *expected {
+                b'N' => byte.is_ascii_digit(),
+                literal => *byte == literal,
+            })
+    })
+}
+
+/// The end of the `.345324` a timestamp writes after its seconds, `from` where
+/// it writes none.
+fn fraction_end(bytes: &[u8], from: usize) -> usize {
+    if bytes.get(from) != Some(&b'.') {
+        return from;
+    }
+    let digits = bytes
+        .iter()
+        .skip(from.saturating_add(1))
+        .take(FRACTION_LIMIT_DIGITS)
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    match digits {
+        0 => from,
+        digits => from.saturating_add(1).saturating_add(digits),
+    }
+}
+
+/// The end of the `Z` or `+02:00` a timestamp writes after its seconds, `from`
+/// where it writes neither.
+fn zone_end(bytes: &[u8], from: usize) -> usize {
+    let after_sign = from.saturating_add(1);
+    match bytes.get(from) {
+        Some(b'Z') => after_sign,
+        Some(b'+' | b'-') if matches_shape(bytes, after_sign, ZONE_OFFSET_SHAPE) => {
+            after_sign.saturating_add(ZONE_OFFSET_SHAPE.len())
+        }
+        _ => from,
+    }
 }
 
 /// The `INFO:` a shell script writes, taken to its colon. `head` is the head
-/// of the message, which starts at `head_start` in it.
-fn bare_level(head: &[u8], head_start: usize) -> Option<RecognisedLevel> {
+/// of the message, which starts at `token_start` in it.
+fn bare_level(head: &[u8], token_start: usize) -> Option<RecognisedLevel> {
     let colon = memchr::memchr(b':', head)?;
     let kind = level_of(head.get(..colon)?)?;
-    let end = head_start.saturating_add(colon).saturating_add(1);
-    RecognisedLevel::at(head_start..end, kind)
+    let end = token_start.saturating_add(colon).saturating_add(1);
+    RecognisedLevel::at(token_start..end, kind)
 }
 
-/// The `[WARN can::session_pool]` a Rust service writes, taken to its closing
-/// bracket. A bracket whose first word states no level, or that never closes
-/// within [`LEVEL_LIMIT_BYTES`], is no level token.
-fn bracketed_level(bytes: &[u8], open: usize) -> Option<RecognisedLevel> {
+/// The bare `INFO` a tracing subscriber writes before its target, taken to the
+/// whitespace after it. Only an all-uppercase word states a level this way: a
+/// message opening `Error reading /etc/conf` states none. `head` is the head of
+/// the message, which starts at `token_start` in it.
+fn uppercase_word_level(head: &[u8], token_start: usize) -> Option<RecognisedLevel> {
+    let word_len = head.iter().position(u8::is_ascii_whitespace)?;
+    let word = head.get(..word_len)?;
+    if !word.iter().all(u8::is_ascii_uppercase) {
+        return None;
+    }
+    let kind = level_of(word)?;
+    RecognisedLevel::at(token_start..token_start.saturating_add(word_len), kind)
+}
+
+/// The `[WARN can::session_pool]` a Rust service writes or the `<info>`
+/// NetworkManager writes, taken to its closing delimiter. A delimiter whose
+/// first word states no level, or that never closes within
+/// [`LEVEL_LIMIT_BYTES`], is no level token.
+fn delimited_level(bytes: &[u8], open: usize) -> Option<RecognisedLevel> {
+    let closing = match *bytes.get(open)? {
+        b'[' => b']',
+        b'<' => b'>',
+        _ => return None,
+    };
     let limit = open.saturating_add(LEVEL_LIMIT_BYTES).min(bytes.len());
-    let bracketed = bytes.get(open.saturating_add(1)..limit)?;
-    let word_len = memchr::memchr2(b' ', b']', bracketed)?;
-    let kind = level_of(bracketed.get(..word_len)?)?;
-    let close = memchr::memchr(b']', bracketed)?;
+    let delimited = bytes.get(open.saturating_add(1)..limit)?;
+    let word_len = memchr::memchr2(b' ', closing, delimited)?;
+    let kind = level_of(delimited.get(..word_len)?)?;
+    let close = memchr::memchr(closing, delimited)?;
     let end = open.saturating_add(close).saturating_add(2);
     RecognisedLevel::at(open..end, kind)
 }
@@ -289,6 +389,7 @@ fn past_spaces(bytes: &[u8], from: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use proptest::{prelude::*, proptest};
     use rstest::rstest;
 
     use super::*;
@@ -376,12 +477,57 @@ mod tests {
     #[case::a_subsystem_prefix("kernel: usbcore: registered", "", None)]
     #[case::a_bracket_that_never_closes("app: [WARN gnss", "", None)]
     #[case::an_open_bracket_alone("app: [", "", None)]
-    #[case::past_the_head(
-        "kernel: 0123456789012345678901234567890123456789 [WARN] late",
+    #[case::angle_bracketed(
+        "NetworkManager[493]: <info>  [1788374011.6111] NetworkManager is starting",
+        "<info>",
+        Some(LogLevelKind::Info)
+    )]
+    #[case::angle_bracketed_outside_the_vocabulary(
+        "yt-service[618]: <html> was returned",
         "",
         None
     )]
-    fn a_level_is_a_vocabulary_word_in_brackets_or_before_a_colon(
+    #[case::upper_case_word("app: INFO fwu_backend: ready", "INFO", Some(LogLevelKind::Info))]
+    #[case::a_capitalised_word_is_prose("app: Error reading /etc/conf", "", None)]
+    #[case::a_vocabulary_word_mid_message("kernel: RCU Tasks Trace: Setting shift to 2", "", None)]
+    #[case::a_word_pair_before_the_colon("yt-service[618]: TCP Error: TcpStreamClosed", "", None)]
+    #[case::a_second_word_before_the_colon(
+        "deno[532]: libEGL warning: failed to get driver name for fd -1",
+        "",
+        None
+    )]
+    #[case::a_kernel_subsystem_in_brackets("kernel: [drm] Initialized v3d 1.0.0", "", None)]
+    #[case::a_dmesg_uptime_prefix(
+        "kernel[440]: [    0.000000] Booting Linux on physical CPU 0x0",
+        "",
+        None
+    )]
+    #[case::a_dotted_word_in_brackets(
+        "alsactl[438]: alsa-lib main.c:1804:(snd) [error.ucm] failed to import hw:0",
+        "",
+        None
+    )]
+    #[case::inner_iso_timestamp(
+        "fwu-backend[446]: 2026-09-02T18:33:31.345324Z  INFO fwu_backend: Starting",
+        "INFO",
+        Some(LogLevelKind::Info)
+    )]
+    #[case::inner_iso_timestamp_to_the_second(
+        "fwu-backend[446]: 2026-09-02T18:33:31 ERROR fwu_backend: no config",
+        "ERROR",
+        Some(LogLevelKind::Error)
+    )]
+    #[case::inner_slash_timestamp(
+        "qbee-agent[555]: 2026/09/02 18:33:32 [INFO] Preparing agent directories",
+        "[INFO]",
+        Some(LogLevelKind::Info)
+    )]
+    #[case::a_date_that_is_no_timestamp(
+        "home-persistent-clock[417]: Wed Sep  2 18:33:30 UTC 2026",
+        "",
+        None
+    )]
+    fn a_level_is_a_vocabulary_word_delimited_in_upper_case_or_before_a_colon(
         #[case] message: &str,
         #[case] expected_token: &str,
         #[case] expected_kind: Option<LogLevelKind>,
@@ -403,6 +549,35 @@ mod tests {
         let (_, _, level) =
             recognised("kernel: [UFW BLOCK] [WARN] dropped", HostnameColumn::Absent);
         assert_eq!(level, "[WARN]");
+    }
+
+    /// A token whose delimiter opens past the head window is no level, so no
+    /// line costs more than a bounded look at its head.
+    #[test]
+    fn a_level_past_the_head_window_is_not_recognised() {
+        let opening_on_the_last_read_byte = format!(
+            "kernel: {} [WARN] still read",
+            "0".repeat(LEVEL_HEAD_BYTES - 2)
+        );
+        let (_, _, level) = recognised(&opening_on_the_last_read_byte, HostnameColumn::Absent);
+        assert_eq!(level, "[WARN]");
+
+        let opening_past_the_window =
+            format!("kernel: {} [WARN] not read", "0".repeat(LEVEL_HEAD_BYTES));
+        let (_, _, level) = recognised(&opening_past_the_window, HostnameColumn::Absent);
+        assert_eq!(level, "");
+    }
+
+    /// The window is wide enough for the longest timestamp a service writes
+    /// before its level, with its fraction to the nanosecond and its zone.
+    #[test]
+    fn the_longest_inner_timestamp_is_read_past_to_the_level() {
+        let longest = "2026-09-02T18:33:31.123456789+02:00";
+        assert_eq!(longest.len(), INNER_TIMESTAMP_LIMIT_BYTES);
+
+        let message = format!("fwu-backend[446]: {longest} WARN fwu_backend: slow");
+        let (_, _, level) = recognised(&message, HostnameColumn::Absent);
+        assert_eq!(level, "WARN");
     }
 
     #[test]
@@ -453,5 +628,37 @@ mod tests {
     #[test]
     fn a_recognised_message_takes_twelve_bytes() {
         assert_eq!(size_of::<RecognisedMessage>(), 12);
+    }
+
+    fn any_message() -> impl Strategy<Value = String> {
+        prop_oneof![
+            r"\PC*",
+            r"[a-zA-Z-]{1,8}(\[[0-9]{1,6}\])?: \PC*",
+            r"host [a-z]{1,8}: (\[)?[A-Za-z]{1,8}(\])?:? \PC*",
+        ]
+    }
+
+    proptest! {
+        /// Whatever a line of a dropped file holds, every span read from it
+        /// slices the message it was read from.
+        #[test]
+        fn every_span_of_any_message_slices_it(
+            message in any_message(),
+            hostname_column in prop_oneof![
+                Just(HostnameColumn::Present),
+                Just(HostnameColumn::Absent)
+            ],
+        ) {
+            let read = recognise_message(&message, hostname_column);
+            let spans = [
+                read.hostname(),
+                read.service().map(RecognisedService::span),
+                read.level().map(RecognisedLevel::span),
+            ];
+            for span in spans.into_iter().flatten() {
+                prop_assert!(span.end <= message.len());
+                prop_assert!(message.get(span).is_some());
+            }
+        }
     }
 }
