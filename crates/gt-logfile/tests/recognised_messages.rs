@@ -1,9 +1,10 @@
-//! What the recogniser reads out of the two log sources the viewer is written
-//! for: a device's own journald export, and a workstation's `journalctl` under
-//! `LC_TIME=C`.
+//! What the recogniser reads out of the log sources the viewer is written for:
+//! a device's own journald export, a workstation's `journalctl` under
+//! `LC_TIME=C`, and the `journalctl` of a Raspberry Pi running a Yocto/BusyBox
+//! image under the C locale.
 //!
-//! Both fixtures under `tests/fixtures/` are excerpts, with every name and
-//! address in them replaced.
+//! Every fixture under `tests/fixtures/` is an excerpt, with every name and
+//! address in it replaced.
 
 use chrono::{DateTime, TimeZone as _, Utc};
 
@@ -15,7 +16,9 @@ const DEVICE_EXPORT: &str = include_str!("fixtures/device_journald.log");
 
 const WORKSTATION_JOURNALCTL: &str = include_str!("fixtures/workstation_journalctl.log");
 
-/// After the last line of either fixture, so the year-less timestamps resolve
+const PI_JOURNALCTL: &str = include_str!("fixtures/pi_journalctl.log");
+
+/// After the last line of every fixture, so the year-less timestamps resolve
 /// to the year the fixtures were written in.
 fn now() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 9, 4, 0, 0, 0)
@@ -72,6 +75,21 @@ fn hostnames(parsed: &ParsedLog) -> Vec<&str> {
         .collect()
 }
 
+/// The service of every entry that names one, with the palette slot it took,
+/// in file order.
+fn services_with_slots(parsed: &ParsedLog) -> Vec<(&str, u16)> {
+    parsed
+        .entries()
+        .iter()
+        .zip(parsed.recognised_messages())
+        .filter_map(|(entry, recognised)| {
+            let message = parsed.message(entry);
+            let service = recognised.service()?;
+            Some((message.get(service.span())?, service.slot()))
+        })
+        .collect()
+}
+
 /// The palette slot of every entry that names a service, in file order.
 fn slots(parsed: &ParsedLog) -> Vec<u16> {
     parsed
@@ -93,6 +111,10 @@ fn the_device_export_names_no_host_and_journalctl_names_one_on_every_line() {
     let journalctl = parse(WORKSTATION_JOURNALCTL).expect("the journalctl excerpt parses");
     assert_eq!(journalctl.hostname_column(), HostnameColumn::Present);
     assert_eq!(hostnames(&journalctl), ["workstation"; 11]);
+
+    let pi = parse(PI_JOURNALCTL).expect("the pi journal excerpt parses");
+    assert_eq!(pi.hostname_column(), HostnameColumn::Present);
+    assert_eq!(hostnames(&pi), ["pi"; 68]);
 }
 
 /// Every service form the two sources write, from the plain `kernel:` to a
@@ -236,6 +258,105 @@ fn a_service_keeps_one_slot_across_the_process_ids_it_logs_under() {
         ]
     );
     assert_eq!(slots(&parsed), [0, 1, 2, 0, 3, 2, 2, 3, 4, 5, 2]);
+}
+
+/// Every service form the pi image writes: parenthesised names, names carrying
+/// a process id, a name ending in a digit, and one whose message is only a
+/// date.
+#[test]
+fn every_service_of_the_pi_journal_is_read_to_its_colon() {
+    let parsed = parse(PI_JOURNALCTL).expect("the pi journal excerpt parses");
+
+    assert_eq!(
+        parsed.services_by_first_appearance().collect::<Vec<_>>(),
+        [
+            "kernel",
+            "systemd",
+            "(udev-worker)",
+            "home-persistent-clock",
+            "(syslogd)",
+            "alsactl",
+            "avahi-daemon",
+            "NetworkManager",
+            "(bluetoothd)",
+            "rauc",
+            "fwu-backend",
+            "sshd_check_keys",
+            "nginx",
+            "qbee-agent",
+            "fife",
+            "mpd",
+            "sh",
+            "mpc",
+            "deno",
+            "yt-service",
+        ]
+    );
+}
+
+/// Both `kernel:` and `kernel[440]:` take one colour: the slot follows the
+/// service name, not the process id.
+#[test]
+fn a_service_keeps_one_slot_with_and_without_a_process_id() {
+    let parsed = parse(PI_JOURNALCTL).expect("the pi journal excerpt parses");
+
+    assert_eq!(
+        services_with_slots(&parsed)
+            .into_iter()
+            .filter(|(service, _)| service.starts_with("kernel"))
+            .collect::<Vec<_>>(),
+        [
+            ("kernel:", 0),
+            ("kernel:", 0),
+            ("kernel[440]:", 0),
+            ("kernel[440]:", 0),
+            ("kernel[440]:", 0),
+        ]
+    );
+}
+
+/// Every level form the pi image writes: NetworkManager's angle brackets, the
+/// bare upper-case word a tracing subscriber writes before its target, and the
+/// bracket a Go service writes. The last two follow a timestamp the service
+/// wrote itself, which stays plain.
+#[test]
+fn every_level_of_the_pi_journal_is_read_past_the_timestamp_before_it() {
+    let parsed = parse(PI_JOURNALCTL).expect("the pi journal excerpt parses");
+
+    assert_eq!(
+        levels(&parsed),
+        [
+            ("<info>", LogLevelKind::Info),
+            ("<info>", LogLevelKind::Info),
+            ("<info>", LogLevelKind::Info),
+            ("INFO", LogLevelKind::Info),
+            ("INFO", LogLevelKind::Info),
+            ("INFO", LogLevelKind::Info),
+            ("INFO", LogLevelKind::Info),
+            ("[INFO]", LogLevelKind::Info),
+            ("[INFO]", LogLevelKind::Info),
+        ],
+        "a dmesg uptime prefix, [drm], [error.ucm], [youtube], TCP Error:, \
+         libEGL warning: and RCU Tasks Trace: state no level"
+    );
+}
+
+/// The excerpt holds a clock jump from March to September inside one boot, at
+/// the point the image read its persistent clock.
+#[test]
+fn the_pi_journal_parses_across_the_clock_jump_inside_its_boot() {
+    let parsed = parse(PI_JOURNALCTL).expect("the pi journal excerpt parses");
+
+    assert_eq!(parsed.entries().len(), 68);
+    assert_eq!(parsed.anchored_entry_count(), 68);
+    assert_eq!(
+        parsed.entries().first().map(|entry| entry.timestamp),
+        Utc.with_ymd_and_hms(2026, 3, 13, 15, 35, 10).single()
+    );
+    assert_eq!(
+        parsed.entries().last().map(|entry| entry.timestamp),
+        Utc.with_ymd_and_hms(2026, 9, 3, 20, 37, 11).single()
+    );
 }
 
 /// The fixture is a whole export: what its summary block counts is what the
