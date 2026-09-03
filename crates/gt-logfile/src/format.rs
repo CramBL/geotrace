@@ -133,22 +133,17 @@ fn parse_iso_t(line: &str) -> Option<(DateTime<Utc>, &str)> {
     Some((dt, rest))
 }
 
+/// The English month abbreviations, in month order. `journalctl` writes them
+/// capitalised under `LC_TIME=C` and lower case under some other locales.
+const MONTH_ABBREVS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
 fn parse_month_abbrev(s: &str) -> Option<u32> {
-    match s {
-        "Jan" => Some(1),
-        "Feb" => Some(2),
-        "Mar" => Some(3),
-        "Apr" => Some(4),
-        "May" => Some(5),
-        "Jun" => Some(6),
-        "Jul" => Some(7),
-        "Aug" => Some(8),
-        "Sep" => Some(9),
-        "Oct" => Some(10),
-        "Nov" => Some(11),
-        "Dec" => Some(12),
-        _ => None,
-    }
+    let index = MONTH_ABBREVS
+        .iter()
+        .position(|month| month.eq_ignore_ascii_case(s))?;
+    u32::try_from(index.saturating_add(1)).ok()
 }
 
 /// Resolves the year the year-less syslog formats leave out, reading a
@@ -211,6 +206,26 @@ mod tests {
         #[case] expected: Option<LogFormat>,
     ) {
         assert_eq!(detect_format(line), expected);
+    }
+
+    #[rstest]
+    #[case::capitalised("Sep", Some(9))]
+    #[case::lower_case("sep", Some(9))]
+    #[case::upper_case("SEP", Some(9))]
+    #[case::another_language("Mai", None)]
+    #[case::not_a_month("xyz", None)]
+    fn a_month_abbreviation_is_read_in_english_whatever_its_case(
+        #[case] abbreviation: &str,
+        #[case] expected: Option<u32>,
+    ) {
+        assert_eq!(parse_month_abbrev(abbreviation), expected);
+    }
+
+    #[test]
+    fn a_lower_case_month_names_the_moment_its_capitalised_form_does() {
+        let capitalised = parse_syslog("Sep 03 21:11:29 msg", false);
+        assert_eq!(parse_syslog("sep 03 21:11:29 msg", false), capitalised);
+        assert!(capitalised.is_some(), "the capitalised form parses");
     }
 
     #[rstest]

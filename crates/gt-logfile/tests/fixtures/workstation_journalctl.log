@@ -1,0 +1,11 @@
+Sep 03 21:11:29 workstation podman[2582462]: 2026-09-03 21:11:29.646443032 +0200 CEST m=+0.085169771 container init 6b899e6269d529cd5c5e084110a0a590 (image=docker.io/example/tool:latest, name=quirky_hopper)
+Sep 03 21:11:30 workstation quirky_hopper[2582494]: {}
+Sep 03 21:11:30 workstation systemd[1223]: libpod-6b899e6269d529cd5c5e084110a0a590.scope: Consumed 1.166s CPU time over 785ms wall clock time, 143.9M memory peak.
+Sep 03 21:11:30 workstation podman[2582462]: 2026-09-03 21:11:30.458893729 +0200 CEST m=+0.897620464 container remove 6b899e6269d529cd5c5e084110a0a590
+Sep 03 21:12:25 workstation kernel: [UFW BLOCK] IN=enp5s0 OUT= MAC=02:00:00:00:00:01 SRC=10.0.0.1 DST=224.0.0.1 LEN=36 TOS=0x00 PREC=0xC0 TTL=1 ID=46071 PROTO=2
+Sep 03 21:13:57 workstation systemd[1223]: Starting Restore the desk if a stream ended without cleaning up...
+Sep 03 21:13:57 workstation systemd[1223]: Finished Restore the desk if a stream ended without cleaning up.
+Sep 03 21:14:15 workstation kernel: [UFW BLOCK] IN=enp5s0 OUT= MAC=02:00:00:00:00:01 SRC=10.0.0.1 DST=224.0.0.1 LEN=36 TOS=0x00 PREC=0xC0 TTL=1 ID=65469 PROTO=2
+Sep 03 21:16:02 workstation sudo[2583120]:     user : TTY=pts/3 ; PWD=/home/user ; COMMAND=/usr/bin/systemctl restart chronyd
+Sep 03 21:16:02 workstation chronyd[1042]: [WARN] Can't synchronise: no selectable sources
+Sep 03 21:16:03 workstation systemd[1]: Started chronyd.service - NTP client/server.

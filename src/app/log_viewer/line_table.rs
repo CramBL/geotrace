@@ -13,7 +13,7 @@ use gt_fmt::MIDDLE_DOT;
 use gt_log_view::{
     DayDivider, EntryMatches, FilterStack, LoadedLog, TimestampTickLevel, VisibleEntries,
 };
-use gt_logfile::{BootSession, LogEntry, TimestampKind};
+use gt_logfile::{BootSession, LogEntry, LogLevelKind, RecognisedMessage, TimestampKind};
 use gt_types::{Latitude, Longitude, mercator};
 use gt_ui_theme::ALMOST_EQUAL_TO;
 use gt_ui_theme::EM_DASH;
@@ -330,6 +330,10 @@ impl LogViewerWindow {
             })
             .collect();
         let unit = self.association_window_unit;
+        let recognised_messages = match self.color_services_and_levels {
+            true => parsed.recognised_messages(),
+            false => &[],
+        };
         let association_window = log.association_window();
         let dark_mode = ui.visuals().dark_mode;
         let gutter = LayerGutter::of(filters, dark_mode);
@@ -390,6 +394,7 @@ impl LogViewerWindow {
                                     .entry_placement(entry_index)
                                     .map(|placement| placement.position),
                                 order_anomaly_step: anomaly_steps.get(&entry_index).copied(),
+                                recognised: recognised_messages.get(entry_index).copied(),
                                 association_window,
                                 gutter: &gutter,
                                 entry_index,
@@ -460,6 +465,10 @@ struct EntryRow<'a> {
     /// starts at.
     order_anomaly_step: Option<Duration>,
 
+    /// What the parse read out of this message, `None` while the viewer draws
+    /// the message in one colour.
+    recognised: Option<RecognisedMessage>,
+
     association_window: Duration,
     gutter: &'a LayerGutter<'a>,
     entry_index: usize,
@@ -485,6 +494,77 @@ struct HighlightedMessage {
     color: Color32,
 }
 
+/// One stretch of a message the table draws in its own colour.
+#[derive(Debug, PartialEq, Eq)]
+struct MessageRun {
+    range: Range<usize>,
+    color: Color32,
+}
+
+/// The colours one row's message is drawn in.
+struct MessageColors {
+    /// Everything the parse recognised nothing in.
+    base: Color32,
+
+    /// What the hostname and a debug level draw in.
+    weak: Color32,
+
+    dark_mode: bool,
+
+    /// Whether the service takes its own colour, which it does only on a line
+    /// that has a position: association is the stronger signal.
+    color_the_service: bool,
+}
+
+impl MessageColors {
+    fn of(ui: &egui::Ui, associated: bool) -> Self {
+        Self {
+            base: match associated {
+                true => ui.visuals().text_color(),
+                false => ui.visuals().weak_text_color(),
+            },
+            weak: ui.visuals().weak_text_color(),
+            dark_mode: ui.visuals().dark_mode,
+            color_the_service: associated,
+        }
+    }
+
+    /// The runs of one message, in message order and never overlapping: the
+    /// hostname, then the service, then the level. An info level draws in the
+    /// base colour, so it takes no run.
+    fn runs(&self, recognised: RecognisedMessage) -> Vec<MessageRun> {
+        let mut runs = Vec::with_capacity(3);
+        if let Some(range) = recognised.hostname() {
+            runs.push(MessageRun {
+                range,
+                color: self.weak,
+            });
+        }
+        if let Some(service) = recognised.service().filter(|_| self.color_the_service) {
+            runs.push(MessageRun {
+                range: service.span(),
+                color: gt_ui_theme::log_service_slot_color(usize::from(service.slot()))
+                    .resolve(self.dark_mode),
+            });
+        }
+        if let Some(level) = recognised.level() {
+            let color = match level.kind() {
+                LogLevelKind::Error => Some(gt_ui_theme::error_indicator(self.dark_mode)),
+                LogLevelKind::Warning => Some(gt_ui_theme::warning_amber(self.dark_mode)),
+                LogLevelKind::Debug => Some(self.weak),
+                LogLevelKind::Info => None,
+            };
+            if let Some(color) = color {
+                runs.push(MessageRun {
+                    range: level.span(),
+                    color,
+                });
+            }
+        }
+        runs
+    }
+}
+
 impl EntryRow<'_> {
     /// Renders the row, returning what the cursor did to it.
     fn ui(&self, ui: &mut egui::Ui, unit: AssociationWindowUnit) -> Option<RowInteraction> {
@@ -494,11 +574,6 @@ impl EntryRow<'_> {
             true => self.tick_level,
             false => self.tick_level.min(TimestampTickLevel::Plain),
         };
-        let message_color = match associated {
-            true => ui.visuals().text_color(),
-            false => ui.visuals().weak_text_color(),
-        };
-
         // Claimed before the row draws: the fill belongs behind its text.
         let background = ui.painter().add(Shape::Noop);
         let row = ui
@@ -509,7 +584,7 @@ impl EntryRow<'_> {
                 if interpolated {
                     timestamp.on_hover_text(INTERPOLATED_TIMESTAMP_HOVER);
                 }
-                let message = self.message_job(ui, message_color);
+                let message = self.message_job(ui);
                 ui.add(Label::new(message).truncate().selectable(true));
             })
             .response;
@@ -587,22 +662,25 @@ impl EntryRow<'_> {
         job
     }
 
-    /// The message, with what the live filter matched painted in the colour
-    /// reserved for it. The caller truncates it to one row: a long line must
-    /// not push the rows below it out of the virtualized table's grid, nor
-    /// stretch the window past the screen.
-    fn message_job(&self, ui: &egui::Ui, color: Color32) -> LayoutJob {
+    /// The message: the service, level and hostname the parse recognised in
+    /// their own colours, and what the live filter matched over those. The
+    /// caller truncates it to one row: a long line must not push the rows
+    /// below it out of the virtualized table's grid, nor stretch the window
+    /// past the screen.
+    fn message_job(&self, ui: &egui::Ui) -> LayoutJob {
         let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+        let colors = MessageColors::of(ui, self.position.is_some());
+        let runs = self
+            .recognised
+            .map(|recognised| colors.runs(recognised))
+            .unwrap_or_default();
         let mut job = LayoutJob::default();
         let mut appended_to = 0;
         for span in &self.highlighted.spans {
-            let (Some(plain), Some(matched)) = (
-                self.message.get(appended_to..span.start),
-                self.message.get(span.clone()),
-            ) else {
+            let Some(matched) = self.message.get(span.clone()) else {
                 continue;
             };
-            job.append(plain, 0.0, egui::TextFormat::simple(font_id.clone(), color));
+            self.append_runs(&mut job, &font_id, appended_to..span.start, &runs, &colors);
             job.append(
                 matched,
                 0.0,
@@ -610,10 +688,56 @@ impl EntryRow<'_> {
             );
             appended_to = span.end;
         }
-        if let Some(rest) = self.message.get(appended_to..) {
-            job.append(rest, 0.0, egui::TextFormat::simple(font_id, color));
-        }
+        self.append_runs(
+            &mut job,
+            &font_id,
+            appended_to..self.message.len(),
+            &runs,
+            &colors,
+        );
         job
+    }
+
+    /// Appends `range` of the message, cut at each recognised run inside it:
+    /// the run in its own colour, everything else in the base colour.
+    fn append_runs(
+        &self,
+        job: &mut LayoutJob,
+        font_id: &egui::FontId,
+        range: Range<usize>,
+        runs: &[MessageRun],
+        colors: &MessageColors,
+    ) {
+        let mut appended_to = range.start;
+        for run in runs {
+            let start = run.range.start.max(appended_to);
+            let end = run.range.end.min(range.end);
+            if start >= end {
+                continue;
+            }
+            if let Some(before) = self.message.get(appended_to..start) {
+                job.append(
+                    before,
+                    0.0,
+                    egui::TextFormat::simple(font_id.clone(), colors.base),
+                );
+            }
+            if let Some(text) = self.message.get(start..end) {
+                job.append(
+                    text,
+                    0.0,
+                    egui::TextFormat::simple(font_id.clone(), run.color),
+                );
+            }
+            appended_to = end;
+        }
+        if let Some(rest) = self.message.get(appended_to..range.end) {
+            job.append(
+                rest,
+                0.0,
+                egui::TextFormat::simple(font_id.clone(), colors.base),
+            );
+        }
     }
 
     /// The warning-amber marker on the row an unexplained backwards timestamp
@@ -991,6 +1115,73 @@ mod tests {
         let marked = CrossHighlightedRows::of(hover.glyph.as_ref(), SHOWN_LOG, true);
 
         assert_eq!(marked.fill_of(entry_index), expected);
+    }
+
+    /// A line stating a service and an error level, as the two colouring cases
+    /// below read it.
+    const ERROR_LINE: &str =
+        "2026-01-01 14:02:11 hal-modem: [ERROR modem::manager::modem] timed out";
+
+    const ERROR_MESSAGE: &str = "hal-modem: [ERROR modem::manager::modem] timed out";
+
+    /// The theme the runs below resolve in.
+    const DARK_MODE: bool = true;
+
+    /// What the parse read out of the one entry of `text`.
+    fn recognised_message_of(text: &str) -> RecognisedMessage {
+        let parsed =
+            gt_logfile::parse_log(text.into(), gutter_log_start()).expect("the log parses");
+        parsed
+            .recognised_messages()
+            .first()
+            .copied()
+            .expect("the log has one entry")
+    }
+
+    /// The text each run covers, with the colour it draws in.
+    fn coloured<'a>(message: &'a str, runs: &[MessageRun]) -> Vec<(&'a str, Color32)> {
+        runs.iter()
+            .filter_map(|run| Some((message.get(run.range.clone())?, run.color)))
+            .collect()
+    }
+
+    /// Association is the stronger signal: a line the window found no fix for
+    /// keeps its service in the weak colour of the rest of its message, and
+    /// only its level stays coloured.
+    #[test]
+    fn a_line_without_a_position_colours_its_level_and_not_its_service() {
+        let recognised = recognised_message_of(ERROR_LINE);
+        let associated = MessageColors {
+            base: Color32::from_gray(200),
+            weak: Color32::from_gray(100),
+            dark_mode: DARK_MODE,
+            color_the_service: true,
+        };
+        let unassociated = MessageColors {
+            color_the_service: false,
+            ..associated
+        };
+
+        assert_eq!(
+            coloured(ERROR_MESSAGE, &associated.runs(recognised)),
+            [
+                (
+                    "hal-modem:",
+                    gt_ui_theme::log_service_slot_color(0).resolve(DARK_MODE)
+                ),
+                (
+                    "[ERROR modem::manager::modem]",
+                    gt_ui_theme::error_indicator(DARK_MODE)
+                ),
+            ]
+        );
+        assert_eq!(
+            coloured(ERROR_MESSAGE, &unassociated.runs(recognised)),
+            [(
+                "[ERROR modem::manager::modem]",
+                gt_ui_theme::error_indicator(DARK_MODE)
+            )]
+        );
     }
 
     /// Two logged phenomena compared side by side: each enabled layer chip

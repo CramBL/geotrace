@@ -1,0 +1,38 @@
+
+--- Device reboot ---
+
+May 29 18:48:25 kernel: Booting Linux on physical CPU 0x0
+May 29 18:48:25 kernel: OF: fdt: Machine model: Telematics Unit V4
+May 29 18:48:25 kernel:   Normal   [mem 0x0000000080000000-0x000000008fffffff]
+May 29 18:48:26 systemd-journald: Journal started
+May 29 18:48:26 systemd: Started Journal Service.
+May 29 18:48:32 hal-pm: [INFO common::feature_flags] FeatureFlag: '/data/conf/suspend_disabled' being watched
+May 29 18:48:33 hal-update: [INFO update::manager] versions: kernel: 0123456789abcdef, rootfs: 0123456789abcdef
+May 29 18:48:35 hal-gnss: [INFO gnss::service::run] Opening serial device '/dev/ttymxc2' with baud rate=115200
+May 29 18:48:38 hal-gnss: [WARN gnss::aiding::time_store] no stored time, waiting for first fix
+May 29 18:48:51 (udev-worker): ci_hdrc.0: Process '/usr/bin/usb-gadget.sh up ci_hdrc.0' failed with exit code 1.
+May 29 18:48:54 (chronyd): chronyd.service: Referenced but unset environment variable evaluates to an empty string: OPTIONS
+May 29 18:49:10 app:  [WARNING] Initiated new state due to no previous state found
+May 29 18:49:12 hal-modem: [ERROR modem::manager::modem] AT+CFUN=1 timed out after 3 attempts
+May 29 18:49:12 kernel: usbcore: registered new interface driver option
+May 29 18:49:13 kernel: Bluetooth: Core ver 2.22
+May 29 18:49:20 ofonod: failed to enable modem: Timeout
+May 29 18:50:01 save-time-state.sh: INFO: Writing chrony state to disk
+May 29 18:50:01 save-time-state.sh: DEBUG: 'chronyc waitsync 5' output: try: 1, refid: 47505300
+May 29 18:50:03 No-service-id: src/command/install.c:upd_install()
+May 29 18:50:05 hal-accel: ScanElement {
+May 29 18:50:05 hal-accel:     bit_size: 64,
+May 29 18:50:05 hal-accel: }
+May 29 18:50:09 hal-can: [WARN can::session_pool] no session for id 3
+May 29 18:50:11 sshd: Accepted publickey for root from 10.0.0.2 port 51022 ssh2
+----------- Journal summary -----------
+Device type: nav-devkit-mk2
+Logs begin at: Fri 29-May-2026 18:48:25 UTC
+Logs end at  : Fri 29-May-2026 18:50:11 UTC
+Log entries: 24
+--- Service error count ---
+hal-modem            -> 1 Errors
+--- Service warning count ---
+app                  -> 1 Warnings
+hal-can              -> 1 Warnings
+hal-gnss             -> 1 Warnings

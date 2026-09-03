@@ -108,6 +108,10 @@ pub(super) struct LogViewerWindow {
     summary_expanded: bool,
     association_window_unit: AssociationWindowUnit,
 
+    /// Whether the line table draws each service and level in its own colour.
+    /// Belongs to the window, and starts on for every session.
+    color_services_and_levels: bool,
+
     /// When the shown log's filters started scanning, for the note the viewer
     /// shows once a scan runs long enough to notice.
     query_pending_since: Option<f64>,
@@ -197,6 +201,7 @@ impl LogViewerWindow {
             selected: None,
             summary_expanded: false,
             association_window_unit: AssociationWindowUnit::Seconds,
+            color_services_and_levels: true,
             query_pending_since: None,
             scroll_to_row: None,
             clicked_glyph: None,

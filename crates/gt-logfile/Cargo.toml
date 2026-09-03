@@ -17,6 +17,7 @@ gt-types = { path = "../gt-types" }
 log.workspace = true
 memchr.workspace = true
 rayon.workspace = true
+rustc-hash.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
