@@ -4,7 +4,7 @@
 
 ### Added
 
-- **Log Viewer:** The line table now colors each line's service name and its error, warning or debug level, switched by "Colour services and levels" in the filter row.
+- **Log Viewer:** The line table now colors each line's service name and its error, warning or debug level, each switched by its own tickbox in the filter row, "Colour services" and "Colour levels".
 - **Log Viewer:** A log whose month abbreviations are written in lower case (`sep 03 21:11:29`) now loads.
 
 ### Changed

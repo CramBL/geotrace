@@ -258,6 +258,7 @@ teardown
 teleports
 tessellator
 tickbox
+tickboxes
 timestamping
 titlebar
 toggleable
