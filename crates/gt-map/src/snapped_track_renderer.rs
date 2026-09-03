@@ -26,8 +26,6 @@
 //! rejection against a small rect around the cursor, so its cost stays
 //! proportional to the geometry near the pointer.
 
-use std::cell::Cell;
-
 use egui::{Pos2, Rect, Response, RichText, Stroke, Ui};
 use gt_filter::GlobalFilter;
 use gt_types::{LoadedFile, PointIdx};
@@ -83,13 +81,6 @@ pub struct SnappedTrackRenderer<'a> {
     /// anchors to their recorded points.
     files: &'a [LoadedFile],
     filter: &'a GlobalFilter,
-    /// Hover is disabled while the recorded data owns the pointer (an
-    /// active hover on recorded elements) - the primary data wins.
-    hover_enabled: bool,
-    /// Set when the edge tooltip draws, and read on the next frame by the
-    /// interference overlay, which paints before this plugin and so cannot
-    /// see the current frame's tooltip.
-    edge_tooltip_shown: &'a Cell<bool>,
 }
 
 impl<'a> SnappedTrackRenderer<'a> {
@@ -97,15 +88,11 @@ impl<'a> SnappedTrackRenderer<'a> {
         snapped: &'a SnappedTracks,
         files: &'a [LoadedFile],
         filter: &'a GlobalFilter,
-        hover_enabled: bool,
-        edge_tooltip_shown: &'a Cell<bool>,
     ) -> Self {
         Self {
             snapped,
             files,
             filter,
-            hover_enabled,
-            edge_tooltip_shown,
         }
     }
 }
@@ -120,9 +107,7 @@ impl Plugin for SnappedTrackRenderer<'_> {
     ) {
         let transform = MercTransform::new(projector, map_memory, ui.max_rect().center());
         let cull_rect = ui.max_rect().expand(CULL_MARGIN_PX);
-        let pointer = (self.hover_enabled && response.hovered())
-            .then(|| response.hover_pos())
-            .flatten();
+        let pointer = response.hovered().then(|| response.hover_pos()).flatten();
         let cursor_rect = pointer
             .map(|p| Rect::from_center_size(p, egui::Vec2::splat(2.0 * SNAPPED_HOVER_RADIUS_PX)));
 
@@ -230,8 +215,10 @@ impl Plugin for SnappedTrackRenderer<'_> {
                 geometry.edges.get(info)
             });
             if let Some(edge) = edge {
+                // Anchored at the response for the whole map, which lands the
+                // label in its bottom-left corner and clear of the stack of
+                // labels drawn at the pointer.
                 response.show_tooltip_ui(|ui| edge_tooltip_rows(ui, edge));
-                self.edge_tooltip_shown.set(true);
             }
         }
     }

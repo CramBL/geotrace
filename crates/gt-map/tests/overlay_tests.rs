@@ -5,14 +5,6 @@ use gt_test_utils::TestHarness;
 use gt_types::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
 
-fn gen_marker_point(pi: usize) -> DataPointRef {
-    DataPointRef {
-        track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-        category: DataCategory::GeneratedMarker,
-        point_index: PointIdx::new(pi),
-    }
-}
-
 fn tpv_point(pi: usize) -> DataPointRef {
     DataPointRef {
         track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
@@ -21,15 +13,15 @@ fn tpv_point(pi: usize) -> DataPointRef {
     }
 }
 
-/// Every way a renderer loses its own hover label, and the plain hover that
-/// keeps it.
+/// Every way an element under the pointer loses its own hover label, and the
+/// plain hover that keeps it.
 #[rstest::rstest]
 #[case::plain_hover(None, false, false, true)]
 #[case::another_point_pinned(Some(tpv_point(1)), false, false, true)]
 #[case::hovered_point_pinned(Some(tpv_point(0)), false, false, false)]
 #[case::popup_open(None, true, false, false)]
 #[case::compound_label_took_over(None, false, true, false)]
-fn a_renderer_draws_its_hover_label_unless_something_else_shows_the_point(
+fn the_map_stacks_an_elements_hover_label_unless_something_else_shows_it(
     #[case] sticky: Option<DataPointRef>,
     #[case] any_popup_open: bool,
     #[case] suppress_hover_labels: bool,
@@ -48,24 +40,8 @@ fn a_renderer_draws_its_hover_label_unless_something_else_shows_the_point(
     );
 }
 
-/// A generated marker's tooltip yields to a TPV tooltip at the same position.
-#[rstest::rstest]
-#[case::tpv_hovered(Some(HighlightScope::Point(tpv_point(0))), true)]
-#[case::marker_hovered(Some(HighlightScope::Point(gen_marker_point(0))), false)]
-#[case::nothing_hovered(None, false)]
-fn only_a_hovered_fix_is_the_primary_tpv_hover(
-    #[case] hover: Option<HighlightScope>,
-    #[case] expected: bool,
-) {
-    let highlight = MapHighlight {
-        hover,
-        ..Default::default()
-    };
-    assert_eq!(highlight.primary_hover_is_tpv(), expected);
-}
-
-/// `suppress_hover_labels` defaults to false. Renderers show tooltips normally
-/// when nothing special is active.
+/// `suppress_hover_labels` defaults to false: an element under the pointer
+/// shows its label while nothing stands in its place.
 #[test]
 fn suppress_hover_labels_defaults_false() {
     let h = MapHighlight::default();

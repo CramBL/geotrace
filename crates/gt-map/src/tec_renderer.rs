@@ -18,7 +18,7 @@ use gt_types::{Latitude, Longitude, mercator};
 use gt_ui_theme::{tec_color, tec_fill_alpha};
 use walkers::{MapMemory, Plugin, Projector};
 
-use crate::hover_labels::TOOLTIP_POINTER_GAP_PX;
+use crate::hover_labels::{HoverLabelEntry, HoverLabelStack};
 use crate::transform::MercTransform;
 
 /// Latitude of the poles, which a node's half step reaches past: the
@@ -160,19 +160,50 @@ pub(crate) fn visible_cells(
 pub(crate) struct TecHeatmapRenderer<'a> {
     snapshot: TecHeatmapSnapshot<'a>,
     opacity_percent: f32,
-    hover_enabled: bool,
+    /// Where the node under the pointer puts its label, at the bottom of the
+    /// map's stack.
+    hover_labels: &'a HoverLabelStack,
 }
 
 impl<'a> TecHeatmapRenderer<'a> {
     pub(crate) const fn new(
         snapshot: TecHeatmapSnapshot<'a>,
         opacity_percent: f32,
-        hover_enabled: bool,
+        hover_labels: &'a HoverLabelStack,
     ) -> Self {
         Self {
             snapshot,
             opacity_percent,
-            hover_enabled,
+            hover_labels,
+        }
+    }
+}
+
+/// The value the node under the pointer holds, as its label states it.
+pub(crate) struct TecNodeLabel {
+    content: TotalElectronContent,
+    instant: DateTime<Utc>,
+    latitude: Latitude,
+    longitude: Longitude,
+}
+
+impl TecNodeLabel {
+    fn of(cell: &NodeCell, instant: DateTime<Utc>) -> Self {
+        Self {
+            content: cell.content,
+            instant,
+            latitude: cell.latitude,
+            longitude: cell.longitude,
+        }
+    }
+
+    /// The node hover shows the value behind the fill. The display toggle's
+    /// own hover describes the layer.
+    pub(crate) fn show(&self, ui: &mut Ui) {
+        for line in
+            gt_ionex::text::node_summary(self.content, self.instant, self.latitude, self.longitude)
+        {
+            ui.label(line);
         }
     }
 }
@@ -195,23 +226,15 @@ impl Plugin for TecHeatmapRenderer<'_> {
         );
         draw_cells(ui, &cells);
 
-        if !self.hover_enabled {
-            return;
-        }
         let Some(pointer) = response.hovered().then(|| response.hover_pos()).flatten() else {
             return;
         };
         if let Some(cell) = cell_at_pointer(&cells, pointer) {
-            // Anchored at the pointer: `response` is the whole map, so a
-            // response-anchored tooltip lands in the map's corner.
-            egui::Tooltip::always_open(
-                ui.ctx().clone(),
-                ui.layer_id(),
-                response.id,
-                egui::PopupAnchor::Pointer,
-            )
-            .gap(TOOLTIP_POINTER_GAP_PX)
-            .show(|ui| node_tooltip(ui, cell, self.snapshot.instant));
+            self.hover_labels
+                .push(HoverLabelEntry::TecNode(TecNodeLabel::of(
+                    cell,
+                    self.snapshot.instant,
+                )));
         }
     }
 }
@@ -230,14 +253,6 @@ fn draw_cells(ui: &Ui, cells: &[NodeCell]) {
 /// containing one is returned.
 fn cell_at_pointer(cells: &[NodeCell], pointer: Pos2) -> Option<&NodeCell> {
     cells.iter().find(|cell| cell.rect.contains(pointer))
-}
-
-/// The node hover shows the value behind the fill. The display toggle's own
-/// hover describes the layer.
-fn node_tooltip(ui: &mut Ui, cell: &NodeCell, instant: DateTime<Utc>) {
-    for line in gt_ionex::text::node_summary(cell.content, instant, cell.latitude, cell.longitude) {
-        ui.label(line);
-    }
 }
 
 #[cfg(test)]

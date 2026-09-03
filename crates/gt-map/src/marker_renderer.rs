@@ -91,78 +91,11 @@ impl Plugin for MarkerRenderer<'_> {
             draw_marker_icon(ui, &mut batch, screen_pos, marker, highlighted, fade);
         }
         batch.paint(ui.painter());
-
-        if let Some(r) = self.highlight.hover_candidates.custom_marker
-            && self
-                .highlight
-                .shows_hover_label(r, ui.ctx().any_popup_open())
-            && let Some(file) = r.track.fi.get(self.files)
-            && let Some(track) = r.track.index.get(&file.tracks)
-            && let Some(marker) = r.point_index.get(&track.custom_markers)
-        {
-            let pos = transform.to_screen(marker.merc);
-            let tpv_also_hovered = self
-                .highlight
-                .hover_candidates
-                .tpv_or_satellite_report
-                .is_some();
-            show_marker_hover_label(ui, marker, pos, tpv_also_hovered);
-        }
     }
 }
 
-/// Paint the marker's label directly onto the map canvas.
-///
-/// With `tpv_also_hovered` the label is drawn above the icon, clear of the TPV
-/// tooltip. A label too wide to fit there is replaced with a message giving its
-/// width.
-fn show_marker_hover_label(ui: &Ui, marker: &CustomMarker, pos: Pos2, tpv_also_hovered: bool) {
-    const MAX_LABEL_WIDTH: f32 = 120.0;
-    const FONT: egui::FontId = egui::FontId::proportional(13.0);
-
-    let (galley, y_offset) = if tpv_also_hovered {
-        let label_galley = ui
-            .painter()
-            .layout_no_wrap(marker.label.clone(), FONT, Color32::WHITE);
-        let w = label_galley.size().x;
-        if w > MAX_LABEL_WIDTH {
-            #[expect(
-                clippy::cast_sign_loss,
-                reason = "galley width and MAX_LABEL_WIDTH are always non-negative"
-            )]
-            let msg = format!(
-                "label cannot be shown (width {} > {} px)",
-                w.round() as u32,
-                MAX_LABEL_WIDTH.round() as u32
-            );
-            let fallback = ui.painter().layout_no_wrap(msg, FONT, Color32::WHITE);
-            (fallback, 18.0_f32)
-        } else {
-            (label_galley, -22.0_f32)
-        }
-    } else {
-        let galley = ui
-            .painter()
-            .layout_no_wrap(marker.label.clone(), FONT, Color32::WHITE);
-        (galley, 18.0_f32)
-    };
-
-    let label_pos = pos + egui::vec2(0.0, y_offset);
-    let text_origin = if y_offset < 0.0 {
-        egui::pos2(
-            label_pos.x - galley.size().x / 2.0,
-            label_pos.y - galley.size().y,
-        )
-    } else {
-        egui::pos2(label_pos.x - galley.size().x / 2.0, label_pos.y)
-    };
-    let text_rect = egui::Rect::from_min_size(text_origin, galley.size());
-    ui.painter().rect_filled(
-        text_rect.expand(3.0),
-        4.0,
-        Color32::from_rgba_unmultiplied(20, 20, 20, 220),
-    );
-    ui.painter().galley(text_origin, galley, Color32::WHITE);
+pub(crate) fn show_hover_label(ui: &mut Ui, marker: &CustomMarker) {
+    ui.label(&marker.label);
 }
 
 fn draw_marker_icon(

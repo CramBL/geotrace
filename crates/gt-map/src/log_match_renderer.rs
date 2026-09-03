@@ -13,7 +13,7 @@
 //! and each keeps its own colour.
 //!
 //! The cursor picks the hexagon of the topmost layer it is on. That hexagon
-//! lists its lines in a tooltip and takes the highlight ring, and the log
+//! lists its lines in a hover label and takes the highlight ring, and the log
 //! viewer marks the rows of those same lines. Clicking it opens the log viewer
 //! on that log, at the first of those lines.
 //!
@@ -33,7 +33,7 @@ use gt_ui_types::{LogMatch, LogMatchColor, LogMatchGlyph, LogMatchSource, LogMat
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::collision_grid;
-use crate::hover_labels::TOOLTIP_POINTER_GAP_PX;
+use crate::hover_labels::{HoverLabelEntry, HoverLabelStack};
 use crate::icon_mesh::{IconId, IconInstance, IconMeshBatch, IconMeshLibrary};
 use crate::transform::MercTransform;
 
@@ -72,17 +72,17 @@ const CLUSTER_COUNT_FONT_PX: f32 = 11.0;
 /// handed the same colour still read as two: one of them is ringed.
 const SHARED_COLOR_RING_SCALE: f32 = 1.35;
 
-/// Lines the hover tooltip writes out before it states how many are left.
+/// Lines the hover label writes out before it states how many are left.
 const HOVER_LINE_CAP: usize = 5;
 
-/// Characters of a message the hover tooltip shows: one long line must not
-/// stretch the tooltip across the map.
+/// Characters of a message the hover label shows: one long line must not
+/// stretch the label across the map.
 const HOVER_MESSAGE_MAX_CHARS: NonZeroUsize = match NonZeroUsize::new(64) {
     Some(chars) => chars,
     None => NonZeroUsize::MIN,
 };
 
-/// How the hover tooltip writes a line's moment, as the map's other hover
+/// How the hover label writes a line's moment, as the map's other hover
 /// labels write a fix's.
 const HOVER_TIME_FORMAT: &str = "%H:%M:%S";
 
@@ -99,9 +99,9 @@ pub(crate) struct LogMatchRenderer<'a> {
     icon_meshes: Option<&'a IconMeshLibrary>,
     dark_mode: bool,
 
-    /// Whether a hexagon may take the pointer this frame: a marker above the
-    /// layer owns it first.
-    hover_enabled: bool,
+    /// Where the hexagon under the pointer puts its label, over the labels of
+    /// the track line and the layers under it.
+    hover_labels: &'a HoverLabelStack,
 
     /// Where the log viewer's hovered row was recorded, which the map rings.
     hovered_row_position: Option<MercPoint>,
@@ -135,9 +135,7 @@ impl Plugin for LogMatchRenderer<'_> {
         let cluster_spacing_merc =
             collision_grid::decimation_cell_merc(CLUSTER_SPACING_PX, map_memory.zoom());
         let outline = gt_ui_theme::LOG_HEXAGON_OUTLINE;
-        let pointer = (self.hover_enabled && response.hovered())
-            .then(|| response.hover_pos())
-            .flatten();
+        let pointer = response.hovered().then(|| response.hover_pos()).flatten();
 
         let mut batch = IconMeshBatch::gpu_when_available(ui, self.icon_meshes);
         let mut counted_clusters: Vec<(egui::Pos2, usize)> = Vec::new();
@@ -231,14 +229,11 @@ impl Plugin for LogMatchRenderer<'_> {
         }
         if let Some(hexagon) = hovered {
             draw_hover_ring(ui, hexagon.center, hexagon.circumradius, hover_ring);
-            egui::Tooltip::always_open(
-                ui.ctx().clone(),
-                ui.layer_id(),
-                response.id,
-                egui::PopupAnchor::Pointer,
-            )
-            .gap(TOOLTIP_POINTER_GAP_PX)
-            .show(|ui| hovered_lines_ui(ui, hexagon.source, &hexagon.glyph.entry_indices));
+            self.hover_labels
+                .push(HoverLabelEntry::LogHexagon(LogHexagonLabel::of(
+                    hexagon.source,
+                    &hexagon.glyph.entry_indices,
+                )));
             if response.clicked() {
                 *self.clicked_glyph.borrow_mut() = Some(hexagon.glyph.clone());
             }
@@ -256,38 +251,59 @@ fn draw_hover_ring(ui: &Ui, center: egui::Pos2, circumradius: f32, color: Color3
     );
 }
 
-/// The hovered hexagon's lines, under the log they were read out of, the last
-/// row stating how many of them the tooltip left out.
-fn hovered_lines_ui(ui: &mut Ui, source: &LogMatchSource, entry_indices: &[usize]) {
-    // One line per row: a message is already cut to a width the tooltip fits.
-    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-    if let Some(display_name) = &source.display_name {
-        ui.label(RichText::new(display_name).strong());
+/// The lines the hexagon under the pointer stands for, as its label states
+/// them: the log they were read out of, the first [`HOVER_LINE_CAP`] of them,
+/// and how many are left.
+pub(crate) struct LogHexagonLabel {
+    log_name: Option<String>,
+    lines: Vec<String>,
+    lines_left_out: usize,
+}
+
+impl LogHexagonLabel {
+    fn of(source: &LogMatchSource, entry_indices: &[usize]) -> Self {
+        let parsed = &source.parsed;
+        Self {
+            log_name: source.display_name.clone(),
+            lines: entry_indices
+                .iter()
+                .take(HOVER_LINE_CAP)
+                .filter_map(|&entry_index| parsed.entries().get(entry_index))
+                .map(|entry| {
+                    format!(
+                        "{}  {}",
+                        entry.timestamp.format(HOVER_TIME_FORMAT),
+                        gt_fmt::truncate_with_ellipsis(
+                            parsed.message(entry),
+                            HOVER_MESSAGE_MAX_CHARS
+                        )
+                    )
+                })
+                .collect(),
+            lines_left_out: entry_indices.len().saturating_sub(HOVER_LINE_CAP),
+        }
     }
-    let parsed = &source.parsed;
-    for entry in entry_indices
-        .iter()
-        .take(HOVER_LINE_CAP)
-        .filter_map(|&entry_index| parsed.entries().get(entry_index))
-    {
-        ui.label(
-            RichText::new(format!(
-                "{}  {}",
-                entry.timestamp.format(HOVER_TIME_FORMAT),
-                gt_fmt::truncate_with_ellipsis(parsed.message(entry), HOVER_MESSAGE_MAX_CHARS)
-            ))
-            .monospace(),
-        );
-    }
-    let left_out = entry_indices.len().saturating_sub(HOVER_LINE_CAP);
-    if left_out > 0 {
-        ui.label(
-            RichText::new(format!(
-                "{ELLIPSIS}and {left_out} more {}",
-                gt_fmt::pluralize(left_out, "line", "lines")
-            ))
-            .weak(),
-        );
+
+    pub(crate) fn show(&self, ui: &mut Ui) {
+        // One line per row: a message is already cut to a width the label
+        // fits.
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+        if let Some(log_name) = &self.log_name {
+            ui.label(RichText::new(log_name).strong());
+        }
+        for line in &self.lines {
+            ui.label(RichText::new(line).monospace());
+        }
+        if self.lines_left_out > 0 {
+            ui.label(
+                RichText::new(format!(
+                    "{ELLIPSIS}and {} more {}",
+                    self.lines_left_out,
+                    gt_fmt::pluralize(self.lines_left_out, "line", "lines")
+                ))
+                .weak(),
+            );
+        }
     }
 }
 

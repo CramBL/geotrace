@@ -37,7 +37,7 @@ pub use space_weather_indicator::SpaceWeatherIndicator;
 pub use tec_renderer::{TecHeatmapSnapshot, TecLayer};
 pub use viewport::ViewportBounds;
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
@@ -63,8 +63,7 @@ use walkers::{HttpTiles, Map, MapMemory};
 use crate::event_marker_renderer::EventMarkerRenderer;
 use crate::generated_marker_renderer::GeneratedMarkerRenderer;
 use crate::hover_labels::{
-    PointerOwnership, draw_disambig_row, draw_multi_hover_label_contents,
-    should_show_compound_label,
+    HoverLabelEntry, HoverLabelSources, HoverLabelStack, OpenPopups, draw_disambig_row,
 };
 use crate::marker_renderer::MarkerRenderer;
 use crate::match_reveal::MatchRevealState;
@@ -354,17 +353,22 @@ impl<'a> MapDrawContext<'a> {
         }
     }
 
-    /// Suppress the renderers' individual hover labels when the disambiguation
-    /// popup owns the cursor area, or when several candidates were hovered last
-    /// frame - the map layer draws one stacked label in their place, so
-    /// independent renderers do not pile theirs at the same spot.
+    /// What the hover label stack reads a recorded element's label out of.
+    fn hover_label_sources(&self) -> HoverLabelSources<'a> {
+        HoverLabelSources {
+            files: self.files,
+            recording_labels: self.recording_labels(),
+            query_matches: self.query_matches,
+        }
+    }
+
+    /// Suppress the individual hover labels of the recorded elements when the
+    /// disambiguation popup owns the cursor area, or when several of them were
+    /// under the pointer last frame - the compound label states them all in
+    /// their place.
     fn suppress_overlapping_hover_labels(&mut self, disambig_open: bool) {
-        let prev_multi_hover = self.highlight.hover_candidates.is_ambiguous();
-        // A hovered log hexagon takes the pointer from the fix underneath it:
-        // it draws over that fix and lists its line itself.
-        let prev_log_glyph_hovered = self.log_hover.glyph.is_some();
         self.highlight.suppress_hover_labels =
-            disambig_open || prev_multi_hover || prev_log_glyph_hovered;
+            disambig_open || self.highlight.hover_candidates.is_ambiguous();
     }
 }
 
@@ -454,9 +458,9 @@ pub struct NavMap {
     sat_label_scratch: sat_labels::LabelSelection,
     /// Reused sky-glyph decimation scratch, borrowed into the track layer.
     sky_glyph_scratch: sky_glyph_renderer::GlyphSelection,
-    /// Whether the snapped-track renderer drew its edge tooltip, raised
-    /// during the frame and read at the start of the next one.
-    snapped_edge_tooltip_shown: Cell<bool>,
+    /// The labels of everything under the pointer, filled while the plugins
+    /// draw and drawn stacked once the map widget has returned.
+    hover_label_stack: HoverLabelStack,
     /// The log hexagon the renderer found under the cursor, filled while the
     /// plugins draw and handed to the caller at the end of the frame.
     hovered_log_glyph: RefCell<Option<LogMatchGlyph>>,
@@ -510,7 +514,7 @@ impl NavMap {
             visible_points: viewport::VisiblePoints::default(),
             sat_label_scratch: sat_labels::LabelSelection::default(),
             sky_glyph_scratch: sky_glyph_renderer::GlyphSelection::default(),
-            snapped_edge_tooltip_shown: Cell::new(false),
+            hover_label_stack: HoverLabelStack::default(),
             hovered_log_glyph: RefCell::new(None),
             clicked_log_glyph: RefCell::new(None),
             tec_heatmap_opacity_percent: gt_ui_theme::TEC_OPACITY_PERCENT_DEFAULT,
@@ -657,10 +661,13 @@ impl NavMap {
         self.adopt_new_files(ui, &ctx, now);
         let animation = self.tick_animations(ui, &ctx, now);
 
-        // Read before the click below can open or close the popup, and reused
-        // as-is by the compound hover label at the end of the frame.
-        let disambig_open = self.disambiguation_is_open();
-        ctx.suppress_overlapping_hover_labels(disambig_open);
+        // Read before the click below can open or close either of them: the
+        // hover labels state the popups the frame was drawn under.
+        let popups = OpenPopups {
+            disambiguation: self.disambiguation_is_open(),
+            egui_popup: ui.ctx().any_popup_open(),
+        };
+        ctx.suppress_overlapping_hover_labels(popups.disambiguation);
 
         let map_center = self
             .map_memory
@@ -684,6 +691,7 @@ impl NavMap {
         // the next frame.
         let scope = ctx.scope();
         let hover = self.detect_hover(ui, &map_response, map_center, scope);
+        self.show_hover_labels(ui, &ctx, hover, popups);
 
         let reference_document = self.show_overlay_controls(ui, map_rect, &mut ctx);
 
@@ -697,7 +705,6 @@ impl NavMap {
         if let Some(document) = reference_document {
             action = Some(MapAction::OpenReferenceDocument(document));
         }
-        show_compound_hover_label(ui, &ctx, hover, disambig_open);
 
         ctx.highlight.hover = hover.primary().map(HighlightScope::Point);
         ctx.highlight.hover_candidates = hover;
@@ -882,13 +889,6 @@ impl NavMap {
                 .map(|tiles| -> &mut dyn walkers::Tiles { tiles })
         };
         let mut map = Map::new(tiles, &mut self.map_memory, default_map_center());
-        let pointer_ownership = PointerOwnership {
-            recorded_element_hovered: ctx.highlight.hover.is_some(),
-            marker_hovered: ctx.highlight.hover_candidates.any_marker(),
-            snapped_edge_tooltip_shown: self.snapped_edge_tooltip_shown.replace(false),
-            interference_layer_drawn: ctx.display_mask.is_visible(DisplayCategory::JammingHexes)
-                && ctx.jamming_dataset.is_some(),
-        };
         // The overlays go on first so every track renderer draws over them,
         // and the global TEC grid goes under the interference cells.
         if ctx.display_mask.is_visible(DisplayCategory::TecHeatmap)
@@ -897,7 +897,7 @@ impl NavMap {
             map = map.with_plugin(tec_renderer::TecHeatmapRenderer::new(
                 snapshot,
                 self.tec_heatmap_opacity_percent,
-                pointer_ownership.tec_node_hover_enabled(),
+                &self.hover_label_stack,
             ));
         }
         if ctx.display_mask.is_visible(DisplayCategory::JammingHexes)
@@ -905,7 +905,7 @@ impl NavMap {
         {
             map = map.with_plugin(jamming_renderer::JammingRenderer::new(
                 dataset,
-                pointer_ownership.jamming_cell_hover_enabled(),
+                &self.hover_label_stack,
             ));
         }
         map = map.with_plugin(
@@ -926,7 +926,6 @@ impl NavMap {
                 )
                 .sky_glyph_variant(*ctx.sky_glyph_variant)
                 .maybe_icon_meshes(self.icon_meshes.as_ref())
-                .recording_labels(ctx.recording_labels())
                 .sat_label_scratch(&mut self.sat_label_scratch)
                 .sky_glyph_scratch(&mut self.sky_glyph_scratch)
                 .build(),
@@ -935,14 +934,7 @@ impl NavMap {
             && let Some(snapped) = ctx.snapped_tracks
             && !snapped.is_empty()
         {
-            // Edge hover is disabled while a recorded element is hovered.
-            map = map.with_plugin(SnappedTrackRenderer::new(
-                snapped,
-                ctx.files,
-                ctx.filter,
-                pointer_ownership.snapped_track_hover_enabled(),
-                &self.snapped_edge_tooltip_shown,
-            ));
+            map = map.with_plugin(SnappedTrackRenderer::new(snapped, ctx.files, ctx.filter));
         }
         // Between the track line and the markers: a hexagon must not cover a
         // pin, and must be legible over the line it sits on. This renderer
@@ -958,7 +950,7 @@ impl NavMap {
                     .filter(ctx.filter)
                     .maybe_icon_meshes(self.icon_meshes.as_ref())
                     .dark_mode(ui.visuals().dark_mode)
-                    .hover_enabled(pointer_ownership.log_hexagon_hover_enabled())
+                    .hover_labels(&self.hover_label_stack)
                     .maybe_hovered_row_position(ctx.log_hover.row_position)
                     .hovered_glyph(&self.hovered_log_glyph)
                     .clicked_glyph(&self.clicked_log_glyph)
@@ -988,7 +980,6 @@ impl NavMap {
                     .generated_vis(ctx.generated_marker_visibility)
                     .visible_generated(&self.visible_points.generated)
                     .maybe_icon_meshes(self.icon_meshes.as_ref())
-                    .recording_labels(ctx.recording_labels())
                     .build(),
             );
         }
@@ -1050,6 +1041,26 @@ impl NavMap {
             }
         }
         hover
+    }
+
+    /// Draw the label of everything under the pointer, stacked there with the
+    /// topmost map layer's first.
+    ///
+    /// The overlay plugins pushed theirs while they drew. The recorded
+    /// element's own label joins them here, once the hit test has run.
+    fn show_hover_labels(
+        &self,
+        ui: &egui::Ui,
+        ctx: &MapDrawContext<'_>,
+        hover: HoverCandidates,
+        popups: OpenPopups,
+    ) {
+        if let Some(label) = hover_labels::recorded_element_label(ctx.highlight, hover, popups) {
+            self.hover_label_stack
+                .push(HoverLabelEntry::RecordedElement(label));
+        }
+        self.hover_label_stack
+            .show_at_the_pointer(ui, ctx.hover_label_sources());
     }
 
     /// The map's floating controls: the tile layer picker with the display
@@ -1303,37 +1314,6 @@ fn default_map_center() -> walkers::Position {
 fn request_animation_frame(ui: &egui::Ui) {
     ui.ctx()
         .request_repaint_after(std::time::Duration::from_millis(16));
-}
-
-/// One stacked label near the cursor when several item types are hovered at
-/// once.
-///
-/// Guarded on `suppress_hover_labels` (set from the previous frame's candidate
-/// count) so that on the first frame of a multi-hover transition the individual
-/// renderer tooltips show normally. From the second frame onward those are
-/// suppressed and this label takes over, so the two never appear at once.
-fn show_compound_hover_label(
-    ui: &egui::Ui,
-    ctx: &MapDrawContext<'_>,
-    hover: HoverCandidates,
-    disambig_open: bool,
-) {
-    if !should_show_compound_label(
-        hover.is_ambiguous(),
-        disambig_open,
-        ctx.highlight.suppress_hover_labels,
-    ) {
-        return;
-    }
-    let Some(cursor_pos) = ui.input(|i| i.pointer.hover_pos()) else {
-        return;
-    };
-    Area::new(egui::Id::new("map_multi_hover_labels"))
-        .fixed_pos(cursor_pos + egui::vec2(15.0, 10.0))
-        .order(egui::Order::Tooltip)
-        .show(ui.ctx(), |ui| {
-            draw_multi_hover_label_contents(ui, hover, ctx.files, ctx.recording_labels());
-        });
 }
 
 /// The clicked-point window body: the deselect hint pinned to the window floor

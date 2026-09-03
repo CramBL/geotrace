@@ -480,22 +480,6 @@ fn spatial_index_valid_after_file_deletion() {
     );
 }
 
-#[test]
-fn compound_label_guard_truth_table() {
-    for (multi, disambig, suppress, expected) in [
-        (true, false, false, false), // first frame, suppress not yet set
-        (true, false, true, true),   // settled multi-hover
-        (false, false, true, false), // single hover
-        (true, true, true, false),   // disambiguation popup open
-    ] {
-        assert_eq!(
-            should_show_compound_label(multi, disambig, suppress),
-            expected,
-            "multi={multi} disambig={disambig} suppress={suppress}"
-        );
-    }
-}
-
 fn hover_ref(category: DataCategory) -> DataPointRef {
     DataPointRef {
         track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
@@ -548,19 +532,16 @@ fn the_disambiguation_popup_survives_the_frame_it_opened_on(
     assert_eq!(dismissal.closes_popup(), expected);
 }
 
-/// What the compound hover label leans on: a renderer keeps its own label
-/// unless the disambiguation popup owns the cursor area, the previous frame
-/// already had several candidates under the pointer, or a log hexagon over the
-/// fix took the pointer and listed that line itself.
+/// What the compound hover label leans on: the map keeps a recorded element's
+/// own label unless the disambiguation popup owns the cursor area or several
+/// elements were already under the pointer on the previous frame.
 #[rstest::rstest]
-#[case::one_candidate(false, 1, false, false)]
-#[case::popup_open(true, 1, false, true)]
-#[case::settled_multi_hover(false, 2, false, true)]
-#[case::a_log_hexagon_over_the_fix(false, 1, true, true)]
-fn hover_labels_yield_to_the_popup_a_previous_multi_hover_or_a_log_hexagon(
+#[case::one_candidate(false, 1, false)]
+#[case::popup_open(true, 1, true)]
+#[case::settled_multi_hover(false, 2, true)]
+fn the_individual_hover_labels_yield_to_the_popup_and_to_a_previous_multi_hover(
     #[case] disambig_open: bool,
     #[case] previous_candidates: usize,
-    #[case] log_glyph_hovered: bool,
     #[case] expected: bool,
 ) {
     let visibility = TrackDataVisibility::from_loaded(&[]);
@@ -573,13 +554,6 @@ fn hover_labels_yield_to_the_popup_a_previous_multi_hover_or_a_log_hexagon(
             .highlight
             .hover_candidates
             .keep_nearest(hover_ref(category));
-    }
-    if log_glyph_hovered {
-        state.log_hover.glyph = Some(gt_ui_types::LogMatchGlyph {
-            log: gt_ui_types::LoadedLogId::new(0),
-            color: gt_ui_types::LogMatchColor::LiveFilter,
-            entry_indices: vec![0],
-        });
     }
 
     let mut ctx = state.context(&[], &visibility);
