@@ -21,7 +21,7 @@ pub(crate) const HOVER_FADE_ALPHA: f32 = 0.15;
 /// non-focused map and tracks recede and the focused track (painted on top)
 /// stands out.
 // A slightly blue-shifted near-black, so the dimmed map keeps the cool cast of
-// the app's dark surfaces. The exact channels are not load-bearing.
+// the app's dark surfaces. Nothing depends on the exact channels.
 pub(crate) const FOCUS_SCRIM_COLOR: egui::Color32 = egui::Color32::from_rgb(15, 17, 20);
 
 /// Peak opacity of the focus scrim, in light and dark themes respectively.
@@ -81,9 +81,8 @@ pub(crate) fn track_fade_alpha(highlight: &MapHighlight, fi: FileIdx, ti: TrackI
     HOVER_FADE_ALPHA
 }
 
-/// Apply a hover-fade by scaling the color's alpha channel rather than its RGB
-/// values, so the element fades to transparent against the map tiles instead
-/// of darkening toward black.
+/// Apply a hover-fade by scaling the color's alpha channel, so the element
+/// fades to transparent against the map tiles.
 ///
 /// `fade` is expected to be in `[0.0, 1.0]`. Values outside that range are
 /// clamped.
@@ -107,7 +106,6 @@ pub(crate) fn hover_is_active(highlight: &MapHighlight) -> bool {
     highlight.hover.is_some() || highlight.plot_hover_snapped
 }
 
-/// Returns `true` when the given track is the focus of the current hover.
 pub(crate) fn is_track_in_focus(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) -> bool {
     let track = TrackRef::new(fi, ti);
     let from_map_hover = match highlight.hover {

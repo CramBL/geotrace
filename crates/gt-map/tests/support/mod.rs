@@ -211,8 +211,8 @@ pub struct Frame<'a> {
 }
 
 /// A headless map over one set of recordings, drawn frame by frame. The map
-/// keeps its camera across frames, which lets a case draw once and then ask
-/// for a reveal, the way the query window does.
+/// keeps its camera across frames, which lets a case draw once and then
+/// request a reveal, the way the query window does.
 pub struct HeadlessMap<'a> {
     egui_ctx: egui::Context,
     map: NavMap,

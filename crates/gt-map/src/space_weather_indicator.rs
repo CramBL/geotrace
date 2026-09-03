@@ -256,8 +256,8 @@ mod tests {
     /// Frames the pointer holds still for, which covers egui's tooltip delay.
     const TOOLTIP_SETTLE_FRAMES: usize = 60;
 
-    /// What the indicator keeps between frames, plus the document its popup
-    /// asked for, which the harness reads back after the click.
+    /// What the indicator keeps between frames, plus the document the user
+    /// opened from its popup, which the harness reads back after the click.
     #[derive(Default)]
     struct IndicatorState {
         indicator: SpaceWeatherIndicatorState,

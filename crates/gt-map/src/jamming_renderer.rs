@@ -2,8 +2,8 @@
 //! drawn beneath every track renderer.
 //!
 //! Cells whose aircraft count is too small for their share to mean anything
-//! draw hatched instead of solid, so they stay visible and stay
-//! distinguishable from a measured value.
+//! draw hatched, so they stay visible and stay distinguishable from a
+//! measured value.
 
 use std::ops::RangeInclusive;
 
@@ -25,7 +25,7 @@ use crate::transform::MercTransform;
 /// bad report reads as 50 %.
 pub const MIN_AIRCRAFT_FOR_SOLID_FILL: u32 = 5;
 
-/// Span of the whole world in normalised mercator x, which is what a
+/// Span of the whole world in normalised Mercator x, which is what a
 /// longitude past the antimeridian wraps by.
 const WORLD_WIDTH: f64 = 1.0;
 
@@ -118,7 +118,7 @@ pub(crate) fn visible_cells(
 /// The whole world's longitudes, for a window that wraps.
 const FULL_LON_RANGE: RangeInclusive<f64> = -180.0..=180.0;
 
-/// The geographic window a mercator viewport covers, as the inclusive
+/// The geographic window a Mercator viewport covers, as the inclusive
 /// degree ranges [`JamDataset::observations_within`] takes.
 ///
 /// A viewport crossing the antimeridian, or wider than the world, widens to
@@ -292,9 +292,9 @@ fn signed_area_x2(polygon: &[Pos2]) -> f32 {
 
 /// Each edge as a start vertex and the normal pointing into the polygon.
 ///
-/// The winding is measured rather than assumed: the projection flips y,
-/// which reverses it. A point is inside the polygon when
-/// `(point - vertex).dot(inward) >= 0.0` for every edge.
+/// The winding is measured: the projection flips y, which reverses it. A
+/// point is inside the polygon when `(point - vertex).dot(inward) >= 0.0` for
+/// every edge.
 fn inward_edges(polygon: &[Pos2]) -> impl Iterator<Item = (Pos2, egui::Vec2)> + '_ {
     let winding = if signed_area_x2(polygon) < 0.0 {
         -1.0
@@ -604,9 +604,9 @@ mod tests {
     }
 
     /// A viewport past the antimeridian must not select an empty sliver:
-    /// its wrapped west lands east of its east. Asserted on the window
-    /// rather than end to end, where `observations_within`'s own padding
-    /// widens a wrong window enough to hide the fault.
+    /// its wrapped west lands east of its east. The assertion reads the window
+    /// directly. End to end, `observations_within`'s own padding widens a wrong
+    /// window enough to hide the fault.
     #[test]
     fn a_window_crossing_the_antimeridian_takes_every_longitude() {
         let (_, lon) = geographic_window(bounds(0.999, 1.001, 0.4, 0.5));
@@ -669,7 +669,7 @@ mod tests {
         assert_eq!(clip_to_convex(far_away, &outline), None);
     }
 
-    /// A cell's own centre is inside it; a point well outside its bounding
+    /// A cell's own centre is inside it. A point well outside its bounding
     /// box is not.
     #[test]
     fn a_cell_contains_its_own_centre() {

@@ -38,8 +38,8 @@ use crate::polyline::{CULL_MARGIN_PX, VisiblePath, segment_outside, visible_path
 use crate::track_renderer::{DashPattern, draw_dashed_line};
 use crate::transform::MercTransform;
 
-/// Stroke width. Thinner than the recorded trackline (3.0) so the reference
-/// geometry reads as an annotation, not a second track.
+/// Stroke width. Thinner than the recorded trackline (3.0), so the snapped
+/// geometry does not look like a second track.
 const SNAPPED_STROKE_WIDTH: f32 = 2.0;
 
 /// Alpha the track color is reduced to for the snapped track.
@@ -59,7 +59,7 @@ const SNAPPED_HOVER_RADIUS_PX: f32 = 10.0;
 
 /// Scale gate for the error whiskers, pixels per metre at the viewport
 /// centre. At 1 px/m a typical snap error (a few metres) spans a legible
-/// few pixels; further out the whiskers would collapse into noise on the
+/// few pixels. Further out the whiskers would collapse into noise on the
 /// trackline. Roughly zoom 16-17 at mid latitudes.
 const WHISKER_MIN_PX_PER_METER: f64 = 1.0;
 

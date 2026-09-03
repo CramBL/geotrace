@@ -14,8 +14,8 @@ use crate::tpv_renderer::{self, TpvDrawStyle};
 const REVEAL_DURATION_SEC: f32 = 0.8;
 
 /// Width of the settled halo band. Deliberately wider than the trackline, the
-/// quality line (5.0), and typical accuracy-circle bands, so the halo reads as
-/// a band around the track rather than a second line under it.
+/// quality line (5.0), and typical accuracy-circle bands, so the halo is drawn
+/// as a band around the track.
 const SETTLED_BAND_WIDTH: f32 = 22.0;
 
 /// Stroke width of the settled ring drawn around a single-point match.
@@ -116,7 +116,7 @@ impl HaloStyle {
     ///
     /// The reveal's extra size is a screen-pixel budget scaled by
     /// [`tpv_renderer::glyph_size_scale`], so it grows and shrinks with the fix
-    /// icons instead of swamping a zoomed-out map.
+    /// icons.
     pub(crate) fn new(style: &TpvDrawStyle, reveal: f32) -> Self {
         let reveal = reveal.clamp(0.0, 1.0);
         let budget = reveal * tpv_renderer::glyph_size_scale(style);
@@ -162,7 +162,7 @@ mod tests {
 
     fn matches_with_halos(run: u64, stale: bool) -> QueryMatches {
         let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
-        // A range built from arguments, so the single-element vec does not
+        // A range built from arguments, so the single-element `vec!` does not
         // trip clippy's `single_range_in_vec_init`.
         let rng = |start: usize, end: usize| start..end;
         QueryMatches {

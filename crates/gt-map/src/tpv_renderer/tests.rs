@@ -50,8 +50,7 @@ fn sats_dense_multi_constellation() -> Satellites {
     let mut satellites = Vec::new();
     for (c, (constellation, count)) in spec.into_iter().enumerate() {
         // Offset each constellation's arc so the marks spread across the
-        // sky instead of stacking on top of each other, and vary SNR and
-        // fix state so the table shows a realistic mix.
+        // sky, and vary SNR and fix state so the table shows a realistic mix.
         let offset = f32::from(u16::try_from(c).unwrap_or(0));
         for i in 0..count {
             let n = f32::from(u16::try_from(i).unwrap_or(0));
@@ -197,8 +196,6 @@ fn dense_multi_constellation_packs_into_two_columns() {
     harness.snapshot("sticky_dense_two_columns");
 }
 
-/// The same fix in a narrow window falls back to a single column rather
-/// than squeezing two.
 #[test]
 fn dense_multi_constellation_reflows_to_one_column_when_narrow() {
     let point = make_point(Some(sats_dense_multi_constellation()));
@@ -215,8 +212,7 @@ fn dense_multi_constellation_reflows_to_one_column_when_narrow() {
 }
 
 /// A folded panel costs only its header when the columns are balanced, so
-/// folding re-packs rather than leaving a column sized for rows that are
-/// no longer drawn.
+/// folding re-packs the columns.
 #[test]
 fn folded_panels_weigh_only_their_header() {
     let group = ConstellationGroup {
@@ -287,7 +283,7 @@ fn folding_a_constellation_hides_only_its_rows(#[case] fold_gps: bool, #[case] e
         });
     harness.run();
 
-    // The header survives either way; only the PRN rows come and go.
+    // The header survives either way. Only the PRN rows come and go.
     assert!(
         harness.inner.query_by_label("GPS").is_some(),
         "the constellation header must stay visible when folded"
@@ -353,7 +349,7 @@ fn the_open_trails_button_does_not_fold_the_sky_plot() {
 
 /// Each header folds its own constellation. Sibling panels lay out
 /// identically, so an auto-generated interaction id collides across them
-/// and a click lands on the wrong panel; this pins the second panel
+/// and a click lands on the wrong panel. This pins the second panel
 /// folding itself and leaving the first alone.
 #[test]
 fn each_header_folds_its_own_constellation() {
@@ -427,7 +423,7 @@ fn the_gap_between_satellite_rows_keeps_the_highlight() {
 
 /// The satellite badge (counts, SNR gradient, PRN colours) must stay
 /// legible on both themes. These render the same content under light and
-/// dark visuals; the light baseline is what catches colours that only read
+/// dark visuals. The light baseline is what catches colours that only read
 /// on a dark surface.
 #[rstest]
 #[case::dark("satellite_badge_dark", true)]
@@ -479,7 +475,7 @@ fn hovering_a_table_sets_the_sky_highlight(#[case] label: &str, #[case] expected
 }
 
 /// Hovering a highlight target paints a band over it - the affordance
-/// that it does something, rather than reading as plain text.
+/// that it does something.
 #[test]
 fn hovering_a_prn_row_shows_the_affordance_band() {
     let point = make_point(Some(sats_multi_constellation()));
@@ -998,8 +994,8 @@ fn icon_fade_stays_opaque_for_infinite_spacing() {
     assert!(icon_fade_alpha(f32::INFINITY, TEST_ICON_PX) >= 1.0);
 }
 
-/// Same value as `MercTransform::pixels_per_meter`'s internal constant;
-/// with `for_test(EARTH_CIRCUMFERENCE_M)` the map scale is 1 px/m at the
+/// Same value as `MercTransform::pixels_per_meter`'s internal constant.
+/// With `for_test(EARTH_CIRCUMFERENCE_M)` the map scale is 1 px/m at the
 /// equator, so test geometry can be written directly in metres.
 const EARTH_CIRCUMFERENCE_M: f64 = 40_030_173.0;
 
@@ -1198,7 +1194,7 @@ fn line_alpha_buckets_quantize_the_crossfade() {
     assert_eq!(line_alpha_bucket(0.34), 1);
     assert_eq!(line_alpha_bucket(0.5), 2); // rounds half away from zero
     assert_eq!(line_alpha_bucket(1.0), QUALITY_LINE_ALPHA_STEPS);
-    // Out-of-range inputs clamp instead of wrapping.
+    // Out-of-range inputs clamp.
     assert_eq!(line_alpha_bucket(-1.0), 0);
     assert_eq!(line_alpha_bucket(2.0), QUALITY_LINE_ALPHA_STEPS);
     assert!((bucket_alpha(QUALITY_LINE_ALPHA_STEPS) - 1.0).abs() < f32::EPSILON);
@@ -1207,7 +1203,7 @@ fn line_alpha_buckets_quantize_the_crossfade() {
 
 #[test]
 fn quality_line_color_marks_ghost_fixes_red() {
-    // No heading and no satellite report: tpv_point_color alone would say
+    // No heading and no satellite report: `tpv_point_color` alone would say
     // blue, but the point is a ghost fix and must show as red.
     let tpv = make_tpv(51.5, -0.1, None);
     let point = NavPoint::new(tpv, None);

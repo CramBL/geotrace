@@ -25,11 +25,11 @@ pub struct IconInstance {
     /// matching the SVG's aspect ratio (the pins are 18x24) draw undistorted,
     /// while [Vec2::splat] stretches them into a square.
     pub half_extents: Vec2,
-    /// Unit direction the icon's "up" aligns to; `None` draws it upright.
+    /// Unit direction the icon's "up" aligns to. `None` draws it upright.
     pub direction: Option<Vec2>,
     /// Per-slot tints multiplied onto the template's baked colors, like a
     /// texture tint: [Color32::WHITE] keeps the SVG colors, alpha fades.
-    /// Slot 0 is the default; slot 1 covers template elements marked
+    /// Slot 0 is the default. Slot 1 covers template elements marked
     /// `id="tint2"` in the SVG (the nav arrow's rim). Single-slot icons
     /// simply repeat the tint.
     pub tints: [Color32; 2],
@@ -48,9 +48,9 @@ pub struct IconInstance {
 ///   untextured [epaint::Mesh] that egui merges into its draw batches.
 /// - GPU ([IconMeshBatch::gpu_when_available]): instances are collected and
 ///   flushed as one instanced-draw paint callback per segment (32 bytes per
-///   instance instead of kilobytes of vertices); segments smaller than
-///   [gpu::GPU_MIN_INSTANCES] fall back to the CPU mesh, so barrier-heavy
-///   zoomed-in frames do not spray tiny draw calls.
+///   instance). Segments smaller than [gpu::GPU_MIN_INSTANCES] fall back to
+///   the CPU mesh, so barrier-heavy zoomed-in frames do not spray tiny draw
+///   calls.
 ///
 /// A batch without a library (the embedded meshes failed to decode, reported
 /// at startup) accepts pushes and paints nothing, so renderers need no
@@ -153,7 +153,7 @@ impl<'a> IconMeshBatch<'a> {
         self.flush(painter);
     }
 
-    /// Add the collected icons to `painter`; a no-op for an empty batch.
+    /// Add the collected icons to `painter`. An empty batch paints nothing.
     pub fn paint(mut self, painter: &egui::Painter) {
         self.flush(painter);
     }
@@ -244,7 +244,7 @@ fn rotate_up_to(offset: Vec2, direction: Vec2) -> Vec2 {
 
 /// The columns of the combined scale-then-rotate map applied to normalized
 /// template positions: `pos = center + col_x * px + col_y * py`.
-/// Expressed through [rotate_up_to] on the axis vectors so the two stay one
+/// Expressed through [`rotate_up_to`] on the axis vectors so the two stay one
 /// definition.
 fn rotation_columns(direction: Option<Vec2>, half_extents: Vec2) -> [Vec2; 2] {
     let x_axis = Vec2::new(half_extents.x, 0.0);
@@ -258,7 +258,7 @@ fn rotation_columns(direction: Option<Vec2>, half_extents: Vec2) -> [Vec2; 2] {
     }
 }
 
-/// A template's baked color as [Color32]; both are premultiplied, so this
+/// A template's baked color as [Color32]. Both are premultiplied, so this
 /// is a plain reinterpretation.
 fn premultiplied(template: [u8; 4]) -> Color32 {
     let [r, g, b, a] = template;
@@ -344,7 +344,7 @@ mod tests {
             direction: None,
             tints: [Color32::WHITE; 2],
         });
-        // Half extent 10 pt at 2x ppp = 40 physical px.
+        // Half extent 10 pt at 2 pixels per point = 40 physical px.
         let expected = library.tessellation(IconId::Pin).mesh_for(40.0);
         assert_eq!(batch.cpu_mesh().vertices.len(), expected.vertices.len());
         assert_eq!(batch.cpu_mesh().indices.len(), expected.indices.len());
@@ -466,8 +466,7 @@ mod gpu_projection_tests {
 
     /// Draw an 8x8 grid of identical icons - 64 instances, comfortably above
     /// [gpu::GPU_MIN_INSTANCES] so the GPU backend takes the instanced-draw
-    /// path instead of falling back to the CPU mesh - inside `clip`, using the
-    /// requested backend, and return the rendered frame.
+    /// path - inside `clip`, using `backend`, and return the rendered frame.
     ///
     /// The painter handed to [IconMeshBatch::paint] is clipped to `clip`, so on
     /// the GPU path the paint callback's rect (hence egui-wgpu's render-pass
@@ -509,7 +508,7 @@ mod gpu_projection_tests {
     /// Count pixels differing by more than a per-channel tolerance, as a
     /// fraction of the frame. The two icon backends rasterize the same baked
     /// template through different pipelines (epaint's mesh vs our instanced
-    /// shader), so a handful of edge pixels per icon legitimately differ; a
+    /// shader), so a handful of edge pixels per icon legitimately differ. A
     /// placement divergence differs across whole icons instead.
     fn diff_fraction(a: &image::RgbaImage, b: &image::RgbaImage) -> f64 {
         assert_eq!(a.dimensions(), b.dimensions(), "frame sizes must match");
@@ -558,7 +557,7 @@ mod gpu_projection_tests {
     /// instanced shader must map screen points into NDC relative to the clip
     /// rect - not the full framebuffer. Zooming out pushes the visible-icon
     /// count past [gpu::GPU_MIN_INSTANCES], switching from the (correct) CPU
-    /// mesh path to the GPU instanced draw; if the shader assumes the whole
+    /// mesh path to the GPU instanced draw. If the shader assumes the whole
     /// framebuffer, every icon is offset and scaled into a corner.
     ///
     /// The CPU path is unaffected by the viewport (its vertices are absolute

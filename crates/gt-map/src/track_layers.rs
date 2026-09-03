@@ -105,8 +105,8 @@ pub struct TrackLayers<'a> {
     /// the collection pass. Borrowed from the reused [`crate::viewport::VisiblePoints`]
     /// scratch, so lookups may return an empty list for a no-longer-visible track.
     tpv_by_track: &'a FxHashMap<TrackRef, Vec<usize>>,
-    /// First file index that is considered "newly loaded";
-    /// files[new_file_boundary..] receive a blinking overlay while
+    /// First file index that is considered "newly loaded".
+    /// `files[new_file_boundary..]` receive a blinking overlay while
     /// `blink_alpha > 0`.
     new_file_boundary: usize,
     /// Current blink intensity in [0.0, 1.0]. Zero means no overlay.
@@ -154,7 +154,7 @@ impl Plugin for TrackLayers<'_> {
         let max_rect = ui.max_rect();
 
         let geometries = self.prepare_track_geometries(max_rect, &style, &transform);
-        // The `select_*` calls fill the scratches through `&mut self`; the
+        // The `select_*` calls fill the scratches through `&mut self`. The
         // `.selected()` reads then borrow them immutably for the paint passes.
         // Split so the mutable fill fully ends before the shared reads begin.
         self.select_sat_labels(&geometries, max_rect, &transform, map_memory.zoom());
@@ -266,8 +266,8 @@ impl<'a> TrackLayers<'a> {
         let vp_bounds = transform.viewport_merc_bounds(max_rect);
 
         // Bind the `'a` file slice out of `&self` so the returned geometry
-        // borrows the underlying tracks, not this `&self` call - the selection
-        // passes then take `&mut self` while the geometry is still alive.
+        // borrows `files`, not this `&self` call - the selection passes then
+        // take `&mut self` while the geometry is still alive.
         let files: &'a [LoadedFile] = self.files;
         let mut geometries: Vec<TrackGeometry<'a>> = Vec::new();
         for (fi, file) in files.iter().enumerate() {
@@ -480,7 +480,7 @@ impl<'a> TrackLayers<'a> {
 
     /// Resolve which satellite-label anchors get a label this frame, for
     /// every track whose TPV layer is on. Labels are collision-resolved
-    /// across all tracks at once ([`sat_labels::select_sat_labels`]); the
+    /// across all tracks at once ([`sat_labels::select_sat_labels`]). The
     /// per-point conditions mirror the icon pass (time filter, query
     /// hiding).
     fn select_sat_labels(
@@ -735,9 +735,9 @@ fn paint_trackline_path(
 /// [`crate::HoverFadeState`].  At `progress = 1.0` the overlay reaches its
 /// theme's peak opacity ([`track_renderer::FOCUS_SCRIM_MAX_ALPHA_LIGHT`] /
 /// [`track_renderer::FOCUS_SCRIM_MAX_ALPHA_DARK`]).
-/// Using a single rect rather than per-track alpha prevents the accumulation
-/// artifact where N overlapping faded tracks at alpha `1/N` each would sum to
-/// full visibility at busy intersections.
+/// A single rect prevents the accumulation artifact where N overlapping
+/// faded tracks at alpha `1/N` each would sum to full visibility at busy
+/// intersections.
 fn paint_fade_overlay(ui: &Ui, max_rect: egui::Rect, progress: f32) {
     let alpha = focus_scrim_alpha(ui.visuals().dark_mode, progress);
     let bg = track_renderer::FOCUS_SCRIM_COLOR;
@@ -831,8 +831,8 @@ mod tests {
             .ui(|ui| {
                 let rect = ui.max_rect();
                 let painter = ui.painter();
-                // A light backdrop stands in for the map tiles (light in both
-                // themes), the surface the scrim used to wash out in light mode.
+                // A light backdrop replaces the map tiles (light in both
+                // themes), the surface the scrim is drawn over.
                 painter.rect_filled(rect, 0.0, Color32::from_gray(225));
                 for (i, color) in [Color32::RED, Color32::GREEN, Color32::from_rgb(0, 120, 255)]
                     .into_iter()
@@ -847,7 +847,7 @@ mod tests {
         harness.snapshot(name);
     }
 
-    /// A span of points with the given `hidden` flags, at increasing x.
+    /// A span of points at increasing x, one per flag in `hidden`.
     fn span(hidden: &[bool]) -> Vec<(LinePointKey, egui::Pos2)> {
         hidden
             .iter()
@@ -876,7 +876,7 @@ mod tests {
 
     #[test]
     fn shown_runs_break_at_hidden_points() {
-        // Hidden points split the line; leading/trailing/adjacent hidden
+        // Hidden points split the line. Leading/trailing/adjacent hidden
         // points yield no empty runs, and an isolated shown point is a
         // 1-element run (which draws no edge but keeps its icon).
         let s = span(&[true, false, false, true, false, true]);
@@ -919,10 +919,9 @@ mod tests {
 
     #[test]
     fn focus_scrim_dims_gently_and_is_lighter_in_light_mode() {
-        // The scrim darkens in both themes (a dark rect); it used to brighten
-        // in light mode, washing the map out. Both stay well below opaque, and
-        // light mode is gentler since a dark scrim reads heavier over a light
-        // map at equal opacity.
+        // The scrim darkens in both themes (a dark rect). Both stay well
+        // below opaque, and light mode is gentler since a dark scrim reads
+        // heavier over a light map at equal opacity.
         let light = focus_scrim_alpha(false, 1.0);
         let dark = focus_scrim_alpha(true, 1.0);
         assert!(light < 128, "light scrim {light} should stay legible");

@@ -8,8 +8,7 @@
 //! Per frame, [IconMeshBatch](super::IconMeshBatch) segments above the
 //! [GPU_MIN_INSTANCES] threshold are painted as one
 //! [egui_wgpu::Callback] that issues one instanced draw per (icon, bucket)
-//! group, uploading 32 bytes per instance instead of kilobytes of
-//! transformed vertices.
+//! group, uploading 32 bytes per instance.
 
 use std::num::NonZeroU64;
 use std::sync::OnceLock;
@@ -372,7 +371,7 @@ impl CallbackTrait for IconDrawCallback {
         // instances carry absolute screen-point positions and the shader maps
         // them against the full framebuffer (`screen_size_in_points`, written
         // in `prepare`), exactly like epaint's own mesh path. Reset the
-        // viewport to the whole framebuffer so that mapping is correct; the
+        // viewport to the whole framebuffer so that mapping is correct. The
         // scissor rect egui-wgpu set to the clip rect stays in place, so the
         // icons are still clipped to the map widget. Without this, zoomed-out
         // frames (>= GPU_MIN_INSTANCES icons, so the instanced path) draw every

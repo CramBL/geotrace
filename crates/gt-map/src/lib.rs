@@ -442,8 +442,8 @@ pub struct NavMap {
     /// popup does not re-walk every point each frame.
     display_counts_cache: display_counts::DisplayCountsCache,
     /// Pre-tessellated marker icon meshes decoded from the embedded blob.
-    /// `None` only if the embedded data is corrupted (reported at startup);
-    /// marker icons are then skipped.
+    /// `None` only if the embedded data is corrupted (reported at startup).
+    /// Marker icons are then skipped.
     icon_meshes: Option<icon_mesh::IconMeshLibrary>,
     /// Per-frame viewport point collection, reused across frames so a steady
     /// stream of frames avoids reallocating the category buffers each time.
@@ -542,8 +542,7 @@ impl NavMap {
     }
 
     /// Starts a fresh record, so a check after the last frame covers that
-    /// frame rather than every frame the map animated through on its way to
-    /// it.
+    /// frame alone.
     pub fn forget_missing_fixture_tiles(&mut self) {
         if let Some(tiles) = self.test_tiles.as_mut() {
             tiles.forget_missing_tiles();
@@ -626,7 +625,7 @@ impl NavMap {
     }
 
     /// Returns `true` when every entry in the spatial index is in-bounds for
-    /// the given file list. Used in tests to verify the index is not stale.
+    /// `files`. Used in tests to verify the index is not stale.
     #[cfg(test)]
     pub(crate) fn all_tree_indices_valid(&self, files: &[LoadedFile]) -> bool {
         use gt_types::DataCategory;

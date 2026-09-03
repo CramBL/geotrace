@@ -350,7 +350,7 @@ fn query_hidden_point_is_not_hoverable() {
     let files = vec![file_with_tracks(vec![track])];
     let vis = vis_all_visible();
     let filter = GlobalFilter::default();
-    // A range built from arguments, so the single-element vec does not trip
+    // A range built from arguments, so the single-element `vec!` does not trip
     // clippy's `single_range_in_vec_init`.
     let rng = |start: usize, end: usize| start..end;
     let matches = QueryMatches {
@@ -444,7 +444,7 @@ fn spatial_index_valid_after_file_deletion() {
     let file_b = make_file_from_points(points_b.clone());
 
     // Confirm the bug scenario: the stale tree (built before deletion) has
-    // entries with point_index ≥ 340, which would be OOB for file_b alone.
+    // entries with `point_index` ≥ 340, which would be OOB for `file_b` alone.
     let files_initial = vec![file_a, make_file_from_points(points_b)];
     let stale_tree = gt_track_builder::build_global_tree(&files_initial);
     let files_after = vec![file_b];
@@ -469,7 +469,7 @@ fn spatial_index_valid_after_file_deletion() {
         "test setup: stale tree must have OOB entries"
     );
 
-    // After calling rebuild_spatial_index, all entries must be in-bounds.
+    // After calling `rebuild_spatial_index`, all entries must be in-bounds.
     let mut map = NavMap::new(egui::Context::default(), TileAccess::Offline);
     map.rebuild_spatial_index(&files_initial);
     map.rebuild_spatial_index(&files_after);
@@ -588,8 +588,8 @@ fn hover_labels_yield_to_the_popup_a_previous_multi_hover_or_a_log_hexagon(
     assert_eq!(ctx.highlight.suppress_hover_labels, expected);
 }
 
-/// candidate_label for a GnssFixRegained marker with a known duration must
-/// produce the same string as generated_marker_header, both surfaces share
+/// `candidate_label` for a GnssFixRegained marker with a known duration must
+/// produce the same string as `generated_marker_header`, both surfaces share
 /// the same text so the disambiguation popup and the compound hover label agree.
 #[test]
 fn candidate_label_generated_marker_matches_header() {
@@ -678,7 +678,7 @@ fn candidate_label_generated_marker_matches_header() {
 
 /// A draw layer covering the first point of `track`, as one completed run.
 fn matches_of_run(run: u64, track: TrackRef) -> QueryMatches {
-    // A range built from arguments, so the single-element vec does not trip
+    // A range built from arguments, so the single-element `vec!` does not trip
     // clippy's `single_range_in_vec_init`.
     let rng = |start: usize, end: usize| start..end;
     QueryMatches {

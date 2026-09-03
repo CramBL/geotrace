@@ -11,7 +11,7 @@ use crate::polyline::MAX_LOD_ERROR_PX;
 ///
 /// At low zoom the viewport can span more than 360° of longitude, so the
 /// pixel column at the viewport centre may sit past the antimeridian wrap and
-/// `Projector::unproject` returns e.g. 185° instead of the equivalent -175°.
+/// `Projector::unproject` returns e.g. 185°.
 /// Longitude is periodic with period 360°, so the wrapped value names the same
 /// meridian and is the correct input for [`Longitude::new`].
 fn wrap_longitude_degrees(deg: f64) -> f64 {
@@ -30,8 +30,8 @@ fn wrap_longitude_degrees(deg: f64) -> f64 {
 /// (e.g. Denmark: lat 55° N, lon 12° E), the y-component of this difference is
 /// ≈ 12 M px, where f32 ULP = 1 px. The anchor obtained this way has ≈ ±0.5 px
 /// constant error per frame, which appears as snapping during smooth zoom
-/// animations. Additionally, viewport culling arithmetic done in f32 before
-/// casting to f64 has the same issue.
+/// animations. Viewport culling arithmetic done in f32 before casting to f64
+/// has the same issue.
 ///
 /// ## Solution
 ///
@@ -85,7 +85,7 @@ impl MapScale {
         (total_px / WORLD_PX_AT_ZOOM_0).log2()
     }
 
-    /// Pixels per metre at the given latitude.
+    /// Pixels per metre at `lat`.
     ///
     /// Uses the Web Mercator scale factor: the equatorial circumference
     /// (≈ 40 030 km) shrinks by cos(lat) at a given latitude.
@@ -150,8 +150,8 @@ impl MercTransform {
         Self::for_test_centered(total_px, Latitude::new(0.0))
     }
 
-    /// Like [`MercTransform::for_test`], with the viewport centred on the
-    /// given latitude (for scale math that depends on the centre).
+    /// Like [`MercTransform::for_test`], with the viewport centred on `lat`
+    /// (for scale math that depends on the centre).
     #[cfg(test)]
     pub(crate) fn for_test_centered(total_px: f64, lat: Latitude) -> Self {
         Self {
@@ -218,7 +218,7 @@ impl MercTransform {
         self.scale
     }
 
-    /// Pixels per metre at the given latitude. See [`MapScale`].
+    /// Pixels per metre at `lat`. See [`MapScale`].
     #[inline]
     pub(crate) fn pixels_per_meter(&self, lat: Latitude) -> f64 {
         self.scale.pixels_per_meter(lat)
@@ -244,7 +244,7 @@ impl MercTransform {
 /// Iterate `(index, point)` over the track's LOD level appropriate for the
 /// current map scale, or over the full point list when no stored level is
 /// fine enough (zoomed in, or no LOD built). Bounds polyline-pass iteration
-/// by on-screen detail instead of recording size.
+/// by on-screen detail.
 ///
 /// `placed` are `track`'s own points, which the caller has already gated on
 /// the track having a geometry.
@@ -283,7 +283,8 @@ mod tests {
 
     /// Regression test: longitudes past the antimeridian - as `unproject` can
     /// return at low zoom - must wrap to the equivalent meridian inside
-    /// `Longitude`'s `[-180, 180]` range rather than panic in `Longitude::new`.
+    /// `Longitude`'s `[-180, 180]` range. An unwrapped value panics in
+    /// `Longitude::new`.
     #[test]
     fn wrap_longitude_degrees_wraps_past_antimeridian() {
         assert_deg_close(

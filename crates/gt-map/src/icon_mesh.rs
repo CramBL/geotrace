@@ -1,7 +1,7 @@
 //! Pre-tessellated icon meshes embedded at build time.
 //!
 //! The build script tessellates every SVG in `assets/icons/` into normalized
-//! triangle meshes (one per size bucket, see [gt_icon_tessellate]) and embeds
+//! triangle meshes (one per size bucket, see [`gt_icon_tessellate`]) and embeds
 //! them as a postcard blob.
 //! [IconMeshLibrary::embedded] decodes that blob once into per-icon
 //! [IconTessellation]s, and renderers draw them through [IconMeshBatch].
@@ -50,7 +50,7 @@ pub(crate) fn marker_icon_half_extent(icon: MarkerIcon) -> f32 {
 
 /// Identifies one marker icon SVG asset.
 ///
-/// The wire name (strum snake_case) is the asset's file stem in
+/// The wire name (strum `snake_case`) is the asset's file stem in
 /// `assets/icons/`, which is also how the embedded blob keys its meshes.
 #[derive(
     Debug,

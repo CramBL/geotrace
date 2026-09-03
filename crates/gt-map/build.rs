@@ -1,5 +1,5 @@
 //! Bakes the marker icon SVGs into pre-tessellated meshes embedded in the
-//! binary; see the `icon_mesh` module for the runtime side.
+//! binary. See the `icon_mesh` module for the runtime side.
 
 use std::error::Error;
 use std::path::PathBuf;
@@ -12,8 +12,8 @@ use gt_icon_tessellate::{IconTessellation, StrokeWidthUnit};
 /// rim keeps the painter path's constant on-screen width across zoom sizes
 /// (see the asset's comment). Everything else scales strokes with the glyph.
 ///
-/// build.rs cannot see the crate's `IconId` enum, so the stem is a string
-/// here; [main] fails the build if the asset disappears, and the runtime
+/// build.rs cannot see the crate's `IconId` enumeration, so the stem is a
+/// string here. [main] fails the build if the asset disappears, and the runtime
 /// decode rejects unknown stems, so a rename cannot silently change modes.
 const PHYSICAL_PIXEL_STROKE_STEMS: [&str; 1] = ["nav_arrow"];
 

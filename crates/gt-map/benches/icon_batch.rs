@@ -3,7 +3,7 @@
 //!
 //! The CPU path serves small flush segments and contexts without the
 //! GPU-instanced pipeline (`icon_mesh/gpu.rs`), which is the default above
-//! `GPU_MIN_INSTANCES`; these numbers guard the CPU path against
+//! `GPU_MIN_INSTANCES`. These numbers guard the CPU path against
 //! throughput regressions.
 
 // Benches, like examples, favour brevity: the core's robustness restriction

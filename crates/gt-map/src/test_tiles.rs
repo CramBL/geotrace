@@ -18,8 +18,7 @@ pub use crate::test_tiles::fixture::{
 };
 pub use crate::test_tiles::synthetic::SyntheticTiles;
 
-/// A piece covers its texture entirely: both sources serve whole tiles at the
-/// requested zoom.
+/// A piece covers its texture entirely: both sources serve whole tiles.
 const FULL_TILE_UV: Rect = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
 
 pub(crate) enum TestTileSource {
