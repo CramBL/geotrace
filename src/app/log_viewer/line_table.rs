@@ -330,9 +330,10 @@ impl LogViewerWindow {
             })
             .collect();
         let unit = self.association_window_unit;
-        let recognised_messages = match self.color_services_and_levels {
-            true => parsed.recognised_messages(),
-            false => &[],
+        let recognised_messages = parsed.recognised_messages();
+        let color_switches = MessageColorSwitches {
+            services: self.color_services,
+            levels: self.color_levels,
         };
         let association_window = log.association_window();
         let dark_mode = ui.visuals().dark_mode;
@@ -395,6 +396,7 @@ impl LogViewerWindow {
                                     .map(|placement| placement.position),
                                 order_anomaly_step: anomaly_steps.get(&entry_index).copied(),
                                 recognised: recognised_messages.get(entry_index).copied(),
+                                color_switches,
                                 association_window,
                                 gutter: &gutter,
                                 entry_index,
@@ -465,9 +467,9 @@ struct EntryRow<'a> {
     /// starts at.
     order_anomaly_step: Option<Duration>,
 
-    /// What the parse read out of this message, `None` while the viewer draws
-    /// the message in one colour.
     recognised: Option<RecognisedMessage>,
+
+    color_switches: MessageColorSwitches,
 
     association_window: Duration,
     gutter: &'a LayerGutter<'a>,
@@ -501,6 +503,15 @@ struct MessageRun {
     color: Color32,
 }
 
+/// Which recognised parts of a message the table draws in their own colour, as
+/// the filter row's two tickboxes set them. The hostname follows the services
+/// tickbox.
+#[derive(Clone, Copy)]
+struct MessageColorSwitches {
+    services: bool,
+    levels: bool,
+}
+
 /// The colours one row's message is drawn in.
 struct MessageColors {
     /// Everything the parse recognised nothing in.
@@ -511,13 +522,18 @@ struct MessageColors {
 
     dark_mode: bool,
 
-    /// Whether the service takes its own colour, which it does only on a line
-    /// that has a position: association is the stronger signal.
+    /// Whether the service takes its own colour, which it does with the
+    /// services tickbox ticked and only on a line that has a position:
+    /// association is the stronger signal.
     color_the_service: bool,
+
+    color_the_hostname: bool,
+
+    color_the_level: bool,
 }
 
 impl MessageColors {
-    fn of(ui: &egui::Ui, associated: bool) -> Self {
+    fn of(ui: &egui::Ui, associated: bool, switches: MessageColorSwitches) -> Self {
         Self {
             base: match associated {
                 true => ui.visuals().text_color(),
@@ -525,7 +541,9 @@ impl MessageColors {
             },
             weak: ui.visuals().weak_text_color(),
             dark_mode: ui.visuals().dark_mode,
-            color_the_service: associated,
+            color_the_service: switches.services && associated,
+            color_the_hostname: switches.services,
+            color_the_level: switches.levels,
         }
     }
 
@@ -534,7 +552,7 @@ impl MessageColors {
     /// base colour, so it takes no run.
     fn runs(&self, recognised: RecognisedMessage) -> Vec<MessageRun> {
         let mut runs = Vec::with_capacity(3);
-        if let Some(range) = recognised.hostname() {
+        if let Some(range) = recognised.hostname().filter(|_| self.color_the_hostname) {
             runs.push(MessageRun {
                 range,
                 color: self.weak,
@@ -547,7 +565,7 @@ impl MessageColors {
                     .resolve(self.dark_mode),
             });
         }
-        if let Some(level) = recognised.level() {
+        if let Some(level) = recognised.level().filter(|_| self.color_the_level) {
             let color = match level.kind() {
                 LogLevelKind::Error => Some(gt_ui_theme::error_indicator(self.dark_mode)),
                 LogLevelKind::Warning => Some(gt_ui_theme::warning_amber(self.dark_mode)),
@@ -669,7 +687,7 @@ impl EntryRow<'_> {
     /// past the screen.
     fn message_job(&self, ui: &egui::Ui) -> LayoutJob {
         let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-        let colors = MessageColors::of(ui, self.position.is_some());
+        let colors = MessageColors::of(ui, self.position.is_some(), self.color_switches);
         let runs = self
             .recognised
             .map(|recognised| colors.runs(recognised))
@@ -1156,6 +1174,8 @@ mod tests {
             weak: Color32::from_gray(100),
             dark_mode: DARK_MODE,
             color_the_service: true,
+            color_the_hostname: true,
+            color_the_level: true,
         };
         let unassociated = MessageColors {
             color_the_service: false,

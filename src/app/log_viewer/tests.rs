@@ -75,6 +75,16 @@ const FIRST_ENTRY_TIMESTAMP: &str = " 2026-05-29 18:48:25";
 /// The message of the log's first entry, which its last boot repeats.
 const FIRST_ENTRY_MESSAGE: &str = "navsyncd: starting";
 
+/// A log whose one line states both a service and a level, for the two
+/// colouring tickboxes.
+const LOG_WITH_A_SERVICE_AND_A_LEVEL: &str = "\
+2026-05-29 18:48:25 navsyncd: [WARN gnss::fix] signal lost
+";
+
+/// The message of [`LOG_WITH_A_SERVICE_AND_A_LEVEL`]'s one entry, as the table
+/// writes it.
+const SERVICE_AND_LEVEL_MESSAGE: &str = "navsyncd: [WARN gnss::fix] signal lost";
+
 /// The timestamp column of the log's third entry, which follows the entry above
 /// it inside the same minute.
 const SAME_MINUTE_ENTRY_TIMESTAMP: &str = " 2026-05-29 18:48:27";
@@ -219,17 +229,40 @@ fn harness_from(state: ViewerState) -> Harness<'static, ViewerState> {
     harness
 }
 
-/// [`harness_of`] on a rendering harness, for the test that reads the pixels
+/// [`harness_with`] on a rendering harness, for the tests that read the pixels
 /// of the rows back.
 fn rendering_harness_with(
     recordings: Vec<gt_types::LoadedFile>,
 ) -> TestHarness<'static, ViewerState> {
-    let mut harness = TestHarness::builder().size(VIEWER_SIZE).ui_state(
-        viewer_ui,
-        viewer_state(recordings, &[("navsyncd.log", LOG_WITH_EVERY_ROW_KIND)]),
-    );
+    rendering_harness_of(recordings, &[("navsyncd.log", LOG_WITH_EVERY_ROW_KIND)])
+}
+
+/// [`harness_of`] on a rendering harness.
+fn rendering_harness_of(
+    recordings: Vec<gt_types::LoadedFile>,
+    logs: &[(&str, &str)],
+) -> TestHarness<'static, ViewerState> {
+    let mut harness = TestHarness::builder()
+        .size(VIEWER_SIZE)
+        .ui_state(viewer_ui, viewer_state(recordings, logs));
     harness.inner.run_steps(3);
     harness
+}
+
+/// The viewer on the log stating a service and a level, over a recording that
+/// gives its line a position: the service takes its own colour only on an
+/// associated line.
+fn colouring_harness() -> TestHarness<'static, ViewerState> {
+    rendering_harness_of(
+        vec![recording("walk.gtd", 55.0)],
+        &[("navsyncd.log", LOG_WITH_A_SERVICE_AND_A_LEVEL)],
+    )
+}
+
+/// Clicks the filter row's tickbox labelled `label`, which starts ticked.
+fn switch_off(harness: &mut Harness<'static, ViewerState>, label: &str) {
+    harness.get_by_label(label).click();
+    harness.run_steps(2);
 }
 
 /// One frame of the viewer, as the app draws it.
@@ -406,32 +439,53 @@ fn a_line_that_loses_its_position_takes_its_timestamp_down_from_strong() {
     );
 }
 
-/// The colouring is one tickbox over the whole table: switched off, a service
-/// name draws in the colour the rest of its line does.
 #[test]
-fn switching_off_the_colouring_draws_a_service_like_the_rest_of_its_line() {
-    let mut harness = rendering_harness_with(vec![recording("walk.gtd", 55.0)]);
+fn switching_off_the_service_colours_leaves_the_level_coloured() {
+    let mut harness = colouring_harness();
     let pixels_per_point = harness.inner.ctx.pixels_per_point();
     let message = harness
         .inner
-        .topmost_matching(By::new().label(FIRST_ENTRY_MESSAGE))
+        .topmost_matching(By::new().label(SERVICE_AND_LEVEL_MESSAGE))
         .rect();
-    let coloured = harness.inner.render().expect("the harness renders a frame");
 
-    harness
-        .inner
-        .get_by_label(filters::COLOR_SERVICES_AND_LEVELS_LABEL)
-        .click();
-    harness.inner.run_steps(2);
-
+    switch_off(&mut harness.inner, filters::COLOR_SERVICES_LABEL);
     assert!(
-        !harness.state().viewer.color_services_and_levels,
-        "the tickbox switched the colouring off"
+        !harness.state().viewer.color_services,
+        "\"Colour services\" switched the service colours off"
     );
-    let plain = harness.inner.render().expect("the harness renders a frame");
+    let levels_only = harness.inner.render().expect("the harness renders a frame");
+
+    switch_off(&mut harness.inner, filters::COLOR_LEVELS_LABEL);
+
+    let neither = harness.inner.render().expect("the harness renders a frame");
     assert!(
-        snapshot_harness::pixels_differ(&coloured, &plain, message, pixels_per_point),
-        "the service name drew in its own colour while the tickbox was ticked"
+        snapshot_harness::pixels_differ(&levels_only, &neither, message, pixels_per_point),
+        "the level drew in the colour of its severity while \"Colour levels\" was ticked"
+    );
+}
+
+#[test]
+fn switching_off_the_level_colours_leaves_the_service_coloured() {
+    let mut harness = colouring_harness();
+    let pixels_per_point = harness.inner.ctx.pixels_per_point();
+    let message = harness
+        .inner
+        .topmost_matching(By::new().label(SERVICE_AND_LEVEL_MESSAGE))
+        .rect();
+
+    switch_off(&mut harness.inner, filters::COLOR_LEVELS_LABEL);
+    assert!(
+        !harness.state().viewer.color_levels,
+        "\"Colour levels\" switched the level colours off"
+    );
+    let services_only = harness.inner.render().expect("the harness renders a frame");
+
+    switch_off(&mut harness.inner, filters::COLOR_SERVICES_LABEL);
+
+    let neither = harness.inner.render().expect("the harness renders a frame");
+    assert!(
+        snapshot_harness::pixels_differ(&services_only, &neither, message, pixels_per_point),
+        "the service name drew in its own colour while \"Colour services\" was ticked"
     );
 }
 
@@ -1369,11 +1423,14 @@ fn switch_chip_mode(harness: &mut Harness<ViewerState>, index: usize) {
     run_until_the_scans_land(harness);
 }
 
-/// Clicks the tickbox of the chip at `index`. The filter row's colouring
-/// tickbox is drawn above the chips and comes before every chip.
+/// The tickboxes the filter row draws above the chips, "Colour services" and
+/// "Colour levels", which come before every chip's own tickbox.
+const FILTER_ROW_TICKBOXES: usize = 2;
+
+/// Clicks the tickbox of the chip at `index`.
 fn toggle_chip(harness: &mut Harness<ViewerState>, index: usize) {
     harness
-        .nth_matching(By::new().role(Role::CheckBox), index + 1)
+        .nth_matching(By::new().role(Role::CheckBox), FILTER_ROW_TICKBOXES + index)
         .click();
     run_until_the_scans_land(harness);
 }
