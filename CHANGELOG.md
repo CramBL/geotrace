@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- **Interface:** Fixed the History window growing with its listing until it filled the screen: it now keeps the height it is at and scrolls its rows inside it, and it shrinks to a listing shorter than that.
 - **Interface:** Fixed the auto-prune confirmation and the "Track settings differ" prompt moving their buttons while they are open.
 - **Interface:** Fixed a short dialog opening with a gap between its text and its buttons.
 - **Interface:** Fixed the wait for a data directory another GeoTrace is using, and its take-over confirmation, moving their buttons while the other GeoTrace reports on itself.

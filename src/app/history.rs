@@ -49,9 +49,20 @@ enum DeleteHiddenTracksChoice {
     Cancel,
 }
 
+/// The height the window opens at, whatever the length of the listing it
+/// opens on.
+const DEFAULT_WINDOW_HEIGHT_PX: f32 = 480.0;
+
 /// Floor on the listing's height, so a very short screen still shows part of
 /// the list.
 const MIN_LISTING_HEIGHT: f32 = 100.0;
+
+/// Lines of body text the listing keeps for the footer before the footer has
+/// been drawn once, which is more than its rule, its stats line and the
+/// database path take. A first frame that kept too little would put the
+/// content past the window's bottom edge, and egui grows the window by the
+/// difference and never back.
+const FOOTER_LINES_BEFORE_IT_IS_DRAWN: f32 = 4.0;
 
 struct PruneDialog {
     open: bool,
@@ -457,10 +468,11 @@ pub struct HistoryWindow {
     /// Which column the list is ordered by, and which way.
     sort: HistorySort,
     /// Height the separator and the stats footer took below the listing on the
-    /// previous frame, reserved out of the screen room the listing may claim.
-    /// The stats line's wrap point and the presence of the database-path line
-    /// are known only once they are drawn.
-    footer_height_last_frame: f32,
+    /// previous frame, reserved out of the room the listing may claim. The
+    /// stats line's wrap point and the presence of the database-path line are
+    /// known only once they are drawn. `None` before the first of those
+    /// frames.
+    footer_height_last_frame: Option<f32>,
 }
 
 /// State for the inline identity-rename editor on one History row.
@@ -487,7 +499,7 @@ impl HistoryWindow {
             list_pending: false,
             rename: None,
             sort: HistorySort::default(),
-            footer_height_last_frame: 0.0,
+            footer_height_last_frame: None,
         }
     }
 
@@ -603,9 +615,13 @@ impl HistoryWindow {
             .open(&mut open)
             .resizable(true)
             .default_width(640.0)
-            // The height the empty listing centres its notice in. A populated
-            // listing sizes the window to its own rows.
-            .default_height(480.0)
+            // The height the window opens at, and the height the empty listing
+            // centres its notice in.
+            .default_height(DEFAULT_WINDOW_HEIGHT_PX)
+            // egui keeps a resizable window's height in memory and grows it
+            // towards the window's content, never back. Declaring the cap every
+            // frame holds that memory to the screen the app is on now.
+            .max_height(ctx.content_rect().height())
             .show(ctx, |ui| {
                 if databases_opening {
                     ui.horizontal(|ui| {
@@ -689,21 +705,15 @@ impl HistoryWindow {
                     return;
                 }
 
-                // The listing takes the screen room left below its own top, so
-                // the window grows with its content only until its bottom edge
-                // would leave the display. Inside an auto-sizing window
-                // `ui.available_height()` is the height the window had on the
-                // previous frame, which grows with the very content this bound
-                // holds.
-                let listing_top = ui.cursor().top();
-                // The window frame's margin below the content, which has to
-                // stay on screen along with the footer.
-                let window_frame_bottom = egui::Frame::window(ui.style()).total_margin().bottom;
-                let max_listing_height = (ui.ctx().content_rect().bottom()
-                    - listing_top
-                    - window_frame_bottom
-                    - footer_height)
-                    .max(MIN_LISTING_HEIGHT);
+                // The listing takes the room the window leaves below the
+                // toolbar, minus the footer that sits under it, and scrolls its
+                // rows inside that. The window is as tall as the user left it,
+                // however long the listing is.
+                let footer_room = footer_height.unwrap_or_else(|| {
+                    FOOTER_LINES_BEFORE_IT_IS_DRAWN * ui.text_style_height(&egui::TextStyle::Body)
+                });
+                let max_listing_height =
+                    (ui.available_height() - footer_room).max(MIN_LISTING_HEIGHT);
 
                 // The listing scrolls sideways once its metadata columns alone
                 // need more width than the window has, identity having clamped
@@ -755,7 +765,7 @@ impl HistoryWindow {
                     );
                 }
 
-                footer_height = ui.min_rect().bottom() - listing_bottom;
+                footer_height = Some(ui.min_rect().bottom() - listing_bottom);
             });
 
         self.rename = rename;

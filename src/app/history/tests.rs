@@ -22,9 +22,10 @@ use super::table::{
     duration_text, started_at_text, time_range_text, track_count_text,
 };
 use super::{
-    DELETE_HIDDEN_WINDOW_TITLE, DatabaseRef, HistorySort, HistoryWindow, HistoryWorker,
-    ICON_CARET_DOWN, ICON_CARET_UP, NavPointTimeRange, PRUNE_WINDOW_TITLE, RecordingEntry,
-    RecordingMeta, SortColumn, SortDirection, identity_display_parts, travel_mode_display,
+    DEFAULT_WINDOW_HEIGHT_PX, DELETE_HIDDEN_WINDOW_TITLE, DatabaseRef, HistorySort, HistoryWindow,
+    HistoryWorker, ICON_CARET_DOWN, ICON_CARET_UP, NavPointTimeRange, PRUNE_WINDOW_TITLE,
+    RecordingEntry, RecordingMeta, SortColumn, SortDirection, identity_display_parts,
+    travel_mode_display,
 };
 use strum::{EnumCount as _, IntoEnumIterator as _};
 
@@ -1552,40 +1553,154 @@ const HEIGHT_AUDIT_VIEWPORT: egui::Vec2 = egui::vec2(1000.0, 800.0);
 /// Settled height of the History window listing `rows` recordings, through the
 /// real rendering path ([`HistoryWindow::show`]).
 fn settled_history_window_height(rows: usize) -> f32 {
-    let entries = (0..rows)
-        .map(|index| entry_with_identity(&format!("auto:ride{index}.gtd")))
-        .collect();
     let mut h = TestHarness::builder()
         .size(HEIGHT_AUDIT_VIEWPORT)
-        .ui_state(show_history, history_harness(entries));
+        .ui_state(show_history, history_harness_for_the_height_audit(rows));
     h.inner
         .settled_window_size("History", 10)
         .expect("the History window is shown")
         .y
 }
 
-/// Three recordings leave the History window at the height of three
-/// recordings, well under its 480px default height.
+/// A short listing leaves the History window at the height of its rows, well
+/// under the height it opens at.
 #[test]
 fn a_short_list_settles_the_window_at_its_content_height() {
-    let height = settled_history_window_height(3);
+    let height = settled_history_window_height(SHORT_LIST_ROWS);
     assert!(
         height < 350.0,
-        "the History window settled at {height:.0}px listing three recordings, far more \
-         than three rows and the footer need: it stopped tracking its content",
+        "the History window settled at {height:.0}px listing {SHORT_LIST_ROWS} \
+         recordings, far more than three rows and the footer need: it stopped tracking \
+         its content",
     );
 }
 
-/// More recordings than the screen shows grow the window to the screen edge
-/// and no further, the rows scrolling inside it from there on.
+/// More recordings than the window shows leave it at the height it opened at,
+/// the rows scrolling inside it from there on.
 #[test]
-fn a_list_longer_than_the_screen_stops_the_window_at_the_screen_edge() {
+fn a_list_longer_than_the_window_leaves_it_at_the_height_it_opened_at() {
     let height = settled_history_window_height(OVERSIZED_ROW_COUNT);
     assert!(
-        (600.0..=HEIGHT_AUDIT_VIEWPORT.y).contains(&height),
+        (height - DEFAULT_WINDOW_HEIGHT_PX).abs() < 1.0,
         "the History window settled at {height:.0}px listing {OVERSIZED_ROW_COUNT} \
-         recordings on a {:.0}px screen: it should take the screen's full height and \
-         scroll its rows there",
-        HEIGHT_AUDIT_VIEWPORT.y,
+         recordings, not the {DEFAULT_WINDOW_HEIGHT_PX:.0}px it opens at: its rows grew \
+         it instead of scrolling inside it",
     );
+}
+
+/// A window that grew for a long listing fits a short one again: its height
+/// matches the rows it draws now.
+#[test]
+fn a_window_that_listed_more_rows_than_it_shows_fits_a_short_list_again() {
+    let mut h = TestHarness::builder().size(HEIGHT_AUDIT_VIEWPORT).ui_state(
+        show_history,
+        history_harness_for_the_height_audit(OVERSIZED_ROW_COUNT),
+    );
+    h.inner.run_steps(8);
+    let grown = h.inner.window_rect("History").expect("the window is shown");
+
+    h.inner.state_mut().window.set_entries(
+        (0..SHORT_LIST_ROWS)
+            .map(|index| entry_with_identity(&format!("auto:ride{index}.gtd")))
+            .collect(),
+    );
+    h.inner.run_steps(8);
+    let shrunk = h.inner.window_rect("History").expect("the window is shown");
+
+    let opened_on_three = settled_history_window_height(SHORT_LIST_ROWS);
+    assert!(
+        (shrunk.height() - opened_on_three).abs() < 1.0,
+        "the History window is {:.0}px tall listing {SHORT_LIST_ROWS} recordings, where a \
+         window opened on the same {SHORT_LIST_ROWS} is {opened_on_three:.0}px: the \
+         {OVERSIZED_ROW_COUNT} it listed before left it {:.0}px tall and it stayed there",
+        shrunk.height(),
+        grown.height(),
+    );
+}
+
+/// A drag on the bottom edge shortens the window, and the listing scrolls in
+/// what is left.
+#[test]
+fn a_drag_on_the_bottom_edge_shortens_the_window_for_good() {
+    let mut h = TestHarness::builder().size(HEIGHT_AUDIT_VIEWPORT).ui_state(
+        show_history,
+        history_harness_for_the_height_audit(OVERSIZED_ROW_COUNT),
+    );
+    h.inner.run_steps(8);
+    let before = h.inner.window_rect("History").expect("the window is shown");
+
+    h.inner.press_drag_release(
+        egui::pos2(before.center().x, before.bottom()),
+        egui::vec2(0.0, -DRAGGED_UP_BY_PX),
+        8,
+    );
+    h.inner.run_steps(8);
+    let after = h.inner.window_rect("History").expect("the window is shown");
+
+    assert!(
+        (after.height() - (before.height() - DRAGGED_UP_BY_PX)).abs() < 1.0,
+        "the History window is {:.0}px tall after a {DRAGGED_UP_BY_PX:.0}px drag up from \
+         {:.0}px: the drag was undone by its rows",
+        after.height(),
+        before.height(),
+    );
+}
+
+/// How far the drag audits pull the window's bottom edge up.
+const DRAGGED_UP_BY_PX: f32 = 200.0;
+
+/// Recordings the height audits call a short listing: fewer than the window
+/// shows at once.
+const SHORT_LIST_ROWS: usize = 3;
+
+/// A harness listing `rows` recordings under names that sort in the order they
+/// are built, with the database path kept out of the image.
+fn history_harness_for_the_height_audit(rows: usize) -> HistoryHarness {
+    let entries = (0..rows)
+        .map(|index| {
+            let mut entry = entry_with_identity(&format!("auto:ride{index:03}.gtd"));
+            entry.meta.gtd_size_bytes = CROWDED_RECORDING_BYTES;
+            entry
+        })
+        .collect();
+    let mut harness = history_harness(entries);
+    harness.worker.hide_path();
+    harness
+}
+
+/// The History window listing more recordings than the screen holds.
+#[test]
+fn snapshot_listing_longer_than_the_screen() {
+    let mut h = TestHarness::builder().size(HEIGHT_AUDIT_VIEWPORT).ui_state(
+        show_history,
+        history_harness_for_the_height_audit(OVERSIZED_ROW_COUNT),
+    );
+    for _ in 0..8 {
+        h.run();
+    }
+    h.snapshot("history_listing_longer_than_the_screen");
+}
+
+/// The History window after the user drags its bottom edge up while it lists
+/// more recordings than the screen holds.
+#[test]
+fn snapshot_window_dragged_shorter_than_its_listing() {
+    let mut h = TestHarness::builder().size(HEIGHT_AUDIT_VIEWPORT).ui_state(
+        show_history,
+        history_harness_for_the_height_audit(OVERSIZED_ROW_COUNT),
+    );
+    for _ in 0..8 {
+        h.run();
+    }
+    let window = h.inner.window_rect("History").expect("the window is shown");
+    h.inner.press_drag_release(
+        egui::pos2(window.center().x, window.bottom()),
+        egui::vec2(0.0, -DRAGGED_UP_BY_PX),
+        8,
+    );
+    // No hover highlight or scrollbar is drawn over the listing: the hover
+    // point is away from the rows.
+    h.inner
+        .hover_at_and_settle(egui::pos2(HEIGHT_AUDIT_VIEWPORT.x - 1.0, 1.0), 8);
+    h.snapshot("history_window_dragged_shorter");
 }
