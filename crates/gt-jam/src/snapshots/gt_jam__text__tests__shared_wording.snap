@@ -5,14 +5,14 @@ expression: wording
 label: Aircraft interference
 summary: Share of aircraft over this area that reported low navigation accuracy, over one UTC day.
 source caveat: Reported by aircraft in flight, not measured on the ground - a track under an affected cell is not necessarily affected, and a clear cell is not a guarantee.
-resolution caveat: One cell spans roughly 22 km and one value covers a full 24-hour UTC day, so neither the minute nor the kilometer of an event can be read from this.
+resolution caveat: One cell spans roughly 22km and one value covers a 24h UTC day, so neither the minute nor the kilometer of an event can be read from this.
 low sample caveat: Too few aircraft passed through this cell for the share to carry weight.
 fetch queue hover: Interference days waiting to be downloaded. One day is requested at a time, and one day costs one request.
 recording day coverage hover: UTC days the recordings loaded this session span, and how many of them the archive holds a dataset for. Days downloaded by a backfill are not counted here.
 plot hover: Share of aircraft over the fix's cell that reported low navigation accuracy.
-gpsjam.org over ADS-B Exchange, one value per UTC day and 22 km cell, percent.
+gpsjam.org over ADS-B Exchange, one value per UTC day and 22km cell, percent.
 More: 'How does aircraft interference data relate to GNSS?' in Settings.
-query doc: Share of aircraft over the fix's cell that reported low navigation accuracy, in percent, for the fix's own UTC day. Reported by aircraft in flight, not measured on the ground - a track under an affected cell is not necessarily affected, and a clear cell is not a guarantee. One cell spans roughly 22 km and one value covers a full 24-hour UTC day, so neither the minute nor the kilometer of an event can be read from this. Fixes whose day is not in the interference archive carry no value.
+query doc: Share of aircraft over the fix's cell that reported low navigation accuracy, in percent, for the fix's own UTC day. Reported by aircraft in flight, not measured on the ground - a track under an affected cell is not necessarily affected, and a clear cell is not a guarantee. One cell spans roughly 22km and one value covers a 24h UTC day, so neither the minute nor the kilometer of an event can be read from this. Fixes whose day is not in the interference archive carry no value.
 attribution: Interference data from gpsjam.org, derived from aircraft reports collected by adsbexchange.com.
 publisher: https://gpsjam.org
 upstream: https://adsbexchange.com

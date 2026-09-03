@@ -758,8 +758,8 @@ fn hover_badge_recording_row(
 }
 
 #[rstest]
-#[case::earlier(2100, "Report 2.1 s earlier")]
-#[case::later(-2100, "Report 2.1 s later")]
+#[case::earlier(2100, "Report 2.1s earlier")]
+#[case::later(-2100, "Report 2.1s later")]
 fn report_age_label_names_the_side(#[case] ms: i64, #[case] expected: &str) {
     assert_eq!(
         report_age_label(chrono::Duration::milliseconds(ms)),

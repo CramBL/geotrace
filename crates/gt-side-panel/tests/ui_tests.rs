@@ -647,7 +647,7 @@ fn context_menu_toggles_snapped_track_visibility() {
     let mut harness = make_harness(state);
     harness.run();
 
-    tree_row(&harness, "#1  4.6 km").click_secondary();
+    tree_row(&harness, "#1  4.6km").click_secondary();
     harness.run();
     harness.inner.get_by_label("Hide snapped track").click();
     harness.run();
@@ -667,7 +667,7 @@ fn costing_submenu_requests_the_chosen_costing() {
     let mut harness = make_harness(state);
     harness.run();
 
-    tree_row(&harness, "#1  4.6 km").click_secondary();
+    tree_row(&harness, "#1  4.6km").click_secondary();
     harness.run();
     harness
         .inner
@@ -750,7 +750,7 @@ fn unsnappable_rows_offer_the_costing_override() {
     let mut harness = make_harness(state);
     harness.run();
 
-    tree_row(&harness, "#1  4.6 km").click_secondary();
+    tree_row(&harness, "#1  4.6km").click_secondary();
     harness.run();
     harness
         .inner
@@ -777,7 +777,7 @@ fn snapshot_snap_costing_submenu() {
     let mut harness = make_harness_sized(state, egui::vec2(420.0, 600.0));
     harness.run();
 
-    tree_row(&harness, "#1  4.6 km").click_secondary();
+    tree_row(&harness, "#1  4.6km").click_secondary();
     harness.run();
     harness
         .inner
@@ -1048,7 +1048,7 @@ fn clicking_a_visible_section_row_reveals_the_track_in_the_tree() {
     harness.run();
     assert!(!harness.state().tree.files[0].expanded);
 
-    section_row(&harness, "#1  4.6 km").click();
+    section_row(&harness, "#1  4.6km").click();
     harness.run();
 
     assert!(harness.state().tree.files[0].expanded);
@@ -1067,7 +1067,7 @@ fn clicking_a_visible_section_row_reveals_the_track_in_the_tree() {
 fn clicking_a_visible_section_row_past_its_columns_reveals_the_track() {
     let mut harness = make_harness(make_state(1));
     harness.run();
-    let row = section_row(&harness, "#1  4.6 km").rect();
+    let row = section_row(&harness, "#1  4.6km").rect();
 
     harness
         .inner
@@ -1081,7 +1081,7 @@ fn the_visible_section_context_menu_hides_the_track_it_was_opened_on() {
     let mut harness = make_harness(make_state(1));
     harness.run();
 
-    section_row(&harness, "#1  4.6 km").click_secondary();
+    section_row(&harness, "#1  4.6km").click_secondary();
     harness.run();
     harness.inner.get_by_label("Hide").click();
     harness.run();
@@ -1118,7 +1118,7 @@ fn the_visible_section_context_menu_shows_only_the_track_it_was_opened_on() {
     // with its recordings collapsed.
     harness
         .inner
-        .bottommost_matching(By::new().label_contains("#1  4.6 km"))
+        .bottommost_matching(By::new().label_contains("#1  4.6km"))
         .click_secondary();
     harness.run();
     harness.inner.get_by_label("Show only this track").click();
@@ -1135,7 +1135,7 @@ fn hovering_a_visible_section_row_marks_its_track() {
     let mut harness = make_harness(make_state(1));
     harness.run();
 
-    let row = section_row(&harness, "#1  4.6 km").rect().center();
+    let row = section_row(&harness, "#1  4.6km").rect().center();
     harness.inner.hover_at_and_settle(row, 3);
 
     assert_eq!(
@@ -1199,7 +1199,7 @@ fn clicking_a_tree_track_row_past_its_columns_expands_the_track() {
     state.tree.toggle_expand_file(FileIdx::new(0));
     let mut harness = make_harness(state);
     harness.run();
-    let row = tree_row(&harness, "#1  4.6 km").rect();
+    let row = tree_row(&harness, "#1  4.6km").rect();
 
     harness
         .inner
@@ -1818,7 +1818,7 @@ fn rows_repainted_by_plot_hover(PlotHoverSnapped(snapped): PlotHoverSnapped) -> 
 
     let pixels_per_point = harness.inner.ctx.pixels_per_point();
     let hovered_file = tree_row(&harness, "ride_0").rect();
-    let hovered_track = tree_row(&harness, "#1  4.6 km").rect();
+    let hovered_track = tree_row(&harness, "#1  4.6km").rect();
     let other_file = tree_row(&harness, "ride_1").rect();
     let before = harness.inner.render().expect("the harness renders a frame");
 
@@ -1997,13 +1997,13 @@ fn open_tooltip_count(harness: &TestHarness<'static, State>) -> usize {
 #[case::disabled_snap_trigger(
     state_with_a_snap_run_in_flight,
     ICON_LINE_SEGMENTS,
-    "Snapping - completed 2 of 5 chunks",
+    "Snapping: chunk 3/5",
     "side_panel_tooltip_over_the_in_flight_trigger"
 )]
 #[case::coordinate_warning_icon(
     state_with_a_track_without_a_valid_position,
     ICON_WARNING,
-    "No fix has a valid coordinate, so the track is not drawn on the map",
+    "Not drawn: no fix has a valid coordinate",
     "side_panel_tooltip_over_the_coordinate_warning"
 )]
 #[case::masked_snapped_track_hint(
@@ -2104,7 +2104,7 @@ impl RowHoverTarget {
 #[case::cells_to_trigger(
     RowHoverTarget::Cells,
     RowHoverTarget::SnapTrigger,
-    "Snapping - completed 2 of 5 chunks",
+    "Snapping: chunk 3/5",
     "side_panel_tooltip_handover_cells_to_trigger"
 )]
 #[case::trigger_to_cells(
@@ -2200,9 +2200,7 @@ fn snapshot_the_trigger_tooltip_continues_when_its_run_starts_under_the_pointer(
     assert!(
         harness
             .inner
-            .query_by_label(
-                "Snap to road - match this track against the OpenStreetMap road network"
-            )
+            .query_by_label("Snap to road: match this track to the OpenStreetMap road network")
             .is_some(),
         "the idle trigger's tooltip"
     );
@@ -2221,7 +2219,7 @@ fn snapshot_the_trigger_tooltip_continues_when_its_run_starts_under_the_pointer(
     assert!(
         harness
             .inner
-            .query_by_label("Snapping - completed 2 of 5 chunks")
+            .query_by_label("Snapping: chunk 3/5")
             .is_some(),
         "the tooltip must state the progress of the run that started"
     );
@@ -2271,7 +2269,7 @@ fn snapshot_the_trigger_takes_the_tooltip_when_wider_columns_shift_it_under_the_
     assert!(
         harness
             .inner
-            .query_by_label("Snapping - completed 2 of 5 chunks")
+            .query_by_label("Snapping: chunk 3/5")
             .is_some(),
         "the trigger the wider columns moved under the pointer"
     );

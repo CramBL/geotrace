@@ -42,12 +42,12 @@ const GEOMAGNETIC_STORM: &str = "Geomagnetic storm";
 const SOLAR_FLARE: &str = "Solar flare";
 
 /// Leads the TEC line, which states a range of values.
-const TEC_OVER_THE_TRACK: &str = "TEC over the track";
+const TEC_OVER_TRACK: &str = "TEC over track";
 
 /// Leads the TEC deviation line, which states one share of the quiet median,
 /// the storm grade it reaches, how long that grade held, and the geomagnetic
 /// activity before it.
-const TEC_DEVIATION: &str = "TEC deviation";
+const TEC_DEVIATION: &str = "ΔTEC";
 
 /// Hours before a TEC deviation's peak epoch the archived geomagnetic indices
 /// are read over, looking for a storm that would account for the deviation.
@@ -58,9 +58,9 @@ const TEC_DEVIATION: &str = "TEC deviation";
 /// as the reference material states no figure to take.
 const GEOMAGNETIC_LOOKBACK_HOURS: i64 = 48;
 
-/// Closes the solar flare line. Only a flare that peaked while the receiver
-/// was in daylight counts, so every flare line ends this way.
-const RECEIVER_ON_THE_SUNLIT_SIDE: &str = "receiver on the sunlit side";
+/// Closes the solar flare line's limit. Only a flare that peaked while the
+/// receiver was in daylight counts.
+const SUNLIT_RECEIVER: &str = "sunlit";
 
 /// How the flare line writes a peak instant, which the catalog publishes to
 /// the minute.
@@ -78,15 +78,15 @@ pub static WARNING_LEVELS: LazyLock<Vec<WarningLevelExplanation>> = LazyLock::ne
     vec![
         WarningLevelExplanation {
             trigger: format!(
-                "{}: {INTERFERENCE_TRIGGER_PERCENT:.0} % or more of aircraft in a crossed cell \
-                 reported low navigation accuracy (gpsjam.org's own yellow level).",
+                "{}: ≥{INTERFERENCE_TRIGGER_PERCENT:.0}% of aircraft in a crossed cell reported \
+                 low navigation accuracy (gpsjam.org's yellow level).",
                 gt_jam::text::LAYER_LABEL
             ),
             reference: gt_jam::reference::AIRCRAFT_INTERFERENCE,
         },
         WarningLevelExplanation {
             trigger: format!(
-                "Geomagnetic activity: {} or {} at {} or higher, NOAA's {} storm level.",
+                "Geomagnetic activity: {} or {} ≥{} (NOAA {}).",
                 GeomagneticIndex::Kp,
                 GeomagneticIndex::Hp30,
                 GeomagneticStormClass::Minor.lowest_value(),
@@ -96,8 +96,8 @@ pub static WARNING_LEVELS: LazyLock<Vec<WarningLevelExplanation>> = LazyLock::ne
         },
         WarningLevelExplanation {
             trigger: format!(
-                "Solar flares: class {FLARE_TRIGGER_CLASSIFICATION} or stronger, NOAA's {} level, \
-                 while the receiver was on the sunlit side.",
+                "Solar flares: class {FLARE_TRIGGER_CLASSIFICATION} or stronger (NOAA {}), \
+                 receiver is on the sunlit side.",
                 RadioBlackoutClass::Minor.scale_name()
             ),
             reference: gt_flare::reference::SOLAR_FLARES,
@@ -109,17 +109,18 @@ pub static WARNING_LEVELS: LazyLock<Vec<WarningLevelExplanation>> = LazyLock::ne
     ]
 });
 
-/// One metric's finding: the metric that reached its disturbance level, and
-/// the value it reached there.
+/// One metric's finding: the metric that reached its disturbance level, the
+/// level it warns from, and the value it reached there.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WarningLine {
     metric: &'static str,
+    limit: String,
     finding: String,
 }
 
 impl fmt::Display for WarningLine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.metric, self.finding)
+        write!(f, "{} ({}): {}", self.metric, self.limit, self.finding)
     }
 }
 
@@ -219,10 +220,8 @@ impl DisturbanceEvidence {
         if let Some(percent) = *aircraft_interference {
             lines.push(WarningLine {
                 metric: gt_jam::text::LAYER_LABEL,
-                finding: format!(
-                    "up to {percent:.1} % of aircraft in a crossed cell (warns from \
-                     {INTERFERENCE_TRIGGER_PERCENT:.0} %)"
-                ),
+                limit: format!("≥{INTERFERENCE_TRIGGER_PERCENT:.0}%"),
+                finding: format!("up to {percent:.1}% of aircraft in a crossed cell"),
             });
         }
         if let Some(peak) = *solar_flare {
@@ -404,13 +403,13 @@ impl GeomagneticActivityBeforePeak {
     fn finding(self) -> String {
         match self {
             Self::NoStorm => {
-                format!("no geomagnetic storm in the {GEOMAGNETIC_LOOKBACK_HOURS} h before")
+                format!("no geomagnetic storm in the {GEOMAGNETIC_LOOKBACK_HOURS}h before")
             }
             Self::Storm {
                 class,
                 hours_before_peak,
             } => format!(
-                "after a {} storm {hours_before_peak} h before",
+                "after a {} storm {hours_before_peak}h before",
                 class.scale_name()
             ),
         }
@@ -436,10 +435,10 @@ pub struct TecDeviationEvidence {
 }
 
 impl TecDeviationEvidence {
-    /// The deviation's own share of the median, the share the same side of the
-    /// median warns from, the grade the index puts it at, how long that grade
-    /// held at the node the peak was read from, and what the geomagnetic
-    /// indices hold over the hours before it.
+    /// The deviation's own share of the median, the grade the index puts it
+    /// at, how long that grade held at the node the peak was read from, and
+    /// what the geomagnetic indices hold over the hours before it. The limit
+    /// is the trigger on the same side of the median as the deviation itself.
     fn warning_line(self) -> WarningLine {
         let deviation = self.peak.deviation;
         let trigger = QuietTimeDeviation::from_log_ratio(
@@ -447,10 +446,9 @@ impl TecDeviationEvidence {
         );
         let mut clauses = vec![
             format!(
-                "{:+.0} % from the {}-day median (warns from {:+.0} %)",
+                "{:+.0}% from the {}-day median",
                 deviation.percent_from_median(),
-                quiet_time::BACKGROUND_WINDOW_DAYS,
-                trigger.percent_from_median()
+                quiet_time::BACKGROUND_WINDOW_DAYS
             ),
             format!(
                 "{} (W = {})",
@@ -458,13 +456,22 @@ impl TecDeviationEvidence {
                 deviation.storm_index_value()
             ),
         ];
-        clauses.extend(self.peak.storm_grade_run.map(|run| format!("for {run}")));
+        clauses.extend(self.peak.storm_grade_run.map(|run| run.to_string()));
         clauses.extend(
             self.geomagnetic_before_peak
                 .map(GeomagneticActivityBeforePeak::finding),
         );
         WarningLine {
             metric: TEC_DEVIATION,
+            limit: format!(
+                "{}{:+.0}%",
+                if deviation.log_ratio() < 0.0 {
+                    '<'
+                } else {
+                    '>'
+                },
+                trigger.percent_from_median()
+            ),
             finding: clauses.join(", "),
         }
     }
@@ -492,8 +499,9 @@ impl GeomagneticStormPeak {
     fn warning_line(self) -> WarningLine {
         WarningLine {
             metric: GEOMAGNETIC_STORM,
+            limit: format!("≥{}", GeomagneticStormClass::Minor.lowest_value()),
             finding: format!(
-                "{} reached {} ({})",
+                "{} {}, {}",
                 self.index,
                 self.activity,
                 self.storm.scale_name()
@@ -527,8 +535,9 @@ impl SunlitFlarePeak {
     fn warning_line(self) -> WarningLine {
         WarningLine {
             metric: SOLAR_FLARE,
+            limit: format!("≥{FLARE_TRIGGER_CLASSIFICATION}, {SUNLIT_RECEIVER}"),
             finding: format!(
-                "{} at {} UTC ({}), {RECEIVER_ON_THE_SUNLIT_SIDE}",
+                "{} at {} UTC, {}",
                 self.classification,
                 self.peak.format(FLARE_PEAK_FORMAT),
                 self.blackout.scale_name()
@@ -547,7 +556,7 @@ struct TecSpan {
 impl TecSpan {
     fn context_line(self) -> String {
         format!(
-            "{TEC_OVER_THE_TRACK}: {:.0} to {:.0} {}",
+            "{TEC_OVER_TRACK}: {:.0}–{:.0} {}",
             self.lowest,
             self.highest,
             gt_ionex::text::LEGEND_UNIT
@@ -834,7 +843,7 @@ mod tests {
 
     /// The deviation a track reaches at `percent` of a fully archived quiet
     /// window's median, built the way the archive read builds it, holding at
-    /// the storm grade over five two-hour epochs, which span 8 h.
+    /// the storm grade over five two-hour epochs, which span 8h.
     fn tec_deviation(percent: f64) -> Option<TecDeviationEvidence> {
         tec_deviation_corroborated_by(percent, None)
     }
@@ -999,7 +1008,7 @@ mod tests {
     }
 
     /// A crossed cell-day below the trigger is background, one at it is not.
-    /// The boundary is the 2 % share gpsjam starts colouring its cells at.
+    /// The boundary is the 2% share gpsjam starts colouring its cells at.
     #[rstest]
     #[case::below(1.9, false)]
     #[case::at_the_trigger(2.0, true)]
@@ -1044,7 +1053,7 @@ mod tests {
 
         assert_eq!(
             evidence_of(&fixture, &[]).warning_lines(),
-            ["Geomagnetic storm: Hp30 reached 7.667 (G3)"]
+            ["Geomagnetic storm (≥5): Hp30 7.667, G3"]
         );
     }
 
@@ -1131,13 +1140,11 @@ mod tests {
         assert_eq!(
             evidence_of(&fixture, &flares).warning_lines(),
             [
-                "Geomagnetic storm: Kp reached 9 (G5)",
-                "Aircraft interference: up to 34.2 % of aircraft in a crossed cell (warns from \
-                 2 %)",
-                "Solar flare: X5.8 at 2024-05-11 02:01 UTC (R3), receiver on the sunlit side",
-                "TEC deviation: +62 % from the 27-day median (warns from +43 %), moderate \
-                 ionospheric storm (W = 3), for 8 h",
-                "TEC over the track: 12 to 175 TECU",
+                "Geomagnetic storm (≥5): Kp 9, G5",
+                "Aircraft interference (≥2%): up to 34.2% of aircraft in a crossed cell",
+                "Solar flare (≥M1, sunlit): X5.8 at 2024-05-11 02:01 UTC, R3",
+                "ΔTEC (>+43%): +62% from the 27-day median, moderate ionospheric storm (W = 3), 8h",
+                "TEC over track: 12–175 TECU",
             ]
         );
     }
@@ -1157,24 +1164,21 @@ mod tests {
         assert!(evidence.warning_lines().is_empty());
     }
 
-    /// The line states the signed share of the median, the share that side
-    /// warns from, the grade the index puts it at, and how long that grade
-    /// held at the node the peak was read from.
+    /// The line states the signed share of the median, the grade the index
+    /// puts it at, how long that grade held at the node the peak was read
+    /// from, and the trigger on the deviation's own side of the median.
     #[rstest]
     #[case::a_moderate_storm(
         62.0,
-        "TEC deviation: +62 % from the 27-day median (warns from +43 %), moderate ionospheric \
-         storm (W = 3), for 8 h"
+        "ΔTEC (>+43%): +62% from the 27-day median, moderate ionospheric storm (W = 3), 8h"
     )]
     #[case::a_negative_moderate_storm(
         -35.0,
-        "TEC deviation: -35 % from the 27-day median (warns from -30 %), moderate ionospheric \
-         storm (W = -3), for 8 h"
+        "ΔTEC (<-30%): -35% from the 27-day median, moderate ionospheric storm (W = -3), 8h"
     )]
     #[case::an_intense_storm(
         200.0,
-        "TEC deviation: +200 % from the 27-day median (warns from +43 %), intense ionospheric \
-         storm (W = 4), for 8 h"
+        "ΔTEC (>+43%): +200% from the 27-day median, intense ionospheric storm (W = 4), 8h"
     )]
     fn the_deviation_line_states_its_share_and_grade(#[case] percent: f64, #[case] expected: &str) {
         let fixture = SeriesFixture {
@@ -1205,8 +1209,8 @@ mod tests {
         assert_eq!(
             evidence_of(&fixture, &[]).warning_lines(),
             [
-                "TEC deviation: +62 % from the 27-day median (warns from +43 %), moderate \
-                 ionospheric storm (W = 3), for one 2 h epoch"
+                "ΔTEC (>+43%): +62% from the 27-day median, moderate ionospheric storm (W = 3), \
+                 one 2h epoch"
             ]
         );
     }
@@ -1220,18 +1224,17 @@ mod tests {
             class: GeomagneticStormClass::Strong,
             hours_before_peak: 5,
         }),
-        "TEC deviation: -35 % from the 27-day median (warns from -30 %), moderate ionospheric \
-         storm (W = -3), for 8 h, after a G3 storm 5 h before"
+        "ΔTEC (<-30%): -35% from the 27-day median, moderate ionospheric storm (W = -3), 8h, \
+         after a G3 storm 5h before"
     )]
     #[case::a_quiet_window(
         Some(GeomagneticActivityBeforePeak::NoStorm),
-        "TEC deviation: -35 % from the 27-day median (warns from -30 %), moderate ionospheric \
-         storm (W = -3), for 8 h, no geomagnetic storm in the 48 h before"
+        "ΔTEC (<-30%): -35% from the 27-day median, moderate ionospheric storm (W = -3), 8h, \
+         no geomagnetic storm in the 48h before"
     )]
     #[case::an_unarchived_window(
         None,
-        "TEC deviation: -35 % from the 27-day median (warns from -30 %), moderate ionospheric \
-         storm (W = -3), for 8 h"
+        "ΔTEC (<-30%): -35% from the 27-day median, moderate ionospheric storm (W = -3), 8h"
     )]
     fn the_deviation_line_states_the_geomagnetic_activity_before_its_peak(
         #[case] geomagnetic_before_peak: Option<GeomagneticActivityBeforePeak>,
@@ -1353,12 +1356,12 @@ mod tests {
                 &[recording(id, "morning.gtd", &stormy, &[], &positions)],
                 no_flares
             ),
-            ["Space weather during morning.gtd\nGeomagnetic storm: Hp30 reached 7.667 (G3)"],
+            ["Space weather during morning.gtd\nGeomagnetic storm (≥5): Hp30 7.667, G3"],
             "the archived day reached the loaded recording"
         );
         assert_eq!(
             only_track_warning(&warning).lines,
-            ["Geomagnetic storm: Hp30 reached 7.667 (G3)"]
+            ["Geomagnetic storm (≥5): Hp30 7.667, G3"]
         );
 
         let stormier = SeriesFixture {
@@ -1385,8 +1388,8 @@ mod tests {
             ..SeriesFixture::default()
         },
         format!(
-            "Space weather during morning.gtd\nTEC deviation: +62 % from the 27-day median \
-             (warns from +43 %), moderate ionospheric storm (W = 3), for 8 h\n{}",
+            "Space weather during morning.gtd\nΔTEC (>+43%): +62% from the 27-day median, \
+             moderate ionospheric storm (W = 3), 8h\n{}",
             *gt_ionex::text::DEVIATION_REFERENCE_CAVEAT
         )
     )]
@@ -1395,7 +1398,7 @@ mod tests {
             geomagnetic: geomagnetic_points(Some(7.667), None),
             ..SeriesFixture::default()
         },
-        "Space weather during morning.gtd\nGeomagnetic storm: Hp30 reached 7.667 (G3)".to_owned()
+        "Space weather during morning.gtd\nGeomagnetic storm (≥5): Hp30 7.667, G3".to_owned()
     )]
     fn a_toast_stating_a_deviation_closes_with_its_reference(
         #[case] series: SeriesFixture,
@@ -1448,8 +1451,8 @@ mod tests {
         assert_eq!(
             warning.reassess(&recordings, no_flares),
             [
-                "Space weather during ride-0.gtd\nGeomagnetic storm: Hp30 reached 5 (G1)",
-                "Space weather during ride-1.gtd\nGeomagnetic storm: Hp30 reached 5 (G1)",
+                "Space weather during ride-0.gtd\nGeomagnetic storm (≥5): Hp30 5, G1",
+                "Space weather during ride-1.gtd\nGeomagnetic storm (≥5): Hp30 5, G1",
             ]
         );
     }
@@ -1503,11 +1506,11 @@ mod tests {
             [
                 (
                     "morning.gtd (track 1)",
-                    ["Geomagnetic storm: Hp30 reached 5 (G1)".to_owned()].as_slice()
+                    ["Geomagnetic storm (≥5): Hp30 5, G1".to_owned()].as_slice()
                 ),
                 (
                     "morning.gtd (track 3)",
-                    ["Geomagnetic storm: Hp30 reached 9 (G5)".to_owned()].as_slice()
+                    ["Geomagnetic storm (≥5): Hp30 9, G5".to_owned()].as_slice()
                 ),
             ]
         );

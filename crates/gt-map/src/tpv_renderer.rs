@@ -408,7 +408,7 @@ fn sky_section_ui(
         SkySection::NoReportNearby => {
             ui.label(
                 RichText::new(format!(
-                    "No satellite report within {SKY_REPORT_MAX_AGE_SECS} s"
+                    "No satellite report within {SKY_REPORT_MAX_AGE_SECS}s"
                 ))
                 .weak()
                 .small(),
@@ -428,7 +428,7 @@ fn sky_section_ui(
     }
 }
 
-/// "Report 2.1 s earlier" / "Report 2.1 s later" for a borrowed report.
+/// "Report 2.1s earlier" / "Report 2.1s later" for a borrowed report.
 fn report_age_label(age: chrono::Duration) -> String {
     let seconds = age.num_milliseconds().abs() as f64 / 1000.0;
     let side = if age > chrono::Duration::zero() {
@@ -436,7 +436,7 @@ fn report_age_label(age: chrono::Duration) -> String {
     } else {
         "later"
     };
-    format!("Report {seconds:.1} s {side}")
+    format!("Report {seconds:.1}s {side}")
 }
 
 /// Zoom-derived visual parameters computed once per frame and shared
@@ -602,7 +602,7 @@ fn position_rows_ui(ui: &mut Ui, fix: &NavPoint, placement: FixPlacement) {
         FixPlacement::Placed(resolved) => drawn_at_row_ui(ui, resolved),
         FixPlacement::TrackWithoutGeometry => {
             ui.label("Not drawn");
-            ui.label("No fix in this track has a valid coordinate");
+            ui.label("No valid coordinate in this track");
             ui.end_row();
         }
     }
@@ -624,7 +624,7 @@ fn hover_grid_ui(ui: &mut Ui, point: PlacedPoint<'_>, recording_name: Option<&st
 
             ui.label("Speed");
             match fix.tpv.velocity_kmh() {
-                Some(v) => ui.label(format!("{:.1} km/h", v)),
+                Some(v) => ui.label(format!("{:.1}km/h", v)),
                 None => ui.label(EM_DASH), // em-dash: speed unknown (interpolated point)
             };
             ui.end_row();
@@ -638,7 +638,7 @@ fn hover_grid_ui(ui: &mut Ui, point: PlacedPoint<'_>, recording_name: Option<&st
 
             if let Some(eph) = fix.tpv.eph_m() {
                 ui.label("Accuracy");
-                ui.label(format!("±{eph:.1} m"));
+                ui.label(format!("±{eph:.1}m"));
                 ui.end_row();
             }
 
@@ -806,7 +806,7 @@ fn sticky_metrics(
         ui.label("Speed");
         match p.tpv.velocity_kmh() {
             Some(v) => {
-                ui.label(format!("{:.1} km/h", v));
+                ui.label(format!("{:.1}km/h", v));
             }
             None => {
                 ui.label(EM_DASH);
@@ -827,7 +827,7 @@ fn sticky_metrics(
 
         if let Some(eph) = p.tpv.eph_m() {
             ui.label("Accuracy");
-            ui.label(format!("±{eph:.1} m"));
+            ui.label(format!("±{eph:.1}m"));
             ui.end_row();
         }
 

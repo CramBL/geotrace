@@ -43,7 +43,7 @@ impl TrackColumnCells {
     /// distance with the unit its header states.
     pub fn accessibility_label(&self) -> String {
         let distance = match &self.distance_km {
-            Some(km) => format!("{km} km"),
+            Some(km) => format!("{km}km"),
             None => self.distance().to_owned(),
         };
         format!("#{}  {distance}  {}", self.number, self.duration)

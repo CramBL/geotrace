@@ -591,7 +591,7 @@ impl App {
         };
         let current = loader::stored_segmentation_from_config(&self.processing_config);
         let stored = prompt.stored;
-        let fmt_gap = |us: i64| format!("{} s", us / 1_000_000);
+        let fmt_gap = |us: i64| format!("{}s", us / 1_000_000);
         let fmt_split_rule = |rule: StoredTrackSplitRule| match rule {
             StoredTrackSplitRule::ForwardGapOnly => "forward only".to_owned(),
             StoredTrackSplitRule::StepInEitherDirection => "either direction".to_owned(),

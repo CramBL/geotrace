@@ -269,7 +269,7 @@ mod tests {
     fn one_warning() -> Vec<TrackSpaceWeatherWarning> {
         vec![TrackSpaceWeatherWarning {
             track_label: "morning.gtd (track 2)".to_owned(),
-            lines: vec!["Geomagnetic storm: Hp30 reached 7.667 (G3)".to_owned()],
+            lines: vec!["Geomagnetic storm (≥5): Hp30 7.667, G3".to_owned()],
             states_tec_deviation: false,
         }]
     }
@@ -280,8 +280,8 @@ mod tests {
         vec![TrackSpaceWeatherWarning {
             track_label: "morning.gtd (track 2)".to_owned(),
             lines: vec![
-                "TEC deviation: -51 % from the 27-day median (warns from -30 %), intense \
-                 ionospheric storm (W = -4), for 8 h, no geomagnetic storm in the 48 h before"
+                "ΔTEC (<-30%): -51% from the 27-day median, intense ionospheric storm \
+                 (W = -4), 8h, no geomagnetic storm in the 48h before"
                     .to_owned(),
             ],
             states_tec_deviation: true,
@@ -295,8 +295,7 @@ mod tests {
             .map(|index| TrackSpaceWeatherWarning {
                 track_label: format!("ride-{index}.gtd"),
                 lines: vec![format!(
-                    "Aircraft interference: up to {}.0 % of aircraft in a crossed cell (warns \
-                     from 2 %)",
+                    "Aircraft interference (≥2%): up to {}.0% of aircraft in a crossed cell",
                     index + 3
                 )],
                 states_tec_deviation: false,
@@ -309,8 +308,7 @@ mod tests {
     fn levels() -> Vec<WarningLevelExplanation> {
         vec![
             WarningLevelExplanation {
-                trigger: "Aircraft interference: 2 % or more of aircraft in a crossed cell."
-                    .to_owned(),
+                trigger: "Aircraft interference: ≥2% of aircraft in a crossed cell.".to_owned(),
                 reference: gt_jam::reference::AIRCRAFT_INTERFERENCE,
             },
             WarningLevelExplanation {
@@ -381,7 +379,7 @@ mod tests {
     /// affected track over the values it reached.
     #[rstest]
     #[case::warned(one_warning(), "morning.gtd (track 2)")]
-    #[case::warned_values(one_warning(), "Geomagnetic storm: Hp30 reached 7.667 (G3)")]
+    #[case::warned_values(one_warning(), "Geomagnetic storm (≥5): Hp30 7.667, G3")]
     #[case::idle(Vec::new(), IDLE_HOVER_TEXT)]
     fn the_hover_names_the_affected_tracks_or_explains_the_idle_glyph(
         #[case] track_warnings: Vec<TrackSpaceWeatherWarning>,

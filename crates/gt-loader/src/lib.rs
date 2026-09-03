@@ -433,7 +433,7 @@ fn coordinates_out_of_range_warning(
         count: u32::try_from(fixes.len()).unwrap_or(u32::MAX),
         issue: format!("fix(es) with a {axis} out of range"),
         description: format!(
-            "{}. Each such fix is drawn at a position interpolated from the fixes around it.",
+            "{}. Each is drawn between the fixes around it.",
             load_warning::first_few_listed(fixes)
         ),
     })
@@ -495,7 +495,7 @@ fn dropped_markers_warning(issue: &str, dropped: &[DroppedMarker]) -> Option<Loa
         count: u32::try_from(dropped.len()).unwrap_or(u32::MAX),
         issue: issue.to_owned(),
         description: format!(
-            "{}. A marker written outside the coordinate ranges has no place on the map and is left out.",
+            "{}. Left off the map: outside the coordinate ranges.",
             load_warning::first_few_listed(dropped)
         ),
     })
@@ -1647,14 +1647,12 @@ mod tests {
                 (
                     1,
                     "fix(es) with a latitude out of range",
-                    "record 3 wrote NaN°. Each such fix is drawn at a position \
-                     interpolated from the fixes around it."
+                    "record 3 wrote NaN°. Each is drawn between the fixes around it."
                 ),
                 (
                     1,
                     "fix(es) with a longitude out of range",
-                    "record 5 wrote -181°. Each such fix is drawn at a position \
-                     interpolated from the fixes around it."
+                    "record 5 wrote -181°. Each is drawn between the fixes around it."
                 ),
             ]
         );

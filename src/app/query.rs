@@ -100,7 +100,7 @@ const EXAMPLES: &[QueryExample] = &[
     },
     QueryExample {
         name: "Poor accuracy while moving",
-        description: "eph worse than 20 m above walking speed",
+        description: "eph worse than 20m above walking speed",
         text: "points\n| where eph > 20 m and velocity > 5 km/h",
     },
     QueryExample {
@@ -115,7 +115,7 @@ const EXAMPLES: &[QueryExample] = &[
     },
     QueryExample {
         name: "Low GPS utilization",
-        description: "In-fix share of visible GPS satellites below 50 %",
+        description: "In-fix share of visible GPS satellites below 50%",
         text: "points\n| with mask 15 deg\n| where util_gps < 50 %\n| draw\n| table time, util_gps, sats_fix",
     },
     QueryExample {

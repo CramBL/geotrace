@@ -86,7 +86,7 @@ impl GeomagneticIndex {
             source_cadence_and_scale: format!(
                 "{SOURCE_NAME}, averaged over stations worldwide, {scale}",
                 scale = match self {
-                    Self::Kp => "0 to 9 in thirds of a unit.",
+                    Self::Kp => "0–9 in thirds of a unit.",
                     Self::Hp30 => "thirds of a unit with no upper end.",
                 }
             ),

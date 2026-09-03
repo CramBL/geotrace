@@ -94,7 +94,7 @@ mod tests {
             hover.lines,
             [
                 "TEC 42.3 TECU",
-                "L1 delay about 6.9 m",
+                "L1 delay about 6.9m",
                 "Interpolated between maps at 2024-05-10T18:00:00 (UTC)",
             ]
         );

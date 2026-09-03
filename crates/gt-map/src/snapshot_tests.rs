@@ -503,8 +503,8 @@ fn snapshot_jamming_overlay(
 fn snapshot_warning_levels() -> Vec<gt_ui_types::WarningLevelExplanation> {
     vec![
         gt_ui_types::WarningLevelExplanation {
-            trigger: "Aircraft interference: 2 % or more of aircraft in a crossed cell reported \
-                      low navigation accuracy (gpsjam.org's own yellow level)."
+            trigger: "Aircraft interference: ≥2% of aircraft in a crossed cell reported low \
+                      navigation accuracy (gpsjam.org's yellow level)."
                 .to_owned(),
             reference: gt_jam::reference::AIRCRAFT_INTERFERENCE,
         },
@@ -521,15 +521,13 @@ fn snapshot_track_warnings() -> Vec<gt_ui_types::TrackSpaceWeatherWarning> {
     vec![gt_ui_types::TrackSpaceWeatherWarning {
         track_label: "morning.gtd (track 2)".to_owned(),
         lines: vec![
-            "Geomagnetic storm: Hp30 reached 7.667 (G3)".to_owned(),
-            "Aircraft interference: up to 34.2 % of aircraft in a crossed cell (warns from 2 %)"
+            "Geomagnetic storm (≥5): Hp30 7.667, G3".to_owned(),
+            "Aircraft interference (≥2%): up to 34.2% of aircraft in a crossed cell".to_owned(),
+            "Solar flare (≥M1, sunlit): X5.8 at 2024-05-11 02:01 UTC, R3".to_owned(),
+            "ΔTEC (<-30%): -73% from the 27-day median, intense ionospheric storm (W = -4), 22h, \
+             after a G5 storm 9h before"
                 .to_owned(),
-            "Solar flare: X5.8 at 2024-05-11 02:01 UTC (R3), receiver on the sunlit side"
-                .to_owned(),
-            "TEC deviation: -73 % from the 27-day median (warns from -30 %), intense ionospheric \
-             storm (W = -4), for 22 h, after a G5 storm 9 h before"
-                .to_owned(),
-            "TEC over the track: 12 to 175 TECU".to_owned(),
+            "TEC over track: 12–175 TECU".to_owned(),
         ],
         states_tec_deviation: true,
     }]
@@ -542,7 +540,7 @@ fn snapshot_many_track_warnings() -> Vec<gt_ui_types::TrackSpaceWeatherWarning> 
         .map(|index| gt_ui_types::TrackSpaceWeatherWarning {
             track_label: format!("ride-{index}.gtd"),
             lines: vec![format!(
-                "Geomagnetic storm: Kp reached {}.667 (G3)",
+                "Geomagnetic storm (≥5): Kp {}.667, G3",
                 5 + index % 3
             )],
             states_tec_deviation: false,
@@ -952,7 +950,7 @@ fn snap_snapped_track_edge_hover() {
                 edges: vec![gt_ui_types::SnappedEdgeInfo {
                     name: Some("H.C. Andersens Boulevard".to_owned()),
                     road_class: Some("Tertiary".to_owned()),
-                    speed_limit: Some("50 km/h".to_owned()),
+                    speed_limit: Some("50km/h".to_owned()),
                     surface: Some("Paved smooth".to_owned()),
                 }],
                 whiskers: Vec::new(),

@@ -231,7 +231,7 @@ impl SnapRun {
 /// One [`SnapWarning`] as the snap status hover shows it.
 ///
 /// Lives app-side so the panel needs no gt-snap dependency. Chunk indices
-/// are shown 1-based, matching the progress display ("completed 2 of 5").
+/// are shown 1-based, matching the progress display ("chunk 3/5").
 pub fn warning_line(warning: &SnapWarning) -> String {
     match warning {
         SnapWarning::ChunkFailed {
@@ -293,7 +293,7 @@ pub fn stale_reasons(
         ));
     }
     let meters = |v: Option<f64>| match v {
-        Some(v) => format!("{v} m"),
+        Some(v) => format!("{v}m"),
         None => "unset".to_owned(),
     };
     let plain = |v: Option<f64>| match v {
@@ -1111,7 +1111,7 @@ mod tests {
     #[case::search_radius_differs(
         SnapParams { search_radius_m: Some(25.0), ..SnapParams::new(Costing::Auto) },
         server_host(DEFAULT_SERVER_URL),
-        &["Search radius was unset - the setting is now 25 m"],
+        &["Search radius was unset - the setting is now 25m"],
     )]
     #[case::turn_penalty_differs(
         SnapParams { turn_penalty_factor: Some(300.0), ..SnapParams::new(Costing::Auto) },
@@ -1121,7 +1121,7 @@ mod tests {
     #[case::gps_accuracy_differs(
         SnapParams { gps_accuracy_override_m: Some(10.0), ..SnapParams::new(Costing::Auto) },
         server_host(DEFAULT_SERVER_URL),
-        &["GPS accuracy override was unset - the setting is now 10 m"],
+        &["GPS accuracy override was unset - the setting is now 10m"],
     )]
     #[case::host_differs(
         SnapParams::new(Costing::Auto),
@@ -1133,7 +1133,7 @@ mod tests {
         server_host(DEFAULT_SERVER_URL),
         &[
             "Snapped as Auto - would now snap as Bicycle",
-            "Search radius was unset - the setting is now 25 m",
+            "Search radius was unset - the setting is now 25m",
         ],
     )]
     fn stale_reasons_name_each_difference(
