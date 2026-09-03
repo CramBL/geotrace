@@ -10,7 +10,9 @@ use gt_store::DatabaseRef;
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::LoadedLogId;
 
-use crate::app::anchored_dialog::{AnchoredDialog, AnchoredDialogKind, DialogRegions};
+use crate::app::anchored_dialog::{
+    AnchoredDialog, AnchoredDialogKind, DialogRegions, HeldBodyLines,
+};
 use crate::app::history_db::ExistingLogAttachment;
 use crate::app::modals::{DialogActions, DialogBody, DialogRowLeadingControl};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
@@ -194,18 +196,23 @@ impl LogAssociationDialog {
                     .wrap(),
                 );
                 ui.add_space(4.0);
-                regions.frozen_at_open(ui, CANDIDATES_REGION, |ui| {
-                    Grid::new("log_association_candidates")
-                        .num_columns(2)
-                        .spacing([16.0, 4.0])
-                        .show(ui, |ui| {
-                            for candidate in candidates.ranked() {
-                                let name =
-                                    names.get(&candidate.recording).copied().unwrap_or(EM_DASH);
-                                self.candidate_row_ui(ui, candidate, name);
-                            }
-                        });
-                });
+                regions.frozen_at_open(
+                    ui,
+                    CANDIDATES_REGION,
+                    HeldBodyLines::what_the_content_took(),
+                    |ui| {
+                        Grid::new("log_association_candidates")
+                            .num_columns(2)
+                            .spacing([16.0, 4.0])
+                            .show(ui, |ui| {
+                                for candidate in candidates.ranked() {
+                                    let name =
+                                        names.get(&candidate.recording).copied().unwrap_or(EM_DASH);
+                                    self.candidate_row_ui(ui, candidate, name);
+                                }
+                            });
+                    },
+                );
                 ui.add_space(8.0);
                 self.attach_ui(ui, regions, attachable, write_access);
             }),
@@ -287,10 +294,10 @@ impl LogAssociationDialog {
         attachable: bool,
         write_access: WriteAccess,
     ) {
-        regions.frozen_at_open_holding_lines(
+        regions.frozen_at_open(
             ui,
             STORED_ATTACHMENT_REGION,
-            STORED_ATTACHMENT_LINES,
+            HeldBodyLines::at_least(STORED_ATTACHMENT_LINES),
             |ui| {
                 if let Some(existing) = &self.duplicate {
                     ui.add(

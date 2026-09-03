@@ -14,7 +14,7 @@ use egui_kittest::kittest::{By, Queryable as _};
 use gt_test_utils::{AuditedWindow, HarnessInteraction as _, WindowFitAssertions as _};
 use strum::IntoEnumIterator as _;
 
-use super::{AnchoredDialog, AnchoredDialogKind};
+use super::{AnchoredDialog, AnchoredDialogKind, HeldBodyLines};
 use crate::app::modals::{DialogActions, DialogBody, DialogRowLeadingControl};
 
 /// A control moves only because its own window moved it, never because the
@@ -92,13 +92,18 @@ fn dialog_ui(ui: &mut egui::Ui, state: &mut DialogUnderTest) {
         ui.ctx(),
         DialogBody::new(|ui| {
             ui.label(PROMPT);
-            regions.frozen_at_open_holding_lines(ui, RESULT_REGION, RESERVED_RESULT_LINES, |ui| {
-                if result_arrived {
-                    for line in 0..ARRIVING_LINE_COUNT {
-                        ui.label(format!("the result, line {line}"));
+            regions.frozen_at_open(
+                ui,
+                RESULT_REGION,
+                HeldBodyLines::at_least(RESERVED_RESULT_LINES),
+                |ui| {
+                    if result_arrived {
+                        for line in 0..ARRIVING_LINE_COUNT {
+                            ui.label(format!("the result, line {line}"));
+                        }
                     }
-                }
-            });
+                },
+            );
         }),
         DialogRowLeadingControl::new(|ui| {
             state.leading_control_text_color = Some(ui.visuals().text_color());

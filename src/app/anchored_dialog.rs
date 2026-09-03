@@ -32,6 +32,9 @@ const FROZEN_REGIONS: &str = "frozen_regions";
 #[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
 pub(super) enum AnchoredDialogKind {
     AssociateLog,
+    DeleteArchivedDays,
+    ForceQuit,
+    SnapToRoadScope,
 }
 
 impl AnchoredDialogKind {
@@ -40,6 +43,14 @@ impl AnchoredDialogKind {
             // Room for a recording name beside how much of the log it ran
             // alongside.
             Self::AssociateLog => 460.0,
+            // Room for an archive's name beside the days it loses, and for a
+            // recording name on one line.
+            Self::DeleteArchivedDays => 480.0,
+            // Fits inside the window that shutdown sizes itself down to.
+            Self::ForceQuit => 360.0,
+            // Room for the two scope rows, and for the statement about
+            // replacing data on two lines under them.
+            Self::SnapToRoadScope => 380.0,
         }
     }
 }
@@ -73,6 +84,49 @@ struct HeldSize {
 #[derive(Clone, Default)]
 struct FrozenRegionHeights(BTreeMap<&'static str, f32>);
 
+/// The height one region of a dialog's body holds, in lines of body text.
+///
+/// The region takes the height its content needed on the frame the dialog
+/// opened. These two counts are the floor and the ceiling on that height.
+#[derive(Clone, Copy)]
+pub(super) struct HeldBodyLines {
+    at_least: u8,
+    at_most: Option<u8>,
+}
+
+impl HeldBodyLines {
+    /// For a region whose content is all there when the dialog opens.
+    pub(super) fn what_the_content_took() -> Self {
+        Self {
+            at_least: 0,
+            at_most: None,
+        }
+    }
+
+    /// At least `lines`. That is the room for content that arrives after the
+    /// dialog opens.
+    pub(super) fn at_least(lines: u8) -> Self {
+        Self {
+            at_least: lines,
+            at_most: None,
+        }
+    }
+
+    /// At most `lines`, for content with no length of its own to hold it: the
+    /// rest scrolls inside the region.
+    pub(super) fn and_at_most(self, lines: u8) -> Self {
+        debug_assert!(
+            lines >= self.at_least,
+            "a region cannot hold at most {lines} lines: it already holds at least {}",
+            self.at_least
+        );
+        Self {
+            at_most: Some(lines),
+            ..self
+        }
+    }
+}
+
 /// The regions of one dialog's body. Each keeps the height it had on the frame
 /// the dialog opened, and content arriving after that scrolls inside it.
 #[derive(Clone, Copy)]
@@ -81,25 +135,13 @@ pub(super) struct DialogRegions {
 }
 
 impl DialogRegions {
-    /// Draws `content` at the height it took on the frame the dialog opened.
+    /// Draws `content` at the height this region holds. `lines` bounds that
+    /// height on the frame the dialog opens.
     pub(super) fn frozen_at_open<R>(
         self,
         ui: &mut egui::Ui,
         salt: &'static str,
-        content: impl FnOnce(&mut egui::Ui) -> R,
-    ) -> R {
-        self.frozen_at_open_holding_lines(ui, salt, 0, content)
-    }
-
-    /// [`frozen_at_open`](Self::frozen_at_open) for a region whose content is
-    /// still on its way when the dialog opens: the region holds `lines` of
-    /// body text from that frame, and content taller than that scrolls inside
-    /// them.
-    pub(super) fn frozen_at_open_holding_lines<R>(
-        self,
-        ui: &mut egui::Ui,
-        salt: &'static str,
-        lines: u8,
+        lines: HeldBodyLines,
         content: impl FnOnce(&mut egui::Ui) -> R,
     ) -> R {
         let frozen = ui.data(|data| {
@@ -119,10 +161,28 @@ impl DialogRegions {
                 .inner;
         }
         // The pass the dialog opened on, where the window has no height to
-        // fill yet and every region takes what its content needs.
-        let laid_out = ui.scope(content);
+        // fill yet and every region takes what its content needs, up to what
+        // `lines` holds it to.
+        let line_height = ui.text_style_height(&TextStyle::Body);
+        let laid_out = ui.scope(|ui| match lines.at_most {
+            Some(most) => {
+                let ceiling = f32::from(most) * line_height;
+                ScrollArea::vertical()
+                    .id_salt(salt)
+                    .auto_shrink([false, true])
+                    // egui sizes a scroll area from the height its parent
+                    // has left, which is nothing on this pass. The ceiling is
+                    // set as both the minimum and the maximum: the area takes
+                    // the ceiling and then shrinks to its content.
+                    .min_scrolled_height(ceiling)
+                    .max_height(ceiling)
+                    .show(ui, content)
+                    .inner
+            }
+            None => content(ui),
+        });
         let drawn = laid_out.response.rect.height();
-        let held = drawn.max(f32::from(lines) * ui.text_style_height(&TextStyle::Body));
+        let held = drawn.max(f32::from(lines.at_least) * line_height);
         ui.add_space(held - drawn);
         ui.data_mut(|data| {
             data.get_temp_mut_or_default::<FrozenRegionHeights>(self.id)
