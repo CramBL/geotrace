@@ -15,8 +15,7 @@ use crate::tpv_renderer::{constellation_swatch, fix_count_color, seen_count_colo
 
 /// Width of the left stats/filter column's label area: the checkbox, the
 /// colour swatch and the constellation name. The count columns are added to
-/// this, so a wider seen column widens the whole column rather than crowding
-/// the names.
+/// this, so a wider seen column widens the whole column.
 const STATS_LABEL_WIDTH_PX: f32 = 100.0;
 
 /// Gap between the stats column and the plot.
@@ -28,9 +27,8 @@ const MIN_PLOT_DIAMETER_PX: f32 = 240.0;
 
 /// First-frame estimate of the vertical space below the plot (the transport
 /// and the gap above it). Only ever used before the real height has been
-/// measured; every later frame sizes the plot against the measurement, so an
-/// inexact seed costs one frame of settling rather than a permanently wrong
-/// layout.
+/// measured. Every later frame sizes the plot against the measurement, so an
+/// inexact seed costs one frame of settling.
 const TRANSPORT_RESERVE_PX: f32 = 78.0;
 
 /// Fixed width of a count column (fix, seen), sized for the column heading and
@@ -91,16 +89,15 @@ const MIN_HELD_SEEK_SECS_PER_SEC: f64 = 10.0;
 /// Glyph size of the play / pause button.
 const PLAY_ICON_SIZE_PX: f32 = 16.0;
 
-/// Width of the speed selector, sized to its widest label ("300x") rather than
-/// egui's much wider default combo width.
+/// Width of the speed selector, sized to its widest label ("300x").
 const SPEED_SELECTOR_WIDTH_PX: f32 = 52.0;
 
 /// Alpha of the underline under an explained term, low enough that it marks
 /// the term without reading as a link.
 const TERM_UNDERLINE_ALPHA: f32 = 0.5;
 
-/// The whole-track sky trails window. Owned by the app and drawn each frame;
-/// opened by [`SkyTrailsWindow::open`] from the context menus and the
+/// The whole-track sky trails window. Owned by the app and drawn each frame.
+/// Opened by [`SkyTrailsWindow::open`] from the context menus and the
 /// clicked-point window.
 pub struct SkyTrailsWindow {
     open: bool,
@@ -187,8 +184,7 @@ impl SkyTrailsWindow {
     }
 
     /// Open the window per `request`: on its track, and scrubbed to its
-    /// instant when it carries one (opened from a clicked track point) rather
-    /// than at the start.
+    /// instant when it carries one (opened from a clicked track point).
     ///
     /// Re-opening the same track keeps the scrubber, filter and playback speed
     /// where they were, so jumping to a new instant does not reset the rest of
@@ -346,7 +342,7 @@ impl WindowBody<'_> {
         // The arrow-key transport (seek, speed) only fires while the pointer is
         // over the window. Spacebar is not gated this way: it toggles play and
         // pause wherever the pointer is (handled in `transport`). Tested against
-        // the full content rect, since `ui`'s min_rect is still empty this early
+        // the full content rect, since `ui.min_rect()` is still empty this early
         // in the layout and `ui_contains_pointer` would miss.
         let window_hovered = ui.rect_contains_pointer(ui.max_rect());
 
@@ -383,7 +379,7 @@ impl WindowBody<'_> {
         let counts = trails.counts_at(stats_time, *show_not_in_fix);
 
         // Size the plot to the space left after the stats column and the
-        // transport, so resizing the window grows the plot rather than a gap.
+        // transport, so resizing the window grows the plot.
         // The reserve is measured from the previous frame and cached: egui's
         // window only ever grows to fit content, so a reserve that undershoots
         // what is really laid out below the plot makes the window creep taller
@@ -530,9 +526,9 @@ fn not_in_fix_label(ui: &egui::Ui) -> egui::text::LayoutJob {
     job
 }
 
-/// The plot diameter for the given available space, leaving `reserved` pixels
-/// below for the transport and [`STATS_COL_WIDTH_PX`] beside it, clamped so the
-/// plot stays legible in a small window.
+/// The plot diameter within `avail`, leaving `reserved` pixels below for the
+/// transport and [`STATS_COL_WIDTH_PX`] beside it, clamped so the plot stays
+/// legible in a small window.
 fn plot_diameter(avail: egui::Vec2, reserved: f32) -> f32 {
     (avail.x - STATS_COL_WIDTH_PX - COLUMN_GAP_PX)
         .min(avail.y - reserved)
@@ -659,9 +655,9 @@ fn stats_total_row(ui: &mut egui::Ui, counts: &[EpochCount]) {
     });
 }
 
-/// A count, right-aligned in a fixed-width column and coloured by the given
-/// tier function (the same colouring the sticky point popup uses), or greyed
-/// when the row is off.
+/// A count, right-aligned in a fixed-width column and coloured by `color`
+/// (the same colouring the sticky point popup uses), or greyed when the row
+/// is off.
 fn count_cell(ui: &mut egui::Ui, count: usize, color: fn(u32, bool) -> egui::Color32, on: bool) {
     let tint = if on {
         color(count as u32, ui.visuals().dark_mode)
@@ -681,11 +677,9 @@ fn count_font(ui: &egui::Ui) -> egui::FontId {
 
 /// Reserve a fixed-width cell and paint `text` right-aligned in it.
 ///
-/// Reserving the width with [`egui::Ui::allocate_exact_size`] - rather than a
-/// sized label, which centres, or a laid-out sub-`Ui`, which egui collapses to
-/// its content in the layout direction - is what keeps the columns lined up
-/// across rows whatever their digit count. Returns the cell's response so the
-/// caller can attach a hover explanation.
+/// Reserving the width with [`egui::Ui::allocate_exact_size`] is what keeps
+/// the columns lined up across rows whatever their digit count. Returns the
+/// cell's response so the caller can attach a hover explanation.
 fn stats_cell(
     ui: &mut egui::Ui,
     width: f32,
@@ -845,7 +839,7 @@ fn tapped(input: &egui::InputState, key: egui::Key) -> bool {
 
 /// Arrow-key transport: left/right seek, up/down step the playback speed.
 ///
-/// A tap seeks one report; holding sweeps at [`held_seek_rate`] once the key
+/// A tap seeks one report. Holding sweeps at [`held_seek_rate`] once the key
 /// has been down past [`HOLD_BEFORE_FAST_SEEK_SECS`], so the two do not fight
 /// over a quick press. Keys are ignored while a widget holds keyboard focus,
 /// since egui gives the slider and the speed selector their own arrow-key
@@ -1073,8 +1067,8 @@ mod tests {
         gt_sky::extract_trails(&gt_test_utils::loaded_track_with_points(points))
     }
 
-    /// The demo track with the given satellites tracked but never in the fix,
-    /// so the not-in-fix filter has something to hide.
+    /// The demo track with GPS PRN 12 tracked but never in the fix, so the
+    /// not-in-fix filter has something to hide.
     fn demo_trails_with_tracked_only() -> SkyTrails {
         demo_trails_with(&[(Constellation::Gps, 12)])
     }
@@ -1262,8 +1256,8 @@ mod tests {
         harness.snapshot_loose(name);
     }
 
-    /// Run the body once at a mid-track scrub with the given starting
-    /// highlight, and return the highlight afterwards.
+    /// Run the body once at a mid-track scrub with `start` as the highlight,
+    /// and return the highlight afterwards.
     fn run_body_with_highlight(start: &MapHighlight) -> MapHighlight {
         let trails = demo_trails();
         let mut harness = crate::test_harness::builder()
@@ -1308,7 +1302,7 @@ mod tests {
     #[test]
     fn scrub_highlight_defers_to_an_active_plot_hover() {
         // The time-series plot already claimed the channel this frame (the app
-        // writes it before the window runs); the window must not clobber it.
+        // writes it before the window runs). The window must not clobber it.
         let plots_point = (
             FileIdx::new(1),
             TrackIdx::new(2),
@@ -1332,7 +1326,7 @@ mod tests {
 
     /// Snapshot: with the not-in-fix filter on, the seen column carries the
     /// unfiltered total in parentheses, so the count visibly drops *from*
-    /// something rather than silently shrinking.
+    /// something.
     #[test]
     fn sky_trails_window_body_filtered() {
         body_snapshot_with(
@@ -1344,7 +1338,7 @@ mod tests {
 
     /// Snapshot: counts that mix single and double digits across rows - the
     /// case that exposed the misalignment. Every fix number must sit under the
-    /// Fix heading and every seen number under Seen, whatever their width; a
+    /// Fix heading and every seen number under Seen, whatever their width. A
     /// two-digit seen must not shove its row's fix number out of the column.
     #[test]
     fn sky_trails_window_body_dense() {
@@ -1565,12 +1559,12 @@ mod tests {
         harness.inner.hover_at(egui::pos2(280.0, 200.0));
         harness.inner.step();
 
-        // Press and keep it down. The first frame is the tap; the sweep only
+        // Press and keep it down. The first frame is the tap. The sweep only
         // starts once the key has been held past the threshold.
         harness.inner.key_down(egui::Key::ArrowRight);
         // The harness advances its own clock a frame at a time, so stepping is
-        // all it takes to let real time pass; enough of them to get past the
-        // hold threshold and well into the sweep.
+        // all it takes to let real time pass. These steps get past the hold
+        // threshold and well into the sweep.
         for _ in 0..90 {
             harness.inner.step();
         }
@@ -1617,9 +1611,8 @@ mod tests {
         assert!(tapped_with(vec![auto, real]));
     }
 
-    /// The speed ladder steps one preset at a time and stops at its ends
-    /// rather than wrapping, so holding a key does not loop from 300x back to
-    /// 1x.
+    /// The speed ladder steps one preset at a time and stops at its ends, so
+    /// holding a key does not loop from 300x back to 1x.
     #[rstest::rstest]
     #[case::up_from_default(60.0, 1, 120.0)]
     #[case::down_from_default(60.0, -1, 30.0)]
@@ -1651,7 +1644,7 @@ mod tests {
 
     #[test]
     fn track_total_secs_spans_first_to_last_epoch() {
-        // demo_trails has eight epochs one second apart, so the span is 7s.
+        // `demo_trails` has eight epochs one second apart, so the span is 7s.
         assert!((track_total_secs(&demo_trails()).expect("has epochs") - 7.0).abs() < 1e-9);
         assert_eq!(track_total_secs(&SkyTrails::default()), None);
     }
@@ -1712,7 +1705,7 @@ mod tests {
             let events = &mut harness.inner.input_mut().events;
             events.push(egui::Event::PointerMoved(egui::pos2(-100.0, -100.0)));
             // Down then up in the frame, so the next press registers a fresh
-            // edge rather than a still-held key.
+            // edge.
             events.push(key_event(true));
             events.push(key_event(false));
             harness.inner.step();
@@ -1725,8 +1718,9 @@ mod tests {
     }
 
     /// End-to-end: with playback on, stepping the harness advances the
-    /// scrubber (the whole loop - input dt, `advanced_scrub`, write-back - not
-    /// just the arithmetic), and it stops at the end of the track.
+    /// scrubber (the whole loop - the frame's elapsed time, `advanced_scrub`,
+    /// write-back - not just the arithmetic), and it stops at the end of the
+    /// track.
     #[test]
     fn playback_runs_the_scrubber_to_the_end() {
         struct State {
@@ -1775,7 +1769,8 @@ mod tests {
 
     #[test]
     fn advanced_scrub_runs_then_stops_at_the_end() {
-        // Mid-track: advances by speed x dt (60 x 0.1 = 6s) and keeps playing.
+        // Mid-track: advances by speed x elapsed time (60 x 0.1 = 6s) and
+        // keeps playing.
         let (secs, playing) = advanced_scrub(10.0, 60.0, 0.1, 100.0);
         assert!((secs - 16.0).abs() < 1e-4);
         assert!(playing);
@@ -1789,7 +1784,7 @@ mod tests {
     /// A stall - the window occluded, a breakpoint - must not leap the
     /// scrubber across the track on the frame that follows it. The clamp lives
     /// in `frame_dt`, so this drives the real body with a jump in wall-clock
-    /// time rather than calling the arithmetic directly.
+    /// time.
     #[test]
     fn a_stalled_frame_does_not_leap_the_scrubber() {
         let trails = demo_trails();
@@ -1865,10 +1860,9 @@ mod tests {
     // Ample space: the plot fills the height left above the transport.
     #[case::height_bound(egui::vec2(800.0, 500.0), 80.0, 420.0)]
     // Tall but narrow: the plot is bounded by the width left beside the stats
-    // column, which takes its space from the plot rather than from the
-    // constellation names.
+    // column, which takes its space from the plot.
     #[case::width_bound(egui::vec2(600.0, 900.0), 80.0, 378.0)]
-    // Tiny window: the plot holds its legibility floor rather than shrinking.
+    // Tiny window: the plot holds its legibility floor.
     #[case::clamped_to_floor(egui::vec2(300.0, 300.0), 80.0, 240.0)]
     fn plot_diameter_fills_the_space_above_the_transport(
         #[case] avail: egui::Vec2,
@@ -1896,9 +1890,9 @@ mod tests {
         );
     }
 
-    /// The width the stats column occupies for the given `show_not_in_fix`
-    /// setting, laid out in the fixed-width container the body gives it. Wider
-    /// than [`STATS_COL_WIDTH_PX`] when the rows overflow it.
+    /// The width the stats column occupies at `show_not_in_fix`, laid out in
+    /// the fixed-width container the body gives it. Wider than
+    /// [`STATS_COL_WIDTH_PX`] when the rows overflow it.
     fn laid_out_stats_column_width(show_not_in_fix: bool) -> f32 {
         let trails = demo_trails_with_tracked_only();
         let mut harness = crate::test_harness::builder()
@@ -1939,8 +1933,7 @@ mod tests {
     }
 
     /// The window stays inside the screen at any viewport: the constellation
-    /// column beside the plot and the transport below it scroll rather than
-    /// pushing the window past the screen edge.
+    /// column beside the plot and the transport below it scroll.
     #[rstest::rstest]
     fn the_window_fits_every_viewport(
         #[values(

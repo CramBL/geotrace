@@ -165,7 +165,7 @@ impl DisplayCounts {
                         .count();
                     // Sky glyphs anchor on report-bearing points. Like the
                     // labels they are per-point track ink, so they share the
-                    // Tpv tree gate.
+                    // `DataCategory::Tpv` tree gate.
                     counts.sky_glyphs += track
                         .points
                         .iter()
@@ -688,7 +688,6 @@ mod tests {
         let filter0 = GlobalFilter::default();
 
         let mut cache = DisplayCountsCache::default();
-        // (files, visibility, filter, emv, gmv, query, snapped)
         type Args<'a> = (
             &'a [LoadedFile],
             &'a TrackDataVisibility,

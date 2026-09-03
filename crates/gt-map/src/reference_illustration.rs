@@ -43,7 +43,7 @@ const INTERFERENCE_CANVAS_SIZE: egui::Vec2 = egui::vec2(2048.0, 1024.0);
 
 /// The interference canvas is drawn at twice the width the asset is written
 /// at and downsampled: a cell covering half a pixel of the written asset
-/// lands as coverage rather than as a dropped or aliased hexagon.
+/// lands as coverage.
 const INTERFERENCE_SUPERSAMPLE: u32 = 2;
 
 /// Drawn without the transparency the app lays the heatmap over its tiles

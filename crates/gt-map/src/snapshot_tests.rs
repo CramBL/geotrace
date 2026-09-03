@@ -91,9 +91,9 @@ fn make_snapshot_file() -> gt_types::LoadedFile {
     };
 
     let n = points.len();
-    // Counted from the points rather than hard-coded: `SkySection::resolve`
-    // short-circuits on a zero count, so claiming zero here would hide the
-    // sky plot even though these points carry satellite reports.
+    // Counted from the points: `SkySection::resolve` short-circuits on a zero
+    // count, so claiming zero here would hide the sky plot even though these
+    // points carry satellite reports.
     let satellite_report_count = points.iter().filter(|p| p.satellites.is_some()).count();
     let bb = GeoBounds::from_positions([
         (Latitude::new(55.67), Longitude::new(12.55)),
@@ -392,7 +392,7 @@ fn snapshot_nav_map_with_matches(
         );
 
     match capture {
-        // The first frame zooms to fit the newly seen file; the rest let the
+        // The first frame zooms to fit the newly seen file. The rest let the
         // blink and fade animations settle before the snapshot.
         MatchCapture::Settled => {
             for _ in 0..5 {
@@ -451,8 +451,7 @@ fn snapshot_jamming_dataset() -> JamDataset {
 
 /// The interference overlay under the fixture track. At the zoom that
 /// frames a 1 km track a single 22 km cell covers the viewport, so this
-/// pins the fill and the draw order - track ink over cells - rather than
-/// the ramp, which `jamming_renderer`'s own tests cover.
+/// pins the fill and the draw order - track ink over cells.
 #[rstest::rstest]
 #[case::dark("jamming_overlay_dark", true, None)]
 #[case::light("jamming_overlay_light", false, None)]
@@ -485,7 +484,7 @@ fn snapshot_jamming_overlay(
             None,
         );
 
-    // The first frame zooms to fit the file; the rest settle animations.
+    // The first frame zooms to fit the file. The rest settle animations.
     for _ in 0..5 {
         harness.run();
     }
@@ -702,8 +701,8 @@ fn snapshot_tec_heatmap(
 }
 
 /// Nudge north (smaller Mercator y) by roughly ten pixels at the
-/// snapped-track snapshot tests' zoom, so the snapped line reads beside
-/// the recorded one instead of on top of it.
+/// snapped-track snapshot tests' zoom, so the snapped line is drawn beside
+/// the recorded one.
 const SNAPPED_OFFSET_MERC_Y: f64 = -1.5e-6;
 
 /// Snapshot the map with `make_snapshot_file`'s track plus the snapped
@@ -758,7 +757,7 @@ fn snapshot_snapped_tracks_with(
     }
     if let Some(pos) = hover {
         harness.inner.hover_at(pos);
-        // Tooltips appear after egui's hover delay; keep stepping until
+        // Tooltips appear after egui's hover delay. Keep stepping until
         // it elapsed and the tooltip laid itself out.
         for _ in 0..60 {
             harness.run();
@@ -826,7 +825,7 @@ fn snap_snapped_track_polylines() {
 /// The culling in `SnappedTrackRenderer` must not clip visible geometry:
 /// the dashed line has to reach the viewport edge exactly, while the
 /// off-screen stretch generates no dashes at all (partially visible
-/// segments keep exact endpoints; only provably invisible ones are
+/// segments keep exact endpoints, and only provably invisible ones are
 /// dropped).
 #[test]
 fn snap_snapped_track_culled_tail() {
@@ -852,9 +851,9 @@ fn snap_snapped_track_culled_tail() {
 }
 
 /// Snapshot: a snapped segment whose on-screen extent packs below one
-/// pixel draws as a dot instead of vanishing - the `VisiblePath::Dot`
-/// case, reached when snapped geometry collapses at low zoom. The dot
-/// sits north of the recorded track's midpoint.
+/// pixel draws as a dot - the `VisiblePath::Dot` case, reached when snapped
+/// geometry collapses at low zoom. The dot sits north of the recorded
+/// track's midpoint.
 #[test]
 fn snap_snapped_track_collapsed_dot() {
     /// Mercator spacing of the collapsed cluster's points, ≈ 0.1 px at
@@ -887,7 +886,7 @@ fn snap_snapped_track_collapsed_dot() {
 
 /// Snapshot: hiding the snapped-tracks display category removes the
 /// dashed ink entirely - only the recorded track remains - without
-/// touching the underlying snapped geometry.
+/// touching the `SnappedTracks` the renderer reads.
 #[test]
 fn snap_snapped_track_hidden_by_display_mask() {
     let mut mask = DisplayMask::default();
@@ -1132,7 +1131,7 @@ fn snap_query_match_halos_stale() {
     );
 }
 
-/// Snapshot: `keep` mode shows only the matching stretches; the rest of
+/// Snapshot: `keep` mode shows only the matching stretches. The rest of
 /// the track is hidden and the polyline breaks at the gaps.
 #[test]
 fn snap_query_keep_mode() {
@@ -1790,7 +1789,7 @@ fn snap_sky_glyphs_only(#[case] name: &str, #[case] variant: gt_ui_types::SkyGly
 }
 
 /// Snapshot: hovering the time-series plot draws the detailed sky disc at
-/// the corresponding map point - even with the sky glyphs overlay hidden,
+/// the hovered sample's map point - even with the sky glyphs overlay hidden,
 /// since the plot-hover disc is a focus indicator, not part of the
 /// overlay. The ring around the point is the existing cross-highlight.
 #[test]
@@ -2045,8 +2044,7 @@ fn file_with_an_overlong_marker_label() -> gt_types::LoadedFile {
 
 /// The sticky popup stays inside the screen whichever map item it pins and
 /// however long that item's label reads: the point layout's resizable frame
-/// and the auto-sized frame the markers use both scroll their content
-/// instead of growing past the screen edge.
+/// and the auto-sized frame the markers use both scroll their content.
 #[rstest::rstest]
 #[case::point(gt_types::DataCategory::Tpv, PointIdx::new(50))]
 #[case::custom_marker(gt_types::DataCategory::CustomMarker, PointIdx::new(0))]

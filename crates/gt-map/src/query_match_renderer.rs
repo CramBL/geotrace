@@ -12,7 +12,7 @@ use crate::match_reveal::HaloStyle;
 /// Paint one draw layer's halos from a track's prepared span geometry, in the
 /// layer's `color`.
 ///
-/// `span` is one culling span of the track's polyline; `matched` projects
+/// `span` is one culling span of the track's polyline. `matched` projects
 /// each point's key to whether this layer covers it, so no intermediate
 /// buffer is built per frame. Consecutive matched points form the halo
 /// stretches. Runs of one point (a single-point match, or a longer match

@@ -4,8 +4,8 @@
 //!
 //! Two variants share this module. The minimal **sky ring** is a faint
 //! annulus centered on the fix with one bead per fix satellite at its
-//! azimuth; because both the map and the ring are north-up, a gap in the
-//! beads points at the obstruction beside the track. The detailed **sky
+//! azimuth. Both the map and the ring are north-up, so a gap in the beads
+//! points at the obstruction beside the track. The detailed **sky
 //! disc** is a miniature sky plot, offset from the fix with a short leader,
 //! placing a dot per fix satellite by azimuth and elevation. Report-bearing
 //! points are decimated through the shared [`crate::collision_grid`] so
@@ -31,7 +31,6 @@ const RING_MIN_SPACING_PX: f32 = 72.0;
 /// an offset disc occupies more room than a centered ring.
 const DISC_MIN_SPACING_PX: f32 = 112.0;
 
-/// The decimation spacing for the given variant.
 pub(crate) fn min_spacing_px(variant: SkyGlyphVariant) -> f32 {
     match variant {
         SkyGlyphVariant::Ring => RING_MIN_SPACING_PX,
@@ -51,7 +50,7 @@ const RING_RADIUS_PX: f32 = 15.0;
 const BASELINE_STROKE_PX: f32 = 1.0;
 
 /// Alpha of the ring baseline, kept low so the ring reads as background
-/// context rather than competing with the track ink.
+/// context.
 const BASELINE_ALPHA: f32 = 0.35;
 
 /// Radius of a satellite bead on the ring.
@@ -67,7 +66,7 @@ const FIX_LOSS_GAP_PX: f32 = 3.0;
 const FIX_LOSS_SEGMENTS: u32 = 48;
 /// Vertices in that polyline (segments plus the closing point). The circle is
 /// a per-glyph, per-frame temporary, so it stacks in a [`SmallVec`] of this
-/// capacity rather than allocating.
+/// capacity.
 const FIX_LOSS_RING_POINTS: usize = FIX_LOSS_SEGMENTS as usize + 1;
 
 /// Radius of the sky disc.
@@ -87,8 +86,8 @@ const DISC_OFFSET_PX: Vec2 = Vec2::new(14.0, -36.0);
 const TANGENT_SAMPLE_MIN_PX: f32 = 8.0;
 
 /// A bend sharper than this (perpendicular offset of the neighbor midpoint
-/// from the fix, in screen px) places the disc on the bend's outer side;
-/// below it the track is treated as straight and the disc goes up.
+/// from the fix, in screen px) places the disc on the bend's outer side.
+/// Below it the track is treated as straight and the disc goes up.
 const CURVE_MIN_PX: f32 = 1.5;
 
 /// Alpha of the disc's translucent backing fill, for contrast against map
@@ -121,7 +120,7 @@ pub(crate) struct Candidate {
 
 /// Resolve which report-bearing points get a sky ring this frame, decimated
 /// across all tracks at once. `tracks` yields each glyph-enabled track with
-/// its geometry index and ref; `point_passes` applies the caller's per-point
+/// its geometry index and ref. `point_passes` applies the caller's per-point
 /// conditions (time filter, query hiding). Points outside `viewport` or
 /// without a satellite report are skipped.
 pub(crate) fn select_glyphs<'s, 'a>(
@@ -188,8 +187,7 @@ pub(crate) fn draw_hover_disc(
     );
 }
 
-/// Draw the sky glyphs of one track at the given selected point indices, in
-/// the chosen variant.
+/// Draw the sky glyphs of one track at `point_indices`, in `variant`.
 ///
 /// `size_scale` shrinks the glyph in step with the heading arrows at lower
 /// zoom (1.0 where the fix icons are full size), so glyphs never stay a
@@ -301,8 +299,8 @@ fn fix_loss_circle_points(center: Pos2, radius: f32) -> SmallVec<[Pos2; FIX_LOSS
         .collect()
 }
 
-/// The screen position of a bead at `azimuth_deg` on a ring of the given
-/// radius, north up.
+/// The screen position of a bead at `azimuth_deg` on a ring of `radius`,
+/// north up.
 fn bead_pos(center: Pos2, azimuth_deg: f32, radius: f32) -> Pos2 {
     let azimuth = azimuth_deg.to_radians();
     center + Vec2::new(azimuth.sin(), -azimuth.cos()) * radius
@@ -363,7 +361,7 @@ fn disc_offset_for_samples(
         (None, None) => return DISC_OFFSET_PX * size_scale,
     };
     // A hairpin can leave the two samples nearly coincident, so guard the
-    // normalization rather than rely on the >= 8px per-side sampling alone.
+    // normalization.
     if tangent.length() < f32::EPSILON {
         return DISC_OFFSET_PX * size_scale;
     }
@@ -371,7 +369,7 @@ fn disc_offset_for_samples(
 }
 
 /// A unit normal to `tangent`, on the outer side of the bend defined by the
-/// neighbor samples. On a straight run (no measurable bend) it prefers the
+/// neighbor samples. On a straight run (no measurable bend) it returns the
 /// upward normal, breaking a vertical tie toward the right so the disc still
 /// reads as sitting above and beside the track.
 fn outward_normal(tangent: Vec2, fix_pos: Pos2, prev: Option<Pos2>, next: Option<Pos2>) -> Vec2 {
@@ -389,7 +387,7 @@ fn outward_normal(tangent: Vec2, fix_pos: Pos2, prev: Option<Pos2>, next: Option
         // Point away from the concave side (the midpoint lies inside the bend).
         if bend <= 0.0 { candidate } else { -candidate }
     } else {
-        // Straight: prefer the upward normal (more negative y); for a vertical
+        // Straight: prefer the upward normal (more negative y). For a vertical
         // track, whose normals are horizontal, break the tie toward the right.
         let up = if candidate.y <= -candidate.y {
             candidate
@@ -492,7 +490,7 @@ mod tests {
         Satellites::new(None, None, sats)
     }
 
-    /// A track from `(x_m, y_m, report)` specs; a `None` report is a plain
+    /// A track from `(x_m, y_m, report)` specs. A `None` report is a plain
     /// point that anchors no glyph.
     fn track(points: &[(f64, f64, Option<Satellites>)]) -> gt_types::LoadedTrack {
         let points = points
@@ -636,7 +634,7 @@ mod tests {
                     .collect(),
             )
         };
-        // Beads only on the southern/eastern half; the north reads as blocked.
+        // Beads only on the southern/eastern half: the north reads as blocked.
         let gapped = report(
             [110.0, 150.0, 200.0, 250.0]
                 .into_iter()
@@ -732,7 +730,7 @@ mod tests {
 
     /// On a bend the disc goes to the outer (convex) side, so it and its
     /// leader clear the trackline. A peak (neighbors below the fix) pushes the
-    /// disc up; a valley (neighbors above) pushes it down.
+    /// disc up. A valley (neighbors above) pushes it down.
     #[test]
     fn curved_track_places_the_disc_on_the_outer_side() {
         let fix = pos2(50.0, 50.0);
@@ -785,8 +783,8 @@ mod tests {
     }
 
     /// At a track end only one neighbor exists, so there is no bend to measure:
-    /// the disc uses the straight fallback rather than picking a side from
-    /// noise, and stays offset by the standard distance.
+    /// the disc uses the straight fallback and stays offset by the standard
+    /// distance.
     #[test]
     fn track_end_uses_the_straight_fallback() {
         let fix = pos2(50.0, 50.0);

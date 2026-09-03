@@ -167,8 +167,8 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
     }
 }
 
-/// Centralises the "GNSS fix regained after Xs" formatting so both the live
-/// tooltip (`show_tooltip`) and the multi-hover compound label
+/// Centralises the `GNSS fix regained after <duration>` formatting so both
+/// the live tooltip (`show_tooltip`) and the multi-hover compound label
 /// (`draw_candidate_section`) always produce identical text.
 pub(crate) fn generated_marker_header(kind: &gt_types::GeneratedMarkerKind) -> String {
     match kind {

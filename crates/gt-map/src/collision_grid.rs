@@ -6,8 +6,7 @@
 //! shuffling while the user navigates.
 //!
 //! The map's log hexagons cluster on the same grid ([`cluster_positions`]),
-//! using it to find the neighbours a position may collapse into instead of
-//! keeping one winner per cell.
+//! using it to find the neighbours a position may collapse into.
 
 use gt_types::{MercBounds, MercPoint};
 use rustc_hash::FxHashMap;
@@ -16,7 +15,7 @@ use crate::transform::MapScale;
 
 /// Reusable working set for one viewport-stable decimation pass, held across
 /// frames so the candidate buffer, cell map, and per-geometry output lists
-/// keep their allocations instead of being rebuilt every frame.
+/// keep their allocations.
 ///
 /// The cell map uses [`FxHashMap`]: keys are integer cell coordinates, so
 /// SipHash's DoS resistance buys nothing over the per-frame rebuild.
@@ -54,7 +53,7 @@ impl<C: Ord + Copy> DecimationScratch<C> {
     /// lists, keeping the smallest candidate (by [`Ord`]) in each
     /// `cell_merc`-sized cell. `bucket_of` maps a surviving candidate to its
     /// `(geometry_index, point_index)`. The result always has exactly
-    /// `geometry_count` buckets; the returned slice borrows the scratch.
+    /// `geometry_count` buckets. The returned slice borrows the scratch.
     pub(crate) fn resolve(
         &mut self,
         cell_merc: f64,
@@ -423,8 +422,7 @@ mod tests {
 
     /// The decimation zoom is a step function: a fine zoom sweep the width of a
     /// bucket lands on a single value, so the collision-grid cell - and thus
-    /// the selected labels and glyphs - hold steady instead of churning
-    /// frame-to-frame during a smooth zoom.
+    /// the selected labels and glyphs - hold steady during a smooth zoom.
     #[test]
     fn decimation_zoom_holds_steady_within_a_bucket() {
         let start = 12.0;

@@ -34,7 +34,7 @@ pub struct ViewportBounds {
 ///
 /// Held across frames as reusable scratch (see [`crate::NavMap`]): [`Self::clear`]
 /// empties every buffer while keeping its allocation, so a steady stream of
-/// frames at similar zoom reuses the same memory instead of reallocating.
+/// frames at similar zoom reuses the same memory.
 #[derive(Default)]
 pub(crate) struct VisiblePoints {
     pub(crate) tpv_by_track: FxHashMap<TrackRef, Vec<usize>>,
@@ -46,7 +46,7 @@ pub(crate) struct VisiblePoints {
 impl VisiblePoints {
     /// Empty every buffer for reuse, keeping capacity. TPV track keys are
     /// retained with emptied index lists so their inner allocations survive
-    /// too; an empty list draws nothing, exactly as an absent key would.
+    /// too. An empty list draws nothing, exactly as an absent key would.
     fn clear(&mut self) {
         for indices in self.tpv_by_track.values_mut() {
             indices.clear();
@@ -215,11 +215,11 @@ impl TrackPlan {
 /// such data exists.
 ///
 /// This matches what the renderers actually draw, so "zoom to fit" frames the
-/// visible data rather than the whole recording. The display mask counts the
-/// same way: point ink contributes only while some point-anchored category
-/// (tracks, track points, satellite labels) is displayed, custom markers only
-/// while theirs is. Snapped tracks deliberately never contribute: they
-/// annotate a recorded track that is already framed.
+/// visible data. The display mask counts the same way: point ink contributes
+/// only while some point-anchored category (tracks, track points, satellite
+/// labels) is displayed, custom markers only while theirs is. Snapped tracks
+/// deliberately never contribute: they annotate a recorded track that is
+/// already framed.
 ///
 /// A track whose drawn fixes circle a pole contributes the cap around that
 /// pole, the way its metadata's box does: each track is bounded on its own
@@ -339,7 +339,7 @@ pub(crate) fn match_bounding_box(
     GeoBounds::from_positions(drawn_fix_positions(matched, filter))
 }
 
-/// Compute the geographic bounding box of the given map viewport rect.
+/// Compute the geographic bounding box of `map_rect`.
 ///
 /// Uses the walkers `Projector` to unproject the four corners of `map_rect`
 /// into geographic positions and returns their bounding envelope.
@@ -482,7 +482,7 @@ pub(crate) fn zoom_to_fit(
     let z_lon = MapScale::zoom_for_world_px(viewport.width() as f64 * FIT_FILL / x_extent);
     let z_lat = MapScale::zoom_for_world_px(viewport.height() as f64 * FIT_FILL / y_extent);
     let zoom = z_lon.min(z_lat).clamp(1.0, 18.0);
-    // zoom is already clamped to [1, 18], so set_zoom can only fail if the
+    // zoom is already clamped to [1, 18], so `set_zoom` can only fail if the
     // walkers library's valid range narrows further - ignore silently.
     let _ignored = map_memory.set_zoom(zoom);
 

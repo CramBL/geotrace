@@ -41,7 +41,7 @@ use crate::transform::MercTransform;
 const GLYPH_CIRCUMRADIUS_PX: f32 = 8.0;
 
 /// Gap between a glyph's circumradius and the cross-highlight ring around it,
-/// so the ring encloses the glyph rather than tracing it.
+/// so the ring encloses the glyph.
 const HOVER_RING_GAP_PX: f32 = 5.0;
 
 /// Stroke width of the cross-highlight ring.

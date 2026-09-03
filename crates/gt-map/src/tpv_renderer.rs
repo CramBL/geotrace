@@ -35,8 +35,7 @@ use crate::transform::MapScale;
 /// overlapping arrows are still readable. Fading starts only below half an
 /// icon size of spacing and completes when neighbouring arrows share almost
 /// all of their pixels, at which point skipping them also keeps the
-/// tessellated vertex count bounded by screen content instead of recording
-/// size.
+/// tessellated vertex count bounded by screen content.
 ///
 /// The spacing is measured per fix (see [`local_fix_spacing_px`]), not per
 /// track, so a parked phase fades out without dragging down the rest of the
@@ -64,8 +63,8 @@ const SWATCH_SIZE_PX: f32 = 10.0;
 const SWATCH_ROUNDING_PX: f32 = 2.0;
 const SWATCH_MARGIN_PX: f32 = 1.0;
 
-/// Size of the solid fold triangle. Big enough that its constellation tint
-/// reads as the colour key to the plot's marks.
+/// Size of the solid fold triangle. Big enough to show its constellation
+/// tint, the colour key to the plot's marks.
 const FOLD_ARROW_SIZE_PX: f32 = 9.0;
 
 /// Box the fold triangle is allocated in, leaving a little air around it.
@@ -82,7 +81,7 @@ const MIN_SATELLITE_COLUMN_WIDTH_PX: f32 = 140.0;
 
 /// Width the satellite area needs before it splits into two columns - two
 /// readable columns and the gap between them. Below it the constellations
-/// stack in one column instead of being squeezed.
+/// stack in one column.
 const MIN_TWO_COLUMN_WIDTH_PX: f32 = 2.0 * MIN_SATELLITE_COLUMN_WIDTH_PX + STICKY_COLUMN_GAP_PX;
 
 /// Width the window needs to put the sky plot beside the satellite tables:
@@ -99,8 +98,8 @@ const PANEL_HEADER_ROWS: usize = 2;
 /// Rows a folded constellation panel costs - just its own header.
 const FOLDED_PANEL_ROWS: usize = 1;
 
-/// Stroke width of the continuous fix-quality line that stands in for the
-/// fix icons when they fade out - slightly thicker than the 3 px trackline
+/// Stroke width of the continuous fix-quality line that replaces the fix
+/// icons when they fade out - slightly thicker than the 3 px trackline
 /// underneath so the quality colors stay readable on top of it.
 pub(crate) const QUALITY_LINE_WIDTH: f32 = 5.0;
 
@@ -118,8 +117,8 @@ const FIX_STRONG_BLUE: Color32 = Color32::from_rgb(66, 133, 244);
 const FIX_MARGINAL_YELLOW: Color32 = Color32::from_rgb(244, 180, 0);
 const FIX_LOST_RED: Color32 = Color32::from_rgb(219, 68, 55);
 
-/// Why the map draws a fix as a hollow chevron where the track builder placed
-/// it, instead of a navigation arrow at the coordinates the receiver wrote.
+/// Why the map draws a fix as a hollow chevron where the track builder
+/// placed it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ChevronFix {
     /// The receiver dead-reckoned the fix: it reported no heading, or nothing
@@ -189,7 +188,7 @@ pub(crate) fn draw_track_icons(
 ) {
     // One batch for the whole track's icons. Painter primitives inside the
     // pass (accuracy circles, highlighted arrows) barrier the batch so
-    // stacking matches immediate painting exactly; see [IconMeshBatch].
+    // stacking matches immediate painting exactly. See [IconMeshBatch].
     let mut batch = IconMeshBatch::gpu_when_available(ui, icon_meshes);
     // A track with no geometry is drawn nowhere, so it has no icons.
     let Some(placed) = track.placed_points() else {
@@ -325,9 +324,9 @@ pub(crate) fn draw_track_icons(
     batch.paint(ui.painter());
 }
 
-/// Show the hover tooltip for the given TPV point. When the point lies
-/// inside a query match, `match_header` renders the match context above the
-/// point table.
+/// Show the hover tooltip for the TPV point at `point_ref`. When the point
+/// lies inside a query match, `match_header` renders the match context above
+/// the point table.
 pub(crate) fn show_tooltip(
     ui: &Ui,
     files: &[LoadedFile],
@@ -396,7 +395,7 @@ impl<'a> SkySection<'a> {
 }
 
 /// The sky plot with its report-age line, or the no-report placeholder. The
-/// full size is interactive (per-mark tooltips); the compact size lives
+/// full size is interactive (per-mark tooltips). The compact size lives
 /// inside the hover badge, which is itself a tooltip.
 fn sky_section_ui(
     ui: &mut Ui,
@@ -463,7 +462,7 @@ pub(crate) fn label_cell_px(zoom: f64) -> f32 {
 /// Cross-highlight: when the track plot cursor is active, draw a ring around
 /// the pre-computed closest point, plus a sky disc for its report so
 /// scrubbing the plot walks the sky along the track. The app layer computes
-/// the point via find_closest_tpv and stores it in
+/// the point via `find_closest_tpv` and stores it in
 /// `MapHighlight::plot_hover_point` - no O(n) scan needed here.
 pub(crate) fn draw_plot_hover_overlay(
     ui: &Ui,
@@ -647,7 +646,7 @@ fn hover_grid_ui(ui: &mut Ui, point: PlacedPoint<'_>, recording_name: Option<&st
 
             // Time delta between the GPS fix and the satellite report.
             // Only shown when the satellite report was GPS-timestamped - if it
-            // only has sys_time, this delta equals the GPS/sys-clock delta below
+            // only has `sys_time`, this delta equals the GPS/sys-clock delta below
             // and showing it would be redundant.
             if let Some(sats) = &fix.satellites
                 && let Some(sat_gps_time) = sats.gps_time()
@@ -703,7 +702,7 @@ pub(crate) fn show_sticky_tpv_content(
         ui.ctx().data(|d| d.get_temp(highlight_id)).flatten();
     let mut highlight: Option<SkyHighlight> = None;
 
-    // Side by side when the plot and a satellite column both fit; stacked
+    // Side by side when the plot and a satellite column both fit. Stacked
     // when they do not, since squeezing the tables in beside a 256 px plot
     // leaves them too narrow to read.
     let side_by_side = ui.available_width() >= MIN_SIDE_BY_SIDE_WIDTH_PX;
@@ -913,8 +912,7 @@ struct ConstellationGroup<'a> {
 impl ConstellationGroup<'_> {
     /// Rows this panel occupies: its own header plus, when it is not folded
     /// away, the table header and a row per satellite. Drives how the columns
-    /// are balanced, so folding a constellation re-balances them rather than
-    /// leaving a column sized for rows that are no longer drawn.
+    /// are balanced, so folding a constellation re-balances them.
     fn weight(&self, folds: PointWindowFolds) -> usize {
         if folds.is_folded(self.constellation) {
             FOLDED_PANEL_ROWS
@@ -1051,10 +1049,9 @@ fn constellation_panel(
             ui.rect_contains_pointer(fix_resp.rect)
         });
         let over_fix_count = header.inner;
-        // Interact with an explicit id rather than re-sensing the container's
-        // response: sibling panels lay out identically, so the auto-generated
-        // container ids collide and the click lands on the wrong panel - or
-        // nowhere at all.
+        // Interact with an explicit id: sibling panels lay out identically,
+        // so the auto-generated container ids collide and the click lands on
+        // the wrong panel - or nowhere at all.
         let header = ui.interact(
             header.response.rect,
             ui.id().with(("constellation_fold", constellation)),
@@ -1132,7 +1129,7 @@ pub(crate) fn sky_table_highlight_id(ui: &Ui) -> egui::Id {
 }
 
 /// A small colour swatch in the constellation's plot colour, drawn before a
-/// table header or legend row so it reads as the key to the plot's marks.
+/// table header or legend row as the colour key to the plot's marks.
 pub(crate) fn constellation_swatch(ui: &mut Ui, constellation: Constellation) {
     let color = gt_ui_theme::constellation_color(constellation, ui.visuals().dark_mode);
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(SWATCH_SIZE_PX), egui::Sense::hover());
@@ -1252,8 +1249,7 @@ pub(crate) fn base_arrow_size(zoom: f64) -> f32 {
 
 /// Zoom-adaptive size scale for overlay glyphs: 1.0 where the fix icons
 /// reach full size, shrinking to the icons' minimum fraction below that, so
-/// glyphs shrink in step with the heading arrows rather than staying a fixed
-/// pixel size as the track shrinks.
+/// glyphs shrink in step with the heading arrows as the track shrinks.
 pub(crate) fn glyph_size_scale(style: &TpvDrawStyle) -> f32 {
     style.base_arrow_size / MAX_ARROW_SIZE_PX
 }
@@ -1356,13 +1352,12 @@ fn icon_fade_alpha(spacing_px: f32, icon_size_px: f32) -> f32 {
     if hi <= lo {
         // Unreachable while the HI floor and factor exceed their LO
         // counterparts. Kept so a future constant change degrades to opaque
-        // icons instead of dividing by zero.
+        // icons.
         return 1.0;
     }
     ((spacing_px - lo) / (hi - lo)).clamp(0.0, 1.0)
 }
 
-/// Opacity of the fix at `pi` under the given per-track fade mode.
 pub(crate) fn fix_icon_alpha(
     fade: TrackIconFade,
     points: PlacedPoints<'_>,
@@ -1513,7 +1508,7 @@ fn draw_tpv_point(
 /// Draw the satellite-count labels for a track's selected anchor points.
 ///
 /// Which anchors get a label this frame is determined by
-/// [`crate::sat_labels::select_sat_labels`]; this pass just renders them.
+/// [`crate::sat_labels::select_sat_labels`]. This pass just renders them.
 /// Labels draw at full opacity regardless of the icon crossfade - the
 /// anchor selection already bounds their density, and a faded-out cluster
 /// is exactly where the surviving label carries the information.
@@ -1596,7 +1591,7 @@ fn chevron_direction(prev: gt_types::MercPoint, next: gt_types::MercPoint) -> Ve
 ///
 /// The chevron tip points in `direction` (the inferred travel direction).
 /// Stacking against interleaved painter primitives is the caller's job via
-/// [IconMeshBatch::barrier]; see [draw_tpv_point].
+/// [IconMeshBatch::barrier]. See [`draw_tpv_point`].
 fn draw_chevron(
     batch: &mut IconMeshBatch<'_>,
     center: Pos2,
@@ -1625,8 +1620,8 @@ fn draw_chevron(
 ///
 /// The hot path pushes one two-tint-slot mesh instance into the track's
 /// icon batch (fill tinted with the fix-quality color, rim white with the
-/// fade alpha); stacking against interleaved painter primitives is handled
-/// by the caller's [IconMeshBatch::barrier] calls, see [draw_tpv_point].
+/// fade alpha). Stacking against interleaved painter primitives is handled
+/// by the caller's [IconMeshBatch::barrier] calls, see [`draw_tpv_point`].
 /// Highlighted arrows (at most the hovered and the sticky point per frame)
 /// keep the painter implementation: their thicker blue outline has a
 /// different stroke width than the baked 1.5 px rim, and at that count the
@@ -1652,7 +1647,7 @@ fn draw_navigation_arrow(
 
     if !highlighted {
         // The painter faded the rim by scaling both its alpha and its stroke
-        // width with `outline_alpha`; the baked rim has a fixed width, so
+        // width with `outline_alpha`. The baked rim has a fixed width, so
         // squaring the alpha matches that width x alpha ink.
         let rim_alpha = outline_alpha * outline_alpha;
         batch.push(IconInstance {
@@ -1666,7 +1661,7 @@ fn draw_navigation_arrow(
     }
 
     // Highlighted arrows keep the painter implementation (thicker blue rim
-    // with its own stroke width); flush so it stacks above earlier icons.
+    // with its own stroke width). Flush so it stacks above earlier icons.
     batch.barrier(ui.painter());
 
     let perp = egui::vec2(-dir.y, dir.x);
@@ -1703,7 +1698,7 @@ fn draw_navigation_arrow(
     // concave dip at the rear centre.
     //
     // Because the shape is non-convex, the fill is drawn as two convex
-    // triangles (tip–right–notch and tip–notch–left) and the outline as a
+    // triangles (tip-right-notch and tip-notch-left) and the outline as a
     // single closed PathShape.
     let tip = center + dir * size;
     let right = center - dir * (size * 0.4) + perp * (size * 0.5);

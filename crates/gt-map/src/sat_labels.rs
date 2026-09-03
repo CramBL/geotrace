@@ -31,7 +31,7 @@ pub(crate) struct Candidate {
 /// Resolve which satellite-label anchors get a label this frame into
 /// `scratch`, returning the per-geometry point-index lists it holds.
 ///
-/// `tracks` yields each visible track with its geometry index and ref;
+/// `tracks` yields each visible track with its geometry index and ref.
 /// `point_passes` applies the caller's own per-point conditions (time
 /// filter, query hiding). Anchors outside `viewport` are skipped. Within
 /// each `cell_merc`-sized grid cell the highest-priority candidate wins
@@ -180,7 +180,7 @@ mod tests {
             y_min: 0.0,
             y_max: 1.0,
         };
-        // Both viewports contain every anchor (points sit near merc 0.5).
+        // Both viewports contain every anchor (points sit near Mercator 0.5).
         let full = select(std::slice::from_ref(&track), WORLD, cell);
         let shifted = select(std::slice::from_ref(&track), panned, cell);
         assert_eq!(full, shifted);

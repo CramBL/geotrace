@@ -229,7 +229,7 @@ impl FixtureTiles {
         })
     }
 
-    /// Every tile asked for since the last [`FixtureTiles::forget_missing_tiles`]
+    /// Every tile requested since the last [`FixtureTiles::forget_missing_tiles`]
     /// that the directory could not serve, which is every tile the base layer
     /// left blank.
     pub fn missing_tiles(&self) -> &BTreeSet<FixtureTileId> {

@@ -13,8 +13,7 @@ pub(crate) const CULL_MARGIN_PX: f32 = 8.0;
 
 /// Minimum squared screen-space distance between kept polyline points.
 /// Consecutive points with the same key closer than this are merged, bounding
-/// the tessellated vertex count by the on-screen path length instead of the
-/// recording's point count.
+/// the tessellated vertex count by the on-screen path length.
 pub(crate) const MIN_POINT_DIST_SQ: f32 = 1.0;
 
 /// Maximum screen-space error allowed when substituting a precomputed track
@@ -84,7 +83,7 @@ impl<K> PolylineSpans<K> {
 /// that downstream drawing uses to style individual edges.
 ///
 /// Two reductions keep the tessellated vertex count proportional to what is
-/// actually visible rather than to the recording size:
+/// actually visible:
 ///
 /// - Segments that provably cannot intersect `cull_rect` (both endpoints
 ///   beyond the same rect edge) end the current span. The polyline resumes
@@ -302,7 +301,7 @@ mod tests {
         /// span) - for arbitrary point streams including coordinates far
         /// outside the viewport, infinities, and degenerate (zero-size or
         /// inverted) cull rects. The collapsed and off-screen cases are
-        /// their own enum variants, so they need no length invariant.
+        /// their own `VisiblePath` variants, so they need no length invariant.
         #[test]
         fn visible_path_never_panics_and_spans_are_drawable(
             pts in proptest::collection::vec(
