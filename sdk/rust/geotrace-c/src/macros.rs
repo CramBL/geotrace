@@ -11,7 +11,7 @@ macro_rules! nonnull_mut {
     }};
 }
 
-/// Checks a const raw pointer for null. On null, sets the error and returns.
+/// Checks a `const` raw pointer for null. On null, sets the error and returns.
 macro_rules! nonnull_ref {
     ($ptr:expr) => {{
         if ($ptr).is_null() {
@@ -23,8 +23,9 @@ macro_rules! nonnull_ref {
     }};
 }
 
-/// Converts a `*const c_char` to `&str`. On null or invalid UTF-8, sets the
-/// error and returns the appropriate status from the enclosing closure.
+/// Converts a `*const c_char` to `&str`. Sets the error and returns
+/// `GtdStatus::GTD_ERR_NULL_ARGUMENT` from the enclosing closure on null, and
+/// `GtdStatus::GTD_ERR_UTF8` on invalid UTF-8.
 macro_rules! cstr {
     ($ptr:expr) => {{
         if ($ptr).is_null() {
@@ -43,7 +44,8 @@ macro_rules! cstr {
 }
 
 /// Converts a nullable `*const c_char` to `Option<&str>`.
-/// Returns `None` for null, or the appropriate error on invalid UTF-8.
+/// Evaluates to `None` for null, and returns `GtdStatus::GTD_ERR_UTF8` from the
+/// enclosing closure on invalid UTF-8.
 macro_rules! cstr_opt {
     ($ptr:expr) => {{
         if ($ptr).is_null() {

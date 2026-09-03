@@ -30,8 +30,8 @@ pub type ColorHexField = FixedWidthString<8>;
 
 impl<const ROW_BYTES: usize> FixedWidthString<ROW_BYTES> {
     /// The longest UTF-8 encoding a value may have: the row width less the nul
-    /// terminator. A `ROW_BYTES` of zero leaves no room for one, and using the
-    /// const generic at zero fails to compile.
+    /// terminator. A `ROW_BYTES` of zero leaves no room for one, and
+    /// instantiating the type at zero fails to compile.
     pub const CONTENT_CAPACITY: usize = ROW_BYTES - 1;
 
     /// Errors when the value contains a nul byte, and when its UTF-8 encoding

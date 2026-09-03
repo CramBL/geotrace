@@ -1,7 +1,7 @@
 //! Generates the `.gtd` fixtures under `sdk/c/tests/fixtures/` that the C, C++,
 //! Python and Rust SDK tests open.
 //!
-//! Run via: cargo run -p geotrace-c --bin gen_fixture
+//! Run via: `cargo run -p geotrace-c --bin gen_fixture`
 
 #![expect(
     clippy::expect_used,

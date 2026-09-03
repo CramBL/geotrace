@@ -3,15 +3,15 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{Attribute, Data, DeriveInput, Fields, parse_macro_input};
 
-/// Derives `geotrace_sdk::EventKind` for an enum.
+/// Derives `geotrace_sdk::EventKind` for an `enum`.
 ///
 /// Each variant's name is converted to `snake_case` and becomes one segment of
-/// a slash-separated path string.  Nesting enums that all derive `EventKind`
-/// produces paths like `"power/boot"` or `"connectivity/agps/request"`.
+/// a slash-separated path string.  Nested `enum` types that all derive
+/// `EventKind` produce paths like `"power/boot"` or `"connectivity/agps/request"`.
 ///
 /// # Enum-level attributes
 ///
-/// Place these on the enum itself.  Multiple can be combined in one attribute:
+/// Place these on the `enum` itself.  Multiple can be combined in one attribute:
 /// `#[event_kind(lax, note = display)]`.
 ///
 /// - *(none)* / **`#[event_kind(strict)]`** - single-field tuple variants
@@ -32,7 +32,7 @@ use syn::{Attribute, Data, DeriveInput, Fields, parse_macro_input};
 ///   Never delegate to the inner type even if it implements `EventKind`.
 /// - **`#[event_kind(delegate)]`** - always delegate to the inner type's
 ///   `EventKind` implementation, appending its path after this variant's
-///   segment.  In `lax` enum mode this opts a single variant into delegation.
+///   segment.  In `lax` mode this opts a single variant into delegation.
 /// - **`#[event_kind(skip)]`** - `variant_path()` returns `None` for this
 ///   variant. `geotrace_sdk::NavRecorder::add_event`
 ///   silently ignores it.

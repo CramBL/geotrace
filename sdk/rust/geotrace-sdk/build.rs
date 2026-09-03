@@ -1,5 +1,6 @@
-//! Passes the provenance the release pipeline recorded in `build_provenance.txt`
-//! to the crate. A build without that file stamps none.
+//! Reads the commit hash and the committer timestamp the release pipeline wrote
+//! to `build_provenance.txt` into `GEOTRACE_SDK_GIT_COMMIT` and
+//! `GEOTRACE_SDK_COMMIT_TIME`. A build without that file sets neither.
 
 use std::error::Error;
 use std::path::PathBuf;

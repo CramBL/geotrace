@@ -111,7 +111,8 @@ fn read_nav_points(file: &SizeCheckedFile) -> Result<Vec<NavPoint>, Error> {
         .ok()
         .and_then(|ds| ds.read_u64().ok())
         .unwrap_or_else(|| times.iter().map(|&us| us.cast_unsigned()).collect());
-    // sys_time_us and eph_m are absent in older files. Default to sentinel/NaN.
+    // `sys_time_us` and `eph_m` are absent in older files. Default to the
+    // `u64::MAX` sentinel value and to NaN.
     let sys_times: Vec<u64> = grp
         .dataset("sys_time_us")
         .ok()
@@ -185,8 +186,9 @@ fn attach_satellite_data(
     let nav_point_idx = sat_grp.dataset("nav_point_idx")?.read_u64()?;
     let r = nav_point_idx.len();
 
-    // v2: gps_time_us / sys_time_us (both f64, NaN = absent).
-    // v1: single "time" dataset mapped to gps_time. sys_time absent.
+    // v2: `gps_time_us` and `sys_time_us`, both u64 with `u64::MAX` for absent.
+    // v1: a single `time` dataset, which the reader treats as the receiver's
+    // timestamp, with no host timestamp.
     let (report_gps_times, report_sys_times): (Vec<u64>, Vec<u64>) =
         if let Ok(ds) = sat_grp.dataset("gps_time_us") {
             let gps = ds.read_u64()?;
@@ -197,7 +199,8 @@ fn attach_satellite_data(
                 .unwrap_or_else(|| vec![u64::MAX; r]);
             (gps, sys)
         } else {
-            // v1 file: old "time" (i64) treated as gps_time. No sys_time.
+            // v1 file: the reader treats the i64 `time` dataset as the
+            // receiver's timestamp, with no host timestamp.
             let times = sat_grp.dataset("time")?.read_i64()?;
             let gps = times.iter().map(|&us| us.cast_unsigned()).collect();
             let sys = vec![u64::MAX; r];
@@ -642,8 +645,8 @@ fn inspect_satellite_reports(file: &SizeCheckedFile, n_nav_points: u64, out: &mu
         return;
     };
 
-    // Count via nav_point_idx (present in all versions) rather than a time field
-    // whose name changed between v1 ("time") and v2 ("gps_time_us").
+    // Counts `nav_point_idx`, which every version writes under that name. The
+    // time field is named `time` in v1 and `gps_time_us` in v2.
     let m = sat_grp
         .dataset("nav_point_idx")
         .ok()

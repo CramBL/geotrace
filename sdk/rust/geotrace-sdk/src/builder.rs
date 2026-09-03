@@ -199,9 +199,9 @@ impl NavFileBuilder {
 
     /// Downgrade annotation-out-of-range errors to warnings and continue.
     ///
-    /// Annotations that fall outside the nav fix time range are clamped to the
-    /// nearest endpoint and a warning is logged rather than returning
-    /// [`BuildError::AnnotationsOutsideRange`].
+    /// The strict build fails with [`BuildError::AnnotationsOutsideRange`]. After
+    /// this call, an annotation outside the nav fix time range is clamped to the
+    /// nearest endpoint and logged as a warning.
     pub fn with_lenient_errors(mut self) -> Self {
         self.continue_on_error = true;
         self
@@ -354,7 +354,7 @@ impl NavRecorder {
 
     /// Attach a scalar sensor [`Channel`] to be recorded alongside the track.
     ///
-    /// The channel keeps its own sample timestamps; it is correlated with the
+    /// The channel keeps its own sample timestamps. It is correlated with the
     /// nav points by time at query time, not resampled here. Build one with
     /// [`Channel::builder`].
     pub fn add_channel(&mut self, channel: Channel) -> &mut Self {
@@ -596,8 +596,8 @@ fn ghost_nav_points_for(
     }
 
     //
-    // delta_us = gps_us - sys_us at each fix that has both a genuine GPS lock
-    // and a sys_time.  Stored as (gps_us, delta_us) sorted by gps_us.
+    // `delta_us = gps_us - sys_us` at each fix that has both a genuine GPS lock
+    // and a `sys_time`.  Stored as `(gps_us, delta_us)` sorted by `gps_us`.
     let delta_anchors: Vec<(i64, i64)> = real_fixes
         .iter()
         .filter_map(|f| match (f.gps_time, f.sys_time) {
@@ -755,7 +755,7 @@ fn best_guess_gps_us(report: &InternalSatReport, anchors: &[(i64, i64)]) -> Opti
     if anchors.is_empty() {
         return Some(st_us);
     }
-    // Find the anchor whose sys_time (gps - delta) is closest to st_us.
+    // Find the anchor whose `sys_time` (`gps_us - delta_us`) is closest to `st_us`.
     let delta = anchors
         .iter()
         .min_by_key(|&&(gps_us, delta_us)| (gps_us - delta_us - st_us).unsigned_abs())
@@ -766,9 +766,9 @@ fn best_guess_gps_us(report: &InternalSatReport, anchors: &[(i64, i64)]) -> Opti
 /// Corrected GPS timestamp for an orphan report within a specific segment.
 ///
 /// Delta is linearly interpolated between the two bounding fix anchors using
-/// the report's sys_time position within the segment's sys_time range.
-/// Returns the GPS time if present, the corrected sys_time if correctable, or
-/// sys_time as-is when no delta information is available.
+/// the report's `sys_time` position within the segment's `sys_time` range.
+/// Returns the GPS time if present, the corrected `sys_time` if correctable, or
+/// `sys_time` as-is when no delta information is available.
 fn segment_corrected_gps_us(
     report: &InternalSatReport,
     b: &InternalFix,
@@ -787,7 +787,7 @@ fn segment_corrected_gps_us(
 
     match (delta_b, delta_a) {
         (Some(db), Some(da)) => {
-            // Interpolate delta by the report's sys_time position in the segment.
+            // Interpolate delta by the report's `sys_time` position in the segment.
             let sys_b = b
                 .sys_time
                 .map_or(effective_time(b).timestamp_micros() - db, |s| {
@@ -809,13 +809,13 @@ fn segment_corrected_gps_us(
         }
         (Some(db), None) => st_us + db,
         (None, Some(da)) => st_us + da,
-        (None, None) => st_us, // no correction; caller uses even-distribution fallback
+        (None, None) => st_us, // no correction: the caller uses the even-distribution fallback
     }
 }
 
 /// Corrected GPS timestamp for a dead-reckoned report after the last real fix.
 ///
-/// Uses the last fix's delta when available. Falls back to sys_time or an
+/// Uses the last fix's delta when available. Falls back to `sys_time` or an
 /// index-based estimate if no timestamp is usable.
 fn dead_reckoned_gps_us(
     report: &InternalSatReport,
@@ -897,8 +897,8 @@ fn associate_satellites(
             continue;
         };
 
-        // When the report has no GPS time, record its sys_time for same-domain
-        // distance comparison against fixes that also carry sys_time.
+        // When the report has no GPS time, record its `sys_time` for same-domain
+        // distance comparison against fixes that also have a `sys_time`.
         let rep_sys_us: Option<i64> = if report.gps_time.is_none() {
             report.sys_time.map(|st| st.timestamp_micros())
         } else {
@@ -987,16 +987,16 @@ fn timeline_time(fix: &InternalFix) -> DateTime<Utc> {
 
 /// Interpolate positions for each annotation.
 ///
-/// Returns `(resolved, out_of_range)`. In lenient mode the out-of-range vec
+/// Returns `(resolved, out_of_range)`. In lenient mode `out_of_range`
 /// is always empty (positions are clamped and a warning is logged). In strict
-/// mode, out-of-range annotations go into the second vec.
+/// mode, out-of-range annotations go into `out_of_range`.
 ///
 /// Annotation timestamps are treated as host system-clock times and compared
 /// against each fix's `sys_time` (falling back to `gps_time` via
 /// [`timeline_time`]). This matches the clock domain of all external event
 /// sources (log files, user annotations). The fix slice must be sorted by a
-/// time consistent with `timeline_time` - in practice GPS and sys times are
-/// monotonically consistent for well-formed data.
+/// time consistent with `timeline_time` - in practice the GPS and system clocks
+/// are monotonically consistent for well-formed data.
 fn interpolate_annotations(
     fixes: &[InternalFix],
     annotations: Vec<Annotation>,
@@ -1065,8 +1065,8 @@ fn interpolate_annotations(
 
 /// Interpolate geographic positions for event markers from the built nav track.
 ///
-/// Uses the same algorithm as [`interpolate_annotations`]: the sys_time is
-/// matched against each fix's `timeline_time` (sys_time-first), then the
+/// Uses the same algorithm as [`interpolate_annotations`]: the `sys_time` is
+/// matched against each fix's `timeline_time` (`sys_time`-first), then the
 /// surrounding fixes bracket the position via linear interpolation.  Markers
 /// before the first fix or after the last fix are clamped to the endpoint.
 /// Markers with no fixes at all are silently dropped.
@@ -1078,7 +1078,7 @@ fn interpolate_event_markers(
         return Vec::new();
     }
 
-    // Build a lightweight slice of (timeline_time, lat, lon) from the already-sorted
+    // Build a lightweight slice of `(timeline_time, lat, lon)` from the already-sorted
     // internal points so we can binary-search without dealing with InternalFix directly.
     let fixes_view: Vec<(chrono::DateTime<chrono::Utc>, f64, f64)> = points
         .iter()
@@ -1170,7 +1170,7 @@ struct SatelliteIssues {
     elevation_above_90: u32,
     /// Satellites with azimuth outside [0°, 360°).
     azimuth_out_of_range: u32,
-    /// Satellites with SNR ≈ 99 dB-Hz (common firmware sentinel for "no data").
+    /// Satellites with SNR ≈ 99 dB-Hz (common firmware sentinel value for "no data").
     snr_sentinel_99: u32,
     /// Satellites with SNR > 60 dB-Hz (above the physical limit for civil GNSS).
     snr_above_60: u32,
@@ -1183,9 +1183,8 @@ struct SatelliteIssues {
 impl SatelliteIssues {
     fn to_records(&self) -> Vec<SatelliteWarning> {
         // One row per issue category: its count and the human-readable text.
-        // Driving the records off a table keeps each kind a single line and
-        // means a new issue (e.g. another constellation's PRN range) is one
-        // more entry rather than another `if` branch.
+        // Driving the records off a table keeps each kind a single line: a new
+        // issue (e.g. another constellation's PRN range) is one more entry.
         let table = [
             (
                 self.prn_zero,
@@ -1332,7 +1331,7 @@ fn collect_satellite_issues_inner<'a>(
     let mut issues = SatelliteIssues::default();
 
     for tracked in reports {
-        // (constellation, prn) - used for per-report duplicate detection.
+        // `(constellation, prn)` - used for per-report duplicate detection.
         let mut seen: HashSet<(Constellation, u32)> = HashSet::new();
         let mut has_duplicate = false;
 
@@ -1429,7 +1428,7 @@ fn validate_satellite_data(reports: &[InternalSatReport]) {
 ///
 /// Uses `gps_time` when the receiver had an active lock, otherwise falls back
 /// to `sys_time` (treated as a GPS-domain estimate), then to the Unix epoch.
-/// All internal builder logic uses this instead of accessing `fix.gps_time` directly.
+/// All internal builder logic resolves a fix's timestamp through this.
 #[inline]
 fn effective_time(fix: &InternalFix) -> GpsTime {
     fix.gps_time
@@ -1446,7 +1445,7 @@ pub(crate) fn micros_to_datetime(us: i64) -> DateTime<Utc> {
 
 /// Encode an optional `DateTime<Utc>` as u64 microseconds since Unix epoch.
 ///
-/// `u64::MAX` is used as the sentinel for `None`. It corresponds to year ~584,542
+/// `u64::MAX` is used as the sentinel value for `None`. It corresponds to year ~584,542
 /// which is impossible for real data.  All valid GPS/system timestamps are
 /// positive i64 values that fit safely in u64.
 pub(crate) fn opt_datetime_to_u64(dt: Option<DateTime<Utc>>) -> u64 {
@@ -1724,7 +1723,6 @@ mod validation_tests {
 
     #[test]
     fn prn_zero_skips_range_check() {
-        // PRN 0 with Glonass: should only count as prn_zero, not glo_out_of_range.
         let reports = vec![report(vec![sat(Constellation::Glonass, 0)])];
         let issues = collect_satellite_issues(&reports);
         assert_eq!(issues.prn_zero, 1);

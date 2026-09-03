@@ -1,6 +1,6 @@
 //! Type-safe event markers using `#[derive(EventKind)]`.
 //!
-//! Define the event taxonomy as a Rust enum hierarchy and let the derive macro
+//! Define the event taxonomy as a Rust `enum` hierarchy and let the derive macro
 //! produce the slash-separated path strings.  The compiler enforces that every
 //! logged event is a known, valid variant, and exhaustive match coverage comes
 //! for free.
@@ -17,7 +17,7 @@
 //! get a human-readable note in the file - no separate string is needed.
 //! `add_event_with_note` overrides the automatic note for that one instance.
 //!
-//! Use `#[event_kind(note = none)]` on an enum to opt out entirely, or
+//! Use `#[event_kind(note = none)]` on an `enum` to opt out entirely, or
 //! `#[event_kind(note = display)]` to use the `Display` implementation instead.
 
 // Examples favour brevity: the core's robustness restriction lints (no
@@ -58,7 +58,7 @@ enum SensorEvent {
 }
 
 // note = none: connectivity events always carry an explicit context string via
-// add_event_with_note, so the Debug representation would be redundant noise.
+// `add_event_with_note`, so the Debug representation would be redundant noise.
 #[derive(Debug, EventKind)]
 #[event_kind(note = none)]
 enum ConnectivityEvent {
@@ -115,7 +115,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         t("2024-06-01T08:00:02Z"),
         "cold start",
     );
-    // ConnectivityEvent has note = none, so add_event_with_note is required for a note.
+    // ConnectivityEvent has note = none, so `add_event_with_note` is required for a note.
     recorder.add_event_with_note(
         &Event::Connectivity(ConnectivityEvent::Agps(AgpsEvent::Request)),
         t("2024-06-01T08:00:05Z"),

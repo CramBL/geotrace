@@ -67,5 +67,5 @@ pub use variant_path::EventKind;
 // Re-export the derive macro
 pub use geotrace_sdk_macros::EventKind;
 
-// Re-export commonly needed external types so users don't need extra deps
+// Re-export commonly needed external types so users need no extra dependencies
 pub use chrono::{DateTime, Duration, Utc};

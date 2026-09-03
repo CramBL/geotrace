@@ -467,7 +467,7 @@ fn channels_round_trip() -> Result<(), Box<dyn std::error::Error>> {
     let nav_file = recorder.finish()?;
     let rt = round_trip(&nav_file)?;
 
-    // Restored channels are name-sorted, so accel_mag precedes tilt.
+    // Restored channels are name-sorted, so `accel_mag` precedes `tilt`.
     assert_eq!(rt.channels().len(), 2);
 
     let accel = &rt.channels()[0];
@@ -510,8 +510,8 @@ fn a_file_without_channels_still_reads() -> Result<(), Box<dyn std::error::Error
 
 #[test]
 fn a_channel_name_must_be_a_lowercase_identifier() {
-    // Uppercase, a space, an empty name, and a leading digit are all rejected;
-    // a plain lowercase identifier is accepted.
+    // Uppercase, a space, an empty name, and a leading digit are all rejected.
+    // A plain lowercase identifier is accepted.
     for bad in ["Accel Fwd", "accel-fwd", "", "1accel", "Accel"] {
         assert!(
             matches!(
@@ -764,8 +764,8 @@ fn vector_channel_validation() {
 
 #[test]
 fn a_single_component_vector_channel_round_trips() -> Result<(), Box<dyn std::error::Error>> {
-    // A 1-component vector's `components` attribute stores as a single string;
-    // it must still read back as a vector, not collapse to a scalar.
+    // A 1-component vector's `components` attribute stores as a single string.
+    // It must still read back as a vector, not collapse to a scalar.
     let t0 = base();
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_channel(

@@ -306,7 +306,7 @@ fn event_marker_styles_are_stored() {
     );
 }
 
-// Enums used only by the icon tests below.
+// The `enum` types used only by the icon tests below.
 #[derive(Debug, EventKind)]
 #[event_kind(note = none)]
 enum IconLeaf {

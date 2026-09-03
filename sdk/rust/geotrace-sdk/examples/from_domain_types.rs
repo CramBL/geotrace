@@ -2,8 +2,7 @@
 //!
 //! **Scenario**: your application already owns its GPS data structs - produced by
 //! a hardware driver, a third-party library, or your own domain model.
-//! Rather than reconstructing each field through SDK builders at every call site,
-//! implement `From` for each SDK type once.
+//! Implement `From` for each SDK type once.
 //! After that, [`NavRecorder::add_nav_fix`] and [`NavRecorder::add_satellite_report`]
 //! accept your types directly. [`Annotation`] takes `TryFrom` instead: a label
 //! past the capacity of `markers/label` is rejected.

@@ -1,8 +1,8 @@
-/// Implemented by enums to produce a slash-separated variant path string.
+/// Implemented by `enum` types to produce a slash-separated variant path string.
 ///
 /// Use `#[derive(EventKind)]` - the trait is sealed so manual implementations
 /// are not possible.  Each variant's name is converted to `snake_case` and
-/// becomes one segment of the path.  Nested enums produce paths like
+/// becomes one segment of the path.  Nested `enum` types produce paths like
 /// `"power/boot"` or `"connectivity/agps/request"` by chaining segments.
 ///
 /// [`variant_path`](EventKind::variant_path) returns `None` for variants
@@ -14,7 +14,7 @@
 ///
 /// ## Enum-level
 ///
-/// Place one of these on the enum itself to set the default behaviour for
+/// Place one of these on the `enum` itself to set the default behaviour for
 /// single-field tuple variants.
 ///
 /// | Attribute | Effect |

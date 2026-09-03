@@ -119,8 +119,8 @@ fn write_channels(nav_file: &NavFile, fb: &mut FileBuilder) {
             .with_chunks(&[chunk])
             .with_shuffle()
             .with_deflate(6);
-        // A scalar channel is a 1-D `[n]` dataset; a vector channel is a 2-D
-        // `[n, k]` dataset so the components stay clock-locked in one column each.
+        // A scalar channel is a 1-D `[n]` dataset. A vector channel is a 2-D
+        // `[n, k]` dataset, so the components stay clock-locked in one column each.
         let value = grp.create_dataset("value").with_f64_data(&channel.values);
         if channel.is_vector() {
             let k = channel.component_count() as u64;
@@ -555,7 +555,7 @@ fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), E
             .with_chunks(&[n_chunk])
             .with_shuffle()
             .with_deflate(6);
-        // variant_path: 256 B rows → chunk at CHUNK_SIZE/256 rows
+        // `variant_path`: 256 B rows → chunk at CHUNK_SIZE/256 rows
         grp.create_dataset("variant_path")
             .with_u8_data(&vp_flat)
             .with_shape(&[n as u64, 256])

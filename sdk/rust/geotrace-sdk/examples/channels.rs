@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
 
     // Three samples, one second apart. A real recorder would sample faster
-    // than the fixes; the channel keeps its own clock either way.
+    // than the fixes. The channel keeps its own clock either way.
     let times: Vec<DateTime<Utc>> = (0..3).map(|i| t0 + Duration::seconds(i)).collect();
 
     // A scalar channel: one value per timestamp.

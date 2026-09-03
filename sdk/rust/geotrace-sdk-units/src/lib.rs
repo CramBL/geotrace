@@ -227,7 +227,7 @@ impl BaseUnit {
         }
     }
 
-    /// Whether this base accepts the given prefix.
+    /// Whether this base accepts `prefix`.
     ///
     /// The pairs are curated to the scales sensors report, each with a single
     /// reading: meters take every prefix, seconds take `n`/`u`/`m`, standard
@@ -277,7 +277,7 @@ impl BaseUnit {
 ///
 /// # Parsing
 ///
-/// [`Unit::from_label`] and the [`FromStr`] impl take a whole label as written:
+/// [`Unit::from_label`] and the [`FromStr`] `impl` take a whole label as written:
 /// they trim it, resolve aliases such as `degrees`, `°`,
 /// `kph`, `mps2` and `mG`, rewrite `²` and `^2` to `2`, and split a compound
 /// spelling on `/`. [`FromStr`] reports a [`UnitParseError`] where
@@ -301,7 +301,7 @@ impl BaseUnit {
 /// # Spelling
 ///
 /// [`Unit::label`] returns the canonical spelling as a `&'static str`, which is
-/// what a `.gtd` file stores. [`Unit::text`] and the [`fmt::Display`] impl write
+/// what a `.gtd` file stores. [`Unit::text`] and the [`fmt::Display`] `impl` write
 /// that same spelling into a formatter. [`Unit::canonical_text`] returns it only
 /// for the units in [`Unit::CANONICAL`], the one spelling per scale the query
 /// editor suggests.
@@ -588,7 +588,7 @@ impl Unit {
         self.label
     }
 
-    /// Iterate over every recognized channel unit in stable catalog order.
+    /// Every recognized channel unit, in catalog order.
     pub fn recognized() -> impl ExactSizeIterator<Item = Self> {
         Self::BINDINGS.iter().map(|binding| binding.unit)
     }
@@ -642,7 +642,7 @@ impl Unit {
 
     /// Canonical spelling as a lightweight display value.
     ///
-    /// Formats exactly like the [`fmt::Display`] impl. [`Unit::label`] gives
+    /// Formats exactly like the [`fmt::Display`] `impl`. [`Unit::label`] gives
     /// the same spelling as a `&'static str`.
     pub fn text(self) -> UnitText {
         UnitText(self)
@@ -716,7 +716,7 @@ impl Unit {
     /// Trims the label, maps aliases (`degree`, `metres`, `sec`, `kph`, `mps2`,
     /// `°`, `mG`) to their catalog unit, rewrites `²` and `^2` to `2`, and
     /// splits a compound spelling on `/`. [`ChannelUnit::from_file_label`]
-    /// parses file labels through it. The [`FromStr`] impl is the same parse
+    /// parses file labels through it. The [`FromStr`] `impl` is the same parse
     /// with a [`UnitParseError`] in place of [`None`].
     pub fn from_label(label: &str) -> Option<Self> {
         let normalized = normalize_label(label);
@@ -844,7 +844,7 @@ pub enum ChannelUnitKind {
 /// A recognized, convertible unit or an explicit display-only custom label.
 ///
 /// The write path has three constructors: [`ChannelUnit::recognized`] (and the
-/// equivalent `From<Unit>`), [`ChannelUnit::custom`], and the [`FromStr`] impl,
+/// equivalent `From<Unit>`), [`ChannelUnit::custom`], and the [`FromStr`] `impl`,
 /// which yields a recognized unit only. The read path adds
 /// [`ChannelUnit::from_file_label`], the one constructor that accepts every
 /// label and the only source of [`ChannelUnitKind::Legacy`].
@@ -997,8 +997,7 @@ fn normalize_label(label: &str) -> String {
         "G" => "g".to_owned(),
         "mG" => "mg".to_owned(),
         // Collapse the superscript first, so a second pass over an already
-        // normalized label is a no-op (idempotent): `²` -> `^2` -> `2` in one
-        // pass rather than leaving a `^2` for the next call to reduce.
+        // normalized label is a no-op (idempotent): `²` -> `^2` -> `2` in one pass.
         value => value.replace('²', "2").replace("^2", "2"),
     }
 }
