@@ -7,8 +7,14 @@ the app).
 
 ## [unreleased]
 
+### Added
+
+- Rust `NavFileBuilder::with_scrubbed_provenance()`. A file written through it holds the new `geotrace_sdk::SCRUBBED_SDK_VERSION` (`<scrubbed>`) as its `sdk_version`, no `sdk_git_commit` and no `sdk_commit_time`, whatever the build that wrote it.
+- Rust `NavFile::equals_ignoring_build_provenance()`, which compares two files over everything but their `sdk_version`, `sdk_git_commit` and `sdk_commit_time`.
+
 ### Changed
 
+- The writer takes `sdk_version`, `sdk_git_commit` and `sdk_commit_time` from the `NavFile` it writes: a file read from disk and written back keeps the stamp it was read with, and one read without a stamp is written without one. `NavRecorder::finish` stamps the build it runs in.
 - C `gtd_builder_add_channel_with_unit_mode` takes `uint32_t unit_mode`, the parameter type `gtd_channel_unit_parse` already uses. A `GtdChannelUnitMode` value passes unchanged.
 
 ## [0.6.0] - 2026-09-03

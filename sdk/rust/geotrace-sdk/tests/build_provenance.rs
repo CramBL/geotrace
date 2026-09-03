@@ -54,6 +54,32 @@ fn a_written_file_carries_the_sdk_version() -> Result<(), Box<dyn std::error::Er
 }
 
 #[test]
+fn a_scrubbed_file_has_the_placeholder_version_and_no_commit()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut recorder = NavFileBuilder::new().with_scrubbed_provenance().open();
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .gps_time(base())
+            .lat(Angle::degrees(51.5))
+            .lon(Angle::degrees(-0.1))
+            .build(),
+    );
+
+    let nav_file = recorder.finish()?;
+    let mut bytes = Vec::new();
+    nav_file.write(&mut bytes)?;
+
+    assert_eq!(
+        nav_file.meta().sdk_version(),
+        Some(geotrace_sdk::SCRUBBED_SDK_VERSION)
+    );
+    assert_eq!(nav_file.meta().sdk_git_commit(), None);
+    assert_eq!(nav_file.meta().sdk_commit_time(), None);
+    assert_eq!(NavFile::read(bytes.as_slice())?, nav_file);
+    Ok(())
+}
+
+#[test]
 fn a_file_with_the_provenance_attributes_reads_them_back() -> Result<(), Box<dyn std::error::Error>>
 {
     let nav_file = read_file_with_attrs(|fb| {

@@ -97,7 +97,7 @@ fn satellite_report(
 
 fn build_snapshot_bytes() -> Vec<u8> {
     let base = base();
-    let mut recorder = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().with_scrubbed_provenance().open();
 
     // Track 0: 12 points, Copenhagen area moving NE, all with satellite data
     let trip0_lats = [

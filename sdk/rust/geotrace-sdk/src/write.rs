@@ -1,3 +1,4 @@
+use chrono::SecondsFormat;
 use hdf5_pure::{AttrValue, FileBuilder};
 
 use crate::builder::{datetime_to_micros, opt_datetime_to_u64};
@@ -6,11 +7,8 @@ use crate::fixed_width_string::{
     AnnotationField, ColorHexField, FixedWidthString, FixedWidthStringError, IconNameField,
     MarkerLabelField, VariantPathField,
 };
-use crate::provenance;
-use crate::provenance::{
-    BuildProvenance, SDK_COMMIT_TIME_ATTR, SDK_GIT_COMMIT_ATTR, SDK_VERSION_ATTR,
-};
-use crate::types::{Constellation, EventMarkerColor, MarkerIcon, NavFile};
+use crate::provenance::{SDK_COMMIT_TIME_ATTR, SDK_GIT_COMMIT_ATTR, SDK_VERSION_ATTR};
+use crate::types::{Constellation, EventMarkerColor, MarkerIcon, Meta, NavFile};
 
 /// Number of elements per chunk for 1-D compressed datasets.
 ///
@@ -28,7 +26,7 @@ pub(crate) fn build_hdf5(nav_file: &NavFile) -> Result<Vec<u8>, Error> {
 
     // Root attributes
     fb.set_attr("geotrace_version", AttrValue::String("1".into()));
-    set_provenance_attrs(&mut fb, provenance::PROVENANCE);
+    set_provenance_attrs(&mut fb, &nav_file.meta);
     if let Some(title) = &nav_file.meta.title {
         fb.set_attr("meta_title", AttrValue::String(title.clone()));
     }
@@ -57,19 +55,20 @@ pub(crate) fn build_hdf5(nav_file: &NavFile) -> Result<Vec<u8>, Error> {
     Ok(fb.finish()?)
 }
 
-fn set_provenance_attrs(fb: &mut FileBuilder, provenance: Option<BuildProvenance>) {
-    fb.set_attr(
-        SDK_VERSION_ATTR,
-        AttrValue::String(crate::VERSION.to_owned()),
-    );
-    if let Some(provenance) = provenance {
-        fb.set_attr(
-            SDK_GIT_COMMIT_ATTR,
-            AttrValue::String(provenance.commit.to_owned()),
-        );
+/// A written file holds the same build stamp as the [`NavFile`] it was written
+/// from: [`NavRecorder::finish`](crate::NavRecorder::finish) stamps `meta`
+/// before this runs.
+fn set_provenance_attrs(fb: &mut FileBuilder, meta: &Meta) {
+    if let Some(version) = &meta.sdk_version {
+        fb.set_attr(SDK_VERSION_ATTR, AttrValue::String(version.clone()));
+    }
+    if let Some(commit) = &meta.sdk_git_commit {
+        fb.set_attr(SDK_GIT_COMMIT_ATTR, AttrValue::String(commit.clone()));
+    }
+    if let Some(commit_time) = meta.sdk_commit_time {
         fb.set_attr(
             SDK_COMMIT_TIME_ATTR,
-            AttrValue::String(provenance.commit_time.to_owned()),
+            AttrValue::String(commit_time.to_rfc3339_opts(SecondsFormat::Secs, true)),
         );
     }
 }
@@ -657,23 +656,31 @@ pub(crate) fn decode_tracked_constellation(code: u8) -> Result<Constellation, Er
 mod tests {
     use std::collections::HashMap;
 
+    use chrono::{DateTime, Utc};
     use hdf5_pure::File;
 
     use super::*;
+    use crate::provenance::SCRUBBED_SDK_VERSION;
 
-    fn attrs_of_a_file_with(provenance: Option<BuildProvenance>) -> HashMap<String, AttrValue> {
+    fn attrs_of_a_file_with(meta: &Meta) -> HashMap<String, AttrValue> {
         let mut fb = FileBuilder::new();
-        set_provenance_attrs(&mut fb, provenance);
+        set_provenance_attrs(&mut fb, meta);
         let file = File::from_bytes(fb.finish().expect("build")).expect("read");
         file.root().attrs().expect("attrs")
     }
 
     #[test]
-    fn a_build_with_provenance_writes_the_commit_and_its_time() {
-        let attrs = attrs_of_a_file_with(Some(BuildProvenance {
-            commit: "0123456789abcdef0123456789abcdef01234567",
-            commit_time: "2026-02-01T15:00:00Z",
-        }));
+    fn a_stamp_with_a_commit_writes_the_commit_and_its_time() {
+        let attrs = attrs_of_a_file_with(&Meta {
+            sdk_version: Some("0.4.2".to_owned()),
+            sdk_git_commit: Some("0123456789abcdef0123456789abcdef01234567".to_owned()),
+            sdk_commit_time: Some(
+                "2026-02-01T15:00:00Z"
+                    .parse::<DateTime<Utc>>()
+                    .expect("a valid RFC 3339 timestamp"),
+            ),
+            ..Meta::default()
+        });
 
         assert_eq!(
             attrs.get(SDK_GIT_COMMIT_ATTR).and_then(AttrValue::as_str),
@@ -685,18 +692,30 @@ mod tests {
         );
         assert_eq!(
             attrs.get(SDK_VERSION_ATTR).and_then(AttrValue::as_str),
-            Some(crate::VERSION)
+            Some("0.4.2")
         );
     }
 
     #[test]
-    fn a_build_without_provenance_writes_only_the_version() {
-        let attrs = attrs_of_a_file_with(None);
+    fn a_scrubbed_stamp_writes_the_placeholder_version_and_no_commit() {
+        let mut meta = Meta::default();
+        meta.stamp_scrubbed_provenance();
+
+        let attrs = attrs_of_a_file_with(&meta);
 
         assert_eq!(
             attrs.get(SDK_VERSION_ATTR).and_then(AttrValue::as_str),
-            Some(crate::VERSION)
+            Some(SCRUBBED_SDK_VERSION)
         );
+        assert!(!attrs.contains_key(SDK_GIT_COMMIT_ATTR));
+        assert!(!attrs.contains_key(SDK_COMMIT_TIME_ATTR));
+    }
+
+    #[test]
+    fn a_file_with_no_stamp_writes_no_provenance_attribute() {
+        let attrs = attrs_of_a_file_with(&Meta::default());
+
+        assert!(!attrs.contains_key(SDK_VERSION_ATTR));
         assert!(!attrs.contains_key(SDK_GIT_COMMIT_ATTR));
         assert!(!attrs.contains_key(SDK_COMMIT_TIME_ATTR));
     }
