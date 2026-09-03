@@ -1502,6 +1502,24 @@ fn prune_dialog_fits_every_viewport(
     );
 }
 
+#[test]
+fn snapshot_delete_hidden_confirmation() {
+    let mut entry = entry_with_identity("auto:ride.gtd");
+    entry.total_tracks = 12;
+    entry.hidden_tracks = 3;
+    let mut harness = history_harness(vec![entry]);
+    // The temporary database path differs every run.
+    harness.worker.hide_path();
+    harness.window.delete_hidden_confirm_open = true;
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(show_history, harness);
+    for _ in 0..4 {
+        h.run();
+    }
+    h.snapshot("delete_hidden_confirmation");
+}
+
 /// The delete-hidden confirmation stays inside the screen and keeps its
 /// buttons reachable however many tracks it names.
 #[rstest::rstest]

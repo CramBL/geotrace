@@ -14,7 +14,7 @@ use crate::app::anchored_dialog::{
     AnchoredDialog, AnchoredDialogKind, DialogRegions, HeldBodyLines,
 };
 use crate::app::history_db::ExistingLogAttachment;
-use crate::app::modals::{DialogActions, DialogBody, DialogRowLeadingControl};
+use crate::app::modals::{DialogActionRow, DialogBody};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 
 #[cfg(test)]
@@ -185,7 +185,7 @@ impl LogAssociationDialog {
         let dialog = AnchoredDialog::new(AnchoredDialogKind::AssociateLog, TITLE)
             .with_close_button(&mut open);
         let regions = dialog.regions();
-        dialog.show_with_action_row(
+        dialog.show(
             ctx,
             DialogBody::new(|ui| {
                 ui.add(
@@ -216,11 +216,7 @@ impl LogAssociationDialog {
                 ui.add_space(8.0);
                 self.attach_ui(ui, regions, attachable, write_access);
             }),
-            DialogRowLeadingControl::new(|ui| {
-                ui.checkbox(&mut dont_show_again, DONT_SHOW_AGAIN_LABEL)
-                    .on_hover_text(DONT_SHOW_AGAIN_HOVER);
-            }),
-            DialogActions::new(|ui| {
+            DialogActionRow::buttons(|ui| {
                 confirmed = ui
                     .button(CONFIRM_LABEL)
                     .on_hover_text(CONFIRM_HOVER)
@@ -228,6 +224,10 @@ impl LogAssociationDialog {
                 if ui.button(CANCEL_LABEL).clicked() {
                     choice = Some(LogAssociationChoice::Cancelled);
                 }
+            })
+            .with_leading_control(|ui| {
+                ui.checkbox(&mut dont_show_again, DONT_SHOW_AGAIN_LABEL)
+                    .on_hover_text(DONT_SHOW_AGAIN_HOVER);
             }),
         );
 

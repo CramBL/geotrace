@@ -63,7 +63,6 @@ enum ResegmentChoice {
     Cancel,
 }
 
-/// What the user chose in the auto-prune confirmation.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AutoPruneChoice {
     Delete,
@@ -457,7 +456,7 @@ impl App {
         let mut keep_backup = self.keep_db_backup;
         let choice = match &failure {
             storage::HistoryFailure::Busy(_) => modals::anchored_confirmation_dialog(
-                ui,
+                ui.ctx(),
                 AnchoredDialogKind::HistoryDatabaseInUse,
                 HISTORY_DATABASE_IN_USE_TITLE,
                 HistoryFailureChoice::Dismiss,
@@ -492,7 +491,7 @@ impl App {
                 },
             ),
             storage::HistoryFailure::Locked(_) => modals::anchored_confirmation_dialog(
-                ui,
+                ui.ctx(),
                 AnchoredDialogKind::HistoryDatabaseLocked,
                 HISTORY_DATABASE_LOCKED_TITLE,
                 HistoryFailureChoice::Dismiss,
@@ -537,7 +536,7 @@ impl App {
                 },
             ),
             storage::HistoryFailure::Unreadable(_) => modals::anchored_confirmation_dialog(
-                ui,
+                ui.ctx(),
                 AnchoredDialogKind::HistoryDatabaseCorrupted,
                 HISTORY_DATABASE_CORRUPTED_TITLE,
                 HistoryFailureChoice::Dismiss,
@@ -614,7 +613,7 @@ impl App {
             prompt.filename
         );
         let choice = modals::anchored_confirmation_dialog(
-            ui,
+            ui.ctx(),
             AnchoredDialogKind::TrackSettingsDiffer,
             TRACK_SETTINGS_DIFFER_TITLE,
             ResegmentChoice::Cancel,
@@ -722,7 +721,7 @@ impl App {
         let limit = gt_fmt::format_bytes(self.storage_settings.auto_prune_max_bytes);
         let n = refs.len();
         let choice = modals::anchored_confirmation_dialog(
-            ui,
+            ui.ctx(),
             AnchoredDialogKind::AutoPrune,
             AUTO_PRUNE_TITLE,
             AutoPruneChoice::Cancel,

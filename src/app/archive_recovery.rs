@@ -29,6 +29,7 @@ use gt_store::{
 };
 use gt_ui_theme::warning_amber;
 
+use super::anchored_dialog::AnchoredDialogKind;
 use super::storage::StorageOpen;
 use super::{App, modals, storage};
 
@@ -37,8 +38,6 @@ pub(in crate::app) const RECOVER_BUTTON_LABEL: &str = "Recover";
 pub(in crate::app) const LEAVE_UNRECOVERED_BUTTON_LABEL: &str = "Leave unrecovered";
 
 pub(in crate::app) const ARCHIVE_IN_USE_BUTTON_LABEL: &str = "Continue";
-
-const PROMPT_MAX_WIDTH: f32 = 460.0;
 
 /// Starts the line an interrupted-delete prompt states a take-over on.
 pub(in crate::app) const WRITE_ACCESS_TAKEN_FROM: &str =
@@ -377,12 +376,12 @@ fn show_interrupted_delete_prompt(
     interrupted: InterruptedDelete,
     take_over: Option<TakeOverAfterTheArchiveWasLastWritten>,
 ) -> Option<InterruptedDeleteChoice> {
-    modals::confirmation_dialog(
-        ui,
+    modals::anchored_confirmation_dialog(
+        ui.ctx(),
+        AnchoredDialogKind::RecoverArchive,
         format!("Recover the {} archive?", archive.label_in_sentence()),
-        PROMPT_MAX_WIDTH,
         InterruptedDeleteChoice::LeaveUnrecovered,
-        |ui| {
+        |ui, _regions| {
             ui.label(
                 "A delete was interrupted part-way through this archive, and GeoTrace cannot \
                  open it as it stands.",
@@ -433,12 +432,12 @@ fn show_archive_held_by_the_other_instance(
     ui: &egui::Ui,
     archive: EnvironmentArchive,
 ) -> Option<InterruptedDeleteChoice> {
-    modals::confirmation_dialog(
-        ui,
+    modals::anchored_confirmation_dialog(
+        ui.ctx(),
+        AnchoredDialogKind::ArchiveHeldByTheOtherInstance,
         format!("The {} archive is in use", archive.label_in_sentence()),
-        PROMPT_MAX_WIDTH,
         InterruptedDeleteChoice::LeaveToTheOtherInstance,
-        |ui| {
+        |ui, _regions| {
             ui.label(
                 "GeoTrace cannot read this file here: the other GeoTrace still has it open. \
                  The archive is unavailable for this session and nothing is written to it.",

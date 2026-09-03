@@ -15,7 +15,7 @@ use gt_test_utils::{AuditedWindow, HarnessInteraction as _, WindowFitAssertions 
 use strum::IntoEnumIterator as _;
 
 use super::{AnchoredDialog, AnchoredDialogKind, HeldBodyLines};
-use crate::app::modals::{DialogActions, DialogBody, DialogRowLeadingControl};
+use crate::app::modals::{DialogActionRow, DialogBody};
 
 /// A control moves only because its own window moved it, never because the
 /// screen clipped it: this is wider and taller than every dialog.
@@ -88,7 +88,7 @@ fn dialog_ui(ui: &mut egui::Ui, state: &mut DialogUnderTest) {
     let result_arrived = state.result_arrived;
     let dialog = AnchoredDialog::new(state.kind, title_of(state.kind));
     let regions = dialog.regions();
-    let cancelled = dialog.show_with_action_row(
+    let cancelled = dialog.show(
         ui.ctx(),
         DialogBody::new(|ui| {
             ui.label(PROMPT);
@@ -105,11 +105,12 @@ fn dialog_ui(ui: &mut egui::Ui, state: &mut DialogUnderTest) {
                 },
             );
         }),
-        DialogRowLeadingControl::new(|ui| {
-            state.leading_control_text_color = Some(ui.visuals().text_color());
-            ui.checkbox(&mut state.suppressed, SUPPRESS_LABEL);
-        }),
-        DialogActions::new(|ui| ui.button(CANCEL_LABEL).clicked()),
+        DialogActionRow::buttons(|ui| ui.button(CANCEL_LABEL).clicked()).with_leading_control(
+            |ui| {
+                state.leading_control_text_color = Some(ui.visuals().text_color());
+                ui.checkbox(&mut state.suppressed, SUPPRESS_LABEL);
+            },
+        ),
     );
     if cancelled == Some(true) {
         state.cancelled = true;

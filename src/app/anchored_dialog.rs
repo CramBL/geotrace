@@ -14,9 +14,7 @@ use egui::emath::GuiRounding as _;
 use egui::{ScrollArea, TextStyle, Window};
 use strum::EnumIter;
 
-use crate::app::modals::{
-    self, DialogActions, DialogBody, DialogBodyHeight, DialogRowLeadingControl,
-};
+use crate::app::modals::{self, DialogActionRow, DialogBody, DialogBodyHeight};
 
 #[cfg(test)]
 mod tests;
@@ -32,31 +30,37 @@ const FROZEN_REGIONS: &str = "frozen_regions";
 #[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
 pub(super) enum AnchoredDialogKind {
     AboutGeoTrace,
+    ArchiveHeldByTheOtherInstance,
     AssociateLog,
     AutoPrune,
     DeleteArchivedDays,
+    DeleteHiddenTracks,
     ForceQuit,
     HistoryDatabaseCorrupted,
     HistoryDatabaseInUse,
     HistoryDatabaseLocked,
     MapboxToken,
+    RecoverArchive,
     RemoveItems,
     SnapToRoadAgain,
     SnapToRoadAutomatically,
     SnapToRoadConsent,
     SnapToRoadScope,
+    TakeOverWriteAccess,
     TrackSettingsDiffer,
+    #[cfg(feature = "self-update")]
+    UpdateAvailable,
+    WaitingForTheDataDirectory,
 }
 
 impl AnchoredDialogKind {
-    #[expect(
-        clippy::match_same_arms,
-        reason = "Each dialog states the width its own content needs"
-    )]
     fn width(self) -> f32 {
         match self {
             // Room for the attribution lines that pair a sentence with a link.
             Self::AboutGeoTrace => 400.0,
+            // Room for the two sentences about the archive the other GeoTrace
+            // has open, on two lines.
+            Self::ArchiveHeldByTheOtherInstance => 460.0,
             // Room for a recording name beside how much of the log it ran
             // alongside.
             Self::AssociateLog => 460.0,
@@ -65,6 +69,8 @@ impl AnchoredDialogKind {
             // Room for an archive's name beside the days it loses, and for a
             // recording name on one line.
             Self::DeleteArchivedDays => 480.0,
+            // Room for the sentence counting the hidden tracks on one line.
+            Self::DeleteHiddenTracks => 420.0,
             // Fits inside the window that shutdown sizes itself down to.
             Self::ForceQuit => 360.0,
             // Room for each of the two sentences about the unreadable file on
@@ -78,6 +84,9 @@ impl AnchoredDialogKind {
             Self::HistoryDatabaseLocked => 460.0,
             // Room for the token field between its label and the Apply button.
             Self::MapboxToken => 420.0,
+            // Room for the sentence about the interrupted delete, and for
+            // the one stating when write access was taken, on two lines each.
+            Self::RecoverArchive => 460.0,
             // Room for a track's name beside its number, distance and
             // duration, and for the line stating what the remove does in
             // history.
@@ -93,9 +102,20 @@ impl AnchoredDialogKind {
             // Room for the two scope rows, and for the statement about
             // replacing data on two lines under them.
             Self::SnapToRoadScope => 380.0,
+            // Room for each statement about what the other GeoTrace is doing
+            // on two lines, and for the warning about writing to the
+            // recordings on four.
+            Self::TakeOverWriteAccess => 460.0,
             // Room for a recording name to wrap at a readable length, and for
             // the stored and current settings side by side.
             Self::TrackSettingsDiffer => 480.0,
+            // Room for the primary action and the two dismissals beside it,
+            // and for each statement the install reports on one line.
+            #[cfg(feature = "self-update")]
+            Self::UpdateAvailable => 460.0,
+            // Room for each statement about the instance holding the data
+            // directory on three lines.
+            Self::WaitingForTheDataDirectory => 360.0,
         }
     }
 }
@@ -281,15 +301,15 @@ impl<'a> AnchoredDialog<'a> {
         }
     }
 
-    /// Draws the dialog: `body` scrolls inside the held height, `actions` sit
-    /// at its bottom edge. Returns `None` once the close button has set the
-    /// flag given to [`with_close_button`](Self::with_close_button) to
+    /// Draws the dialog: `body` scrolls inside the held height, and `actions`
+    /// sit at its bottom edge. Returns `None` once the close button has set
+    /// the flag given to [`with_close_button`](Self::with_close_button) to
     /// `false`.
     pub(super) fn show<R>(
         self,
         ctx: &egui::Context,
         body: DialogBody<impl FnOnce(&mut egui::Ui)>,
-        actions: DialogActions<impl FnOnce(&mut egui::Ui) -> R>,
+        actions: DialogActionRow<impl FnOnce(&mut egui::Ui), impl FnOnce(&mut egui::Ui) -> R>,
     ) -> Option<R> {
         let Self {
             kind,
@@ -333,7 +353,7 @@ impl<'a> AnchoredDialog<'a> {
             }
             #[expect(
                 clippy::disallowed_methods,
-                reason = "AnchoredDialog is the wrapper this rule points at"
+                reason = "Every anchored dialog anchors its window here, and nowhere else"
             )]
             None => {
                 window = window
@@ -347,7 +367,7 @@ impl<'a> AnchoredDialog<'a> {
         }
 
         let laid_out = window.show(ctx, |ui| {
-            modals::dialog_body_above_actions_taking(ui, body_height, body, actions)
+            modals::dialog_body_above_the_action_row_taking(ui, body_height, body, actions)
         });
 
         match held.size {
@@ -374,29 +394,5 @@ impl<'a> AnchoredDialog<'a> {
         }
         ctx.data_mut(|data| data.insert_temp(held_id, held));
         laid_out.and_then(|window| window.inner)
-    }
-
-    /// [`show`](Self::show) with the actions in the standard row: `leading` at
-    /// its left end and `buttons` right-aligned. A tickbox that stops the
-    /// dialog from opening again goes at that left end.
-    ///
-    /// A rule across the dialog's width divides the body from the row, so the
-    /// leading control reads as part of the row and not as the body's last
-    /// item.
-    pub(super) fn show_with_action_row<R>(
-        self,
-        ctx: &egui::Context,
-        body: DialogBody<impl FnOnce(&mut egui::Ui)>,
-        leading: DialogRowLeadingControl<impl FnOnce(&mut egui::Ui)>,
-        DialogActions(buttons): DialogActions<impl FnOnce(&mut egui::Ui) -> R>,
-    ) -> Option<R> {
-        self.show(
-            ctx,
-            body,
-            DialogActions::new(|ui| {
-                ui.separator();
-                modals::dialog_button_row_with_leading_control(ui, leading, buttons)
-            }),
-        )
     }
 }

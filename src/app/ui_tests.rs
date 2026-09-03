@@ -39,6 +39,7 @@ use gt_store::{
     RecordingsHandle, SolarStore,
 };
 use gt_test_utils::day_archive::{self, GroupPath};
+use gt_test_utils::snapshot_harness;
 use gt_test_utils::{
     By, DEMO_BYTES, GOLD_BYTES, HarnessInteraction as _, SyntheticGtdSpec, SyntheticLogSpec,
     SyntheticLogTimestamps, TestHarness, WindowFitAssertions as _, synthetic_gtd_bytes,
@@ -4745,6 +4746,64 @@ fn snapshot_update_prompt_self_update() {
     harness.snapshot_loose("update_prompt_self_update");
 }
 
+/// What a failed install reports in the cases below.
+#[cfg(feature = "self-update")]
+const UPDATE_INSTALL_FAILURE: &str = "the release asset could not be downloaded";
+
+/// The prompt as it opens, with an update offered and no install started yet.
+#[cfg(feature = "self-update")]
+fn app_showing_the_update_prompt() -> TestHarness<'static, App> {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(640.0, 400.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness.inner.state_mut().update_checker =
+        super::update::UpdateChecker::available_for_test("0.2.0", true);
+    harness.inner.run_steps(4);
+    harness
+}
+
+/// What the prompt shows once the install it started has failed: the reason
+/// in the body, and a manual download beside the dismissal.
+#[cfg(feature = "self-update")]
+#[test]
+fn snapshot_update_prompt_install_failed() {
+    let mut harness = app_showing_the_update_prompt();
+    harness
+        .inner
+        .state()
+        .update_checker
+        .report_a_failed_install_for_test(UPDATE_INSTALL_FAILURE);
+    harness.inner.run_steps(4);
+
+    harness.snapshot_loose("update_prompt_install_failed");
+}
+
+/// The install reports its outcome after the prompt has already opened.
+#[cfg(feature = "self-update")]
+#[test]
+fn the_update_prompt_shows_the_reason_a_failed_install_gives_without_growing() {
+    let mut harness = app_showing_the_update_prompt();
+
+    harness
+        .inner
+        .state()
+        .update_checker
+        .report_a_failed_install_for_test(UPDATE_INSTALL_FAILURE);
+    harness.inner.run_steps(4);
+
+    let reason = harness
+        .inner
+        .get_by_label_contains(UPDATE_INSTALL_FAILURE)
+        .rect();
+    let dismissal = harness.inner.get_by_label("Later").rect();
+    assert!(
+        reason.bottom() <= dismissal.top(),
+        "the reason the failed install gave is at {reason:?}, over the action row at \
+         {dismissal:?}"
+    );
+}
+
 /// A non-self-updatable build (Homebrew / MSI / manual download) shows no
 /// dialog. It exposes the available version for the subtle menu-bar badge.
 #[cfg(feature = "self-update")]
@@ -5649,6 +5708,146 @@ fn the_take_over_confirmation_names_what_the_other_instance_is_doing() {
     );
 }
 
+/// The frame time the wait dialog's harness pins its clock at. The dialog
+/// paints the same however many frames a case runs: a raw input keeps its
+/// time until something sets a new one. egui draws the dialog's spinner from
+/// that clock, and its arc is at its longest here.
+const PINNED_FRAME_TIME: f64 = std::f64::consts::FRAC_PI_2;
+
+/// The wait over a data directory held by a GeoTrace that reported a shutdown
+/// [`STALE_STATUS_WRITTEN_SECONDS_AGO`] ago and has not reported since. That
+/// state fills both dialogs: a statement, the write the other instance is
+/// finishing, and the note marking the report as out of date.
+fn app_waiting_on_a_stale_shutdown_report(directory: &Path) -> TestHarness<'static, App> {
+    let written_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("the clock is past the Unix epoch")
+        .as_secs()
+        - STALE_STATUS_WRITTEN_SECONDS_AGO;
+    write_a_shutting_down_status(directory, Some(written_at));
+    let instance_lock = lock_on_a_directory_another_instance_holds(directory);
+    let harness = Harness::builder()
+        .with_size(egui::vec2(640.0, 420.0))
+        .with_wait_for_pending_images(false)
+        .build_eframe(move |cc| {
+            transient_app_with_the_instance_lock(cc, &[], instance_lock, PendingWrites::default())
+        });
+    let mut harness = TestHarness::from_harness(harness);
+    harness.inner.input_mut().time = Some(PINNED_FRAME_TIME);
+    harness.inner.run_steps(4);
+    harness
+}
+
+#[test]
+fn snapshot_data_directory_wait_dialog() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_on_a_stale_shutdown_report(directory.path());
+
+    harness.snapshot_loose("data_directory_wait_dialog");
+}
+
+/// The pinned frame clock is what makes the baseline above a fixed image: the
+/// spinner's arc would otherwise turn with every frame the case runs.
+#[test]
+fn the_wait_dialog_paints_the_same_however_many_frames_it_runs() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_on_a_stale_shutdown_report(directory.path());
+    let dialog = harness
+        .inner
+        .window_rect(DATA_DIRECTORY_HELD_TITLE)
+        .expect("the wait dialog is shown");
+    let pixels_per_point = harness.inner.ctx.pixels_per_point();
+    let opened = harness.inner.render().expect("the harness renders a frame");
+
+    harness.inner.run_steps(5);
+
+    let later = harness.inner.render().expect("the harness renders a frame");
+    assert!(
+        !snapshot_harness::pixels_differ(&opened, &later, dialog, pixels_per_point),
+        "the wait dialog at {dialog:?} paints differently after five more frames"
+    );
+}
+
+/// The wait re-reads the status file while its dialog is up, and the instance
+/// holding the data directory reports the writes it is finishing once it
+/// begins shutting down.
+#[test]
+fn the_wait_dialog_keeps_its_buttons_in_place_while_the_holder_reports_a_shutdown() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+    harness.step();
+    let before = harness
+        .get_by_label_contains(START_READ_ONLY_BUTTON_LABEL)
+        .rect();
+
+    report_the_holder_as_compacting_an_archive(&holder);
+
+    assert!(
+        harness.step_until(|harness| harness
+            .query_by_label_contains("Compacting the TEC archive")
+            .is_some()),
+        "the wait dialog never named the write the holder is finishing"
+    );
+    assert_eq!(
+        harness
+            .get_by_label_contains(START_READ_ONLY_BUTTON_LABEL)
+            .rect(),
+        before,
+        "the read-only button of the wait dialog moved: a press where the user aimed misses it"
+    );
+}
+
+/// The confirmation reads the same status file the wait does, for as long as
+/// it is up.
+#[test]
+fn the_take_over_confirmation_keeps_its_buttons_in_place_while_the_holder_reports_a_shutdown() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_for_the_data_directory(&[], directory.path());
+    harness.step();
+    harness
+        .get_by_label_contains(TAKE_OVER_BUTTON_LABEL)
+        .click();
+    harness.run_steps(3);
+    let before = harness.get_by_label("Cancel").rect();
+
+    report_the_holder_as_compacting_an_archive(&holder);
+
+    assert!(
+        harness.step_until(|harness| harness
+            .query_by_label_contains("Compacting the TEC archive")
+            .is_some()),
+        "the confirmation never named the write the holder is finishing"
+    );
+    assert_eq!(
+        harness.get_by_label("Cancel").rect(),
+        before,
+        "the Cancel button of the take-over confirmation moved: a press where the user aimed \
+         misses it"
+    );
+}
+
+#[test]
+fn snapshot_take_over_confirmation() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let _holder = DataDirectoryLock::acquire(Some(directory.path()));
+    let mut harness = app_waiting_on_a_stale_shutdown_report(directory.path());
+
+    harness
+        .inner
+        .get_by_label_contains(TAKE_OVER_BUTTON_LABEL)
+        .click();
+    // The harness paints a pointer wherever it last was, over the Cancel
+    // button of the confirmation the click opens.
+    harness.inner.remove_cursor();
+    harness.inner.run_steps(4);
+
+    harness.snapshot_loose("take_over_confirmation");
+}
+
 /// Cancelling leaves everything as it was: the wait dialog is back and
 /// nothing has been opened.
 #[test]
@@ -6231,6 +6430,37 @@ fn the_recovery_prompt_states_the_take_over_the_archive_was_not_written_since() 
         "Write access to this data directory was taken from another GeoTrace (process 4321) on \
          2033-05-18 03:33 UTC.",
     );
+}
+
+#[test]
+fn snapshot_recover_archive_prompt() {
+    let dir = data_directory_with_an_interrupted_interference_delete();
+    let harness = app_asking_about_the_archives_under(
+        dir.path(),
+        Some(TakeOverRecord {
+            taken_by_process_id: 1234,
+            taken_from_process_id: Some(TAKEN_FROM_PROCESS_ID),
+            written_at: Some(TAKE_OVER_STAMPED_AHEAD_OF_THIS_MACHINES_CLOCK),
+        }),
+    );
+
+    let mut harness = TestHarness::from_harness(harness);
+    harness.snapshot_loose("recover_archive_prompt");
+}
+
+#[test]
+fn snapshot_archive_in_use_prompt() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let harness = app_asking_about(InspectedArchives::of_findings_under(
+        dir.path().to_owned(),
+        vec![(
+            EnvironmentArchive::AircraftInterference,
+            InterruptedDeleteFinding::HeldByTheOtherInstance,
+        )],
+    ));
+
+    let mut harness = TestHarness::from_harness(harness);
+    harness.snapshot_loose("archive_in_use_prompt");
 }
 
 /// A take-over the archive was written after says nothing about the state
@@ -6879,7 +7109,6 @@ fn snapshot_history_resegment_dialog() {
     harness.snapshot_loose("history_resegment_dialog");
 }
 
-/// The intro past the room it caps at, scrolling inside that room.
 #[test]
 fn snapshot_history_resegment_dialog_past_the_capped_room() {
     let mut harness = app_showing_the_resegment_prompt(&recording_name_past_the_capped_room());
@@ -6938,7 +7167,6 @@ fn snapshot_auto_prune_dialog() {
     harness.snapshot_loose("auto_prune_dialog");
 }
 
-/// The list past the room it caps at, scrolling inside that room.
 #[test]
 fn snapshot_auto_prune_dialog_past_the_capped_room() {
     let mut harness =
@@ -11779,7 +12007,7 @@ fn the_update_prompt_fits_the_audit_viewports(
     )]
     viewport: egui::Vec2,
 ) {
-    let window = gt_test_utils::AuditedWindow::titled("Update available");
+    let window = gt_test_utils::AuditedWindow::titled(super::update::UPDATE_DIALOG_TITLE);
     let (mut harness, _config_path) = TestHarness::builder().size(viewport).eframe(build_app);
     harness.inner.step();
     harness.inner.state_mut().update_checker =

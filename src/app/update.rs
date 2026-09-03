@@ -25,16 +25,30 @@
 //! on a wedged install a manual path and lets CI exercise the updater end to
 //! end.
 
-use egui::{Button, Label, RichText, Window};
+use egui::{Button, Label, RichText};
 use std::{sync::Arc, thread};
 
 use axoupdater::{AxoUpdater, ReleaseSource, ReleaseSourceType};
 use parking_lot::Mutex;
 
-use crate::app::modals::{self, DialogActions, DialogBody};
+use crate::app::anchored_dialog::{AnchoredDialog, AnchoredDialogKind, HeldBodyLines};
+use crate::app::modals::{DialogActionRow, DialogBody};
 
-/// Room for the primary action and the two dismissals beside it.
-const DIALOG_WIDTH: f32 = 380.0;
+pub(in crate::app) const UPDATE_DIALOG_TITLE: &str = "Update available";
+
+/// The region of the prompt's body that shows what the install reports. The
+/// prompt opens before the user starts an install, and shows the progress and
+/// the outcome of that install in the same window.
+const INSTALL_STATUS_REGION: &str = "install_status";
+
+/// Lines [`INSTALL_STATUS_REGION`] holds from the frame the prompt opens.
+/// Each of the statements the install reports takes one line at this width.
+const INSTALL_STATUS_LEAST_LINES: u8 = 1;
+
+/// Lines [`INSTALL_STATUS_REGION`] holds at most: the one it reserves plus
+/// three for the reason a failed install gives. A longer reason scrolls
+/// inside that room.
+const INSTALL_STATUS_MOST_LINES: u8 = 4;
 
 /// The app name dist records in the install receipt and uses for installer
 /// asset names. Must match the `geotrace` package/binary name.
@@ -116,6 +130,13 @@ impl UpdateChecker {
         checker
     }
 
+    /// Test-only: the install the prompt started reports `error`, as the
+    /// install thread does when it cannot replace the binary.
+    #[cfg(test)]
+    pub fn report_a_failed_install_for_test(&self, error: &str) {
+        *self.install.lock() = InstallStatus::Failed(error.to_owned());
+    }
+
     /// Spawn the background check exactly once. Cheap to call every frame.
     pub fn start(&mut self, ctx: &egui::Context) {
         if self.started {
@@ -177,96 +198,88 @@ impl UpdateChecker {
 
         let current_version = self.current_version;
         let install_status = self.install.lock();
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "The 'Update available' dialog has not moved to AnchoredDialog"
-        )]
-        Window::new("Update available")
-            .collapsible(false)
-            .resizable(false)
-            .min_width(DIALOG_WIDTH)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                modals::dialog_body_above_actions(
+        let dialog = AnchoredDialog::new(AnchoredDialogKind::UpdateAvailable, UPDATE_DIALOG_TITLE);
+        let regions = dialog.regions();
+        dialog.show(
+            ctx,
+            DialogBody::new(|ui| {
+                ui.add(
+                    Label::new(format!(
+                        "GeoTrace {version} is available (current: {current_version})."
+                    ))
+                    .wrap(),
+                );
+                regions.frozen_at_open(
                     ui,
-                    DialogBody::new(|ui| {
-                        ui.vertical_centered(|ui| {
+                    INSTALL_STATUS_REGION,
+                    HeldBodyLines::at_least(INSTALL_STATUS_LEAST_LINES)
+                        .and_at_most(INSTALL_STATUS_MOST_LINES),
+                    |ui| match &*install_status {
+                        InstallStatus::Idle => {}
+                        InstallStatus::Running => {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label(RichText::new("Downloading and installing…").weak());
+                            });
+                        }
+                        InstallStatus::Done => {
                             ui.add(
-                                Label::new(format!(
-                                    "GeoTrace {version} is available (current: \
-                                     {current_version})."
-                                ))
+                                Label::new(
+                                    "Update installed. Restart GeoTrace to use the new version.",
+                                )
                                 .wrap(),
                             );
-                            if let InstallStatus::Failed(err) = &*install_status {
-                                ui.add_space(10.0);
-                                ui.add(
-                                    Label::new(
-                                        RichText::new(format!("Update failed: {err}")).color(
-                                            gt_ui_theme::warning_amber(ui.visuals().dark_mode),
-                                        ),
-                                    )
-                                    .wrap(),
-                                );
-                            }
-                        });
-                    }),
-                    DialogActions::new(|ui| {
-                        ui.vertical_centered(|ui| match &*install_status {
-                            InstallStatus::Done => {
-                                ui.label(
-                                    "Update installed. Restart GeoTrace to use the new version.",
-                                );
-                                ui.add_space(8.0);
-                                if ui.button("Quit now").clicked() {
-                                    quit = true;
-                                }
-                            }
-                            InstallStatus::Running => {
-                                ui.horizontal(|ui| {
-                                    ui.spinner();
-                                    ui.label("Downloading and installing…");
-                                });
-                            }
-                            InstallStatus::Failed(_) => {
-                                ui.horizontal(|ui| {
-                                    ui.hyperlink_to("Download manually", RELEASES_URL);
-                                    if ui.button("Later").clicked() {
-                                        later = true;
-                                    }
-                                });
-                            }
-                            InstallStatus::Idle => {
-                                // Primary action: prominent, green, and the obvious default.
-                                let update = Button::new(
-                                    RichText::new("Update and restart")
-                                        .color(egui::Color32::WHITE)
-                                        .strong(),
+                        }
+                        InstallStatus::Failed(err) => {
+                            ui.add(
+                                Label::new(
+                                    RichText::new(format!("Update failed: {err}"))
+                                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
                                 )
-                                .fill(gt_ui_theme::SUCCESS_GREEN)
-                                .min_size(egui::vec2(200.0, 30.0));
-                                if ui.add(update).clicked() {
-                                    start_install = true;
-                                }
-                                ui.add_space(8.0);
-                                // Lower-key "not right now" choices.
-                                ui.horizontal(|ui| {
-                                    if ui.button("Later").clicked() {
-                                        later = true;
-                                    }
-                                    if ui
-                                        .button("Skip this version")
-                                        .on_hover_text("Don't prompt again for this version")
-                                        .clicked()
-                                    {
-                                        skip = true;
-                                    }
-                                });
-                            }
-                        });
-                    }),
+                                .wrap(),
+                            );
+                        }
+                    },
                 );
-            });
+            }),
+            DialogActionRow::buttons(|ui| match &*install_status {
+                // The row is empty while an install runs: nothing can stop
+                // one that has started.
+                InstallStatus::Running => {}
+                InstallStatus::Done => {
+                    if ui.button("Quit now").clicked() {
+                        quit = true;
+                    }
+                }
+                InstallStatus::Failed(_) => {
+                    ui.hyperlink_to("Download manually", RELEASES_URL);
+                    if ui.button("Later").clicked() {
+                        later = true;
+                    }
+                }
+                InstallStatus::Idle => {
+                    let update = Button::new(
+                        RichText::new("Update and restart")
+                            .color(egui::Color32::WHITE)
+                            .strong(),
+                    )
+                    .fill(gt_ui_theme::SUCCESS_GREEN);
+                    if ui.add(update).clicked() {
+                        start_install = true;
+                    }
+                    if ui
+                        .button("Skip this version")
+                        .on_hover_text("Don't prompt again for this version")
+                        .clicked()
+                    {
+                        skip = true;
+                    }
+                    if ui.button("Later").clicked() {
+                        later = true;
+                    }
+                }
+            }),
+        );
         drop(install_status);
 
         if start_install {

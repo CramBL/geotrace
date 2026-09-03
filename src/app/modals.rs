@@ -1,4 +1,4 @@
-use egui::{Button, Checkbox, Grid, IntoAtoms, Label, RichText, ScrollArea, Window};
+use egui::{Button, Checkbox, Grid, Label, RichText, ScrollArea, Window};
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -48,69 +48,7 @@ pub struct RemoveOutcome {
     pub removed_recordings: Vec<RecordingKey>,
 }
 
-/// Show the delete-confirmation dialog.
-///
-/// Returns `Some` in the one frame when items were actually removed, so the
-/// caller can rebuild caches that depend on file indices and apply the chosen
-/// history operation (hide or permanent delete) to `affected`.
-/// The button row of a modal dialog: buttons grouped bottom-right with the
-/// affirmative (or destructive action) rightmost - `add_contents` adds them
-/// in right-to-left order. The horizontal wrapper keeps the layout from
-/// claiming the window's full height. The row wraps onto further rows when the
-/// window is narrower than the buttons.
-pub(super) fn dialog_button_row<R>(
-    ui: &mut egui::Ui,
-    add_contents: impl FnOnce(&mut egui::Ui) -> R,
-) -> R {
-    dialog_button_row_with_leading_control(ui, DialogRowLeadingControl::none(), add_contents)
-}
-
-/// The control at the left end of a dialog's button row, where a dialog puts a
-/// preference that outlives the action the row confirms.
-pub(super) struct DialogRowLeadingControl<F>(Option<F>);
-
-impl<F: FnOnce(&mut egui::Ui)> DialogRowLeadingControl<F> {
-    pub(super) fn new(control: F) -> Self {
-        Self(Some(control))
-    }
-}
-
-impl DialogRowLeadingControl<fn(&mut egui::Ui)> {
-    /// Nothing at the row's left end.
-    pub(super) fn none() -> Self {
-        Self(None)
-    }
-}
-
-/// [`dialog_button_row`] with `leading` at the left end of the row, drawn in
-/// the theme's weak text color.
-///
-/// The weak color separates it from a tickbox the body ends with: the body's
-/// tickbox applies to the one action the row confirms, the leading control to
-/// every dialog of its class.
-pub(super) fn dialog_button_row_with_leading_control<R>(
-    ui: &mut egui::Ui,
-    DialogRowLeadingControl(leading): DialogRowLeadingControl<impl FnOnce(&mut egui::Ui)>,
-    add_contents: impl FnOnce(&mut egui::Ui) -> R,
-) -> R {
-    ui.horizontal(|ui| {
-        if let Some(leading) = leading {
-            ui.scope(|ui| {
-                let weak_text_color = ui.visuals().weak_text_color();
-                ui.visuals_mut().override_text_color = Some(weak_text_color);
-                leading(ui);
-            });
-        }
-        ui.with_layout(
-            egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
-            add_contents,
-        )
-        .inner
-    })
-    .inner
-}
-
-/// Gap between a dialog's body and the actions below it.
+/// Gap between a dialog's body and the action row below it.
 const DIALOG_ACTIONS_GAP: f32 = 6.0;
 
 /// What a dialog scrolls: everything the user reads before acting.
@@ -122,29 +60,93 @@ impl<F: FnOnce(&mut egui::Ui)> DialogBody<F> {
     }
 }
 
-/// What a dialog keeps on screen below its body: the button row, or whatever
-/// arrangement the dialog puts its actions in.
-pub(super) struct DialogActions<F>(pub(super) F);
+/// The row a dialog keeps on screen below its body: the buttons at its right
+/// end, and one optional control at its left end.
+///
+/// Every dialog places its actions through this row.
+pub(super) struct DialogActionRow<Leading, Buttons> {
+    leading: Option<Leading>,
+    buttons: Buttons,
+}
 
-impl<F: FnOnce(&mut egui::Ui) -> R, R> DialogActions<F> {
-    pub(super) fn new(actions: F) -> Self {
-        Self(actions)
+impl<Buttons: FnOnce(&mut egui::Ui) -> R, R> DialogActionRow<fn(&mut egui::Ui), Buttons> {
+    /// The buttons alone, grouped at the right end with the affirmative (or
+    /// destructive action) rightmost: `buttons` adds them in right-to-left
+    /// order. The row wraps onto further rows when the window is narrower
+    /// than the buttons.
+    pub(super) fn buttons(buttons: Buttons) -> Self {
+        Self {
+            leading: None,
+            buttons,
+        }
+    }
+}
+
+impl<Leading, Buttons> DialogActionRow<Leading, Buttons> {
+    /// Puts `leading` at the left end of the row, in the theme's weak text
+    /// color and under a rule across the dialog's width.
+    ///
+    /// The weak color and the rule separate it from a tickbox the body ends
+    /// with: the body's tickbox applies to the one action the row confirms,
+    /// the leading control to every dialog of its class.
+    pub(super) fn with_leading_control<F: FnOnce(&mut egui::Ui)>(
+        self,
+        leading: F,
+    ) -> DialogActionRow<F, Buttons> {
+        DialogActionRow {
+            leading: Some(leading),
+            buttons: self.buttons,
+        }
+    }
+}
+
+impl<Leading: FnOnce(&mut egui::Ui), Buttons: FnOnce(&mut egui::Ui) -> R, R>
+    DialogActionRow<Leading, Buttons>
+{
+    fn ui(self, ui: &mut egui::Ui) -> R {
+        let Self { leading, buttons } = self;
+        if leading.is_some() {
+            ui.separator();
+        }
+        // The horizontal wrapper keeps the layout from claiming the window's
+        // full height.
+        ui.horizontal(|ui| {
+            if let Some(leading) = leading {
+                ui.scope(|ui| {
+                    let weak_text_color = ui.visuals().weak_text_color();
+                    ui.visuals_mut().override_text_color = Some(weak_text_color);
+                    leading(ui);
+                });
+            }
+            ui.with_layout(
+                egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
+                buttons,
+            )
+            .inner
+        })
+        .inner
     }
 }
 
 /// A dialog's contents: `body` scrolls inside the room the screen leaves above
-/// `actions`, which stay out of that scroll area so they are always on screen.
+/// the action row, which stays out of that scroll area so it is always on
+/// screen.
 ///
 /// egui clips a window at the screen edge and scrolls nothing on its own, so
 /// without this a long list or an unbroken identity puts the actions out of the
-/// user's reach. Their height is measured as they are drawn and reserved on the
-/// next frame, which covers a row that wrapped onto a second line.
-pub(super) fn dialog_body_above_actions<R>(
+/// user's reach. The row's height is measured as it is drawn and reserved on
+/// the next frame, which covers a row that wrapped onto a second line.
+pub(super) fn dialog_body_above_the_action_row<R>(
     ui: &mut egui::Ui,
     body: DialogBody<impl FnOnce(&mut egui::Ui)>,
-    actions: DialogActions<impl FnOnce(&mut egui::Ui) -> R>,
+    actions: DialogActionRow<impl FnOnce(&mut egui::Ui), impl FnOnce(&mut egui::Ui) -> R>,
 ) -> R {
-    dialog_body_above_actions_taking(ui, DialogBodyHeight::UpToWhatTheWindowLeaves, body, actions)
+    dialog_body_above_the_action_row_taking(
+        ui,
+        DialogBodyHeight::UpToWhatTheWindowLeaves,
+        body,
+        actions,
+    )
 }
 
 /// What a dialog's body does with the height above its actions.
@@ -163,11 +165,11 @@ pub(super) enum DialogBodyHeight {
     TheHeldHeight,
 }
 
-pub(super) fn dialog_body_above_actions_taking<R>(
+pub(super) fn dialog_body_above_the_action_row_taking<R>(
     ui: &mut egui::Ui,
     height: DialogBodyHeight,
     DialogBody(body): DialogBody<impl FnOnce(&mut egui::Ui)>,
-    DialogActions(actions): DialogActions<impl FnOnce(&mut egui::Ui) -> R>,
+    actions: DialogActionRow<impl FnOnce(&mut egui::Ui), impl FnOnce(&mut egui::Ui) -> R>,
 ) -> R {
     let measured_height_id = ui.id().with("dialog_actions_height");
     let reserved = ui
@@ -182,94 +184,50 @@ pub(super) fn dialog_body_above_actions_taking<R>(
             ScrollArea::both()
                 .id_salt("dialog_body")
                 .auto_shrink(!matches!(height, DialogBodyHeight::TheHeldHeight))
+                // A body shorter than 64 points would open the dialog with
+                // the difference as a gap above the action row: egui keeps 64
+                // points for a scroll area to scroll in.
+                .min_scrolled_height(0.0)
                 .max_height((ui.available_height() - reserved).max(0.0))
                 .show(ui, body);
         }
     }
     let laid_out = ui.scope(|ui| {
         ui.add_space(DIALOG_ACTIONS_GAP);
-        actions(ui)
+        actions.ui(ui)
     });
     ui.data_mut(|data| data.insert_temp(measured_height_id, laid_out.response.rect.height()));
     laid_out.inner
 }
 
-/// [`dialog_body_above_actions`] with the actions in the standard right-aligned
-/// button row.
-pub(super) fn dialog_body_above_buttons<R>(
-    ui: &mut egui::Ui,
-    body: DialogBody<impl FnOnce(&mut egui::Ui)>,
-    DialogActions(buttons): DialogActions<impl FnOnce(&mut egui::Ui) -> R>,
-) -> R {
-    dialog_body_above_actions(
-        ui,
-        body,
-        DialogActions::new(|ui| dialog_button_row(ui, buttons)),
-    )
-}
-
 /// Returns `escape_choice` on the frame the user presses Escape, taking the
 /// key so nothing else reads it.
-fn consume_escape_press<T>(ui: &egui::Ui, escape_choice: T) -> Option<T> {
-    ui.ctx()
-        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+fn consume_escape_press<T>(ctx: &egui::Context, escape_choice: T) -> Option<T> {
+    ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         .then_some(escape_choice)
 }
 
-/// A modal centred on the window, with `body` above a right-aligned button row.
-///
-/// `width` is what the dialog takes, so its prose wraps at a readable length.
-/// A screen narrower than that takes precedence and the body scrolls sideways.
+/// A confirmation drawn by [`AnchoredDialog`], with `body` above the action
+/// row. The window keeps the position and the height it opened at, and `body`
+/// gets the regions for its content.
 ///
 /// Escape returns `escape_choice`: pass the choice that discards nothing.
-pub(super) fn confirmation_dialog<'a, T>(
-    ui: &egui::Ui,
-    title: impl IntoAtoms<'a>,
-    width: f32,
-    escape_choice: T,
-    body: impl FnOnce(&mut egui::Ui),
-    buttons: impl FnOnce(&mut egui::Ui) -> Option<T>,
-) -> Option<T> {
-    let mut choice = consume_escape_press(ui, escape_choice);
-
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "The shared `confirmation_dialog` window has not moved to AnchoredDialog"
-    )]
-    Window::new(title)
-        .collapsible(false)
-        .resizable(false)
-        .min_width(width)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ui.ctx(), |ui| {
-            let clicked =
-                dialog_body_above_buttons(ui, DialogBody::new(body), DialogActions::new(buttons));
-            if let Some(clicked) = clicked {
-                choice = Some(clicked);
-            }
-        });
-
-    choice
-}
-
-/// [`confirmation_dialog`] drawn by [`AnchoredDialog`]. The window keeps its
-/// opening position. This passes `body` the regions for its content.
 pub(super) fn anchored_confirmation_dialog<T>(
-    ui: &egui::Ui,
+    ctx: &egui::Context,
     kind: AnchoredDialogKind,
     title: impl Into<String>,
     escape_choice: T,
     body: impl FnOnce(&mut egui::Ui, DialogRegions),
     buttons: impl FnOnce(&mut egui::Ui) -> Option<T>,
 ) -> Option<T> {
-    let mut choice = consume_escape_press(ui, escape_choice);
+    let mut choice = consume_escape_press(ctx, escape_choice);
 
     let dialog = AnchoredDialog::new(kind, title);
     let regions = dialog.regions();
     let clicked = dialog.show(
-        ui.ctx(),
+        ctx,
         DialogBody::new(|ui| body(ui, regions)),
-        DialogActions::new(|ui| dialog_button_row(ui, buttons)),
+        DialogActionRow::buttons(buttons),
     );
     if let Some(clicked) = clicked.flatten() {
         choice = Some(clicked);
@@ -299,6 +257,11 @@ const ATTACHED_LOGS_REGION: &str = "remove_attached_logs";
 /// The longer of its two wordings takes one line at this width.
 const ATTACHED_LOGS_LINES: u8 = 1;
 
+/// Show the delete-confirmation dialog.
+///
+/// Returns `Some` in the one frame when items were actually removed, so the
+/// caller can rebuild caches that depend on file indices and apply the chosen
+/// history operation (hide or permanent delete) to `affected`.
 pub fn show_delete_confirmation(
     ui: &egui::Ui,
     tree: &mut TreeState,
@@ -444,15 +407,13 @@ pub fn show_delete_confirmation(
                 },
             );
         }),
-        DialogActions::new(|ui| {
-            dialog_button_row(ui, |ui| {
-                if ui.button("Remove").clicked() {
-                    do_delete = true;
-                }
-                if ui.button("Cancel").clicked() {
-                    do_cancel = true;
-                }
-            });
+        DialogActionRow::buttons(|ui| {
+            if ui.button("Remove").clicked() {
+                do_delete = true;
+            }
+            if ui.button("Cancel").clicked() {
+                do_cancel = true;
+            }
         }),
     );
 
@@ -646,7 +607,7 @@ pub fn show_orphaned_event_markers_popup(
         .resizable(true)
         .min_width(480.0)
         .show(ui.ctx(), |ui| {
-            dialog_body_above_buttons(
+            dialog_body_above_the_action_row(
                 ui,
                 DialogBody::new(|ui| {
                     let ten_min = chrono::Duration::minutes(10);
@@ -662,7 +623,7 @@ pub fn show_orphaned_event_markers_popup(
                         prev_ts = Some(*ts);
                     }
                 }),
-                DialogActions::new(|ui| {
+                DialogActionRow::buttons(|ui| {
                     if ui.button("Dismiss").clicked() {
                         dismiss = true;
                     }
@@ -691,7 +652,7 @@ pub fn show_load_warnings_dialog(ui: &egui::Ui, popup: &mut Option<(String, Vec<
         .resizable(true)
         .min_width(540.0)
         .show(ui.ctx(), |ui| {
-            dialog_body_above_buttons(
+            dialog_body_above_the_action_row(
                 ui,
                 DialogBody::new(|ui| {
                     ui.add(Label::new(RichText::new(filename.as_str()).strong()).truncate());
@@ -713,7 +674,7 @@ pub fn show_load_warnings_dialog(ui: &egui::Ui, popup: &mut Option<(String, Vec<
                             }
                         });
                 }),
-                DialogActions::new(|ui| {
+                DialogActionRow::buttons(|ui| {
                     if ui.button("Dismiss").clicked() {
                         dismiss = true;
                     }
@@ -829,7 +790,7 @@ pub fn show_about_dialog(ui: &egui::Ui, open: &mut bool, version: &str) {
         }),
         // The close button in the title bar and Escape dismiss the dialog,
         // which has nothing to act on.
-        DialogActions::new(|_ui| {}),
+        DialogActionRow::buttons(|_ui| {}),
     );
 
     if !keep_open || escape_pressed {
@@ -935,26 +896,24 @@ pub fn show_snap_consent_dialog(
                 },
             );
         }),
-        DialogActions::new(|ui| {
-            dialog_button_row(ui, |ui| {
-                if ask_auto {
-                    if ui.button("Agree - snap automatically").clicked() {
-                        choice = Some(SnapConsentChoice::Accepted {
-                            auto_snap: Some(true),
-                        });
-                    }
-                    if ui.button("Agree - manual only").clicked() {
-                        choice = Some(SnapConsentChoice::Accepted {
-                            auto_snap: Some(false),
-                        });
-                    }
-                } else if ui.button("Agree").clicked() {
-                    choice = Some(SnapConsentChoice::Accepted { auto_snap: None });
+        DialogActionRow::buttons(|ui| {
+            if ask_auto {
+                if ui.button("Agree - snap automatically").clicked() {
+                    choice = Some(SnapConsentChoice::Accepted {
+                        auto_snap: Some(true),
+                    });
                 }
-                if ui.button("Cancel").clicked() {
-                    choice = Some(SnapConsentChoice::Declined);
+                if ui.button("Agree - manual only").clicked() {
+                    choice = Some(SnapConsentChoice::Accepted {
+                        auto_snap: Some(false),
+                    });
                 }
-            });
+            } else if ui.button("Agree").clicked() {
+                choice = Some(SnapConsentChoice::Accepted { auto_snap: None });
+            }
+            if ui.button("Cancel").clicked() {
+                choice = Some(SnapConsentChoice::Declined);
+            }
         }),
     );
     if !open {
@@ -1020,15 +979,13 @@ pub fn show_snap_replace_dialog(ui: &egui::Ui, costing_name: &str) -> Option<Sna
                 },
             );
         }),
-        DialogActions::new(|ui| {
-            dialog_button_row(ui, |ui| {
-                if ui.button("Snap again").clicked() {
-                    choice = Some(SnapReplaceChoice::SnapAgain);
-                }
-                if ui.button("Cancel").clicked() {
-                    choice = Some(SnapReplaceChoice::Cancel);
-                }
-            });
+        DialogActionRow::buttons(|ui| {
+            if ui.button("Snap again").clicked() {
+                choice = Some(SnapReplaceChoice::SnapAgain);
+            }
+            if ui.button("Cancel").clicked() {
+                choice = Some(SnapReplaceChoice::Cancel);
+            }
         }),
     );
     if !open {
@@ -1088,7 +1045,7 @@ pub fn show_snap_scope_dialog(
     costing_name: &str,
     counts: SnapScopeCounts,
 ) -> Option<SnapScopeChoice> {
-    let mut choice = consume_escape_press(ui, SnapScopeChoice::Cancel);
+    let mut choice = consume_escape_press(ui.ctx(), SnapScopeChoice::Cancel);
 
     let mut open = true;
     let dialog = AnchoredDialog::new(
@@ -1131,23 +1088,21 @@ pub fn show_snap_scope_dialog(
                 },
             );
         }),
-        DialogActions::new(|ui| {
-            dialog_button_row(ui, |ui| {
-                if ui.button("Snap all tracks").clicked() {
-                    choice = Some(SnapScopeChoice::Snap(SnapScope::AllTracks));
-                }
-                let selected = ui.add_enabled(
-                    counts.selected.tracks > 0,
-                    Button::new("Snap selected tracks"),
-                );
-                if selected.clicked() {
-                    choice = Some(SnapScopeChoice::Snap(SnapScope::SelectedTracks));
-                }
-                selected.on_disabled_hover_text("Select tracks of this recording first");
-                if ui.button("Cancel").clicked() {
-                    choice = Some(SnapScopeChoice::Cancel);
-                }
-            });
+        DialogActionRow::buttons(|ui| {
+            if ui.button("Snap all tracks").clicked() {
+                choice = Some(SnapScopeChoice::Snap(SnapScope::AllTracks));
+            }
+            let selected = ui.add_enabled(
+                counts.selected.tracks > 0,
+                Button::new("Snap selected tracks"),
+            );
+            if selected.clicked() {
+                choice = Some(SnapScopeChoice::Snap(SnapScope::SelectedTracks));
+            }
+            selected.on_disabled_hover_text("Select tracks of this recording first");
+            if ui.button("Cancel").clicked() {
+                choice = Some(SnapScopeChoice::Cancel);
+            }
         }),
     );
     if !open {
@@ -1235,15 +1190,13 @@ pub fn show_snap_auto_prompt(ui: &egui::Ui, server_url: &str) -> Option<SnapAuto
                 },
             );
         }),
-        DialogActions::new(|ui| {
-            dialog_button_row(ui, |ui| {
-                if ui.button("Snap automatically").clicked() {
-                    choice = Some(SnapAutoChoice::Automatic);
-                }
-                if ui.button("Manual only").clicked() {
-                    choice = Some(SnapAutoChoice::ManualOnly);
-                }
-            });
+        DialogActionRow::buttons(|ui| {
+            if ui.button("Snap automatically").clicked() {
+                choice = Some(SnapAutoChoice::Automatic);
+            }
+            if ui.button("Manual only").clicked() {
+                choice = Some(SnapAutoChoice::ManualOnly);
+            }
         }),
     );
     if !open {
@@ -1294,9 +1247,7 @@ pub fn show_mapbox_token_dialog(
                 },
             );
         }),
-        DialogActions::new(|ui| {
-            dialog_button_row(ui, |ui| ui.button("Cancel - use OpenStreetMap").clicked())
-        }),
+        DialogActionRow::buttons(|ui| ui.button("Cancel - use OpenStreetMap").clicked()),
     );
 
     // The X button in the title bar is a cancel too.
