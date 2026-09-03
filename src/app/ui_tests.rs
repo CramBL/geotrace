@@ -6855,6 +6855,28 @@ fn snapshot_history_resegment_dialog() {
     harness.snapshot_loose("history_resegment_dialog");
 }
 
+/// The recordings a prune under the storage limit takes, each named by its
+/// identity and the group it is stored under.
+fn auto_prune_candidates(count: usize) -> Vec<gt_store::DatabaseRef> {
+    (0..count)
+        .map(|index| gt_store::DatabaseRef {
+            identity: format!("auto:ride-{index}.gtd"),
+            group_name: format!("2025-05-2{index}T10:00:00Z_a1b2"),
+        })
+        .collect()
+}
+
+#[test]
+fn snapshot_auto_prune_dialog() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(640.0, 420.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness.inner.state_mut().pending_auto_prune = Some(auto_prune_candidates(3));
+    harness.run();
+    harness.snapshot_loose("auto_prune_dialog");
+}
+
 fn stored_segmentation_from_app_with_rules(
     app: &App,
     track_split_rule: gt_store::StoredTrackSplitRule,
