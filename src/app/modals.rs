@@ -15,6 +15,9 @@ use strum::IntoEnumIterator as _;
 
 use gt_loaded_files::{LoadedFiles, LoadedFilesView, RecordingNames};
 
+use crate::app::anchored_dialog::{
+    AnchoredDialog, AnchoredDialogKind, DialogRegions, HeldBodyLines,
+};
 use crate::app::environment_storage::{CoveredDayCounts, PruneRequest, PruneScope, PrunedDays};
 use crate::app::mapbox_token;
 use crate::app::mapbox_token::{MapboxTokenCommit, MapboxTokenField};
@@ -205,6 +208,14 @@ pub(super) fn dialog_body_above_buttons<R>(
     )
 }
 
+/// Returns `escape_choice` on the frame the user presses Escape, taking the
+/// key so nothing else reads it.
+fn consume_escape_press<T>(ui: &egui::Ui, escape_choice: T) -> Option<T> {
+    ui.ctx()
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        .then_some(escape_choice)
+}
+
 /// A modal centred on the window, with `body` above a right-aligned button row.
 ///
 /// `width` is what the dialog takes, so its prose wraps at a readable length.
@@ -219,10 +230,7 @@ pub(super) fn confirmation_dialog<'a, T>(
     body: impl FnOnce(&mut egui::Ui),
     buttons: impl FnOnce(&mut egui::Ui) -> Option<T>,
 ) -> Option<T> {
-    let mut choice = ui
-        .ctx()
-        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        .then_some(escape_choice);
+    let mut choice = consume_escape_press(ui, escape_choice);
 
     #[expect(
         clippy::disallowed_methods,
@@ -241,6 +249,31 @@ pub(super) fn confirmation_dialog<'a, T>(
             }
         });
 
+    choice
+}
+
+/// [`confirmation_dialog`] drawn by [`AnchoredDialog`]. The window keeps its
+/// opening position. This passes `body` the regions for its content.
+pub(super) fn anchored_confirmation_dialog<T>(
+    ui: &egui::Ui,
+    kind: AnchoredDialogKind,
+    title: impl Into<String>,
+    escape_choice: T,
+    body: impl FnOnce(&mut egui::Ui, DialogRegions),
+    buttons: impl FnOnce(&mut egui::Ui) -> Option<T>,
+) -> Option<T> {
+    let mut choice = consume_escape_press(ui, escape_choice);
+
+    let dialog = AnchoredDialog::new(kind, title);
+    let regions = dialog.regions();
+    let clicked = dialog.show(
+        ui.ctx(),
+        DialogBody::new(|ui| body(ui, regions)),
+        DialogActions::new(|ui| dialog_button_row(ui, buttons)),
+    );
+    if let Some(clicked) = clicked.flatten() {
+        choice = Some(clicked);
+    }
     choice
 }
 
@@ -989,6 +1022,14 @@ pub enum SnapScopeChoice {
     Cancel,
 }
 
+/// The region stating that snapping again replaces the tracks' existing data.
+/// A snap result that arrives while the dialog is open fills it.
+const REPLACED_DATA_REGION: &str = "snap_scope_replaced_data";
+
+/// Lines the [`REPLACED_DATA_REGION`] holds from the frame the dialog opens,
+/// which is the two lines that statement wraps onto at this width.
+const REPLACED_DATA_LINES: u8 = 2;
+
 /// Ask the user which of a recording's tracks a "Snap again as" choice
 /// covers, and how many of them already have data for `costing_name`.
 /// Returns `None` while the dialog stays open.
@@ -1000,59 +1041,68 @@ pub fn show_snap_scope_dialog(
     costing_name: &str,
     counts: SnapScopeCounts,
 ) -> Option<SnapScopeChoice> {
-    let escape_pressed = ui
-        .ctx()
-        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-
-    let mut choice = escape_pressed.then_some(SnapScopeChoice::Cancel);
+    let mut choice = consume_escape_press(ui, SnapScopeChoice::Cancel);
 
     let mut open = true;
-    #[expect(clippy::disallowed_methods, reason = "The snap scope dialog has not moved to AnchoredDialog")]
-    Window::new(format!("Snap to road as {costing_name}"))
-        .collapsible(false)
-        .resizable(false)
-        .min_width(380.0)
-        .open(&mut open)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ui.ctx(), |ui| {
-            dialog_body_above_buttons(
+    let dialog = AnchoredDialog::new(
+        AnchoredDialogKind::SnapToRoadScope,
+        format!("Snap to road as {costing_name}"),
+    )
+    .with_close_button(&mut open);
+    let regions = dialog.regions();
+    dialog.show(
+        ui.ctx(),
+        DialogBody::new(|ui| {
+            Grid::new("snap_scope_grid")
+                .num_columns(2)
+                .spacing([12.0, 4.0])
+                .show(ui, |ui| {
+                    let mut row = |label: &str, count: SnapScopeCount| {
+                        ui.label(RichText::new(label).weak());
+                        ui.label(scope_summary(count, costing_name));
+                        ui.end_row();
+                    };
+                    row("Selected", counts.selected);
+                    row("All", counts.all);
+                });
+            ui.add_space(4.0);
+            regions.frozen_at_open(
                 ui,
-                DialogBody::new(|ui| {
-                    Grid::new("snap_scope_grid")
-                        .num_columns(2)
-                        .spacing([12.0, 4.0])
-                        .show(ui, |ui| {
-                            let mut row = |label: &str, count: SnapScopeCount| {
-                                ui.label(RichText::new(label).weak());
-                                ui.label(scope_summary(count, costing_name));
-                                ui.end_row();
-                            };
-                            row("Selected", counts.selected);
-                            row("All", counts.all);
-                        });
-                    if counts.all.already_snapped > 0 {
-                        ui.add_space(4.0);
-                        ui.label("Snapping again uploads those tracks once more and replaces their data.");
+                REPLACED_DATA_REGION,
+                HeldBodyLines::at_least(REPLACED_DATA_LINES),
+                |ui| {
+                    if counts.all.already_snapped == 0 {
+                        return;
                     }
-                }),
-                DialogActions::new(|ui| {
-                    if ui.button("Snap all tracks").clicked() {
-                        choice = Some(SnapScopeChoice::Snap(SnapScope::AllTracks));
-                    }
-                    let selected = ui.add_enabled(
-                        counts.selected.tracks > 0,
-                        Button::new("Snap selected tracks"),
+                    ui.add(
+                        Label::new(
+                            "Snapping again uploads those tracks once more and replaces their \
+                             data.",
+                        )
+                        .wrap(),
                     );
-                    if selected.clicked() {
-                        choice = Some(SnapScopeChoice::Snap(SnapScope::SelectedTracks));
-                    }
-                    selected.on_disabled_hover_text("Select tracks of this recording first");
-                    if ui.button("Cancel").clicked() {
-                        choice = Some(SnapScopeChoice::Cancel);
-                    }
-                }),
+                },
             );
-        });
+        }),
+        DialogActions::new(|ui| {
+            dialog_button_row(ui, |ui| {
+                if ui.button("Snap all tracks").clicked() {
+                    choice = Some(SnapScopeChoice::Snap(SnapScope::AllTracks));
+                }
+                let selected = ui.add_enabled(
+                    counts.selected.tracks > 0,
+                    Button::new("Snap selected tracks"),
+                );
+                if selected.clicked() {
+                    choice = Some(SnapScopeChoice::Snap(SnapScope::SelectedTracks));
+                }
+                selected.on_disabled_hover_text("Select tracks of this recording first");
+                if ui.button("Cancel").clicked() {
+                    choice = Some(SnapScopeChoice::Cancel);
+                }
+            });
+        }),
+    );
     if !open {
         choice = Some(SnapScopeChoice::Cancel);
     }
@@ -1201,8 +1251,6 @@ pub fn show_mapbox_token_dialog(
     }
 }
 
-const ENVIRONMENT_PRUNE_WIDTH: f32 = 480.0;
-
 /// The environment-data delete waiting for the user to confirm, and what it
 /// would take.
 pub struct EnvironmentPrunePrompt<'a> {
@@ -1219,6 +1267,21 @@ pub enum EnvironmentPruneChoice {
     Cancel,
 }
 
+const DELETE_ARCHIVED_DAYS_TITLE: &str = "Delete archived days?";
+
+/// The region naming the loaded recordings. A recording that finishes loading
+/// while the dialog is open joins that list.
+const LOADED_RECORDINGS_REGION: &str = "environment_prune_loaded_recordings";
+
+/// Lines the [`LOADED_RECORDINGS_REGION`] holds from the frame the dialog
+/// opens. Three is the fewest that hold the note above the names and the
+/// first name under it.
+const LOADED_RECORDINGS_LINES: u8 = 3;
+
+/// Lines the [`LOADED_RECORDINGS_REGION`] holds at most, however many
+/// recordings are loaded: the rest of the names scroll inside it.
+const LOADED_RECORDINGS_MOST_LINES: u8 = 9;
+
 /// Confirm an environment-data delete, naming what goes and which loaded
 /// recordings are downloaded again straight after.
 ///
@@ -1228,12 +1291,12 @@ pub fn show_environment_prune_confirmation(
     ui: &egui::Ui,
     prompt: &EnvironmentPrunePrompt<'_>,
 ) -> Option<EnvironmentPruneChoice> {
-    confirmation_dialog(
+    anchored_confirmation_dialog(
         ui,
-        "Delete archived days?",
-        ENVIRONMENT_PRUNE_WIDTH,
+        AnchoredDialogKind::DeleteArchivedDays,
+        DELETE_ARCHIVED_DAYS_TITLE,
         EnvironmentPruneChoice::Cancel,
-        |ui| {
+        |ui, regions| {
             ui.label(prune_scope_line(prompt.request));
             ui.add_space(4.0);
             Grid::new("environment_prune_grid")
@@ -1250,22 +1313,29 @@ pub fn show_environment_prune_confirmation(
                     }
                 });
 
-            if !prompt.loaded_recordings.is_empty() {
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new(
-                        "These loaded recordings span days in that range. Those days are \
-                         downloaded again as soon as the delete finishes.",
-                    )
-                    .weak()
-                    .small(),
-                );
-                ScrollArea::vertical().max_height(120.0).show(ui, |ui| {
+            regions.frozen_at_open(
+                ui,
+                LOADED_RECORDINGS_REGION,
+                HeldBodyLines::at_least(LOADED_RECORDINGS_LINES)
+                    .and_at_most(LOADED_RECORDINGS_MOST_LINES),
+                |ui| {
+                    if prompt.loaded_recordings.is_empty() {
+                        return;
+                    }
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(
+                            "These loaded recordings span days in that range. Those days are \
+                             downloaded again as soon as the delete finishes.",
+                        )
+                        .weak()
+                        .small(),
+                    );
                     for name in prompt.loaded_recordings {
                         ui.add(Label::new(name.as_str()).truncate());
                     }
-                });
-            }
+                },
+            );
         },
         |ui| {
             let mut choice = None;
@@ -1303,14 +1373,15 @@ fn prune_scope_line(request: PruneRequest) -> String {
     }
 }
 
-/// Fits inside the window that shutdown sizes itself down to.
-const FORCE_QUIT_WIDTH: f32 = 360.0;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ForceQuitChoice {
     Quit,
     Cancel,
 }
+
+/// The region listing what each running write costs. The dialog drops the line
+/// for a write that finishes while it is open.
+const INTERRUPTION_COSTS_REGION: &str = "force_quit_interruption_costs";
 
 /// Confirm ending the process with the running writes unfinished, listing what
 /// each one costs.
@@ -1321,17 +1392,24 @@ pub fn show_force_quit_confirmation(
     ui: &egui::Ui,
     interruption_costs: &[String],
 ) -> Option<ForceQuitChoice> {
-    confirmation_dialog(
+    anchored_confirmation_dialog(
         ui,
+        AnchoredDialogKind::ForceQuit,
         "Force quit?",
-        FORCE_QUIT_WIDTH,
         ForceQuitChoice::Cancel,
-        |ui| {
+        |ui, regions| {
             ui.label("GeoTrace ends now, with the work it is still doing unfinished");
             ui.add_space(4.0);
-            for cost in interruption_costs {
-                ui.add(Label::new(cost.as_str()).wrap());
-            }
+            regions.frozen_at_open(
+                ui,
+                INTERRUPTION_COSTS_REGION,
+                HeldBodyLines::what_the_content_took(),
+                |ui| {
+                    for cost in interruption_costs {
+                        ui.add(Label::new(cost.as_str()).wrap());
+                    }
+                },
+            );
         },
         |ui| {
             let mut choice = None;
@@ -1348,6 +1426,10 @@ pub fn show_force_quit_confirmation(
 
 #[cfg(test)]
 mod tests {
+    //! A harness that changes what it renders between frames holds that input
+    //! in a `RefCell` and reads it every frame.
+
+    use std::cell::RefCell;
     use std::path::PathBuf;
 
     use gt_types::{
@@ -1366,14 +1448,15 @@ mod tests {
     use rustc_hash::FxHashMap;
 
     use super::{
-        CoveredDayCounts, EnvironmentArchive, EnvironmentPruneChoice, EnvironmentPrunePrompt,
-        ForceQuitChoice, LoadedLogs, MapLayer, MapboxTokenField, NavMap, NodeKey,
-        PERMANENT_DELETE_LABEL, PruneRequest, PruneScope, PrunedDays, RecordingDetails,
-        SnapScopeCounts, TrackRef, files_fully_removed, prune_scope_line, show_about_dialog,
-        show_delete_confirmation, show_environment_prune_confirmation,
-        show_force_quit_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
-        show_orphaned_event_markers_popup, show_recording_details_dialog, show_snap_auto_prompt,
-        show_snap_consent_dialog, show_snap_replace_dialog, show_snap_scope_dialog, track_removals,
+        CoveredDayCounts, DELETE_ARCHIVED_DAYS_TITLE, EnvironmentArchive, EnvironmentPruneChoice,
+        EnvironmentPrunePrompt, ForceQuitChoice, LoadedLogs, MapLayer, MapboxTokenField, NavMap,
+        NodeKey, PERMANENT_DELETE_LABEL, PruneRequest, PruneScope, PrunedDays, RecordingDetails,
+        SnapScopeChoice, SnapScopeCount, SnapScopeCounts, TrackRef, files_fully_removed,
+        prune_scope_line, show_about_dialog, show_delete_confirmation,
+        show_environment_prune_confirmation, show_force_quit_confirmation,
+        show_load_warnings_dialog, show_mapbox_token_dialog, show_orphaned_event_markers_popup,
+        show_recording_details_dialog, show_snap_auto_prompt, show_snap_consent_dialog,
+        show_snap_replace_dialog, show_snap_scope_dialog, track_removals,
     };
     use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
     use gt_side_panel::{DeleteConfirmState, TreeState};
@@ -1383,14 +1466,14 @@ mod tests {
             + chrono::TimeDelta::days(offset)
     }
 
-    fn prune_request(scope: PruneScope) -> PruneRequest {
+    pub(super) fn prune_request(scope: PruneScope) -> PruneRequest {
         PruneRequest {
             scope,
             days: PrunedDays::Before(day(0)),
         }
     }
 
-    fn covered_days() -> CoveredDayCounts {
+    pub(super) fn covered_days() -> CoveredDayCounts {
         let mut covered = CoveredDayCounts::default();
         covered[EnvironmentArchive::AircraftInterference] = 2;
         covered[EnvironmentArchive::GeomagneticIndices] = 3;
@@ -1399,36 +1482,75 @@ mod tests {
         covered
     }
 
+    /// Every dialog opened by these tests is drawn at its full width, with no
+    /// control clipped by the screen. This is wider and taller than all of
+    /// them.
+    pub(super) const DIALOG_VIEWPORT: egui::Vec2 = egui::vec2(640.0, 480.0);
+
     /// Renders the confirmation and reports the choice it took.
-    fn prune_dialog<'a>(
-        prompt: &'a EnvironmentPrunePrompt<'a>,
-        choice: &'a std::cell::RefCell<Option<EnvironmentPruneChoice>>,
+    pub(super) fn prune_dialog<'a>(
+        scope: PruneScope,
+        loaded_recordings: &'a RefCell<Vec<String>>,
+        choice: &'a RefCell<Option<EnvironmentPruneChoice>>,
     ) -> TestHarness<'a, ()> {
-        let mut harness = TestHarness::builder()
-            .size(egui::vec2(520.0, 320.0))
-            .ui(|ui| {
-                if let Some(made) = show_environment_prune_confirmation(ui, prompt) {
-                    *choice.borrow_mut() = Some(made);
-                }
-            });
-        harness.run();
+        let request = prune_request(scope);
+        let covered = covered_days();
+        let mut harness = TestHarness::builder().size(DIALOG_VIEWPORT).ui(move |ui| {
+            let listed = loaded_recordings.borrow();
+            let prompt = EnvironmentPrunePrompt {
+                request,
+                covered,
+                loaded_recordings: &listed,
+            };
+            if let Some(made) = show_environment_prune_confirmation(ui, &prompt) {
+                *choice.borrow_mut() = Some(made);
+            }
+        });
+        harness.inner.run_steps(4);
         harness
+    }
+
+    /// Renders the snap scope dialog and reports the choice it took.
+    pub(super) fn snap_scope_dialog<'a>(
+        counts: &'a RefCell<SnapScopeCounts>,
+        choice: &'a RefCell<Option<SnapScopeChoice>>,
+    ) -> TestHarness<'a, ()> {
+        let mut harness = TestHarness::builder().size(DIALOG_VIEWPORT).ui(move |ui| {
+            if let Some(made) = show_snap_scope_dialog(ui, SNAP_COSTING, *counts.borrow()) {
+                *choice.borrow_mut() = Some(made);
+            }
+        });
+        harness.inner.run_steps(4);
+        harness
+    }
+
+    /// The costing the snap scope dialog is opened for.
+    pub(super) const SNAP_COSTING: &str = "car";
+
+    /// Four tracks, none of them snapped as [`SNAP_COSTING`] yet, one of them
+    /// selected in the panel.
+    pub(super) fn nothing_snapped_yet() -> SnapScopeCounts {
+        SnapScopeCounts {
+            selected: SnapScopeCount {
+                tracks: 1,
+                already_snapped: 0,
+            },
+            all: SnapScopeCount {
+                tracks: 4,
+                already_snapped: 0,
+            },
+        }
     }
 
     /// The dialog names the loaded recordings whose days go: the fetch
     /// schedulers download those days again straight after.
     #[test]
     fn the_prune_dialog_names_the_loaded_recordings_it_affects() {
-        let recordings = ["Morning ride".to_owned(), "Ferry crossing".to_owned()];
-        let prompt = EnvironmentPrunePrompt {
-            request: prune_request(PruneScope::Every),
-            covered: covered_days(),
-            loaded_recordings: &recordings,
-        };
-        let choice = std::cell::RefCell::new(None);
-        let harness = prune_dialog(&prompt, &choice);
+        let recordings = RefCell::new(vec!["Morning ride".to_owned(), "Ferry crossing".to_owned()]);
+        let choice = RefCell::new(None);
+        let harness = prune_dialog(PruneScope::Every, &recordings, &choice);
 
-        for name in &recordings {
+        for name in recordings.borrow().iter() {
             assert!(
                 harness.inner.query_by_label_contains(name).is_some(),
                 "{name} is not named in the dialog"
@@ -1445,13 +1567,9 @@ mod tests {
 
     #[test]
     fn confirming_the_prune_dialog_reports_the_delete() {
-        let prompt = EnvironmentPrunePrompt {
-            request: prune_request(PruneScope::Every),
-            covered: covered_days(),
-            loaded_recordings: &[],
-        };
-        let choice = std::cell::RefCell::new(None);
-        let mut harness = prune_dialog(&prompt, &choice);
+        let no_recording_loaded = RefCell::new(Vec::new());
+        let choice = RefCell::new(None);
+        let mut harness = prune_dialog(PruneScope::Every, &no_recording_loaded, &choice);
         harness.inner.get_by_label("Delete").click();
         harness.run();
         drop(harness);
@@ -1464,13 +1582,9 @@ mod tests {
 
     #[test]
     fn cancelling_the_prune_dialog_deletes_nothing() {
-        let prompt = EnvironmentPrunePrompt {
-            request: prune_request(PruneScope::Every),
-            covered: covered_days(),
-            loaded_recordings: &[],
-        };
-        let choice = std::cell::RefCell::new(None);
-        let mut harness = prune_dialog(&prompt, &choice);
+        let no_recording_loaded = RefCell::new(Vec::new());
+        let choice = RefCell::new(None);
+        let mut harness = prune_dialog(PruneScope::Every, &no_recording_loaded, &choice);
         harness.inner.get_by_label("Cancel").click();
         harness.run();
         drop(harness);
@@ -1483,13 +1597,9 @@ mod tests {
 
     #[test]
     fn escape_cancels_the_prune_dialog() {
-        let prompt = EnvironmentPrunePrompt {
-            request: prune_request(PruneScope::Every),
-            covered: covered_days(),
-            loaded_recordings: &[],
-        };
-        let choice = std::cell::RefCell::new(None);
-        let mut harness = prune_dialog(&prompt, &choice);
+        let no_recording_loaded = RefCell::new(Vec::new());
+        let choice = RefCell::new(None);
+        let mut harness = prune_dialog(PruneScope::Every, &no_recording_loaded, &choice);
         harness.inner.key_press(egui::Key::Escape);
         harness.run();
         drop(harness);
@@ -1502,8 +1612,8 @@ mod tests {
 
     /// Renders the force-quit confirmation and reports the choice it took.
     fn force_quit_dialog<'a>(
-        interruption_costs: &'a [String],
-        choice: &'a std::cell::RefCell<Option<ForceQuitChoice>>,
+        interruption_costs: &'a RefCell<Vec<String>>,
+        choice: &'a RefCell<Option<ForceQuitChoice>>,
     ) -> TestHarness<'a, ()> {
         force_quit_dialog_over(interruption_costs, choice, |_| {})
     }
@@ -1511,26 +1621,24 @@ mod tests {
     /// [`force_quit_dialog`] with `shutdown_window` drawn behind the
     /// confirmation: a press that misses the confirmation reaches it.
     pub(super) fn force_quit_dialog_over<'a>(
-        interruption_costs: &'a [String],
-        choice: &'a std::cell::RefCell<Option<ForceQuitChoice>>,
+        interruption_costs: &'a RefCell<Vec<String>>,
+        choice: &'a RefCell<Option<ForceQuitChoice>>,
         mut shutdown_window: impl FnMut(&mut egui::Ui) + 'a,
     ) -> TestHarness<'a, ()> {
-        let mut harness = TestHarness::builder()
-            .size(egui::vec2(520.0, 320.0))
-            .ui(move |ui| {
-                shutdown_window(ui);
-                if let Some(made) = show_force_quit_confirmation(ui, interruption_costs) {
-                    *choice.borrow_mut() = Some(made);
-                }
-            });
+        let mut harness = TestHarness::builder().size(DIALOG_VIEWPORT).ui(move |ui| {
+            shutdown_window(ui);
+            if let Some(made) = show_force_quit_confirmation(ui, &interruption_costs.borrow()) {
+                *choice.borrow_mut() = Some(made);
+            }
+        });
         harness.run();
         harness
     }
 
     #[test]
     fn confirming_the_force_quit_dialog_reports_the_quit() {
-        let costs = [WriteKind::Settings.interruption_cost()];
-        let choice = std::cell::RefCell::new(None);
+        let costs = RefCell::new(vec![WriteKind::Settings.interruption_cost()]);
+        let choice = RefCell::new(None);
         let mut harness = force_quit_dialog(&costs, &choice);
         harness.inner.get_by_label("Force quit").click();
         harness.run();
@@ -1541,8 +1649,8 @@ mod tests {
 
     #[test]
     fn cancelling_the_force_quit_dialog_quits_nothing() {
-        let costs = [WriteKind::Settings.interruption_cost()];
-        let choice = std::cell::RefCell::new(None);
+        let costs = RefCell::new(vec![WriteKind::Settings.interruption_cost()]);
+        let choice = RefCell::new(None);
         let mut harness = force_quit_dialog(&costs, &choice);
         harness.inner.get_by_label("Cancel").click();
         harness.run();
@@ -1553,8 +1661,8 @@ mod tests {
 
     #[test]
     fn escape_cancels_the_force_quit_dialog() {
-        let costs = [WriteKind::Settings.interruption_cost()];
-        let choice = std::cell::RefCell::new(None);
+        let costs = RefCell::new(vec![WriteKind::Settings.interruption_cost()]);
+        let choice = RefCell::new(None);
         let mut harness = force_quit_dialog(&costs, &choice);
         harness.inner.key_press(egui::Key::Escape);
         harness.run();
@@ -1596,15 +1704,41 @@ mod tests {
     /// are downloaded again.
     #[test]
     fn snapshot_environment_prune_dialog() {
-        let recordings = ["Morning ride".to_owned(), "Ferry crossing".to_owned()];
-        let prompt = EnvironmentPrunePrompt {
-            request: prune_request(PruneScope::Every),
-            covered: covered_days(),
-            loaded_recordings: &recordings,
-        };
-        let choice = std::cell::RefCell::new(None);
-        let mut harness = prune_dialog(&prompt, &choice);
+        let recordings = RefCell::new(vec!["Morning ride".to_owned(), "Ferry crossing".to_owned()]);
+        let choice = RefCell::new(None);
+        let mut harness = prune_dialog(PruneScope::Every, &recordings, &choice);
         harness.snapshot("environment_prune_dialog");
+    }
+
+    #[test]
+    fn snapshot_the_prune_dialog_while_no_recording_is_named() {
+        let no_recording_loaded = RefCell::new(Vec::new());
+        let choice = RefCell::new(None);
+        let mut harness = prune_dialog(PruneScope::Every, &no_recording_loaded, &choice);
+        harness.snapshot("environment_prune_dialog_no_recording_named");
+    }
+
+    /// The confirmation as the user meets it during shutdown, listing what
+    /// each running write costs.
+    #[test]
+    fn snapshot_the_force_quit_confirmation() {
+        let costs = RefCell::new(vec![
+            WriteKind::Settings.interruption_cost(),
+            WriteKind::RecordingDatabase.interruption_cost(),
+            WriteKind::DatabaseOpen.interruption_cost(),
+            WriteKind::TakeOverRecord.interruption_cost(),
+        ]);
+        let choice = RefCell::new(None);
+        let mut harness = force_quit_dialog(&costs, &choice);
+        harness.snapshot("force_quit_confirmation");
+    }
+
+    #[test]
+    fn snapshot_the_snap_scope_dialog_while_nothing_is_snapped() {
+        let counts = RefCell::new(nothing_snapped_yet());
+        let choice = RefCell::new(None);
+        let mut harness = snap_scope_dialog(&counts, &choice);
+        harness.snapshot("snap_to_road_scope_dialog_nothing_snapped");
     }
 
     struct TokenDialogState {
@@ -1944,7 +2078,7 @@ mod tests {
                 }
                 Self::SnapAutoPrompt => "Snap to road automatically?".to_owned(),
                 Self::MapboxToken => "Mapbox API Token Required".to_owned(),
-                Self::EnvironmentPrune => "Delete archived days?".to_owned(),
+                Self::EnvironmentPrune => DELETE_ARCHIVED_DAYS_TITLE.to_owned(),
                 Self::ForceQuit => "Force quit?".to_owned(),
             }
         }
@@ -2147,11 +2281,10 @@ mod anchored_dialog_layout_tests {
         self, CONFIRM_LABEL, LogAssociationChoice, TITLE as ASSOCIATION_TITLE, tests::DialogState,
     };
 
-    use super::{ForceQuitChoice, tests};
-
-    /// Wider and taller than every dialog here, for the reason
-    /// [`crate::app::anchored_dialog::tests`]'s viewport states.
-    const VIEWPORT: egui::Vec2 = egui::vec2(640.0, 480.0);
+    use super::{
+        DELETE_ARCHIVED_DAYS_TITLE, EnvironmentPruneChoice, ForceQuitChoice,
+        LOADED_RECORDINGS_MOST_LINES, PruneScope, SnapScopeChoice, tests,
+    };
 
     const CANCEL_LABEL: &str = "Cancel";
 
@@ -2161,6 +2294,21 @@ mod anchored_dialog_layout_tests {
     /// The attachment the history database reports for the chosen recording,
     /// with a name long enough that the note about it wraps onto three lines.
     const STORED_ATTACHMENT_NAME: &str = "navsyncd-export-2026-05-29-evening-run.log";
+
+    /// The recording name added to the prune confirmation once the pending
+    /// load finishes.
+    const LOADED_RECORDING: &str = "Evening ferry crossing";
+
+    /// Loaded recordings enough to fill the room the prune confirmation caps
+    /// at [`LOADED_RECORDINGS_MOST_LINES`].
+    const RECORDINGS_PAST_THE_CAPPED_ROOM: usize = 12;
+
+    /// Loaded recordings far past that cap, to read the capped room's height
+    /// against.
+    const RECORDINGS_FAR_PAST_THE_CAPPED_ROOM: usize = 40;
+
+    /// Writes still running once two of the four have finished.
+    const WRITES_STILL_RUNNING: usize = 2;
 
     /// The costs the force-quit confirmation lists while four writes run.
     fn four_write_costs() -> Vec<String> {
@@ -2172,12 +2320,205 @@ mod anchored_dialog_layout_tests {
         ]
     }
 
+    fn loaded_recordings(count: usize) -> RefCell<Vec<String>> {
+        RefCell::new(
+            (0..count)
+                .map(|index| format!("Recording {index}"))
+                .collect(),
+        )
+    }
+
+    /// A list longer than the capped room scrolls inside it, and the buttons
+    /// stay where they are when one more name arrives.
+    #[test]
+    fn the_prune_confirmation_keeps_its_buttons_in_place_while_a_name_arrives_past_the_capped_room()
+    {
+        let listed = loaded_recordings(RECORDINGS_PAST_THE_CAPPED_ROOM);
+        let choice = RefCell::new(None);
+        let mut harness = tests::prune_dialog(PruneScope::Every, &listed, &choice);
+        let before = harness.inner.get(By::new().label(CANCEL_LABEL)).rect();
+
+        listed.borrow_mut().push(LOADED_RECORDING.to_owned());
+        harness.inner.run_steps(4);
+
+        assert_eq!(
+            harness.inner.get(By::new().label(CANCEL_LABEL)).rect(),
+            before,
+            "the Cancel button of the prune confirmation moved: a press where the user aimed \
+             misses it"
+        );
+    }
+
+    /// The capped room holds the prune confirmation to one height, however
+    /// many recordings are loaded when it opens.
+    #[test]
+    fn the_prune_confirmation_opens_at_one_height_for_every_list_past_the_capped_room() {
+        let past = loaded_recordings(RECORDINGS_PAST_THE_CAPPED_ROOM);
+        let past_choice = RefCell::new(None);
+        let past_harness = tests::prune_dialog(PruneScope::Every, &past, &past_choice);
+        let far_past = loaded_recordings(RECORDINGS_FAR_PAST_THE_CAPPED_ROOM);
+        let far_past_choice = RefCell::new(None);
+        let far_past_harness = tests::prune_dialog(PruneScope::Every, &far_past, &far_past_choice);
+
+        assert_eq!(
+            far_past_harness
+                .inner
+                .window_rect(DELETE_ARCHIVED_DAYS_TITLE)
+                .expect("the prune confirmation is shown")
+                .size(),
+            past_harness
+                .inner
+                .window_rect(DELETE_ARCHIVED_DAYS_TITLE)
+                .expect("the prune confirmation is shown")
+                .size(),
+            "{RECORDINGS_FAR_PAST_THE_CAPPED_ROOM} loaded recordings made the prune confirmation \
+             taller than {RECORDINGS_PAST_THE_CAPPED_ROOM} did: a list past the room it caps at \
+             {LOADED_RECORDINGS_MOST_LINES} lines has to scroll inside that room"
+        );
+    }
+
+    /// The prune confirmation lists the loaded recordings whose days the
+    /// delete takes. A recording that finishes loading while the dialog is up
+    /// joins that list.
+    #[test]
+    fn the_prune_confirmation_keeps_its_buttons_in_place_while_a_recording_name_arrives() {
+        let loaded_recordings = RefCell::new(Vec::new());
+        let choice = RefCell::new(None);
+        let mut harness = tests::prune_dialog(PruneScope::Every, &loaded_recordings, &choice);
+        let before = harness.inner.get(By::new().label(CANCEL_LABEL)).rect();
+
+        loaded_recordings
+            .borrow_mut()
+            .push(LOADED_RECORDING.to_owned());
+        harness.inner.run_steps(4);
+
+        assert_eq!(
+            harness.inner.get(By::new().label(CANCEL_LABEL)).rect(),
+            before,
+            "the Cancel button of the prune confirmation moved: a press where the user aimed \
+             misses it"
+        );
+    }
+
+    /// The user aims at Cancel and a recording finishes loading before the
+    /// press. Cancel deletes nothing.
+    #[test]
+    fn cancelling_the_prune_confirmation_reports_the_cancel_while_a_recording_name_arrives() {
+        let loaded_recordings = RefCell::new(Vec::new());
+        let choice = RefCell::new(None);
+        let mut harness = tests::prune_dialog(PruneScope::Every, &loaded_recordings, &choice);
+        let aimed_at = harness
+            .inner
+            .get(By::new().label(CANCEL_LABEL))
+            .rect()
+            .center();
+        harness.inner.hover_at(aimed_at);
+        harness.inner.run_steps(2);
+
+        loaded_recordings
+            .borrow_mut()
+            .push(LOADED_RECORDING.to_owned());
+        harness.inner.run_steps(2);
+        harness.inner.press_where_the_pointer_rests(aimed_at);
+
+        assert!(
+            matches!(*choice.borrow(), Some(EnvironmentPruneChoice::Cancel)),
+            "the press on Cancel deleted the archived days instead of reporting the cancel"
+        );
+    }
+
+    /// The force-quit confirmation lists one line per write still running, and
+    /// the user aims at Cancel while two of the four finish. Cancel keeps the
+    /// writes running.
+    #[test]
+    fn cancelling_the_force_quit_confirmation_reports_the_cancel_while_two_writes_finish() {
+        let costs = RefCell::new(four_write_costs());
+        let choice = RefCell::new(None);
+        let mut harness = tests::force_quit_dialog_over(&costs, &choice, |_| {});
+        let aimed_at = harness
+            .inner
+            .get(By::new().label(CANCEL_LABEL))
+            .rect()
+            .center();
+        harness.inner.hover_at(aimed_at);
+        harness.inner.run_steps(2);
+
+        costs.borrow_mut().truncate(WRITES_STILL_RUNNING);
+        harness.inner.run_steps(2);
+        harness.inner.press_where_the_pointer_rests(aimed_at);
+
+        assert!(
+            matches!(*choice.borrow(), Some(ForceQuitChoice::Cancel)),
+            "the press on Cancel did not report the cancel"
+        );
+    }
+
+    /// The same two writes finish, and the press aimed at the confirmation
+    /// does not reach the shutdown window behind it. That window's own row
+    /// holds "Force quit…" beside "Run in background".
+    #[test]
+    fn a_press_aimed_at_the_force_quit_confirmation_does_not_reach_the_window_behind_it() {
+        let costs = RefCell::new(four_write_costs());
+        let choice = RefCell::new(None);
+        let background_pressed = RefCell::new(false);
+        let mut harness = tests::force_quit_dialog_over(&costs, &choice, |ui| {
+            if ui
+                .allocate_response(ui.available_size(), egui::Sense::click())
+                .clicked()
+            {
+                *background_pressed.borrow_mut() = true;
+            }
+        });
+        let aimed_at = harness
+            .inner
+            .get(By::new().label(CANCEL_LABEL))
+            .rect()
+            .center();
+        harness.inner.hover_at(aimed_at);
+        harness.inner.run_steps(2);
+
+        costs.borrow_mut().truncate(WRITES_STILL_RUNNING);
+        harness.inner.run_steps(2);
+        harness.inner.press_where_the_pointer_rests(aimed_at);
+
+        assert!(
+            !*background_pressed.borrow(),
+            "the press aimed at Cancel reached the window under the confirmation"
+        );
+    }
+
+    /// The snap scope dialog counts the tracks that already have snap data,
+    /// and states that snapping again replaces it as soon as one does. Cancel
+    /// uploads nothing.
+    #[test]
+    fn cancelling_the_snap_scope_dialog_reports_the_cancel_while_a_snap_result_arrives() {
+        let counts = RefCell::new(tests::nothing_snapped_yet());
+        let choice = RefCell::new(None);
+        let mut harness = tests::snap_scope_dialog(&counts, &choice);
+        let aimed_at = harness
+            .inner
+            .get(By::new().label(CANCEL_LABEL))
+            .rect()
+            .center();
+        harness.inner.hover_at(aimed_at);
+        harness.inner.run_steps(2);
+
+        counts.borrow_mut().all.already_snapped = 1;
+        harness.inner.run_steps(2);
+        harness.inner.press_where_the_pointer_rests(aimed_at);
+
+        assert!(
+            matches!(*choice.borrow(), Some(SnapScopeChoice::Cancel)),
+            "the press on Cancel uploaded the tracks instead of reporting the cancel"
+        );
+    }
+
     /// The press the association tests use, over a confirmation whose content
     /// does not change: it reports Cancel and reaches nothing behind the
     /// confirmation.
     #[test]
     fn a_press_where_the_pointer_rests_cancels_an_unchanged_force_quit_confirmation() {
-        let costs = four_write_costs();
+        let costs = RefCell::new(four_write_costs());
         let choice = RefCell::new(None);
         let background_pressed = RefCell::new(false);
         let mut harness = tests::force_quit_dialog_over(&costs, &choice, |ui| {
@@ -2224,7 +2565,7 @@ mod anchored_dialog_layout_tests {
                     association_dialog::tests::stored_in_history("nav-devkit-mk4"),
                 ),
             ],
-            VIEWPORT,
+            tests::DIALOG_VIEWPORT,
         )
     }
 
