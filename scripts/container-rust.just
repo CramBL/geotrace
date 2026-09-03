@@ -2,10 +2,10 @@
 typos: (_native_or_dev "typos" "typos")
 
 [group("container-rust")]
-sort: (_dev "cargo" "sort" "--workspace" "." "sdk/python/geotrace-py" "sdk/rust/geotrace-sdk/fuzz")
+sort: (_dev "cargo" "sort" "--workspace" "." "sdk/python/geotrace-py" "sdk/rust/geotrace-sdk/fuzz" "crates/gt-logfile/fuzz")
 
 [group("container-rust")]
-sort-check: (_native_or_dev "cargo-sort" "cargo sort --workspace --check . sdk/python/geotrace-py sdk/rust/geotrace-sdk/fuzz")
+sort-check: (_native_or_dev "cargo-sort" "cargo sort --workspace --check . sdk/python/geotrace-py sdk/rust/geotrace-sdk/fuzz crates/gt-logfile/fuzz")
 
 [group("container-rust")]
 shear *ARGS:
@@ -13,6 +13,7 @@ shear *ARGS:
     just _native_or_dev "cargo-shear" "cargo shear --check-test-targets --deny-warnings {{ ARGS }} ."
     just _native_or_dev "cargo-shear" "cargo shear --check-test-targets --deny-warnings {{ ARGS }} sdk/python/geotrace-py"
     just _native_or_dev "cargo-shear" "cargo shear --check-test-targets --deny-warnings {{ ARGS }} sdk/rust/geotrace-sdk/fuzz"
+    just _native_or_dev "cargo-shear" "cargo shear --check-test-targets --deny-warnings {{ ARGS }} crates/gt-logfile/fuzz"
 
 # Runs the command directly when its binary is installed, otherwise inside the
 # dev container. Keeps ci-essentials runnable without a container runtime.

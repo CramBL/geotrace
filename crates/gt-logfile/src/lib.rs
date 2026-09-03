@@ -16,12 +16,18 @@ mod structure;
 mod summary;
 mod text;
 
+#[cfg(test)]
+mod log_strategies;
+
 pub use associate::{EntryPlacement, associate_entries, associate_position};
 pub use format::{LogFormat, detect_format, infer_year};
-pub use parse::{LogEntry, LogParseError, ParsedLog, TextSlice, TimestampKind, parse_log};
+pub use parse::{
+    LogEntry, LogParseError, ParsedLog, TextSlice, TimestampKind, parse_log, parse_log_in_chunks_of,
+};
 pub use pool::log_worker_pool;
 pub use recognise::{
     HostnameColumn, LogLevelKind, RecognisedLevel, RecognisedMessage, RecognisedService,
+    recognise_message,
 };
 pub use session::{AnchoredBounds, BootSession, OrderAnomaly};
 pub use structure::{StructuralLine, StructuralLineKind};

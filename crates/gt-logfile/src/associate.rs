@@ -104,6 +104,7 @@ mod tests {
     use chrono::TimeZone as _;
     use gt_test_utils::nav_points_from;
     use gt_types::{FileIdx, LoadedTrack, PointIdx, TrackIdx, TrackRef};
+    use proptest::{prelude::*, proptest};
     use rstest::rstest;
 
     use super::*;
@@ -146,6 +147,16 @@ mod tests {
         Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0)
             .single()
             .expect("valid")
+    }
+
+    /// One entry logged at `time`, which is all the association reads of it.
+    fn entry_at(time: DateTime<Utc>) -> LogEntry {
+        LogEntry {
+            timestamp: time,
+            timestamp_kind: TimestampKind::Anchored,
+            line_number: 1,
+            message: TextSlice { offset: 0, len: 0 },
+        }
     }
 
     #[test]
@@ -250,12 +261,7 @@ mod tests {
         let track = track_of(1 + entry_count / 1000);
         let points = placed_fixes(&track);
         let entries: Vec<LogEntry> = (0..entry_count)
-            .map(|index| LogEntry {
-                timestamp: start() + Duration::milliseconds(index as i64),
-                timestamp_kind: TimestampKind::Anchored,
-                line_number: 1,
-                message: TextSlice { offset: 0, len: 0 },
-            })
+            .map(|index| entry_at(start() + Duration::milliseconds(index as i64)))
             .collect();
 
         let associated = associate_entries(&entries, &points, window());
@@ -276,5 +282,44 @@ mod tests {
     #[test]
     fn a_recording_without_fixes_associates_nothing() {
         assert!(associate_position(start(), &[], window()).is_none());
+    }
+
+    proptest! {
+        /// Every entry takes the fix nearest its timestamp, the earlier one
+        /// where two lie equally close, and no position at all where the
+        /// nearest lies further from it than the window.
+        #[test]
+        fn an_entry_takes_the_nearest_fix_within_the_window_or_no_position(
+            fix_count in 1usize..8,
+            entry_offsets_secs in prop::collection::vec(-120i64..120, 0..12),
+            window_secs in 0i64..30,
+        ) {
+            let track = track_of(fix_count);
+            let fixes = placed_fixes(&track);
+            let window = Duration::seconds(window_secs);
+            let entries: Vec<LogEntry> = entry_offsets_secs
+                .iter()
+                .map(|offset| entry_at(start() + Duration::seconds(*offset)))
+                .collect();
+
+            let placements = associate_entries(&entries, &fixes, window);
+
+            prop_assert_eq!(placements.len(), entries.len());
+            for (entry, placement) in entries.iter().zip(&placements) {
+                let logged_at = entry.timestamp;
+                let nearest = fixes.iter().enumerate().min_by_key(|(_, fix)| {
+                    (fix.placed.fix.tpv.time().utc() - logged_at).abs()
+                });
+                let Some((point_index, nearest)) = nearest else {
+                    return Err(TestCaseError::fail("the generated track has no fixes"));
+                };
+                let gap = (nearest.placed.fix.tpv.time().utc() - logged_at).abs();
+
+                prop_assert_eq!(placement.is_some(), gap <= window);
+                if let Some(placement) = placement {
+                    prop_assert_eq!(placement.fix.point, PointIdx::new(point_index));
+                }
+            }
+        }
     }
 }

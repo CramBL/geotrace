@@ -4,16 +4,16 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 
-const DEVICE_TYPE_KEY: &str = "Device type";
-const LOGS_BEGIN_KEY: &str = "Logs begin at";
-const LOGS_END_KEY: &str = "Logs end at";
-const ENTRY_COUNT_KEY: &str = "Log entries";
-const ERROR_TABLE_HEADER: &str = "--- Service error count ---";
-const WARNING_TABLE_HEADER: &str = "--- Service warning count ---";
-const SERVICE_COUNT_ARROW: &str = "->";
+pub(crate) const DEVICE_TYPE_KEY: &str = "Device type";
+pub(crate) const LOGS_BEGIN_KEY: &str = "Logs begin at";
+pub(crate) const LOGS_END_KEY: &str = "Logs end at";
+pub(crate) const ENTRY_COUNT_KEY: &str = "Log entries";
+pub(crate) const ERROR_TABLE_HEADER: &str = "--- Service error count ---";
+pub(crate) const WARNING_TABLE_HEADER: &str = "--- Service warning count ---";
+pub(crate) const SERVICE_COUNT_ARROW: &str = "->";
 
 /// `Thu 29-May-2025 18:48:25 UTC`, how the exporter writes the log's span.
-const EXPORTER_TIME_FORMAT: &str = "%a %d-%b-%Y %H:%M:%S UTC";
+pub(crate) const EXPORTER_TIME_FORMAT: &str = "%a %d-%b-%Y %H:%M:%S UTC";
 
 /// What the exporter says about the log it wrote. Every field is optional: a
 /// truncated block yields whatever it got as far as stating.
@@ -162,8 +162,10 @@ fn parse_exporter_time(value: &str) -> Option<DateTime<Utc>> {
 #[cfg(test)]
 mod tests {
     use chrono::TimeZone as _;
+    use proptest::{prelude::*, proptest};
 
     use super::*;
+    use crate::log_strategies::{self, GeneratedSummaryBlock};
 
     /// The block a real journald export ends with, shortened to two rows per table.
     const EXPORTED_BLOCK: &str = "\
@@ -280,5 +282,17 @@ kernel               -> 315 Warnings";
         let summary =
             parse("Log entries: many\nLogs begin at: yesterday\nsome-service -> lots of Errors");
         assert_eq!(summary, SummaryBlock::default());
+    }
+
+    proptest! {
+        /// Every figure an exporter states in a block is read back as the
+        /// figure it wrote.
+        #[test]
+        fn a_written_block_is_read_back_as_the_figures_it_states(
+            block in log_strategies::any_summary_block(),
+        ) {
+            let GeneratedSummaryBlock { stated, text } = block;
+            prop_assert_eq!(parse_summary_block(text.lines().map(str::trim)), stated);
+        }
     }
 }

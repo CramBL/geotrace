@@ -177,10 +177,7 @@ impl RecognisedLevel {
 /// Reads one message, given what the head of the log decided about its
 /// hostname column. The same message always reads the same way: nothing here
 /// depends on the entries around it.
-pub(crate) fn recognise_message(
-    message: &str,
-    hostname_column: HostnameColumn,
-) -> RecognisedMessage {
+pub fn recognise_message(message: &str, hostname_column: HostnameColumn) -> RecognisedMessage {
     let bytes = message.as_bytes();
     let hostname_end = match hostname_column {
         HostnameColumn::Present => leading_word_end(bytes),
@@ -389,10 +386,11 @@ fn past_spaces(bytes: &[u8], from: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use proptest::{prelude::*, proptest};
+    use proptest::{prelude::*, prop_oneof, proptest};
     use rstest::rstest;
 
     use super::*;
+    use crate::log_strategies;
 
     /// What the recogniser found in a message, as the cases below write it:
     /// the hostname, the service and the level, each as the text it covers.
@@ -630,34 +628,39 @@ mod tests {
         assert_eq!(size_of::<RecognisedMessage>(), 12);
     }
 
-    fn any_message() -> impl Strategy<Value = String> {
-        prop_oneof![
-            r"\PC*",
-            r"[a-zA-Z-]{1,8}(\[[0-9]{1,6}\])?: \PC*",
-            r"host [a-z]{1,8}: (\[)?[A-Za-z]{1,8}(\])?:? \PC*",
-        ]
-    }
-
     proptest! {
         /// Whatever a line of a dropped file holds, every span read from it
-        /// slices the message it was read from.
+        /// slices the message, and each stands where the layout puts it: the
+        /// host before the service, the level at or after the end of it.
         #[test]
-        fn every_span_of_any_message_slices_it(
-            message in any_message(),
+        fn every_span_of_any_message_slices_it_in_layout_order(
+            message in log_strategies::any_message(),
             hostname_column in prop_oneof![
                 Just(HostnameColumn::Present),
                 Just(HostnameColumn::Absent)
             ],
         ) {
             let read = recognise_message(&message, hostname_column);
-            let spans = [
-                read.hostname(),
-                read.service().map(RecognisedService::span),
-                read.level().map(RecognisedLevel::span),
-            ];
+            let hostname = read.hostname();
+            let service = read.service().map(RecognisedService::span);
+            let level = read.level().map(RecognisedLevel::span);
+
+            let spans = [hostname.clone(), service.clone(), level.clone()];
             for span in spans.into_iter().flatten() {
-                prop_assert!(span.end <= message.len());
                 prop_assert!(message.get(span).is_some());
+            }
+            if let (Some(hostname), Some(service)) = (&hostname, &service) {
+                prop_assert!(hostname.end < service.start);
+            }
+            if let (Some(service), Some(level)) = (&service, &level) {
+                prop_assert!(level.start >= service.end);
+            }
+            if let Some(name) = service.and_then(|span| message.get(span)) {
+                prop_assert!(!name.contains(' '));
+                prop_assert!(name.len() <= SERVICE_LIMIT_BYTES);
+            }
+            if hostname_column == HostnameColumn::Absent {
+                prop_assert_eq!(hostname, None);
             }
         }
     }
