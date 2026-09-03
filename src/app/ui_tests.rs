@@ -9590,7 +9590,7 @@ fn a_tec_window_archived_after_the_load_warns_on_the_map() {
         [(
             "ride.gtd".to_owned(),
             vec![
-                "ΔTEC (>+43%): +75% from the 27-day median, moderate ionospheric storm \
+                "ΔTEC (> +43%): +75% from the 27-day median, moderate ionospheric storm \
                  (W = 3), 24h"
                     .to_owned(),
                 "TEC over track: 35–35 TECU".to_owned(),
@@ -9627,7 +9627,7 @@ fn a_tec_window_archived_after_the_load_warns_on_the_map() {
         [(
             "ride.gtd".to_owned(),
             vec![
-                "ΔTEC (>+43%): +75% from the 27-day median, moderate ionospheric storm \
+                "ΔTEC (> +43%): +75% from the 27-day median, moderate ionospheric storm \
                  (W = 3), 24h, after a G5 storm 21h before"
                     .to_owned(),
                 "TEC over track: 35–35 TECU".to_owned(),

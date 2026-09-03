@@ -461,7 +461,7 @@ impl TecDeviationEvidence {
         WarningLine {
             metric: TEC_DEVIATION,
             limit: format!(
-                "{}{:+.0}%",
+                "{} {:+.0}%",
                 if deviation.log_ratio() < 0.0 {
                     '<'
                 } else {
@@ -1140,7 +1140,7 @@ mod tests {
                 "Geomagnetic storm (≥5): Kp 9, G5",
                 "Aircraft interference (≥2%): up to 34.2% of aircraft in a crossed cell",
                 "Solar flare (≥M1, sunlit): X5.8 at 2024-05-11 02:01 UTC, R3",
-                "ΔTEC (>+43%): +62% from the 27-day median, moderate ionospheric storm (W = 3), 8h",
+                "ΔTEC (> +43%): +62% from the 27-day median, moderate ionospheric storm (W = 3), 8h",
                 "TEC over track: 12–175 TECU",
             ]
         );
@@ -1167,15 +1167,15 @@ mod tests {
     #[rstest]
     #[case::a_moderate_storm(
         62.0,
-        "ΔTEC (>+43%): +62% from the 27-day median, moderate ionospheric storm (W = 3), 8h"
+        "ΔTEC (> +43%): +62% from the 27-day median, moderate ionospheric storm (W = 3), 8h"
     )]
     #[case::a_negative_moderate_storm(
         -35.0,
-        "ΔTEC (<-30%): -35% from the 27-day median, moderate ionospheric storm (W = -3), 8h"
+        "ΔTEC (< -30%): -35% from the 27-day median, moderate ionospheric storm (W = -3), 8h"
     )]
     #[case::an_intense_storm(
         200.0,
-        "ΔTEC (>+43%): +200% from the 27-day median, intense ionospheric storm (W = 4), 8h"
+        "ΔTEC (> +43%): +200% from the 27-day median, intense ionospheric storm (W = 4), 8h"
     )]
     fn the_deviation_line_states_its_share_and_grade(#[case] percent: f64, #[case] expected: &str) {
         let fixture = SeriesFixture {
@@ -1206,7 +1206,7 @@ mod tests {
         assert_eq!(
             evidence_of(&fixture, &[]).warning_lines(),
             [
-                "ΔTEC (>+43%): +62% from the 27-day median, moderate ionospheric storm (W = 3), \
+                "ΔTEC (> +43%): +62% from the 27-day median, moderate ionospheric storm (W = 3), \
                  one 2h epoch"
             ]
         );
@@ -1221,17 +1221,17 @@ mod tests {
             class: GeomagneticStormClass::Strong,
             hours_before_peak: 5,
         }),
-        "ΔTEC (<-30%): -35% from the 27-day median, moderate ionospheric storm (W = -3), 8h, \
+        "ΔTEC (< -30%): -35% from the 27-day median, moderate ionospheric storm (W = -3), 8h, \
          after a G3 storm 5h before"
     )]
     #[case::a_quiet_window(
         Some(GeomagneticActivityBeforePeak::NoStorm),
-        "ΔTEC (<-30%): -35% from the 27-day median, moderate ionospheric storm (W = -3), 8h, \
+        "ΔTEC (< -30%): -35% from the 27-day median, moderate ionospheric storm (W = -3), 8h, \
          no geomagnetic storm in the 48h before"
     )]
     #[case::an_unarchived_window(
         None,
-        "ΔTEC (<-30%): -35% from the 27-day median, moderate ionospheric storm (W = -3), 8h"
+        "ΔTEC (< -30%): -35% from the 27-day median, moderate ionospheric storm (W = -3), 8h"
     )]
     fn the_deviation_line_states_the_geomagnetic_activity_before_its_peak(
         #[case] geomagnetic_before_peak: Option<GeomagneticActivityBeforePeak>,
@@ -1385,7 +1385,7 @@ mod tests {
             ..SeriesFixture::default()
         },
         format!(
-            "Space weather during morning.gtd\nΔTEC (>+43%): +62% from the 27-day median, \
+            "Space weather during morning.gtd\nΔTEC (> +43%): +62% from the 27-day median, \
              moderate ionospheric storm (W = 3), 8h\n{}",
             *gt_ionex::text::DEVIATION_REFERENCE_CAVEAT
         )
