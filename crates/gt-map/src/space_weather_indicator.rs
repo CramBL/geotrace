@@ -280,7 +280,7 @@ mod tests {
         vec![TrackSpaceWeatherWarning {
             track_label: "morning.gtd (track 2)".to_owned(),
             lines: vec![
-                "ΔTEC (<-30%): -51% from the 27-day median, intense ionospheric storm \
+                "ΔTEC (< -30%): -51% from the 27-day median, intense ionospheric storm \
                  (W = -4), 8h, no geomagnetic storm in the 48h before"
                     .to_owned(),
             ],

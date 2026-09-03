@@ -523,7 +523,7 @@ fn snapshot_track_warnings() -> Vec<gt_ui_types::TrackSpaceWeatherWarning> {
             "Geomagnetic storm (≥5): Hp30 7.667, G3".to_owned(),
             "Aircraft interference (≥2%): up to 34.2% of aircraft in a crossed cell".to_owned(),
             "Solar flare (≥M1, sunlit): X5.8 at 2024-05-11 02:01 UTC, R3".to_owned(),
-            "ΔTEC (<-30%): -73% from the 27-day median, intense ionospheric storm (W = -4), 22h, \
+            "ΔTEC (< -30%): -73% from the 27-day median, intense ionospheric storm (W = -4), 22h, \
              after a G5 storm 9h before"
                 .to_owned(),
             "TEC over track: 12–175 TECU".to_owned(),
