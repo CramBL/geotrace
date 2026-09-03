@@ -449,7 +449,7 @@ pub const BYTES_PER_GB: u64 = BYTES_PER_KB * BYTES_PER_KB * BYTES_PER_KB;
 
 /// Format a byte count in binary units (`1.5 KB`, `126.6 MB`, `10.0 GB`).
 ///
-/// Data sizes are the exception to the unit rule: they keep the space.
+/// Data sizes keep the space between the number and its unit.
 /// Zero renders as an em dash, the table convention for an absent value.
 pub fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];

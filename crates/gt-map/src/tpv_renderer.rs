@@ -624,7 +624,7 @@ fn hover_grid_ui(ui: &mut Ui, point: PlacedPoint<'_>, recording_name: Option<&st
 
             ui.label("Speed");
             match fix.tpv.velocity_kmh() {
-                Some(v) => ui.label(format!("{:.1}km/h", v)),
+                Some(v) => ui.label(format!("{:.1} km/h", v)),
                 None => ui.label(EM_DASH), // em-dash: speed unknown (interpolated point)
             };
             ui.end_row();
@@ -806,7 +806,7 @@ fn sticky_metrics(
         ui.label("Speed");
         match p.tpv.velocity_kmh() {
             Some(v) => {
-                ui.label(format!("{:.1}km/h", v));
+                ui.label(format!("{:.1} km/h", v));
             }
             None => {
                 ui.label(EM_DASH);

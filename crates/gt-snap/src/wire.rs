@@ -362,10 +362,10 @@ pub enum SpeedLimit {
 const SPEED_LIMIT_UNLIMITED: &str = "unlimited";
 
 impl SpeedLimit {
-    /// Hover-text rendering: `"120km/h"` or `"Unlimited"`.
+    /// Hover-text rendering: `"120 km/h"` or `"Unlimited"`.
     pub fn display(self) -> String {
         match self {
-            SpeedLimit::Kmh(kmh) => format!("{kmh}km/h"),
+            SpeedLimit::Kmh(kmh) => format!("{kmh} km/h"),
             SpeedLimit::Unlimited => "Unlimited".to_owned(),
         }
     }

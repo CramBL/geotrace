@@ -950,7 +950,7 @@ fn snap_snapped_track_edge_hover() {
                 edges: vec![gt_ui_types::SnappedEdgeInfo {
                     name: Some("H.C. Andersens Boulevard".to_owned()),
                     road_class: Some("Tertiary".to_owned()),
-                    speed_limit: Some("50km/h".to_owned()),
+                    speed_limit: Some("50 km/h".to_owned()),
                     surface: Some("Paved smooth".to_owned()),
                 }],
                 whiskers: Vec::new(),

@@ -20,7 +20,7 @@ ResponseDigest {
         "PavedSmooth",
     },
     speed_limits: {
-        "50km/h",
+        "50 km/h",
     },
     shape_chars: 67,
     osm_changeset: Some(

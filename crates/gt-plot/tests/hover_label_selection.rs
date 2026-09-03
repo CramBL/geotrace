@@ -401,7 +401,7 @@ fn snapshot_the_plot_labels_the_tec_interpolated_at_the_pointer() {
         plot.hover_label(),
         "Ionospheric TEC\n\
          TEC 15.0 TECU\n\
-         L1 delay about 2.4 m\n\
+         L1 delay about 2.4m\n\
          Interpolated between maps at 2024-01-15T13:00:00 (UTC)"
     );
     plot.snapshot("hover_the_tec_line_between_two_epochs");

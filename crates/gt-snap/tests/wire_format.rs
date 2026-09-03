@@ -407,7 +407,7 @@ fn edge_index_sentinel_folds_into_none() {
 /// and serialize back unchanged so cached results round-trip. Any other
 /// string is an error.
 #[rstest::rstest]
-#[case::kmh("50", SpeedLimit::Kmh(50), "50km/h")]
+#[case::kmh("50", SpeedLimit::Kmh(50), "50 km/h")]
 #[case::unlimited(r#""unlimited""#, SpeedLimit::Unlimited, "Unlimited")]
 fn speed_limit_parses_both_wire_shapes(
     #[case] json: &str,
