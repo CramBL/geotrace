@@ -121,7 +121,7 @@ impl App {
                 // series, and keeps the loader in step for files loaded
                 // later. `set_analysis` is a no-op when unchanged.
                 self.loader.analysis_config = analysis;
-                // Slip markers share these detection params, but as
+                // Slip markers share these detection parameters, but as
                 // load-time generated markers they only pick up the
                 // change on the next load or "Apply to loaded data".
                 self.processing_config

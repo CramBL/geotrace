@@ -160,8 +160,8 @@ fn assert_the_capture_covers_the_map(harness: &mut TestHarness<'_, App>, snapsho
     gt_test_utils::assert_map_tile_fixture_is_complete(snapshot_name, missing);
 }
 
-/// [`build_app`] for a session with the given write access, which is what
-/// decides whether the settings are persisted at all.
+/// [`build_app`] for a session with `write_access`, which controls whether the
+/// settings are persisted at all.
 fn build_app_with_write_access(
     cc: &eframe::CreationContext<'_>,
     config_path: &std::path::Path,
@@ -1302,8 +1302,8 @@ fn popping_the_matches_out_moves_them_into_their_own_window() {
 /// spacing every frame.
 #[test]
 fn the_popped_out_matches_window_keeps_its_default_size() {
-    // More matches than the window can list, so its table fills the height it
-    // was given rather than shrinking to its rows.
+    // More matches than the window can list, so its table fills the height it was
+    // given.
     let mut harness = demo_app_with_query_run(MANY_MATCH_QUERY);
     pop_out_button(&harness).click();
     harness.run_steps(5);
@@ -2012,8 +2012,8 @@ fn query_match_row_hover_highlights_the_match() {
     );
 }
 
-/// Anything that is not a recording is read as a log, so binary junk fails as
-/// one: nothing in it carries a timestamp.
+/// Anything that is not a recording goes to the log parser, so binary junk
+/// fails as a log: nothing in it contains a timestamp.
 #[test]
 fn drag_drop_binary_junk_reports_it_is_not_a_recognised_log() {
     let mut harness = Harness::builder()
@@ -2645,7 +2645,7 @@ fn snapshot_app_query_matches_window() {
 }
 
 /// The query editor under the light theme, so the syntax-highlight colours
-/// (keywords, numbers, idents, comments) are verified on the white editor
+/// (keywords, numbers, identifiers, comments) are verified on the white editor
 /// background where the dark-tuned palette was unreadable. Focused on the
 /// editor: it sets highlighted text but does not run the query.
 #[test]
@@ -2663,8 +2663,8 @@ fn snapshot_app_query_editor_light() {
     harness.inner.ctx.set_theme(egui::ThemePreference::Light);
     let app = harness.inner.state_mut();
     app.query_window.open = true;
-    // Exercises every token class: keywords, numeric literals, a unit, idents,
-    // and a comment.
+    // Exercises every token class: keywords, numeric literals, a unit,
+    // identifiers, and a comment.
     app.query_window.set_text(
         "points\n| window 10\n| where avg(velocity) > 25 km/h # keep the fast bits\n| table time, velocity"
             .to_owned(),
@@ -2808,7 +2808,7 @@ fn snapshot_app_plot_light() {
     // Enable a spread of seen/fix series across constellations so the snapshot
     // exercises the light palette's constellation coding and the seen-vs-fix
     // depth separation. (Util/slip families are advanced-gated and covered by
-    // the contrast test rather than shown here.)
+    // the contrast test.)
     {
         use gt_types::MetricKind as M;
         let shown = [
@@ -3474,7 +3474,7 @@ fn query_ctrl_enter_runs() {
     );
 }
 
-/// A key-press event for the given key with no modifiers.
+/// A key-press event for `key` with no modifiers.
 fn key_press(key: egui::Key) -> egui::Event {
     egui::Event::Key {
         key,
@@ -3585,7 +3585,7 @@ fn no_popup_on_the_blank_line_after_a_query() {
 }
 
 /// An eagerly opened empty-prefix popup (units after a number) is passive:
-/// Enter still breaks the line instead of inserting a unit.
+/// Enter still breaks the line.
 #[test]
 fn passive_unit_popup_lets_enter_break_the_line() {
     let mut harness = editor_with_popup("points | where velocity > 30");
@@ -3817,7 +3817,7 @@ fn channel_chip_menu_offers_component_colors() {
 
 /// A user-picked component color reaches every surface at once: the line,
 /// the chip's bar strip, and the hover legend square all draw `accel.y` in
-/// the override instead of the derived hue.
+/// the override colour.
 #[test]
 fn snapshot_app_plot_channel_color_override() {
     let (mut harness, _config_path) = TestHarness::builder()
@@ -4199,8 +4199,7 @@ fn snapshot_app_three_overlapping_files() {
     assert_the_capture_covers_the_map(&mut harness, "app_three_overlapping_files");
     // Full-app map+plot render, so it carries the same GPU/anti-aliasing
     // nondeterminism as the other map snapshots and uses the shared loose
-    // tolerance rather than a tighter hand-picked count that the macOS runner
-    // drifts past.
+    // tolerance: a tighter hand-picked count drifts on the macOS runner.
     harness.snapshot_loose("app_three_overlapping_files");
 }
 
@@ -5011,8 +5010,8 @@ fn app_with_the_databases_still_opening<'a>(
     app_with_the_databases_still_opening_for(paths, WriteAccess::Owner)
 }
 
-/// [`app_with_the_databases_still_opening`] for a session with the given
-/// write access, which is what decides whether anything it loads is stored.
+/// [`app_with_the_databases_still_opening`] for a session with `write_access`,
+/// which controls whether anything it loads is stored.
 fn app_with_the_databases_still_opening_for<'a>(
     paths: &[PathBuf],
     write_access: WriteAccess,
@@ -5229,7 +5228,7 @@ fn log_text_pasted_before_the_databases_land_loads_once_they_do() {
 }
 
 /// A storage open that ends without reporting leaves the run storing nothing,
-/// and says so instead of failing quietly.
+/// and says so.
 #[test]
 fn a_storage_open_that_never_reports_still_runs_the_loads_that_waited() {
     let (mut harness, databases) = app_with_the_databases_still_opening(&[]);
@@ -6355,7 +6354,7 @@ fn app_asking_about_the_archives_under<'a>(
 }
 
 /// The same, for findings this process cannot produce on its own: libhdf5
-/// hands one process the same open file twice rather than rejecting it.
+/// hands one process the same open file twice.
 fn app_asking_about<'a>(inspected: InspectedArchives) -> Harness<'a, App> {
     let (mut harness, _databases) = app_with_the_databases_still_opening(&[]);
     harness
@@ -6909,9 +6908,8 @@ fn a_storage_landing_after_the_close_began_installs_no_worker() {
     );
 }
 
-/// "Try again" on a database that still will not open puts the prompt back
-/// rather than leaving the user with no history and no explanation. Uses an
-/// unreadable file, since holding a real lock needs a second process.
+/// "Try again" on a database that still will not open puts the prompt back.
+/// Uses an unreadable file, since holding a real lock needs a second process.
 #[test]
 fn a_failed_retry_restores_the_prompt() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -7565,7 +7563,7 @@ fn auto_prompt_appears_once_after_earlier_consent() {
     harness.run_steps(2);
 
     // First synthetic click settles the startup map-layer popup (see
-    // snap_consent_agree_persists_the_server_host). The second only fires
+    // `snap_consent_agree_persists_the_server_host`). The second only fires
     // while the prompt is still open: unlike the sibling consent dialogs,
     // this prompt sometimes receives the first click already, and a second
     // Enter-equivalent click after it closed would go to the map.
@@ -8453,8 +8451,8 @@ fn environment_auto_pruning_waits_for_a_running_delete() {
     );
 }
 
-/// Push a file built with the given travel mode into the app's loaded files,
-/// returning the ref of its single track.
+/// Push a file built with `travel_mode` into the app's loaded files, returning
+/// the ref of its single track.
 fn push_file_with_travel_mode(
     harness: &mut Harness<'_, App>,
     name: &str,
@@ -8577,7 +8575,7 @@ fn snap_request_parks_on_consent_and_agree_takes_it() {
     harness.step();
 
     // First synthetic click settles the startup map-layer popup (see
-    // snap_consent_agree_persists_the_server_host), the second lands.
+    // `snap_consent_agree_persists_the_server_host`), the second lands.
     harness
         .get_by_role_and_label(egui::accesskit::Role::Button, "Agree - snap automatically")
         .click();
@@ -8865,8 +8863,7 @@ fn costing_choice_with_a_cached_run_prompts_before_replacing_it() {
     );
 }
 
-/// Confirming the dialog forgets the cached run, so the choice reaches the
-/// server instead of redisplaying what the track already had.
+/// Confirming the dialog forgets the cached run, so the choice reaches the server.
 #[test]
 fn confirming_the_replace_prompt_discards_the_cached_run() {
     let (mut harness, track) = harness_prompting_to_replace_the_auto_run();
@@ -10013,7 +10010,7 @@ fn snapshot_recording_details_dialog() {
                 ..gt_test_utils::empty_file_metadata()
             },
             // A long, auto-derived, path-like identity to show the dialog gives
-            // it room instead of clipping it.
+            // it room.
             identity: Some("auto:/home/user/recordings/2025/05/ride_2025-05-23.gtd".to_owned()),
         });
     harness.run();
@@ -12065,7 +12062,7 @@ fn the_update_prompt_fits_the_audit_viewports(
 }
 
 /// The popped-out match list stays inside the screen at any viewport: its rows
-/// scroll instead of stretching the window past the screen edge.
+/// scroll inside it.
 #[rstest]
 fn the_match_list_window_fits_the_audit_viewports(
     #[values(

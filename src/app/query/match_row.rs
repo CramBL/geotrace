@@ -256,7 +256,7 @@ pub(super) enum MatchColumn {
 
 impl MatchColumn {
     /// The column's header text. `samples` names a channel run's rows, which
-    /// are samples of a channel timeline rather than nav points.
+    /// are samples of a channel timeline.
     pub(super) fn title(self, row_noun: RowNoun) -> &'static str {
         match self {
             Self::Number => "#",

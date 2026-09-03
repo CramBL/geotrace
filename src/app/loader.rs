@@ -53,10 +53,10 @@ pub struct FinishedJob {
     /// Total wall-clock time the job took, frozen at the moment of completion.
     pub elapsed_secs: f32,
     /// egui frame time (`Context::input().time`, seconds) when the job
-    /// completed, used to drive the fade-out animation. Frame time rather than
-    /// [`std::time::Instant`] so the animation is a pure function of the
-    /// deterministic clock the test harness advances - a wall-clock read here
-    /// leaks into snapshots and makes them racy.
+    /// completed, used to drive the fade-out animation. Frame time keeps the
+    /// animation a pure function of the deterministic clock the test harness
+    /// advances - a wall-clock read here leaks into snapshots and makes them
+    /// racy.
     pub completed_at: f64,
 }
 
@@ -71,8 +71,9 @@ pub enum LoadOutcome {
         series: PreparedSeries,
         /// App-owned history attachment metadata for this file.
         history: FileHistory,
-        /// True when a history load rebuilt generated markers with the current
-        /// app settings rather than the recording's stored/default marker settings.
+        /// True when a history load rebuilt generated markers with the current app
+        /// settings. False when those settings match the recording's stored marker
+        /// settings, and for a recording that stored none.
         applied_current_marker_settings: bool,
     },
     /// A successfully parsed log, not yet associated with a recording.
@@ -836,9 +837,9 @@ fn track_ranges_from_file(file: &LoadedFile) -> Vec<gt_store::TrackRange> {
         .collect()
 }
 
-/// Remove the tracks at the given 0-based positions (segmentation order) from a
-/// loaded file's view - used to re-apply a recording's stored hidden tracks when
-/// it is opened from history.
+/// Remove the tracks at `positions` (0-based, segmentation order) from a loaded
+/// file's view - used to re-apply a recording's stored hidden tracks when it is
+/// opened from history.
 fn drop_tracks(file: &mut LoadedFile, positions: &[usize]) {
     if positions.is_empty() {
         return;

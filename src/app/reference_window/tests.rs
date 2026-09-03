@@ -25,7 +25,7 @@ const SCROLL_TO_END_POINTS: f32 = 6000.0;
 const SCROLL_SETTLE_FRAMES: usize = 12;
 
 /// Coverage an equation asset's darkest pixel reaches, below which its glyphs
-/// would tint to a wash of the text colour rather than the text colour itself.
+/// would tint to a wash of the text colour.
 const MIN_EQUATION_PEAK_COVERAGE: u8 = 200;
 
 fn harness_showing<'a>(
@@ -100,7 +100,7 @@ fn scroll_to_block(
     panic!("{label:?} never came into view");
 }
 
-/// The urls of the [`egui::OutputCommand::OpenUrl`] commands in the output of
+/// The URLs of the [`egui::OutputCommand::OpenUrl`] commands in the output of
 /// the frame just run.
 fn opened_urls(harness: &TestHarness<'_, ReferenceWindow>) -> Vec<String> {
     harness
@@ -291,7 +291,7 @@ fn hovering_a_source_shows_its_url() {
 }
 
 /// A clicked hyperlink adds an [`egui::OutputCommand::OpenUrl`] to the
-/// platform output, and eframe's `links` feature opens that url in the system
+/// platform output, and eframe's `links` feature opens that URL in the system
 /// browser.
 #[test]
 fn clicking_a_source_opens_its_url() {
@@ -406,8 +406,7 @@ const ADJACENT_CITATION_DOCUMENT: ReferenceDocument = ReferenceDocument {
     ],
 };
 
-/// Two citations in a row read as a list of source numbers. The window
-/// snapshots show the comma raised with the numbers.
+/// The window snapshots show the comma raised with the numbers.
 #[test]
 fn adjacent_citations_are_separated_by_a_comma() {
     let harness = harness_showing(ADJACENT_CITATION_DOCUMENT, true);
@@ -465,7 +464,7 @@ fn a_long_cell_wraps_within_its_column() {
 }
 
 /// Every reference document stays inside the screen at any viewport: its
-/// prose, tables and illustrations scroll rather than stretching the window.
+/// prose, tables and illustrations scroll inside it.
 #[rstest]
 fn the_reference_window_fits_every_viewport(
     #[values(

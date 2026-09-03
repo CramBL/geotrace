@@ -137,7 +137,7 @@ mod tests {
     }
 
     /// Clicking away from the field applies the edit only where the call site
-    /// asked for it.
+    /// requested it.
     #[rstest]
     #[case::on_focus_loss(MapboxTokenCommit::OnEnterOrFocusLoss, "entered")]
     #[case::on_enter_alone(MapboxTokenCommit::OnEnter, "")]

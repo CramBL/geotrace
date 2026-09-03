@@ -45,7 +45,7 @@ enum CliAction {
     /// Update in place and exit (`--update`). Recognized in every build so one
     /// without the updater can report it clearly. Only dist builds honor it.
     SelfUpdate,
-    /// Launch the GUI, opening the given files on startup.
+    /// Launch the GUI, opening `paths` on startup.
     Launch {
         paths: Vec<PathBuf>,
         /// [`OFFLINE_FLAG`] was given.
@@ -107,8 +107,8 @@ const TERMINATION_SIGNAL_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 #[derive(Debug, PartialEq, Eq)]
 enum SignalDuringTheWait {
     KeepWaiting,
-    /// A signal reached a shutdown that is already under way: the terminal
-    /// it came from is told so, and what quitting now would abandon.
+    /// A signal reached a shutdown that is already under way. The wait logs the
+    /// shutdown and how many writes quitting now would abandon.
     ReportTheShutdownAlreadyUnderWay {
         writes_still_running: usize,
     },
@@ -134,7 +134,7 @@ impl SignalDuringTheWait {
 /// Waits for the writes still running once the window is gone, which is where
 /// "Run in background" leaves them, and reports the code to exit with.
 ///
-/// A second instance started meanwhile can tell what this one is doing: the
+/// A second instance started meanwhile can read what this one is doing: the
 /// instance lock keeps naming what is left to write while the wait runs.
 fn begin_shutdown_and_wait_for_pending_writes(
     pending_writes: &PendingWrites,
@@ -340,8 +340,8 @@ mod tests {
     };
 
     /// The first signal after the window closed reaches a shutdown that is
-    /// already under way: nothing changes, and the terminal it came from is
-    /// told what a second signal would cost.
+    /// already under way: nothing changes, and the wait reports the writes a
+    /// second signal would abandon.
     #[test]
     fn a_signal_reaching_the_shutdown_under_way_reports_what_quitting_would_abandon() {
         let pending_writes = PendingWrites::default();
@@ -410,7 +410,7 @@ mod tests {
 
     /// Longer than [`TERMINATION_SIGNAL_CHECK_INTERVAL`]: the second signal
     /// always ends the wait first. Short enough that a wait that stopped
-    /// reading the flag fails instead of hanging.
+    /// reading the flag fails.
     const HELD_WRITE_RELEASED_AFTER: Duration = Duration::from_secs(5);
 
     /// The wait after the window closes reads the flag too: a signal there,
@@ -448,8 +448,7 @@ mod tests {
         );
     }
 
-    // Decodes independently of app startup so a corrupt embedded icon fails
-    // CI instead of only surfacing when someone launches the GUI.
+    // Decodes independently of app startup so a corrupt embedded icon fails CI.
     #[test]
     fn embedded_app_icon_is_a_valid_png() {
         let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/geotrace_icon.png"))

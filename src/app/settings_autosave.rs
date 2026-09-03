@@ -22,7 +22,7 @@ impl From<StableF32> for f32 {
 /// without triggering the `float_cmp` lint.
 ///
 /// Dirty-check helper only: it compares raw bits, so it does not treat
-/// `+0.0`/`-0.0` as equal or canonicalise `NaN`.  Inputs here are range-clamped
+/// `+0.0`/`-0.0` as equal or canonicalize `NaN`.  Inputs here are range-clamped
 /// finite settings values, so neither case arises.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct StableF64(u64);

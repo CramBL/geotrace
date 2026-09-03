@@ -487,7 +487,7 @@ impl SnapScheduler {
 
     /// Whether a completed run for this track under these parameters and
     /// the current host is cached, i.e. whether [`Self::request_snap`]
-    /// would redisplay it instead of requesting a new one from the server.
+    /// would redisplay it without a new request to the server.
     pub fn has_cached_run(&self, track: &LoadedTrack, params: SnapParams) -> bool {
         self.cache
             .contains_key(&SnapCacheKey::new(track, params, self.current_host()))
@@ -535,7 +535,7 @@ impl SnapScheduler {
     /// is already queued or in flight - except that a manual request for a
     /// track queued automatically promotes it to the front of the queue. A
     /// cache hit for the same content, parameters, and host promotes the
-    /// cached run to the track's displayed run instead of re-requesting -
+    /// cached run to the track's displayed run and sends no request:
     /// switching parameters back to a known combination is instant and
     /// costs no server budget.
     pub fn request_snap(
@@ -915,8 +915,7 @@ mod tests {
     }
 
     /// A track the receiver dead-reckoned end to end has no fix to send, so
-    /// nothing is queued and the row says so instead of silently doing
-    /// nothing.
+    /// nothing is queued and the row says so.
     #[test]
     fn a_track_of_only_ghost_fixes_has_nothing_to_send() {
         let mut scheduler = scheduler();
@@ -1074,7 +1073,7 @@ mod tests {
         let auto = SnapParams::new(Costing::Auto);
         let bicycle = SnapParams::new(Costing::Bicycle);
 
-        // Two completed runs for the same track under different params.
+        // Two completed runs for the same track under different parameters.
         scheduler.insert_run(key(&track, auto), empty_run(auto));
         scheduler.insert_run(key(&track, bicycle), empty_run(bicycle));
         assert_eq!(
@@ -1241,7 +1240,7 @@ mod tests {
     #[test]
     fn manual_request_promotes_queued_auto_entry() {
         let mut scheduler = scheduler();
-        // A sentinel in-flight run keeps the test from spawning a worker.
+        // An in-flight run keeps the test from spawning a worker.
         scheduler.in_flight = Some(nth_track_ref(9));
         let track = track(10);
         let (a, b) = (nth_track_ref(0), nth_track_ref(1));
@@ -1490,9 +1489,8 @@ mod tests {
     }
 
     /// Every warning variant renders to a hover line carrying its key facts
-    /// (1-based chunk numbers, counts, the failure detail). The table length
-    /// is pinned to the enum so a new variant fails here instead of
-    /// silently shipping without a rendering.
+    /// (1-based chunk numbers, counts, the failure detail). The table length is
+    /// pinned to [`SnapWarning`]'s variant count, so a new variant fails here.
     #[test]
     fn warning_lines_cover_every_variant() {
         use strum::EnumCount;

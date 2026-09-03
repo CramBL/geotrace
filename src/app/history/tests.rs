@@ -163,8 +163,8 @@ fn pump_history(ui: &mut egui::Ui, s: &mut HistoryHarness) {
 #[test]
 fn rename_workflow_updates_the_listed_identity_end_to_end() {
     // Full workflow against a real worker + database: the row lists, the user
-    // edits the identity inline, and after the async rename the list shows the
-    // new name.
+    // edits the identity inline, and after the worker's rename the list shows
+    // the new name.
     let harness = history_harness_with_recording("auto:ride.gtd", &[]);
     let mut h = TestHarness::builder()
         .size(egui::vec2(900.0, 500.0))
@@ -485,7 +485,7 @@ fn sorted_identities(sort: HistorySort, entries: &[RecordingEntry]) -> Vec<&str>
 
 /// Every column orders the list by its own value, in both directions.
 /// Identity compares case-insensitively on the displayed name, so `beta`
-/// sorts between `Alpha` and `Gamma` rather than after both.
+/// sorts between `Alpha` and `Gamma`.
 #[rstest::rstest]
 #[case(SortColumn::Identity, SortDirection::Ascending, ["Alpha", "beta", "Gamma"])]
 #[case(SortColumn::Identity, SortDirection::Descending, ["Gamma", "beta", "Alpha"])]
@@ -642,10 +642,10 @@ fn history_window_width(identity: &str) -> f32 {
         .x
 }
 
-/// A long recording identity truncates in the History window rather than
-/// stretching it: a short, a long, and a much longer identity all settle the
-/// resizable window at the same width. Without the truncation the identity
-/// column would size to its full text and the window would grow with it.
+/// A long recording identity truncates in the History window: a short, a long,
+/// and a much longer identity all settle the resizable window at the same
+/// width. Without the truncation the identity column would size to its full
+/// text and the window would grow with it.
 #[test]
 fn long_identity_does_not_widen_history_window() {
     let short = history_window_width("auto:ride.gtd");
@@ -810,9 +810,7 @@ fn window_rect(h: &TestHarness<HistoryHarness>) -> egui::Rect {
 }
 
 /// The window can be dragged narrower than its settled width. Identity
-/// yields as the window shrinks, so the table follows the window down
-/// instead of pinning it at a content minimum that snaps it back to full
-/// width (the old "can't shrink the window" bug).
+/// yields as the window shrinks, so the table follows the window down.
 #[test]
 fn the_window_can_be_shrunk_narrower() {
     let mut h = resize_harness();
@@ -1057,8 +1055,8 @@ fn point_at_header(h: &mut TestHarness<HistoryHarness>, title: &str) {
     h.inner.hover_at_and_settle(target, 1);
 }
 
-/// Centre of the topmost widget whose label contains `label` - the table
-/// row rather than the footer summary when both carry the same text.
+/// Centre of the topmost widget whose label contains `label`. The table row
+/// sits above the footer summary when both hold the same text.
 fn topmost_labelled(h: &TestHarness<HistoryHarness>, label: &str) -> egui::Pos2 {
     h.inner
         .topmost_matching(By::new().label_contains(label))
@@ -1069,9 +1067,9 @@ fn topmost_labelled(h: &TestHarness<HistoryHarness>, label: &str) -> egui::Pos2 
 /// Snapshot the hover breakdown for `entry`, rendered through the same
 /// function the tooltip calls.
 ///
-/// Driven directly rather than through a hover so the image is just the
-/// breakdown: what it covers is everything the breakdown itself determines -
-/// which rows appear, how the channels lay out, and where it truncates.
+/// Called directly, so the image is just the breakdown: what it covers is
+/// everything the breakdown itself determines - which rows appear, how the
+/// channels lay out, and where it truncates.
 /// That the hover actually reaches it is covered separately, by the tests
 /// that hover a real row.
 fn snapshot_breakdown(entry: &RecordingEntry, name: &str) {
@@ -1092,9 +1090,8 @@ fn snapshot_history_row_breakdown() {
     snapshot_breakdown(&entry_with_channels(), "history_row_breakdown");
 }
 
-/// A recording with no channels states that in its breakdown rather than
-/// rendering nothing. Its hidden tracks also get the note explaining where
-/// they came from.
+/// A recording with no channels states that in its breakdown. Its hidden
+/// tracks also get the note explaining where they came from.
 #[test]
 fn snapshot_history_row_breakdown_without_channels() {
     let mut entry = sortable_entry(
@@ -1152,7 +1149,7 @@ fn cursor_icon(h: &TestHarness<HistoryHarness>) -> egui::CursorIcon {
 
 /// Each part of the window requests the cursor that matches what it does:
 /// only real text entry shows the I-beam, so a column header that sorts on
-/// click never reads as a text field.
+/// click shows the pointing hand.
 #[rstest::rstest]
 // Sortable headers act on click.
 #[case::points_header(point_at_header, "Points", egui::CursorIcon::PointingHand)]
@@ -1438,16 +1435,15 @@ fn crowded_history_harness() -> HistoryHarness {
     history_harness(entries)
 }
 
-/// Size given to each of [`crowded_history_harness`]'s recordings, so the
-/// footer states a total rather than a placeholder.
+/// Size given to each of [`crowded_history_harness`]'s recordings, so the footer
+/// states a total.
 const CROWDED_RECORDING_BYTES: u64 = 1024;
 
 /// The stats line the footer ends on for [`crowded_history_harness`].
 const CROWDED_FOOTER_STATS: &str = "200 recordings - 200.0 KB";
 
 /// The History window keeps its footer reachable at any viewport: the listing
-/// takes the room that is left and scrolls its own rows, instead of pushing the
-/// stats line past the bottom of the screen.
+/// takes the room that is left and scrolls its own rows.
 #[rstest::rstest]
 fn history_window_fits_every_viewport(
     #[values(CRAMPED_VIEWPORT, NARROW_VIEWPORT, SHORT_VIEWPORT)] viewport: egui::Vec2,
@@ -1484,7 +1480,7 @@ fn crowded_prune_harness() -> HistoryHarness {
 }
 
 /// The prune dialog keeps its destructive action reachable at any viewport: the
-/// preview list scrolls rather than pushing the buttons past the screen edge.
+/// preview list scrolls its own rows.
 #[rstest::rstest]
 fn prune_dialog_fits_every_viewport(
     #[values(CRAMPED_VIEWPORT, NARROW_VIEWPORT, SHORT_VIEWPORT)] viewport: egui::Vec2,

@@ -6,7 +6,7 @@
 //! fixes fall on, so a track sitting in one cell costs one node whatever its
 //! fix rate. Both sides of the comparison are read the same way, as one node's
 //! value between the two maps bracketing an instant, so a gradient across the
-//! cell cannot read as a deviation.
+//! cell cancels out of the deviation.
 //!
 //! How long the storm grade held around a track's peak is read across every
 //! epoch that day published at the peak's own node, not only the epochs the

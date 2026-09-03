@@ -191,8 +191,8 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
     }
 }
 
-/// Find the Unix-second time range of TPV points that lie within the given map
-/// geographic bounds, considering only files/tracks currently enabled in `visibility`.
+/// Find the Unix-second time range of TPV points that lie within `bounds`,
+/// considering only files/tracks currently enabled in `visibility`.
 ///
 /// Returns `None` when no visible TPV points fall in the viewport.
 fn tpv_time_range_in_bounds(

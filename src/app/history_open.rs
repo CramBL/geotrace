@@ -378,7 +378,7 @@ impl App {
             }
             Response::AutoPruned(Err(e)) => log::error!("Auto-prune failed: {e}"),
             // A failed cache write costs only the persisted copy - the
-            // session stores keep working - so this logs instead of toasting.
+            // session stores keep working - so this logs the failure.
             Response::SnapRunsStored(result) => {
                 if let Err(e) = result {
                     log::warn!("Storing snap runs failed: {e}");

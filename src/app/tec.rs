@@ -1085,8 +1085,7 @@ mod tests {
     }
 
     /// A mirror serving an archive that needs a token is not requested while
-    /// none is set, and the day reports why instead of archiving nothing
-    /// quietly.
+    /// none is set, and the day reports why.
     #[test]
     fn a_day_is_not_requested_from_an_authenticated_archive_without_a_token() {
         let (_dir, store) = archive();
@@ -1231,7 +1230,7 @@ mod tests {
         );
     }
 
-    /// A revised day replaces the archived one instead of appending to it.
+    /// A revised day replaces the archived one.
     #[test]
     fn ingesting_a_day_twice_replaces_what_was_archived() {
         let (_dir, store) = archive();
@@ -1460,8 +1459,7 @@ mod tests {
         assert_eq!(scheduler.days.backfill_progress(), None);
     }
 
-    /// No archive is distinct from an empty range: the control says so instead
-    /// of claiming the range is already downloaded.
+    /// No archive is distinct from an empty range.
     #[test]
     fn a_backfill_without_an_archive_reports_no_archive() {
         let mut scheduler = scheduler_without_archive();
@@ -1585,8 +1583,8 @@ mod tests {
         assert_eq!(scheduler.days.fetch_status().recording_days.archived, 1);
     }
 
-    /// Offline, a queued day is still dispatched: the transport declines the
-    /// request rather than the day staying queued.
+    /// Offline, a queued day is still dispatched: the day leaves the queue and
+    /// the transport declines the request.
     #[test]
     fn a_queued_day_is_dispatched() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
@@ -1660,8 +1658,8 @@ mod tests {
     }
 
     /// One day of maps at `step_hours` epochs, every node standing at `scale`
-    /// times the hour of day. It stands in for the diurnal rise, linearly, so
-    /// a clock time between two epochs interpolates to an exact value.
+    /// times the hour of day. The rise is linear, so a clock time between two
+    /// epochs interpolates to an exact value.
     fn rising_maps(archived: NaiveDate, step_hours: i64, scale: f64) -> GlobalIonosphereMaps {
         let samples: Vec<(i64, f64)> = (0..=(24 / step_hours))
             .map(|step| {
@@ -1733,8 +1731,7 @@ mod tests {
     }
 
     /// A median is formed only once a majority of the 27 days before the
-    /// recording is archived, so a handful of days never stands in for the
-    /// quiet level.
+    /// recording is archived: a handful of days yields no quiet level.
     #[rstest]
     #[case::one_short_of_the_minimum(13, false)]
     #[case::the_minimum(14, true)]
@@ -1792,9 +1789,8 @@ mod tests {
     }
 
     /// A rapid day publishes maps an hour apart and a final day two, so a
-    /// window holding both is read at the clock time the fix's own epoch names
-    /// rather than by matching epochs off against each other. The final days
-    /// interpolate between the two epochs bracketing that time.
+    /// window holding both is read at the clock time the fix's own epoch names.
+    /// The final days interpolate between the two epochs bracketing that time.
     #[test]
     fn a_window_of_hourly_and_two_hourly_days_is_read_at_one_clock_time() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
@@ -1941,9 +1937,9 @@ mod tests {
     /// is the one the capture grades directly.
     ///
     /// The storm-grade run beside the peak is the day's own, counted over
-    /// every epoch that day published rather than the three the track's fixes
-    /// touch: 11 May grades a storm at the North America node from 02:00 to
-    /// 24:00, while 10 May reaches it over Europe at 20:00 alone.
+    /// every epoch that day published: 11 May grades a storm at the North America
+    /// node from 02:00 to 24:00, while 10 May reaches it over Europe at 20:00
+    /// alone.
     #[rstest]
     #[case::a_day_held_at_the_storm_grade(
         gt_ionex::NORTH_AMERICA_NODE,

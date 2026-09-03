@@ -964,7 +964,8 @@ mod tests {
     }
 
     /// The catalog returns a window, and a window's ends can hold events of
-    /// the neighbouring days. Only the requested day's are archived under it.
+    /// the neighbouring days. Only the events beginning on the ingested day are
+    /// archived under it.
     #[test]
     fn an_event_of_another_day_is_not_archived_under_this_one() {
         let (_dir, store) = archive();

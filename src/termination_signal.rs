@@ -6,8 +6,7 @@
 //! button starts.
 //!
 //! Windows is not covered: a GUI-subsystem build receives
-//! `WM_QUERYENDSESSION` and `WM_ENDSESSION` at logoff or shutdown rather than
-//! console control events.
+//! `WM_QUERYENDSESSION` and `WM_ENDSESSION` at logoff or shutdown.
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};

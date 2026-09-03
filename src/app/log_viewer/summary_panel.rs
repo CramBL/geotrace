@@ -44,8 +44,7 @@ impl LogViewerWindow {
         });
     }
 
-    /// One row per boot session, with a bar proportional to its uptime: the
-    /// boot history reads as a timeline.
+    /// One row per boot session, with a bar proportional to its uptime.
     fn boot_sessions_ui(
         &mut self,
         ui: &mut egui::Ui,

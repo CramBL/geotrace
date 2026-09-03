@@ -913,8 +913,7 @@ mod tests {
     /// The window before a TEC deviation's peak is read from the archived
     /// periods of both indices: the strongest storm-level period in it is the
     /// one reported, with the whole hours from its end to the peak. A window
-    /// no archived day falls in is reported as nothing at all rather than as
-    /// quiet.
+    /// no archived day falls in is reported as nothing at all.
     #[rstest]
     #[case::a_storm_before_the_peak(
         true,
@@ -1138,8 +1137,8 @@ mod tests {
         assert!(scheduler.days.requested_days().is_empty());
     }
 
-    /// A queued day is always dispatched, offline included: the transport
-    /// declines the request rather than the day staying queued.
+    /// A queued day is always dispatched, offline included: the day leaves the
+    /// queue and the transport declines the request.
     #[test]
     fn a_queued_day_is_dispatched() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
@@ -1536,7 +1535,7 @@ mod tests {
         );
     }
 
-    /// A revised day replaces the archived one instead of appending to it.
+    /// A revised day replaces the archived one.
     #[test]
     fn ingesting_a_day_twice_replaces_what_was_archived() {
         let (_dir, store) = archive();

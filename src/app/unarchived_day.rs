@@ -3,9 +3,9 @@ use gt_pending_writes::WriteRejection;
 
 use super::day_fetch_queue::DayFetchQueue;
 
-/// A finished day fetch that added nothing to the archive, held by each of
-/// the four environment schedulers' message enums next to its own `Stored`
-/// variant.
+/// A finished day fetch that added nothing to the archive, held by
+/// `FlareDayMessage`, `JamMessage`, `IndexDayMessage` and `MapDayMessage`
+/// next to each one's `Stored` variant.
 pub enum UnarchivedDay {
     /// The fetch, the parse or the insert returned an error.
     Failed { day: NaiveDate, detail: String },
