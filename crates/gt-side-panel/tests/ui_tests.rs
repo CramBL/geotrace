@@ -5,6 +5,7 @@
 
 use egui::CentralPanel;
 use egui_phosphor::regular::CHECK_SQUARE as ICON_CHECK_SQUARE;
+use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
 use egui_phosphor::regular::LINE_SEGMENTS as ICON_LINE_SEGMENTS;
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use egui_phosphor::regular::PATH as ICON_PATH;
@@ -1896,4 +1897,421 @@ fn the_time_range_filter_covers_a_recording_shorter_than_a_second() {
             .is_some(),
         "the time range bar must be drawn for a recording spanning under a second"
     );
+}
+
+/// A state whose tree shows one track row with its trailing controls: one
+/// recording of one track, its file expanded.
+fn state_with_an_expanded_recording(points: &[NavPoint]) -> State {
+    let mut files = LoadedFiles::new();
+    files.push(
+        build_file(
+            "ride.gtd",
+            points,
+            gt_track_builder::FileMeta::default(),
+            vec![],
+        ),
+        FileHistory::None,
+    );
+    let mut state = make_state_from_files(files);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    state
+}
+
+/// The track row's snap trigger while its run is in flight: disabled, with
+/// the progress hover.
+fn state_with_a_snap_run_in_flight() -> State {
+    let mut state = state_with_an_expanded_recording(&gt_test_utils::nav_test_data());
+    state.snap_rows.insert(
+        first_track(),
+        SnapRowView::InFlight {
+            completed_chunks: 2,
+            total_chunks: 5,
+        },
+    );
+    state
+}
+
+/// The track row's status glyph alone: a completed run, its snapped track
+/// drawn on the map.
+fn state_with_a_completed_snap_run() -> State {
+    let mut state = state_with_an_expanded_recording(&gt_test_utils::nav_test_data());
+    state.snap_rows.insert(first_track(), done_row(true));
+    state
+}
+
+/// The track row's coordinate warning icon: no fix of the recording holds a
+/// position.
+fn state_with_a_track_without_a_valid_position() -> State {
+    state_with_an_expanded_recording(&gt_test_utils::nav_points_without_a_valid_position(3))
+}
+
+/// The track row's eye-slash hint: a completed run whose snapped track is
+/// hidden by the map display toggles.
+fn state_with_a_hidden_snapped_track() -> State {
+    let mut state = state_with_an_expanded_recording(&gt_test_utils::nav_test_data());
+    state.snap_rows.insert(first_track(), done_row(true));
+    state
+        .display_mask
+        .set_visible(DisplayCategory::SnappedTracks, false);
+    state
+}
+
+/// The panel over `state` in a bounded number of steps: a row with a run in
+/// flight spins forever and run-until-idle never settles.
+fn make_harness_in_bounded_steps(state: State) -> TestHarness<'static, State> {
+    let mut harness = make_harness(state);
+    harness.inner.run_steps(3);
+    harness
+}
+
+/// The first line of a track row's stats tooltip for a recording of
+/// [`gt_test_utils::nav_test_data`].
+const TRACK_STATS_TIME_RANGE: &str = "2026-01-01 12:00:00 – 12:19:59";
+
+/// Frames a hover is held for before its tooltip is read and snapshotted:
+/// egui opens a tooltip after its delay, and lays a newly opened one out over
+/// the frames that follow.
+const TOOLTIP_SETTLE_FRAMES: usize = 5;
+
+/// One digit longer than the duration [`gt_test_utils::nav_test_data`] gives
+/// a track ("0:19:59"), which widens the duration column by that digit.
+const WIDER_TRACK_DURATION: chrono::TimeDelta = chrono::TimeDelta::seconds(37_199);
+
+/// How many tooltips egui shows: each one is an area of its own in the
+/// tooltip layer order.
+fn open_tooltip_count(harness: &TestHarness<'static, State>) -> usize {
+    harness.inner.ctx.memory(|memory| {
+        memory
+            .areas()
+            .visible_layer_ids()
+            .iter()
+            .filter(|layer| layer.order == egui::Order::Tooltip)
+            .count()
+    })
+}
+
+/// The three controls of a track row with a tooltip of their own: the snap
+/// trigger disabled while its run is in flight, the coordinate warning icon
+/// and the eye-slash hint.
+#[rstest::rstest]
+#[case::disabled_snap_trigger(
+    state_with_a_snap_run_in_flight,
+    ICON_LINE_SEGMENTS,
+    "Snapping - completed 2 of 5 chunks",
+    "side_panel_tooltip_over_the_in_flight_trigger"
+)]
+#[case::coordinate_warning_icon(
+    state_with_a_track_without_a_valid_position,
+    ICON_WARNING,
+    "No fix has a valid coordinate, so the track is not drawn on the map",
+    "side_panel_tooltip_over_the_coordinate_warning"
+)]
+#[case::masked_snapped_track_hint(
+    state_with_a_hidden_snapped_track,
+    ICON_EYE_SLASH,
+    "Hidden by the map display toggles",
+    "side_panel_tooltip_over_the_masked_hint"
+)]
+fn snapshot_hovering_a_track_row_control_opens_that_controls_tooltip_alone(
+    #[case] state: fn() -> State,
+    #[case] control_label: &str,
+    #[case] expected_tooltip: &str,
+    #[case] snapshot_name: &str,
+) {
+    let mut harness = make_harness_in_bounded_steps(state());
+
+    let control = harness.inner.get_by_label(control_label).rect().center();
+    harness
+        .inner
+        .hover_at_and_settle(control, TOOLTIP_SETTLE_FRAMES);
+
+    assert!(
+        harness.inner.query_by_label(expected_tooltip).is_some(),
+        "hovering {control_label:?} must state {expected_tooltip:?}"
+    );
+    assert_eq!(
+        open_tooltip_count(&harness),
+        1,
+        "the row's track stats must stay closed while a control's tooltip is open"
+    );
+    harness.snapshot(snapshot_name);
+}
+
+/// The point on the columns a track row paints, midway between its checkbox
+/// and its snap trigger, where the row holds no widget of its own.
+fn track_row_cells_position(harness: &TestHarness<'static, State>) -> egui::Pos2 {
+    let checkbox = harness
+        .inner
+        .bottommost_matching(By::new().label_contains(ICON_CHECK_SQUARE))
+        .rect();
+    let trigger = harness.inner.get_by_label(ICON_LINE_SEGMENTS).rect();
+    egui::pos2(
+        (checkbox.right() + trigger.left()) / 2.0,
+        checkbox.center().y,
+    )
+}
+
+#[test]
+fn snapshot_hovering_a_track_rows_cells_opens_the_track_stats_tooltip() {
+    let mut harness = make_harness_in_bounded_steps(state_with_a_snap_run_in_flight());
+
+    let cells = track_row_cells_position(&harness);
+    harness
+        .inner
+        .hover_at_and_settle(cells, TOOLTIP_SETTLE_FRAMES);
+
+    assert!(
+        harness
+            .inner
+            .query_by_label(TRACK_STATS_TIME_RANGE)
+            .is_some(),
+        "the row's tooltip must state the span the track covers"
+    );
+    assert_eq!(
+        open_tooltip_count(&harness),
+        1,
+        "the snap trigger's tooltip must stay closed while the pointer is off it"
+    );
+    harness.snapshot("side_panel_tooltip_over_the_row_cells");
+}
+
+/// The two places the pointer rests in the handover tests: the columns a
+/// track row paints, and the snap trigger it draws after them.
+#[derive(Clone, Copy)]
+enum RowHoverTarget {
+    Cells,
+    SnapTrigger,
+}
+
+impl RowHoverTarget {
+    fn position(self, harness: &TestHarness<'static, State>) -> egui::Pos2 {
+        match self {
+            Self::Cells => track_row_cells_position(harness),
+            Self::SnapTrigger => harness
+                .inner
+                .get_by_label(ICON_LINE_SEGMENTS)
+                .rect()
+                .center(),
+        }
+    }
+}
+
+/// The pointer moves from the row's columns onto the in-flight trigger, and
+/// back. The frame it arrives on shows neither tooltip: egui allows one
+/// tooltip per layer, and reads which widget holds it from the previous
+/// frame.
+#[rstest::rstest]
+#[case::cells_to_trigger(
+    RowHoverTarget::Cells,
+    RowHoverTarget::SnapTrigger,
+    "Snapping - completed 2 of 5 chunks",
+    "side_panel_tooltip_handover_cells_to_trigger"
+)]
+#[case::trigger_to_cells(
+    RowHoverTarget::SnapTrigger,
+    RowHoverTarget::Cells,
+    TRACK_STATS_TIME_RANGE,
+    "side_panel_tooltip_handover_trigger_to_cells"
+)]
+fn snapshot_a_track_row_shows_no_tooltip_on_the_frame_the_pointer_arrives(
+    #[case] from: RowHoverTarget,
+    #[case] to: RowHoverTarget,
+    #[case] expected_tooltip: &str,
+    #[case] snapshot_name: &str,
+) {
+    let mut harness = make_harness_in_bounded_steps(state_with_a_snap_run_in_flight());
+
+    let start = from.position(&harness);
+    harness
+        .inner
+        .hover_at_and_settle(start, TOOLTIP_SETTLE_FRAMES);
+    assert_eq!(open_tooltip_count(&harness), 1, "the tooltip hovered first");
+
+    let target = to.position(&harness);
+    harness.inner.hover_at(target);
+    harness.inner.step();
+    assert_eq!(
+        open_tooltip_count(&harness),
+        0,
+        "the frame the pointer arrives on"
+    );
+    harness.snapshot(&format!("{snapshot_name}_arrival_frame"));
+
+    harness.inner.run_steps(TOOLTIP_SETTLE_FRAMES);
+    assert_eq!(open_tooltip_count(&harness), 1, "the settled frame");
+    assert!(
+        harness.inner.query_by_label(expected_tooltip).is_some(),
+        "the settled tooltip must state {expected_tooltip:?}"
+    );
+    harness.snapshot(&format!("{snapshot_name}_settled"));
+}
+
+/// The tooltip counts over the three frames after `change` is applied to the
+/// state under a resting pointer.
+fn tooltip_counts_over_three_frames(
+    harness: &mut TestHarness<'static, State>,
+    change: impl FnOnce(&mut State),
+) -> [usize; 3] {
+    change(harness.state_mut());
+    std::array::from_fn(|_| {
+        harness.inner.step();
+        open_tooltip_count(harness)
+    })
+}
+
+/// The status glyph of a completed run takes the trigger's place in the row,
+/// and its widget id with it. The one-tooltip-per-layer rule reads that id
+/// from the previous frame and allows the glyph's tooltip on the first frame
+/// the glyph is drawn.
+#[test]
+fn snapshot_the_status_glyph_opens_its_tooltip_at_once_when_the_run_completes_under_the_pointer() {
+    let mut harness = make_harness_in_bounded_steps(state_with_a_snap_run_in_flight());
+
+    let trigger = RowHoverTarget::SnapTrigger.position(&harness);
+    harness
+        .inner
+        .hover_at_and_settle(trigger, TOOLTIP_SETTLE_FRAMES);
+    assert_eq!(open_tooltip_count(&harness), 1, "the trigger's tooltip");
+
+    let counts = tooltip_counts_over_three_frames(&mut harness, |state| {
+        state.snap_rows.insert(first_track(), done_row(true));
+    });
+
+    assert_eq!(counts, [1, 1, 1]);
+    assert!(
+        harness.inner.query_by_label("Snapped to road").is_some(),
+        "the status glyph's tooltip heads the completed run's breakdown"
+    );
+    harness.snapshot("side_panel_tooltip_after_the_run_completed");
+}
+
+/// The trigger's tooltip continues showing the progress text while the
+/// pointer rests on it: the trigger keeps its widget id when its run starts.
+#[test]
+fn snapshot_the_trigger_tooltip_continues_when_its_run_starts_under_the_pointer() {
+    let mut harness = make_harness_in_bounded_steps(state_with_an_expanded_recording(
+        &gt_test_utils::nav_test_data(),
+    ));
+
+    let trigger = RowHoverTarget::SnapTrigger.position(&harness);
+    harness
+        .inner
+        .hover_at_and_settle(trigger, TOOLTIP_SETTLE_FRAMES);
+    assert!(
+        harness
+            .inner
+            .query_by_label(
+                "Snap to road - match this track against the OpenStreetMap road network"
+            )
+            .is_some(),
+        "the idle trigger's tooltip"
+    );
+
+    let counts = tooltip_counts_over_three_frames(&mut harness, |state| {
+        state.snap_rows.insert(
+            first_track(),
+            SnapRowView::InFlight {
+                completed_chunks: 2,
+                total_chunks: 5,
+            },
+        );
+    });
+
+    assert_eq!(counts, [1, 1, 1]);
+    assert!(
+        harness
+            .inner
+            .query_by_label("Snapping - completed 2 of 5 chunks")
+            .is_some(),
+        "the tooltip must state the progress of the run that started"
+    );
+    harness.snapshot("side_panel_tooltip_after_the_run_started");
+}
+
+/// A longer duration widens the duration column, which moves the trailing
+/// trigger right, onto a pointer resting beside it.
+#[test]
+fn snapshot_the_trigger_takes_the_tooltip_when_wider_columns_shift_it_under_the_pointer() {
+    let mut harness = make_harness_in_bounded_steps(state_with_a_snap_run_in_flight());
+
+    let trigger = harness.inner.get_by_label(ICON_LINE_SEGMENTS).rect();
+    let beside_the_trigger = egui::pos2(trigger.right() + 3.0, trigger.center().y);
+    harness
+        .inner
+        .hover_at_and_settle(beside_the_trigger, TOOLTIP_SETTLE_FRAMES);
+    assert!(
+        harness
+            .inner
+            .query_by_label(TRACK_STATS_TIME_RANGE)
+            .is_some(),
+        "the row's track stats beside the trigger"
+    );
+
+    let counts = tooltip_counts_over_three_frames(&mut harness, |state| {
+        if let Some(track) = state
+            .files
+            .get_mut(0)
+            .and_then(|file| file.tracks.first_mut())
+        {
+            track.metadata.duration = WIDER_TRACK_DURATION;
+        }
+    });
+
+    let shifted = harness.inner.get_by_label(ICON_LINE_SEGMENTS).rect();
+    assert!(
+        shifted.contains(beside_the_trigger),
+        "the wider columns must move the trigger onto the resting pointer"
+    );
+    assert_eq!(counts, [1, 0, 1]);
+
+    // The trigger's tooltip opened on the last of those frames: hold the
+    // pointer while egui lays it out.
+    harness.inner.run_steps(TOOLTIP_SETTLE_FRAMES);
+    assert_eq!(open_tooltip_count(&harness), 1);
+    assert!(
+        harness
+            .inner
+            .query_by_label("Snapping - completed 2 of 5 chunks")
+            .is_some(),
+        "the trigger the wider columns moved under the pointer"
+    );
+    harness.snapshot("side_panel_tooltip_after_the_columns_widened");
+}
+
+/// The pointer 3 points from a control, over the row itself. egui hits the
+/// row directly, since the row is the click target that contains the pointer,
+/// and never reaches for the widgets within `interact_radius`.
+#[rstest::rstest]
+#[case::beside_an_enabled_status_glyph(
+    state_with_a_completed_snap_run,
+    ICON_PATH,
+    "side_panel_tooltip_beside_the_status_glyph"
+)]
+#[case::beside_a_disabled_trigger(
+    state_with_a_snap_run_in_flight,
+    ICON_LINE_SEGMENTS,
+    "side_panel_tooltip_beside_the_in_flight_trigger"
+)]
+fn snapshot_hovering_the_row_beside_a_control_opens_the_track_stats_tooltip(
+    #[case] state: fn() -> State,
+    #[case] control_label: &str,
+    #[case] snapshot_name: &str,
+) {
+    let mut harness = make_harness_in_bounded_steps(state());
+
+    let control = harness.inner.get_by_label(control_label).rect();
+    let beside_it = egui::pos2(control.left() - 3.0, control.center().y);
+    harness
+        .inner
+        .hover_at_and_settle(beside_it, TOOLTIP_SETTLE_FRAMES);
+
+    assert_eq!(open_tooltip_count(&harness), 1);
+    assert!(
+        harness
+            .inner
+            .query_by_label(TRACK_STATS_TIME_RANGE)
+            .is_some(),
+        "hovering 3 points left of {control_label:?} must state the track stats"
+    );
+    harness.snapshot(snapshot_name);
 }
