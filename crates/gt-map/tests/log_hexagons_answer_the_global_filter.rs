@@ -6,28 +6,19 @@
 //! hides that recording's hexagons the way it keeps or hides its fixes. The
 //! log's own filter chips still select which lines match.
 
-#![expect(
-    clippy::expect_used,
-    reason = "the helpers beside the tests are not covered by clippy's in-test relaxations"
-)]
-
 mod support;
 
-use std::ops::Range;
-use std::sync::Arc;
-
-use chrono::{DateTime, Duration, Utc};
+use chrono::Duration;
 use gt_filter::GlobalFilter;
-use gt_logfile::{LogText, ParsedLog};
 use gt_map::display_counts::{DisplayCounts, SuppliedCounts};
-use gt_types::{FixRef, LoadedFile, LoadedTrack, MercPoint, PointIdx};
+use gt_types::LoadedFile;
 use gt_ui_types::{
-    DisplayCategory, EventMarkerVisibility, GeneratedMarkerVisibility, LoadedLogId, LogMatch,
-    LogMatchColor, LogMatchGlyph, LogMatchLayer, LogMatchSource, LogMatches, TrackDataVisibility,
+    DisplayCategory, EventMarkerVisibility, GeneratedMarkerVisibility, LogMatchGlyph, LogMatches,
+    TrackDataVisibility,
 };
 use support::{
-    FRAMES_TO_SETTLE, Frame, HeadlessMap, WALKING_STEP_DEGREES, a_recording_of, epoch,
-    window_ending_at,
+    FRAMES_TO_SETTLE, Frame, HeadlessMap, WALKING_STEP_DEGREES, a_log_over, a_recording_of, epoch,
+    fix_position, matches_over, window_ending_at,
 };
 
 /// Longitude between consecutive fixes of a recording made in one spot, about
@@ -36,90 +27,6 @@ const STANDING_STEP_DEGREES: f64 = 0.000_001;
 
 /// Fixes of the recording the cases draw, one a minute apart.
 const FIX_COUNT: usize = 30;
-
-/// The moment each fix of the recording was made, in fix order.
-fn fix_times(files: &[LoadedFile]) -> Vec<DateTime<Utc>> {
-    files
-        .first()
-        .and_then(|file| file.tracks.first())
-        .map(|track| {
-            track
-                .points
-                .iter()
-                .map(|point| point.tpv.time().utc())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Where the map draws the fixes of the recording, in normalized Mercator.
-fn drawn_positions(files: &[LoadedFile]) -> Vec<MercPoint> {
-    files
-        .first()
-        .and_then(|file| file.tracks.first())
-        .and_then(LoadedTrack::placed_points)
-        .map(|placed| placed.iter().map(|point| point.merc()).collect())
-        .unwrap_or_default()
-}
-
-/// The position of the fix at `index`, in degrees, which the camera centres on
-/// so the hexagon of the entry recorded there draws at the middle of the
-/// viewport.
-fn fix_position(files: &[LoadedFile], index: usize) -> (f64, f64) {
-    files
-        .first()
-        .and_then(|file| file.tracks.first())
-        .and_then(LoadedTrack::placed_points)
-        .and_then(|placed| placed.get(index))
-        .map(|point| {
-            let (lat, lon) = point.resolved_position();
-            (lat.as_degrees(), lon.as_degrees())
-        })
-        .unwrap_or_default()
-}
-
-/// A log of one line per fix of the recording, each timestamped at that fix.
-fn a_log_over(files: &[LoadedFile]) -> Arc<ParsedLog> {
-    let text: String = fix_times(files)
-        .into_iter()
-        .map(|time| {
-            format!(
-                "{} tracklogd[311]: heading hold engaged\n",
-                time.format("%Y-%m-%d %H:%M:%S")
-            )
-        })
-        .collect();
-    let parsed = gt_logfile::parse_log(LogText::decode_lossy(text.as_bytes()), epoch())
-        .expect("the generated lines carry ISO 8601 timestamps");
-    Arc::new(parsed)
-}
-
-/// One layer of hexagons over the entries in `entries`, each at the position of
-/// the fix it was recorded at, as a layer chip puts them on the map.
-fn matches_over(files: &[LoadedFile], log: &Arc<ParsedLog>, entries: Range<usize>) -> LogMatches {
-    let positions = drawn_positions(files);
-    let matches: Vec<LogMatch> = entries
-        .filter_map(|entry_index| {
-            Some(LogMatch {
-                merc: *positions.get(entry_index)?,
-                entry_index,
-                fix: FixRef::new(support::track0(), PointIdx::new(entry_index)),
-            })
-        })
-        .collect();
-    LogMatches::from_layers(vec![LogMatchLayer {
-        color: LogMatchColor::LayerSlot {
-            index: 0,
-            shared: false,
-        },
-        log: LogMatchSource {
-            id: LoadedLogId::new(1),
-            parsed: Arc::clone(log),
-            display_name: None,
-        },
-        matches,
-    }])
-}
 
 /// The map every case drives: `files` framed with no filter active over
 /// `FRAMES_TO_SETTLE` frames, holding `matches`, with `filter` set after that.

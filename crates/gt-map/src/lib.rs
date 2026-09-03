@@ -805,7 +805,7 @@ impl NavMap {
     }
 
     /// Whether the disambiguation popup is holding candidates for a pick.
-    fn disambiguation_is_open(&self) -> bool {
+    pub fn disambiguation_is_open(&self) -> bool {
         self.disambiguation_candidates.primary().is_some()
     }
 
