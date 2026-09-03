@@ -3,6 +3,9 @@
 No test runs Vale or reaches the network: `_VALE_JSON` is a captured reply.
 """
 
+import subprocess
+from pathlib import Path
+
 import pytest
 
 from qa import lint_prose
@@ -145,4 +148,28 @@ def test_summary_says_nothing_to_check_when_the_range_is_empty() -> None:
     assert totals.summary("HEAD") == (
         "vale: nothing to check since HEAD: "
         "no added lines in a linted file, and no commits in the range"
+    )
+
+
+def _repository_with_one_commit(root: Path) -> None:
+    for args in (
+        ["init", "--quiet"],
+        ["commit", "--quiet", "--allow-empty", "-m", "root"],
+    ):
+        subprocess.run(
+            ["git", "-c", "user.email=qa@example.com", "-c", "user.name=QA", *args],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+
+
+def test_merge_base_exits_with_one_line_when_the_base_ref_does_not_resolve(tmp_path: Path) -> None:
+    _repository_with_one_commit(tmp_path)
+
+    with pytest.raises(SystemExit) as raised:
+        lint_prose._merge_base_with_head(tmp_path, "origin/trunk")
+
+    assert str(raised.value) == (
+        "error: base ref origin/trunk does not resolve: fetch it, or pass another base"
     )

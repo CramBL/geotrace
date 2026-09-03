@@ -352,8 +352,17 @@ def _untracked_added(root: Path) -> dict[str, set[int]]:
     return added
 
 
+def _merge_base_with_head(root: Path, base: str) -> str:
+    resolved = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", base], cwd=root, capture_output=True
+    )
+    if resolved.returncode != 0:
+        raise SystemExit(f"error: base ref {base} does not resolve: fetch it, or pass another base")
+    return _git(root, ["merge-base", base, "HEAD"]).strip()
+
+
 def _collect_run(engine: Engine, root: Path, base: str) -> Run:
-    merge_base = _git(root, ["merge-base", base, "HEAD"]).strip()
+    merge_base = _merge_base_with_head(root, base)
     diff = _git(root, ["diff", "-U0", "--no-color", "--diff-filter=AM", merge_base])
     added = added_lines(diff)
     added.update(_untracked_added(root))

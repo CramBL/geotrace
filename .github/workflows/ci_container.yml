@@ -29,6 +29,9 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          # `just ci` runs the prose gate, which diffs against origin/trunk and
+          # lints every commit in the range.
+          fetch-depth: 0
 
       # `just ci` builds the dev container images and runs the SDK suites with
       # vcpkg, which together exhaust the default runner disk. Reclaim the space
