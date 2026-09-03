@@ -8,6 +8,8 @@
 
 use std::sync::LazyLock;
 
+use chrono::{DateTime, Utc};
+use gt_fmt::UTC_MINUTE_FORMAT;
 use gt_types::SunlitSide;
 use gt_ui_types::MetricChipHover;
 
@@ -21,49 +23,39 @@ pub const LAYER_LABEL: &str = "Solar flares";
 
 /// The standing caveat, shown wherever a flare is. Never abbreviated, even
 /// when another surface already said it.
-pub const SOURCE_CAVEAT: &str = "The catalog lists every flare the Sun produced, so a flare \
-                                 raises the ionization above a receiver only where the Sun was \
-                                 up at the time.";
+pub const SOURCE_CAVEAT: &str = "Lists every flare on the Sun. Only one on the receiver's sunlit \
+                                 side raises the ionization above it.";
 
-/// Shown for a flare below the radio blackout scale, which starts at M1.
-pub const BELOW_BLACKOUT_SCALE: &str = "Below the radio blackout scale";
+/// Shown for a flare whose peak flux stays under the radio blackout scale's
+/// first level.
+pub static BELOW_BLACKOUT_SCALE: LazyLock<String> =
+    LazyLock::new(|| format!("Below {}", RadioBlackoutClass::Minor.scale_name()));
 
-/// Shown for a flare the catalog published no end time for.
-pub const NO_END_TIME: &str = "no end published";
+/// Closes the time range of a flare the catalog published no end time for.
+pub const NO_END_TIME: &str = "end not published";
 
 /// Which side of Earth the receiver was on when the flare peaked, shown once
 /// a loaded recording places it.
-pub const RECEIVER_SUNLIT: &str = "The receiver was on the sunlit side";
-pub const RECEIVER_NIGHT: &str = "The receiver was on the night side";
+pub const RECEIVER_SUNLIT: &str = "Receiver: sunlit side";
+pub const RECEIVER_NIGHT: &str = "Receiver: night side";
 
-/// The three times of one flare, formatted by the surface showing them so
-/// every hover reads the same way.
-#[derive(Debug, Clone, Copy)]
-pub struct FormattedFlareTimes<'a> {
-    pub begin: &'a str,
-    pub peak: &'a str,
-    /// [`None`] for a flare the catalog left open.
-    pub end: Option<&'a str>,
-}
+/// How the flare hover writes an hour and a minute of the peak's own UTC day.
+const HOUR_MINUTE_FORMAT: &str = "%H:%M";
 
 /// The lines describing one flare, leading with the classification that
 /// places it on the scale and closing with where the receiver stood.
-pub fn flare_summary(marked: &MarkedFlare, times: FormattedFlareTimes<'_>) -> Vec<String> {
+pub fn flare_summary(marked: &MarkedFlare) -> Vec<String> {
     let flare = &marked.flare;
     let mut lines = vec![
         format!("{} solar flare", flare.classification),
-        flare
-            .classification
-            .radio_blackout_class()
-            .map_or(BELOW_BLACKOUT_SCALE, RadioBlackoutClass::display_name)
-            .to_owned(),
-        format!("Peaked at {} (UTC)", times.peak),
-        match times.end {
-            Some(end) => format!("Began {}, ended {end}", times.begin),
-            None => format!("Began {}, {NO_END_TIME}", times.begin),
-        },
+        flare.classification.radio_blackout_class().map_or_else(
+            || BELOW_BLACKOUT_SCALE.clone(),
+            |class| class.display_name().to_owned(),
+        ),
+        format!("Peak: {} UTC", flare.peak.format(UTC_MINUTE_FORMAT)),
+        flare.time_range_line(),
     ];
-    if let Some(origin) = flare_origin(flare) {
+    if let Some(origin) = flare.origin_line() {
         lines.push(origin);
     }
     if let Some(side) = marked.receiver_side {
@@ -78,14 +70,47 @@ pub fn flare_summary(marked: &MarkedFlare, times: FormattedFlareTimes<'_>) -> Ve
     lines
 }
 
-/// Where on the Sun the flare came from, or [`None`] when the catalog gave
-/// neither the region nor the location.
-fn flare_origin(flare: &SolarFlare) -> Option<String> {
-    match (flare.active_region, flare.source_location.as_deref()) {
-        (Some(region), Some(location)) => Some(format!("Active region {region} at {location}")),
-        (Some(region), None) => Some(format!("Active region {region}")),
-        (None, Some(location)) => Some(format!("Source location {location}")),
-        (None, None) => None,
+impl SolarFlare {
+    /// The stretch from the flare's begin to its end, closed by
+    /// [`NO_END_TIME`] where the catalog published no end.
+    ///
+    /// A stretch inside the peak's own UTC day is written in hours and
+    /// minutes, joined by an en dash with no spaces around it. One reaching
+    /// another day includes the date on both sides, and the dash is spaced.
+    fn time_range_line(&self) -> String {
+        let on_the_peaks_day =
+            |instant: DateTime<Utc>| instant.date_naive() == self.peak.date_naive();
+        let Some(end) = self.end else {
+            let begin = if on_the_peaks_day(self.begin) {
+                self.begin.format(HOUR_MINUTE_FORMAT)
+            } else {
+                self.begin.format(UTC_MINUTE_FORMAT)
+            };
+            return format!("{begin} – {NO_END_TIME}");
+        };
+        if on_the_peaks_day(self.begin) && on_the_peaks_day(end) {
+            return format!(
+                "{}–{} UTC",
+                self.begin.format(HOUR_MINUTE_FORMAT),
+                end.format(HOUR_MINUTE_FORMAT)
+            );
+        }
+        format!(
+            "{} – {} UTC",
+            self.begin.format(UTC_MINUTE_FORMAT),
+            end.format(UTC_MINUTE_FORMAT)
+        )
+    }
+
+    /// Where on the Sun the flare came from, or [`None`] when the catalog
+    /// gave neither the region nor the location.
+    fn origin_line(&self) -> Option<String> {
+        match (self.active_region, self.source_location.as_deref()) {
+            (Some(region), Some(location)) => Some(format!("AR {region}, {location}")),
+            (Some(region), None) => Some(format!("AR {region}")),
+            (None, Some(location)) => Some(location.to_owned()),
+            (None, None) => None,
+        }
     }
 }
 
@@ -148,10 +173,6 @@ mod tests {
         }
     }
 
-    fn times<'a>(begin: &'a str, peak: &'a str, end: Option<&'a str>) -> FormattedFlareTimes<'a> {
-        FormattedFlareTimes { begin, peak, end }
-    }
-
     /// The storm flare with no recording loaded to place the receiver.
     fn unplaced(flare: SolarFlare) -> MarkedFlare {
         MarkedFlare {
@@ -162,10 +183,7 @@ mod tests {
 
     #[test]
     fn a_flare_summary_leads_with_the_classification() {
-        let lines = flare_summary(
-            &unplaced(storm_flare()),
-            times("08:45", "09:13", Some("09:36")),
-        );
+        let lines = flare_summary(&unplaced(storm_flare()));
         insta::assert_debug_snapshot!("flare_summary", lines);
     }
 
@@ -179,7 +197,7 @@ mod tests {
             classification: "C5.0".parse().expect("a published class"),
             ..storm_flare()
         };
-        let lines = flare_summary(&unplaced(flare), times("13:13", "13:22", None));
+        let lines = flare_summary(&unplaced(flare));
         insta::assert_debug_snapshot!("flare_summary_without_an_end", lines);
     }
 
@@ -188,7 +206,7 @@ mod tests {
     #[rstest]
     #[case::sunlit(Some(SunlitSide::Sunlit), RECEIVER_SUNLIT)]
     #[case::night(Some(SunlitSide::Night), RECEIVER_NIGHT)]
-    #[case::no_recording_loaded(None, "Active region 13664 at S20W25")]
+    #[case::no_recording_loaded(None, "AR 13664, S20W25")]
     fn a_flare_summary_closes_on_the_side_the_receiver_was_on(
         #[case] receiver_side: Option<SunlitSide>,
         #[case] expected_last_line: &str,
@@ -197,8 +215,52 @@ mod tests {
             flare: storm_flare(),
             receiver_side,
         };
-        let lines = flare_summary(&marked, times("08:45", "09:13", Some("09:36")));
+        let lines = flare_summary(&marked);
         assert_eq!(lines.last().map(String::as_str), Some(expected_last_line));
+    }
+
+    /// The forms of the time range: one stretch inside the peak's own UTC
+    /// day, one reaching the next day, and one the catalog left open, whose
+    /// begin takes the date on any day but the peak's.
+    #[rstest]
+    #[case::inside_the_peaks_day(
+        "2024-05-09T14:10Z",
+        "2024-05-09T14:32Z",
+        Some("2024-05-09T14:58Z"),
+        "14:10–14:58 UTC"
+    )]
+    #[case::reaching_the_next_day(
+        "2024-05-10T23:50Z",
+        "2024-05-11T00:05Z",
+        Some("2024-05-11T00:20Z"),
+        "2024-05-10 23:50 – 2024-05-11 00:20 UTC"
+    )]
+    #[case::left_open(
+        "2024-05-09T14:10Z",
+        "2024-05-09T14:32Z",
+        None,
+        "14:10 – end not published"
+    )]
+    #[case::left_open_from_the_day_before(
+        "2024-05-08T23:40Z",
+        "2024-05-09T00:05Z",
+        None,
+        "2024-05-08 23:40 – end not published"
+    )]
+    fn the_time_range_states_the_stretch_the_catalog_published(
+        #[case] begin: &str,
+        #[case] peak: &str,
+        #[case] end: Option<&str>,
+        #[case] expected: &str,
+    ) {
+        let flare = SolarFlare {
+            begin: time(begin),
+            peak: time(peak),
+            end: end.map(time),
+            ..storm_flare()
+        };
+
+        assert_eq!(flare.time_range_line(), expected);
     }
 
     /// A location without a region number still says where the flare came
@@ -209,10 +271,7 @@ mod tests {
             active_region: None,
             ..storm_flare()
         };
-        assert_eq!(
-            flare_origin(&flare).as_deref(),
-            Some("Source location S20W25")
-        );
+        assert_eq!(flare.origin_line().as_deref(), Some("S20W25"));
     }
 
     /// The feature's user-visible wording, in one place.
@@ -223,7 +282,7 @@ mod tests {
              events: {EVENT_NAMES}\n\
              archive: {ARCHIVE_NAME}\n\
              source caveat: {SOURCE_CAVEAT}\n\
-             below the scale: {BELOW_BLACKOUT_SCALE}\n\
+             below the scale: {}\n\
              no end time: {NO_END_TIME}\n\
              receiver sunlit: {RECEIVER_SUNLIT}\n\
              receiver on the night side: {RECEIVER_NIGHT}\n\
@@ -232,7 +291,7 @@ mod tests {
              attribution: {}\n\
              publisher: {PUBLISHER_URL}\n\
              key signup: {KEY_SIGNUP_URL}",
-            *PLOT_HOVER, *MISSING_KEY, *ATTRIBUTION
+            *BELOW_BLACKOUT_SCALE, *PLOT_HOVER, *MISSING_KEY, *ATTRIBUTION
         );
         insta::assert_snapshot!("shared_wording", wording);
     }

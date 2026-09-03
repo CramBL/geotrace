@@ -5,5 +5,5 @@ expression: lines
 [
     "Hp30 not published",
     "No value was published for this period.",
-    "30 minutes from 1980-01-01T00:00:00 (UTC)",
+    "30min from 1980-01-01 00:00 UTC",
 ]

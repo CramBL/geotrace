@@ -10,8 +10,6 @@ use gt_ionex::tec::TotalElectronContent;
 use gt_types::TrackRef;
 use gt_ui_types::TecSeries;
 
-use super::lines::HOVER_INSTANT_FORMAT;
-
 /// Whether any visible track has TEC values, gating the chip.
 pub(super) fn tec_available(
     visible_tracks: impl Iterator<Item = TrackRef>,
@@ -32,13 +30,10 @@ impl TecHover {
     /// The line's own value at the hovered instant, which runs between the
     /// two map epochs bracketing it.
     pub(super) fn of_line_point(point: PlotPoint) -> Self {
-        let instant = DateTime::from_timestamp(point.x as i64, 0)
-            .map(|time| time.format(HOVER_INSTANT_FORMAT).to_string())
-            .unwrap_or_default();
         Self {
             lines: gt_ionex::text::value_summary(
                 TotalElectronContent::from_tecu(point.y),
-                &instant,
+                DateTime::from_timestamp(point.x as i64, 0).unwrap_or_default(),
             ),
         }
     }
@@ -94,8 +89,8 @@ mod tests {
             hover.lines,
             [
                 "TEC 42.3 TECU",
-                "L1 delay about 6.9m",
-                "Interpolated between maps at 2024-05-10T18:00:00 (UTC)",
+                "L1 delay ≈6.9m",
+                "Interpolated at 2024-05-10 18:00:00 UTC",
             ]
         );
     }

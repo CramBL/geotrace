@@ -1,5 +1,6 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui, Vec2};
 use gt_filter::GlobalFilter;
+use gt_fmt::UTC_SECOND_FORMAT;
 use gt_types::{DataCategory, EventMarkerStyle, LoadedFile, MarkerIcon, SpatialPoint};
 use gt_ui_theme::HIGHLIGHT_BLUE;
 use gt_ui_types::{
@@ -344,7 +345,7 @@ fn show_tooltip(ui: &Ui, point_ref: DataPointRef, marker: &gt_types::EventMarker
     );
     response.show_tooltip_ui(|ui| {
         ui.strong(&marker.variant_path);
-        ui.label(marker.time.format("%Y-%m-%d %H:%M:%S").to_string());
+        ui.label(marker.time.format(UTC_SECOND_FORMAT).to_string());
         if let Some(ann) = &marker.annotation {
             ui.separator();
             ui.label(ann);

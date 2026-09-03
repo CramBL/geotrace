@@ -12,6 +12,7 @@ doctest = false
 [dependencies]
 chrono.workspace = true
 gt-fetch = { path = "../gt-fetch" }
+gt-fmt = { path = "../gt-fmt" }
 gt-types = { path = "../gt-types" }
 gt-ui-types = { path = "../gt-ui-types" }
 serde.workspace = true

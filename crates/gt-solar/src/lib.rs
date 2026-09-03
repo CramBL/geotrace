@@ -81,11 +81,11 @@ impl GeomagneticIndex {
         }
     }
 
-    /// [`period_length`](Self::period_length) as it is written in hover text.
-    pub const fn period_length_words(self) -> &'static str {
+    /// [`period_length`](Self::period_length) written with its unit symbol.
+    pub const fn period_length_with_unit_symbol(self) -> &'static str {
         match self {
-            Self::Kp => "3 hours",
-            Self::Hp30 => "30 minutes",
+            Self::Kp => "3h",
+            Self::Hp30 => "30min",
         }
     }
 
@@ -335,15 +335,15 @@ mod tests {
     }
 
     #[rstest]
-    #[case(GeomagneticIndex::Kp, TimeDelta::hours(3), "3 hours")]
-    #[case(GeomagneticIndex::Hp30, TimeDelta::minutes(30), "30 minutes")]
-    fn period_length_words_state_the_period_length(
+    #[case(GeomagneticIndex::Kp, TimeDelta::hours(3), "3h")]
+    #[case(GeomagneticIndex::Hp30, TimeDelta::minutes(30), "30min")]
+    fn the_period_length_with_its_unit_symbol_states_the_period_length(
         #[case] index: GeomagneticIndex,
         #[case] length: TimeDelta,
-        #[case] words: &str,
+        #[case] written: &str,
     ) {
         assert_eq!(index.period_length(), length);
-        assert_eq!(index.period_length_words(), words);
+        assert_eq!(index.period_length_with_unit_symbol(), written);
     }
 
     #[rstest]

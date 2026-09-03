@@ -45,10 +45,6 @@ pub(super) fn visible_by_x<T>(
     items.get(start..end).unwrap_or_default()
 }
 
-/// Format of the time a per-fix hover label reports, as the archived sources
-/// write their own epochs.
-pub(super) const HOVER_INSTANT_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
-
 /// Pixel radius within which the pointer is considered to be hovering a
 /// masked-satellite anomaly marker.
 pub(super) const ANOMALY_HOVER_RADIUS_PX: f32 = 7.0;

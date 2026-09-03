@@ -11,6 +11,7 @@ use egui_phosphor::regular::CARET_LEFT as ICON_CARET_LEFT;
 use egui_phosphor::regular::CARET_RIGHT as ICON_CARET_RIGHT;
 use egui_phosphor::regular::EYE as ICON_EYE;
 use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
+use gt_fmt::UTC_MINUTE_FORMAT;
 use gt_ionex::instant_selection::{TecEmptyReason, TecInstantSelection};
 use gt_jam::day_selection::{DaySelection, EmptyReason};
 use gt_ui_theme::EM_DASH;
@@ -29,9 +30,6 @@ const STEPPER_INDENT_PX: f32 = 24.0;
 
 /// Disabled hover text while the interference layer is hidden.
 const HIDDEN_LAYER_TEXT: &str = "Show the interference layer to step days";
-
-/// Format the TEC row writes the instant it shows in.
-const TEC_INSTANT_FORMAT: &str = "%Y-%m-%d %H:%M";
 
 /// Width and height of the TEC legend's colour strip.
 const LEGEND_WIDTH_PX: f32 = 168.0;
@@ -247,7 +245,7 @@ fn instant_stepper_ui(ui: &mut Ui, visible: bool, tec: &mut TecRow<'_>) {
 }
 
 fn format_instant(instant: DateTime<Utc>) -> String {
-    instant.format(TEC_INSTANT_FORMAT).to_string()
+    instant.format(UTC_MINUTE_FORMAT).to_string()
 }
 
 /// The TEC colour scale, with the TEC unit values its stops sit at. Drawn

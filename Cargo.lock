@@ -2508,6 +2508,7 @@ version = "0.14.0"
 dependencies = [
  "chrono",
  "gt-fetch",
+ "gt-fmt",
  "gt-types",
  "gt-ui-types",
  "insta",
@@ -2662,6 +2663,7 @@ dependencies = [
  "chrono",
  "flate2",
  "gt-fetch",
+ "gt-fmt",
  "gt-types",
  "gt-ui-types",
  "insta",
@@ -3012,6 +3014,7 @@ version = "0.14.0"
 dependencies = [
  "chrono",
  "gt-fetch",
+ "gt-fmt",
  "gt-types",
  "gt-ui-types",
  "insta",
