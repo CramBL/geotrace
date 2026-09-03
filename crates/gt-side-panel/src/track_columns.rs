@@ -190,32 +190,53 @@ pub fn paint_row_background(
     );
 }
 
+/// The controls a track row draws, each registered as the row draws it.
+///
+/// A control shows its own tooltip while the pointer is inside its rect,
+/// whether or not egui marks the control as hovered. The row shows its own
+/// tooltip only while the pointer is over none of them.
+#[derive(Default)]
+pub struct TrackRowControls {
+    pointer_is_over_a_control: bool,
+}
+
+impl TrackRowControls {
+    pub fn register(&mut self, control: &egui::Response) {
+        self.pointer_is_over_a_control |= control.contains_pointer();
+    }
+}
+
 /// Draws a track row as one interactive surface. `add_contents` fills the row
-/// over its whole width. Each control that closure added keeps its own clicks:
-/// the row's sense registers below them. The returned response has the row's
-/// hover tooltip and its accessibility label.
+/// over its whole width and registers every control it draws. Each of those
+/// controls keeps its own clicks: the row's sense registers below them. The
+/// returned response has the row's accessibility label, and the track stats
+/// tooltip while the pointer is over none of the row's controls.
 pub fn render_row_as_one_surface<T>(
     ui: &mut egui::Ui,
     metadata: &TrackMetadata,
     cells: &TrackColumnCells,
     is_selected: bool,
-    add_contents: impl FnOnce(&mut egui::Ui) -> T,
+    add_contents: impl FnOnce(&mut egui::Ui, &mut TrackRowControls) -> T,
 ) -> (egui::Response, T) {
     // Claimed before the row draws: its fill belongs behind the cells.
     let background = ui.painter().add(egui::Shape::Noop);
     let row_width = ui.available_width();
+    let mut controls = TrackRowControls::default();
     let row = ui.horizontal(|ui| {
         ui.set_min_width(row_width);
-        add_contents(ui)
+        add_contents(ui, &mut controls)
     });
-    let response = ui
-        .interact_opt(
-            row.response.rect,
-            row.response.id,
-            egui::Sense::click(),
-            InteractOptions { move_to_top: false },
-        )
-        .on_hover_ui(|ui| widgets::track_tooltip_rows(ui, metadata));
+    let response = ui.interact_opt(
+        row.response.rect,
+        row.response.id,
+        egui::Sense::click(),
+        InteractOptions { move_to_top: false },
+    );
+    let response = if controls.pointer_is_over_a_control {
+        response
+    } else {
+        response.on_hover_ui(|ui| widgets::track_tooltip_rows(ui, metadata))
+    };
     response.widget_info(|| {
         egui::WidgetInfo::selected(
             egui::WidgetType::SelectableLabel,

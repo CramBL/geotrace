@@ -23,7 +23,9 @@ use gt_ui_types::{
 use rustc_hash::FxHashMap;
 
 use crate::filter::{FilterPanelState, render_filter_panel};
-use crate::track_columns::{self, TrackColumnCells, TrackColumnWidths, TrackRowCellColor};
+use crate::track_columns::{
+    self, TrackColumnCells, TrackColumnWidths, TrackRowCellColor, TrackRowControls,
+};
 use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TreeState};
 use crate::widgets::{
     CHECKBOX_PADDING, MetadataView, PointClickRequests, checkbox_width, expand_arrow,
@@ -190,11 +192,16 @@ fn masked_hint(ui: &mut egui::Ui, mask: DisplayMask, category: DataCategory) {
 }
 
 /// [`masked_hint`] for ink without a tree data category (the snapped track).
-fn masked_display_hint(ui: &mut egui::Ui, mask: DisplayMask, category: DisplayCategory) {
-    if !mask.is_visible(category) {
+/// Returns the hint it drew, `None` while the category is visible.
+fn masked_display_hint(
+    ui: &mut egui::Ui,
+    mask: DisplayMask,
+    category: DisplayCategory,
+) -> Option<egui::Response> {
+    (!mask.is_visible(category)).then(|| {
         ui.label(RichText::new(ICON_EYE_SLASH).weak())
-            .on_hover_text("Hidden by the map display toggles");
-    }
+            .on_hover_text("Hidden by the map display toggles")
+    })
 }
 
 impl<'a> PanelContext<'a> {
@@ -600,13 +607,20 @@ fn render_visible_track_row(
     }
     .resolve(ui);
 
-    let (response, ()) =
-        track_columns::render_row_as_one_surface(ui, &track.metadata, cells, is_selected, |ui| {
-            if tri_checkbox(ui, CheckState::On).clicked() {
+    let (response, ()) = track_columns::render_row_as_one_surface(
+        ui,
+        &track.metadata,
+        cells,
+        is_selected,
+        |ui, controls| {
+            let checkbox = tri_checkbox(ui, CheckState::On);
+            controls.register(&checkbox);
+            if checkbox.clicked() {
                 ctx.tree.hide_track(track_ref);
             }
             cells.paint(ui, column_widths, cell_color);
-        });
+        },
+    );
     if map_hovered {
         paint_map_hover_bg(
             ui,
@@ -1005,7 +1019,12 @@ fn snap_status_rows(
 /// The trailing per-track snap control: the manual trigger while a run is
 /// possible (grayed with hover text when it is not, never hidden), and the
 /// run's status glyph with the breakdown hover once complete.
-fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'_>) {
+fn snap_control(
+    ui: &mut egui::Ui,
+    track_ref: TrackRef,
+    controls: &mut TrackRowControls,
+    ctx: &mut PanelContext<'_>,
+) {
     let row = ctx.snap.rows.get(&track_ref).unwrap_or(&SnapRowView::Idle);
 
     // A completed run always shows its status glyph (fresh or stale); a
@@ -1064,11 +1083,16 @@ fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'
             }
             ui.label(RichText::new(snapped_track_toggle_label(shown)).weak());
         });
+        controls.register(&glyph);
         if glyph.clicked() {
             *ctx.snap_visibility_request = Some(track_ref);
         }
         glyph.context_menu(|ui| snap_track_costing_submenu(ui, track_ref, row, ctx));
-        masked_display_hint(ui, ctx.display_mask, DisplayCategory::SnappedTracks);
+        if let Some(hint) =
+            masked_display_hint(ui, ctx.display_mask, DisplayCategory::SnappedTracks)
+        {
+            controls.register(&hint);
+        }
     }
 
     let Some(action) = snap_action(row, ctx.snap) else {
@@ -1084,6 +1108,7 @@ fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'
     let button = FramelessIconButton::new(text)
         .enabled(action.enabled)
         .hover_text_ui(ui, &action.hover);
+    controls.register(&button);
     snap_trigger_overlay(ui, row, button.rect);
     if button.clicked() {
         *ctx.snap_request = Some(track_ref);
@@ -1333,9 +1358,14 @@ fn render_track_row(
     }
     .resolve(ui);
 
-    let (response, newly_enabled) =
-        track_columns::render_row_as_one_surface(ui, &track.metadata, cells, is_selected, |ui| {
+    let (response, newly_enabled) = track_columns::render_row_as_one_surface(
+        ui,
+        &track.metadata,
+        cells,
+        is_selected,
+        |ui, controls| {
             let chk_resp = tri_checkbox(ui, check);
+            controls.register(&chk_resp);
             if chk_resp.clicked() {
                 ctx.tree.toggle_track_check(track_ref);
             }
@@ -1350,15 +1380,18 @@ fn render_track_row(
             );
             cells.paint(ui, columns.widths, cell_color);
             if let Some(warning) = CoordinateWarning::for_track(&track) {
-                ui.label(
-                    RichText::new(ICON_WARNING)
-                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
-                )
-                .on_hover_text(warning.hover_text());
+                let icon = ui
+                    .label(
+                        RichText::new(ICON_WARNING)
+                            .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                    )
+                    .on_hover_text(warning.hover_text());
+                controls.register(&icon);
             }
-            snap_control(ui, track_ref, ctx);
+            snap_control(ui, track_ref, controls, ctx);
             chk_resp.clicked() && matches!(check, CheckState::Off | CheckState::Mixed)
-        });
+        },
+    );
 
     if map_hovered {
         paint_map_hover_bg(ui, response.rect, map_hover_bg);

@@ -11,6 +11,7 @@
 
 - **Interface:** Fixed the auto-prune confirmation and the "Track settings differ" prompt moving their buttons while they are open.
 - **Interface:** Fixed the remove confirmation moving its controls when a log stored with a recording it removes finishes loading.
+- **Map & Tracks:** Fixed a track row's hover text drawing over the hover text of the row's snap trigger, coordinate warning icon or hidden snapped track hint.
 
 ## 0.14.0 - 2026-09-03
 
