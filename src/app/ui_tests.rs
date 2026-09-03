@@ -64,7 +64,11 @@ use super::environment_storage_ui::{
     AUTO_PRUNE_LABEL as ENVIRONMENT_AUTO_PRUNE_LABEL, DELETE_ALL_LABEL, DeleteBlocker,
     PRUNE_BUTTON_LABEL,
 };
-use super::history_open::CLEAR_LOCK_BUTTON_LABEL;
+use super::history_open::{
+    AUTO_PRUNE_RECORDINGS_MOST_LINES, AUTO_PRUNE_TITLE, CLEAR_LOCK_BUTTON_LABEL,
+    HISTORY_DATABASE_CORRUPTED_TITLE, HISTORY_DATABASE_IN_USE_TITLE, HISTORY_DATABASE_LOCKED_TITLE,
+    TRACK_SETTINGS_DIFFER_TITLE,
+};
 use super::instance_wait::{
     DATA_DIRECTORY_HELD_TITLE, DATA_DIRECTORY_RETRY_INTERVAL, LOCK_FILE_UNUSABLE_TITLE,
     START_READ_ONLY_BUTTON_LABEL, TAKE_OVER_BUTTON_LABEL, TAKE_OVER_CONFIRMATION_TITLE,
@@ -6828,18 +6832,18 @@ fn snapshot_history_busy_dialog() {
     harness.snapshot_loose("history_busy_dialog");
 }
 
-#[test]
-fn snapshot_history_resegment_dialog() {
-    let (mut harness, _config_path) = TestHarness::builder()
-        .size(egui::vec2(640.0, 420.0))
-        .eframe(build_app);
-    harness.inner.step();
-    harness.inner.state_mut().pending_resegment = Some(super::ResegmentPrompt {
+/// The button that dismisses a history database prompt.
+const CANCEL_LABEL: &str = "Cancel";
+
+/// A re-segment prompt for the recording named `filename`, stored with a split
+/// rule and a placement rule that both differ from the current ones.
+fn resegment_prompt_named(filename: &str) -> super::ResegmentPrompt {
+    super::ResegmentPrompt {
         db_ref: gt_store::DatabaseRef {
-            identity: "auto:ride.gtd".to_owned(),
+            identity: format!("auto:{filename}"),
             group_name: "2025-05-23T10:00:00Z_a1b2".to_owned(),
         },
-        filename: "ride.gtd".to_owned(),
+        filename: filename.to_owned(),
         bytes: std::sync::Arc::from(Vec::<u8>::new()),
         stored: gt_store::StoredSegmentation {
             track_split_gap_us: 60_000_000,
@@ -6850,9 +6854,139 @@ fn snapshot_history_resegment_dialog() {
         },
         hidden_positions: Vec::new(),
         marker_settings_changed: false,
-    });
+    }
+}
+
+fn app_showing_the_resegment_prompt(filename: &str) -> TestHarness<'static, App> {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(640.0, 420.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness.inner.state_mut().pending_resegment = Some(resegment_prompt_named(filename));
     harness.run();
+    harness
+}
+
+/// A recording name of words, long enough for the prompt's intro to run past
+/// the room it caps at.
+fn recording_name_past_the_capped_room() -> String {
+    format!("{}.gtd", ["ride"; 60].join(" "))
+}
+
+#[test]
+fn snapshot_history_resegment_dialog() {
+    let mut harness = app_showing_the_resegment_prompt("ride.gtd");
     harness.snapshot_loose("history_resegment_dialog");
+}
+
+/// The intro past the room it caps at, scrolling inside that room.
+#[test]
+fn snapshot_history_resegment_dialog_past_the_capped_room() {
+    let mut harness = app_showing_the_resegment_prompt(&recording_name_past_the_capped_room());
+    harness.snapshot_loose("history_resegment_dialog_past_the_capped_room");
+}
+
+/// Opening a second recording from history replaces the prompt with one
+/// naming that recording.
+#[test]
+fn the_resegment_prompt_keeps_its_buttons_in_place_while_a_longer_name_arrives() {
+    let mut harness = app_showing_the_resegment_prompt("ride.gtd");
+    let before = harness.inner.get_by_label(CANCEL_LABEL).rect();
+
+    harness.inner.state_mut().pending_resegment = Some(resegment_prompt_named(
+        &recording_name_past_the_capped_room(),
+    ));
+    harness.inner.run_steps(4);
+
+    assert_eq!(
+        harness.inner.get_by_label(CANCEL_LABEL).rect(),
+        before,
+        "the Cancel button of the re-segment prompt moved: a press where the user aimed misses it"
+    );
+}
+
+/// The recordings a prune under the storage limit deletes, each named by its
+/// identity and the group it is stored under.
+fn auto_prune_candidates(count: usize) -> Vec<gt_store::DatabaseRef> {
+    (0..count)
+        .map(|index| gt_store::DatabaseRef {
+            identity: format!("auto:ride-{index}.gtd"),
+            group_name: format!("2025-05-2{index}T10:00:00Z_a1b2"),
+        })
+        .collect()
+}
+
+fn app_showing_the_auto_prune_confirmation(count: usize) -> TestHarness<'static, App> {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(640.0, 420.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness.inner.state_mut().pending_auto_prune = Some(auto_prune_candidates(count));
+    harness.run();
+    harness
+}
+
+/// Candidates enough to fill the room the list caps at
+/// [`AUTO_PRUNE_RECORDINGS_MOST_LINES`].
+const AUTO_PRUNE_CANDIDATES_PAST_THE_CAPPED_ROOM: usize = 12;
+
+const AUTO_PRUNE_CANDIDATES_FAR_PAST_THE_CAPPED_ROOM: usize = 40;
+
+#[test]
+fn snapshot_auto_prune_dialog() {
+    let mut harness = app_showing_the_auto_prune_confirmation(3);
+    harness.snapshot_loose("auto_prune_dialog");
+}
+
+/// The list past the room it caps at, scrolling inside that room.
+#[test]
+fn snapshot_auto_prune_dialog_past_the_capped_room() {
+    let mut harness =
+        app_showing_the_auto_prune_confirmation(AUTO_PRUNE_CANDIDATES_FAR_PAST_THE_CAPPED_ROOM);
+    harness.snapshot_loose("auto_prune_dialog_past_the_capped_room");
+}
+
+#[test]
+fn the_auto_prune_confirmation_opens_at_one_height_for_every_list_past_the_capped_room() {
+    let past = app_showing_the_auto_prune_confirmation(AUTO_PRUNE_CANDIDATES_PAST_THE_CAPPED_ROOM);
+    let far_past =
+        app_showing_the_auto_prune_confirmation(AUTO_PRUNE_CANDIDATES_FAR_PAST_THE_CAPPED_ROOM);
+
+    assert_eq!(
+        far_past
+            .inner
+            .window_rect(AUTO_PRUNE_TITLE)
+            .expect("the auto-prune confirmation is shown")
+            .size(),
+        past.inner
+            .window_rect(AUTO_PRUNE_TITLE)
+            .expect("the auto-prune confirmation is shown")
+            .size(),
+        "{AUTO_PRUNE_CANDIDATES_FAR_PAST_THE_CAPPED_ROOM} candidates made the auto-prune \
+         confirmation taller than {AUTO_PRUNE_CANDIDATES_PAST_THE_CAPPED_ROOM} did: a list past \
+         the room it caps at {AUTO_PRUNE_RECORDINGS_MOST_LINES} lines has to scroll inside that \
+         room"
+    );
+}
+
+/// A recording stored while the confirmation is open runs the auto-prune check
+/// again, and the candidates it comes back with replace the list.
+#[test]
+fn the_auto_prune_confirmation_keeps_its_buttons_in_place_while_more_candidates_arrive() {
+    let mut harness = app_showing_the_auto_prune_confirmation(3);
+    let before = harness.inner.get_by_label(CANCEL_LABEL).rect();
+
+    harness.inner.state_mut().pending_auto_prune = Some(auto_prune_candidates(
+        AUTO_PRUNE_CANDIDATES_FAR_PAST_THE_CAPPED_ROOM,
+    ));
+    harness.inner.run_steps(4);
+
+    assert_eq!(
+        harness.inner.get_by_label(CANCEL_LABEL).rect(),
+        before,
+        "the Cancel button of the auto-prune confirmation moved: a press where the user aimed \
+         misses it"
+    );
 }
 
 fn stored_segmentation_from_app_with_rules(
@@ -11491,18 +11625,18 @@ impl OversizedAppWindow {
     fn audited(self) -> gt_test_utils::AuditedWindow<'static> {
         match self {
             Self::HistoryDatabaseInUse => {
-                gt_test_utils::AuditedWindow::titled("History database in use")
+                gt_test_utils::AuditedWindow::titled(HISTORY_DATABASE_IN_USE_TITLE)
             }
             Self::HistoryDatabaseLocked => {
-                gt_test_utils::AuditedWindow::titled("History database locked")
+                gt_test_utils::AuditedWindow::titled(HISTORY_DATABASE_LOCKED_TITLE)
             }
             Self::HistoryDatabaseCorrupted => {
-                gt_test_utils::AuditedWindow::titled("History database is corrupted")
+                gt_test_utils::AuditedWindow::titled(HISTORY_DATABASE_CORRUPTED_TITLE)
             }
             Self::TrackSettingsDiffer => {
-                gt_test_utils::AuditedWindow::titled("Track settings differ")
+                gt_test_utils::AuditedWindow::titled(TRACK_SETTINGS_DIFFER_TITLE)
             }
-            Self::AutoPrune => gt_test_utils::AuditedWindow::titled("Auto-prune"),
+            Self::AutoPrune => gt_test_utils::AuditedWindow::titled(AUTO_PRUNE_TITLE),
             Self::Settings => gt_test_utils::AuditedWindow::identified(
                 "Settings",
                 egui::Id::new(settings_ui::WINDOW_ID),

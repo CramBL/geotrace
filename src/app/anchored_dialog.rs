@@ -33,14 +33,19 @@ const FROZEN_REGIONS: &str = "frozen_regions";
 pub(super) enum AnchoredDialogKind {
     AboutGeoTrace,
     AssociateLog,
+    AutoPrune,
     DeleteArchivedDays,
     ForceQuit,
+    HistoryDatabaseCorrupted,
+    HistoryDatabaseInUse,
+    HistoryDatabaseLocked,
     MapboxToken,
     RemoveItems,
     SnapToRoadAgain,
     SnapToRoadAutomatically,
     SnapToRoadConsent,
     SnapToRoadScope,
+    TrackSettingsDiffer,
 }
 
 impl AnchoredDialogKind {
@@ -55,11 +60,22 @@ impl AnchoredDialogKind {
             // Room for a recording name beside how much of the log it ran
             // alongside.
             Self::AssociateLog => 460.0,
+            // Room for a recording identity and its group name on one line.
+            Self::AutoPrune => 480.0,
             // Room for an archive's name beside the days it loses, and for a
             // recording name on one line.
             Self::DeleteArchivedDays => 480.0,
             // Fits inside the window that shutdown sizes itself down to.
             Self::ForceQuit => 360.0,
+            // Room for each of the two sentences about the unreadable file on
+            // one line.
+            Self::HistoryDatabaseCorrupted => 400.0,
+            // Room for each of the two sentences about the other process on
+            // two lines.
+            Self::HistoryDatabaseInUse => 460.0,
+            // Room for the sentence about an unclean shutdown, and for the
+            // warning under it, on two lines each.
+            Self::HistoryDatabaseLocked => 460.0,
             // Room for the token field between its label and the Apply button.
             Self::MapboxToken => 420.0,
             // Room for a track's name beside its number, distance and
@@ -77,6 +93,9 @@ impl AnchoredDialogKind {
             // Room for the two scope rows, and for the statement about
             // replacing data on two lines under them.
             Self::SnapToRoadScope => 380.0,
+            // Room for a recording name to wrap at a readable length, and for
+            // the stored and current settings side by side.
+            Self::TrackSettingsDiffer => 480.0,
         }
     }
 }
