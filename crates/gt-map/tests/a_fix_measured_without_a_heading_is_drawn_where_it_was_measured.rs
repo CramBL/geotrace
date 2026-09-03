@@ -115,6 +115,6 @@ fn a_recording_that_turns_at_the_end_of_a_cul_de_sac() -> Vec<LoadedFile> {
 #[test]
 fn snapshot_a_fix_measured_without_a_heading_is_drawn_at_the_tip_of_the_track() {
     let files = a_recording_that_turns_at_the_end_of_a_cul_de_sac();
-    let mut harness = support::rendered_map(files);
-    harness.snapshot_loose("fix_measured_without_a_heading");
+    let mut map = support::RenderedMapScene::of(files).draw();
+    map.snapshot("fix_measured_without_a_heading");
 }

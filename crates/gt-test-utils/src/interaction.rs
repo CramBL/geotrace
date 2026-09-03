@@ -12,14 +12,19 @@ use egui_kittest::{Harness, Node};
 const STEP_UNTIL_FRAME_BUDGET: usize = 200;
 const PAUSE_BETWEEN_FRAMES: Duration = Duration::from_millis(10);
 
-/// Queues `clicks` primary press-and-release pairs at `target`, all read by
-/// the frame that runs next.
-fn queue_primary_clicks<State>(harness: &mut Harness<'_, State>, target: egui::Pos2, clicks: u8) {
+/// Queues `clicks` press-and-release pairs of `button` at `target`, all read
+/// by the frame that runs next.
+fn queue_clicks<State>(
+    harness: &mut Harness<'_, State>,
+    button: egui::PointerButton,
+    target: egui::Pos2,
+    clicks: u8,
+) {
     for _ in 0..clicks {
         for pressed in [true, false] {
             harness.input_mut().events.push(egui::Event::PointerButton {
                 pos: target,
-                button: egui::PointerButton::Primary,
+                button,
                 pressed,
                 modifiers: egui::Modifiers::NONE,
             });
@@ -61,6 +66,10 @@ pub trait HarnessInteraction {
     /// Presses and releases at `target` within one frame, which egui reads as
     /// a click.
     fn click_at(&mut self, target: egui::Pos2);
+
+    /// [`HarnessInteraction::click_at`] with the secondary button, which opens
+    /// the context menu of the widget under the pointer.
+    fn secondary_click_at(&mut self, target: egui::Pos2);
 
     /// [`HarnessInteraction::click_at`] without the pointer movement it makes
     /// first: this is the press of a user whose pointer already rests on the
@@ -150,19 +159,26 @@ impl<State> HarnessInteraction for Harness<'_, State> {
     fn click_at(&mut self, target: egui::Pos2) {
         self.hover_at(target);
         self.step();
-        queue_primary_clicks(self, target, 1);
+        queue_clicks(self, egui::PointerButton::Primary, target, 1);
+        self.step();
+    }
+
+    fn secondary_click_at(&mut self, target: egui::Pos2) {
+        self.hover_at(target);
+        self.step();
+        queue_clicks(self, egui::PointerButton::Secondary, target, 1);
         self.step();
     }
 
     fn press_where_the_pointer_rests(&mut self, target: egui::Pos2) {
-        queue_primary_clicks(self, target, 1);
+        queue_clicks(self, egui::PointerButton::Primary, target, 1);
         self.run_steps(2);
     }
 
     fn double_click_at(&mut self, target: egui::Pos2) {
         self.hover_at(target);
         self.step();
-        queue_primary_clicks(self, target, 2);
+        queue_clicks(self, egui::PointerButton::Primary, target, 2);
         self.step();
     }
 

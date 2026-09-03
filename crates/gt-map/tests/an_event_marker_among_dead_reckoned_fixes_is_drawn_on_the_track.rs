@@ -127,6 +127,6 @@ fn a_recording_with_an_event_marker_among_dead_reckoned_fixes() -> Vec<LoadedFil
 #[test]
 fn snapshot_an_event_marker_among_dead_reckoned_fixes_is_drawn_on_the_dashed_track() {
     let files = a_recording_with_an_event_marker_among_dead_reckoned_fixes();
-    let mut harness = support::rendered_map(files);
-    harness.snapshot_loose("event_marker_among_dead_reckoned_fixes");
+    let mut map = support::RenderedMapScene::of(files).draw();
+    map.snapshot("event_marker_among_dead_reckoned_fixes");
 }
