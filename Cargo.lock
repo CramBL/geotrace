@@ -2223,7 +2223,7 @@ dependencies = [
 
 [[package]]
 name = "geotrace-c"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "geotrace-sdk",
@@ -2231,7 +2231,7 @@ dependencies = [
 
 [[package]]
 name = "geotrace-sdk"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "bon",
  "chrono",
@@ -2250,7 +2250,7 @@ dependencies = [
 
 [[package]]
 name = "geotrace-sdk-macros"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2259,7 +2259,7 @@ dependencies = [
 
 [[package]]
 name = "geotrace-sdk-units"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "insta",
  "proptest",
