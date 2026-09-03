@@ -8187,6 +8187,47 @@ fn cancelling_the_force_quit_confirmation_returns_to_the_shutdown_window() {
     drop(compaction);
 }
 
+/// With the pointer over Cancel when the last write finishes, the confirmation
+/// stays up reporting the finished writes. The window waits for it, and the
+/// press aimed at Cancel lands on the Close button that replaced it.
+#[test]
+fn the_force_quit_confirmation_takes_the_press_aimed_at_it_when_the_last_write_finishes() {
+    let (mut harness, compaction) = app_with_the_force_quit_confirmation_open();
+    let aimed_at = harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Cancel")
+        .rect()
+        .center();
+    harness.hover_at(aimed_at);
+    harness.run_steps(2);
+
+    drop(compaction);
+    assert!(
+        harness.step_until(|harness| harness.query_by_label("Close").is_some()),
+        "the confirmation never reported the finished writes"
+    );
+    assert!(
+        harness
+            .query_by_label_contains("The work finished")
+            .is_some(),
+        "the confirmation never said the work finished"
+    );
+    assert!(
+        !closed_the_window(&harness),
+        "the window closed while the confirmation was up"
+    );
+
+    harness.press_where_the_pointer_rests(aimed_at);
+
+    assert!(
+        harness.query_by_label("Close").is_none(),
+        "the press aimed at Cancel missed the Close button that took its place"
+    );
+    assert!(
+        harness.state().shutdown.close_allowed(),
+        "the window never closed after the confirmation did"
+    );
+}
+
 /// The window shrinks to the shutdown window's size as it comes up, and is
 /// left at whatever size the user drags it to from then on.
 #[test]
