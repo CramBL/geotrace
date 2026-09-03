@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- **Interface:** Fixed the loading overlay growing over the map's layer and display toggles while a batch of recordings loads: it now lists four loads and counts the rest, and a press over it reaches the control under it.
 - **Interface:** Fixed the History window growing with its listing until it filled the screen: it now keeps the height it is at and scrolls its rows inside it, and it shrinks to a listing shorter than that.
 - **Interface:** Fixed the auto-prune confirmation and the "Track settings differ" prompt moving their buttons while they are open.
 - **Interface:** Fixed a short dialog opening with a gap between its text and its buttons.

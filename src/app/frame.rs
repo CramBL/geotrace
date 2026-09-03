@@ -52,6 +52,14 @@ const DROP_OVERLAY_SCRIM_OPACITY: f32 = 0.85;
 const LOADING_OVERLAY_MIN_WIDTH: f32 = 260.0;
 const LOADING_OVERLAY_MAX_WIDTH: f32 = 340.0;
 
+/// Id of the [`Window`] the loading progress overlay is drawn in.
+pub(super) const LOADING_OVERLAY_WINDOW_ID: &str = "##loading_progress";
+
+/// Jobs the loading progress overlay lists before it counts the rest in one
+/// line. Four running loads with their progress bars make the overlay 200
+/// points tall.
+pub(super) const LOADING_OVERLAY_MOST_LISTED_JOBS: usize = 4;
+
 impl eframe::App for App {
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
         self.flush_settings();
@@ -988,26 +996,36 @@ impl App {
             // Keep repainting while jobs are active or fading.
             ui.ctx().request_repaint();
 
-            // The overlay grows and shrinks with the jobs it lists while
-            // they run.
+            let listed_loading = self
+                .loader
+                .loading_jobs
+                .len()
+                .min(LOADING_OVERLAY_MOST_LISTED_JOBS);
+            let listed_finishing = self
+                .loader
+                .finishing_jobs
+                .len()
+                .min(LOADING_OVERLAY_MOST_LISTED_JOBS - listed_loading);
+            let unlisted = (self.loader.loading_jobs.len() - listed_loading)
+                + (self.loader.finishing_jobs.len() - listed_finishing);
+
             #[expect(
                 clippy::disallowed_methods,
-                reason = "The loading progress overlay stays in the corner and has no controls"
+                reason = "The overlay needs none of AnchoredDialog's layout tracking: it sits \
+                          in the corner and has no controls. A press over it reaches the map \
+                          control underneath: `interactable(false)` excludes the window from \
+                          egui's hit-test."
             )]
-            Window::new("##loading_progress")
+            Window::new(LOADING_OVERLAY_WINDOW_ID)
                 .title_bar(false)
                 .resizable(false)
+                .interactable(false)
                 .anchor(egui::Align2::RIGHT_BOTTOM, [-8.0, -8.0])
                 .show(ui.ctx(), |ui| {
                     ui.set_min_width(LOADING_OVERLAY_MIN_WIDTH);
                     // Cap the width so a long recording name truncates.
                     ui.set_max_width(LOADING_OVERLAY_MAX_WIDTH);
 
-                    // The overlay grows upward from the corner, and many
-                    // concurrent loads reach past the top of the screen.
-                    egui::ScrollArea::vertical()
-                    .id_salt("loading_progress_jobs")
-                    .show(ui, |ui| {
                     if opening_databases {
                         ui.horizontal(|ui| {
                             ui.spinner();
@@ -1016,8 +1034,8 @@ impl App {
                         ui.add_space(2.0);
                     }
 
-                    for job in &self.loader.loading_jobs {
-                        let elapsed = job.started_at.elapsed().as_secs_f32();
+                    for job in self.loader.loading_jobs.iter().take(listed_loading) {
+                        let elapsed = (now - job.started_at) as f32;
                         Sides::new().shrink_left().truncate().show(
                             ui,
                             |ui| {
@@ -1039,7 +1057,7 @@ impl App {
                         ui.add_space(2.0);
                     }
 
-                    for job in &self.loader.finishing_jobs {
+                    for job in self.loader.finishing_jobs.iter().take(listed_finishing) {
                         let since = (now - job.completed_at) as f32;
                         #[expect(
                             clippy::cast_sign_loss,
@@ -1075,7 +1093,10 @@ impl App {
                         );
                         ui.add_space(2.0);
                     }
-                    });
+
+                    if unlisted > 0 {
+                        ui.label(RichText::new(format!("{unlisted} more")).weak().small());
+                    }
                 });
         }
     }
