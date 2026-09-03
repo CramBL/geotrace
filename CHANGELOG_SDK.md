@@ -7,6 +7,8 @@ the app).
 
 ## [unreleased]
 
+## [0.6.0] - 2026-09-03
+
 ### Added
 
 - The `sdk_version`, `sdk_git_commit` and `sdk_commit_time` file attributes, which a released SDK build stamps on the files it writes. They read back through Rust `Meta::sdk_version()`, `Meta::sdk_git_commit()` and `Meta::sdk_commit_time()`, C `gtd_nav_file_sdk_version()`, `gtd_nav_file_sdk_git_commit()` and `gtd_nav_file_sdk_commit_time()`, the same three as C++ `NavFile` methods, and the Python `Meta.sdk_version`, `Meta.sdk_git_commit` and `Meta.sdk_commit_time` properties.
