@@ -1589,3 +1589,58 @@ fn a_list_longer_than_the_screen_stops_the_window_at_the_screen_edge() {
         HEIGHT_AUDIT_VIEWPORT.y,
     );
 }
+
+/// How far the drag audits pull the window's bottom edge up.
+const DRAGGED_UP_BY_PX: f32 = 200.0;
+
+/// A harness listing `rows` recordings under names that sort in the order they
+/// are built, with the database path kept out of the image.
+fn history_harness_for_the_height_audit(rows: usize) -> HistoryHarness {
+    let entries = (0..rows)
+        .map(|index| {
+            let mut entry = entry_with_identity(&format!("auto:ride{index:03}.gtd"));
+            entry.meta.gtd_size_bytes = CROWDED_RECORDING_BYTES;
+            entry
+        })
+        .collect();
+    let mut harness = history_harness(entries);
+    harness.worker.hide_path();
+    harness
+}
+
+/// The History window listing more recordings than the screen holds.
+#[test]
+fn snapshot_listing_longer_than_the_screen() {
+    let mut h = TestHarness::builder().size(HEIGHT_AUDIT_VIEWPORT).ui_state(
+        show_history,
+        history_harness_for_the_height_audit(OVERSIZED_ROW_COUNT),
+    );
+    for _ in 0..8 {
+        h.run();
+    }
+    h.snapshot("history_listing_longer_than_the_screen");
+}
+
+/// The History window after the user drags its bottom edge up while it lists
+/// more recordings than the screen holds.
+#[test]
+fn snapshot_window_dragged_shorter_than_its_listing() {
+    let mut h = TestHarness::builder().size(HEIGHT_AUDIT_VIEWPORT).ui_state(
+        show_history,
+        history_harness_for_the_height_audit(OVERSIZED_ROW_COUNT),
+    );
+    for _ in 0..8 {
+        h.run();
+    }
+    let window = h.inner.window_rect("History").expect("the window is shown");
+    h.inner.press_drag_release(
+        egui::pos2(window.center().x, window.bottom()),
+        egui::vec2(0.0, -DRAGGED_UP_BY_PX),
+        8,
+    );
+    // No hover highlight or scrollbar is drawn over the listing: the hover
+    // point is away from the rows.
+    h.inner
+        .hover_at_and_settle(egui::pos2(HEIGHT_AUDIT_VIEWPORT.x - 1.0, 1.0), 8);
+    h.snapshot("history_window_dragged_shorter");
+}
