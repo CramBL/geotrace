@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0 - 2026-09-03
+
 ### Added
 
 - **Interface:** A query's `table` stage now takes an aggregate column, such as `table max(@accel.x)`, and a match lists the channel samples its aggregate columns reduced.
