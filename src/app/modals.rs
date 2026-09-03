@@ -1741,6 +1741,17 @@ mod tests {
         harness.snapshot("snap_to_road_scope_dialog_nothing_snapped");
     }
 
+    /// The confirmation the user meets when a track already has a run for the
+    /// costing they chose.
+    #[test]
+    fn snapshot_the_snap_replace_confirmation() {
+        let mut harness = TestHarness::builder().size(DIALOG_VIEWPORT).ui(|ui| {
+            show_snap_replace_dialog(ui, SNAP_COSTING);
+        });
+        harness.inner.run_steps(4);
+        harness.snapshot("snap_replace_confirmation");
+    }
+
     struct TokenDialogState {
         map: NavMap,
         field: MapboxTokenField,
@@ -1804,6 +1815,14 @@ mod tests {
         assert_eq!(harness.state().map.mapbox_token(), "typed");
     }
 
+    /// The dialog the satellite layer asks for a token in.
+    #[test]
+    fn snapshot_the_mapbox_token_dialog() {
+        let mut harness = token_dialog();
+        harness.inner.run_steps(4);
+        harness.snapshot("mapbox_token_dialog");
+    }
+
     /// The dialog states the time range and the recorded time apart for a
     /// recording that idled between its tracks.
     #[test]
@@ -1841,9 +1860,13 @@ mod tests {
         );
     }
 
-    fn make_file(track_count: usize) -> LoadedFile {
+    fn make_file(filename: String, track_count: usize) -> LoadedFile {
+        let metadata = gt_types::FileMetadata {
+            filename,
+            ..gt_test_utils::empty_file_metadata()
+        };
         LoadedFile {
-            metadata: gt_test_utils::empty_file_metadata(),
+            metadata,
             tracks: (0..track_count)
                 .map(|ti| LoadedTrack {
                     metadata: TrackMetadata {
@@ -1883,7 +1906,7 @@ mod tests {
             } else {
                 FileHistory::None
             };
-            loaded.push(make_file(track_count), history);
+            loaded.push(make_file(format!("ride-{idx}.gtd"), track_count), history);
         }
         loaded
     }
@@ -1938,6 +1961,27 @@ mod tests {
         harness
             .inner
             .get_by_label_contains("the session is read-only");
+    }
+
+    /// The confirmation over two tracks of a stored recording, with the
+    /// permanent delete chosen.
+    #[test]
+    fn snapshot_the_remove_confirmation() {
+        let mut tree = TreeState::default();
+        tree.delete_confirm = Some(DeleteConfirmState {
+            items: vec![track_key(0, 0), track_key(0, 1)],
+            delete_permanently: true,
+        });
+        let mut harness = TestHarness::builder().size(DIALOG_VIEWPORT).ui_state(
+            delete_confirmation_ui,
+            DeleteConfirmationState {
+                tree,
+                loaded_files: make_loaded_files(&[(3, true)]),
+                write_access: WriteAccess::Owner,
+            },
+        );
+        harness.inner.run_steps(4);
+        harness.snapshot("remove_confirmation");
     }
 
     fn track_key(fi: usize, ti: usize) -> NodeKey {
