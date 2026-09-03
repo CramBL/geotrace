@@ -1739,6 +1739,15 @@ mod tests {
         harness.snapshot("force_quit_confirmation");
     }
 
+    /// The confirmation with every write it listed finished.
+    #[test]
+    fn snapshot_the_force_quit_confirmation_once_the_writes_finish() {
+        let costs = RefCell::new(Vec::new());
+        let choice = RefCell::new(None);
+        let mut harness = force_quit_dialog(&costs, &choice);
+        harness.snapshot("force_quit_confirmation_writes_finished");
+    }
+
     #[test]
     fn snapshot_the_snap_scope_dialog_while_nothing_is_snapped() {
         let counts = RefCell::new(nothing_snapped_yet());
