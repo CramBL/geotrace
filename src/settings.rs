@@ -233,7 +233,7 @@ impl SnapSettings {
         self.auto_snap == Some(true) && self.consent_granted()
     }
 
-    /// The parameters a fresh snap run would use under the given costing:
+    /// The parameters a fresh snap run would use under `costing`:
     /// the advanced trace options as configured. The single source for run
     /// parameters, so staleness detection picks up every setting
     /// automatically ([`SnapParams`](gt_snap::request_plan::SnapParams)
@@ -636,9 +636,9 @@ mod snap_settings_tests {
 
     use super::*;
 
-    /// Every advanced option flows into the run parameters - the params
-    /// helper is the single source, so a field forgotten here would leave
-    /// a setting that never reaches a request (and never marks staleness).
+    /// Every advanced option flows into the run parameters - [`SnapSettings::params`]
+    /// is the single source, so a field forgotten here would leave a setting that
+    /// never reaches a request (and never marks staleness).
     #[test]
     fn params_carry_every_advanced_option() {
         let snap = SnapSettings {

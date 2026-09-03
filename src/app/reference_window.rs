@@ -58,8 +58,7 @@ const QUOTATION_INDENT: i8 = 12;
 /// the prose.
 const QUOTATION_RULE_WIDTH: f32 = 2.0;
 
-/// Raised comma written between two adjacent citation numbers, so a run of
-/// citations reads as a list.
+/// Raised comma written between two adjacent citation numbers.
 const CITATION_SEPARATOR: &str = ",";
 
 /// The dots of an abbreviation's underline: how far apart they sit, how big
@@ -410,7 +409,7 @@ fn cell_ui(ui: &mut egui::Ui, document: ReferenceDocument, cell: &TableCell, wid
 }
 
 /// The sources under the numbers the prose cites them by, each hovering the
-/// url it opens.
+/// URL it opens.
 fn sources_ui(ui: &mut egui::Ui, sources: &[Source]) {
     ui.style_mut().url_in_tooltip = true;
     for (index, source) in sources.iter().enumerate() {

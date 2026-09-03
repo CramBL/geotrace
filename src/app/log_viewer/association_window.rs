@@ -7,8 +7,9 @@ use strum::EnumIter;
 /// any clock offset a log and a recording could plausibly have.
 const MAX_ASSOCIATION_WINDOW_NANOS: f64 = 365.0 * 24.0 * 60.0 * 60.0 * 1e9;
 
-/// Decimals a window is written to in a hover text. Two are enough to tell one
-/// association window from another without spelling out a repeating fraction.
+/// Decimals a window is written to in a hover text. Two are enough to
+/// distinguish one association window from another without spelling out a
+/// repeating fraction.
 const DESCRIBED_DECIMALS: usize = 2;
 
 const NANOS_PER_MICROSECOND: f64 = 1e3;

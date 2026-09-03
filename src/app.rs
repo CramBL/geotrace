@@ -470,7 +470,7 @@ impl App {
             .map(|p| crate::settings::load_settings_from(p))
             .unwrap_or_default();
 
-        // One-time migration: pick up mapbox_token and map_layer from the old
+        // One-time migration: pick up `mapbox_token` and `map_layer` from the old
         // eframe storage when config.toml doesn't exist yet.
         let path_exists = config_path.as_ref().is_some_and(|p| p.exists());
         if !path_exists {

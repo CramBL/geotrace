@@ -333,7 +333,7 @@ impl UpdateChecker {
 }
 
 /// Build the current-thread runtime the background threads use to drive
-/// `axoupdater`'s async API (reqwest needs a reactor, there is none on a bare
+/// `axoupdater`'s asynchronous API (reqwest needs a reactor, there is none on a
 /// `std::thread`).
 fn runtime() -> Result<tokio::runtime::Runtime, String> {
     tokio::runtime::Builder::new_current_thread()

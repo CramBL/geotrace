@@ -64,7 +64,7 @@ impl DayFetchQueue {
 
     /// Queue `day` under the scheduler's refresh rule and report what the
     /// archive holds for it. An archive it could not be read from leaves the
-    /// day awaited and reports the read as a failure.
+    /// day awaited and reports that the archive could not be read.
     fn queue_counted_day<E: Display>(
         &mut self,
         day: NaiveDate,

@@ -273,8 +273,8 @@ pub(super) struct LineTableRequests<'a> {
 /// or the one last clicked while the cursor is on none.
 ///
 /// A hexagon of another log than the one shown marks nothing: filter stacks
-/// are per log, and marking rows across a log switch the reader did not ask
-/// for would show them the wrong log's lines.
+/// are per log, and marking rows across a log switch the reader did not
+/// request would show them the wrong log's lines.
 struct CrossHighlightedRows<'a> {
     glyph: Option<&'a LogMatchGlyph>,
     shown_log: LoadedLogId,

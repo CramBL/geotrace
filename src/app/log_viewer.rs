@@ -121,8 +121,8 @@ pub(super) struct LogViewerWindow {
     /// shows once a scan runs long enough to notice.
     query_pending_since: Option<f64>,
 
-    /// The table row the summary panel asked to scroll to, consumed by the
-    /// table on the frame after it was asked for.
+    /// The table row the summary panel requested a scroll to, consumed by the
+    /// table on the frame after the request.
     scroll_to_row: Option<usize>,
 
     /// The hexagon the map was last clicked on. The table marks the rows of

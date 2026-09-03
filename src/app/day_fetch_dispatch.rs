@@ -77,7 +77,7 @@ mod tests {
 
     use super::*;
 
-    /// Stands in for one of the day archives, which nothing here calls into.
+    /// A test double for one of the day archives, which nothing here calls into.
     struct TestArchive;
 
     fn day() -> NaiveDate {

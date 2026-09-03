@@ -158,7 +158,8 @@ pub struct JammingScheduler {
     /// `None` disables fetching: no archive was opened. A read-only session
     /// has one here, and [`Self::writable_archive`] is [`None`].
     store: Option<InterferenceArchive>,
-    /// Unpaced: [`dispatch_delay`] spaces this scheduler's requests.
+    /// Built by [`DayFetchTransport::unpaced`]: [`dispatch_delay`] spaces this
+    /// scheduler's requests.
     transport: DayFetchTransport,
     days: DayFetchQueue,
     /// Cells archived per day, read from the archive's day index and updated
@@ -411,8 +412,8 @@ impl JammingScheduler {
     pub fn plot_series(&mut self, files: &[LoadedFile]) -> JammingSeries {
         let mut series = JammingSeries::default();
         let mut live: FxHashSet<TrackRef> = FxHashSet::default();
-        // Shared across tracks: a batch of recordings from one trip all read
-        // the same day.
+        // Shared across tracks: recordings loaded together often span the same
+        // day.
         let mut datasets: FxHashMap<NaiveDate, Option<JamDataset>> = FxHashMap::default();
 
         for (fi, file) in files.iter().enumerate() {
@@ -492,7 +493,7 @@ impl JammingScheduler {
     /// resolved it.
     ///
     /// The `Arc` identities hold until the archive gains a day a track spans:
-    /// the query fingerprint compares them to tell whether a run's results
+    /// the query fingerprint compares them to determine whether a run's results
     /// still describe the data on display. Shaped like the snap-error values
     /// so both reach the provider the same way.
     pub fn query_values(&self) -> JammingValues {
@@ -812,8 +813,7 @@ mod tests {
         assert_eq!(scheduler.days.backfill_progress(), None);
     }
 
-    /// No archive is distinct from an empty range: the control says so
-    /// instead of claiming the range is already downloaded.
+    /// No archive is distinct from an empty range.
     #[test]
     fn a_backfill_without_an_archive_reports_no_archive() {
         let mut scheduler = scheduler();
@@ -1217,8 +1217,8 @@ mod tests {
         assert_eq!(scheduler.days.fetch_status().recording_days.archived, 0);
     }
 
-    /// A queued day is always dispatched, offline included: the transport
-    /// declines the request rather than the day staying queued.
+    /// A queued day is always dispatched, offline included: the day leaves the
+    /// queue and the transport declines the request.
     #[test]
     fn a_queued_day_is_dispatched() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
@@ -1338,7 +1338,7 @@ mod tests {
         assert_eq!(scheduler.empty_reason(), Some(EmptyReason::NotPublished));
     }
 
-    /// With no track loaded the legend says so, rather than showing a day.
+    /// With no track loaded the legend says so.
     #[test]
     fn no_loaded_track_means_no_day() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();

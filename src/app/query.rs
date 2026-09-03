@@ -205,7 +205,7 @@ struct Candidate {
     /// The dimmed one-line summary shown beside the name.
     summary: String,
     /// Appended after `insert` on acceptance: a trailing space where something
-    /// always follows (stages, params, the source, connectives), `()` for a
+    /// always follows (stages, parameters, the source, connectives), `()` for a
     /// function.
     suffix: &'static str,
     /// Bytes the caret steps back into the suffix, so accepting `avg` lands
@@ -297,14 +297,14 @@ struct Autocomplete {
     /// Set by Ctrl+Space. The next recompute runs with the manual trigger,
     /// which offers candidates even on an empty prefix.
     manual_request: bool,
-    /// A non-interactive explanation row shown instead of candidates (typing
-    /// `@` with no channels loaded).
+    /// A non-interactive explanation row the popup shows when it has no
+    /// candidates (typing `@` with no channels loaded).
     notice: Option<&'static str>,
     /// Memo key of the last candidate computation: the window's assist
     /// revision and the caret byte. Unchanged key, unchanged candidates.
     computed_for: Option<(u64, usize)>,
-    /// Whether the popup was drawn last frame. Key handling reads this rather
-    /// than live focus, for the reason on [`QueryWindow::editor_had_focus`].
+    /// Whether the popup was drawn last frame. Key handling reads this field,
+    /// for the reason on [`QueryWindow::editor_had_focus`].
     shown: bool,
 }
 
@@ -695,8 +695,7 @@ impl QueryWindow {
 
         // Every failed chunk surfaces: each gets an underline and a message
         // line, so an error in query 3 is never hidden behind one in query 1.
-        // The chunk being typed in gets a grace period instead of flashing
-        // red under every keystroke.
+        // The chunk being typed in gets a grace period.
         let now = ui.input(|i| i.time);
         let in_grace = self.editor_had_focus
             && self
@@ -1032,8 +1031,7 @@ impl QueryWindow {
         let (range, items) =
             if let Some(channels) = gt_query::channel_completions_at(src, local, schema) {
                 if channels.items.is_empty() && schema.is_empty() {
-                    // The sigil path exists but has nothing to offer: say why,
-                    // instead of silently not appearing.
+                    // The sigil path exists but has nothing to offer: say why.
                     notice = Some("No channels loaded");
                 }
                 let items = channels
@@ -1156,8 +1154,7 @@ impl QueryWindow {
             },
         };
         self.hover_doc_span = Some(span);
-        // Drawn as an Area (rather than a hover tooltip) so it is anchored to
-        // the token under the pointer.
+        // Drawn as an Area so it is anchored to the token under the pointer.
         Area::new(egui::Id::new("query_hover_doc"))
             .order(egui::Order::Tooltip)
             .fixed_pos(pointer + egui::vec2(12.0, 18.0))
@@ -1438,7 +1435,7 @@ fn autocomplete_row(ui: &egui::Ui, candidate: &Candidate) -> LayoutJob {
 /// A Rust-doc-style hover: the construct's name and kind, its summary, then -
 /// when present - the fuller explanation and example snippets. Language
 /// constructs (backticked in the doc, and whole example snippets) are syntax
-/// colored the way the editor colors them, rather than shown in raw backticks.
+/// colored the way the editor colors them.
 fn construct_tooltip_ui(ui: &mut egui::Ui, construct: &Construct) {
     tooltip_header(ui, construct.name, construct.kind.label());
     let mono = egui::TextStyle::Monospace.resolve(ui.style());

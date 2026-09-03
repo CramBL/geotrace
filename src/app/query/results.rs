@@ -1448,8 +1448,8 @@ fn swatch_side(ui: &egui::Ui) -> f32 {
 
 /// A small square in a draw query's halo `color`, tying a summary line and its
 /// matches to the halos on the map. A query that draws no halos leaves the
-/// space blank, so the lines and rows still line up. Painted rather than a text
-/// glyph, which the editor font does not carry.
+/// space blank, so the lines and rows still line up. Painted, since the editor
+/// font has no square glyph.
 fn query_swatch_ui(ui: &mut egui::Ui, color: Option<egui::Color32>, hover: &str) {
     let (rect, response) =
         ui.allocate_exact_size(egui::Vec2::splat(swatch_side(ui)), Sense::hover());

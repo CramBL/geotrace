@@ -43,8 +43,8 @@ impl App {
                 clock_discontinuity_sigmas: s.processing.clock_discontinuity_sigmas,
                 detect_clock_offset_excursions: s.processing.detect_clock_offset_excursions,
                 detect_slips: s.processing.detect_slips,
-                // Slip and excursion markers share the plot's detection params
-                // so the markers and the plot always agree.
+                // Slip and excursion markers share the plot's detection
+                // parameters so the markers and the plot always agree.
                 clock_excursion_threshold_s: excursion_threshold,
                 slip_elevation_mask_deg: s.analysis.elevation_mask_deg,
                 slip_snr_drop_db: s.analysis.snr_drop_db,

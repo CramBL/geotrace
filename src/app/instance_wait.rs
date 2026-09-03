@@ -268,7 +268,7 @@ impl DataDirectoryWait {
 
     /// Shows the wait, and reports the frame the user chooses in it.
     ///
-    /// The confirmation stands in for the wait dialog while it is up: both
+    /// The confirmation replaces the wait dialog while it is up: both
     /// are anchored to the center of the window, and the confirmation names
     /// the same holder state the wait dialog does.
     fn ui(&mut self, ui: &egui::Ui) -> WaitChoice {

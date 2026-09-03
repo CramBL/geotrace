@@ -3,13 +3,12 @@
 //! The recording history database keeps one opaque blob per recording (see
 //! `gt_history_types::SNAP_GROUP`). This module owns what is inside it: a
 //! versioned serde-JSON envelope holding the latest run of every track that
-//! has one, each keyed by the track's content fingerprint. Content keys
-//! rather than track indices, so re-segmentation or index shifts can never
-//! attach a run to the wrong track - a non-matching entry is simply never
-//! restored.
+//! has one, each keyed by the track's content fingerprint. A content key
+//! means re-segmentation or index shifts can never attach a run to the wrong
+//! track: a non-matching entry is never restored.
 //!
 //! Decoding is tolerant: an unreadable or newer-versioned blob is treated
-//! as absent (with a warning) rather than failing the recording. The inner
+//! as absent (with a warning) and the recording still opens. The inner
 //! types' schema is pinned by `gt-snap`'s `stored_result_schema` snapshot.
 //! Fields added later decode absent from older blobs via serde defaults.
 
@@ -22,7 +21,7 @@ use super::snap::{SnapRun, TrackContentKey};
 
 /// Version of the envelope layout itself (not the inner result schema).
 /// Bumped only on incompatible layout changes. A blob written by a newer
-/// version is treated as absent rather than misread.
+/// version is treated as absent.
 const STORED_SNAP_FORMAT_VERSION: u32 = 1;
 
 /// The envelope stored as the recording's snap blob.
@@ -50,7 +49,7 @@ pub struct StoredTrackRun {
 }
 
 impl StoredTrackRun {
-    /// Whether this stored run belongs to the given track.
+    /// Whether this stored run belongs to `track`.
     pub fn matches(&self, track: &LoadedTrack) -> bool {
         let key = TrackContentKey::new(track);
         key.start_us == self.start_us
@@ -64,7 +63,7 @@ impl StoredTrackRun {
     }
 }
 
-/// Serialize the given tracks' runs into the blob stored with a recording.
+/// Serialize `runs` into the blob stored with a recording.
 pub fn encode<'a>(runs: impl IntoIterator<Item = (&'a LoadedTrack, &'a SnapRun)>) -> Vec<u8> {
     let envelope = StoredSnapRuns {
         format_version: STORED_SNAP_FORMAT_VERSION,

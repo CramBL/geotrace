@@ -97,7 +97,7 @@ impl<'a> ColumnFormat<'a> {
     }
 
     /// How an aggregate column prints. A column whose values have no quantity
-    /// reads as a bare number.
+    /// prints a bare number.
     pub(super) fn of_aggregate(column: &AggregateColumn) -> Self {
         column.quantity().map_or_else(
             || Self::number(None, 1.0, UNITLESS_DECIMALS),
@@ -154,8 +154,8 @@ impl<'a> ColumnFormat<'a> {
         }
     }
 
-    /// The widest text a cell of this column prints, for sizing the column
-    /// once instead of measuring every row.
+    /// The widest text a cell of this column prints, for sizing the column from
+    /// one measurement.
     fn widest_cell_text(self) -> String {
         match self.kind {
             ColumnKind::TimeOfDay { millis } => time_of_day(0.0, millis),

@@ -64,9 +64,9 @@ const GEOMAGNETIC_LOOKBACK_HOURS: i64 = 48;
 const SUNLIT_RECEIVER: &str = "sunlit";
 
 /// The weakest flare classification the NOAA radio blackout scale covers, as
-/// the catalog writes it. The scale's own floor is a peak flux rather than a
-/// classification, so the test `the_stated_flare_class_is_the_first_blackout_level`
-/// pins this string against the scale.
+/// the catalog writes it. The scale's own floor is a peak flux, so the test
+/// `the_stated_flare_class_is_the_first_blackout_level` pins this string
+/// against the scale.
 const FLARE_TRIGGER_CLASSIFICATION: &str = "M1";
 
 /// One row per environment metric, stating the level at which it raises a

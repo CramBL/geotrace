@@ -186,9 +186,9 @@ impl App {
                 ui.end_row();
 
                 // Clock discontinuity: the toggle and its jump sensitivity share
-                // one row. The sensitivity stays visible but grays out when
-                // detection is off rather than hiding (DESIGN.md: keep the layout
-                // stable and the feature discoverable).
+                // one row. The sensitivity stays visible and grays out when
+                // detection is off (DESIGN.md: keep the layout stable and the
+                // feature discoverable).
                 let clock_help =
                     "Flag abrupt jumps in the GPS/system clock offset - e.g. a device resuming \
                      from suspend, where a stale GPS timestamp meets a fresh system timestamp. \

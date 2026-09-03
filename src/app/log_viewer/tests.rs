@@ -1,5 +1,5 @@
 //! The viewer driven on its own: the rows the table draws for one log, what a
-//! row click asks of the map, and the footer's association controls.
+//! row click requests of the map, and the footer's association controls.
 
 use std::path::PathBuf;
 
@@ -1672,8 +1672,7 @@ fn oversized_log_text() -> String {
 }
 
 /// The log viewer keeps its footer controls reachable at any viewport, and an
-/// unbroken log line scrolls inside the table instead of stretching the window
-/// past the screen edge.
+/// unbroken log line scrolls inside the table.
 #[rstest::rstest]
 fn log_viewer_window_fits_every_viewport(
     #[values(CRAMPED_VIEWPORT, NARROW_VIEWPORT, SHORT_VIEWPORT)] viewport: egui::Vec2,

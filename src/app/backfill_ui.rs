@@ -466,7 +466,7 @@ mod tests {
 
     use super::*;
 
-    /// The interference control stands in for both: the dataset only supplies
+    /// The interference control covers both datasets: the dataset only supplies
     /// constants, and the geomagnetic ones are covered where they differ.
     type TestBackfillUi = BackfillUi<InterferenceBackfill>;
 

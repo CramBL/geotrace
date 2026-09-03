@@ -890,7 +890,7 @@ impl HistoryWindow {
                 });
 
                 // Advanced filter row: points + date range. Wraps onto a
-                // second line rather than widening the window.
+                // second line, keeping the window's width.
                 ui.horizontal_wrapped(|ui| {
                     ui.label("Points ≥");
                     ui.add(TextEdit::singleline(&mut self.filter_min_points).desired_width(60.0));

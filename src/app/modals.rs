@@ -491,8 +491,8 @@ fn files_fully_removed(keys: &[NodeKey], loaded_files: LoadedFilesView<'_>) -> B
 /// (segmentation) track indices to act on in history, grouped by recording.
 ///
 /// A removed file contributes all of its tracks. Track indices are taken from
-/// each track's stored `metadata.index` rather than its live view position, so
-/// they line up with the recording's persisted track table.
+/// each track's stored `metadata.index`, so they line up with the recording's
+/// persisted track table.
 fn track_removals(
     keys: &[NodeKey],
     loaded_files: LoadedFilesView<'_>,

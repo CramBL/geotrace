@@ -25,7 +25,7 @@ use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 /// table is always exactly as wide as the window.
 ///
 /// Identity is sized as a [`Column::exact`] recomputed each frame. A
-/// [`Column::remainder`] that is not the *last* column ratchets in egui_extras:
+/// [`Column::remainder`] that is not the *last* column ratchets in `egui_extras`:
 /// it feeds its clipped width back into its own minimum every frame, so it can
 /// never shrink again, which stops the window from being made narrower and lets
 /// it creep wider.
@@ -76,12 +76,11 @@ pub(super) fn history_table(
         // computed identity column already accounts for.
         .auto_shrink([false, true])
         .max_scroll_height(max_scroll_height)
-        // egui_extras keeps a 200px floor by default, which on a short window
+        // `egui_extras` keeps a 200px floor by default, which on a short window
         // pushes the footer off the bottom. The body takes exactly the height
         // it is given.
         .min_scrolled_height(0.0)
-        // Identity fills the leftover width (see above) and clips long names
-        // rather than growing to fit them.
+        // Identity fills the leftover width (see above) and clips long names.
         .column(Column::exact(identity_width).clip(true))
         // Metadata columns size to their fixed-format content - every sortable
         // column except identity, which was added above. They are not
@@ -90,7 +89,7 @@ pub(super) fn history_table(
         .columns(Column::auto().resizable(false), SortColumn::COUNT - 1)
         .column(Column::auto().resizable(false))
         .header(row_height, |mut header| {
-            // Driven off the enum, so a new sortable column cannot be added
+            // Driven off `SortColumn`, so a new sortable column cannot be added
             // without a header appearing.
             for column in SortColumn::iter() {
                 header.col(|ui| {

@@ -204,8 +204,7 @@ pub enum Response {
     PrunePreview(Result<Vec<DatabaseRef>, DbError>),
     AutoPruned(Result<AutoPruneOutcome, DbError>),
     /// Outcome of a snap-run store. Failures cost only the cache entry
-    /// (the session stores keep working), so the app logs rather than
-    /// toasts.
+    /// (the session stores keep working), so the app logs them.
     SnapRunsStored(Result<(), DbError>),
     /// A recording's stored snap runs, `None` when it has no stored runs.
     SnapRunsLoaded {

@@ -331,8 +331,8 @@ impl App {
                     }
 
                     // A subtle "update available" hint for builds that can't
-                    // self-update (Homebrew, MSI, manual download). Self-updatable
-                    // installs get the prompt instead of this badge.
+                    // self-update (Homebrew, MSI, manual download). A self-updatable
+                    // install gets the prompt.
                     #[cfg(feature = "self-update")]
                     if let Some(new_version) = self.update_checker.badge_version() {
                         ui.separator();
@@ -708,7 +708,7 @@ impl App {
                 extract_match_hover_time_range(&s.loaded_files, &s.highlight);
 
             // Render the tiles tree (map on top, optional plot on bottom).
-            // Borrow tiles_tree and map explicitly so the borrow checker can see
+            // Borrow `tiles_tree` and `map` explicitly so the borrow checker can see
             // they are disjoint from s (which comes from self.shared).
             let toggle_plot_request;
             {
@@ -776,7 +776,7 @@ impl App {
             }
 
             // Forward plot hover → map highlight (must happen after the tree renders
-            // so that show_track_plot has already written the current hovered_time).
+            // so that `show_track_plot` has already written the current `hovered_time`).
             // The pre-computed `plot_hover_point` lets TpvRenderer look up the
             // closest point in O(1).
             let plot_visible = self.plot_is_visible();
@@ -973,8 +973,8 @@ impl App {
             && self.snap_settings.consent_granted()
             && self.any_snappable_track()
         {
-            // Uploads were acknowledged before auto mode existed: ask the
-            // mode choice once, before anything would auto-upload.
+            // Uploads were acknowledged before auto mode existed: prompt for
+            // the mode choice once, before anything would auto-upload.
             if let Some(choice) = show_snap_auto_prompt(ui, &self.snap_settings.server_url) {
                 self.snap_settings.auto_snap = Some(choice == SnapAutoChoice::Automatic);
                 self.snap_auto_sweep = true;
@@ -1190,8 +1190,8 @@ impl App {
 }
 
 /// Sends dropped bytes to the recording loader or the log parser, deciding by
-/// content: anything that is not HDF5 is read as a log, lossily decoded where
-/// it is not UTF-8.
+/// content: bytes starting with the HDF5 magic go to the loader, everything
+/// else to the log parser, lossily decoded where it is not UTF-8.
 fn handle_dropped_bytes_dispatch(
     loader: &mut LoadJobs,
     bytes: Arc<[u8]>,
@@ -1240,7 +1240,7 @@ fn show_drop_hint_overlay(ctx: &egui::Context) {
 }
 
 /// Extract the GPS timestamp of the map-hovered TPV point (if any) so the plot
-/// can draw a vertical cursor at the corresponding time.
+/// can draw a vertical cursor at that timestamp.
 fn extract_map_hover_time(
     files: &[LoadedFile],
     highlight: &MapHighlight,
