@@ -2,9 +2,14 @@
 
 ## Unreleased
 
+### Changed
+
+- **Interface:** The remove confirmation now scrolls its list of items inside the dialog when the remove takes more than ten.
+
 ### Fixed
 
 - **Interface:** Fixed the auto-prune confirmation and the "Track settings differ" prompt moving their buttons while they are open.
+- **Interface:** Fixed the remove confirmation moving its controls when a log stored with a recording it removes finishes loading.
 
 ## 0.14.0 - 2026-09-03
 
