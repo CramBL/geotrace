@@ -644,6 +644,13 @@ impl RenderedMap {
         self.harness.inner.secondary_click_at(target);
     }
 
+    /// Draws one frame that reads a press of Escape, which closes the
+    /// disambiguation popup and the context menu.
+    pub fn press_escape(&mut self) {
+        self.harness.inner.key_press(egui::Key::Escape);
+        self.harness.step();
+    }
+
     /// The labels the last frame left open, in text order.
     ///
     /// The lines of one label are joined the way the tooltip stacks them. The

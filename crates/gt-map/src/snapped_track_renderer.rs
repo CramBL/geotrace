@@ -20,21 +20,28 @@
 //! sub-pixel detail is merged, bounding the per-frame shape count by what is
 //! actually on screen.
 //!
-//! Hovering the snapped line shows the matched edge's attributes (name,
-//! road class, speed limit, surface). The hit-test runs over the original
-//! vertices - their indices address the edge spans - with a cheap same-side
-//! rejection against a small rect around the cursor, so its cost stays
-//! proportional to the geometry near the pointer.
+//! Hovering the snapped line shows the matched edge's attributes (name, road
+//! class, speed limit, surface), except while a popup is open over the map.
+//! The hit-test runs over the original vertices - their indices address the
+//! edge spans - with a cheap same-side rejection against a small rect around
+//! the cursor, so its cost stays proportional to the geometry near the
+//! pointer.
 
-use egui::{Pos2, Rect, Response, RichText, Stroke, Ui};
+use egui::{Popup, PopupKind, Pos2, Rect, Response, RichText, Stroke, Ui};
 use gt_filter::GlobalFilter;
 use gt_types::{LoadedFile, PointIdx};
 use gt_ui_types::{SnappedEdgeInfo, SnappedTracks};
 use walkers::{MapMemory, Plugin, Projector};
 
+use crate::hover_labels::OpenPopups;
 use crate::polyline::{CULL_MARGIN_PX, VisiblePath, segment_outside, visible_path};
 use crate::track_renderer::{DashPattern, draw_dashed_line};
 use crate::transform::MercTransform;
+
+/// The area id of the edge's label, distinct from `response.id.with("popup")`,
+/// which the map response's context menu uses. Sharing that id fires egui's
+/// debug assertion for one widget at two layers on the frame the menu opens.
+const SNAPPED_EDGE_LABEL_ID: &str = "map_snapped_edge_label";
 
 /// Stroke width. Thinner than the recorded trackline (3.0), so the snapped
 /// geometry does not look like a second track.
@@ -81,6 +88,8 @@ pub struct SnappedTrackRenderer<'a> {
     /// anchors to their recorded points.
     files: &'a [LoadedFile],
     filter: &'a GlobalFilter,
+    /// The edge's label draws only while neither popup is open.
+    open_popups: OpenPopups,
 }
 
 impl<'a> SnappedTrackRenderer<'a> {
@@ -88,11 +97,13 @@ impl<'a> SnappedTrackRenderer<'a> {
         snapped: &'a SnappedTracks,
         files: &'a [LoadedFile],
         filter: &'a GlobalFilter,
+        open_popups: OpenPopups,
     ) -> Self {
         Self {
             snapped,
             files,
             filter,
+            open_popups,
         }
     }
 }
@@ -209,7 +220,9 @@ impl Plugin for SnappedTrackRenderer<'_> {
             }
         }
 
-        if let Some(hit) = &best {
+        if !self.open_popups.a_popup_owns_the_pointer()
+            && let Some(hit) = &best
+        {
             let edge = self.snapped.get(hit.track).and_then(|geometry| {
                 let info = geometry.segments.get(hit.segment)?.edge_at(hit.vertex)?;
                 geometry.edges.get(info)
@@ -218,7 +231,10 @@ impl Plugin for SnappedTrackRenderer<'_> {
                 // Anchored at the response for the whole map, which lands the
                 // label in its bottom-left corner and clear of the stack of
                 // labels drawn at the pointer.
-                response.show_tooltip_ui(|ui| edge_tooltip_rows(ui, edge));
+                Popup::from_response(response)
+                    .kind(PopupKind::Tooltip)
+                    .id(egui::Id::new(SNAPPED_EDGE_LABEL_ID))
+                    .show(|ui| edge_tooltip_rows(ui, edge));
             }
         }
     }
