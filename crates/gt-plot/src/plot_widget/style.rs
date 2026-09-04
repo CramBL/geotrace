@@ -99,8 +99,8 @@ pub(super) fn file_line_style(file_index: usize) -> LineStyle {
         .unwrap_or(LineStyle::Solid)
 }
 
-/// Shifts a color toward white (positive `factor_pct`) or black (negative)
-/// by the given percentage.
+/// Shifts a color by `factor_pct` percent toward white (positive) or black
+/// (negative).
 pub(super) fn shade_color(color: Color32, factor_pct: i16) -> Color32 {
     let (target, amount_pct) = if factor_pct >= 0 {
         (255, factor_pct)

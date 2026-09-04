@@ -1,6 +1,6 @@
 //! The SVG-to-mesh tessellation pipeline.
 //!
-//! [tessellate_icon] parses an SVG with usvg, walks its flattened tree in
+//! [`tessellate_icon`] parses an SVG with usvg, walks its flattened tree in
 //! paint order, and tessellates every fill and stroke with lyon into one
 //! [IconMeshTemplate] per size bucket, each with a baked anti-alias fringe
 //! (see the private `fringe` submodule).
@@ -8,8 +8,7 @@
 //! Only the subset of SVG used by the icon assets is supported: plain-color
 //! fills and strokes, groups without opacity/clip/mask/filter, no text or
 //! images.
-//! Anything else is a hard error so a bad asset fails the build instead of
-//! rendering wrong.
+//! Anything else is a hard error: a bad asset fails the build.
 
 mod fringe;
 
@@ -28,7 +27,7 @@ use crate::template::{
 
 /// Curve flattening tolerance, in bucket pixels.
 ///
-/// Applied after the per-bucket scale in [bucket_mesh], i.e. in already-scaled
+/// Applied after the per-bucket scale in [`bucket_mesh`], i.e. in already-scaled
 /// bucket-pixel space, so the same absolute tolerance yields proportionally
 /// finer curves for larger buckets.
 const TOLERANCE_PX: f32 = 0.1;
@@ -63,7 +62,7 @@ struct Element {
 }
 
 /// The SVG `id` that assigns an element's vertices to the secondary tint
-/// slot; every other element uses the primary slot. See
+/// slot. Every other element uses the primary slot. See
 /// [crate::TemplateVertex::tint_slot].
 const SECONDARY_TINT_ID: &str = "tint2";
 
@@ -73,8 +72,8 @@ enum PaintOp {
 }
 
 struct StrokeStyle {
-    /// Width as written in the SVG; its meaning is determined per bake by
-    /// [StrokeWidthUnit] (see [stroke_width_px]).
+    /// Width as written in the SVG. [`StrokeWidthUnit`] determines its meaning
+    /// per bake (see [`stroke_width_px`]).
     width: f32,
     cap: LineCap,
     join: LineJoin,
@@ -92,8 +91,7 @@ pub enum StrokeWidthUnit {
     #[default]
     UserUnits,
     /// Physical pixels: strokes keep the same on-screen width at every
-    /// bucket, matching painter-drawn outlines whose width is in pixels
-    /// rather than a fraction of the glyph.
+    /// bucket, matching painter-drawn outlines whose width is in pixels.
     PhysicalPixels,
 }
 
@@ -102,7 +100,7 @@ pub fn tessellate_icon(svg_bytes: &[u8]) -> Result<IconTessellation, IconTessell
     tessellate_icon_with(svg_bytes, StrokeWidthUnit::default())
 }
 
-/// [tessellate_icon] with an explicit stroke-width interpretation.
+/// [`tessellate_icon`] with an explicit stroke-width interpretation.
 pub fn tessellate_icon_with(
     svg_bytes: &[u8],
     stroke_width_unit: StrokeWidthUnit,
@@ -316,7 +314,7 @@ struct EdgeRamp {
     inset_px: f32,
     outset_px: f32,
     /// Alpha multiplier for the whole element: strokes thinner than one
-    /// feather dim instead of fattening into blobs, like epaint's thin lines.
+    /// feather dim, like epaint's thin lines.
     alpha_factor: f32,
 }
 
@@ -334,8 +332,8 @@ fn edge_ramp(op: &PaintOp, scale: f32, stroke_width_unit: StrokeWidthUnit) -> Ed
             if width_px >= FEATHER_PX {
                 symmetric
             } else {
-                // A half-feather inset would collapse a sub-feather stroke;
-                // inset only a quarter of its width, keep the ramp one
+                // A half-feather inset would collapse a sub-feather stroke.
+                // Inset only a quarter of its width, keep the ramp one
                 // feather wide, and trade the lost coverage for lower alpha.
                 let inset_px = width_px / 4.0;
                 EdgeRamp {
@@ -489,7 +487,7 @@ mod tests {
     use crate::template::FEATHER_PX;
 
     /// Every icon asset, sorted. Kept in sync with `assets/icons/` by
-    /// [icon_names_match_assets_dir]; the rstest cases below must mirror it.
+    /// [`icon_names_match_assets_dir`]. The rstest cases below must mirror it.
     const ICON_NAMES: [&str; 18] = [
         "check",
         "circle_marker",
@@ -637,7 +635,7 @@ mod tests {
 
             // Both solid geometry and a fringe must be present. Solid alpha
             // can sit below 255 at small buckets, where sub-feather strokes
-            // are dimmed instead of fattened.
+            // are dimmed.
             assert!(
                 mesh.vertices.iter().any(|vertex| vertex.color[3] == 0),
                 "{label}: no fringe vertices"
@@ -661,8 +659,8 @@ mod tests {
         }
     }
 
-    /// Loop instead of rstest cases: this is an exhaustiveness check over all
-    /// icons at once, not a per-icon scenario.
+    /// One loop over every icon: this is an exhaustiveness check, and each
+    /// icon runs the same assertions.
     #[test]
     fn tessellation_is_deterministic() {
         for name in ICON_NAMES {
@@ -712,9 +710,9 @@ mod tests {
         );
 
         // Physical pixels: the on-screen width is constant, so the
-        // normalized thickness shrinks as the bucket grows (24 -> 64 px is
-        // a 8/3 factor; assert well past the halfway point to stay robust
-        // against the fringe).
+        // normalized thickness shrinks as the bucket grows. 24 -> 64 px is a
+        // factor of 8/3, and the assert takes 1.8 to leave room for the
+        // fringe.
         let physical_small = normalized_half_thickness(&physical, 24.0);
         let physical_large = normalized_half_thickness(&physical, 64.0);
         assert!(

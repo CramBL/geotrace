@@ -258,8 +258,7 @@ pub fn nav_points_without_a_valid_position(count: usize) -> Vec<NavPoint> {
 }
 
 /// `count` fixes one second apart from 2026-01-01 12:00:00 UTC, walking
-/// north-east from 55°N 12°E, with the fix at `out_of_range` carrying a
-/// latitude of 91° instead of its own.
+/// north-east from 55°N 12°E, with the fix at `out_of_range` at latitude 91°.
 #[expect(
     clippy::unwrap_used,
     reason = "Test data generation with hardcoded values"
@@ -336,7 +335,7 @@ pub fn nav_data_with_gap(first_count: usize, second_count: usize) -> Vec<NavPoin
 }
 
 /// A [`gt_types::LoadedTrack`] over [`nav_points_from`]'s points: metadata
-/// time range and tpv count derived from the points, everything else
+/// time range and TPV count derived from the points, everything else
 /// default. The shared builder for tests that need a track with a stable
 /// content fingerprint (time range + point count).
 pub fn loaded_track_from(
@@ -383,8 +382,8 @@ pub fn latlon_at_meters(x_m: f64, y_m: f64) -> (Latitude, Longitude) {
     )
 }
 
-/// A [`NavPoint`] at the given metric offset from the origin, carrying an
-/// optional satellite report. Stamped at the Unix epoch, since the placement
+/// A [`NavPoint`] `x_m` metres east and `y_m` metres north of the origin, with
+/// an optional satellite report. Stamped at the Unix epoch, since the placement
 /// tests that use this are time-independent.
 pub fn nav_point_at_meters(x_m: f64, y_m: f64, satellites: Option<Satellites>) -> NavPoint {
     let (lat, lon) = latlon_at_meters(x_m, y_m);
@@ -408,7 +407,7 @@ pub fn track_geometry(points: &[NavPoint]) -> gt_types::TrackGeometry {
     )
 }
 
-/// A [`gt_types::LoadedTrack`] over the given points, with the geometry the
+/// A [`gt_types::LoadedTrack`] over `points`, with the geometry the
 /// track builder measures for them and every other field defaulted. The shared
 /// builder for tests that supply explicit per-point content (satellite
 /// reports, or anchors set on the returned track).
@@ -469,7 +468,7 @@ pub fn nav_points_walking_from(
 }
 
 /// One fix per position of `positions`, a second apart from `start`, each with
-/// a heading so that none of them reads as a ghost fix. For tests over
+/// a heading so that none of them is a ghost fix. For tests over
 /// positions the walking fixtures cannot reach, such as a pair either side of
 /// the antimeridian.
 pub fn nav_points_at_positions(

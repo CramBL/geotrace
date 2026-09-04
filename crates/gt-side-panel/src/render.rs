@@ -40,7 +40,7 @@ use crate::widgets::{
 #[derive(Debug, Clone)]
 pub struct RecordingDetails {
     pub metadata: gt_types::FileMetadata,
-    /// The raw recording identity, if any; stripped for display by the dialog.
+    /// The raw recording identity, if any. The dialog strips it for display.
     pub identity: Option<String>,
 }
 
@@ -99,7 +99,7 @@ pub enum SnapRowView {
     /// Snappable, no run this session. The default for tracks without an entry.
     Idle,
     /// The file declares a travel mode without a road network (boat, rail,
-    /// aircraft); the value is the mode's display name for the hover text.
+    /// aircraft). The value is the mode's display name for the hover text.
     Unsnappable {
         travel_mode: String,
     },
@@ -123,7 +123,7 @@ pub enum SnapRowView {
         shown: bool,
         /// `Some` when the run is stale - produced under parameters or a
         /// server that differ from the current settings. Each entry names
-        /// one difference; the row offers a re-run. `None` = current.
+        /// one difference. The row offers a re-run. `None` = current.
         stale: Option<Vec<String>>,
         /// At least one chunk failed and left a gap in the result.
         partial: bool,
@@ -327,7 +327,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
         }
     });
 
-    // The progress strip pins to the panel bottom as an inner panel; the
+    // The progress strip pins to the panel bottom as an inner panel. The
     // file tree scrolls in the remaining central space.
     if ctx.snap.progress.active() {
         egui::Panel::bottom("snap_progress_strip").show(ui, |ui| {
@@ -746,9 +746,9 @@ fn render_file_row(
         let dur = gt_fmt::format_human_terse_duration(file.metadata.total_duration);
         let is_selected = ctx.tree.selection.contains(&file_key);
         // Truncate only the identity: the distance and duration stay pinned on the
-        // right so a long recording name clips itself instead of hiding the metrics
-        // or forcing the panel to grow. `Sides::shrink_left` lays the right group
-        // out first, then truncates the identity into whatever width is left.
+        // right, and a long recording name clips itself. `Sides::shrink_left`
+        // lays the right group out first, then truncates the identity into
+        // whatever width is left.
         let (resp, ()) = Sides::new().shrink_left().truncate().show(
             ui,
             |ui| {
@@ -882,7 +882,7 @@ fn snap_action(row: &SnapRowView, snap: SnapPanelView<'_>) -> Option<SnapAction>
             hover: OFFLINE_HOVER.to_owned(),
             consent_pending: false,
         },
-        // A stale run keeps its status glyph; this action is the re-run.
+        // A stale run keeps its status glyph. This action is the re-run.
         SnapRowView::Done {
             stale: Some(reasons),
             ..
@@ -929,7 +929,7 @@ fn snap_action(row: &SnapRowView, snap: SnapPanelView<'_>) -> Option<SnapAction>
 
 /// The re-run submenu's label for a row, `None` for rows without one.
 /// "Snap again as" re-runs an existing (completed or failed) run under an
-/// explicit costing; "Snap as" overrides a road-less declared travel mode
+/// explicit costing. "Snap as" overrides a road-less declared travel mode
 /// that never ran. In-progress rows finish first, idle rows keep the plain
 /// action.
 fn costing_submenu_label(row: &SnapRowView) -> Option<&'static str> {
@@ -1045,7 +1045,7 @@ fn snap_control(
 ) {
     let row = ctx.snap.rows.get(&track_ref).unwrap_or(&SnapRowView::Idle);
 
-    // A completed run always shows its status glyph (fresh or stale); a
+    // A completed run always shows its status glyph (fresh or stale). A
     // stale run additionally gets the re-run trigger from `snap_action`.
     if let SnapRowView::Done {
         snapped,
@@ -1211,14 +1211,14 @@ fn snap_track_costing_submenu(
     }
 }
 
-/// The context-menu counterpart of [`snap_control`]: same action state, text
-/// label instead of the icon. A completed run shows the entry disabled with
-/// the status hover, per the never-hide rule.
+/// The context-menu counterpart of [`snap_control`]: same action state, with a
+/// text label. A completed run shows the entry disabled with the status hover,
+/// per the never-hide rule.
 fn snap_menu_entry(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'_>) {
     let row = ctx.snap.rows.get(&track_ref).unwrap_or(&SnapRowView::Idle);
     match snap_action(row, ctx.snap) {
         Some(action) => {
-            // A stale completed run re-runs; everything else is a first run.
+            // A stale completed run re-runs. Everything else is a first run.
             let verb = if matches!(row, SnapRowView::Done { .. }) {
                 "Snap again"
             } else {
@@ -1806,7 +1806,7 @@ fn render_event_markers_section(
         }
     }
 
-    // No max_height cap - expands inline with the track's content.
+    // No `max_height` cap - expands inline with the track's content.
     for prefix in &prefix_set {
         let depth = prefix.chars().filter(|&c| c == '/').count();
         let segment = prefix.split('/').next_back().unwrap_or(prefix.as_str());
@@ -2064,7 +2064,7 @@ mod snap_action_tests {
     use super::*;
 
     fn view(offline: bool, consent_pending: bool) -> SnapPanelView<'static> {
-        // The rows map is irrelevant to snap_action. A `static` empty map keeps
+        // The rows map is irrelevant to `snap_action`. A `static` empty map keeps
         // the borrow 'static for the test helper.
         static EMPTY: std::sync::OnceLock<FxHashMap<TrackRef, SnapRowView>> =
             std::sync::OnceLock::new();

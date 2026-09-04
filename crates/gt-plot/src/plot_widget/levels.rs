@@ -65,8 +65,7 @@ pub(super) fn track_target(
 }
 
 /// The viewport one line selects its mipmap levels against, shared by every
-/// metric whose line is built from per-fix values rather than from
-/// [`TrackSeries`].
+/// metric whose line is built from per-fix values.
 ///
 /// `x_min` and `x_max` are the plot's visible x range intersected with
 /// `time_window`, and every marker overlay clips itself against them.

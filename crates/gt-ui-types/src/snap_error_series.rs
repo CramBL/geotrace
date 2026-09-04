@@ -3,8 +3,8 @@ use std::sync::Arc;
 use gt_types::TrackRef;
 use rustc_hash::FxHashMap;
 
-/// Per-point match kind of a snap run, as the plot shows it. A plain mirror
-/// of gt-snap's wire enum so the plot stays decoupled from the snap machinery
+/// Per-point match kind of a snap run, as the plot shows it. A plain mirror of
+/// gt-snap's wire variants so the plot stays decoupled from the snap machinery
 /// (like [`crate::SnappedTracks`] for the map).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapErrorKind {
@@ -23,7 +23,7 @@ pub enum SnapErrorKind {
 pub struct SnapErrorPoint {
     /// Plot x: the point's time as Unix seconds (the plot's shared x-axis).
     pub x_secs: f64,
-    /// Snap error in meters; `None` exactly for unsnapped points.
+    /// Snap error in meters. `None` exactly for unsnapped points.
     pub error_m: Option<f64>,
     pub kind: SnapErrorKind,
     /// True when the run holds no snap data for the points right before

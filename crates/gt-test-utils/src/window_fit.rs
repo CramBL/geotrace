@@ -1,6 +1,7 @@
 //! Assertions for the invariant every [`egui::Window`] in the app has to hold:
-//! oversized content scrolls inside the window instead of pushing the window
-//! past the screen edge, where egui clips it and puts the content out of reach.
+//! oversized content scrolls inside the window, which keeps the window inside
+//! the screen edge. egui clips a window past that edge and puts its content out
+//! of reach.
 
 use egui_kittest::Harness;
 use egui_kittest::kittest::{By, Queryable as _};

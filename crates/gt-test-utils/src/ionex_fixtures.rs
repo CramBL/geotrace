@@ -5,9 +5,9 @@ use gt_ionex::grid::{AxisDeclaration, GridAxis, LatitudeAxis, LongitudeAxis, Map
 use gt_ionex::maps::{GlobalIonosphereMaps, TecMap};
 use gt_ionex::tec::TotalElectronContent;
 
-/// Maps of `day` whose every node carries one value, at the given whole hours
-/// from that day's midnight. Hour 24 is the map at the end of the day, which a
-/// published file dates to the next day's midnight.
+/// Maps of `day` whose every node holds one value, at the whole hours listed
+/// in `samples`, counted from that day's midnight. Hour 24 is the map at the
+/// end of the day, which a published file dates to the next day's midnight.
 #[expect(
     clippy::expect_used,
     reason = "The maps cannot fail to build: the grid axis parameters are fixed constants"

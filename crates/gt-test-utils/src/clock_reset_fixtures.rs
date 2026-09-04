@@ -5,14 +5,14 @@
 //! that shape produces:
 //!
 //! - one track of [`COLD_BOOT_FIX_COUNT`] fixes stamped in the RTC epoch, from
-//!   before the receiver ever corrected the clock, with no host timestamp;
+//!   before the receiver ever corrected the clock, with no host timestamp.
 //! - [`BOOT_COUNT`] tracks of [`FIXES_PER_BOOT`] fixes stamped in the true
 //!   epoch, the first [`FIXES_BEFORE_THE_CLOCK_IS_CORRECTED`] of each carrying
 //!   a host timestamp still at the RTC default, the rest a host timestamp
-//!   [`HOST_AHEAD_MS`] ahead of the receiver's;
+//!   [`HOST_AHEAD_MS`] ahead of the receiver's.
 //! - an `accel` channel sampled at [`CHANNEL_RATE_HZ`], every sample stamped in
 //!   the RTC epoch, in [`CHANNEL_RUN_LENGTHS`] runs that each restart at
-//!   [`CHANNEL_RUN_START_SECS`] after the RTC default;
+//!   [`CHANNEL_RUN_START_SECS`] after the RTC default.
 //! - event markers in both epochs.
 //!
 //! The route, the names and the timestamps are invented.

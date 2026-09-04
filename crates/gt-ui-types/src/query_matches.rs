@@ -16,7 +16,7 @@ pub type TrackRanges = FxHashMap<TrackRef, Vec<Range<usize>>>;
 /// Produced by the app layer from the pipeline output and consumed by the map.
 /// Rendering state only - per-query summaries and tables stay with the query
 /// window. `hide`/`keep` queries contribute to `hidden` (the polyline breaks
-/// there); each `draw` query is one entry in `draws`, painted in its own color.
+/// there). Each `draw` query is one entry in `draws`, painted in its own color.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QueryMatches {
     /// Per track: point ranges removed from the map (sorted, disjoint).
@@ -212,8 +212,8 @@ mod tests {
         TrackRef::new(FileIdx::new(0), TrackIdx::new(0))
     }
 
-    /// A range built from arguments rather than a literal, so single-element
-    /// `vec![rng(0, 1)]` does not trip clippy's `single_range_in_vec_init`.
+    /// A range built from arguments, so single-element `vec![rng(0, 1)]` does
+    /// not trip clippy's `single_range_in_vec_init`.
     fn rng(start: usize, end: usize) -> Range<usize> {
         start..end
     }
@@ -288,7 +288,7 @@ mod tests {
             draws,
             ..QueryMatches::default()
         };
-        // Every representable layer covers point 0; the overflow layer does not
+        // Every representable layer covers point 0. The overflow layer does not
         // alias back onto bit 0.
         assert_eq!(matches.draws.len(), DrawLayerMask::MAX_LAYERS + 1);
         assert_eq!(

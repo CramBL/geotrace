@@ -13,7 +13,7 @@ use crate::style;
 const MASK_RING_POINTS: usize = style::MASK_RING_SEGMENTS as usize + 1;
 
 /// Draw the grid: the horizon rim, the inner elevation rings, and the
-/// cardinal spokes. `full` labels the rings and all four cardinals; the
+/// cardinal spokes. `full` labels the rings and all four cardinals. The
 /// compact size labels north only and ticks the other cardinals.
 pub(crate) fn draw_grid(ui: &egui::Ui, center: Pos2, radius: f32, full: bool) {
     let painter = ui.painter();

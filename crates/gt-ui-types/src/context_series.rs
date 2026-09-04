@@ -51,7 +51,7 @@ pub struct GeomagneticContextLines {
 }
 
 /// The context metric lines the plot draws across the span it shows, sampled
-/// from the archives rather than clipped to the fixes of a recording.
+/// from the archives.
 ///
 /// Each [`Arc`] identity changes exactly when its samples do, which is what
 /// the plot rebuilds its mipmaps on.

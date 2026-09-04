@@ -49,7 +49,7 @@ pub enum DisplayCategory {
 }
 
 impl DisplayCategory {
-    /// The category's bit in a [`DisplayMask`]. Cannot overflow: the const
+    /// The category's bit in a [`DisplayMask`]. Cannot overflow: the `const`
     /// assert below pins `COUNT` to the mask's width.
     fn bit(self) -> u16 {
         1 << (self as u16)
@@ -140,7 +140,7 @@ impl DisplayMask {
         self.hidden = ALL_HIDDEN;
     }
 
-    /// Show only the given category, hiding every other one.
+    /// Show only `category`, hiding every other one.
     pub fn solo(&mut self, category: DisplayCategory) {
         self.hide_all();
         self.set_visible(category, true);

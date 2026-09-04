@@ -435,8 +435,8 @@ fn snapshot_snap_status_hover_with_warnings() {
     harness.run();
 
     harness.inner.get_by_label(ICON_PATH).hover();
-    // Tooltips appear after egui's hover delay; keep stepping until the
-    // delay has elapsed and the tooltip laid itself out.
+    // Tooltips appear after egui's hover delay. Keep stepping until the
+    // delay has elapsed and egui has laid the tooltip out.
     for _ in 0..60 {
         harness.run();
     }
@@ -656,7 +656,7 @@ fn context_menu_toggles_snapped_track_visibility() {
 }
 
 /// The "Snap again as" submenu: hovering it on a completed run's context
-/// menu opens the costing choices; clicking one requests the costing
+/// menu opens the costing choices. Clicking one requests the costing
 /// re-run (and not a plain snap or a visibility toggle).
 #[test]
 fn costing_submenu_requests_the_chosen_costing() {
@@ -1229,7 +1229,7 @@ fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
     state.tree.toggle_expand_file(FileIdx::new(0));
 
     // Renders the expanded track row, exercising the `fix_stats == None` fallback
-    // ("No satellite data") instead of the colored tooltip.
+    // ("No satellite data").
     let mut harness = make_harness(state);
     harness.run();
 }
@@ -1533,9 +1533,9 @@ fn make_state_with_metadata() -> State {
 
 #[test]
 fn snapshot_recording_name_template() {
-    // A non-default template renders "{title} — {device}" for each row instead
-    // of the filename, and recordings with metadata show the details note icon
-    // between the checkbox and the name.
+    // A non-default template renders `{title} — {device}` for each row, and
+    // recordings with metadata show the details note icon between the checkbox
+    // and the name.
     let mut harness = make_harness(make_state_with_metadata());
     harness.run();
     harness.snapshot("side_panel_name_template");

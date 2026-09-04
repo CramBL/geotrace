@@ -48,9 +48,8 @@ const MIN_LEVEL_POINTS: usize = 2;
 
 /// Number of input points grouped into one output pair (min + max) at each
 /// downsampling step.
-/// A window of 4 emits 2 points, giving a ~2× point-count reduction per level -
-/// fine-grained enough that level selection can closely match the target sample
-/// count rather than overshooting it by up to 4×.
+/// A window of 4 emits 2 points, a ~2× point-count reduction per level: the
+/// level selection lands on at most about twice the target sample count.
 const DOWNSAMPLE_WINDOW: usize = 4;
 
 const FULL_TURN_DEGREES: f64 = 360.0;
@@ -178,8 +177,7 @@ pub struct LevelSelection {
 
 impl LevelSelection {
     /// Whether this selection reads the finest (original) level - i.e. the
-    /// view shows full detail and every selected point is a real data point
-    /// rather than a downsampled aggregate.
+    /// view shows full detail and every selected point is a real data point.
     pub fn is_full_detail(&self) -> bool {
         self.level_idx == 0
     }
@@ -239,7 +237,7 @@ impl MipMap {
             // `levels` is guaranteed non-empty: it was initialised with one element
             // and we only append.  `map_or` avoids an `expect` while remaining
             // correct: an empty fallback produces an empty downsample, which has
-            // len < MIN_LEVEL_POINTS and immediately breaks.
+            // fewer than `MIN_LEVEL_POINTS` points and immediately breaks.
             let last_len = levels.last().map_or(0, Vec::len);
             let next = downsample(levels.last().map_or(&[][..], Vec::as_slice), period);
             // Stop at the floor, and also when a level stops shrinking: a
@@ -291,7 +289,7 @@ impl MipMap {
     }
 
     /// Compute a `LevelSelection` that records which level and which sub-range
-    /// of that level to use for the given view bounds and target point count.
+    /// of that level to use for `range` and `target_count`.
     ///
     /// Pass the result to [`Self::slice_at`] to obtain the data slice.
     /// Storing the `LevelSelection` and calling `slice_at` each frame avoids
@@ -341,9 +339,8 @@ impl MipMap {
     /// and return its index with that level's `partition_point` bounds for the
     /// span.
     ///
-    /// Returning the bounds alongside the index lets [`Self::select_indices`]
-    /// reuse them directly instead of repeating the same two binary searches on
-    /// the chosen level.
+    /// The two binary searches on the chosen level run once: the bounds
+    /// returned here are the ones [`Self::select_indices`] uses.
     ///
     /// Falls back to the finest level's bounds when no level meets the target -
     /// the reverse iteration always visits level 0 last, so its bounds are
@@ -391,10 +388,10 @@ fn downsample(data: &[PlotPoint], period: Option<WrapPeriod>) -> Vec<PlotPoint> 
             continue;
         };
 
-        // Emit in chronological order so the rendered line follows the
-        // correct time direction and the shape of the window is preserved.
-        // Compare by identity rather than `x` equality: a vertical line (two
-        // distinct points sharing one timestamp) must still emit both ends.
+        // Emit in chronological order so the rendered line follows the correct
+        // time direction and keeps the window's two kept points in the order
+        // they occurred.  Compare by identity: a vertical line (two distinct
+        // points sharing one timestamp) must still emit both ends.
         if std::ptr::eq(first, second) {
             // Same point - one representative.
             out.push(*first);
@@ -629,9 +626,8 @@ mod tests {
     // plot's visible viewport.  A naive per-side clamp of such an
     // intersection (`viewport.0.max(filter.0)`, `viewport.1.min(filter.1)`)
     // can yield `x_min > x_max` when the two ranges are disjoint.  `MipMap`
-    // must treat that as a (legitimately empty) range rather than panicking
-    // on an inverted slice index - see the `slice index starts at .. but ends
-    // at ..` panic this guards against.
+    // treats that as an empty range.  Indexing a slice with an inverted range
+    // panics with `slice index starts at .. but ends at ..`.
     //
     // Each case below pins both halves of the fix: the counted span must
     // restore `clip_start <= clip_end` (the invariant `slice_at` relies on -

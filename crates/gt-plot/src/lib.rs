@@ -70,9 +70,9 @@ pub struct PreparedSeries(pub(crate) Vec<series::TrackSeries>);
 /// Build mipmap series for all tracks in `file`.
 ///
 /// This is the CPU-heavy work - call it from a background loader thread, not
-/// from the render loop.  `analysis` parameterizes the derived satellite series;
-/// pass the same value the [`PlotState`] is using so newly loaded files match
-/// the rest of the plot.
+/// from the render loop.  `analysis` parameterizes the derived satellite
+/// series.  Pass the same value the [`PlotState`] is using so newly loaded
+/// files match the rest of the plot.
 pub fn prepare_file_series(
     file: &gt_types::LoadedFile,
     analysis: AnalysisConfig,

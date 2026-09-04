@@ -1,7 +1,7 @@
 //! Rendering of the user-configurable recording display-name template.
 //!
 //! A template is free text with `{token}` placeholders. Recognised tokens are
-//! substituted with the matching field; a token whose field is absent collapses,
+//! substituted with the matching field. A token whose field is absent collapses,
 //! taking its adjacent literal separator with it, so `"{title} — {device}"` with
 //! no device renders as just the title (not `"Alpha — "`). A token may cap its
 //! value at `N` characters as `{title:12}`. Unknown tokens are kept verbatim as
@@ -11,9 +11,9 @@ use std::{borrow::Cow, num::NonZeroUsize};
 
 /// The field values a [`render_name_template`] call draws from.
 ///
-/// `filename` is required (and used as the ultimate fallback); it is expected to
-/// already be common-prefix-stripped by the caller. The rest mirror the optional
-/// SDK metadata on a recording.
+/// `filename` is required and is the ultimate fallback. The caller strips its
+/// common prefix beforehand. The rest mirror the optional SDK metadata on a
+/// recording.
 #[derive(Debug, Clone, Copy)]
 pub struct NameFields<'a> {
     pub title: Option<&'a str>,
@@ -24,7 +24,7 @@ pub struct NameFields<'a> {
 
 /// One recognised placeholder token. The `snake_case` wire names are the tokens
 /// users type inside `{...}`. Deriving them keeps the set in lockstep with the
-/// enum (see the exhaustiveness test).
+/// variants (see the exhaustiveness test).
 #[derive(
     Debug,
     Clone,
@@ -112,7 +112,7 @@ fn parse(template: &str) -> Vec<Part<'_>> {
     let mut parts = Vec::new();
     let mut rest = template;
     // `{` is ASCII, so `open` from `find` is always a valid char boundary for
-    // `split_at`; `get` is used elsewhere to satisfy the `string_slice` lint and
+    // `split_at`. `get` is used elsewhere to satisfy the `string_slice` lint and
     // to fall back safely on any unexpected index.
     while let Some(open) = rest.find('{') {
         let (before, from_open) = rest.split_at(open);
@@ -150,7 +150,7 @@ fn parse(template: &str) -> Vec<Part<'_>> {
 /// Render `template` against `fields`.
 ///
 /// Absent (or empty) tokens collapse together with the literal separator that
-/// joins them to their neighbour; leading/trailing literal text next to a
+/// joins them to their neighbour. Leading and trailing literal text next to a
 /// present token is kept. If nothing renders, falls back to `fields.filename`.
 pub fn render_name_template(template: &str, fields: &NameFields<'_>) -> String {
     let mut out = String::new();

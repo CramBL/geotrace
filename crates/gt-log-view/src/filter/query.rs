@@ -22,9 +22,9 @@ use crate::filter::{
 };
 
 /// Bitset words one chunk of a scan fills. At 64 entries per word this is
-/// 65,536 entries per chunk: enough for a worker to earn its dispatch, small
-/// enough for the pool to keep stealing work on a log of a few hundred thousand
-/// lines.
+/// 65,536 entries per chunk: enough work per dispatch to cover the worker's
+/// cost, small enough for the pool to keep stealing work on a log of a few
+/// hundred thousand lines.
 const WORDS_PER_CHUNK: NonZeroUsize = match NonZeroUsize::new(1024) {
     Some(words) => words,
     None => NonZeroUsize::MIN,

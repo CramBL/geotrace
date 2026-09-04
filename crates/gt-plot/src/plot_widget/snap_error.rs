@@ -46,7 +46,7 @@ const SNAPPED_MARKER_RADIUS: f32 = 2.5;
 pub(crate) struct SnapErrorPlotCache {
     /// Identity of the source series, for invalidation.
     source: ArcIdentity,
-    /// One cascade per drawable line run (maximal valued stretches; see
+    /// One cascade per drawable line run, i.e. per maximal valued stretch (see
     /// [`snap_error_runs`]).
     runs: Vec<MipMap>,
     /// Snapped-kind points, ascending by x - the anchor markers.
@@ -259,8 +259,8 @@ mod tests {
     use super::super::FilterTimeWindow;
     use super::*;
 
-    /// A viewport over `0..=x_max` seconds, `width` px wide, with the
-    /// given per-track sample cap.
+    /// A viewport over `0..=x_max` seconds, `width` px wide, with a per-track
+    /// sample cap of `cap`.
     fn viewport(x_max: f64, width: f32, cap: usize) -> LineViewport {
         LineViewport {
             x_min: 0.0,
@@ -283,10 +283,9 @@ mod tests {
     }
 
     /// The anchor-marker gate: dots draw only while every viewport-visible
-    /// run reads its finest mipmap level. A downsampled run vetoes; a run
-    /// entirely outside the viewport neither draws nor vetoes; no runs at
-    /// all leave the gate open (the marker overlay then has nothing to
-    /// draw from anyway, but the gate must not mask a future source).
+    /// run reads its finest mipmap level. A downsampled run vetoes. A run
+    /// entirely outside the viewport neither draws nor vetoes. No runs at all
+    /// leave the gate open.
     #[rstest::rstest]
     #[case::no_runs(vec![], viewport(100.0, 800.0, 4096), true)]
     #[case::single_run_at_full_detail(vec![run_of(100)], viewport(100.0, 800.0, 4096), true)]
@@ -346,7 +345,7 @@ mod tests {
             "an unchanged series keeps its cache entry"
         );
 
-        // A new run (new Arc) rebuilds; a removed track prunes.
+        // A new run (new Arc) rebuilds. A removed track prunes.
         series.points_by_track.insert(
             track,
             Arc::new(vec![sep(0.0, Some(1.0)), sep(1.0, Some(2.0))]),
@@ -360,7 +359,7 @@ mod tests {
         assert!(cache.is_empty(), "tracks that left the series are pruned");
     }
 
-    /// Shorthand for a snap error point at time `x` with the given error.
+    /// Shorthand for a snap error point at time `x` with error `error_m`.
     fn sep(x: f64, error_m: Option<f64>) -> SnapErrorPoint {
         SnapErrorPoint {
             x_secs: x,

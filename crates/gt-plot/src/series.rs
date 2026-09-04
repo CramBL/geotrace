@@ -87,7 +87,7 @@ pub(crate) struct TrackSeries {
     pub util_qzss: MipMap,
     /// Epochs where the receiver used a satellite below the elevation mask, so
     /// that satellite is excluded from the utilization rate.  Surfaced as plot
-    /// markers; also mask-dependent.
+    /// markers.  Also mask-dependent.
     pub util_anomalies: Vec<UtilAnomaly>,
     /// Loss-of-lock (slip) rate per minute, all constellations combined and per
     /// constellation.  Depends on the elevation mask, the SNR-drop threshold,

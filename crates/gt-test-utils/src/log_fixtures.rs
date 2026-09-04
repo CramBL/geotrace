@@ -93,7 +93,8 @@ const UNTIMED_LINE_ONE_IN: usize = 50;
 const MAX_UNTIMED_RUN_LINES: usize = 3;
 
 /// One in this many lines is a reboot marker, after which the clock restarts
-/// behind where it left off, as an unsynchronised device's does.
+/// behind where it left off, as it does on a device that has not set its clock
+/// yet.
 const REBOOT_ONE_IN: usize = 512;
 
 const REBOOT_MARKER: &str = "--- Device reboot ---";
@@ -208,7 +209,8 @@ pub fn synthetic_journald_log(spec: SyntheticLogSpec) -> String {
     text
 }
 
-/// Writes one line: the moment `time` names in the requested form, then `message`.
+/// Writes one line: the moment `time` names in the form `timestamps` selects,
+/// then `message`.
 fn write_entry(
     text: &mut String,
     timestamps: SyntheticLogTimestamps,

@@ -63,7 +63,7 @@ pub trait HarnessInteraction {
 
     fn press_drag_release(&mut self, from: egui::Pos2, delta: egui::Vec2, move_frames: u16);
 
-    /// Presses and releases at `target` within one frame, which egui reads as
+    /// Presses and releases at `target` within one frame, which egui reports as
     /// a click.
     fn click_at(&mut self, target: egui::Pos2);
 
@@ -77,7 +77,7 @@ pub trait HarnessInteraction {
     fn press_where_the_pointer_rests(&mut self, target: egui::Pos2);
 
     /// Presses and releases twice at `target` within one frame, which egui
-    /// reads as a double click.
+    /// reports as a double click.
     ///
     /// The harness gives every queued event a frame of its own, and its clock
     /// ticks a quarter second per frame: two clicks queued one after the other

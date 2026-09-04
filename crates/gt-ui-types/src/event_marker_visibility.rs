@@ -43,7 +43,7 @@ impl EventMarkerVisibility {
         self.hidden.get(&track).is_some_and(|h| h.contains(path))
     }
 
-    /// Toggle the explicit hidden state of `path` for the given track.
+    /// Toggle the explicit hidden state of `path` for `track`.
     pub fn toggle(&mut self, track: TrackRef, path: &str) {
         let hidden = self.hidden.entry(track).or_default();
         if !hidden.remove(path) {
@@ -69,7 +69,8 @@ impl EventMarkerVisibility {
         }
     }
 
-    /// Replace the hidden set for one track with the given minimal root paths.
+    /// Replace the hidden set for one track with the minimal root paths in
+    /// `hidden_roots`.
     ///
     /// Each entry in `hidden_roots` should be a path whose parent is NOT hidden -
     /// callers are responsible for ensuring minimality.

@@ -25,8 +25,8 @@ pub(crate) const REBOOT_SEPARATOR_LINE: &str = "--- Device reboot ---";
 /// The line the exporter opens its trailing summary block with.
 pub(crate) const SUMMARY_BLOCK_HEADER_LINE: &str = "----------- Journal summary -----------";
 
-/// What a recognized non-entry line marks. Structural lines are kept out of the
-/// entries: they carry the log's structure instead of its content.
+/// What a recognized non-entry line marks. A structural line states the log's
+/// structure and is kept out of the entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StructuralLineKind {
     /// The boundary between two boot sessions.
@@ -50,7 +50,7 @@ struct StructuralPattern {
 }
 
 /// The exporter idioms the parser recognizes. Teaching it another one is one
-/// row here. A line matching no row is read as an entry.
+/// row here. A line matching no row is parsed as an entry.
 const STRUCTURAL_LINE_REGISTRY: &[StructuralPattern] = &[
     StructuralPattern {
         matcher: LineMatcher::Exact(REBOOT_SEPARATOR_LINE),
