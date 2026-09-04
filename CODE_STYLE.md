@@ -29,7 +29,7 @@ let Some(first) = vec.get(0) else {
 ### Iterators
 Be careful when iterating over `HashSet`s and `HashMap`s, as the order is non-deterministic.
 Whenever you return a list or an iterator, sort it first.
-If you don't want to sort it for performance reasons, you MUST put `unsorted` in the  name as a warning.
+If sorting is too slow, you MUST put `unsorted` in the  name as a warning.
 
 ### Error handling and logging
 
@@ -81,7 +81,7 @@ If data is lost, it is an error and NOT a warning.
 This is the default verbosity level. This should mostly be used _only by application code_ to write interesting and rare things to the application user. For instance, you may perhaps log that a file was saved to specific path, or where the default configuration was read from. These things lets application users understand what the application is doing, and debug their use of the application.
 
 #### `DEBUG`
-This is a level you opt-in to to debug either an application or a library. These are logged when high-level operations are performed (e.g. texture creation). If it is likely going to be logged each frame, move it to `TRACE` instead.
+This is a level you opt-in to debug either an application or a library. These are logged when high-level operations are performed (e.g. texture creation). If it is likely going to be logged each frame, move it to `TRACE` instead.
 
 #### `TRACE`
 This is the last-resort log level, and mostly for debugging libraries or the use of libraries. Here any and all spam goes, logging low-level operations.
@@ -184,7 +184,8 @@ read_to_string(path)?;
 some_crate::utils::helper(…);
 ```
 
-For very common functions (e.g. `mem::swap`, `iter::once`) retaining one module level is sufficient; for less familiar ones, keep more context.
+For very common functions (e.g. `mem::swap`, `iter::once`) retaining one module level is sufficient.
+For less familiar ones, keep more context.
 
 When intentionally ignoring a `Result`, prefer `foo().ok();` over `let _ = foo();`. The former shows what is happening, and will fail to compile if `foo`:s return type ever changes.
 
@@ -192,7 +193,7 @@ Never use `foo().unwrap_or(())` to discard a `Result` - it is more verbose than 
 
 We group and order imports (`use` statements) by `std`, other crates, and lastly own `crate` and `super`. This corresponds to [`StdExternalCrate`](https://rust-lang.github.io/rustfmt/?version=v1.8.0&search=group#StdExternalCrate%5C%3A).
 
-We group our `use` statements by module, e.g. `crate_name::module::{a, b, c}`. This is a compromise, being rather terse while still avoiding excessive merge conflicts. See [the cargofmt docs](https://rust-lang.github.io/rustfmt/?version=v1.8.0&search=group#Module%5C%3A) for details.
+We group our `use` statements by module, e.g. `crate_name::module::{a, b, c}`. This is a compromise, being rather terse while still avoiding excessive merge conflicts. See [the `rustfmt` docs](https://rust-lang.github.io/rustfmt/?version=v1.8.0&search=group#Module%5C%3A) for details.
 
 Use the destructor syntax (`let Self { a, b, c} = self;`) whenever you're accessing most of (or all) of the fields of a struct.
 
@@ -225,7 +226,7 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 
 | Term | Meaning | Examples in code |
 |------|---------|-----------------|
-| **file** | A single loaded `.gtd` file; maps to one `LoadedFile`. | `FileIdx`, `FileNode`, `fi` |
+| **file** | A single loaded `.gtd` file. Maps to one `LoadedFile`. | `FileIdx`, `FileNode`, `fi` |
 | **track** | A contiguous GPS recording within a file (what the user calls a "track"). | `LoadedTrack`, `TrackIdx`, `TrackRef`, `ti` |
 | **point** | A single data point within a track. | `PointIdx`, `SpatialPoint`, `pi` |
 | **track ref** (`TrackRef`) | Typed (file-index, track-index) pair that uniquely addresses a track. Fields: `fi: FileIdx`, `index: TrackIdx`. | `TrackRef::new(fi, ti)` |
@@ -237,7 +238,7 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 | **generated marker** | A marker derived automatically from data (e.g. trip start/end). | `GeneratedMarker`, `generated_markers` |
 | **visibility** | Whether a file/track/marker is shown on the map. Controlled via `Visibility` / `GlobalFilter`. | `track_visible`, `show_only_track` |
 | **highlight** | Transient hover or sticky selection state. | `MapHighlight`, `HighlightScope` |
-| **polyline span** | A maximal stretch of consecutive on-screen track points painted as one unbroken polyline; viewport culling splits a track into spans, and key changes (e.g. fix-quality color) split spans into sub-spans. Renderer-internal to `gt-map`. | `PolylineSpans`, `VisiblePath::Spans`, `split_key_spans` |
+| **polyline span** | A maximal stretch of consecutive on-screen track points painted as one unbroken polyline. Viewport culling splits a track into spans, and key changes (e.g. fix-quality color) split spans into sub-spans. Renderer-internal to `gt-map`. | `PolylineSpans`, `VisiblePath::Spans`, `split_key_spans` |
 | **query** | A short declarative pipeline the user writes and runs over loaded data. Defined by the `gt-query` crate (lex → parse → check → run) and driven from the query window. | `gt-query`, `QueryWindow`, `CheckedQuery` |
 | **query session** | The run lifecycle of the editor's queries over the loaded data: the text, its per-query check results, the run in flight, and the last run's results. Lives in `gt-query-run`, above the language and below the UI. | `QuerySession`, `PreparedRun`, `RunResults` |
 | **stage** | One step of a query pipeline, separated by `\|`: the source (`points`), `with`, `window`, `where`, `draw`, `table`. | parser stage methods in `gt-query` |
@@ -249,14 +250,14 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 | **value bar** | The faint bar behind a number in the query results table: its length is where that value sits between the lowest and the highest its column takes over the run's matches. | `ValueBar`, `ColumnValueRange` |
 | **snap** / **snap to road** | Matching a track against the OpenStreetMap road network (Valhalla map matching), and the act of requesting it for one track. Not "match" (query matches) or "trace" (TPV traces). | `gt-snap`, `SnapScheduler`, `SnapResult` |
 | **snapped track** | The matched road geometry drawn on the map alongside the recorded track. Not "ghost track" - a ghost is a heading-less nav point. | `SnappedTracks`, `SnappedTrackSegment` |
-| **ghost fix** | A nav point the receiver dead-reckoned rather than measured: no heading, or a satellite report with nothing in fix. Drawn hollow on the map and never sent to the map-matching server. | `NavPoint::is_ghost_fix`, `FixQuality::Lost` |
+| **ghost fix** | A nav point the receiver dead-reckoned: no heading, or a satellite report with nothing in fix. Drawn hollow on the map and never sent to the map-matching server. | `NavPoint::is_ghost_fix`, `FixQuality::Lost` |
 | **sendable stretch** | A maximal run of a track's points with no ghost fix between them. A snap request never spans two of them, so the snapped track breaks where the receiver was dead reckoning. | `SendableStretch`, `ChunkContinuity` |
 | **snap error** | Distance in meters from a recorded point to its snapped position. | `MetricKind::SnapError`, `SnapErrorSeries` |
 | **snapped / interpolated / unsnapped** | Per-point match kind, mirroring Valhalla's `matched` / `interpolated` / `unmatched` wire names. | `SnapPointKind`, `SnapErrorKind`, `SnapKindCounts` |
-| **discontinuity** | A stretch Valhalla could not connect through the road network; rendered as a gap in the snapped track. | `begin_route_discontinuity`, `snapped_track::point_groups` |
-| **travel mode** | Optional `.gtd` metadata declaring the recording platform (car, bicycle, boat, ...). Declared by the recorder via the SDKs; the app derives the default snap costing from it. | `TravelMode`, `meta_travel_mode`, `resolve_costing` |
+| **discontinuity** | A stretch Valhalla could not connect through the road network. Rendered as a gap in the snapped track. | `begin_route_discontinuity`, `snapped_track::point_groups` |
+| **travel mode** | Optional `.gtd` metadata declaring the recording platform (car, bicycle, boat, ...). Declared by the recorder via the SDKs. The app derives the default snap costing from it. | `TravelMode`, `meta_travel_mode`, `resolve_costing` |
 | **stale** (snap) | A completed snap run whose parameters or server host differ from what a fresh run would use now. Always shown and marked, never silently dropped or auto re-run. | `stale_reasons`, `SnapRowView::Done::stale` |
-| **auto snap** | The mode where loaded tracks snap automatically while shown on the map. Off until explicitly chosen; never active without upload consent. | `SnapSettings::auto_snap`, `SnapPriority::Auto` |
+| **auto snap** | The mode where loaded tracks snap automatically while shown on the map. Off until explicitly chosen. Never active without upload consent. | `SnapSettings::auto_snap`, `SnapPriority::Auto` |
 | **error whisker** | The thin line from a recorded point to its snapped position, drawn at high zoom to make the snap error spatially legible. | `WhiskerAnchor`, `WHISKER_MIN_PX_PER_METER` |
 | **sky plot** | The polar satellite view for one report: north up, azimuth clockwise, horizon at the rim, zenith at the center. Never bare "plot" - that is the time-series plot pane (`gt-plot`). | `gt-sky`, `SkyPlot`, `SkyPlotSize` |
 | **report age** | Time from a point to the satellite report shown for it, when the report is borrowed from a nearby point. Not "stale" - that is snap staleness. | `NearestSatelliteReport`, `SKY_REPORT_MAX_AGE_SECS` |
@@ -318,7 +319,7 @@ Never write raw Unicode escape sequences (`\u{XXXX}`) for special characters dir
 Such escapes are opaque to reviewers and make the intent hard to see at a glance.
 Instead, use:
 
-- An [`egui_phosphor`](https://docs.rs/egui-phosphor) icon constant when the character is a visual icon. Because these constants are highly useful in `format!` macros (e.g. `format!("{ICON_MAGNIFYING_GLASS} Search")`), you should fully import or alias them (e.g. `use egui_phosphor::regular::MAGNIFYING_GLASS as ICON_MAGNIFYING_GLASS;`) instead of writing out the full path at the call site.
+- An [`egui_phosphor`](https://docs.rs/egui-phosphor) icon constant when the character is a visual icon. Because these constants are highly useful in `format!` macros (e.g. `format!("{ICON_MAGNIFYING_GLASS} Search")`), you should fully import or alias them (e.g. `use egui_phosphor::regular::MAGNIFYING_GLASS as ICON_MAGNIFYING_GLASS;`).
 - A named `const &str` when the character is a typographic symbol that appears inline with text - for example `const EM_DASH: &str = "—";` or `const ELLIPSIS: &str = "…";`.
   Define the constant in the narrowest scope that covers all callers (file-level `const` in the module that owns the UI, crate-level if shared across files in a crate).
   The constant body may contain the literal Unicode character directly (the restriction is on escape sequences, not on non-ASCII characters in source).

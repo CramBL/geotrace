@@ -5,24 +5,24 @@
 //! built binary into a throwaway directory with a fake "very old" install
 //! receipt, runs `--update`, and asserts axoupdater downloaded the latest
 //! release and replaced the binary in place. It is the same shape as
-//! axoupdater's own `perform_runtest`, but sandboxed to temp dirs so it never
-//! touches `~/.cargo` or the real receipt.
+//! axoupdater's own `perform_runtest`, but sandboxed to temporary
+//! directories so it never touches `~/.cargo` or the real receipt.
 //!
 //! Gated two ways so it never runs on an ordinary `cargo test`:
 //! - the `self-update` feature (a `required-features` test target in
 //!   `Cargo.toml`), so the `--update` flag exists in the binary under test.
-//! - the `GEOTRACE_RUN_UPDATE_TEST` env var, because it reaches out to GitHub
-//!   and mutates a file. CI sets both (see `ci_self_update.yml`).
+//! - the `GEOTRACE_RUN_UPDATE_TEST` environment variable, because it reaches
+//!   out to GitHub and mutates a file. CI sets both (see `ci_self_update.yml`).
 
 use std::{fs, process::Command};
 
 use tempfile::tempdir;
 
-/// Must match the package/binary name and the repo `axoupdater` queries.
+/// Must match the package/binary name and the repository `axoupdater` queries.
 const APP: &str = "geotrace";
 const OWNER: &str = "CramBL";
 
-/// Env var that opts a run in to actually performing the network update.
+/// Environment variable that opts a run in to actually performing the network update.
 const RUN_VAR: &str = "GEOTRACE_RUN_UPDATE_TEST";
 
 #[test]
