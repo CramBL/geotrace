@@ -832,10 +832,10 @@ mod tests {
 
     use super::*;
 
-    fn sample_bytes() -> Vec<u8> {
+    fn bytes_starting_at(start_secs: i64, point_count: usize) -> Vec<u8> {
         synthetic_gtd_bytes(SyntheticGtdSpec {
-            start: DateTime::from_timestamp(1_748_000_000, 0).expect("valid timestamp"),
-            point_count: 20,
+            start: DateTime::from_timestamp(start_secs, 0).expect("valid timestamp"),
+            point_count,
             step_secs: 1,
             start_lat_deg: 51.5,
             start_lon_deg: -0.1,
@@ -849,32 +849,55 @@ mod tests {
         })
     }
 
-    /// Store one recording of two ten-point tracks in a database at `path`.
-    fn seed_two_track_recording(path: &Path) {
-        let bytes = sample_bytes();
-        let mut db = Recordings::open_or_create(path).expect("open");
-        let meta = gt_store::extract_meta(&bytes).expect("meta");
-        let tracks = [
-            TrackRange {
-                start: 0,
-                end: 10,
-                hidden: false,
-            },
-            TrackRange {
-                start: 10,
-                end: 20,
-                hidden: false,
-            },
-        ];
-        let settings = StoredSegmentation {
+    /// Twenty nav points one second apart from 2025-05-23 12:53:20 UTC.
+    fn sample_bytes() -> Vec<u8> {
+        bytes_starting_at(1_748_000_000, 20)
+    }
+
+    fn segmentation() -> StoredSegmentation {
+        StoredSegmentation {
             track_split_gap_us: 300_000_000,
             track_split_rule: gt_store::StoredTrackSplitRule::StepInEitherDirection,
             fix_placement_rule: gt_store::StoredFixPlacementRule::MissingHeadingAndNothingInFix,
             detect_clock_discontinuities: true,
             clock_discontinuity_sigmas: 5.0,
-        };
-        db.insert("dev", &meta, &tracks, settings, &bytes)
+        }
+    }
+
+    fn store_recording(path: &Path, bytes: &[u8], tracks: &[TrackRange]) {
+        let mut db = Recordings::open_or_create(path).expect("open");
+        let meta = gt_store::extract_meta(bytes).expect("meta");
+        db.insert("dev", &meta, tracks, segmentation(), bytes)
             .expect("insert");
+    }
+
+    /// Store one recording of two ten-point tracks in a database at `path`.
+    fn seed_two_track_recording(path: &Path) {
+        store_recording(
+            path,
+            &sample_bytes(),
+            &[
+                TrackRange {
+                    start: 0,
+                    end: 10,
+                    hidden: false,
+                },
+                TrackRange {
+                    start: 10,
+                    end: 20,
+                    hidden: false,
+                },
+            ],
+        );
+    }
+
+    fn worker_on(path: &Path) -> HistoryWorker {
+        let db = Recordings::open_or_create(path).expect("reopen");
+        HistoryWorker::spawn(
+            RecordingsHandle::Owner(db),
+            Context::default(),
+            PendingWrites::default(),
+        )
     }
 
     /// Block until the worker delivers exactly one response, or time out.
@@ -893,13 +916,20 @@ mod tests {
         }
     }
 
+    /// The recordings the worker's database holds, as the History window lists
+    /// them.
+    fn listed_recordings(worker: &HistoryWorker) -> Vec<RecordingEntry> {
+        worker.list();
+        let Response::Listed(Ok(entries)) = next_response(worker) else {
+            panic!("expected a Listed response");
+        };
+        entries
+    }
+
     /// The one recording the worker's database holds, as the History window
     /// lists it.
     fn only_recording(worker: &HistoryWorker) -> RecordingEntry {
-        worker.list();
-        let Response::Listed(Ok(mut entries)) = next_response(worker) else {
-            panic!("expected a Listed response");
-        };
+        let mut entries = listed_recordings(worker);
         assert_eq!(entries.len(), 1, "expected exactly one recording");
         entries.remove(0)
     }
@@ -911,12 +941,7 @@ mod tests {
 
         seed_two_track_recording(&path);
 
-        let db = Recordings::open_or_create(&path).expect("reopen");
-        let worker = HistoryWorker::spawn(
-            RecordingsHandle::Owner(db),
-            Context::default(),
-            PendingWrites::default(),
-        );
+        let worker = worker_on(&path);
         assert!(worker.available());
         assert_eq!(worker.path(), Some(path.as_path()));
 
@@ -989,12 +1014,7 @@ mod tests {
 
         seed_two_track_recording(&path);
 
-        let db = Recordings::open_or_create(&path).expect("reopen");
-        let worker = HistoryWorker::spawn(
-            RecordingsHandle::Owner(db),
-            Context::default(),
-            PendingWrites::default(),
-        );
+        let worker = worker_on(&path);
 
         // Hide the first track, then permanently delete all hidden tracks.
         let db_ref = only_recording(&worker).db_ref;
@@ -1043,12 +1063,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
         seed_two_track_recording(&path);
-        let db = Recordings::open_or_create(&path).expect("reopen");
-        let worker = HistoryWorker::spawn(
-            RecordingsHandle::Owner(db),
-            Context::default(),
-            PendingWrites::default(),
-        );
+        let worker = worker_on(&path);
 
         let recording = only_recording(&worker);
         let tracks_before = recording.total_tracks;
@@ -1079,12 +1094,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
         seed_two_track_recording(&path);
-        let db = Recordings::open_or_create(&path).expect("reopen");
-        let worker = HistoryWorker::spawn(
-            RecordingsHandle::Owner(db),
-            Context::default(),
-            PendingWrites::default(),
-        );
+        let worker = worker_on(&path);
 
         worker.delete_tracks(only_recording(&worker).db_ref, vec![0, 2]);
         let Response::Mutated { result, .. } = next_response(&worker) else {
@@ -1102,6 +1112,148 @@ mod tests {
         let recording = only_recording(&worker);
         assert_eq!(recording.total_tracks, 2);
         assert_eq!(recording.meta.nav_point_count, 20);
+        worker.shutdown();
+    }
+
+    #[test]
+    fn hiding_a_track_after_a_delete_re_encoded_the_recording_stores_the_hide() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        seed_two_track_recording(&path);
+        let worker = worker_on(&path);
+
+        let session_ref = only_recording(&worker).db_ref;
+        worker.delete_tracks(session_ref.clone(), vec![0]);
+        let Response::Mutated { result, .. } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        result.expect("the delete runs");
+
+        worker.set_tracks_hidden(session_ref, vec![0], true);
+        let Response::Mutated { result, .. } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        result.expect("the hide runs");
+
+        assert_eq!(
+            only_recording(&worker).hidden_tracks,
+            1,
+            "the track the session hid is hidden in history"
+        );
+        worker.shutdown();
+    }
+
+    /// The History window's "Delete hidden data" sweeps every recording,
+    /// including the one this session has open.
+    #[test]
+    fn hiding_a_track_after_the_hidden_data_sweep_re_encoded_the_recording_stores_the_hide() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        seed_two_track_recording(&path);
+        let worker = worker_on(&path);
+
+        let session_ref = only_recording(&worker).db_ref;
+        worker.set_tracks_hidden(session_ref.clone(), vec![0], true);
+        let Response::Mutated { result, .. } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        result.expect("the first hide runs");
+
+        worker.delete_hidden_tracks();
+        let Response::Mutated { result, .. } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        result.expect("the sweep runs");
+
+        worker.set_tracks_hidden(session_ref, vec![0], true);
+        let Response::Mutated { result, .. } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        result.expect("the second hide runs");
+
+        assert_eq!(
+            only_recording(&worker).hidden_tracks,
+            1,
+            "the track the session hid is hidden in history"
+        );
+        worker.shutdown();
+    }
+
+    /// The logs the user stored with a recording belong to the recording, not
+    /// to one of its tracks.
+    #[test]
+    fn deleting_one_track_of_a_recording_keeps_the_logs_attached_to_it() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        seed_two_track_recording(&path);
+        let worker = worker_on(&path);
+
+        let db_ref = only_recording(&worker).db_ref;
+        worker.attach_log(
+            db_ref.clone(),
+            LoadedLogId::new(1),
+            "field-notes.log".to_owned(),
+            "one line".into(),
+            Vec::new(),
+        );
+        let Response::LogAttached { result, .. } = next_response(&worker) else {
+            panic!("expected a LogAttached response");
+        };
+        result.expect("the log is attached");
+
+        worker.delete_tracks(db_ref, vec![0]);
+        let Response::Mutated { result, .. } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        result.expect("the delete runs");
+
+        worker.load_attached_logs(only_recording(&worker).db_ref);
+        let Response::AttachedLogsLoaded { attachments, .. } = next_response(&worker) else {
+            panic!("expected an AttachedLogsLoaded response");
+        };
+        assert_eq!(
+            attachments.expect("the attachments are read").len(),
+            1,
+            "the log stored with the recording survives the delete of one of its tracks"
+        );
+        worker.shutdown();
+    }
+
+    /// The duplicate check matches the re-encoded recording against the second
+    /// stored one: both hold the same ten points.
+    #[test]
+    fn deleting_a_track_keeps_the_recording_when_a_stored_one_matches_what_is_left() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        seed_two_track_recording(&path);
+        store_recording(
+            &path,
+            &bytes_starting_at(1_748_000_010, 10),
+            &[TrackRange {
+                start: 0,
+                end: 10,
+                hidden: false,
+            }],
+        );
+
+        let worker = worker_on(&path);
+        let db_ref = listed_recordings(&worker)
+            .iter()
+            .find(|entry| entry.total_tracks == 2)
+            .map(|entry| entry.db_ref.clone())
+            .expect("the two-track recording is listed");
+
+        worker.delete_tracks(db_ref, vec![0]);
+        let Response::Mutated { result, .. } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        result.expect("the delete runs");
+
+        assert_eq!(
+            listed_recordings(&worker).len(),
+            2,
+            "the recording the delete re-encoded is still stored"
+        );
         worker.shutdown();
     }
 
