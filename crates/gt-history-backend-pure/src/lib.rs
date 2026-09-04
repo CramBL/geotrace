@@ -4,7 +4,7 @@ use gt_history_types::{
     DatabaseRef, DbError, GTD_META_DEVICE_ATTR, GTD_META_NOTES_ATTR, GTD_META_TITLE_ATTR,
     GTD_META_TRAVEL_MODE_ATTR, HistoryDatabase, LogAttachment, LogAttachmentEntry, LogAttachmentId,
     NavPointTimeRange, ReadOnlyHistoryDatabase, RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR,
-    StoredRecording, StoredSegmentation, TrackRange, identity_from_group_name,
+    StoredRecording, StoredSegmentation, TrackRange, TrackState, identity_from_group_name,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 use parking_lot::Mutex;
@@ -115,7 +115,10 @@ impl ReadOnlyHistoryDatabase for ReadOnlyPureDb {
                 };
                 if let Some(meta) = recording_meta_from_attrs(&attrs) {
                     let tracks = copy::read_track_table(&rec_grp);
-                    let hidden_tracks = tracks.iter().filter(|t| t.hidden).count();
+                    let shelved_tracks = tracks
+                        .iter()
+                        .filter(|t| t.state == TrackState::Shelved)
+                        .count();
                     entries.push(RecordingEntry {
                         db_ref: DatabaseRef {
                             identity: display_identity.clone(),
@@ -123,7 +126,7 @@ impl ReadOnlyHistoryDatabase for ReadOnlyPureDb {
                         },
                         meta,
                         total_tracks: tracks.len(),
-                        hidden_tracks,
+                        shelved_tracks,
                         title: string_attr(&attrs, GTD_META_TITLE_ATTR),
                         device: string_attr(&attrs, GTD_META_DEVICE_ATTR),
                         notes: string_attr(&attrs, GTD_META_NOTES_ATTR),
@@ -273,19 +276,19 @@ impl HistoryDatabase for PureDb {
         .map_err(Into::into)
     }
 
-    fn set_tracks_hidden(
+    fn set_tracks_shelved(
         &mut self,
         db_ref: &DatabaseRef,
         track_indices: &[usize],
-        hidden: bool,
+        shelved: bool,
     ) -> Result<(), DbError> {
         let _guard = DB_LOCK.lock();
-        copy::set_tracks_hidden(
+        copy::set_tracks_shelved(
             &self.path,
             &db_ref.identity,
             &db_ref.group_name,
             track_indices,
-            hidden,
+            shelved,
         )
         .map_err(Into::into)
     }

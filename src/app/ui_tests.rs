@@ -4519,7 +4519,7 @@ fn stored_recording_entry(identity: &str, title: &str) -> gt_store::RecordingEnt
             gtd_size_bytes: 0,
         },
         total_tracks: 1,
-        hidden_tracks: 0,
+        shelved_tracks: 0,
         title: Some(title.to_owned()),
         device: Some("u-blox F9P".to_owned()),
         notes: None,
@@ -7083,7 +7083,7 @@ fn resegment_prompt_named(filename: &str) -> super::ResegmentPrompt {
             detect_clock_discontinuities: false,
             clock_discontinuity_sigmas: 4.0,
         },
-        hidden_positions: Vec::new(),
+        shelved_positions: Vec::new(),
         marker_settings_changed: false,
     }
 }
@@ -7243,7 +7243,7 @@ fn resegment_prompt_for(
         filename: "ride.gtd".to_owned(),
         bytes: std::sync::Arc::from(minimal_gtd_bytes()),
         stored: stored_segmentation_from_app_with_rules(app, track_split_rule, fix_placement_rule),
-        hidden_positions: vec![1],
+        shelved_positions: vec![1],
         marker_settings_changed: false,
     }
 }
@@ -7289,12 +7289,12 @@ fn opening_a_recording_stored_by_another_rule_raises_the_resegment_prompt(
             gt_store::TrackRange {
                 start: 0,
                 end: 30,
-                hidden: false,
+                state: gt_store::TrackState::Live,
             },
             gt_store::TrackRange {
                 start: 30,
                 end: 61,
-                hidden: true,
+                state: gt_store::TrackState::Shelved,
             },
         ],
         segmentation: Some(stored_segmentation_from_app_with_rules(
@@ -9053,7 +9053,7 @@ fn recording_scope_parks_the_whole_batch_on_one_consent_dialog() {
 #[test]
 fn snap_runs_persist_and_restore_through_the_app() {
     use geotrace_sdk::{Angle, DateTime, Duration as SdkDuration, NavFileBuilder, NavFix};
-    use gt_store::{HistoryDatabase, Recordings, StoredSegmentation, TrackRange};
+    use gt_store::{HistoryDatabase, Recordings, StoredSegmentation, TrackRange, TrackState};
 
     // One real recording so the blob has a valid group to live in.
     let t0 = DateTime::from_timestamp(1_000, 0).expect("valid timestamp");
@@ -9079,7 +9079,7 @@ fn snap_runs_persist_and_restore_through_the_app() {
     let tracks = [TrackRange {
         start: 0,
         end: meta.nav_point_count,
-        hidden: false,
+        state: TrackState::Live,
     }];
     let settings = StoredSegmentation {
         track_split_gap_us: 300_000_000,
@@ -11526,14 +11526,14 @@ mod log_association {
     fn seed_a_recording_and_the_log_stored_with_it(
         db_path: &std::path::Path,
     ) -> (gt_store::DatabaseRef, gt_store::LogAttachmentId) {
-        use gt_store::{LogAttachments as _, LogToAttach, TrackRange};
+        use gt_store::{LogAttachments as _, LogToAttach, TrackRange, TrackState};
 
         let bytes = recording_bytes_alongside_the_log(55.0);
         let meta = gt_store::extract_meta(&bytes).expect("the fixture recording carries metadata");
         let tracks = [TrackRange {
             start: 0,
             end: meta.nav_point_count,
-            hidden: false,
+            state: TrackState::Live,
         }];
         let mut db = open_temporary_history_database(db_path);
         let db_ref = db
@@ -11970,7 +11970,7 @@ impl OversizedAppWindow {
                         detect_clock_discontinuities: false,
                         clock_discontinuity_sigmas: 4.0,
                     },
-                    hidden_positions: Vec::new(),
+                    shelved_positions: Vec::new(),
                     marker_settings_changed: false,
                 });
             }

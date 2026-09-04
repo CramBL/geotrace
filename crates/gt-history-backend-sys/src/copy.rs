@@ -8,8 +8,9 @@ use gt_history_types::{
     GTD_VERSION_FALLBACK, LogAttachment, LogAttachmentEntry, LogAttachmentId, NavPointTimeRange,
     RecordingEntry, RecordingMeta, SNAP_BLOB_DATASET, SNAP_GROUP, StoredFixPlacementRule,
     StoredRecording, StoredSegmentation, StoredTrackSplitRule, TRACK_END_DATASET,
-    TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP, TrackRange, identity_from_group_name,
-    identity_group_name, is_db_internal_group, is_db_recording_attr, make_group_name,
+    TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, TrackRange, TrackState,
+    identity_from_group_name, identity_group_name, is_db_internal_group, is_db_recording_attr,
+    make_group_name,
 };
 use hdf5::Group;
 use std::path::Path;
@@ -578,8 +579,8 @@ fn create_native_file(path: &Path) -> Result<hdf5::File, InternalError> {
 
 /// Copy one recording group into `dst_parent` as a freshly created (native)
 /// group: a plain `H5Ocopy` would preserve the legacy object header, which
-/// libhdf5 cannot later add attributes to (e.g. the hidden flag). The recording
-/// attributes are re-written and the leaf data groups are object-copied.
+/// libhdf5 cannot later add attributes to. The recording attributes are
+/// re-written and the leaf data groups are object-copied.
 fn copy_recording_native(
     src_rec: &Group,
     dst_parent: &Group,
@@ -869,11 +870,11 @@ fn write_track_table(rec_grp: &Group, tracks: &[TrackRange]) -> Result<(), Inter
         rec_grp.unlink(TRACKS_GROUP)?;
     }
     let grp = rec_grp.create_group(TRACKS_GROUP)?;
-    let (starts, ends, hidden) = gt_history_types::track_columns(tracks);
+    let (starts, ends, states) = gt_history_types::track_columns(tracks);
     for (name, col) in [
         (TRACK_START_DATASET, &starts),
         (TRACK_END_DATASET, &ends),
-        (TRACK_HIDDEN_DATASET, &hidden),
+        (TRACK_STATE_DATASET, &states),
     ] {
         grp.new_dataset::<u64>()
             .shape([col.len()])
@@ -883,24 +884,22 @@ fn write_track_table(rec_grp: &Group, tracks: &[TrackRange]) -> Result<(), Inter
     Ok(())
 }
 
-/// Read the stored track ranges (empty if the recording predates track storage
-/// or the table is inconsistent, in which case tracks are recomputed on load).
-fn read_track_table(rec_grp: &Group) -> Vec<TrackRange> {
-    let Ok(grp) = rec_grp.group(TRACKS_GROUP) else {
-        return Vec::new();
-    };
-    let read = |name: &str| -> Vec<u64> {
-        grp.dataset(name)
-            .and_then(|d| d.read_raw::<u64>())
-            .unwrap_or_default()
-    };
-    let starts = read(TRACK_START_DATASET);
-    let ends = read(TRACK_END_DATASET);
-    let hidden = read(TRACK_HIDDEN_DATASET);
-    gt_history_types::track_ranges_from_columns(&starts, &ends, &hidden).unwrap_or_else(|| {
-        log::warn!("Inconsistent track table; ignoring it (tracks will be recomputed)");
-        Vec::new()
+/// Every row of a recording's stored track table, tombstones and all.
+fn stored_track_table(rec_grp: &Group) -> Option<Vec<TrackRange>> {
+    let grp = rec_grp.group(TRACKS_GROUP).ok()?;
+    gt_history_types::stored_track_table(|name| {
+        grp.dataset(name).and_then(|d| d.read_raw::<u64>()).ok()
     })
+}
+
+/// The tracks a recording has: its [`stored_track_table`] without the
+/// [`TrackState::Deleted`] tombstones a permanent delete leaves.
+fn read_track_table(rec_grp: &Group) -> Vec<TrackRange> {
+    stored_track_table(rec_grp)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|track| track.state != TrackState::Deleted)
+        .collect()
 }
 
 /// Summarize the recording's ad-hoc sensor channels for the History listing.
@@ -1447,33 +1446,36 @@ pub(crate) fn log_attachment_ids(rec_grp: &Group) -> Vec<LogAttachmentId> {
     }
 }
 
-/// Set or clear the hidden flag on a recording's tracks at `track_indices`.
-pub(crate) fn set_tracks_hidden(
+/// Shelve or unshelve a recording's tracks at `track_indices`.
+///
+/// `track_indices` count the tracks the recording lists, which
+/// [`gt_history_types::listed_track_rows`] maps onto the stored table's rows. A
+/// recording whose table predates [`TRACK_STATE_DATASET`] comes out of this
+/// with a state column: the whole table is rewritten, tombstones and all.
+pub(crate) fn set_tracks_shelved(
     db_path: &std::path::Path,
     identity: &str,
     group_name: &str,
     track_indices: &[usize],
-    hidden: bool,
+    shelved: bool,
 ) -> Result<(), InternalError> {
     let file = hdf5::File::open_rw(db_path)?;
     let by_id = file.group("by_identity")?;
     let id_grp = open_identity_group(&by_id, identity)?;
     let rec_grp = id_grp.group(group_name)?;
-    let Ok(grp) = rec_grp.group(TRACKS_GROUP) else {
-        log::warn!("set_tracks_hidden on {identity}/{group_name} which has no track table");
+    let Some(mut tracks) = stored_track_table(&rec_grp) else {
+        log::warn!("Shelving tracks of {identity}/{group_name}, which has no track table");
         return Ok(());
     };
-    let ds = grp.dataset(TRACK_HIDDEN_DATASET)?;
-    let mut flags = ds.read_raw::<u64>()?;
-    let value = u64::from(hidden);
-    for &i in track_indices {
-        match flags.get_mut(i) {
-            Some(slot) => *slot = value,
-            None => log::warn!("track index {i} out of range for {identity}/{group_name}"),
-        }
+    let state = if shelved {
+        TrackState::Shelved
+    } else {
+        TrackState::Live
+    };
+    for index in gt_history_types::set_state_of_listed_tracks(&mut tracks, track_indices, state) {
+        log::warn!("track index {index} out of range for {identity}/{group_name}");
     }
-    ds.write_raw(&flags)?;
-    Ok(())
+    write_track_table(&rec_grp, &tracks)
 }
 
 pub(crate) fn list_recordings(
@@ -1494,7 +1496,10 @@ pub(crate) fn list_recordings(
                         continue;
                     };
                     let tracks = read_track_table(&rec_grp);
-                    let hidden_tracks = tracks.iter().filter(|t| t.hidden).count();
+                    let shelved_tracks = tracks
+                        .iter()
+                        .filter(|t| t.state == TrackState::Shelved)
+                        .count();
                     let log_attachments = match rec_grp.attr_names() {
                         Ok(attr_names) => log_attachments_in_attrs(&rec_grp, attr_names),
                         Err(err) => {
@@ -1512,7 +1517,7 @@ pub(crate) fn list_recordings(
                         },
                         meta,
                         total_tracks: tracks.len(),
-                        hidden_tracks,
+                        shelved_tracks,
                         title: read_group_string_attr(&rec_grp, GTD_META_TITLE_ATTR).ok(),
                         device: read_group_string_attr(&rec_grp, GTD_META_DEVICE_ATTR).ok(),
                         notes: read_group_string_attr(&rec_grp, GTD_META_NOTES_ATTR).ok(),

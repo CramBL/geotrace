@@ -19,7 +19,7 @@ use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
 use gt_store::ChannelSummary;
 use gt_ui_theme::EM_DASH;
 
-use super::delete_hidden_prompt::DELETE_HIDDEN_WINDOW_TITLE;
+use super::delete_shelved_prompt::DELETE_SHELVED_WINDOW_TITLE;
 use super::table::{
     MAX_HOVER_CHANNELS, OPEN_LOG_LABEL, breakdown_cell_id, channel_title, data_breakdown_ui,
     duration_text, started_at_text, time_range_text, track_count_text,
@@ -94,7 +94,7 @@ fn show_history(ui: &mut egui::Ui, s: &mut HistoryHarness) {
 /// attached to it, and no pre-seeded entries - the list arrives from the worker
 /// (see [`pump_history`]).
 fn history_harness_with_recording(identity: &str, stored_logs: &[&str]) -> HistoryHarness {
-    use gt_store::{LogAttachments as _, LogToAttach, StoredSegmentation, TrackRange};
+    use gt_store::{LogAttachments as _, LogToAttach, StoredSegmentation, TrackRange, TrackState};
 
     let dir = tempfile::tempdir().expect("temp dir");
     let mut db =
@@ -104,7 +104,7 @@ fn history_harness_with_recording(identity: &str, stored_logs: &[&str]) -> Histo
     let tracks = [TrackRange {
         start: 0,
         end: meta.nav_point_count,
-        hidden: false,
+        state: TrackState::Live,
     }];
     let settings = StoredSegmentation {
         track_split_gap_us: 300_000_000,
@@ -432,7 +432,7 @@ fn entry_with_identity(identity: &str) -> RecordingEntry {
             gtd_size_bytes: 0,
         },
         total_tracks: 0,
-        hidden_tracks: 0,
+        shelved_tracks: 0,
         title: None,
         device: None,
         notes: None,
@@ -1100,7 +1100,7 @@ fn snapshot_history_row_breakdown() {
     snapshot_breakdown(&entry_with_channels(), "history_row_breakdown");
 }
 
-/// A recording with no channels states that in its breakdown. Its hidden
+/// A recording with no channels states that in its breakdown. Its shelved
 /// tracks also get the note explaining where they came from.
 #[test]
 fn snapshot_history_row_breakdown_without_channels() {
@@ -1112,7 +1112,7 @@ fn snapshot_history_row_breakdown_without_channels() {
         4_096,
     );
     entry.total_tracks = 3;
-    entry.hidden_tracks = 1;
+    entry.shelved_tracks = 1;
     snapshot_breakdown(&entry, "history_row_breakdown_no_channels");
 }
 
@@ -1396,20 +1396,20 @@ fn breakdown_cell_ids_are_distinct_per_cell() {
     );
 }
 
-/// The track row calls out hidden tracks, and stays quiet when there are
+/// The track row calls out shelved tracks, and stays quiet when there are
 /// none - it is the only place the breakdown mentions them.
 #[rstest::rstest]
 #[case(4, 0, "4")]
-#[case(4, 1, "4 (1 hidden)")]
+#[case(4, 1, "4 (1 shelved)")]
 #[case(0, 0, "0")]
-fn track_count_text_names_hidden_tracks(
+fn track_count_text_states_the_shelved_tracks(
     #[case] total_tracks: usize,
-    #[case] hidden_tracks: usize,
+    #[case] shelved_tracks: usize,
     #[case] expected: &str,
 ) {
     let mut entry = entry_with_identity("auto:ride.gtd");
     entry.total_tracks = total_tracks;
-    entry.hidden_tracks = hidden_tracks;
+    entry.shelved_tracks = shelved_tracks;
 
     assert_eq!(track_count_text(&entry), expected);
 }
@@ -1510,35 +1510,35 @@ fn prune_dialog_fits_every_viewport(
 }
 
 #[test]
-fn snapshot_delete_hidden_confirmation() {
+fn snapshot_delete_shelved_confirmation() {
     let mut entry = entry_with_identity("auto:ride.gtd");
     entry.total_tracks = 12;
-    entry.hidden_tracks = 3;
-    let hidden_tracks = entry.hidden_tracks;
+    entry.shelved_tracks = 3;
+    let shelved_tracks = entry.shelved_tracks;
     let mut harness = history_harness(vec![entry]);
     // The temporary database path differs every run.
     harness.worker.hide_path();
-    harness.window.delete_hidden_prompt.open(hidden_tracks);
+    harness.window.delete_shelved_prompt.open(shelved_tracks);
     let mut h = TestHarness::builder()
         .size(egui::vec2(900.0, 500.0))
         .ui_state(show_history, harness);
     for _ in 0..4 {
         h.run();
     }
-    h.snapshot("delete_hidden_confirmation");
+    h.snapshot("delete_shelved_confirmation");
 }
 
-/// The confirmation once the last hidden track has gone from the recording
+/// The confirmation once the last shelved track has gone from the recording
 /// list: it stays up, states that there is nothing left to delete, grays the
 /// delete out, and counts down on its Close button.
 #[test]
-fn snapshot_delete_hidden_confirmation_with_no_track_hidden() {
+fn snapshot_delete_shelved_confirmation_with_every_track_live() {
     let mut entry = entry_with_identity("auto:ride.gtd");
     entry.total_tracks = 12;
     let mut harness = history_harness(vec![entry]);
     // The temporary database path differs every run.
     harness.worker.hide_path();
-    harness.window.delete_hidden_prompt.open(3);
+    harness.window.delete_shelved_prompt.open(3);
     let mut h = TestHarness::builder()
         .size(egui::vec2(900.0, 500.0))
         .ui_state(show_history, harness);
@@ -1547,21 +1547,21 @@ fn snapshot_delete_hidden_confirmation_with_no_track_hidden() {
     for _ in 0..6 {
         h.step();
     }
-    h.snapshot("delete_hidden_confirmation_no_track_hidden");
+    h.snapshot("delete_shelved_confirmation_every_track_live");
 }
 
-/// The delete-hidden confirmation stays inside the screen and keeps its
+/// The delete-shelved confirmation stays inside the screen and keeps its
 /// buttons reachable however many tracks it lists.
 #[rstest::rstest]
-fn delete_hidden_confirmation_fits_every_viewport(
+fn delete_shelved_confirmation_fits_every_viewport(
     #[values(CRAMPED_VIEWPORT, NARROW_VIEWPORT, SHORT_VIEWPORT)] viewport: egui::Vec2,
 ) {
     let mut entry = entry_with_identity(&gt_test_utils::oversized_text('r'));
     entry.total_tracks = OVERSIZED_ROW_COUNT;
-    entry.hidden_tracks = OVERSIZED_ROW_COUNT;
-    let hidden_tracks = entry.hidden_tracks;
+    entry.shelved_tracks = OVERSIZED_ROW_COUNT;
+    let shelved_tracks = entry.shelved_tracks;
     let mut harness = history_harness(vec![entry]);
-    harness.window.delete_hidden_prompt.open(hidden_tracks);
+    harness.window.delete_shelved_prompt.open(shelved_tracks);
     let mut h = TestHarness::builder()
         .size(viewport)
         .ui_state(show_history, harness);
@@ -1569,9 +1569,9 @@ fn delete_hidden_confirmation_fits_every_viewport(
         h.step();
     }
     h.inner
-        .assert_window_fits_the_viewport(AuditedWindow::titled(DELETE_HIDDEN_WINDOW_TITLE));
+        .assert_window_fits_the_viewport(AuditedWindow::titled(DELETE_SHELVED_WINDOW_TITLE));
     h.inner.assert_control_is_reachable(
-        AuditedWindow::titled(DELETE_HIDDEN_WINDOW_TITLE),
+        AuditedWindow::titled(DELETE_SHELVED_WINDOW_TITLE),
         ControlLabel("Cancel"),
     );
 }

@@ -13,7 +13,7 @@ use gt_ui_theme::labels::LabelWithHover;
 use gt_ui_theme::warning_amber;
 use strum::{EnumCount, EnumIter};
 
-use crate::app::history::delete_hidden_prompt::DeleteHiddenTracksPrompt;
+use crate::app::history::delete_shelved_prompt::DeleteShelvedTracksPrompt;
 use crate::app::history_db::{DeleteReason, HistoryWorker};
 use crate::app::modals::{self, DialogActionRow, DialogBody};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
@@ -24,7 +24,7 @@ use crate::settings::StorageSettings;
 /// not unavailable, it is not open yet.
 pub(in crate::app) const OPENING_RECORDINGS_DATABASE: &str = "Opening the recordings database";
 
-mod delete_hidden_prompt;
+mod delete_shelved_prompt;
 mod table;
 
 /// Which pruning mode is selected in the Prune dialog.
@@ -39,7 +39,7 @@ const PRUNE_WINDOW_TITLE: &str = "Prune History…";
 
 /// What a permanent delete of stored recordings costs, and what it leaves
 /// alone. Shared by the prune dialog, the auto-prune prompt and the
-/// delete-hidden confirmation.
+/// delete-shelved confirmation.
 pub(super) const DESTRUCTIVE_DELETE_HOVER: &str =
     "This cannot be undone. The original source files are unaffected.";
 
@@ -453,7 +453,7 @@ pub struct HistoryWindow {
     /// Error from the last operation, if any.
     error: Option<String>,
     prune: PruneDialog,
-    delete_hidden_prompt: DeleteHiddenTracksPrompt,
+    delete_shelved_prompt: DeleteShelvedTracksPrompt,
     /// Whether a recording-list request is in flight (drives the spinner and
     /// prevents re-requesting every frame while waiting).
     list_pending: bool,
@@ -471,7 +471,7 @@ pub struct HistoryWindow {
 
 /// What the app hands the History window on the frame it draws.
 pub struct HistoryWindowFrame<'a> {
-    /// The frame's instant, which the delete-hidden confirmation counts its
+    /// The frame's instant, which the delete-shelved confirmation counts its
     /// own close down against.
     pub now: Instant,
     /// Every database operation goes here, and its result arrives
@@ -507,7 +507,7 @@ impl HistoryWindow {
             filter_date_to: String::new(),
             error: None,
             prune: PruneDialog::new(),
-            delete_hidden_prompt: DeleteHiddenTracksPrompt::default(),
+            delete_shelved_prompt: DeleteShelvedTracksPrompt::default(),
             list_pending: false,
             rename: None,
             sort: HistorySort::default(),
@@ -594,15 +594,14 @@ impl HistoryWindow {
         // Show Prune dialog (a separate window).
         self.prune.show(ctx, worker);
 
-        // Hidden tracks live inside otherwise-visible recordings (there is no
-        // recording-level hide). Count them across all recordings so the toolbar
-        // can offer a "Delete hidden data" action that permanently drops them.
-        // The count is `None` until the recording list arrives, and `Some(0)`
-        // once the list has no hidden track.
-        let hidden_track_count: Option<usize> = self
+        // Shelving is per track: a shelved track sits inside a recording the
+        // list shows. The sum over every recording is what the toolbar's
+        // "Delete shelved data" action permanently drops, and `None` until the
+        // recording list arrives.
+        let shelved_track_count: Option<usize> = self
             .entries
             .as_ref()
-            .map(|entries| entries.iter().map(|e| e.hidden_tracks).sum());
+            .map(|entries| entries.iter().map(|e| e.shelved_tracks).sum());
 
         let mut open = self.open;
 
@@ -610,7 +609,7 @@ impl HistoryWindow {
         // it. The confirmation dialog and an open inline rename both take it
         // first, so the key is left unconsumed here via short-circuit.
         if self.rename.is_none()
-            && !self.delete_hidden_prompt.is_up()
+            && !self.delete_shelved_prompt.is_up()
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             open = false;
@@ -655,7 +654,7 @@ impl HistoryWindow {
 
                 // The count arrives with the recording list: the spinner
                 // stands until both are there.
-                let Some(hidden_track_count) = hidden_track_count else {
+                let Some(shelved_track_count) = shelved_track_count else {
                     ui.spinner();
                     return;
                 };
@@ -665,7 +664,13 @@ impl HistoryWindow {
                 // inside closures where `entries` also holds an immutable borrow.
                 let filter_active = self.any_filter_active();
 
-                self.toolbar_ui(ui, storage, write_access, hidden_track_count, filter_active);
+                self.toolbar_ui(
+                    ui,
+                    storage,
+                    write_access,
+                    shelved_track_count,
+                    filter_active,
+                );
 
                 let Some(entries) = &self.entries else {
                     return;
@@ -749,9 +754,9 @@ impl HistoryWindow {
                 let listing_bottom = ui.min_rect().bottom();
 
                 ui.separator();
-                // Footer stats cover every stored recording. Hidden tracks are
-                // reported separately since they are pending permanent
-                // deletion.
+                // Footer stats cover every stored recording. Shelved tracks
+                // are reported separately: they are what the permanent delete
+                // takes.
                 let stored_count = entries.len();
                 let total_size: u64 = entries.iter().map(|e| e.meta.gtd_size_bytes).sum();
                 ui.horizontal_wrapped(|ui| {
@@ -763,9 +768,9 @@ impl HistoryWindow {
                     if filter_active && visible.len() != stored_count {
                         ui.weak(format!("({} shown)", visible.len()));
                     }
-                    if hidden_track_count > 0 {
-                        let track_label = gt_fmt::pluralize(hidden_track_count, "track", "tracks");
-                        ui.weak(format!("- {hidden_track_count} hidden {track_label}"));
+                    if shelved_track_count > 0 {
+                        let track_label = gt_fmt::pluralize(shelved_track_count, "track", "tracks");
+                        ui.weak(format!("- {shelved_track_count} shelved {track_label}"));
                     }
                 });
                 if let Some(path) = worker.path() {
@@ -784,11 +789,11 @@ impl HistoryWindow {
         self.footer_height_last_frame = footer_height;
 
         if self
-            .delete_hidden_prompt
-            .show(ctx, now, hidden_track_count)
+            .delete_shelved_prompt
+            .show(ctx, now, shelved_track_count)
             .is_some()
         {
-            worker.delete_hidden_tracks();
+            worker.delete_shelved_tracks();
         }
 
         self.open = open;
@@ -804,7 +809,7 @@ impl HistoryWindow {
         ui: &mut egui::Ui,
         storage: &mut StorageSettings,
         write_access: WriteAccess,
-        hidden_track_count: usize,
+        shelved_track_count: usize,
         filter_active: bool,
     ) {
         ScrollArea::horizontal()
@@ -820,27 +825,27 @@ impl HistoryWindow {
                     LabelWithHover::underlined_term(RichText::new("Identity"))
                         .explanation_ui(ui, crate::terms::IDENTITY);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let delete_hidden_label = if hidden_track_count > 0 {
-                            format!("Delete hidden data ({hidden_track_count})…")
+                        let delete_shelved_label = if shelved_track_count > 0 {
+                            format!("Delete shelved data ({shelved_track_count})…")
                         } else {
-                            "Delete hidden data…".to_owned()
+                            "Delete shelved data…".to_owned()
                         };
                         let writes_recordings = write_access.allows_writing();
-                        let delete_hidden = ui
+                        let delete_shelved = ui
                         .add_enabled(
-                            hidden_track_count > 0 && writes_recordings,
-                            Button::new(delete_hidden_label),
+                            shelved_track_count > 0 && writes_recordings,
+                            Button::new(delete_shelved_label),
                         )
                         .on_hover_text(
-                            "Permanently delete every hidden track from the original recordings",
+                            "Permanently delete every shelved track from the original recordings",
                         )
                         .on_disabled_hover_text(if writes_recordings {
-                            "No hidden tracks to delete"
+                            "No shelved tracks to delete"
                         } else {
                             READ_ONLY_RECORDING_HISTORY_HOVER
                         });
-                        if delete_hidden.clicked() {
-                            self.delete_hidden_prompt.open(hidden_track_count);
+                        if delete_shelved.clicked() {
+                            self.delete_shelved_prompt.open(shelved_track_count);
                         }
                         if ui
                             .add_enabled(writes_recordings, Button::new("Prune…"))

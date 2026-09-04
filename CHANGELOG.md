@@ -2,12 +2,16 @@
 
 ## Unreleased
 
+### Changed
+
+- **Interface:** History now says "shelved" for a track removed from a recording without deleting its data: the count on a recording row, the "Delete shelved data…" button and its confirmation.
+
 ### Fixed
 
 - **Interface:** Fixed a permanent track delete announcing a track it had not deleted, when the recording in history no longer had that track: it now reports the failure, and a delete of several tracks with one of them already gone leaves all of them in place.
 - **Interface:** Fixed a permanent track delete removing the logs stored with the recording.
 - **Interface:** Fixed a permanent track delete removing the whole recording when another stored recording held the points the delete left.
-- **Interface:** Fixed a hide or a permanent track delete failing on a recording that a permanent track delete or "Delete hidden data" had already re-encoded.
+- **Interface:** Fixed shelving a track or deleting one permanently failing on a recording that a permanent track delete or "Delete shelved data" had already re-encoded.
 
 ## 0.15.0 - 2026-09-04
 

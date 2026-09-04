@@ -647,7 +647,7 @@ mod tests {
         let writes = PendingWrites::default();
         let guards = [
             writes.try_begin("Storing a recording", WriteKind::RecordingDatabase),
-            writes.try_begin("Deleting hidden tracks", WriteKind::RecordingDatabase),
+            writes.try_begin("Deleting shelved tracks", WriteKind::RecordingDatabase),
             writes.try_begin("Compacting the TEC archive", TEC),
         ];
 

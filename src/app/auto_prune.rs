@@ -58,13 +58,13 @@ mod tests {
     }
 
     fn insert(db: &mut Recordings, identity: &str, bytes: &[u8]) {
-        use gt_store::{StoredSegmentation, TrackRange};
+        use gt_store::{StoredSegmentation, TrackRange, TrackState};
         let meta = gt_store::extract_meta(bytes).expect("parse meta");
         // One track spanning the whole recording is enough for prune tests.
         let tracks = [TrackRange {
             start: 0,
             end: meta.nav_point_count,
-            hidden: false,
+            state: TrackState::Live,
         }];
         let settings = StoredSegmentation {
             track_split_gap_us: 300_000_000,

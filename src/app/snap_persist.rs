@@ -185,6 +185,7 @@ mod tests {
         use geotrace_sdk::{Angle, DateTime, Duration as SdkDuration, NavFileBuilder, NavFix};
         use gt_store::{
             HistoryDatabase, ReadOnlyHistoryDatabase, Recordings, StoredSegmentation, TrackRange,
+            TrackState,
         };
 
         let t0 = DateTime::from_timestamp(1_000, 0).expect("valid timestamp");
@@ -209,7 +210,7 @@ mod tests {
         let tracks = [TrackRange {
             start: 0,
             end: meta.nav_point_count,
-            hidden: false,
+            state: TrackState::Live,
         }];
         let settings = StoredSegmentation {
             track_split_gap_us: 300_000_000,

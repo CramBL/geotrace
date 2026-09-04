@@ -34,7 +34,7 @@ pub(super) enum AnchoredDialogKind {
     AssociateLog,
     AutoPrune,
     DeleteArchivedDays,
-    DeleteHiddenTracks,
+    DeleteShelvedTracks,
     ForceQuit,
     HistoryDatabaseCorrupted,
     HistoryDatabaseInUse,
@@ -69,8 +69,8 @@ impl AnchoredDialogKind {
             // Room for an archive's name beside the days it loses, and for a
             // recording name on one line.
             Self::DeleteArchivedDays => 480.0,
-            // Room for the sentence counting the hidden tracks on one line.
-            Self::DeleteHiddenTracks => 420.0,
+            // Room for the sentence counting the shelved tracks on one line.
+            Self::DeleteShelvedTracks => 420.0,
             // Fits inside the window that shutdown sizes itself down to.
             Self::ForceQuit => 360.0,
             // Room for each of the two sentences about the unreadable file on

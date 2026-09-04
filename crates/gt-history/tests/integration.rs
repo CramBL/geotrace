@@ -4,17 +4,14 @@ use gt_history::{
     Database, DatabaseRef, DbError, HistoryDatabase, LogAttachment, LogAttachmentId,
     LogContentHash, ReadOnlyDatabase, ReadOnlyHistoryDatabase, RecordingMeta,
     StoredFixPlacementRule, StoredLogFilter, StoredLogFilterMode, StoredRecording,
-    StoredSegmentation, StoredTrackSplitRule, TrackRange, extract_meta,
+    StoredSegmentation, StoredTrackSplitRule, TrackRange, TrackState, extract_meta,
 };
 use gt_history_types::{
-    ATTR_EVENT_MARKER_COUNT, ATTR_IDENTITY, ATTR_MARKER_COUNT, ATTR_NAV_POINT_COUNT,
-    ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK, ATTR_SEG_GAP_US,
-    ATTR_SEG_PLACEMENT_RULE, ATTR_SEG_SPLIT_RULE, ATTR_START_US, CURRENT_SCHEMA_VERSION,
-    SCHEMA_VERSION_ATTR,
-};
-#[cfg(feature = "backend-pure")]
-use gt_history_types::{
-    ATTR_GTD_SIZE_BYTES, TRACK_END_DATASET, TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP,
+    ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
+    ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
+    ATTR_SEG_GAP_US, ATTR_SEG_PLACEMENT_RULE, ATTR_SEG_SPLIT_RULE, ATTR_START_US,
+    CURRENT_SCHEMA_VERSION, GTD_VERSION_ATTR, LEGACY_TRACK_HIDDEN_DATASET, SCHEMA_VERSION_ATTR,
+    TRACK_END_DATASET, TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP,
 };
 use rstest::rstest;
 
@@ -54,7 +51,7 @@ impl TestDbExt for Database {
         let tracks = [TrackRange {
             start: 0,
             end: meta.nav_point_count,
-            hidden: false,
+            state: TrackState::Live,
         }];
         self.insert(identity, meta, &tracks, test_settings(), bytes)
     }
@@ -425,7 +422,7 @@ fn groups_present_after_creation() {
 }
 
 #[test]
-fn schema_version_is_zero_on_new_file() {
+fn a_new_file_records_the_current_schema_version() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
 
@@ -435,8 +432,8 @@ fn schema_version_is_zero_on_new_file() {
     let root = file.root();
     let attrs = root.attrs().expect("root attrs");
 
-    match attrs.get("schema_version") {
-        Some(hdf5_pure::AttrValue::I64(v)) => assert_eq!(*v, 0),
+    match attrs.get(SCHEMA_VERSION_ATTR) {
+        Some(hdf5_pure::AttrValue::I64(v)) => assert_eq!(*v, CURRENT_SCHEMA_VERSION),
         other => panic!("unexpected schema_version attr: {other:?}"),
     }
 }
@@ -1153,7 +1150,7 @@ fn delete_batch_removes_multiple_in_one_pass() {
 }
 
 #[test_log::test]
-fn set_tracks_hidden_flags_tracks_and_is_reversible() {
+fn set_tracks_shelved_shelves_tracks_and_is_reversible() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
@@ -1165,12 +1162,12 @@ fn set_tracks_hidden_flags_tracks_and_is_reversible() {
         TrackRange {
             start: 0,
             end: 3,
-            hidden: false,
+            state: TrackState::Live,
         },
         TrackRange {
             start: 3,
             end: 6,
-            hidden: false,
+            state: TrackState::Live,
         },
     ];
     let db_ref = db
@@ -1179,17 +1176,17 @@ fn set_tracks_hidden_flags_tracks_and_is_reversible() {
 
     let entries = db.list_recordings().expect("list");
     assert_eq!(entries[0].total_tracks, 2);
-    assert_eq!(entries[0].hidden_tracks, 0, "new tracks are visible");
+    assert_eq!(entries[0].shelved_tracks, 0, "a new track is live");
 
-    // Hide the first track, the recording stays, with one hidden track.
-    db.set_tracks_hidden(&db_ref, &[0], true).expect("hide");
-    let entries = db.list_recordings().expect("list after hide");
-    assert_eq!(entries[0].hidden_tracks, 1);
+    // Shelve the first track: the recording stays, with one shelved track.
+    db.set_tracks_shelved(&db_ref, &[0], true).expect("shelve");
+    let entries = db.list_recordings().expect("list after the shelve");
+    assert_eq!(entries[0].shelved_tracks, 1);
     let stored = db.load_full(&db_ref).expect("load");
-    assert!(stored.tracks[0].hidden, "track 0 should be hidden");
-    assert!(!stored.tracks[1].hidden, "track 1 should be visible");
+    assert_eq!(stored.tracks[0].state, TrackState::Shelved);
+    assert_eq!(stored.tracks[1].state, TrackState::Live);
 
-    // The recording's data still round-trips after the hide edit.
+    // The recording's data still round-trips after the shelve.
     let file = hdf5_pure::File::from_bytes(stored.bytes).expect("parse loaded");
     let nav = file.group("nav_points").expect("nav_points group");
     let times = nav
@@ -1199,12 +1196,13 @@ fn set_tracks_hidden_flags_tracks_and_is_reversible() {
     assert_eq!(
         times.len(),
         6,
-        "hidden tracks must keep the recording's data"
+        "a shelved track must keep the recording's data"
     );
 
-    // Unhiding clears it.
-    db.set_tracks_hidden(&db_ref, &[0], false).expect("unhide");
-    assert_eq!(db.list_recordings().expect("list")[0].hidden_tracks, 0);
+    // Unshelving clears it.
+    db.set_tracks_shelved(&db_ref, &[0], false)
+        .expect("unshelve");
+    assert_eq!(db.list_recordings().expect("list")[0].shelved_tracks, 0);
 }
 
 #[cfg(feature = "backend-sys")]
@@ -1474,7 +1472,7 @@ fn write_pure_db_with_recording(db_path: &std::path::Path, identity: &str, rec_n
 
 /// Regression: a database written by the old pure-Rust backend cannot be
 /// extended by libhdf5. Opening it must migrate it in place so existing
-/// recordings survive and new edits (insert, hide, delete) work.
+/// recordings survive and new edits (insert, shelve, delete) work.
 #[cfg(feature = "backend-sys")]
 #[test_log::test]
 fn sys_migrates_and_writes_a_pure_created_database() {
@@ -1527,35 +1525,35 @@ fn reinserting_a_recording_keeps_its_track_table() {
         TrackRange {
             start: 0,
             end: 3,
-            hidden: false,
+            state: TrackState::Live,
         },
         TrackRange {
             start: 3,
             end: 6,
-            hidden: false,
+            state: TrackState::Live,
         },
     ];
     let db_ref = db
         .insert("dev", &meta, &tracks, test_settings(), &bytes)
         .expect("insert");
-    db.set_tracks_hidden(&db_ref, &[0], true).expect("hide");
+    db.set_tracks_shelved(&db_ref, &[0], true).expect("shelve");
 
     // Re-storing the same recording dedups, and must not clobber the track
-    // table (the hidden mark is preserved).
+    // table (the shelved mark is preserved).
     let db_ref2 = db
         .insert("dev", &meta, &tracks, test_settings(), &bytes)
         .expect("reinsert");
     assert_eq!(db_ref, db_ref2, "re-insert returns the existing reference");
     assert_eq!(db.list_recordings().expect("list").len(), 1, "no duplicate");
     assert_eq!(
-        db.list_recordings().expect("list")[0].hidden_tracks,
+        db.list_recordings().expect("list")[0].shelved_tracks,
         1,
-        "the hidden track must survive a re-insert"
+        "the shelved track must survive a re-insert"
     );
 }
 
 #[test]
-fn set_tracks_hidden_marks_only_the_given_tracks() {
+fn set_tracks_shelved_shelves_only_the_given_tracks() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
@@ -1566,31 +1564,186 @@ fn set_tracks_hidden_marks_only_the_given_tracks() {
         TrackRange {
             start: 0,
             end: 3,
-            hidden: false,
+            state: TrackState::Live,
         },
         TrackRange {
             start: 3,
             end: 6,
-            hidden: false,
+            state: TrackState::Live,
         },
         TrackRange {
             start: 6,
             end: 9,
-            hidden: false,
+            state: TrackState::Live,
         },
     ];
     let db_ref = db
         .insert("dev", &meta, &tracks, test_settings(), &bytes)
         .expect("insert");
 
-    db.set_tracks_hidden(&db_ref, &[0, 2], true)
-        .expect("hide 0 and 2");
+    db.set_tracks_shelved(&db_ref, &[0, 2], true)
+        .expect("shelve 0 and 2");
 
     let stored = db.load_full(&db_ref).expect("load");
-    assert!(stored.tracks[0].hidden, "track 0 hidden");
-    assert!(!stored.tracks[1].hidden, "track 1 visible");
-    assert!(stored.tracks[2].hidden, "track 2 hidden");
-    assert_eq!(db.list_recordings().expect("list")[0].hidden_tracks, 2);
+    assert_eq!(stored.tracks[0].state, TrackState::Shelved);
+    assert_eq!(stored.tracks[1].state, TrackState::Live);
+    assert_eq!(stored.tracks[2].state, TrackState::Shelved);
+    assert_eq!(db.list_recordings().expect("list")[0].shelved_tracks, 2);
+}
+
+/// Write a database holding one recording of `state_column.len()` tracks, each
+/// covering one nav point, with the track table's state column written under
+/// `state_dataset`. `schema_version` is what the file records.
+#[expect(
+    clippy::expect_used,
+    reason = "test helper; panicking on I/O failure is the right behaviour"
+)]
+fn write_pure_db_with_a_track_table(
+    db_path: &std::path::Path,
+    schema_version: i64,
+    state_dataset: &str,
+    state_column: &[u64],
+) {
+    use hdf5_pure::AttrValue;
+
+    let n = state_column.len() as u64;
+    let times: Vec<i64> = (0..n as i64).map(|i| 1_000 + i).collect();
+    let starts: Vec<u64> = (0..n).collect();
+    let ends: Vec<u64> = (1..=n).collect();
+
+    let mut fb = hdf5_pure::FileBuilder::new();
+    fb.set_attr(SCHEMA_VERSION_ATTR, AttrValue::I64(schema_version));
+
+    let meta = fb.create_group("meta");
+    fb.add_group(meta.finish());
+
+    let mut by_id = fb.create_group("by_identity");
+    let mut id_grp = by_id.create_group(&gt_history::identity_group_name("dev"));
+    let mut rec = id_grp.create_group("2024-01-01T00:00:00Z");
+    rec.set_attr(ATTR_IDENTITY, AttrValue::String("dev".to_owned()));
+    rec.set_attr(ATTR_START_US, AttrValue::I64(1_000));
+    rec.set_attr(ATTR_END_US, AttrValue::I64(1_000 + n as i64 - 1));
+    rec.set_attr(ATTR_NAV_POINT_COUNT, AttrValue::U64(n));
+    rec.set_attr(ATTR_SAT_REPORT_COUNT, AttrValue::U64(0));
+    rec.set_attr(ATTR_MARKER_COUNT, AttrValue::U64(0));
+    rec.set_attr(ATTR_EVENT_MARKER_COUNT, AttrValue::U64(0));
+    rec.set_attr(ATTR_GTD_SIZE_BYTES, AttrValue::U64(0));
+    rec.set_attr(GTD_VERSION_ATTR, AttrValue::String("1".to_owned()));
+
+    let mut nav = rec.create_group("nav_points");
+    let time = nav.create_dataset("time");
+    time.with_shape(&[n]);
+    time.with_i64_data(&times);
+    rec.add_group(nav.finish());
+
+    let mut tracks = rec.create_group(TRACKS_GROUP);
+    for (name, column) in [
+        (TRACK_START_DATASET, &starts),
+        (TRACK_END_DATASET, &ends),
+        (state_dataset, &state_column.to_vec()),
+    ] {
+        let ds = tracks.create_dataset(name);
+        ds.with_shape(&[n]);
+        ds.with_u64_data(column);
+    }
+    rec.add_group(tracks.finish());
+
+    id_grp.add_group(rec.finish());
+    by_id.add_group(id_grp.finish());
+    fb.add_group(by_id.finish());
+    fb.write(db_path).expect("write db");
+}
+
+/// Every database written before the state column holds a boolean `hidden`
+/// column, whose non-zero rows are the shelved tracks.
+#[test_log::test]
+fn a_schema_version_0_database_reads_its_legacy_hidden_column() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("legacy.h5");
+    write_pure_db_with_a_track_table(&db_path, 0, LEGACY_TRACK_HIDDEN_DATASET, &[0, 1, 0]);
+
+    let db = Database::open_or_create(&db_path).expect("open a schema version 0 database");
+
+    let entries = db.list_recordings().expect("list");
+    let [entry] = entries.as_slice() else {
+        panic!("expected exactly one recording, got {}", entries.len());
+    };
+    assert_eq!(entry.total_tracks, 3);
+    assert_eq!(entry.shelved_tracks, 1);
+    let stored = db.load(&entry.db_ref).expect("load");
+    let states: Vec<TrackState> = stored.tracks.iter().map(|track| track.state).collect();
+    assert_eq!(
+        states,
+        vec![TrackState::Live, TrackState::Shelved, TrackState::Live]
+    );
+}
+
+#[test_log::test]
+fn shelving_a_track_past_a_tombstone_shelves_the_one_the_recording_lists() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("tombstone.h5");
+    write_pure_db_with_a_track_table(
+        &db_path,
+        CURRENT_SCHEMA_VERSION,
+        TRACK_STATE_DATASET,
+        &[0, 2, 0],
+    );
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = db.list_recordings().expect("list")[0].db_ref.clone();
+
+    db.set_tracks_shelved(&db_ref, &[1], true).expect("shelve");
+
+    let stored = db.load(&db_ref).expect("load");
+    let states: Vec<TrackState> = stored.tracks.iter().map(|track| track.state).collect();
+    assert_eq!(states, vec![TrackState::Live, TrackState::Shelved]);
+    assert_eq!(
+        stored_state_column(&db_path, &db_ref),
+        vec![0, 2, 1],
+        "the tombstone keeps its row and the shelve lands past it"
+    );
+}
+
+/// The recording's track table as it sits on disk, tombstones and all.
+#[expect(
+    clippy::expect_used,
+    reason = "test helper; panicking on I/O failure is the right behaviour"
+)]
+fn stored_state_column(db_path: &std::path::Path, db_ref: &DatabaseRef) -> Vec<u64> {
+    let file = hdf5::File::open(db_path).expect("open with the reference C library");
+    file.group("by_identity")
+        .and_then(|by_id| by_id.group(&gt_history::identity_group_name(&db_ref.identity)))
+        .and_then(|id_grp| id_grp.group(&db_ref.group_name))
+        .and_then(|rec_grp| rec_grp.group(TRACKS_GROUP))
+        .and_then(|tracks| tracks.dataset(TRACK_STATE_DATASET))
+        .and_then(|column| column.read_1d::<u64>())
+        .expect("the recording's state column")
+        .to_vec()
+}
+
+/// A tombstone row stands for a track the user deleted permanently.
+/// `list_recordings` and `load` count only the rows around it.
+#[test_log::test]
+fn a_deleted_row_of_the_track_table_is_no_track_of_the_recording() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("tombstone.h5");
+    write_pure_db_with_a_track_table(
+        &db_path,
+        CURRENT_SCHEMA_VERSION,
+        TRACK_STATE_DATASET,
+        &[0, 2, 1],
+    );
+
+    let db = Database::open_or_create(&db_path).expect("open");
+
+    let entries = db.list_recordings().expect("list");
+    let [entry] = entries.as_slice() else {
+        panic!("expected exactly one recording, got {}", entries.len());
+    };
+    assert_eq!(entry.total_tracks, 2);
+    assert_eq!(entry.shelved_tracks, 1);
+    let stored = db.load(&entry.db_ref).expect("load");
+    let states: Vec<TrackState> = stored.tracks.iter().map(|track| track.state).collect();
+    assert_eq!(states, vec![TrackState::Live, TrackState::Shelved]);
 }
 
 #[test]
@@ -1919,12 +2072,12 @@ fn pure_backend_database_is_readable_by_metno() {
         TrackRange {
             start: 0,
             end: 4,
-            hidden: false,
+            state: TrackState::Live,
         },
         TrackRange {
             start: 4,
             end: 9,
-            hidden: true,
+            state: TrackState::Shelved,
         },
     ];
     db.insert("device", &meta, &tracks, test_settings(), &bytes)
@@ -1970,7 +2123,7 @@ fn pure_backend_database_is_readable_by_metno() {
     };
     assert_eq!(read_column(TRACK_START_DATASET), vec![0, 4]);
     assert_eq!(read_column(TRACK_END_DATASET), vec![4, 9]);
-    assert_eq!(read_column(TRACK_HIDDEN_DATASET), vec![0, 1]);
+    assert_eq!(read_column(TRACK_STATE_DATASET), vec![0, 1]);
 }
 
 /// Regression: two distinct recordings that start within the same second and have
@@ -2025,12 +2178,12 @@ fn insert_two_track(db: &mut Database, identity: &str, start_us: i64, n: u64) ->
         TrackRange {
             start: 0,
             end: half,
-            hidden: false,
+            state: TrackState::Live,
         },
         TrackRange {
             start: half,
             end: meta.nav_point_count,
-            hidden: false,
+            state: TrackState::Live,
         },
     ];
     db.insert(identity, &meta, &tracks, test_settings(), &bytes)
@@ -2038,11 +2191,11 @@ fn insert_two_track(db: &mut Database, identity: &str, start_us: i64, n: u64) ->
 }
 
 /// Exercises the whole API at scale: hundreds of recordings inserted, then
-/// listed, read back, partially hidden, batch-deleted, and re-opened. Verifies
+/// listed, read back, partially shelved, batch-deleted, and re-opened. Verifies
 /// end to end that HDF5 keeps a large number of sibling groups consistent on
 /// whichever backend is active.
 #[test_log::test]
-fn many_recordings_support_list_read_hide_and_delete() {
+fn many_recordings_support_list_read_shelve_and_delete() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
@@ -2073,21 +2226,21 @@ fn many_recordings_support_list_read_hide_and_delete() {
         assert_eq!(covered, *n, "track ranges must cover all nav points");
     }
 
-    // Hide the first track of every third recording.
-    let mut expected_hidden = 0;
+    // Shelve the first track of every third recording.
+    let mut expected_shelved = 0;
     for (db_ref, _) in refs.iter().step_by(3) {
-        db.set_tracks_hidden(db_ref, &[0], true).expect("hide");
-        expected_hidden += 1;
+        db.set_tracks_shelved(db_ref, &[0], true).expect("shelve");
+        expected_shelved += 1;
     }
-    let hidden_total: usize = db
+    let shelved_total: usize = db
         .list_recordings()
         .expect("list")
         .iter()
-        .map(|e| e.hidden_tracks)
+        .map(|e| e.shelved_tracks)
         .sum();
     assert_eq!(
-        hidden_total, expected_hidden,
-        "hidden marks persist across the whole set"
+        shelved_total, expected_shelved,
+        "shelved marks persist across the whole set"
     );
 
     // Batch-delete the first half.
@@ -2263,12 +2416,12 @@ fn chunked_recordings_reuse_freed_space_on_interior_delete() {
             TrackRange {
                 start: 0,
                 end: half,
-                hidden: false,
+                state: TrackState::Live,
             },
             TrackRange {
                 start: half,
                 end: meta.nav_point_count,
-                hidden: false,
+                state: TrackState::Live,
             },
         ];
         db.insert("dev", &meta, &tracks, test_settings(), &bytes)
@@ -2295,7 +2448,7 @@ fn chunked_recordings_reuse_freed_space_on_interior_delete() {
 
 /// `set_tracks` must wholly replace the stored track table and segmentation
 /// settings, not merge with or append to the previous ones (including dropping
-/// stale hidden marks).
+/// stale shelved marks).
 #[test_log::test]
 fn set_tracks_replaces_the_table_and_settings() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -2308,12 +2461,12 @@ fn set_tracks_replaces_the_table_and_settings() {
         TrackRange {
             start: 0,
             end: 4,
-            hidden: false,
+            state: TrackState::Live,
         },
         TrackRange {
             start: 4,
             end: 9,
-            hidden: true,
+            state: TrackState::Shelved,
         },
     ];
     let db_ref = db
@@ -2322,24 +2475,24 @@ fn set_tracks_replaces_the_table_and_settings() {
     {
         let entry = &db.list_recordings().expect("list")[0];
         assert_eq!(entry.total_tracks, 2);
-        assert_eq!(entry.hidden_tracks, 1);
+        assert_eq!(entry.shelved_tracks, 1);
     }
 
     let three = [
         TrackRange {
             start: 0,
             end: 3,
-            hidden: false,
+            state: TrackState::Live,
         },
         TrackRange {
             start: 3,
             end: 6,
-            hidden: false,
+            state: TrackState::Live,
         },
         TrackRange {
             start: 6,
             end: 9,
-            hidden: false,
+            state: TrackState::Live,
         },
     ];
     let new_settings = StoredSegmentation {
@@ -2366,8 +2519,8 @@ fn set_tracks_replaces_the_table_and_settings() {
     let entry = &db.list_recordings().expect("list")[0];
     assert_eq!(entry.total_tracks, 3);
     assert_eq!(
-        entry.hidden_tracks, 0,
-        "the replacement clears the old hidden mark"
+        entry.shelved_tracks, 0,
+        "the replacement clears the old shelved mark"
     );
 }
 
@@ -2385,7 +2538,7 @@ fn replacing_a_recording_in_place_stores_the_new_bytes_under_the_same_reference(
     let tracks = [TrackRange {
         start: 0,
         end: 25,
-        hidden: true,
+        state: TrackState::Shelved,
     }];
     db.replace_recording_in_place(&db_ref, &meta, &tracks, test_settings(), &shorter)
         .expect("replace");
@@ -2403,7 +2556,7 @@ fn replacing_a_recording_in_place_stores_the_new_bytes_under_the_same_reference(
     };
     assert_eq!(entry.db_ref, db_ref);
     assert_eq!(entry.total_tracks, 1);
-    assert_eq!(entry.hidden_tracks, 1);
+    assert_eq!(entry.shelved_tracks, 1);
     assert_eq!(entry.meta, meta, "the listing describes the new bytes");
 }
 
@@ -2422,7 +2575,7 @@ fn replacing_a_recording_in_place_keeps_the_logs_attached_to_it() {
     let tracks = [TrackRange {
         start: 0,
         end: 25,
-        hidden: false,
+        state: TrackState::Live,
     }];
     db.replace_recording_in_place(&db_ref, &meta, &tracks, test_settings(), &shorter)
         .expect("replace");
@@ -2451,7 +2604,7 @@ fn replacing_a_recording_in_place_drops_the_stored_snap_run() {
     let tracks = [TrackRange {
         start: 0,
         end: 25,
-        hidden: false,
+        state: TrackState::Live,
     }];
     db.replace_recording_in_place(&db_ref, &meta, &tracks, test_settings(), &shorter)
         .expect("replace");
@@ -2471,7 +2624,7 @@ fn replacing_a_recording_that_is_not_stored_reports_an_error() {
     let tracks = [TrackRange {
         start: 0,
         end: 10,
-        hidden: false,
+        state: TrackState::Live,
     }];
     let missing = DatabaseRef {
         identity: db_ref.identity.clone(),
@@ -2502,7 +2655,7 @@ fn replacing_a_recording_with_bytes_that_are_not_a_recording_keeps_the_stored_on
     let tracks = [TrackRange {
         start: 0,
         end: 25,
-        hidden: false,
+        state: TrackState::Live,
     }];
 
     assert!(
@@ -2563,7 +2716,7 @@ fn a_replacement_interrupted_before_it_was_linked_in_puts_the_recording_back() {
     let tracks = [TrackRange {
         start: 0,
         end: 25,
-        hidden: false,
+        state: TrackState::Live,
     }];
     db.replace_recording_in_place(&db_ref, &meta, &tracks, test_settings(), &shorter)
         .expect("replace");
@@ -2633,7 +2786,7 @@ fn a_stored_recording_reads_back_the_rules_it_was_written_with(
     let tracks = [TrackRange {
         start: 0,
         end: meta.nav_point_count,
-        hidden: false,
+        state: TrackState::Live,
     }];
     let settings = StoredSegmentation {
         track_split_rule,
