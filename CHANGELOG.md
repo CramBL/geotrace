@@ -17,6 +17,7 @@
 ### Fixed
 
 - **Interface:** Fixed the force quit confirmation vanishing when the last background write finishes: it now stays up saying the work finished, with the force quit grayed out and a Close button, and closes itself four seconds later.
+- **Interface:** Fixed the "Delete hidden data?" confirmation vanishing when the last hidden track goes from the recording list: it now stays up saying that no track is hidden any more, with the delete grayed out and a Close button counting down.
 - **Interface:** Fixed the force quit confirmation closing itself with nothing on screen counting down to it: its Close button now counts the seconds down, and the count holds while the pointer is over the confirmation.
 - **Interface:** Fixed the loading overlay growing over the map's layer and display toggles while a batch of recordings loads: it now lists four loads and counts the rest, and a press over it reaches the control under it.
 - **Interface:** Fixed the History window growing with its listing until it filled the screen: it now keeps the height it is at and scrolls its rows inside it, and it shrinks to a listing shorter than that.

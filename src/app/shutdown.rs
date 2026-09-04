@@ -12,7 +12,7 @@ use egui_phosphor::regular::CHECK as ICON_CHECK;
 use gt_pending_writes::{PendingWriteStatus, PendingWrites, PendingWritesSnapshot, WriteKind};
 
 use super::modals::{
-    self, ForceQuitChoice, ForceQuitPromptContents, PointerOverTheDialog, TimeUntilTheClose,
+    self, CountdownToTheClose, ForceQuitChoice, ForceQuitPromptContents, PointerOverTheDialog,
 };
 use super::{App, history_db};
 use crate::termination_signal::{TERMINATION_SIGNAL_FLAG, TerminationSignalAction};
@@ -35,10 +35,6 @@ pub(crate) const FORCE_QUIT_EXIT_CODE: u8 = 3;
 pub(crate) const SECOND_SIGNAL_QUIT_CAUSE: &str = "Quitting on a second termination signal";
 
 const HISTORY_SHUTDOWN_LABEL: &str = "Finishing recording history work";
-
-/// The force-quit prompt counts this down to its own close once the last write
-/// finishes, which is long enough to read the one sentence it reports.
-const COUNT_THE_PROMPT_RUNS_AFTER_THE_LAST_WRITE_FINISHES: Duration = Duration::from_secs(4);
 
 /// Reports the writes the process is about to abandon, wherever it ends
 /// before they finish.
@@ -140,37 +136,6 @@ enum ForceQuitPrompt {
     ReportingTheFinishedWrites(CountdownToTheClose),
 }
 
-/// What the prompt reporting the finished writes has left before it closes
-/// itself, and the frame that time was last taken off it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CountdownToTheClose {
-    time_left: Duration,
-    last_advanced_at: Instant,
-}
-
-impl CountdownToTheClose {
-    fn started_at(now: Instant) -> Self {
-        Self {
-            time_left: COUNT_THE_PROMPT_RUNS_AFTER_THE_LAST_WRITE_FINISHES,
-            last_advanced_at: now,
-        }
-    }
-
-    /// Takes the time since the last frame off the count, and holds the count
-    /// where it is while the pointer rests over the prompt.
-    fn advance_to(&mut self, now: Instant, pointer: PointerOverTheDialog) {
-        let since_the_last_frame = now.saturating_duration_since(self.last_advanced_at);
-        self.last_advanced_at = now;
-        if pointer == PointerOverTheDialog::Away {
-            self.time_left = self.time_left.saturating_sub(since_the_last_frame);
-        }
-    }
-
-    fn has_run_out(self) -> bool {
-        self.time_left.is_zero()
-    }
-}
-
 impl ForceQuitPrompt {
     fn open(&mut self) {
         *self = Self::ListingInterruptionCosts;
@@ -196,14 +161,14 @@ impl ForceQuitPrompt {
                 if costs.is_empty() {
                     let countdown = CountdownToTheClose::started_at(now);
                     *self = Self::ReportingTheFinishedWrites(countdown);
-                    return Some(ForceQuitPromptContents::WritesFinished(TimeUntilTheClose(
-                        countdown.time_left,
-                    )));
+                    return Some(ForceQuitPromptContents::WritesFinished(
+                        countdown.time_until_the_close(),
+                    ));
                 }
                 Some(ForceQuitPromptContents::InterruptionCosts(costs))
             }
             Self::ReportingTheFinishedWrites(countdown) => Some(
-                ForceQuitPromptContents::WritesFinished(TimeUntilTheClose(countdown.time_left)),
+                ForceQuitPromptContents::WritesFinished(countdown.time_until_the_close()),
             ),
         }
     }
@@ -438,6 +403,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    use crate::app::modals::{COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES, TimeUntilTheClose};
 
     /// A write of each kind given, as the registry reports the running ones.
     fn snapshot_of(kinds: &[WriteKind]) -> PendingWritesSnapshot {
@@ -526,7 +492,7 @@ mod tests {
 
         assert_eq!(
             prompt.contents_to_show(Instant::now(), &snapshot_of(&[])),
-            writes_finished(COUNT_THE_PROMPT_RUNS_AFTER_THE_LAST_WRITE_FINISHES)
+            writes_finished(COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES)
         );
     }
 
@@ -537,7 +503,7 @@ mod tests {
 
         assert_eq!(
             prompt.contents_to_show(now, &snapshot_of(&[TEC_COMPACTION])),
-            writes_finished(COUNT_THE_PROMPT_RUNS_AFTER_THE_LAST_WRITE_FINISHES)
+            writes_finished(COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES)
         );
     }
 
@@ -545,7 +511,7 @@ mod tests {
     fn the_prompt_shows_the_time_it_has_left_before_it_closes() {
         let finished_at = Instant::now();
         let mut prompt = prompt_reporting_writes_finished_at(finished_at);
-        let a_third_of_the_count = COUNT_THE_PROMPT_RUNS_AFTER_THE_LAST_WRITE_FINISHES / 3;
+        let a_third_of_the_count = COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES / 3;
 
         prompt.advance_the_countdown_and_close_when_it_runs_out(
             finished_at + a_third_of_the_count,
@@ -555,8 +521,7 @@ mod tests {
         assert_eq!(
             prompt.contents_to_show(finished_at + a_third_of_the_count, &snapshot_of(&[])),
             writes_finished(
-                COUNT_THE_PROMPT_RUNS_AFTER_THE_LAST_WRITE_FINISHES
-                    .saturating_sub(a_third_of_the_count)
+                COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES.saturating_sub(a_third_of_the_count)
             )
         );
     }
@@ -565,12 +530,12 @@ mod tests {
     fn the_count_holds_while_the_pointer_rests_over_the_prompt_and_resumes_where_it_stopped() {
         let finished_at = Instant::now();
         let mut prompt = prompt_reporting_writes_finished_at(finished_at);
-        let half_the_count = COUNT_THE_PROMPT_RUNS_AFTER_THE_LAST_WRITE_FINISHES / 2;
+        let half_the_count = COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES / 2;
         let mut frame_at = finished_at + half_the_count;
         prompt
             .advance_the_countdown_and_close_when_it_runs_out(frame_at, PointerOverTheDialog::Away);
 
-        frame_at += COUNT_THE_PROMPT_RUNS_AFTER_THE_LAST_WRITE_FINISHES * 10;
+        frame_at += COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES * 10;
         prompt.advance_the_countdown_and_close_when_it_runs_out(
             frame_at,
             PointerOverTheDialog::Resting,
@@ -594,17 +559,17 @@ mod tests {
 
     #[rstest]
     #[case::the_count_ran_out_and_the_pointer_is_away(
-        COUNT_THE_PROMPT_RUNS_AFTER_THE_LAST_WRITE_FINISHES,
+        COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES,
         PointerOverTheDialog::Away,
         false
     )]
     #[case::the_pointer_rests_over_the_prompt(
-        COUNT_THE_PROMPT_RUNS_AFTER_THE_LAST_WRITE_FINISHES * 10,
+        COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES * 10,
         PointerOverTheDialog::Resting,
         true
     )]
     #[case::the_count_has_not_run_out_yet(
-        COUNT_THE_PROMPT_RUNS_AFTER_THE_LAST_WRITE_FINISHES / 2,
+        COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES / 2,
         PointerOverTheDialog::Away,
         true
     )]

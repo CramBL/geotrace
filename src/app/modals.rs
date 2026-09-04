@@ -1,7 +1,7 @@
 use egui::{Button, Checkbox, Grid, Label, RichText, ScrollArea, Window};
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use gt_fmt::UTC_SECOND_FORMAT;
@@ -1401,7 +1401,7 @@ pub enum PointerOverTheDialog {
 impl PointerOverTheDialog {
     /// Where the pointer is against the layer `ui` draws in, which for a
     /// dialog's body is the dialog's own window.
-    fn of(ui: &egui::Ui) -> Self {
+    pub(super) fn of(ui: &egui::Ui) -> Self {
         let over_this_layer = ui
             .ctx()
             .pointer_latest_pos()
@@ -1424,17 +1424,66 @@ pub enum ForceQuitPromptContents {
     WritesFinished(TimeUntilTheClose),
 }
 
-/// How long the confirmation reporting the finished writes has left before it
-/// closes itself.
+/// How long a dialog reporting that its action has nothing left to do has
+/// before it closes itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimeUntilTheClose(pub Duration);
 
 impl TimeUntilTheClose {
     /// The label counts the whole seconds left, rounded up, so it reads `1s`
     /// through the whole last second of the count.
-    fn close_button_label(self) -> String {
+    pub(super) fn close_button_label(self) -> String {
         let seconds = self.0.as_secs() + u64::from(self.0.subsec_nanos() > 0);
         format!("Close ({seconds}s)")
+    }
+}
+
+/// A dialog that reports its action has nothing left to do runs this count
+/// before it closes itself, which is long enough to read the one sentence it
+/// reports.
+pub(super) const COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES: Duration = Duration::from_secs(4);
+
+/// What a dialog reporting that its action has nothing left to do has left
+/// before it closes itself, and the frame that time was last taken off it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct CountdownToTheClose {
+    time_left: Duration,
+    last_advanced_at: Instant,
+}
+
+impl CountdownToTheClose {
+    /// The count moves without new input. A dialog counting down repaints on
+    /// this interval.
+    const REPAINT_INTERVAL: Duration = Duration::from_millis(100);
+
+    pub(super) fn started_at(now: Instant) -> Self {
+        Self {
+            time_left: COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES,
+            last_advanced_at: now,
+        }
+    }
+
+    pub(super) fn time_until_the_close(self) -> TimeUntilTheClose {
+        TimeUntilTheClose(self.time_left)
+    }
+
+    /// Takes the time since the last frame off the count, and holds the count
+    /// where it is while the pointer rests over the dialog.
+    pub(super) fn advance_to(&mut self, now: Instant, pointer: PointerOverTheDialog) {
+        let since_the_last_frame = now.saturating_duration_since(self.last_advanced_at);
+        self.last_advanced_at = now;
+        if pointer == PointerOverTheDialog::Away {
+            self.time_left = self.time_left.saturating_sub(since_the_last_frame);
+        }
+    }
+
+    pub(super) fn has_run_out(self) -> bool {
+        self.time_left.is_zero()
+    }
+
+    /// A dialog counting down calls this on every frame it is up.
+    pub(super) fn request_the_repaint_the_count_needs(self, ctx: &egui::Context) {
+        ctx.request_repaint_after(Self::REPAINT_INTERVAL);
     }
 }
 
