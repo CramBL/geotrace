@@ -431,6 +431,12 @@ pub struct NavMap {
     /// Geographic bounds of the last rendered viewport.
     /// `None` before the first draw call.
     last_viewport_bounds: Option<ViewportBounds>,
+    /// What `Context::any_popup_open` said at the end of the previous draw,
+    /// which is what [`OpenPopups::egui_popup_was_open_last_frame`] states.
+    /// egui records a popup in the pass state only once that popup has drawn,
+    /// and the map's context menu draws after the layers whose labels it
+    /// hides.
+    an_egui_popup_was_open_last_frame: bool,
     /// The element that was under the pointer when the last right-click fired.
     /// Held across frames so the context menu can reference it while it is open.
     right_click_ref: Option<DataPointRef>,
@@ -505,6 +511,7 @@ impl NavMap {
             last_viewport_bounds: None,
             fit_notice: None,
             right_click_ref: None,
+            an_egui_popup_was_open_last_frame: false,
             disambiguation_candidates: HoverCandidates::default(),
             disambiguation_pos: egui::pos2(0.0, 0.0),
             display_toggle: display_toggle::DisplayToggleState::default(),
@@ -665,7 +672,7 @@ impl NavMap {
         // hover labels state the popups the frame was drawn under.
         let popups = OpenPopups {
             disambiguation: self.disambiguation_is_open(),
-            egui_popup: ui.ctx().any_popup_open(),
+            egui_popup_was_open_last_frame: self.an_egui_popup_was_open_last_frame,
         };
         ctx.suppress_overlapping_hover_labels(popups.disambiguation);
 
@@ -674,7 +681,7 @@ impl NavMap {
             .detached()
             .unwrap_or_else(default_map_center);
         let plan = self.collect_viewport_points(ui.max_rect(), map_center, &ctx);
-        let map_response = self.show_map(ui, &ctx, &plan, animation);
+        let map_response = self.show_map(ui, &ctx, &plan, animation, popups);
         ctx.log_hover.glyph = self.hovered_log_glyph.take();
         *ctx.clicked_log_glyph = self.clicked_log_glyph.take();
 
@@ -708,6 +715,7 @@ impl NavMap {
 
         ctx.highlight.hover = hover.primary().map(HighlightScope::Point);
         ctx.highlight.hover_candidates = hover;
+        self.an_egui_popup_was_open_last_frame = ui.ctx().any_popup_open();
 
         action
     }
@@ -875,6 +883,7 @@ impl NavMap {
         ctx: &MapDrawContext<'_>,
         plan: &viewport::TrackPlan,
         animation: FrameAnimation,
+        popups: OpenPopups,
     ) -> egui::Response {
         let use_mapbox_tiles = self.use_mapbox_tiles();
         let tiles: Option<&mut dyn walkers::Tiles> = if let Some(tiles) = self.test_tiles.as_mut() {
@@ -934,7 +943,9 @@ impl NavMap {
             && let Some(snapped) = ctx.snapped_tracks
             && !snapped.is_empty()
         {
-            map = map.with_plugin(SnappedTrackRenderer::new(snapped, ctx.files, ctx.filter));
+            map = map.with_plugin(SnappedTrackRenderer::new(
+                snapped, ctx.files, ctx.filter, popups,
+            ));
         }
         // Between the track line and the markers: a hexagon must not cover a
         // pin, and must be legible over the line it sits on. This renderer
@@ -1060,7 +1071,7 @@ impl NavMap {
                 .push(HoverLabelEntry::RecordedElement(label));
         }
         self.hover_label_stack
-            .show_at_the_pointer(ui, ctx.hover_label_sources());
+            .show_at_the_pointer(ui, ctx.hover_label_sources(), popups);
     }
 
     /// The map's floating controls: the tile layer picker with the display

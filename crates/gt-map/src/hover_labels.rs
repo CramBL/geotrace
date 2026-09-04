@@ -186,7 +186,13 @@ pub(crate) struct OpenPopups {
     /// could not resolve.
     pub(crate) disambiguation: bool,
     /// Any egui popup, which the map's context menu is one of.
-    pub(crate) egui_popup: bool,
+    pub(crate) egui_popup_was_open_last_frame: bool,
+}
+
+impl OpenPopups {
+    pub(crate) fn a_popup_owns_the_pointer(self) -> bool {
+        self.disambiguation || self.egui_popup_was_open_last_frame
+    }
 }
 
 /// Which recorded element's label the stack takes this frame, and `None`
@@ -210,7 +216,7 @@ pub(crate) fn recorded_element_label(
     }
     let candidate = highlight.hover_candidates.primary()?;
     highlight
-        .shows_hover_label(candidate, popups.egui_popup)
+        .shows_hover_label(candidate, popups.egui_popup_was_open_last_frame)
         .then_some(RecordedElementLabel::One(candidate))
 }
 
@@ -228,14 +234,23 @@ impl HoverLabelStack {
     }
 
     /// Draws the frame's labels stacked at the pointer, the topmost layer's
-    /// first, and empties the stack for the next frame.
+    /// first, and empties the stack for the next frame. While a popup owns
+    /// the pointer it draws none of them, and empties the stack all the same.
     ///
     /// The call order is the stacking order: egui places each further
     /// tooltip of one parent widget below the bounding rect of the ones
     /// already shown for it. A stack too tall for the room below the pointer
     /// is cut off by the screen.
-    pub(crate) fn show_at_the_pointer(&self, ui: &egui::Ui, sources: HoverLabelSources<'_>) {
+    pub(crate) fn show_at_the_pointer(
+        &self,
+        ui: &egui::Ui,
+        sources: HoverLabelSources<'_>,
+        popups: OpenPopups,
+    ) {
         let mut entries = self.entries.take();
+        if popups.a_popup_owns_the_pointer() {
+            return;
+        }
         entries.sort_by_key(HoverLabelEntry::layer);
         for entry in entries {
             let mut tooltip = Tooltip::always_open(
@@ -560,7 +575,10 @@ mod tests {
         &[FIX],
         &[FIX],
         FrameInputs {
-            popups: OpenPopups { egui_popup: true, ..OpenPopups::default() },
+            popups: OpenPopups {
+                egui_popup_was_open_last_frame: true,
+                ..OpenPopups::default()
+            },
             ..FrameInputs::default()
         },
         None

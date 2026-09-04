@@ -31,6 +31,15 @@ const CENTRE_FIX: usize = 15;
 /// How far north of the track the bare-map point sits, in points.
 const NORTH_OF_THE_TRACK_OFFSET_PT: f32 = 150.0;
 
+/// Fixes of a recording sparse enough for the snapped edge to run on past the
+/// last of them, where the pointer reaches the edge alone.
+const SPARSE_FIX_COUNT: usize = 4;
+
+/// How far east of the last fix the pointer rests on the bare edge, in points.
+/// The fit puts the fixes about 200 pt apart, and a fix takes the pointer
+/// within 20 pt.
+const BARE_EDGE_OFFSET_PT: f32 = 120.0;
+
 /// The margin `egui_kittest` lays a `ui_state` harness out with, which insets
 /// the map from the viewport.
 const HARNESS_OUTER_MARGIN_PT: f32 = 8.0;
@@ -314,20 +323,33 @@ impl PopupOverTheMap {
     }
 }
 
-/// The interference cell's label draws while a popup holds the map: a popup
-/// replaces the label of a recorded element, and leaves the labels of the
-/// layers under the track alone.
+/// What the map has open on the frame Escape closes a popup on.
+#[derive(Clone, Copy)]
+enum LabelsOnTheEscapeFrame {
+    /// The map reads its own popup before it draws the labels: the frame
+    /// that closes the disambiguation popup shows them again.
+    Returned,
+    /// egui closes the context menu at the end of the frame it reads the key
+    /// on: the map drew that frame with the menu still open.
+    StillHidden,
+}
+
+/// Every hover label hides while a popup holds the map, and the labels of the
+/// layers under the pointer return once the popup closes.
 #[rstest]
 #[case::the_disambiguation_popup(
     PopupOverTheMap::Disambiguation,
+    LabelsOnTheEscapeFrame::Returned,
     "hover_label_an_interference_cell_under_the_disambiguation_popup"
 )]
 #[case::the_context_menu(
     PopupOverTheMap::ContextMenu,
+    LabelsOnTheEscapeFrame::StillHidden,
     "hover_label_an_interference_cell_under_the_context_menu"
 )]
-fn snapshot_the_interference_cell_label_draws_while_a_popup_holds_the_map(
+fn snapshot_no_hover_label_draws_while_a_popup_holds_the_map(
     #[case] popup: PopupOverTheMap,
+    #[case] on_the_escape_frame: LabelsOnTheEscapeFrame,
     #[case] snapshot_name: &str,
 ) {
     let files =
@@ -347,11 +369,49 @@ fn snapshot_the_interference_cell_label_draws_while_a_popup_holds_the_map(
     map.move_pointer_to(bare_map_north_of_the_track());
     map.draw_one_more_frame();
     assert!(popup.is_open(&map), "the pointer move closed the popup");
-    assert_eq!(map.hover_label_texts(), [THE_INTERFERENCE_CELL_LABEL]);
+    assert_eq!(map.hover_label_texts(), Vec::<String>::new());
+
+    map.draw_one_more_frame();
+    assert_eq!(map.hover_label_texts(), Vec::<String>::new());
+    map.snapshot(snapshot_name);
+
+    map.press_escape();
+    assert_eq!(
+        map.hover_label_texts(),
+        match on_the_escape_frame {
+            LabelsOnTheEscapeFrame::Returned => vec![THE_INTERFERENCE_CELL_LABEL.to_owned()],
+            LabelsOnTheEscapeFrame::StillHidden => Vec::new(),
+        }
+    );
 
     map.draw_one_more_frame();
     assert_eq!(map.hover_label_texts(), [THE_INTERFERENCE_CELL_LABEL]);
-    map.snapshot(snapshot_name);
+}
+
+/// The snapped edge's corner label hides while the context menu is open, and
+/// returns on the frame after Escape closes the menu. The menu opens on the
+/// last fix, and the pointer then rests on the bare edge east of it.
+#[test]
+fn the_snapped_edge_label_hides_while_the_context_menu_is_open() {
+    let files = a_recording_of(SPARSE_FIX_COUNT, WALKING_STEP_DEGREES);
+    let centre = fix_position(&files, SPARSE_FIX_COUNT - 1);
+    let mut map = RenderedMapScene::of(files)
+        .with_snapped_tracks(a_snapped_edge_through(centre))
+        .centred_on(centre)
+        .draw();
+
+    map.secondary_click_at(viewport_center());
+    map.draw_one_more_frame();
+    assert!(map.any_popup_is_open(), "the click opened no context menu");
+
+    map.move_pointer_to(viewport_center() + egui::vec2(BARE_EDGE_OFFSET_PT, 0.0));
+    map.draw_one_more_frame();
+    assert!(map.any_popup_is_open(), "the pointer move closed the menu");
+    assert_eq!(map.hover_label_texts(), Vec::<String>::new());
+
+    map.press_escape();
+    map.draw_one_more_frame();
+    assert_eq!(map.hover_label_texts(), [THE_SNAPPED_EDGE_LABEL]);
 }
 
 /// The compound label opens the frame after the pointer reaches a fix and an
@@ -398,15 +458,6 @@ fn snapshot_the_compound_label_opens_the_frame_after_the_pointer_reaches_two_ele
 /// edge's hit test runs on the frame it draws.
 #[test]
 fn snapshot_the_fix_table_opens_the_frame_after_the_pointer_reaches_a_fix_on_a_snapped_edge() {
-    /// Fixes of a recording sparse enough for the snapped edge to run on past
-    /// the last of them, where the pointer reaches the edge alone.
-    const SPARSE_FIX_COUNT: usize = 4;
-
-    /// How far east of the last fix the pointer rests on the bare edge, in
-    /// points. The fit puts the fixes about 200 pt apart, and a fix takes the
-    /// pointer within 20 pt.
-    const BARE_EDGE_OFFSET_PT: f32 = 120.0;
-
     let the_fix_label = format!(
         "Time\n2023-11-14 22:16:20\n\
          Lat\n55.676000° N\n\

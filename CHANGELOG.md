@@ -24,6 +24,7 @@
 - **Interface:** Fixed the wait for a data directory another GeoTrace is using, and its take-over confirmation, moving their buttons while the other GeoTrace reports on itself.
 - **Interface:** Fixed the remove confirmation moving its controls when a log stored with a recording it removes finishes loading.
 - **Map & Tracks:** Fixed a track row's hover text drawing over the hover text of the row's snap trigger, coordinate warning icon or hidden snapped track hint.
+- **Map & Tracks:** Fixed the map drawing hover text under an open popup: every layer's hover text, and the snap-to-road hover text in the corner, now stay hidden while the popup listing overlapping elements or the right-click menu is open.
 
 ## 0.14.0 - 2026-09-03
 
