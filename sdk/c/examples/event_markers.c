@@ -39,7 +39,7 @@ int main(void) {
         }
     }
 
-    /* (variant_path, second-offset, annotation) - flat and nested paths. */
+    /* (`variant_path`, second-offset, annotation) - flat and nested paths. */
     struct {
         const char *path;
         uint32_t offset;

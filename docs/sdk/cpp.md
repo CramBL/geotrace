@@ -53,7 +53,7 @@ source build, select static with `-DGEOTRACE_C_STATIC=ON` (see below).
 
 Requires a Rust toolchain. Install the C SDK, then the C++ SDK into the same
 prefix. `-DGEOTRACE_C_STATIC=ON` builds the static library (the default on
-Windows); omit it for a shared library on Linux and macOS.
+Windows). Omit it for a shared library on Linux and macOS.
 
 ```sh
 cargo build -p geotrace-c --release

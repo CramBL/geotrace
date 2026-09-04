@@ -38,7 +38,7 @@ FIXES = [
 ]
 
 EVENTS = [
-    # (variant_path,                  seconds, annotation)
+    # (`variant_path`, seconds, annotation)
     ("power/boot", 2, "cold start"),
     ("connectivity/agps/request", 5, "EPO fetch started"),
     ("connectivity/agps/success", 18, "EPO applied, TTFF reduced"),

@@ -55,7 +55,7 @@ _CONSTELLATIONS = {
     "beidou": Constellation.BEIDOU,
 }
 
-# (gps_time, sys_time) raw CSV strings -> satellites captured at that instant.
+# (`gps_time`, `sys_time`) raw CSV strings -> satellites captured at that instant.
 SatKey = tuple[str, str]
 
 
@@ -143,7 +143,7 @@ def _load_fixes(
                 sys_time=sys_time,
                 heading=_opt_float(cols[5]),
                 # Match the SDK's MPS_PER_KMH = 1.0 / 3.6 constant-multiply so
-                # the m/s value is bit-identical across SDKs (kmh / 3.6 differs
+                # the m/s value is bit-identical across SDKs (`kmh / 3.6` differs
                 # by 1 ULP for some values).
                 speed_mps=None if speed_kmh is None else speed_kmh * (1.0 / 3.6),
                 eph_m=_opt_float(cols[7]),
@@ -187,7 +187,8 @@ def _load_channels(builder: NavFileBuilder, base: Path) -> None:
     accumulators: dict[str, _ChannelAcc] = {}
     order: list[str] = []
     for cols in _rows(base / "channels.csv"):
-        # cols: name, unit, period_deg, description, components, time, values
+        # cols: `name`, `unit`, `period_deg`, `description`, `components`,
+        # `time`, `values`
         if len(cols) < 7:
             continue
         name = cols[0]

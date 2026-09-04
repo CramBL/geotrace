@@ -52,7 +52,7 @@ std::vector<std::string> split_csv(const std::string &line) {
     return split(line, ',');
 }
 
-// The first N comma-separated fields of `line`, or nullopt when it holds fewer.
+// The first N comma-separated fields of `line`, or `std::nullopt` when it holds fewer.
 template <std::size_t N>
 std::optional<std::array<std::string, N>> split_csv_fields(const std::string &line) {
     auto cols = split_csv(line);
@@ -72,7 +72,7 @@ int month_days(int m, int y) noexcept {
     return (m == 2 && is_leap(y)) ? 29 : dom.at(static_cast<std::size_t>(m - 1));
 }
 
-/* Parse "YYYY-MM-DDTHH:MM:SS+HH:MM" to a Timestamp, or nullopt on failure. */
+/* Parse "YYYY-MM-DDTHH:MM:SS+HH:MM" to a Timestamp, or `std::nullopt` on failure. */
 std::optional<geotrace::Timestamp> parse_ts(const std::string &s) {
     if (s.size() < 19)
         return std::nullopt;

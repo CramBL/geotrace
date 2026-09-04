@@ -172,9 +172,8 @@ struct ParseError : Error {
 
 /**
  * A channel was malformed (bad name/component, length mismatch, or duplicate
- * name). Derives `Error` rather than `BuildError`, mirroring `InvalidPathError`:
- * both are input-validation errors, even though the duplicate-name check fires
- * at `finish()`.
+ * name). Derives `Error`, as `InvalidPathError` does: both are
+ * input-validation errors. The duplicate-name check runs at `finish()`.
  */
 struct InvalidChannelError : Error {
     using Error::Error;
@@ -236,9 +235,9 @@ inline std::string path_string(const std::filesystem::path &p) {
 }
 
 inline GtdOptF64 to_c(std::optional<double> v) noexcept {
-    // Plain aggregate construction rather than GTD_SOME_F64/GTD_NONE_F64: those
-    // macros expand to C99 compound-literal + designated-initializer syntax,
-    // which MSVC rejects in C++ mode (errors C4576/C7555).
+    // GTD_SOME_F64 and GTD_NONE_F64 expand to C99 compound-literal +
+    // designated-initializer syntax, which MSVC rejects in C++ mode (errors
+    // C4576/C7555).
     GtdOptF64 result{};
     if (v) {
         result.value = *v;
@@ -258,7 +257,7 @@ struct NavFileDeleter {
 } // namespace detail
 
 /**
- * An error returned by value from a `try_*` method, instead of thrown.
+ * An error returned by value from a `try_*` method.
  *
  * `code` is the underlying `GtdStatus`. `description` is a human-readable
  * message. This is the non-throwing error channel: check `is_ok()` or call
@@ -844,8 +843,8 @@ struct EventMarkerView {
  * Model an event taxonomy as `enum class` levels and specialise `EventEnum<E>`
  * to give each level a path segment.  `event_path()` composes a slash-separated
  * `variant_path` at the call site, and `FileBuilder::add_event()` accepts the
- * enum values directly - the compiler rejects anything that is not a known
- * event enum.
+ * `enum` values directly - the compiler rejects anything that is not a known
+ * event `enum`.
  *
  * @code
  * enum class Power { Boot, Sleep, BatteryLow };
@@ -880,8 +879,8 @@ struct EventMarkerView {
  * tests build that way). A value that falls through would compose a malformed
  * path such as `"power/"`, surfacing only as a runtime `InvalidPathError`.
  *
- * The primary template is left undefined so that only specialised enums are
- * accepted by `event_path()` and `FileBuilder::add_event()`.
+ * The primary template is left undefined so that only specialised `enum` types
+ * are accepted by `event_path()` and `FileBuilder::add_event()`.
  */
 template <class E> struct EventEnum;
 
@@ -899,8 +898,7 @@ struct is_event_enum<
  *
  * Constrains `event_path()` and `FileBuilder::add_event()` on C++20 builds,
  * giving a clear "constraint not satisfied" diagnostic when a type lacks a
- * proper EventEnum<> specialisation, rather than the cryptic substitution
- * failure that the C++17 SFINAE path produces.
+ * proper EventEnum<> specialisation.
  */
 template <typename E>
 concept EventEnumValue = requires(E val) {
@@ -1319,7 +1317,7 @@ class NavFile {
      */
     std::vector<std::uint8_t> to_bytes() const { return try_to_bytes().value_or_throw(); }
 
-    /** @name Metadata (returns empty string_view when field is absent). */
+    /** @name Metadata (returns empty `std::string_view` when field is absent). */
     ///@{
 
     std::string_view title() const noexcept {
@@ -1342,8 +1340,8 @@ class NavFile {
     /**
      * Travel mode wire name, or an empty view when the field is absent.
      *
-     * The value is the raw wire string (e.g. `"car"`); pass it to
-     * travel_mode_from_name() for the typed enum. A file written by a newer
+     * The value is the raw wire string (e.g. `"car"`). Pass it to
+     * travel_mode_from_name() for the typed `enum`. A file written by a newer
      * SDK may carry a wire name outside the known set - such values are still
      * returned here verbatim, never dropped.
      */
@@ -1354,8 +1352,8 @@ class NavFile {
 
     ///@}
 
-    /** @name Provenance of the SDK build that wrote the file (empty or
-     * Timestamp::none() when absent). */
+    /** @name The SDK build that wrote the file (empty or Timestamp::none()
+     * when absent). */
     ///@{
 
     /** Version of the SDK build that wrote the file. */
@@ -1504,8 +1502,8 @@ class NavFile {
 
         v.components.reserve(info.component_count);
         for (std::size_t c = 0; c < info.component_count; ++c) {
-            // Matches GtdChannelInfo::name[256]; a longer label is truncated by
-            // the C API, which cannot report the untruncated length.
+            // Matches GtdChannelInfo::name[256]. The C API truncates a longer
+            // label and cannot report the untruncated length.
             static constexpr std::size_t kChannelLabelCap = 256;
             char buf[kChannelLabelCap] = {};
             if (::gtd_nav_file_get_channel_component(impl_.get(), idx, c, buf, sizeof(buf)) ==
@@ -1513,8 +1511,8 @@ class NavFile {
                 v.components.emplace_back(buf);
         }
 
-        // info already holds the authoritative counts, so size the buffers from
-        // it rather than querying the C accessors again.
+        // The buffer sizes come from `info`, which holds the authoritative
+        // counts.
         const std::size_t columns = info.component_count > 0 ? info.component_count : 1;
         std::vector<GtdTimestamp> raw_times(info.sample_count);
         if (info.sample_count > 0)

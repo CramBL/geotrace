@@ -7,7 +7,7 @@
  * Per-variant styles set an icon and color. Unlisted variants get a
  * deterministic fallback color derived from their path.
  *
- * For a compile-checked taxonomy instead of raw strings, see typed_events.cpp.
+ * For a compile-checked taxonomy, see typed_events.cpp.
  */
 
 #include <geotrace/geotrace.hpp>

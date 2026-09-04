@@ -248,7 +248,8 @@ static void load_fixes(GtdFileBuilder *b, const char *base) {
         if (*line == '\0')
             continue;
         char *cols[CSV_MAX_COLS];
-        /* cols: track_id, gps_time, sys_time, lat, lon, heading_deg, speed_kmh, eph_m */
+        /* cols: `track_id`, `gps_time`, `sys_time`, `lat`, `lon`, `heading_deg`,
+           `speed_kmh`, `eph_m` */
         if (split_csv(line, cols, CSV_MAX_COLS) < 8)
             continue;
 
@@ -277,7 +278,7 @@ static void load_fixes(GtdFileBuilder *b, const char *base) {
         CHECK_SDK(gtd_builder_add_nav_fix(b, gps_ts, sys_ts, lat, lon, hdg, spd, eph),
                   "add_nav_fix");
 
-        /* collect satellites for this (gps_time, sys_time) key */
+        /* collect satellites for this (`gps_time`, `sys_time`) key */
         GtdSatellite sat_buf[SAT_PER_FIX];
         int sat_n = 0;
         for (int i = 0; i < g_sat_n; i++) {
@@ -343,7 +344,7 @@ static void load_events(GtdFileBuilder *b, const char *base) {
     fclose(f);
 }
 
-/* One accumulator per channel; each CSV row is one sample, and the metadata
+/* One accumulator per channel. Each CSV row is one sample, and the metadata
    columns repeat and are read once (on the first row for a name). Fields are
    ordered largest-alignment first to avoid struct padding. */
 typedef struct {
@@ -380,7 +381,7 @@ static void load_channels(GtdFileBuilder *b, const char *base) {
         if (*line == '\0')
             continue;
         char *cols[CSV_MAX_COLS];
-        /* cols: name, unit, period_deg, description, components, time, values */
+        /* cols: `name`, `unit`, `period_deg`, `description`, `components`, `time`, `values` */
         if (split_csv(line, cols, CSV_MAX_COLS) < 7)
             continue;
 

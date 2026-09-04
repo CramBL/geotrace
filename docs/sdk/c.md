@@ -57,7 +57,7 @@ On Windows, configure with `-A x64` or `-A ARM64`.
 ### Static linking
 
 The released archives and the Homebrew formula are static, so `find_package`
-yields a static `GeoTrace::C`; on Windows it is always static. The static library
+yields a static `GeoTrace::C`. On Windows it is always static. The static library
 links the system libraries it needs (`ntdll`, `userenv`, `ws2_32`, `advapi32`,
 `bcrypt`) through the package config. For a source build, select static with
 `-DGEOTRACE_C_STATIC=ON` (see below).
@@ -65,7 +65,7 @@ links the system libraries it needs (`ntdll`, `userenv`, `ws2_32`, `advapi32`,
 ## Build from source
 
 Requires a Rust toolchain. `-DGEOTRACE_C_STATIC=ON` builds the static library
-(the default on Windows); omit it for a shared library on Linux and macOS.
+(the default on Windows). Omit it for a shared library on Linux and macOS.
 
 ```sh
 cargo build -p geotrace-c --release
