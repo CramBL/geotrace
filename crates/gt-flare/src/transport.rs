@@ -104,7 +104,7 @@ mod tests {
         })
     }
 
-    /// Replays a scripted sequence and records the requested URLs.
+    /// Replays a scripted sequence and records the URL of every request.
     struct CannedTransport {
         script: RefCell<Vec<Result<HttpResponse, TransportError>>>,
         urls: RefCell<Vec<String>>,

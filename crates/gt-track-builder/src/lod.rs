@@ -254,7 +254,7 @@ mod tests {
     fn selected_level_error_stays_sub_pixel() {
         // For every stored level reachable via select, verify the actual
         // screen-space deviation of dropped points from the kept polyline
-        // anchor stays below the requested error bound.
+        // anchor stays below the 0.75 px bound passed to `select`.
         let points = uniform_track();
         let lod = lod_of(&points);
         for exp in 10..30 {

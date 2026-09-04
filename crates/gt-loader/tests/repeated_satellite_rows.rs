@@ -1,7 +1,7 @@
 //! What the loader makes of a `.gtd` report's satellite rows, read back through
 //! the real file path: rows repeating a `(constellation, prn)` merge into the
 //! one satellite every count taken from a report measures, and an SNR of ≈99
-//! dB-Hz, the firmware sentinel for "no data", arrives as no SNR at all.
+//! dB-Hz, the firmware's sentinel value for "no data", arrives as no SNR at all.
 
 #![expect(
     clippy::expect_used,
@@ -36,7 +36,7 @@ const REPEATED_PRN: u32 = 7;
 const REMAINING_PRN: u32 = 1;
 
 /// The GPS satellite the gold dataset's satellite-stress track reports on two
-/// rows: once with the ≈99 dB-Hz sentinel, once with [`GOLD_MEASURED_SNR_DB`].
+/// rows: once with the ≈99 dB-Hz sentinel value, once with [`GOLD_MEASURED_SNR_DB`].
 const GOLD_REPEATED_PRN: u32 = 1;
 
 /// The out-of-range PRN that identifies the gold dataset's satellite-stress track.

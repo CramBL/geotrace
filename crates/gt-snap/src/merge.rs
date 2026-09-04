@@ -28,8 +28,8 @@ pub enum ChunkOutcome {
     /// The server matched the chunk.
     Success(TraceAttributesResponse),
     /// The server rejected the whole chunk with error 444: every point is
-    /// off the road network. Captured reality: this arrives instead of
-    /// per-point `unmatched`, so merging maps it to all-unsnapped points.
+    /// off the road network. Captured reality: merging maps this to
+    /// all-unsnapped points.
     OffNetwork,
     /// The chunk failed even after the transport's retry. The string is the
     /// transport's rendered error. Its points have no data.
@@ -40,7 +40,7 @@ pub enum ChunkOutcome {
 /// reporter pattern (CODE_STYLE.md). The app determines how to surface them.
 ///
 /// Serde derives exist for persisting a run's warnings with its cached
-/// [`SnapResult`]. Snake_case tags keep the stored form stable against
+/// [`SnapResult`]. `snake_case` tags keep the stored form stable against
 /// variant renames being caught in review.
 #[derive(Debug, Clone, PartialEq, strum::EnumCount, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -167,8 +167,8 @@ pub struct SnapResult {
     /// change is reported as a warning.
     #[serde(default)]
     pub osm_changeset: Option<u64>,
-    /// The parameters the run was requested with, as provenance: staleness
-    /// against the current settings compares these.
+    /// The parameters the run was requested with. The staleness check compares
+    /// these against the current settings.
     pub params: SnapParams,
     /// The `gps_accuracy` the run actually sent: the clamped override when
     /// set, else the eph-derived value. `None` = server default.

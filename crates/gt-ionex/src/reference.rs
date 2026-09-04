@@ -209,7 +209,7 @@ const STORM_PLOT_ILLUSTRATION: ReferenceIllustration = ReferenceIllustration {
             asset_name: "tec_plot_2024_05_gannon_storm",
         },
         // The days and the node are `DRAWN_DAYS` and `DRAWN_NODE` of
-        // `gt-plot`'s reference_illustration, which renders the asset.
+        // `gt-plot`'s `reference_illustration`, which renders the asset.
         label: "6 to 13 May 2024, grid node 40 N, 100 W",
     }],
     caption: "Vertical [TEC] over mid-latitude North America across the Gannon storm, from the \

@@ -2,7 +2,7 @@
 //!
 //! A [`Channel`] is a named time series sampled at its own rate (an
 //! accelerometer's axes, an inclinometer angle), correlated with the track by
-//! timestamp rather than resampled onto the nav points. Channels arrive
+//! timestamp. Channels arrive
 //! file-level from the `.gtd` reader and are partitioned to tracks by timestamp
 //! when a file is segmented.
 

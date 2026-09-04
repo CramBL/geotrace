@@ -125,7 +125,7 @@ fn max_pairwise_haversine_m(positions: &[Point<f64>]) -> f64 {
 }
 
 /// Direction from the earth's centre to a position, as a unit vector in the
-/// cartesian frame with `x` at 0° N 0° E, `y` at 0° N 90° E and `z` at the
+/// Cartesian frame with `x` at 0° N 0° E, `y` at 0° N 90° E and `z` at the
 /// north pole.
 fn earth_centred_direction(lat: Latitude, lon: Longitude) -> Vector3<f64> {
     let (sin_lat, cos_lat) = lat.as_degrees().to_radians().sin_cos();

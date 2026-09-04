@@ -423,7 +423,7 @@ fn a_fix_with_a_heading_and_nothing_in_fix_keeps_its_recorded_position() {
 }
 
 /// Every fix keeps the coordinates it was written with. A recording that holds
-/// no satellite report holds nothing that tells a measured fix from a
+/// no satellite report holds nothing that distinguishes a measured fix from a
 /// dead-reckoned one.
 #[test]
 fn a_track_without_a_satellite_report_keeps_every_recorded_position() {

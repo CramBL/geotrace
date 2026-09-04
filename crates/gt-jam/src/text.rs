@@ -105,7 +105,7 @@ mod tests {
         insta::assert_debug_snapshot!("cell_summary", lines);
     }
 
-    /// A cell with no good aircraft still reads as a count, not a bare
+    /// A cell with no good aircraft still states a count, not a bare
     /// percentage.
     #[test]
     fn cell_summary_handles_an_all_bad_cell() {

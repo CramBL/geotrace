@@ -50,7 +50,7 @@ pub const TRACK_HIDDEN_DATASET: &str = "hidden";
 
 /// DB-internal subgroup (under each recording group) holding the recording's
 /// cached snap-to-road run as one opaque byte dataset. The bytes are the
-/// app's own serialization (a versioned envelope); the history layer never
+/// app's own serialization (a versioned envelope). The history layer never
 /// inspects them. Prefixed like [`TRACKS_GROUP`], skipped when
 /// reconstructing the GTD file, and dropped automatically when the
 /// recording group is deleted.
@@ -80,7 +80,7 @@ pub const GTD_META_TRAVEL_MODE_ATTR: &str = "meta_travel_mode";
 /// re-parse, and recordings stored before the listing surfaced channels are
 /// covered too.
 pub const GTD_CHANNELS_GROUP: &str = "channels";
-/// Sample timestamps of one channel; its row count is the sample count.
+/// Sample timestamps of one channel: its row count is the sample count.
 pub const GTD_CHANNEL_TIME_DATASET: &str = "time";
 /// Per-channel unit label (`"g"`, `"deg"`), absent for a unitless channel.
 pub const GTD_CHANNEL_UNIT_ATTR: &str = "unit";
@@ -139,7 +139,7 @@ fn hex_nibble(byte: u8) -> Option<u8> {
 }
 
 /// Returns true for attribute keys that belong to the database's recording
-/// metadata (as opposed to GTD file-format root attributes).
+/// metadata, and false for a GTD file-format root attribute.
 pub fn is_db_recording_attr(key: &str) -> bool {
     matches!(
         key,
@@ -440,7 +440,7 @@ impl RecordingMeta {
 ///
 /// Read from the stored `channels/{name}` group (see [`GTD_CHANNELS_GROUP`]) so
 /// the History listing can describe a recording's custom data without loading
-/// it. The full series lives in `gt_types::Channel`; this is the listing's view
+/// it. The full series lives in `gt_types::Channel`. This is the listing's view
 /// of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelSummary {
@@ -480,7 +480,7 @@ pub struct RecordingEntry {
     pub notes: Option<String>,
     /// Declared travel mode wire value, from the GTD
     /// [`GTD_META_TRAVEL_MODE_ATTR`] attribute. Kept as the raw wire string
-    /// (the DB stores attributes verbatim); parse with
+    /// because the DB stores attributes verbatim. Parse with
     /// `gt_types::TravelMode::from_wire` for display or matching.
     pub travel_mode: Option<String>,
     /// The recording's ad-hoc sensor channels, sorted by name. Empty for a
@@ -885,7 +885,7 @@ mod track_column_properties {
         }
 
         /// Mismatched column lengths are rejected, so a partially-written table is
-        /// treated as absent rather than silently truncated.
+        /// treated as absent.
         #[test]
         fn mismatched_lengths_reject(
             starts in proptest::collection::vec(any::<u64>(), 0..16),

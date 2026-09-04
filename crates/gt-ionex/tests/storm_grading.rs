@@ -2,9 +2,8 @@
 //! index, from the values JPL published.
 //!
 //! The index is what the environment warning fires on, so the boundaries in
-//! [`gt_ionex::quiet_time`] are checked here against real data rather than
-//! against constructed windows alone: the Gannon storm of 10 to 12 May 2024 is
-//! the best documented event the archive covers.
+//! [`gt_ionex::quiet_time`] are checked here against real data: the Gannon
+//! storm of 10 to 12 May 2024 is the best documented event the archive covers.
 
 // A helper beside a `#[test]` function is not covered by clippy's in-test
 // relaxations, and this file is development-only code.

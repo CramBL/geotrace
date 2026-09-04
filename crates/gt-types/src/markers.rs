@@ -80,7 +80,7 @@ pub enum GeneratedMarkerKind {
     },
     /// The receiver lost lock on one or more satellites that should still have
     /// been trackable - each vanished while above the elevation mask, or its SNR
-    /// fell sharply between epochs.  Detected by `gt_analysis::loss_of_lock`; the
+    /// fell sharply between epochs.  Detected by `gt_analysis::loss_of_lock`. The
     /// payload groups every satellite that slipped at this epoch, each with its
     /// before/after geometry and signal so the marker can show what changed.
     Slip(SlipEvent),

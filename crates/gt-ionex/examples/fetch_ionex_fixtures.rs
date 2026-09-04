@@ -47,7 +47,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let dir = fixtures_dir();
     fs::create_dir_all(&dir)?;
 
-    // Positional args select a subset. No args re-captures every file.
+    // Positional arguments select a subset. Without them the capture covers
+    // every file.
     let args: Vec<String> = env::args().skip(1).collect();
     let selected: Vec<FixtureFile> = if args.is_empty() {
         FIXTURE_FILES.to_vec()

@@ -19,7 +19,7 @@ use gt_ionex::tec::TotalElectronContent;
 use gt_types::{Latitude, Longitude};
 
 /// How far an interpolated value may stand from the mean of the nodes it
-/// falls between, which the two arithmetics do not round alike.
+/// falls between: the interpolation and the mean do not round alike.
 const TECU_TOLERANCE: f64 = 1e-9;
 
 /// How far a captured shell height may stand from the one JPL declares.

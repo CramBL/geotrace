@@ -4,7 +4,7 @@
 //! Excluded from the default nextest profile (see `.config/nextest.toml`)
 //! and run via `just snap-live-test` - never in
 //! CI. Asserts structural invariants, not values: matching output drifts
-//! with OSM data, but the shape of the exchange must hold.
+//! with OSM data, and the response must keep the fields the parser reads.
 //!
 //! The `live` nextest test group caps this binary at one thread so a run
 //! can never exceed the server's 1 request/s fair-use budget (the transport

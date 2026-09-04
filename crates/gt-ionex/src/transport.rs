@@ -634,7 +634,7 @@ mod tests {
     }
 
     /// The archive needing a token is never requested while none is set, and
-    /// the day says so instead of reporting that nobody published it.
+    /// the day's failure names the missing token.
     #[test]
     fn a_mirror_needing_a_token_is_passed_over_while_none_is_set() {
         let (outcome, transport) = fetch_with_token(
@@ -692,7 +692,7 @@ mod tests {
     }
 
     /// A day is requested under its long name and then its legacy one, and the
-    /// file under the legacy name is LZW compressed rather than gzipped.
+    /// file under the legacy name is LZW compressed.
     #[test]
     fn a_legacy_file_is_read_through_the_compress_decoder() {
         let (outcome, transport) = fetch_with_token(

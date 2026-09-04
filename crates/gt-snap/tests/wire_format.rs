@@ -194,7 +194,7 @@ fn bad_request_fixture_is_not_a_valid_typed_request() {
 
 /// The `trace_options` payload shape: each present option serializes under
 /// Valhalla's field name, absent options serialize to nothing (which is why
-/// captured fixture requests without trace_options still roundtrip
+/// captured fixture requests without `trace_options` still roundtrip
 /// unchanged).
 #[test]
 fn trace_options_serialize_only_present_options() {
@@ -219,8 +219,8 @@ fn trace_options_serialize_only_present_options() {
     assert_eq!(serde_json::to_value(none).expect("serialize"), json!({}));
 }
 
-/// No live exemplar of a `warnings` array exists (out-of-range options
-/// reject instead of warning), so its parsing is pinned synthetically.
+/// No live exemplar of a `warnings` array exists (the server rejects an
+/// out-of-range option), so its parsing is pinned synthetically.
 #[test]
 fn warnings_array_is_preserved_raw() {
     let response: TraceAttributesResponse = serde_json::from_str(
@@ -231,7 +231,7 @@ fn warnings_array_is_preserved_raw() {
     assert_eq!(response.warnings[0]["message"], "synthetic");
 }
 
-/// Locks the wire spelling of every closed enum, exhaustively via
+/// Locks the wire spelling of every closed `enum`, exhaustively via
 /// `EnumCount` (see `gt_types::metrics::tests::wire_names_are_stable`).
 #[test]
 fn wire_names_are_stable() {
@@ -347,8 +347,8 @@ fn server_host_extracts_the_host_and_only_the_host() {
     assert_eq!(server_host("file:///tmp/x"), None);
 }
 
-/// Open-world enums: known wire names parse to their variant, anything else
-/// lands on `Unknown` instead of failing the whole response.
+/// Open-world `enum` types: known wire names parse to their variant, anything
+/// else lands on `Unknown` and the response still parses.
 #[test]
 fn open_enums_absorb_unknown_wire_values() {
     let road_classes = [
@@ -386,7 +386,7 @@ fn open_enums_absorb_unknown_wire_values() {
     }
 }
 
-/// The wire's "no edge association" sentinel (`u64::MAX`, captured on
+/// The wire's "no edge association" sentinel value (`u64::MAX`, captured on
 /// interpolated points in `dense_10hz`) folds into `None` and never escapes
 /// the wire layer.
 #[test]
@@ -431,7 +431,7 @@ fn speed_limit_rejects_unknown_strings() {
 }
 
 /// The failing body shape from the field: a success response whose edge
-/// carries `"speed_limit": "unlimited"` parses instead of failing the chunk.
+/// has `"speed_limit": "unlimited"` parses.
 #[test]
 fn response_with_unlimited_speed_limit_parses() {
     let response: TraceAttributesResponse = serde_json::from_str(

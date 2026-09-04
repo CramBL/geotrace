@@ -4,7 +4,7 @@
 //! bytes, which the unit tests' hand-written responses cannot cover.
 //!
 //! Every property asserts the same thing: no input panics a parser, and what
-//! survives holds only values the requested index publishes. Mirrors how
+//! survives holds only values inside the index's published range. Mirrors how
 //! `gt-jam` fuzzes its dataset parser.
 
 mod support;

@@ -23,7 +23,7 @@ impl PoleWinding {
     /// It sums the shorter longitude arc between consecutive fixes, plus the
     /// arc from the last fix back to the first. That closing arc counts only
     /// when it is no longer than the longest arc between recorded fixes: a
-    /// track that ended far from where it started is read as an open line.
+    /// track that ended far from where it started is treated as an open line.
     /// The arcs of a closed path sum to a multiple of 360°, and a non-zero
     /// multiple means the path encircles a pole - the one in the hemisphere
     /// the fixes' mean latitude lies in.

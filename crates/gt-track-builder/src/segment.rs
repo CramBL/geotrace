@@ -180,7 +180,7 @@ pub const DEFAULT_CLOCK_EXCURSION_THRESHOLD_S: f32 = clock_offset::DEFAULT_EXCUR
 /// Partitions `points` into contiguous track ranges. A new track begins where
 /// the timestamp step between consecutive points reaches
 /// `config.track_split_gap` in a direction `config.track_split_rule` covers.
-/// Returns an empty vec for empty input.
+/// Returns an empty `Vec` for empty input.
 pub fn segment_tracks(points: &[NavPoint], config: &TrackLayoutConfig) -> Vec<Range<usize>> {
     if points.is_empty() {
         return Vec::new();
@@ -311,8 +311,8 @@ fn detect_generated_markers(
         }
     }
     // Excursions are classified whatever the marker toggle is set to: the
-    // discontinuity pass needs them out of its step series either way, or one
-    // excursion reads as a pair of jumps - out and straight back.
+    // discontinuity pass needs them out of its step series either way, or it
+    // counts one excursion as a pair of jumps - out and straight back.
     let excursions =
         clock_offset::detect_excursions(points.fixes(), config.clock_excursion_threshold_s);
     if config.detect_clock_offset_excursions {
@@ -612,7 +612,7 @@ pub fn compute_track_metadata(
         satellite_report_count: points.iter().filter(|p| p.satellites.is_some()).count(),
         custom_marker_count: custom_markers.len(),
         generated_marker_count: generated_markers.len(),
-        event_marker_count: 0, // filled in by build_loaded_file after event marker assignment
+        event_marker_count: 0, // filled in by `build_loaded_file` after event marker assignment
         fix_stats: compute_fix_stats(points),
     }
 }
@@ -912,7 +912,7 @@ pub fn build_loaded_file(
     }
     place_event_markers(&mut loaded_tracks);
 
-    // Back-fill event_marker_count now that assignment is done.
+    // Back-fill `event_marker_count` now that assignment is done.
     for track in &mut loaded_tracks {
         track.metadata.event_marker_count = track.event_markers.len();
     }
@@ -1567,8 +1567,8 @@ mod tests {
     fn segment_tracks_multiple_gaps() {
         let pts = vec![
             make_point_at(0),
-            make_point_at(3600), // gap
-            make_point_at(7200), // gap
+            make_point_at(3600), // first gap
+            make_point_at(7200), // second gap
         ];
         let ranges = segment_tracks(&pts, &TrackLayoutConfig::default());
         assert_eq!(ranges, vec![0..1, 1..2, 2..3]);
@@ -1916,7 +1916,7 @@ mod tests {
 
     #[test]
     fn compute_fix_stats_no_satellite_reports() {
-        // make_point_at produces points with no satellite data (NavPoint::new(tpv, None))
+        // `make_point_at` produces points with no satellite data (`NavPoint::new(tpv, None)`)
         let pts = vec![make_point_at(0), make_point_at(60)];
         assert!(compute_fix_stats(&pts).is_none());
     }
@@ -1929,7 +1929,7 @@ mod tests {
 
     #[test]
     fn compute_fix_stats_all_with_fix() {
-        // Two consecutive sat points, both in fix → all time_with_fix, no losses
+        // Two consecutive sat points, both in fix → all `time_with_fix`, no losses
         let pts = vec![make_point_with_fix(0, true), make_point_with_fix(60, true)];
         let stats = compute_fix_stats(&pts).expect("has satellite data");
         assert_eq!(stats.time_with_fix, Duration::seconds(60));

@@ -17,7 +17,7 @@ pub mod copy;
 
 /// Map an `hdf5-pure` failure onto the [`DbError`] the app acts on.
 ///
-/// Two of them mean the file is held rather than broken. `FileMarkedInUse` is
+/// Two of them mean the file is in use by a writer. `FileMarkedInUse` is
 /// the durable superblock status-flags byte, which a crashed writer leaves set
 /// and [`PureDb::clear_write_lock`] repairs. `FileLocked` is an OS lock, which
 /// only a live process holds and which no repair can take away.

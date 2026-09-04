@@ -170,8 +170,8 @@ impl Store {
         self.open_or_create_archive_with_recovery_choice::<A>(InterruptedDeleteRecovery::Recover)
     }
 
-    /// The archive `A`, recovering an interrupted delete only when `recovery`
-    /// asks for it.
+    /// The archive `A`, recovering an interrupted delete only for
+    /// [`InterruptedDeleteRecovery::Recover`].
     pub fn open_or_create_archive_with_recovery_choice<A: StoredDayArchive>(
         &self,
         recovery: InterruptedDeleteRecovery,
@@ -544,7 +544,7 @@ mod tests {
     /// A read-only session opens every archive without writing to any of
     /// them.
     ///
-    /// The file a rebuild fills stands in for the writes an open would make:
+    /// The file a rebuild fills represents the writes an open would make:
     /// an open that creates, rebuilds or repairs removes it before rebuilding
     /// again, and a read-only one leaves it where it is.
     #[test]

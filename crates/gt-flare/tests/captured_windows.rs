@@ -107,7 +107,7 @@ fn every_capture_parses_into_the_recorded_number_of_flares() {
     }
 }
 
-/// Every flare begins inside the requested window and peaks after it began,
+/// Every flare begins inside the capture window and peaks after it began,
 /// and the events come back in peak order.
 #[test]
 fn every_capture_falls_inside_the_requested_window_in_peak_order() {

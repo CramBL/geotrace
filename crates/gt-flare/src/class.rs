@@ -144,7 +144,7 @@ impl fmt::Display for FlareClassification {
     }
 }
 
-/// Why a `classType` could not be read as a classification.
+/// Why a `classType` could not be parsed as a classification.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum ClassificationParseError {
     #[error("{class:?} names no flare class, which is one of A, B, C, M or X")]
@@ -303,8 +303,7 @@ mod tests {
         );
     }
 
-    /// The class outranks the magnitude, which is the whole point of ordering
-    /// on flux rather than on the number.
+    /// Ordering on flux makes the class outrank the magnitude.
     #[test]
     fn a_weak_x_outranks_the_strongest_m() {
         assert!(classification("X1.0") > classification("M9.9"));

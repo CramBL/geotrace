@@ -171,7 +171,7 @@ impl fmt::Display for SysTime {
 ///
 /// The host clock stamps a fix when the receiver has no lock and reports no GPS
 /// time. That fix's difference from the same host clock is a structural zero.
-/// Keeping the two clocks apart here stops that zero from being read as a
+/// Keeping the two clocks apart here stops that zero from being reported as a
 /// measured GPS/system offset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FixTimestamp {
@@ -219,14 +219,14 @@ mod tests {
     #[test]
     fn offset_from_sys_positive_means_gps_ahead() {
         let g = gps(1000); // GPS at t=1s
-        let s = sys(400); // sys at t=0.4s → GPS 600 ms ahead
+        let s = sys(400); // `sys` at t=0.4s → GPS 600 ms ahead
         assert_eq!(g.offset_from_sys(s).num_milliseconds(), 600);
     }
 
     #[test]
     fn offset_from_sys_negative_means_sys_ahead() {
         let g = gps(400); // GPS at t=0.4s
-        let s = sys(1000); // sys at t=1s → sys 600 ms ahead
+        let s = sys(1000); // `sys` at t=1s → the system clock is 600 ms ahead
         assert_eq!(g.offset_from_sys(s).num_milliseconds(), -600);
     }
 

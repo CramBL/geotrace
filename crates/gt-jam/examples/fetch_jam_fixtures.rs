@@ -40,7 +40,8 @@ use gt_jam::{
     fixtures_dir, parse_day,
 };
 
-/// Points the capture at a mirror instead of the default host.
+/// Points the capture at a mirror. The capture requests from `DEFAULT_BASE_URL`
+/// when it is unset.
 const HOST_ENV: &str = "GEOTRACE_JAM_HOST";
 
 /// A full day is about 900 KiB uncompressed.
@@ -54,7 +55,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let dir = fixtures_dir();
     fs::create_dir_all(&dir)?;
 
-    // Positional args select a subset. No args re-captures every day.
+    // Positional arguments select a subset. Without them the capture covers
+    // every day.
     let args: Vec<String> = env::args().skip(1).collect();
     let selected: Vec<FixtureDay> = if args.is_empty() {
         FIXTURE_DAYS.to_vec()

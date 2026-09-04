@@ -153,7 +153,8 @@ pub enum ChunkContinuity {
     OpensStretch,
 }
 
-/// One request's worth of points, with provenance and ownership.
+/// One request's worth of points, with the source point indices and the range
+/// this chunk owns.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chunk {
     /// The points this chunk sends, in track order. Includes overlap.

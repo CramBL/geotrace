@@ -1,5 +1,5 @@
 //! [`enum_bitset`]: generate a `Copy` set type backed by one bit per variant
-//! of a fieldless enum.
+//! of a fieldless `enum`.
 //!
 //! The storage integer is a parameter, so a 4- or 6-variant set can stay a `u8`
 //! while a 33-variant set uses a `u64`.
@@ -8,8 +8,8 @@
 //! (e.g. gt-plot builds its metric set on it), unlike the otherwise-private
 //! `bitset` module. Treat it as public API.
 
-/// Define a bitset newtype `$set($storage)` holding one bit per variant of the
-/// fieldless enum `$elem`, which must derive [`strum::EnumCount`] and
+/// Define a bitset newtype `$set($storage)` holding one bit per variant of
+/// `$elem`, a fieldless `enum` which must derive [`strum::EnumCount`] and
 /// [`strum::EnumIter`]. A `const` assert checks the variants fit the storage.
 ///
 /// `$elem` must keep the default sequential discriminants (`0, 1, 2, …`) that

@@ -214,7 +214,7 @@ fn write_group_into(parent: &mut GroupBuilder, node: &GroupNode) {
     parent.add_group(gb.finish());
 }
 
-/// Recursively read an HDF5 group (its attrs, datasets, and subgroups) into an
+/// Recursively read an HDF5 group (its attributes, datasets, and subgroups) into an
 /// owned `GroupNode`.
 fn snapshot_group(src: &Group, name: &str) -> Result<GroupNode, InternalError> {
     let mut node = GroupNode {
@@ -500,7 +500,7 @@ pub(crate) fn insert_recording(
         .push(new_recording);
 
     // Release the in-memory snapshot of the old file before writing the new one,
-    // matching the other mutators (delete_batch, set_tracks, set_tracks_hidden).
+    // matching the other mutators (`delete_batch`, `set_tracks`, `set_tracks_hidden`).
     drop(existing_db);
     write_db(&identity_nodes, db_path)?;
     log::info!("Stored recording identity={identity:?}, group={rec_name:?} in history database");
@@ -624,7 +624,7 @@ pub(crate) fn rename_identity(
     Ok(())
 }
 
-/// Set or clear the hidden flag on the given tracks (by index) of a recording,
+/// Set or clear the hidden flag on a recording's tracks at `track_indices`,
 /// via a read-modify-write cycle.
 pub(crate) fn set_tracks_hidden(
     db_path: &std::path::Path,
@@ -714,7 +714,7 @@ pub(crate) fn set_tracks(
     Ok(())
 }
 
-/// Replace a recording's stored snap run with the given opaque bytes.
+/// Replace a recording's stored snap run with the opaque bytes in `blob`.
 /// A no-op when the recording is absent, like [`set_tracks`].
 pub(crate) fn set_snap_blob(
     db_path: &std::path::Path,
@@ -915,7 +915,7 @@ fn attr_string_array_value(
         .unwrap_or_default()
 }
 
-/// Read the stored segmentation settings from a recording's attrs, if present.
+/// Read the stored segmentation settings from a recording's attributes, if present.
 fn read_segmentation(
     attrs: &std::collections::HashMap<String, AttrValue>,
 ) -> Option<StoredSegmentation> {
@@ -952,15 +952,15 @@ pub(crate) fn load_recording(
 
     let tracks = read_track_table(&rec_grp);
 
-    // Snapshot all child data groups (nav_points, sat_reports, etc.) and
+    // Snapshot all child data groups (`nav_points`, `sat_reports`, etc.) and
     // write them as a fresh GTD-format HDF5 file.
     let mut fb = FileBuilder::new();
 
-    // Restore GTD root attributes.  Every attr on the recording group that is
-    // not a DB-internal field is a GTD root attr and belongs on the file root.
-    // The denylist restores newly added GTD attrs automatically.  Fall back to
-    // geotrace_version="1" for recordings stored by older code that predates
-    // attr preservation.
+    // Restore GTD root attributes.  Every attribute on the recording group that
+    // is not a DB-internal field is a GTD root attribute and belongs on the file
+    // root.  The denylist restores newly added GTD attributes automatically.
+    // Fall back to geotrace_version="1" for recordings stored by older code that
+    // predates attribute preservation.
     let rec_attrs = rec_grp.attrs()?;
     let segmentation = read_segmentation(&rec_attrs);
     let mut has_version = false;

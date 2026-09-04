@@ -184,7 +184,7 @@ fn minimal_stored_result_decodes_with_defaults() {
     assert!(!decoded.partial);
 }
 
-/// The open-world edge enums roundtrip their `Unknown` catch-all: it
+/// The open-world edge `enum` types roundtrip their `Unknown` catch-all: it
 /// serializes as `"unknown"`, which the `#[serde(other)]` arm folds back
 /// into `Unknown` - a stored result never fails on an unmodeled class.
 #[test]

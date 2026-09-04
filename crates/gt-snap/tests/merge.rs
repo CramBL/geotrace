@@ -14,7 +14,7 @@ use gt_snap::snapped_track::SHAPE_POLYLINE_PRECISION;
 use gt_snap::wire::{Costing, SnapPointKind, TraceAttributesResponse};
 use gt_types::PointIdx;
 
-/// The params every scenario in this file merges with: default advanced
+/// The [`SnapParams`] every scenario in this file merges with: default advanced
 /// options, auto costing.
 fn auto_params() -> SnapParams {
     SnapParams::new(Costing::Auto)
@@ -448,8 +448,7 @@ fn geometry_error_reports_warning_and_never_welds_across() {
 
 /// The chunks either side of a dropped ghost run match two disconnected
 /// drives, so their geometry stays split even though both boundaries are
-/// snappable - the snapped track shows the break instead of a road through
-/// the stretch the receiver never measured.
+/// snappable - the snapped track shows the break.
 #[test]
 fn chunks_across_a_ghost_gap_keep_their_geometry_split() {
     let plan = support::plan_of(&support::points_with_ghosts_at(20, &[10, 11, 12]));

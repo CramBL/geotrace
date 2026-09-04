@@ -44,7 +44,8 @@ use gt_flare::{
 /// requests an hour, which is what a capture costs.
 const API_KEY_ENV: &str = "GEOTRACE_FLARE_API_KEY";
 
-/// Points the capture at a proxy instead of the default host.
+/// Points the capture at a proxy. The capture requests from `DEFAULT_BASE_URL`
+/// when it is unset.
 const HOST_ENV: &str = "GEOTRACE_FLARE_HOST";
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -61,7 +62,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let dir = fixtures_dir();
     fs::create_dir_all(&dir)?;
 
-    // Positional args select a subset. No args re-captures every window.
+    // Positional arguments select a subset. Without them the capture covers
+    // every window.
     let args: Vec<String> = env::args().skip(1).collect();
     let selected: Vec<FixtureWindow> = if args.is_empty() {
         FIXTURE_WINDOWS.to_vec()

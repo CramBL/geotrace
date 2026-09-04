@@ -44,7 +44,7 @@ const FLARE_PATH: &str = "/DONKI/FLR";
 /// Date format the endpoint's `startDate` and `endDate` parameters take.
 const DATE_FORMAT: &str = "%Y-%m-%d";
 
-/// Stands in for the key wherever text that may hold it is written down.
+/// Replaces the key wherever text that may hold it is written down.
 pub const REDACTED_KEY: &str = gt_fetch::REDACTED_SECRET;
 
 /// The api.nasa.gov key a user registers for and enters in settings, which
@@ -91,9 +91,9 @@ pub fn parse_date(date: &str) -> Result<NaiveDate, chrono::ParseError> {
 pub struct FixtureWindow {
     /// Names the capture on disk and selects it on the capture command line.
     pub name: &'static str,
-    /// First day of the requested window, as [`parse_date`] reads it.
+    /// First day of the capture window, as [`parse_date`] reads it.
     pub start: &'static str,
-    /// Last day of the requested window, as [`parse_date`] reads it.
+    /// Last day of the capture window, as [`parse_date`] reads it.
     pub end: &'static str,
     /// What this capture exists to exercise.
     pub purpose: &'static str,

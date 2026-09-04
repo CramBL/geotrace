@@ -1,4 +1,4 @@
-//! Validate downsampling, chunking, and gps_accuracy derivation.
+//! Validate downsampling, chunking, and `gps_accuracy` derivation.
 
 mod support;
 
@@ -102,8 +102,8 @@ fn ownership_partitions_sent_points(#[case] count: usize) {
     }
 }
 
-/// Downsampled tracks keep their original `PointIdx` provenance: a 10 Hz
-/// track's sent points map back to every 10th original index.
+/// Downsampled tracks keep the original `PointIdx` of every point they send: a
+/// 10 Hz track's sent points map back to every 10th original index.
 #[test]
 fn sent_points_carry_original_indices() {
     let plan = support::plan_of(&points(50, 100, |_| None));
@@ -120,7 +120,7 @@ fn out_of_order_timestamps_are_not_kept() {
     assert_eq!(plan.sent_point_count(), 1);
 }
 
-/// gps_accuracy: eph distribution vs. expected derived value.
+/// `gps_accuracy`: eph distribution vs. expected derived value.
 #[rstest]
 #[case::no_eph_at_all(&[], None)]
 #[case::single_value(&[12.0], Some(12.0))]
@@ -296,7 +296,7 @@ fn turn_penalty_factor_is_clamped_at_request_build(
     assert_eq!(sent_options.and_then(|o| o.turn_penalty_factor), sent);
 }
 
-/// gps_accuracy precedence: the clamped override beats the derived value,
+/// `gps_accuracy` precedence: the clamped override beats the derived value,
 /// the derived value fills in when no override is set, and the override's
 /// range is the server's full range, wider than the derivation clamp.
 #[rstest]
@@ -316,7 +316,7 @@ fn gps_accuracy_override_beats_derived(
     assert_eq!(params.gps_accuracy_sent_m(derived), sent);
 }
 
-/// All-default params send no trace_options at all. The chunk request
+/// All-default [`SnapParams`] send no `trace_options` at all. The chunk request
 /// includes them only when something differs from the server default.
 #[test]
 fn default_params_send_no_trace_options() {

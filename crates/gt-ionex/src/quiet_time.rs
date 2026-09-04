@@ -25,8 +25,8 @@ pub const BACKGROUND_WINDOW_DAYS: usize = 27;
 /// Archived days of the window a median is formed from at all.
 ///
 /// An ionospheric storm and its recovery run over several days, so a median
-/// drawn from a minority of the window can be a storm's own level rather than
-/// the quiet one. 14 is the smallest majority of the 27 days.
+/// drawn from a minority of the window can be a storm's own level. 14 is the
+/// smallest majority of the 27 days.
 pub const MINIMUM_BACKGROUND_DAYS: usize = 14;
 
 /// The deviation, in log10 units, past which the index leaves the quiet

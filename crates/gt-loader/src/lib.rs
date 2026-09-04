@@ -741,8 +741,8 @@ fn convert_satellite_report(
     record: usize,
     alterations: &mut SatelliteAlterations,
 ) -> Satellites {
-    // A sentinel SNR is cleared to `None` here, before the merge, so it never
-    // outranks a real reading for the same satellite.
+    // An SNR sentinel value is cleared to `None` here, before the merge, so it
+    // never outranks a real reading for the same satellite.
     let measured: Vec<SdkSatellite> = report
         .tracked
         .iter()
@@ -1102,9 +1102,9 @@ mod tests {
         assert_eq!(file.metadata.travel_mode, travel_mode);
     }
 
-    /// The SDK and app travel-mode enums are structurally identical. Every SDK
-    /// variant must map onto the app variant of the same name. Iterating the
-    /// app enum and converting its wire form back through the SDK type pins
+    /// The SDK and app travel-mode `enum` types are structurally identical. Every
+    /// SDK variant must map onto the app variant of the same name. Iterating the
+    /// app `enum` and converting its wire form back through the SDK type pins
     /// the two variant sets together, so adding a variant to one without the
     /// other fails here.
     #[test]
@@ -1199,8 +1199,7 @@ mod tests {
         /// against arbitrary ranges - including reversed, overlapping, and
         /// out-of-bounds ones. Survivors must be exactly the points no (clamped)
         /// range covers. The all-dropped case is a don't-care (the worker deletes
-        /// the whole recording instead of re-encoding), so we only require it not
-        /// to invent points.
+        /// the whole recording), so we only require it not to invent points.
         #[test]
         fn reencode_keeps_exactly_the_undropped_points(
             raw in proptest::collection::vec((0usize..14, 0usize..14), 0..6),
@@ -1832,8 +1831,8 @@ mod tests {
         );
     }
 
-    /// Three fixes a second apart, and the given event marker styles in the
-    /// order they are written.
+    /// Three fixes a second apart, and the event marker styles in `styles`, in
+    /// the order they are written.
     fn recording_with_event_marker_styles(styles: Vec<SdkEventMarkerStyle>) -> Vec<u8> {
         let mut recorder = NavFileBuilder::new().open();
         for second in 0..3i64 {

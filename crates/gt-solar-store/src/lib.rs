@@ -304,8 +304,7 @@ impl WritableDayArchive for SolarStore {
 
 impl SolarStore {
     /// Delete `deleted` from each index in turn, counting the columns of both
-    /// as one run: the second index carries on where the first stopped rather
-    /// than starting the count again.
+    /// as one run: the second index continues the count where the first stopped.
     fn delete_from_both_indices(
         &self,
         deleted: DeletedDays,

@@ -211,10 +211,10 @@ fn build_snapshot_bytes() -> Vec<u8> {
                 .speed(v(3.0))
                 .build(),
         );
-        // No satellite report for Trip 1 points
+        // No satellite report for track 1 points
     }
 
-    // Custom marker within Trip 1 time range [t+750, t+960]
+    // Custom marker within track 1 time range [t+750, t+960]
     recorder.add_annotation(
         Annotation::builder()
             .time(offset(base, 780))

@@ -68,7 +68,7 @@ mod tests {
 
     use super::*;
 
-    /// Stands in for one of the day archives, which the wrapper never calls
+    /// A test double for one of the day archives, which the wrapper never calls
     /// into itself.
     struct TestArchive;
 

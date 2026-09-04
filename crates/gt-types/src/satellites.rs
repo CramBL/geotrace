@@ -195,7 +195,7 @@ impl Satellite {
 
 /// Why a [`Slip`] was recorded for a satellite.
 ///
-/// The detection algorithm lives in the `gt-analysis` crate; this type is shared
+/// The detection algorithm lives in the `gt-analysis` crate. This type is shared
 /// so both the slip-rate plot and the generated-marker pipeline describe a slip
 /// the same way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumCount, strum::EnumIter)]

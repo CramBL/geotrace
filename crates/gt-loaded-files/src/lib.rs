@@ -10,9 +10,9 @@ mod recording_names;
 
 pub use recording_names::RecordingNames;
 
-/// Prefix marking an identity that GeoTrace derived automatically (from the
-/// recording's title/device/filename) rather than one supplied explicitly via
-/// the SDK. Produced by `gt_loader::derive_identity`.
+/// Prefix marking an identity that GeoTrace derived automatically from the
+/// recording's title/device/filename. An identity the SDK supplied is stored
+/// unprefixed. Produced by `gt_loader::derive_identity`.
 pub const AUTO_IDENTITY_PREFIX: &str = "auto:";
 
 /// Split an identity into its user-facing text and whether it was auto-derived.

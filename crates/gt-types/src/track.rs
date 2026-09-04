@@ -224,7 +224,7 @@ pub const LOD_BASE_TOLERANCE_MERC: f64 = 1.0 / (1u64 << 26) as f64;
 ///
 /// Renderers call [`TrackLod::select`] with the current map scale to get
 /// the coarsest level whose tolerance is still sub-pixel, bounding per-frame
-/// iteration by on-screen detail instead of recording size. Mercator space
+/// iteration by on-screen detail. Mercator space
 /// is used because screen space is a pure scaling of it: a tolerance checked
 /// in Mercator units holds exactly in pixels at every latitude.
 #[derive(Debug, Clone, Default)]
@@ -258,9 +258,9 @@ impl TrackLod {
     }
 
     /// The coarsest level whose decimation error stays below `max_error_px`
-    /// at the given scale (`px_per_merc` = pixels per Mercator unit, i.e.
-    /// the world's width in pixels). `None` when no stored level is fine
-    /// enough - render from the full point list.
+    /// at `px_per_merc` (pixels per Mercator unit, i.e. the world's width in
+    /// pixels). `None` when no stored level is fine enough - render from the
+    /// full point list.
     ///
     /// A level built from its predecessor accumulates at most twice its own
     /// tolerance of error (a geometric series of halving tolerances), so the
@@ -497,7 +497,7 @@ impl TrackRef {
 /// Wire values outside the known set are preserved in [`TravelMode::Unknown`],
 /// never dropped.
 ///
-/// `Display`/`FromStr` (via `strum`) give the lower snake_case wire form used
+/// `Display`/`FromStr` (via `strum`) give the lower `snake_case` wire form used
 /// by [`TravelMode::from_wire`].
 #[derive(
     Debug,
@@ -524,7 +524,7 @@ pub enum TravelMode {
 }
 
 impl TravelMode {
-    /// Parses the lower snake_case wire form (the `meta_travel_mode` attribute
+    /// Parses the lower `snake_case` wire form (the `meta_travel_mode` attribute
     /// value).
     ///
     /// Never fails: values outside the known set become
