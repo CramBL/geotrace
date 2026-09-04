@@ -739,6 +739,9 @@ fn purge_tracks(
 /// are range-shifted onto the compacted point sequence. When nothing survives the
 /// whole recording is deleted instead (an empty re-encode would fail).
 ///
+/// Returns [`DbError::TrackIndexOutOfRange`] and leaves the recording as it is
+/// when `drop_indices` holds an index the stored track table does not have.
+///
 /// The delete-and-reinsert intentionally drops any stored snap runs with the
 /// old recording group (pinned by gt-history's
 /// `snap_blob_is_dropped_with_its_recording`): the purge shifts point
@@ -749,6 +752,19 @@ fn purge_tracks_with_stored(
     stored: &StoredRecording,
     drop_indices: &[usize],
 ) -> Result<(), DbError> {
+    // The whole request is rejected when any index is out of range: the caller
+    // numbered the tracks against a different table, so the in-range indices
+    // may not name what the user chose either.
+    if let Some(&index) = drop_indices
+        .iter()
+        .find(|&&index| index >= stored.tracks.len())
+    {
+        return Err(DbError::TrackIndexOutOfRange {
+            index,
+            stored_track_count: stored.tracks.len(),
+        });
+    }
+
     let drop: HashSet<usize> = drop_indices.iter().copied().collect();
 
     let kept: Vec<TrackRange> = stored
@@ -1052,6 +1068,40 @@ mod tests {
             reported, tracks_lost,
             "the delete reports the number of tracks it removed"
         );
+        worker.shutdown();
+    }
+
+    /// One index of the request is in range and one is past the end, which is
+    /// what a delete of two tracks looks like once the stored table is shorter
+    /// than the session's numbering.
+    #[test]
+    fn deleting_a_track_index_the_stored_table_does_not_have_removes_no_track_at_all() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        seed_two_track_recording(&path);
+        let db = Recordings::open_or_create(&path).expect("reopen");
+        let worker = HistoryWorker::spawn(
+            RecordingsHandle::Owner(db),
+            Context::default(),
+            PendingWrites::default(),
+        );
+
+        worker.delete_tracks(only_recording(&worker).db_ref, vec![0, 2]);
+        let Response::Mutated { result, .. } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        let Err(DbError::TrackIndexOutOfRange {
+            index,
+            stored_track_count,
+        }) = result
+        else {
+            panic!("expected the delete to name the index the table does not have");
+        };
+        assert_eq!((index, stored_track_count), (2, 2));
+
+        let recording = only_recording(&worker);
+        assert_eq!(recording.total_tracks, 2);
+        assert_eq!(recording.meta.nav_point_count, 20);
         worker.shutdown();
     }
 
