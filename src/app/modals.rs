@@ -1578,7 +1578,8 @@ mod tests {
     //! in a `RefCell` and reads it every frame.
 
     use std::cell::RefCell;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+    use std::time::Instant;
 
     use gt_types::{
         FileIdx, FileSource, LoadedFile, LoadedTrack, TimeRange, TrackIdx, TrackMetadata,
@@ -1586,7 +1587,11 @@ mod tests {
 
     use egui_kittest::kittest::{NodeT as _, Queryable as _};
     use gt_map::TileAccess;
-    use gt_pending_writes::{WriteAccess, WriteKind};
+    use gt_pending_writes::{PendingWrites, WriteAccess, WriteKind};
+    use gt_store::{
+        DatabaseRef, HistoryDatabase as _, Recordings, RecordingsHandle, StoredFixPlacementRule,
+        StoredSegmentation, StoredTrackSplitRule, TrackRange, TrackState,
+    };
     use gt_test_utils::window_fit::{
         CRAMPED_VIEWPORT, NARROW_VIEWPORT, OVERSIZED_ROW_COUNT, SHORT_VIEWPORT,
     };
@@ -1601,7 +1606,7 @@ mod tests {
         ForceQuitPromptContents, LoadedLogs, MapLayer, MapboxTokenField, NavMap, NodeKey,
         PERMANENT_DELETE_LABEL, PruneRequest, PruneScope, PrunedDays, REMOVED_ITEMS_MOST_LINES,
         RecordingDetails, SnapScopeChoice, SnapScopeCount, SnapScopeCounts, TimeUntilTheClose,
-        TrackRef, files_fully_removed, prune_scope_line, show_about_dialog,
+        TrackRef, execute_delete, files_fully_removed, prune_scope_line, show_about_dialog,
         show_delete_confirmation, show_environment_prune_confirmation,
         show_force_quit_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
         show_orphaned_event_markers_popup, show_recording_details_dialog, show_snap_auto_prompt,
@@ -1609,6 +1614,8 @@ mod tests {
     };
     use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
     use gt_side_panel::{DeleteConfirmState, TreeState};
+
+    use crate::app::history_db::{DbOp, HistoryWorker, Response};
 
     fn day(offset: i64) -> chrono::NaiveDate {
         chrono::NaiveDate::from_ymd_opt(2026, 7, 5).unwrap_or_default()
@@ -2367,6 +2374,255 @@ mod tests {
                 case.name
             );
         }
+    }
+
+    /// The nav points [`sample_bytes`] holds.
+    const SAMPLE_POINT_COUNT: u64 = 20;
+
+    /// Twenty nav points one second apart, which [`seed_recording`] cuts into
+    /// tracks.
+    fn sample_bytes() -> Vec<u8> {
+        gt_test_utils::synthetic_gtd_bytes(gt_test_utils::SyntheticGtdSpec {
+            start: chrono::DateTime::from_timestamp(1_748_000_000, 0).expect("valid timestamp"),
+            point_count: SAMPLE_POINT_COUNT as usize,
+            step_secs: 1,
+            start_lat_deg: 51.5,
+            start_lon_deg: -0.1,
+            lat_step_deg: 0.0002,
+            lon_step_deg: -0.00015,
+            heading_deg: 270.0,
+            speed_kmh: 22.0,
+            eph_m: 2.4,
+            sats_seen: 10,
+            sats_in_fix: 7,
+        })
+    }
+
+    /// Store one recording whose twenty points are cut at `bounds` into live
+    /// tracks.
+    fn seed_recording(path: &Path, bounds: &[u64]) {
+        let bytes = sample_bytes();
+        let mut db = Recordings::open_or_create(path).expect("open");
+        let meta = gt_store::extract_meta(&bytes).expect("meta");
+        let mut tracks = Vec::new();
+        let mut start = 0;
+        for end in bounds
+            .iter()
+            .copied()
+            .chain(std::iter::once(SAMPLE_POINT_COUNT))
+        {
+            tracks.push(TrackRange {
+                start,
+                end,
+                state: TrackState::Live,
+            });
+            start = end;
+        }
+        let settings = StoredSegmentation {
+            track_split_gap_us: 300_000_000,
+            track_split_rule: StoredTrackSplitRule::StepInEitherDirection,
+            fix_placement_rule: StoredFixPlacementRule::MissingHeadingAndNothingInFix,
+            detect_clock_discontinuities: true,
+            clock_discontinuity_sigmas: 5.0,
+        };
+        db.insert("dev", &meta, &tracks, settings, &bytes)
+            .expect("insert");
+    }
+
+    fn worker_on(path: &Path) -> HistoryWorker {
+        let db = Recordings::open_or_create(path).expect("reopen");
+        HistoryWorker::spawn(
+            RecordingsHandle::Owner(db),
+            egui::Context::default(),
+            PendingWrites::default(),
+        )
+    }
+
+    /// Block until the worker delivers exactly one response, or time out.
+    fn next_response(worker: &HistoryWorker) -> Response {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let mut batch = worker.poll();
+            if !batch.is_empty() {
+                return batch.remove(0);
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for a history worker response"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// The reference and the nav point count that the History window lists for
+    /// the one recording in the database.
+    fn only_recording(worker: &HistoryWorker) -> (DatabaseRef, u64) {
+        worker.list();
+        let Response::Listed(Ok(entries)) = next_response(worker) else {
+            panic!("expected a Listed response");
+        };
+        let [entry] = entries.as_slice() else {
+            panic!("expected exactly one recording, got {}", entries.len());
+        };
+        (entry.db_ref.clone(), entry.meta.nav_point_count)
+    }
+
+    /// The loaded view of a recording whose tracks sit in the stored table rows
+    /// `rows`, numbered the way the loader numbers a recording opened from
+    /// history.
+    fn loaded_recording_in_stored_rows(rows: &[usize], db_ref: &DatabaseRef) -> LoadedFiles {
+        let file = LoadedFile {
+            metadata: gt_types::FileMetadata {
+                filename: "coast-road.gtd".to_owned(),
+                ..gt_test_utils::empty_file_metadata()
+            },
+            tracks: rows
+                .iter()
+                .map(|row| LoadedTrack {
+                    metadata: TrackMetadata {
+                        index: row + 1,
+                        ..gt_test_utils::empty_track_metadata()
+                    },
+                    ..gt_test_utils::loaded_track_with_points(Vec::new())
+                })
+                .collect(),
+            event_marker_styles: FxHashMap::default(),
+            orphaned_event_markers: Vec::new(),
+            source: FileSource::GtdPath(PathBuf::new()),
+            load_warnings: Vec::new(),
+        };
+        let history = FileHistory::recording(
+            db_ref.identity.clone(),
+            gt_store::RecordingMeta {
+                time_range: gt_store::NavPointTimeRange::covering(&[0]),
+                nav_point_count: 0,
+                sat_report_count: 0,
+                marker_count: 0,
+                event_marker_count: 0,
+                gtd_size_bytes: 0,
+            },
+            Some(db_ref.clone()),
+        );
+        let mut loaded = LoadedFiles::new();
+        loaded.push(file, history);
+        loaded
+    }
+
+    /// Remove the track at view position `ti` and run the permanent delete it
+    /// asks for, the way the app applies a [`RemoveOutcome`].
+    fn remove_the_track_permanently(
+        worker: &HistoryWorker,
+        loaded: &mut LoadedFiles,
+        tree: &mut TreeState,
+        db_ref: &DatabaseRef,
+        ti: usize,
+    ) {
+        let removals = execute_delete(&[track_key(0, ti)], loaded, tree);
+        let [removal] = removals.as_slice() else {
+            panic!("expected one affected recording, got {}", removals.len());
+        };
+        worker.delete_tracks(db_ref.clone(), removal.track_indices.clone());
+        let Response::Mutated {
+            op: DbOp::TracksDeleted { .. },
+            result,
+        } = next_response(worker)
+        else {
+            panic!("expected a TracksDeleted mutation");
+        };
+        result.expect("the delete runs");
+    }
+
+    /// The recording holds three tracks of 7, 7 and 6 points. The session
+    /// deletes the first one permanently, then the first of the two that are
+    /// left, which leaves the last one and its six points.
+    ///
+    /// The second delete is sent under the reference that the database lists
+    /// after the first delete. The row alone decides which track it removes.
+    #[test]
+    fn removing_a_track_after_a_permanent_delete_deletes_the_track_the_user_chose() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        seed_recording(&path, &[7, 14]);
+        let worker = worker_on(&path);
+
+        let (db_ref, _) = only_recording(&worker);
+        let mut loaded = loaded_recording_in_stored_rows(&[0, 1, 2], &db_ref);
+        let mut tree = TreeState::default();
+        remove_the_track_permanently(&worker, &mut loaded, &mut tree, &db_ref, 0);
+
+        let (db_ref, points_left) = only_recording(&worker);
+        assert_eq!(points_left, 13, "the first delete removed seven points");
+        remove_the_track_permanently(&worker, &mut loaded, &mut tree, &db_ref, 0);
+
+        assert_eq!(
+            only_recording(&worker).1,
+            6,
+            "the recording keeps the six points of its last track"
+        );
+        worker.shutdown();
+    }
+
+    /// Shelving a track leaves the stored track table in place. The session
+    /// still addresses that table by the row number that each of its tracks
+    /// holds.
+    #[test]
+    fn shelving_a_track_of_a_recording_opened_with_a_shelved_track_shelves_the_track_the_user_chose()
+     {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        seed_recording(&path, &[7, 14]);
+        let worker = worker_on(&path);
+
+        let (db_ref, _) = only_recording(&worker);
+        worker.set_tracks_shelved(db_ref.clone(), vec![1], true);
+        let Response::Mutated { result, .. } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        result.expect("the first shelve runs");
+
+        // The open leaves the shelved track out of the view. The two that stay
+        // keep the numbers of the rows they came from.
+        let mut loaded = loaded_recording_in_stored_rows(&[0, 2], &db_ref);
+        let mut tree = TreeState::default();
+        let removals = execute_delete(&[track_key(0, 1)], &mut loaded, &mut tree);
+        let [removal] = removals.as_slice() else {
+            panic!("expected one affected recording, got {}", removals.len());
+        };
+        worker.set_tracks_shelved(db_ref.clone(), removal.track_indices.clone(), true);
+        let Response::Mutated { result, .. } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        result.expect("the second shelve runs");
+
+        worker.open(db_ref);
+        let Response::Opened { result, .. } = next_response(&worker) else {
+            panic!("expected an Opened response");
+        };
+        let states: Vec<TrackState> = result
+            .expect("the recording opens")
+            .tracks
+            .iter()
+            .map(|track| track.state)
+            .collect();
+        assert_eq!(
+            states,
+            vec![TrackState::Live, TrackState::Shelved, TrackState::Shelved],
+            "the track the user shelved is the recording's third"
+        );
+        worker.shutdown();
+    }
+
+    #[test]
+    fn removing_a_recording_whose_tracks_are_all_shelved_removes_no_stored_track() {
+        let mut loaded = make_loaded_files(&[(0, true)]);
+        let mut tree = TreeState::default();
+
+        let removals = execute_delete(&[file_key(0)], &mut loaded, &mut tree);
+
+        assert!(
+            removals.is_empty(),
+            "the remove acts on no stored track, and the shelved ones stay stored"
+        );
     }
 
     /// One dialog this module renders, driven with content far larger than any
