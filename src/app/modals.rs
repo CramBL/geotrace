@@ -2140,7 +2140,7 @@ mod tests {
 
     /// The remove confirmation over one stored recording, with its first
     /// track selected for removal.
-    struct DeleteConfirmationState {
+    pub(super) struct DeleteConfirmationState {
         tree: TreeState,
         loaded_files: LoadedFiles,
         write_access: WriteAccess,
@@ -2190,15 +2190,23 @@ mod tests {
             .get_by_label_contains("the session is read-only");
     }
 
-    /// The confirmation over `count` tracks of one stored recording, with the
-    /// permanent delete chosen.
-    fn remove_confirmation(count: usize) -> TestHarness<'static, DeleteConfirmationState> {
+    /// Whether the confirmation opens with [`PERMANENT_DELETE_LABEL`] ticked.
+    #[derive(Clone, Copy)]
+    pub(super) struct PermanentDeleteTicked(pub(super) bool);
+
+    /// The confirmation over `count` tracks of one stored recording, at
+    /// `viewport`.
+    pub(super) fn remove_confirmation_at(
+        viewport: egui::Vec2,
+        count: usize,
+        PermanentDeleteTicked(delete_permanently): PermanentDeleteTicked,
+    ) -> TestHarness<'static, DeleteConfirmationState> {
         let mut tree = TreeState::default();
         tree.delete_confirm = Some(DeleteConfirmState {
             items: (0..count).map(|ti| track_key(0, ti)).collect(),
-            delete_permanently: true,
+            delete_permanently,
         });
-        let mut harness = TestHarness::builder().size(DIALOG_VIEWPORT).ui_state(
+        let mut harness = TestHarness::builder().size(viewport).ui_state(
             delete_confirmation_ui,
             DeleteConfirmationState {
                 tree,
@@ -2210,7 +2218,11 @@ mod tests {
         harness
     }
 
-    fn remove_confirmation_title(count: usize) -> String {
+    fn remove_confirmation(count: usize) -> TestHarness<'static, DeleteConfirmationState> {
+        remove_confirmation_at(DIALOG_VIEWPORT, count, PermanentDeleteTicked(true))
+    }
+
+    pub(super) fn remove_confirmation_title(count: usize) -> String {
         format!("Remove {count} items?")
     }
 
@@ -2592,6 +2604,7 @@ mod anchored_dialog_layout_tests {
     use chrono::Duration;
     use egui_kittest::Harness;
     use gt_pending_writes::WriteKind;
+    use gt_test_utils::window_fit::NARROW_VIEWPORT;
     use gt_test_utils::{By, HarnessInteraction as _, Queryable as _};
 
     use crate::app::log_viewer::association_dialog::{
@@ -2600,10 +2613,20 @@ mod anchored_dialog_layout_tests {
 
     use super::{
         DELETE_ARCHIVED_DAYS_TITLE, EnvironmentPruneChoice, ForceQuitChoice,
-        LOADED_RECORDINGS_MOST_LINES, PruneScope, SnapScopeChoice, tests,
+        LOADED_RECORDINGS_MOST_LINES, PERMANENT_DELETE_LABEL, PruneScope, SnapScopeChoice, tests,
     };
 
     const CANCEL_LABEL: &str = "Cancel";
+
+    const REMOVE_LABEL: &str = "Remove";
+
+    /// Items the tickbox measurement removes, all of them tracks of one
+    /// stored recording.
+    const REMOVED_ITEMS: usize = 2;
+
+    /// The opening the two wordings of the remove confirmation's history
+    /// sentence share.
+    const DETAIL_SENTENCE_OPENING: &str = "Removes them from the view and";
 
     /// Fixes of each recording the association dialog lists.
     const FIX_COUNT: usize = 10;
@@ -2827,6 +2850,72 @@ mod anchored_dialog_layout_tests {
         assert!(
             matches!(*choice.borrow(), Some(SnapScopeChoice::Cancel)),
             "the press on Cancel uploaded the tracks instead of reporting the cancel"
+        );
+    }
+
+    /// The remove confirmation states in one sentence what the remove does in
+    /// history, and the permanent-delete tickbox chooses the wording. The
+    /// dialog is 324 points wide at [`NARROW_VIEWPORT`]. "Removes them from
+    /// the view and hides 2 tracks in 1 recording in history." takes one line
+    /// at that width, and "Removes them from the view and permanently deletes
+    /// 2 tracks from 1 recording in history." takes two.
+    ///
+    /// The second line goes into the room the body already had. The window
+    /// keeps the height it opened at.
+    #[test]
+    fn the_remove_confirmation_keeps_its_controls_in_place_while_the_permanent_delete_is_ticked() {
+        let mut harness = tests::remove_confirmation_at(
+            NARROW_VIEWPORT,
+            REMOVED_ITEMS,
+            tests::PermanentDeleteTicked(false),
+        );
+        let title = tests::remove_confirmation_title(REMOVED_ITEMS);
+        let window = harness.inner.window_rect(&title);
+        let tickbox = harness
+            .inner
+            .get(By::new().label_contains(PERMANENT_DELETE_LABEL))
+            .rect();
+        let remove = harness.inner.get(By::new().label(REMOVE_LABEL)).rect();
+        let one_line = harness
+            .inner
+            .get(By::new().label_contains(DETAIL_SENTENCE_OPENING))
+            .rect()
+            .height();
+
+        harness.inner.click_at(tickbox.center());
+        harness.inner.run_steps(4);
+
+        let two_lines = harness
+            .inner
+            .get(By::new().label_contains(DETAIL_SENTENCE_OPENING))
+            .rect()
+            .height();
+        assert!(
+            two_lines > one_line,
+            "the sentence took {two_lines} points ticked and {one_line} points unticked: this \
+             measurement needs a width at which the two wordings wrap onto a different number of \
+             lines"
+        );
+        assert_eq!(
+            harness.inner.window_rect(&title),
+            window,
+            "the remove confirmation resized around the longer sentence: its edge moves past a \
+             control the user aimed at, and the press reaches the app behind it"
+        );
+        assert_eq!(
+            harness
+                .inner
+                .get(By::new().label_contains(PERMANENT_DELETE_LABEL))
+                .rect(),
+            tickbox,
+            "the permanent-delete tickbox moved under the pointer that just ticked it: the press \
+             that unticks it misses"
+        );
+        assert_eq!(
+            harness.inner.get(By::new().label(REMOVE_LABEL)).rect(),
+            remove,
+            "the Remove button of the remove confirmation moved: a press where the user aimed \
+             misses it"
         );
     }
 
