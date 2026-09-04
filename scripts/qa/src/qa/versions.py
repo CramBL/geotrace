@@ -14,7 +14,7 @@ in different places:
   pins in both committed ``Cargo.lock`` files (the root workspace and the
   isolated Python workspace).
 
-Most spots carry the full version (``0.2.0`` or ``0.2.0-rc.1``). CMake project
+Most spots contain the full version (``0.2.0`` or ``0.2.0-rc.1``). CMake project
 versions and the numeric ``*_MAJOR/MINOR/PATCH`` macros only hold the numeric
 core (``0.2.0``), since they cannot express a prerelease suffix.
 

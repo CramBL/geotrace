@@ -3,7 +3,7 @@
 `gt_ionex::unix_compress` decodes what CDDIS serves its legacy IONEX files in.
 This module writes its fixtures, since no `compress` binary ships with the
 development machines. Every generated stream is checked against `gzip -d`
-before it is written, so a decoder test reads fixtures an independent
+before it is written, so a decoder test reads fixtures that an independent
 implementation agrees with.
 """
 
