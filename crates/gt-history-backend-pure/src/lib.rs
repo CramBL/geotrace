@@ -243,6 +243,19 @@ impl HistoryDatabase for PureDb {
             .map_err(Into::into)
     }
 
+    fn replace_recording_in_place(
+        &mut self,
+        db_ref: &DatabaseRef,
+        meta: &RecordingMeta,
+        tracks: &[TrackRange],
+        settings: StoredSegmentation,
+        bytes: &[u8],
+    ) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        copy::replace_recording(&self.path, db_ref, meta, tracks, settings, bytes)
+            .map_err(Into::into)
+    }
+
     fn set_tracks(
         &mut self,
         db_ref: &DatabaseRef,

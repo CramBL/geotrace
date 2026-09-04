@@ -666,6 +666,22 @@ pub trait HistoryDatabase: ReadOnlyHistoryDatabase {
         bytes: &[u8],
     ) -> Result<DatabaseRef, DbError>;
 
+    /// Replace a recording's stored GTD bytes, metadata, track table and
+    /// segmentation settings under its existing group name, which keeps
+    /// `db_ref` valid.
+    ///
+    /// The recording keeps the logs attached to it. Its stored snap run is
+    /// dropped: the run names point indices that `bytes` renumber. Fails when
+    /// the recording is not in the database.
+    fn replace_recording_in_place(
+        &mut self,
+        db_ref: &DatabaseRef,
+        meta: &RecordingMeta,
+        tracks: &[TrackRange],
+        settings: StoredSegmentation,
+        bytes: &[u8],
+    ) -> Result<(), DbError>;
+
     /// Replace a recording's stored tracks and segmentation settings (e.g. after
     /// recalculating from the original with new settings). Discards prior hidden
     /// marks - the supplied `tracks` carry the new hidden state.

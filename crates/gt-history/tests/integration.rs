@@ -2371,6 +2371,247 @@ fn set_tracks_replaces_the_table_and_settings() {
     );
 }
 
+/// The recording the app re-encodes after a permanent track delete: shorter
+/// bytes, one track, and the reference the session holds still names it.
+#[test_log::test]
+fn replacing_a_recording_in_place_stores_the_new_bytes_under_the_same_reference() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+
+    let shorter = make_gtd_bytes(1_000_000_025, 25);
+    let meta = extract_meta(&shorter).expect("meta");
+    let tracks = [TrackRange {
+        start: 0,
+        end: 25,
+        hidden: true,
+    }];
+    db.replace_recording_in_place(&db_ref, &meta, &tracks, test_settings(), &shorter)
+        .expect("replace");
+
+    let stored = db.load_full(&db_ref).expect("load");
+    assert_eq!(stored.tracks, tracks.to_vec());
+    assert_eq!(stored.segmentation, Some(test_settings()));
+    let reconstructed = extract_meta(&stored.bytes).expect("meta");
+    assert_eq!(reconstructed.nav_point_count, 25);
+    assert_eq!(reconstructed.time_range, meta.time_range);
+
+    let entries = db.list_recordings().expect("list");
+    let [entry] = entries.as_slice() else {
+        panic!("expected exactly one recording, got {}", entries.len());
+    };
+    assert_eq!(entry.db_ref, db_ref);
+    assert_eq!(entry.total_tracks, 1);
+    assert_eq!(entry.hidden_tracks, 1);
+    assert_eq!(entry.meta, meta, "the listing describes the new bytes");
+}
+
+/// The logs a user stored with a recording belong to the recording, not to the
+/// points it was re-encoded from.
+#[test_log::test]
+fn replacing_a_recording_in_place_keeps_the_logs_attached_to_it() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    let id = attach_placeholder_log(&mut db, &db_ref, "field-notes.log");
+
+    let shorter = make_gtd_bytes(1_000_000_025, 25);
+    let meta = extract_meta(&shorter).expect("meta");
+    let tracks = [TrackRange {
+        start: 0,
+        end: 25,
+        hidden: false,
+    }];
+    db.replace_recording_in_place(&db_ref, &meta, &tracks, test_settings(), &shorter)
+        .expect("replace");
+
+    let attachments = db.log_attachments(&db_ref).expect("list the attachments");
+    let [entry] = attachments.as_slice() else {
+        panic!("expected one attachment, got {}", attachments.len());
+    };
+    assert_eq!(entry.id, id);
+    assert_eq!(entry.attachment.name, "field-notes.log");
+    assert_eq!(entry.attachment.filters, log_filters());
+    assert_eq!(stored_log_count(&db_path), 1, "the log itself is kept too");
+}
+
+/// A stored snap run names point indices, which the new bytes renumber.
+#[test_log::test]
+fn replacing_a_recording_in_place_drops_the_stored_snap_run() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    db.set_snap_blob(&db_ref, &[1, 2, 3]).expect("store");
+
+    let shorter = make_gtd_bytes(1_000_000_025, 25);
+    let meta = extract_meta(&shorter).expect("meta");
+    let tracks = [TrackRange {
+        start: 0,
+        end: 25,
+        hidden: false,
+    }];
+    db.replace_recording_in_place(&db_ref, &meta, &tracks, test_settings(), &shorter)
+        .expect("replace");
+
+    assert_eq!(db.snap_blob(&db_ref).expect("read"), None);
+}
+
+#[test_log::test]
+fn replacing_a_recording_that_is_not_stored_reports_an_error() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+
+    let bytes = make_gtd_bytes(2_000_000_000, 10);
+    let meta = extract_meta(&bytes).expect("meta");
+    let tracks = [TrackRange {
+        start: 0,
+        end: 10,
+        hidden: false,
+    }];
+    let missing = DatabaseRef {
+        identity: db_ref.identity.clone(),
+        group_name: "2001-01-01T00:00:00Z_no-such-recording".to_owned(),
+    };
+    assert!(
+        db.replace_recording_in_place(&missing, &meta, &tracks, test_settings(), &bytes)
+            .is_err()
+    );
+
+    let entries = db.list_recordings().expect("list");
+    let [entry] = entries.as_slice() else {
+        panic!("expected exactly one recording, got {}", entries.len());
+    };
+    assert_eq!(entry.db_ref, db_ref);
+    assert_eq!(entry.meta.nav_point_count, 50);
+}
+
+/// Bytes that are not a recording at all: the replacement fails and the stored
+/// recording is left as it was.
+#[test_log::test]
+fn replacing_a_recording_with_bytes_that_are_not_a_recording_keeps_the_stored_one() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    let meta = extract_meta(&make_gtd_bytes(1_000_000_025, 25)).expect("meta");
+    let tracks = [TrackRange {
+        start: 0,
+        end: 25,
+        hidden: false,
+    }];
+
+    assert!(
+        db.replace_recording_in_place(&db_ref, &meta, &tracks, test_settings(), b"not a recording")
+            .is_err()
+    );
+
+    let stored = db.load_full(&db_ref).expect("load");
+    assert_eq!(stored.tracks.len(), 2);
+    assert_eq!(
+        extract_meta(&stored.bytes).expect("meta").nav_point_count,
+        50
+    );
+    let entries = db.list_recordings().expect("list");
+    let [entry] = entries.as_slice() else {
+        panic!("expected exactly one recording, got {}", entries.len());
+    };
+    assert_eq!(entry.meta.nav_point_count, 50);
+}
+
+/// Leave a recording in a replacement stage, as an interruption between the
+/// system-HDF5 backend's two link operations does.
+#[cfg(feature = "backend-sys")]
+#[expect(
+    clippy::expect_used,
+    reason = "test helper; panicking on I/O failure is the right behaviour"
+)]
+fn stage_the_recording(db_path: &std::path::Path, db_ref: &DatabaseRef) {
+    let file = hdf5::File::open_rw(db_path).expect("open raw");
+    let identity_name = gt_history::identity_group_name(&db_ref.identity);
+    let recording_path = format!("by_identity/{identity_name}/{}", db_ref.group_name);
+    // The name the system-HDF5 backend builds from `REPLACEMENT_STAGE_PREFIX`.
+    let stage_path = format!("meta/__geotrace_replacement__{}", db_ref.group_name);
+    file.relink(&recording_path, &stage_path)
+        .expect("stage the recording");
+}
+
+/// The system-HDF5 backend stages a replacement under `/meta` and links it in
+/// as its last step. An interruption between the two link operations leaves
+/// the recording in its stage, under no name of its own.
+#[cfg(feature = "backend-sys")]
+#[test_log::test]
+fn a_replacement_interrupted_before_it_was_linked_in_puts_the_recording_back() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    attach_placeholder_log(&mut db, &db_ref, "field-notes.log");
+
+    stage_the_recording(&db_path, &db_ref);
+    assert!(
+        db.list_recordings().expect("list").is_empty(),
+        "the interrupted swap left the recording under no name of its own"
+    );
+
+    let shorter = make_gtd_bytes(1_000_000_025, 25);
+    let meta = extract_meta(&shorter).expect("meta");
+    let tracks = [TrackRange {
+        start: 0,
+        end: 25,
+        hidden: false,
+    }];
+    db.replace_recording_in_place(&db_ref, &meta, &tracks, test_settings(), &shorter)
+        .expect("replace");
+
+    let entries = db.list_recordings().expect("list");
+    let [entry] = entries.as_slice() else {
+        panic!("expected exactly one recording, got {}", entries.len());
+    };
+    assert_eq!(entry.db_ref, db_ref);
+    assert_eq!(entry.meta.nav_point_count, 25);
+    assert_eq!(
+        db.log_attachments(&db_ref).expect("attachments").len(),
+        1,
+        "the log stored with the recording came back with it"
+    );
+}
+
+/// Opening the database is what happens next after an interrupted replacement,
+/// whether or not the recording is ever replaced again.
+#[cfg(feature = "backend-sys")]
+#[test_log::test]
+fn opening_a_database_with_an_interrupted_replacement_puts_the_recording_back() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    attach_placeholder_log(&mut db, &db_ref, "field-notes.log");
+    drop(db);
+
+    stage_the_recording(&db_path, &db_ref);
+
+    let db = Database::open_or_create(&db_path).expect("reopen");
+    let entries = db.list_recordings().expect("list");
+    let [entry] = entries.as_slice() else {
+        panic!("expected exactly one recording, got {}", entries.len());
+    };
+    assert_eq!(
+        entry.db_ref, db_ref,
+        "the recording is listed under the reference a session holds for it"
+    );
+    assert_eq!(entry.meta.nav_point_count, 50);
+    assert_eq!(
+        db.log_attachments(&db_ref).expect("attachments").len(),
+        1,
+        "the log stored with the recording came back with it"
+    );
+}
+
 #[rstest]
 #[case::the_earlier_rules(
     StoredTrackSplitRule::ForwardGapOnly,
