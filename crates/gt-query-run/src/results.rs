@@ -193,7 +193,7 @@ impl ChannelResults {
 pub struct ChannelTrackResult {
     pub track: TrackRef,
     /// This track's declared display unit. The evaluator timeline below is in
-    /// base units; tables convert it back through this metadata.
+    /// base units. The result tables convert it back through this metadata.
     pub unit: Option<ChannelUnit>,
     /// Matched stretches of `timeline`, indexed by sample.
     pub matches: Vec<MatchValues>,
@@ -202,8 +202,8 @@ pub struct ChannelTrackResult {
 
 /// One query's result for the panel: its summary line, columns, and matches.
 pub struct PanelQuery {
-    /// Palette color index when this query draws, for the swatch; `None`
-    /// otherwise.
+    /// Palette color index when this query draws, for the swatch. `None` when
+    /// the query does not draw.
     pub color: Option<usize>,
     pub summary: QuerySummary,
     /// The match table's columns, in table order.
@@ -295,8 +295,8 @@ pub(crate) fn matched_point_ranges(
         .filter_map(|r| {
             let t0 = *timeline.times.get(r.start)?;
             let t1 = *timeline.times.get(r.end.checked_sub(1)?)?;
-            // Last point at or before t0 (or the first point); first point at or
-            // after t1 (or the last).
+            // Last point at or before t0 (or the first point). First point at
+            // or after t1 (or the last).
             let lo = point_secs.partition_point(|&t| t <= t0).saturating_sub(1);
             let hi = point_secs.partition_point(|&t| t < t1).min(last);
             Some(lo..hi + 1)

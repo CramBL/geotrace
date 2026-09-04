@@ -11,7 +11,7 @@ fn scenario() -> MapScenario {
 }
 
 /// Narrowing the time filter after a run marks the results stale, and the
-/// points it excluded read as filtered out rather than hidden.
+/// points it excluded are classed as outside the time filter.
 #[test]
 fn narrowing_the_time_filter_grays_the_results_out() {
     let mut scenario = scenario();
@@ -38,7 +38,7 @@ fn narrowing_the_time_filter_grays_the_results_out() {
     ");
 }
 
-/// Disabling a track after a run marks the results stale; its points are off
+/// Disabling a track after a run marks the results stale. Its points are off
 /// the map entirely, halo or not.
 #[test]
 fn disabling_an_evaluated_track_grays_the_results_out() {

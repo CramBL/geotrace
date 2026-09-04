@@ -58,8 +58,8 @@ impl TrackQueryData {
         captured: CapturedTrackValues,
     ) -> Self {
         // gt_query::check::require_params guarantees these parameters whenever
-        // the corresponding metrics are referenced - defaulting below is for the
-        // Option unwrap only, never a real fallback.
+        // a `util_*` or `slip_*` metric is referenced - the default below is
+        // for the Option unwrap only, never a real fallback.
         debug_assert!(
             !(uses_util || uses_slip) || params.mask_deg.is_some(),
             "checker must reject util/slip metrics without a mask"
@@ -501,8 +501,8 @@ impl MetricProvider for TrackProvider<'_> {
             QueryMetric::Jamming => self
                 .jamming
                 .and_then(|values| values.get(index).copied().flatten())
-                // A percentage, converted to the 0-1 ratio base like the util
-                // metrics.
+                // A percentage, converted to the 0-1 ratio base like the
+                // `util_*` metrics.
                 .map(|percent| percent * Unit::PERCENT.to_base()),
             QueryMetric::Hp30 => self.geomagnetic_value(index, |point| point.hp30),
             QueryMetric::Kp => self.geomagnetic_value(index, |point| point.kp),
@@ -722,8 +722,8 @@ mod tests {
             ])),
             util: Some(util),
             slip: Some(slip),
-            // Point 0 snapped with a 3.5 m error; point 1 carries no value
-            // (unsnapped, thinned, or simply beyond the sent range).
+            // Point 0 snapped with a 3.5 m error. Point 1 has no value
+            // (unsnapped, thinned, or beyond the sent range).
             snap_error: Some(Arc::new(vec![Some(3.5), None])),
             filtered_points: TimeFilteredPoints::whole_track(points.len()),
         };
@@ -903,8 +903,8 @@ mod tests {
     }
 
     /// A track without a snap run resolves no `snap_error` values - the
-    /// metric never invents data (and never triggers an upload; providers
-    /// only read what the app captured).
+    /// metric never invents data. A provider only reads what the app captured,
+    /// and never triggers an upload.
     #[test]
     fn snap_error_is_absent_without_a_run() {
         let points = test_points();
@@ -1057,8 +1057,9 @@ mod tests {
 
     #[test]
     fn channel_span_converts_units_and_filters_time() {
-        // A g-valued scalar accel channel: channel_span converts each sample to
-        // base m/s2 and keeps only those whose absolute time lands in the span.
+        // A g-valued scalar accel channel: `channel_span` converts each sample
+        // to base m/s2 and keeps only those whose absolute time lands in the
+        // span.
         let base = TEST_EPOCH as f64;
         let accel = scalar_channel(
             "accel",
@@ -1070,8 +1071,8 @@ mod tests {
         let provider = TrackProvider::new(&points, &channels, None);
 
         let got = provider.channel_span("accel", base, base + 2.0);
-        // The first three samples (the fourth is past t_hi), each g -> m/s2, one
-        // column (scalar).
+        // The first three samples (the fourth is past `t_hi`), each g -> m/s2,
+        // one column (scalar).
         let g = Unit::G.to_base();
         let want = [1.0 * g, 1.5 * g, 2.0 * g];
         assert_eq!(got.columns, 1);
@@ -1084,7 +1085,7 @@ mod tests {
     #[test]
     fn channel_span_reads_vector_rows() {
         // A vector channel returns row-major values, all columns per row, each
-        // converted to base; an unknown channel yields nothing.
+        // converted to base. An unknown channel returns no values.
         let base = TEST_EPOCH as f64;
         let accel = vector_channel(
             "accel",
@@ -1221,7 +1222,7 @@ mod tests {
         let slice = SliceProvider::new(inner.clone(), from_the_second_point(&points));
 
         // The span [base, base+1] holds the first two samples through either
-        // provider; the slice's start must not shift the time window.
+        // provider. The slice's start does not shift the time window.
         assert_eq!(
             slice.channel_span("accel", base, base + 1.0),
             inner.channel_span("accel", base, base + 1.0),
@@ -1336,8 +1337,9 @@ mod tests {
     #[test]
     fn a_vector_component_checks_and_runs_end_to_end() {
         // The whole app path for a vector component: build the schema, check
-        // @accel.y, then run over a provider carrying the vector. Only the y
-        // column (peak 1.5 g) clears the threshold; x (0.9) would not.
+        // @accel.y, then run over a provider holding the vector. Only the y
+        // column (peak 1.5 g) clears the threshold. The x column peaks at
+        // 0.9 g.
         let channel = vector_channel(
             "accel",
             Some("g"),
@@ -1364,9 +1366,9 @@ mod tests {
 
     #[test]
     fn an_si_prefixed_channel_unit_checks_and_runs_end_to_end() {
-        // The whole app path for SI prefixes on both sides: a channel spec'd
+        // The whole app path for SI prefixes on both sides: a channel declared
         // in mg (the usual IMU datasheet unit) against an mg literal. Sample
-        // 1 (80 mg) clears the 50 mg threshold; sample 0 (20 mg) does not,
+        // 1 (80 mg) clears the 50 mg threshold. Sample 0 (20 mg) does not,
         // pinning that the channel values scale by the prefixed label too.
         let channel = vector_channel(
             "accel",

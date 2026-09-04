@@ -27,11 +27,11 @@
 //! [`MapScenario::picture`] asserts against the per-point view every time, so a
 //! divergence between the two fails every scenario.
 //!
-//! Not routed through real map code, because it is screen geometry rather than
-//! point state: viewport culling, LOD decimation, polyline span splitting, and
-//! the hit-testing that turns a pointer position into a candidate. A click's
-//! *rule* is shared - [`MapScenario::select_point`] pins only what the map draws,
-//! as every click site does - but the pointer geometry ahead of it is not.
+//! Not routed through real map code: viewport culling, LOD decimation, polyline
+//! span splitting, and the hit-testing that turns a pointer position into a
+//! candidate are all screen geometry. A click's *rule* is shared -
+//! [`MapScenario::select_point`] pins only what the map draws, as every click
+//! site does - but the pointer geometry ahead of it is not.
 //!
 //! What this crate owns is the scenario script and the rendering, and nothing
 //! else: it builds no shared domain type by hand. Files and tracks come from

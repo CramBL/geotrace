@@ -102,7 +102,8 @@ fn gtd_file_with_the_host_clock_ahead(micros_ahead: i64) -> LoadedFile {
     gt_loader::load_bytes(&bytes, "ride.gtd".to_owned()).expect("the written file loads")
 }
 
-/// A scalar channel sampled at the given millisecond offsets past [`EPOCH`].
+/// A scalar channel from `samples`, each a millisecond offset past [`EPOCH`]
+/// and a value.
 fn scalar_channel(name: &str, unit: Option<&str>, samples: &[(i64, f64)]) -> Channel {
     Channel {
         name: name.to_owned(),

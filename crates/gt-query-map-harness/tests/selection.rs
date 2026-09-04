@@ -42,8 +42,8 @@ fn clicking_another_point_moves_the_pin() {
 
 /// A point selected before a query hides it keeps its pin, but the popup shows
 /// nothing: the map does not draw the point, so there is nothing for a popup to
-/// describe. The pin is remembered rather than dropped, so clearing the query
-/// brings the popup back.
+/// describe. The pin is remembered, so clearing the query brings the popup
+/// back.
 #[test]
 fn a_query_that_hides_the_selected_point_withholds_its_popup() {
     let mut scenario = scenario();

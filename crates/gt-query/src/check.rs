@@ -73,7 +73,7 @@ pub enum ChannelConflict {
 }
 
 /// The channels a query may reference, keyed by name. The app builds this from
-/// the loaded files; [`check`] resolves each `@name` against it.
+/// the loaded files. [`check`] resolves each `@name` against it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ChannelSchema {
     channels: FxHashMap<String, ChannelInfo>,
@@ -273,7 +273,7 @@ impl AggregateColumn {
 
 /// A resolved channel reference: the channel name, and for a vector channel the
 /// column of the referenced component (`@accel.x`). `None` is a scalar channel
-/// or a whole vector; the checker resolves the component label to its index so
+/// or a whole vector. The checker resolves the component label to its index, so
 /// evaluation works by column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ChannelKey {
@@ -283,7 +283,7 @@ pub(crate) struct ChannelKey {
 
 /// Which timeline an aggregate reduces: the window's nav points, or one
 /// channel's native samples over the window's time span. A vector channel's
-/// components share a clock, so the timeline is the channel by name; each
+/// components share a clock, so the timeline is the channel by name. Each
 /// [`CExpr::Channel`]/[`CExpr::Norm`] node projects the column(s) it needs per
 /// sample. The checker resolves this once (see [`aggregate_source`]).
 #[derive(Debug, Clone, PartialEq)]
@@ -357,7 +357,7 @@ pub(crate) enum ArithOp {
 
 /// The static type the checker gives an expression. Dimensionless values carry
 /// a [`Kind`] so a count, a ratio, and a bare number stay distinct despite
-/// sharing the zero dimension; `Timestamp` and `Condition` stand outside
+/// sharing the zero dimension. `Timestamp` and `Condition` stand outside
 /// dimensional arithmetic.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ValueType {
@@ -375,7 +375,7 @@ enum ValueType {
 }
 
 /// How the language treats a dimensionless value. All three share the zero
-/// dimension; the tag keeps them from comparing nonsensically across
+/// dimension. The tag keeps them from comparing nonsensically across
 /// categories (a count is not a ratio is not a bare number).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -555,7 +555,7 @@ fn base_with_exponent(name: &str, exponent: i8) -> String {
 /// dimension, and a declared period makes an angular channel wrap.
 ///
 /// A custom or absent unit resolves to a bare number. SDK writers require the
-/// custom-unit escape hatch explicitly; legacy file metadata can still arrive
+/// custom-unit escape hatch explicitly. Legacy file metadata can still arrive
 /// here as a preserved custom label.
 fn channel_value_type(info: &ChannelInfo) -> ValueType {
     let Some(quantity) = info
@@ -586,7 +586,7 @@ fn dimensioned(dim: Dimension) -> ValueType {
 }
 
 /// The column a channel reference selects, validated against the channel's
-/// shape. `None` for a scalar channel (`@name`); `Some(i)` for a vector
+/// shape. `None` for a scalar channel (`@name`). `Some(i)` for a vector
 /// component (`@name.x`). A component on a scalar, an unknown component, or a
 /// bare vector (which has no scalar value) each error with a hint.
 fn resolve_component(c: &ChannelRef, info: &ChannelInfo) -> Result<Option<usize>, Diagnostic> {
@@ -625,7 +625,7 @@ fn resolve_component(c: &ChannelRef, info: &ChannelInfo) -> Result<Option<usize>
 /// Which timeline an aggregate argument reduces, rejecting anything that mixes
 /// two. An aggregate reduces one clock at a time: the window's nav points, or a
 /// single channel's samples. A vector channel's components share a clock, so
-/// several components of one channel are fine; two different channels, or a
+/// several components of one channel are fine. Two different channels, or a
 /// channel alongside a per-point metric, are on independent clocks and cannot
 /// be combined per element.
 fn aggregate_source(arg: &CExpr, span: Span) -> Result<AggSource, Diagnostic> {
@@ -692,8 +692,8 @@ pub fn check(query: &Query, schema: &ChannelSchema) -> Result<CheckedQuery, Diag
     let params = resolve_params(&query.params)?;
     let window = match query.window {
         None => None,
-        // The conversion only fails on targets where usize is narrower than
-        // u64.
+        // The conversion only fails on targets where `usize` is narrower than
+        // `u64`.
         Some(AstWindow::Count { len, span }) => {
             let n = NonZeroUsize::try_from(len)
                 .map_err(|_overflow| err(span, "window is too large"))?;
@@ -813,7 +813,7 @@ fn resolve_params(decls: &[ParamDecl]) -> Result<Params, Diagnostic> {
 fn param_value_base(decl: &ParamDecl) -> Result<f64, Diagnostic> {
     let lit = decl.value;
     match decl.name.value_quantity() {
-        // A bare number, like snr_drop: a unit is a mistake.
+        // A bare number, like `snr_drop`: a unit is a mistake.
         None => {
             if lit.unit.is_some() {
                 return Err(err(decl.span, format!("{} takes a bare number", decl.name)));
@@ -835,7 +835,7 @@ fn param_unit_help(name: ParamName) -> &'static str {
     match name {
         ParamName::Mask => "mask needs an angle, e.g. mask 15 deg",
         ParamName::SlipWindow => "slip_window needs a duration, e.g. slip_window 5 min",
-        // snr_drop has no quantity, so it never reaches this branch.
+        // `snr_drop` has no quantity, so it never reaches this branch.
         ParamName::SnrDrop => "snr_drop takes a bare number",
     }
 }
@@ -844,7 +844,7 @@ fn declared_twice(decl: &ParamDecl) -> Diagnostic {
     err(decl.span, format!("{} is declared twice", decl.name))
 }
 
-/// util_* needs mask. slip_* needs mask, snr_drop, and slip_window.
+/// `util_*` needs `mask`. `slip_*` needs `mask`, `snr_drop`, and `slip_window`.
 fn require_params(occurrences: &[(QueryMetric, Span)], params: Params) -> Result<(), Diagnostic> {
     for &(metric, span) in occurrences {
         let mut missing = Vec::new();
@@ -1109,7 +1109,7 @@ impl Checker<'_> {
     }
 
     /// Resolve a channel reference against the schema. A `@name.component`
-    /// selects one column of a vector channel as a scalar; a bare `@name` is a
+    /// selects one column of a vector channel as a scalar. A bare `@name` is a
     /// scalar channel, or an error for a vector (which has no scalar value on
     /// its own). A per-sample reference must be aggregated (see
     /// [`per_sample_ok`](Self::per_sample_ok)).
@@ -1131,7 +1131,7 @@ impl Checker<'_> {
 
     /// Resolve `norm(@vector)`: the Euclidean magnitude of a whole vector
     /// channel, in the channel's own dimension. The argument must be a bare
-    /// vector reference (no component); like a bare channel, the result is
+    /// vector reference (no component). Like a bare channel, the result is
     /// per-sample and must sit inside an aggregate.
     fn norm(&self, arg: &Expr, span: Span, in_agg: bool) -> Result<(ValueType, CExpr), Diagnostic> {
         let Expr::Channel(c) = arg else {
@@ -1651,7 +1651,7 @@ fn compatible(a: ValueType, b: ValueType) -> bool {
 
 /// A bare number compares with a count (`sats_fix > 6`) and with an index
 /// (`hp30 > 5`), but a count, a ratio, and an index never mix, and a bare
-/// number never stands in for a ratio (which must carry `%`).
+/// number is never accepted as a ratio (which must carry `%`).
 fn dimensionless_compatible(a: Kind, b: Kind) -> bool {
     a == b
         || matches!(
@@ -1742,7 +1742,7 @@ fn literal_base(lit: &NumberLit) -> f64 {
 }
 
 /// The pinned `==` message: with a unit literal on one side, suggest the
-/// concrete range; otherwise the generic form.
+/// concrete range. Without one, suggest the generic form.
 fn equality_needs_range(lhs: &Expr, rhs: &Expr, span: Span) -> Diagnostic {
     for (lit_expr, other_expr) in [(lhs, rhs), (rhs, lhs)] {
         let Expr::Number(NumberLit {
@@ -1853,7 +1853,8 @@ mod tests {
         );
     }
 
-    /// A bare number takes on the other kind when summed; like kinds stay.
+    /// A bare number takes on the other kind when summed. Two of the same kind
+    /// stay that kind.
     #[rstest]
     #[case::number_count(Number, Count, Count)]
     #[case::ratio_number(Ratio, Number, Ratio)]

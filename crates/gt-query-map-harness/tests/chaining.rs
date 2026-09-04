@@ -101,7 +101,7 @@ fn a_stage_after_everything_is_hidden_matches_nothing() {
 ///
 /// `accel` differences against the previous point *of the current run*, so
 /// hiding first can leave a survivor at a run boundary where `accel` is missing.
-/// A missing value skips the point instead of matching it, so it stays. The
+/// A point whose `accel` is missing does not match, so it stays. The
 /// counterexample a property test shrank to, kept as the documented semantics.
 #[test]
 fn swapping_two_hides_can_change_the_map() {

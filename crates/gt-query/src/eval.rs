@@ -23,9 +23,9 @@ use crate::wrap::WrapPeriod;
 pub(crate) const CANCEL_CHECK_INTERVAL: usize = 4096;
 
 /// A channel's samples over a time span: row-major values in the evaluator's
-/// base units, `columns` per row. A scalar channel has one column; a vector
-/// channel one per component (`@accel.x` is column 0). Empty when the channel
-/// is unknown or has no samples in the span.
+/// base units, `columns` per row. A scalar channel has one column. A vector
+/// channel has one column per component (`@accel.x` is column 0). Empty when
+/// the channel is unknown or has no samples in the span.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ChannelSamples {
     /// Row-major values, `columns` per row.
@@ -56,7 +56,7 @@ impl ChannelSamples {
 
 /// A channel's sample timeline, for a query whose source is that channel: each
 /// sample's time (seconds) and its row of component values, in base units.
-/// `times.len()` is the sample count; `values` is row-major with `columns` per
+/// `times.len()` is the sample count. `values` is row-major with `columns` per
 /// row (one for a scalar channel). Empty when the channel is unknown.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ChannelTimeline {
@@ -536,8 +536,8 @@ fn duration_windows<P: MetricProvider>(
                 continue;
             }
             any_fit = true;
-            // The contiguous points of the run with time in `[t_start, t_start
-            // + secs)`. The anchor itself always fits.
+            // The contiguous points of the run with time in
+            // `[t_start, t_start + secs)`. The anchor itself always fits.
             let end_time = t_start + secs;
             let mut end = start;
             while end < run.end
@@ -568,7 +568,7 @@ fn duration_windows<P: MetricProvider>(
 
 /// Evaluate a channel-source query: `name`'s own samples are the timeline, so a
 /// match is a range of sample indices. Without a window each sample is judged on
-/// its own row; a count window groups consecutive samples and a duration window
+/// its own row. A count window groups consecutive samples and a duration window
 /// a time span, for the aggregates to reduce over.
 fn evaluate_channel_source(
     query: &CheckedQuery,
@@ -810,11 +810,11 @@ struct WindowScope {
 #[derive(Clone, Copy)]
 enum Scope<'a> {
     Point(usize),
-    /// A point aggregate reduces its metric over the window's points; a channel
+    /// A point aggregate reduces its metric over the window's points. A channel
     /// aggregate reduces the channel's samples over the window's time span.
     Window(WindowScope),
     /// One native channel sample: the row of component values (one for a scalar
-    /// channel). A `@name.x` node reads its column; `norm` reads the whole row.
+    /// channel). A `@name.x` node reads its column. `norm` reads the whole row.
     Sample(&'a [f64]),
     /// A window of a channel-source timeline: the samples' rows, row-major with
     /// `columns` per row. An aggregate reduces its argument over these rows.
@@ -946,7 +946,7 @@ fn eval_num<P: MetricProvider>(ctx: &mut Ctx<'_, P>, expr: &CExpr, scope: Scope)
             Scope::Window(_) | Scope::Sample(_) | Scope::SampleWindow { .. } => None,
         },
         // A channel node reads its component's column of the current sample row
-        // inside a channel aggregate (or per sample on a channel source); in any
+        // inside a channel aggregate (or per sample on a channel source). In any
         // other scope it has no value. The checker keeps the column in range.
         CExpr::Channel(key) => match scope {
             Scope::Sample(row) => {
@@ -1101,8 +1101,8 @@ fn reduce_values<P: MetricProvider>(
         },
         // The checker rejects var on a wrapping angle, so it is always linear.
         Func::Var => population_variance(&values),
-        // The checker never emits abs, sqrt, or norm as an aggregate. They are
-        // their own scalar `CExpr` nodes.
+        // The checker never emits `abs`, `sqrt`, or `norm` as an aggregate.
+        // They are their own scalar `CExpr` nodes.
         Func::Abs | Func::Sqrt | Func::Norm => return None,
     };
     ctx.finite_or_poison(value)

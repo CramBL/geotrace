@@ -28,7 +28,7 @@ impl Span {
 }
 
 /// The pipeline's source: its timeline and match granularity. `points` is the
-/// loaded nav points; a channel iterates that channel's own samples.
+/// loaded nav points. A channel source iterates that channel's own samples.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Source {
     Points,
@@ -153,8 +153,8 @@ pub enum Expr {
         span: Span,
     },
     /// A postfix integer power, `base²` or `base⁻³`. The exponent is a whole
-    /// number in `i8` range; the parser rejects fractional and out-of-range
-    /// powers.
+    /// number in `i8` range. The parser rejects a fractional or out-of-range
+    /// power.
     Power {
         base: Box<Expr>,
         exponent: i8,

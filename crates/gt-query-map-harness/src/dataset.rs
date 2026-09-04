@@ -49,10 +49,10 @@ pub fn epoch() -> DateTime<Utc> {
 /// One synthetic point: when it was recorded, where, and the metric values a
 /// query can read.
 ///
-/// `secs` is an offset from [`EPOCH_SECS`]; position defaults to a north-east
-/// walk keyed off it. The metrics are opt-in, so a scenario states only what it
-/// filters on and everything else reads as missing - which is what a receiver
-/// that did not report them looks like.
+/// `secs` is an offset from [`EPOCH_SECS`]. The position defaults to a
+/// north-east walk keyed off `secs`. The metrics are opt-in, so a scenario
+/// states only what it filters on and everything else reads as missing - which
+/// is what a receiver that did not report them looks like.
 #[derive(Debug, Clone, Copy)]
 pub struct PointSpec {
     pub secs: i64,
