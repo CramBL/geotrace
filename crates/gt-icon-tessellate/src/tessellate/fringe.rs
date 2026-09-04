@@ -19,8 +19,8 @@ use crate::template::TemplateVertex;
 /// Fringe geometry in final mesh index space.
 ///
 /// The ramp's inner ring is the element's inset solid boundary itself,
-/// referenced by index (`solid_base + boundary vertex index`) instead of
-/// duplicated, so the fringe only adds the transparent outer ring.
+/// referenced by index (`solid_base + boundary vertex index`), so the fringe
+/// only adds the transparent outer ring.
 pub(super) struct FringeMesh {
     pub outer_vertices: Vec<TemplateVertex>,
     /// Triangle indices in final mesh space: inner refs point into the
@@ -35,14 +35,14 @@ pub(super) struct FringeMesh {
 /// solid geometry so the alpha ramp straddles the true edge.
 ///
 /// `positions` and `indices` are the element's triangle mesh in bucket-pixel
-/// space; `solid_base` is where the element's solid vertices will land in
+/// space. `solid_base` is where the element's solid vertices will land in
 /// the final mesh.
 /// Boundary vertices in `positions` are moved `inset_px` inward, and the
 /// fringe ramps from full alpha there to zero at `outset_px` outside the
 /// original edge.
 /// Centering the ramp like this (egui's feathering does the same) keeps the
-/// perceived edge on the true outline; a ramp that only grows outward makes
-/// thin strokes read noticeably fatter.
+/// perceived edge on the true outline. A ramp that only grows outward makes
+/// thin strokes look noticeably fatter.
 pub(super) fn fringe_mesh(
     positions: &mut [[f32; 2]],
     indices: &[u32],
@@ -90,7 +90,7 @@ struct BoundaryEdge {
 /// Each loop entry pairs a vertex with the opposite vertex of its outgoing
 /// boundary edge.
 fn boundary_loops(indices: &[u32]) -> Result<Vec<Vec<(u32, BoundaryEdge)>>, IconTessellateError> {
-    // Count directed edges; interior edges appear once per direction.
+    // Count directed edges. Interior edges appear once per direction.
     let mut edges: BTreeMap<(u32, u32), (u32, u32)> = BTreeMap::new();
     for triangle in indices.chunks_exact(3) {
         let &[a, b, c] = triangle else { continue };
@@ -208,7 +208,7 @@ fn miter_normal(a: [f32; 2], b: [f32; 2]) -> [f32; 2] {
     let sum = [a[0] + b[0], a[1] + b[1]];
     let length = sum[0].hypot(sum[1]);
     if length <= f32::EPSILON {
-        // The boundary reverses direction; fall back to one side's normal.
+        // The boundary reverses direction. Fall back to one side's normal.
         return b;
     }
     let average = [sum[0] / length, sum[1] / length];

@@ -3,7 +3,7 @@
 //! Places a soft glow at each of the current-instant in-fix satellites,
 //! brighter with stronger signal, and sums them where satellites cluster. It is
 //! rendered as one coloured triangle mesh: the field is sampled on a fixed grid
-//! and egui interpolates the vertex colours between, so the result reads as a
+//! and egui interpolates the vertex colours between, so the result is a
 //! continuous blur without a shader, at a cost fixed by the grid size.
 
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
@@ -25,7 +25,7 @@ const MIN_WEIGHT: f32 = 0.15;
 const NO_SNR_WEIGHT: f32 = 0.3;
 
 /// Standard deviation of a single satellite's glow, as a fraction of the disc
-/// radius. Wide enough that a handful of satellites read as a smooth field.
+/// radius. Wide enough that a handful of satellites merge into a smooth field.
 const GLOW_SIGMA_FRACTION: f32 = 0.22;
 
 /// Cells per side of the square mesh laid over the disc's bounding box. The

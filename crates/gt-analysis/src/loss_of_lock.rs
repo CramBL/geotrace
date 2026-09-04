@@ -68,8 +68,8 @@ pub fn slips_between(
 /// Detect slips across a track's `points`, grouped per epoch: each returned
 /// entry pairs a point index with every satellite that slipped at that epoch.
 ///
-/// The previous epoch is the most recent earlier point that carried a satellite
-/// report; points without one are skipped without breaking continuity.  Epochs
+/// The previous epoch is the most recent earlier point with a satellite
+/// report. Points without one are skipped without breaking continuity.  Epochs
 /// with no slip produce no entry.  Used by the generated-marker pipeline, which
 /// reads each event's position and time from `points[index]` and emits one
 /// marker per epoch (not one per slipped satellite).
@@ -163,8 +163,8 @@ fn windowed_rate_of_ascending_epochs_and_events(
     for &t in epochs {
         let lower = t - window_secs;
         // Advance `hi` past every event at or before `t`, and `lo` past every
-        // event at or before the window's lower edge; the gap is the count in
-        // the half-open window.
+        // event at or before the window's lower edge. The gap between them is
+        // the count in the half-open window.
         while events.get(hi).is_some_and(|&e| e <= t) {
             hi += 1;
         }
@@ -248,7 +248,7 @@ pub fn slip_rate_series(
 ///
 /// Entry i is `None` when point i has no satellite report, or when
 /// `window_min` is not positive (the rate is undefined). The index alignment
-/// is what the query evaluator needs; the plot uses the time-keyed
+/// is what the query evaluator needs. The plot uses the time-keyed
 /// [`slip_rate_series`] instead.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SlipRatePerPoint {
@@ -355,8 +355,6 @@ mod detection_tests {
 
     #[test]
     fn snr_drop_ignored_when_satellite_falls_below_mask() {
-        // Big SNR drop, but the satellite dipped under the mask this epoch, so
-        // it is treated as a natural fade rather than a slip.
         let prev = report(vec![sat(Constellation::Gps, 1, Some(20.0), Some(45.0))]);
         let curr = report(vec![sat(Constellation::Gps, 1, Some(5.0), Some(20.0))]);
         assert!(slips_between(&prev, &curr, 15.0, 10.0).is_empty());
@@ -502,8 +500,8 @@ mod series_tests {
 
     #[test]
     fn detect_slip_events_groups_all_slips_at_one_epoch() {
-        // Sat 1 above mask throughout; sats 2 and 3 both lost at index 1, so they
-        // form a single grouped event at that epoch.
+        // Sat 1 stays above the mask throughout. Sats 2 and 3 are both lost at
+        // index 1 and produce one grouped event at that epoch.
         let points = vec![
             point(
                 0,
@@ -524,7 +522,7 @@ mod series_tests {
 
     #[test]
     fn slip_rate_series_counts_one_slip_per_minute_window() {
-        // One lost-lock slip at t=1 s; a 1-minute window gives a 1/min rate from
+        // One lost-lock slip at t=1 s. A 1-minute window gives a 1/min rate from
         // that epoch onward, on the all and GPS series.
         let points = vec![
             point(0, vec![gps(1, 40.0, 45.0), gps(2, 30.0, 40.0)]),
@@ -565,8 +563,6 @@ mod series_tests {
         assert_eq!(series_values, aligned_values);
     }
 
-    /// A non-positive window yields no defined rates rather than a division
-    /// artifact.
     #[test]
     fn slip_rate_per_point_with_zero_window_is_all_none() {
         let points = vec![point(0, vec![gps(1, 40.0, 45.0)])];

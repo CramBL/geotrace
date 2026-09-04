@@ -141,8 +141,8 @@ fn epoch_rates(sats: &Satellites, mask_deg: f32) -> EpochRates {
 /// Per-point utilization rates (percent), aligned with `points` by index.
 ///
 /// Entry i is `None` when point i has no satellite report or the masked
-/// baseline is empty. The index alignment is what the query evaluator needs;
-/// the plot uses the time-keyed [`compute_util`] instead.
+/// baseline is empty. The index alignment is what the query evaluator needs.
+/// The plot uses the time-keyed [`compute_util`] instead.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct UtilPerPoint {
     pub all: Vec<Option<f64>>,
@@ -154,8 +154,8 @@ pub struct UtilPerPoint {
     pub qzss: Vec<Option<f64>>,
 }
 
-/// Compute per-point utilization rates for one track's `points` at the given
-/// elevation mask. Same values as [`compute_util`], keyed by point index.
+/// Compute per-point utilization rates for one track's `points` at elevation
+/// mask `mask_deg`. Same values as [`compute_util`], keyed by point index.
 pub fn util_per_point(points: &[NavPoint], mask_deg: f32) -> UtilPerPoint {
     let mut out = UtilPerPoint::default();
     for point in points {
@@ -176,7 +176,7 @@ pub fn util_per_point(points: &[NavPoint], mask_deg: f32) -> UtilPerPoint {
 }
 
 /// Compute the utilization-rate series and masked-satellite anomalies for one
-/// track's `points` at the given elevation mask.
+/// track's `points` at elevation mask `mask_deg`.
 pub fn compute_util(points: &[NavPoint], mask_deg: f32) -> UtilPoints {
     let mut out = UtilPoints::default();
 

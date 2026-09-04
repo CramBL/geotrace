@@ -221,9 +221,8 @@ fn track_label(name: &str, ti: usize, track_count: usize) -> String {
     }
 }
 
-/// What the plot draws from the archives over the span it shows, rather than
-/// from the loaded recordings: the context metric lines and the solar flare
-/// markers.
+/// What the plot draws from the archives over the span it shows: the context
+/// metric lines and the solar flare markers.
 #[derive(Clone, Copy)]
 pub struct ArchiveOverlays<'a> {
     /// Resolved by the app over the span the plot reported last frame (see
@@ -270,8 +269,8 @@ pub struct PlotState {
     /// Off by default - these metrics are hidden until the user opts in.
     pub show_advanced_metrics: bool,
     /// Whether the ad-hoc channel chips and lines are revealed. Off by
-    /// default, like the advanced section; the toggle only renders when a
-    /// loaded track carries channels.
+    /// default, like the advanced section. The toggle only renders when a
+    /// loaded track has channels.
     pub show_channels: bool,
     /// Global per-channel visibility - toggled via the channel chips.
     pub channel_vis: ChannelVisibility,
@@ -311,7 +310,7 @@ pub struct PlotState {
     last_visible_x_range: Option<RangeInclusive<f64>>,
     /// User-chosen component colors, keyed by channel name: one optional
     /// override per component, `None` = the derived hue. Edited through the
-    /// chip's right-click menu; persisted with the plot settings.
+    /// chip's right-click menu. Persisted with the plot settings.
     pub channel_component_colors: FxHashMap<String, Vec<Option<Color32>>>,
     /// Whether the plot cursor was snapped close to a data point on the most
     /// recently rendered frame.
@@ -364,8 +363,9 @@ impl PlotState {
     /// level cache so the next frame recomputes level selections.
     pub fn integrate_file(&mut self, fi: usize, prepared: crate::PreparedSeries) {
         self.series_cache.retain(|s| s.fi != fi);
-        // Re-insert at a stable position: find where fi would sit among existing
-        // file indices so the ordering stays consistent with the loaded_files vec.
+        // Re-insert at a stable position: find where `fi` would sit among
+        // existing file indices so the ordering stays consistent with
+        // `loaded_files`.
         let insert_pos = self
             .series_cache
             .iter()
@@ -466,7 +466,7 @@ pub fn show_track_plot(
     archive: ArchiveOverlays<'_>,
     state: &mut PlotState,
 ) {
-    // Computed once, shared by visible_count, the full-x-range loop and the
+    // Computed once, shared by `visible_count`, the full-x-range loop and the
     // render loop.
     let visible: Vec<bool> = state
         .series_cache
@@ -605,7 +605,7 @@ pub fn show_track_plot(
             FlareSpanMarking::OnlyTheHoveredFlare
         };
     let line_width = state.line_width;
-    // Anomaly markers are drawn on the "Util all" line.
+    // Anomaly markers are drawn on the [`MetricKind::UtilAll`] line.
     let show_advanced = state.show_advanced_metrics;
     let show_anomalies =
         show_advanced && state.mark_masked_fix && state.metric_vis.field(MetricKind::UtilAll);
@@ -712,10 +712,10 @@ pub fn show_track_plot(
 
         // Hysteresis: skip recompute when the view has moved less than ~10 px
         // since the last cache fill.  Converting to data space:
-        //   10 px × (data_range / plot_width_px) = 20 × data_range / single
-        // (single ≈ 2 × plot_width_px, always ≥ 400).  The cache also depends on
-        // the plot width and visible count (both feed the per-track targets), so
-        // those are part of the validity check, not just the view bounds.
+        //   10 px × (`data_range` / `plot_width_px`) = 20 × `data_range` / single
+        // (single ≈ 2 × `plot_width_px`, always ≥ 400).  The cache also depends
+        // on the plot width and visible count (both feed the per-track targets),
+        // so those are part of the validity check, not just the view bounds.
         let single = single_target(available_width);
         let threshold = 20.0 * (eff_x_max - eff_x_min) / single as f64;
         let cache_valid = last_level_cache_inputs.is_some_and(|last| {
@@ -759,12 +759,11 @@ pub fn show_track_plot(
         let series_pointer = plot_ui.response().hover_pos();
 
         // The hovered match's time band, before the series so the lines stay
-        // on top. A `Span` rather than a polygon: it fills the plot's full
-        // height on its own and contributes nothing to the auto-bounds, so
-        // the view never re-fits to the band (a polygon sized to the current
-        // bounds fed back into the next frame's bounds and made the plot
-        // oscillate). A single-point match has no width; a cursor line marks
-        // it.
+        // on top. A `Span` fills the plot's full height on its own and
+        // contributes nothing to the auto-bounds: the view never re-fits to
+        // the band. A polygon sized to the current bounds would feed its own
+        // size back into the next frame's bounds and make the plot oscillate.
+        // A single-point match has no width. A cursor line marks it.
         if let Some((start, end)) = match_hover_time_range {
             let (x0, x1) = (start.timestamp() as f64, end.timestamp() as f64);
             if x0 < x1 {

@@ -1,5 +1,5 @@
 //! The captured base tiles the fixture-backed map snapshots draw, and the
-//! check that the capture covers every tile they ask for.
+//! check that the capture covers every tile they request.
 
 use std::env;
 use std::fmt::Display;

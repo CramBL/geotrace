@@ -100,7 +100,7 @@ pub const DANGER_FG: Color32 = Color32::WHITE;
 pub const ERROR_INDICATOR: Color32 = Color32::from_rgb(220, 70, 50);
 
 /// Amber colour used for data quality warning icons and indicators. Bright
-/// enough for dark backgrounds; use [`warning_amber`] where the surface may be
+/// enough for dark backgrounds. Use [`warning_amber`] where the surface may be
 /// light.
 pub const WARNING_AMBER: Color32 = Color32::from_rgb(255, 180, 0);
 
@@ -116,7 +116,7 @@ pub const fn warning_amber(dark_mode: bool) -> Color32 {
 }
 
 /// Colour for inline load-error labels, for the current theme. Pass
-/// `ui.visuals().dark_mode`. Bright coral on dark; a deeper red on light,
+/// `ui.visuals().dark_mode`. Bright coral on dark. A deeper red on light,
 /// where the bright variant is too pale to read.
 pub const fn error_indicator(dark_mode: bool) -> Color32 {
     ERROR.resolve(dark_mode)
@@ -129,9 +129,9 @@ pub const ERROR: ThemedColor = ThemedColor::new(ERROR_INDICATOR, Color32::from_r
 /// button in the update prompt.
 pub const SUCCESS_GREEN: Color32 = Color32::from_rgb(46, 160, 67);
 
-/// Background colour used to indicate that the corresponding map element is hovered.
+/// Background colour for a hovered map element.
 ///
-/// Pass `ui.visuals().dark_mode` to select the appropriate variant.
+/// Pass `ui.visuals().dark_mode`.
 pub fn map_hover_color(dark_mode: bool) -> Color32 {
     if dark_mode {
         Color32::from_rgba_unmultiplied(210, 160, 0, 90)
@@ -142,7 +142,7 @@ pub fn map_hover_color(dark_mode: bool) -> Color32 {
 
 /// Blue/cyan palette assigned to track polylines - chosen to stand out on both
 /// OSM and satellite map backgrounds without implying error or warning semantics.
-/// The palette cycles over (file_index, track_index) using a mixing function
+/// The palette cycles over `(file_index, track_index)` using a mixing function
 /// so adjacent tracks get distinct shades.
 pub const TRACK_COLORS: [Color32; 12] = [
     Color32::from_rgb(30, 160, 255),  // vivid blue
@@ -187,7 +187,7 @@ pub const fn constellation_color(
     constellation_themed_color(constellation).resolve(dark_mode)
 }
 
-/// Returns the track color for a (file_index, track_index) pair.
+/// Returns the track color for a `(file_index, track_index)` pair.
 ///
 /// Coprime-factor mixing ensures adjacent tracks get distinct palette slots even
 /// for moderate numbers of files and tracks.
@@ -591,12 +591,12 @@ pub const fn seen_count_tier(count: u32) -> SatCountTier {
 /// The standalone semantic foreground [`ThemedColor`]s, paired with a name for
 /// diagnostics. The crate's contrast test iterates this to assert each variant
 /// keeps enough contrast against its own theme's panel background, so a new
-/// colour that is not legible on light (or dark) fails CI instead of shipping.
+/// colour that is not legible on light (or dark) fails CI.
 ///
 /// Enum-driven palettes ([`SatCountTier`], [`SignalQuality`](gt_types::SignalQuality))
-/// are covered by the same test via `strum` iteration rather than being listed
-/// here, so a newly added variant is contrast-checked automatically. Add new
-/// standalone themed foreground colours here.
+/// are covered by the same test via `strum` iteration, so a newly added variant
+/// is contrast-checked automatically. Add new standalone themed foreground
+/// colours here.
 pub const THEMED_FOREGROUNDS: &[(&str, ThemedColor)] = &[
     ("WARNING", WARNING),
     ("ERROR", ERROR),
@@ -607,7 +607,7 @@ pub const THEMED_FOREGROUNDS: &[(&str, ThemedColor)] = &[
 ];
 
 /// The query editor's syntax-highlight colours. Checked against the editor
-/// background (the theme's `extreme_bg_color`) rather than the panel fill.
+/// background (the theme's `extreme_bg_color`).
 pub const QUERY_SYNTAX_COLORS: &[(&str, ThemedColor)] = &[
     ("KEYWORD", QUERY_SYNTAX_KEYWORD),
     ("NUMBER", QUERY_SYNTAX_NUMBER),
@@ -725,22 +725,26 @@ pub const QUERY_SYNTAX_COMMENT: ThemedColor = ThemedColor::new(
     Color32::from_rgb(92, 110, 92),
 );
 
-/// The identifier syntax colour for the given theme. Pass `ui.visuals().dark_mode`.
+/// The identifier syntax colour for the `dark_mode` theme. Pass
+/// `ui.visuals().dark_mode`.
 pub const fn query_syntax_ident(dark_mode: bool) -> Color32 {
     QUERY_SYNTAX_IDENT.resolve(dark_mode)
 }
 
-/// The keyword syntax colour for the given theme. Pass `ui.visuals().dark_mode`.
+/// The keyword syntax colour for the `dark_mode` theme. Pass
+/// `ui.visuals().dark_mode`.
 pub const fn query_syntax_keyword(dark_mode: bool) -> Color32 {
     QUERY_SYNTAX_KEYWORD.resolve(dark_mode)
 }
 
-/// The numeric-literal syntax colour for the given theme. Pass `ui.visuals().dark_mode`.
+/// The numeric-literal syntax colour for the `dark_mode` theme. Pass
+/// `ui.visuals().dark_mode`.
 pub const fn query_syntax_number(dark_mode: bool) -> Color32 {
     QUERY_SYNTAX_NUMBER.resolve(dark_mode)
 }
 
-/// The comment syntax colour for the given theme. Pass `ui.visuals().dark_mode`.
+/// The comment syntax colour for the `dark_mode` theme. Pass
+/// `ui.visuals().dark_mode`.
 pub const fn query_syntax_comment(dark_mode: bool) -> Color32 {
     QUERY_SYNTAX_COMMENT.resolve(dark_mode)
 }
@@ -779,7 +783,8 @@ pub const fn metric_themed_color(kind: gt_types::MetricKind) -> ThemedColor {
         M::Eph => ((220, 20, 220), (215, 19, 215)),      // magenta
         M::HeadingDeg => ((255, 100, 50), (209, 81, 40)), // red-orange
         M::ClockDeltaMs => ((200, 200, 200), (123, 123, 123)), // light gray
-        // Utilization echoes each constellation's hue, lightened in dark mode.
+        // Each utilization rate line uses its constellation's hue, lightened in
+        // dark mode.
         M::UtilAll => ((245, 245, 245), (122, 122, 122)), // near-white
         M::UtilGps => ((150, 255, 150), (74, 127, 74)),   // pale green
         M::UtilGlonass => ((255, 200, 130), (142, 111, 72)), // pale orange
@@ -836,8 +841,8 @@ pub const LOG_LIVE_FILTER: ThemedColor = ThemedColor::new(
 /// chip holds.
 ///
 /// Magenta through rose. The hues are clear of the track blues and cyans and of
-/// the semantic amber, red and green: a log layer never reads as a warning, an
-/// error or a track.
+/// the semantic amber, red and green: a log layer never uses the warning, error
+/// or track colours.
 pub const LOG_LAYER_SLOTS: [ThemedColor; 5] = [
     // Magenta.
     ThemedColor::new(
@@ -1083,8 +1088,8 @@ mod tests {
 
     /// Contrast floor for status foreground colours. These are bold badge
     /// glyphs and small status labels drawn over the panel/window fill, i.e.
-    /// graphical status indicators rather than body text, so the WCAG 1.4.11
-    /// non-text / large-bold-text threshold of 3.0 is the right bar.
+    /// graphical status indicators, so the WCAG 1.4.11 non-text /
+    /// large-bold-text threshold of 3.0 is the right bar.
     const MIN_CONTRAST: f64 = 3.0;
 
     /// Every themed foreground the test checks: the standalone registry plus
@@ -1182,7 +1187,7 @@ mod tests {
 
     #[test]
     fn query_syntax_colors_are_legible_in_the_editor() {
-        // The code editor uses the theme's extreme_bg_color: near-black on dark,
+        // The code editor uses the theme's `extreme_bg_color`: near-black on dark,
         // white on light. Syntax highlighting is small text, so hold it to the
         // stricter 4.5 body-text bar.
         const EDITOR_MIN: f64 = 4.5;
@@ -1292,7 +1297,7 @@ mod tests {
         assert_eq!(unit_to_u8(0.0), 0);
         assert_eq!(unit_to_u8(1.0), 255);
         assert_eq!(unit_to_u8(0.5), 128, "rounds to nearest");
-        // Out of range clamps rather than wrapping.
+        // Out of range clamps to the ends.
         assert_eq!(unit_to_u8(-1.0), 0);
         assert_eq!(unit_to_u8(2.0), 255);
     }

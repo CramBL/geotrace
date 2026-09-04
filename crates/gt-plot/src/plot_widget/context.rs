@@ -395,8 +395,8 @@ mod tests {
         );
     }
 
-    /// A sample with no value ends the run, so the line breaks over what the
-    /// archive does not cover instead of bridging it.
+    /// A sample with no value ends the run: the line breaks over the span the
+    /// archive does not cover.
     #[test]
     fn a_sample_without_a_value_breaks_a_stepped_line() {
         let samples = [

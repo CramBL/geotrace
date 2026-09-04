@@ -92,7 +92,7 @@ impl<'a> SkyTrailsPlot<'a> {
         }
     }
 
-    /// Restrict to the given constellations. Defaults to all.
+    /// Draw only the constellations in `shown`. Defaults to all.
     pub fn shown(self, shown: ConstellationSet) -> Self {
         Self { shown, ..self }
     }
@@ -102,13 +102,13 @@ impl<'a> SkyTrailsPlot<'a> {
         Self { focus, ..self }
     }
 
-    /// Drop a marker on each trail at the given time.
+    /// Drop a marker on each trail at time `scrub`.
     pub fn scrub(self, scrub: Option<GpsTime>) -> Self {
         Self { scrub, ..self }
     }
 
     /// Whether to draw satellites never in the fix over the track. Defaults to
-    /// true; false hides them to focus on the ones that contributed a fix.
+    /// true. Passing false leaves only the ones that contributed a fix.
     pub fn show_not_in_fix(self, show_not_in_fix: bool) -> Self {
         Self {
             show_not_in_fix,
@@ -117,8 +117,8 @@ impl<'a> SkyTrailsPlot<'a> {
     }
 
     /// Whether to draw the whole-track trail polylines and slip marks. Defaults
-    /// to true; false leaves only the current-instant markers - the immediate
-    /// snapshot of where the satellites are now.
+    /// to true. Passing false leaves only the current-instant markers - the
+    /// immediate snapshot of where the satellites are now.
     pub fn show_trails(self, show_trails: bool) -> Self {
         Self {
             show_trails,
@@ -129,7 +129,7 @@ impl<'a> SkyTrailsPlot<'a> {
     /// Whether to trim each trail to the stretches where the satellite was in
     /// the fix, and hide the current-instant marker of one merely tracked right
     /// now. Defaults to false. The trimming applies with or without a
-    /// [`Self::scrub`]; only the marker needs one.
+    /// [`Self::scrub`]. Only the marker needs one.
     pub fn in_fix_now(self, in_fix_now: bool) -> Self {
         Self { in_fix_now, ..self }
     }
@@ -200,8 +200,8 @@ impl<'a> SkyTrailsPlot<'a> {
                 continue;
             }
             // Hide satellites that were never in the fix over the track, when
-            // enabled. This is a whole-track judgement, so it hides the trail;
-            // the current-instant "in fix only" filter below hides only the
+            // enabled. This is a whole-track judgement, so it hides the trail.
+            // The current-instant "in fix only" filter below hides only the
             // marker, leaving the path in place.
             if !self.show_not_in_fix && !trail.ever_in_fix() {
                 continue;
@@ -542,7 +542,7 @@ fn trail_runs(trail: &SkyTrail, frame: Frame, in_fix_only: bool) -> Vec<Vec<Trai
 
 /// Finish the run under construction: keep it if it has a line to draw, and
 /// leave it empty either way so the next run starts clean. A single vertex
-/// draws nothing, so it is dropped rather than emitted as a stray point.
+/// draws nothing and is dropped.
 fn close_run(run: &mut Vec<TrailVertex>, runs: &mut Vec<Vec<TrailVertex>>) {
     if run.len() >= 2 {
         runs.push(std::mem::take(run));
@@ -738,9 +738,8 @@ mod tests {
         }
     }
 
-    /// Samples that project less than a pixel apart collapse into one run, but
-    /// the run still reaches the last sample rather than stopping at the last
-    /// one that happened to clear the threshold.
+    /// Samples that project less than a pixel apart collapse into one run, and
+    /// the run still reaches the last sample.
     #[test]
     fn collapsed_samples_still_reach_the_end_of_the_trail() {
         let frame = test_frame();
@@ -763,8 +762,7 @@ mod tests {
     }
 
     /// The collapse must never span an absence: a satellite that dropped out
-    /// still shows a break, rather than a line drawn straight across the time
-    /// it was gone.
+    /// still shows a break.
     #[test]
     fn a_gap_ends_the_run_even_when_the_samples_are_sub_pixel_apart() {
         let frame = test_frame();
@@ -918,7 +916,7 @@ mod tests {
 
     /// A sample at second `secs`, taken from the epoch of the same number.
     /// These fixtures report at 1 Hz, so a skipped second is a skipped epoch
-    /// and reads as a gap. Use [`trail_sample_from_epoch`] where the two must
+    /// and produces a gap. Use [`trail_sample_from_epoch`] where the two must
     /// come apart.
     fn trail_sample(secs: i64, azimuth: f32, elevation: f32) -> TrailSample {
         trail_sample_from_epoch(secs, secs.unsigned_abs() as usize, azimuth, elevation)
@@ -1216,7 +1214,7 @@ mod tests {
         let ring_radius = radius * super::projection::unit_disc_radius(10.0);
         let on_ring = center.get() + egui::vec2(ring_radius, 0.0);
         harness.inner.hover_at(on_ring);
-        // Tooltips appear after egui's hover delay; step until it elapses.
+        // Tooltips appear after egui's hover delay. Step until it elapses.
         for _ in 0..60 {
             harness.run();
         }
@@ -1567,8 +1565,8 @@ mod tests {
     /// The fade shapes the trail into a tail: brightest at the satellite's
     /// current position, fading back over the tail's length into the path it
     /// already travelled, and flat at the floor over the path ahead of it. The
-    /// asymmetry is the point - it is what makes the bright end read as the head
-    /// and so shows the direction of travel.
+    /// asymmetry is the point: the bright end marks the head and shows the
+    /// direction of travel.
     #[test]
     fn trail_fade_makes_a_tail_behind_the_satellite() {
         use crate::style::{TRAIL_FADE_STEPS, TRAIL_MAX_ALPHA, TRAIL_MIN_ALPHA};
@@ -1611,8 +1609,8 @@ mod tests {
 
     /// The opacity multiplier scales the whole trail, but the stroke alpha
     /// saturates at fully opaque: a high opacity lifts the faint tail while the
-    /// bright head simply tops out rather than overflowing past 1.0 (which would
-    /// blow out the colour in `gamma_multiply`).
+    /// bright head tops out at 1.0. An alpha past 1.0 blows out the colour in
+    /// `gamma_multiply`.
     #[test]
     fn trail_stroke_alpha_scales_the_tail_and_saturates_the_head() {
         use crate::style::{TRAIL_FADE_STEPS, TRAIL_MAX_ALPHA, TRAIL_MIN_ALPHA};
@@ -1720,8 +1718,8 @@ mod tests {
 
     #[rstest]
     // A slip at azimuth 90 / elevation 0 sits on the east rim (radius = the
-    // frame radius from the center). Pointer near it hits; far misses; a
-    // hidden constellation is never selected.
+    // frame radius from the center). A pointer near it hits. A pointer beyond
+    // the radius misses. A hidden constellation is never selected.
     #[case::hits(egui::pos2(102.0, 100.0), ConstellationSet::all(), true)]
     #[case::beyond_radius(egui::pos2(130.0, 100.0), ConstellationSet::all(), false)]
     #[case::constellation_hidden(egui::pos2(102.0, 100.0), ConstellationSet::empty(), false)]

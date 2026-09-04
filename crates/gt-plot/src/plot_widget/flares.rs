@@ -114,7 +114,7 @@ impl FlareViewport {
 }
 
 /// Draw a marker for every flare inside the visible span, shade the spans
-/// [`FlareViewport::span_marking`] asks for, and, when the pointer is within
+/// [`FlareViewport::span_marking`] selects, and, when the pointer is within
 /// [`HOVER_RADIUS_PX`] of a marker, record the nearest in `nearest` so the
 /// caller can show its tooltip.
 pub(super) fn add_flare_markers(

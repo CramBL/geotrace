@@ -58,8 +58,7 @@ const Y_HEADROOM: f64 = 1.15;
 /// Space around the plot inside the canvas, which the axis labels sit in.
 const CANVAS_MARGIN_PX: i8 = 6;
 
-/// How far the median line's colour is dimmed from the metric's own, so the
-/// quiet reference reads as the background the storm departs from.
+/// How far the median line's colour is dimmed from the metric's own.
 const MEDIAN_DIM: f32 = 0.55;
 
 fn midnight(day: NaiveDate) -> DateTime<Utc> {

@@ -127,7 +127,7 @@ pub struct MapHighlight {
     pub plot_hover_time: Option<DateTime<Utc>>,
     /// Pre-computed `(FileIdx, TrackIdx, PointIdx)` of the TPV point closest to
     /// `plot_hover_time`, set by the app layer alongside that field.
-    /// `TpvRenderer` reads this directly instead of re-scanning all points.
+    /// `TpvRenderer` reads this directly.
     /// `None` when `plot_hover_time` is `None`.
     pub plot_hover_point: Option<(FileIdx, TrackIdx, PointIdx)>,
     /// `true` when the plot cursor is within the snap-distance threshold of
@@ -155,7 +155,7 @@ pub struct MapHighlight {
     pub fading_enabled: bool,
     /// The match hovered in the query results table, cross-highlighted on the
     /// map and plot. Cleared by the app each frame before the query window
-    /// renders; the map and plot read it one frame behind (the query window
+    /// renders. The map and plot read it one frame behind (the query window
     /// draws after both).
     pub hover_match: Option<MatchHighlight>,
 }
@@ -259,8 +259,7 @@ pub enum PinnedPopup {
 /// Why a pinned popup shows nothing: the ways the map can withhold a point that
 /// still exists.
 ///
-/// [`PointVisibility`] also covers "drawn" and "no such element", which are not
-/// withholdings.
+/// [`PointVisibility`] additionally covers "drawn" and "no such element".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PinWithheld {
     /// The file or track is off in the tree, or the track fails the filter.

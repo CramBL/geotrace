@@ -49,7 +49,8 @@ pub const DEMO_BYTES: &[u8] = include_bytes!(concat!(
     "/../../tests/fixtures/demo_trip/demo_trip.gtd"
 ));
 
-/// Asserts that a slice or Vec exactly matches a sequence of patterns, one per element.
+/// Asserts that a slice or `Vec` exactly matches a sequence of patterns, one
+/// per element.
 ///
 /// Fails if the length doesn't match or any element fails its pattern.
 /// Uses `assert_matches!` internally for each element, so failure messages include

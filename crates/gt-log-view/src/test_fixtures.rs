@@ -72,8 +72,9 @@ pub(crate) fn log_of_service(service: &str, count: usize) -> LoadedLog {
     )
 }
 
-/// A recording of `count` fixes from [`start`], its first fix at the given
-/// latitude so tests can tell two recordings apart by where an entry landed.
+/// A recording of `count` fixes from [`start`], its first fix at
+/// `first_lat_deg` so tests can tell two recordings apart by where an entry
+/// landed.
 pub(crate) fn recording_at(first_lat_deg: f64, count: usize) -> LoadedFile {
     recording_of(nav_points_walking_from(
         start(),

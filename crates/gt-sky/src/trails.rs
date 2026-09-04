@@ -150,7 +150,7 @@ impl SkyTrails {
     /// constellations present in the track. A constellation with no satellite
     /// up at that epoch still gets a row, at zero, so the window's stats rows
     /// stay stable as the scrubber moves. `time` is a report epoch time (from
-    /// [`SkyTrails::epochs`]); satellites are matched exactly, not
+    /// [`SkyTrails::epochs`]). Satellites are matched exactly, not
     /// interpolated.
     ///
     /// When `show_not_in_fix` is false, satellites that were never in the fix
@@ -289,8 +289,8 @@ mod tests {
         Satellite::new(constellation, prn, elevation, azimuth, Some(40.0), in_fix)
     }
 
-    /// A point `secs` after a fixed epoch, carrying the given satellites (or
-    /// no report when `None`).
+    /// A point `secs` after a fixed epoch, reporting `satellites` (or no
+    /// report when `None`).
     fn point_at(secs: i64, satellites: Option<Vec<Satellite>>) -> NavPoint {
         let start = DateTime::<Utc>::from_timestamp(1_748_000_000, 0).expect("valid");
         let tpv = TimePositionVelocity::builder()
@@ -386,7 +386,7 @@ mod tests {
 
     #[test]
     fn counts_at_between_epochs_finds_nobody() {
-        // counts_at matches an epoch exactly (no interpolation), so a time
+        // `counts_at` matches an epoch exactly (no interpolation), so a time
         // between reports yields zero everywhere.
         let trails = extract_trails(&track(vec![
             point_at(
@@ -470,7 +470,7 @@ mod tests {
     #[test]
     fn groups_by_satellite_sorted_with_gaps() {
         // Reports at t0 and t2 (t1 has none). GPS G05 has a sky position at
-        // both; Galileo E03 only at t0, so its trail has one sample.
+        // both. Galileo E03 has one only at t0, so its trail has one sample.
         let track = track(vec![
             point_at(
                 0,
@@ -546,7 +546,7 @@ mod tests {
 
     #[test]
     fn constellations_lists_each_present_one_once_in_order() {
-        // Two GPS satellites and one Galileo, interleaved across epochs;
+        // Two GPS satellites and one Galileo, interleaved across epochs.
         // `constellations()` collapses to one entry each, GPS before Galileo.
         let track = track(vec![
             point_at(
@@ -573,7 +573,7 @@ mod tests {
 
     #[test]
     fn same_prn_in_two_constellations_stays_separate() {
-        // GPS and Galileo both have a PRN 5: the compound (constellation, prn)
+        // GPS and Galileo both have a PRN 5: the compound `(constellation, prn)`
         // key must keep them in distinct trails.
         let track = track(vec![point_at(
             0,

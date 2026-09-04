@@ -80,10 +80,10 @@ pub struct SnappedSegment {
     /// of `points`. Empty for a snap run stored before the geometry included
     /// the attribution: such a segment cannot be trimmed to a time window.
     pub recorded_points: Vec<PointIdx>,
-    /// Which edge each vertex run was matched to. Sorted by start; spans of
-    /// adjacent edges overlap at their shared boundary vertex (lookups take
-    /// the first covering span); vertices without edge coverage are simply
-    /// absent from every span.
+    /// Which edge each vertex run was matched to, sorted by start. Spans of
+    /// adjacent edges overlap at their shared boundary vertex, and a lookup
+    /// takes the first covering span. Vertices without edge coverage are absent
+    /// from every span.
     pub edge_spans: Vec<SnappedEdgeSpan>,
 }
 
@@ -97,8 +97,8 @@ pub struct SnappedEdgeSpan {
 }
 
 impl SnappedSegment {
-    /// The edge info index covering the given vertex, if any (the first
-    /// covering span wins at shared boundary vertices).
+    /// The edge info index covering `vertex`, if any (the first covering span
+    /// wins at shared boundary vertices).
     pub fn edge_at(&self, vertex: usize) -> Option<usize> {
         self.edge_spans
             .iter()
@@ -137,8 +137,8 @@ mod tests {
 
     use super::*;
 
-    /// Boundary vertices shared by two spans resolve to the first span;
-    /// uncovered vertices resolve to nothing.
+    /// Boundary vertices shared by two spans resolve to the first span.
+    /// Uncovered vertices resolve to nothing.
     #[test]
     fn edge_at_takes_the_first_covering_span() {
         let segment = SnappedSegment {

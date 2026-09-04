@@ -2,7 +2,7 @@
 
 /// Which sky-glyph variant the map overlay draws.
 ///
-/// Serialized into the map settings; the wire names are pinned by
+/// Serialized into the map settings. The wire names are pinned by
 /// `wire_names_are_stable` below.
 #[derive(
     Debug,

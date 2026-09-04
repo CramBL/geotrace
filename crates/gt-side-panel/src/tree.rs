@@ -36,15 +36,15 @@ pub enum NodeKey {
 pub struct DeleteConfirmState {
     pub items: Vec<NodeKey>,
     /// When set, removal also permanently deletes the affected recordings from
-    /// the history database instead of only hiding them.
+    /// the history database.
     pub delete_permanently: bool,
 }
 
 /// Per-track tree of event variant paths with tri-state visibility.
 ///
 /// Stores all unique prefix segments derived from the track's marker
-/// variant paths.  Leaves are paths that exist as actual marker variants;
-/// internal nodes are shared prefix segments.  `CheckState` is derived for
+/// variant paths.  Leaves are paths that exist as actual marker variants.
+/// Internal nodes are shared prefix segments.  `CheckState` is derived for
 /// internal nodes from their children. Only leaves carry "true" state.
 #[derive(Default)]
 pub struct EventPathTree {
@@ -139,8 +139,7 @@ pub struct TrackNode {
     /// Per-track text filter for the Events section search box.
     pub event_filter: String,
     /// Whether the read-only Channels section is expanded. Channels have no map
-    /// visibility yet, so they get a dedicated flag rather than a
-    /// [`DataCategory`] entry.
+    /// visibility yet, so they get a dedicated flag.
     pub channels_expanded: bool,
 }
 
@@ -546,9 +545,9 @@ impl TreeState {
         self.rebuild_visibility();
     }
 
-    /// Show only the given tracks, hiding everything else. Tracks from files not
-    /// mentioned in `tracks` are hidden. Within a mentioned file, only the listed
-    /// tracks are shown.
+    /// Show only the tracks in `tracks`, hiding everything else. Tracks from
+    /// files not mentioned in `tracks` are hidden. Within a mentioned file, only
+    /// the listed tracks are shown.
     pub fn show_only_tracks(&mut self, tracks: &[TrackRef]) {
         for (i, file_node) in self.files.iter_mut().enumerate() {
             let fi = FileIdx::new(i);

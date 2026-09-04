@@ -45,9 +45,9 @@ impl ChipHover {
 ///
 /// `MetricKind` lives in `gt_types` (shared with the persisted settings, see
 /// `geotrace::settings::PlotSettings::metric`). These are presentation
-/// details specific to this widget, so they live here as an extension trait
-/// rather than on the type itself. The `match` in each method forces a
-/// compile error here when a variant is added until every arm is filled in.
+/// details specific to this widget, so they live here as an extension trait.
+/// The `match` in each method forces a compile error here when a variant is
+/// added until every arm is filled in.
 pub(super) trait MetricKindUi {
     fn label(self) -> &'static str;
     fn hover(self) -> Option<ChipHover>;
@@ -305,9 +305,9 @@ impl MetricVisibility {
 /// Whether a metric's chip and line should be shown, given which constellations
 /// appear in the loaded data and whether the advanced section is revealed.
 ///
-/// A per-constellation metric is shown only when that constellation is present;
-/// an advanced metric only when the advanced section is open.  This is the
-/// single gate shared by chip rendering, line drawing, and the show/hide-all
+/// A per-constellation metric is shown only when that constellation is present.
+/// An advanced metric is shown only when the advanced section is open.  This is
+/// the single gate shared by chip rendering, line drawing, and the show/hide-all
 /// logic so they never disagree about what is on screen.
 pub(super) fn metric_is_shown(
     kind: MetricKind,
@@ -522,8 +522,7 @@ const ALWAYS_SHOW_SPANS: &str = "Always show each flare's span";
 const ALWAYS_SHOW_SPANS_HOVER: &str = "Shade every flare's active time";
 
 /// The flare markers' toggle: the metric chip's look, with a context menu
-/// holding the span-shading setting instead of the "show only this" that
-/// belongs to a line.
+/// holding the span-shading setting.
 ///
 /// Returns whether the pointer is over the chip, which shades every visible
 /// flare's span.
@@ -1044,9 +1043,9 @@ fn channel_chip(
     channel: &LoadedChannel,
     component_colors: &mut FxHashMap<String, Vec<Option<Color32>>>,
 ) -> (bool, bool) {
-    // The color pickers live in the right-click menu (a menu stays open
-    // while its submenus are used; a hover tooltip closes the moment the
-    // pointer leaves the chip, which made an editable tooltip unusable).
+    // The color pickers live in the right-click menu: a menu stays open while
+    // its submenus are used.  A hover tooltip closes the moment the pointer
+    // leaves the chip.
     let (show_only, response) = chip_button(ui, enabled, name, color, |ui| {
         for (index, label) in channel.components.iter().enumerate() {
             // The picker submenu only closes on a click outside (or the
@@ -1159,7 +1158,7 @@ mod tests {
             .filter(|k| k.constellation().is_none())
             .count();
         assert_eq!(with + without, MetricKind::COUNT);
-        // 6 constellations x {seen, fix, util, slip}.
+        // 6 constellations x {seen, fix, utilization rate, slip}.
         assert_eq!(with, 24);
     }
 
@@ -1200,7 +1199,7 @@ mod tests {
     }
 
     /// A per-constellation chip/line shows only when its constellation appears
-    /// in the data; all-constellation metrics always show (subject to the
+    /// in the data.  All-constellation metrics always show (subject to the
     /// advanced gate).  This is the rule that hides empty NavIC/QZSS chips.
     #[test]
     fn metric_is_shown_gates_on_presence_and_advanced() {

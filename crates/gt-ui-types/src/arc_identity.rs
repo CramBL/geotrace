@@ -21,8 +21,8 @@ impl ArcIdentity {
 mod tests {
     use super::*;
 
-    /// Clones of one allocation share an identity; a distinct allocation
-    /// with equal contents does not.
+    /// Clones of one allocation share an identity. A distinct allocation with
+    /// equal contents has its own.
     #[test]
     fn identity_follows_the_allocation_not_the_value() {
         let a = Arc::new(7);

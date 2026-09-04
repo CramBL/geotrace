@@ -12,7 +12,7 @@ fn main() {
         let mut res = winres::WindowsResource::new();
         res.set_icon("assets/geotrace_icon.ico");
         // winres fills version/company from Cargo metadata. Set the display
-        // strings explicitly so they read "GeoTrace" rather than the crate name.
+        // strings explicitly so they read "GeoTrace".
         res.set("ProductName", "GeoTrace");
         res.set(
             "FileDescription",

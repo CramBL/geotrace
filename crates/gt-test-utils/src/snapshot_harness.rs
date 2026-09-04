@@ -58,8 +58,8 @@ pub struct TestHarness<'a, State = ()> {
 }
 
 impl<'a> TestHarness<'a, ()> {
-    /// Entry point for all snapshot harnesses. Lives on the `State = ()` impl so
-    /// `TestHarness::builder()` resolves without a turbofish. The builder's
+    /// Entry point for all snapshot harnesses. Lives on the `State = ()` `impl`
+    /// so `TestHarness::builder()` resolves without a turbofish. The builder's
     /// `ui_state`/`eframe` methods then pick the real `State`.
     pub fn builder() -> TestHarnessBuilder<'a> {
         TestHarnessBuilder::default()
@@ -91,8 +91,8 @@ impl<'a, State> TestHarness<'a, State> {
     }
 
     /// Resize the harness viewport to exactly fit the rendered content,
-    /// then re-run to stabilise.  Use this instead of a hard-coded size
-    /// when the content dimensions aren't known up front.
+    /// then re-run to stabilise.  Use this when the content dimensions aren't
+    /// known up front.
     pub fn fit_contents(&mut self) {
         self.inner.fit_contents();
     }
@@ -201,8 +201,9 @@ impl<'a> TestHarnessBuilder<'a> {
     }
 
     /// Run `hook` with the harness context and wgpu render state after the
-    /// harness is built (`ui`/`ui_state` harnesses only; `eframe` harnesses
-    /// configure their renderer through `CreationContext` like the app).
+    /// harness is built. Applies to `ui`/`ui_state` harnesses only: `eframe`
+    /// harnesses configure their renderer through `CreationContext` like the
+    /// app.
     pub fn render_state_hook(mut self, hook: RenderStateHook) -> Self {
         self.render_state_hook = Some(hook);
         self
@@ -229,7 +230,7 @@ impl<'a> TestHarnessBuilder<'a> {
         self
     }
 
-    /// Apply the requested theme to a freshly built harness and re-run so the
+    /// Apply the `dark_mode` theme to a freshly built harness and re-run so the
     /// first snapshot reflects it.
     fn apply_theme<State>(&self, inner: &mut Harness<'a, State>) {
         if let Some(dark_mode) = self.dark_mode {

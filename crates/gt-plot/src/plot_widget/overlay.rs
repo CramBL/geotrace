@@ -11,8 +11,8 @@ pub(super) const EDGE_INSET: f64 = 0.03;
 
 /// Length of the line running from a marker at the edge back into the plot, in
 /// points: the clock excursion marker's tail, and the backward time step
-/// mark's leader.  Short on purpose: a full-height line would read as a cursor,
-/// and the plot already has two of those.
+/// mark's leader.  Short on purpose: a full-height line would look like a
+/// cursor, and the plot already has two of those.
 pub(super) const TAIL_LENGTH: f32 = 22.0;
 
 /// What one overlay paints over the plot.

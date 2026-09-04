@@ -9,7 +9,7 @@ use vec1::Vec1;
 ///
 /// Matches egui's feathering width, and like egui's feathering the ramp is
 /// centered on the true edge (the solid geometry is inset by half a feather),
-/// so shapes keep their perceived size instead of growing a bright halo.
+/// so shapes keep their perceived size.
 pub const FEATHER_PX: f32 = 1.0;
 
 /// Physical-pixel icon sizes (full extent of the larger viewbox axis) the
@@ -103,7 +103,7 @@ impl IconTessellation {
     }
 
     /// The index into [IconTessellation::buckets] of the bucket nearest to
-    /// `target_px` in log space; see [IconTessellation::mesh_for].
+    /// `target_px` in log space. See [IconTessellation::mesh_for].
     pub fn bucket_ordinal_for(&self, target_px: f32) -> usize {
         let target = target_px.max(0.0);
         let target_sq = target * target;

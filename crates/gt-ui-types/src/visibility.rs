@@ -29,13 +29,13 @@ pub struct TrackVisibility {
 }
 
 impl TrackVisibility {
-    /// This track's tree toggle for the given element category, the single
-    /// mapping renderers and counts consult.
+    /// This track's tree toggle for `category`, the single mapping renderers
+    /// and counts consult.
     pub fn category_visible(self, category: DataCategory) -> bool {
         self.categories.contains(category)
     }
 
-    /// Show or hide the given element category for this track.
+    /// Show or hide `category` for this track.
     pub fn set_category_visible(&mut self, category: DataCategory, visible: bool) {
         self.categories.set(category, visible);
     }
@@ -75,7 +75,7 @@ impl TrackDataVisibility {
         }
     }
 
-    /// Whether the given track (and its file) is enabled.
+    /// Whether `track_ref` and its file are enabled.
     pub fn track_enabled(&self, track_ref: TrackRef) -> bool {
         track_ref
             .fi
@@ -83,8 +83,8 @@ impl TrackDataVisibility {
             .is_some_and(|f| f.enabled && track_ref.index.get(&f.tracks).is_some_and(|t| t.enabled))
     }
 
-    /// Whether the given track's line is shown on the map: its file and the
-    /// track are enabled, and the track-line toggle is on. The predicate the
+    /// Whether `track_ref`'s line is shown on the map: its file and the track
+    /// are enabled, and the track-line toggle is on. The predicate the
     /// snapped-track rendering and the snap queue's visibility priority use.
     pub fn track_shown(&self, track_ref: TrackRef) -> bool {
         track_ref.fi.get(&self.files).is_some_and(|f| {
@@ -96,15 +96,15 @@ impl TrackDataVisibility {
         })
     }
 
-    /// Show only the given file. Hide all others. Track visibility within files
-    /// is preserved so that re-enabling a file restores its previous state.
+    /// Show only `fi`. Hide all others. Track visibility within files is
+    /// preserved so that re-enabling a file restores its previous state.
     pub fn show_only_file(&mut self, fi: FileIdx) {
         for (i, file) in self.files.iter_mut().enumerate() {
             file.enabled = FileIdx::new(i) == fi;
         }
     }
 
-    /// Show only the given track (and its parent file). Hide everything else.
+    /// Show only `track` and its parent file. Hide everything else.
     pub fn show_only_track(&mut self, track: TrackRef) {
         for (i, file) in self.files.iter_mut().enumerate() {
             if FileIdx::new(i) == track.fi {
@@ -332,8 +332,8 @@ mod tests {
         );
     }
 
-    /// A [`TrackRef`] left over from before a file shrank addresses nothing, and
-    /// must read as out of scope rather than index past the end.
+    /// A [`TrackRef`] left over from before a file shrank addresses nothing and
+    /// is out of scope.
     #[test]
     fn stale_indices_are_out_of_scope() {
         let files = one_track_file();
@@ -375,7 +375,7 @@ mod tests {
     }
 
     /// `track_shown` requires the file, the track, and the track-line
-    /// toggle; any one of them off hides the track. Out-of-range refs are
+    /// toggle. Any one of them off hides the track. Out-of-range refs are
     /// simply not shown.
     #[rstest::rstest]
     #[case::all_on(true, true, true, true)]

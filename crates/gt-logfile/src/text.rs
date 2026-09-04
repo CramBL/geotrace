@@ -111,7 +111,7 @@ mod tests {
     }
 
     /// One replacement character per malformed sequence, counting the bytes it
-    /// stands in for.
+    /// replaced.
     #[rstest]
     #[case::latin1_byte_mid_line(b"caf\xe9 open", format!("caf{REPLACEMENT} open"), 1)]
     #[case::sequence_cut_short_by_the_end(b"end \xe2\x82", format!("end {REPLACEMENT}"), 2)]

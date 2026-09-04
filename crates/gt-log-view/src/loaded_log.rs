@@ -566,7 +566,6 @@ impl LoadedLogs {
             .map(|stored| &mut stored.log)
     }
 
-    /// Whether `attachment` is loaded as a log, as opposed to only stored.
     pub fn any_loaded_log_holds(&self, attachment: &LogAttachmentRef) -> bool {
         self.logs
             .iter()

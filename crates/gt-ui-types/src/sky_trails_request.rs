@@ -9,7 +9,7 @@ use gt_types::{GpsTime, TrackRef};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SkyTrailsRequest {
     pub track: TrackRef,
-    /// The moment to scrub to; `None` opens at the start of the track.
+    /// The moment to scrub to. `None` opens at the start of the track.
     pub at: Option<GpsTime>,
 }
 
