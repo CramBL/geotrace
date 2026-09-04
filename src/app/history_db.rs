@@ -735,17 +735,17 @@ fn purge_tracks(
 }
 
 /// Re-encode `db_ref` with the points of the tracks at `drop_indices` removed,
-/// then replace the stored recording. Surviving tracks keep their hidden flag and
-/// are range-shifted onto the compacted point sequence. When nothing survives the
-/// whole recording is deleted instead (an empty re-encode would fail).
+/// and store the new bytes under the same reference. Surviving tracks keep their
+/// hidden flag and are range-shifted onto the compacted point sequence. When
+/// nothing survives the whole recording is deleted instead (an empty re-encode
+/// would fail).
 ///
 /// Returns [`DbError::TrackIndexOutOfRange`] and leaves the recording as it is
 /// when `drop_indices` holds an index the stored track table does not have.
 ///
-/// The delete-and-reinsert intentionally drops any stored snap runs with the
-/// old recording group (pinned by gt-history's
-/// `snap_blob_is_dropped_with_its_recording`): the purge shifts point
-/// indices, so the stored runs could no longer be matched to their points.
+/// The recording's stored snap runs are dropped by
+/// [`HistoryDatabase::replace_recording_in_place`]: the runs name point indices
+/// that the re-encode shifts.
 fn purge_tracks_with_stored(
     db: &mut Recordings,
     db_ref: &DatabaseRef,
@@ -815,9 +815,7 @@ fn purge_tracks_with_stored(
         .unwrap_or_else(|| stored_segmentation_from_config(&SegmentationConfig::default()));
     let meta = gt_store::extract_meta(&new_bytes)?;
 
-    db.delete_batch(std::slice::from_ref(db_ref))?;
-    db.insert(&db_ref.identity, &meta, &new_tracks, settings, &new_bytes)?;
-    Ok(())
+    db.replace_recording_in_place(db_ref, &meta, &new_tracks, settings, &new_bytes)
 }
 
 #[cfg(test)]

@@ -114,18 +114,20 @@ fn ensure_identity_group(by_id: &Group, identity: &str) -> Result<Group, Interna
     Ok(id_grp)
 }
 
-fn open_identity_group(by_id: &Group, identity: &str) -> Result<Group, InternalError> {
-    let storage_name = identity_group_name(identity);
-    match by_id.group(&storage_name) {
-        Ok(group) => Ok(group),
-        Err(encoded_err) => {
-            if identity.contains('/') {
-                Err(encoded_err.into())
-            } else {
-                by_id.group(identity).map_err(Into::into)
-            }
-        }
+/// The name `by_identity` holds `identity` under: the encoded one, or the raw
+/// one a legacy database was written with.
+fn identity_storage_name(by_id: &Group, identity: &str) -> Option<String> {
+    let encoded = identity_group_name(identity);
+    if by_id.link_exists(&encoded) {
+        return Some(encoded);
     }
+    (!identity.contains('/') && by_id.link_exists(identity)).then(|| identity.to_owned())
+}
+
+fn open_identity_group(by_id: &Group, identity: &str) -> Result<Group, InternalError> {
+    let storage_name =
+        identity_storage_name(by_id, identity).unwrap_or_else(|| identity_group_name(identity));
+    by_id.group(&storage_name).map_err(Into::into)
 }
 
 /// Overwrite (or add) the `identity` string attribute on a group. The plain
@@ -268,10 +270,27 @@ fn find_indexed_recording(
 
 pub(crate) fn repair_unindexed_recordings(db_path: &Path) -> Result<(), InternalError> {
     let file = hdf5::File::open_rw(db_path)?;
+
+    // Must run before the scan below: that scan would otherwise take a stage
+    // for a recording stored outside `by_identity` and file it under the
+    // stage's own name.
+    let mut resolved_stages = 0_usize;
+    if let Ok(meta_grp) = file.group("meta") {
+        for name in meta_grp.member_names()? {
+            if name.starts_with(REPLACEMENT_STAGE_PREFIX) {
+                resolve_replacement_stage(&file, &name)?;
+                resolved_stages += 1;
+            }
+        }
+    }
+
     let root = file.group("/")?;
     let mut paths = Vec::new();
     collect_recording_group_paths(&root, "/", &mut paths)?;
     if paths.is_empty() {
+        if resolved_stages > 0 {
+            file.flush()?;
+        }
         return Ok(());
     }
 
@@ -328,8 +347,10 @@ pub(crate) fn repair_unindexed_recordings(db_path: &Path) -> Result<(), Internal
         );
     }
 
-    if repaired > 0 || removed_duplicates > 0 {
+    if repaired > 0 || removed_duplicates > 0 || resolved_stages > 0 {
         file.flush()?;
+    }
+    if repaired > 0 || removed_duplicates > 0 {
         log::warn!(
             "Repaired history database at {}: moved {repaired} recording(s), removed {removed_duplicates} duplicate orphan(s)",
             db_path.display()
@@ -677,6 +698,122 @@ pub(crate) fn insert_recording(
         identity: identity.to_owned(),
         group_name,
     })
+}
+
+/// Name of the group [`replace_recording`] builds a recording's replacement
+/// in, under `/meta` and one per recording.
+///
+/// A stage stays out of the listing: [`list_recordings`] reads the recordings
+/// under `by_identity`. [`resolve_replacement_stage`] resolves a stage, from
+/// [`replace_recording`] on the next replacement of that recording, and from
+/// [`repair_unindexed_recordings`] ahead of its own scan on the next open.
+const REPLACEMENT_STAGE_PREFIX: &str = "__geotrace_replacement__";
+
+/// Resolve one replacement stage, in each of the three states an interrupted
+/// [`replace_recording`] leaves one in.
+///
+/// A stage without recording metadata was interrupted while it was being
+/// built: the stored recording is as it was, and the stage is dropped. A
+/// complete stage whose recording is still stored under its own name was
+/// interrupted before the swap: the recording is as it was, and the stage is
+/// dropped. A complete stage whose recording is missing from `by_identity` was
+/// interrupted between the unlink and the relink: the stage is linked in under
+/// the recording's own name, and the recording is stored as the re-encode left
+/// it.
+fn resolve_replacement_stage(file: &hdf5::File, stage_name: &str) -> Result<(), InternalError> {
+    let Some(group_name) = stage_name.strip_prefix(REPLACEMENT_STAGE_PREFIX) else {
+        return Ok(());
+    };
+    let meta_grp = file.group("meta")?;
+    let stage = meta_grp.group(stage_name)?;
+    let by_id = file.group("by_identity")?;
+
+    let (Some(identity), Some(_)) = (recording_identity(&stage), read_recording_meta(&stage))
+    else {
+        return meta_grp.unlink(stage_name).map_err(Into::into);
+    };
+
+    let identity_name =
+        identity_storage_name(&by_id, &identity).unwrap_or_else(|| identity_group_name(&identity));
+    let id_grp = match by_id.group(&identity_name) {
+        Ok(id_grp) => id_grp,
+        Err(_) => ensure_identity_group(&by_id, &identity)?,
+    };
+    if id_grp.link_exists(group_name) {
+        return meta_grp.unlink(stage_name).map_err(Into::into);
+    }
+
+    file.relink(
+        &format!("meta/{stage_name}"),
+        &format!("by_identity/{identity_name}/{group_name}"),
+    )?;
+    log::warn!(
+        "Restored history recording identity={identity:?}, group={group_name:?} from the stage of an interrupted replacement"
+    );
+    Ok(())
+}
+
+/// Rewrite one recording's GTD data, metadata attributes, track table and
+/// segmentation settings under the group name it already has.
+///
+/// The recording's log attachment attributes are kept. Every other attribute
+/// and every member of the group, its snap run included, is replaced by what
+/// `gtd_bytes`, `meta`, `tracks` and `settings` describe.
+///
+/// A failure while the replacement is being built leaves the stored recording
+/// as it was: the replacement is built in a stage (see
+/// [`REPLACEMENT_STAGE_PREFIX`]) and linked in only once it is complete. HDF5
+/// has no way to point a name at another object in one step, as
+/// [`rename_identity`] also works around: a failure between the two link
+/// operations leaves the recording in its stage, and
+/// [`resolve_replacement_stage`] puts it back.
+pub(crate) fn replace_recording(
+    db_path: &std::path::Path,
+    db_ref: &DatabaseRef,
+    meta: &RecordingMeta,
+    tracks: &[TrackRange],
+    settings: StoredSegmentation,
+    gtd_bytes: &[u8],
+) -> Result<(), InternalError> {
+    let file = hdf5::File::open_rw(db_path)?;
+    let by_id = file.group("by_identity")?;
+    let identity_name = identity_storage_name(&by_id, &db_ref.identity)
+        .unwrap_or_else(|| identity_group_name(&db_ref.identity));
+    let id_grp = by_id.group(&identity_name)?;
+    let meta_grp = file.group("meta").or_else(|_| file.create_group("meta"))?;
+
+    let stage_name = format!("{REPLACEMENT_STAGE_PREFIX}{}", db_ref.group_name);
+    let stage_path = format!("meta/{stage_name}");
+    let recording_path = format!("by_identity/{identity_name}/{}", db_ref.group_name);
+
+    if meta_grp.link_exists(&stage_name) {
+        resolve_replacement_stage(&file, &stage_name)?;
+    }
+
+    let rec_grp = id_grp.group(&db_ref.group_name)?;
+
+    let tmp = tempfile::NamedTempFile::new_in(db_path.parent().unwrap_or_else(|| Path::new(".")))?;
+    std::fs::write(tmp.path(), gtd_bytes)?;
+    let gtd_file = hdf5::File::open(tmp.path())?;
+
+    let stage = meta_grp.create_group(&stage_name)?;
+    copy_attrs(&gtd_file, &stage, |_| true)?;
+    copy_members(&gtd_file, &stage)?;
+    write_track_table(&stage, tracks)?;
+    copy_attrs(&rec_grp, &stage, |name| {
+        LogAttachmentId::from_attr_key(name).is_some()
+    })?;
+    write_segmentation_attrs(&stage, settings)?;
+    // Written last: until it has these, the stage is no recording to
+    // `repair_unindexed_recordings`.
+    write_meta_attrs(&stage, &db_ref.identity, meta)?;
+
+    drop(rec_grp);
+    id_grp.unlink(&db_ref.group_name)?;
+    file.relink(&stage_path, &recording_path)?;
+
+    file.flush()?;
+    Ok(())
 }
 
 /// Write (creating or overwriting) the segmentation settings the stored tracks

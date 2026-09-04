@@ -510,6 +510,60 @@ pub(crate) fn insert_recording(
     })
 }
 
+/// Rewrite one recording's GTD data, metadata attributes, track table and
+/// segmentation settings under the group name it already has.
+///
+/// The recording's log attachment attributes are carried over. Everything else
+/// under the group, its snap run included, is replaced by what `gtd_bytes`,
+/// `meta`, `tracks` and `settings` describe.
+pub(crate) fn replace_recording(
+    db_path: &std::path::Path,
+    db_ref: &DatabaseRef,
+    meta: &RecordingMeta,
+    tracks: &[TrackRange],
+    settings: StoredSegmentation,
+    gtd_bytes: &[u8],
+) -> Result<(), InternalError> {
+    let existing_db = hdf5_pure::File::open(db_path)?;
+    let mut identity_nodes = snapshot_by_identity(&existing_db)?;
+    drop(existing_db);
+
+    let Some(stored) =
+        find_recording_node_mut(&mut identity_nodes, &db_ref.identity, &db_ref.group_name)
+    else {
+        return Err(InternalError::NoSuchRecording {
+            identity: db_ref.identity.clone(),
+            group_name: db_ref.group_name.clone(),
+        });
+    };
+
+    let gtd_file = hdf5_pure::File::from_bytes(gtd_bytes.to_vec())?;
+    let mut replacement = build_new_recording(
+        &gtd_file,
+        &db_ref.group_name,
+        meta,
+        &db_ref.identity,
+        tracks,
+        settings,
+    )?;
+    replacement.attrs.extend(
+        stored
+            .attrs
+            .iter()
+            .filter(|(key, _)| LogAttachmentId::from_attr_key(key).is_some())
+            .cloned(),
+    );
+    *stored = replacement;
+
+    write_db(&identity_nodes, db_path)?;
+    log::info!(
+        "Replaced recording identity={:?}, group={:?} in history database",
+        db_ref.identity,
+        db_ref.group_name
+    );
+    Ok(())
+}
+
 /// Remove multiple recordings in a single read-modify-write cycle.
 pub(crate) fn delete_batch(
     db_path: &std::path::Path,
