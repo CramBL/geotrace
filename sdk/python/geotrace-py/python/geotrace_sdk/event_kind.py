@@ -6,7 +6,7 @@ __all__ = ["event_kind"]
 
 
 class _Skip:
-    """Sentinel returned by skipped event-kind attributes."""
+    """Sentinel value returned by skipped event-kind attributes."""
 
     __slots__ = ()
 
@@ -74,11 +74,12 @@ def _process(cls: type, prefix: str) -> _Namespace:
 
 
 def event_kind(cls: type) -> _Namespace:
-    """Class decorator that converts each attribute to its snake_case event path string.
+    """Class decorator that converts each attribute to its ``snake_case`` event
+    path string.
 
     Attributes in the class body become path strings, and inner classes become
     nested namespaces. An attribute set to ``event_kind.skip`` returns the skip
-    sentinel, which ``NavFileBuilder.add()`` silently ignores.
+    sentinel value, which ``NavFileBuilder.add()`` silently ignores.
 
     Example::
 

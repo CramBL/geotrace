@@ -3,8 +3,7 @@
  *
  * Scenario: your GPS logger exports fixes as CSV rows.  Parse each row, feed the
  * fields to the builder, then finish() to produce a validated file ready for
- * GeoTrace to open.  In a real workflow you would read the CSV from a file
- * instead of the inline kCsvData constant.
+ * GeoTrace to open.  In a real workflow you would read the CSV from a file.
  *
  * Timestamps here are whole Unix epoch seconds to keep the parser tiny.
  */
@@ -21,7 +20,6 @@
 
 namespace {
 
-// timestamp_s, lat, lon, heading_deg, speed_mps
 constexpr std::string_view kCsvData = "timestamp_s,lat,lon,heading_deg,speed_mps\n"
                                       "1705309200,51.5074,-0.1278,90.0,12.5\n"
                                       "1705309201,51.5075,-0.1276,91.0,12.6\n"

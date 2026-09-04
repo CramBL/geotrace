@@ -18,7 +18,7 @@ Test(gold_timestamp, rejects_malformed_input) {
     static const char *const malformed[] = {
         "",                    /* empty */
         "2026-02",             /* truncated */
-        "2026-02-01 15:00:00", /* space instead of 'T' */
+        "2026-02-01 15:00:00", /* space date-time separator */
         "2026/02/01T15:00:00", /* wrong separator */
         "x",
     };
@@ -26,7 +26,7 @@ Test(gold_timestamp, rejects_malformed_input) {
         cr_assert(gtd_ts_is_none(gold_parse_timestamp(malformed[i])), "accepted %s", malformed[i]);
 }
 
-/* One past each end of int, which strtoll itself still converts. The negative
+/* One past each end of int, which `strtoll` itself still converts. The negative
    case sits on the seconds field: a year that far below INT_MIN wraps to
    INT_MAX, which walks the day-count loop through two billion iterations. */
 Test(gold_timestamp, rejects_component_wider_than_int) {

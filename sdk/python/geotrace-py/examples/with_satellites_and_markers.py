@@ -29,7 +29,7 @@ START = datetime(2024, 7, 22, 8, 30, 0, tzinfo=UTC)
 
 # A stretch of the A3 southbound from Elephant & Castle toward Kennington.
 FIXES = [
-    # (seconds, lat,     lon,      heading,  speed_mps, eph_m)
+    # (`seconds`, `lat`, `lon`, `heading`, `speed_mps`, `eph_m`)
     (0, 51.4953, -0.1005, 175.0, 0.0, 5.1),
     (5, 51.4947, -0.1007, 174.0, 8.3, 4.4),
     (10, 51.4940, -0.1009, 176.0, 11.1, 3.9),
@@ -43,7 +43,7 @@ FIXES = [
 ]
 
 SATS = [
-    # (constellation,         prn, in_fix, elev,  az,    snr)
+    # (`constellation`, `prn`, `in_fix`, `elev`, `az`, `snr`)
     (Constellation.GPS, 1, True, 68.0, 120.0, 43.0),
     (Constellation.GPS, 11, True, 52.0, 215.0, 40.0),
     (Constellation.GPS, 17, True, 38.0, 50.0, 36.0),

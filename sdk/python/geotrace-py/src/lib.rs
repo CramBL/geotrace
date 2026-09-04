@@ -33,10 +33,10 @@ fn build_err(e: BuildError) -> PyErr {
     PyValueError::new_err(e.to_string())
 }
 
-// Map a core SDK error to the appropriate Python exception: filesystem failures
-// become OSError (IOError). Bad file content (invalid HDF5 container, wrong
-// version, or a decode failure) and a value too long for the field that holds
-// it become ValueError. Exhaustive, so a new variant must be classified.
+// Filesystem failures become `OSError` (`IOError`). Bad file content (invalid
+// HDF5 container, wrong version, or a decode failure) and a value too long for
+// the field that holds it become `ValueError`. Exhaustive, so a new variant must
+// be classified.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "called as `map_err(file_err)`, which passes the error by value"
@@ -112,8 +112,8 @@ mod py_constellation_tests {
     use super::*;
 
     /// `Satellite::__repr__` derives the Python member name from
-    /// `PyConstellation`'s `Debug` output (upper-cased) instead of re-typing
-    /// it. This pins down that the result still matches the literal
+    /// `PyConstellation`'s `Debug` output (upper-cased).
+    /// This pins down that the result still matches the literal
     /// `#[pyo3(name = "...")]` strings declared on `PyConstellation` above. A
     /// rename of one without the other - the exact desync this issue is
     /// about - fails here.
@@ -243,7 +243,7 @@ impl From<PyTravelMode> for TravelMode {
 }
 
 impl PyTravelMode {
-    /// [`TravelMode::Unknown`] has no Python enum member - its preserved wire
+    /// [`TravelMode::Unknown`] has no Python `enum` member - its preserved wire
     /// value crosses into Python as a plain `str` instead (see
     /// [`PyMeta::travel_mode`]).
     fn from_travel_mode(mode: &TravelMode) -> Option<Self> {
@@ -260,7 +260,7 @@ impl PyTravelMode {
     }
 }
 
-/// `Meta(travel_mode=...)` accepts the enum or a wire-name string, so values
+/// `Meta(travel_mode=...)` accepts the `enum` or a wire-name string, so values
 /// read back as a preserved unknown `str` can be written again unchanged.
 #[derive(FromPyObject)]
 enum TravelModeArg {
@@ -1013,7 +1013,7 @@ impl PyMarker {
         self.inner.lon.as_degrees()
     }
 
-    /// The underlying annotation.
+    /// The annotation at :attr:`lat` and :attr:`lon`.
     #[getter]
     fn annotation(&self) -> PyAnnotation {
         PyAnnotation {
@@ -1052,7 +1052,7 @@ impl PyMarker {
 ///
 /// ``variant_path`` is a slash-separated hierarchy, e.g. ``"power/boot"`` or
 /// ``"connectivity/agps/request"``, or ``None`` (or the ``event_kind.skip``
-/// sentinel) to silently skip this marker.
+/// sentinel value) to silently skip this marker.
 /// Allowed characters: ASCII alphanumeric, hyphen, underscore, and slash.
 /// No leading or trailing slash. No empty segments (``//``). Max 255 bytes.
 /// ``annotation`` holds at most 511 bytes, checked when ``NavFileBuilder.add()``
@@ -1072,8 +1072,8 @@ impl PyEventMarker {
     /// Create an ``EventMarker``.
     ///
     /// ``variant_path`` may be a path string, ``None``, or the
-    /// ``event_kind.skip`` sentinel - the latter two are treated as a silent
-    /// no-op when passed to ``NavFileBuilder.add()``.
+    /// ``event_kind.skip`` sentinel value - the latter two are treated as a
+    /// silent no-op when passed to ``NavFileBuilder.add()``.
     #[new]
     #[pyo3(signature = (variant_path, sys_time, *, annotation=None))]
     fn new(
@@ -1081,7 +1081,7 @@ impl PyEventMarker {
         sys_time: DateTime<FixedOffset>,
         annotation: Option<String>,
     ) -> PyResult<Self> {
-        // Accept None or any non-string value (e.g. the skip sentinel) as None.
+        // Accept None or any non-string value (e.g. the skip sentinel value) as None.
         let path = variant_path.and_then(|v| v.extract::<String>().ok());
         // Validate the path if one is supplied.
         if let Some(ref p) = path {
@@ -1161,8 +1161,8 @@ impl PyEventMarkerStyle {
     /// The stored name of :attr:`icon`, or ``None`` where the style leaves the
     /// icon to the application.
     ///
-    /// For an icon name this build does not have, this property holds the name
-    /// verbatim. :attr:`icon` reads as ``None`` for it.
+    /// An icon name this build does not have is returned verbatim, and
+    /// :attr:`icon` is ``None`` for it.
     #[getter]
     fn icon_name(&self) -> Option<&str> {
         Some(self.icon.wire_name()).filter(|name| !name.is_empty())

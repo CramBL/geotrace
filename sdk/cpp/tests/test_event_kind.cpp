@@ -74,8 +74,8 @@ TEST_CASE("event_path composes base/seg and suppresses nested bases") {
         {event_path(Power::Boot).str(), "power/boot"},
         {event_path(Power::BatteryLow).str(), "power/battery_low"},
         {event_path(Agps::Request).str(), "agps/request"},
-        // Nested composition emits the outer base once, then each inner seg -
-        // the inner enum's own base ("agps") is suppressed, never repeated.
+        // Nested composition emits the outer base once, then each inner `seg()` -
+        // the inner enum's own base (`"agps"`) is suppressed, never repeated.
         {event_path(Connectivity::Agps, Agps::Request).str(), "connectivity/agps/request"},
         {event_path(Connectivity::Agps, Agps::Success).str(), "connectivity/agps/success"},
     };

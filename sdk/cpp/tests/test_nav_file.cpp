@@ -34,7 +34,7 @@ TEST_CASE("NavFile: nav_point out-of-range throws std::out_of_range") {
 TEST_CASE("NavFile: satellite out-of-range throws std::out_of_range") {
     auto file = make_minimal();
     CHECK_THROWS_AS(file.satellite(0, 0), std::out_of_range);    // no satellite report
-    CHECK_THROWS_AS(file.satellite(9999, 0), std::out_of_range); // nav idx out of range
+    CHECK_THROWS_AS(file.satellite(9999, 0), std::out_of_range); // nav index out of range
 }
 
 TEST_CASE("NavFile: event_marker out-of-range throws std::out_of_range") {

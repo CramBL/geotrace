@@ -8,7 +8,7 @@
  * strings, no typos.
  *
  * This mirrors the Rust SDK's `#[derive(EventKind)]` example with the idiom a
- * C++ developer reaches for: enums plus a small trait.
+ * C++ developer reaches for: `enum class` levels plus a small trait.
  */
 
 #include <geotrace/geotrace.hpp>
@@ -101,7 +101,7 @@ template <> struct geotrace::EventEnum<Gps> {
 };
 
 int main() {
-    // A lambda over the file-scope kBase keeps the event timeline readable.
+    // A lambda over the file-scope `kBase` keeps the event timeline readable.
     auto at = [](std::uint64_t secs) { return geotrace::Timestamp::from_seconds(kBase + secs); };
 
     try {
@@ -127,7 +127,7 @@ int main() {
             ++idx;
         }
 
-        // Single-level events take the enum value directly.
+        // Single-level events take the `enum` value directly.
         builder.add_event(Power::Boot, at(2), "cold start");
         // Nested events compose with event_path(). The compiler checks every level.
         builder.add_event(geotrace::event_path(Connectivity::Agps, Agps::Request), at(5),

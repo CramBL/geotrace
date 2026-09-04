@@ -24,7 +24,7 @@ START = datetime(2024, 3, 10, 14, 0, 0, tzinfo=UTC)
 
 # Short urban loop - roughly Southwark, London.
 FIXES = [
-    # (seconds, lat,     lon,      heading, speed_mps, eph_m)
+    # (`seconds`, `lat`, `lon`, `heading`, `speed_mps`, `eph_m`)
     (0, 51.5030, -0.0978, 5.0, 0.0, 4.2),
     (10, 51.5038, -0.0975, 8.0, 3.1, 3.8),
     (20, 51.5045, -0.0971, 12.0, 4.4, 3.5),
@@ -35,7 +35,7 @@ FIXES = [
 
 # A realistic mixed GPS + Galileo sky: eight satellites, five in the fix.
 SAT_TEMPLATE = [
-    # (constellation,            prn, in_fix, elev,  az,    snr)
+    # (`constellation`, `prn`, `in_fix`, `elev`, `az`, `snr`)
     (Constellation.GPS, 3, True, 72.0, 145.0, 44.0),
     (Constellation.GPS, 8, True, 58.0, 230.0, 41.0),
     (Constellation.GPS, 14, True, 41.0, 60.0, 37.0),

@@ -15,7 +15,7 @@ from geotrace_sdk import NavFileBuilder, NavFix
 
 # Roughly London → Slough → Oxford via the A4/M4 corridor.
 TRACK = [
-    # (lat,     lon,      heading_deg, speed_mps)
+    # (`lat`, `lon`, `heading_deg`, `speed_mps`)
     (51.5074, -0.1278, 75.0, 0.0),  # London, stationary start
     (51.5513, -0.4055, 72.0, 25.0),  # Chiswick
     (51.5817, -0.7417, 74.0, 27.0),  # Slough outskirts
