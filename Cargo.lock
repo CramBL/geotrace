@@ -2157,7 +2157,7 @@ dependencies = [
 
 [[package]]
 name = "geotrace"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "axoupdater",
  "chrono",
@@ -2465,7 +2465,7 @@ dependencies = [
 
 [[package]]
 name = "gt-analysis"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "gt-types",
@@ -2475,7 +2475,7 @@ dependencies = [
 
 [[package]]
 name = "gt-egui-mipmap"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "egui_plot",
  "proptest",
@@ -2484,7 +2484,7 @@ dependencies = [
 
 [[package]]
 name = "gt-fetch"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "parking_lot",
  "reqwest 0.13.4",
@@ -2494,7 +2494,7 @@ dependencies = [
 
 [[package]]
 name = "gt-filter"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "gt-test-utils",
@@ -2504,7 +2504,7 @@ dependencies = [
 
 [[package]]
 name = "gt-flare"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "gt-fetch",
@@ -2523,7 +2523,7 @@ dependencies = [
 
 [[package]]
 name = "gt-flare-store"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "gt-flare",
@@ -2538,7 +2538,7 @@ dependencies = [
 
 [[package]]
 name = "gt-fmt"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "gt-types",
@@ -2550,7 +2550,7 @@ dependencies = [
 
 [[package]]
 name = "gt-geo-math"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "geo",
  "geo-types",
@@ -2561,7 +2561,7 @@ dependencies = [
 
 [[package]]
 name = "gt-hdf5-archive"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "hdf5-metno",
@@ -2573,7 +2573,7 @@ dependencies = [
 
 [[package]]
 name = "gt-history"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "geotrace-sdk",
  "gt-history-backend-pure",
@@ -2590,7 +2590,7 @@ dependencies = [
 
 [[package]]
 name = "gt-history-backend-pure"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "gt-history-types",
  "hdf5-pure",
@@ -2602,7 +2602,7 @@ dependencies = [
 
 [[package]]
 name = "gt-history-backend-sys"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "gt-history-types",
  "hdf5-metno",
@@ -2615,7 +2615,7 @@ dependencies = [
 
 [[package]]
 name = "gt-history-types"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "log",
@@ -2630,7 +2630,7 @@ dependencies = [
 
 [[package]]
 name = "gt-icon-tessellate"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "insta",
  "lyon_tessellation",
@@ -2644,7 +2644,7 @@ dependencies = [
 
 [[package]]
 name = "gt-instance-lock"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "fd-lock",
  "gt-pending-writes",
@@ -2658,7 +2658,7 @@ dependencies = [
 
 [[package]]
 name = "gt-ionex"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "flate2",
@@ -2678,7 +2678,7 @@ dependencies = [
 
 [[package]]
 name = "gt-ionex-store"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "gt-hdf5-archive",
@@ -2695,7 +2695,7 @@ dependencies = [
 
 [[package]]
 name = "gt-jam"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "gt-fetch",
@@ -2714,7 +2714,7 @@ dependencies = [
 
 [[package]]
 name = "gt-jam-store"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "gt-hdf5-archive",
@@ -2730,7 +2730,7 @@ dependencies = [
 
 [[package]]
 name = "gt-loaded-files"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "gt-fmt",
@@ -2743,7 +2743,7 @@ dependencies = [
 
 [[package]]
 name = "gt-loader"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "geotrace-sdk",
@@ -2762,7 +2762,7 @@ dependencies = [
 
 [[package]]
 name = "gt-log-view"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -2786,7 +2786,7 @@ dependencies = [
 
 [[package]]
 name = "gt-logfile"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -2806,7 +2806,7 @@ dependencies = [
 
 [[package]]
 name = "gt-map"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "bon",
  "bytemuck",
@@ -2852,7 +2852,7 @@ dependencies = [
 
 [[package]]
 name = "gt-pending-writes"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "parking_lot",
  "rstest",
@@ -2860,7 +2860,7 @@ dependencies = [
 
 [[package]]
 name = "gt-plot"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "egui",
@@ -2891,7 +2891,7 @@ dependencies = [
 
 [[package]]
 name = "gt-query"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "geotrace-sdk-units",
  "gt-ionex",
@@ -2910,7 +2910,7 @@ dependencies = [
 
 [[package]]
 name = "gt-query-map-harness"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "gt-filter",
@@ -2931,7 +2931,7 @@ dependencies = [
 
 [[package]]
 name = "gt-query-run"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "geotrace-sdk",
@@ -2954,7 +2954,7 @@ dependencies = [
 
 [[package]]
 name = "gt-side-panel"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "egui",
@@ -2977,7 +2977,7 @@ dependencies = [
 
 [[package]]
 name = "gt-sky"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "egui",
@@ -2991,7 +2991,7 @@ dependencies = [
 
 [[package]]
 name = "gt-snap"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "geo-types",
@@ -3012,7 +3012,7 @@ dependencies = [
 
 [[package]]
 name = "gt-solar"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "gt-fetch",
@@ -3031,7 +3031,7 @@ dependencies = [
 
 [[package]]
 name = "gt-solar-store"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "gt-hdf5-archive",
@@ -3047,7 +3047,7 @@ dependencies = [
 
 [[package]]
 name = "gt-store"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "dirs",
@@ -3073,7 +3073,7 @@ dependencies = [
 
 [[package]]
 name = "gt-test-utils"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "eframe",
@@ -3099,7 +3099,7 @@ dependencies = [
 
 [[package]]
 name = "gt-track-builder"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "geotrace-sdk-units",
@@ -3116,7 +3116,7 @@ dependencies = [
 
 [[package]]
 name = "gt-types"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "bon",
  "chrono",
@@ -3134,7 +3134,7 @@ dependencies = [
 
 [[package]]
 name = "gt-ui-theme"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "egui",
  "egui-phosphor",
@@ -3147,7 +3147,7 @@ dependencies = [
 
 [[package]]
 name = "gt-ui-types"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "gt-filter",
