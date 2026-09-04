@@ -2,7 +2,8 @@
 
 This dataset provides a set of reference GPS/GNSS data in CSV format.
 It is intended for cross-SDK verification: every SDK (Rust, C, C++, Python) parses these CSV files and writes a `.gtd` file that decodes to the same `NavFile`.
-The HDF5 byte layout may differ between SDKs; the decoded content must not.
+The HDF5 byte layout may differ between SDKs.
+The decoded content must not.
 The `gold_conformance` test (`sdk/rust/geotrace-sdk/tests/gold_conformance.rs`) pins `gold.gtd`, `gold_c.gtd`, `gold_cpp.gtd`, and `gold_py.gtd` to this guarantee, and `just test-gold-all` regenerates and re-checks them.
 
 ## Dataset Structure
@@ -61,7 +62,7 @@ The first track starts on **1 February 2026 at 15:00:00 UTC**.
 
 ### Track 10: Satellite Stress
 - **Purpose**: Trigger validation warnings.
-- **Description**: Includes PRN 0, SNR 99 (sentinel), duplicate PRNs, and out-of-range PRNs (SBAS/Glonass offsets).
+- **Description**: Includes PRN 0, SNR 99 (sentinel value), duplicate PRNs, and out-of-range PRNs (SBAS/Glonass offsets).
 
 ### Track 11: Metadata & Unicode Stress
 - **Purpose**: Verify string handling and serialization.

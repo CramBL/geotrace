@@ -93,7 +93,7 @@
 - **Map & Tracks:** Added a right-click option to snap all tracks in a recording to the road at once. Finished query matches now flare up and settle on the map to stand out, and tooltips identify which recording a point belongs to.
 - **Settings & Storage:** Added a storage manager to view disk usage for environment data and auto-prune old days. Also added a search field and a live preview for the recording name template.
 - **System:** Added the `--offline` flag to run without network access.
-- **System:** Closing GeoTrace now finishes writes in progress instead of ending them mid-file, with a shutdown window listing the progress of unfinished writes and archive deletes.
+- **System:** Closing GeoTrace now finishes writes in progress, with a shutdown window listing the progress of unfinished writes and archive deletes.
 - **System:** Only one GeoTrace writes to a data directory at a time to prevent conflicts. Additional instances will wait until the directory is free, or can be started in a "read-only" mode that safely reads recordings and archives alongside the active window.
 
 ### Changed
@@ -125,7 +125,7 @@
 
 ### Fixed
 
-- Hovering a shortened name shows one tooltip instead of two stacked ones.
+- Hovering a shortened name shows one tooltip.
 - Use the recording name template in the rest of the app: the plot's file legend, line names and hover labels, the map's right-click menu and the remove-confirmation dialog all show the same name as the side panel.
 - The plot hover label no longer starts with a blank line when the cursor is not on a line.
 
@@ -151,8 +151,8 @@
 
 ### Fixed
 
-- History elements show a cursor that matches what they do, rather than a text-editing one on everything.
-- Double-clicking a History identity always opens the rename editor now, instead of sometimes selecting a word.
+- History elements show a cursor that matches what they do.
+- Double-clicking a History identity always opens the rename editor now.
 
 ## 0.9.0 - 2026-07-23
 
@@ -160,10 +160,10 @@ All optimizations, no features, no fixes.
 
 ### Changed
 
-- Map markers, navigation arrows and fix-loss chevrons are now vector meshes pre-tessellated at build time and drawn with GPU instancing, instead of pre-rasterised bitmaps. They stay sharp at every zoom level and on high-DPI screens, and dense recordings render them in one instanced draw call per icon type rather than one textured quad each.
-- Reduced per-frame allocation and hashing in the map's overlay placement pass (satellite labels, sky glyphs, fix icons): reused scratch buffers instead of reallocating, a faster hasher for the decimation grids, stack-allocated vectors for fixed-size temporaries, and the GPU icon instance transform computed once per instance.
-- Clip the track plot's masked-fix and unsnapped-point markers to the visible x-range before drawing and hit-testing them, instead of processing the whole track each frame.
-- Cache the display settings popup's per-category counts, recomputing only when an input changes instead of walking all loaded points each frame.
+- Map markers, navigation arrows and fix-loss chevrons are now vector meshes pre-tessellated at build time and drawn with GPU instancing. They stay sharp at every zoom level and on high-DPI screens, and dense recordings render them in one instanced draw call per icon type.
+- Reduced per-frame allocation and hashing in the map's overlay placement pass (satellite labels, sky glyphs, fix icons): reused scratch buffers, a faster hasher for the decimation grids, stack-allocated vectors for fixed-size temporaries, and the GPU icon instance transform computed once per instance.
+- Clip the track plot's masked-fix and unsnapped-point markers to the visible x-range before drawing and hit-testing them.
+- Cache the display settings popup's per-category counts, recomputing only when an input changes.
 
 ## 0.8.0 - 2026-07-22
 
@@ -175,7 +175,7 @@ All optimizations, no features, no fixes.
 ### Changed
 
 - Sky trails now draw as a comet's tail: brightest at each satellite's current position and fading back over the path it has travelled, so the direction of travel reads at a glance.
-- "In fix only" in the Sky trails window now trims each trail to the parts where the satellite was actually used in the fix, rather than blinking whole trails on and off during playback.
+- "In fix only" in the Sky trails window now trims each trail to the parts where the satellite was actually used in the fix.
 
 ### Fixed
 
@@ -204,7 +204,8 @@ All optimizations, no features, no fixes.
 - Snap to road: match a track against the OpenStreetMap road network, from its side-panel action or automatically (opt-in).
   The match draws as a dashed line on the map with road details on hover, the "Snap error (m)" plot metric shows each point's distance to the road next to EPH, and `snap_error` is usable in queries.
   Results are kept in history, marked stale when settings change, and can be re-run as another travel mode.
-  Nothing is uploaded without consent; the server and matcher options are configurable in Settings (default: the public FOSSGIS instance).
+  Nothing is uploaded without consent.
+  The server and matcher options are configurable in Settings (default: the public FOSSGIS instance).
 - A File menu with Open and an About dialog.
 - A "Recording name" template in Settings controls how recordings are labelled in the side panel (`{title}`, `{device}`, `{identity}`, `{filename}`).
 - Recording metadata (title, device, notes, travel mode) shows behind a note icon in the side panel and the History window.
@@ -214,13 +215,13 @@ All optimizations, no features, no fixes.
 
 - History window columns are resizable, and the identity column gets the spare width.
 - Distance and duration in the side panel carry a road and clock icon.
-- Query summaries name tracks that carry no values for a referenced metric, instead of only counting skipped points.
+- Query summaries name tracks that carry no values for a referenced metric.
 
 ### Fixed
 
-- Long names truncate (full value on hover) instead of stretching the side panel, the History window, and related dialogs.
+- Long names truncate in the side panel, the History window, and related dialogs, with the full value on hover.
 - Light mode: status colors, plot lines, and query syntax highlighting are readable now, and the plot gets a faint-grey canvas.
-- Focusing a track dims the map with a gentle veil instead of washing it to white.
+- Focusing a track dims the map with a gentle veil.
 
 ## 0.5.1 - 2026-07-09
 
@@ -243,7 +244,7 @@ All optimizations, no features, no fixes.
 ### Changed
 
 - Plot lines are slightly thinner by default so plots with many metrics enabled stay readable.
-- Satellite-count labels are now placed at diagnostically relevant points (fix-quality changes, signal dips, recoveries after loss) instead of at fixed intervals, and no longer shuffle while panning the map.
+- Satellite-count labels are now placed at diagnostically relevant points (fix-quality changes, signal dips, recoveries after loss), and no longer shuffle while panning the map.
 
 ### Fixed
 
