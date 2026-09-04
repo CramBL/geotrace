@@ -131,7 +131,7 @@ fn every_capture_parses_into_the_recorded_number_of_samples() {
     }
 }
 
-/// Every period starts inside the requested window, one index cadence after
+/// Every period starts inside the capture window, one index cadence after
 /// the one before it.
 #[test]
 fn every_capture_runs_at_its_index_cadence_inside_the_requested_window() {

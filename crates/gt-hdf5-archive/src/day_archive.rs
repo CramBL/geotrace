@@ -118,7 +118,7 @@ pub trait WritableDayArchive: Sized {
     }
 
     /// Open the archive at `path` as [`Self::open_or_create`] does, recovering
-    /// an interrupted delete only when `recovery` asks for it.
+    /// an interrupted delete only for [`InterruptedDeleteRecovery::Recover`].
     ///
     /// A declined recovery leaves the file exactly as it was found and fails
     /// with [`DeclinedRecovery`], which is checked before anything else the

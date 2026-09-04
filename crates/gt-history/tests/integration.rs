@@ -152,7 +152,7 @@ fn make_gtd_bytes_with_meta(
 ///
 /// These sit two levels below the recording group once stored, which is deeper
 /// than the rest of the GTD tree - so this fixture is also what proves the
-/// backends preserve nested groups rather than flattening them away.
+/// backends preserve nested groups.
 #[expect(
     clippy::expect_used,
     reason = "test helper; panicking on I/O failure is the right behaviour"
@@ -542,7 +542,7 @@ fn is_duplicate_matches_only_exact_meta() {
     // Different identity → duplicate detected based on metadata.
     assert!(db.is_duplicate(&meta).expect("different identity"));
 
-    // Different nav_point_count → not a duplicate.
+    // Different `nav_point_count` → not a duplicate.
     let other_meta = RecordingMeta {
         nav_point_count: meta.nav_point_count + 1,
         ..meta
@@ -1022,8 +1022,8 @@ fn nav_point_f64_data_round_trips() {
 
     // A GTD file mixing i64 (time) and f64 (lat/lon) datasets. Storing then
     // reloading must preserve the f64 values exactly - an earlier hand-rolled
-    // copy in the sys backend reinterpreted non-i64 datasets as raw bytes and
-    // silently corrupted coordinates.
+    // copy in the system-HDF5 backend reinterpreted non-i64 datasets as raw
+    // bytes and silently corrupted coordinates.
     let bytes = {
         let tmp = tempfile::NamedTempFile::new().expect("temp file");
         let times: Vec<i64> = (0..n as i64).map(|i| start_us + i).collect();
@@ -1120,7 +1120,7 @@ fn prune_by_total_size_removes_oldest_first() {
         .expect("candidates");
 
     assert_eq!(candidates.len(), 1);
-    // The oldest recording (start_us=1000, group_name contains timestamp) should be removed.
+    // The oldest recording (`start_us` 1000, `group_name` holding the timestamp) should be removed.
     assert!(candidates[0].identity == "dev");
 }
 
@@ -1598,7 +1598,7 @@ fn open_with_older_schema_version_migrates_data() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
 
-    // Create a db then manually lower the schema_version to simulate an older file.
+    // Create a db then manually lower the `schema_version` to simulate an older file.
     {
         let mut db = Database::open_or_create(&db_path).expect("create");
         let bytes = make_gtd_bytes(7_000_000, 3);
@@ -1606,7 +1606,7 @@ fn open_with_older_schema_version_migrates_data() {
         db.insert_simple("dev", &meta, &bytes).expect("insert");
     }
 
-    // Rewrite schema_version to -1 to simulate an older file.
+    // Rewrite `schema_version` to -1 to simulate an older file.
     {
         let existing = hdf5_pure::File::open(&db_path).expect("open");
         let by_id = existing.root().group("by_identity").expect("by_identity");
@@ -1650,7 +1650,7 @@ fn meta_time_range_and_size_bytes_are_populated() {
 // Each test below is marked `#[should_panic]` and currently passes because the
 // tested hdf5-pure feature is absent.  If the feature is added upstream the
 // panic will stop occurring, the `#[should_panic]` wrapper will report a test
-// failure, and the corresponding workaround in `copy.rs` / `lib.rs` can be
+// failure, and the workaround in `copy.rs` / `lib.rs` can be
 // removed.  See `docs/storage-roadmap.md` for the full evidence trail.
 /// hdf5-pure 0.6 writes superblock v2 files, which set `free_space_address` to
 /// `None`.  A functional free-space manager would record a valid (non-max)
@@ -1712,7 +1712,6 @@ fn concurrent_insert_does_not_panic() {
 #[test]
 fn insert_malformed_data_returns_error() {
     let malformed_bytes = vec![0, 1, 2, 3, 4]; // Not a GTD file
-    // extract_meta should fail
     let meta = extract_meta(&malformed_bytes);
     assert!(
         meta.is_err(),
@@ -1737,7 +1736,6 @@ fn insert_large_dataset_works() {
     let db_ref = &db.list_recordings().unwrap()[0].db_ref;
     let loaded_bytes = db.load_bytes(db_ref).expect("load");
 
-    // Compare content by parsing instead of raw byte length
     let original_nav = hdf5_pure::File::from_bytes(bytes.clone())
         .expect("parse original")
         .group("nav_points")
@@ -1803,7 +1801,7 @@ fn pure_backend_prevents_recursive_insertion_of_loaded_file() {
     let loaded_bytes = db.load_bytes(&db_ref).expect("load_bytes");
     let meta2 = extract_meta(&loaded_bytes).expect("parse meta");
 
-    // The insert should detect this as a duplicate and return the existing db_ref
+    // The insert should detect this as a duplicate and return the existing `db_ref`
     let db_ref2 = db
         .insert_simple(identity, &meta2, &loaded_bytes)
         .expect("second insert");
@@ -1831,7 +1829,7 @@ fn sys_backend_structural_parity_repro() {
     let _db_ref = db.insert_simple("device", &meta, &bytes).expect("insert");
 
     // Verify the sys-backend structure with the hdf5-pure reader (as the pure
-    // backend does): if the sys backend is parity-compatible, this works.
+    // backend does): if the system-HDF5 backend is parity-compatible, this works.
     let file = hdf5_pure::File::open(&db_path).expect("open");
     let root = file.root();
 
@@ -1851,7 +1849,7 @@ fn sys_backend_structural_parity_repro() {
     );
 }
 
-/// Bytes read back out of the sys backend rebuild the recording's own file:
+/// Bytes read back out of the system-HDF5 backend rebuild the recording's own file:
 /// the reference C library opens them and finds the groups the recording was
 /// written with.
 #[test_log::test]
@@ -1903,11 +1901,11 @@ fn test_hdf5_pure_file_openable_by_metno() {
 }
 
 /// The mirror of [`sys_backend_structural_parity_repro`]: a database written by
-/// the pure backend must be readable by the reference C library, since the sys
-/// backend (the default) opens the very same file. Reads the whole shape a
+/// the pure backend must be readable by the reference C library, since the
+/// system-HDF5 backend (the default) opens the very same file. Reads the whole shape a
 /// recording occupies - the identity tree, the recording attributes, and the
 /// track table datasets - so an `hdf5-pure` upgrade that changes the emitted
-/// bytes is caught here rather than by a user whose history file stops opening.
+/// bytes is caught here.
 #[test_log::test]
 #[cfg(feature = "backend-pure")]
 fn pure_backend_database_is_readable_by_metno() {
@@ -2154,7 +2152,7 @@ fn delete_reinsert_size_trajectory(db_path: &std::path::Path) -> (u64, u64) {
 /// file without bound - freed space has to be reused.
 ///
 /// The pure backend gets this for free by rewriting the whole tree on every
-/// mutation. The sys backend relies on libhdf5's free-space manager, which only
+/// mutation. The system-HDF5 backend relies on libhdf5's free-space manager, which only
 /// reuses object-header and raw-data space - not the global heap that backs
 /// variable-length strings - so the backend stores all string attributes
 /// fixed-length (see `write_string_attr`). Both backends therefore keep the file
@@ -2172,8 +2170,8 @@ fn file_size_stays_bounded_across_delete_reinsert_cycles() {
 
 /// Deleting an *older* recording while newer ones remain leaves an interior hole
 /// that cannot be truncated away (live data sits after it). Inserting fresh
-/// recordings afterwards must reuse that freed space rather than only appending,
-/// so the file stays near its full size instead of growing by the inserts.
+/// recordings afterwards must reuse that freed space, so the file stays near its
+/// full size.
 #[test_log::test]
 fn interior_delete_then_insert_reuses_freed_space() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -2211,8 +2209,7 @@ fn interior_delete_then_insert_reuses_freed_space() {
 /// Strictly-interior churn: delete a middle range of recordings (recordings
 /// remain at *both* ends, so the freed regions are bracketed by live data and
 /// cannot be truncated), then insert the same number of fresh recordings. The
-/// file must barely change - the inserts reuse the interior holes rather than
-/// growing it linearly.
+/// file must barely change: the inserts reuse the interior holes.
 #[test_log::test]
 fn interior_range_delete_keeps_file_bounded() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -2240,8 +2237,8 @@ fn interior_range_delete_keeps_file_bounded() {
     assert_eq!(db.list_recordings().expect("list").len(), N);
     let after = file_size(&db_path);
 
-    // The 20 inserts reuse the 20 interior holes, so the file barely changes;
-    // linear growth would push it to ~1.5x. The snapshot pins the exact sizes.
+    // The 20 inserts reuse the 20 interior holes, so the file barely changes.
+    // Linear growth would push it to ~1.5x. The snapshot pins the exact sizes.
     assert_size_snapshot("interior_range_delete", full, after);
 }
 
@@ -2504,7 +2501,7 @@ fn snap_blob_roundtrips_and_overwrites() {
 /// The snap subgroup is DB bookkeeping: storing a blob must not change what
 /// the reconstructed GTD contains, and each recording keeps its own blob.
 ///
-/// Compared by content rather than byte-for-byte: HDF5 stamps every object
+/// Compared by content: HDF5 stamps every object
 /// header with access/modification/change times, so two reconstructions taken
 /// either side of a second boundary differ in those bytes (and the header
 /// checksums over them) no matter what the blob did. A byte comparison here
@@ -2543,7 +2540,7 @@ fn snap_blob_stays_out_of_the_reconstructed_gtd() {
     );
 }
 
-/// Deleting a recording drops its blob with the group; a same-content
+/// Deleting a recording drops its blob with the group. A same-content
 /// reinsert starts blank.
 #[test_log::test]
 fn snap_blob_is_dropped_with_its_recording() {
@@ -2565,8 +2562,8 @@ fn snap_blob_is_dropped_with_its_recording() {
 
 /// Rewriting a recording's snap blob many times must not grow the database
 /// file without bound - the fixed-shape byte dataset is reclaimed by the
-/// free-space manager on every unlink-and-recreate (unlike variable-length
-/// values, which leak in libhdf5's global heap; see
+/// free-space manager on every unlink-and-recreate. Variable-length values leak
+/// in libhdf5's global heap (see
 /// `file_size_stays_bounded_across_delete_reinsert_cycles`).
 #[test_log::test]
 fn file_size_stays_bounded_across_snap_blob_rewrites() {
@@ -2614,7 +2611,7 @@ fn clearing_the_write_lock_on_a_healthy_database_is_harmless() {
 }
 
 /// A live writer still holding the file is [`DbError::Busy`], not a stale lock
-/// to clear: the repair stops rather than pulling the file out from under it.
+/// to clear: the repair stops and leaves the file to the writer.
 #[cfg(feature = "backend-pure")]
 #[test_log::test]
 fn clearing_the_write_lock_under_a_live_writer_reports_busy() {

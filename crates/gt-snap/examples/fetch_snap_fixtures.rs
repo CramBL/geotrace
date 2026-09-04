@@ -6,7 +6,7 @@
 //! with capture metadata (date, server, per-scenario HTTP status).
 //!
 //! Fixtures are frozen once committed - matching output drifts as the
-//! underlying OpenStreetMap data updates - so re-running this tool is an
+//! OpenStreetMap data updates - so re-running this tool is an
 //! explicit act and the resulting diff is reviewed like code.
 //! See `docs/snap/design.md` ("Testing") and `docs/snap/implementation-plan.md`.
 //!
@@ -50,7 +50,7 @@ const BASE_TIME_UNIX: i64 = 1_767_268_800;
 /// tighter than any GNSS receiver and keeps request bodies small.
 const COORD_DECIMALS: i32 = 6;
 
-/// Observed FOSSGIS per-request shape point limit (error_code 153 names it).
+/// Observed FOSSGIS per-request shape point limit (`error_code` 153 names it).
 /// One point past it captures the limit error.
 const OBSERVED_POINT_LIMIT: usize = 16_000;
 
@@ -114,8 +114,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let dir = fixtures_dir();
     fs::create_dir_all(&dir)?;
 
-    // Positional args select a scenario subset for an additive capture.
-    // No args re-captures everything.
+    // Positional arguments select a scenario subset for an additive capture.
+    // Without them the capture covers every scenario.
     let args: Vec<String> = env::args().skip(1).collect();
     let selected: Vec<&str> = if args.is_empty() {
         FIXTURE_SCENARIOS.to_vec()
@@ -233,7 +233,7 @@ fn scenario_request(name: &str) -> Value {
             trace(40, BOULEVARD_ROUTE, Some(1.0)),
         )),
         // The clean drive with every advanced trace option set, built through
-        // the production params path ([`SnapParams::trace_options`]): pins the
+        // the production parameter path ([`SnapParams::trace_options`]): pins the
         // tuned-request serialization and the server accepting in-range
         // values.
         "clean_drive_tuned" => {
@@ -265,8 +265,7 @@ fn scenario_request(name: &str) -> Value {
             trace(20, HARBOR_LINE, Some(1.0)),
         )),
         // Open sea: fully off the road network. Captured reality check: the
-        // server rejects the whole request (400, error_code 444) instead of
-        // returning per-point `unmatched`.
+        // server rejects the whole request with 400 and `error_code` 444.
         "unsnappable" => typed(TraceAttributesRequest::new(
             Costing::Auto,
             trace(20, SEA_LINE, Some(1.0)),
@@ -284,11 +283,11 @@ fn scenario_request(name: &str) -> Value {
             typed(TraceAttributesRequest::new(Costing::Auto, shape))
         }
         // No shape at all: captures the server's real 400 error payload
-        // (error_code 114). Deliberately malformed, so not expressible
+        // (`error_code` 114). Deliberately malformed, so not expressible
         // through the typed request.
         "bad_request" => json!({ "costing": "auto" }),
         // One trace option just past the server's bound: captures the real
-        // rejection (400, error_code 158) that the client-side clamps in
+        // rejection (400, `error_code` 158) that the client-side clamps in
         // [`SnapParams`] exist to prevent. Raw [`TraceOptions`], bypassing
         // the clamping deliberately.
         "option_out_of_bounds" => {
@@ -302,7 +301,7 @@ fn scenario_request(name: &str) -> Value {
             typed(request)
         }
         // One point past the server's shape limit: captures the limit error
-        // (400, error_code 153), which names the maximum - the observation
+        // (400, `error_code` 153), which names the maximum - the observation
         // that set the chunk-size constant.
         "oversized" => typed(TraceAttributesRequest::new(
             Costing::Auto,

@@ -20,7 +20,7 @@ const COVERAGE_START_YMD: (i32, u32, u32) = (2008, 11, 19);
 const fn coverage_start((year, month, day): (i32, u32, u32)) -> NaiveDate {
     match NaiveDate::from_ymd_opt(year, month, day) {
         Some(date) => date,
-        // Dead arm: const evaluation cannot unwrap without panicking, and the
+        // Dead arm: `const` evaluation cannot unwrap without panicking, and the
         // assertion below fails the build if it ever stops being dead.
         None => NaiveDate::MIN,
     }

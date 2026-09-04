@@ -389,7 +389,7 @@ fn a_column_shorter_than_the_index_is_reported() {
 }
 
 /// A code the schema does not define is reported as an inconsistent archive,
-/// never read as a flare with an invented field.
+/// never decoded as a flare with an invented field.
 #[rstest]
 #[case::end_presence(schema::EVENT_END_PRESENCE, 9, "flare row 0 has end presence code 9")]
 #[case::source_location_presence(

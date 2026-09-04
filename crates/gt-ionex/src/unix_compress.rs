@@ -37,8 +37,8 @@ const CLEAR_CODE: u16 = 256;
 /// Most bytes one stream may decode to.
 ///
 /// A published IONEX day is under 1 MB decompressed. The format lets a short
-/// stream expand into orders of magnitude more, so the decode stops at this
-/// instead of growing the output until the allocator fails.
+/// stream expand into orders of magnitude more, so the decode stops once the
+/// output reaches this many bytes.
 pub const MAX_DECOMPRESSED_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]

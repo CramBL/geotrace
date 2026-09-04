@@ -22,7 +22,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// with every request.
 pub const CLIENT_ID_HEADER: (&str, &str) = ("X-Client-Id", "geotrace");
 
-/// Stands in for a secret wherever text that may hold one is written down.
+/// Replaces a secret wherever text that may hold one is written down.
 pub const REDACTED_SECRET: &str = "[redacted]";
 
 /// A credential the user registers for and enters in settings, which a host
@@ -31,8 +31,8 @@ pub const REDACTED_SECRET: &str = "[redacted]";
 /// The value is a secret, so this type's [`Debug`] output is
 /// [`REDACTED_SECRET`] and it has no [`Display`](std::fmt::Display)
 /// implementation: reaching the value takes
-/// [`expose_secret`](Self::expose_secret), which every call site is read as a
-/// leak unless it is building the request itself. Text that may hold the
+/// [`expose_secret`](Self::expose_secret), which leaks the value at every call
+/// site that is not building the request itself. Text that may hold the
 /// value, such as a transport failure quoting the request it tried, goes
 /// through [`redact`](Self::redact) first.
 #[derive(Clone, PartialEq, Eq)]

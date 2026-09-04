@@ -186,7 +186,8 @@ mod tests {
         NavPoint::new(tpv, sats)
     }
 
-    /// Points spaced 10 m apart with the given fix counts, heading present.
+    /// Points spaced 10 m apart with the fix counts in `fix_counts`, heading
+    /// present.
     fn track(fix_counts: &[Option<u32>]) -> Vec<NavPoint> {
         (0i32..)
             .zip(fix_counts)

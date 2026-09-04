@@ -132,8 +132,8 @@ fn unfiltered_fixture_assembles_like_filtered() {
     );
 }
 
-/// A response with a valid 4-position synthetic shape and the given points
-/// and edges. The shape is encoded with the wire's precision constant, so
+/// A response with a valid 4-position synthetic shape, holding `points` and
+/// `edges`. The shape is encoded with the wire's precision constant, so
 /// encode and decode cannot drift apart.
 fn synthetic_response(points: &Value, edges: &Value) -> Result<TraceAttributesResponse, String> {
     // Four positions spaced ~110 m apart along a meridian.

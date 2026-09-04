@@ -330,7 +330,6 @@ fn a_reopened_archive_still_holds_its_days() {
     assert_eq!(store.day_maps(day(0)).expect("archive read"), Some(stored));
 }
 
-/// An archive written by a newer build is rejected rather than misread.
 #[test]
 fn an_archive_from_a_newer_schema_is_rejected() {
     let dir = tempfile::tempdir().expect("temp dir");

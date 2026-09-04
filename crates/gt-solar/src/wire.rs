@@ -27,7 +27,7 @@ use crate::activity::GeomagneticActivity;
 use crate::series::{Hp30Sample, Hp30Series, KpSample, KpSeries, KpStatus};
 use crate::{GeomagneticIndex, parse_timestamp};
 
-/// Why a response could not be read as a series.
+/// Why a response could not be parsed as a series.
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
     #[error("response is not JSON in the published shape: {0}")]
@@ -84,7 +84,7 @@ pub enum ParseError {
 }
 
 /// The response fields this parser reads. The value array arrives under the
-/// requested index's name, so it is picked out of `columns` by key.
+/// [`GeomagneticIndex`] name, so it is picked out of `columns` by key.
 #[derive(Debug, Deserialize)]
 struct ResponseBody {
     datetime: Vec<String>,

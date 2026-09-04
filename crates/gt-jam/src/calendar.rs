@@ -23,7 +23,7 @@ pub const COVERAGE_START: NaiveDate = {
     let (year, month, day) = COVERAGE_START_YMD;
     match NaiveDate::from_ymd_opt(year, month, day) {
         Some(date) => date,
-        // Dead arm: const evaluation cannot unwrap without panicking, and
+        // Dead arm: `const` evaluation cannot unwrap without panicking, and
         // the assert below fails the build if it ever stops being dead.
         None => NaiveDate::MIN,
     }

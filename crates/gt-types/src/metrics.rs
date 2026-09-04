@@ -57,7 +57,7 @@ pub enum MetricKind {
     SlipQzss,
     /// Distance in meters from a recorded point to its road-snapped position
     /// (see `docs/snap/design.md`). Values exist only for points sent in a
-    /// completed snap run; meters, so it overlays [`MetricKind::Eph`] on the
+    /// completed snap run. In meters, so it overlays [`MetricKind::Eph`] on the
     /// shared y-axis for the claimed-accuracy vs. observed-deviation read.
     SnapError,
     /// Share of aircraft over the fix's cell that reported low navigation

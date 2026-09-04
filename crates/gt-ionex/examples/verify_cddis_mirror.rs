@@ -3,7 +3,7 @@
 //! Requests one day under every name [`gt_ionex::cddis`] files it under and
 //! reads each served file through the fetch pipeline's own decoders. A day the
 //! workspace holds a JPL capture of is read against that capture, since the
-//! archive serves the same producer's file. Any other day is read as a
+//! archive serves the same producer's file. Any other day is parsed as a
 //! standalone IONEX file, held only to the parser's own header cross-checks,
 //! and its grid and maps are reported.
 //!

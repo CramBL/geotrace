@@ -44,8 +44,7 @@ mod tests {
             SatLabelTier::QualityTransition,
             SatLabelTier::FixCountMinimum,
         ];
-        // A variant added to the enum but not to this list fails here
-        // instead of silently escaping the ordering check.
+        // A variant added to the `enum` but not to this list fails here.
         assert_eq!(tiers.len(), SatLabelTier::COUNT);
         tiers.sort();
         assert_eq!(

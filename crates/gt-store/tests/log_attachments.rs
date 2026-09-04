@@ -92,8 +92,7 @@ impl RecordedStore {
         id.file_path(&self.store.logs_path())
     }
 
-    /// Logs in the store directory, counted from disk rather than from the
-    /// attributes naming them.
+    /// Logs in the store directory, counted from disk.
     fn stored_log_count(&self) -> usize {
         match std::fs::read_dir(self.store.logs_path()) {
             Ok(entries) => entries.count(),

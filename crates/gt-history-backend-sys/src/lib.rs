@@ -16,7 +16,7 @@ pub mod copy;
 
 /// Extract recording metadata from raw GTD file bytes.
 ///
-/// libhdf5 reads from a path rather than a byte slice, so the bytes are staged
+/// libhdf5 reads from a path, so the bytes are staged
 /// in a temporary file. Each count comes from its dataset's shape, the time
 /// range from every `nav_points/time` entry.
 pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {

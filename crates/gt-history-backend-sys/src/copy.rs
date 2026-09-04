@@ -129,7 +129,7 @@ fn open_identity_group(by_id: &Group, identity: &str) -> Result<Group, InternalE
 }
 
 /// Overwrite (or add) the `identity` string attribute on a group. The plain
-/// [`write_meta_attrs`] path skips existing attrs, and string attrs cannot be
+/// [`write_meta_attrs`] path skips existing attributes, and a string attribute cannot be
 /// rewritten in place, so this deletes any existing attribute first.
 fn overwrite_identity_attr(group: &Group, identity: &str) -> Result<(), InternalError> {
     if group.attr(ATTR_IDENTITY).is_ok() {
@@ -145,8 +145,8 @@ fn overwrite_identity_attr(group: &Group, identity: &str) -> Result<(), Internal
 /// [`repair_unindexed_recordings`]. If `new` already exists the recordings merge
 /// into it. A no-op when `old` is absent or equal to `new`.
 ///
-/// Because this copies rather than moves, the file grows by the recordings'
-/// size; the system-HDF5 backend does not reclaim the vacated space (the
+/// This copies the recordings, so the file grows by their size. The
+/// system-HDF5 backend does not reclaim the vacated space (the
 /// whole-file-rewrite pure backend does).
 pub(crate) fn rename_identity(
     db_path: &std::path::Path,
@@ -190,7 +190,7 @@ pub(crate) fn rename_identity(
     for rec_name in &rec_names {
         let rec = src.group(rec_name)?;
         rec.copy_to(&dst, rec_name)?;
-        // The copy still carries the old identity attribute; rewrite it.
+        // The copy still has the old identity attribute. Rewrite it.
         overwrite_identity_attr(&dst.group(rec_name)?, new)?;
     }
 
@@ -476,8 +476,8 @@ fn jenkins_lookup3(data: &[u8]) -> u32 {
 /// performs), recomputing the superblock checksum so libhdf5 will open the file
 /// again. Returns `true` if a flag was actually cleared.
 ///
-/// Only version-2/3 superblocks (standard 8-byte offsets) carry these flags;
-/// anything else is left untouched.
+/// Only version-2/3 superblocks (standard 8-byte offsets) hold these flags.
+/// Anything else is left untouched.
 pub(crate) fn clear_write_lock(db_path: &Path) -> Result<bool, InternalError> {
     use std::io::{Read, Seek, SeekFrom, Write};
 
@@ -566,7 +566,7 @@ fn copy_recording_native(
 ) -> Result<(), InternalError> {
     let dst_rec = dst_parent.create_group(name)?;
     copy_attrs(src_rec, &dst_rec, |_| true)?;
-    // Data subtrees (nav_points, sat_reports, …) are never modified after
+    // Data subtrees (`nav_points`, `sat_reports`, …) are never modified after
     // import, so object-copying them faithfully is fine.
     copy_members(src_rec, &dst_rec)?;
     Ok(())
@@ -923,8 +923,8 @@ fn copy_attr(src: &Group, dst: &Group, name: &str) -> Result<(), InternalError> 
         | TypeDescriptor::FixedUnicode(_)
         | TypeDescriptor::FixedAscii(_) => {
             // Re-store every string attribute as fixed-length (see
-            // write_string_attr) so its space is reclaimed when the recording is
-            // deleted. Reading the original is the subtle part (see read_string_attr).
+            // `write_string_attr`) so its space is reclaimed when the recording is
+            // deleted. Reading the original is the subtle part (see `read_string_attr`).
             let s = read_string_attr(&attr, &descriptor)?;
             write_string_attr(dst, name, &s)?;
         }
@@ -1024,7 +1024,7 @@ macro_rules! read_at_capacity {
     }};
 }
 
-/// Read a string attribute (fixed- or variable-length, unicode or ASCII) into an
+/// Read a string attribute (fixed- or variable-length, Unicode or ASCII) into an
 /// owned `String`. See [`read_at_capacity`] for why fixed-length attributes need
 /// the capacity ladder.
 fn read_string_attr(
@@ -1165,7 +1165,7 @@ pub(crate) fn set_tracks(
     Ok(())
 }
 
-/// Replace a recording's stored snap run with the given opaque bytes.
+/// Replace a recording's stored snap run with the opaque bytes in `blob`.
 ///
 /// A fixed-shape `u8` dataset in the `__geotrace_snap__` subgroup,
 /// unlinked and recreated on rewrite - variable-length values leak in
@@ -1310,7 +1310,7 @@ pub(crate) fn log_attachment_ids(rec_grp: &Group) -> Vec<LogAttachmentId> {
     }
 }
 
-/// Set or clear the hidden flag on the given tracks (by index) of a recording.
+/// Set or clear the hidden flag on a recording's tracks at `track_indices`.
 pub(crate) fn set_tracks_hidden(
     db_path: &std::path::Path,
     identity: &str,
@@ -1509,7 +1509,7 @@ mod tests {
     #[test]
     fn jenkins_lookup3_matches_known_vectors() {
         // Canonical Jenkins lookup3 (`hashlittle`) self-test vectors with
-        // initval 0, matching libhdf5's `H5_checksum_lookup3`.
+        // `initval` 0, matching libhdf5's `H5_checksum_lookup3`.
         assert_eq!(jenkins_lookup3(b""), 0xdead_beef);
         assert_eq!(
             jenkins_lookup3(b"Four score and seven years ago"),

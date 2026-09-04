@@ -53,8 +53,8 @@ fn the_decoded_capture_parses_as_the_file_it_came_from() {
     assert_eq!(maps.maps().len(), 13);
 }
 
-/// A crafted stream expands far beyond its own length, so the decode stops
-/// instead of growing the output until the allocator fails.
+/// A crafted stream expands far beyond its own length, so the decode stops at
+/// the output limit.
 #[test]
 fn a_stream_past_the_output_limit_is_rejected() {
     let compressed =

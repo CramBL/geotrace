@@ -128,7 +128,7 @@ const HP30_COVERAGE_START: NaiveDate = coverage_start(HP30_COVERAGE_START_YMD);
 const fn coverage_start((year, month, day): (i32, u32, u32)) -> NaiveDate {
     match NaiveDate::from_ymd_opt(year, month, day) {
         Some(date) => date,
-        // Dead arm: const evaluation cannot unwrap without panicking, and the
+        // Dead arm: `const` evaluation cannot unwrap without panicking, and the
         // assertions below fail the build if it ever stops being dead.
         None => NaiveDate::MIN,
     }
@@ -168,7 +168,7 @@ impl TimeWindow {
 
 const LAST_SECOND_OF_DAY: NaiveTime = match NaiveTime::from_hms_opt(23, 59, 59) {
     Some(time) => time,
-    // Dead arm: const evaluation cannot unwrap without panicking, and the
+    // Dead arm: `const` evaluation cannot unwrap without panicking, and the
     // assertion below fails the build if it ever stops being dead.
     None => NaiveTime::MIN,
 };
@@ -203,9 +203,9 @@ pub struct FixtureWindow {
     /// Names the capture on disk and selects it on the capture command line.
     pub name: &'static str,
     pub index: GeomagneticIndex,
-    /// Start of the requested window, as [`parse_timestamp`] reads it.
+    /// Start of the capture window, as [`parse_timestamp`] reads it.
     pub start: &'static str,
-    /// End of the requested window, as [`parse_timestamp`] reads it.
+    /// End of the capture window, as [`parse_timestamp`] reads it.
     pub end: &'static str,
     /// What this capture exists to exercise.
     pub purpose: &'static str,

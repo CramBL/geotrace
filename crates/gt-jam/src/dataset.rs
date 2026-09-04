@@ -20,7 +20,7 @@ const FULL_LON_SPAN: f64 = 360.0;
 
 /// Cosine of a latitude close enough to a pole that longitude padding stops
 /// being meaningful (about 89.9 degrees). Below it, the whole longitude
-/// range is taken instead of dividing by a vanishing cosine.
+/// range is taken.
 const MIN_COS_LAT: f64 = 0.001;
 
 /// The cell containing a position, at the published resolution.

@@ -31,8 +31,7 @@ const LONG_NAME_PRODUCER: &str = "JPL0OPS";
 const LONG_NAME_CONTENT: &str = "01D";
 const LONG_NAME_FORMAT: &str = "GIM.INX";
 
-/// Suffix of the legacy short names, which are LZW compressed rather than
-/// gzipped.
+/// Suffix of the legacy short names, which are LZW compressed.
 const LEGACY_SUFFIX: &str = ".Z";
 
 /// The files `product` may sit under for `day`, in the order they are

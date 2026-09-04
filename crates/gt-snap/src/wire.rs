@@ -165,8 +165,8 @@ pub struct TraceAttributesRequest {
 }
 
 impl TraceAttributesRequest {
-    /// A production request: the given points with the production attribute
-    /// filter attached.
+    /// A production request: the points in `shape` with the production
+    /// attribute filter attached.
     pub fn new(costing: Costing, shape: Vec<ShapePoint>) -> Self {
         Self {
             costing,
@@ -233,7 +233,7 @@ pub struct SnappedPoint {
     /// Index into [`TraceAttributesResponse::edges`], or `None` when the
     /// point has no edge association. Captured reality: the wire encodes
     /// "no edge" as `u64::MAX` on interpolated points (not by omitting the
-    /// field). That sentinel is folded into `None` here and never escapes
+    /// field). That sentinel value is folded into `None` here and never escapes
     /// the wire layer.
     #[serde(default, deserialize_with = "edge_index_from_wire")]
     pub edge_index: Option<u64>,
@@ -256,7 +256,7 @@ pub struct SnappedPoint {
 /// The wire value Valhalla uses for "this point has no edge association".
 const EDGE_INDEX_NONE: u64 = u64::MAX;
 
-/// Fold the wire's no-edge sentinel into `None` (see
+/// Fold the wire's no-edge sentinel value into `None` (see
 /// [`SnappedPoint::edge_index`]).
 fn edge_index_from_wire<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
 where
@@ -400,7 +400,8 @@ impl<'de> Deserialize<'de> for SpeedLimit {
     }
 }
 
-/// One matched edge, trimmed to the requested attribute subset.
+/// One matched edge, trimmed to the attributes [`AttributeFilter::production`]
+/// lists.
 ///
 /// `Serialize` exists for persisting cached snap results, not for requests.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -439,7 +440,7 @@ pub struct TraceAttributesResponse {
     /// OSM data version the match was computed against.
     #[serde(default)]
     pub osm_changeset: Option<u64>,
-    /// Per-run trust indicator, 0..=1.
+    /// Per-run confidence, 0..=1.
     #[serde(default)]
     pub confidence_score: Option<f64>,
     /// Kept raw: no live exemplar of a warning exists to model a shape.

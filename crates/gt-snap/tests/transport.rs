@@ -17,7 +17,7 @@ use gt_snap::request_plan::{CHUNK_POINTS, SnapParams};
 use gt_snap::wire::Costing;
 use gt_snap::{DEFAULT_SERVER_URL, fixtures_dir, transport};
 
-/// The params every scenario in this file runs with: default advanced
+/// The [`SnapParams`] every scenario in this file runs with: default advanced
 /// options, auto costing.
 fn auto_params() -> SnapParams {
     SnapParams::new(Costing::Auto)
@@ -82,7 +82,7 @@ fn connection_reset() -> Result<HttpResponse, TransportError> {
 
 #[test]
 fn fixture_success_body_classifies_and_merges_end_to_end() {
-    // The captured partially_snappable response has 20 matched points, so a
+    // The captured `partially_snappable` response has 20 matched points, so a
     // 20-point plan is one chunk.
     let plan = support::plan_of(&points(20));
     let transport = CannedTransport::new(vec![ok(fixture_body(
