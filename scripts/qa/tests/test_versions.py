@@ -192,3 +192,27 @@ def test_app_lock_crates_rejects_an_unlisted_workspace_member(tmp_path: Path) ->
     assert any("gt-new" in e and "missing from" in e for e in errors), errors
 
 
+def test_bump_sdk_rewrites_the_uv_lock_package_pin_and_keeps_its_format_version(
+    tmp_path: Path,
+) -> None:
+    lock = tmp_path / versions._PY_UV_LOCK
+    lock.parent.mkdir(parents=True)
+    lock.write_text(
+        """\
+version = 1
+revision = 3
+requires-python = ">=3.12"
+
+[[package]]
+name = "geotrace-sdk"
+version = "0.5.1"
+source = { editable = "." }
+""",
+        encoding="utf-8",
+    )
+    spot = next(s for s in versions._SDK_SPOTS if s.path == versions._PY_UV_LOCK)
+
+    versions._apply(tmp_path, [spot], "0.6.0", "0.6.0")
+
+    assert versions._read(tmp_path, spot).value == "0.6.0"
+    assert lock.read_text(encoding="utf-8").splitlines()[0] == "version = 1"

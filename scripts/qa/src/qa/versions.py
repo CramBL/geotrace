@@ -10,9 +10,10 @@ in different places:
   and units dependency pins, the Python package (``Cargo.toml`` +
   ``pyproject.toml``), the C and C++ headers
   (``GEOTRACE_C_VERSION`` / ``GEOTRACE_CPP_VERSION`` and their numeric parts),
-  the C and C++ CMake ``project(... VERSION)`` declarations, and the SDK-crate
+  the C and C++ CMake ``project(... VERSION)`` declarations, the SDK-crate
   pins in both committed ``Cargo.lock`` files (the root workspace and the
-  isolated Python workspace).
+  isolated Python workspace), and the Python package pin in the committed
+  ``uv.lock``.
 
 Most spots contain the full version (``0.2.0`` or ``0.2.0-rc.1``). CMake project
 versions and the numeric ``*_MAJOR/MINOR/PATCH`` macros only hold the numeric
@@ -91,6 +92,12 @@ _C_CBINDGEN = "sdk/rust/geotrace-c/cbindgen.toml"
 _ROOT_LOCK = "Cargo.lock"
 _PY_LOCK = "sdk/python/geotrace-py/Cargo.lock"
 
+# `_lock_version` reads this pin too: uv writes the [[package]] block for the
+# editable local project in the same shape cargo uses, with `version` on the
+# line after `name`. This pin drifts silently: `uv sync` rewrites it from
+# `pyproject.toml` on every `just ci-sdks` run, leaving the tree dirty.
+_PY_UV_LOCK = "sdk/python/geotrace-py/uv.lock"
+
 _SDK_SPOTS: list[Spot] = [
     Spot("sdk/rust/geotrace-sdk/Cargo.toml", _TOML_VERSION),
     Spot("sdk/rust/geotrace-sdk/Cargo.toml", _MACRO_PIN, note="macro pin"),
@@ -118,6 +125,7 @@ _SDK_SPOTS: list[Spot] = [
     Spot(_PY_LOCK, _lock_version("geotrace-sdk"), note="geotrace-sdk lock"),
     Spot(_PY_LOCK, _lock_version("geotrace-sdk-macros"), note="geotrace-sdk-macros lock"),
     Spot(_PY_LOCK, _lock_version("geotrace-sdk-units"), note="geotrace-sdk-units lock"),
+    Spot(_PY_UV_LOCK, _lock_version("geotrace-sdk"), note="geotrace-sdk lock"),
 ]
 
 _APP_LOCK_CRATES: list[str] = [
