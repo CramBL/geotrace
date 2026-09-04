@@ -92,8 +92,8 @@ struct BoundaryEdge {
 fn boundary_loops(indices: &[u32]) -> Result<Vec<Vec<(u32, BoundaryEdge)>>, IconTessellateError> {
     // Count directed edges. Interior edges appear once per direction.
     let mut edges: BTreeMap<(u32, u32), (u32, u32)> = BTreeMap::new();
-    for triangle in indices.chunks_exact(3) {
-        let &[a, b, c] = triangle else { continue };
+    let (triangles, _trailing_indices) = indices.as_chunks::<3>();
+    for &[a, b, c] in triangles {
         if a == b || b == c || a == c {
             continue;
         }
@@ -317,10 +317,11 @@ mod tests {
     }
 
     fn point_in_mesh(p: [f32; 2], positions: &[[f32; 2]], indices: &[u32]) -> bool {
-        indices.chunks_exact(3).any(|triangle| {
-            let a = positions[triangle[0] as usize];
-            let b = positions[triangle[1] as usize];
-            let c = positions[triangle[2] as usize];
+        let (triangles, _trailing_indices) = indices.as_chunks::<3>();
+        triangles.iter().any(|&[ia, ib, ic]| {
+            let a = positions[ia as usize];
+            let b = positions[ib as usize];
+            let c = positions[ic as usize];
             let sign = |p0: [f32; 2], p1: [f32; 2]| {
                 (p1[0] - p0[0]) * (p[1] - p0[1]) - (p1[1] - p0[1]) * (p[0] - p0[0])
             };
@@ -369,8 +370,8 @@ mod tests {
         assert_eq!(fringe.indices.len() % 6, 0);
 
         let ramp = INSET + OUTSET;
-        for chunk in fringe.indices.chunks_exact(6) {
-            let (inner_i, outer_i) = (chunk[0], chunk[1]);
+        let (edge_triangle_pairs, _trailing_indices) = fringe.indices.as_chunks::<6>();
+        for &[inner_i, outer_i, ..] in edge_triangle_pairs {
             assert!(inner_i >= SOLID_BASE && inner_i < fringe.outer_base);
             assert!(outer_i >= fringe.outer_base);
             let inner = positions[(inner_i - SOLID_BASE) as usize];

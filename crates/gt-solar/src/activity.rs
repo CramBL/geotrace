@@ -147,7 +147,7 @@ impl GeomagneticActivityClass {
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
-    use strum::{EnumCount as _, IntoEnumIterator as _};
+    use strum::EnumCount as _;
 
     use super::*;
 
