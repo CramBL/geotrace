@@ -844,7 +844,7 @@ mod snap_settings_tests {
     }
 
     /// A file written before the mirror list existed keeps fetching from the
-    /// host it names, and one written before the TEC section existed fetches
+    /// host it states, and one written before the TEC section existed fetches
     /// from the publishing host and the archive behind it.
     #[rstest]
     #[case::without_the_tec_section(
@@ -901,7 +901,7 @@ mod snap_settings_tests {
         );
     }
 
-    /// A stored entry naming its layout keeps it, and an entry from before the
+    /// A stored entry stating its layout keeps it, and an entry from before the
     /// layouts existed is one of the publishing archive's.
     #[rstest]
     #[case::a_bare_url(
@@ -968,7 +968,7 @@ mod snap_settings_tests {
         assert_eq!(parsed.tec.earthdata_token, "entered-token");
     }
 
-    /// An upgrade deletes no archived day: a settings file written before the
+    /// An upgrade keeps every archived day: a settings file written before the
     /// environment storage section existed loads with auto-pruning off.
     #[test]
     fn a_settings_file_without_the_environment_storage_section_loads() {

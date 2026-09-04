@@ -8,7 +8,7 @@ use gt_store::{DbError, StoredFixPlacementRule, StoredTrackSplitRule};
 use super::anchored_dialog::{AnchoredDialogKind, HeldBodyLines};
 use super::{App, ResegmentPrompt, auto_prune, history, history_db, loader, modals, storage};
 
-/// The region naming the recording the re-segment prompt is about.
+/// The region showing the recording the re-segment prompt is about.
 const RESEGMENT_INTRO_REGION: &str = "resegment_intro";
 
 /// Lines the [`RESEGMENT_INTRO_REGION`] holds at most, however long the

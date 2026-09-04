@@ -14,7 +14,7 @@ pub struct MetricChipHover {
 }
 
 impl MetricChipHover {
-    /// Every metric's hover ends with this phrasing, naming the settings link
+    /// Every metric's hover ends with this phrasing, stating the settings link
     /// that opens its reference window.
     pub fn reference_line(&self) -> String {
         format!("More: '{}' in Settings.", self.reference.link_question)

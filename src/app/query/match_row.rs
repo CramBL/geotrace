@@ -51,7 +51,7 @@ pub(super) struct MatchRow {
 
 #[cfg(test)]
 impl MatchKey {
-    /// A key naming the first track of the first file, for the tests of the
+    /// A key for the first track of the first file, for the tests of the
     /// state keyed by a match.
     pub(super) fn of_first_track(first_row: usize) -> Self {
         Self {
@@ -255,7 +255,7 @@ pub(super) enum MatchColumn {
 }
 
 impl MatchColumn {
-    /// The column's header text. `samples` names a channel run's rows, which
+    /// The column's header text. `samples` heads a channel run's rows, which
     /// are samples of a channel timeline.
     pub(super) fn title(self, row_noun: RowNoun) -> &'static str {
         match self {
@@ -677,7 +677,7 @@ mod tests {
         );
     }
 
-    /// The track column names the recording as well once several are loaded:
+    /// The track column states the recording as well once several are loaded:
     /// the track number alone would not say which one is meant.
     #[test]
     fn the_track_column_names_the_file_when_several_are_loaded() {

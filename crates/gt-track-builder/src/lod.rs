@@ -26,8 +26,8 @@ const MAX_KEPT_DENOMINATOR: usize = 4;
 /// previous one, so the total build cost is a geometric series in the point
 /// count, capped by the shrink ratio a stored level must reach.
 ///
-/// The first level's tolerance starts near the track's mean segment length so
-/// sparse recordings store no full-length levels.
+/// The first level's tolerance starts near the track's mean segment length, so
+/// every level a sparse recording stores drops points from the full list.
 pub fn build_track_lod(points: PlacedPoints<'_>) -> TrackLod {
     if points.len() < MIN_LEVEL_POINTS || u32::try_from(points.len()).is_err() {
         return TrackLod::default();

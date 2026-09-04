@@ -342,7 +342,7 @@ impl GeomagneticIndexScheduler {
     /// What the archived indices hold over the hours before `peak`, the epoch
     /// a track's TEC deviation peaks at.
     ///
-    /// [`None`] where the archive holds no day the window falls in: a window
+    /// [`None`] where the archive has no day the window falls in: a window
     /// it knows nothing about is never reported as quiet. A partly archived
     /// window is read for the days it holds.
     pub fn activity_before_peak(
@@ -1797,7 +1797,7 @@ mod tests {
         );
     }
 
-    /// A day the archive does not hold breaks both lines, so what is drawn is
+    /// A day missing from the archive breaks both lines, so what is drawn is
     /// what was downloaded.
     #[test]
     fn an_unarchived_day_between_two_archived_ones_breaks_the_lines() {

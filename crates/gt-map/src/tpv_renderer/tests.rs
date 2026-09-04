@@ -722,7 +722,7 @@ fn the_point_window_names_the_recorded_coordinates(
     );
 }
 
-/// The recording row names the file a fix came from, and is absent while
+/// The recording row states the file a fix came from, and is absent while
 /// a single file is loaded.
 #[rstest]
 #[case::several_files(Some("Morning ride"), true)]

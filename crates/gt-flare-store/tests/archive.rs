@@ -90,7 +90,7 @@ fn a_day_round_trips_with_the_fields_the_catalog_left_off() {
     assert!(store.contains(day(0)).expect("contains"));
 }
 
-/// A day the catalog lists no flare for is still an archived day, distinct
+/// A day without a flare in the catalog is still an archived day, distinct
 /// from one never fetched.
 #[test]
 fn a_day_without_flares_is_still_archived() {

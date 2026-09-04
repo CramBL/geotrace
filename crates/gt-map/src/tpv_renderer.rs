@@ -478,7 +478,7 @@ pub(crate) fn show_hover_table(
     });
 }
 
-/// The row naming the recording a fix came from, in the grid the caller has
+/// The row stating the recording a fix came from, in the grid the caller has
 /// open. Draws nothing while a single file is loaded.
 fn recording_row_ui(ui: &mut Ui, recording_name: Option<&str>) {
     if let Some(name) = recording_name {
@@ -488,7 +488,7 @@ fn recording_row_ui(ui: &mut Ui, recording_name: Option<&str>) {
     }
 }
 
-/// Where the map draws a fix, for the surfaces that name it beside the
+/// Where the map draws a fix, for the surfaces that state it beside the
 /// coordinates the receiver recorded.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum FixPlacement {
@@ -1232,7 +1232,7 @@ pub(crate) enum TrackIconFade {
 ///
 /// A track without segments (a lone fix) has nothing to overlap with and is
 /// always [`TrackIconFade::AllVisible`] - a spacing of zero would hide it at
-/// every zoom. So is a track with no geometry, which draws no icon anyway.
+/// every zoom. So is a track with no geometry, whose icons are never drawn.
 pub(crate) fn classify_icon_fade(
     track: &LoadedTrack,
     scale: MapScale,

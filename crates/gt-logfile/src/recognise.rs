@@ -61,8 +61,8 @@ const LEVEL_VOCABULARY: &[(&str, LogLevelKind)] = &[
     ("VERBOSE", LogLevelKind::Debug),
 ];
 
-/// Whether every line of a log names the host it came from. `journalctl` writes
-/// the host before the service. A device's own export leaves it out.
+/// Whether every line of a log states the host it came from. `journalctl`
+/// writes the host before the service. A device's own export leaves it out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostnameColumn {
     Present,

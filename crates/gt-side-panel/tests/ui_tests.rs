@@ -2038,7 +2038,7 @@ fn snapshot_hovering_a_track_row_control_opens_that_controls_tooltip_alone(
 }
 
 /// The point on the columns a track row paints, midway between its checkbox
-/// and its snap trigger, where the row holds no widget of its own.
+/// and its snap trigger, where the row has no widget of its own.
 fn track_row_cells_position(harness: &TestHarness<'static, State>) -> egui::Pos2 {
     let checkbox = harness
         .inner

@@ -490,7 +490,7 @@ fn switching_off_the_level_colours_leaves_the_service_coloured() {
 }
 
 /// The order-anomaly section is drawn only for a log the parse found one in,
-/// naming the line the unexplained backwards step lands on.
+/// stating the line the unexplained backwards step lands on.
 #[test]
 fn the_summary_panel_lists_the_line_an_unexplained_backwards_step_lands_on() {
     let mut harness = harness_with(Vec::new());
@@ -570,8 +570,8 @@ fn clicking_a_line_with_no_fix_within_the_window_leaves_the_map_where_it_was() {
     assert_eq!(harness.state().map_center, None);
 }
 
-/// A drag across a line selects its text for the clipboard, and the row it
-/// crossed reports no click.
+/// A drag across a line selects its text for the clipboard. The row keeps the
+/// map where it was: the pointer travelled, so it never registers a click.
 #[test]
 fn dragging_across_a_line_copies_its_text_and_leaves_the_map_where_it_was() {
     let mut harness = harness_with(vec![recording("walk.gtd", 55.0)]);
@@ -893,7 +893,7 @@ fn the_footer_requests_the_association_dialog_for_the_shown_log() {
     );
 }
 
-/// The attachment the viewer shows and takes off: the indicator names the
+/// The attachment the viewer shows and takes off: the indicator states the
 /// recording holding the log, and "Remove attachment" acts only on a log that
 /// has one.
 #[test]

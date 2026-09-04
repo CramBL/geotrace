@@ -392,7 +392,7 @@ impl fmt::Display for UnrecognizedEventMarkerColor {
     }
 }
 
-/// An event marker style naming an icon outside the set this build draws.
+/// An event marker style with an icon outside the set this build draws.
 struct UnrecognizedEventMarkerIcon {
     variant_path: String,
     written_icon_name: String,
@@ -1691,7 +1691,7 @@ mod tests {
 
     /// A recording no fix of which has a position has nowhere to draw its
     /// track, and still loads: the fixes reach the plot and the history, and
-    /// the warning names the records.
+    /// the warning lists the records.
     #[test]
     fn a_recording_whose_every_latitude_is_nan_loads_with_tracks_that_have_no_geometry() {
         let mut recorder = NavFileBuilder::new().open();

@@ -1542,7 +1542,7 @@ mod tests {
             }
         }
 
-        /// An anomaly names an anchored entry of a boot session with an
+        /// An anomaly identifies an anchored entry of a boot session with an
         /// anchored entry before it in that session: the step is measured
         /// between the two.
         #[test]

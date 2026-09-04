@@ -22,7 +22,7 @@ pub enum TecEmptyReason {
     BeforeCoverage,
     /// Later than today, UTC.
     InFuture,
-    /// Inside the coverage window, but the archive holds no maps for the day.
+    /// Inside the coverage window, but the archive has no maps for the day.
     NotArchived,
 }
 

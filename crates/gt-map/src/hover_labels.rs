@@ -326,8 +326,7 @@ fn paint_hover_band(ui: &egui::Ui, rect: egui::Rect) {
 /// Renders the sections of a multi-hover stacked label into `ui`.
 ///
 /// Each section is wrapped in its own `Frame::popup` so the items appear as
-/// distinct opaque cards, which is the containment they need: the caller adds
-/// no frame of its own around them.
+/// distinct opaque cards, which is the containment they need.
 pub(crate) fn draw_multi_hover_label_contents(
     ui: &mut egui::Ui,
     candidates: HoverCandidates,

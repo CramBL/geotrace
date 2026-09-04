@@ -155,8 +155,8 @@ impl GlobalIonosphereMaps {
     /// [`None`] where the time falls outside the file's epochs, the latitude
     /// outside the grid, or any contributing node is a gap, which keeps a
     /// published value from being mixed with an unpublished one. A longitude
-    /// the grid does not hold directly is wrapped a full turn, so the
-    /// meridian both ends of a global grid name is reached either way round.
+    /// missing from the grid is wrapped a full turn, so the meridian at both
+    /// ends of a global grid is reached either way round.
     pub fn total_electron_content_at(
         &self,
         latitude: Latitude,

@@ -28,8 +28,8 @@ fn an_archive_reports_its_size_and_the_days_it_spans() {
     assert!(!usage.is_empty());
 }
 
-/// An archive whose file is not there yet reports no size, which the rows
-/// show as an absent value.
+/// An archive whose file is not there yet reports its size as [`None`], which
+/// the rows show as an absent value.
 #[test]
 fn an_archive_without_a_file_reports_no_size() {
     let dir = tempfile::tempdir().expect("temp dir");

@@ -62,7 +62,7 @@ fn levels(parsed: &ParsedLog) -> Vec<(&str, LogLevelKind)> {
         .collect()
 }
 
-/// The hostname of every entry that names one, in file order.
+/// The hostname of every entry with one, in file order.
 fn hostnames(parsed: &ParsedLog) -> Vec<&str> {
     parsed
         .entries()
@@ -75,7 +75,7 @@ fn hostnames(parsed: &ParsedLog) -> Vec<&str> {
         .collect()
 }
 
-/// The service of every entry that names one, with the palette slot it took,
+/// The service of every entry with one, with the palette slot it took,
 /// in file order.
 fn services_with_slots(parsed: &ParsedLog) -> Vec<(&str, u16)> {
     parsed
@@ -90,7 +90,7 @@ fn services_with_slots(parsed: &ParsedLog) -> Vec<(&str, u16)> {
         .collect()
 }
 
-/// The palette slot of every entry that names a service, in file order.
+/// The palette slot of every entry with a service, in file order.
 fn slots(parsed: &ParsedLog) -> Vec<u16> {
     parsed
         .recognised_messages()

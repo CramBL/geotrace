@@ -7,7 +7,7 @@ A pushed tag drives the release: the GitHub release and all publishing are autom
 Two rules hold for both tracks:
 
 - **The manifest version must exactly equal the tag's version.**
-  cargo-dist (GUI) and the SDK version guard both refuse to release a tag whose version does not match the version in the manifests.
+  cargo-dist (GUI) and the SDK version guard both reject a tag whose version does not match the version in the manifests.
   So a prerelease is not just a tag suffix.
   The manifest must carry the `-rc.N` suffix too, which means the prerelease and the final release are _different commits_.
 - **Bump on a branch, merge via PR, then tag the merged commit** - never commit a version bump straight to `trunk`.
@@ -22,7 +22,7 @@ The release flow promotes it for you.
 `just qa::bump-app` turns `## Unreleased` into `## X.Y.Z - YYYY-MM-DD`, which the app release metadata workflow prepends to the GitHub release body after cargo-dist creates the release.
 `just qa::bump-sdk` turns `## [unreleased]` into `## [X.Y.Z] - YYYY-MM-DD` and leaves a fresh empty `## [unreleased]` on top.
 A prerelease (`X.Y.Z-rc.N`) and its final release share one core-version section.
-The `--expect` guards refuse to tag if that section is missing.
+The `--expect` guards reject a tag when that section is missing.
 
 ## Scripted flow
 

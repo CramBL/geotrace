@@ -30,14 +30,14 @@ the app).
 - A string longer than the `.gtd` field that holds it is rejected where it is built or written: an event marker variant path past 255 bytes or annotation past 511 bytes, a marker label past 255 bytes, and an event marker style variant path or color past its field. Rust `EventMarker::builder().build()` and `Annotation::builder().build()` return `Result`, C returns the new `GTD_ERR_FIELD_TOO_LONG` (11) from `gtd_builder_add_event_marker`, `gtd_builder_add_annotation`, `gtd_nav_file_write_to_path` and `gtd_nav_file_to_bytes`, C++ throws the new `geotrace::FieldTooLongError`, and Python raises `ValueError`. `GTD_ERR_INVALID_PATH` covers only a malformed variant path now.
 - Rust `Annotation` has the accessors `label()`, `icon()` and `time()` in place of its public fields, so `Annotation::builder().build()` is the only way to construct one. The `markers/label` dataset no longer has a `truncated` attribute.
 - Rust `EventMarkerIconChoice` and `EventMarkerColor` each have a new `Unrecognized(String)` variant, which the reader produces for an `icon_name` outside the `MarkerIcon` set and for a `color_hex` that is not `#RRGGBB`, and which the writer writes back verbatim. `EventMarkerIconChoice::wire_name` returns the `icon_name` wire value the choice writes, and `EventMarkerIconChoice` is no longer `Copy`.
-- Python `NavFile.event_marker_styles` raises a `UserWarning` for a style naming an icon outside the `MarkerIcon` set, whose `icon` reads as `None` and whose new read-only `EventMarkerStyle.icon_name` holds the stored name. `EventMarkerStyle.color` reads back a color that is not `#RRGGBB` verbatim. `NavFileBuilder.add_event_marker_style` writes such a name back unchanged and raises `ValueError` for such a color.
+- Python `NavFile.event_marker_styles` raises a `UserWarning` for a style with an icon outside the `MarkerIcon` set, whose `icon` reads as `None` and whose new read-only `EventMarkerStyle.icon_name` holds the stored name. `EventMarkerStyle.color` reads back a color that is not `#RRGGBB` verbatim. `NavFileBuilder.add_event_marker_style` writes such a name back unchanged and raises `ValueError` for such a color.
 - Rust `Unit::to_base` bases a rate on per second: `Unit::PER_S.to_base()` is `1.0`, `Unit::PER_MIN.to_base()` is `1/60`, and `Unit::PER_H.to_base()` is `1/3600`.
 - Updated the Python bindings' `pyo3` to 0.29, which fixes RUSTSEC-2026-0176 and RUSTSEC-2026-0177.
 
 ### Fixed
 
-- Fixed the reader allocating for a dataset's declared size before reading it: a file declaring more data than its own byte length can hold is rejected with an error naming the dataset.
-- Fixed the reader replacing the invalid bytes of a marker label, event marker variant path or annotation, or event marker style icon name or color hex with U+FFFD: reading a file whose field is not UTF-8 now fails with an error naming the group and dataset, in all four SDKs.
+- Fixed the reader allocating for a dataset's declared size before reading it: a file declaring more data than its own byte length can hold is rejected with an error stating the dataset.
+- Fixed the reader replacing the invalid bytes of a marker label, event marker variant path or annotation, or event marker style icon name or color hex with U+FFFD: reading a file whose field is not UTF-8 now fails with an error stating the group and dataset, in all four SDKs.
 
 ## [0.5.1] - 2026-08-05
 

@@ -1,5 +1,5 @@
 //! The warning indicator in the map's top-right corner: a storm glyph whose
-//! hover names the tracks the archived environment values could have disturbed
+//! hover lists the tracks the archived environment values could have disturbed
 //! and what each metric reached over them, and whose click opens the whole
 //! list over the levels each metric warns at.
 
@@ -264,8 +264,8 @@ mod tests {
         opened_document: Option<ReferenceDocument>,
     }
 
-    /// One disturbed track, named the way the application names a track of a
-    /// recording that split into several.
+    /// One disturbed track, labelled the way the application labels a track of
+    /// a recording that split into several.
     fn one_warning() -> Vec<TrackSpaceWeatherWarning> {
         vec![TrackSpaceWeatherWarning {
             track_label: "morning.gtd (track 2)".to_owned(),
@@ -375,7 +375,7 @@ mod tests {
     }
 
     /// The glyph is on the map either way. What a metric reaching its
-    /// disturbance level changes is the hover behind it, which names the
+    /// disturbance level changes is the hover behind it, which states the
     /// affected track over the values it reached.
     #[rstest]
     #[case::warned(one_warning(), "morning.gtd (track 2)")]
@@ -426,7 +426,7 @@ mod tests {
         );
     }
 
-    /// A hover cannot be scrolled or clicked, so it names only the first few
+    /// A hover cannot be scrolled or clicked, so it lists only the first few
     /// tracks and counts the rest, and says where all of them are.
     #[test]
     fn the_hover_counts_the_tracks_it_leaves_out() {

@@ -24,7 +24,7 @@ pub(crate) const TOGGLE_LABEL: &str = "Samples";
 const TIME_COLUMN_NAME: &str = "time";
 
 /// One channel's samples under a match: the samples every aggregate column
-/// naming that channel reduced, and how they read.
+/// over that channel reduced, and how they read.
 #[derive(Debug)]
 pub(super) struct ReducedChannel {
     /// The channel as the query names it, without the leading `@`.
@@ -110,7 +110,7 @@ impl ReducedChannel {
         for width in &value_widths {
             table = table.column(Column::exact(*width));
         }
-        // The trailing column holds no value: it stretches the striping across
+        // The trailing column has no value: it stretches the striping across
         // the full width of the table.
         table = table.column(Column::remainder());
 
@@ -209,7 +209,7 @@ impl AggregateSampleExpansion {
             .unwrap_or(0)
     }
 
-    /// The control opening the listing, on the line naming the picked match.
+    /// The control opening the listing, on the line stating the picked match.
     /// Disabled with `disabled_reason` where the match has no samples behind
     /// it.
     pub(super) fn toggle_ui(&mut self, ui: &mut egui::Ui, disabled_reason: Option<&str>) {
@@ -304,7 +304,7 @@ mod tests {
         assert_eq!(channel.sample_count(), 2);
     }
 
-    /// Nothing is gathered until the listing is opened: a closed listing holds
+    /// Nothing is gathered until the listing is opened: a closed listing has
     /// no samples. A second frame of the same match reads what is held.
     #[test]
     fn the_samples_are_gathered_once_per_match_while_the_listing_is_open() {

@@ -1,6 +1,6 @@
 //! The auto-store and auto-prune controls, rendered by the History window and
 //! by the settings window's Application page. Each control is grayed with a
-//! hover text naming what to enable first while auto-storing or auto-pruning
+//! hover text stating what to enable first while auto-storing or auto-pruning
 //! is off, and every one of them is grayed in a read-only session, which
 //! stores and prunes nothing.
 

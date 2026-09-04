@@ -7,8 +7,8 @@ use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-/// Names the file a snapshot run appends the tiles its map could not draw to.
-/// Defined here, so no library code reads it.
+/// The environment variable holding the path a snapshot run appends the tiles
+/// its map could not draw to. Defined here, so no library code reads it.
 const RECORD_MISSES_ENV: &str = "GEOTRACE_RECORD_TILE_MISSES";
 
 /// Where `just map-tile-fixtures` writes the captured tiles and their
@@ -17,11 +17,12 @@ pub fn map_tile_fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/map_tiles")
 }
 
-/// Fails naming every base tile `snapshot_name`'s map left blank, so no
+/// Fails listing every base tile `snapshot_name`'s map left blank, so no
 /// snapshot quietly loses the ground under its track.
 ///
-/// Under `GEOTRACE_RECORD_TILE_MISSES` those tiles are appended to the file it
-/// names first, which is the wanted list `just map-tile-fixtures` captures.
+/// Under `GEOTRACE_RECORD_TILE_MISSES` those tiles are appended to the file at
+/// that path before the failure, which is the wanted list
+/// `just map-tile-fixtures` captures.
 #[expect(
     clippy::expect_used,
     reason = "a recording run that cannot write its list has nothing to offer"

@@ -62,7 +62,7 @@ pub const ABSENT_TIME_FILL: i64 = 0;
 /// Written for an absent active region, like [`ABSENT_TIME_FILL`].
 pub const ABSENT_ACTIVE_REGION_FILL: u32 = 0;
 
-/// Attribute naming the archive's schema version.
+/// Attribute holding the archive's schema version.
 pub const SCHEMA_VERSION_ATTR: &str = "schema_version";
 
 /// Schema this build writes and can read.

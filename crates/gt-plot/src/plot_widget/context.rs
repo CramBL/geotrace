@@ -215,8 +215,8 @@ fn interpolated_line<S: ContextSample>(samples: &[S]) -> (Vec<MipMap>, Vec<Hover
     (runs, segments)
 }
 
-/// Close the stretch being collected. One point draws no visible geometry, so
-/// only a stretch of two or more becomes a run.
+/// Close the stretch being collected. Only a stretch of two or more becomes a
+/// run: a single point has no line geometry.
 fn flush_run(points: &mut Vec<[f64; 2]>, runs: &mut Vec<MipMap>) {
     if points.len() >= 2 {
         runs.push(MipMap::build(std::mem::take(points)));

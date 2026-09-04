@@ -917,7 +917,7 @@ mod tests {
     proptest! {
         /// Whatever the user writes into the field and adds as a refine chip,
         /// the table shows exactly the entries a walk of the log selects, in
-        /// file order, and never an entry the log does not have.
+        /// file order, and never an entry missing from the log.
         #[test]
         fn the_visible_entries_are_what_a_walk_of_the_log_selects(
             live in "[a-z ]{0,5}",

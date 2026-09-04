@@ -111,7 +111,7 @@ impl DeleteState {
     }
 }
 
-/// The columns of one level naming a range of rows of the level below it.
+/// The columns of one level stating a range of rows of the level below it.
 #[derive(Debug, Clone, Copy)]
 pub struct ExtentColumns<'a> {
     /// Column holding the first row of the range.
@@ -127,8 +127,8 @@ pub struct RowLevel<'a> {
     /// Columns holding one value per row of this level, the extent columns
     /// aside.
     pub columns: &'a [&'a str],
-    /// Set where every row of this level names a range of the next level's
-    /// rows. Only the innermost level names none.
+    /// Set where every row of this level indexes a range of the next level's
+    /// rows. Only the innermost level has none.
     pub extent: Option<ExtentColumns<'a>>,
 }
 
@@ -305,7 +305,7 @@ impl ArchiveLayout<'_> {
             return Ok(0);
         }
 
-        // The surviving entries, read before the rows they name start moving.
+        // The surviving entries, read before the rows they index start moving.
         let mut entries: Vec<(&str, ColumnValues)> = Vec::new();
         for name in self.index_columns() {
             let kept = ColumnValues::read_rows(&index.dataset(name)?, &kept_rows)?;

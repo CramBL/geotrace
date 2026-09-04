@@ -3,8 +3,8 @@
 
 use gt_history_types::{DatabaseRef, LogAttachmentEntry, LogAttachmentId, StoredLogFilter};
 
-/// Names the attachment a log was stored as: the recording carrying it, and
-/// the attachment's own id on that recording.
+/// Identifies the attachment a log was stored as: the recording carrying it,
+/// and the attachment's own id on that recording.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogAttachmentRef {
     pub recording: DatabaseRef,

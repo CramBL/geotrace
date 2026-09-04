@@ -200,7 +200,7 @@ pub fn parse_timestamp(timestamp: &str) -> Result<DateTime<Utc>, chrono::ParseEr
 /// code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FixtureWindow {
-    /// Names the capture on disk and selects it on the capture command line.
+    /// Identifies the capture on disk and on the capture command line.
     pub name: &'static str,
     pub index: GeomagneticIndex,
     /// Start of the capture window, as [`parse_timestamp`] reads it.

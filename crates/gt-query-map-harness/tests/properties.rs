@@ -586,7 +586,7 @@ proptest! {
         }
     }
 
-    /// A `keep` on a metric a point does not carry hides that point: a missing
+    /// A `keep` on a metric hides every point without that metric: a missing
     /// value makes the predicate skip, and a skipped point was never matched.
     #[test]
     fn a_keep_on_a_missing_metric_hides_that_point(dataset in gen_dataset()) {

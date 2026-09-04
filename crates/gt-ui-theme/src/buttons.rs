@@ -4,7 +4,7 @@
 
 use egui::{Button, CursorIcon, Layout, Response, RichText, TextWrapMode};
 
-/// An icon as a button without a frame, the hover naming what a click does.
+/// An icon as a button without a frame, the hover stating what a click does.
 ///
 /// Disabled, it grays out and its hover states the reason (DESIGN.md,
 /// "Controls and conditional state").

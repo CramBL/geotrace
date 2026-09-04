@@ -818,7 +818,7 @@ pub enum SnapConsentChoice {
     Declined,
 }
 
-/// Show the one-time snap upload-consent dialog naming the configured server
+/// Show the one-time snap upload-consent dialog stating the configured server
 /// and what is uploaded. Returns `None` while the dialog stays open.
 ///
 /// Recorded location data leaves the machine, so nothing is ever sent before
@@ -1276,7 +1276,7 @@ pub enum EnvironmentPruneChoice {
 
 const DELETE_ARCHIVED_DAYS_TITLE: &str = "Delete archived days?";
 
-/// The region naming the loaded recordings. A recording that finishes loading
+/// The region listing the loaded recordings. A recording that finishes loading
 /// while the dialog is open joins that list.
 const LOADED_RECORDINGS_REGION: &str = "environment_prune_loaded_recordings";
 
@@ -1289,7 +1289,7 @@ const LOADED_RECORDINGS_LINES: u8 = 3;
 /// recordings are loaded: the rest of the names scroll inside it.
 const LOADED_RECORDINGS_MOST_LINES: u8 = 9;
 
-/// Confirm an environment-data delete, naming what goes and which loaded
+/// Confirm an environment-data delete, stating what goes and which loaded
 /// recordings are downloaded again straight after.
 ///
 /// Returns the choice in the frame the user makes it, and [`None`] while the
@@ -1691,7 +1691,7 @@ mod tests {
         }
     }
 
-    /// The dialog names the loaded recordings whose days go: the fetch
+    /// The dialog lists the loaded recordings whose days go: the fetch
     /// schedulers download those days again straight after.
     #[test]
     fn the_prune_dialog_names_the_loaded_recordings_it_affects() {
@@ -2160,7 +2160,7 @@ mod tests {
 
     /// Removing tracks of a stored recording writes to the recording history,
     /// which a read-only session does not: the permanent-delete tickbox is
-    /// grayed, and the dialog names the view as all the remove changes.
+    /// grayed, and the dialog states that the remove only changes the view.
     #[test]
     fn the_remove_confirmation_touches_no_recording_in_a_read_only_session() {
         let mut tree = TreeState::default();

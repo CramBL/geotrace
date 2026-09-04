@@ -38,7 +38,7 @@ const DEFAULT_CUTOFF_DAYS: u64 = 30;
 /// Unix epoch.
 const EARLIEST_PICKABLE_YEAR: i16 = 1970;
 
-/// Why the controls that delete archived days take no input.
+/// Why the controls that delete archived days are grayed out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteBlocker {
     /// There is no archive to delete from.
@@ -80,7 +80,7 @@ const ENABLE_AUTO_PRUNE_FIRST: &str = "Tick 'Auto-prune days older than' to conf
 ///
 /// This row starts nothing itself and stays live while a delete runs:
 /// auto-pruning acts at startup and after a recording finishes loading. The
-/// row takes no input in a read-only session: it prunes at neither point.
+/// row is grayed out in a read-only session: it prunes at neither point.
 pub fn show_auto_prune_age(
     ui: &mut Ui,
     settings: &mut EnvironmentStorageSettings,

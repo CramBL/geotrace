@@ -26,8 +26,8 @@ const BUDGETED_INTEGER_DIGITS: usize = 4;
 /// How one column of a match table prints its values.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ColumnFormat<'a> {
-    /// What the header names the column in, absent where the cells hold times
-    /// or bare numbers.
+    /// The unit the header states, absent where the cells hold times or bare
+    /// numbers.
     unit: Option<&'a str>,
     /// Factor from the base unit the evaluator works in to `unit`.
     from_base: f64,
@@ -194,7 +194,7 @@ impl<'a> ColumnFormat<'a> {
     }
 
     /// Whether this column's cells hold magnitudes to compare across the run,
-    /// which the bar behind a cell states. A time of day names an instant, and
+    /// which the bar behind a cell states. A time of day is an instant, and
     /// a blank column holds nothing.
     pub(super) fn holds_magnitudes(self) -> bool {
         match self.kind {

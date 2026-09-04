@@ -410,7 +410,7 @@ struct Endpoint {
 
 /// Whether `day` must be requested.
 ///
-/// A day the archive does not hold is fetched, and so is the current day,
+/// A day missing from the archive is fetched, and so is the current day,
 /// which the catalog is still submitting events for. A past day is final, a
 /// day without flares included: DONKI back-publishes rarely enough that a
 /// second request for a settled day costs more than it finds.
@@ -788,7 +788,8 @@ mod tests {
     /// A read-only session reads the day index beside the instance that owns
     /// the data directory, so the read at
     /// [`SolarFlareScheduler::adopt_store`] can fail on that instance's open.
-    /// Without a re-read the session marks no flares for the rest of its run.
+    /// Without a re-read the session stops marking flares for the rest of its
+    /// run.
     #[test]
     fn a_day_index_read_that_failed_on_another_process_is_run_again_and_finds_the_days() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();

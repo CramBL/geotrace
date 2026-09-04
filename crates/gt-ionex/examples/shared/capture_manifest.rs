@@ -1,8 +1,9 @@
 //! The manifest each capture tool keeps beside the files it wrote.
 //!
-//! One JSON object per captured file, under a `files` array: the fields naming
-//! the capture, and the facts its maps parse to. A capture of a subset diffs
-//! cleanly: entries are written in the order the caller hands them over.
+//! One JSON object per captured file, under a `files` array: the fields
+//! identifying the capture, and the facts its maps parse to. A capture of a
+//! subset diffs cleanly: entries are written in the order the caller hands
+//! them over.
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -37,7 +38,7 @@ pub fn recorded_entries(directory: &Path, identity_field: &str) -> BTreeMap<Stri
         .collect()
 }
 
-/// One entry: the fields naming the capture, and the facts `maps` holds.
+/// One entry: the fields identifying the capture, and the facts `maps` holds.
 pub fn entry(naming_fields: Value, maps: &GlobalIonosphereMaps) -> Value {
     let mut entry = naming_fields;
     if let (Some(fields), Value::Object(facts)) = (entry.as_object_mut(), map_facts(maps)) {

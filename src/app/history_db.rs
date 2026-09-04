@@ -217,7 +217,7 @@ pub enum Response {
         name: String,
         result: Result<StoredLogAttachment, LogAttachmentError>,
     },
-    /// The logs a recording carries, one entry per attachment it names.
+    /// The logs a recording carries, one entry per attachment it holds.
     AttachedLogsLoaded {
         db_ref: DatabaseRef,
         attachments: Result<Vec<RestoredLogAttachment>, DbError>,
@@ -1056,8 +1056,8 @@ mod tests {
         let Response::Mutated { op, result } = next_response(&worker) else {
             panic!("expected a mutation response");
         };
-        // A failed mutation counts as zero here: it raises no toast, and so
-        // states no count.
+        // A failed mutation counts as zero here: only a successful one raises
+        // a toast with a count.
         let reported = match (op, result) {
             (DbOp::TracksDeleted { count }, Ok(())) => count,
             _ => 0,

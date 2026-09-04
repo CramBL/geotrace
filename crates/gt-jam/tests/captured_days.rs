@@ -71,7 +71,7 @@ fn the_manifest_lists_exactly_the_declared_days() {
     assert_eq!(declared, recorded);
 }
 
-/// A served day has its dataset on disk. A refused one has no file.
+/// A served day has its dataset on disk. A day the host refused has no file.
 #[test]
 fn only_served_days_have_a_dataset_on_disk() {
     for fixture in FIXTURE_DAYS {
@@ -87,8 +87,8 @@ fn only_served_days_have_a_dataset_on_disk() {
     }
 }
 
-/// The refusal body is kept, so the transport is tested against a real
-/// refusal.
+/// The body of the refusal from the host is kept, so the transport is tested
+/// against a real one.
 #[test]
 fn a_refused_day_records_the_hosts_response() {
     for fixture in refused_days() {

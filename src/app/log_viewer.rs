@@ -194,8 +194,8 @@ pub(super) struct LogViewerRequests {
 pub(super) struct AttachmentToLoad {
     pub attachment: LogAttachmentRef,
 
-    /// The name the list drew, which names the attachment in a warning when it
-    /// does not come back.
+    /// The name the list drew, which identifies the attachment in a warning
+    /// when it does not come back.
     pub name: String,
 }
 
@@ -405,7 +405,7 @@ impl LogViewerWindow {
     fn notices_ui(&mut self, ui: &mut egui::Ui) {
         let mut dismissed = None;
         for (index, notice) in self.notices.iter().enumerate() {
-            // Wrapped: a notice names a recording and a reason.
+            // Wrapped: a notice states a recording and a reason.
             ui.horizontal_wrapped(|ui| {
                 ui.label(
                     RichText::new(notice).color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
@@ -481,8 +481,8 @@ impl LogViewerWindow {
 
         let attached = log.attachment().is_some();
         // The anchored recording while it is not loaded, which is always one of
-        // the history database's: a log anchored to a recording the database
-        // does not hold unloads with that recording.
+        // the history database's: a log anchored to a recording missing
+        // from the database unloads with that recording.
         let unresolved_anchor = match target {
             Some(_) => None,
             None => log.anchor_key().and_then(RecordingKey::database_ref),

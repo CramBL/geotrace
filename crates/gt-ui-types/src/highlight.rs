@@ -142,8 +142,8 @@ pub struct MapHighlight {
     /// not driving a scrub. Set by that window and read one frame behind (it
     /// draws after the plot), the same way [`Self::hover_match`] is.
     pub scrub_time: Option<DateTime<Utc>>,
-    /// When `true`, the map draws no label of its own for the recorded element
-    /// under the pointer.
+    /// When `true`, the map leaves the recorded element under the pointer
+    /// unlabelled.
     ///
     /// Set by `NavMap` in two situations: while the disambiguation popup is
     /// open, which occupies that screen region, and while several elements

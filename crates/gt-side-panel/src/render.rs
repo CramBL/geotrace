@@ -122,7 +122,7 @@ pub enum SnapRowView {
         /// Whether the snapped track is currently drawn on the map.
         shown: bool,
         /// `Some` when the run is stale - produced under parameters or a
-        /// server that differ from the current settings. Each entry names
+        /// server that differ from the current settings. Each entry states
         /// one difference. The row offers a re-run. `None` = current.
         stale: Option<Vec<String>>,
         /// At least one chunk failed and left a gap in the result.
@@ -553,7 +553,7 @@ fn show_only_track_menu_entry(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut 
     }
 }
 
-/// The line the section groups a recording's track rows under. It names the
+/// The line the section groups a recording's track rows under. It states the
 /// recording and takes the map hover, and has no control of its own.
 fn render_visible_file_caption(
     ui: &mut egui::Ui,
@@ -657,7 +657,7 @@ struct TreeTrackColumns {
     arrow_width: f32,
     /// The first expanded recording with a track. The header row is drawn
     /// above that recording's track rows, once for the whole tree, and is
-    /// `None` while the tree shows no track row.
+    /// `None` while the tree has no track row.
     header_file: Option<FileIdx>,
 }
 
@@ -862,7 +862,7 @@ fn snap_action(row: &SnapRowView, snap: SnapPanelView<'_>) -> Option<SnapAction>
         // stays usable offline: cached results are local.
         SnapRowView::Done { stale: None, .. } => return None,
         // Unsnappable beats offline: it is the permanent condition, and its
-        // hover names the declared mode.
+        // hover states the declared mode.
         SnapRowView::Unsnappable { travel_mode } => SnapAction {
             enabled: false,
             hover: format!(
@@ -1068,7 +1068,7 @@ fn snap_control(
         );
         // The status glyph doubles as the per-track visibility toggle: weak
         // while the snapped track draws, extra-faint while hidden. Stale and
-        // partial runs color it warning-amber, and the hover names which
+        // partial runs color it warning-amber, and the hover states which
         // condition applies.
         let text = if stale.is_some() || partial {
             RichText::new(ICON_PATH).color(gt_ui_theme::warning_amber(ui.visuals().dark_mode))

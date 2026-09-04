@@ -79,7 +79,7 @@ impl From<UnarchivedDay> for JamMessage {
 struct ResolvedTrackInterference {
     plot_points: Arc<Vec<JammingPoint>>,
     /// Absent when the archive valued none of the track's fixes, which is
-    /// also when the plot draws no line for the track.
+    /// also when the track has no line on the plot.
     query_values: Option<Arc<Vec<Option<f64>>>>,
 }
 
@@ -606,7 +606,7 @@ fn archived_cells_of(store: &ReadOnlyJamStore) -> Result<BTreeMap<NaiveDate, u32
 /// receiver was in nearest the day's midpoint in time.
 ///
 /// A day with no recording to place it at contributes nothing, and so breaks
-/// the line like a day the archive does not hold.
+/// the line like a day missing from the archive.
 fn context_day(
     store: Option<&ReadOnlyJamStore>,
     positions: &FixPositionTimeline,
@@ -1167,8 +1167,8 @@ mod tests {
 
     /// A read-only session reads the day index beside the instance that owns
     /// the data directory, so the read at [`JammingScheduler::adopt_store`]
-    /// can fail on that instance's open. Without a re-read the session draws
-    /// no interference for the rest of its run.
+    /// can fail on that instance's open. Without a re-read the session stops
+    /// drawing interference for the rest of its run.
     #[test]
     fn a_day_index_read_that_failed_on_another_process_is_run_again_and_finds_the_days() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();

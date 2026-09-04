@@ -11,7 +11,7 @@ pub enum LogFormat {
 }
 
 impl LogFormat {
-    /// How the viewer names the format in a log's parse summary.
+    /// The name the viewer shows for this format in a log's parse summary.
     pub fn display_name(self) -> &'static str {
         match self {
             Self::SyslogShort => "syslog",

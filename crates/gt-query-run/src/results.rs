@@ -476,7 +476,7 @@ fn push_non_finite_note(notes: &mut Vec<String>, skipped_non_finite: usize) {
 }
 
 impl fmt::Display for QuerySummary {
-    /// The whole summary as one line, for the hover naming the query a match
+    /// The whole summary as one line, for the hover stating the query a match
     /// came from.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut parts = vec![format!(

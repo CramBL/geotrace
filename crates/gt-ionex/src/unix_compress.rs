@@ -61,7 +61,7 @@ pub enum UnixCompressError {
 /// The bytes `compressed` stands for.
 ///
 /// A stream that ends mid-string decodes to what it did hold: the format
-/// records no length, so a truncated file is indistinguishable from a short
+/// has no length field, so a truncated file is indistinguishable from a short
 /// one. The caller's own parser is what rejects the partial content.
 pub fn decompress(compressed: &[u8]) -> Result<Vec<u8>, UnixCompressError> {
     let header: [u8; HEADER_LEN] = compressed
@@ -120,7 +120,7 @@ pub fn decompress(compressed: &[u8]) -> Result<Vec<u8>, UnixCompressError> {
             }
             Some(previous_code) => {
                 let first_byte = if u32::from(code) == decoder.table.next_code() {
-                    // The code names the string this step is about to add,
+                    // The code refers to the string this step is about to add,
                     // which the encoder emitted before the decoder had it.
                     let first_byte = decoder.append_string(previous_code)?;
                     decoder.output.push(first_byte);
@@ -245,7 +245,7 @@ impl StringTable {
     fn expand(&self, code: u16, into: &mut Vec<u8>) -> Result<(), UnixCompressError> {
         into.clear();
         let mut current = code;
-        // Every entry names a code added before it, so the walk is finite.
+        // Every entry refers to a code added before it, so the walk is finite.
         // The bound holds even for a table that somehow says otherwise.
         for _ in 0..=self.entries.len() {
             if current < BYTE_CODES {

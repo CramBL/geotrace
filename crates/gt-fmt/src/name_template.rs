@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn wire_names_parse_to_variants() {
         use strum::EnumCount;
-        // The wire names a user types map to each variant. Asserting the table's
+        // Each wire name a user types maps to a variant. Asserting the table's
         // length against `COUNT` fails the test if a variant is added without a
         // parse case here.
         let cases = [

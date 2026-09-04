@@ -432,7 +432,7 @@ mod tests {
         );
     }
 
-    /// The header error names what arrived and what was expected.
+    /// The header error states what arrived and what was expected.
     #[test]
     fn header_error_wording() {
         let error = ParseError::UnexpectedHeader {

@@ -63,9 +63,9 @@ impl TemplatePreviewRecording {
         }
     }
 
-    /// Take the fields from a stored recording. History keeps no file name of its
-    /// own: opening a recording from it names the file after the identity, and
-    /// the preview follows that.
+    /// Take the fields from a stored recording. History has no file name of
+    /// its own: opening a recording from it takes the file name from the
+    /// identity, and the preview follows that.
     pub fn from_history_entry(entry: &RecordingEntry) -> Self {
         let identity = gt_loaded_files::display_identity(&entry.db_ref.identity)
             .0
@@ -193,7 +193,7 @@ mod tests {
         }
     }
 
-    /// The guide's hint line names a character limit. The structure preview it
+    /// The guide's hint line states a character limit. The structure preview it
     /// sits under cuts at exactly that limit.
     #[test]
     fn hinted_limit_cuts_the_structure_preview() {

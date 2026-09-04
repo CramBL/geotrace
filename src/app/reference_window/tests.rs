@@ -173,7 +173,7 @@ fn snapshot_reference_window_tec_storm_plot() {
     harness.snapshot_loose("reference_window_tec_storm_plot");
 }
 
-/// Names the frame of the TEC document's plot illustration, which the scroll
+/// The frame label of the TEC document's plot illustration, which the scroll
 /// searches for.
 const STORM_PLOT_FRAME_LABEL: &str = "grid node 40 N";
 

@@ -5,7 +5,7 @@
 //! days were downloaded is assessed again as each day is stored, and a
 //! recording no archived day overlaps warns about nothing.
 //!
-//! The evidence is kept per track: the indicator names each affected track and
+//! The evidence is kept per track: the indicator lists each affected track and
 //! the value every metric reached over it, and the load toast states the peaks
 //! over the recording the track belongs to.
 
@@ -366,8 +366,8 @@ pub struct ArchivedIndexPeriod {
 /// covers without one leaves the 27-day reference as the likelier explanation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeomagneticActivityBeforePeak {
-    /// The archive covers the window, or part of it, and reaches no storm
-    /// level anywhere in what it holds.
+    /// The archive covers the window, or part of it, and stays below every
+    /// storm level in what it holds.
     NoStorm,
     /// The strongest storm class the window holds, and the whole hours from
     /// the end of the period carrying it to the peak epoch.
@@ -606,7 +606,7 @@ impl<'a> TrackSeries<'a> {
 
 /// One loaded track as it enters the assessment.
 pub struct TrackUnderAssessment<'a> {
-    /// How the warning names the track, as the rest of the app names it.
+    /// The warning's label for the track, as the rest of the app labels it.
     pub label: String,
     /// The span the track's own fixes cover, which decides the flares it is
     /// assessed against.
@@ -617,7 +617,7 @@ pub struct TrackUnderAssessment<'a> {
 /// One loaded recording as it enters the assessment.
 pub struct RecordingUnderAssessment<'a> {
     pub id: LoadedFileId,
-    /// How the load toast names the recording.
+    /// The load toast's label for the recording.
     pub label: String,
     /// The span its tracks cover, which its flares are read over.
     pub span: TimeRange,
@@ -640,8 +640,8 @@ struct WarningSource {
     tec_deviations: Vec<Option<TecDeviationEvidence>>,
     archived_flare_days: Vec<NaiveDate>,
     positions: ArcIdentity,
-    /// The names the lines carry, which move with the user's recording-name
-    /// template and with the tracks a file holds.
+    /// The line labels, which move with the user's recording-name template and
+    /// with the tracks a file holds.
     labels: Vec<String>,
 }
 
@@ -1039,7 +1039,7 @@ mod tests {
         assert_eq!(evidence_of(&fixture, &[]).warns(), expected);
     }
 
-    /// Either index raises the warning, and the line names the one that
+    /// Either index raises the warning, and the line states the one that
     /// carried the higher value.
     #[test]
     fn the_geomagnetic_line_names_the_index_that_peaked() {
@@ -1104,8 +1104,8 @@ mod tests {
         assert_eq!(evidence.warns(), expected);
     }
 
-    /// An absolute TEC value is context, so it raises no warning on its own
-    /// and is listed only once another metric has.
+    /// An absolute TEC value is context, so it is listed only once another
+    /// metric has raised the warning.
     #[test]
     fn the_tec_range_never_warns_on_its_own() {
         let fixture = SeriesFixture {
@@ -1273,7 +1273,7 @@ mod tests {
         );
     }
 
-    /// A window in which the archive holds only quiet periods names no storm.
+    /// A window in which the archive holds only quiet periods has no storm.
     #[test]
     fn an_archived_window_without_a_storm_names_none() {
         let periods = [archived_period(at(2, 0), 4.667)];
@@ -1296,7 +1296,7 @@ mod tests {
         insta::assert_snapshot!("warning_levels", listed.join("\n\n"));
     }
 
-    /// The flare row names a classification, while the blackout scale is
+    /// The flare row states a classification, while the blackout scale is
     /// defined in peak flux: M1 is the weakest class that reaches the scale.
     #[test]
     fn the_stated_flare_class_is_the_first_blackout_level() {
@@ -1417,7 +1417,7 @@ mod tests {
     }
 
     /// Every disturbed recording is toasted, and only the disturbed ones, each
-    /// toast naming its own recording.
+    /// toast stating its own recording.
     #[test]
     fn each_disturbed_recording_is_toasted_once() {
         let mut warning = SpaceWeatherWarning::default();

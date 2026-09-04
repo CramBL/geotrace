@@ -301,7 +301,7 @@ fn scenario_request(name: &str) -> Value {
             typed(request)
         }
         // One point past the server's shape limit: captures the limit error
-        // (400, `error_code` 153), which names the maximum - the observation
+        // (400, `error_code` 153), which states the maximum - the observation
         // that set the chunk-size constant.
         "oversized" => typed(TraceAttributesRequest::new(
             Costing::Auto,

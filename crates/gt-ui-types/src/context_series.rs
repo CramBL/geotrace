@@ -8,7 +8,7 @@ pub struct JammingContextSample {
     /// the whole day.
     pub start_secs: f64,
     /// Share of aircraft reporting low navigation accuracy, in percent.
-    /// [`None`] where the archive holds no cell over the receiver, or no
+    /// [`None`] where the archive has no cell over the receiver, or no
     /// recording is loaded to place the day at, which breaks the line.
     pub percent: Option<f64>,
     /// Aircraft the share was computed over. Zero where `percent` is

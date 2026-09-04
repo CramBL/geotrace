@@ -39,7 +39,7 @@ impl RecordingKey {
     }
 
     /// The history database entry this key identifies, `None` for a recording
-    /// the database does not hold.
+    /// missing from the database.
     pub fn database_ref(&self) -> Option<&DatabaseRef> {
         match self {
             Self::Stored(db_ref) => Some(db_ref),

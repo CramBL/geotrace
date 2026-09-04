@@ -363,8 +363,8 @@ mod tests {
         assert_eq!(position.nearest_index(), expected);
     }
 
-    /// Both axes round together, and a position off the grid names no node
-    /// at all.
+    /// Both axes round together, and a position off the grid has no nearest
+    /// node at all.
     #[rstest]
     #[case::a_node_itself(87.5, -180.0, Some((0, 0)))]
     #[case::the_nearest_corner_of_a_cell(86.0, -178.0, Some((1, 0)))]

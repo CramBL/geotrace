@@ -41,7 +41,7 @@ pub const MAX_DAYS_PER_TRACK: usize = 7;
 #[strum(serialize_all = "snake_case")]
 pub enum DayOutlook {
     /// Inside the catalog's coverage and not in the future. Worth requesting,
-    /// even if the catalog turns out to list no flare for it.
+    /// even if the catalog turns out to have no flare for it.
     Fetchable,
     /// Earlier than the catalog's first listed day.
     BeforeCoverage,

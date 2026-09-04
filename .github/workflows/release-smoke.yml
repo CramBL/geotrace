@@ -8,11 +8,12 @@ name: Release smoke test
 # Triggered three ways. The SDK release (release-sdk.yml) creates its GitHub
 # release with a repo-scoped PAT, whose `release: published` event runs this
 # directly. The GUI release (dist) creates its release with the built-in
-# GITHUB_TOKEN, which emits no triggering `release: published` event, so instead
-# we run when its "Release" workflow completes (`workflow_run`). This fires from
-# a separate run regardless of token, and unlike a dist post-announce job it is
-# not skipped on prereleases (where dist skips the Homebrew publish job). It can
-# also be re-run manually for any tag via `workflow_dispatch`.
+# GITHUB_TOKEN, and GitHub starts a workflow only for an event a PAT created,
+# so instead we run when its "Release" workflow completes (`workflow_run`).
+# This fires from a separate run regardless of token, and unlike a dist
+# post-announce job it is not skipped on prereleases (where dist skips the
+# Homebrew publish job). It can also be re-run manually for any tag via
+# `workflow_dispatch`.
 #
 # zizmor flags `workflow_run` as a dangerous trigger, but this use is safe: the
 # `branches: ['app/**']` filter only matches a "Release" run for a maintainer-

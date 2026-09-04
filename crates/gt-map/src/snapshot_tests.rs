@@ -1,6 +1,6 @@
-//! Every map here draws a base layer that reaches no tile server: the
-//! labelled synthetic tiles, or the captured Mapbox tiles where the imagery
-//! under the track is part of what the baseline shows.
+//! Every map here draws a base layer from local fixtures: the labelled
+//! synthetic tiles, or the captured Mapbox tiles where the imagery under the
+//! track is part of what the baseline shows.
 
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -205,7 +205,7 @@ fn snap_multi_hover_tpv_and_generated_marker() {
     harness.snapshot("multi_hover_tpv_and_generated_marker");
 }
 
-/// Two loaded files with distinct filenames, so the labels that name a
+/// Two loaded files with distinct filenames, so the labels stating a
 /// recording have something to distinguish.
 fn two_recordings_loaded() -> gt_loaded_files::LoadedFiles {
     let mut loaded = gt_loaded_files::LoadedFiles::new();
@@ -241,7 +241,7 @@ fn snap_multi_hover_stacked_label_two_files() {
     harness.snapshot("multi_hover_stacked_label_two_files");
 }
 
-/// The compound label names the recording of the fix it shows, which need
+/// The compound label states the recording of the fix it shows, which need
 /// not be the file the markers stacked with it came from.
 #[test]
 fn multi_hover_names_the_hovered_fixs_recording() {
@@ -1559,7 +1559,8 @@ fn a_hovered_viewer_row_is_ringed_on_the_map() {
 }
 
 /// The cursor picks the hexagon of the topmost layer it is on, and that
-/// hexagon names the lines it stands for - what the viewer marks the rows of.
+/// hexagon identifies the lines it stands for - what the viewer marks the rows
+/// of.
 #[test]
 fn hovering_a_hexagon_names_the_lines_of_the_topmost_layer_it_is_on() {
     let harness = log_hover_harness();

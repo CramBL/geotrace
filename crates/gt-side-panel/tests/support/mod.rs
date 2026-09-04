@@ -2,7 +2,7 @@
 //! binaries: the recordings they load, the harness that draws the panel over
 //! them, and the readouts they assert on.
 //!
-//! The panel lays out a heading, the bar it names, and a label of the window's
+//! The panel lays out a heading, the bar under it, and a label of the window's
 //! two ends, twice: once over the whole loaded time range, and once over the
 //! active range when that range is far narrower than the whole.
 
@@ -85,8 +85,8 @@ pub fn harness(files: Vec<LoadedFile>) -> TestHarness<'static, PanelState> {
 /// The rectangles of the time range bars on screen, topmost first.
 ///
 /// A bar reaches the accessibility tree under [`Role::Unknown`]: it allocates
-/// its rectangle with a sense and reports no widget info. Nothing else the
-/// filter panel draws takes that role.
+/// its rectangle with a sense and leaves the widget info unset. Nothing else
+/// the filter panel draws takes that role.
 pub fn bar_rects(harness: &TestHarness<'static, PanelState>) -> Vec<egui::Rect> {
     let mut rects: Vec<egui::Rect> = harness
         .inner

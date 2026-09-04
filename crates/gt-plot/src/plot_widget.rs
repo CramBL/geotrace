@@ -76,7 +76,7 @@ pub const PLOT_LINE_WIDTH_RANGE: RangeInclusive<f32> = 0.5..=5.0;
 /// the data lines so the marker stays findable across a crowded plot.
 const SEEK_LINE_WIDTH: f32 = 1.5;
 
-/// The salt [`show_track_plot`] names its plot with. `egui_plot` derives the
+/// The salt [`show_track_plot`] passes to its plot. `egui_plot` derives the
 /// plot's memory id from it, which is how a test reads the transform of the
 /// frame the plot last drew.
 pub const TRACK_PLOT_ID_SALT: &str = "track_plot";
@@ -160,7 +160,7 @@ fn visible_series<'a>(
 
 /// The x range in Unix seconds a double-click resets the view to: the fixes
 /// of every visible series that the time window keeps, which is what the plot
-/// draws. [`None`] when the window leaves no fix of any of them.
+/// draws. [`None`] when the window excludes every fix of every series.
 ///
 /// Reads the precomputed [`crate::series::TrackSeries::x_range`] field - O(1)
 /// per series.

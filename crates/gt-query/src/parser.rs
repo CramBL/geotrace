@@ -691,7 +691,7 @@ impl<'src> Parser<'src> {
             return Ok(Some((compound, first.span.to(third.span))));
         }
         // A `/ ident (` is division by a function call, never a compound unit -
-        // even when the identifier also names a unit, as `min` does (the minute
+        // even when the identifier is also a unit, as `min` is (the minute
         // and the aggregate). Leaving it for expression division is what makes
         // `<length> / min(x)` round-trip through the printer.
         let second_starts_call = matches!(self.peek_at(3), Some(t) if t.kind == Token::LParen);

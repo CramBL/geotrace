@@ -1148,8 +1148,8 @@ impl App {
             let logs = &self.logs;
             let mut refmut = self.shared.borrow_mut();
             let s = &mut *refmut;
-            // Resolved only while the dialog is up. The map and plot resolve
-            // their own names each frame.
+            // Resolved only while the dialog is up. The map and the plot
+            // resolve recording names of their own every frame.
             let outcome = s.tree.delete_confirm.is_some().then(|| {
                 let recording_names =
                     RecordingNames::resolve(s.loaded_files.view(), &s.recording_name_template);

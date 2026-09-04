@@ -840,9 +840,9 @@ mod tests {
 
     #[test]
     fn shown_runs_break_at_hidden_points() {
-        // Hidden points split the line. Leading/trailing/adjacent hidden
-        // points yield no empty runs, and an isolated shown point is a
-        // 1-element run (which draws no edge but keeps its icon).
+        // Hidden points split the line. Leading, trailing and adjacent
+        // hidden points are skipped, and an isolated shown point is a
+        // 1-element run (icon only, no edge).
         let s = span(&[true, false, false, true, false, true]);
         let runs: Vec<usize> = shown_runs(&s).map(<[_]>::len).collect();
         assert_eq!(runs, vec![2, 1]);

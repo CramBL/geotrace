@@ -2,10 +2,10 @@
 # RELEASES.md and prints every git/just command as `<command> ?` before running
 # it, so you confirm each step yourself: Enter runs it, `s` skips it, `q` quits.
 #
-# All four assume you are on an up-to-date, clean `trunk`. They refuse to start
-# otherwise. The prerelease recipes are fully linear (the `rc` tag sits on the
-# release branch). The regular recipes open a PR and pause for you to merge it
-# before tagging the merged commit.
+# All four assume you are on an up-to-date, clean `trunk`. A preflight check
+# stops them with guidance otherwise. The prerelease recipes are fully linear
+# (the `rc` tag sits on the release branch). The regular recipes open a PR and
+# pause for you to merge it before tagging the merged commit.
 
 TRUNK := "trunk"
 

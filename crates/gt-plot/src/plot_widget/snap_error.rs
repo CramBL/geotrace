@@ -135,7 +135,7 @@ impl SnapErrorHover {
 /// consecutive valued points, split wherever a point carries no error (the
 /// road network rejected it) and wherever a point follows a gap in the run
 /// (the receiver was dead reckoning there, or a chunk failed), so the line
-/// never spans data the run does not have. Runs of a single point produce
+/// never spans data the run does not have. Runs of a single point have
 /// no visible line geometry and are dropped - the point's value stays
 /// reachable through the custom hover.
 fn snap_error_runs(points: &[SnapErrorPoint]) -> Vec<Vec<PlotPoint>> {
@@ -392,8 +392,8 @@ mod tests {
     }
 
     /// The line runs split exactly at valueless points, and runs of a single
-    /// point (leading, interior, or trailing) are dropped - one point draws
-    /// no line and would clutter the legend.
+    /// point (leading, interior, or trailing) are dropped - one point has
+    /// no line to draw and would clutter the legend.
     #[rstest::rstest]
     #[case::empty(&[], &[])]
     #[case::one_unbroken_run(&[(0.0, Some(1.0)), (1.0, Some(2.0)), (2.0, Some(3.0))], &[3])]

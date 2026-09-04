@@ -290,8 +290,8 @@ impl Storage {
     /// after the user took write access from the instance holding the data
     /// directory.
     ///
-    /// This step writes nothing and opens no database: what it finds is put
-    /// to the user, and the choices start the open itself.
+    /// This step only reads: what it finds is put to the user, and the choices
+    /// start the open itself.
     ///
     /// `previous_take_over` is the take-over recorded in the data directory
     /// before this one, which the prompts state.
@@ -498,7 +498,8 @@ fn open_recordings_read_only(
 
 /// Open one archive, recording why the app has no archive where it ends up
 /// with none. A read-only session decides for itself, whatever `recovery`
-/// plans: it creates no archive and writes to none.
+/// plans: it opens only an archive that is already there, and never writes to
+/// it.
 ///
 /// An archive the user left as it is, and one another process holds, are both
 /// reported to the controls that need them. Anything else is logged and the
@@ -1056,8 +1057,8 @@ mod tests {
     }
 
     /// A read-only session offers no remedy for an unreadable database - every
-    /// one of them writes - so it reports no failure and simply runs without
-    /// the recordings.
+    /// one of them writes - so it keeps the failure out of the prompts and
+    /// simply runs without the recordings.
     #[test]
     fn a_broken_recordings_database_raises_no_prompt_in_a_read_only_session() {
         let (_dir, store) = store();

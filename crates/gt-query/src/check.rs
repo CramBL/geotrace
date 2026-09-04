@@ -90,7 +90,7 @@ impl ChannelSchema {
         self.channels.insert(name.into(), info);
     }
 
-    /// Whether the schema holds no channels at all (nothing is loaded).
+    /// Whether the schema has no channels at all (nothing is loaded).
     pub fn is_empty(&self) -> bool {
         self.channels.is_empty()
     }
@@ -435,9 +435,10 @@ fn value_type(quantity: Quantity) -> ValueType {
     }
 }
 
-/// The [`Quantity`] a value type names, when it names one. Exotic dimensions (a
-/// squared speed, say) and the bare [`Kind::Number`] have no quantity. Lets the
-/// error wording and the aggregate result rule reuse [`Quantity`]-keyed logic.
+/// The [`Quantity`] a value type belongs to, where it has one. Exotic
+/// dimensions (a squared speed, say) and the bare [`Kind::Number`] have no
+/// quantity. Lets the error wording and the aggregate result rule reuse
+/// [`Quantity`]-keyed logic.
 fn named_quantity(vt: ValueType) -> Option<Quantity> {
     Some(match vt {
         ValueType::Condition => Quantity::Condition,
@@ -648,9 +649,10 @@ fn aggregate_source(arg: &CExpr, span: Span) -> Result<AggSource, Diagnostic> {
     }
 }
 
-/// Collect the distinct channel names an expression reads and whether it reads
-/// any per-point metric, walking every value-carrying node. Components of one
-/// vector channel collapse to that channel's single name (one timeline).
+/// Collect the distinct names of the channels an expression reads and whether
+/// it reads any per-point metric, walking every value-carrying node. Components
+/// of one vector channel collapse to that channel's single name (one
+/// timeline).
 fn collect_timelines<'a>(expr: &'a CExpr, channels: &mut Vec<&'a str>, has_metric: &mut bool) {
     match expr {
         CExpr::Channel(key) => {
@@ -1097,7 +1099,7 @@ impl Checker<'_> {
             return Ok(());
         }
         // Per sample and not inside an aggregate. On the points source with no
-        // window, the hint names the two working forms: an aggregate alone
+        // window, the hint states the two working forms: an aggregate alone
         // still needs a window, since the channel is on a finer clock than the
         // points. Windowed, on either source, an aggregate is the whole fix.
         let help = if self.source_channel().is_none() && !self.windowed {
@@ -1408,7 +1410,7 @@ fn display_optional_unit(unit: Option<&ChannelUnit>) -> String {
 }
 
 /// The value type an aggregate produces from its argument. Where the argument
-/// names a quantity, reuses [`Func::result_quantity`] - the single definition
+/// has a quantity, reuses [`Func::result_quantity`] - the single definition
 /// of the collapse rule (`spread`/`std`/`delta` turn a wrapping angle into a
 /// plain angle and a timestamp into a duration), shared with autocomplete. An
 /// exotic dimension has no quantity and passes straight through, since an

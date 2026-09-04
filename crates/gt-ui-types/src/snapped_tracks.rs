@@ -8,7 +8,7 @@ use gt_types::{PointIdx, TrackRef};
 ///
 /// Prepared once per run by the app (runs are immutable, the map redraws
 /// every frame) and shared via `Arc`. Plain data mirrored from the snap
-/// machinery, so the map keeps no gt-snap dependency.
+/// machinery, so the map builds without a gt-snap dependency.
 ///
 /// Iteration order is insertion order, kept ascending by [`TrackRef`]. The
 /// renderer paints the translucent traces in this order. A stable order keeps

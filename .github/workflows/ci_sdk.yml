@@ -673,8 +673,8 @@ jobs:
       # anything else unlisted must never pass. This job always runs so the
       # required status check always reports.
       #
-      # The `changes` job must have succeeded. If it reports no SDK changes, the
-      # suite was intentionally skipped and the gate passes. Otherwise every
+      # The `changes` job must have succeeded. If it reports the SDK unchanged,
+      # the suite was intentionally skipped and the gate passes. Otherwise every
       # dependency must have a 'success' result.
       - name: Verify the SDK suite succeeded
         env:

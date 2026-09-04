@@ -131,7 +131,7 @@ pub const INDEX_NAMES: &str = "Kp and Hp30 indices";
 /// The local archive of downloaded days, as the download controls name it.
 pub const ARCHIVE_NAME: &str = "geomagnetic index archive";
 
-/// Name of the service the values come from, as it names itself in every
+/// Name of the service the values come from, as it appears in every
 /// response.
 pub const SOURCE_NAME: &str = "GFZ Potsdam";
 

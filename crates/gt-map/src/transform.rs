@@ -12,8 +12,8 @@ use crate::polyline::MAX_LOD_ERROR_PX;
 /// At low zoom the viewport can span more than 360° of longitude, so the
 /// pixel column at the viewport centre may sit past the antimeridian wrap and
 /// `Projector::unproject` returns e.g. 185°.
-/// Longitude is periodic with period 360°, so the wrapped value names the same
-/// meridian and is the correct input for [`Longitude::new`].
+/// Longitude is periodic with period 360°, so the wrapped value identifies the
+/// same meridian and is the correct input for [`Longitude::new`].
 fn wrap_longitude_degrees(deg: f64) -> f64 {
     ((deg + 180.0).rem_euclid(360.0)) - 180.0
 }

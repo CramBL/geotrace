@@ -202,7 +202,7 @@ impl DisplayCounts {
                 }
                 // A match counts while any of its points is in scope - the
                 // halo renderer paints over the filtered point path, so a
-                // range fully outside the time window draws no ink.
+                // range fully outside the time window stays invisible.
                 counts.query_highlights += query_matches.map_or(0, |m| {
                     m.draws
                         .iter()
@@ -614,7 +614,7 @@ mod tests {
     #[test]
     fn draws_outside_the_time_window_are_not_counted() {
         // A query ran before the filter was narrowed: its match on points
-        // 0-1 now draws no halo ink, so it must not be counted either.
+        // 0-1 is invisible now, so it must not be counted either.
         let files = vec![fixture()];
         let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
         let matches = QueryMatches {

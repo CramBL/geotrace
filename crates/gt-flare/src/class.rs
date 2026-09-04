@@ -326,8 +326,8 @@ mod tests {
         assert_eq!(classification(class_type).radio_blackout_class(), expected);
     }
 
-    /// Every level is reachable from a published class, and each names its own
-    /// R number.
+    /// Every level is reachable from a published class, and each display name
+    /// starts with its own R number.
     #[test]
     fn every_blackout_level_is_reachable_and_named() {
         let reached: Vec<RadioBlackoutClass> = ["M1.0", "M5.0", "X1.0", "X10.0", "X20.0"]

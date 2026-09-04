@@ -1,8 +1,8 @@
 use gt_loaded_files::RecordingNames;
 use gt_types::{FileIdx, LoadedFile};
 
-/// Names the loaded recordings for the map's own labels, so a point's context
-/// menu and its tooltips say what the side panel says.
+/// Holds the names of the loaded recordings for the map's own labels, so a
+/// point's context menu and its tooltips say what the side panel says.
 #[derive(Clone, Copy)]
 pub(crate) struct RecordingLabels<'a> {
     files: &'a [LoadedFile],

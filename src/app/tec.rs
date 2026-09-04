@@ -463,7 +463,7 @@ impl TecMapScheduler {
     /// background of the same grid node and time of day.
     ///
     /// A track without a value carries no entry: a window the archive holds
-    /// too little of yields no background at all.
+    /// too little of has no background.
     pub fn quiet_time_deviations(
         &mut self,
         files: &[LoadedFile],
@@ -479,7 +479,7 @@ impl TecMapScheduler {
     /// the position the receiver was in nearest that epoch in time.
     ///
     /// The epochs are the ones the producer published, two hours apart in a
-    /// final file and one in a rapid one. Days the archive holds no maps for
+    /// final file and one in a rapid one. Days with no maps in the archive
     /// break the line.
     pub fn context_line(
         &mut self,
@@ -576,7 +576,7 @@ impl TecMapScheduler {
 
 /// Whether `day` must be requested.
 ///
-/// Three conditions put a day on the queue: the archive holds no maps for it,
+/// Three conditions put a day on the queue: the archive has no maps for it,
 /// the maps it holds came from [`IonexProduct::Rapid`] which JPL replaces with
 /// a final map about two days later, or the day is still running and so has no
 /// settled maps yet. A past day archived from [`IonexProduct::Final`] is never
@@ -597,7 +597,7 @@ fn day_needs_fetch(
 /// with.
 ///
 /// A day with no recording to place its epochs at contributes nothing, and so
-/// breaks the line like a day the archive does not hold.
+/// breaks the line like a day missing from the archive.
 fn context_day(
     store: Option<&ReadOnlyIonexStore>,
     positions: &FixPositionTimeline,
@@ -858,8 +858,8 @@ mod tests {
 
     /// A read-only session reads the day index beside the instance that owns
     /// the data directory, so the read at [`TecMapScheduler::adopt_store`] can
-    /// fail on that instance's open. Without a re-read the session draws no
-    /// TEC for the rest of its run.
+    /// fail on that instance's open. Without a re-read the session stops
+    /// drawing TEC for the rest of its run.
     #[test]
     fn a_day_index_read_that_failed_on_another_process_is_run_again_and_finds_the_days() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
@@ -1382,7 +1382,7 @@ mod tests {
         );
     }
 
-    /// A day every mirror failed on names each of them and why.
+    /// A day every mirror failed on lists each of them and why.
     #[test]
     fn a_day_every_mirror_failed_on_reports_each_failure() {
         let (_dir, store) = archive();
@@ -1689,7 +1689,7 @@ mod tests {
         day(2024, 5, 20)
     }
 
-    /// The peak of the one loaded track, or [`None`] where its window yields
+    /// The peak of the one loaded track, or [`None`] where its window has
     /// no background.
     fn track_peak(
         scheduler: &mut TecMapScheduler,
@@ -1731,7 +1731,7 @@ mod tests {
     }
 
     /// A median is formed only once a majority of the 27 days before the
-    /// recording is archived: a handful of days yields no quiet level.
+    /// recording is archived: a handful of days is too few.
     #[rstest]
     #[case::one_short_of_the_minimum(13, false)]
     #[case::the_minimum(14, true)]
@@ -2285,7 +2285,7 @@ mod tests {
         );
     }
 
-    /// A day the archive does not hold breaks the line between the days that
+    /// A day missing from the archive breaks the line between the days that
     /// surround it.
     #[test]
     fn an_unarchived_day_breaks_the_context_line() {

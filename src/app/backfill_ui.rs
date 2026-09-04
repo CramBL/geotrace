@@ -44,10 +44,10 @@ pub struct BackfillPreset {
 pub trait BackfillDataset {
     /// Distinguishes this control's date pickers from another control's.
     const ID_PREFIX: &'static str;
-    /// Names the archive days are downloaded into, as the outcome line and
-    /// the disabled hover spell it.
+    /// The name of the archive days are downloaded into, as the outcome line
+    /// and the disabled hover spell it.
     const ARCHIVE_NAME: &'static str;
-    /// Names what one day holds, as the download button's hover spells it.
+    /// What one day holds, as the download button's hover spells it.
     const DAY_SUBJECT: &'static str;
     /// How many requests one day costs.
     const REQUESTS_PER_DAY: u64;
@@ -168,7 +168,7 @@ impl BackfillDataset for TecMapBackfill {
     const ARCHIVE_NAME: &'static str = gt_ionex::text::ARCHIVE_NAME;
     const DAY_SUBJECT: &'static str = gt_ionex::text::MAP_NAMES;
     /// The first mirror's settled file serves a past day, and a further
-    /// request only goes out where that mirror holds no file.
+    /// request only goes out where that mirror has no file.
     const REQUESTS_PER_DAY: u64 = 1;
     const REQUEST_INTERVAL: Duration = gt_ionex::transport::REQUEST_INTERVAL;
     /// Measured on an archive filled from JPL final files: a day of 13 maps on

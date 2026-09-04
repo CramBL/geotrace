@@ -123,7 +123,7 @@ fn recording_of(points: Vec<NavPoint>) -> LoadedFile {
     recording_of_tracks(vec![points])
 }
 
-/// A recording of no fixes at all: it holds no track and covers no span.
+/// A recording of no fixes at all: it has no track and covers no span.
 pub(crate) fn recording_with_no_track() -> LoadedFile {
     recording_of_tracks(Vec::new())
 }

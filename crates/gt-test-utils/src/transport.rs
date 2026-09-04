@@ -39,7 +39,7 @@ impl<B> ScriptedTransport<B> {
     }
 
     /// Returns one script entry per request, in order. A request past the end
-    /// of the script fails, naming the test's under-declared script.
+    /// of the script fails, stating the test's under-declared script.
     pub fn in_order(script: Vec<TransportResponse<B>>) -> Self {
         Self::new(ScriptedResponses::InOrder(script.into()))
     }

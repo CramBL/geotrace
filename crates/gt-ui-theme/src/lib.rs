@@ -690,7 +690,7 @@ pub const QUERY_VALUE_BAR_ALPHA: u8 = 64;
 /// `color` as the magnitude bar behind a value cell of the query results
 /// table. Two draw queries paint bars of different colours: the caller passes
 /// the halo colour of the query that matched, or the theme's text colour for a
-/// query that draws no halo.
+/// query without a halo.
 pub fn query_value_bar_color(color: Color32) -> Color32 {
     let [red, green, blue, _] = color.to_srgba_unmultiplied();
     Color32::from_rgba_unmultiplied(red, green, blue, QUERY_VALUE_BAR_ALPHA)

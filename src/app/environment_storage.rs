@@ -987,8 +987,8 @@ mod tests {
         assert_eq!(report.removed_days_line().as_deref(), expected);
     }
 
-    /// The line names every archive the delete did not reach, and nothing at
-    /// all where it reached all of them.
+    /// The line lists every archive the delete did not reach, and is absent
+    /// where it reached all of them.
     #[rstest]
     #[case::every_archive_reached(vec![removed(EnvironmentArchive::AircraftInterference, 3)], None)]
     #[case::two_archives_skipped(
@@ -1024,7 +1024,8 @@ mod tests {
         assert_eq!(report.skipped_line().as_deref(), expected);
     }
 
-    /// The sentence form names the same archive as the settings row.
+    /// The sentence form and the settings row spell an archive the same way,
+    /// apart from case.
     #[test]
     fn every_archive_reads_the_same_inside_a_sentence() {
         for archive in EnvironmentArchive::iter() {

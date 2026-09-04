@@ -6,7 +6,7 @@ use std::ops::RangeInclusive;
 use chrono::{Days, NaiveDate};
 
 /// The days in `range` that `keep` accepts, oldest first. A range that runs
-/// backwards holds no days.
+/// backwards has no days.
 pub fn days_in_range(
     range: RangeInclusive<NaiveDate>,
     mut keep: impl FnMut(NaiveDate) -> bool,

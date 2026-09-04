@@ -81,7 +81,7 @@ fn a_track_shorter_than_the_window_reports_it() {
 }
 
 /// A metric the track carries no values for: every point is skipped, the
-/// summary names the metric, and the map stays untouched.
+/// summary states the metric, and the map stays untouched.
 #[test]
 fn a_metric_the_track_never_carried_matches_nothing() {
     let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(&[

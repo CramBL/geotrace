@@ -144,8 +144,8 @@ struct HeldSize {
     capped: bool,
 }
 
-/// The height each region of one dialog's body holds, under the salt naming
-/// the region.
+/// The height each region of one dialog's body holds, keyed by the region's
+/// salt.
 #[derive(Clone, Default)]
 struct FrozenRegionHeights(BTreeMap<&'static str, f32>);
 

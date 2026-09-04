@@ -598,7 +598,7 @@ impl HistoryWindow {
         // recording-level hide). Count them across all recordings so the toolbar
         // can offer a "Delete hidden data" action that permanently drops them.
         // The count is `None` until the recording list arrives, and `Some(0)`
-        // once the list reports no hidden track.
+        // once the list has no hidden track.
         let hidden_track_count: Option<usize> = self
             .entries
             .as_ref()

@@ -111,8 +111,8 @@ struct QuerySection<'a> {
     color: Option<egui::Color32>,
     columns: Vec<ResultColumn<'a>>,
     /// The channels this query's aggregate columns reduce, in table order and
-    /// without repeats. Empty for a query whose aggregate columns read no
-    /// channel, and for one with no aggregate column.
+    /// without repeats. Empty for a query whose aggregate columns reduce
+    /// metrics only, and for one with no aggregate column.
     reduced_channels: Vec<&'a str>,
 }
 
@@ -181,7 +181,7 @@ struct TrackValues<'a> {
 impl<'a> TrackValues<'a> {
     /// A provider reading the track's channels as well, for the samples an
     /// aggregate reduced. The provider the rows read through leaves them out:
-    /// a table of metric columns reads no channel.
+    /// a table of metric columns needs no channel.
     fn provider_with_channels(&self) -> TrackProvider<'a> {
         self.provider.clone().with_channels(self.channels)
     }
@@ -259,7 +259,7 @@ impl RowSource<'_> {
     }
 
     /// The samples of `channel` that `match_row`'s aggregate columns reduced,
-    /// `None` where the run holds no rows for the match's track. On the points
+    /// `None` where the run has no rows for the match's track. On the points
     /// source those are the channel's samples inside the closed time extent of
     /// the match's points, and there are none of them for a track that recorded
     /// no such channel. On a channel source they are the match's own rows of
@@ -554,7 +554,7 @@ impl<'a> ResultsTables<'a> {
         }
     }
 
-    /// The matches list, the caption naming the picked match, and that match's
+    /// The matches list, the caption stating the picked match, and that match's
     /// rows. While the list is popped out the tab holds only the last two, and
     /// the list fills a window of its own.
     pub(super) fn ui(
@@ -862,7 +862,7 @@ impl<'a> ResultsTables<'a> {
         )
     }
 
-    /// The line naming the match the points table lists below it, with the
+    /// The line stating the match the points table lists below it, with the
     /// control listing the samples its aggregate columns reduced.
     fn caption_ui(
         &self,
@@ -887,7 +887,7 @@ impl<'a> ResultsTables<'a> {
         });
     }
 
-    /// Why the picked match lists no samples under it, `None` where it lists
+    /// Why the picked match has no samples under it, `None` where it lists
     /// some.
     fn no_samples_reason(&self, selected: &MatchRow) -> Option<&'static str> {
         let reduces_a_channel = self
@@ -1171,7 +1171,7 @@ impl<'a> ResultsTables<'a> {
                 // the window it is in.
                 table = table.column(Column::exact(*width));
             }
-            // The trailing column holds no value: it stretches the striping and
+            // The trailing column has no value: it stretches the striping and
             // the hover fill across the full width of the table.
             table = table.column(Column::remainder());
 
@@ -1286,7 +1286,7 @@ impl<'a> ResultsTables<'a> {
     }
 
     /// Every match of the run as tab-separated values, in the order the table
-    /// lists them: one block per query, each with a header line naming its
+    /// lists them: one block per query, each with a header line stating its
     /// columns in the unit their values are in.
     fn as_tsv(&self) -> String {
         let mut tsv = String::new();
@@ -1332,7 +1332,7 @@ impl<'a> ResultsTables<'a> {
 struct PointColumns<'a> {
     columns: &'a [ResultColumn<'a>],
     /// One entry per column of `columns`, in the same order. Empty where the
-    /// table paints no bars.
+    /// table has no bars.
     ranges: &'a [Option<ColumnValueRange>],
     bar_color: egui::Color32,
 }
@@ -1447,7 +1447,7 @@ fn swatch_side(ui: &egui::Ui) -> f32 {
 }
 
 /// A small square in a draw query's halo `color`, tying a summary line and its
-/// matches to the halos on the map. A query that draws no halos leaves the
+/// matches to the halos on the map. A query without halos leaves the
 /// space blank, so the lines and rows still line up. Painted, since the editor
 /// font has no square glyph.
 fn query_swatch_ui(ui: &mut egui::Ui, color: Option<egui::Color32>, hover: &str) {

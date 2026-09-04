@@ -69,7 +69,7 @@ pub(super) enum LineTableRow {
         session_index: usize,
     },
 
-    /// The divider naming the UTC day the entry at `entry_index` opens.
+    /// The divider stating the UTC day the entry at `entry_index` opens.
     DayDivider {
         entry_index: usize,
     },
@@ -549,7 +549,7 @@ impl MessageColors {
 
     /// The runs of one message, in message order and never overlapping: the
     /// hostname, then the service, then the level. An info level draws in the
-    /// base colour, so it takes no run.
+    /// base colour, which needs no run.
     fn runs(&self, recognised: RecognisedMessage) -> Vec<MessageRun> {
         let mut runs = Vec::with_capacity(3);
         if let Some(range) = recognised.hostname().filter(|_| self.color_the_hostname) {
@@ -795,7 +795,7 @@ impl EntryRow<'_> {
     }
 }
 
-/// One divider row: what it names, and the rule running from it to the right
+/// One divider row: its label, and the rule running from it to the right
 /// edge of the table.
 fn divider_row_ui(ui: &mut egui::Ui, label: RichText) {
     ui.horizontal(|ui| {
@@ -804,7 +804,7 @@ fn divider_row_ui(ui: &mut egui::Ui, label: RichText) {
     });
 }
 
-/// The divider opening one boot session, naming the run it starts.
+/// The divider opening one boot session, stating the run it starts.
 fn boot_divider_row_ui(ui: &mut egui::Ui, session: &BootSession) {
     let uptime = session
         .uptime()
@@ -1059,8 +1059,8 @@ mod tests {
     }
 
     /// A boot session whose first line opens a new day draws the day divider
-    /// above its own boot divider. A session the filters emptied still takes no
-    /// row.
+    /// above its own boot divider. A session the filters emptied is left out
+    /// of the table.
     #[test]
     fn a_boot_session_opening_a_new_day_draws_the_day_divider_above_its_own() {
         let boot_sessions = sessions(&[2, 2, 2]);

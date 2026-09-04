@@ -10,7 +10,7 @@ use gt_types::nav_point::NavPoint;
 use gt_types::track::MeasuredTrackGeometry;
 
 /// The geometry of `points` taken as a track of their own, `None` when the
-/// builder places no fix of them.
+/// builder places none of them.
 pub fn measured_geometry(points: &[NavPoint]) -> Option<MeasuredTrackGeometry> {
     segment::measure_track_geometry(points, segment::FixPlacementRule::default())
         .measured()

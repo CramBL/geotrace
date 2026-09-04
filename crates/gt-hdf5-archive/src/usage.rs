@@ -28,7 +28,7 @@ pub struct ArchiveUsage {
     /// read.
     pub bytes: Option<u64>,
     pub days: usize,
-    /// [`None`] while the archive holds no day.
+    /// [`None`] until the archive holds a day.
     pub span: Option<ArchivedDaySpan>,
 }
 

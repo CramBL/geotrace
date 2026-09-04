@@ -494,8 +494,8 @@ pub struct LoadedLogs {
     /// [`LoadedLogs::map_matches`], which rebuilds what it stands for.
     map_matches_stale: bool,
 
-    /// The recording names the cached layers' display names were resolved
-    /// from. A name template change resolves other names, and the tooltips
+    /// The recording names used when the cached layers' display names were
+    /// resolved. A name template change resolves other names, and the tooltips
     /// follow it.
     map_matches_recording_names: RecordingNames,
 }
@@ -536,8 +536,8 @@ impl LoadedLogs {
     /// Loads `log` under a fresh identity, taking a colour slot for each layer
     /// chip it arrives with.
     ///
-    /// Content already loaded is refused: the outcome names the log the session
-    /// holds it under, and `log` is dropped.
+    /// Content already loaded is rejected: the outcome states which log the
+    /// session holds it under, and `log` is dropped.
     pub fn push(&mut self, mut log: LoadedLog) -> LogPushOutcome {
         if let Some(loaded) = self.id_of_content(log.content_hash) {
             return LogPushOutcome::AlreadyLoaded(loaded);
@@ -1204,8 +1204,8 @@ mod tests {
         assert!(map_matches(&mut logs, &files).is_empty());
     }
 
-    /// Each layer names the log its filter read, which is how the map hands a
-    /// hovered hexagon back to the viewer showing that log.
+    /// Each layer identifies the log its filter read, which is how the map
+    /// hands a hovered hexagon back to the viewer showing that log.
     #[test]
     fn every_layer_names_the_log_it_was_filtered_out_of() {
         let files = loaded(vec![recording_at(55.0, 10)]);
@@ -1233,7 +1233,7 @@ mod tests {
 
     /// What a hexagon's tooltip identifies its log by: nothing while the
     /// session holds one log, the log's name once it holds a second, and the
-    /// anchored recording after that name where both logs go by it.
+    /// anchored recording after the name where two logs go by the same name.
     #[rstest::rstest]
     #[case::one_loaded_log(&[("navsyncd.log", "navsyncd")], &[None])]
     #[case::two_names(
@@ -1328,8 +1328,8 @@ mod tests {
             .clone()
     }
 
-    /// A hexagon of an unloaded log never names the log that took its place in
-    /// the list: an identity is never handed out twice.
+    /// A hexagon of an unloaded log never identifies the log that took its
+    /// place in the list: an identity is never handed out twice.
     #[test]
     fn an_unloaded_logs_identity_is_never_handed_out_again() {
         let mut logs = LoadedLogs::default();
@@ -1598,7 +1598,7 @@ mod tests {
     }
 
     /// One log per content: a second copy of a text the session already holds
-    /// is refused, whatever name it arrived under.
+    /// is rejected, whatever name it arrived under.
     #[test]
     fn pushing_content_that_is_already_loaded_returns_the_loaded_log() {
         let mut logs = LoadedLogs::default();
@@ -1619,8 +1619,8 @@ mod tests {
         );
     }
 
-    /// The refused copy leaves the loaded log as it was, chips and colour slots
-    /// included.
+    /// The rejected copy leaves the loaded log as it was, chips and colour
+    /// slots included.
     #[test]
     fn a_refused_copy_takes_no_colour_slot_from_the_loaded_log() {
         let mut logs = LoadedLogs::default();

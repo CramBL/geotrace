@@ -1333,9 +1333,8 @@ impl PyNavFile {
 
     /// Per-variant style overrides stored in the file.
     ///
-    /// A style naming an icon this build does not have raises a
-    /// ``UserWarning``. Its ``icon`` reads as ``None``. Its ``icon_name`` holds
-    /// the name.
+    /// A style with an icon unknown to this build raises a ``UserWarning``.
+    /// Its ``icon`` reads as ``None``. Its ``icon_name`` holds the name.
     #[getter]
     fn event_marker_styles(&self, py: Python<'_>) -> PyResult<Vec<PyEventMarkerStyle>> {
         let styles = self.inner.event_marker_styles();

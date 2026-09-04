@@ -339,7 +339,7 @@ mod tests {
     }
 
     /// Each stage's summary counts the track once per metric it references
-    /// and the track lacks - a `snap_error` stage names the run-less track,
+    /// and the track lacks - a `snap_error` stage lists the run-less track,
     /// the velocity stage next to it does not.
     #[test]
     fn stages_count_tracks_without_their_own_metrics() {

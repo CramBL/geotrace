@@ -211,7 +211,7 @@ fn parse_kp_statuses(body: &ResponseBody) -> Result<Vec<KpStatus>, ParseError> {
         .collect()
 }
 
-/// The JSON type of `value`, for an error naming what arrived instead.
+/// The JSON type of `value`, for an error stating what arrived.
 fn json_type_name(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",

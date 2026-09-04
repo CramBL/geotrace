@@ -289,8 +289,8 @@ impl ResolvedChannel<'_> {
             }
             ChannelSampleOrder::PositionsInTimeOrder(samples) => {
                 // The samples of the span are a contiguous range of the
-                // time-ordered positions, each naming a row anywhere in the
-                // stored values.
+                // time-ordered positions, each referring to a row anywhere in
+                // the stored values.
                 let lo = samples.partition_point(|sample| sample.seconds < t_lo);
                 let hi = samples.partition_point(|sample| sample.seconds <= t_hi);
                 for sample in samples.get(lo..hi).unwrap_or_default() {
@@ -1085,7 +1085,7 @@ mod tests {
     #[test]
     fn channel_span_reads_vector_rows() {
         // A vector channel returns row-major values, all columns per row, each
-        // converted to base. An unknown channel returns no values.
+        // converted to base. An unknown channel returns a span with no values.
         let base = TEST_EPOCH as f64;
         let accel = vector_channel(
             "accel",
@@ -1190,8 +1190,8 @@ mod tests {
         assert!(timeline.values.is_empty());
     }
 
-    /// A provider built for metric columns alone reads no channel until one is
-    /// given to it.
+    /// A provider built for metric columns alone reads a channel only once one
+    /// is given to it.
     #[test]
     fn a_provider_given_channels_reads_them() {
         let base = TEST_EPOCH as f64;
@@ -1288,8 +1288,8 @@ mod tests {
     }
 
     /// A channel sample is kept by its own timestamp, independent of the
-    /// points. This window keeps no point of the track and still keeps the
-    /// sample past its last fix.
+    /// points. This window excludes every point of the track and still keeps
+    /// the sample past its last fix.
     #[test]
     fn a_slice_provider_keeps_a_channel_sample_the_window_covers_without_a_point() {
         let base = TEST_EPOCH as f64;

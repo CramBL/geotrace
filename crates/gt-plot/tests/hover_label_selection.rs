@@ -192,7 +192,7 @@ const THE_FLARE_HOVER_LABEL: &str = "X2.2 solar flare\n\
     Lists every flare on the Sun. Only one on the receiver's sunlit side raises the \
     ionization above it.";
 
-/// The label names the channel's first sample and the rulers draw at it, far
+/// The label states the channel's first sample and the rulers draw at it, far
 /// to the left of the pointer. The channel's two samples draw one segment
 /// across the whole recording, and the pointer rests a third of the way along
 /// it, nearest that first endpoint.
@@ -242,9 +242,9 @@ fn snapshot_the_plot_labels_the_nearest_sample_of_the_level_it_drew() {
     plot.snapshot("hover_a_downsampled_line");
 }
 
-/// The label names the upper of two channel lines, which the plot added last.
-/// The lines lie about 3 points apart, both within egui_plot's interact radius
-/// of a pointer 1 point below the lower one.
+/// The label identifies the upper of two channel lines, which the plot added
+/// last. The lines lie about 3 points apart, both within egui_plot's interact
+/// radius of a pointer 1 point below the lower one.
 #[test]
 fn snapshot_the_plot_labels_the_line_it_added_last() {
     let sample_times = vec![at_second(0), at_second(59)];
@@ -300,9 +300,9 @@ fn snapshot_the_plot_labels_a_flare_while_the_pointer_rests_on_a_line() {
     plot.snapshot("hover_beside_a_flare_marker");
 }
 
-/// The label names the flare with the pointer near the top of the plot, far
-/// from every line: a marker runs the plot's full height and is hit-tested on
-/// x alone.
+/// The label identifies the flare with the pointer near the top of the plot,
+/// far from every line: a marker runs the plot's full height and is hit-tested
+/// on x alone.
 #[test]
 fn snapshot_the_plot_labels_a_flare_from_its_x_alone() {
     let mut plot = PlotScene::of(recording(60, 1, Vec::new()))
@@ -408,8 +408,7 @@ fn snapshot_the_plot_labels_the_tec_interpolated_at_the_pointer() {
 }
 
 /// The label states the pointer's own time and value: a channel run of one
-/// sample draws no line, so the pointer resting on that sample reaches no
-/// channel.
+/// sample has no line for the pointer to be near.
 #[test]
 fn snapshot_the_plot_draws_no_line_and_no_channel_label_for_a_run_of_one_sample() {
     let drawn = scalar_channel(
@@ -432,7 +431,7 @@ fn snapshot_the_plot_draws_no_line_and_no_channel_label_for_a_run_of_one_sample(
     plot.snapshot("hover_a_channel_run_of_one_sample");
 }
 
-/// The label over either run names the channel and the sample the pointer is
+/// The label over either run states the channel and the sample the pointer is
 /// nearest: a channel whose timestamps step back once is drawn as two lines
 /// under one name.
 #[test]
