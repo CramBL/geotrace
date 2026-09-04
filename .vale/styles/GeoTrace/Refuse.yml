@@ -1,0 +1,19 @@
+# Code that declines input rejects it. A remote host that declines a request
+# refuses it, which is the sense of the gt-jam scheduler's refused days, of
+# HTTP 403 and of "connection refused".
+#
+# Vale note: an exception must start with (?i), otherwise Vale compiles it
+# case-sensitive.
+extends: existence
+message: "Refuse '%s': code rejects input. A remote host refuses a request."
+level: error
+ignorecase: true
+nonword: true
+exceptions:
+  - '(?i)\b(?:host|server|mirror|endpoint|catalog)s?\s+(?:that\s+|which\s+)?refus\w*'
+  - '(?i)\brefus\w*\s+(?:by\s+|from\s+)?(?:the\s+|a\s+)?(?:host|server|mirror|endpoint)'
+  - '(?i)\bconnection\s+refused\b'
+  - '(?i)\brefused\s+days?\b'
+  - '(?i)\bdays?\s+(?:the\s+host\s+)?refused\b'
+tokens:
+  - '\brefus(?:e|es|ed|ing|al)\b'
