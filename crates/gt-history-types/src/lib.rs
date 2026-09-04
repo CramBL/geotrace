@@ -10,7 +10,12 @@ pub use log_attachment::{
     LogContentHash, StoredLogFilter, StoredLogFilterMode, logs_directory_for_database,
 };
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 0;
+/// The schema version this build writes.
+///
+/// Version 1 stores each track's [`TrackState`] in the track table's
+/// [`TRACK_STATE_DATASET`] column. Version 0 stored one boolean per track in a
+/// [`LEGACY_TRACK_HIDDEN_DATASET`] column, which [`TrackStateColumn`] reads.
+pub const CURRENT_SCHEMA_VERSION: i64 = 1;
 pub const SCHEMA_VERSION_ATTR: &str = "schema_version";
 
 pub const ATTR_IDENTITY: &str = "identity";
@@ -21,11 +26,6 @@ pub const ATTR_SAT_REPORT_COUNT: &str = "sat_report_count";
 pub const ATTR_MARKER_COUNT: &str = "marker_count";
 pub const ATTR_EVENT_MARKER_COUNT: &str = "event_marker_count";
 pub const ATTR_GTD_SIZE_BYTES: &str = "gtd_size_bytes";
-/// Soft-delete marker: a recording with this attribute set to `1` is hidden from
-/// the normal history listing and is a candidate for "delete hidden data".
-/// Stored as `u64` (`1` = hidden) so both backends can read/write it with the
-/// integer attribute handling they already have.
-pub const ATTR_HIDDEN: &str = "hidden";
 
 /// Segmentation settings the stored tracks were produced with. `track_split_gap`
 /// is stored in microseconds.
@@ -40,13 +40,17 @@ pub const ATTR_SEG_SPLIT_RULE: &str = "seg_track_split_rule";
 pub const ATTR_SEG_PLACEMENT_RULE: &str = "seg_fix_placement_rule";
 
 /// DB-internal subgroup (under each recording group) holding the stored track
-/// ranges as parallel `start`/`end`/`hidden` datasets. The name is prefixed so
+/// ranges as parallel `start`/`end`/`state` datasets. The name is prefixed so
 /// it cannot collide with a GTD data group, and is skipped when reconstructing
 /// the original GTD file on load.
 pub const TRACKS_GROUP: &str = "__geotrace_tracks__";
 pub const TRACK_START_DATASET: &str = "start";
 pub const TRACK_END_DATASET: &str = "end";
-pub const TRACK_HIDDEN_DATASET: &str = "hidden";
+/// Each track's [`TrackState`], as its [`TrackState::column_value`].
+pub const TRACK_STATE_DATASET: &str = "state";
+/// The state column of a track table written before [`TRACK_STATE_DATASET`]:
+/// `0` for a live track, any other value for a shelved one.
+pub const LEGACY_TRACK_HIDDEN_DATASET: &str = "hidden";
 
 /// DB-internal subgroup (under each recording group) holding the recording's
 /// cached snap-to-road run as one opaque byte dataset. The bytes are the
@@ -151,7 +155,6 @@ pub fn is_db_recording_attr(key: &str) -> bool {
             | ATTR_MARKER_COUNT
             | ATTR_EVENT_MARKER_COUNT
             | ATTR_GTD_SIZE_BYTES
-            | ATTR_HIDDEN
             | ATTR_SEG_GAP_US
             | ATTR_SEG_DETECT_CLOCK
             | ATTR_SEG_CLOCK_SIGMAS
@@ -168,12 +171,94 @@ pub fn is_db_internal_group(name: &str) -> bool {
 }
 
 /// One stored track: a half-open index range `[start, end)` into the recording's
-/// nav points, plus whether it is hidden.
+/// nav points, plus its [`TrackState`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrackRange {
     pub start: u64,
     pub end: u64,
-    pub hidden: bool,
+    pub state: TrackState,
+}
+
+/// The state one row of the stored track table is in.
+///
+/// A shelved track keeps its nav points in the recording and comes back when
+/// the user unshelves it. Whether a track is drawn on the map is the session's
+/// own visibility state, which lives outside the database.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackState {
+    /// A track of the recording's working set: the state every stored track
+    /// starts in.
+    Live,
+    /// A track the user took out of the working set, restored by unshelving it.
+    Shelved,
+    /// A tombstone for a track the user deleted permanently. The permanent
+    /// delete compacts the track table today, and the tombstone is what takes
+    /// the deleted row's place once the table keeps its row count across a
+    /// delete.
+    Deleted,
+}
+
+impl TrackState {
+    const LIVE_COLUMN_VALUE: u64 = 0;
+    const SHELVED_COLUMN_VALUE: u64 = 1;
+    const DELETED_COLUMN_VALUE: u64 = 2;
+
+    pub fn column_value(self) -> u64 {
+        match self {
+            Self::Live => Self::LIVE_COLUMN_VALUE,
+            Self::Shelved => Self::SHELVED_COLUMN_VALUE,
+            Self::Deleted => Self::DELETED_COLUMN_VALUE,
+        }
+    }
+
+    /// The state a [`TRACK_STATE_DATASET`] value stands for. An unrecognized
+    /// value decodes as [`Self::Shelved`], which keeps the track and its nav
+    /// points.
+    fn from_state_column_value(value: u64) -> Self {
+        match value {
+            Self::LIVE_COLUMN_VALUE => Self::Live,
+            Self::DELETED_COLUMN_VALUE => Self::Deleted,
+            _ => Self::Shelved,
+        }
+    }
+
+    /// The state a [`LEGACY_TRACK_HIDDEN_DATASET`] value stands for: `0` is
+    /// [`Self::Live`] and every other value is [`Self::Shelved`].
+    fn from_legacy_hidden_column_value(value: u64) -> Self {
+        if value == Self::LIVE_COLUMN_VALUE {
+            Self::Live
+        } else {
+            Self::Shelved
+        }
+    }
+}
+
+/// The track table's state column, on disk in one of the two forms below.
+/// [`track_ranges_from_columns`] decodes it according to the variant given.
+#[derive(Debug, Clone, Copy)]
+pub enum TrackStateColumn<'a> {
+    /// The [`TRACK_STATE_DATASET`] column, which a recording's track table
+    /// holds from schema version 1 on.
+    State(&'a [u64]),
+    /// The [`LEGACY_TRACK_HIDDEN_DATASET`] column, the state column of a track
+    /// table written before schema version 1.
+    LegacyHidden(&'a [u64]),
+}
+
+impl<'a> TrackStateColumn<'a> {
+    fn states(self) -> impl Iterator<Item = TrackState> + 'a {
+        let (values, from_value): (&[u64], fn(u64) -> TrackState) = match self {
+            Self::State(values) => (values, TrackState::from_state_column_value),
+            Self::LegacyHidden(values) => (values, TrackState::from_legacy_hidden_column_value),
+        };
+        values.iter().copied().map(from_value)
+    }
+
+    fn row_count(self) -> usize {
+        match self {
+            Self::State(values) | Self::LegacyHidden(values) => values.len(),
+        }
+    }
 }
 
 /// A reference to a specific recording stored in the history database.
@@ -289,12 +374,12 @@ pub struct StoredSegmentation {
     pub clock_discontinuity_sigmas: f64,
 }
 
-/// Split track ranges into the parallel on-disk columns (`start`/`end`/`hidden`).
+/// Split track ranges into the parallel on-disk columns (`start`/`end`/`state`).
 pub fn track_columns(tracks: &[TrackRange]) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
     let starts = tracks.iter().map(|t| t.start).collect();
     let ends = tracks.iter().map(|t| t.end).collect();
-    let hidden = tracks.iter().map(|t| u64::from(t.hidden)).collect();
-    (starts, ends, hidden)
+    let states = tracks.iter().map(|t| t.state.column_value()).collect();
+    (starts, ends, states)
 }
 
 /// Reconstruct track ranges from the on-disk columns, validating consistency.
@@ -305,23 +390,83 @@ pub fn track_columns(tracks: &[TrackRange]) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
 pub fn track_ranges_from_columns(
     starts: &[u64],
     ends: &[u64],
-    hidden: &[u64],
+    states: TrackStateColumn<'_>,
 ) -> Option<Vec<TrackRange>> {
-    if starts.len() != ends.len() || starts.len() != hidden.len() {
+    if starts.len() != ends.len() || starts.len() != states.row_count() {
         return None;
     }
     let mut out = Vec::with_capacity(starts.len());
-    for ((&start, &end), &h) in starts.iter().zip(ends).zip(hidden) {
+    for ((&start, &end), state) in starts.iter().zip(ends).zip(states.states()) {
         if start > end {
             return None;
         }
-        out.push(TrackRange {
-            start,
-            end,
-            hidden: h != 0,
-        });
+        out.push(TrackRange { start, end, state });
     }
     Some(out)
+}
+
+/// The stored table rows the recording's tracks sit in, in listing order.
+///
+/// A track index from [`ReadOnlyHistoryDatabase::load`] or
+/// [`ReadOnlyHistoryDatabase::list_recordings`] counts the rows around a
+/// [`TrackState::Deleted`] tombstone: `listed_track_rows(&tracks)[index]` is
+/// the stored table row it belongs to.
+pub fn listed_track_rows(tracks: &[TrackRange]) -> Vec<usize> {
+    tracks
+        .iter()
+        .enumerate()
+        .filter(|(_, track)| track.state != TrackState::Deleted)
+        .map(|(row, _)| row)
+        .collect()
+}
+
+/// Set `state` on the tracks at `track_indices`, which count the tracks the
+/// recording lists (see [`listed_track_rows`]). Returns the indices past the
+/// last listed track, for the caller to report with the recording it read them
+/// for.
+#[must_use]
+pub fn set_state_of_listed_tracks(
+    tracks: &mut [TrackRange],
+    track_indices: &[usize],
+    state: TrackState,
+) -> Vec<usize> {
+    let rows = listed_track_rows(tracks);
+    let mut past_the_last_listed_track = Vec::new();
+    for &index in track_indices {
+        match rows.get(index).and_then(|&row| tracks.get_mut(row)) {
+            Some(track) => track.state = state,
+            None => past_the_last_listed_track.push(index),
+        }
+    }
+    past_the_last_listed_track
+}
+
+/// Decode a recording's stored track table, tombstones and all, from the
+/// columns `read_column` reads.
+///
+/// `read_column` reads one dataset of [`TRACKS_GROUP`] and returns `None` for a
+/// dataset the recording's table holds none of. A table written before
+/// [`TRACK_STATE_DATASET`] decodes by its [`LEGACY_TRACK_HIDDEN_DATASET`]
+/// column.
+///
+/// `None` for a table whose columns are inconsistent, which the caller treats
+/// as absent and recomputes the recording's tracks from its nav points.
+pub fn stored_track_table(
+    read_column: impl Fn(&str) -> Option<Vec<u64>>,
+) -> Option<Vec<TrackRange>> {
+    let starts = read_column(TRACK_START_DATASET).unwrap_or_default();
+    let ends = read_column(TRACK_END_DATASET).unwrap_or_default();
+    let state_column = read_column(TRACK_STATE_DATASET);
+    let legacy_column = read_column(LEGACY_TRACK_HIDDEN_DATASET);
+    let states = match state_column {
+        Some(ref values) => TrackStateColumn::State(values),
+        None => TrackStateColumn::LegacyHidden(legacy_column.as_deref().unwrap_or_default()),
+    };
+    let table = track_ranges_from_columns(&starts, &ends, states);
+    if table.is_none() {
+        log::warn!("Inconsistent track table; ignoring it (tracks will be recomputed)");
+    }
+    table
 }
 
 /// The time a recording's nav points cover, in microseconds since epoch UTC:
@@ -469,8 +614,8 @@ pub struct RecordingEntry {
     pub meta: RecordingMeta,
     /// Total number of stored tracks for this recording.
     pub total_tracks: usize,
-    /// How many of those tracks are currently hidden.
-    pub hidden_tracks: usize,
+    /// How many of those tracks are shelved.
+    pub shelved_tracks: usize,
     /// Recording title, from the GTD [`GTD_META_TITLE_ATTR`] attribute.
     pub title: Option<String>,
     /// Producing device, from the GTD [`GTD_META_DEVICE_ATTR`] attribute.
@@ -656,7 +801,7 @@ pub trait HistoryDatabase: ReadOnlyHistoryDatabase {
         Self: Sized;
 
     /// Store a recording: the original GTD `bytes`, the segmentation `settings`,
-    /// and the resulting `tracks` (index ranges, none hidden initially).
+    /// and the resulting `tracks` (index ranges, every one of them live).
     fn insert(
         &mut self,
         identity: &str,
@@ -683,8 +828,8 @@ pub trait HistoryDatabase: ReadOnlyHistoryDatabase {
     ) -> Result<(), DbError>;
 
     /// Replace a recording's stored tracks and segmentation settings (e.g. after
-    /// recalculating from the original with new settings). Discards prior hidden
-    /// marks - the supplied `tracks` carry the new hidden state.
+    /// recalculating from the original with new settings). The supplied `tracks`
+    /// hold the new [`TrackState`] of every row, discarding the stored ones.
     fn set_tracks(
         &mut self,
         db_ref: &DatabaseRef,
@@ -692,12 +837,18 @@ pub trait HistoryDatabase: ReadOnlyHistoryDatabase {
         settings: StoredSegmentation,
     ) -> Result<(), DbError>;
 
-    /// Mark or unmark individual tracks (by index) of a recording as hidden.
-    fn set_tracks_hidden(
+    /// Shelve the tracks at `track_indices` of a recording, or unshelve them
+    /// when `shelved` is false.
+    ///
+    /// `track_indices` count the tracks the recording lists, as
+    /// [`ReadOnlyHistoryDatabase::load`] numbers them: the tombstone rows of
+    /// its stored table are not among them (see [`listed_track_rows`]). An
+    /// index past the last listed track is skipped with a warning.
+    fn set_tracks_shelved(
         &mut self,
         db_ref: &DatabaseRef,
         track_indices: &[usize],
-        hidden: bool,
+        shelved: bool,
     ) -> Result<(), DbError>;
 
     /// Store the serialized snap run for a recording, replacing any prior
@@ -859,50 +1010,92 @@ mod tests {
 mod track_column_properties {
     use proptest::prelude::*;
 
-    use super::{TrackRange, track_columns, track_ranges_from_columns};
+    use super::{
+        TrackRange, TrackState, TrackStateColumn, track_columns, track_ranges_from_columns,
+    };
+
+    fn state_strategy() -> impl Strategy<Value = TrackState> {
+        prop_oneof![
+            Just(TrackState::Live),
+            Just(TrackState::Shelved),
+            Just(TrackState::Deleted),
+        ]
+    }
 
     /// Build valid (`start <= end`) ranges from arbitrary input.
-    fn valid_ranges(raw: &[(u64, u64, bool)]) -> Vec<TrackRange> {
+    fn valid_ranges(raw: &[(u64, u64, TrackState)]) -> Vec<TrackRange> {
         raw.iter()
-            .map(|&(a, b, hidden)| {
+            .map(|&(a, b, state)| {
                 let (start, end) = if a <= b { (a, b) } else { (b, a) };
-                TrackRange { start, end, hidden }
+                TrackRange { start, end, state }
             })
             .collect()
     }
 
+    /// Two columns of `rows`, each row ordered so that `start <= end`.
+    fn geometry_columns(rows: &[(u64, u64)]) -> (Vec<u64>, Vec<u64>) {
+        rows.iter()
+            .map(|&(a, b)| if a <= b { (a, b) } else { (b, a) })
+            .unzip()
+    }
+
     proptest! {
         /// The on-disk column split is lossless for any valid track table: the
-        /// exact ranges (including hidden flags) come back.
+        /// exact ranges, states and all, come back.
         #[test]
         fn columns_round_trip(
-            raw in proptest::collection::vec((any::<u64>(), any::<u64>(), any::<bool>()), 0..64),
+            raw in proptest::collection::vec(
+                (any::<u64>(), any::<u64>(), state_strategy()),
+                0..64,
+            ),
         ) {
             let tracks = valid_ranges(&raw);
-            let (starts, ends, hidden) = track_columns(&tracks);
-            prop_assert_eq!(track_ranges_from_columns(&starts, &ends, &hidden), Some(tracks));
+            let (starts, ends, states) = track_columns(&tracks);
+            prop_assert_eq!(
+                track_ranges_from_columns(&starts, &ends, TrackStateColumn::State(&states)),
+                Some(tracks),
+            );
         }
 
-        /// Any column with a `hidden` value other than 0/1 still decodes to a
-        /// boolean (non-zero is hidden), so a stray on-disk value never corrupts
-        /// the table.
+        /// An unrecognized state value decodes as [`TrackState::Shelved`],
+        /// which keeps the track and its nav points.
         #[test]
-        fn nonzero_hidden_decodes_as_true(
+        fn an_unknown_state_value_decodes_as_shelved(
+            rows in proptest::collection::vec((0u64..1_000, 0u64..1_000, 3u64..), 1..32),
+        ) {
+            let (starts, ends) = geometry_columns(
+                &rows.iter().map(|&(a, b, _)| (a, b)).collect::<Vec<_>>(),
+            );
+            let states: Vec<u64> = rows.iter().map(|&(_, _, state)| state).collect();
+            let decoded =
+                track_ranges_from_columns(&starts, &ends, TrackStateColumn::State(&states))
+                    .expect("valid geometry decodes");
+            for range in decoded {
+                prop_assert_eq!(range.state, TrackState::Shelved);
+            }
+        }
+
+        /// A stray on-disk value never corrupts the table: in the legacy
+        /// column of a schema version 0 database, `0` is a live track and every
+        /// other value is shelved.
+        #[test]
+        fn any_nonzero_legacy_hidden_value_decodes_as_shelved(
             rows in proptest::collection::vec((0u64..1_000, 0u64..1_000, any::<u64>()), 1..32),
         ) {
-            let mut starts = Vec::with_capacity(rows.len());
-            let mut ends = Vec::with_capacity(rows.len());
-            let mut hidden = Vec::with_capacity(rows.len());
-            for &(a, b, h) in &rows {
-                let (s, e) = if a <= b { (a, b) } else { (b, a) };
-                starts.push(s);
-                ends.push(e);
-                hidden.push(h);
-            }
-            let decoded = track_ranges_from_columns(&starts, &ends, &hidden)
-                .expect("valid geometry decodes");
-            for (range, &h) in decoded.iter().zip(&hidden) {
-                prop_assert_eq!(range.hidden, h != 0);
+            let (starts, ends) = geometry_columns(
+                &rows.iter().map(|&(a, b, _)| (a, b)).collect::<Vec<_>>(),
+            );
+            let hidden: Vec<u64> = rows.iter().map(|&(_, _, hidden)| hidden).collect();
+            let decoded =
+                track_ranges_from_columns(&starts, &ends, TrackStateColumn::LegacyHidden(&hidden))
+                    .expect("valid geometry decodes");
+            for (range, &hidden) in decoded.iter().zip(&hidden) {
+                let expected = if hidden == 0 {
+                    TrackState::Live
+                } else {
+                    TrackState::Shelved
+                };
+                prop_assert_eq!(range.state, expected);
             }
         }
 
@@ -912,10 +1105,13 @@ mod track_column_properties {
         fn mismatched_lengths_reject(
             starts in proptest::collection::vec(any::<u64>(), 0..16),
             ends in proptest::collection::vec(any::<u64>(), 0..16),
-            hidden in proptest::collection::vec(any::<u64>(), 0..16),
+            states in proptest::collection::vec(any::<u64>(), 0..16),
         ) {
-            prop_assume!(!(starts.len() == ends.len() && starts.len() == hidden.len()));
-            prop_assert_eq!(track_ranges_from_columns(&starts, &ends, &hidden), None);
+            prop_assume!(!(starts.len() == ends.len() && starts.len() == states.len()));
+            prop_assert_eq!(
+                track_ranges_from_columns(&starts, &ends, TrackStateColumn::State(&states)),
+                None,
+            );
         }
 
         /// A single inverted range (`start > end`) rejects the whole table.
@@ -925,13 +1121,7 @@ mod track_column_properties {
             bad in any::<usize>(),
         ) {
             let n = pairs.len();
-            let mut starts = Vec::with_capacity(n);
-            let mut ends = Vec::with_capacity(n);
-            for &(a, b) in &pairs {
-                let (s, e) = if a <= b { (a, b) } else { (b, a) };
-                starts.push(s);
-                ends.push(e);
-            }
+            let (mut starts, mut ends) = geometry_columns(&pairs);
             // Force range `i` to have start strictly greater than end.
             let i = bad % n;
             if starts[i] == 0 {
@@ -940,8 +1130,11 @@ mod track_column_properties {
             } else {
                 ends[i] = starts[i] - 1;
             }
-            let hidden = vec![0u64; n];
-            prop_assert_eq!(track_ranges_from_columns(&starts, &ends, &hidden), None);
+            let states = vec![TrackState::Live.column_value(); n];
+            prop_assert_eq!(
+                track_ranges_from_columns(&starts, &ends, TrackStateColumn::State(&states)),
+                None,
+            );
         }
     }
 }

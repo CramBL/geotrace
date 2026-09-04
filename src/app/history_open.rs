@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use egui::{Button, Grid, Label, RichText};
 use gt_pending_writes::{PendingWriteGuard, WriteKind};
-use gt_store::{DbError, StoredFixPlacementRule, StoredTrackSplitRule};
+use gt_store::{DbError, StoredFixPlacementRule, StoredTrackSplitRule, TrackState};
 
 use super::anchored_dialog::{AnchoredDialogKind, HeldBodyLines};
 use super::{App, ResegmentPrompt, auto_prune, history, history_db, loader, modals, storage};
@@ -224,7 +224,8 @@ impl App {
     }
 
     /// Begin opening a recording from history. Reproduces the stored tracks,
-    /// re-applies the hidden ones, and regenerates markers with current settings.
+    /// leaves the shelved ones out, and regenerates markers with current
+    /// settings.
     /// When a stored track setting differs from the current one it raises a
     /// prompt instead (recalculate vs. use the stored tracks).
     fn begin_history_open(
@@ -240,17 +241,17 @@ impl App {
             .unwrap_or(&db_ref.identity)
             .to_owned();
 
-        let hidden_positions: Vec<usize> = stored
+        let shelved_positions: Vec<usize> = stored
             .tracks
             .iter()
             .enumerate()
-            .filter(|(_, t)| t.hidden)
+            .filter(|(_, t)| t.state == TrackState::Shelved)
             .map(|(i, _)| i)
             .collect();
 
         match stored.segmentation {
             // A stored track setting differs from the current one: let the user
-            // choose before changing track ranges that hidden-track state may
+            // choose before changing track ranges that the shelved state may
             // refer to, or the positions the fixes are drawn at.
             Some(stored_settings)
                 if !loader::stored_tracks_match_config(
@@ -279,13 +280,13 @@ impl App {
                     filename,
                     bytes: stored.bytes.into(),
                     stored: stored_settings,
-                    hidden_positions,
+                    shelved_positions,
                     marker_settings_changed,
                 });
             }
             // Every stored track setting matches: reproduce the stored tracks,
-            // re-apply hidden ones, and rebuild generated markers from current
-            // settings.
+            // leave the shelved ones out, and rebuild generated markers from
+            // current settings.
             Some(stored_settings) => {
                 let marker_settings_changed = !loader::marker_settings_match_config(
                     &stored_settings,
@@ -299,9 +300,9 @@ impl App {
                     stored.bytes.into(),
                     filename,
                     config,
-                    loader::HistoryOpen::ApplyHidden {
+                    loader::HistoryOpen::ApplyShelved {
                         db_ref,
-                        positions: hidden_positions,
+                        positions: shelved_positions,
                         applied_current_marker_settings: marker_settings_changed,
                     },
                 );
@@ -312,9 +313,9 @@ impl App {
                     stored.bytes.into(),
                     filename,
                     self.processing_config,
-                    loader::HistoryOpen::ApplyHidden {
+                    loader::HistoryOpen::ApplyShelved {
                         db_ref,
-                        positions: hidden_positions,
+                        positions: shelved_positions,
                         applied_current_marker_settings: false,
                     },
                 );
@@ -705,9 +706,9 @@ impl App {
                     prompt.bytes,
                     prompt.filename,
                     config,
-                    loader::HistoryOpen::ApplyHidden {
+                    loader::HistoryOpen::ApplyShelved {
                         db_ref: prompt.db_ref,
-                        positions: prompt.hidden_positions,
+                        positions: prompt.shelved_positions,
                         applied_current_marker_settings: prompt.marker_settings_changed,
                     },
                 );
@@ -797,9 +798,9 @@ fn corrupt_backup_path(path: &std::path::Path) -> PathBuf {
 fn mutation_toast(op: &history_db::DbOp) -> String {
     use history_db::{DbOp, DeleteReason};
     match op {
-        DbOp::TracksHidden { count } => {
+        DbOp::TracksShelved { count } => {
             let tracks = gt_fmt::pluralize(*count, "track", "tracks");
-            format!("Hid {count} {tracks} in history")
+            format!("Shelved {count} {tracks} in history")
         }
         DbOp::TracksDeleted { count } => {
             let tracks = gt_fmt::pluralize(*count, "track", "tracks");

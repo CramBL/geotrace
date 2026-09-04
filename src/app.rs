@@ -149,9 +149,9 @@ struct ResegmentPrompt {
     bytes: std::sync::Arc<[u8]>,
     /// Settings the stored tracks were built with.
     stored: gt_store::StoredSegmentation,
-    /// 0-based positions of the recording's hidden tracks, re-applied to the view
-    /// when the user keeps the stored tracks.
-    hidden_positions: Vec<usize>,
+    /// 0-based positions of the recording's shelved tracks, left out of the
+    /// view when the user keeps the stored tracks.
+    shelved_positions: Vec<usize>,
     /// Whether marker-generation settings differ from the stored/default marker
     /// settings and will be rebuilt from the current app settings when opened.
     marker_settings_changed: bool,
@@ -1111,7 +1111,7 @@ impl App {
         self.logs.reassociate_all(&s.loaded_files.view());
     }
 
-    /// Hides the affected recordings, or deletes them when
+    /// Shelves the affected tracks, or deletes them permanently when
     /// `outcome.permanent`. The toast is shown when the worker confirms via
     /// [`Self::handle_history_response`].
     fn apply_remove_outcome(&self, outcome: &modals::RemoveOutcome) {
@@ -1120,7 +1120,7 @@ impl App {
                 self.history
                     .delete_tracks(removal.db_ref.clone(), removal.track_indices.clone());
             } else {
-                self.history.set_tracks_hidden(
+                self.history.set_tracks_shelved(
                     removal.db_ref.clone(),
                     removal.track_indices.clone(),
                     true,

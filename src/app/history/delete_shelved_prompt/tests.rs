@@ -9,11 +9,11 @@ use crate::app::modals::{
 };
 
 use super::{
-    DELETE_HIDDEN_TRACKS_LABEL, DeleteHiddenTracks, DeleteHiddenTracksChoice,
-    DeleteHiddenTracksPrompt, DeleteHiddenTracksPromptContents,
+    DELETE_SHELVED_TRACKS_LABEL, DeleteShelvedTracks, DeleteShelvedTracksChoice,
+    DeleteShelvedTracksPrompt, DeleteShelvedTracksPromptContents,
 };
 
-const HIDDEN_TRACKS: usize = 3;
+const SHELVED_TRACKS: usize = 3;
 
 const CANCEL_LABEL: &str = "Cancel";
 
@@ -21,50 +21,52 @@ const CANCEL_LABEL: &str = "Cancel";
 /// taller than the confirmation.
 const VIEWPORT: egui::Vec2 = egui::vec2(640.0, 480.0);
 
-fn confirming_prompt() -> DeleteHiddenTracksPrompt {
-    let mut prompt = DeleteHiddenTracksPrompt::default();
-    prompt.open(HIDDEN_TRACKS);
+fn confirming_prompt() -> DeleteShelvedTracksPrompt {
+    let mut prompt = DeleteShelvedTracksPrompt::default();
+    prompt.open(SHELVED_TRACKS);
     prompt
 }
 
-fn prompt_reporting_no_hidden_track_at(now: Instant) -> DeleteHiddenTracksPrompt {
+fn prompt_reporting_every_track_live_at(now: Instant) -> DeleteShelvedTracksPrompt {
     let mut prompt = confirming_prompt();
     prompt.contents_to_show(now, Some(0));
     prompt
 }
 
-fn hidden_tracks(count: usize) -> Option<DeleteHiddenTracksPromptContents> {
-    Some(DeleteHiddenTracksPromptContents::HiddenTracks(count))
+fn shelved_tracks(count: usize) -> Option<DeleteShelvedTracksPromptContents> {
+    Some(DeleteShelvedTracksPromptContents::ShelvedTracks(count))
 }
 
-fn no_track_is_hidden(time_until_the_close: Duration) -> Option<DeleteHiddenTracksPromptContents> {
-    Some(DeleteHiddenTracksPromptContents::NoTrackIsHidden(
+fn every_track_is_live(
+    time_until_the_close: Duration,
+) -> Option<DeleteShelvedTracksPromptContents> {
+    Some(DeleteShelvedTracksPromptContents::EveryTrackIsLive(
         TimeUntilTheClose(time_until_the_close),
     ))
 }
 
 #[test]
 fn a_closed_confirmation_shows_nothing() {
-    let mut prompt = DeleteHiddenTracksPrompt::default();
+    let mut prompt = DeleteShelvedTracksPrompt::default();
 
     assert_eq!(
-        prompt.contents_to_show(Instant::now(), Some(HIDDEN_TRACKS)),
+        prompt.contents_to_show(Instant::now(), Some(SHELVED_TRACKS)),
         None
     );
 }
 
 #[test]
-fn the_confirmation_counts_the_hidden_tracks_the_recording_list_last_reported() {
+fn the_confirmation_counts_the_shelved_tracks_the_recording_list_last_reported() {
     let mut prompt = confirming_prompt();
 
     assert_eq!(
         prompt.contents_to_show(Instant::now(), Some(5)),
-        hidden_tracks(5)
+        shelved_tracks(5)
     );
 }
 
 /// The count is `None` between a mutation and the list that follows it: a
-/// recording finishing its load, an auto-prune, or a track unhidden elsewhere
+/// recording finishing its load, an auto-prune, or a track unshelved elsewhere
 /// all send the window back to the database for a fresh list.
 #[test]
 fn the_confirmation_keeps_its_count_while_a_recording_list_request_is_in_flight() {
@@ -72,29 +74,29 @@ fn the_confirmation_keeps_its_count_while_a_recording_list_request_is_in_flight(
 
     assert_eq!(
         prompt.contents_to_show(Instant::now(), None),
-        hidden_tracks(HIDDEN_TRACKS)
+        shelved_tracks(SHELVED_TRACKS)
     );
 }
 
 #[test]
-fn no_track_being_hidden_any_more_leaves_the_confirmation_up_reporting_it() {
+fn every_track_being_live_again_leaves_the_confirmation_up_reporting_it() {
     let mut prompt = confirming_prompt();
 
     assert_eq!(
         prompt.contents_to_show(Instant::now(), Some(0)),
-        no_track_is_hidden(COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES)
+        every_track_is_live(COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES)
     );
     assert!(prompt.is_up());
 }
 
 #[test]
-fn a_confirmation_reporting_that_no_track_is_hidden_never_counts_tracks_again() {
+fn a_confirmation_reporting_that_every_track_is_live_never_counts_tracks_again() {
     let now = Instant::now();
-    let mut prompt = prompt_reporting_no_hidden_track_at(now);
+    let mut prompt = prompt_reporting_every_track_live_at(now);
 
     assert_eq!(
         prompt.contents_to_show(now, Some(2)),
-        no_track_is_hidden(COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES)
+        every_track_is_live(COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES)
     );
 }
 
@@ -114,16 +116,16 @@ fn a_confirmation_reporting_that_no_track_is_hidden_never_counts_tracks_again() 
     PointerOverTheDialog::Away,
     true
 )]
-fn the_confirmation_reporting_that_no_track_is_hidden_closes_itself(
-    #[case] since_the_last_hidden_track_went: Duration,
+fn the_confirmation_reporting_that_every_track_is_live_closes_itself(
+    #[case] since_the_last_shelved_track_went: Duration,
     #[case] pointer: PointerOverTheDialog,
     #[case] expected_up: bool,
 ) {
     let reported_at = Instant::now();
-    let mut prompt = prompt_reporting_no_hidden_track_at(reported_at);
+    let mut prompt = prompt_reporting_every_track_live_at(reported_at);
 
     prompt.advance_the_countdown_and_close_when_it_runs_out(
-        reported_at + since_the_last_hidden_track_went,
+        reported_at + since_the_last_shelved_track_went,
         pointer,
     );
 
@@ -131,11 +133,11 @@ fn the_confirmation_reporting_that_no_track_is_hidden_closes_itself(
 }
 
 #[rstest]
-#[case::delete(DeleteHiddenTracksChoice::Delete, Some(DeleteHiddenTracks))]
-#[case::dismiss(DeleteHiddenTracksChoice::Dismiss, None)]
+#[case::delete(DeleteShelvedTracksChoice::Delete, Some(DeleteShelvedTracks))]
+#[case::dismiss(DeleteShelvedTracksChoice::Dismiss, None)]
 fn the_users_choice_closes_the_confirmation(
-    #[case] choice: DeleteHiddenTracksChoice,
-    #[case] expected: Option<DeleteHiddenTracks>,
+    #[case] choice: DeleteShelvedTracksChoice,
+    #[case] expected: Option<DeleteShelvedTracks>,
 ) {
     let mut prompt = confirming_prompt();
 
@@ -144,9 +146,9 @@ fn the_users_choice_closes_the_confirmation(
 }
 
 struct PromptUnderTest {
-    prompt: DeleteHiddenTracksPrompt,
+    prompt: DeleteShelvedTracksPrompt,
     now: Instant,
-    hidden_track_count: Option<usize>,
+    shelved_track_count: Option<usize>,
     background_pressed: bool,
     delete_requested: bool,
 }
@@ -162,7 +164,7 @@ fn prompt_ui(ui: &mut egui::Ui, state: &mut PromptUnderTest) {
     }
     if state
         .prompt
-        .show(ui.ctx(), state.now, state.hidden_track_count)
+        .show(ui.ctx(), state.now, state.shelved_track_count)
         .is_some()
     {
         state.delete_requested = true;
@@ -170,8 +172,8 @@ fn prompt_ui(ui: &mut egui::Ui, state: &mut PromptUnderTest) {
 }
 
 /// The confirmation over the window it is drawn on, with the pointer resting
-/// on Cancel and the last hidden track gone from the recording list.
-fn confirmation_once_no_track_is_hidden() -> (TestHarness<'static, PromptUnderTest>, egui::Pos2) {
+/// on Cancel and the last shelved track gone from the recording list.
+fn confirmation_once_every_track_is_live() -> (TestHarness<'static, PromptUnderTest>, egui::Pos2) {
     let mut harness = TestHarness::builder().size(VIEWPORT).ui_state(
         prompt_ui,
         PromptUnderTest {
@@ -179,7 +181,7 @@ fn confirmation_once_no_track_is_hidden() -> (TestHarness<'static, PromptUnderTe
             // Held still: the count is what the confirmation opened at
             // however long the frames take.
             now: Instant::now(),
-            hidden_track_count: Some(HIDDEN_TRACKS),
+            shelved_track_count: Some(SHELVED_TRACKS),
             background_pressed: false,
             delete_requested: false,
         },
@@ -193,14 +195,14 @@ fn confirmation_once_no_track_is_hidden() -> (TestHarness<'static, PromptUnderTe
     harness.inner.hover_at(aimed_at);
     harness.inner.run_steps(2);
 
-    harness.state_mut().hidden_track_count = Some(0);
+    harness.state_mut().shelved_track_count = Some(0);
     harness.inner.run_steps(2);
     (harness, aimed_at)
 }
 
 #[test]
 fn a_press_aimed_at_the_confirmation_does_not_reach_the_window_behind_it() {
-    let (mut harness, aimed_at) = confirmation_once_no_track_is_hidden();
+    let (mut harness, aimed_at) = confirmation_once_every_track_is_live();
 
     harness.inner.press_where_the_pointer_rests(aimed_at);
 
@@ -212,14 +214,14 @@ fn a_press_aimed_at_the_confirmation_does_not_reach_the_window_behind_it() {
 }
 
 #[test]
-fn the_confirmation_reporting_that_no_track_is_hidden_grays_its_delete_out() {
-    let (harness, _aimed_at) = confirmation_once_no_track_is_hidden();
+fn the_confirmation_reporting_that_every_track_is_live_grays_its_delete_out() {
+    let (harness, _aimed_at) = confirmation_once_every_track_is_live();
 
     assert!(harness.state().prompt.is_up());
     assert!(
         harness
             .inner
-            .get_by_label(DELETE_HIDDEN_TRACKS_LABEL)
+            .get_by_label(DELETE_SHELVED_TRACKS_LABEL)
             .accesskit_node()
             .is_disabled()
     );

@@ -7,7 +7,7 @@ use gt_store::{
     DatabaseRef, HistoryDatabase as _, LogAttachmentError, LogAttachmentId, LogAttachments as _,
     LogToAttach, ReadOnlyHistoryDatabase as _, ReadOnlyLogAttachments as _, RecordingMeta,
     Recordings, Store, StoredFixPlacementRule, StoredLogFilter, StoredLogFilterMode,
-    StoredSegmentation, StoredTrackSplitRule, TrackRange,
+    StoredSegmentation, StoredTrackSplitRule, TrackRange, TrackState,
 };
 
 /// A journald-shaped log, long enough that its stored copy is visibly
@@ -61,7 +61,7 @@ impl RecordedStore {
         let tracks = [TrackRange {
             start: 0,
             end: meta.nav_point_count,
-            hidden: false,
+            state: TrackState::Live,
         }];
         let recording = recordings
             .insert("nav-devkit-mk2", &meta, &tracks, segmentation(), &bytes)

@@ -67,7 +67,7 @@ fn entry(identity: &str, time_range: Option<NavPointTimeRange>) -> RecordingEntr
             gtd_size_bytes: 0,
         },
         total_tracks: 0,
-        hidden_tracks: 0,
+        shelved_tracks: 0,
         title: None,
         device: None,
         notes: None,

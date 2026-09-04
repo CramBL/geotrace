@@ -302,19 +302,19 @@ impl HistoryDatabase for SysDb {
         .map_err(Into::into)
     }
 
-    fn set_tracks_hidden(
+    fn set_tracks_shelved(
         &mut self,
         db_ref: &DatabaseRef,
         track_indices: &[usize],
-        hidden: bool,
+        shelved: bool,
     ) -> Result<(), DbError> {
         let _guard = DB_LOCK.lock();
-        crate::copy::set_tracks_hidden(
+        crate::copy::set_tracks_shelved(
             &self.path,
             &db_ref.identity,
             &db_ref.group_name,
             track_indices,
-            hidden,
+            shelved,
         )
         .map_err(Into::into)
     }

@@ -135,15 +135,15 @@ pub(super) struct CompletedLoad {
 /// What to do, beyond a plain load, with a recording opened from history.
 pub(super) enum HistoryOpen {
     /// Remove these track positions (0-based, segmentation order) from the loaded
-    /// view - the recording's hidden tracks. The stored table is left unchanged.
-    ApplyHidden {
+    /// view - the recording's shelved tracks. The stored table is left unchanged.
+    ApplyShelved {
         db_ref: gt_store::DatabaseRef,
         positions: Vec<usize>,
         applied_current_marker_settings: bool,
     },
     /// Overwrite the recording's stored track table and segmentation settings with
-    /// a fresh segmentation under the load config (recalculation), discarding the
-    /// previous hidden marks.
+    /// a fresh segmentation under the load config (recalculation), which makes
+    /// every track of the new table live.
     Recalculate {
         db_ref: gt_store::DatabaseRef,
         applied_current_marker_settings: bool,
@@ -153,7 +153,7 @@ pub(super) enum HistoryOpen {
 impl HistoryOpen {
     fn applied_current_marker_settings(&self) -> bool {
         match self {
-            Self::ApplyHidden {
+            Self::ApplyShelved {
                 applied_current_marker_settings,
                 ..
             }
@@ -166,7 +166,7 @@ impl HistoryOpen {
 
     fn db_ref(&self) -> &gt_store::DatabaseRef {
         match self {
-            Self::ApplyHidden { db_ref, .. } | Self::Recalculate { db_ref, .. } => db_ref,
+            Self::ApplyShelved { db_ref, .. } | Self::Recalculate { db_ref, .. } => db_ref,
         }
     }
 }
@@ -327,8 +327,8 @@ impl LoadJobs {
     }
 
     /// Load a recording opened from the history database, applying the chosen
-    /// open behaviour (re-apply the recording's hidden tracks, or recalculate and
-    /// overwrite its stored track table) once it is parsed.
+    /// open behaviour (leave the recording's shelved tracks out, or recalculate
+    /// and overwrite its stored track table) once it is parsed.
     pub fn spawn_gtd_from_history(
         &mut self,
         bytes: Arc<[u8]>,
@@ -422,13 +422,14 @@ impl LoadJobs {
                                     );
                                 }
                             }
-                            Some(HistoryOpen::ApplyHidden { positions, .. }) => {
+                            Some(HistoryOpen::ApplyShelved { positions, .. }) => {
                                 drop_tracks(&mut file, positions);
                             }
                             None => {}
                         }
-                        // Build the plot series after any hidden-track removal
-                        // so the series matches the visible tracks.
+                        // Build the plot series after any shelved track is
+                        // dropped, so the series matches the tracks the view
+                        // holds.
                         tx.send(LoadMessage::Progress {
                             id,
                             fraction: 0.95,
@@ -785,7 +786,7 @@ pub(crate) fn stored_tracks_match_config(
 
 /// Rebuild a [`SegmentationConfig`] for opening stored history tracks.
 ///
-/// Hidden-track indices still line up with the stored track table because the
+/// Shelved-track indices still line up with the stored track table because the
 /// stored track layout is kept, and the fixes land where they were stored
 /// because the stored placement rule is kept. A history load takes the user's
 /// current marker toggles and slip thresholds from `current`. A recording
@@ -829,7 +830,7 @@ fn track_ranges_from_file(file: &LoadedFile) -> Vec<gt_store::TrackRange> {
             let range = gt_store::TrackRange {
                 start,
                 end,
-                hidden: false,
+                state: gt_store::TrackState::Live,
             };
             start = end;
             range
@@ -838,8 +839,8 @@ fn track_ranges_from_file(file: &LoadedFile) -> Vec<gt_store::TrackRange> {
 }
 
 /// Remove the tracks at `positions` (0-based, segmentation order) from a loaded
-/// file's view - used to re-apply a recording's stored hidden tracks when it is
-/// opened from history.
+/// file's view - used to leave a recording's stored shelved tracks out when it
+/// is opened from history.
 fn drop_tracks(file: &mut LoadedFile, positions: &[usize]) {
     if positions.is_empty() {
         return;
@@ -851,7 +852,7 @@ fn drop_tracks(file: &mut LoadedFile, positions: &[usize]) {
         .filter(|(i, _)| !drop.contains(i))
         .map(|(_, t)| t)
         .collect();
-    log::debug!("Applied {} hidden track(s) on open", drop.len());
+    log::debug!("Left {} shelved track(s) out on open", drop.len());
 }
 
 /// Overwrite a recording's stored track table and segmentation settings with a
@@ -1452,10 +1453,10 @@ mod tests {
     }
 
     /// A loaded recording is stored with a per-track table, and those tracks can
-    /// be hidden (what "Remove filtered data" does), surfacing in the listing so
-    /// "Delete hidden data" enables.
+    /// be shelved (what "Remove filtered data" does), surfacing in the listing
+    /// so "Delete shelved data" enables.
     #[test]
-    fn loaded_recording_stores_tracks_and_supports_hiding() {
+    fn loaded_recording_stores_tracks_and_supports_shelving() {
         let dir = tempfile::tempdir().expect("temp dir");
         let gtd_path = write_sample_gtd(dir.path());
         let db_path = dir.path().join("history.h5");
@@ -1480,14 +1481,14 @@ mod tests {
             "the loaded recording must store a track table"
         );
 
-        // Hide every track (as removing all filtered data would).
+        // Shelve every track (as removing all filtered data would).
         let all: Vec<usize> = (0..stored.tracks.len()).collect();
-        db.set_tracks_hidden(&db_ref, &all, true).expect("hide");
+        db.set_tracks_shelved(&db_ref, &all, true).expect("shelve");
         let entries = db.list_recordings().expect("list");
         assert_eq!(
-            entries.first().map(|e| e.hidden_tracks),
+            entries.first().map(|e| e.shelved_tracks),
             Some(stored.tracks.len()),
-            "all tracks should now be hidden"
+            "every track should now be shelved"
         );
     }
 }

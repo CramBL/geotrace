@@ -225,10 +225,10 @@ fn render_row(
 
     breakdown_cell(row, entry, SortColumn::Points, |ui| {
         ui.label(gt_store::format_count_suffix(entry.meta.nav_point_count));
-        if entry.hidden_tracks > 0 {
+        if entry.shelved_tracks > 0 {
             ui.weak(format!(
-                "({}/{} hidden)",
-                entry.hidden_tracks, entry.total_tracks
+                "({}/{} shelved)",
+                entry.shelved_tracks, entry.total_tracks
             ));
         }
     });
@@ -397,11 +397,11 @@ pub(super) fn data_breakdown_ui(ui: &mut egui::Ui, entry: &RecordingEntry) {
             );
         });
 
-    if entry.hidden_tracks > 0 {
+    if entry.shelved_tracks > 0 {
         ui.label(
             RichText::new(
-                "Hidden tracks came from 'remove filtered data'. \
-                 Use 'Delete hidden data' to drop them permanently.",
+                "Shelved tracks came from 'remove filtered data'. \
+                 Use 'Delete shelved data' to drop them permanently.",
             )
             .small()
             .color(ui.visuals().weak_text_color()),
@@ -488,10 +488,10 @@ pub(super) fn channel_title(channel: &ChannelSummary) -> String {
     format!("{} ({})", channel.name, channel.components.join(", "))
 }
 
-/// The recording's track count, noting how many of them are hidden.
+/// The recording's track count, noting how many of them are shelved.
 pub(super) fn track_count_text(entry: &RecordingEntry) -> String {
-    if entry.hidden_tracks > 0 {
-        format!("{} ({} hidden)", entry.total_tracks, entry.hidden_tracks)
+    if entry.shelved_tracks > 0 {
+        format!("{} ({} shelved)", entry.total_tracks, entry.shelved_tracks)
     } else {
         entry.total_tracks.to_string()
     }

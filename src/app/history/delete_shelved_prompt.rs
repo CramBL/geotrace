@@ -1,10 +1,10 @@
-//! The confirmation for permanently deleting every hidden track, which the
-//! History window's "Delete hidden data…" button raises.
+//! The confirmation for permanently deleting every shelved track, which the
+//! History window's "Delete shelved data…" button raises.
 //!
 //! The count comes from the recording list, which the window reads again after
 //! every change to the database: a recording finishing its load, an auto-prune,
-//! or a track unhidden elsewhere. The confirmation stays up through all of
-//! them, and reports that no track is hidden any more once the count reaches
+//! or a track unshelved elsewhere. The confirmation stays up through all of
+//! them, and reports that every track is live again once the count reaches
 //! zero.
 
 use std::time::Instant;
@@ -20,11 +20,11 @@ use super::DESTRUCTIVE_DELETE_HOVER;
 #[cfg(test)]
 mod tests;
 
-pub(super) const DELETE_HIDDEN_WINDOW_TITLE: &str = "Delete hidden data?";
+pub(super) const DELETE_SHELVED_WINDOW_TITLE: &str = "Delete shelved data?";
 
-const DELETE_HIDDEN_TRACKS_LABEL: &str = "Delete hidden tracks";
+const DELETE_SHELVED_TRACKS_LABEL: &str = "Delete shelved tracks";
 
-const NOTHING_LEFT_TO_DELETE_HOVER: &str = "No track is hidden any more";
+const NOTHING_LEFT_TO_DELETE_HOVER: &str = "Every track is live again";
 
 const CLOSE_BUTTON_HOVER: &str = "Closes this confirmation now. It closes on its own when the \
                                   count reaches zero. The count holds while the pointer is over \
@@ -32,38 +32,38 @@ const CLOSE_BUTTON_HOVER: &str = "Closes this confirmation now. It closes on its
 
 /// The user confirmed the delete.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct DeleteHiddenTracks;
+pub(super) struct DeleteShelvedTracks;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum DeleteHiddenTracksChoice {
+enum DeleteShelvedTracksChoice {
     Delete,
     Dismiss,
 }
 
 /// What the open confirmation shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DeleteHiddenTracksPromptContents {
+enum DeleteShelvedTracksPromptContents {
     /// How many tracks the delete removes, as the recording list last counted
     /// them.
-    HiddenTracks(usize),
+    ShelvedTracks(usize),
     /// Nothing is left for the delete to remove.
-    NoTrackIsHidden(TimeUntilTheClose),
+    EveryTrackIsLive(TimeUntilTheClose),
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(super) enum DeleteHiddenTracksPrompt {
+pub(super) enum DeleteShelvedTracksPrompt {
     #[default]
     Closed,
     /// Asking the user, at the count the recording list last reported.
-    ConfirmingTheDelete { hidden_tracks: usize },
-    /// Reporting that no track is hidden any more, counting down to its own
+    ConfirmingTheDelete { shelved_tracks: usize },
+    /// Reporting that every track is live again, counting down to its own
     /// close. The confirmation never counts tracks again from here.
-    ReportingThatNoTrackIsHidden(CountdownToTheClose),
+    ReportingThatEveryTrackIsLive(CountdownToTheClose),
 }
 
-impl DeleteHiddenTracksPrompt {
-    pub(super) fn open(&mut self, hidden_tracks: usize) {
-        *self = Self::ConfirmingTheDelete { hidden_tracks };
+impl DeleteShelvedTracksPrompt {
+    pub(super) fn open(&mut self, shelved_tracks: usize) {
+        *self = Self::ConfirmingTheDelete { shelved_tracks };
     }
 
     pub(super) fn is_up(self) -> bool {
@@ -73,19 +73,19 @@ impl DeleteHiddenTracksPrompt {
     /// Draws the open confirmation, and reports the delete on the frame the
     /// user confirms it.
     ///
-    /// `hidden_track_count` is what the recording list counts across the
+    /// `shelved_track_count` is what the recording list counts across the
     /// stored recordings, and [`None`] while a list request is in flight.
     pub(super) fn show(
         &mut self,
         ctx: &egui::Context,
         now: Instant,
-        hidden_track_count: Option<usize>,
-    ) -> Option<DeleteHiddenTracks> {
-        let contents = self.contents_to_show(now, hidden_track_count)?;
-        if let Self::ReportingThatNoTrackIsHidden(countdown) = *self {
+        shelved_track_count: Option<usize>,
+    ) -> Option<DeleteShelvedTracks> {
+        let contents = self.contents_to_show(now, shelved_track_count)?;
+        if let Self::ReportingThatEveryTrackIsLive(countdown) = *self {
             countdown.request_the_repaint_the_count_needs(ctx);
         }
-        let response = show_delete_hidden_tracks_confirmation(ctx, contents);
+        let response = show_delete_shelved_tracks_confirmation(ctx, contents);
         match response.choice {
             Some(choice) => self.record_choice(choice),
             None => {
@@ -97,44 +97,46 @@ impl DeleteHiddenTracksPrompt {
 
     /// What the open confirmation shows, or [`None`] while it is closed.
     ///
-    /// The count is read from the recording list every frame: a track that
-    /// stopped being hidden since the confirmation opened is no longer one the
-    /// delete removes. The count the confirmation last showed stands while a
-    /// list request is in flight.
+    /// The count is read from the recording list every frame: a track
+    /// unshelved since the confirmation opened is one the delete leaves alone.
+    /// The count the confirmation last showed stands while a list request is in
+    /// flight.
     fn contents_to_show(
         &mut self,
         now: Instant,
-        hidden_track_count: Option<usize>,
-    ) -> Option<DeleteHiddenTracksPromptContents> {
+        shelved_track_count: Option<usize>,
+    ) -> Option<DeleteShelvedTracksPromptContents> {
         match *self {
             Self::Closed => None,
-            Self::ConfirmingTheDelete { hidden_tracks } => {
-                let hidden_tracks = hidden_track_count.unwrap_or(hidden_tracks);
-                if hidden_tracks == 0 {
+            Self::ConfirmingTheDelete { shelved_tracks } => {
+                let shelved_tracks = shelved_track_count.unwrap_or(shelved_tracks);
+                if shelved_tracks == 0 {
                     let countdown = CountdownToTheClose::started_at(now);
-                    *self = Self::ReportingThatNoTrackIsHidden(countdown);
-                    return Some(DeleteHiddenTracksPromptContents::NoTrackIsHidden(
+                    *self = Self::ReportingThatEveryTrackIsLive(countdown);
+                    return Some(DeleteShelvedTracksPromptContents::EveryTrackIsLive(
                         countdown.time_until_the_close(),
                     ));
                 }
-                *self = Self::ConfirmingTheDelete { hidden_tracks };
-                Some(DeleteHiddenTracksPromptContents::HiddenTracks(
-                    hidden_tracks,
+                *self = Self::ConfirmingTheDelete { shelved_tracks };
+                Some(DeleteShelvedTracksPromptContents::ShelvedTracks(
+                    shelved_tracks,
                 ))
             }
-            Self::ReportingThatNoTrackIsHidden(countdown) => Some(
-                DeleteHiddenTracksPromptContents::NoTrackIsHidden(countdown.time_until_the_close()),
-            ),
+            Self::ReportingThatEveryTrackIsLive(countdown) => {
+                Some(DeleteShelvedTracksPromptContents::EveryTrackIsLive(
+                    countdown.time_until_the_close(),
+                ))
+            }
         }
     }
 
     /// Closes the confirmation on the user's choice, reporting a confirmed
     /// delete.
-    fn record_choice(&mut self, choice: DeleteHiddenTracksChoice) -> Option<DeleteHiddenTracks> {
+    fn record_choice(&mut self, choice: DeleteShelvedTracksChoice) -> Option<DeleteShelvedTracks> {
         *self = Self::Closed;
         match choice {
-            DeleteHiddenTracksChoice::Delete => Some(DeleteHiddenTracks),
-            DeleteHiddenTracksChoice::Dismiss => None,
+            DeleteShelvedTracksChoice::Delete => Some(DeleteShelvedTracks),
+            DeleteShelvedTracksChoice::Dismiss => None,
         }
     }
 
@@ -146,52 +148,52 @@ impl DeleteHiddenTracksPrompt {
         now: Instant,
         pointer: PointerOverTheDialog,
     ) {
-        let Self::ReportingThatNoTrackIsHidden(mut countdown) = *self else {
+        let Self::ReportingThatEveryTrackIsLive(mut countdown) = *self else {
             return;
         };
         countdown.advance_to(now, pointer);
         *self = if countdown.has_run_out() {
             Self::Closed
         } else {
-            Self::ReportingThatNoTrackIsHidden(countdown)
+            Self::ReportingThatEveryTrackIsLive(countdown)
         };
     }
 }
 
 /// What the confirmation reports for the frame it drew.
-struct DeleteHiddenTracksPromptResponse {
+struct DeleteShelvedTracksPromptResponse {
     /// The choice in the frame the user makes it, and [`None`] on every other
     /// frame the confirmation is up.
-    choice: Option<DeleteHiddenTracksChoice>,
+    choice: Option<DeleteShelvedTracksChoice>,
     pointer: PointerOverTheDialog,
 }
 
-/// Confirm permanently removing every hidden track from its recording, naming
-/// how many there are, or report that no track is hidden any more.
-fn show_delete_hidden_tracks_confirmation(
+/// Confirm permanently removing every shelved track from its recording,
+/// stating how many there are, or report that every track is live again.
+fn show_delete_shelved_tracks_confirmation(
     ctx: &egui::Context,
-    contents: DeleteHiddenTracksPromptContents,
-) -> DeleteHiddenTracksPromptResponse {
+    contents: DeleteShelvedTracksPromptContents,
+) -> DeleteShelvedTracksPromptResponse {
     let mut pointer = PointerOverTheDialog::Away;
     let choice = modals::anchored_confirmation_dialog(
         ctx,
-        AnchoredDialogKind::DeleteHiddenTracks,
-        DELETE_HIDDEN_WINDOW_TITLE,
-        DeleteHiddenTracksChoice::Dismiss,
+        AnchoredDialogKind::DeleteShelvedTracks,
+        DELETE_SHELVED_WINDOW_TITLE,
+        DeleteShelvedTracksChoice::Dismiss,
         |ui, _regions| {
             pointer = PointerOverTheDialog::of(ui);
             match contents {
-                DeleteHiddenTracksPromptContents::HiddenTracks(hidden_tracks) => {
-                    let track_label = gt_fmt::pluralize(hidden_tracks, "track", "tracks");
+                DeleteShelvedTracksPromptContents::ShelvedTracks(shelved_tracks) => {
+                    let track_label = gt_fmt::pluralize(shelved_tracks, "track", "tracks");
                     let removal = format!(
-                        "{hidden_tracks} hidden {track_label} will be permanently removed from \
-                         their recordings."
+                        "{shelved_tracks} shelved {track_label} will be permanently removed \
+                         from their recordings."
                     );
                     ui.add(Label::new(removal).wrap());
                 }
-                DeleteHiddenTracksPromptContents::NoTrackIsHidden(_) => {
+                DeleteShelvedTracksPromptContents::EveryTrackIsLive(_) => {
                     ui.add(
-                        Label::new("No track is hidden any more: there is nothing left to delete")
+                        Label::new("Every track is live again: there is nothing left to delete")
                             .wrap(),
                     );
                 }
@@ -200,31 +202,31 @@ fn show_delete_hidden_tracks_confirmation(
         |ui| {
             let mut choice = None;
             let dismiss = match contents {
-                DeleteHiddenTracksPromptContents::HiddenTracks(_) => {
+                DeleteShelvedTracksPromptContents::ShelvedTracks(_) => {
                     if ui
                         .button(
-                            RichText::new(DELETE_HIDDEN_TRACKS_LABEL)
+                            RichText::new(DELETE_SHELVED_TRACKS_LABEL)
                                 .color(warning_amber(ui.visuals().dark_mode)),
                         )
                         .on_hover_text(DESTRUCTIVE_DELETE_HOVER)
                         .clicked()
                     {
-                        choice = Some(DeleteHiddenTracksChoice::Delete);
+                        choice = Some(DeleteShelvedTracksChoice::Delete);
                     }
                     ui.button("Cancel")
                 }
-                DeleteHiddenTracksPromptContents::NoTrackIsHidden(time_until_the_close) => {
-                    ui.add_enabled(false, Button::new(DELETE_HIDDEN_TRACKS_LABEL))
+                DeleteShelvedTracksPromptContents::EveryTrackIsLive(time_until_the_close) => {
+                    ui.add_enabled(false, Button::new(DELETE_SHELVED_TRACKS_LABEL))
                         .on_disabled_hover_text(NOTHING_LEFT_TO_DELETE_HOVER);
                     ui.button(time_until_the_close.close_button_label())
                         .on_hover_text(CLOSE_BUTTON_HOVER)
                 }
             };
             if dismiss.clicked() {
-                choice = Some(DeleteHiddenTracksChoice::Dismiss);
+                choice = Some(DeleteShelvedTracksChoice::Dismiss);
             }
             choice
         },
     );
-    DeleteHiddenTracksPromptResponse { choice, pointer }
+    DeleteShelvedTracksPromptResponse { choice, pointer }
 }

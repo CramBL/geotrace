@@ -323,6 +323,9 @@ unrestored
 unrewritten
 unrotated
 unsampled
+unshelve
+unshelves
+unshelving
 unsnappable
 Unsnappable
 unstaged

@@ -1,6 +1,6 @@
 //! Background worker for all history-database reads and edits.
 //!
-//! Every history operation - listing, loading a recording, hiding tracks,
+//! Every history operation - listing, loading a recording, shelving tracks,
 //! deleting recordings, prune previews, auto-prune - runs on a dedicated thread
 //! that owns the [`RecordingsHandle`]. The UI thread sends [`Request`]s and drains
 //! [`Response`]s once per frame (see [`HistoryWorker::poll`]), so a slow disk
@@ -27,7 +27,7 @@ use gt_store::{
     AttachedLog, DatabaseRef, DbError, HistoryDatabase, LogAttachmentEntry, LogAttachmentError,
     LogAttachmentId, LogAttachments as _, LogContentHash, LogToAttach, PruneMode,
     ReadOnlyHistoryDatabase, ReadOnlyLogAttachments as _, ReadOnlyRecordings, RecordingEntry,
-    Recordings, RecordingsHandle, StoredLogFilter, StoredRecording, TrackRange,
+    Recordings, RecordingsHandle, StoredLogFilter, StoredRecording, TrackRange, TrackState,
 };
 use gt_track_builder::SegmentationConfig;
 use gt_ui_types::LoadedLogId;
@@ -49,7 +49,7 @@ pub enum DeleteReason {
 
 /// A completed mutation, carried back so the UI can show the right toast.
 pub enum DbOp {
-    TracksHidden {
+    TracksShelved {
         count: usize,
     },
     TracksDeleted {
@@ -100,18 +100,18 @@ enum ReadRequest {
 /// A request that changes the database, which only [`RecordingsHandle::writer`]
 /// can run.
 enum WriteRequest {
-    SetTracksHidden {
+    SetTracksShelved {
         db_ref: DatabaseRef,
         indices: Vec<usize>,
-        hidden: bool,
+        shelved: bool,
     },
     /// Permanently remove specific tracks' points from one recording (re-encode).
     DeleteTracks {
         db_ref: DatabaseRef,
         indices: Vec<usize>,
     },
-    /// Permanently remove every hidden track across all recordings (re-encode).
-    DeleteHiddenTracks,
+    /// Permanently remove every shelved track across all recordings (re-encode).
+    DeleteShelvedTracks,
     DeleteRecordings {
         refs: Vec<DatabaseRef>,
         reason: DeleteReason,
@@ -154,10 +154,12 @@ impl WriteRequest {
     /// The label the write registry lists this request under.
     fn database_write_label(&self) -> &'static str {
         match self {
-            Self::SetTracksHidden { hidden: true, .. } => "Hiding tracks in recording history",
-            Self::SetTracksHidden { hidden: false, .. } => "Showing tracks in recording history",
+            Self::SetTracksShelved { shelved: true, .. } => "Shelving tracks in recording history",
+            Self::SetTracksShelved { shelved: false, .. } => {
+                "Unshelving tracks in recording history"
+            }
             Self::DeleteTracks { .. } => "Deleting tracks from recording history",
-            Self::DeleteHiddenTracks => "Deleting hidden tracks from recording history",
+            Self::DeleteShelvedTracks => "Deleting shelved tracks from recording history",
             Self::DeleteRecordings { .. } => "Deleting recordings from recording history",
             Self::RenameIdentity { .. } => "Renaming an identity in recording history",
             Self::AutoPrune { .. } => "Auto-pruning recording history",
@@ -361,11 +363,11 @@ impl HistoryWorker {
         self.send_read(ReadRequest::Open(db_ref));
     }
 
-    pub fn set_tracks_hidden(&self, db_ref: DatabaseRef, indices: Vec<usize>, hidden: bool) {
-        self.send_write(WriteRequest::SetTracksHidden {
+    pub fn set_tracks_shelved(&self, db_ref: DatabaseRef, indices: Vec<usize>, shelved: bool) {
+        self.send_write(WriteRequest::SetTracksShelved {
             db_ref,
             indices,
-            hidden,
+            shelved,
         });
     }
 
@@ -373,8 +375,8 @@ impl HistoryWorker {
         self.send_write(WriteRequest::DeleteTracks { db_ref, indices });
     }
 
-    pub fn delete_hidden_tracks(&self) {
-        self.send_write(WriteRequest::DeleteHiddenTracks);
+    pub fn delete_shelved_tracks(&self) {
+        self.send_write(WriteRequest::DeleteShelvedTracks);
     }
 
     pub fn delete_recordings(&self, refs: Vec<DatabaseRef>, reason: DeleteReason) {
@@ -604,15 +606,15 @@ fn handle_read_request(db: &ReadOnlyRecordings, req: ReadRequest) -> Response {
 
 fn handle_write_request(db: &mut Recordings, req: WriteRequest) -> Response {
     match req {
-        WriteRequest::SetTracksHidden {
+        WriteRequest::SetTracksShelved {
             db_ref,
             indices,
-            hidden,
+            shelved,
         } => {
             let count = indices.len();
-            let result = db.set_tracks_hidden(&db_ref, &indices, hidden);
+            let result = db.set_tracks_shelved(&db_ref, &indices, shelved);
             Response::Mutated {
-                op: DbOp::TracksHidden { count },
+                op: DbOp::TracksShelved { count },
                 result,
             }
         }
@@ -624,7 +626,7 @@ fn handle_write_request(db: &mut Recordings, req: WriteRequest) -> Response {
                 result,
             }
         }
-        WriteRequest::DeleteHiddenTracks => match purge_all_hidden(db) {
+        WriteRequest::DeleteShelvedTracks => match purge_all_shelved(db) {
             Ok(count) => Response::Mutated {
                 op: DbOp::TracksDeleted { count },
                 result: Ok(()),
@@ -701,25 +703,25 @@ fn handle_write_request(db: &mut Recordings, req: WriteRequest) -> Response {
     }
 }
 
-/// Permanently remove every hidden track across all recordings, re-encoding each
-/// affected recording. Returns the number of tracks removed.
-fn purge_all_hidden(db: &mut Recordings) -> Result<usize, DbError> {
+/// Permanently remove every shelved track across all recordings, re-encoding
+/// each affected recording. Returns the number of tracks removed.
+fn purge_all_shelved(db: &mut Recordings) -> Result<usize, DbError> {
     let entries = db.list_recordings()?;
     let mut deleted = 0;
     for entry in entries {
-        if entry.hidden_tracks == 0 {
+        if entry.shelved_tracks == 0 {
             continue;
         }
         let stored = db.load(&entry.db_ref)?;
-        let hidden: Vec<usize> = stored
+        let shelved: Vec<usize> = stored
             .tracks
             .iter()
             .enumerate()
-            .filter(|(_, t)| t.hidden)
+            .filter(|(_, t)| t.state == TrackState::Shelved)
             .map(|(i, _)| i)
             .collect();
-        deleted += hidden.len();
-        purge_tracks_with_stored(db, &entry.db_ref, &stored, &hidden)?;
+        deleted += shelved.len();
+        purge_tracks_with_stored(db, &entry.db_ref, &stored, &shelved)?;
     }
     Ok(deleted)
 }
@@ -736,7 +738,7 @@ fn purge_tracks(
 
 /// Re-encode `db_ref` with the points of the tracks at `drop_indices` removed,
 /// and store the new bytes under the same reference. Surviving tracks keep their
-/// hidden flag and are range-shifted onto the compacted point sequence. When
+/// [`TrackState`] and are range-shifted onto the compacted point sequence. When
 /// nothing survives the whole recording is deleted instead (an empty re-encode
 /// would fail).
 ///
@@ -805,7 +807,7 @@ fn purge_tracks_with_stored(
         new_tracks.push(TrackRange {
             start: cursor,
             end: cursor + len,
-            hidden: t.hidden,
+            state: t.state,
         });
         cursor += len;
     }
@@ -878,12 +880,12 @@ mod tests {
                 TrackRange {
                     start: 0,
                     end: 10,
-                    hidden: false,
+                    state: TrackState::Live,
                 },
                 TrackRange {
                     start: 10,
                     end: 20,
-                    hidden: false,
+                    state: TrackState::Live,
                 },
             ],
         );
@@ -961,17 +963,17 @@ mod tests {
         assert!(!stored.bytes.is_empty());
         assert_eq!(stored.tracks.len(), 2);
 
-        // Hide one track.
-        worker.set_tracks_hidden(db_ref.clone(), vec![0], true);
+        // Shelve one track.
+        worker.set_tracks_shelved(db_ref.clone(), vec![0], true);
         let Response::Mutated {
-            op: DbOp::TracksHidden { count },
+            op: DbOp::TracksShelved { count },
             result,
         } = next_response(&worker)
         else {
-            panic!("expected a TracksHidden mutation");
+            panic!("expected a TracksShelved mutation");
         };
         assert_eq!(count, 1);
-        result.expect("hide ok");
+        result.expect("the shelve runs");
 
         // Prune preview reports candidates without deleting.
         worker.prune_preview(PruneMode::ByCount { keep: 0 });
@@ -1006,7 +1008,7 @@ mod tests {
     }
 
     #[test]
-    fn worker_permanently_deletes_hidden_tracks() {
+    fn worker_permanently_deletes_shelved_tracks() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
 
@@ -1014,12 +1016,12 @@ mod tests {
 
         let worker = worker_on(&path);
 
-        // Hide the first track, then permanently delete all hidden tracks.
+        // Shelve the first track, then permanently delete every shelved track.
         let db_ref = only_recording(&worker).db_ref;
-        worker.set_tracks_hidden(db_ref, vec![0], true);
+        worker.set_tracks_shelved(db_ref, vec![0], true);
         next_response(&worker);
 
-        worker.delete_hidden_tracks();
+        worker.delete_shelved_tracks();
         let Response::Mutated {
             op: DbOp::TracksDeleted { count },
             result,
@@ -1027,17 +1029,17 @@ mod tests {
         else {
             panic!("expected TracksDeleted");
         };
-        assert_eq!(count, 1, "one hidden track removed");
+        assert_eq!(count, 1, "one shelved track removed");
         result.expect("delete ok");
 
-        // The recording now has a single ten-point track and no hidden tracks.
+        // The recording now has a single ten-point track, every one of them live.
         worker.list();
         let Response::Listed(Ok(entries)) = next_response(&worker) else {
             panic!("expected Listed");
         };
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].total_tracks, 1);
-        assert_eq!(entries[0].hidden_tracks, 0);
+        assert_eq!(entries[0].shelved_tracks, 0);
         assert_eq!(entries[0].meta.nav_point_count, 10);
 
         let new_ref = entries[0].db_ref.clone();
@@ -1051,7 +1053,7 @@ mod tests {
             vec![TrackRange {
                 start: 0,
                 end: 10,
-                hidden: false,
+                state: TrackState::Live,
             }]
         );
     }
@@ -1114,7 +1116,7 @@ mod tests {
     }
 
     #[test]
-    fn hiding_a_track_after_a_delete_re_encoded_the_recording_stores_the_hide() {
+    fn shelving_a_track_after_a_delete_re_encoded_the_recording_stores_the_shelve() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
         seed_two_track_recording(&path);
@@ -1127,52 +1129,52 @@ mod tests {
         };
         result.expect("the delete runs");
 
-        worker.set_tracks_hidden(session_ref, vec![0], true);
+        worker.set_tracks_shelved(session_ref, vec![0], true);
         let Response::Mutated { result, .. } = next_response(&worker) else {
             panic!("expected a mutation response");
         };
-        result.expect("the hide runs");
+        result.expect("the shelve runs");
 
         assert_eq!(
-            only_recording(&worker).hidden_tracks,
+            only_recording(&worker).shelved_tracks,
             1,
-            "the track the session hid is hidden in history"
+            "the track the session shelved is shelved in history"
         );
         worker.shutdown();
     }
 
-    /// The History window's "Delete hidden data" sweeps every recording,
+    /// The History window's "Delete shelved data" sweeps every recording,
     /// including the one this session has open.
     #[test]
-    fn hiding_a_track_after_the_hidden_data_sweep_re_encoded_the_recording_stores_the_hide() {
+    fn shelving_a_track_after_the_shelved_data_sweep_re_encoded_the_recording_stores_the_shelve() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
         seed_two_track_recording(&path);
         let worker = worker_on(&path);
 
         let session_ref = only_recording(&worker).db_ref;
-        worker.set_tracks_hidden(session_ref.clone(), vec![0], true);
+        worker.set_tracks_shelved(session_ref.clone(), vec![0], true);
         let Response::Mutated { result, .. } = next_response(&worker) else {
             panic!("expected a mutation response");
         };
-        result.expect("the first hide runs");
+        result.expect("the first shelve runs");
 
-        worker.delete_hidden_tracks();
+        worker.delete_shelved_tracks();
         let Response::Mutated { result, .. } = next_response(&worker) else {
             panic!("expected a mutation response");
         };
         result.expect("the sweep runs");
 
-        worker.set_tracks_hidden(session_ref, vec![0], true);
+        worker.set_tracks_shelved(session_ref, vec![0], true);
         let Response::Mutated { result, .. } = next_response(&worker) else {
             panic!("expected a mutation response");
         };
-        result.expect("the second hide runs");
+        result.expect("the second shelve runs");
 
         assert_eq!(
-            only_recording(&worker).hidden_tracks,
+            only_recording(&worker).shelved_tracks,
             1,
-            "the track the session hid is hidden in history"
+            "the track the session shelved is shelved in history"
         );
         worker.shutdown();
     }
@@ -1230,7 +1232,7 @@ mod tests {
             &[TrackRange {
                 start: 0,
                 end: 10,
-                hidden: false,
+                state: TrackState::Live,
             }],
         );
 
@@ -1279,16 +1281,16 @@ mod tests {
         );
         let db_ref = only_recording(&worker).db_ref;
 
-        worker.set_tracks_hidden(db_ref, vec![0], true);
+        worker.set_tracks_shelved(db_ref, vec![0], true);
         let Response::Mutated { result, .. } = next_response(&worker) else {
             panic!("expected a mutation response");
         };
 
-        result.expect("hide ok");
+        result.expect("the shelve runs");
         assert_eq!(
             pending_writes.snapshot().recently_finished,
-            vec!["Hiding tracks in recording history"],
-            "the listing before it registered nothing, the hide registered while it ran"
+            vec!["Shelving tracks in recording history"],
+            "the listing before it registered nothing, the shelve registered while it ran"
         );
         assert!(pending_writes.is_idle());
         worker.shutdown();
@@ -1315,13 +1317,13 @@ mod tests {
         );
         let db_ref = only_recording(&worker).db_ref;
 
-        worker.set_tracks_hidden(db_ref, vec![0], true);
+        worker.set_tracks_shelved(db_ref, vec![0], true);
 
         let Response::WriteRejected { label, rejection } = next_response(&worker) else {
             panic!("expected the write to be rejected");
         };
         assert_eq!(rejection, expected);
-        assert_eq!(label, "Hiding tracks in recording history");
+        assert_eq!(label, "Shelving tracks in recording history");
         assert!(pending_writes.is_idle());
 
         // Reads still return, and report a database the rejected write left alone.
@@ -1329,7 +1331,7 @@ mod tests {
         let Response::Listed(Ok(entries)) = next_response(&worker) else {
             panic!("expected a Listed response");
         };
-        assert_eq!(entries.first().map(|entry| entry.hidden_tracks), Some(0));
+        assert_eq!(entries.first().map(|entry| entry.shelved_tracks), Some(0));
         worker.shutdown();
     }
 
@@ -1349,13 +1351,13 @@ mod tests {
         );
         let db_ref = only_recording(&worker).db_ref;
 
-        worker.set_tracks_hidden(db_ref, vec![0], true);
+        worker.set_tracks_shelved(db_ref, vec![0], true);
 
         let Response::WriteRejected { label, rejection } = next_response(&worker) else {
             panic!("expected the write to be rejected");
         };
         assert_eq!(rejection, WriteRejection::ReadOnlySession);
-        assert_eq!(label, "Hiding tracks in recording history");
+        assert_eq!(label, "Shelving tracks in recording history");
         assert_eq!(
             pending_writes.snapshot().recently_finished,
             Vec::<String>::new(),
@@ -1367,7 +1369,7 @@ mod tests {
         let Response::Listed(Ok(entries)) = next_response(&worker) else {
             panic!("expected a Listed response");
         };
-        assert_eq!(entries.first().map(|entry| entry.hidden_tracks), Some(0));
+        assert_eq!(entries.first().map(|entry| entry.shelved_tracks), Some(0));
         worker.shutdown();
     }
 
@@ -1387,20 +1389,20 @@ mod tests {
 
     #[rstest]
     #[case(
-        WriteRequest::SetTracksHidden {
+        WriteRequest::SetTracksShelved {
             db_ref: db_ref(),
             indices: vec![0],
-            hidden: true,
+            shelved: true,
         },
-        "Hiding tracks in recording history"
+        "Shelving tracks in recording history"
     )]
     #[case(
-        WriteRequest::SetTracksHidden {
+        WriteRequest::SetTracksShelved {
             db_ref: db_ref(),
             indices: vec![0],
-            hidden: false,
+            shelved: false,
         },
-        "Showing tracks in recording history"
+        "Unshelving tracks in recording history"
     )]
     #[case(
         WriteRequest::DeleteTracks {
@@ -1410,8 +1412,8 @@ mod tests {
         "Deleting tracks from recording history"
     )]
     #[case(
-        WriteRequest::DeleteHiddenTracks,
-        "Deleting hidden tracks from recording history"
+        WriteRequest::DeleteShelvedTracks,
+        "Deleting shelved tracks from recording history"
     )]
     #[case(
         WriteRequest::DeleteRecordings {

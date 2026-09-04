@@ -16,9 +16,9 @@ use gt_history_types::{
     GTD_CHANNELS_GROUP, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK, LogAttachment, LogAttachmentEntry,
     LogAttachmentId, RecordingMeta, SCHEMA_VERSION_ATTR, SNAP_BLOB_DATASET, SNAP_GROUP,
     StoredFixPlacementRule, StoredRecording, StoredSegmentation, StoredTrackSplitRule,
-    TRACK_END_DATASET, TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP, TrackRange,
-    identity_from_group_name, identity_group_name, is_db_internal_group, is_db_recording_attr,
-    log_attachment, make_group_name,
+    TRACK_END_DATASET, TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, TrackRange,
+    TrackState, identity_from_group_name, identity_group_name, is_db_internal_group,
+    is_db_recording_attr, log_attachment, make_group_name,
 };
 use hdf5_pure::{AttrValue, DType, FileBuilder, Group, GroupBuilder};
 use thiserror::Error;
@@ -280,10 +280,10 @@ fn snapshot_by_identity(file: &hdf5_pure::File) -> Result<Vec<GroupNode>, Intern
 }
 
 /// Build the DB-internal `__geotrace_tracks__` subgroup node holding the track
-/// ranges as parallel `start`/`end`/`hidden` u64 datasets.
+/// ranges as parallel `start`/`end`/`state` u64 datasets.
 fn track_table_node(tracks: &[TrackRange]) -> GroupNode {
     let n = tracks.len() as u64;
-    let (starts, ends, hidden) = gt_history_types::track_columns(tracks);
+    let (starts, ends, states) = gt_history_types::track_columns(tracks);
     GroupNode {
         name: TRACKS_GROUP.to_owned(),
         attrs: Vec::new(),
@@ -301,9 +301,9 @@ fn track_table_node(tracks: &[TrackRange]) -> GroupNode {
                 attrs: Vec::new(),
             },
             DatasetNode {
-                name: TRACK_HIDDEN_DATASET.to_owned(),
+                name: TRACK_STATE_DATASET.to_owned(),
                 shape: vec![n],
-                data: DatasetData::U64(hidden),
+                data: DatasetData::U64(states),
                 attrs: Vec::new(),
             },
         ],
@@ -500,7 +500,7 @@ pub(crate) fn insert_recording(
         .push(new_recording);
 
     // Release the in-memory snapshot of the old file before writing the new one,
-    // matching the other mutators (`delete_batch`, `set_tracks`, `set_tracks_hidden`).
+    // matching the other mutators (`delete_batch`, `set_tracks`, `set_tracks_shelved`).
     drop(existing_db);
     write_db(&identity_nodes, db_path)?;
     log::info!("Stored recording identity={identity:?}, group={rec_name:?} in history database");
@@ -678,40 +678,46 @@ pub(crate) fn rename_identity(
     Ok(())
 }
 
-/// Set or clear the hidden flag on a recording's tracks at `track_indices`,
-/// via a read-modify-write cycle.
-pub(crate) fn set_tracks_hidden(
+/// Shelve or unshelve a recording's tracks at `track_indices`, via a
+/// read-modify-write cycle.
+///
+/// `track_indices` count the tracks the recording lists, which
+/// [`gt_history_types::listed_track_rows`] maps onto the stored table's rows. A
+/// recording whose table predates [`TRACK_STATE_DATASET`] comes out of this
+/// with a state column: the whole table is rewritten, tombstones and all.
+pub(crate) fn set_tracks_shelved(
     db_path: &std::path::Path,
     identity: &str,
     group_name: &str,
     track_indices: &[usize],
-    hidden: bool,
+    shelved: bool,
 ) -> Result<(), InternalError> {
     let existing_db = hdf5_pure::File::open(db_path)?;
+    let stored_tracks = existing_db
+        .root()
+        .group("by_identity")
+        .and_then(|by_id| find_identity_group(&by_id, identity))
+        .and_then(|id_grp| id_grp.group(group_name))
+        .ok()
+        .and_then(|rec_grp| stored_track_table(&rec_grp));
+    let Some(mut tracks) = stored_tracks else {
+        log::warn!("Shelving tracks of {identity}/{group_name}, which has no track table");
+        return Ok(());
+    };
     let mut identity_nodes = snapshot_by_identity(&existing_db)?;
     drop(existing_db);
 
-    let value = u64::from(hidden);
-    let mut found_table = false;
-    if let Some(id_node) = find_identity_node_mut(&mut identity_nodes, identity)
-        && let Some(rec) = id_node.groups.iter_mut().find(|r| r.name == group_name)
-        && let Some(tracks_grp) = rec.groups.iter_mut().find(|g| g.name == TRACKS_GROUP)
-        && let Some(ds) = tracks_grp
-            .datasets
-            .iter_mut()
-            .find(|d| d.name == TRACK_HIDDEN_DATASET)
-        && let DatasetData::U64(flags) = &mut ds.data
-    {
-        found_table = true;
-        for &i in track_indices {
-            match flags.get_mut(i) {
-                Some(slot) => *slot = value,
-                None => log::warn!("track index {i} out of range for {identity}/{group_name}"),
-            }
-        }
+    let state = if shelved {
+        TrackState::Shelved
+    } else {
+        TrackState::Live
+    };
+    for index in gt_history_types::set_state_of_listed_tracks(&mut tracks, track_indices, state) {
+        log::warn!("track index {index} out of range for {identity}/{group_name}");
     }
-    if !found_table {
-        log::warn!("set_tracks_hidden on {identity}/{group_name} which has no track table");
+    if let Some(rec) = find_recording_node_mut(&mut identity_nodes, identity, group_name) {
+        rec.groups.retain(|g| g.name != TRACKS_GROUP);
+        rec.groups.push(track_table_node(&tracks));
     }
 
     write_db(&identity_nodes, db_path)?;
@@ -898,23 +904,20 @@ pub(crate) fn delete_log_attachment_attribute(
     write_db(&identity_nodes, db_path)
 }
 
-/// Read the stored track ranges from a recording group (empty if absent).
+/// Every row of a recording's stored track table, tombstones and all.
+fn stored_track_table(rec_grp: &Group) -> Option<Vec<TrackRange>> {
+    let grp = rec_grp.group(TRACKS_GROUP).ok()?;
+    gt_history_types::stored_track_table(|name| grp.dataset(name).and_then(|d| d.read_u64()).ok())
+}
+
+/// The tracks a recording has: its [`stored_track_table`] without the
+/// [`TrackState::Deleted`] tombstones a permanent delete leaves.
 pub(crate) fn read_track_table(rec_grp: &Group) -> Vec<TrackRange> {
-    let Ok(grp) = rec_grp.group(TRACKS_GROUP) else {
-        return Vec::new();
-    };
-    let read = |name: &str| -> Vec<u64> {
-        grp.dataset(name)
-            .and_then(|d| d.read_u64())
-            .unwrap_or_default()
-    };
-    let starts = read(TRACK_START_DATASET);
-    let ends = read(TRACK_END_DATASET);
-    let hidden = read(TRACK_HIDDEN_DATASET);
-    gt_history_types::track_ranges_from_columns(&starts, &ends, &hidden).unwrap_or_else(|| {
-        log::warn!("Inconsistent track table; ignoring it (tracks will be recomputed)");
-        Vec::new()
-    })
+    stored_track_table(rec_grp)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|track| track.state != TrackState::Deleted)
+        .collect()
 }
 
 /// Summarize the recording's ad-hoc sensor channels for the History listing.
