@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Interface:** Fixed a permanent track delete announcing a track it had not deleted, when the recording in history no longer had that track: it now reports the failure, and a delete of several tracks with one of them already gone leaves all of them in place.
+
 ## 0.15.0 - 2026-09-04
 
 ### Added

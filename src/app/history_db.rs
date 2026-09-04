@@ -739,6 +739,9 @@ fn purge_tracks(
 /// are range-shifted onto the compacted point sequence. When nothing survives the
 /// whole recording is deleted instead (an empty re-encode would fail).
 ///
+/// Returns [`DbError::TrackIndexOutOfRange`] and leaves the recording as it is
+/// when `drop_indices` holds an index the stored track table does not have.
+///
 /// The delete-and-reinsert intentionally drops any stored snap runs with the
 /// old recording group (pinned by gt-history's
 /// `snap_blob_is_dropped_with_its_recording`): the purge shifts point
@@ -749,6 +752,19 @@ fn purge_tracks_with_stored(
     stored: &StoredRecording,
     drop_indices: &[usize],
 ) -> Result<(), DbError> {
+    // The whole request is rejected when any index is out of range: the caller
+    // numbered the tracks against a different table, so the in-range indices
+    // may not name what the user chose either.
+    if let Some(&index) = drop_indices
+        .iter()
+        .find(|&&index| index >= stored.tracks.len())
+    {
+        return Err(DbError::TrackIndexOutOfRange {
+            index,
+            stored_track_count: stored.tracks.len(),
+        });
+    }
+
     let drop: HashSet<usize> = drop_indices.iter().copied().collect();
 
     let kept: Vec<TrackRange> = stored
@@ -877,16 +893,15 @@ mod tests {
         }
     }
 
-    /// The reference to the one recording the worker's database holds.
-    fn only_recording_ref(worker: &HistoryWorker) -> DatabaseRef {
+    /// The one recording the worker's database holds, as the History window
+    /// lists it.
+    fn only_recording(worker: &HistoryWorker) -> RecordingEntry {
         worker.list();
-        let Response::Listed(Ok(entries)) = next_response(worker) else {
+        let Response::Listed(Ok(mut entries)) = next_response(worker) else {
             panic!("expected a Listed response");
         };
-        let [entry] = entries.as_slice() else {
-            panic!("expected exactly one recording, got {}", entries.len());
-        };
-        entry.db_ref.clone()
+        assert_eq!(entries.len(), 1, "expected exactly one recording");
+        entries.remove(0)
     }
 
     #[test]
@@ -982,7 +997,7 @@ mod tests {
         );
 
         // Hide the first track, then permanently delete all hidden tracks.
-        let db_ref = only_recording_ref(&worker);
+        let db_ref = only_recording(&worker).db_ref;
         worker.set_tracks_hidden(db_ref, vec![0], true);
         next_response(&worker);
 
@@ -1024,6 +1039,73 @@ mod tests {
     }
 
     #[test]
+    fn deleting_a_track_index_the_stored_table_does_not_have_reports_the_tracks_it_removed() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        seed_two_track_recording(&path);
+        let db = Recordings::open_or_create(&path).expect("reopen");
+        let worker = HistoryWorker::spawn(
+            RecordingsHandle::Owner(db),
+            Context::default(),
+            PendingWrites::default(),
+        );
+
+        let recording = only_recording(&worker);
+        let tracks_before = recording.total_tracks;
+        worker.delete_tracks(recording.db_ref, vec![2]);
+        let Response::Mutated { op, result } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        // A failed mutation counts as zero here: it raises no toast, and so
+        // states no count.
+        let reported = match (op, result) {
+            (DbOp::TracksDeleted { count }, Ok(())) => count,
+            _ => 0,
+        };
+
+        let tracks_lost = tracks_before - only_recording(&worker).total_tracks;
+        assert_eq!(
+            reported, tracks_lost,
+            "the delete reports the number of tracks it removed"
+        );
+        worker.shutdown();
+    }
+
+    /// One index of the request is in range and one is past the end, which is
+    /// what a delete of two tracks looks like once the stored table is shorter
+    /// than the session's numbering.
+    #[test]
+    fn deleting_a_track_index_the_stored_table_does_not_have_removes_no_track_at_all() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        seed_two_track_recording(&path);
+        let db = Recordings::open_or_create(&path).expect("reopen");
+        let worker = HistoryWorker::spawn(
+            RecordingsHandle::Owner(db),
+            Context::default(),
+            PendingWrites::default(),
+        );
+
+        worker.delete_tracks(only_recording(&worker).db_ref, vec![0, 2]);
+        let Response::Mutated { result, .. } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        let Err(DbError::TrackIndexOutOfRange {
+            index,
+            stored_track_count,
+        }) = result
+        else {
+            panic!("expected the delete to name the index the table does not have");
+        };
+        assert_eq!((index, stored_track_count), (2, 2));
+
+        let recording = only_recording(&worker);
+        assert_eq!(recording.total_tracks, 2);
+        assert_eq!(recording.meta.nav_point_count, 20);
+        worker.shutdown();
+    }
+
+    #[test]
     fn disabled_worker_is_inert() {
         let worker = HistoryWorker::disabled();
         assert!(!worker.available());
@@ -1045,7 +1127,7 @@ mod tests {
             Context::default(),
             pending_writes.clone(),
         );
-        let db_ref = only_recording_ref(&worker);
+        let db_ref = only_recording(&worker).db_ref;
 
         worker.set_tracks_hidden(db_ref, vec![0], true);
         let Response::Mutated { result, .. } = next_response(&worker) else {
@@ -1081,7 +1163,7 @@ mod tests {
             Context::default(),
             pending_writes.clone(),
         );
-        let db_ref = only_recording_ref(&worker);
+        let db_ref = only_recording(&worker).db_ref;
 
         worker.set_tracks_hidden(db_ref, vec![0], true);
 
@@ -1115,7 +1197,7 @@ mod tests {
             Context::default(),
             pending_writes.clone(),
         );
-        let db_ref = only_recording_ref(&worker);
+        let db_ref = only_recording(&worker).db_ref;
 
         worker.set_tracks_hidden(db_ref, vec![0], true);
 
