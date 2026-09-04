@@ -6,7 +6,7 @@ on:
   pull_request:
   workflow_dispatch: {}
   schedule:
-    # Run monthly on the 1st at 03:00 UTC to catch regressions from upstream deps.
+    # Run monthly on the 1st at 03:00 UTC to catch regressions from upstream dependencies.
     - cron: "0 3 1 * *"
 
 # Minimal permissions - CI only reads the repository.
@@ -25,7 +25,7 @@ env:
 # Cargo caches, in every CI workflow: only trunk writes, and only one job per
 # `shared-key` group. A cache written on a PR ref is readable only by that PR yet
 # still evicts trunk's from the repo-wide 10 GB budget, and one writer per group
-# means one cache per OS rather than one per job.
+# means one cache per OS.
 jobs:
   check:
     name: check / ${{ matrix.os }}
@@ -133,7 +133,7 @@ jobs:
           tool: nextest,just
 
       # wgpu requires a GPU or a software renderer for headless test rendering.
-      # Ubuntu GitHub runners have no GPU. Force Mesa's OpenGL software rasteriser.
+      # Ubuntu GitHub runners have no GPU. Force Mesa's OpenGL software rasterizer.
       - name: Set up software GPU rendering (Linux)
         if: runner.os == 'Linux'
         run: |

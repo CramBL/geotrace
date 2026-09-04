@@ -28,6 +28,7 @@ Chiswick
 chronyd
 circumradius
 Circumradius
+clippy
 CMake
 codecs
 componentwise
@@ -64,6 +65,7 @@ deserialize
 deserializing
 destructured
 desync
+dev
 dialogs
 digitless
 disambiguates
@@ -77,6 +79,7 @@ downsampling
 Downsampling
 Doxygen
 draggable
+dylib
 Earthdata
 eframe
 egui
@@ -98,6 +101,7 @@ Frameless
 Gannon
 gapless
 gapped
+gcc
 Geophysicae
 Geosciences
 geotrace
@@ -109,6 +113,7 @@ Gulyaeva
 gzip
 gzipped
 hardcoded
+hardlinks
 hashable
 hasher
 headlessly
@@ -133,7 +138,11 @@ Kp
 Langebro
 layouter
 lexes
+libc
+libpython
+Linuxbrew
 lockfile
+lockfiles
 lon
 lookups
 lossily
@@ -153,6 +162,7 @@ mergeable
 metacharacter
 Metacharacter
 metno
+mingw
 mipmap
 Mipmap
 mipmapped
@@ -161,7 +171,10 @@ mipmaps
 misroute
 monospace
 mpsc
+MSBuild
+msrv
 multipath
+musl
 musllinux
 mutators
 mypy
@@ -182,6 +195,7 @@ orderable
 parameterizes
 parsable
 placeable
+podman
 polyfill
 polyline
 polylines
@@ -212,6 +226,7 @@ reindexed
 renderers
 Renderers
 reparses
+repo
 repoints
 reportless
 reqwest
@@ -222,6 +237,8 @@ retuned
 Roskilde
 roundtrips
 rstest
+rustfmt
+rustup
 sandboxed
 sats
 screenfuls
@@ -267,6 +284,7 @@ tokenizer
 Tokenizer
 Tomasik
 toolchain
+toolchains
 tooltip
 tooltips
 trackline
@@ -319,6 +337,10 @@ untruncated
 untrusted
 unwindowed
 usvg
+uv
+vcpkg
+vendored
+venv
 viewbox
 viewboxes
 viewport
@@ -328,6 +350,7 @@ virtualized
 wgpu
 winit
 winres
+zizmor
 (?i)antimeridian
 (?i)prereleases
 (?i)sdks?

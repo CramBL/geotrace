@@ -8,13 +8,13 @@ gen-fixture:
 
 # Refresh the gt-flare event fixtures from the NASA DONKI catalog (network!).
 # Needs GEOTRACE_FLARE_API_KEY, an api.nasa.gov key.
-# Name windows to capture only those (additive); no args captures all.
+# Name windows to capture only those (additive). No `WINDOWS` captures all.
 [group("fixtures")]
 flare-fixtures *WINDOWS:
     cargo run -p gt-flare --example fetch_flare_fixtures -- {{ WINDOWS }}
 
 # Refresh the gt-ionex map fixtures from the JPL archive (network!).
-# Name files to capture only those (additive); no args captures all.
+# Name files to capture only those (additive). No `FILES` captures all.
 [group("fixtures")]
 ionex-fixtures *FILES:
     cargo run -p gt-ionex --example fetch_ionex_fixtures -- {{ FILES }}
@@ -36,7 +36,7 @@ ionex-node-series:
     cargo run -p gt-ionex --example fetch_node_series_fixture
 
 # Refresh the gt-jam interference dataset fixtures from gpsjam.org (network!).
-# Name days to capture only those (additive); no args captures all.
+# Name days to capture only those (additive). No `DAYS` captures all.
 [group("fixtures")]
 jam-fixtures *DAYS:
     cargo run -p gt-jam --example fetch_jam_fixtures -- {{ DAYS }}
@@ -44,19 +44,20 @@ jam-fixtures *DAYS:
 # Capture the Mapbox satellite tiles the fixture-backed map snapshots draw
 # (network!). Needs MAPBOX_TOKEN.
 # Name files a snapshot run recorded under GEOTRACE_RECORD_TILE_MISSES to add
-# their tiles (additive); no args re-captures what the manifest already lists.
+# their tiles (additive). No `WANTED` re-captures what the manifest already
+# lists.
 [group("fixtures")]
 map-tile-fixtures *WANTED:
     cargo run -p gt-map --example fetch_map_tile_fixtures -- {{ WANTED }}
 
 # Refresh the gt-solar index fixtures from the GFZ Potsdam service (network!).
-# Name windows to capture only those (additive); no args captures all.
+# Name windows to capture only those (additive). No `WINDOWS` captures all.
 [group("fixtures")]
 solar-fixtures *WINDOWS:
     cargo run -p gt-solar --example fetch_solar_fixtures -- {{ WINDOWS }}
 
 # Refresh the gt-snap live-API fixtures from the Valhalla server (network!).
-# Name scenarios to capture only those (additive); no args captures all.
+# Name scenarios to capture only those (additive). No `SCENARIOS` captures all.
 [group("fixtures")]
 snap-fixtures *SCENARIOS:
     cargo run -p gt-snap --example fetch_snap_fixtures -- {{ SCENARIOS }}

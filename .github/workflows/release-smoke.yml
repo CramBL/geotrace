@@ -12,9 +12,9 @@ name: Release smoke test
 # we run when its "Release" workflow completes (`workflow_run`). This fires from
 # a separate run regardless of token, and unlike a dist post-announce job it is
 # not skipped on prereleases (where dist skips the Homebrew publish job). It can
-# also be re-run manually for any tag via workflow_dispatch.
+# also be re-run manually for any tag via `workflow_dispatch`.
 #
-# zizmor flags workflow_run as a dangerous trigger, but this use is safe: the
+# zizmor flags `workflow_run` as a dangerous trigger, but this use is safe: the
 # `branches: ['app/**']` filter only matches a "Release" run for a maintainer-
 # pushed release tag (a fork PR cannot push one), the job is gated to a
 # successful run, the token is read-only, and we only install the already-
@@ -42,7 +42,7 @@ concurrency:
 
 jobs:
   meta:
-    # A workflow_run fires for completed "Release" runs regardless of outcome.
+    # A `workflow_run` fires for completed "Release" runs regardless of outcome.
     # Only smoke-test one that actually succeeded. The release and dispatch
     # paths always proceed.
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
@@ -57,7 +57,7 @@ jobs:
         env:
           # Three triggers, three tag sources, in precedence order: a release
           # event carries it on the payload, a manual run passes `tag`, and a
-          # GUI "Release" run exposes the tag as its head_branch.
+          # GUI "Release" run exposes the tag as its `head_branch`.
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           DISPATCH_TAG: ${{ inputs.tag }}
           RUN_TAG: ${{ github.event.workflow_run.head_branch }}

@@ -6,7 +6,7 @@ name: App release metadata
 # hand-edited. Once dist's "Release" workflow finishes for an `app/v*` tag,
 # retitle the release to "GeoTrace X.Y.Z" and prepend the app CHANGELOG notes.
 #
-# zizmor flags workflow_run as a dangerous trigger. This use is safe: the
+# zizmor flags `workflow_run` as a dangerous trigger. This use is safe: the
 # `branches: ['app/**']` filter only matches a maintainer-pushed release tag,
 # the job is gated to a successful run, and it only edits release metadata.
 on: # zizmor: ignore[dangerous-triggers]

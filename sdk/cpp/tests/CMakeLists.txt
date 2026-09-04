@@ -62,7 +62,7 @@ function(add_cpp_test name)
         endif()
     endif()
 
-    # On Unix, embed an RPATH so ctest can find the shared library without
+    # On Unix, embed an RPATH so `ctest` can find the shared library without
     # LD_LIBRARY_PATH / DYLD_LIBRARY_PATH.  On Windows, GeoTrace::C is a
     # static library so there is no DLL to locate at runtime.
     if(NOT WIN32)

@@ -3,7 +3,7 @@ name: Smoke / Python SDK
 # Build a uv project that depends on geotrace-sdk, use it to write a one-fix
 # file, and check its version. A stable release installs from PyPI. A prerelease
 # (not published to PyPI) installs the matching wheel attached to the GitHub
-# release. Each step is one command so the workflow reads as a step-by-step
+# release. Each step is one command, so the workflow doubles as a step-by-step
 # guide, mirroring the Rust SDK smoke test.
 on:
   workflow_call:
@@ -118,7 +118,7 @@ jobs:
 
           import geotrace_sdk
 
-          # A SemVer tag (0.1.0-rc.1) normalizes to PEP 440 (0.1.0rc1), so compare
-          # parsed versions rather than raw strings.
+          # A SemVer tag (0.1.0-rc.1) normalizes to PEP 440 (0.1.0rc1), so this
+          # compares the parsed versions.
           assert Version(geotrace_sdk.__version__) == Version(os.environ["EXPECTED"]), geotrace_sdk.__version__
           PY

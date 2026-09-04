@@ -2,7 +2,7 @@ name: Release SDK
 
 # Independent of the GUI app: pushing a `geotrace-sdk-vX.Y.Z` tag builds the
 # C/C++ archives and Python wheels, creates a GitHub release, and publishes to
-# crates.io, PyPI, and the Homebrew tap. A workflow_dispatch run is a no-publish
+# crates.io, PyPI, and the Homebrew tap. A `workflow_dispatch` run is a no-publish
 # dry run.
 on:
   push:

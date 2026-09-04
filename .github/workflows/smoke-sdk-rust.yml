@@ -3,7 +3,7 @@ name: Smoke / Rust SDK
 # Build a fresh project that depends on geotrace-sdk, use it to write a one-fix
 # file, and print geotrace_sdk::VERSION. A stable release comes from crates.io. A
 # prerelease (not published to crates.io) is pulled from the tagged git source.
-# Each step is one command so the workflow reads as a step-by-step guide.
+# Each step is one command, so the workflow doubles as a step-by-step guide.
 on:
   workflow_call:
     inputs:

@@ -4,8 +4,8 @@ name: CI / Self-update
 # built binary with a fake "very old" receipt and drives `geotrace --update`,
 # asserting axoupdater downloads the latest release and replaces the binary. It
 # needs the network and the `self-update` feature, so it never runs on a normal
-# `cargo test`; here we opt in with GEOTRACE_RUN_UPDATE_TEST and authenticate the
-# release query with the automatic token to dodge rate limits.
+# `cargo test`. This workflow opts in with GEOTRACE_RUN_UPDATE_TEST and
+# authenticates the release query with the automatic token to dodge rate limits.
 on:
   push:
     branches: [trunk]

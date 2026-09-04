@@ -60,7 +60,7 @@ jobs:
             echo "sdk=$SDK_CHANGED" >> "$GITHUB_OUTPUT"
           fi
 
-  # Run the SDK test suite (including large_file_round_trip) under QEMU on 32-bit ARM.
+  # Run the SDK test suite (including `large_file_round_trip`) under QEMU on 32-bit ARM.
   # This catches pointer-size and integer-overflow bugs that are invisible on 64-bit hosts.
   cross-32bit:
     name: SDK / QEMU armv7 (32-bit)

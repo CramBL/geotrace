@@ -1,10 +1,10 @@
 """Reference encoder for the Unix `compress` format (`.Z`).
 
 `gt_ionex::unix_compress` decodes what CDDIS serves its legacy IONEX files in.
-Fixtures for it are written here rather than captured, because no `compress`
-binary ships with the development machines, and every generated stream is
-checked against `gzip -d` before it is written, so the fixtures a decoder test
-reads are ones an independent implementation agrees with.
+This module writes its fixtures, since no `compress` binary ships with the
+development machines. Every generated stream is checked against `gzip -d`
+before it is written, so a decoder test reads fixtures an independent
+implementation agrees with.
 """
 
 import subprocess

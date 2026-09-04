@@ -61,8 +61,8 @@ def test_bump_app_updates_root_lockfile_versions(tmp_path: Path) -> None:
 
 def _write_publish_fixture(tmp_path: Path, publish: list[str], deps: dict[str, list[str]]) -> None:
     """A minimal repo shape for the publish-closure check: a release workflow
-    publishing `publish` in order, and one manifest per crate with the given
-    path dependencies. Every crate is registered as a version spot."""
+    publishing `publish` in order, and one manifest per crate with the path
+    dependencies `deps` names. Every crate is registered as a version spot."""
     workflow = tmp_path / versions._RELEASE_WORKFLOW
     workflow.parent.mkdir(parents=True, exist_ok=True)
     workflow.write_text(

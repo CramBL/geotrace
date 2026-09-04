@@ -6,8 +6,8 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Enable static linking on all platforms, not just Windows.
-# Windows always uses static to avoid DLL search-path complications;
-# Linux/macOS default to shared but callers can opt in to static.
+# Windows always uses static to avoid DLL search-path complications.
+# Linux/macOS default to shared, and callers can opt in to static.
 option(GEOTRACE_C_STATIC "Link against the static library (.a / .lib)" OFF)
 
 # Callers may set GEOTRACE_C_LIB_DIR to a pre-built install prefix.
@@ -22,7 +22,7 @@ else()
 endif()
 
 # Force static (.a / .lib) lookup when the option is set so that
-# find_library doesn't inadvertently pick up a shared library if both exist.
+# `find_library` doesn't inadvertently pick up a shared library if both exist.
 if(GEOTRACE_C_STATIC OR WIN32)
     set(_gtc_saved_suffixes "${CMAKE_FIND_LIBRARY_SUFFIXES}")
     if(MSVC)
@@ -58,7 +58,7 @@ endif()
 
 if(WIN32)
     # Rust's static archive on Windows uses NT I/O and Win32 APIs that MSVC
-    # doesn't auto-link; consumers must pull these in explicitly.
+    # doesn't auto-link: consumers must link these explicitly.
     set(_gtc_iface_libs ntdll userenv ws2_32 advapi32 bcrypt)
 elseif(UNIX AND NOT APPLE AND (GEOTRACE_C_STATIC OR WIN32))
     set(_gtc_iface_libs m dl pthread)
@@ -134,8 +134,8 @@ install(FILES
 option(GEOTRACE_C_BUILD_EXAMPLES "Build C SDK examples" OFF)
 option(GEOTRACE_C_BUILD_TESTS "Build C SDK tests" OFF)
 
-# Enable testing before recursing so the examples can register ctest smoke
-# tests even when only GEOTRACE_C_BUILD_EXAMPLES is set.
+# Enable testing before the `add_subdirectory` calls so the examples can
+# register `ctest` smoke tests even when only GEOTRACE_C_BUILD_EXAMPLES is set.
 if(GEOTRACE_C_BUILD_EXAMPLES OR GEOTRACE_C_BUILD_TESTS)
     enable_testing()
 endif()

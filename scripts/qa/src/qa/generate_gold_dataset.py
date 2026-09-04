@@ -54,7 +54,7 @@ def multi_constellation_sats(t: str, gps_time: str | None = None) -> list[dict[s
     gt = gps_time if gps_time is not None else t
     sats: list[dict[str, Any]] = []
 
-    # (constellation, prn_start, n_in_fix, n_visible_only, base_elev, base_az, base_snr)
+    # `(constellation, prn_start, n_in_fix, n_visible_only, base_elev, base_az, base_snr)`
     config = [
         ("gps", 1, 8, 4, 40, 0, 42),
         ("glonass", 1, 6, 3, 35, 90, 38),
@@ -194,7 +194,7 @@ def main() -> None:
                 "eph_m": 1.0,
             }
         )
-    # Points 11-20 move South from (base_lat, base_lon + 10m)
+    # Points 11-20 move South from `(base_lat, base_lon + 10m)`
     for i in range(1, 11):
         t = get_time(3, float(10 + i))
         lat, lon = add_meters(base_lat, base_lon, float(-i), 10.0)
@@ -271,7 +271,7 @@ def main() -> None:
 
     # Add Edge Case: No fix
     # Track 7: Fix loss then regain mid-track
-    # Points 0-2: real fix. Points 3-7: ghost (no gps_time). Points 8-9: real fix again.
+    # Points 0-2: real fix. Points 3-7: ghost (no `gps_time`). Points 8-9: real fix again.
     for i in range(10):
         t = get_time(6, float(i))
         lat, lon = add_meters(SAHARA_LAT + 0.2, SAHARA_LON + 0.2, i * 5, 0)
@@ -357,7 +357,7 @@ def main() -> None:
         # Add problematic satellites
         sats_to_add = [
             {"constellation": "gps", "prn": 0, "snr": 30},  # Invalid PRN
-            {"constellation": "gps", "prn": 1, "snr": 99},  # SNR Sentinel
+            {"constellation": "gps", "prn": 1, "snr": 99},  # SNR at the no-data value
             {"constellation": "glonass", "prn": 70, "snr": 35},  # Glonass Offset
             {"constellation": "gps", "prn": 1, "snr": 40},  # Duplicate PRN
             {"constellation": "beidou", "prn": 100, "snr": 20},  # Out of range
@@ -394,7 +394,7 @@ def main() -> None:
         )
 
     # Track 12: Ghost fix at start, then fix acquired
-    # 3 ghost points (no gps_time) followed by 7 real fixes.
+    # 3 ghost points (no `gps_time`) followed by 7 real fixes.
     # Tests "ghost fix start" rendering: the track begins without a GPS time and
     # then gains a fix part-way through, exercising the transition from ghost to
     # real in the rendering and track-building pipeline.
