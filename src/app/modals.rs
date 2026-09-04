@@ -30,10 +30,9 @@ const PERMANENT_DELETE_LABEL: &str = "Also delete permanently from history";
 /// The tracks of one stored recording that a remove acts on.
 pub struct RecordingTrackRemoval {
     pub db_ref: DatabaseRef,
-    /// Original (segmentation) track indices, matching the recording's stored
-    /// track table - not the live view positions, which shift as tracks are
-    /// removed.
-    pub track_indices: Vec<usize>,
+    /// The rows of the recording's stored track table - not the live view
+    /// positions, which shift as tracks are removed.
+    pub track_rows: Vec<usize>,
 }
 
 /// Actions the app applies in the frame after the user confirms the remove
@@ -281,7 +280,7 @@ pub fn show_delete_confirmation(
     // whether the "delete permanently" option is even relevant.
     let removals = track_removals(&confirm.items, loaded_files.view());
     let affected_recordings = removals.len();
-    let affected_tracks: usize = removals.iter().map(|r| r.track_indices.len()).sum();
+    let affected_tracks: usize = removals.iter().map(|r| r.track_rows.len()).sum();
     let removed_recordings = removed_recording_keys(&confirm.items, loaded_files.view());
     let attached_logs = logs
         .anchored_to(&removed_recordings)
@@ -488,12 +487,12 @@ fn files_fully_removed(keys: &[NodeKey], loaded_files: LoadedFilesView<'_>) -> B
     files
 }
 
-/// For every removed track that belongs to a stored recording, the original
-/// (segmentation) track indices to act on in history, grouped by recording.
+/// For every removed track that belongs to a stored recording, the stored track
+/// table rows to act on in history, grouped by recording.
 ///
-/// A removed file contributes all of its tracks. Track indices are taken from
-/// each track's stored `metadata.index`, so they line up with the recording's
-/// persisted track table.
+/// A removed file contributes all of its tracks. Each row comes from the
+/// track's `metadata.index`, which numbers a track by the stored row that it
+/// sits in.
 fn track_removals(
     keys: &[NodeKey],
     loaded_files: LoadedFilesView<'_>,
@@ -528,18 +527,14 @@ fn track_removals(
         let Some(db_ref) = entry.history().db_ref().cloned() else {
             continue;
         };
-        let track_indices: Vec<usize> = positions
+        let track_rows: Vec<usize> = positions
             .iter()
             .filter_map(|ti| file.tracks.get(*ti))
-            // `metadata.index` is the 1-based display index. The stored track
-            // table is 0-based, so shift down by one.
+            // `metadata.index` is 1-based and the stored table is 0-based.
             .map(|t| t.metadata.index.saturating_sub(1))
             .collect();
-        if !track_indices.is_empty() {
-            removals.push(RecordingTrackRemoval {
-                db_ref,
-                track_indices,
-            });
+        if !track_rows.is_empty() {
+            removals.push(RecordingTrackRemoval { db_ref, track_rows });
         }
     }
     removals
@@ -1578,8 +1573,7 @@ mod tests {
     //! in a `RefCell` and reads it every frame.
 
     use std::cell::RefCell;
-    use std::path::{Path, PathBuf};
-    use std::time::Instant;
+    use std::path::PathBuf;
 
     use gt_types::{
         FileIdx, FileSource, LoadedFile, LoadedTrack, TimeRange, TrackIdx, TrackMetadata,
@@ -1587,11 +1581,8 @@ mod tests {
 
     use egui_kittest::kittest::{NodeT as _, Queryable as _};
     use gt_map::TileAccess;
-    use gt_pending_writes::{PendingWrites, WriteAccess, WriteKind};
-    use gt_store::{
-        DatabaseRef, HistoryDatabase as _, Recordings, RecordingsHandle, StoredFixPlacementRule,
-        StoredSegmentation, StoredTrackSplitRule, TrackRange, TrackState,
-    };
+    use gt_pending_writes::{WriteAccess, WriteKind};
+    use gt_store::{DatabaseRef, TrackState};
     use gt_test_utils::window_fit::{
         CRAMPED_VIEWPORT, NARROW_VIEWPORT, OVERSIZED_ROW_COUNT, SHORT_VIEWPORT,
     };
@@ -1616,6 +1607,9 @@ mod tests {
     use gt_side_panel::{DeleteConfirmState, TreeState};
 
     use crate::app::history_db::{DbOp, HistoryWorker, Response};
+    use crate::app::history_test_support::{
+        next_response, only_recording, seed_recording_cut_at, worker_on,
+    };
 
     fn day(offset: i64) -> chrono::NaiveDate {
         chrono::NaiveDate::from_ymd_opt(2026, 7, 5).unwrap_or_default()
@@ -2292,8 +2286,8 @@ mod tests {
             expect_removed: Vec<usize>,
             /// Number of recordings the remove touches in history.
             expect_recordings: usize,
-            /// Track indices removed per affected recording (ascending).
-            expect_track_indices: Vec<Vec<usize>>,
+            /// Stored track rows removed per affected recording (ascending).
+            expect_track_rows: Vec<Vec<usize>>,
         }
 
         let cases = [
@@ -2303,7 +2297,7 @@ mod tests {
                 keys: vec![],
                 expect_removed: vec![],
                 expect_recordings: 0,
-                expect_track_indices: vec![],
+                expect_track_rows: vec![],
             },
             Case {
                 name: "file key removes every track of the file",
@@ -2311,7 +2305,7 @@ mod tests {
                 keys: vec![file_key(0)],
                 expect_removed: vec![0],
                 expect_recordings: 1,
-                expect_track_indices: vec![vec![0, 1]],
+                expect_track_rows: vec![vec![0, 1]],
             },
             Case {
                 name: "all tracks selected promotes to full removal",
@@ -2319,7 +2313,7 @@ mod tests {
                 keys: vec![track_key(0, 0), track_key(0, 1)],
                 expect_removed: vec![0],
                 expect_recordings: 1,
-                expect_track_indices: vec![vec![0, 1]],
+                expect_track_rows: vec![vec![0, 1]],
             },
             Case {
                 name: "partial track selection hides just those tracks",
@@ -2327,7 +2321,7 @@ mod tests {
                 keys: vec![track_key(0, 0), track_key(0, 1)],
                 expect_removed: vec![],
                 expect_recordings: 1,
-                expect_track_indices: vec![vec![0, 1]],
+                expect_track_rows: vec![vec![0, 1]],
             },
             Case {
                 name: "removed file without db_ref touches no recording",
@@ -2335,7 +2329,7 @@ mod tests {
                 keys: vec![file_key(0)],
                 expect_removed: vec![0],
                 expect_recordings: 0,
-                expect_track_indices: vec![],
+                expect_track_rows: vec![],
             },
             Case {
                 name: "removes one file and leaves the other",
@@ -2343,7 +2337,7 @@ mod tests {
                 keys: vec![file_key(1)],
                 expect_removed: vec![1],
                 expect_recordings: 1,
-                expect_track_indices: vec![vec![0, 1]],
+                expect_track_rows: vec![vec![0, 1]],
             },
         ];
 
@@ -2366,105 +2360,13 @@ mod tests {
                 "affected recording count for '{}'",
                 case.name
             );
-            let indices: Vec<Vec<usize>> =
-                removals.iter().map(|r| r.track_indices.clone()).collect();
+            let rows: Vec<Vec<usize>> = removals.iter().map(|r| r.track_rows.clone()).collect();
             assert_eq!(
-                indices, case.expect_track_indices,
-                "removed track indices for '{}'",
+                rows, case.expect_track_rows,
+                "removed stored track rows for '{}'",
                 case.name
             );
         }
-    }
-
-    /// The nav points [`sample_bytes`] holds.
-    const SAMPLE_POINT_COUNT: u64 = 20;
-
-    /// Twenty nav points one second apart, which [`seed_recording`] cuts into
-    /// tracks.
-    fn sample_bytes() -> Vec<u8> {
-        gt_test_utils::synthetic_gtd_bytes(gt_test_utils::SyntheticGtdSpec {
-            start: chrono::DateTime::from_timestamp(1_748_000_000, 0).expect("valid timestamp"),
-            point_count: SAMPLE_POINT_COUNT as usize,
-            step_secs: 1,
-            start_lat_deg: 51.5,
-            start_lon_deg: -0.1,
-            lat_step_deg: 0.0002,
-            lon_step_deg: -0.00015,
-            heading_deg: 270.0,
-            speed_kmh: 22.0,
-            eph_m: 2.4,
-            sats_seen: 10,
-            sats_in_fix: 7,
-        })
-    }
-
-    /// Store one recording whose twenty points are cut at `bounds` into live
-    /// tracks.
-    fn seed_recording(path: &Path, bounds: &[u64]) {
-        let bytes = sample_bytes();
-        let mut db = Recordings::open_or_create(path).expect("open");
-        let meta = gt_store::extract_meta(&bytes).expect("meta");
-        let mut tracks = Vec::new();
-        let mut start = 0;
-        for end in bounds
-            .iter()
-            .copied()
-            .chain(std::iter::once(SAMPLE_POINT_COUNT))
-        {
-            tracks.push(TrackRange {
-                start,
-                end,
-                state: TrackState::Live,
-            });
-            start = end;
-        }
-        let settings = StoredSegmentation {
-            track_split_gap_us: 300_000_000,
-            track_split_rule: StoredTrackSplitRule::StepInEitherDirection,
-            fix_placement_rule: StoredFixPlacementRule::MissingHeadingAndNothingInFix,
-            detect_clock_discontinuities: true,
-            clock_discontinuity_sigmas: 5.0,
-        };
-        db.insert("dev", &meta, &tracks, settings, &bytes)
-            .expect("insert");
-    }
-
-    fn worker_on(path: &Path) -> HistoryWorker {
-        let db = Recordings::open_or_create(path).expect("reopen");
-        HistoryWorker::spawn(
-            RecordingsHandle::Owner(db),
-            egui::Context::default(),
-            PendingWrites::default(),
-        )
-    }
-
-    /// Block until the worker delivers exactly one response, or time out.
-    fn next_response(worker: &HistoryWorker) -> Response {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let mut batch = worker.poll();
-            if !batch.is_empty() {
-                return batch.remove(0);
-            }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for a history worker response"
-            );
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    }
-
-    /// The reference and the nav point count that the History window lists for
-    /// the one recording in the database.
-    fn only_recording(worker: &HistoryWorker) -> (DatabaseRef, u64) {
-        worker.list();
-        let Response::Listed(Ok(entries)) = next_response(worker) else {
-            panic!("expected a Listed response");
-        };
-        let [entry] = entries.as_slice() else {
-            panic!("expected exactly one recording, got {}", entries.len());
-        };
-        (entry.db_ref.clone(), entry.meta.nav_point_count)
     }
 
     /// The loaded view of a recording whose tracks sit in the stored table rows
@@ -2508,8 +2410,9 @@ mod tests {
         loaded
     }
 
-    /// Remove the track at view position `ti` and run the permanent delete it
-    /// asks for, the way the app applies a [`RemoveOutcome`].
+    /// Remove the track at view position `ti` from the view, and send the
+    /// permanent delete for the stored rows that [`execute_delete`] returns,
+    /// the way the app applies a [`RemoveOutcome`].
     fn remove_the_track_permanently(
         worker: &HistoryWorker,
         loaded: &mut LoadedFiles,
@@ -2521,7 +2424,7 @@ mod tests {
         let [removal] = removals.as_slice() else {
             panic!("expected one affected recording, got {}", removals.len());
         };
-        worker.delete_tracks(db_ref.clone(), removal.track_indices.clone());
+        worker.delete_tracks(db_ref.clone(), removal.track_rows.clone());
         let Response::Mutated {
             op: DbOp::TracksDeleted { .. },
             result,
@@ -2537,25 +2440,30 @@ mod tests {
     /// left, which leaves the last one and its six points.
     ///
     /// The second delete is sent under the reference that the database lists
-    /// after the first delete. The row alone decides which track it removes.
+    /// after the first delete. Only the stored row identifies the track that
+    /// the delete removes.
     #[test]
     fn removing_a_track_after_a_permanent_delete_deletes_the_track_the_user_chose() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
-        seed_recording(&path, &[7, 14]);
+        seed_recording_cut_at(&path, &[7, 14]);
         let worker = worker_on(&path);
 
-        let (db_ref, _) = only_recording(&worker);
+        let db_ref = only_recording(&worker).db_ref;
         let mut loaded = loaded_recording_in_stored_rows(&[0, 1, 2], &db_ref);
         let mut tree = TreeState::default();
         remove_the_track_permanently(&worker, &mut loaded, &mut tree, &db_ref, 0);
 
-        let (db_ref, points_left) = only_recording(&worker);
-        assert_eq!(points_left, 13, "the first delete removed seven points");
+        let after_the_first_delete = only_recording(&worker);
+        assert_eq!(
+            after_the_first_delete.meta.nav_point_count, 13,
+            "the first delete removed seven points"
+        );
+        let db_ref = after_the_first_delete.db_ref;
         remove_the_track_permanently(&worker, &mut loaded, &mut tree, &db_ref, 0);
 
         assert_eq!(
-            only_recording(&worker).1,
+            only_recording(&worker).meta.nav_point_count,
             6,
             "the recording keeps the six points of its last track"
         );
@@ -2570,10 +2478,10 @@ mod tests {
      {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("history.h5");
-        seed_recording(&path, &[7, 14]);
+        seed_recording_cut_at(&path, &[7, 14]);
         let worker = worker_on(&path);
 
-        let (db_ref, _) = only_recording(&worker);
+        let db_ref = only_recording(&worker).db_ref;
         worker.set_tracks_shelved(db_ref.clone(), vec![1], true);
         let Response::Mutated { result, .. } = next_response(&worker) else {
             panic!("expected a mutation response");
@@ -2588,7 +2496,7 @@ mod tests {
         let [removal] = removals.as_slice() else {
             panic!("expected one affected recording, got {}", removals.len());
         };
-        worker.set_tracks_shelved(db_ref.clone(), removal.track_indices.clone(), true);
+        worker.set_tracks_shelved(db_ref.clone(), removal.track_rows.clone(), true);
         let Response::Mutated { result, .. } = next_response(&worker) else {
             panic!("expected a mutation response");
         };

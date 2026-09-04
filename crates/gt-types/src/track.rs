@@ -324,6 +324,10 @@ pub struct MeasuredTrackGeometry {
 
 #[derive(Debug, Clone, Copy)]
 pub struct TrackMetadata {
+    /// The track's 1-based number. For a recording in the history database it
+    /// is the row that the track takes in the stored track table, plus one: a
+    /// permanently deleted track leaves a tombstone in its row, and the tracks
+    /// after it keep their numbers.
     pub index: usize,
     pub duration: Duration,
     pub time_range: TimeRange,

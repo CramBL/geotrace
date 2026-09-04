@@ -305,7 +305,7 @@ impl HistoryDatabase for SysDb {
     fn set_tracks_shelved(
         &mut self,
         db_ref: &DatabaseRef,
-        track_indices: &[usize],
+        rows: &[usize],
         shelved: bool,
     ) -> Result<(), DbError> {
         let _guard = DB_LOCK.lock();
@@ -313,7 +313,7 @@ impl HistoryDatabase for SysDb {
             &self.path,
             &db_ref.identity,
             &db_ref.group_name,
-            track_indices,
+            rows,
             shelved,
         )
         .map_err(Into::into)

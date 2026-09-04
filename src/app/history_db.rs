@@ -102,13 +102,14 @@ enum ReadRequest {
 enum WriteRequest {
     SetTracksShelved {
         db_ref: DatabaseRef,
-        indices: Vec<usize>,
+        rows: Vec<usize>,
         shelved: bool,
     },
-    /// Permanently remove specific tracks' points from one recording (re-encode).
+    /// Permanently remove the nav points of the tracks in these stored table
+    /// rows from one recording (re-encode).
     DeleteTracks {
         db_ref: DatabaseRef,
-        indices: Vec<usize>,
+        rows: Vec<usize>,
     },
     /// Permanently remove every shelved track across all recordings (re-encode).
     DeleteShelvedTracks,
@@ -363,16 +364,20 @@ impl HistoryWorker {
         self.send_read(ReadRequest::Open(db_ref));
     }
 
-    pub fn set_tracks_shelved(&self, db_ref: DatabaseRef, indices: Vec<usize>, shelved: bool) {
+    /// Shelve the tracks in the stored table rows `rows` of a recording, or
+    /// unshelve them when `shelved` is false.
+    pub fn set_tracks_shelved(&self, db_ref: DatabaseRef, rows: Vec<usize>, shelved: bool) {
         self.send_write(WriteRequest::SetTracksShelved {
             db_ref,
-            indices,
+            rows,
             shelved,
         });
     }
 
-    pub fn delete_tracks(&self, db_ref: DatabaseRef, indices: Vec<usize>) {
-        self.send_write(WriteRequest::DeleteTracks { db_ref, indices });
+    /// Permanently delete the tracks in the stored table rows `rows` of a
+    /// recording.
+    pub fn delete_tracks(&self, db_ref: DatabaseRef, rows: Vec<usize>) {
+        self.send_write(WriteRequest::DeleteTracks { db_ref, rows });
     }
 
     pub fn delete_shelved_tracks(&self) {
@@ -608,19 +613,19 @@ fn handle_write_request(db: &mut Recordings, req: WriteRequest) -> Response {
     match req {
         WriteRequest::SetTracksShelved {
             db_ref,
-            indices,
+            rows,
             shelved,
         } => {
-            let count = indices.len();
-            let result = db.set_tracks_shelved(&db_ref, &indices, shelved);
+            let count = rows.len();
+            let result = db.set_tracks_shelved(&db_ref, &rows, shelved);
             Response::Mutated {
                 op: DbOp::TracksShelved { count },
                 result,
             }
         }
-        WriteRequest::DeleteTracks { db_ref, indices } => {
-            let count = indices.len();
-            let result = purge_tracks(db, &db_ref, &indices);
+        WriteRequest::DeleteTracks { db_ref, rows } => {
+            let count = rows.len();
+            let result = purge_tracks(db, &db_ref, &rows);
             Response::Mutated {
                 op: DbOp::TracksDeleted { count },
                 result,
@@ -713,37 +718,44 @@ fn purge_all_shelved(db: &mut Recordings) -> Result<usize, DbError> {
             continue;
         }
         let stored = db.load(&entry.db_ref)?;
-        let shelved: Vec<usize> = stored
+        let shelved_rows: Vec<usize> = stored
             .tracks
             .iter()
             .enumerate()
             .filter(|(_, t)| t.state == TrackState::Shelved)
-            .map(|(i, _)| i)
+            .map(|(row, _)| row)
             .collect();
-        deleted += shelved.len();
-        purge_tracks_with_stored(db, &entry.db_ref, &stored, &shelved)?;
+        deleted += shelved_rows.len();
+        purge_tracks_with_stored(db, &entry.db_ref, &stored, &shelved_rows)?;
     }
     Ok(deleted)
 }
 
-/// Permanently remove the tracks at `drop_indices` from one recording.
+/// Permanently remove the tracks in the stored table rows `drop_rows` from one
+/// recording.
 fn purge_tracks(
     db: &mut Recordings,
     db_ref: &DatabaseRef,
-    drop_indices: &[usize],
+    drop_rows: &[usize],
 ) -> Result<(), DbError> {
     let stored = db.load(db_ref)?;
-    purge_tracks_with_stored(db, db_ref, &stored, drop_indices)
+    purge_tracks_with_stored(db, db_ref, &stored, drop_rows)
 }
 
-/// Re-encode `db_ref` with the points of the tracks at `drop_indices` removed,
-/// and store the new bytes under the same reference. Surviving tracks keep their
-/// [`TrackState`] and are range-shifted onto the compacted point sequence. When
-/// nothing survives the whole recording is deleted instead (an empty re-encode
-/// would fail).
+/// Re-encode `db_ref` with the nav points of the tracks in the stored table rows
+/// `drop_rows` removed, and store the new bytes under the same reference.
 ///
-/// Returns [`DbError::TrackIndexOutOfRange`] and leaves the recording as it is
-/// when `drop_indices` holds an index the stored track table does not have.
+/// A row keeps its place for the life of the recording. A dropped row becomes
+/// a [`TrackState::Deleted`] tombstone, and the rows after it stay where they
+/// are. The surviving rows range-shift onto the compacted nav point sequence,
+/// and each tombstone takes the empty range at the offset where its nav points
+/// began.
+/// When no row survives, the whole recording is deleted instead (an empty
+/// re-encode would fail).
+///
+/// Returns [`DbError::TrackIndexOutOfRange`] or [`DbError::TrackAlreadyDeleted`]
+/// and leaves the recording as it is when `drop_rows` holds a row past the end
+/// of the table or a row that already holds a tombstone.
 ///
 /// The recording's stored snap runs are dropped by
 /// [`HistoryDatabase::replace_recording_in_place`]: the runs name point indices
@@ -752,31 +764,34 @@ fn purge_tracks_with_stored(
     db: &mut Recordings,
     db_ref: &DatabaseRef,
     stored: &StoredRecording,
-    drop_indices: &[usize],
+    drop_rows: &[usize],
 ) -> Result<(), DbError> {
-    // The whole request is rejected when any index is out of range: the caller
-    // numbered the tracks against a different table, so the in-range indices
-    // may not name what the user chose either.
-    if let Some(&index) = drop_indices
-        .iter()
-        .find(|&&index| index >= stored.tracks.len())
-    {
-        return Err(DbError::TrackIndexOutOfRange {
-            index,
-            stored_track_count: stored.tracks.len(),
-        });
+    // One unusable row rejects the whole request. The caller numbered the
+    // tracks against another table, and the rows that do hold a track may hold
+    // tracks other than the ones that the user chose.
+    for &row in drop_rows {
+        match stored.tracks.get(row) {
+            None => {
+                return Err(DbError::TrackIndexOutOfRange {
+                    index: row,
+                    stored_track_count: stored.tracks.len(),
+                });
+            }
+            Some(track) if track.state == TrackState::Deleted => {
+                return Err(DbError::TrackAlreadyDeleted { index: row });
+            }
+            Some(_) => {}
+        }
     }
 
-    let drop: HashSet<usize> = drop_indices.iter().copied().collect();
+    let drop: HashSet<usize> = drop_rows.iter().copied().collect();
 
-    let kept: Vec<TrackRange> = stored
+    let a_track_survives = stored
         .tracks
         .iter()
         .enumerate()
-        .filter(|(i, _)| !drop.contains(i))
-        .map(|(_, t)| *t)
-        .collect();
-    if kept.is_empty() {
+        .any(|(row, t)| !drop.contains(&row) && t.state != TrackState::Deleted);
+    if !a_track_survives {
         return db.delete_batch(std::slice::from_ref(db_ref));
     }
 
@@ -784,7 +799,7 @@ fn purge_tracks_with_stored(
         .tracks
         .iter()
         .enumerate()
-        .filter(|(i, _)| drop.contains(i))
+        .filter(|(row, _)| drop.contains(row))
         .map(|(_, t)| {
             let start = usize::try_from(t.start).unwrap_or(usize::MAX);
             let end = usize::try_from(t.end).unwrap_or(usize::MAX);
@@ -798,16 +813,26 @@ fn purge_tracks_with_stored(
     let new_bytes = gt_loader::reencode_dropping_ranges(&stored.bytes, &drop_ranges)
         .map_err(|e| DbError::Backend(e.to_string()))?;
 
-    // Range-shift the survivors: each keeps its length, starting where the
-    // previous survivor ended.
+    // Range-shift the table onto the compacted nav points. A surviving row
+    // keeps its length and starts where the previous row ended, and a tombstone
+    // takes the empty range there.
     let mut cursor = 0;
-    let mut new_tracks = Vec::with_capacity(kept.len());
-    for t in &kept {
-        let len = t.end.saturating_sub(t.start);
+    let mut new_tracks = Vec::with_capacity(stored.tracks.len());
+    for (row, t) in stored.tracks.iter().enumerate() {
+        let deleted = drop.contains(&row) || t.state == TrackState::Deleted;
+        let len = if deleted {
+            0
+        } else {
+            t.end.saturating_sub(t.start)
+        };
         new_tracks.push(TrackRange {
             start: cursor,
             end: cursor + len,
-            state: t.state,
+            state: if deleted {
+                TrackState::Deleted
+            } else {
+                t.state
+            },
         });
         cursor += len;
     }
@@ -822,117 +847,17 @@ fn purge_tracks_with_stored(
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
-
-    use chrono::DateTime;
     use gt_pending_writes::WriteAccess;
-    use gt_store::{StoredSegmentation, TrackRange};
-    use gt_test_utils::{SyntheticGtdSpec, pending_writes, synthetic_gtd_bytes};
+    use gt_store::TrackRange;
+    use gt_test_utils::pending_writes;
     use rstest::rstest;
 
+    use crate::app::history_test_support::{
+        bytes_starting_at, listed_recordings, next_response, only_recording, sample_bytes,
+        seed_two_track_recording, store_recording, worker_on,
+    };
+
     use super::*;
-
-    fn bytes_starting_at(start_secs: i64, point_count: usize) -> Vec<u8> {
-        synthetic_gtd_bytes(SyntheticGtdSpec {
-            start: DateTime::from_timestamp(start_secs, 0).expect("valid timestamp"),
-            point_count,
-            step_secs: 1,
-            start_lat_deg: 51.5,
-            start_lon_deg: -0.1,
-            lat_step_deg: 0.0002,
-            lon_step_deg: -0.00015,
-            heading_deg: 270.0,
-            speed_kmh: 22.0,
-            eph_m: 2.4,
-            sats_seen: 10,
-            sats_in_fix: 7,
-        })
-    }
-
-    /// Twenty nav points one second apart from 2025-05-23 12:53:20 UTC.
-    fn sample_bytes() -> Vec<u8> {
-        bytes_starting_at(1_748_000_000, 20)
-    }
-
-    fn segmentation() -> StoredSegmentation {
-        StoredSegmentation {
-            track_split_gap_us: 300_000_000,
-            track_split_rule: gt_store::StoredTrackSplitRule::StepInEitherDirection,
-            fix_placement_rule: gt_store::StoredFixPlacementRule::MissingHeadingAndNothingInFix,
-            detect_clock_discontinuities: true,
-            clock_discontinuity_sigmas: 5.0,
-        }
-    }
-
-    fn store_recording(path: &Path, bytes: &[u8], tracks: &[TrackRange]) {
-        let mut db = Recordings::open_or_create(path).expect("open");
-        let meta = gt_store::extract_meta(bytes).expect("meta");
-        db.insert("dev", &meta, tracks, segmentation(), bytes)
-            .expect("insert");
-    }
-
-    /// Store one recording of two ten-point tracks in a database at `path`.
-    fn seed_two_track_recording(path: &Path) {
-        store_recording(
-            path,
-            &sample_bytes(),
-            &[
-                TrackRange {
-                    start: 0,
-                    end: 10,
-                    state: TrackState::Live,
-                },
-                TrackRange {
-                    start: 10,
-                    end: 20,
-                    state: TrackState::Live,
-                },
-            ],
-        );
-    }
-
-    fn worker_on(path: &Path) -> HistoryWorker {
-        let db = Recordings::open_or_create(path).expect("reopen");
-        HistoryWorker::spawn(
-            RecordingsHandle::Owner(db),
-            Context::default(),
-            PendingWrites::default(),
-        )
-    }
-
-    /// Block until the worker delivers exactly one response, or time out.
-    fn next_response(worker: &HistoryWorker) -> Response {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let mut batch = worker.poll();
-            if !batch.is_empty() {
-                return batch.remove(0);
-            }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for a history worker response"
-            );
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    }
-
-    /// The recordings the worker's database holds, as the History window lists
-    /// them.
-    fn listed_recordings(worker: &HistoryWorker) -> Vec<RecordingEntry> {
-        worker.list();
-        let Response::Listed(Ok(entries)) = next_response(worker) else {
-            panic!("expected a Listed response");
-        };
-        entries
-    }
-
-    /// The one recording the worker's database holds, as the History window
-    /// lists it.
-    fn only_recording(worker: &HistoryWorker) -> RecordingEntry {
-        let mut entries = listed_recordings(worker);
-        assert_eq!(entries.len(), 1, "expected exactly one recording");
-        entries.remove(0)
-    }
 
     #[test]
     fn worker_round_trips_every_operation() {
@@ -1050,11 +975,19 @@ mod tests {
         let stored = result.expect("open ok");
         assert_eq!(
             stored.tracks,
-            vec![TrackRange {
-                start: 0,
-                end: 10,
-                state: TrackState::Live,
-            }]
+            vec![
+                TrackRange {
+                    start: 0,
+                    end: 0,
+                    state: TrackState::Deleted,
+                },
+                TrackRange {
+                    start: 0,
+                    end: 10,
+                    state: TrackState::Live,
+                }
+            ],
+            "the deleted track leaves a tombstone, and the track that stays keeps its row"
         );
     }
 
@@ -1129,7 +1062,9 @@ mod tests {
         };
         result.expect("the delete runs");
 
-        worker.set_tracks_shelved(session_ref, vec![0], true);
+        // The track that the session still holds sits in stored row 1, where
+        // the delete left it.
+        worker.set_tracks_shelved(session_ref, vec![1], true);
         let Response::Mutated { result, .. } = next_response(&worker) else {
             panic!("expected a mutation response");
         };
@@ -1165,7 +1100,9 @@ mod tests {
         };
         result.expect("the sweep runs");
 
-        worker.set_tracks_shelved(session_ref, vec![0], true);
+        // The track that the session still holds sits in stored row 1, where
+        // the sweep left it.
+        worker.set_tracks_shelved(session_ref, vec![1], true);
         let Response::Mutated { result, .. } = next_response(&worker) else {
             panic!("expected a mutation response");
         };
@@ -1175,6 +1112,120 @@ mod tests {
             only_recording(&worker).shelved_tracks,
             1,
             "the track the session shelved is shelved in history"
+        );
+        worker.shutdown();
+    }
+
+    #[test]
+    fn deleting_a_stored_row_that_holds_a_tombstone_removes_no_track_at_all() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        seed_two_track_recording(&path);
+        let worker = worker_on(&path);
+
+        let db_ref = only_recording(&worker).db_ref;
+        worker.delete_tracks(db_ref.clone(), vec![0]);
+        let Response::Mutated { result, .. } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        result.expect("the first delete runs");
+
+        worker.delete_tracks(db_ref, vec![0]);
+        let Response::Mutated { result, .. } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        let Err(DbError::TrackAlreadyDeleted { index }) = result else {
+            panic!("expected the delete to report the row that holds a tombstone");
+        };
+        assert_eq!(index, 0);
+
+        let recording = only_recording(&worker);
+        assert_eq!(recording.total_tracks, 1);
+        assert_eq!(recording.meta.nav_point_count, 10);
+        worker.shutdown();
+    }
+
+    /// The sweep addresses the stored rows too. A tombstone that an earlier
+    /// delete left keeps its row, and the sweep reads the rows around it.
+    #[test]
+    fn the_shelved_data_sweep_of_a_recording_with_a_tombstone_deletes_the_shelved_track() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        store_recording(
+            &path,
+            &sample_bytes(),
+            &[
+                TrackRange {
+                    start: 0,
+                    end: 7,
+                    state: TrackState::Live,
+                },
+                TrackRange {
+                    start: 7,
+                    end: 14,
+                    state: TrackState::Live,
+                },
+                TrackRange {
+                    start: 14,
+                    end: 20,
+                    state: TrackState::Live,
+                },
+            ],
+        );
+        let worker = worker_on(&path);
+
+        let db_ref = only_recording(&worker).db_ref;
+        worker.delete_tracks(db_ref.clone(), vec![0]);
+        let Response::Mutated { result, .. } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        result.expect("the delete runs");
+
+        worker.set_tracks_shelved(db_ref.clone(), vec![1], true);
+        let Response::Mutated { result, .. } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        result.expect("the shelve runs");
+
+        worker.delete_shelved_tracks();
+        let Response::Mutated {
+            op: DbOp::TracksDeleted { count },
+            result,
+        } = next_response(&worker)
+        else {
+            panic!("expected a TracksDeleted mutation");
+        };
+        result.expect("the sweep runs");
+        assert_eq!(count, 1);
+
+        assert_eq!(
+            only_recording(&worker).meta.nav_point_count,
+            6,
+            "the recording keeps the six points of its last track"
+        );
+        worker.open(db_ref);
+        let Response::Opened { result, .. } = next_response(&worker) else {
+            panic!("expected an Opened response");
+        };
+        assert_eq!(
+            result.expect("the recording opens").tracks,
+            vec![
+                TrackRange {
+                    start: 0,
+                    end: 0,
+                    state: TrackState::Deleted,
+                },
+                TrackRange {
+                    start: 0,
+                    end: 0,
+                    state: TrackState::Deleted,
+                },
+                TrackRange {
+                    start: 0,
+                    end: 6,
+                    state: TrackState::Live,
+                }
+            ]
         );
         worker.shutdown();
     }
@@ -1391,7 +1442,7 @@ mod tests {
     #[case(
         WriteRequest::SetTracksShelved {
             db_ref: db_ref(),
-            indices: vec![0],
+            rows: vec![0],
             shelved: true,
         },
         "Shelving tracks in recording history"
@@ -1399,7 +1450,7 @@ mod tests {
     #[case(
         WriteRequest::SetTracksShelved {
             db_ref: db_ref(),
-            indices: vec![0],
+            rows: vec![0],
             shelved: false,
         },
         "Unshelving tracks in recording history"
@@ -1407,7 +1458,7 @@ mod tests {
     #[case(
         WriteRequest::DeleteTracks {
             db_ref: db_ref(),
-            indices: vec![0],
+            rows: vec![0],
         },
         "Deleting tracks from recording history"
     )]

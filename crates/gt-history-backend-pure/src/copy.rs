@@ -678,18 +678,16 @@ pub(crate) fn rename_identity(
     Ok(())
 }
 
-/// Shelve or unshelve a recording's tracks at `track_indices`, via a
+/// Shelve or unshelve the tracks in the stored table rows `rows`, via a
 /// read-modify-write cycle.
 ///
-/// `track_indices` count the tracks the recording lists, which
-/// [`gt_history_types::listed_track_rows`] maps onto the stored table's rows. A
-/// recording whose table predates [`TRACK_STATE_DATASET`] comes out of this
+/// A recording whose table predates [`TRACK_STATE_DATASET`] comes out of this
 /// with a state column: the whole table is rewritten, tombstones and all.
 pub(crate) fn set_tracks_shelved(
     db_path: &std::path::Path,
     identity: &str,
     group_name: &str,
-    track_indices: &[usize],
+    rows: &[usize],
     shelved: bool,
 ) -> Result<(), InternalError> {
     let existing_db = hdf5_pure::File::open(db_path)?;
@@ -712,8 +710,10 @@ pub(crate) fn set_tracks_shelved(
     } else {
         TrackState::Live
     };
-    for index in gt_history_types::set_state_of_listed_tracks(&mut tracks, track_indices, state) {
-        log::warn!("track index {index} out of range for {identity}/{group_name}");
+    for row in gt_history_types::set_state_of_stored_rows(&mut tracks, rows, state) {
+        log::warn!(
+            "Track row {row} of {identity}/{group_name} holds no live or shelved track: it is past the end of the stored track table, or it holds a permanently deleted one"
+        );
     }
     if let Some(rec) = find_recording_node_mut(&mut identity_nodes, identity, group_name) {
         rec.groups.retain(|g| g.name != TRACKS_GROUP);
@@ -1007,7 +1007,7 @@ pub(crate) fn load_recording(
     let id_grp = find_identity_group(&by_id, identity)?;
     let rec_grp = id_grp.group(group_name)?;
 
-    let tracks = read_track_table(&rec_grp);
+    let tracks = stored_track_table(&rec_grp).unwrap_or_default();
 
     // Snapshot all child data groups (`nav_points`, `sat_reports`, etc.) and
     // write them as a fresh GTD-format HDF5 file.

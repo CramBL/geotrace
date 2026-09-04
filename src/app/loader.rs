@@ -134,11 +134,12 @@ pub(super) struct CompletedLoad {
 
 /// What to do, beyond a plain load, with a recording opened from history.
 pub(super) enum HistoryOpen {
-    /// Remove these track positions (0-based, segmentation order) from the loaded
-    /// view - the recording's shelved tracks. The stored table is left unchanged.
+    /// Apply the recording's stored track table to the loaded view: number each
+    /// track by the stored row from which it was reproduced, and leave the
+    /// shelved ones out. The stored table is left unchanged.
     ApplyShelved {
         db_ref: gt_store::DatabaseRef,
-        positions: Vec<usize>,
+        stored_tracks: Vec<gt_store::TrackRange>,
         applied_current_marker_settings: bool,
     },
     /// Overwrite the recording's stored track table and segmentation settings with
@@ -422,8 +423,8 @@ impl LoadJobs {
                                     );
                                 }
                             }
-                            Some(HistoryOpen::ApplyShelved { positions, .. }) => {
-                                drop_tracks(&mut file, positions);
+                            Some(HistoryOpen::ApplyShelved { stored_tracks, .. }) => {
+                                apply_stored_track_table(&mut file, stored_tracks);
                             }
                             None => {}
                         }
@@ -838,21 +839,39 @@ fn track_ranges_from_file(file: &LoadedFile) -> Vec<gt_store::TrackRange> {
         .collect()
 }
 
-/// Remove the tracks at `positions` (0-based, segmentation order) from a loaded
-/// file's view - used to leave a recording's stored shelved tracks out when it
-/// is opened from history.
-fn drop_tracks(file: &mut LoadedFile, positions: &[usize]) {
-    if positions.is_empty() {
-        return;
+/// Apply a recording's stored track table to the file just segmented from its
+/// nav points, when it is opened from history.
+///
+/// Segmentation reproduces one track per listed row of `stored_tracks`, in
+/// order. Each track takes the number of its stored row, and the shelved tracks
+/// are left out of the view. A track after a permanently deleted one keeps its
+/// number.
+fn apply_stored_track_table(file: &mut LoadedFile, stored_tracks: &[gt_store::TrackRange]) {
+    let rows = gt_store::listed_track_rows(stored_tracks);
+    if rows.len() != file.tracks.len() {
+        log::warn!(
+            "The recording lists {} stored track(s), and its nav points segment into {}",
+            rows.len(),
+            file.tracks.len()
+        );
     }
-    let drop: std::collections::HashSet<usize> = positions.iter().copied().collect();
+    let mut shelved = 0;
     file.tracks = std::mem::take(&mut file.tracks)
         .into_iter()
         .enumerate()
-        .filter(|(i, _)| !drop.contains(i))
-        .map(|(_, t)| t)
+        .filter_map(|(position, mut track)| {
+            let Some(&row) = rows.get(position) else {
+                return Some(track);
+            };
+            track.metadata.index = row + 1;
+            if stored_tracks.get(row).map(|t| t.state) == Some(gt_store::TrackState::Shelved) {
+                shelved += 1;
+                return None;
+            }
+            Some(track)
+        })
         .collect();
-    log::debug!("Left {} shelved track(s) out on open", drop.len());
+    log::debug!("Left {shelved} shelved track(s) out on open");
 }
 
 /// Overwrite a recording's stored track table and segmentation settings with a
@@ -1450,6 +1469,86 @@ mod tests {
         );
 
         assert_eq!(stored_track_split_gap_us(&db_path, &db_ref), stored_before);
+    }
+
+    /// A file of `track_count` tracks numbered the way `build_loaded_file`
+    /// numbers a fresh segmentation.
+    fn segmented_file(track_count: usize) -> LoadedFile {
+        LoadedFile {
+            metadata: gt_test_utils::empty_file_metadata(),
+            tracks: (0..track_count)
+                .map(|position| gt_types::LoadedTrack {
+                    metadata: gt_types::TrackMetadata {
+                        index: position + 1,
+                        ..gt_test_utils::empty_track_metadata()
+                    },
+                    ..gt_test_utils::loaded_track_with_points(Vec::new())
+                })
+                .collect(),
+            event_marker_styles: rustc_hash::FxHashMap::default(),
+            orphaned_event_markers: Vec::new(),
+            source: gt_types::FileSource::GtdPath(std::path::PathBuf::new()),
+            load_warnings: Vec::new(),
+        }
+    }
+
+    /// A stored track table whose rows hold `states`, with ten nav points in
+    /// each live or shelved row and none in a tombstone.
+    fn synthetic_stored_track_table(states: &[gt_store::TrackState]) -> Vec<gt_store::TrackRange> {
+        let mut start = 0;
+        states
+            .iter()
+            .map(|&state| {
+                let len = if state == gt_store::TrackState::Deleted {
+                    0
+                } else {
+                    10
+                };
+                let range = gt_store::TrackRange {
+                    start,
+                    end: start + len,
+                    state,
+                };
+                start += len;
+                range
+            })
+            .collect()
+    }
+
+    /// The number that each track of a recording opened from history takes, and
+    /// the shelved tracks that the view is left without.
+    #[rstest]
+    #[case::a_shelved_track_between_two_live_ones(
+        vec![
+            gt_store::TrackState::Live,
+            gt_store::TrackState::Shelved,
+            gt_store::TrackState::Live,
+        ],
+        3,
+        vec![1, 3]
+    )]
+    #[case::a_tombstone_before_the_tracks_that_stay(
+        vec![
+            gt_store::TrackState::Deleted,
+            gt_store::TrackState::Live,
+            gt_store::TrackState::Shelved,
+            gt_store::TrackState::Live,
+        ],
+        3,
+        vec![2, 4]
+    )]
+    #[case::more_tracks_than_the_table_lists(vec![gt_store::TrackState::Live], 2, vec![1, 2])]
+    fn applying_a_stored_track_table_numbers_the_view_by_the_rows_it_came_from(
+        #[case] states: Vec<gt_store::TrackState>,
+        #[case] segmented_track_count: usize,
+        #[case] expected_numbers: Vec<usize>,
+    ) {
+        let mut file = segmented_file(segmented_track_count);
+
+        apply_stored_track_table(&mut file, &synthetic_stored_track_table(&states));
+
+        let numbers: Vec<usize> = file.tracks.iter().map(|t| t.metadata.index).collect();
+        assert_eq!(numbers, expected_numbers);
     }
 
     /// A loaded recording is stored with a per-track table, and those tracks can
