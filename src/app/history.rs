@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::time::Instant;
 
 use chrono::NaiveDate;
 use egui::{Button, DragValue, Label, RichText, ScrollArea, TextEdit, Window};
@@ -12,7 +13,7 @@ use gt_ui_theme::labels::LabelWithHover;
 use gt_ui_theme::warning_amber;
 use strum::{EnumCount, EnumIter};
 
-use crate::app::anchored_dialog::AnchoredDialogKind;
+use crate::app::history::delete_hidden_prompt::DeleteHiddenTracksPrompt;
 use crate::app::history_db::{DeleteReason, HistoryWorker};
 use crate::app::modals::{self, DialogActionRow, DialogBody};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
@@ -23,6 +24,7 @@ use crate::settings::StorageSettings;
 /// not unavailable, it is not open yet.
 pub(in crate::app) const OPENING_RECORDINGS_DATABASE: &str = "Opening the recordings database";
 
+mod delete_hidden_prompt;
 mod table;
 
 /// Which pruning mode is selected in the Prune dialog.
@@ -40,14 +42,6 @@ const PRUNE_WINDOW_TITLE: &str = "Prune History…";
 /// delete-hidden confirmation.
 pub(super) const DESTRUCTIVE_DELETE_HOVER: &str =
     "This cannot be undone. The original source files are unaffected.";
-
-const DELETE_HIDDEN_WINDOW_TITLE: &str = "Delete hidden data?";
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum DeleteHiddenTracksChoice {
-    Delete,
-    Cancel,
-}
 
 /// The height the window opens at, whatever the length of the listing it
 /// opens on.
@@ -459,7 +453,7 @@ pub struct HistoryWindow {
     /// Error from the last operation, if any.
     error: Option<String>,
     prune: PruneDialog,
-    delete_hidden_confirm_open: bool,
+    delete_hidden_prompt: DeleteHiddenTracksPrompt,
     /// Whether a recording-list request is in flight (drives the spinner and
     /// prevents re-requesting every frame while waiting).
     list_pending: bool,
@@ -473,6 +467,24 @@ pub struct HistoryWindow {
     /// known only once they are drawn. `None` before the first of those
     /// frames.
     footer_height_last_frame: Option<f32>,
+}
+
+/// What the app hands the History window on the frame it draws.
+pub struct HistoryWindowFrame<'a> {
+    /// The frame's instant, which the delete-hidden confirmation counts its
+    /// own close down against.
+    pub now: Instant,
+    /// Every database operation goes here, and its result arrives
+    /// asynchronously through [`HistoryWindow::set_entries`] and friends.
+    pub worker: &'a HistoryWorker,
+    /// The content fingerprints of the files loaded in the app, which is what
+    /// disables re-opening a recording that is already open.
+    pub loaded_metas: &'a [RecordingMeta],
+    pub storage: &'a mut StorageSettings,
+    /// Whether the startup open of the databases is still running, which is
+    /// what the window shows its "opening" notice for.
+    pub databases_opening: bool,
+    pub write_access: WriteAccess,
 }
 
 /// State for the inline identity-rename editor on one History row.
@@ -495,7 +507,7 @@ impl HistoryWindow {
             filter_date_to: String::new(),
             error: None,
             prune: PruneDialog::new(),
-            delete_hidden_confirm_open: false,
+            delete_hidden_prompt: DeleteHiddenTracksPrompt::default(),
             list_pending: false,
             rename: None,
             sort: HistorySort::default(),
@@ -560,20 +572,17 @@ impl HistoryWindow {
         self.prune.set_preview(refs);
     }
 
-    /// Show the History window. All database work is sent to `worker`. Results
-    /// arrive asynchronously and are applied via [`HistoryWindow::set_entries`]
-    /// and friends.
-    ///
-    /// `loaded_metas` are the content fingerprints of the files currently loaded
-    /// in the app, used to disable re-opening a recording that is already open.
     pub fn show(
         &mut self,
         ctx: &egui::Context,
-        worker: &HistoryWorker,
-        loaded_metas: &[RecordingMeta],
-        storage: &mut StorageSettings,
-        databases_opening: bool,
-        write_access: WriteAccess,
+        HistoryWindowFrame {
+            now,
+            worker,
+            loaded_metas,
+            storage,
+            databases_opening,
+            write_access,
+        }: HistoryWindowFrame<'_>,
     ) {
         if !self.open {
             return;
@@ -588,11 +597,12 @@ impl HistoryWindow {
         // Hidden tracks live inside otherwise-visible recordings (there is no
         // recording-level hide). Count them across all recordings so the toolbar
         // can offer a "Delete hidden data" action that permanently drops them.
-        let hidden_count: usize = self
+        // The count is `None` until the recording list arrives, and `Some(0)`
+        // once the list reports no hidden track.
+        let hidden_track_count: Option<usize> = self
             .entries
             .as_ref()
-            .map(|entries| entries.iter().map(|e| e.hidden_tracks).sum())
-            .unwrap_or_default();
+            .map(|entries| entries.iter().map(|e| e.hidden_tracks).sum());
 
         let mut open = self.open;
 
@@ -600,7 +610,7 @@ impl HistoryWindow {
         // it. The confirmation dialog and an open inline rename both take it
         // first, so the key is left unconsumed here via short-circuit.
         if self.rename.is_none()
-            && !self.delete_hidden_confirm_open
+            && !self.delete_hidden_prompt.is_up()
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             open = false;
@@ -643,17 +653,19 @@ impl HistoryWindow {
                     ui.add_space(4.0);
                 }
 
-                if self.entries.is_none() {
+                // The count arrives with the recording list: the spinner
+                // stands until both are there.
+                let Some(hidden_track_count) = hidden_track_count else {
                     ui.spinner();
                     return;
-                }
+                };
 
                 // Snapshot filter active state before the closures that mutably
                 // borrow individual filter fields - avoids whole-self method calls
                 // inside closures where `entries` also holds an immutable borrow.
                 let filter_active = self.any_filter_active();
 
-                self.toolbar_ui(ui, storage, write_access, hidden_count, filter_active);
+                self.toolbar_ui(ui, storage, write_access, hidden_track_count, filter_active);
 
                 let Some(entries) = &self.entries else {
                     return;
@@ -751,9 +763,9 @@ impl HistoryWindow {
                     if filter_active && visible.len() != stored_count {
                         ui.weak(format!("({} shown)", visible.len()));
                     }
-                    if hidden_count > 0 {
-                        let track_label = gt_fmt::pluralize(hidden_count, "track", "tracks");
-                        ui.weak(format!("- {hidden_count} hidden {track_label}"));
+                    if hidden_track_count > 0 {
+                        let track_label = gt_fmt::pluralize(hidden_track_count, "track", "tracks");
+                        ui.weak(format!("- {hidden_track_count} hidden {track_label}"));
                     }
                 });
                 if let Some(path) = worker.path() {
@@ -771,54 +783,12 @@ impl HistoryWindow {
         self.rename = rename;
         self.footer_height_last_frame = footer_height;
 
-        // Confirmation for the destructive "delete hidden data" action, mirroring
-        // the prune/auto-prune confirm flow (no permanent delete without a prompt).
-        if self.delete_hidden_confirm_open {
-            if hidden_count == 0 {
-                self.delete_hidden_confirm_open = false;
-            } else {
-                let choice = modals::anchored_confirmation_dialog(
-                    ctx,
-                    AnchoredDialogKind::DeleteHiddenTracks,
-                    DELETE_HIDDEN_WINDOW_TITLE,
-                    DeleteHiddenTracksChoice::Cancel,
-                    |ui, _regions| {
-                        let track_label = gt_fmt::pluralize(hidden_count, "track", "tracks");
-                        let removal = format!(
-                            "{hidden_count} hidden {track_label} will be permanently removed from \
-                             their recordings."
-                        );
-                        ui.add(Label::new(removal).wrap());
-                    },
-                    |ui| {
-                        let mut choice = None;
-                        if ui
-                            .button(
-                                RichText::new("Delete hidden tracks")
-                                    .color(warning_amber(ui.visuals().dark_mode)),
-                            )
-                            .on_hover_text(DESTRUCTIVE_DELETE_HOVER)
-                            .clicked()
-                        {
-                            choice = Some(DeleteHiddenTracksChoice::Delete);
-                        }
-                        if ui.button("Cancel").clicked() {
-                            choice = Some(DeleteHiddenTracksChoice::Cancel);
-                        }
-                        choice
-                    },
-                );
-                match choice {
-                    Some(DeleteHiddenTracksChoice::Delete) => {
-                        worker.delete_hidden_tracks();
-                        self.delete_hidden_confirm_open = false;
-                    }
-                    Some(DeleteHiddenTracksChoice::Cancel) => {
-                        self.delete_hidden_confirm_open = false;
-                    }
-                    None => {}
-                }
-            }
+        if self
+            .delete_hidden_prompt
+            .show(ctx, now, hidden_track_count)
+            .is_some()
+        {
+            worker.delete_hidden_tracks();
         }
 
         self.open = open;
@@ -834,7 +804,7 @@ impl HistoryWindow {
         ui: &mut egui::Ui,
         storage: &mut StorageSettings,
         write_access: WriteAccess,
-        hidden_count: usize,
+        hidden_track_count: usize,
         filter_active: bool,
     ) {
         ScrollArea::horizontal()
@@ -850,15 +820,15 @@ impl HistoryWindow {
                     LabelWithHover::underlined_term(RichText::new("Identity"))
                         .explanation_ui(ui, crate::terms::IDENTITY);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let delete_hidden_label = if hidden_count > 0 {
-                            format!("Delete hidden data ({hidden_count})…")
+                        let delete_hidden_label = if hidden_track_count > 0 {
+                            format!("Delete hidden data ({hidden_track_count})…")
                         } else {
                             "Delete hidden data…".to_owned()
                         };
                         let writes_recordings = write_access.allows_writing();
                         let delete_hidden = ui
                         .add_enabled(
-                            hidden_count > 0 && writes_recordings,
+                            hidden_track_count > 0 && writes_recordings,
                             Button::new(delete_hidden_label),
                         )
                         .on_hover_text(
@@ -870,7 +840,7 @@ impl HistoryWindow {
                             READ_ONLY_RECORDING_HISTORY_HOVER
                         });
                         if delete_hidden.clicked() {
-                            self.delete_hidden_confirm_open = true;
+                            self.delete_hidden_prompt.open(hidden_track_count);
                         }
                         if ui
                             .add_enabled(writes_recordings, Button::new("Prune…"))

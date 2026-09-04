@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Instant;
 
 use egui::{Button, Grid, Label, RichText};
 use gt_pending_writes::{PendingWriteGuard, WriteKind};
@@ -435,11 +436,14 @@ impl App {
         };
         self.history_window.show(
             ui.ctx(),
-            &self.history,
-            &loaded_metas,
-            &mut self.storage_settings,
-            self.storage_open.databases_pending().is_some(),
-            self.pending_writes.write_access(),
+            history::HistoryWindowFrame {
+                now: Instant::now(),
+                worker: &self.history,
+                loaded_metas: &loaded_metas,
+                storage: &mut self.storage_settings,
+                databases_opening: self.storage_open.databases_pending().is_some(),
+                write_access: self.pending_writes.write_access(),
+            },
         );
         self.sync_db_path_if_auto_store_changed(storage_before_edit);
     }

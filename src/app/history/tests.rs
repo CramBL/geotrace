@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use gt_pending_writes::{PendingWrites, WriteAccess};
 use gt_store::{HistoryDatabase as _, RecordingsHandle};
@@ -17,15 +19,15 @@ use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
 use gt_store::ChannelSummary;
 use gt_ui_theme::EM_DASH;
 
+use super::delete_hidden_prompt::DELETE_HIDDEN_WINDOW_TITLE;
 use super::table::{
     MAX_HOVER_CHANNELS, OPEN_LOG_LABEL, breakdown_cell_id, channel_title, data_breakdown_ui,
     duration_text, started_at_text, time_range_text, track_count_text,
 };
 use super::{
-    DEFAULT_WINDOW_HEIGHT_PX, DELETE_HIDDEN_WINDOW_TITLE, DatabaseRef, HistorySort, HistoryWindow,
-    HistoryWorker, ICON_CARET_DOWN, ICON_CARET_UP, NavPointTimeRange, PRUNE_WINDOW_TITLE,
-    RecordingEntry, RecordingMeta, SortColumn, SortDirection, identity_display_parts,
-    travel_mode_display,
+    DEFAULT_WINDOW_HEIGHT_PX, DatabaseRef, HistorySort, HistoryWindow, HistoryWorker,
+    ICON_CARET_DOWN, ICON_CARET_UP, NavPointTimeRange, PRUNE_WINDOW_TITLE, RecordingEntry,
+    RecordingMeta, SortColumn, SortDirection, identity_display_parts, travel_mode_display,
 };
 use strum::{EnumCount as _, IntoEnumIterator as _};
 
@@ -33,6 +35,9 @@ use strum::{EnumCount as _, IntoEnumIterator as _};
 /// worker so the list branch renders, and the settings toggles `show` needs.
 struct HistoryHarness {
     window: HistoryWindow,
+    /// The frame's instant, held still so a confirmation counting down to its
+    /// own close keeps the count it opened at.
+    now: Instant,
     worker: HistoryWorker,
     storage: crate::settings::StorageSettings,
     /// What the app reports while its startup open runs.
@@ -58,6 +63,7 @@ fn history_harness(entries: Vec<RecordingEntry>) -> HistoryHarness {
     window.set_entries(entries);
     HistoryHarness {
         window,
+        now: Instant::now(),
         worker,
         storage: crate::settings::StorageSettings {
             auto_prune_max_bytes: 0,
@@ -73,11 +79,14 @@ fn history_harness(entries: Vec<RecordingEntry>) -> HistoryHarness {
 fn show_history(ui: &mut egui::Ui, s: &mut HistoryHarness) {
     s.window.show(
         ui.ctx(),
-        &s.worker,
-        &[],
-        &mut s.storage,
-        s.databases_opening,
-        s.write_access,
+        super::HistoryWindowFrame {
+            now: s.now,
+            worker: &s.worker,
+            loaded_metas: &[],
+            storage: &mut s.storage,
+            databases_opening: s.databases_opening,
+            write_access: s.write_access,
+        },
     );
 }
 
@@ -127,6 +136,7 @@ fn history_harness_with_recording(identity: &str, stored_logs: &[&str]) -> Histo
     window.open = true;
     HistoryHarness {
         window,
+        now: Instant::now(),
         worker,
         storage: crate::settings::StorageSettings {
             auto_prune_max_bytes: 0,
@@ -1504,10 +1514,11 @@ fn snapshot_delete_hidden_confirmation() {
     let mut entry = entry_with_identity("auto:ride.gtd");
     entry.total_tracks = 12;
     entry.hidden_tracks = 3;
+    let hidden_tracks = entry.hidden_tracks;
     let mut harness = history_harness(vec![entry]);
     // The temporary database path differs every run.
     harness.worker.hide_path();
-    harness.window.delete_hidden_confirm_open = true;
+    harness.window.delete_hidden_prompt.open(hidden_tracks);
     let mut h = TestHarness::builder()
         .size(egui::vec2(900.0, 500.0))
         .ui_state(show_history, harness);
@@ -1515,6 +1526,28 @@ fn snapshot_delete_hidden_confirmation() {
         h.run();
     }
     h.snapshot("delete_hidden_confirmation");
+}
+
+/// The confirmation once the last hidden track has gone from the recording
+/// list: it stays up, states that there is nothing left to delete, grays the
+/// delete out, and counts down on its Close button.
+#[test]
+fn snapshot_delete_hidden_confirmation_with_no_track_hidden() {
+    let mut entry = entry_with_identity("auto:ride.gtd");
+    entry.total_tracks = 12;
+    let mut harness = history_harness(vec![entry]);
+    // The temporary database path differs every run.
+    harness.worker.hide_path();
+    harness.window.delete_hidden_prompt.open(3);
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(show_history, harness);
+    // The test steps through the frames. The confirmation requests a repaint
+    // every frame it counts down, and `h.run()` never settles while it does.
+    for _ in 0..6 {
+        h.step();
+    }
+    h.snapshot("delete_hidden_confirmation_no_track_hidden");
 }
 
 /// The delete-hidden confirmation stays inside the screen and keeps its
@@ -1526,8 +1559,9 @@ fn delete_hidden_confirmation_fits_every_viewport(
     let mut entry = entry_with_identity(&gt_test_utils::oversized_text('r'));
     entry.total_tracks = OVERSIZED_ROW_COUNT;
     entry.hidden_tracks = OVERSIZED_ROW_COUNT;
+    let hidden_tracks = entry.hidden_tracks;
     let mut harness = history_harness(vec![entry]);
-    harness.window.delete_hidden_confirm_open = true;
+    harness.window.delete_hidden_prompt.open(hidden_tracks);
     let mut h = TestHarness::builder()
         .size(viewport)
         .ui_state(show_history, harness);
