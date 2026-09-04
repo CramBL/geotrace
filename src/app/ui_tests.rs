@@ -10778,9 +10778,7 @@ fn choosing_a_target_in_the_footer_associates_the_log_against_it() {
 /// The dialog every loaded log raises while a recording is open, and what
 /// confirming it does.
 mod log_association {
-    use gt_store::{
-        HistoryDatabase as _, LogAttachmentEntry, Recordings, StoredLogFilter, StoredLogFilterMode,
-    };
+    use gt_store::{LogAttachmentEntry, Recordings, StoredLogFilter, StoredLogFilterMode};
 
     use gt_log_view::LogAttachmentRef;
 
