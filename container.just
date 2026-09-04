@@ -2,8 +2,7 @@ IMAGE := "geotrace-dev"
 SDK_IMAGE := "geotrace-sdk-dev"
 CACHE_DIR := ".just-cache/images"
 
-# Replace with this when just stabilizes 'which'
-# RUNNER := if which("podman") != "" { "podman" } else if which("docker") != "" { "docker" } else { error("neither docker nor podman found; install one to use container recipes") }
+# Switch to just's `which()` for the runner once it stabilizes.
 [private]
 RUNNER := `if command -v podman >/dev/null 2>&1; then printf "podman"; elif command -v docker >/dev/null 2>&1; then printf "docker"; fi`
 
@@ -32,7 +31,7 @@ _build_if_needed IMAGE BUILD_RECIPE: _require-runner
     # Image exist locally?
     if ! {{ RUNNER }} image inspect {{ IMAGE }} >/dev/null 2>&1; then
         BUILD_NEEDED=1
-    # Dockerfile modified since last build?
+    # `Dockerfile` modified since last build?
     elif [[ Dockerfile -nt "$STAMP" ]]; then
         BUILD_NEEDED=1
     # Cache older than 30 days (2,592,000 seconds)?

@@ -1,4 +1,4 @@
-# Build libgeotrace_c (release) inside the SDK container.
+# Build `libgeotrace_c` (release) inside the SDK container.
 # Must run before lint-c, test-c, lint-cpp, and test-cpp, which all require the
 # library to be present in the target volume.
 [group("container-sdk")]
@@ -65,7 +65,7 @@ test-cpp-asan: (_sdk "bash" "scripts/test-cpp-asan.sh")
 [group("container-sdk")]
 examples-cpp: (_sdk "bash" "scripts/examples-cpp.sh")
 
-# Install the C and C++ SDKs into /tmp/gtd-sdk and verify find_package works.
+# Install the C and C++ SDKs into /tmp/gtd-sdk and verify `find_package` works.
 [group("container-sdk")]
 test-install: (_sdk "bash" "scripts/test-install.sh")
 

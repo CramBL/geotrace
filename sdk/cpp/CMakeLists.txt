@@ -1,13 +1,13 @@
 cmake_minimum_required(VERSION 3.21)
 project(GeoTraceCpp VERSION 0.6.0 LANGUAGES CXX)
 
-# Default to C++17; callers may override with -DCMAKE_CXX_STANDARD=20.
+# Default to C++17. Callers may override with -DCMAKE_CXX_STANDARD=20.
 set(CMAKE_CXX_STANDARD "17" CACHE STRING "C++ standard version")
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# The C++ SDK is header-only — it wraps the C SDK at link time.
+# The C++ SDK is header-only: it wraps the C SDK at link time.
 find_package(GeoTraceC REQUIRED)
 
 add_library(geotrace_cpp INTERFACE)
@@ -51,7 +51,8 @@ install(FILES
 option(GEOTRACE_CPP_BUILD_EXAMPLES "Build C++ SDK examples" OFF)
 option(BUILD_TESTING "Build C++ SDK tests" OFF)
 
-# Enable testing before recursing so examples can register ctest smoke tests.
+# Enable testing before the `add_subdirectory` calls so examples can register
+# `ctest` smoke tests.
 if(GEOTRACE_CPP_BUILD_EXAMPLES OR BUILD_TESTING)
     enable_testing()
 endif()

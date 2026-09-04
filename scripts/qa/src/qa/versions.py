@@ -14,7 +14,7 @@ in different places:
   pins in both committed ``Cargo.lock`` files (the root workspace and the
   isolated Python workspace).
 
-Most spots carry the full version (``0.2.0`` or ``0.2.0-rc.1``); CMake project
+Most spots carry the full version (``0.2.0`` or ``0.2.0-rc.1``). CMake project
 versions and the numeric ``*_MAJOR/MINOR/PATCH`` macros only hold the numeric
 core (``0.2.0``), since they cannot express a prerelease suffix.
 
@@ -85,9 +85,9 @@ _CPP_HEADER = "sdk/cpp/include/geotrace/geotrace.hpp"
 _C_CBINDGEN = "sdk/rust/geotrace-c/cbindgen.toml"
 
 # The two committed Cargo.lock files that pin the SDK crates. The root lock is
-# the main workspace (geotrace-c and its deps). The Python lock is an isolated
-# workspace whose pins only refresh when cargo runs in its own directory, so it
-# is the one that silently drifts after a bump.
+# the main workspace (geotrace-c and its dependencies). The Python lock is an
+# isolated workspace whose pins only refresh when cargo runs in its own
+# directory, so it is the one that silently drifts after a bump.
 _ROOT_LOCK = "Cargo.lock"
 _PY_LOCK = "sdk/python/geotrace-py/Cargo.lock"
 
@@ -107,9 +107,9 @@ _SDK_SPOTS: list[Spot] = [
     Spot("sdk/cpp/CMakeLists.txt", _cmake_project("GeoTraceCpp"), core=True),
     # Cargo.lock pins (full version). Bumping them here keeps the locks in
     # lockstep with the manifests. Checking them makes a drifted lock fail
-    # loudly instead of being silently re-resolved at build time. The SDK
-    # packages are path crates with no checksum and are referenced by name only,
-    # so rewriting the block's `version` line leaves each lock valid.
+    # loudly. The SDK packages are path crates with no checksum and are
+    # referenced by name only, so rewriting the block's `version` line leaves
+    # each lock valid.
     Spot(_ROOT_LOCK, _lock_version("geotrace-sdk"), note="geotrace-sdk lock"),
     Spot(_ROOT_LOCK, _lock_version("geotrace-sdk-macros"), note="geotrace-sdk-macros lock"),
     Spot(_ROOT_LOCK, _lock_version("geotrace-sdk-units"), note="geotrace-sdk-units lock"),
@@ -173,7 +173,7 @@ def app_lock_crate_errors(root: Path, listed_crates: list[str] | None = None) ->
     """`_APP_LOCK_CRATES` must list exactly the workspace-versioned members.
 
     Every workspace member inheriting the workspace version gets its
-    Cargo.lock pin rewritten by `bump-app`; a member missing from the list
+    Cargo.lock pin rewritten by `bump-app`. A member missing from the list
     keeps its old pin, and the very next `cargo update --workspace --locked`
     (the release recipe and CI's lockfile guard) fails. That is how a new
     crate broke the app release without any earlier signal - this check
@@ -264,9 +264,9 @@ def publish_closure_errors(root: Path) -> list[str]:
     version requirement against the index - a path dependency of a published
     crate that is not itself published (in order, before its dependent) fails
     the upload. This is what happened when `geotrace-units` joined the SDK
-    without joining the release workflow; this check fails the same gap in CI
-    instead of at release time. Each such dependency must also be a version
-    spot, so `bump-sdk` keeps it in lockstep.
+    without joining the release workflow. This check fails the same gap in CI.
+    Each such dependency must also be a version spot, so `bump-sdk` keeps it in
+    lockstep.
     """
     workflow = (root / _RELEASE_WORKFLOW).read_text(encoding="utf-8")
     published = _PUBLISH_LINE.findall(workflow)

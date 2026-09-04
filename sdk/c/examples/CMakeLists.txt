@@ -30,14 +30,14 @@ foreach(example ${GEOTRACE_C_EXAMPLES})
     endif()
 endforeach()
 
-# Register self-contained examples as ctest smoke tests so CI runs them.
-# gold_dataset needs the CSV fixtures and writes into the source tree, so it is
+# Register self-contained examples as `ctest` smoke tests so CI runs them.
+# `gold_dataset` needs the CSV fixtures and writes into the source tree, so it is
 # exercised separately by the `test-gold-c` recipe and excluded here.
 foreach(example write_basic with_satellites event_markers channels from_csv from_multiple_sources)
     add_test(NAME example_${example} COMMAND ${example})
 endforeach()
 
-# read_file takes a .gtd path; feed it the minimal fixture used by the unit tests.
+# `read_file` takes a .gtd path. Feed it the minimal fixture the unit tests use.
 set(GTD_MINIMAL_FIXTURE "${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/minimal.gtd")
 if(EXISTS "${GTD_MINIMAL_FIXTURE}")
     add_test(NAME example_read_file COMMAND read_file "${GTD_MINIMAL_FIXTURE}")

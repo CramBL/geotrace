@@ -2,8 +2,8 @@
 # RELEASES.md and prints every git/just command as `<command> ?` before running
 # it, so you confirm each step yourself: Enter runs it, `s` skips it, `q` quits.
 #
-# All four assume you are on an up-to-date, clean `trunk`; they refuse to start
-# otherwise. The prerelease recipes are fully linear (the rc tag sits on the
+# All four assume you are on an up-to-date, clean `trunk`. They refuse to start
+# otherwise. The prerelease recipes are fully linear (the `rc` tag sits on the
 # release branch). The regular recipes open a PR and pause for you to merge it
 # before tagging the merged commit.
 
@@ -101,7 +101,7 @@ _flow TRACK KIND VERSION:
     ask git push -u origin "$branch"
 
     if [ "$kind" = "prerelease" ]; then
-      # The prerelease tag points at the branch commit; no PR/merge is involved.
+      # The prerelease tag points at the branch commit. No PR or merge is involved.
       ask git tag "$tag"
       ask git push origin "$tag"
       echo

@@ -30,7 +30,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   # The directories the capture recipes write into. Three are absent: gt-snap's
-  # map-matching answers change with every OpenStreetMap edit, so its fixtures
+  # map-matching responses change with every OpenStreetMap edit, so its fixtures
   # are frozen by design and checked on demand through `just snap-live-test`,
   # gt-flare's endpoint needs a per-user api.nasa.gov key that this workflow
   # has none of, so `just flare-fixtures` is run by hand, and gt-map's tiles
@@ -69,7 +69,7 @@ jobs:
         with:
           tool: nextest,just
 
-      # Uncached: the qa project has no runtime dependencies to restore.
+      # The cache is off: the `qa` project has no runtime dependencies to restore.
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:

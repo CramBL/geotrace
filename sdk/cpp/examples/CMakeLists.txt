@@ -28,8 +28,8 @@ foreach(example ${GEOTRACE_CPP_EXAMPLES})
         )
     endif()
 
-    # On Unix, GeoTrace::C is a shared library; embed an RPATH so the example
-    # binaries find it when run via ctest without LD_LIBRARY_PATH.
+    # On Unix, GeoTrace::C is a shared library. Embed an RPATH so the example
+    # binaries find it when run via `ctest` without LD_LIBRARY_PATH.
     if(NOT WIN32)
         set_target_properties(${example} PROPERTIES
             BUILD_RPATH "$<TARGET_FILE_DIR:GeoTrace::C>"
@@ -37,8 +37,8 @@ foreach(example ${GEOTRACE_CPP_EXAMPLES})
     endif()
 endforeach()
 
-# Register self-contained examples as ctest smoke tests so CI runs them.
-# read_file needs an input path and gold_dataset needs the CSV fixtures and
+# Register self-contained examples as `ctest` smoke tests so CI runs them.
+# `read_file` needs an input path and `gold_dataset` needs the CSV fixtures and
 # writes into the source tree, so both are exercised separately (test-gold-cpp)
 # and excluded here.
 foreach(example write_basic with_satellites event_markers channels typed_events from_csv

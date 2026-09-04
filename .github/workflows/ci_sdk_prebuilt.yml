@@ -22,8 +22,8 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
-# Use bash on every runner (Git Bash on Windows) so there is a single shell to
-# read and maintain instead of a mix of bash and PowerShell.
+# Use bash on every runner (Git Bash on Windows), so every run block below is
+# written in one shell.
 defaults:
   run:
     shell: bash

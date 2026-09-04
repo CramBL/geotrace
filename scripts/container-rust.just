@@ -28,8 +28,8 @@ _native_or_dev bin *args:
         just _dev "{{ args }}"
     fi
 
-# msrv runs natively rather than via `_dev`: cargo-msrv pulls many toolchains,
-# kept out of the dev image to keep it slim. Install it natively (see CI).
+# msrv runs outside the dev image: cargo-msrv pulls many toolchains, and the
+# image leaves it out to stay slim. Install it natively (see CI).
 [group("native-checks")]
 msrv:
     cargo msrv verify --manifest-path Cargo.toml

@@ -2,8 +2,8 @@ name: Smoke / C SDK
 
 # Install the published C SDK and build + run a small consumer against it via
 # find_package(GeoTraceC). The consumer (defined inline below in CONSUMER_SRC)
-# builds a one-fix file and prints GEOTRACE_C_VERSION. Each step is one command
-# so the workflow reads as a step-by-step guide.
+# builds a one-fix file and prints GEOTRACE_C_VERSION. Each step is one command,
+# so the workflow doubles as a step-by-step guide.
 #
 # Install paths, one job each:
 #   - tarball-unix (Linux + macOS): download the release archive and point CMake

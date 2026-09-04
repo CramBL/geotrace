@@ -4,8 +4,7 @@
 primaries. They read on a dark surface but wash out or vanish on a light one,
 which is how a string of light-mode-only legibility bugs slipped through. Every
 semantic foreground colour belongs in `gt-ui-theme` as a `ThemedColor` (with a
-light and a dark variant, contrast-checked by that crate's tests) rather than a
-raw primary grabbed at the call site.
+light and a dark variant, contrast-checked by that crate's tests).
 
 The un-themed `gt-ui-theme` foreground constants that now have theme-aware
 accessors (`WARNING_AMBER` → `warning_amber(dark_mode)`, `ERROR_INDICATOR` →
@@ -20,6 +19,7 @@ test-only module file (where primaries are opaque sentinels, not rendered
 colours) are left alone.
 
 Exemption syntax (same line):
+
     let c = Color32::RED; // [qa-allow-check-raw-colors, reason = "why"]
 """
 
@@ -60,7 +60,7 @@ _CHROMATIC = (
 )
 _RAW_COLOR = re.compile(rf"Color32::(?:{'|'.join(_CHROMATIC)})\b")
 
-# gt-ui-theme foreground constants that now have theme-aware accessors; using
+# gt-ui-theme foreground constants that now have theme-aware accessors. Using
 # the bare constant elsewhere pins the dark variant onto every theme. The word
 # boundary keeps `WARNING_AMBER` from also matching `WARNING_AMBER_LIGHT`.
 _UNTHEMED_CONST = re.compile(r"\b(?:WARNING_AMBER|ERROR_INDICATOR)\b")

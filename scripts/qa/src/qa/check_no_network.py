@@ -1,7 +1,7 @@
 """Forbid network access from the workspace's Rust tests and examples.
 
 Every test runs against committed fixtures and a canned transport, so a run
-never depends on a live service being reachable or on what it answers today.
+never depends on a live service being reachable or on what it returns today.
 The services themselves are pinned by the capture tools listed below and by
 the fixture-freshness workflow that re-runs them on trunk.
 
@@ -11,6 +11,7 @@ mentions a URL as inert data (an expected value, a host constant a canned
 transport never dials) is listed for `url-literal` alone.
 
 Exemption syntax (same line), for a one-off outside the allowlist:
+
     let url = "https://example.invalid"; // [qa-allow-check-no-network, reason = "why"]
 """
 
@@ -61,7 +62,7 @@ _ALLOWED: dict[str, frozenset[str]] = {
     # and runs only under `just snap-live-test`.
     "crates/gt-snap/tests/live_api.rs": _EVERY_CONSTRUCT,
     # Host constants the archive tests build expected URLs from. The requests
-    # go to a canned transport that answers from a committed fixture.
+    # go to a canned transport that responds from a committed fixture.
     "crates/gt-flare-store/tests/archive.rs": _URL_LITERAL_ONLY,
     "crates/gt-hdf5-archive/tests/columns.rs": _URL_LITERAL_ONLY,
     "crates/gt-hdf5-archive/tests/file_space_migration.rs": _URL_LITERAL_ONLY,

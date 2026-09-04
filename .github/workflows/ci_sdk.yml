@@ -18,14 +18,14 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  # Must match the LLVM major the SDK dev image installs (Dockerfile, sdk-dev
+  # Must match the LLVM major the SDK dev image installs (`Dockerfile`, sdk-dev
   # stage): clang-format output differs between majors. setup-cpp installs
   # clang-format and clang-tidy from apt.llvm.org by major, ignoring any minor
   # or patch given here.
   LLVM_CLANG_MAJOR: "22"
 
-# Use bash on every runner (Git Bash on Windows) so there is a single shell to
-# read and maintain instead of a mix of bash and PowerShell.
+# Use bash on every runner (Git Bash on Windows), so every run block below is
+# written in one shell.
 defaults:
   run:
     shell: bash
@@ -35,7 +35,7 @@ jobs:
   # cross-language matrix below can be skipped on app-only PRs. The path set
   # covers every cascade source: sdk/** (which includes geotrace-sdk-macros, so
   # a macro change triggers the full suite), the workspace manifests (the SDK
-  # crates pull deps via `*.workspace = true`, so a Cargo.toml/Cargo.lock bump
+  # crates pull dependencies via `*.workspace = true`, so a Cargo.toml/Cargo.lock bump
   # changes what they compile against), the C/C++ lint scripts, the shared
   # toolchain action, and this workflow file itself.
   #
@@ -71,8 +71,8 @@ jobs:
               - '.github/actions/setup-sdk-toolchain/**'
               - '.github/workflows/ci_sdk.yml'
 
-      # Expansions go through env rather than inline `${{ }}` in the run block,
-      # which would be a template-injection sink (flagged by zizmor).
+      # Expansions go through `env`. An inline `${{ }}` in a run block is a
+      # template-injection sink, which zizmor flags.
       - name: Decide whether to run the SDK suite
         id: decide
         env:
@@ -87,7 +87,7 @@ jobs:
           fi
 
   # Builds the C ABI library and the round-trip fixture once per platform. The C
-  # and C++ jobs download the artifact instead of running Cargo themselves.
+  # and C++ jobs download that artifact.
   # Windows appears twice: the C SDK links under mingw, the C++ SDK under MSVC.
   build-c-lib:
     name: Build geotrace-c / ${{ matrix.label }}
@@ -159,7 +159,7 @@ jobs:
           if-no-files-found: error
 
   # clang-format and clang-tidy over the C SDK. This job needs criterion and the
-  # geotrace_c library from build-c-lib: scripts/lint-c.sh configures the C SDK
+  # `geotrace_c` library from build-c-lib: scripts/lint-c.sh configures the C SDK
   # with its tests and examples on.
   lint-c:
     name: C SDK Lint
@@ -194,7 +194,7 @@ jobs:
           GEOTRACE_C_LIB_DIR: ${{ github.workspace }}/target/release
         run: bash scripts/lint-c.sh
 
-  # clang-format and clang-tidy over the C++ SDK. This job needs the geotrace_c
+  # clang-format and clang-tidy over the C++ SDK. This job needs the `geotrace_c`
   # library too: scripts/lint-cpp.sh installs the C SDK to a temporary prefix
   # for find_package(GeoTraceC). The clang toolchain is the only package it
   # installs: that C SDK install configures tests off, and the C++ tests take
@@ -345,7 +345,7 @@ jobs:
 
     strategy:
       fail-fast: false
-      # macOS is built under both the system AppleClang and Homebrew llvm.
+      # macOS is built under both the system AppleClang and Homebrew LLVM.
       matrix:
         include:
           - { os: ubuntu-latest, cc: llvm-20, label: llvm-20, lib: ubuntu }
@@ -410,7 +410,7 @@ jobs:
           ctest --test-dir build/c --output-on-failure
 
   # Installs the C SDK to a local prefix so find_package(GeoTraceC) works,
-  # configures and builds the C++ SDK with BUILD_TESTING=ON, then runs ctest.
+  # configures and builds the C++ SDK with BUILD_TESTING=ON, then runs `ctest`.
   cpp-sdk:
     name: C++ SDK / ${{ matrix.os }} / C++${{ matrix.cxx_std }} / ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
@@ -420,7 +420,7 @@ jobs:
     strategy:
       fail-fast: false
       # Fully enumerated so macOS can be tested under both the system AppleClang
-      # and Homebrew llvm.
+      # and Homebrew LLVM.
       matrix:
         include:
           - { os: ubuntu-latest, cxx_std: "17", cc: llvm-20, label: llvm-20, lib: ubuntu }
@@ -591,7 +591,7 @@ jobs:
           done
 
   # Install the C SDK via a local vcpkg overlay port and verify a downstream
-  # consumer project builds and runs correctly.  This validates the portfile
+  # consumer project builds and runs correctly.  This validates the `portfile`
   # and the integration-test consumer in sdk/integration-tests/vcpkg/.
   vcpkg-sdk:
     name: vcpkg overlay port
@@ -669,9 +669,9 @@ jobs:
       contents: none
     if: always()
     steps:
-      # Assert the good state explicitly rather than denylisting bad ones (a
-      # cancelled run, a new result type, etc. must never slip through as a
-      # pass). This job always runs so the required status check always reports.
+      # Assert the good state explicitly: a cancelled run, a new result type or
+      # anything else unlisted must never pass. This job always runs so the
+      # required status check always reports.
       #
       # The `changes` job must have succeeded. If it reports no SDK changes, the
       # suite was intentionally skipped and the gate passes. Otherwise every
