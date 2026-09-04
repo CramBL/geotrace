@@ -69,11 +69,11 @@ impl WrapPeriod {
     /// units.
     ///
     /// Built from the mean resultant length R of the values as unit vectors:
-    /// `sqrt(-2 ln R)` (Mardia), which is robust across the wrap where a
-    /// linear standard deviation is not. Identical values give 0. As they
-    /// spread toward uniform, R falls to 0 and the deviation grows without
-    /// bound. At the R = 0 singularity the value is non-finite, which the
-    /// evaluator turns into a reported skip.
+    /// `sqrt(-2 ln R)` (Mardia), which holds across the wrap where a linear
+    /// standard deviation does not. Identical values give 0. As they spread
+    /// toward uniform, R falls to 0 and the deviation grows without bound.
+    /// At the R = 0 singularity the value is non-finite, which the evaluator
+    /// turns into a reported skip.
     pub(crate) fn std(self, values: &[f64]) -> f64 {
         let scale = self.radians_per_unit();
         let n = values.len() as f64;
@@ -81,7 +81,7 @@ impl WrapPeriod {
             acc + UnitComplex::new(value * scale).into_inner()
         });
         // Clamp guards a floating-point overshoot above 1 when every value is
-        // identical, which would make the log positive and the sqrt NaN.
+        // identical, which would make the log positive and the `sqrt` NaN.
         let mean_resultant = (resultant.norm() / n).min(1.0);
         (-2.0 * mean_resultant.ln()).sqrt() / scale
     }

@@ -34,8 +34,8 @@ fn a_hide_over_a_slice_hides_the_absolute_points() {
     ");
 }
 
-/// `keep` hides the non-matching points *of the slice*; points outside the
-/// window were never the query's to hide.
+/// `keep` hides the non-matching points *of the slice*. Points outside the
+/// window are never evaluated, so `keep` never hides them.
 #[test]
 fn a_keep_over_a_slice_only_hides_inside_the_window() {
     let mut scenario = sliced_scenario();
@@ -67,7 +67,7 @@ fn panel_match_ranges_are_absolute() {
 ///
 /// A window is only ever evaluated over points the run has, so trimming the
 /// slice withdraws the windows that reached past the cut. Here point 1 survives
-/// only because the window over points 1 and 2 averages slowly enough; drop
+/// only because the window over points 1 and 2 averages slowly enough. Drop
 /// point 2 and the only window left is the fast one. The counterexample a
 /// property test shrank to, kept as the documented semantics.
 #[test]

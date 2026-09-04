@@ -171,7 +171,7 @@ mod tests {
         let huge = (0..200).fold(Dimension::LENGTH, |acc, _| acc * Dimension::LENGTH);
         assert_eq!(huge.length, i8::MAX);
         assert!(!huge.is_dimensionless());
-        // powi and division saturate the same way.
+        // `powi` and division saturate the same way.
         assert_eq!(Dimension::LENGTH.powi(i8::MAX).length, i8::MAX);
         let tiny = (0..200).fold(Dimension::DIMENSIONLESS, |acc, _| acc / Dimension::LENGTH);
         assert_eq!(tiny.length, i8::MIN);

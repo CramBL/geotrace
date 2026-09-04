@@ -47,8 +47,8 @@ fn every_layer_up_to_the_cap_renders() {
     ");
 }
 
-/// One draw query past the cap: the extra layer is dropped rather than aliasing
-/// onto layer 0, and the query still reports its own matches in the panel.
+/// One draw query past the cap: the extra layer is dropped from the map, and
+/// the query still reports its own matches in the panel.
 #[test]
 fn a_draw_query_past_the_cap_is_dropped_from_the_map() {
     let count = DrawLayerMask::MAX_LAYERS + 1;

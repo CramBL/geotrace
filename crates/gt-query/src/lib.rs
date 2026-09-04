@@ -12,7 +12,7 @@
 //! ```
 //!
 //! The flow is [`parse`] → [`check`] → [`run`]. Parsing and checking report a
-//! [`Diagnostic`] with a byte span for the editor to underline; a checked
+//! [`Diagnostic`] with a byte span for the editor to underline. A checked
 //! query evaluates over [`MetricProvider`]s supplied by the caller and
 //! returns matches as point-index ranges per track, plus a run summary.
 //!

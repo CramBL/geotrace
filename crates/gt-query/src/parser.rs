@@ -703,7 +703,7 @@ impl<'src> Parser<'src> {
                 self.advance_n(3);
                 return Ok(Some((compound, first.span.to(second.span))));
             }
-            // `30 km/s`: the right side is unit-shaped, so this is a typoed
+            // `30 km/s`: the right side is unit-shaped, so this is a mistyped
             // compound unit, not a division by a metric.
             if Unit::from_ident(second.text).is_some() || second.text == "s2" {
                 return Err(Diagnostic {

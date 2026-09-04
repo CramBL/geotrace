@@ -78,7 +78,7 @@ impl<P: MetricProvider> MetricProvider for RunView<'_, P> {
 
     fn channel_span(&self, name: &str, t_lo: f64, t_hi: f64) -> ChannelSamples {
         // Channel samples are keyed by absolute time, so the run's time window
-        // selects them directly from the underlying provider - no index offset.
+        // selects them directly from `self.inner` - no index offset.
         self.inner.channel_span(name, t_lo, t_hi)
     }
 
@@ -320,7 +320,8 @@ mod tests {
         TrackRef::new(FileIdx::new(0), TrackIdx::new(0))
     }
 
-    /// Velocity in m/s and a 1 s-per-point clock; other metrics are missing.
+    /// Velocity in m/s and a 1 s-per-point clock. Every other metric is
+    /// missing.
     struct Speeds(Vec<f64>);
 
     impl MetricProvider for Speeds {
@@ -454,7 +455,7 @@ mod tests {
 
     #[test]
     fn one_draw_query_matches_a_plain_run() {
-        // A single draw query behaves like a lone run: halos, nothing hidden.
+        // A single draw query is drawn as a lone run: halos, nothing hidden.
         let provider = Speeds(vec![5.0, 20.0, 20.0, 5.0]);
         let out = compose(&["points | where velocity > 10 m/s | draw"], &provider);
         assert!(hidden_ranges(&out).is_empty());

@@ -184,7 +184,7 @@ impl MapScenario {
         self
     }
 
-    /// Recompare the results against the current inputs. Every step already
+    /// Compare the results against the current inputs again. Every step already
     /// does this, mirroring the app's per-frame refresh. This call exists for
     /// explicit scripts.
     pub fn refresh_staleness(&mut self) -> &mut Self {
@@ -307,8 +307,8 @@ impl MapScenario {
         }
     }
 
-    /// The composed map effect of the last run, for an assertion about ranges
-    /// rather than points.
+    /// The composed map effect of the last run, for an assertion about match
+    /// ranges.
     pub fn matches(&self) -> Option<&QueryMatches> {
         self.session.matches()
     }
@@ -358,8 +358,7 @@ impl MapScenario {
     /// Matches with at least one drawn point, counted the way
     /// [`DisplayCounts`] counts halos.
     ///
-    /// Deliberately re-aggregated from the per-point classification rather than
-    /// reusing the counts' own loop, so the check in
+    /// Aggregated from the per-point classification, so the check in
     /// [`picture`](Self::picture) cannot pass by construction.
     fn drawn_match_count(&self) -> usize {
         let Some(matches) = self.session.matches() else {

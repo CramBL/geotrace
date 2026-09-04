@@ -41,7 +41,7 @@ impl TrackPicture {
 /// counts.
 ///
 /// Rendered as a picture of the tracks, so a scenario's snapshot shows the
-/// shape of the result:
+/// whole result in one block:
 ///
 /// ```text
 /// track.gtd#0  ..0000xx

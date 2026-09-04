@@ -195,7 +195,7 @@ pub fn channel_completions_at(
 }
 
 /// The completion entries a channel contributes: a scalar channel offers itself
-/// (`@incline`); a vector channel offers the whole vector (`@accel`, for
+/// (`@incline`). A vector channel offers the whole vector (`@accel`, for
 /// `norm`) and each component (`@accel.x`).
 fn channel_offers(name: &str, info: &ChannelInfo) -> Vec<ChannelSuggestion> {
     if info.components.is_empty() {
@@ -283,15 +283,16 @@ fn channel_partial(src: &str, cursor: usize) -> Option<(Range<usize>, &str)> {
 }
 
 /// Whether `b` is a channel-name character (`[a-z0-9_]`). Mirrors the lexer's
-/// `ident` subpattern (see [`crate::lexer`]); keep the two in step if the
+/// `ident` subpattern (see [`crate::lexer`]). Keep the two in step if the
 /// SDK's channel-name rule changes. All such bytes are single-byte ASCII, so
 /// scanning by byte never splits a multi-byte character.
 fn is_ident_byte(b: u8) -> bool {
     b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'
 }
 
-/// Whether `b` can appear in a channel reference body after the `@`: an ident
-/// character or the `.` separating a vector component (`@accel.x`).
+/// Whether `b` can appear in a channel reference body after the `@`: a
+/// channel-name character or the `.` separating a vector component
+/// (`@accel.x`).
 fn is_body_byte(b: u8) -> bool {
     is_ident_byte(b) || b == b'.'
 }
@@ -401,7 +402,7 @@ fn allowed_units_at(
                 if let Ok(param) = ParamName::from_str(tok.text) {
                     return Some(match param.value_quantity() {
                         Some(quantity) => units_of_quantity(quantity),
-                        // A bare number, like snr_drop: no unit belongs here.
+                        // A bare number, like `snr_drop`: no unit belongs here.
                         None => Vec::new(),
                     });
                 }
@@ -743,7 +744,7 @@ mod tests {
 
     #[test]
     fn partial_stage_keyword_fuzzy_filters() {
-        // "wh": `where` is a prefix and ranks first. `with` matches as a
+        // `wh`: `where` is a prefix and ranks first. `with` matches as a
         // subsequence (w..h). `window` has no 'h' so it is filtered out.
         let items = names("points | wh");
         assert_eq!(items.first(), Some(&"where"));
@@ -839,12 +840,12 @@ mod tests {
         assert!(mask_units.contains(&"deg"));
         assert!(!mask_units.contains(&"m"));
         assert!(!mask_units.contains(&"km/h"));
-        // slip_window is a duration.
+        // `slip_window` is a duration.
         let slip_units = names("points | with mask 15 deg, slip_window 5 ");
         assert!(slip_units.contains(&"min"));
         assert!(slip_units.contains(&"s"));
         assert!(!slip_units.contains(&"deg"));
-        // snr_drop is a bare number, so no unit is offered.
+        // `snr_drop` is a bare number, so no unit is offered.
         assert!(names("points | with mask 15 deg, snr_drop 10 ").is_empty());
         // A comma starts the next parameter name.
         assert!(names("points | with mask 15 deg, ").contains(&"snr_drop"));
@@ -974,7 +975,7 @@ mod tests {
 
     #[test]
     fn fuzzy_prefix_beats_subsequence() {
-        // "sl" prefixes slip_* and is a subsequence of slip_window etc.
+        // `sl` prefixes `slip_*` and is a subsequence of `slip_window` etc.
         assert!(fuzzy_score("sl", "slip_all") > fuzzy_score("sl", "sats_fix"));
         assert_eq!(fuzzy_score("xyz", "velocity"), None);
         // Empty prefix matches everything at a neutral score.
@@ -1077,7 +1078,7 @@ mod tests {
 
     #[test]
     fn a_channel_prefix_filters_the_offer() {
-        // `@in` prefixes incline (ranked first); it is a subsequence of
+        // `@in` prefixes incline (ranked first). It is a subsequence of
         // bear-in-g too, but accel has no 'i' then 'n' so it drops out.
         let incline = "points | window 3 | where max(@in";
         let names = channel_names(incline, incline.len());
@@ -1154,14 +1155,15 @@ mod tests {
 
     #[test]
     fn channel_hover_handles_components_and_whole_vectors() {
-        // A component reads as the channel's dimension.
+        // The hover on a component shows the channel's dimension.
         let comp = "points | window 3 | where max(@gyro.x) > 1 deg";
         let ci = comp.find("@gyro.x").expect("has @gyro.x") + 2;
         let hover = channel_at(comp, ci, &channel_schema()).expect("hovers a component");
         assert_eq!(hover.name, "gyro.x");
         assert_eq!(hover.summary, "in deg");
 
-        // A whole vector names its components; an unknown component has no hover.
+        // A whole vector names its components. An unknown component has no
+        // hover.
         let whole = "points | window 3 | where max(@gyro) > 1 deg";
         let gi = whole.find("@gyro").expect("has @gyro") + 2;
         assert_eq!(

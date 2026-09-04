@@ -2,10 +2,9 @@
 //!
 //! Deliberately dumb and direct: a per-point fold over plain vectors, reading
 //! the loaded points through [`gt_types`] accessors and nothing from
-//! `gt_query`'s evaluator. Unit factors do come from the language's own table
-//! ([`gt_query::Unit`]) - duplicating those would test the unit crate rather
-//! than the query engine, and a literal's scale is not what this oracle is
-//! reasoning about.
+//! `gt_query`'s evaluator. Unit factors come from the language's own table
+//! ([`gt_query::Unit`]): a literal's scale is not what this oracle is reasoning
+//! about.
 //!
 //! The semantics it implements, from the pipeline's own documentation:
 //!

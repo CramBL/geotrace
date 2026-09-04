@@ -12,7 +12,7 @@ fn scenario() -> MapScenario {
 }
 
 /// Every messy-but-legitimate way to write two queries lands the same two
-/// chunks and the same map, so whitespace is never load-bearing.
+/// chunks and the same map.
 #[rstest]
 #[case::one_blank_line(
     "points | where velocity > 30 km/h | draw\n\npoints | where velocity < 10 km/h | hide"
@@ -50,7 +50,8 @@ fn whitespace_between_queries_never_changes_the_result(#[case] text: &str) {
 }
 
 /// A blank line inside what was one query splits it in two, and the tail is not
-/// a query on its own - the editor must say so instead of running half of it.
+/// a query on its own - the editor reports it as a failing chunk and rejects
+/// the run.
 #[test]
 fn a_blank_line_inside_a_query_splits_it_into_a_failing_chunk() {
     let mut scenario = scenario();

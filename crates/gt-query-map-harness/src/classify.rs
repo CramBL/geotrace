@@ -24,10 +24,11 @@ impl PointClass {
     /// The single character this point contributes to a track's picture: its
     /// halo layer when it carries exactly one, else why it is not shown.
     ///
-    /// A shown point with no halo is `.`; with one halo it is that layer's index
-    /// in base 16 (the mask holds [`DrawLayerMask::MAX_LAYERS`] = 16 layers, so
-    /// one digit always suffices); with several halos it is `*`. The withheld
-    /// glyphs stay clear of the base-16 digits, which a test pins down.
+    /// A shown point with no halo is `.`. A shown point with one halo is that
+    /// layer's index in base 16, one digit for each of the
+    /// [`DrawLayerMask::MAX_LAYERS`] = 16 layers the mask holds. A shown point
+    /// with several halos is `*`. The withheld glyphs stay clear of the base-16
+    /// digits, which a test pins down.
     pub fn glyph(&self) -> char {
         match self.visibility {
             PointVisibility::Shown => self.halo_glyph(),

@@ -1,5 +1,5 @@
-//! Windowed queries, whose matches are stretches rather than single points, and
-//! the other per-point metrics a recording carries.
+//! Windowed queries, whose matches are stretches of points, and the other
+//! per-point metrics a recording carries.
 
 use gt_query_map_harness::{Dataset, MapScenario, PointSpec, TrackSpec, track};
 
@@ -36,7 +36,7 @@ fn a_heading_spread_window_bands_the_swinging_stretch() {
     )));
     scenario.run("points | window 3 | where spread(heading) > 90 deg | draw");
     // Every window from point 1 on holds one of the swung headings, so the band
-    // reaches from there to the end; only the opening window is calm.
+    // reaches from there to the end. Only the opening window is calm.
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  .0000000
     counts: shown 8, halos 1

@@ -7,7 +7,7 @@
 //!
 //! The catalog is the single source of the assistance text - the completion
 //! popup and the hover doc read the same entry, so they cannot disagree. It
-//! is built off the language's own enums (`QueryMetric`, `Func`, `Unit`,
+//! is built off the language's own types (`QueryMetric`, `Func`, `Unit`,
 //! `ParamName`, gt_types::DisplayMode) so a new variant cannot ship without
 //! a catalog entry (enforced by `catalog_is_exhaustive`).
 
@@ -146,7 +146,7 @@ const STAGES: &[Construct] = &[
     },
 ];
 
-/// The logical connectives of a `where` condition. No enum backs these, so
+/// The logical connectives of a `where` condition. No `enum` backs these, so
 /// they are catalogued by hand like the stages.
 const CONNECTIVES: &[Construct] = &[
     Construct {

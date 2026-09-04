@@ -41,8 +41,7 @@ impl Metric {
     }
 
     /// Thresholds in this metric's own unit, spanning the values the data
-    /// carries so a predicate splits the points rather than matching all or
-    /// none.
+    /// carries so a predicate splits the points.
     fn threshold(self) -> BoxedStrategy<f64> {
         match self {
             Self::Velocity => (0i32..=45).prop_map(f64::from).boxed(),

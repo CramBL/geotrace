@@ -258,8 +258,8 @@ impl QuerySession {
     }
 
     /// Compare the current inputs against the ones the last run saw and mark
-    /// its results stale when they differ, so the map and the panel gray out
-    /// instead of showing point indices that may address other data.
+    /// its results stale when they differ. A stale run's point indices may
+    /// address other data, so the map and the panel gray out.
     pub fn refresh_staleness(&mut self, inputs: RunInputs<'_>) {
         let Some(completed) = &mut self.completed else {
             return;
@@ -556,7 +556,7 @@ mod tests {
 
     #[test]
     fn a_channel_source_run_pairs_matches_with_the_timeline() {
-        // Sample 0 (1.5 g -> 14.7 m/s2) clears 1 g; sample 1 (0.2 g -> 1.96)
+        // Sample 0 (1.5 g -> 14.7 m/s2) clears 1 g. Sample 1 (0.2 g -> 1.96)
         // does not. The matched sample (at t=0 s) bands the track: a draw halo
         // over the enclosing nav-point range.
         let state = LoadedState::with_channels(vec![vector_channel(
