@@ -36,8 +36,8 @@ const WORDS_PER_CHUNK: NonZeroUsize = match NonZeroUsize::new(1024) {
 pub(crate) struct FilterQuery {
     shared: Arc<QueryState>,
 
-    /// The newest landed generation, copied out of `shared`: reads take no
-    /// lock.
+    /// The newest landed generation, copied out of `shared`: a read here never
+    /// takes the lock.
     landed: LandedScan,
 }
 

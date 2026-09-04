@@ -3,7 +3,7 @@
 //! A day already archived costs no request: one HDF5 file holds every day
 //! ever fetched, queried per day. See [`schema`] for the layout.
 //!
-//! A day the catalog lists no flare for is archived with no events, which is
+//! A day without a flare in the catalog is archived with no events, which is
 //! what keeps it from being requested again.
 
 use std::ops::{Deref, Range};
@@ -430,8 +430,7 @@ fn read_events(group: &Group, rows: Range<usize>) -> Result<Vec<SolarFlare>, Fla
 }
 
 /// Whether the column beside the presence column holds a value the catalog
-/// published, naming the field in the error a code outside the schema
-/// produces.
+/// published. The error for a code outside the schema states `field`.
 fn stored_presence(code: u8, row: usize, field: &str) -> Result<StoredPresence, FlareStoreError> {
     StoredPresence::from_code(code).ok_or_else(|| {
         FlareStoreError::Corrupt(format!("flare row {row} has {field} presence code {code}"))

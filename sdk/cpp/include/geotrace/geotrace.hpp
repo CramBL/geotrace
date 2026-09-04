@@ -870,7 +870,7 @@ struct EventMarkerView {
  * Trait describing one level of an event taxonomy.
  *
  * Specialise for each `enum class` level with two members:
- *  - `static constexpr std::string_view base` - the segment naming this level.
+ *  - `static constexpr std::string_view base` - the segment for this level.
  *  - `static constexpr std::string_view seg(E)` - the leaf segment per value.
  *
  * `seg()` must return a non-empty segment for **every** enumerator. Write it as

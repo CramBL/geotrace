@@ -15,7 +15,7 @@ const MAX_DECODED_BYTES_PER_FILE_BYTE: u128 = 1032;
 ///
 /// A dataset's declared element count and element size are read from its header
 /// and are whatever the file says. Reading one allocates their product, so a
-/// hostile file names a size no allocator can serve.
+/// hostile file can state a size no allocator can serve.
 pub(crate) struct SizeCheckedFile {
     file: File,
     file_bytes: u64,

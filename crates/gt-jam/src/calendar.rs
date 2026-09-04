@@ -13,7 +13,7 @@ use gt_types::TimeRange;
 
 /// The first day of coverage, as (year, month, day).
 ///
-/// Probed, not taken from the publisher's prose, which names February 2022
+/// Probed, not taken from the publisher's prose, which states February 2022
 /// without a day: on 2026-07-31 every day from 2022-01-31 through
 /// 2022-02-13 returned 404, and 2022-02-14 returned 200.
 const COVERAGE_START_YMD: (i32, u32, u32) = (2022, 2, 14);

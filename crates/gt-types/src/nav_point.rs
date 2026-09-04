@@ -90,8 +90,9 @@ impl ResolvedPosition {
 ///
 /// `tpv` holds the coordinates recorded for this epoch, out of range values
 /// included, which is not always where the fix belongs on the map: a receiver
-/// that reports no heading often writes coordinates it did not measure, down
-/// to (0, 0), and one that reports a latitude of 91° wrote no position at all.
+/// without a heading to report often writes coordinates it did not measure,
+/// down to (0, 0), and one that reports a latitude of 91° wrote no position at
+/// all.
 ///
 /// Where a fix is drawn is the track's geometry, not the fix's own: read
 /// [`crate::track::LoadedTrack::placed_points`] for anything geometric - a

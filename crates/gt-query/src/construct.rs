@@ -543,7 +543,7 @@ mod tests {
     }
 
     /// Every metric a table header can carry finds its own entry, so a header
-    /// hover always has the doc the editor would show for that name.
+    /// hover always has the doc the editor would show for that metric.
     #[test]
     fn every_metric_has_documentation_under_its_own_name() {
         for metric in QueryMetric::iter() {

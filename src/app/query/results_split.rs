@@ -45,7 +45,7 @@ impl ResultsSplit {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct SplitGeometry {
     /// Everything under the summary strip: both tables, the splitter band, and
-    /// the caption naming the picked match.
+    /// the caption stating the picked match.
     pub(super) available: f32,
     /// The matches table's header and [`MIN_SPLIT_ROWS`] of its rows.
     pub(super) matches_minimum: f32,

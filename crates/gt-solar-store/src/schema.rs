@@ -50,7 +50,7 @@ pub const SAMPLE_KP_STATUS: &str = "status";
 /// is a gap.
 pub const UNPUBLISHED_ACTIVITY_FILL: f64 = 0.0;
 
-/// Attribute naming the archive's schema version.
+/// Attribute holding the archive's schema version.
 pub const SCHEMA_VERSION_ATTR: &str = "schema_version";
 
 /// Schema this build writes and can read.

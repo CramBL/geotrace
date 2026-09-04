@@ -27,8 +27,8 @@ pub const OVERSIZED_TEXT_LENGTH: usize = 2000;
 pub const OVERSIZED_ROW_COUNT: usize = 200;
 
 /// An unbroken run of `fill`, standing in for the identity, path, URL or error
-/// a window is handed. `fill` names the fixture it came from when it turns up
-/// in a failure message.
+/// a window is handed. `fill` identifies the fixture it came from when it
+/// turns up in a failure message.
 pub fn oversized_text(fill: char) -> String {
     String::from(fill).repeat(OVERSIZED_TEXT_LENGTH)
 }

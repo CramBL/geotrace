@@ -125,7 +125,7 @@ impl TimeRange {
     ///
     /// An absent bound is treated as unbounded (−∞ or +∞ respectively), so a
     /// fully absent window matches every range. A window whose start is after
-    /// its end overlaps no range: it selects no instant.
+    /// its end overlaps no range: it excludes every instant.
     pub fn overlaps_window(
         self,
         window_start: Option<DateTime<Utc>>,
@@ -286,7 +286,7 @@ impl TrackLod {
 /// Where a track's fixes are drawn, and the measures taken over them.
 ///
 /// A recording places its fixes before it is cut into tracks, so a track has a
-/// geometry unless the whole recording holds no fix with a latitude and a
+/// geometry unless the whole recording has no fix with a latitude and a
 /// longitude in range.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrackGeometry {
@@ -581,7 +581,7 @@ pub struct FileMetadata {
     pub total_duration: Duration,
     /// The span from the earliest start to the latest end over every track of
     /// the recording, whatever order the tracks are stored in. `None` when the
-    /// recording holds no track.
+    /// recording has no track.
     pub time_range: Option<TimeRange>,
     /// Aggregated fix stats across all tracks. `None` when no track has satellite reports.
     pub fix_stats: Option<FixStats>,

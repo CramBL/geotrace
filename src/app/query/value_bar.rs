@@ -38,7 +38,7 @@ impl ColumnValueRange {
 
     /// How much of the cell the bar behind `value` fills: nothing at the
     /// column's lowest value, all of it at its highest. A column whose values
-    /// are all the same spans nothing to place a value in and paints no bar.
+    /// are all the same spans nothing to place a value in and returns [`None`].
     pub(super) fn bar_fraction(self, value: Option<f64>) -> Option<f32> {
         emath::inverse_lerp(self.lowest..=self.highest, value?)
             .map(|fraction| (fraction as f32).clamp(0.0, 1.0))
@@ -100,7 +100,7 @@ impl RunColumnRanges {
     }
 
     /// The ranges of the columns the query at `query_index` tables, empty for a
-    /// query the run does not hold.
+    /// query missing from the run.
     pub(super) fn of_query(&self, query_index: usize) -> &[Option<ColumnValueRange>] {
         self.queries.get(query_index).map_or(&[], Vec::as_slice)
     }

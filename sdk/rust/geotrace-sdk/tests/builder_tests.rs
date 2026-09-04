@@ -480,7 +480,7 @@ fn orphan_reports_before_first_fix_are_dropped() -> Result<(), BuildError> {
 
     let nav_file = recorder.finish()?;
 
-    // Only the real fix. The pre-fix report produces no ghost.
+    // Only the real fix. The pre-fix report is dropped.
     assert_eq!(
         nav_file.nav_points().len(),
         1,

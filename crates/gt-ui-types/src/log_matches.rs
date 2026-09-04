@@ -15,7 +15,7 @@ use gt_types::{FixRef, LoadedFile, MercPoint};
 /// Session-unique identity of a loaded log, handed out by `LoadedLogs`.
 ///
 /// Stable while the log stays loaded, and never handed out again once it is
-/// unloaded. The hexagon under the cursor names its log by this, and the
+/// unloaded. The hexagon under the cursor identifies its log by this, and the
 /// viewer resolves that back to the log's rows.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LoadedLogId(u64);

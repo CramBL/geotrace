@@ -3,11 +3,11 @@
 //!
 //! The instance that gets there first holds an exclusive advisory lock on
 //! `instance.lock` in the data directory for as long as it runs, and writes
-//! what it is doing to `instance-status.json` beside it. A crashed instance
-//! leaves no lock behind: the lock lives on an open file descriptor, which
-//! the OS releases however the process ends. The status file it leaves is
-//! read only while the lock is held - a status without a lock behind it says
-//! nothing about a live instance.
+//! what it is doing to `instance-status.json` beside it. The lock lives on an
+//! open file descriptor, which the OS releases however the process ends,
+//! including a crash. A crashed instance leaves its status file behind, and
+//! that file is read only while the lock is held - a status without a lock
+//! behind it says nothing about a live instance.
 
 use std::fs::{self, File, OpenOptions};
 use std::io;
@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 /// a process holds it.
 pub const LOCK_FILE_NAME: &str = "instance.lock";
 
-/// The file naming what the instance holding the lock is doing.
+/// The file stating what the instance holding the lock is doing.
 pub const STATUS_FILE_NAME: &str = "instance-status.json";
 
 /// A reader never finds half a status: each one is written here and renamed
@@ -73,7 +73,7 @@ pub struct PendingWriteReport {
     pub label: String,
     /// How far the write has got, where it reports progress at all.
     pub progress: Option<f32>,
-    /// Which step the write is on, where it names its steps at all.
+    /// Which step the write is on, where it reports steps at all.
     pub stage: Option<String>,
 }
 
@@ -545,8 +545,9 @@ impl DataDirectoryLock {
     /// from the instance holding it, and reports the take-over the record
     /// replaces.
     ///
-    /// A run that marks no data directory - a read-only session, and a run
-    /// without one at all - writes nothing here.
+    /// A run without a marked data directory - a read-only session, or a run
+    /// without a directory at all - returns [`None`] and leaves the take-over
+    /// file untouched.
     pub fn record_take_over(&self, taken_from_process_id: Option<u32>) -> Option<TakeOverRecord> {
         self.0.lock().record_take_over(taken_from_process_id)
     }

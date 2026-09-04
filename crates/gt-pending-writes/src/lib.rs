@@ -20,8 +20,8 @@ const RECENTLY_FINISHED_KEPT: usize = 8;
 /// the settings file.
 ///
 /// A [`Self::ReadOnly`] session is one started beside the instance that owns
-/// the data directory: it takes no instance lock and writes nothing, so both
-/// windows can be open at once.
+/// the data directory: it runs without the instance lock and never writes, so
+/// both windows can be open at once.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum WriteAccess {
     #[default]
@@ -115,7 +115,7 @@ pub struct PendingWriteStatus {
     pub kind: WriteKind,
     /// How far the write has got, where it reports progress at all.
     pub progress: Option<f32>,
-    /// Which step the write is on, where it names its steps at all.
+    /// Which step the write is on, where it reports steps at all.
     pub stage: Option<String>,
 }
 

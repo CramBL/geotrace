@@ -882,7 +882,7 @@ impl ChannelUnit {
     /// # Errors
     ///
     /// The [`CustomUnit::new`] errors, including
-    /// [`UnitParseError::CustomIsRecognized`] for a label that names a catalog
+    /// [`UnitParseError::CustomIsRecognized`] for a label matching a catalog
     /// unit once aliases are resolved.
     pub fn custom(label: impl Into<String>) -> Result<Self, UnitParseError> {
         CustomUnit::new(label)
@@ -892,7 +892,7 @@ impl ChannelUnit {
 
     /// Read existing file metadata, keeping every label.
     ///
-    /// A label naming a catalog unit through any accepted alias becomes
+    /// A label matching a catalog unit through any accepted alias becomes
     /// [`ChannelUnitKind::Recognized`], a label [`CustomUnit::new`] accepts
     /// unchanged becomes [`ChannelUnitKind::Custom`], and the rest - untrimmed,
     /// empty, or holding a control character - becomes

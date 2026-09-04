@@ -773,7 +773,7 @@ void gtd_builder_set_lenient(GtdFileBuilder *b);
  * Under `GTD_CHANNEL_UNIT_RECOGNIZED` the label is trimmed and aliases are
  * resolved, so `"kph"`, `"degrees"` and `"m/s²"` come back as `"km/h"`,
  * `"deg"` and `"m/s2"`. Under `GTD_CHANNEL_UNIT_CUSTOM` the label is only
- * trimmed, and a label that names a recognized unit is rejected: it belongs in
+ * trimmed, and a label matching a recognized unit is rejected: it belongs in
  * `GTD_CHANNEL_UNIT_RECOGNIZED`, which keeps its conversion factor.
  *
  * @param label        Unit label to validate, NUL-terminated UTF-8.

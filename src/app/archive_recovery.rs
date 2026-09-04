@@ -365,7 +365,7 @@ impl InterruptedDeleteChoice {
     }
 }
 
-/// Ask the user about the interrupted delete in `archive`, naming what each
+/// Ask the user about the interrupted delete in `archive`, stating what each
 /// choice costs.
 ///
 /// Returns the choice in the frame the user makes it, and [`None`] while the
@@ -457,7 +457,7 @@ impl App {
     /// archive it found something in.
     ///
     /// An inspection that lands once the app is closing is left where it is:
-    /// an app on its way out opens no database.
+    /// an app on its way out leaves the database closed.
     pub(in crate::app) fn adopt_finished_archive_inspection(&mut self) {
         if self.shutdown.has_begun() {
             return;
@@ -602,9 +602,9 @@ mod tests {
         assert_eq!(take_over.is_some(), stated);
     }
 
-    /// `fs::metadata` reports no modification time for a file that is not
-    /// there, which [`TakeOverAfterTheArchiveWasLastWritten::of_the_archive_at`]
-    /// states the take-over for.
+    /// A file that is not there has no modification time, which
+    /// [`TakeOverAfterTheArchiveWasLastWritten::of_the_archive_at`] states the
+    /// take-over for.
     #[test]
     fn a_take_over_is_stated_where_the_archive_has_no_modification_time() {
         let directory = tempfile::tempdir().expect("temp dir");

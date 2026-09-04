@@ -44,7 +44,7 @@ impl CapturedNodeDay {
     }
 
     /// The value of `node` at `offset` into the day, [`None`] where the file
-    /// names no epoch there or the producer published no value for the node.
+    /// has no epoch there or the producer published no value for the node.
     ///
     /// Only offsets the day's own epochs name are read: the capture holds
     /// published values, not interpolations between them.
@@ -63,7 +63,7 @@ impl CapturedNodeDay {
             .map(TotalElectronContent::from_tecu)
     }
 
-    /// Every offset into the day its file names an epoch at, oldest first.
+    /// Every offset into the day its file holds an epoch at, oldest first.
     /// Each node carries one value per map, so the count is the day's own.
     pub fn epoch_offsets(&self) -> Vec<TimeDelta> {
         let epochs = self.values_tecu.values().map(Vec::len).max().unwrap_or(0);
@@ -112,8 +112,8 @@ impl NodeSeriesCapture {
         self.days.iter().find(|captured| captured.day == day)
     }
 
-    /// The value of `node` at `offset` into `day`, [`None`] for a day the
-    /// capture does not hold.
+    /// The value of `node` at `offset` into `day`, [`None`] for a day missing
+    /// from the capture.
     pub fn value_at_offset(
         &self,
         node: &str,

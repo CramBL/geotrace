@@ -1,9 +1,9 @@
 //! Waiting for the GeoTrace instance that holds the data directory.
 //!
-//! A second instance opens its window like any other run, but opens no
-//! database: archive recovery here would run against archives the instance
-//! holding the directory is part-way through rewriting. It retries the lock
-//! instead, and shows what that instance is doing until it lets go.
+//! A second instance opens its window like any other run, but leaves the
+//! databases closed: archive recovery here would run against archives the
+//! instance holding the directory is part-way through rewriting. It retries
+//! the lock instead, and shows what that instance is doing until it lets go.
 //!
 //! The wait ends in one of four ways: this instance takes the lock, the user
 //! takes write access after a confirmation, the user starts a read-only
@@ -184,7 +184,7 @@ pub(in crate::app) struct TakenOverInstance {
 }
 
 impl TakenOverInstance {
-    /// Names the instance as the subject of a sentence, e.g.
+    /// The instance as the subject of a sentence, e.g.
     /// `"Another GeoTrace (process 4210)"`.
     pub(in crate::app) fn sentence_subject(self) -> String {
         match self.process_id {
@@ -269,7 +269,7 @@ impl DataDirectoryWait {
     /// Shows the wait, and reports the frame the user chooses in it.
     ///
     /// The confirmation replaces the wait dialog while it is up: both
-    /// are anchored to the center of the window, and the confirmation names
+    /// are anchored to the center of the window, and the confirmation states
     /// the same holder state the wait dialog does.
     fn ui(&mut self, ui: &egui::Ui) -> WaitChoice {
         if self.confirming_take_over {
@@ -531,7 +531,7 @@ impl DataDirectoryUnavailable {
 }
 
 /// Confirm opening the recordings and archives while another instance still
-/// holds the data directory, naming what that instance is doing and what
+/// holds the data directory, stating what that instance is doing and what
 /// opening here can discard.
 ///
 /// Returns the choice in the frame the user makes it, and [`None`] while the
@@ -571,8 +571,8 @@ impl App {
     /// instance is doing, until the directory is this instance's to open or
     /// the user takes write access from the instance holding it.
     ///
-    /// A close ends the wait where it stands: an app on its way out opens no
-    /// database.
+    /// A close ends the wait where it stands: an app on its way out leaves the
+    /// databases closed.
     pub(in crate::app) fn wait_for_the_data_directory(&mut self, ui: &egui::Ui) {
         if self.shutdown.has_begun() {
             return;
@@ -706,7 +706,7 @@ impl App {
     }
 
     /// Retries the mark behind an open window, so the data directory's status
-    /// file names this instance once the mark can be taken.
+    /// file states this instance once the mark can be taken.
     ///
     /// Taking the mark here changes nothing else: the databases opened when
     /// the wait ended and stay as they are.
@@ -754,9 +754,9 @@ mod tests {
         }
     }
 
-    /// The wait ends and the databases open: a lock file that stops opening
-    /// at all - a mount turned read-only, a lock daemon gone - leaves nothing
-    /// naming an instance to wait for.
+    /// The wait ends and the databases open: with a lock file that stops
+    /// opening at all - a mount turned read-only, a lock daemon gone - there
+    /// is no instance to wait for.
     #[test]
     fn a_lock_file_that_stops_opening_mid_wait_ends_the_wait() {
         let mut wait = wait_on_a_directory_held_by_another_instance();

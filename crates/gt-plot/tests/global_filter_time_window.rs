@@ -167,7 +167,7 @@ fn draw(files: &[LoadedFile], mut state: PlotUnderFilter) -> TestHarness<'_, Plo
 
 /// A window of one minute over an hour-long recording resets to the minute,
 /// not to the hour. The view fits the data the plot draws, and the plot draws
-/// no fix outside the time window.
+/// only the fixes inside the time window.
 #[test]
 fn the_view_fits_the_time_window_rather_than_the_whole_recording() {
     let files = [recording(0, 3600, Constellation::Gps)];

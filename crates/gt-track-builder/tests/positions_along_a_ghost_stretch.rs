@@ -334,7 +334,7 @@ fn an_event_marker_among_measured_fixes_is_drawn_at_its_recorded_coordinates(
 }
 
 /// A receiver reports satellites in fix whenever it measured the position it
-/// wrote. It reports no heading whenever it has no course to report.
+/// wrote. It leaves the heading out whenever it has no course to report.
 #[test]
 fn a_fix_with_satellites_in_fix_keeps_its_measured_position() {
     let points = vec![
@@ -422,8 +422,8 @@ fn a_fix_with_a_heading_and_nothing_in_fix_keeps_its_recorded_position() {
     );
 }
 
-/// Every fix keeps the coordinates it was written with. A recording that holds
-/// no satellite report holds nothing that distinguishes a measured fix from a
+/// Every fix keeps the coordinates it was written with. A recording without a
+/// satellite report holds nothing that distinguishes a measured fix from a
 /// dead-reckoned one.
 #[test]
 fn a_track_without_a_satellite_report_keeps_every_recorded_position() {

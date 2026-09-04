@@ -20,7 +20,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// default: the surface/depth textures must cover 4k+ displays.
 const MIN_TEXTURE_DIMENSION_2D: u32 = 8192;
 
-/// Under this flag GeoTrace sends no request: no map tiles, no downloads, no
+/// Under this flag GeoTrace is offline: no map tiles, no downloads, no
 /// snapping, no update check.
 const OFFLINE_FLAG: &str = "--offline";
 
@@ -135,7 +135,7 @@ impl SignalDuringTheWait {
 /// "Run in background" leaves them, and reports the code to exit with.
 ///
 /// A second instance started meanwhile can read what this one is doing: the
-/// instance lock keeps naming what is left to write while the wait runs.
+/// instance lock keeps stating what is left to write while the wait runs.
 fn begin_shutdown_and_wait_for_pending_writes(
     pending_writes: &PendingWrites,
     instance_lock: &DataDirectoryLock,

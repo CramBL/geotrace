@@ -144,7 +144,7 @@ fn out_of_range_values() -> NavFile {
     recorder.finish().expect("gen_fixture: build failed")
 }
 
-/// A file as a newer build would write it: an event marker style naming an icon
+/// A file as a newer build would write it: an event marker style with an icon
 /// outside the [`MarkerIcon`](geotrace_sdk::MarkerIcon) set, and a color that is
 /// not `#RRGGBB`.
 fn unrecognized_style_values() -> NavFile {

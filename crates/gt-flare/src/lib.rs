@@ -89,7 +89,7 @@ pub fn parse_date(date: &str) -> Result<NaiveDate, chrono::ParseError> {
 /// code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FixtureWindow {
-    /// Names the capture on disk and selects it on the capture command line.
+    /// Identifies the capture on disk and on the capture command line.
     pub name: &'static str,
     /// First day of the capture window, as [`parse_date`] reads it.
     pub start: &'static str,

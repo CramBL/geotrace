@@ -1,6 +1,6 @@
 //! What a day-keyed fetch worker is doing, and the settings rows reporting it.
 //!
-//! Shared by every day-keyed fetch worker: only the hover text names the
+//! Shared by every day-keyed fetch worker: only the hover text states the
 //! source.
 
 use std::collections::BTreeMap;
@@ -32,7 +32,7 @@ impl DayArchiveCoverage {
         self.days.insert(day, state);
     }
 
-    /// Report `day` as fully archived, ignoring a day this set does not hold:
+    /// Report `day` as fully archived, ignoring a day missing from this set:
     /// a backfilled day is not part of the count.
     pub fn mark_archived(&mut self, day: NaiveDate) {
         if let Some(state) = self.days.get_mut(&day) {
@@ -122,7 +122,7 @@ impl DayFetchStatus {
     }
 }
 
-/// The hover text naming the source the rows report on.
+/// The hover text stating the source the rows report on.
 #[derive(Debug, Clone, Copy)]
 pub struct FetchRowHoverText {
     pub queue: &'static str,

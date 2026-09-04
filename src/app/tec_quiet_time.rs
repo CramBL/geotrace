@@ -363,7 +363,7 @@ fn days_read_for_day(day: NaiveDate) -> Vec<NaiveDate> {
 /// The grid node and map epoch each of a track's fixes falls on, one entry per
 /// distinct pair.
 ///
-/// A fix whose day the archive does not hold places no point: the grid and the
+/// A fix has a point only where the archive holds its day: the grid and the
 /// epochs both come from that day's own published file. A fix past the last
 /// full epoch of its day falls on the map that file dates to the next day's
 /// midnight, which is 24 h into the fix's own day.

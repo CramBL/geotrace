@@ -215,8 +215,8 @@ fn rename_workflow_updates_the_listed_identity_end_to_end() {
 }
 
 /// The Logs column over a real database: the count the row shows, the names
-/// the menu lists, and the log the database reads back for the row that was
-/// opened.
+/// listed in the menu, and the log the database reads back for the row that
+/// was opened.
 #[test]
 fn the_logs_column_counts_the_stored_logs_and_opens_the_one_that_was_chosen() {
     let harness =
@@ -305,8 +305,8 @@ fn the_row_actions_that_write_are_grayed_in_a_read_only_session() {
         .get_by_label_contains(READ_ONLY_RECORDING_HISTORY_HOVER);
 }
 
-/// The rename a double click opens is a write too: a read-only session opens
-/// no editor, and the context menu's Rename is grayed.
+/// The rename a double click opens is a write too: a read-only session ignores
+/// the double click, and the context menu's Rename is grayed.
 #[test]
 fn no_rename_editor_opens_in_a_read_only_session() {
     let mut harness = history_harness(vec![entry_with_identity("auto:ride.gtd")]);
@@ -761,8 +761,8 @@ fn content_gap_to_window_edge(h: &TestHarness<HistoryHarness>) -> f32 {
 
 /// Identity fills the window at every size: the metadata columns keep their
 /// content width and identity takes the rest. Growing or shrinking the
-/// window leaves no gap on the right and traps no content off-screen - the
-/// table is always exactly as wide as the window.
+/// window keeps the table flush with the right edge and every column
+/// on-screen - the table is always exactly as wide as the window.
 #[test]
 fn identity_fills_the_window_at_every_size() {
     let mut h = resize_harness();
@@ -1246,7 +1246,7 @@ fn hovering_any_value_cell_reveals_the_breakdown(#[case] cell_text: &str) {
     );
 }
 
-/// The breakdown names the recording's ad-hoc sensor channels - their
+/// The breakdown lists the recording's ad-hoc sensor channels - their
 /// component labels, units, and sample counts - which no table column
 /// shows. This is the whole point of the hover.
 #[test]
@@ -1551,7 +1551,7 @@ fn snapshot_delete_hidden_confirmation_with_no_track_hidden() {
 }
 
 /// The delete-hidden confirmation stays inside the screen and keeps its
-/// buttons reachable however many tracks it names.
+/// buttons reachable however many tracks it lists.
 #[rstest::rstest]
 fn delete_hidden_confirmation_fits_every_viewport(
     #[values(CRAMPED_VIEWPORT, NARROW_VIEWPORT, SHORT_VIEWPORT)] viewport: egui::Vec2,
@@ -1683,7 +1683,7 @@ const DRAGGED_UP_BY_PX: f32 = 200.0;
 /// shows at once.
 const SHORT_LIST_ROWS: usize = 3;
 
-/// A harness listing `rows` recordings under names that sort in the order they
+/// A harness listing `rows` recordings under names sorting in the order they
 /// are built, with the database path kept out of the image.
 fn history_harness_for_the_height_audit(rows: usize) -> HistoryHarness {
     let entries = (0..rows)

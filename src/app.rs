@@ -112,7 +112,7 @@ struct SharedAppState {
     /// When `true`, `NavMap::draw` zooms the map to fit all currently visible data.
     zoom_to_visible_request: bool,
     /// Set by a map button in the query window, consumed by `NavMap::draw`
-    /// to frame what it names and play the reveal animation again.
+    /// to frame the matches it identifies and play the reveal animation again.
     reveal_query_matches_request: Option<gt_ui_types::MatchRevealTarget>,
     /// Filename and warnings for the currently open data quality warnings dialog, if any.
     warnings_popup: Option<(String, Vec<LoadWarning>)>,
@@ -192,7 +192,8 @@ pub struct StartupOptions {
     /// `main` so the process can wait for the writes that outlive the window.
     pub pending_writes: PendingWrites,
     /// The mark on the data directory, shared with `main`. A run that finds
-    /// another instance holding it opens no database until it takes it.
+    /// another instance holding it leaves the database closed until it takes
+    /// it.
     pub instance_lock: DataDirectoryLock,
 }
 
@@ -410,7 +411,7 @@ pub struct App {
     /// What the log viewer requested while it drew, applied once the shared
     /// state it drew from is no longer borrowed.
     log_viewer_requests: LogViewerRequests,
-    /// The association dialog of the log it names, shown until the user
+    /// The association dialog of the log it refers to, shown until the user
     /// decides.
     association_dialog: Option<LogAssociationDialog>,
     /// Whether a loading log raises the association dialog. Off leaves a log
@@ -1071,7 +1072,7 @@ impl App {
     }
 
     /// Opens the viewer on the log `id` names and toasts that the session
-    /// already holds its content. The toast names `name`, the name the refused
+    /// already holds its content. The toast names `name`, the name the rejected
     /// copy arrived under, when that log is no longer loaded.
     fn show_the_log_this_content_is_already_loaded_as(&mut self, id: LoadedLogId, name: &str) {
         let loaded_name = self.logs.get_by_id(id).map_or(name, LoadedLog::name);

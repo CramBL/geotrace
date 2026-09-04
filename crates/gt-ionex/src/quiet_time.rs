@@ -5,7 +5,8 @@
 //! The index compares a value against the median of the 27 days before the
 //! day observed, so a quiet reference exists for a recording made yesterday.
 //! That median is only ever formed from what the archive already holds: a
-//! window too sparsely archived yields no deviation at all.
+//! window under [`MINIMUM_BACKGROUND_DAYS`] archived days has no median, and
+//! so no deviation.
 //!
 //! The grade boundaries below are the W index thresholds of Table 3 in
 //! Gulyaeva, Stanislawska and Tomasik, Annales Geophysicae 26, 2008.

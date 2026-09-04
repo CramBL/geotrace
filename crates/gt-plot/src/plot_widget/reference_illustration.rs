@@ -203,7 +203,7 @@ fn generate_tec_reference_plot() {
     println!("wrote {}", path.display());
 }
 
-/// Names the quiet reference in the plot's legend.
+/// The quiet reference's label in the plot's legend.
 const MEDIAN_LINE_LABEL: &str = "27-day median";
 
 /// Grid marks landing on every UTC day and every six hours between them, so

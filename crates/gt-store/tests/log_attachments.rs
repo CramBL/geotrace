@@ -210,7 +210,7 @@ fn detaching_a_log_removes_it_and_leaves_the_other_attachments() {
         .expect("the other attachment is untouched");
 }
 
-/// Detaching works when the log it names is already gone.
+/// Detaching works when the log it refers to is already gone.
 #[test_log::test]
 fn detaching_a_log_that_is_already_gone_removes_the_attachment() {
     let mut recorded = RecordedStore::new();
@@ -315,7 +315,7 @@ fn changing_the_filters_of_an_attachment_a_recording_never_had_fails() {
 }
 
 /// Attaching to a recording that was deleted from under the session fails
-/// and leaves no log behind.
+/// and leaves the logs directory as it was.
 #[test_log::test]
 fn attaching_to_a_deleted_recording_fails_and_stores_no_log() {
     let mut recorded = RecordedStore::new();

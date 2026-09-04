@@ -645,7 +645,7 @@ fn inspect_satellite_reports(file: &SizeCheckedFile, n_nav_points: u64, out: &mu
         return;
     };
 
-    // Counts `nav_point_idx`, which every version writes under that name. The
+    // Counts `nav_point_idx`, the one name every version writes it under. The
     // time field is named `time` in v1 and `gps_time_us` in v2.
     let m = sat_grp
         .dataset("nav_point_idx")

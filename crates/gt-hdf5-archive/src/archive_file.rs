@@ -142,7 +142,7 @@ impl ArchiveFile {
         Ok(())
     }
 
-    /// Reject an archive whose `attribute` names a schema newer than
+    /// Reject an archive whose `attribute` states a schema version newer than
     /// `supported`. An archive without the attribute reads as version 0.
     pub fn validate_schema_version(
         &mut self,

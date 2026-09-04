@@ -358,7 +358,7 @@ fn attaching_is_not_offered_in_a_read_only_session() {
 }
 
 /// Selecting a recording outside history clears the attach tickbox, so
-/// confirming never reports `attach` for a recording that can hold no
+/// confirming never reports `attach` for a recording that cannot hold an
 /// attachment.
 #[test]
 fn switching_to_a_recording_outside_history_clears_the_attach_tickbox() {

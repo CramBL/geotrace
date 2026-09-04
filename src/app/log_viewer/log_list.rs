@@ -87,7 +87,7 @@ pub(super) struct AvailableAttachmentRow {
     pub attachment: LogAttachmentRef,
     pub name: String,
 
-    /// How the app names the recording holding this attachment.
+    /// The app's name for the recording holding this attachment.
     pub recording: String,
 }
 
@@ -227,8 +227,8 @@ fn rows_ui(
 }
 
 impl LogRow {
-    /// `recording` is how the app names the group's recording, `None` for the
-    /// group of logs anchored to none. An attached log listed there names the
+    /// `recording` is the app's name for the group's recording, `None` for the
+    /// group of logs anchored to none. An attached log listed there shows the
     /// identity its attachment holds instead.
     fn of_loaded_log(id: LoadedLogId, log: &LoadedLog, recording: Option<&str>) -> Self {
         Self::Loaded(LoadedLogRow {

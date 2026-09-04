@@ -50,8 +50,8 @@ pub fn server_host(url: &str) -> Option<String> {
 
 /// The canonical fixture scenarios captured from the live server.
 ///
-/// Each entry names a `NAME.request.json` / `NAME.response.json` pair under
-/// [`fixtures_dir`]. The set is deliberately one scenario per server behavior
+/// Each entry identifies a `NAME.request.json` / `NAME.response.json` pair
+/// under [`fixtures_dir`]. The set is deliberately one scenario per server behavior
 /// the client must handle. The capture harness builds the matching requests.
 pub const FIXTURE_SCENARIOS: &[&str] = &[
     "clean_drive",

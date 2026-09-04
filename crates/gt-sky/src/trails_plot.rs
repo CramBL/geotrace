@@ -404,8 +404,8 @@ fn trail_stroke_alpha(step: i32, focus_factor: f32, opacity: f32) -> f32 {
 /// covers.
 ///
 /// Adjacent stretches share their boundary vertex, so the drawn line is unbroken
-/// across a step change. A stretch left with a single vertex draws no line and
-/// is dropped.
+/// across a step change. A stretch left with a single vertex has no line to
+/// draw and is dropped.
 fn fade_stretches(run: &[TrailVertex], scrub: Option<GpsTime>) -> Vec<(Vec<Pos2>, i32)> {
     let mut stretches = Vec::new();
     let mut points: Vec<Pos2> = Vec::new();
@@ -601,7 +601,7 @@ fn satellite_from_sample(trail: &SkyTrail, sample: &TrailSample) -> Satellite {
 
 /// A scrub marker's hover payload: the satellite as of the report in effect,
 /// and when that report was. The time is carried because the scrubber sits
-/// between reports for most of its travel, so the tooltip names the report the
+/// between reports for most of its travel, so the tooltip states the report the
 /// values actually came from.
 struct MarkerHover {
     satellite: Satellite,

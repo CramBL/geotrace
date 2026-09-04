@@ -59,7 +59,7 @@ impl DayIndexReadRetry {
     /// [`DayArchiveError::is_held_by_another_process`] leaves a re-read due,
     /// and requests the repaint that runs it: a session doing nothing else
     /// would never poll again. Every other failure is a problem in the file
-    /// itself and leaves no re-read due.
+    /// itself, and no re-read is due.
     pub fn record_read<Days, E: DayArchiveError>(
         &mut self,
         ctx: &Context,
@@ -98,8 +98,8 @@ impl DayIndexReadRetry {
 
     /// Reads `store`'s day index with `read_index`, returning the days it read.
     ///
-    /// [`None`] for `store` is a session with no archive open: that leaves no
-    /// re-read due. A failed read returns [`None`] per [`Self::record_read`].
+    /// [`None`] for `store` is a session with no archive open, and no re-read
+    /// is due. A failed read returns [`None`] per [`Self::record_read`].
     pub fn read_the_day_index_of<W: Deref<Target = R>, R, Days, E: DayArchiveError>(
         &mut self,
         ctx: &Context,

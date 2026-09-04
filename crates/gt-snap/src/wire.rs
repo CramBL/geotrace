@@ -283,7 +283,7 @@ pub enum RoadClass {
     Unclassified,
     Residential,
     ServiceOther,
-    /// Forward compatibility: a class this client does not know yet.
+    /// Forward compatibility: a class unknown to this client.
     #[serde(other)]
     Unknown,
 }
@@ -322,7 +322,7 @@ pub enum Surface {
     Gravel,
     Path,
     Impassable,
-    /// Forward compatibility: a surface this client does not know yet.
+    /// Forward compatibility: a surface unknown to this client.
     #[serde(other)]
     Unknown,
 }
@@ -467,7 +467,7 @@ pub enum ErrorCode {
     /// 114: request lacks `shape` (or `encoded_polyline`).
     MissingShape,
     /// 153: more shape points than the server accepts per request. The
-    /// error text names the limit (16 000 on the FOSSGIS instance).
+    /// error text states the limit (16 000 on the FOSSGIS instance).
     TooManyShapePoints,
     /// 158: a trace option is out of bounds. Captured reality: out-of-range
     /// options are rejected, never clamped.
@@ -475,7 +475,7 @@ pub enum ErrorCode {
     /// 444: the matcher found no path - every point is off the road network.
     /// Not a failure for merging: it maps to all-unsnapped points.
     OffNetwork,
-    /// A code this client does not know yet, kept verbatim.
+    /// A code unknown to this client, kept verbatim.
     Other(u32),
 }
 

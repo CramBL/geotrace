@@ -36,7 +36,7 @@ fn a_recording_whose_clock_steps_backwards_has_a_time_range_bar() {
     );
 }
 
-/// A recording of no fixes at all holds no track and covers no span. The bar
+/// A recording of no fixes at all has no track and covers no span. The bar
 /// spans the recordings that hold fixes.
 #[test]
 fn a_recording_with_no_fixes_stays_out_of_the_time_range_bar() {

@@ -69,10 +69,10 @@ pub fn slips_between(
 /// entry pairs a point index with every satellite that slipped at that epoch.
 ///
 /// The previous epoch is the most recent earlier point with a satellite
-/// report. Points without one are skipped without breaking continuity.  Epochs
-/// with no slip produce no entry.  Used by the generated-marker pipeline, which
-/// reads each event's position and time from `points[index]` and emits one
-/// marker per epoch (not one per slipped satellite).
+/// report. Points without one are skipped without breaking continuity.  Only
+/// epochs with a slip get an entry.  Used by the generated-marker pipeline,
+/// which reads each event's position and time from `points[index]` and emits
+/// one marker per epoch (not one per slipped satellite).
 pub fn detect_slip_events(
     points: &[NavPoint],
     mask_deg: f32,
@@ -116,8 +116,8 @@ pub struct SlipSeries {
 /// A track's fix timestamps are not guaranteed to ascend (a receiver resuming
 /// after a gap can stamp a fix earlier than the one before it), so epochs and
 /// events out of ascending order are sorted before the sweep and the rates are
-/// written back into the order `epochs` was given in.  Returns no points when
-/// `per_min` is not positive (the rate would be undefined).
+/// written back into the order `epochs` was given in.  Returns an empty vector
+/// when `per_min` is not positive (the rate would be undefined).
 fn windowed_rate(epochs: &[f64], events: &[f64], window_secs: f64, per_min: f64) -> Vec<[f64; 2]> {
     if per_min <= 0.0 {
         return Vec::new();

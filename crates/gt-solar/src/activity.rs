@@ -217,7 +217,7 @@ mod tests {
     }
 
     /// Every storm level is reachable from its own lowest value, and each
-    /// names its own G number.
+    /// display name starts with its own G number.
     #[test]
     fn every_storm_class_is_reachable_and_named() {
         let storms: Vec<GeomagneticStormClass> = GeomagneticStormClass::iter().collect();

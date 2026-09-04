@@ -718,7 +718,7 @@ fn an_aggregate_column_names_the_channel_it_reduces(
     assert_eq!(aggregate_column(&query, call).reduced_channel(), channel);
 }
 
-/// `var` squares its argument, and no quantity names a squared speed.
+/// `var` squares its argument, and a squared speed has no quantity.
 #[test]
 fn an_aggregate_column_of_an_unnamed_dimension_has_no_quantity() {
     let query = checked("points | window 3 | table var(velocity)");
@@ -848,7 +848,7 @@ fn jamming_accepts_ratios_and_rejects_other_dimensions(#[case] src: &str, #[case
     assert_eq!(checked.is_ok(), accepted, "for {src}: {checked:?}");
 }
 
-/// The rejection names the metric and shows the form that works.
+/// The rejection states the metric and shows the form that works.
 #[test]
 fn a_jamming_comparison_without_a_unit_says_so() {
     let err = chk(&parse("points | where jamming > 0.1").unwrap()).unwrap_err();

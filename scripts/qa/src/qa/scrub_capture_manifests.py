@@ -30,7 +30,7 @@ _NONDETERMINISTIC_FIELDS = frozenset({"captured_at"})
 # gt-flare's endpoint needs a per-user api.nasa.gov key that CI has none of, so
 # it is re-captured by hand through `just flare-fixtures`, and the CDDIS
 # manifest under gt-ionex/tests/fixtures/cddis/ needs a per-user Earthdata
-# token, so `just cddis-verify --capture` writes it by hand. Naming one of
+# token, so `just cddis-verify --capture` writes it by hand. Passing one of
 # those on the command line scrubs it all the same.
 _MANIFESTS = (
     "crates/gt-ionex/tests/fixtures/capture.json",

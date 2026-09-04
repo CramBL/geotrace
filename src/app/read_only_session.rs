@@ -13,8 +13,8 @@ use super::App;
 
 pub(in crate::app) const READ_ONLY_MARKER_LABEL: &str = "read only";
 
-/// The first sentence of the marker's hover text, which names every kind of
-/// write the session leaves undone.
+/// The first sentence of the marker's hover text, which lists the writes the
+/// session skips.
 const WRITES_NOTHING: &str = "GeoTrace writes nothing this session: no recording is stored, no \
                               day is downloaded, and no setting is saved.";
 

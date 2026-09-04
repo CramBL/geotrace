@@ -486,8 +486,8 @@ fn a_column_shorter_than_what_refers_to_it_is_reported(
 }
 
 /// Days go from the front and the maps of the rest read back through the
-/// offsets the delete rebased, at both levels: the day names its maps, and
-/// each map names its values.
+/// offsets the delete rebased, at both levels: the day indexes its maps, and
+/// each map indexes its values.
 #[test]
 fn deleting_days_before_a_cutoff_keeps_the_maps_of_the_rest() {
     let (_dir, store) = store().expect("archive");

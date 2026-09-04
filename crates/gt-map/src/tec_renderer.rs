@@ -65,7 +65,7 @@ pub(crate) struct NodeCell {
 }
 
 /// A declared longitude as the projection takes it. A grid declared from 0 to
-/// 360 degrees names its western meridians above 180, while a value already
+/// 360 degrees states its western meridians above 180, while a value already
 /// inside the range is left alone so the 180 degree node stays at the eastern
 /// edge of the world.
 fn projected_longitude_degrees(declared: f64) -> f64 {

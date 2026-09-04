@@ -52,7 +52,7 @@ pub enum LogAttachmentError {
     #[error("the recording has no log attachment {id}")]
     UnknownAttachment { id: LogAttachmentId },
 
-    /// The attribute names a log the store no longer holds.
+    /// The attribute refers to a log the store no longer holds.
     #[error("the attached log at {} is missing", path.display())]
     MissingLog { id: LogAttachmentId, path: PathBuf },
 
@@ -173,7 +173,7 @@ pub trait LogAttachments: HistoryDatabase {
 
     /// Remove one attachment: its attribute, and the log stored with it.
     ///
-    /// Removing an attachment the recording does not have succeeds.
+    /// Removing an attachment missing from the recording succeeds.
     fn detach_log(
         &mut self,
         db_ref: &DatabaseRef,

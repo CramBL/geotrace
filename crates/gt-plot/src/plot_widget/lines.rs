@@ -357,7 +357,7 @@ pub(super) struct LineStroke {
 /// Submit one metric line to the plot, borrowing the point slice directly via
 /// [`PlotPoints::Borrowed`] - no allocation.
 ///
-/// Skips slices with fewer than two points: a single-point line produces no
+/// Skips slices with fewer than two points: a single-point line has no
 /// visible geometry and would clutter the legend.
 ///
 /// The shared lifetime `'a` ensures the borrowed slice lives at least as long

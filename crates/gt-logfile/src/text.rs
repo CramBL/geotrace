@@ -46,7 +46,7 @@ impl LogText {
             {
                 decoded.push_str(valid);
             }
-            // A sequence cut short by the end of the input reports no length:
+            // A sequence cut short by the end of the input has no length:
             // everything after the last valid character is what it holds.
             let malformed_byte_count = error
                 .error_len()

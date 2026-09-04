@@ -34,7 +34,7 @@ pub(crate) fn satellite_designator(constellation: Constellation, prn: Prn) -> St
 /// satellite reads the same whether hovered on the per-report plot or on a
 /// trail's scrub marker.
 ///
-/// `at` names the report the values came from. The trails plot passes it: its
+/// `at` states the report the values came from. The trails plot passes it: its
 /// scrubber sits between reports for most of its travel, so the values can be up
 /// to one report interval old. The per-report plot leaves it unset.
 pub(crate) fn satellite_tooltip(ui: &mut egui::Ui, satellite: &Satellite, at: Option<GpsTime>) {

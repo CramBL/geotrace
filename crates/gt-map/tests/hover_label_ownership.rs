@@ -303,7 +303,7 @@ enum PopupOverTheMap {
     Disambiguation,
     /// What a secondary click opens on the element under the pointer. A
     /// secondary click on bare map opens nothing: the menu closes itself on the
-    /// frame it finds no element.
+    /// first frame with no element under the pointer.
     ContextMenu,
 }
 

@@ -273,7 +273,7 @@ mod tests {
     }
 
     /// A clock corrected back past midnight is compared like any other step:
-    /// the line it lands on opens the day it names.
+    /// the line it lands on opens the day of its timestamp.
     #[test]
     fn a_backwards_step_across_midnight_opens_a_day_divider_too() {
         let ticks = ticks_of(
@@ -288,7 +288,7 @@ mod tests {
 
     /// The divider opens the day at the first line of it the table draws: a
     /// filter that hides that line moves the divider down to the next one, and
-    /// one that hides the whole day leaves no divider at all.
+    /// one that hides the whole day drops the divider with it.
     #[test]
     fn a_filter_moves_the_day_divider_to_the_first_line_of_the_day_it_leaves() {
         let text = "\
@@ -321,7 +321,7 @@ mod tests {
     }
 
     /// A boot session opening on a new day takes both dividers: the day
-    /// divider names the date, the boot divider the run.
+    /// divider states the date, the boot divider the run.
     #[test]
     fn the_first_line_of_a_boot_session_is_strong_and_opens_its_day() {
         let ticks = ticks_of(

@@ -8,9 +8,9 @@ use crate::{LoadedFileId, LoadedFilesView};
 /// The display name of every loaded file, resolved from the user's
 /// recording-name template.
 ///
-/// A surface that names a recording reads it from here, so a template change
-/// moves all of them together. The raw filename still shows where the file
-/// itself is the subject - a file row's hover path, the recording-details
+/// A surface showing a recording's name reads it from here, so a template
+/// change moves all of them together. The raw filename still shows where the
+/// file itself is the subject - a file row's hover path, the recording-details
 /// header - and those read `FileMetadata` directly.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecordingNames {
@@ -81,7 +81,7 @@ impl RecordingNames {
         self.display_name(recordings.files(), FileIdx::new(index))
     }
 
-    /// How a surface names one track: the recording's display name, with the
+    /// How a surface labels one track: the recording's display name, with the
     /// track number appended where the recording split into several tracks.
     ///
     /// [`None`] when no such file is loaded. The raw filename stands in where

@@ -43,7 +43,7 @@ impl<'a> GeneratedMarkerRenderer<'a> {
 }
 
 /// A marker sitting on an anomalous sample states that fix's data too:
-/// `recording_name` names its recording while several files are loaded.
+/// `recording_name` states its recording while several files are loaded.
 pub(crate) fn show_hover_label(
     ui: &mut Ui,
     track: &LoadedTrack,

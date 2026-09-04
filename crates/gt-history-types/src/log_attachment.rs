@@ -42,8 +42,8 @@ pub fn logs_directory_for_database(db_path: &Path) -> PathBuf {
         .join(LOGS_DIRECTORY)
 }
 
-/// Names one attachment: its attribute on the recording, and its file under
-/// the logs directory.
+/// Identifies one attachment: its attribute on the recording, and its file
+/// under the logs directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LogAttachmentId(Uuid);
 
@@ -63,7 +63,7 @@ impl LogAttachmentId {
     }
 
     /// Where this attachment's compressed log is stored, always directly
-    /// inside `logs_directory`: a parsed UUID holds no path separator.
+    /// inside `logs_directory`: a parsed UUID has no path separator.
     pub fn file_path(self, logs_directory: &Path) -> PathBuf {
         logs_directory.join(format!("{}{LOG_ATTACHMENT_FILE_SUFFIX}", self.0))
     }
@@ -130,7 +130,7 @@ pub enum StoredLogFilterMode {
     /// An overlay drawing its matches on the map in the palette slot it held.
     Layer { color_slot: usize },
 
-    /// A refinement of the table, which draws nothing and holds no slot.
+    /// A refinement of the table: it narrows the rows, with no palette slot.
     Refine,
 }
 

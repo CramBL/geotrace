@@ -270,7 +270,7 @@ impl MirrorAttempt {
 /// Why a mirror did not serve a day's file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MirrorOutcome {
-    /// The mirror holds no file of this product for the day.
+    /// The mirror has no file of this product for the day.
     NoFile,
     /// The mirror serves the maps to registered callers only and no Earthdata
     /// token is set, so nothing was requested from it.
@@ -460,7 +460,7 @@ mod tests {
         );
     }
 
-    /// The failure names every mirror that was tried for one product, in the
+    /// The failure lists every mirror that was tried for one product, in the
     /// order they were tried, under that product.
     #[test]
     fn a_product_failure_reads_as_the_product_and_each_mirrors_reason() {

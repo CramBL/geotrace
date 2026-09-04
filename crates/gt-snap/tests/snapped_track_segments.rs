@@ -267,8 +267,8 @@ fn shape_index_gaps_leave_vertices_uncovered() {
     assert!(!covered(2), "the gapped vertex stays uncovered");
 }
 
-/// Every vertex names the recorded point the server placed at or before it,
-/// and the vertices before the first placed point name that point.
+/// Every vertex identifies the recorded point the server placed at or before
+/// it, and the vertices before the first placed point identify that point.
 ///
 /// The first point sits at the end of edge 0 (shape vertex 1), the second
 /// halfway along edge 1 (shape vertex 2.5), so vertices 0 to 2 are the first
@@ -318,7 +318,7 @@ fn a_point_matched_to_no_edge_names_no_vertex() {
 }
 
 /// Points the server placed at one spot resolve to the earliest of them: a
-/// response without `distance_along_edge` names one recorded point for the
+/// response without `distance_along_edge` identifies one recorded point for the
 /// whole segment.
 #[test]
 fn vertices_name_the_earliest_of_the_points_placed_at_one_spot() {

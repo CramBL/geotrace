@@ -271,7 +271,7 @@ pub fn warning_line(warning: &SnapWarning) -> String {
     }
 }
 
-/// Why a run is stale: each line names one difference between how the run
+/// Why a run is stale: each line states one difference between how the run
 /// was produced and how a fresh run would be produced now. Empty = fresh.
 ///
 /// Compares the *configured* parameters (the gps-accuracy override, not the
@@ -535,7 +535,7 @@ impl SnapScheduler {
     /// is already queued or in flight - except that a manual request for a
     /// track queued automatically promotes it to the front of the queue. A
     /// cache hit for the same content, parameters, and host promotes the
-    /// cached run to the track's displayed run and sends no request:
+    /// cached run to the track's displayed run without a request:
     /// switching parameters back to a known combination is instant and
     /// costs no server budget.
     pub fn request_snap(
@@ -1099,7 +1099,7 @@ mod tests {
     }
 
     /// Staleness reasons: each differing component contributes one line
-    /// naming the stored and the current value. Identical runs are fresh.
+    /// stating the stored and the current value. Identical runs are fresh.
     #[rstest::rstest]
     #[case::fresh(SnapParams::new(Costing::Auto), server_host(DEFAULT_SERVER_URL), &[])]
     #[case::costing_differs(

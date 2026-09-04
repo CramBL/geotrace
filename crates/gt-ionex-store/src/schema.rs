@@ -14,7 +14,7 @@
 //! The day group holds a [`gt_hdf5_archive::day_index`] whose entry turns a
 //! day into one slice of the map columns, plus the day's own columns beside
 //! it: one row each, at the same row the day index holds the day at. Each map
-//! row in turn names one slice of the value columns, which hold the grid's
+//! row in turn indexes one slice of the value columns, which hold the grid's
 //! nodes band by band, northernmost first.
 //!
 //! Storing a day that is already archived appends its new rows and repoints
@@ -75,7 +75,7 @@ pub const VALUE_PRESENCE: &str = "tecu_presence";
 /// Never read back: [`VALUE_PRESENCE`] is what says the node is a gap.
 pub const UNPUBLISHED_TECU_FILL: f64 = 0.0;
 
-/// Attribute naming the archive's schema version.
+/// Attribute holding the archive's schema version.
 pub const SCHEMA_VERSION_ATTR: &str = "schema_version";
 
 /// Schema this build writes and can read.

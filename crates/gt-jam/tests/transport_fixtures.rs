@@ -60,8 +60,8 @@ fn the_captured_day_is_served_and_parses() {
     assert!(!observations.is_empty());
 }
 
-/// The captured refusal classifies as missing, from the host's own status
-/// and body.
+/// The captured refusal from the host classifies as missing, from its own
+/// status and body.
 #[test]
 fn the_captured_refusal_is_missing() {
     let fixture = support::refused_day().unwrap();

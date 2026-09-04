@@ -104,8 +104,8 @@ impl WrapPeriod {
 ///
 /// The selection extends one point past each edge of the viewport where the
 /// level has one, so a rendered line stays connected to the data outside the
-/// visible viewport. It holds no point outside the hard bound, at either edge,
-/// so a caller drawing a filtered range draws exactly the points inside it.
+/// visible viewport. It stays within the hard bound at either edge, so a
+/// caller drawing a filtered range draws exactly the points inside it.
 #[derive(Debug, Clone, Copy)]
 pub struct SelectionRange {
     viewport_min: f64,
@@ -155,7 +155,7 @@ impl SelectionRange {
             .saturating_sub(1)
             .max(level.partition_point(|p| p.x < self.hard_min));
         // `start` passes the end when the viewport lies wholly outside the
-        // hard bound, which selects no point at all.
+        // hard bound, leaving the range empty.
         let end = (inner.end + 1)
             .min(level.partition_point(|p| p.x <= self.hard_max))
             .max(start);
@@ -408,8 +408,8 @@ fn downsample(data: &[PlotPoint], period: Option<WrapPeriod>) -> Vec<PlotPoint> 
 
 /// The two points of `chunk` lying furthest to either side of its mean
 /// direction, by signed arc, or `None` when a value falls outside one period
-/// or the values cancel out and leave no mean direction. A single-point chunk
-/// yields that point twice.
+/// or the values cancel out to a mean resultant below
+/// [`MEAN_RESULTANT_FLOOR`]. A single-point chunk yields that point twice.
 fn extremes_either_side_of_mean_direction(
     chunk: &[PlotPoint],
     period: WrapPeriod,
@@ -851,7 +851,7 @@ mod wrapping_series {
     }
 
     /// Every sample a bucket of north jitter emits is as close to north as the
-    /// samples it was given: such a bucket holds no outlier to keep.
+    /// samples it was given.
     #[test]
     fn a_bucket_of_north_jitter_keeps_northward_samples() {
         let period = WrapPeriod::full_turn_degrees();
@@ -869,7 +869,7 @@ mod wrapping_series {
     }
 
     /// A bucket of opposite samples keeps its linear minimum and maximum: they
-    /// cancel out and leave no mean direction to measure an arc from.
+    /// cancel out to a mean resultant below the floor, so no arc is measured.
     #[test]
     fn a_bucket_of_opposite_headings_keeps_its_linear_extremes() {
         let mipmap = MipMap::build_wrapping(

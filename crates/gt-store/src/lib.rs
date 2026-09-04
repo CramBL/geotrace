@@ -151,8 +151,8 @@ impl Store {
     }
 
     /// Open the recording history without writing to it, or [`None`] where
-    /// there is none to open: a read-only session creates no database and
-    /// repairs none.
+    /// there is none to open: a read-only session only reads what is already
+    /// there.
     pub fn open_recordings_read_only(&self) -> Result<Option<ReadOnlyRecordings>, DbError> {
         let path = self.recordings_path();
         if !path.exists() {
@@ -287,8 +287,8 @@ mod tests {
     }
 
     /// The store's logs directory and the history database's own derivation
-    /// of it name the same directory. The database deletes an attachment's
-    /// log when its recording goes.
+    /// of it resolve to the same directory. The database deletes an
+    /// attachment's log when its recording goes.
     #[test]
     fn attached_logs_sit_in_one_directory_beside_the_recording_history() {
         let (dir, store) = store();

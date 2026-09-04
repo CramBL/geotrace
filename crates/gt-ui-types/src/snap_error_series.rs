@@ -26,7 +26,7 @@ pub struct SnapErrorPoint {
     /// Snap error in meters. `None` exactly for unsnapped points.
     pub error_m: Option<f64>,
     pub kind: SnapErrorKind,
-    /// True when the run holds no snap data for the points right before
+    /// True when the run has no snap data for the points right before
     /// this one (the receiver was dead reckoning there, or a chunk failed). The
     /// series line breaks here.
     pub follows_gap: bool,

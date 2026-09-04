@@ -162,7 +162,7 @@ impl<'a> Column<'a> {
         Ok(self.dataset()?.read_1d::<T>().map(|array| array.to_vec())?)
     }
 
-    /// Reads `rows`, rejecting a range the column does not hold. HDF5 returns
+    /// Reads `rows`, rejecting a range outside the column. HDF5 returns
     /// fewer values than requested for an out-of-range slice.
     pub fn read_slice<T: hdf5::H5Type + Clone>(
         &self,

@@ -10,7 +10,7 @@
 //! Usage: `EARTHDATA_TOKEN=... just cddis-verify [--day YYYY-MM-DD]
 //! [--capture]`, or `cargo run -p gt-ionex --example verify_cddis_mirror --
 //! [ARGS]`. `--day` reaches the legacy era as well as the current one: it
-//! names the day to request, [`DEFAULT_DAY`] by default. `--capture` writes
+//! states the day to request, [`DEFAULT_DAY`] by default. `--capture` writes
 //! each served file under `tests/fixtures/cddis/` and records it in the
 //! manifest beside them. The token authenticates a request header. It is never
 //! written to a manifest field.

@@ -285,7 +285,7 @@ impl LogAssociationDialog {
         ui.end_row();
     }
 
-    /// The attach tickbox, under the note naming an attachment the chosen
+    /// The attach tickbox, under the note stating an attachment the chosen
     /// recording already holds this log as.
     fn attach_ui(
         &mut self,

@@ -414,8 +414,8 @@ pub fn clock_discontinuity_floor_seconds(sigmas: f64) -> f64 {
 /// deviations from that, floored at [`MIN_CLOCK_SPREAD_MS`].
 ///
 /// Working on jumps, not levels, flags a discontinuity once at the transition,
-/// not once per sample of a shifted plateau. A steady large offset produces no
-/// jumps.
+/// not once per sample of a shifted plateau. A steady large offset has no jump
+/// to flag.
 ///
 /// `sigmas` is the outlier sensitivity (see
 /// [`SegmentationConfig::clock_discontinuity_sigmas`]). `excursion_indices`
@@ -1239,7 +1239,7 @@ fn placed_fixes_in_time_order(placed: PlacedPoints<'_>) -> Vec<(DateTime<Utc>, R
 /// `None` leaves an event marker at the coordinates the recording holds for
 /// it, which is where a marker between two measured fixes already sits: the
 /// recorder interpolated it over those same two positions. A track with no
-/// drawn fix places no marker either.
+/// drawn fix returns `None` too.
 fn position_between_placed_fixes(
     fixes: &[(DateTime<Utc>, ResolvedPosition)],
     time: DateTime<Utc>,
@@ -1294,7 +1294,7 @@ mod tests {
     use super::*;
 
     /// `points` taken as a track of their own, each fix with where the builder
-    /// places it. `None` for a track it places no fix of.
+    /// places it. `None` for a track without a placed fix.
     fn placed<'a>(points: &'a [NavPoint], geometry: &'a TrackGeometry) -> Option<PlacedPoints<'a>> {
         geometry
             .measured()
@@ -2034,7 +2034,7 @@ mod tests {
     }
 
     /// Where the builder draws each fix of `points`, taken as a track of their
-    /// own. Empty for a track it places no fix of.
+    /// own. Empty for a track without a placed fix.
     fn drawn_positions(points: &[NavPoint]) -> Vec<(Latitude, Longitude)> {
         measure_track_geometry(points, FixPlacementRule::default())
             .measured()
@@ -2224,7 +2224,7 @@ mod tests {
         }
     }
 
-    /// A track whose every fix is out of range holds no anchor of its own, and
+    /// A track whose every fix is out of range has no anchor of its own, and
     /// the fixes of the recording's other tracks place it: 3610 s is halfway
     /// between the fixes at 10 s (lon 10) and 7210 s (lon 20).
     #[test]

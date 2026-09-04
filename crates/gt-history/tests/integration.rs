@@ -2691,7 +2691,7 @@ fn log_attachment(name: &str) -> LogAttachment {
     )
 }
 
-/// Write an attachment's attribute and a stand-in for the log it names.
+/// Write an attachment's attribute and a stand-in for the log it refers to.
 ///
 /// The database's half of an attachment is the attribute, and deleting the
 /// file named alongside it. Compressing that file is `gt_store`'s half.

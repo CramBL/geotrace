@@ -1,9 +1,9 @@
 //! Capture live interference datasets from the publisher.
 //!
 //! Requests each day of [`gt_jam::FIXTURE_DAYS`] into `tests/fixtures/`.
-//! A served day is written as its own file. A refused one has no dataset, so
-//! only its `capture.json` entry records the status, alongside the capture
-//! date and host.
+//! A served day is written as its own file. A day the host refused has no
+//! dataset, so only its `capture.json` entry records the status, alongside the
+//! capture date and host.
 //!
 //! Fixtures are frozen once committed. A re-capture's diff is reviewed like
 //! code.

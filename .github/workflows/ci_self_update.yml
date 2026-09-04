@@ -38,7 +38,8 @@ jobs:
           persist-credentials: false
 
       # Runtime libraries the binary's loader resolves at launch, even for
-      # `--update`/`--version` which open no window. macOS ships the equivalents.
+      # `--update`/`--version`, which exit before any window opens. macOS ships
+      # the equivalents.
       - name: Install Linux runtime libraries
         if: runner.os == 'Linux'
         run: |

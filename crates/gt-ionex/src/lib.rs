@@ -151,7 +151,7 @@ pub(crate) const IONOSPHERE_MAPS_TYPE: char = 'I';
 /// code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FixtureFile {
-    /// Names the capture on the capture command line.
+    /// Identifies the capture on the capture command line.
     pub name: &'static str,
     /// Where the file was captured from, compressed as the archive serves it.
     pub url: &'static str,

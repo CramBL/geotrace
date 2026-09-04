@@ -538,7 +538,7 @@ fn an_interrupted_delete_is_reported_without_touching_the_archive() {
     );
 }
 
-/// An archive no delete was interrupted in has nothing to recover.
+/// An archive without an interrupted delete has nothing to recover.
 #[test]
 fn a_settled_archive_reports_no_interrupted_delete() {
     let archive = TestArchive::create().expect("archive");
@@ -608,8 +608,8 @@ fn an_index_column_that_lost_rows_is_rejected() {
     assert!(err.contains("count holds 2 rows, requested"), "{err}");
 }
 
-/// The TEC archive's shape: a day names maps, and a map names the values it
-/// holds. Both sets of offsets are rebased when days go.
+/// The TEC archive's shape: a day contains maps, and a map contains values.
+/// Both sets of offsets are rebased when days go.
 mod three_levels {
     use super::*;
 

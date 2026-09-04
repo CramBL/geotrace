@@ -196,7 +196,7 @@ fn match_stage(values: &[Values], stage: &Stage, visible: &[bool]) -> Vec<bool> 
                 })
                 .map(|local| local..local + 1)
                 .collect(),
-            // A run shorter than the window holds no window to evaluate.
+            // A run shorter than the window has no window to evaluate.
             Some(width) if run_values.len() >= width => (0..=(run_values.len() - width))
                 .filter(|&start| {
                     evaluate(

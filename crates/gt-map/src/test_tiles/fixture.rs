@@ -215,7 +215,7 @@ pub struct FixtureTiles {
 
 impl FixtureTiles {
     /// Reads the manifest the capture wrote, which states the size and the
-    /// format the tiles were served in. A directory without one holds no
+    /// format the tiles were served in. A directory without one has no
     /// usable capture.
     pub fn new(directory: PathBuf, egui_ctx: Context) -> Result<Self, TileFixtureManifestError> {
         let manifest = TileFixtureManifest::read(&directory)?;

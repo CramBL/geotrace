@@ -81,7 +81,7 @@ impl ServiceTable {
 
 impl LogFormat {
     /// Writes `moment` the way a log of this format writes it. The syslog
-    /// forms write no year, which [`crate::infer_year`] resolves on the way
+    /// forms omit the year, which [`crate::infer_year`] resolves on the way
     /// back.
     pub(crate) fn written_timestamp(self, moment: DateTime<Utc>) -> String {
         match self {

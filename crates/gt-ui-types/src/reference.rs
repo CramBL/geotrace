@@ -20,7 +20,7 @@ const MARKER_OPEN: char = '[';
 
 const MARKER_CLOSE: char = ']';
 
-/// Prefixes a marker body that names a citation key.
+/// Prefixes a marker body containing a citation key.
 const CITATION_SIGIL: char = '^';
 
 /// An abbreviation the prose marks up, shown with its full form on hover.
@@ -110,8 +110,8 @@ pub enum TableCell {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReferenceImage {
     pub image_bytes: &'static [u8],
-    /// Names the image wherever it is addressed by name, such as the texture
-    /// the window uploads it to.
+    /// Identifies the image wherever it is addressed by name, such as the
+    /// texture the window uploads it to.
     pub asset_name: &'static str,
 }
 
@@ -168,7 +168,7 @@ pub struct Citation {
 /// [`ReferenceDocument::defects`] finds none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DocumentDefect {
-    /// A marker naming an abbreviation or a citation key the document does not
+    /// A marker with an abbreviation or a citation key the document does not
     /// declare, which the window shows with its brackets.
     UnresolvedMarker { prose: &'static str },
     /// Prose is written without em-dashes. A quotation keeps its source's

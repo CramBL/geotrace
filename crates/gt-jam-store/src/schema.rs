@@ -34,10 +34,10 @@ pub const OBS_BAD: &str = "bad";
 /// The observation columns, for checks that must cover all of them.
 pub const OBSERVATION_COLUMNS: [&str; 4] = [OBS_DAY, OBS_CELL, OBS_GOOD, OBS_BAD];
 
-/// Attribute naming the archive's schema version.
+/// Attribute holding the archive's schema version.
 pub const SCHEMA_VERSION_ATTR: &str = "schema_version";
 
-/// Attribute naming the H3 resolution the observations are addressed at.
+/// Attribute holding the H3 resolution the observations are addressed at.
 pub const H3_RESOLUTION_ATTR: &str = "h3_resolution";
 
 /// Schema this build writes and can read.

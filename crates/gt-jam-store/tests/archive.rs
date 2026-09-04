@@ -538,9 +538,9 @@ fn declining_recovery_leaves_the_interrupted_archive_as_it_was() {
     );
 }
 
-/// An archive no delete was interrupted in has nothing to offer a choice
-/// about, and opens whichever choice it is given. Neither does one that has
-/// yet to be created.
+/// An archive without an interrupted delete has nothing to offer a choice
+/// about, and opens whichever choice it is given. Nor does one that has yet to
+/// be created.
 #[test]
 fn a_settled_archive_reports_no_interrupted_delete() {
     let dir = tempfile::tempdir().expect("temp dir");

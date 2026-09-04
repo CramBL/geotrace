@@ -144,7 +144,7 @@ fn build_app_on_captured_tiles(
     )
 }
 
-/// Fails naming every captured tile the map requested while drawing the frame
+/// Fails listing every captured tile the map requested while drawing the frame
 /// about to be snapshotted and did not get, so no fixture-backed snapshot is
 /// recorded over blank ground. The record starts fresh and one more frame is
 /// drawn, so the check covers only that frame.
@@ -218,7 +218,7 @@ fn pin_settings_dates(app: &mut App) {
 }
 
 /// The second node labelled `label`, in render order. The side panel renders
-/// first and its Visible section names every recording drawn on the map: the
+/// first and its Visible section lists every recording drawn on the map: the
 /// first node is the panel's, the second the surface under test.
 fn node_outside_the_side_panel<'h>(harness: &'h Harness<'_, App>, label: &'h str) -> Node<'h> {
     harness.nth_matching(By::new().label(label), 1)
@@ -659,7 +659,7 @@ fn query_point_row_click_pins_its_point() {
 }
 
 /// What the map does with the fix the plot-hover cross-highlight names, judged
-/// by the map's own hit-test. `None` when the highlight names no fix.
+/// by the map's own hit-test. `None` when the highlight has no fix.
 fn highlighted_fix_visibility(harness: &Harness<'_, App>) -> Option<PointVisibility> {
     let app = harness.state();
     let shared = app.shared.borrow();
@@ -934,7 +934,7 @@ fn bare_time_labels<'a>() -> By<'a> {
 /// The rows one of the results tab's two tables lists, top row first: the rect
 /// of the row's first time cell and the time it states.
 ///
-/// The caption naming the picked match starts at the left edge of the tab, and
+/// The caption stating the picked match starts at the left edge of the tab, and
 /// so does the points table's time column. The matches table indents its times
 /// behind the swatch, number and track columns.
 fn time_rows(harness: &Harness<'_, App>, table: ResultsTable) -> Vec<(egui::Rect, String)> {
@@ -1445,7 +1445,7 @@ fn the_results_fill_the_rest_of_the_window() {
 }
 
 /// Clicking a match lists its rows in the points table below, and the caption
-/// there names the match on display.
+/// there states the match on display.
 #[test]
 fn clicking_a_match_lists_its_points() {
     let mut harness = demo_app_with_query_run(TWO_MATCH_QUERY);
@@ -1595,7 +1595,8 @@ fn hovering_a_column_header_explains_its_metric() {
 }
 
 /// Every line of the results strip requests the cursor that matches what it
-/// does: a line that is neither text entry nor a control shows no I-beam.
+/// does: a line that is neither text entry nor a control keeps the default
+/// cursor.
 #[rstest::rstest]
 // The summary states what the run left out on hover.
 #[case::run_summary(demo_query_run, "2 matches", egui::CursorIcon::Help)]
@@ -1643,7 +1644,7 @@ fn demo_query_run() -> Harness<'static, App> {
     demo_app_with_query_run(TWO_MATCH_QUERY)
 }
 
-/// "Copy as TSV" writes the whole run to the clipboard: a header line naming
+/// "Copy as TSV" writes the whole run to the clipboard: a header line stating
 /// each column in its unit, then one line per matched point.
 #[test]
 fn copying_a_query_result_writes_a_tab_separated_table() {
@@ -1816,7 +1817,7 @@ fn expanding_a_channel_match_lists_the_samples_of_its_matched_rows() {
     harness.get_by_label_contains(&format!("@accel {MIDDLE_DOT} {} samples", stretch.len()));
 }
 
-/// A query whose table holds no aggregate over a channel has nothing to list,
+/// A query whose table has no aggregate over a channel has nothing to list,
 /// and its control says so.
 #[test]
 fn a_match_whose_query_reduces_no_channel_states_why_it_lists_nothing() {
@@ -1873,7 +1874,7 @@ fn a_channel_run_lists_a_match_per_stretch_of_samples() {
 }
 
 /// "Copy as TSV" writes a channel run the way it writes a points query: a
-/// header line naming each column in the unit the track declared, then one
+/// header line stating each column in the unit the track declared, then one
 /// line per matched sample.
 #[test]
 fn copying_a_channel_result_writes_a_tab_separated_sample_table() {
@@ -2194,7 +2195,7 @@ fn plot_legend_follows_the_recording_name_template() {
     );
 }
 
-/// The remove-confirmation dialog names what it is about to remove the same
+/// The remove-confirmation dialog labels what it is about to remove the same
 /// way every other surface does.
 #[test]
 fn remove_confirmation_follows_the_recording_name_template() {
@@ -2335,7 +2336,7 @@ fn snapshot_app_with_file_loaded() {
 }
 
 /// The load warning as the user meets it: the toast the application raises
-/// for a recording the archives place a disturbance in, naming the recording
+/// for a recording the archives place a disturbance in, stating the recording
 /// and what each metric reached over it.
 #[test]
 fn snapshot_space_weather_warning_toast() {
@@ -2448,7 +2449,7 @@ fn snapshot_app_with_file_loaded_light() {
 }
 
 /// Snapshot of the point window pinned on a fix the receiver wrote a latitude
-/// of 91° for: the window marks the recorded value and names the position the
+/// of 91° for: the window marks the recorded value and states the position the
 /// map draws the fix at.
 #[test]
 fn snapshot_app_point_window_coordinate_out_of_range() {
@@ -2940,7 +2941,7 @@ fn snapshot_app_query_points_with_channel() {
 
 /// A match expanded to the samples behind its aggregate column: the results tab
 /// lists the `@accel` samples the match's `max(@accel.x)` reduced between the
-/// line naming the match and the match's own rows.
+/// line stating the match and the match's own rows.
 #[test]
 fn snapshot_app_query_match_samples() {
     let (mut harness, _config_path) = TestHarness::builder()
@@ -4562,7 +4563,7 @@ fn name_template_guide_previews_the_loaded_recording() {
 }
 
 /// With nothing loaded, the preview falls back to the most recent recording in
-/// history, which names its file after its identity.
+/// history, which takes its file name from its identity.
 #[test]
 fn name_template_guide_previews_a_history_recording() {
     let mut harness = Harness::builder()
@@ -4804,8 +4805,9 @@ fn the_update_prompt_shows_the_reason_a_failed_install_gives_without_growing() {
     );
 }
 
-/// A non-self-updatable build (Homebrew / MSI / manual download) shows no
-/// dialog. It exposes the available version for the subtle menu-bar badge.
+/// A non-self-updatable build (Homebrew / MSI / manual download) exposes the
+/// available version for the subtle menu-bar badge. A self-updatable build
+/// has no badge version and gets the dialog.
 #[cfg(feature = "self-update")]
 #[test]
 fn non_self_update_uses_badge_not_dialog() {
@@ -5300,9 +5302,9 @@ fn app_waiting_for_the_data_directory_registering_writes_in<'a>(
         })
 }
 
-/// A second GeoTrace on a data directory the first is using opens no database
-/// of its own: recovery here would run against archives the first is part-way
-/// through rewriting. Its window is up and takes input all the same.
+/// A second GeoTrace on a data directory the first is using leaves its own
+/// databases closed: recovery here would run against archives the first is
+/// part-way through rewriting. Its window is up and takes input all the same.
 #[test]
 fn a_data_directory_another_instance_holds_is_waited_for_and_nothing_is_opened() {
     let directory = tempfile::tempdir().expect("temp dir");
@@ -5344,7 +5346,7 @@ enum StatusFileOnDisk {
 }
 
 /// The lock is what says the directory is in use: the dialog says so however
-/// the status file reads, and names which of the three reads it got.
+/// the status file reads, and states which of the three reads it got.
 #[rstest::rstest]
 #[case::absent(StatusFileOnDisk::Removed, "It has not reported what it is doing yet")]
 #[case::unreadable(StatusFileOnDisk::ADirectory, "Its status file cannot be read")]
@@ -5398,7 +5400,7 @@ fn write_a_shutting_down_status(directory: &Path, written_at: Option<u64>) {
 }
 
 /// A shutdown that stopped reporting - a `write_status` that failed, or an
-/// instance stuck before its next `report_shutdown_progress` - still names
+/// instance stuck before its next `report_shutdown_progress` - still lists
 /// the writes it had running, and the dialog states how old that is.
 #[test]
 fn a_status_the_holding_instance_stopped_refreshing_is_marked_as_out_of_date() {
@@ -5536,7 +5538,7 @@ fn a_lock_file_that_briefly_cannot_be_opened_leaves_the_wait_running() {
 }
 
 /// Waiting is not a trap: the window closes on request, and an app on its way
-/// out takes no directory and opens no database.
+/// out leaves the directory unmarked and the databases closed.
 #[test]
 fn a_window_closed_while_it_waits_for_the_data_directory_opens_nothing() {
     let directory = tempfile::tempdir().expect("temp dir");
@@ -5667,7 +5669,7 @@ fn take_over_write_access(harness: &mut Harness<'_, App>) {
     harness.run_steps(3);
 }
 
-/// The wait is not a dead end: the button opens a confirmation naming what
+/// The wait is not a dead end: the button opens a confirmation stating what
 /// the instance holding the directory is doing, which it reads afresh for as
 /// long as the confirmation is up.
 #[test]
@@ -6252,9 +6254,9 @@ fn a_file_queued_while_waiting_loads_read_only_and_is_not_stored() {
     harness
         .get_by_label_contains(START_READ_ONLY_BUTTON_LABEL)
         .click();
-    // The load runs against a real recording history from here on: a test
-    // run opens no database of its own, and this is the one frame the choice
-    // takes before that lands.
+    // The load runs against a real recording history from here on: the test
+    // itself supplies the databases in place of the app opening its own, and
+    // this is the one frame the choice takes before that lands.
     harness.step();
     let databases = harness.state_mut().storage_open.take_over_for_test();
     land_the_databases(&mut harness, &databases, &store);
@@ -6373,7 +6375,7 @@ fn wait_for_the_archives_to_open(harness: &mut Harness<'_, App>) {
 }
 
 /// The recovery an instance that is gone left behind is the user's to make
-/// after a take-over: the prompt names the archive and what recovering costs,
+/// after a take-over: the prompt states the archive and what recovering costs,
 /// and recovering opens it with those days discarded.
 #[test]
 fn recovering_after_a_take_over_opens_the_archive_with_its_days_discarded() {
@@ -6464,7 +6466,7 @@ fn snapshot_archive_in_use_prompt() {
 }
 
 /// A take-over the archive was written after says nothing about the state
-/// that write left, and a data directory may record no take-over at all.
+/// that write left, and a data directory may have no take-over recorded at all.
 #[rstest::rstest]
 #[case::no_take_over_recorded(None)]
 #[case::a_take_over_the_archive_was_written_after(Some(TakeOverRecord {
@@ -6663,7 +6665,7 @@ fn an_archive_left_unrecovered_says_why_on_the_controls_that_need_it() {
 }
 
 /// The prompts are not a trap either: the window closes on request, and an
-/// app on its way out opens no archive.
+/// app on its way out leaves the archives closed.
 #[test]
 fn a_window_closed_while_an_interrupted_delete_is_asked_about_opens_nothing() {
     let dir = data_directory_with_an_interrupted_interference_delete();
@@ -6805,7 +6807,7 @@ fn the_environment_controls_are_grayed_in_a_read_only_session() {
 }
 
 /// The recording storage controls are grayed the same way: a read-only
-/// session stores no recording and prunes none.
+/// session never stores or prunes a recording.
 #[test]
 fn the_recording_storage_controls_are_grayed_in_a_read_only_session() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -6936,7 +6938,7 @@ fn a_failed_retry_restores_the_prompt() {
 
 /// A shutdown that has begun rejects all three recovery paths: each writes to
 /// the recordings database. `recreate_history_database` renames the file before
-/// it reopens it, and a quit in between leaves no database.
+/// it reopens it, and a quit in between would leave the directory without one.
 #[rstest::rstest]
 #[case::reopen(|app: &mut App, path: &Path, ctx: &egui::Context| {
     app.reopen_history_database(path, ctx);
@@ -7005,7 +7007,7 @@ fn app_after_a_take_over_with<'a>(
     harness
 }
 
-/// The busy prompt names the GeoTrace the user took write access from: they
+/// The busy prompt states the GeoTrace the user took write access from: they
 /// chose to keep it running.
 #[test]
 fn the_busy_prompt_after_a_take_over_names_the_instance_that_still_has_the_database() {
@@ -7115,7 +7117,7 @@ fn snapshot_history_resegment_dialog_past_the_capped_room() {
 }
 
 /// Opening a second recording from history replaces the prompt with one
-/// naming that recording.
+/// stating that recording.
 #[test]
 fn the_resegment_prompt_keeps_its_buttons_in_place_while_a_longer_name_arrives() {
     let mut harness = app_showing_the_resegment_prompt("ride.gtd");
@@ -8049,7 +8051,7 @@ fn a_signal_after_the_close_button_leaves_the_writes_running() {
     );
 }
 
-/// The shutdown window names the write it is waiting for, how far it has got
+/// The shutdown window states the write it is waiting for, how far it has got
 /// and which step it is on.
 #[test]
 fn the_shutdown_window_shows_a_running_write_with_its_progress_and_stage() {
@@ -8273,7 +8275,7 @@ fn app_holding_the_data_directory_over_a_running_write<'a>(
 }
 
 /// The window being up is no reason to switch to it once its shutdown has
-/// begun: the wait names the writes that instance is finishing instead.
+/// begun: the wait lists the writes that instance is finishing instead.
 #[test]
 fn an_instance_shutting_down_with_its_window_up_is_named_with_what_it_is_writing() {
     let directory = tempfile::tempdir().expect("temp dir");
@@ -8399,7 +8401,7 @@ fn closing_the_window_hands_the_history_worker_to_its_own_thread() {
     }
 }
 
-/// A closing app sends no new snap request: the auto sweep a load armed is
+/// A closing app stops requesting snaps: the auto sweep a load armed is
 /// dropped once the close began.
 #[test]
 fn the_auto_snap_sweep_is_paused_once_the_close_began() {
@@ -8536,8 +8538,8 @@ fn push_points_as(
     fi
 }
 
-/// A boat-declared file's track resolves to the unsnappable row (hover names
-/// the mode), while an undeclared file stays idle (no entry).
+/// A boat-declared file's track resolves to the unsnappable row (the hover
+/// states the mode), while an undeclared file stays idle (no entry).
 #[test]
 fn snap_row_views_marks_declared_roadless_modes_unsnappable() {
     let mut harness = Harness::builder()
@@ -9579,7 +9581,7 @@ fn archive_tec_day(store: &gt_store::TecMapArchive, day: chrono::NaiveDate, tecu
 }
 
 /// The quiet-time window before a loaded recording arrives after it: the map
-/// indicator names the deviation and the load toast is raised once, however
+/// indicator states the deviation and the load toast is raised once, however
 /// many frames follow.
 #[test]
 fn a_tec_window_archived_after_the_load_warns_on_the_map() {
@@ -10135,8 +10137,8 @@ fn a_log_that_finished_loading_opens_the_viewer_on_its_parse_summary() {
     harness.get_by_label(summary.as_str());
 }
 
-/// One log per content: dropping a text the session already holds names the
-/// loaded log and loads nothing.
+/// One log per content: dropping a text the session already holds opens the
+/// loaded log and keeps the one copy.
 #[test]
 fn dropping_a_log_the_session_already_holds_shows_the_loaded_one() {
     let mut harness = app_with_a_log_loaded();
@@ -11037,7 +11039,7 @@ mod log_association {
         let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
         attach_the_log(&mut harness, &db_path, &db_ref);
 
-        // The attribute now names a log the stored file is not.
+        // The attribute now holds the content hash of a different log.
         let stored = stored_attachments(&db_path, &db_ref);
         let entry = stored.first().expect("the attachment was stored");
         let mut db = open_temporary_history_database(&db_path);
@@ -11457,9 +11459,9 @@ mod log_association {
         harness.get_by_label(ICON_ARTICLE);
     }
 
-    /// Attaching a log the recording already holds writes no second
-    /// attachment: the loaded log takes the stored one, and the app writes its
-    /// filter stack to that attachment.
+    /// Attaching a log the recording already holds reuses the stored
+    /// attachment: the loaded log takes it, and the app writes its filter
+    /// stack there.
     #[test]
     fn attaching_a_log_the_recording_already_holds_reuses_the_stored_attachment() {
         let dir = tempfile::tempdir().expect("temp dir");

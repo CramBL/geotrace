@@ -20,7 +20,7 @@
 //! The global filter applies here as it does to the recorded track. Nothing
 //! draws for a match whose entry falls outside the time window, or whose fix
 //! sits on a track the filter rejects: such a match is left out of every
-//! cluster's count and takes no pointer.
+//! cluster's count, and the cursor finds nothing where it was recorded.
 
 use std::cell::RefCell;
 use std::num::NonZeroUsize;

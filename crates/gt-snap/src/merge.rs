@@ -351,7 +351,7 @@ fn merge_chunk(
                 // The cut between two chunks falls mid-road: the
                 // previous chunk's trailing segment and this chunk's
                 // leading one are the same street. Join them so the
-                // snapped track shows no artificial gap at chunk cuts.
+                // snapped track stays unbroken at chunk cuts.
                 // The let-chain only consumes `next` once `prev` exists,
                 // so no segment is ever silently dropped.
                 if join_previous

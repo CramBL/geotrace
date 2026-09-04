@@ -99,11 +99,11 @@ pub enum SnappedTrackError {
 
 /// Decode the response shape and split it into snapped-track segments.
 ///
-/// A response without a shape (or without any snapped point) yields no
-/// segments. Unsnapped points contribute no geometry. A run of them between
-/// snapped points is a break, as are the explicit discontinuity flags.
+/// A response without a shape (or without any snapped point) yields an empty
+/// list of segments. Unsnapped points contribute no geometry. A run of them
+/// between snapped points is a break, as are the explicit discontinuity flags.
 ///
-/// The vertex attribution names the recorded point at each snapped point's
+/// The vertex attribution identifies the recorded point at each snapped point's
 /// own index. That mapping holds for a request that sent the whole track.
 pub fn snapped_track_segments(
     response: &TraceAttributesResponse,
@@ -116,7 +116,7 @@ pub fn snapped_track_segments(
 
 /// Like [`snapped_track_segments`], but considering only the points in
 /// `points` (a range of indices into the response's snapped points), and
-/// attributing vertices via `sent_points`, which names the recorded point
+/// attributing vertices via `sent_points`, which identifies the recorded point
 /// behind each of the response's snapped points.
 ///
 /// Merging uses this to build each chunk's geometry from its owned points

@@ -124,8 +124,8 @@ fn no_log_hexagon_is_drawn_for_a_recording_the_filter_rejects(#[case] filter: Gl
 
 /// The time window ends the recorded track at the last fix it keeps, and the
 /// hexagons of the entries logged after that end there too. The cursor finds
-/// nothing where a hidden entry was recorded: a hexagon the map does not draw
-/// takes no pointer.
+/// nothing where a hidden entry was recorded: the pointer only ever hits a
+/// hexagon the map drew.
 #[test]
 fn no_log_hexagon_is_hovered_for_an_entry_the_time_window_hides() {
     /// Fixes of a recording walking east, each hexagon its own on screen.
@@ -154,7 +154,7 @@ fn no_log_hexagon_is_hovered_for_an_entry_the_time_window_hides() {
 
 /// A hexagon the filter removed is not under the cursor either: the map
 /// publishes nothing for the log viewer to mark, and a click where the hexagon
-/// was opens no log.
+/// was leaves the log viewer as it is.
 #[rstest::rstest]
 #[case::the_time_window_is_disjoint_from_the_recording(GlobalFilter {
     time_start: Some(epoch() + Duration::hours(5)),

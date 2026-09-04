@@ -8,7 +8,7 @@
 //! [`fetch_day_maps`] walks the whole [`MirrorList`] for one product before it
 //! moves on to the next, and reports [`DayFetch::Missing`] only once every
 //! mirror has returned 404 for every product: a 404 means that one mirror
-//! holds no file of that product for the day.
+//! has no file of that product for the day.
 //!
 //! The Earthdata token reaches the mirrors of
 //! [`MirrorLayout::Cddis`](crate::mirrors::MirrorLayout::Cddis) and no others.
@@ -36,7 +36,7 @@ use crate::{IonexProduct, calendar, parse, unix_compress};
 /// request per mirror per product.
 pub const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
 
-/// HTTP status for a product the mirror holds no file of for the day.
+/// HTTP status for a product the mirror has no file of for the day.
 const HTTP_NOT_FOUND: u16 = 404;
 
 /// What one day's fetch produced.
@@ -583,7 +583,7 @@ mod tests {
     }
 
     /// The earlier estimate is not requested once a mirror fails, and the day
-    /// fails naming every mirror that was tried: a failure leaves it unknown
+    /// fails listing every mirror that was tried: a failure leaves it unknown
     /// whether the day has a settled file.
     #[test]
     fn a_failed_mirror_fails_the_day_before_the_earlier_product_is_requested() {
@@ -634,7 +634,7 @@ mod tests {
     }
 
     /// The archive needing a token is never requested while none is set, and
-    /// the day's failure names the missing token.
+    /// the day's failure states the missing token.
     #[test]
     fn a_mirror_needing_a_token_is_passed_over_while_none_is_set() {
         let (outcome, transport) = fetch_with_token(

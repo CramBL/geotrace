@@ -160,8 +160,8 @@ pub fn is_db_recording_attr(key: &str) -> bool {
     ) || key.starts_with(LOG_ATTACHMENT_ATTR_PREFIX)
 }
 
-/// Returns true for recording child-group names that are GeoTrace history
-/// bookkeeping (not part of the GTD file), so they are skipped when
+/// Returns true for a recording child-group name used for GeoTrace history
+/// bookkeeping (not part of the GTD file), so the group is skipped when
 /// reconstructing the original GTD file on load.
 pub fn is_db_internal_group(name: &str) -> bool {
     name == TRACKS_GROUP || name == SNAP_GROUP
@@ -347,8 +347,7 @@ impl NavPointTimeRange {
     /// attributes bound.
     ///
     /// `None` for a recording with no nav point (both attributes then hold 0).
-    /// Also `None` when the start of `bounds` is past its end, which names no
-    /// earliest and latest time.
+    /// Also `None` when the start of `bounds` is past its end.
     pub fn from_stored_attributes(
         nav_point_count: u64,
         bounds: RangeInclusive<i64>,

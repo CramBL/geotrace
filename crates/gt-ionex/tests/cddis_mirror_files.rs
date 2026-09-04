@@ -2,9 +2,10 @@
 //!
 //! Every file under `tests/fixtures/cddis/` is what the archive served for the
 //! day and product its manifest entry records, written by
-//! `just cddis-verify --capture`. Addressing that day again names the file, the
-//! name it was requested under decides how it is decompressed, and the decoded
-//! text goes through the parser: the whole ingest path, over archive bytes.
+//! `just cddis-verify --capture`. Addressing that day again identifies the
+//! file, the decompression depends on the name it was requested under, and
+//! the decoded text goes through the parser: the whole ingest path, over
+//! archive bytes.
 //!
 //! A capture of a day the workspace also holds a JPL capture of must read as
 //! that capture. Capturing another day extends this without a change here:
@@ -24,7 +25,7 @@ use gt_ionex::{IonexProduct, Mirror, MirrorLayout, transport};
 /// How far a recorded peak may stand from the one the file parses to.
 const TECU_TOLERANCE: f64 = 1e-9;
 
-/// One captured file, read through the addressing that names it.
+/// One captured file, read through the addressing that identifies it.
 struct CapturedFile {
     file_name: String,
     day: NaiveDate,

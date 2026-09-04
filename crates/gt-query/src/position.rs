@@ -1162,8 +1162,8 @@ mod tests {
         assert_eq!(hover.name, "gyro.x");
         assert_eq!(hover.summary, "in deg");
 
-        // A whole vector names its components. An unknown component has no
-        // hover.
+        // The hover on a whole vector lists its components. An unknown
+        // component has no hover.
         let whole = "points | window 3 | where max(@gyro) > 1 deg";
         let gi = whole.find("@gyro").expect("has @gyro") + 2;
         assert_eq!(

@@ -720,7 +720,7 @@ fn a_channel_source_duration_window_holds_the_samples_of_one_chronological_run()
 }
 
 /// The track spans 9 s and the window 5 s: the filter ending at 1 s is what
-/// leaves no room for a window here.
+/// cuts the track below the window here.
 #[test]
 fn a_time_filter_leaving_no_room_for_a_window_is_reported_without_calling_the_track_short() {
     let mut state = LoadedState::of(file_named(
@@ -809,7 +809,8 @@ fn a_channel_query_keeps_samples_at_each_bound_of_the_time_window() {
 }
 
 /// A time range filter ending before the channel's first sample leaves the run
-/// no sample to read: the query matches nothing and the map draws no halo.
+/// without a sample to read: the query matches nothing, so the map has no halo
+/// to draw.
 #[test]
 fn a_channel_query_matches_nothing_under_a_time_window_holding_no_sample() {
     let channel = scalar_channel("sensor", None, &[(6_000, 10.0), (7_000, 10.0)]);

@@ -158,7 +158,7 @@ fn a_track_passes_a_window_that_its_recording_gap_covers_entirely() {
     assert!(track_passes_filter(&track, &filter));
 }
 
-/// A window whose start is after its end selects no instant at all: the
+/// A window whose start is after its end excludes every instant: the
 /// per-point predicate rejects every fix of the track. The track-level clause
 /// must reject the track: it reads the same window.
 #[test]

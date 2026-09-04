@@ -83,9 +83,9 @@ pub struct OrderAnomaly {
     pub timestamp_step: Duration,
 }
 
-/// Cuts `entries` at every reboot separator. A separator with no entry before
-/// the next one opens no session of its own: a log opening on a separator
-/// reports as many boots as the device was rebooted.
+/// Cuts `entries` at every reboot separator. Each session holds at least one
+/// entry: a separator with no entry before the next one is skipped, so a log
+/// opening on a separator reports as many boots as the device was rebooted.
 pub(crate) fn segment_into_boot_sessions(
     entries: &[LogEntry],
     structural_lines: &[StructuralLine],

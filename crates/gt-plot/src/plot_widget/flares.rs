@@ -281,7 +281,7 @@ mod tests {
         }
     }
 
-    /// The flares' catalog identifiers, which name them in an assertion.
+    /// The flares' catalog identifiers, as an assertion reads them.
     fn ids<'f>(flares: &[&'f MarkedFlare]) -> Vec<&'f str> {
         flares
             .iter()
