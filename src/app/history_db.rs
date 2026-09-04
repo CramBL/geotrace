@@ -877,16 +877,15 @@ mod tests {
         }
     }
 
-    /// The reference to the one recording the worker's database holds.
-    fn only_recording_ref(worker: &HistoryWorker) -> DatabaseRef {
+    /// The one recording the worker's database holds, as the History window
+    /// lists it.
+    fn only_recording(worker: &HistoryWorker) -> RecordingEntry {
         worker.list();
-        let Response::Listed(Ok(entries)) = next_response(worker) else {
+        let Response::Listed(Ok(mut entries)) = next_response(worker) else {
             panic!("expected a Listed response");
         };
-        let [entry] = entries.as_slice() else {
-            panic!("expected exactly one recording, got {}", entries.len());
-        };
-        entry.db_ref.clone()
+        assert_eq!(entries.len(), 1, "expected exactly one recording");
+        entries.remove(0)
     }
 
     #[test]
@@ -982,7 +981,7 @@ mod tests {
         );
 
         // Hide the first track, then permanently delete all hidden tracks.
-        let db_ref = only_recording_ref(&worker);
+        let db_ref = only_recording(&worker).db_ref;
         worker.set_tracks_hidden(db_ref, vec![0], true);
         next_response(&worker);
 
@@ -1024,6 +1023,39 @@ mod tests {
     }
 
     #[test]
+    fn deleting_a_track_index_the_stored_table_does_not_have_reports_the_tracks_it_removed() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        seed_two_track_recording(&path);
+        let db = Recordings::open_or_create(&path).expect("reopen");
+        let worker = HistoryWorker::spawn(
+            RecordingsHandle::Owner(db),
+            Context::default(),
+            PendingWrites::default(),
+        );
+
+        let recording = only_recording(&worker);
+        let tracks_before = recording.total_tracks;
+        worker.delete_tracks(recording.db_ref, vec![2]);
+        let Response::Mutated { op, result } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        // A failed mutation counts as zero here: it raises no toast, and so
+        // states no count.
+        let reported = match (op, result) {
+            (DbOp::TracksDeleted { count }, Ok(())) => count,
+            _ => 0,
+        };
+
+        let tracks_lost = tracks_before - only_recording(&worker).total_tracks;
+        assert_eq!(
+            reported, tracks_lost,
+            "the delete reports the number of tracks it removed"
+        );
+        worker.shutdown();
+    }
+
+    #[test]
     fn disabled_worker_is_inert() {
         let worker = HistoryWorker::disabled();
         assert!(!worker.available());
@@ -1045,7 +1077,7 @@ mod tests {
             Context::default(),
             pending_writes.clone(),
         );
-        let db_ref = only_recording_ref(&worker);
+        let db_ref = only_recording(&worker).db_ref;
 
         worker.set_tracks_hidden(db_ref, vec![0], true);
         let Response::Mutated { result, .. } = next_response(&worker) else {
@@ -1081,7 +1113,7 @@ mod tests {
             Context::default(),
             pending_writes.clone(),
         );
-        let db_ref = only_recording_ref(&worker);
+        let db_ref = only_recording(&worker).db_ref;
 
         worker.set_tracks_hidden(db_ref, vec![0], true);
 
@@ -1115,7 +1147,7 @@ mod tests {
             Context::default(),
             pending_writes.clone(),
         );
-        let db_ref = only_recording_ref(&worker);
+        let db_ref = only_recording(&worker).db_ref;
 
         worker.set_tracks_hidden(db_ref, vec![0], true);
 
