@@ -7226,6 +7226,119 @@ fn app_showing_the_resegment_prompt(filename: &str) -> TestHarness<'static, App>
     harness
 }
 
+/// The marks the user set by hand on the recording of a re-segment prompt.
+#[derive(Clone, Copy)]
+struct MarksOnThePromptedRecording {
+    shelved_tracks: usize,
+    hidden_tracks: usize,
+}
+
+/// Nav points per track of the stored track table the prompt is built with.
+const STORED_TRACK_NAV_POINTS: u64 = 100;
+
+/// A stored track table of `shelved_tracks` shelved tracks and one live one.
+fn stored_track_table_with_shelved_tracks(shelved_tracks: usize) -> Vec<gt_store::TrackRange> {
+    let mut table = Vec::new();
+    let mut start = 0;
+    for state in std::iter::repeat_n(gt_store::TrackState::Shelved, shelved_tracks)
+        .chain(std::iter::once(gt_store::TrackState::Live))
+    {
+        table.push(gt_store::TrackRange {
+            start,
+            end: start + STORED_TRACK_NAV_POINTS,
+            state,
+        });
+        start += STORED_TRACK_NAV_POINTS;
+    }
+    table
+}
+
+fn app_showing_the_resegment_prompt_with(
+    marks: MarksOnThePromptedRecording,
+) -> TestHarness<'static, App> {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(640.0, 420.0))
+        .eframe(build_app);
+    harness.inner.step();
+    let mut prompt = resegment_prompt_named("ride.gtd");
+    prompt.stored_tracks = stored_track_table_with_shelved_tracks(marks.shelved_tracks);
+    let mut hidden = gt_side_panel::HiddenTracksByRecording::default();
+    hidden.record(&prompt.db_ref, (0..marks.hidden_tracks).collect());
+    harness
+        .inner
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .tree
+        .set_hidden_tracks(hidden);
+    harness.inner.state_mut().pending_resegment = Some(prompt);
+    harness.run();
+    harness
+}
+
+/// What every warning about the marks a recalculation drops opens with.
+const RECALCULATION_WARNING_OPENING: &str = "Recalculating ";
+
+#[rstest]
+#[case::shelved_tracks(
+    MarksOnThePromptedRecording {
+        shelved_tracks: 2,
+        hidden_tracks: 0,
+    },
+    Some("Recalculating puts the 2 shelved tracks of this recording back in the working set.")
+)]
+#[case::hidden_tracks(
+    MarksOnThePromptedRecording {
+        shelved_tracks: 0,
+        hidden_tracks: 1,
+    },
+    Some("Recalculating shows the 1 hidden track of this recording.")
+)]
+#[case::shelved_and_hidden_tracks(
+    MarksOnThePromptedRecording {
+        shelved_tracks: 1,
+        hidden_tracks: 3,
+    },
+    Some(
+        "Recalculating puts the 1 shelved track of this recording back in the working set and \
+         shows its 3 hidden tracks."
+    )
+)]
+#[case::neither(
+    MarksOnThePromptedRecording {
+        shelved_tracks: 0,
+        hidden_tracks: 0,
+    },
+    None
+)]
+fn the_resegment_prompt_states_the_marks_a_recalculation_drops(
+    #[case] marks: MarksOnThePromptedRecording,
+    #[case] expected_warning: Option<&str>,
+) {
+    let harness = app_showing_the_resegment_prompt_with(marks);
+    match expected_warning {
+        Some(warning) => {
+            harness.inner.get_by_label(warning);
+        }
+        None => assert!(
+            harness
+                .inner
+                .query_by_label_contains(RECALCULATION_WARNING_OPENING)
+                .is_none(),
+            "the re-segment prompt warns about marks on a recording that has none"
+        ),
+    }
+}
+
+#[test]
+fn snapshot_history_resegment_dialog_with_shelved_and_hidden_tracks() {
+    let mut harness = app_showing_the_resegment_prompt_with(MarksOnThePromptedRecording {
+        shelved_tracks: 1,
+        hidden_tracks: 3,
+    });
+    harness.snapshot_loose("history_resegment_dialog_with_shelved_and_hidden_tracks");
+}
+
 /// A recording name of words, long enough for the prompt's intro to run past
 /// the room it caps at.
 fn recording_name_past_the_capped_room() -> String {
