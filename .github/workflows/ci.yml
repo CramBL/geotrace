@@ -233,6 +233,14 @@ jobs:
       - name: Examples
         run: bash scripts/examples.sh
 
+      # Ubuntu alone checks the fixtures: the examples write platform-dependent bytes,
+      # and byte reproducibility of the `.gtd` writer is an open question.
+      - name: Committed fixtures unchanged
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          git diff --exit-code --stat -- tests/fixtures/demo_trip/demo_trip.gtd tests/fixtures/gold_dataset/gold.gtd \
+              || { echo "error: an example rewrote a committed fixture, commit the new bytes" >&2; exit 1; }
+
   quality:
     name: quality / ubuntu-latest
     runs-on: ubuntu-latest
