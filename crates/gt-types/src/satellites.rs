@@ -191,6 +191,27 @@ impl Satellite {
     pub fn snr(&self) -> Option<Snr> {
         self.snr
     }
+
+    /// Merges another row of the same report for this satellite into this one.
+    ///
+    /// This satellite is in the fix when any of its rows was, and takes the
+    /// highest SNR reported: the strongest signal measured for the satellite.
+    /// Taking the highest keeps the result independent of row order, which
+    /// `gt_analysis::loss_of_lock` reads when it compares a satellite's SNR
+    /// between epochs. Elevation and azimuth are properties of the satellite's
+    /// geometry, not of the signal: this satellite keeps the first value any of
+    /// its rows holds for each of them.
+    pub fn absorb_repeated_row(&mut self, row: Satellite) {
+        self.in_fix |= row.in_fix;
+        self.elevation = self.elevation.or(row.elevation);
+        self.azimuth = self.azimuth.or(row.azimuth);
+        self.snr = match (self.snr, row.snr) {
+            (Some(highest_so_far), Some(row_snr)) => {
+                Some(Snr::new(highest_so_far.value().max(row_snr.value())))
+            }
+            (reported, None) | (None, reported) => reported,
+        };
+    }
 }
 
 /// Why a [`Slip`] was recorded for a satellite.
@@ -502,5 +523,106 @@ mod constellation_tests {
                 .map(SlipCause::label)
                 .all(|l| !l.is_empty())
         );
+    }
+}
+
+#[cfg(test)]
+mod satellite_tests {
+    use rstest::rstest;
+
+    use super::{Constellation, Satellite};
+
+    const PRN: u32 = 7;
+
+    const FIRST_ELEVATION_DEG: f32 = 40.0;
+
+    const FIRST_AZIMUTH_DEG: f32 = 90.0;
+
+    const SECOND_ELEVATION_DEG: f32 = 10.0;
+
+    const SECOND_AZIMUTH_DEG: f32 = 200.0;
+
+    fn row_with_snr(snr_db: Option<f32>) -> Satellite {
+        Satellite::new(Constellation::Gps, PRN, None, None, snr_db, false)
+    }
+
+    fn row_with_geometry(elevation_deg: Option<f32>, azimuth_deg: Option<f32>) -> Satellite {
+        Satellite::new(
+            Constellation::Gps,
+            PRN,
+            elevation_deg,
+            azimuth_deg,
+            None,
+            false,
+        )
+    }
+
+    #[rstest]
+    #[case::the_higher_snr_first(Some(45.0), Some(30.0), Some(45.0))]
+    #[case::the_higher_snr_second(Some(30.0), Some(45.0), Some(45.0))]
+    #[case::only_the_first_row_reports_an_snr(Some(45.0), None, Some(45.0))]
+    #[case::only_the_second_row_reports_an_snr(None, Some(45.0), Some(45.0))]
+    #[case::neither_row_reports_an_snr(None, None, None)]
+    fn absorb_repeated_row_keeps_the_highest_snr_of_the_two_rows(
+        #[case] snr_db: Option<f32>,
+        #[case] absorbed_snr_db: Option<f32>,
+        #[case] expected_snr_db: Option<f32>,
+    ) {
+        let mut satellite = row_with_snr(snr_db);
+
+        satellite.absorb_repeated_row(row_with_snr(absorbed_snr_db));
+
+        assert_eq!(satellite.snr().map(|snr| snr.value()), expected_snr_db);
+    }
+
+    #[test]
+    fn absorb_repeated_row_keeps_the_elevation_and_azimuth_of_the_row_reporting_them_first() {
+        let mut satellite = row_with_geometry(Some(FIRST_ELEVATION_DEG), Some(FIRST_AZIMUTH_DEG));
+
+        satellite.absorb_repeated_row(row_with_geometry(
+            Some(SECOND_ELEVATION_DEG),
+            Some(SECOND_AZIMUTH_DEG),
+        ));
+
+        assert_eq!(
+            (satellite.elevation(), satellite.azimuth()),
+            (Some(FIRST_ELEVATION_DEG), Some(FIRST_AZIMUTH_DEG))
+        );
+    }
+
+    #[test]
+    fn absorb_repeated_row_takes_an_elevation_and_azimuth_the_satellite_has_none_of() {
+        let mut satellite = row_with_geometry(None, None);
+
+        satellite.absorb_repeated_row(row_with_geometry(
+            Some(SECOND_ELEVATION_DEG),
+            Some(SECOND_AZIMUTH_DEG),
+        ));
+
+        assert_eq!(
+            (satellite.elevation(), satellite.azimuth()),
+            (Some(SECOND_ELEVATION_DEG), Some(SECOND_AZIMUTH_DEG))
+        );
+    }
+
+    #[rstest]
+    #[case::the_satellite_is_in_the_fix(true, false)]
+    #[case::the_absorbed_row_is_in_the_fix(false, true)]
+    fn absorb_repeated_row_puts_the_satellite_in_the_fix_when_either_row_was(
+        #[case] in_fix: bool,
+        #[case] absorbed_in_fix: bool,
+    ) {
+        let mut satellite = Satellite::new(Constellation::Gps, PRN, None, None, None, in_fix);
+
+        satellite.absorb_repeated_row(Satellite::new(
+            Constellation::Gps,
+            PRN,
+            None,
+            None,
+            None,
+            absorbed_in_fix,
+        ));
+
+        assert!(satellite.in_fix());
     }
 }
