@@ -13,6 +13,7 @@ using geotrace::Angle;
 using geotrace::Channel;
 using geotrace::ChannelUnit;
 using geotrace::FileBuilder;
+using geotrace::FixTime;
 using geotrace::InvalidChannelError;
 using geotrace::NavFile;
 using geotrace::NavFix;
@@ -28,10 +29,7 @@ static_assert(!std::is_default_constructible_v<ChannelUnit>);
 TEST_CASE("channels: scalar and vector survive write → from_bytes → read") {
     std::vector<std::uint8_t> bytes;
     {
-        NavFix fix{};
-        fix.gps_time = T0;
-        fix.lat = Angle::degrees(51.5);
-        fix.lon = Angle::degrees(-0.1);
+        const NavFix fix{FixTime::receiver(T0), Angle::degrees(51.5), Angle::degrees(-0.1)};
 
         Channel incline{};
         incline.name = "incline";

@@ -15,6 +15,7 @@ using geotrace::Error;
 using geotrace::EventMarker;
 using geotrace::FieldTooLongError;
 using geotrace::FileBuilder;
+using geotrace::FixTime;
 using geotrace::Hdf5Error;
 using geotrace::InvalidChannelError;
 using geotrace::InvalidPathError;
@@ -44,8 +45,7 @@ TEST_CASE("exception hierarchy: all types derive from std::exception") {
 TEST_CASE("exception: NoNavFixesError is catchable as BuildError and Error") {
     auto throw_it = [] {
         FileBuilder b;
-        Annotation ann;
-        ann.time = Timestamp::from_seconds(1700000000ULL);
+        Annotation ann{Timestamp::from_seconds(1700000000ULL)};
         ann.label = "no fixes";
         b.add_annotation(ann);
         b.finish();
@@ -60,16 +60,9 @@ TEST_CASE("exception: InvalidPathError is catchable as Error") {
     auto throw_it = [] {
         FileBuilder b;
         const Timestamp t = Timestamp::from_seconds(1700000000ULL);
-        NavFix fix{};
-        fix.gps_time = t;
-        fix.lat = Angle::degrees(0.0);
-        fix.lon = Angle::degrees(0.0);
-        b.add_nav_fix(fix);
+        b.add_nav_fix(NavFix{FixTime::receiver(t), Angle::degrees(0.0), Angle::degrees(0.0)});
 
-        EventMarker marker{};
-        marker.variant_path = "invalid path with spaces!";
-        marker.sys_time = t;
-        b.add_event_marker(marker);
+        b.add_event_marker(EventMarker{"invalid path with spaces!", t});
     };
     CHECK_THROWS_AS(throw_it(), InvalidPathError);
     CHECK_THROWS_AS(throw_it(), Error);
@@ -79,17 +72,9 @@ TEST_CASE("exception: FieldTooLongError is catchable as Error") {
     auto throw_it = [] {
         FileBuilder b;
         const Timestamp t = Timestamp::from_seconds(1700000000ULL);
-        NavFix fix{};
-        fix.gps_time = t;
-        fix.lat = Angle::degrees(0.0);
-        fix.lon = Angle::degrees(0.0);
-        b.add_nav_fix(fix);
+        b.add_nav_fix(NavFix{FixTime::receiver(t), Angle::degrees(0.0), Angle::degrees(0.0)});
 
-        EventMarker marker{};
-        marker.variant_path = "system/startup";
-        marker.sys_time = t;
-        marker.annotation = std::string(512, 'a');
-        b.add_event_marker(marker);
+        b.add_event_marker(EventMarker{"system/startup", t, std::string(512, 'a')});
     };
     CHECK_THROWS_AS(throw_it(), FieldTooLongError);
     CHECK_THROWS_AS(throw_it(), Error);
@@ -115,10 +100,8 @@ TEST_CASE("exception: IoError is catchable as Error") {
 }
 
 TEST_CASE("exception: out_of_range from nav_point is std::out_of_range, not geotrace::Error") {
-    NavFix fix{};
-    fix.gps_time = Timestamp::from_seconds(1700000000ULL);
-    fix.lat = Angle::degrees(0.0);
-    fix.lon = Angle::degrees(0.0);
+    const NavFix fix{FixTime::receiver(Timestamp::from_seconds(1700000000ULL)), Angle::degrees(0.0),
+                     Angle::degrees(0.0)};
 
     auto file = FileBuilder{}.add_nav_fix(fix).finish();
 
@@ -136,18 +119,10 @@ TEST_CASE("exception: AnnotationsOutOfRangeError carries a count field") {
     const Timestamp t0 = Timestamp::from_seconds(1700000000ULL); // before t1
 
     try {
-        NavFix f1{};
-        f1.gps_time = t1;
-        f1.lat = Angle::degrees(0.0);
-        f1.lon = Angle::degrees(0.0);
+        const NavFix f1{FixTime::receiver(t1), Angle::degrees(0.0), Angle::degrees(0.0)};
+        const NavFix f2{FixTime::receiver(t2), Angle::degrees(0.1), Angle::degrees(0.1)};
 
-        NavFix f2{};
-        f2.gps_time = t2;
-        f2.lat = Angle::degrees(0.1);
-        f2.lon = Angle::degrees(0.1);
-
-        Annotation ann{};
-        ann.time = t0;
+        Annotation ann{t0};
         ann.label = "outside range";
 
         auto file = FileBuilder{}.add_nav_fix(f1).add_nav_fix(f2).add_annotation(ann).finish();
@@ -162,8 +137,7 @@ TEST_CASE("exception: AnnotationsOutOfRangeError carries a count field") {
 TEST_CASE("exception: what() returns a non-empty string") {
     try {
         FileBuilder b;
-        Annotation ann{};
-        ann.time = Timestamp::from_seconds(1700000000ULL);
+        Annotation ann{Timestamp::from_seconds(1700000000ULL)};
         ann.label = "no fixes";
         b.add_annotation(ann);
         b.finish();

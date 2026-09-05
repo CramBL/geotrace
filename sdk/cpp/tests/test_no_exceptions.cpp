@@ -14,24 +14,19 @@
 using geotrace::Angle;
 using geotrace::EventMarker;
 using geotrace::FileBuilder;
+using geotrace::FixTime;
 using geotrace::NavFile;
 using geotrace::NavFix;
 using geotrace::Timestamp;
 
 namespace {
 NavFix one_fix() {
-    NavFix fix{};
-    fix.gps_time = Timestamp::from_seconds(1700000000ULL);
-    fix.lat = Angle::degrees(51.5);
-    fix.lon = Angle::degrees(-0.1);
-    return fix;
+    return NavFix{FixTime::receiver(Timestamp::from_seconds(1700000000ULL)), Angle::degrees(51.5),
+                  Angle::degrees(-0.1)};
 }
 
 EventMarker bad_marker() {
-    EventMarker marker{};
-    marker.variant_path = "invalid path with spaces!";
-    marker.sys_time = Timestamp::from_seconds(1700000001ULL);
-    return marker;
+    return EventMarker{"invalid path with spaces!", Timestamp::from_seconds(1700000001ULL)};
 }
 } // namespace
 

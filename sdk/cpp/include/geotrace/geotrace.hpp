@@ -42,6 +42,7 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <geotrace.h> // C SDK (already has extern "C" guards)
@@ -339,14 +340,13 @@ template <typename T> struct Result {
 /**
  * UTC Unix epoch timestamp in microseconds.
  *
- * Use `Timestamp::none()` to represent an absent value.
+ * Always an instant. An absent timestamp is `std::optional<Timestamp>`.
  */
 struct Timestamp {
-    std::int64_t unix_micros = 0;
+    std::int64_t unix_micros;
 
-    static constexpr std::int64_t kNoneVal = -9223372036854775807LL - 1;
+    explicit constexpr Timestamp(std::int64_t micros) noexcept : unix_micros(micros) {}
 
-    static constexpr Timestamp none() noexcept { return Timestamp{kNoneVal}; }
     static Timestamp from_seconds(std::uint64_t s) noexcept {
         return Timestamp{::gtd_ts_from_seconds(s).unix_micros};
     }
@@ -360,8 +360,6 @@ struct Timestamp {
         return Timestamp{::gtd_ts_from_nanos(ns).unix_micros};
     }
 
-    bool is_none() const noexcept { return unix_micros == kNoneVal; }
-
 #if defined(__cpp_impl_three_way_comparison) && __cpp_impl_three_way_comparison >= 201907L
     auto operator<=>(const Timestamp &) const = default;
 #else
@@ -372,6 +370,76 @@ struct Timestamp {
     bool operator>(Timestamp other) const noexcept { return unix_micros > other.unix_micros; }
     bool operator>=(Timestamp other) const noexcept { return unix_micros >= other.unix_micros; }
 #endif
+};
+
+/**
+ * The two timestamps a recorder holds for one fix or satellite report, either
+ * of which may be absent. A caller cannot transpose the two clocks: each has
+ * its own field.
+ */
+struct RecordedFixTimestamps {
+    std::optional<Timestamp> gps_time;
+    std::optional<Timestamp> sys_time;
+};
+
+/** The clock or clocks that stamped a nav fix or a satellite report. */
+class FixTime {
+  public:
+    /** The receiver's timestamp, with no host clock recorded. */
+    static FixTime receiver(Timestamp gps) noexcept { return FixTime{ReceiverOnly{gps}}; }
+
+    /** The host clock's timestamp, taken while the receiver had no lock. */
+    static FixTime host(Timestamp sys) noexcept { return FixTime{HostOnly{sys}}; }
+
+    /** Both timestamps, recorded under lock on a host that also stamped it. */
+    static FixTime both(Timestamp gps, Timestamp sys) noexcept {
+        return FixTime{BothClocks{gps, sys}};
+    }
+
+    /** `std::nullopt` when the recorder holds neither timestamp. */
+    static std::optional<FixTime> from_recorded(const RecordedFixTimestamps &recorded) noexcept {
+        if (recorded.gps_time && recorded.sys_time)
+            return both(*recorded.gps_time, *recorded.sys_time);
+        if (recorded.gps_time)
+            return receiver(*recorded.gps_time);
+        if (recorded.sys_time)
+            return host(*recorded.sys_time);
+        return std::nullopt;
+    }
+
+    std::optional<Timestamp> gps_time() const noexcept {
+        if (const auto *receiver_only = std::get_if<ReceiverOnly>(&clocks_))
+            return receiver_only->gps;
+        if (const auto *both_clocks = std::get_if<BothClocks>(&clocks_))
+            return both_clocks->gps;
+        return std::nullopt;
+    }
+
+    std::optional<Timestamp> sys_time() const noexcept {
+        if (const auto *host_only = std::get_if<HostOnly>(&clocks_))
+            return host_only->sys;
+        if (const auto *both_clocks = std::get_if<BothClocks>(&clocks_))
+            return both_clocks->sys;
+        return std::nullopt;
+    }
+
+  private:
+    struct ReceiverOnly {
+        Timestamp gps;
+    };
+    struct HostOnly {
+        Timestamp sys;
+    };
+    struct BothClocks {
+        Timestamp gps;
+        Timestamp sys;
+    };
+
+    using Clocks = std::variant<ReceiverOnly, HostOnly, BothClocks>;
+
+    explicit FixTime(Clocks clocks) noexcept : clocks_(clocks) {}
+
+    Clocks clocks_;
 };
 
 /** Angular measurement stored in degrees. */
@@ -585,7 +653,19 @@ inline GtdTimestamp to_c(Timestamp ts) noexcept {
     return GtdTimestamp{ts.unix_micros};
 }
 
-inline Timestamp from_c(GtdTimestamp ts) noexcept {
+inline GtdTimestamp to_c(std::optional<Timestamp> ts) noexcept {
+    return ts ? to_c(*ts) : ::gtd_ts_none();
+}
+
+inline std::optional<Timestamp> from_c(GtdTimestamp ts) noexcept {
+    if (::gtd_ts_is_none(ts) != 0)
+        return std::nullopt;
+    return Timestamp{ts.unix_micros};
+}
+
+// `gtd_ts_none()` never appears in an event marker or channel sample timestamp:
+// the `.gtd` format stores an instant for both.
+inline Timestamp instant_from_c(GtdTimestamp ts) noexcept {
     return Timestamp{ts.unix_micros};
 }
 
@@ -621,13 +701,14 @@ inline std::optional<TravelMode> travel_mode_from_name(const std::string &name) 
  * of the three reads back as `std::nullopt`.
  */
 struct NavFix {
-    Timestamp gps_time = Timestamp::none();
-    Timestamp sys_time = Timestamp::none();
+    FixTime time;
     Angle lat = Angle::degrees(0.0);
     Angle lon = Angle::degrees(0.0);
-    std::optional<Angle> heading;
-    std::optional<Velocity> speed;
-    std::optional<double> eph_m;
+    // Each default keeps `-Wmissing-field-initializers` quiet for a caller that
+    // lists only `time`, `lat` and `lon`.
+    std::optional<Angle> heading = std::nullopt;
+    std::optional<Velocity> speed = std::nullopt;
+    std::optional<double> eph_m = std::nullopt;
 };
 
 /** One satellite in a visibility report. */
@@ -642,8 +723,7 @@ struct Satellite {
 
 /** A snapshot of satellite visibility at a point in time. */
 struct SatelliteReport {
-    Timestamp gps_time = Timestamp::none();
-    Timestamp sys_time = Timestamp::none();
+    FixTime time;
     std::vector<Satellite> tracked;
 };
 
@@ -806,8 +886,8 @@ struct ChannelView {
  * Checking a value against its range is the caller's job.
  */
 struct NavPointView {
-    Timestamp gps_time;
-    Timestamp sys_time;
+    std::optional<Timestamp> gps_time;
+    std::optional<Timestamp> sys_time;
     Angle lat = Angle::degrees(0.0);
     Angle lon = Angle::degrees(0.0);
     std::optional<Angle> heading;
@@ -1034,8 +1114,8 @@ class FileBuilder {
             fix.heading ? std::optional<double>{fix.heading->as_degrees()} : std::nullopt;
         const std::optional<double> speed_mps =
             fix.speed ? std::optional<double>{fix.speed->as_mps()} : std::nullopt;
-        record(::gtd_builder_add_nav_fix(impl_.get(), detail::to_c(fix.gps_time),
-                                         detail::to_c(fix.sys_time), fix.lat.as_degrees(),
+        record(::gtd_builder_add_nav_fix(impl_.get(), detail::to_c(fix.time.gps_time()),
+                                         detail::to_c(fix.time.sys_time()), fix.lat.as_degrees(),
                                          fix.lon.as_degrees(), detail::to_c(heading_deg),
                                          detail::to_c(speed_mps), detail::to_c(fix.eph_m)));
         return *this;
@@ -1054,8 +1134,8 @@ class FileBuilder {
                 detail::to_c(s.snr_dbhz),
             });
         }
-        record(::gtd_builder_add_satellite_report(impl_.get(), detail::to_c(report.gps_time),
-                                                  detail::to_c(report.sys_time), sats.data(),
+        record(::gtd_builder_add_satellite_report(impl_.get(), detail::to_c(report.time.gps_time()),
+                                                  detail::to_c(report.time.sys_time()), sats.data(),
                                                   sats.size()));
         return *this;
     }
@@ -1354,8 +1434,8 @@ class NavFile {
 
     ///@}
 
-    /** @name The SDK build that wrote the file (empty or Timestamp::none()
-     * when absent). */
+    /** @name The SDK build that wrote the file (an empty view or
+     * `std::nullopt` when absent). */
     ///@{
 
     /** Version of the SDK build that wrote the file. */
@@ -1371,7 +1451,7 @@ class NavFile {
     }
 
     /** Committer timestamp of sdk_git_commit(). */
-    Timestamp sdk_commit_time() const noexcept {
+    std::optional<Timestamp> sdk_commit_time() const noexcept {
         return detail::from_c(::gtd_nav_file_sdk_commit_time(impl_.get()));
     }
 
@@ -1452,13 +1532,13 @@ class NavFile {
         if (s != GTD_OK)
             return Status::from(s);
 
-        EventMarkerView v{};
-        v.variant_path = info.variant_path;
-        v.sys_time = detail::from_c(info.sys_time);
-        v.lat = Angle::degrees(info.lat_deg);
-        v.lon = Angle::degrees(info.lon_deg);
-        v.annotation = info.has_annotation ? std::string{info.annotation} : std::string{};
-        return v;
+        return EventMarkerView{
+            info.variant_path,
+            detail::instant_from_c(info.sys_time),
+            Angle::degrees(info.lat_deg),
+            Angle::degrees(info.lon_deg),
+            info.has_annotation ? std::string{info.annotation} : std::string{},
+        };
     }
 
     /**
@@ -1521,7 +1601,7 @@ class NavFile {
             ::gtd_nav_file_channel_times(impl_.get(), idx, raw_times.data(), raw_times.size());
         v.times.reserve(info.sample_count);
         for (const auto &t : raw_times)
-            v.times.push_back(detail::from_c(t));
+            v.times.push_back(detail::instant_from_c(t));
 
         v.values.resize(info.sample_count * columns);
         if (!v.values.empty())

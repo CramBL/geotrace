@@ -44,19 +44,15 @@ int main() {
         for (const auto &point : track) {
             const geotrace::Timestamp t = at(idx);
 
-            geotrace::NavFix fix{};
-            fix.gps_time = t;
-            fix.lat = geotrace::Angle::degrees(point.lat);
-            fix.lon = geotrace::Angle::degrees(point.lon);
+            geotrace::NavFix fix{geotrace::FixTime::receiver(t),
+                                 geotrace::Angle::degrees(point.lat),
+                                 geotrace::Angle::degrees(point.lon)};
             fix.heading = geotrace::Angle::degrees(90.0);
             fix.speed = geotrace::Velocity::mps(5.5);
             builder.add(fix);
 
             // SNR climbs slightly each second as the receiver settles.
             const double snr = 36.0 + static_cast<double>(idx);
-
-            geotrace::SatelliteReport report{};
-            report.gps_time = t;
 
             geotrace::Satellite g1{};
             g1.constellation = geotrace::Constellation::Gps;
@@ -65,23 +61,20 @@ int main() {
             g1.elevation_deg = 45.0;
             g1.azimuth_deg = 90.0;
             g1.snr_dbhz = snr;
-            report.tracked.push_back(g1);
 
             geotrace::Satellite g5{};
             g5.constellation = geotrace::Constellation::Gps;
             g5.prn = 5;
             g5.in_fix = true;
             g5.snr_dbhz = snr - 2.0;
-            report.tracked.push_back(g5);
 
             geotrace::Satellite e3{};
             e3.constellation = geotrace::Constellation::Galileo;
             e3.prn = 3;
             e3.in_fix = false;
             e3.snr_dbhz = 21.0;
-            report.tracked.push_back(e3);
 
-            builder.add(report);
+            builder.add(geotrace::SatelliteReport{geotrace::FixTime::receiver(t), {g1, g5, e3}});
             ++idx;
         }
 
