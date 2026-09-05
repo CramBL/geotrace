@@ -151,6 +151,7 @@ syn = "2"
 tempfile = "3"
 test-log = "0.2"
 thiserror = "2"
+trybuild = "1"
 uom = "0.38.0"
 uuid = { version = "1", features = ["v4"] }
 vec1 = "1"

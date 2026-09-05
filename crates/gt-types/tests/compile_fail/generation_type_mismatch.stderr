@@ -1,0 +1,8 @@
+error[E0308]: mismatched types
+  --> tests/compile_fail/generation_type_mismatch.rs:15:36
+   |
+15 |     assert_eq!(files.generation(), visibility.generation());
+   |                                    ^^^^^^^^^^^^^^^^^^^^^^^ expected `Generation<Files>`, found `Generation<Visibility>`
+   |
+   = note: expected struct `Generation<Files>`
+              found struct `Generation<Visibility>`
