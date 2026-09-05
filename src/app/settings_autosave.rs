@@ -18,13 +18,13 @@ impl From<StableF32> for f32 {
     }
 }
 
-/// `f64` stored as its bit pattern so `AppSnapshot` can derive `PartialEq`
+/// `f64` stored as its bit pattern, so a struct holding one derives `PartialEq`
 /// without triggering the `float_cmp` lint.
 ///
-/// Dirty-check helper only: it compares raw bits, so it does not treat
-/// `+0.0`/`-0.0` as equal or canonicalize `NaN`.  Inputs here are range-clamped
-/// finite settings values, so neither case arises.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// Dirty-check helper only: it compares raw bits, so `+0.0` differs from `-0.0`
+/// and a `NaN` differs from itself. A dirty check that finds a difference where
+/// the two values are equal costs one recompute.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct StableF64(u64);
 
 impl From<f64> for StableF64 {
