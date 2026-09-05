@@ -12,13 +12,17 @@ using geotrace::RecordedFixTimestamps;
 using geotrace::SatelliteReport;
 using geotrace::Timestamp;
 
-static const Timestamp GPS = Timestamp::from_seconds(1700000000ULL);
-static const Timestamp SYS = Timestamp::from_seconds(1700000002ULL);
+constexpr Timestamp GPS{1'700'000'000'000'000};
+constexpr Timestamp SYS{1'700'000'002'000'000};
 
 static_assert(!std::is_default_constructible_v<Timestamp>);
 static_assert(!std::is_default_constructible_v<FixTime>);
 static_assert(!std::is_default_constructible_v<NavFix>);
 static_assert(!std::is_default_constructible_v<SatelliteReport>);
+
+constexpr FixTime BOTH_CLOCKS = FixTime::both(GPS, SYS);
+static_assert(BOTH_CLOCKS.gps_time()->unix_micros == GPS.unix_micros);
+static_assert(BOTH_CLOCKS.sys_time()->unix_micros == SYS.unix_micros);
 
 TEST_CASE("FixTime reports the clock it was built from") {
     SUBCASE("receiver") {

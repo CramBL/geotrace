@@ -22,23 +22,26 @@ static NavFile make_minimal() {
 }
 
 TEST_CASE("NavFile: open on non-existent path throws IoError") {
-    CHECK_THROWS_AS(NavFile::open("/nonexistent/path/that/does/not/exist.gtd"), IoError);
+    CHECK_THROWS_AS(static_cast<void>(NavFile::open("/nonexistent/path/that/does/not/exist.gtd")),
+                    IoError);
 }
 
 TEST_CASE("NavFile: nav_point out-of-range throws std::out_of_range") {
     auto file = make_minimal();
-    CHECK_THROWS_AS(file.nav_point(9999), std::out_of_range);
+    CHECK_THROWS_AS(static_cast<void>(file.nav_point(9999)), std::out_of_range);
 }
 
 TEST_CASE("NavFile: satellite out-of-range throws std::out_of_range") {
     auto file = make_minimal();
-    CHECK_THROWS_AS(file.satellite(0, 0), std::out_of_range);    // no satellite report
-    CHECK_THROWS_AS(file.satellite(9999, 0), std::out_of_range); // nav index out of range
+    CHECK_THROWS_AS(static_cast<void>(file.satellite(0, 0)),
+                    std::out_of_range); // no satellite report
+    CHECK_THROWS_AS(static_cast<void>(file.satellite(9999, 0)),
+                    std::out_of_range); // nav index out of range
 }
 
 TEST_CASE("NavFile: event_marker out-of-range throws std::out_of_range") {
     auto file = make_minimal();
-    CHECK_THROWS_AS(file.event_marker(0), std::out_of_range);
+    CHECK_THROWS_AS(static_cast<void>(file.event_marker(0)), std::out_of_range);
 }
 
 TEST_CASE("NavFile: absent metadata returns empty string_view") {
@@ -72,7 +75,7 @@ TEST_CASE("NavFile: move semantics work") {
 
 TEST_CASE("NavFile: from_bytes with invalid data throws") {
     const std::vector<std::uint8_t> garbage = {0x00, 0xFF, 0xAB, 0xCD};
-    CHECK_THROWS_AS(NavFile::from_bytes(garbage), Error);
+    CHECK_THROWS_AS(static_cast<void>(NavFile::from_bytes(garbage)), Error);
 }
 
 #ifdef GTD_FIXTURE_PATH

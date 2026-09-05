@@ -27,6 +27,9 @@ the app).
 - Reading a file whose satellite report has neither a receiver nor a host timestamp fails with an error stating the report.
 - C++ `NavFix` and `SatelliteReport` have a required `FixTime` member, built with `FixTime::receiver`, `FixTime::host` or `FixTime::both`, in place of their two timestamps.
 - C++ `Timestamp` is always an instant: it has no default constructor, `Timestamp::none()` and `Timestamp::is_none()` are gone, and `NavPointView::gps_time`, `NavPointView::sys_time` and `NavFile::sdk_commit_time()` are `std::optional<Timestamp>`.
+- C++ `Timestamp`, `FixTime`, `Angle`, `Velocity`, `ChannelUnit`, `EventPath`, `Status`, `Result` and `NavFile` are `[[nodiscard]]` types, and every accessor returning a value of another type is a `[[nodiscard]]` function. A compiler warns where a caller drops such a value.
+- C++ `Timestamp`, `FixTime`, `Angle` and `Velocity` have `constexpr` constructors, factories, accessors and comparisons. `Timestamp::from_seconds`, `from_millis`, `from_micros` and `from_nanos` call the C SDK for their saturation and stay outside a constant expression.
+- C++ `NavFile` has no default constructor: a `NavFile` comes from `NavFile::open`, `NavFile::from_bytes` or `FileBuilder::finish`.
 - A satellite report before the first nav fix produces a ghost fix on the first fix.
 - A ghost fix after the last nav fix takes that fix's position when the fix has no heading.
 

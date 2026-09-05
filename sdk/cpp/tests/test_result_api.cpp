@@ -56,11 +56,12 @@ TEST_CASE("try_nav_point reports out-of-range without throwing; in-range is ok")
 }
 
 TEST_CASE("value_or_throw rethrows the typed exception on error") {
-    CHECK_THROWS_AS(NavFile::try_open("/no/such/file.gtd").value_or_throw(), IoError);
+    CHECK_THROWS_AS(static_cast<void>(NavFile::try_open("/no/such/file.gtd").value_or_throw()),
+                    IoError);
 }
 
 TEST_CASE("value access on an error is defined in release builds") {
     const auto result = NavFile::try_open("/no/such/file.gtd");
     CHECK(result.get_if() == nullptr);
-    CHECK_THROWS_AS(result.value(), IoError);
+    CHECK_THROWS_AS(static_cast<void>(result.value()), IoError);
 }

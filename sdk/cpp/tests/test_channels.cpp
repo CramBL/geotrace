@@ -115,14 +115,15 @@ TEST_CASE("channels: a malformed channel throws InvalidChannelError") {
         CHECK_THROWS_AS(FileBuilder{}.add_channel(ch), InvalidChannelError);
     }
     SUBCASE("unrecognized unit") {
-        CHECK_THROWS_AS(geotrace::ChannelUnit::parse_recognized("rpm"), InvalidChannelError);
+        CHECK_THROWS_AS(static_cast<void>(geotrace::ChannelUnit::parse_recognized("rpm")),
+                        InvalidChannelError);
     }
     SUBCASE("duplicate channel name at finish") {
         Channel ch{};
         ch.name = "accel";
         ch.times = {T0};
         ch.values = {1.0};
-        CHECK_THROWS_AS(FileBuilder{}.add_channel(ch).add_channel(ch).finish(),
+        CHECK_THROWS_AS(static_cast<void>(FileBuilder{}.add_channel(ch).add_channel(ch).finish()),
                         InvalidChannelError);
     }
 }
