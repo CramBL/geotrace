@@ -34,12 +34,14 @@ from datetime import datetime, timezone
 from geotrace_sdk import NavFileBuilder, NavFix
 
 builder = NavFileBuilder()
-builder.add(NavFix(
-    lat=51.5074,
-    lon=-0.1278,
-    gps_time=datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc),
-    heading=90.0,
-))
+builder.add(
+    NavFix(
+        lat=51.5074,
+        lon=-0.1278,
+        gps_time=datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc),
+        heading=90.0,
+    )
+)
 builder.finish().write_to_file("track.gtd")
 ```
 
