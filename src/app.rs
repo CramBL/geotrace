@@ -801,6 +801,7 @@ impl App {
             theme,
             recording_name_template: s.recording_name_template.clone(),
             visible_section_fraction: s.tree.visible_section_fraction().into(),
+            hidden_tracks_revision: s.tree.hidden_tracks_revision(),
             track_split_gap_seconds: self
                 .processing_config
                 .track_layout

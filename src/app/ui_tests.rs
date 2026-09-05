@@ -3183,6 +3183,81 @@ fn plot_channel_toggles_persist_across_settings_roundtrip() {
     assert!(shared.plot_state.channel_vis.is_visible("incline"));
 }
 
+/// A track hidden in a recording that history holds reaches the settings file
+/// and comes back: opening the recording again hides that track and leaves the
+/// other one shown.
+#[test]
+fn hidden_tracks_persist_across_settings_roundtrip() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+
+    let db_ref = gt_store::DatabaseRef {
+        identity: "dev".to_owned(),
+        group_name: "2026-01-01T00:00:00Z_ride".to_owned(),
+    };
+    let history = || {
+        gt_loaded_files::FileHistory::recording(
+            "dev".to_owned(),
+            gt_store::RecordingMeta {
+                time_range: None,
+                nav_point_count: 0,
+                sat_report_count: 0,
+                marker_count: 0,
+                event_marker_count: 0,
+                gtd_size_bytes: 0,
+            },
+            Some(db_ref.clone()),
+        )
+    };
+    let points = gt_test_utils::fixtures::nav_data_with_gap(30, 30);
+    let fi = push_points_as(&mut harness, "ride.gtd", &points, None, history());
+    {
+        let state = harness.state_mut();
+        let mut shared = state.shared.borrow_mut();
+        shared
+            .tree
+            .hide_track(gt_types::TrackRef::new(fi, gt_types::TrackIdx::new(1)));
+    }
+
+    let flushed = harness.state().collect_settings_for_flush();
+    assert_eq!(flushed.ui.hidden_tracks.track_numbers(&db_ref), [2]);
+
+    // Through the actual wire format, not just the struct.
+    let toml = toml::to_string_pretty(&flushed).expect("settings serialize");
+    assert!(
+        toml.contains("[[ui.hidden_tracks]]"),
+        "the hidden tracks are listed per recording: {toml}"
+    );
+    let reloaded: crate::settings::Settings = toml::from_str(&toml).expect("settings parse");
+
+    // Simulate the next run: a tree with nothing in it, then the recording
+    // opened into it again.
+    {
+        let state = harness.state_mut();
+        let mut shared = state.shared.borrow_mut();
+        shared.tree = gt_side_panel::TreeState::new();
+    }
+    harness.state_mut().apply_startup_settings(&reloaded);
+    {
+        let state = harness.state_mut();
+        let mut shared = state.shared.borrow_mut();
+        shared.sync_tree_from_loaded_files();
+    }
+
+    let shared = harness.state().shared.borrow();
+    let visible = shared.tree.visible_tracks_by_file();
+    assert_eq!(
+        visible
+            .iter()
+            .flat_map(|group| group.tracks.iter().copied())
+            .collect::<Vec<_>>(),
+        [gt_types::TrackRef::new(fi, gt_types::TrackIdx::new(0))],
+        "the second track opens hidden and the first one shown"
+    );
+}
+
 /// The sparse<->dense component color conversions: empty stays empty, an
 /// index gap widens with unset slots, and only overridden slots are stored.
 #[test]

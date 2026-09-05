@@ -7,6 +7,7 @@
 - **Interface:** The History window lists a recording's shelved tracks under its row, each with its track number and nav-point count, and unshelves one track or all of them.
 - **Interface:** The list of a recording's shelved tracks offers a delete beside "Unshelve all" that permanently removes that recording's shelved tracks.
 - **Interface:** A recording opened from history shows how many of its tracks are shelved on its side panel row, and pressing that mark lists them in the History window.
+- **Interface:** A track hidden in a recording that history holds stays hidden when that recording is opened again.
 
 ### Changed
 
