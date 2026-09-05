@@ -55,22 +55,26 @@ TEST_CASE("NavFile: absent metadata returns empty string_view") {
 }
 
 TEST_CASE("NavFile: nav_point_count returns correct value") {
-    const NavFix f1{FixTime::receiver(Timestamp::from_seconds(1700000000ULL)), Angle::degrees(0.0),
-                    Angle::degrees(0.0)};
-    const NavFix f2{FixTime::receiver(Timestamp::from_seconds(1700000010ULL)), Angle::degrees(0.1),
-                    Angle::degrees(0.1)};
-    const NavFix f3{FixTime::receiver(Timestamp::from_seconds(1700000020ULL)), Angle::degrees(0.2),
-                    Angle::degrees(0.2)};
+    const NavFix first_fix{FixTime::receiver(Timestamp::from_seconds(1700000000ULL)),
+                           Angle::degrees(0.0), Angle::degrees(0.0)};
+    const NavFix second_fix{FixTime::receiver(Timestamp::from_seconds(1700000010ULL)),
+                            Angle::degrees(0.1), Angle::degrees(0.1)};
+    const NavFix third_fix{FixTime::receiver(Timestamp::from_seconds(1700000020ULL)),
+                           Angle::degrees(0.2), Angle::degrees(0.2)};
 
-    auto file = FileBuilder{}.add_nav_fix(f1).add_nav_fix(f2).add_nav_fix(f3).finish();
+    auto file = FileBuilder{}
+                    .add_nav_fix(first_fix)
+                    .add_nav_fix(second_fix)
+                    .add_nav_fix(third_fix)
+                    .finish();
 
     CHECK(file.nav_point_count() == 3);
 }
 
 TEST_CASE("NavFile: move semantics work") {
-    auto f1 = make_minimal();
-    auto f2 = std::move(f1);
-    CHECK(f2.nav_point_count() == 1);
+    auto file = make_minimal();
+    auto moved = std::move(file);
+    CHECK(moved.nav_point_count() == 1);
 }
 
 TEST_CASE("NavFile: from_bytes with invalid data throws") {
@@ -85,8 +89,8 @@ TEST_CASE("NavFile: open fixture file succeeds") {
     CHECK(file.title() == "minimal fixture");
     CHECK(file.device() == "gen_fixture");
 
-    auto p0 = file.nav_point(0);
-    CHECK(p0.lat.as_degrees() == doctest::Approx(51.5074).epsilon(1e-4));
-    CHECK(p0.satellite_count == 2);
+    auto point = file.nav_point(0);
+    CHECK(point.lat.as_degrees() == doctest::Approx(51.5074).epsilon(1e-4));
+    CHECK(point.satellite_count == 2);
 }
 #endif

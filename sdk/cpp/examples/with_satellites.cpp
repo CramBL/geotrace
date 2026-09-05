@@ -12,8 +12,10 @@
 
 #include <geotrace/geotrace.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <iostream>
 
@@ -24,7 +26,9 @@ constexpr std::uint64_t kBase = 1717228800;
 } // namespace
 
 int main() {
-    auto at = [](std::uint64_t secs) { return geotrace::Timestamp::from_seconds(kBase + secs); };
+    auto timestamp_at = [](std::uint64_t secs) {
+        return geotrace::Timestamp::from_seconds(kBase + secs);
+    };
 
     try {
         geotrace::FileBuilder builder{};
@@ -34,17 +38,17 @@ int main() {
             double lat;
             double lon;
         };
-        const TrackPoint track[] = {
+        const std::array<TrackPoint, 4> track = {{
             {51.5074, -0.1278},
             {51.5080, -0.1265},
             {51.5088, -0.1248},
             {51.5095, -0.1233},
-        };
+        }};
         std::size_t idx = 0;
         for (const auto &point : track) {
-            const geotrace::Timestamp t = at(idx);
+            const geotrace::Timestamp time = timestamp_at(idx);
 
-            geotrace::NavFix fix{geotrace::FixTime::receiver(t),
+            geotrace::NavFix fix{geotrace::FixTime::receiver(time),
                                  geotrace::Angle::degrees(point.lat),
                                  geotrace::Angle::degrees(point.lon)};
             fix.heading = geotrace::Angle::degrees(90.0);
@@ -54,27 +58,28 @@ int main() {
             // SNR climbs slightly each second as the receiver settles.
             const double snr = 36.0 + static_cast<double>(idx);
 
-            geotrace::Satellite g1{};
-            g1.constellation = geotrace::Constellation::Gps;
-            g1.prn = 1;
-            g1.in_fix = true;
-            g1.elevation_deg = 45.0;
-            g1.azimuth_deg = 90.0;
-            g1.snr_dbhz = snr;
+            geotrace::Satellite gps_prn1{};
+            gps_prn1.constellation = geotrace::Constellation::Gps;
+            gps_prn1.prn = 1;
+            gps_prn1.in_fix = true;
+            gps_prn1.elevation_deg = 45.0;
+            gps_prn1.azimuth_deg = 90.0;
+            gps_prn1.snr_dbhz = snr;
 
-            geotrace::Satellite g5{};
-            g5.constellation = geotrace::Constellation::Gps;
-            g5.prn = 5;
-            g5.in_fix = true;
-            g5.snr_dbhz = snr - 2.0;
+            geotrace::Satellite gps_prn5{};
+            gps_prn5.constellation = geotrace::Constellation::Gps;
+            gps_prn5.prn = 5;
+            gps_prn5.in_fix = true;
+            gps_prn5.snr_dbhz = snr - 2.0;
 
-            geotrace::Satellite e3{};
-            e3.constellation = geotrace::Constellation::Galileo;
-            e3.prn = 3;
-            e3.in_fix = false;
-            e3.snr_dbhz = 21.0;
+            geotrace::Satellite galileo_prn3{};
+            galileo_prn3.constellation = geotrace::Constellation::Galileo;
+            galileo_prn3.prn = 3;
+            galileo_prn3.in_fix = false;
+            galileo_prn3.snr_dbhz = 21.0;
 
-            builder.add(geotrace::SatelliteReport{geotrace::FixTime::receiver(t), {g1, g5, e3}});
+            builder.add(geotrace::SatelliteReport{geotrace::FixTime::receiver(time),
+                                                  {gps_prn1, gps_prn5, galileo_prn3}});
             ++idx;
         }
 
@@ -87,18 +92,19 @@ int main() {
         const geotrace::NavFile loaded = geotrace::NavFile::open(out);
         std::cout << loaded.nav_point_count() << " nav point(s)\n";
         for (std::size_t i = 0; i < loaded.nav_point_count(); ++i) {
-            const auto p = loaded.nav_point(i);
+            const auto point = loaded.nav_point(i);
             std::size_t in_fix = 0;
-            for (std::size_t j = 0; j < p.satellite_count; ++j) {
-                if (loaded.satellite(i, j).in_fix)
+            for (std::size_t j = 0; j < point.satellite_count; ++j) {
+                if (loaded.satellite(i, j).in_fix) {
                     ++in_fix;
+                }
             }
-            std::cout << "  [" << i << "] " << p.satellite_count << " tracked, " << in_fix
+            std::cout << "  [" << i << "] " << point.satellite_count << " tracked, " << in_fix
                       << " in fix\n";
         }
 
         std::filesystem::remove(out);
-    } catch (const geotrace::Error &e) {
+    } catch (const std::exception &e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
     }

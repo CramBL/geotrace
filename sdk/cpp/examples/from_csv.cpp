@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -31,18 +32,21 @@ constexpr std::string_view kCsvData = "timestamp_s,lat,lon,heading_deg,speed_mps
 
 // Parse one "ts,lat,lon,heading,speed" row. Returns std::nullopt for a malformed line.
 std::optional<geotrace::NavFix> parse_row(const std::string &line) {
-    std::istringstream ls(line);
-    std::uint64_t ts = 0;
+    std::istringstream fields(line);
+    std::uint64_t unix_seconds = 0;
     double lat = 0.0;
     double lon = 0.0;
     double heading = 0.0;
     double speed = 0.0;
     char comma = 0;
-    if (!(ls >> ts >> comma >> lat >> comma >> lon >> comma >> heading >> comma >> speed))
+    if (!(fields >> unix_seconds >> comma >> lat >> comma >> lon >> comma >> heading >> comma >>
+          speed)) {
         return std::nullopt;
+    }
 
-    geotrace::NavFix fix{geotrace::FixTime::receiver(geotrace::Timestamp::from_seconds(ts)),
-                         geotrace::Angle::degrees(lat), geotrace::Angle::degrees(lon)};
+    geotrace::NavFix fix{
+        geotrace::FixTime::receiver(geotrace::Timestamp::from_seconds(unix_seconds)),
+        geotrace::Angle::degrees(lat), geotrace::Angle::degrees(lon)};
     fix.heading = geotrace::Angle::degrees(heading);
     fix.speed = geotrace::Velocity::mps(speed);
     return fix;
@@ -61,8 +65,9 @@ int main() {
 
         std::size_t rows = 0;
         while (std::getline(csv, line)) {
-            if (line.empty())
+            if (line.empty()) {
                 continue;
+            }
             if (const auto fix = parse_row(line)) {
                 builder.add(*fix);
                 ++rows;
@@ -79,7 +84,7 @@ int main() {
                   << " nav points -> " << out.string() << "\n";
 
         std::filesystem::remove(out);
-    } catch (const geotrace::Error &e) {
+    } catch (const std::exception &e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
     }
