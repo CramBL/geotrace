@@ -4,6 +4,7 @@
 )]
 
 use egui::CentralPanel;
+use egui_phosphor::regular::CARET_RIGHT as ICON_CARET_RIGHT;
 use egui_phosphor::regular::CHECK_SQUARE as ICON_CHECK_SQUARE;
 use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
 use egui_phosphor::regular::LINE_SEGMENTS as ICON_LINE_SEGMENTS;
@@ -14,6 +15,7 @@ use egui_phosphor::regular::WARNING as ICON_WARNING;
 use std::path::PathBuf;
 
 use egui_kittest::Node;
+use egui_kittest::kittest::NodeT as _;
 use egui_kittest::kittest::Queryable as _;
 use geotrace_sdk_units::Unit;
 use gt_filter::GlobalFilter;
@@ -1232,6 +1234,30 @@ fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
     // ("No satellite data").
     let mut harness = make_harness(state);
     harness.run();
+}
+
+#[test]
+fn the_satellite_reports_row_counts_the_fixes_with_a_report() {
+    let fixes_with_a_report = gt_test_utils::nav_test_data()
+        .iter()
+        .filter(|point| point.satellites.is_some())
+        .count();
+    let mut state = make_state(1);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    state
+        .tree
+        .toggle_expand_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(0)));
+    let mut harness = make_harness(state);
+    harness.run();
+
+    assert_eq!(
+        tree_row(&harness, "Satellite reports")
+            .accesskit_node()
+            .label(),
+        Some(format!(
+            "{ICON_CARET_RIGHT} Satellite reports  {fixes_with_a_report}"
+        ))
+    );
 }
 
 /// The hover text states the time range and the recorded time apart for a

@@ -1334,29 +1334,16 @@ fn render_track_row(
     let Some(cells) = columns.cells.get(&track_ref) else {
         return;
     };
-    let (track, passes, is_expanded, panel_hovered, map_hovered, key) = {
-        let Some(file) = ctx.file(fi) else {
-            return;
-        };
-        let Some(track) = ti.get(&file.tracks) else {
-            return;
-        };
-        let passes = gt_filter::track_passes_filter(track, ctx.filter);
-        let is_expanded = ctx.tree.track_node(track_ref).is_some_and(|t| t.expanded);
-        let panel_hovered = ctx.highlight.hovers_the_whole_track(track_ref);
-        // The plot writes its hover after this panel renders: a plot hover marks
-        // the row one frame later.
-        let map_hovered = ctx.highlight.hovers_a_point_of_track(track_ref);
-        let key = NodeKey::Track(track_ref);
-        (
-            track.clone(),
-            passes,
-            is_expanded,
-            panel_hovered,
-            map_hovered,
-            key,
-        )
+    let Some(track) = ctx.track(track_ref) else {
+        return;
     };
+    let passes = gt_filter::track_passes_filter(track, ctx.filter);
+    let is_expanded = ctx.tree.track_node(track_ref).is_some_and(|t| t.expanded);
+    let panel_hovered = ctx.highlight.hovers_the_whole_track(track_ref);
+    // The plot writes its hover after this panel renders: a plot hover marks
+    // the row one frame later.
+    let map_hovered = ctx.highlight.hovers_a_point_of_track(track_ref);
+    let key = NodeKey::Track(track_ref);
 
     let was_all_hidden = ctx.tree.all_hidden();
     let map_hover_bg = gt_ui_theme::map_hover_color(ui.visuals().dark_mode);
@@ -1395,7 +1382,7 @@ fn render_track_row(
                 egui::Align2::CENTER_CENTER,
             );
             cells.paint(ui, columns.widths, cell_color);
-            if let Some(warning) = CoordinateWarning::for_track(&track) {
+            if let Some(warning) = CoordinateWarning::for_track(track) {
                 let icon = ui
                     .label(
                         RichText::new(ICON_WARNING)
@@ -1423,7 +1410,7 @@ fn render_track_row(
     }
     let modifiers = ui.ctx().input(|i| i.modifiers);
     if response.double_clicked() {
-        if let Some(center) = track_bounding_center(&track) {
+        if let Some(center) = track_bounding_center(track) {
             *ctx.map_center_request = Some(center);
         }
     } else if response.clicked() {
@@ -1454,7 +1441,7 @@ fn render_track_row(
 
     if is_expanded {
         ui.indent(format!("track_{fi}_{ti}"), |ui| {
-            render_track_categories(ui, track_ref, &track, scope, ctx);
+            render_track_categories(ui, track_ref, track, scope, ctx);
         });
     }
 }
@@ -1590,16 +1577,11 @@ fn render_track_categories(
         },
     );
 
-    let sat_count = track
-        .points
-        .iter()
-        .filter(|p| p.satellites.is_some())
-        .count();
     render_category_section(
         ui,
         track_ref,
         DataCategory::SatelliteReport,
-        sat_count,
+        track.metadata.satellite_report_count,
         "Satellite reports",
         sat_visible,
         sat_expanded,
