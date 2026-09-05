@@ -569,6 +569,10 @@ jobs:
           uv pip install maturin pytest ruff mypy
           uv run maturin develop
 
+      - name: Check formatting
+        working-directory: sdk/python/geotrace-py
+        run: uv run ruff format --check .
+
       - name: Lint
         working-directory: sdk/python/geotrace-py
         run: uv run ruff check .
