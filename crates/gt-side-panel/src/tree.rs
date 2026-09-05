@@ -33,6 +33,15 @@ pub enum NodeKey {
     Track(TrackRef),
 }
 
+impl NodeKey {
+    pub fn file(self) -> FileIdx {
+        match self {
+            Self::File(fi) => fi,
+            Self::Track(track_ref) => track_ref.fi,
+        }
+    }
+}
+
 /// The items of an open shelve confirmation, and the state of its
 /// permanent-delete tickbox.
 pub struct ShelveConfirmState {
@@ -480,10 +489,7 @@ impl TreeState {
     /// Expand, select and scroll to the row for `key`, which renders further
     /// down this frame.
     pub fn reveal(&mut self, key: NodeKey) {
-        self.expand_file(match key {
-            NodeKey::File(fi) => fi,
-            NodeKey::Track(track_ref) => track_ref.fi,
-        });
+        self.expand_file(key.file());
         self.apply_click(key, false, false);
         self.reveal_request = Some(key);
     }

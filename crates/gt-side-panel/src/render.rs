@@ -229,6 +229,20 @@ impl<'a> PanelContext<'a> {
         self.loaded_files.file_stored_in_history(file)
     }
 
+    /// The hover text that grays out a shelve control over the tracks of
+    /// `files`, and `None` while the control acts. A read-only session grays
+    /// every shelve control out, as does a set of files that all sit outside
+    /// the recording history.
+    fn shelve_unavailable_hover(&self, mut files: impl Iterator<Item = FileIdx>) -> Option<&str> {
+        if let Some(read_only) = self.read_only_recording_history_hover {
+            Some(read_only)
+        } else if files.any(|file| self.file_stored_in_history(file)) {
+            None
+        } else {
+            Some(ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER)
+        }
+    }
+
     /// The recording identity for a file, or `None` if it has none. Used by the
     /// `{identity}` display-name token.
     fn identity(&self, file: FileIdx) -> Option<&'a str> {
@@ -246,10 +260,21 @@ const SHELVE_FILTERED_DATA_HOVER: &str = "Takes every track that the filter excl
 /// Hover text of the shelve button while the filter excludes nothing.
 pub const EVERY_TRACK_PASSES_THE_FILTER_HOVER: &str = "Every loaded track passes the filter";
 
-/// Hover text of the shelve button while every track that the filter excludes
-/// sits outside the recording history.
+/// Hover text of every shelve control while the tracks it would act on sit
+/// outside the recording history.
 pub const ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER: &str =
     "Only a track stored in the recording history can be shelved";
+
+pub const SHELVE_TRACK_LABEL: &str = "Shelve…";
+
+const SHELVE_TRACK_HOVER: &str = "Shelves this track in the recording history and takes it out of \
+                                  the view. Opening the recording again leaves the track shelved.";
+
+pub const SHELVE_SELECTED_TRACKS_LABEL: &str = "Shelve selected…";
+
+const SHELVE_SELECTED_TRACKS_HOVER: &str = "Shelves the selected tracks in the recording \
+                                            history and takes them out of the view. Opening a \
+                                            recording again leaves its shelved tracks shelved.";
 
 pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
     let header = ui.horizontal(|ui| {
@@ -297,17 +322,10 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
                 .map(move |(ti, _)| TrackRef::new(fi, TrackIdx::new(ti)))
         })
         .collect();
-    let any_track_is_stored = filtered_out_tracks
-        .iter()
-        .any(|track| ctx.file_stored_in_history(track.fi));
     let unavailable = if filtered_out_tracks.is_empty() {
         Some(EVERY_TRACK_PASSES_THE_FILTER_HOVER)
-    } else if let Some(read_only) = ctx.read_only_recording_history_hover {
-        Some(read_only)
-    } else if any_track_is_stored {
-        None
     } else {
-        Some(ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER)
+        ctx.shelve_unavailable_hover(filtered_out_tracks.iter().map(|track| track.fi))
     };
     let button = Button::new(format!(
         "{ICON_TRAY_ARROW_DOWN} {SHELVE_FILTERED_DATA_LABEL}{ELLIPSIS}"
@@ -564,6 +582,62 @@ fn show_only_track_menu_entry(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut 
     }
 }
 
+struct ShelveMenuEntry {
+    label: &'static str,
+    hover: &'static str,
+    items: Vec<NodeKey>,
+}
+
+fn shelve_menu_entry(
+    ui: &mut egui::Ui,
+    ShelveMenuEntry {
+        label,
+        hover,
+        items,
+    }: ShelveMenuEntry,
+    ctx: &mut PanelContext<'_>,
+) {
+    let unavailable = ctx.shelve_unavailable_hover(items.iter().map(|item| item.file()));
+    let button = Button::new(label);
+    let response = match unavailable {
+        Some(reason) => ui.add_enabled(false, button).on_disabled_hover_text(reason),
+        None => ui.add(button).on_hover_text(hover),
+    };
+    if response.clicked() {
+        ctx.tree.shelve_confirm = Some(ShelveConfirmState {
+            items,
+            delete_permanently: false,
+        });
+        ui.close();
+    }
+}
+
+/// The shelve entries of a track row's context menu: the row's own track, and
+/// the tree's selection while it holds two items or more.
+fn shelve_menu_entries(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'_>) {
+    shelve_menu_entry(
+        ui,
+        ShelveMenuEntry {
+            label: SHELVE_TRACK_LABEL,
+            hover: SHELVE_TRACK_HOVER,
+            items: vec![NodeKey::Track(track_ref)],
+        },
+        ctx,
+    );
+    if ctx.tree.selection.len() >= 2 {
+        let selected: Vec<NodeKey> = ctx.tree.selection.iter().copied().collect();
+        shelve_menu_entry(
+            ui,
+            ShelveMenuEntry {
+                label: SHELVE_SELECTED_TRACKS_LABEL,
+                hover: SHELVE_SELECTED_TRACKS_HOVER,
+                items: selected,
+            },
+            ctx,
+        );
+    }
+}
+
 /// The line the section groups a recording's track rows under. It states the
 /// recording and takes the map hover, and has no control of its own.
 fn render_visible_file_caption(
@@ -656,6 +730,8 @@ fn render_visible_track_row(
             ctx.tree.hide_file(track_ref.fi);
             ui.close();
         }
+        ui.separator();
+        shelve_menu_entries(ui, track_ref, ctx);
     });
 }
 
@@ -1440,7 +1516,14 @@ fn render_track_row(
             ui.close();
         }
         ui.separator();
-        if ui.button("Unload").clicked() {
+        let unload =
+            ui.button("Unload")
+                .on_hover_text(if ctx.file_stored_in_history(track_ref.fi) {
+                    "Unloads this track from the view. It stays in the recording history."
+                } else {
+                    "Unloads this track from the current view"
+                });
+        if unload.clicked() {
             ctx.tree.pending_unload = Some(vec![key]);
             ui.close();
         }
@@ -1448,6 +1531,8 @@ fn render_track_row(
             ctx.tree.pending_unload = Some(ctx.tree.selection.iter().cloned().collect());
             ui.close();
         }
+        ui.separator();
+        shelve_menu_entries(ui, track_ref, ctx);
     });
 
     if is_expanded {

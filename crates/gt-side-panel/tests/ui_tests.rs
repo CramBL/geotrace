@@ -24,7 +24,8 @@ use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
 use gt_side_panel::{
     EVERY_TRACK_PASSES_THE_FILTER_HOVER, FilterPanelState, NodeKey,
     ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER, PanelContext, SHELVE_FILTERED_DATA_LABEL,
-    SnapCostingTarget, SnapPanelView, SnapRowView, TreeState, show_side_panel,
+    SHELVE_SELECTED_TRACKS_LABEL, SHELVE_TRACK_LABEL, SnapCostingTarget, SnapPanelView,
+    SnapRowView, TreeState, show_side_panel,
 };
 use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
 use gt_types::{
@@ -2496,4 +2497,151 @@ fn the_shelve_button_is_grayed_for_a_recording_outside_the_recording_history() {
     harness
         .inner
         .get_by_label_contains(ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER);
+}
+
+/// The panel over a stored recording of two tracks, with the tree's recording
+/// expanded so both its track rows are drawn.
+fn harness_over_an_expanded_stored_recording() -> TestHarness<'static, State> {
+    let mut state = state_with_two_tracks(Some(stored_recording_ref()));
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    let mut harness = make_harness(state);
+    harness.run();
+    harness
+}
+
+fn shelve_confirmation_items(harness: &TestHarness<'static, State>) -> Option<Vec<NodeKey>> {
+    harness
+        .state()
+        .tree
+        .shelve_confirm
+        .as_ref()
+        .map(|confirm| confirm.items.clone())
+}
+
+#[test]
+fn the_tree_context_menu_shelves_the_track_it_was_opened_on() {
+    let mut harness = harness_over_an_expanded_stored_recording();
+
+    tree_row(&harness, "#2").click_secondary();
+    harness.run();
+    harness.inner.get_by_label(SHELVE_TRACK_LABEL).click();
+    harness.run();
+
+    assert_eq!(
+        shelve_confirmation_items(&harness),
+        Some(vec![NodeKey::Track(TrackRef::new(
+            FileIdx::new(0),
+            TrackIdx::new(1)
+        ))])
+    );
+}
+
+#[test]
+fn the_visible_section_context_menu_shelves_the_track_it_was_opened_on() {
+    let mut harness = make_harness(state_with_two_tracks(Some(stored_recording_ref())));
+    harness.run();
+
+    section_row(&harness, "#1").click_secondary();
+    harness.run();
+    harness.inner.get_by_label(SHELVE_TRACK_LABEL).click();
+    harness.run();
+
+    assert_eq!(
+        shelve_confirmation_items(&harness),
+        Some(vec![NodeKey::Track(first_track())])
+    );
+}
+
+/// The selected-many entry takes the tree's whole selection, as "Unload
+/// selected" does, and not the row the menu was opened on.
+#[test]
+fn the_tree_context_menu_shelves_every_selected_track() {
+    let mut harness = harness_over_an_expanded_stored_recording();
+    let second = NodeKey::Track(TrackRef::new(FileIdx::new(0), TrackIdx::new(1)));
+    harness.state_mut().tree.selection = [NodeKey::Track(first_track()), second].into();
+    harness.run();
+
+    tree_row(&harness, "#1").click_secondary();
+    harness.run();
+    harness
+        .inner
+        .get_by_label(SHELVE_SELECTED_TRACKS_LABEL)
+        .click();
+    harness.run();
+
+    assert_eq!(
+        shelve_confirmation_items(&harness),
+        Some(vec![NodeKey::Track(first_track()), second])
+    );
+}
+
+/// The menu offers the row's own entry alone with one track selected.
+#[test]
+fn the_tree_context_menu_offers_the_selected_entry_from_two_selected_tracks_on() {
+    let mut harness = harness_over_an_expanded_stored_recording();
+    harness.state_mut().tree.selection = [NodeKey::Track(first_track())].into();
+    harness.run();
+
+    tree_row(&harness, "#1").click_secondary();
+    harness.run();
+
+    assert!(
+        harness
+            .inner
+            .query_by_label(SHELVE_SELECTED_TRACKS_LABEL)
+            .is_none()
+    );
+}
+
+#[rstest::rstest]
+#[case::a_recording_outside_the_recording_history(
+    None,
+    None,
+    ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER
+)]
+#[case::a_read_only_session(Some(stored_recording_ref()), Some(READ_ONLY_HOVER), READ_ONLY_HOVER)]
+fn the_tree_context_menu_grays_out_its_shelve_entry(
+    #[case] db_ref: Option<gt_history_types::DatabaseRef>,
+    #[case] read_only: Option<&'static str>,
+    #[case] hover: &str,
+) {
+    let mut state = state_with_two_tracks(db_ref);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    state.read_only_recording_history_hover = read_only;
+    let mut harness = make_harness(state);
+    harness.run();
+
+    tree_row(&harness, "#1").click_secondary();
+    harness.run();
+
+    assert!(
+        harness
+            .inner
+            .get_by_label(SHELVE_TRACK_LABEL)
+            .accesskit_node()
+            .is_disabled()
+    );
+    harness
+        .inner
+        .hover_and_settle(By::new().label(SHELVE_TRACK_LABEL), 3);
+    harness.inner.get_by_label_contains(hover);
+    assert_eq!(shelve_confirmation_items(&harness), None);
+}
+
+/// Snapshot: the Visible section's open context menu over a stored recording
+/// with both its tracks selected.
+#[test]
+fn snapshot_the_visible_section_context_menu() {
+    let mut state = state_with_two_tracks(Some(stored_recording_ref()));
+    state.tree.selection = [
+        NodeKey::Track(first_track()),
+        NodeKey::Track(TrackRef::new(FileIdx::new(0), TrackIdx::new(1))),
+    ]
+    .into();
+    let mut harness = make_harness_sized(state, egui::vec2(420.0, 600.0));
+    harness.run();
+
+    section_row(&harness, "#1").click_secondary();
+    harness.run();
+    harness.snapshot("side_panel_visible_section_context_menu");
 }
