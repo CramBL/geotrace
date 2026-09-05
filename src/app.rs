@@ -35,6 +35,7 @@ mod modals;
 mod panes;
 mod query;
 mod read_only_session;
+mod recording_from_disk;
 mod recording_name_template;
 mod recording_names_cache;
 mod reference_window;
@@ -401,6 +402,13 @@ pub struct App {
     /// settings differ from the current ones. Drives the recalculate/use-stored
     /// prompt.
     pending_resegment: Option<ResegmentPrompt>,
+    /// Set when the files that arrived together include a recording the
+    /// history database already holds. Drives the prompt offering the stored
+    /// version or the file on disk.
+    pending_recordings_already_in_history: Option<recording_from_disk::RecordingsAlreadyInHistory>,
+    /// How many recordings are out with the history worker, waiting to be
+    /// looked up there before they load.
+    recordings_awaiting_a_history_lookup: usize,
 
     storage_settings: crate::settings::StorageSettings,
     /// Recordings selected for auto-pruning, waiting for the user to confirm.
@@ -668,6 +676,8 @@ impl App {
             data_directory_owner_process_id: None,
             keep_db_backup: true,
             pending_resegment: None,
+            pending_recordings_already_in_history: None,
+            recordings_awaiting_a_history_lookup: 0,
             storage_settings: crate::settings::StorageSettings::default(),
             pending_auto_prune: None,
             environment_storage_settings: crate::settings::EnvironmentStorageSettings::default(),
@@ -693,30 +703,14 @@ impl App {
         let initial_snapshot = app.collect_snapshot();
         app.config = SettingsAutosaver::new(initial_snapshot);
 
-        for path in paths {
-            app.spawn_load_path(path.clone());
-        }
+        app.load_arriving_files(
+            paths
+                .iter()
+                .map(|path| storage::QueuedLoad::Path(path.clone()))
+                .collect(),
+        );
 
         app
-    }
-
-    /// Load `path`, once the databases it is stored in and resolved against
-    /// are open.
-    pub(in crate::app) fn spawn_load_path(&mut self, path: PathBuf) {
-        if let Some(queued_loads) = self.storage_open.queued_loads_mut() {
-            queued_loads.push(storage::QueuedLoad::Path(path));
-            return;
-        }
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        if ext == "gtd" {
-            self.loader.spawn_gtd_path(path, self.processing_config);
-        } else {
-            self.loader.spawn_log_path(path);
-        }
     }
 
     fn plot_is_visible(&self) -> bool {

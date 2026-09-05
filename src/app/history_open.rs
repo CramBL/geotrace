@@ -290,28 +290,28 @@ impl App {
                     &stored_settings,
                     self.processing_config,
                 );
-                self.loader.spawn_gtd_from_history(
+                self.loader.spawn_gtd_bytes(
                     stored.bytes.into(),
                     filename,
                     config,
-                    loader::HistoryOpen::ApplyShelved {
+                    Some(loader::HistoryOpen::ApplyShelved {
                         db_ref,
                         stored_tracks,
                         applied_current_marker_settings: marker_settings_changed,
-                    },
+                    }),
                 );
             }
             // Older recording with no stored settings: load with current settings.
             None => {
-                self.loader.spawn_gtd_from_history(
+                self.loader.spawn_gtd_bytes(
                     stored.bytes.into(),
                     filename,
                     self.processing_config,
-                    loader::HistoryOpen::ApplyShelved {
+                    Some(loader::HistoryOpen::ApplyShelved {
                         db_ref,
                         stored_tracks,
                         applied_current_marker_settings: false,
-                    },
+                    }),
                 );
             }
         }
@@ -414,6 +414,9 @@ impl App {
                 result,
             } => {
                 self.apply_log_detach_outcome(&attachment, log, &name, result);
+            }
+            Response::RecordingsFromDiskScreened(screened) => {
+                self.load_screened_recordings(screened);
             }
             Response::DuplicateAttachmentFound {
                 log,
@@ -685,29 +688,29 @@ impl App {
 
         match choice {
             Some(ResegmentChoice::RecalculateWithCurrentSettings) => {
-                self.loader.spawn_gtd_from_history(
+                self.loader.spawn_gtd_bytes(
                     prompt.bytes,
                     prompt.filename,
                     self.processing_config,
-                    loader::HistoryOpen::Recalculate {
+                    Some(loader::HistoryOpen::Recalculate {
                         db_ref: prompt.db_ref,
                         applied_current_marker_settings: prompt.marker_settings_changed,
-                    },
+                    }),
                 );
                 self.history_window.invalidate();
             }
             Some(ResegmentChoice::UseStoredTracks) => {
                 let config =
                     loader::config_from_stored_segmentation(&stored, self.processing_config);
-                self.loader.spawn_gtd_from_history(
+                self.loader.spawn_gtd_bytes(
                     prompt.bytes,
                     prompt.filename,
                     config,
-                    loader::HistoryOpen::ApplyShelved {
+                    Some(loader::HistoryOpen::ApplyShelved {
                         db_ref: prompt.db_ref,
                         stored_tracks: prompt.stored_tracks,
                         applied_current_marker_settings: prompt.marker_settings_changed,
-                    },
+                    }),
                 );
             }
             Some(ResegmentChoice::Cancel) => {}

@@ -8,6 +8,7 @@
 - **Interface:** The list of a recording's shelved tracks offers a delete beside "Unshelve all" that permanently removes that recording's shelved tracks.
 - **Interface:** A recording opened from history shows how many of its tracks are shelved on its side panel row, and pressing that mark lists them in the History window.
 - **Interface:** A track hidden in a recording that history holds stays hidden when that recording is opened again.
+- **Interface:** Dropping a `.gtd` that history already holds opens one prompt for the whole drop, offering the stored version or the file on disk. A tickbox leaves the shelved tracks out of the file on disk.
 
 ### Changed
 

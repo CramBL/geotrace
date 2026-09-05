@@ -80,6 +80,11 @@ use super::log_viewer;
 use super::modals::{DELETE_PERMANENTLY_BUTTON_LABEL, SHELVE_BUTTON_LABEL};
 use super::query;
 use super::read_only_session::{READ_ONLY_MARKER_LABEL, READ_ONLY_RECORDING_HISTORY_HOVER};
+use super::recording_from_disk::{
+    LEAVE_SHELVED_TRACKS_OUT_LABEL, LOAD_FROM_DISK_LABEL, NO_SHELVED_TRACK_HOVER,
+    OPEN_THE_STORED_VERSION_LABEL, RecordingAlreadyInHistory, RecordingContent, RecordingFromDisk,
+    RecordingsAlreadyInHistory, recordings_already_in_history_title,
+};
 use super::settings_ui::{self, SettingsPage};
 use super::storage::{DatabasesPending, OPENING_DATABASES, OpenStorage, StorageOpen};
 use super::storage_controls::AUTO_STORE_LABEL;
@@ -291,13 +296,35 @@ fn minimal_gtd_bytes() -> Vec<u8> {
 /// finished with it.
 ///
 /// The thread sends a `Completed` message when done and `drain_load_channel`
-/// (called at the start of every `ui()` frame) removes the job.
+/// (called at the start of every `ui()` frame) removes the job. A dropped
+/// recording is looked up in the recording history before its job starts, so
+/// the wait covers that lookup too.
 fn drop_file_and_wait_for_load(harness: &mut Harness<App>, file: TestDroppedFile) {
     harness.input_mut().dropped_files.push(Arc::new(file));
     harness.step();
     assert!(
-        harness.step_until(|harness| harness.state().loader.loading_jobs.is_empty()),
+        harness.step_until(|harness| harness.state().loader.loading_jobs.is_empty()
+            && harness.state().recordings_awaiting_a_history_lookup == 0),
         "the background load did not finish"
+    );
+}
+
+/// Drop a recording history already holds, answer the prompt it raises with
+/// "Load from disk", and step until the recording is in the view.
+fn drop_a_stored_recording_and_load_it_from_disk(
+    harness: &mut Harness<App>,
+    file: TestDroppedFile,
+) {
+    let loaded_before = harness.state().shared.borrow().loaded_files.len();
+    harness.input_mut().dropped_files.push(Arc::new(file));
+    harness.step();
+    step_until_the_prompt_over_stored_recordings_is_drawn(harness);
+    harness.get_by_label(LOAD_FROM_DISK_LABEL).click();
+    assert!(
+        harness.step_until(|harness| harness.state().shared.borrow().loaded_files.len()
+            > loaded_before
+            && harness.state().loader.loading_jobs.is_empty()),
+        "the recording did not load from disk"
     );
 }
 
@@ -7319,6 +7346,400 @@ fn the_auto_prune_confirmation_keeps_its_buttons_in_place_while_more_candidates_
     );
 }
 
+/// A recording that segments into two tracks under the default split gap: ten
+/// fixes a second apart, an hour of nothing, then ten more.
+fn two_track_gtd_bytes() -> Vec<u8> {
+    use geotrace_sdk::{Angle, Duration as SdkDuration, NavFileBuilder, NavFix, NavFixTime};
+
+    let mut recorder = NavFileBuilder::new().open();
+    for fix in 0..20i64 {
+        let seconds = if fix < 10 { fix } else { fix + 3_600 };
+        recorder.add_nav_fix(
+            NavFix::builder()
+                .time(NavFixTime::Receiver(
+                    base_time() + SdkDuration::seconds(seconds),
+                ))
+                .lat(Angle::degrees(51.5 + 0.0002 * fix as f64))
+                .lon(Angle::degrees(-0.1))
+                .heading(Angle::degrees(270.0))
+                .build(),
+        );
+    }
+    let nav_file = recorder.finish().expect("valid nav file");
+    let mut bytes = Vec::new();
+    nav_file.write(&mut bytes).expect("write bytes");
+    bytes
+}
+
+/// The app with `ride.gtd` in its history database, the second of its two
+/// tracks shelved, and the same file sitting on disk beside the database.
+fn app_with_a_stored_recording_on_disk() -> (Harness<'static, App>, tempfile::TempDir, PathBuf) {
+    use gt_store::{TrackRange, TrackState};
+
+    app_with_a_stored_recording_of(&[
+        TrackRange {
+            start: 0,
+            end: 10,
+            state: TrackState::Live,
+        },
+        TrackRange {
+            start: 10,
+            end: 20,
+            state: TrackState::Shelved,
+        },
+    ])
+}
+
+/// [`app_with_a_stored_recording_on_disk`] with both of the stored tracks
+/// live.
+fn app_with_a_stored_recording_of_live_tracks()
+-> (Harness<'static, App>, tempfile::TempDir, PathBuf) {
+    use gt_store::{TrackRange, TrackState};
+
+    app_with_a_stored_recording_of(&[
+        TrackRange {
+            start: 0,
+            end: 10,
+            state: TrackState::Live,
+        },
+        TrackRange {
+            start: 10,
+            end: 20,
+            state: TrackState::Live,
+        },
+    ])
+}
+
+/// The app with `ride.gtd` in its history database under `tracks`, and the
+/// same file sitting on disk beside the database.
+///
+/// The temporary directory holds both and is returned so it outlives the
+/// harness.
+fn app_with_a_stored_recording_of(
+    tracks: &[gt_store::TrackRange],
+) -> (Harness<'static, App>, tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = gt_store::Store::open_in(dir.path());
+    let bytes = two_track_gtd_bytes();
+    let gtd_path = dir.path().join("ride.gtd");
+    std::fs::write(&gtd_path, &bytes).expect("write the recording");
+
+    let (mut harness, databases) = app_with_the_databases_still_opening(&[]);
+    harness.step();
+
+    // Stored under the settings the app runs with: opening the stored version
+    // then reproduces its tracks without the "Track settings differ" prompt.
+    let settings =
+        crate::app::loader::stored_segmentation_from_config(&harness.state().processing_config);
+    let mut db =
+        Recordings::open_or_create(&store.recordings_path()).expect("open the history database");
+    let meta = gt_store::extract_meta(&bytes).expect("the recording has metadata");
+    db.insert("dev", &meta, tracks, settings, &bytes)
+        .expect("store the recording");
+    drop(db);
+
+    land_the_databases(&mut harness, &databases, &store);
+    (harness, dir, gtd_path)
+}
+
+/// Drop each of `paths` on the window in one drop, and step once so the app
+/// takes them.
+fn drop_paths(harness: &mut Harness<'_, App>, paths: &[PathBuf]) {
+    for path in paths {
+        harness
+            .input_mut()
+            .dropped_files
+            .push(Arc::new(TestDroppedFile::path(path.clone())));
+    }
+    harness.step();
+}
+
+/// Step until the prompt over the recordings history holds is drawn where the
+/// user sees it: an anchored dialog takes its position on the pass after it
+/// opens, and a click aimed at the pass before that misses its buttons.
+fn step_until_the_prompt_over_stored_recordings_is_drawn(harness: &mut Harness<'_, App>) {
+    assert!(
+        harness.step_until(|harness| harness
+            .state()
+            .pending_recordings_already_in_history
+            .is_some()),
+        "the drop of a recording history holds raised no prompt"
+    );
+    harness.run_steps(3);
+}
+
+/// How many tracks the one loaded recording has, once its load lands.
+fn step_until_one_recording_is_loaded(harness: &mut Harness<'_, App>) -> usize {
+    assert!(
+        harness.step_until(
+            |harness| harness.state().shared.borrow().loaded_files.len() == 1
+                && harness.state().loader.loading_jobs.is_empty()
+        ),
+        "no recording finished loading"
+    );
+    let state = harness.state();
+    let shared = state.shared.borrow();
+    shared
+        .loaded_files
+        .view()
+        .get(0)
+        .expect("the loaded recording")
+        .file()
+        .tracks
+        .len()
+}
+
+#[test]
+fn dropping_a_recording_history_holds_raises_a_prompt_before_it_loads() {
+    let (mut harness, _dir, gtd_path) = app_with_a_stored_recording_on_disk();
+
+    drop_paths(&mut harness, &[gtd_path]);
+    step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
+
+    let state = harness.state();
+    let prompt = state
+        .pending_recordings_already_in_history
+        .as_ref()
+        .expect("the prompt is open");
+    assert_eq!(
+        prompt
+            .recordings
+            .iter()
+            .map(|recording| recording.from_disk.filename.as_str())
+            .collect::<Vec<_>>(),
+        vec!["ride.gtd"]
+    );
+    assert_eq!(
+        state.shared.borrow().loaded_files.len(),
+        0,
+        "the recording loaded before the user chose"
+    );
+}
+
+/// One drop of five recordings history holds costs one decision, not five.
+#[test]
+fn one_drop_of_several_stored_recordings_raises_one_prompt() {
+    let (mut harness, dir, gtd_path) = app_with_a_stored_recording_on_disk();
+    let copies: Vec<PathBuf> = (0..4)
+        .map(|copy| {
+            let path = dir.path().join(format!("ride-copy-{copy}.gtd"));
+            std::fs::copy(&gtd_path, &path).expect("copy the recording");
+            path
+        })
+        .collect();
+
+    drop_paths(&mut harness, &[vec![gtd_path], copies].concat());
+    step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
+
+    let state = harness.state();
+    let prompt = state
+        .pending_recordings_already_in_history
+        .as_ref()
+        .expect("the prompt is open");
+    assert_eq!(prompt.recordings.len(), 5);
+    assert!(
+        harness
+            .window_rect(&recordings_already_in_history_title(5))
+            .is_some(),
+        "no prompt stands over all five recordings"
+    );
+}
+
+/// A drop mixing a stored recording with one history has never seen loads the
+/// second straight away and raises the prompt over the first.
+#[test]
+fn a_drop_loads_the_recording_new_to_history_and_prompts_over_the_stored_one() {
+    let (mut harness, dir, gtd_path) = app_with_a_stored_recording_on_disk();
+    let fresh_path = dir.path().join("fresh.gtd");
+    std::fs::write(&fresh_path, minimal_gtd_bytes()).expect("write the second recording");
+
+    drop_paths(&mut harness, &[gtd_path, fresh_path]);
+    step_until_one_recording_is_loaded(&mut harness);
+
+    let state = harness.state();
+    let shared = state.shared.borrow();
+    assert_eq!(
+        shared
+            .loaded_files
+            .view()
+            .get(0)
+            .expect("the loaded recording")
+            .file()
+            .metadata
+            .filename,
+        "fresh.gtd"
+    );
+    let prompt = state
+        .pending_recordings_already_in_history
+        .as_ref()
+        .expect("the prompt is open");
+    assert_eq!(
+        prompt
+            .recordings
+            .iter()
+            .map(|recording| recording.from_disk.filename.as_str())
+            .collect::<Vec<_>>(),
+        vec!["ride.gtd"]
+    );
+}
+
+#[test]
+fn opening_the_stored_version_reproduces_the_stored_tracks_from_the_database() {
+    let (mut harness, _dir, gtd_path) = app_with_a_stored_recording_on_disk();
+
+    drop_paths(&mut harness, &[gtd_path]);
+    step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
+    harness.get_by_label(OPEN_THE_STORED_VERSION_LABEL).click();
+
+    assert_eq!(
+        step_until_one_recording_is_loaded(&mut harness),
+        1,
+        "the stored version showed the shelved track"
+    );
+    let state = harness.state();
+    let shared = state.shared.borrow();
+    let file = shared
+        .loaded_files
+        .view()
+        .get(0)
+        .expect("the loaded recording")
+        .file();
+    assert!(
+        matches!(file.source, gt_types::FileSource::GtdBytes(_)),
+        "the stored version was read from disk"
+    );
+}
+
+#[test]
+fn loading_from_disk_leaves_the_shelved_track_out_while_the_tickbox_is_ticked() {
+    let (mut harness, _dir, gtd_path) = app_with_a_stored_recording_on_disk();
+
+    drop_paths(&mut harness, &[gtd_path]);
+    step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
+    harness.get_by_label(LOAD_FROM_DISK_LABEL).click();
+
+    assert_eq!(
+        step_until_one_recording_is_loaded(&mut harness),
+        1,
+        "the load from disk showed the shelved track"
+    );
+    let state = harness.state();
+    let shared = state.shared.borrow();
+    let file = shared
+        .loaded_files
+        .view()
+        .get(0)
+        .expect("the loaded recording")
+        .file();
+    assert!(
+        matches!(file.source, gt_types::FileSource::GtdPath(_)),
+        "the load from disk read the stored bytes"
+    );
+}
+
+#[test]
+fn loading_from_disk_shows_every_track_once_the_tickbox_is_cleared() {
+    let (mut harness, _dir, gtd_path) = app_with_a_stored_recording_on_disk();
+
+    drop_paths(&mut harness, &[gtd_path]);
+    step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
+    harness.get_by_label(LEAVE_SHELVED_TRACKS_OUT_LABEL).click();
+    harness.step();
+    harness.get_by_label(LOAD_FROM_DISK_LABEL).click();
+
+    assert_eq!(
+        step_until_one_recording_is_loaded(&mut harness),
+        2,
+        "the load from disk left the shelved track out with the tickbox cleared"
+    );
+}
+
+#[test]
+fn the_tickbox_is_grayed_out_where_no_stored_recording_has_a_shelved_track() {
+    let (mut harness, _dir, gtd_path) = app_with_a_stored_recording_of_live_tracks();
+
+    drop_paths(&mut harness, &[gtd_path]);
+    step_until_the_prompt_over_stored_recordings_is_drawn(&mut harness);
+
+    assert!(
+        harness
+            .get_by_label(LEAVE_SHELVED_TRACKS_OUT_LABEL)
+            .accesskit_node()
+            .is_disabled(),
+        "the tickbox is live over recordings with every track in the view"
+    );
+    harness.get_by_label(LEAVE_SHELVED_TRACKS_OUT_LABEL).hover();
+    harness.run_steps(3);
+    assert!(
+        harness
+            .query_by_label_contains(NO_SHELVED_TRACK_HOVER)
+            .is_some(),
+        "the grayed-out tickbox says nothing about why"
+    );
+}
+
+/// The recordings one drop brought in that history already holds, as the
+/// prompt lists them.
+fn recordings_already_in_history(count: usize) -> RecordingsAlreadyInHistory {
+    use gt_store::{TrackRange, TrackState};
+
+    RecordingsAlreadyInHistory {
+        recordings: (0..count)
+            .map(|index| RecordingAlreadyInHistory {
+                from_disk: RecordingFromDisk {
+                    filename: format!("ride-{index}.gtd"),
+                    content: RecordingContent::Path(PathBuf::from(format!(
+                        "/recordings/ride-{index}.gtd"
+                    ))),
+                },
+                db_ref: gt_store::DatabaseRef {
+                    identity: format!("auto:ride-{index}.gtd"),
+                    group_name: format!("2025-05-2{index}T10:00:00Z_a1b2"),
+                },
+                stored_tracks: vec![
+                    TrackRange {
+                        start: 0,
+                        end: 10,
+                        state: TrackState::Live,
+                    },
+                    TrackRange {
+                        start: 10,
+                        end: 20,
+                        state: TrackState::Shelved,
+                    },
+                ],
+            })
+            .collect(),
+        leave_shelved_tracks_out: true,
+    }
+}
+
+fn app_showing_the_prompt_over_stored_recordings(count: usize) -> TestHarness<'static, App> {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(640.0, 420.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness
+        .inner
+        .state_mut()
+        .pending_recordings_already_in_history = Some(recordings_already_in_history(count));
+    harness.run();
+    harness
+}
+
+#[test]
+fn snapshot_recordings_already_in_history_dialog() {
+    let mut harness = app_showing_the_prompt_over_stored_recordings(1);
+    harness.snapshot_loose("recordings_already_in_history_dialog");
+}
+
+/// More recordings than the prompt lists one by one: the rest are counted.
+#[test]
+fn snapshot_recordings_already_in_history_dialog_past_the_listed_recordings() {
+    let mut harness = app_showing_the_prompt_over_stored_recordings(14);
+    harness.snapshot_loose("recordings_already_in_history_dialog_past_the_listed_recordings");
+}
+
 fn stored_segmentation_from_app_with_rules(
     app: &App,
     track_split_rule: gt_store::StoredTrackSplitRule,
@@ -11168,7 +11589,10 @@ mod log_association {
         .expect("the attribute is writable");
         drop(db);
 
-        drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+        drop_a_stored_recording_and_load_it_from_disk(
+            &mut harness,
+            recording_alongside_the_log("walk.gtd", 55.0),
+        );
 
         assert!(
             harness.step_until(|harness| harness
@@ -11268,7 +11692,10 @@ mod log_association {
         assert_eq!(harness.state().logs.len(), 0);
 
         // Opening the recording again restores the log it carries.
-        drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+        drop_a_stored_recording_and_load_it_from_disk(
+            &mut harness,
+            recording_alongside_the_log("walk.gtd", 55.0),
+        );
         assert!(
             harness.step_until(|harness| harness.state().logs.len() == 1),
             "the attached log came back with the recording"
@@ -11874,7 +12301,10 @@ mod log_association {
         {
             std::fs::remove_file(entry.path()).expect("the stored log is removable");
         }
-        drop_file_and_wait_for_load(&mut harness, recording_alongside_the_log("walk.gtd", 55.0));
+        drop_a_stored_recording_and_load_it_from_disk(
+            &mut harness,
+            recording_alongside_the_log("walk.gtd", 55.0),
+        );
 
         assert!(
             harness.step_until(|harness| harness
