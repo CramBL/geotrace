@@ -8570,8 +8570,7 @@ fn push_points_as(
     let mut shared = state.shared.borrow_mut();
     shared.loaded_files.push(file, history);
     let fi = gt_types::FileIdx::new(shared.loaded_files.files().len() - 1);
-    let files = shared.loaded_files.files().to_vec();
-    shared.tree.sync_from_loaded_files(&files);
+    shared.sync_tree_from_loaded_files();
     fi
 }
 

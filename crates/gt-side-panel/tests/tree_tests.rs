@@ -1,36 +1,47 @@
+use std::path::PathBuf;
+
+use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_side_panel::tree::{CheckState, NodeKey, TreeState};
-use gt_types::{DataCategory, DataCategorySet, FileIdx, TrackIdx, TrackRef};
+use gt_types::{
+    DataCategory, FileIdx, FileMetadata, FileSource, LoadedFile, LoadedTrack, TrackIdx,
+    TrackMetadata, TrackRef,
+};
 use rstest::rstest;
+use rustc_hash::FxHashMap;
+
+/// `file_count` recordings of `tracks_per_file` tracks each, every track empty
+/// and numbered the way the track builder numbers one.
+fn make_loaded_files(file_count: usize, tracks_per_file: usize) -> LoadedFiles {
+    let mut loaded = LoadedFiles::new();
+    for fi in 0..file_count {
+        let file = LoadedFile {
+            metadata: FileMetadata {
+                filename: format!("ride-{fi}.gtd"),
+                ..gt_test_utils::empty_file_metadata()
+            },
+            tracks: (0..tracks_per_file)
+                .map(|ti| LoadedTrack {
+                    metadata: TrackMetadata {
+                        index: ti + 1,
+                        ..gt_test_utils::empty_track_metadata()
+                    },
+                    ..gt_test_utils::loaded_track_with_points(Vec::new())
+                })
+                .collect(),
+            event_marker_styles: FxHashMap::default(),
+            orphaned_event_markers: Vec::new(),
+            source: FileSource::GtdPath(PathBuf::new()),
+            load_warnings: Vec::new(),
+        };
+        loaded.push(file, FileHistory::None);
+    }
+    loaded
+}
 
 fn make_tree(file_count: usize, tracks_per_file: usize) -> TreeState {
     let mut tree = TreeState::new();
-    for _ in 0..file_count {
-        let file_node = gt_side_panel::FileNode {
-            expanded: false,
-            check: CheckState::On,
-            tracks: (0..tracks_per_file).map(|_| make_track_node()).collect(),
-        };
-        tree.files.push(file_node);
-    }
+    tree.sync_from_loaded_files(make_loaded_files(file_count, tracks_per_file).view());
     tree
-}
-
-fn make_track_node() -> gt_side_panel::TrackNode {
-    gt_side_panel::TrackNode {
-        expanded: false,
-        check: CheckState::On,
-        categories_expanded: DataCategorySet::default(),
-        track_visible: true,
-        tpv_visible: true,
-        satellites_visible: true,
-        custom_markers_visible: true,
-        generated_markers_visible: true,
-        generated_kinds_expanded: Default::default(),
-        generated_kinds_hidden: Default::default(),
-        event_paths: Default::default(),
-        event_filter: String::new(),
-        channels_expanded: false,
-    }
 }
 
 fn add_event_paths(tree: &mut TreeState, fi: usize, ti: usize, paths: &[&str]) {
