@@ -455,11 +455,8 @@ typedef struct {
     char comp_storage[MAX_CH_COMPONENTS][CH_COMP_BUFSIZE];
 } ChannelAcc;
 
-/* Returns the accumulator for the channel in column 0. Appends a new
-   accumulator from the row's unit, period, description and component columns
-   when column 0 holds a channel no earlier row listed.
-   cols: `name`, `unit`, `period_deg`, `description`, `components`, `time`,
-   `values` */
+/* Returns the accumulator for the channel in column 0, appending one filled
+   from the row when no earlier row listed that channel. */
 static ChannelAcc *channel_for_row(ChannelAcc *channels, size_t *n_channels, char *cols[]) {
     for (size_t i = 0; i < *n_channels; i++) {
         if (strcmp(channels[i].name, cols[0]) == 0) {
@@ -511,6 +508,8 @@ static void append_sample_values(ChannelAcc *accumulator, char *values_col) {
     }
 }
 
+/* cols: `name`, `unit`, `period_deg`, `description`, `components`, `time`,
+   `values` */
 static void load_channels(GtdFileBuilder *builder, const char *base) {
     FILE *file = open_csv(base, "channels.csv");
     char line[CSV_BUFSIZE];

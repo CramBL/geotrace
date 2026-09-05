@@ -87,11 +87,11 @@ pub struct GtdChannel {
 /// trimmed, and a label matching a recognized unit is rejected: it belongs in
 /// `GTD_CHANNEL_UNIT_RECOGNIZED`, which keeps its conversion factor.
 ///
-/// @param label        Unit label to validate, NUL-terminated UTF-8.
-/// @param unit_mode    A @ref GtdChannelUnitMode value.
-/// @param out          Buffer for the canonical label, or NULL to size it.
-/// @param out_capacity Bytes writable at @p out.
-/// @param required_len Receives the canonical byte length including the NUL.
+/// @param label           Unit label to validate, NUL-terminated UTF-8.
+/// @param unit_mode       A @ref GtdChannelUnitMode value.
+/// @param out             Buffer for the canonical label, or NULL to size it.
+/// @param out_capacity    Bytes writable at @p out.
+/// @param required_length Receives the canonical byte length including the NUL.
 ///
 /// @return `GTD_ERR_INVALID_CHANNEL` if the label is invalid for @p unit_mode or
 ///         @p unit_mode is not a @ref GtdChannelUnitMode, `GTD_ERR_UTF8` if
@@ -103,10 +103,10 @@ pub unsafe extern "C" fn gtd_channel_unit_parse(
     unit_mode: u32,
     out: *mut c_char,
     out_capacity: usize,
-    required_len: *mut usize,
+    required_length: *mut usize,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
-        if label.is_null() || required_len.is_null() {
+        if label.is_null() || required_length.is_null() {
             error::set_last_error("null pointer argument");
             return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         }
@@ -130,8 +130,8 @@ pub unsafe extern "C" fn gtd_channel_unit_parse(
             }
         };
         let bytes = unit.label().as_bytes();
-        // SAFETY: `required_len` is non-null and writable by the caller.
-        unsafe { *required_len = bytes.len().saturating_add(1) };
+        // SAFETY: `required_length` is non-null and writable by the caller.
+        unsafe { *required_length = bytes.len().saturating_add(1) };
         if out.is_null() || out_capacity == 0 {
             return GtdStatus::GTD_OK;
         }

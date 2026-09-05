@@ -13,13 +13,13 @@ use crate::error::{self, GtdStatus};
 /// @return `GTD_ERR_INTERNAL` if data has already been added.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_set_title(
-    b: *mut GtdFileBuilder,
+    builder: *mut GtdFileBuilder,
     title: *const c_char,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
-        let b = nonnull_mut!(b);
+        let builder = nonnull_mut!(builder);
         let s = cstr!(title);
-        b.set_title(s)
+        builder.set_title(s)
     })
 }
 
@@ -30,13 +30,13 @@ pub unsafe extern "C" fn gtd_builder_set_title(
 /// @return `GTD_ERR_INTERNAL` if data has already been added.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_set_device(
-    b: *mut GtdFileBuilder,
+    builder: *mut GtdFileBuilder,
     device: *const c_char,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
-        let b = nonnull_mut!(b);
+        let builder = nonnull_mut!(builder);
         let s = cstr!(device);
-        b.set_device(s)
+        builder.set_device(s)
     })
 }
 
@@ -47,13 +47,13 @@ pub unsafe extern "C" fn gtd_builder_set_device(
 /// @return `GTD_ERR_INTERNAL` if data has already been added.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_set_notes(
-    b: *mut GtdFileBuilder,
+    builder: *mut GtdFileBuilder,
     notes: *const c_char,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
-        let b = nonnull_mut!(b);
+        let builder = nonnull_mut!(builder);
         let s = cstr!(notes);
-        b.set_notes(s)
+        builder.set_notes(s)
     })
 }
 
@@ -64,13 +64,13 @@ pub unsafe extern "C" fn gtd_builder_set_notes(
 /// @return `GTD_ERR_INTERNAL` if data has already been added.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_set_identity(
-    b: *mut GtdFileBuilder,
+    builder: *mut GtdFileBuilder,
     identity: *const c_char,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
-        let b = nonnull_mut!(b);
+        let builder = nonnull_mut!(builder);
         let s = cstr!(identity);
-        b.set_identity(s)
+        builder.set_identity(s)
     })
 }
 
@@ -81,12 +81,12 @@ pub unsafe extern "C" fn gtd_builder_set_identity(
 /// @return `GTD_ERR_INTERNAL` if data has already been added.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_set_travel_mode(
-    b: *mut GtdFileBuilder,
+    builder: *mut GtdFileBuilder,
     mode: GtdTravelMode,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
-        let b = nonnull_mut!(b);
-        b.set_travel_mode(mode.into())
+        let builder = nonnull_mut!(builder);
+        builder.set_travel_mode(mode.into())
     })
 }
 
@@ -98,13 +98,13 @@ pub unsafe extern "C" fn gtd_builder_set_travel_mode(
 ///
 /// Must be called before the first `gtd_builder_add_*` call.
 ///
-/// @param b Builder handle. No-op if NULL.
+/// @param builder Builder handle. No-op if NULL.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gtd_builder_set_lenient(b: *mut GtdFileBuilder) {
-    if b.is_null() {
+pub unsafe extern "C" fn gtd_builder_set_lenient(builder: *mut GtdFileBuilder) {
+    if builder.is_null() {
         error::set_last_error("null pointer argument");
         return;
     }
-    // SAFETY: b is non-null and valid for the call duration
-    unsafe { (*b).set_lenient() };
+    // SAFETY: builder is non-null and valid for the call duration
+    unsafe { (*builder).set_lenient() };
 }

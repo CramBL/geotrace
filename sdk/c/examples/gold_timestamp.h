@@ -13,13 +13,18 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+typedef struct {
+    int year;
+    int month;
+} GoldYearMonth;
+
 static inline int gold_is_leap(int year) {
     return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
 }
 
-static inline int gold_month_days(int month, int year) {
-    static const int dom[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-    return (month == 2 && gold_is_leap(year)) ? 29 : dom[month - 1];
+static inline int gold_days_in_month(GoldYearMonth date) {
+    static const int days_per_month[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    return (date.month == 2 && gold_is_leap(date.year)) ? 29 : days_per_month[date.month - 1];
 }
 
 /* Reads a decimal integer at *cursor and advances it past the digits, rejecting
@@ -70,6 +75,9 @@ static inline GtdTimestamp gold_parse_timestamp(const char *text) {
         !gold_read_int(&cursor, &second)) {
         return gtd_ts_none();
     }
+    if (month < 1 || month > 12) {
+        return gtd_ts_none();
+    }
 
     /* Optional fractional seconds (".ffffff"), kept as microseconds. */
     long frac_us = 0;
@@ -105,7 +113,7 @@ static inline GtdTimestamp gold_parse_timestamp(const char *text) {
         days += gold_is_leap(y) ? 366 : 365;
     }
     for (int m = 1; m < month; m++) {
-        days += gold_month_days(m, year);
+        days += gold_days_in_month((GoldYearMonth){.year = year, .month = m});
     }
     days += day - 1;
 

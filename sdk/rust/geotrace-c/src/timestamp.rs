@@ -28,33 +28,33 @@ pub(crate) fn ts_to_datetime(ts: GtdTimestamp) -> Option<chrono::DateTime<chrono
 
 /// Construct a timestamp from whole seconds since the Unix epoch.
 #[unsafe(no_mangle)]
-pub extern "C" fn gtd_ts_from_seconds(secs: u64) -> GtdTimestamp {
+pub extern "C" fn gtd_ts_from_seconds(seconds: u64) -> GtdTimestamp {
     GtdTimestamp {
-        unix_micros: (secs as i64).saturating_mul(1_000_000),
+        unix_micros: (seconds as i64).saturating_mul(1_000_000),
     }
 }
 
 /// Construct a timestamp from milliseconds since the Unix epoch.
 #[unsafe(no_mangle)]
-pub extern "C" fn gtd_ts_from_millis(ms: u64) -> GtdTimestamp {
+pub extern "C" fn gtd_ts_from_millis(millis: u64) -> GtdTimestamp {
     GtdTimestamp {
-        unix_micros: (ms as i64).saturating_mul(1_000),
+        unix_micros: (millis as i64).saturating_mul(1_000),
     }
 }
 
 /// Construct a timestamp from microseconds since the Unix epoch.
 #[unsafe(no_mangle)]
-pub extern "C" fn gtd_ts_from_micros(us: u64) -> GtdTimestamp {
+pub extern "C" fn gtd_ts_from_micros(micros: u64) -> GtdTimestamp {
     GtdTimestamp {
-        unix_micros: us as i64,
+        unix_micros: micros as i64,
     }
 }
 
 /// Construct a timestamp from nanoseconds since the Unix epoch (truncated to µs).
 #[unsafe(no_mangle)]
-pub extern "C" fn gtd_ts_from_nanos(ns: u64) -> GtdTimestamp {
+pub extern "C" fn gtd_ts_from_nanos(nanos: u64) -> GtdTimestamp {
     GtdTimestamp {
-        unix_micros: (ns / 1_000) as i64,
+        unix_micros: (nanos / 1_000) as i64,
     }
 }
 
@@ -66,8 +66,8 @@ pub extern "C" fn gtd_ts_none() -> GtdTimestamp {
     }
 }
 
-/// Returns non-zero if @p ts is the absent timestamp.
+/// Returns non-zero if @p timestamp is the absent timestamp.
 #[unsafe(no_mangle)]
-pub extern "C" fn gtd_ts_is_none(ts: GtdTimestamp) -> u8 {
-    u8::from(ts.unix_micros == TS_NONE_SENTINEL)
+pub extern "C" fn gtd_ts_is_none(timestamp: GtdTimestamp) -> u8 {
+    u8::from(timestamp.unix_micros == TS_NONE_SENTINEL)
 }

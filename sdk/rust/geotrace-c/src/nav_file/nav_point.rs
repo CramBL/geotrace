@@ -41,35 +41,35 @@ pub struct GtdNavPointInfo {
 
 /// Return the number of navigation fixes in the file.
 ///
-/// @param f File handle. Returns 0 if NULL.
+/// @param file File handle. Returns 0 if NULL.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gtd_nav_file_nav_point_count(f: *const GtdNavFile) -> usize {
-    if f.is_null() {
+pub unsafe extern "C" fn gtd_nav_file_nav_point_count(file: *const GtdNavFile) -> usize {
+    if file.is_null() {
         return 0;
     }
-    // SAFETY: f is non-null (checked above)
-    unsafe { (*f).file.nav_points().len() }
+    // SAFETY: file is non-null (checked above)
+    unsafe { (*file).file.nav_points().len() }
 }
 
-/// Fill @p out with data for the navigation fix at @p idx.
+/// Fill @p out with data for the navigation fix at @p index.
 ///
-/// @param f   File handle.
-/// @param idx Zero-based index. Must be less than `gtd_nav_file_nav_point_count(f)`.
-/// @param out Caller-allocated struct to fill.
+/// @param file  File handle.
+/// @param index Zero-based index. Must be less than `gtd_nav_file_nav_point_count(file)`.
+/// @param out   Caller-allocated struct to fill.
 ///
-/// @return `GTD_ERR_NULL_ARGUMENT` if @p idx is out of range.
+/// @return `GTD_ERR_NULL_ARGUMENT` if @p index is out of range.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_get_nav_point(
-    f: *const GtdNavFile,
-    idx: usize,
+    file: *const GtdNavFile,
+    index: usize,
     out: *mut GtdNavPointInfo,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
-        let f = nonnull_ref!(f);
+        let handle = nonnull_ref!(file);
         let out = nonnull_mut!(out);
 
-        let Some(point) = f.file.nav_points().get(idx) else {
-            error::set_last_error(format!("nav point index {idx} is out of range"));
+        let Some(point) = handle.file.nav_points().get(index) else {
+            error::set_last_error(format!("nav point index {index} is out of range"));
             return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         };
 
@@ -101,37 +101,39 @@ pub unsafe extern "C" fn gtd_nav_file_get_nav_point(
 
 /// Fill @p out with satellite data for a specific satellite within a nav fix.
 ///
-/// @param f       File handle.
-/// @param nav_idx Nav fix index.
-/// @param sat_idx Satellite index within that fix. Must be less than
-///                `GtdNavPointInfo::sat_count`.
-/// @param out     Caller-allocated struct to fill.
+/// @param file            File handle.
+/// @param nav_point_index Nav fix index.
+/// @param satellite_index Satellite index within that fix. Must be less than
+///                        `GtdNavPointInfo::sat_count`.
+/// @param out             Caller-allocated struct to fill.
 ///
 /// @return `GTD_ERR_NULL_ARGUMENT` if either index is out of range, or the nav
 ///         fix has no satellite report.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_get_satellite(
-    f: *const GtdNavFile,
-    nav_idx: usize,
-    sat_idx: usize,
+    file: *const GtdNavFile,
+    nav_point_index: usize,
+    satellite_index: usize,
     out: *mut GtdSatInfo,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
-        let f = nonnull_ref!(f);
+        let handle = nonnull_ref!(file);
         let out = nonnull_mut!(out);
 
-        let Some(point) = f.file.nav_points().get(nav_idx) else {
-            error::set_last_error(format!("nav point index {nav_idx} is out of range"));
+        let Some(point) = handle.file.nav_points().get(nav_point_index) else {
+            error::set_last_error(format!("nav point index {nav_point_index} is out of range"));
             return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         };
 
         let Some(report) = &point.satellites else {
-            error::set_last_error(format!("nav point {nav_idx} has no satellite report"));
+            error::set_last_error(format!(
+                "nav point {nav_point_index} has no satellite report"
+            ));
             return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         };
 
-        let Some(sat) = report.tracked.get(sat_idx) else {
-            error::set_last_error(format!("satellite index {sat_idx} is out of range"));
+        let Some(sat) = report.tracked.get(satellite_index) else {
+            error::set_last_error(format!("satellite index {satellite_index} is out of range"));
             return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         };
 

@@ -46,7 +46,7 @@ fn nav_fix_time_or_invalid_argument(
 /// A NaN @p heading_deg, @p speed_mps or @p eph_m reads back as absent: the SDK
 /// stores `GTD_NONE_F64` as NaN.
 ///
-/// @param b           Builder handle.
+/// @param builder     Builder handle.
 /// @param gps_time    GPS time of the fix. Use `gtd_ts_none()` when unavailable.
 /// @param sys_time    System (wall-clock) time. Use `gtd_ts_none()` when unavailable.
 /// @param lat_deg     WGS-84 latitude in degrees, expected in [-90, 90].
@@ -60,7 +60,7 @@ fn nav_fix_time_or_invalid_argument(
 ///         `gtd_ts_none()`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_nav_fix(
-    b: *mut GtdFileBuilder,
+    builder: *mut GtdFileBuilder,
     gps_time: GtdTimestamp,
     sys_time: GtdTimestamp,
     lat_deg: f64,
@@ -70,7 +70,7 @@ pub unsafe extern "C" fn gtd_builder_add_nav_fix(
     eph_m: GtdOptF64,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
-        let b = nonnull_mut!(b);
+        let builder = nonnull_mut!(builder);
         let time = match nav_fix_time_or_invalid_argument(
             TimestampArguments { gps_time, sys_time },
             "a fix",
@@ -78,7 +78,7 @@ pub unsafe extern "C" fn gtd_builder_add_nav_fix(
             Ok(time) => time,
             Err(status) => return status,
         };
-        b.recorder_mut().add_nav_fix(geotrace_sdk::NavFix {
+        builder.recorder_mut().add_nav_fix(geotrace_sdk::NavFix {
             time,
             lat: Angle::degrees(lat_deg),
             lon: Angle::degrees(lon_deg),
@@ -95,7 +95,7 @@ pub unsafe extern "C" fn gtd_builder_add_nav_fix(
 /// The report is associated with the nearest preceding nav fix.
 /// Passing @p n_sats as zero with a NULL @p sats pointer records an empty report.
 ///
-/// @param b        Builder handle.
+/// @param builder  Builder handle.
 /// @param gps_time GPS time of the report. Use `gtd_ts_none()` when unavailable.
 /// @param sys_time System (wall-clock) time of the report.
 /// @param sats     Array of @p n_sats satellite entries.
@@ -105,14 +105,14 @@ pub unsafe extern "C" fn gtd_builder_add_nav_fix(
 ///         `gtd_ts_none()`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_satellite_report(
-    b: *mut GtdFileBuilder,
+    builder: *mut GtdFileBuilder,
     gps_time: GtdTimestamp,
     sys_time: GtdTimestamp,
     sats: *const GtdSatellite,
     n_sats: usize,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
-        let b = nonnull_mut!(b);
+        let builder = nonnull_mut!(builder);
         if n_sats > 0 && sats.is_null() {
             error::set_last_error("sats is null but n_sats > 0");
             return GtdStatus::GTD_ERR_NULL_ARGUMENT;
@@ -131,7 +131,8 @@ pub unsafe extern "C" fn gtd_builder_add_satellite_report(
             let slice = unsafe { std::slice::from_raw_parts(sats, n_sats) };
             slice.iter().map(|s| s.to_sdk_satellite()).collect()
         };
-        b.recorder_mut()
+        builder
+            .recorder_mut()
             .add_satellite_report(SatelliteReport { time, tracked });
         GtdStatus::GTD_OK
     })
@@ -141,21 +142,21 @@ pub unsafe extern "C" fn gtd_builder_add_satellite_report(
 ///
 /// @p time must lie within the nav fix time range unless lenient mode is enabled.
 ///
-/// @param b     Builder handle.
-/// @param time  Timestamp of the annotation. Must not be `gtd_ts_none()`.
-/// @param label Human-readable label, or NULL for no label.
-/// @param icon  Icon to display. `GTD_ICON_AUTO` uses the application default (Pin).
+/// @param builder Builder handle.
+/// @param time    Timestamp of the annotation. Must not be `gtd_ts_none()`.
+/// @param label   Human-readable label, or NULL for no label.
+/// @param icon    Icon to display. `GTD_ICON_AUTO` uses the application default (Pin).
 ///
 /// @return `GTD_ERR_FIELD_TOO_LONG` if @p label is longer than 255 bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_annotation(
-    b: *mut GtdFileBuilder,
+    builder: *mut GtdFileBuilder,
     time: GtdTimestamp,
     label: *const c_char,
     icon: GtdMarkerIcon,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
-        let b = nonnull_mut!(b);
+        let builder = nonnull_mut!(builder);
         let Some(ann_time) = timestamp::ts_to_datetime(time) else {
             error::set_last_error("annotation time must not be gtd_ts_none()");
             return GtdStatus::GTD_ERR_NULL_ARGUMENT;
@@ -173,7 +174,7 @@ pub unsafe extern "C" fn gtd_builder_add_annotation(
                 return status;
             }
         };
-        b.recorder_mut().add_annotation(annotation);
+        builder.recorder_mut().add_annotation(annotation);
         GtdStatus::GTD_OK
     })
 }
@@ -184,7 +185,7 @@ pub unsafe extern "C" fn gtd_builder_add_annotation(
 /// identify the event type. Paths must be non-empty, consist of alphanumeric
 /// segments separated by `/`, and not exceed 255 bytes.
 ///
-/// @param b            Builder handle.
+/// @param builder      Builder handle.
 /// @param variant_path Hierarchical event type path.
 /// @param sys_time     Time of the event. Must not be `gtd_ts_none()`.
 /// @param annotation   Optional human-readable text. Pass NULL for none.
@@ -194,13 +195,13 @@ pub unsafe extern "C" fn gtd_builder_add_annotation(
 ///         or @p annotation longer than 511 bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_event_marker(
-    b: *mut GtdFileBuilder,
+    builder: *mut GtdFileBuilder,
     variant_path: *const c_char,
     sys_time: GtdTimestamp,
     annotation: *const c_char,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
-        let b = nonnull_mut!(b);
+        let builder = nonnull_mut!(builder);
         let path = cstr!(variant_path);
         let ann = cstr_opt!(annotation).map(str::to_owned);
         let Some(dt) = timestamp::ts_to_datetime(sys_time) else {
@@ -220,7 +221,7 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker(
                 return status;
             }
         };
-        b.recorder_mut().add_event_marker(marker);
+        builder.recorder_mut().add_event_marker(marker);
         GtdStatus::GTD_OK
     })
 }
@@ -230,7 +231,7 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker(
 /// Styles are per-variant, not per-event. Calling this multiple times for the
 /// same path overwrites the previous style.
 ///
-/// @param b            Builder handle.
+/// @param builder      Builder handle.
 /// @param variant_path Hierarchical event type path (same format as in
 ///                     `gtd_builder_add_event_marker()`).
 /// @param icon         Icon to display. `GTD_ICON_AUTO` uses the application default.
@@ -241,24 +242,26 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker(
 ///       `GTD_ERR_FIELD_TOO_LONG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_event_marker_style(
-    b: *mut GtdFileBuilder,
+    builder: *mut GtdFileBuilder,
     variant_path: *const c_char,
     icon: GtdMarkerIcon,
     color_hex: *const c_char,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
-        let b = nonnull_mut!(b);
+        let builder = nonnull_mut!(builder);
         let path = cstr!(variant_path);
         let icon_choice = icon.to_icon_choice();
         let color = match cstr_opt!(color_hex) {
             Some(hex) => EventMarkerColor::Hex(hex.to_owned()),
             None => EventMarkerColor::Auto,
         };
-        b.recorder_mut().add_event_marker_style(EventMarkerStyle {
-            variant_path: path.to_owned(),
-            icon: icon_choice,
-            color,
-        });
+        builder
+            .recorder_mut()
+            .add_event_marker_style(EventMarkerStyle {
+                variant_path: path.to_owned(),
+                icon: icon_choice,
+                color,
+            });
         GtdStatus::GTD_OK
     })
 }
@@ -269,7 +272,7 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker_style(
 /// track by time at query time, not resampled here. See @ref GtdChannel for the
 /// field layout, including the row-major `values` convention.
 ///
-/// @param b       Builder handle.
+/// @param builder Builder handle.
 /// @param channel Channel description. Not retained after the call returns.
 ///
 /// @return `GTD_ERR_INVALID_CHANNEL` if the unit is unrecognized, the name or a
@@ -277,11 +280,11 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker_style(
 ///         `n_times * max(n_components, 1)` long.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_channel(
-    b: *mut GtdFileBuilder,
+    builder: *mut GtdFileBuilder,
     channel: *const GtdChannel,
 ) -> GtdStatus {
     // SAFETY: this forwards the caller's pointers unchanged.
-    unsafe { gtd_builder_add_channel_with_unit_mode(b, channel, 0) }
+    unsafe { gtd_builder_add_channel_with_unit_mode(builder, channel, 0) }
 }
 
 /// Add a channel with an explicit recognized/custom interpretation for its unit.
@@ -294,7 +297,7 @@ pub unsafe extern "C" fn gtd_builder_add_channel(
 /// NULL @ref GtdChannel::unit adds a channel without a unit, whatever
 /// @p unit_mode says.
 ///
-/// @param b         Builder handle.
+/// @param builder   Builder handle.
 /// @param channel   Channel description. Not retained after the call returns.
 /// @param unit_mode A @ref GtdChannelUnitMode value.
 ///
@@ -302,12 +305,12 @@ pub unsafe extern "C" fn gtd_builder_add_channel(
 ///         malformed channel metadata.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_channel_with_unit_mode(
-    b: *mut GtdFileBuilder,
+    builder: *mut GtdFileBuilder,
     channel: *const GtdChannel,
     unit_mode: u32,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
-        let b = nonnull_mut!(b);
+        let builder = nonnull_mut!(builder);
         let ch = nonnull_ref!(channel);
 
         let name = cstr!(ch.name);
@@ -386,7 +389,7 @@ pub unsafe extern "C" fn gtd_builder_add_channel_with_unit_mode(
             .build();
         match built {
             Ok(built) => {
-                b.recorder_mut().add_channel(built);
+                builder.recorder_mut().add_channel(built);
                 GtdStatus::GTD_OK
             }
             Err(e) => {

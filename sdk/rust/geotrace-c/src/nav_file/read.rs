@@ -44,28 +44,28 @@ pub unsafe extern "C" fn gtd_nav_file_open(
 ///
 /// The caller retains ownership of @p data. It may be freed after this call returns.
 ///
-/// @param data Pointer to the serialised file data.
-/// @param len  Length of the data in bytes.
-/// @param out  Output parameter for the file handle.
+/// @param data   Pointer to the serialised file data.
+/// @param length Length of the data in bytes.
+/// @param out    Output parameter for the file handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_from_bytes(
     data: *const u8,
-    len: usize,
+    length: usize,
     out: *mut *mut GtdNavFile,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
         let out_ref = nonnull_mut!(out);
         *out_ref = std::ptr::null_mut();
-        if data.is_null() && len > 0 {
-            error::set_last_error("data is null but len > 0");
+        if data.is_null() && length > 0 {
+            error::set_last_error("data is null but length > 0");
             return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         }
 
-        let slice = if len == 0 {
+        let slice = if length == 0 {
             &[][..]
         } else {
-            // SAFETY: data is non-null (checked above), `len` is the byte count
-            unsafe { std::slice::from_raw_parts(data, len) }
+            // SAFETY: data is non-null (checked above), `length` is the byte count
+            unsafe { std::slice::from_raw_parts(data, length) }
         };
 
         match NavFile::read(Cursor::new(slice)) {
