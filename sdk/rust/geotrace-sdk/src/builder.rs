@@ -32,8 +32,8 @@ struct InternalFix {
 impl InternalFix {
     fn from_nav_fix(f: NavFix) -> Self {
         Self {
-            gps_time: f.gps_time.map(GpsTime::from_utc),
-            sys_time: f.sys_time.map(SysTime::from_utc),
+            gps_time: f.gps_time().map(GpsTime::from_utc),
+            sys_time: f.sys_time().map(SysTime::from_utc),
             lat: f.lat,
             lon: f.lon,
             heading: f.heading,
@@ -84,8 +84,8 @@ struct InternalSatReport {
 impl InternalSatReport {
     fn from_sat_report(r: SatelliteReport) -> Self {
         Self {
-            gps_time: r.gps_time.map(GpsTime::from_utc),
-            sys_time: r.sys_time.map(SysTime::from_utc),
+            gps_time: r.gps_time().map(GpsTime::from_utc),
+            sys_time: r.sys_time().map(SysTime::from_utc),
             tracked: r.tracked,
         }
     }

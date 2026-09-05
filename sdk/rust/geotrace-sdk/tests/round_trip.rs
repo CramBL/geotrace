@@ -91,14 +91,14 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
 
     assert_eq!(rt.nav_points().len(), 2);
     let p0 = &rt.nav_points()[0];
-    assert_eq!(p0.fix.gps_time, Some(t0));
+    assert_eq!(p0.fix.gps_time(), Some(t0));
     assert_eq!(p0.fix.lat.as_degrees(), 51.5);
     assert_eq!(p0.fix.lon.as_degrees(), -0.1);
     assert_eq!(p0.fix.heading.map(|h| h.as_degrees()), Some(270.0));
     assert_eq!(p0.fix.speed.map(|v| v.as_meters_per_second()), Some(12.5));
 
     let rep = p0.satellites.as_ref().ok_or("missing satellite report")?;
-    assert_eq!(rep.gps_time, Some(t0));
+    assert_eq!(rep.gps_time(), Some(t0));
     assert_eq!(rep.tracked.len(), 2);
     let s0 = &rep.tracked[0];
     assert_eq!(s0.constellation, Constellation::Gps);
@@ -244,9 +244,9 @@ fn large_file() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(rt.nav_points().len(), 50_000);
     assert_eq!(rt.markers().len(), 0);
 
-    assert_eq!(rt.nav_points()[0].fix.gps_time, Some(t0));
+    assert_eq!(rt.nav_points()[0].fix.gps_time(), Some(t0));
     assert_eq!(
-        rt.nav_points()[49_999].fix.gps_time,
+        rt.nav_points()[49_999].fix.gps_time(),
         Some(t0 + Duration::seconds(49_999))
     );
     let sat_rep = rt.nav_points()[0].satellites.as_ref().ok_or("missing")?;
@@ -887,7 +887,7 @@ fn a_fix_keeps_the_clock_that_stamped_it(
     let rt = round_trip(&recorder.finish()?)?;
     let fix = &rt.nav_points().first().ok_or("no nav point")?.fix;
 
-    assert_eq!(fix.gps_time, gps_time);
-    assert_eq!(fix.sys_time, sys_time);
+    assert_eq!(fix.gps_time(), gps_time);
+    assert_eq!(fix.sys_time(), sys_time);
     Ok(())
 }

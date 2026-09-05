@@ -218,7 +218,7 @@ mod tests {
         let host_times: Vec<DateTime<Utc>> = file
             .nav_points()
             .iter()
-            .filter_map(|point| point.fix.sys_time)
+            .filter_map(|point| point.fix.sys_time())
             .collect();
         assert_eq!(
             host_times.windows(2).filter(|w| w[1] < w[0]).count() as i64,

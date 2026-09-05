@@ -148,11 +148,11 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) {
         .collect();
     let gps_times: Vec<u64> = points
         .iter()
-        .map(|p| opt_datetime_to_u64(p.fix.gps_time))
+        .map(|p| opt_datetime_to_u64(p.fix.gps_time()))
         .collect();
     let sys_times: Vec<u64> = points
         .iter()
-        .map(|p| opt_datetime_to_u64(p.fix.sys_time))
+        .map(|p| opt_datetime_to_u64(p.fix.sys_time()))
         .collect();
     let lats: Vec<f64> = points.iter().map(|p| p.fix.lat.as_degrees()).collect();
     let lons: Vec<f64> = points.iter().map(|p| p.fix.lon.as_degrees()).collect();
@@ -268,8 +268,8 @@ fn write_satellite_data(nav_file: &NavFile, fb: &mut FileBuilder) {
         };
 
         report_nav_point_idx.push(nav_idx as u64);
-        report_gps_times.push(opt_datetime_to_u64(report.gps_time));
-        report_sys_times.push(opt_datetime_to_u64(report.sys_time));
+        report_gps_times.push(opt_datetime_to_u64(report.gps_time()));
+        report_sys_times.push(opt_datetime_to_u64(report.sys_time()));
 
         for sat in &report.tracked {
             tracked_rep_idx.push(report_idx);

@@ -407,7 +407,7 @@ impl PySatelliteReport {
     /// constructed without one, or read from a file that stores none.
     #[getter]
     fn gps_time(&self) -> Option<DateTime<FixedOffset>> {
-        self.inner.gps_time.map(to_fixed)
+        self.inner.gps_time().map(to_fixed)
     }
 
     /// System-clock timestamp at capture time (timezone-aware UTC), or `None`
@@ -415,12 +415,12 @@ impl PySatelliteReport {
     /// none.
     #[getter]
     fn sys_time(&self) -> Option<DateTime<FixedOffset>> {
-        self.inner.sys_time.map(to_fixed)
+        self.inner.sys_time().map(to_fixed)
     }
 
     fn __eq__(&self, other: &Self) -> bool {
-        self.inner.gps_time == other.inner.gps_time
-            && self.inner.sys_time == other.inner.sys_time
+        self.inner.gps_time() == other.inner.gps_time()
+            && self.inner.sys_time() == other.inner.sys_time()
             && self.inner.tracked.len() == other.inner.tracked.len()
             && self
                 .inner
@@ -714,14 +714,14 @@ impl PyNavFix {
     /// had no lock.
     #[getter]
     fn gps_time(&self) -> Option<DateTime<FixedOffset>> {
-        self.inner.gps_time.map(to_fixed)
+        self.inner.gps_time().map(to_fixed)
     }
 
     /// System-clock timestamp (timezone-aware UTC), or `None` when the recorder
     /// did not supply one.
     #[getter]
     fn sys_time(&self) -> Option<DateTime<FixedOffset>> {
-        self.inner.sys_time.map(to_fixed)
+        self.inner.sys_time().map(to_fixed)
     }
 
     /// Heading in degrees, expected in [0, 360), or `None` for
@@ -745,8 +745,8 @@ impl PyNavFix {
     }
 
     fn __eq__(&self, other: &Self) -> bool {
-        self.inner.gps_time == other.inner.gps_time
-            && self.inner.sys_time == other.inner.sys_time
+        self.inner.gps_time() == other.inner.gps_time()
+            && self.inner.sys_time() == other.inner.sys_time()
             && self.inner.lat.as_degrees() == other.inner.lat.as_degrees()
             && self.inner.lon.as_degrees() == other.inner.lon.as_degrees()
             && self.inner.heading.map(|h| h.as_degrees())
@@ -945,14 +945,14 @@ impl PyNavPoint {
     /// had no lock.
     #[getter]
     fn gps_time(&self) -> Option<DateTime<FixedOffset>> {
-        self.inner.fix.gps_time.map(to_fixed)
+        self.inner.fix.gps_time().map(to_fixed)
     }
 
     /// System-clock timestamp (timezone-aware UTC), or `None` when the recorder
     /// did not supply one.
     #[getter]
     fn sys_time(&self) -> Option<DateTime<FixedOffset>> {
-        self.inner.fix.sys_time.map(to_fixed)
+        self.inner.fix.sys_time().map(to_fixed)
     }
 
     /// Heading in degrees, expected in [0, 360), or `None`.

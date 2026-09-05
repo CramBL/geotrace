@@ -552,7 +552,7 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
             longitudes_out_of_range.push(CoordinateOutOfRange { record, degrees });
         }
 
-        let time = match (sdk_point.fix.gps_time, sdk_point.fix.sys_time) {
+        let time = match (sdk_point.fix.gps_time(), sdk_point.fix.sys_time()) {
             (Some(gps), _) => FixTimestamp::FromGpsReceiver(GpsTime::from_utc(gps)),
             (None, Some(host)) => FixTimestamp::FromHostClock(SysTime::from_utc(host)),
             (None, None) => FixTimestamp::Missing,
@@ -564,7 +564,7 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
             .lon(lon)
             .maybe_heading(sdk_point.fix.heading.map(to_uom_angle))
             .maybe_velocity(sdk_point.fix.speed.map(to_uom_velocity))
-            .maybe_sys_time(sdk_point.fix.sys_time.map(SysTime::from_utc))
+            .maybe_sys_time(sdk_point.fix.sys_time().map(SysTime::from_utc))
             .maybe_eph_m(sdk_point.fix.eph_m.map(|v| v as f32))
             .build();
 
@@ -784,8 +784,8 @@ fn convert_satellite_report(
         })
         .collect();
 
-    let gps_time = report.gps_time.map(GpsTime::from_utc);
-    let sys_time = report.sys_time.map(SysTime::from_utc);
+    let gps_time = report.gps_time().map(GpsTime::from_utc);
+    let sys_time = report.sys_time().map(SysTime::from_utc);
     Satellites::new(gps_time, sys_time, satellites)
 }
 
