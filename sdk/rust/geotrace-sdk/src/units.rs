@@ -111,6 +111,10 @@ impl Angle {
         Angle((other.0 - self.0 + 180.0).rem_euclid(360.0) - 180.0)
     }
 
+    pub(crate) fn wrapped_to_plus_minus_180_degrees(self) -> Self {
+        Self((self.0 + 180.0).rem_euclid(360.0) - 180.0)
+    }
+
     /// Parse a decimal degree value from a string.
     pub fn try_from_degrees_str(s: impl AsRef<str>) -> Result<Self, Error> {
         let s = s.as_ref();

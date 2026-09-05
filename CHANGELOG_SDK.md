@@ -20,6 +20,7 @@ the app).
 ### Fixed
 
 - Fixed an annotation or event marker timestamped exactly at the last nav fix being placed outside the nav fix time range: it is placed on that fix.
+- Fixed a marker, event marker or ghost fix interpolated between two fixes on either side of the antimeridian being placed near longitude 0: it is placed on the short arc between the two fixes.
 
 ## [0.6.0] - 2026-09-03
 

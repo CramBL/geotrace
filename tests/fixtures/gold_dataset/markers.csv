@@ -14,3 +14,4 @@ time,label,icon
 2026-02-05T15:01:00+00:00,Turn point 60,refresh
 2026-02-06T15:00:05+00:00,Cluster center,wrench
 2026-02-07T15:00:05+00:00,Marker during no-fix,satellite_lost
+2026-02-08T15:00:05.500000+00:00,Antimeridian crossing,pin

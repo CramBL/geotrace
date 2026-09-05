@@ -249,16 +249,17 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     assert_eq!(meta.travel_mode, Some(TravelMode::Bicycle));
 
     let points = file.nav_points();
-    assert_eq!(points.len(), 199);
+    assert_eq!(points.len(), 200);
 
-    // Track 8 Antimeridian: check first and last point
+    // Track 8 Antimeridian: 10 fixes plus the ghost fix of the orphan satellite
+    // report at 15:00:05.5. Check the first and the last point.
     let track_8_points: Vec<_> = points
         .iter()
         .filter(|p| p.fix.lon.as_degrees() > 179.9 || p.fix.lon.as_degrees() < -179.9)
         .collect();
-    assert_eq!(track_8_points.len(), 10);
+    assert_eq!(track_8_points.len(), 11);
     assert!((track_8_points[0].fix.lon.as_degrees() - 179.95).abs() < 1e-6);
-    assert!((track_8_points[9].fix.lon.as_degrees() - (-179.96)).abs() < 1e-6);
+    assert!((track_8_points[10].fix.lon.as_degrees() - (-179.96)).abs() < 1e-6);
 
     // Track 9 Stationary
     let track_9_points: Vec<_> = points
@@ -271,7 +272,7 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     }
 
     let markers = file.markers();
-    assert_eq!(markers.len(), 15);
+    assert_eq!(markers.len(), 16);
     // Check "File Boundary Start" at index 0
     assert_eq!(
         markers[0].annotation.label().unwrap(),
@@ -279,8 +280,16 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     );
     assert_eq!(markers[0].annotation.icon(), Some(MarkerIcon::Check));
 
+    // The short arc between the track 8 fixes at 180.0° and -179.99° puts the
+    // antimeridian marker, timestamped half way between them, at -179.995°.
+    let antimeridian_marker = markers
+        .iter()
+        .find(|m| m.annotation.label() == Some("Antimeridian crossing"))
+        .unwrap();
+    assert!((antimeridian_marker.lon.as_degrees() - (-179.995)).abs() < 1e-6);
+
     let events = file.event_markers();
-    assert_eq!(events.len(), 6);
+    assert_eq!(events.len(), 7);
 
     let styles = file.event_marker_styles();
     let icon_style = styles

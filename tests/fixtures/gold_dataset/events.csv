@@ -5,3 +5,4 @@ sys_time,variant_path,annotation
 2026-02-04T15:00:10+00:00,navigation/turn-90,Sharp right turn
 2026-02-07T15:00:03+00:00,signal/lost,GNSS fix lost
 2026-02-07T15:00:08+00:00,signal/regained,GNSS fix regained
+2026-02-08T15:00:05.500000+00:00,navigation/antimeridian,Crossed 180°

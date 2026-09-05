@@ -321,6 +321,23 @@ def main() -> None:
                 "eph_m": 1.0,
             }
         )
+    # No fix claims the report at 5.5 s: the fixes at 5 s and 6 s are each closer
+    # to their own report. It becomes a ghost fix half way over the antimeridian.
+    for offset in (5.0, 5.5, 6.0):
+        t = get_time(7, offset)
+        for prn in (1, 2):
+            satellites.append(
+                {
+                    "gps_time": t,
+                    "sys_time": t,
+                    "constellation": "gps",
+                    "prn": prn,
+                    "in_fix": "true",
+                    "elevation": 40,
+                    "azimuth": 90,
+                    "snr": 44,
+                }
+            )
 
     # Track 9: Stationary (Zero Speed)
     # 20 points at exact same location
@@ -500,6 +517,19 @@ def main() -> None:
     # Marker during no-fix period (interpolated between ghosts)
     markers.append(
         {"time": get_time(6, 5), "label": "Marker during no-fix", "icon": "satellite_lost"}
+    )
+
+    # Track 8: the marker and the event are interpolated across the antimeridian,
+    # half a second past the fix at 180.0°.
+    markers.append(
+        {"time": get_time(7, 5.5), "label": "Antimeridian crossing", "icon": "pin"}
+    )
+    events.append(
+        {
+            "sys_time": get_time(7, 5.5),
+            "variant_path": "navigation/antimeridian",
+            "annotation": "Crossed 180°",
+        }
     )
 
     # Metadata
