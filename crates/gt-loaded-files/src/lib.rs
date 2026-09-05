@@ -48,6 +48,10 @@ pub enum FileHistory {
         identity: String,
         meta: RecordingMeta,
         db_ref: Option<DatabaseRef>,
+        /// How many of the recording's stored tracks are shelved. The open
+        /// from history leaves those tracks out of the [`LoadedFile`], and a
+        /// recording loaded from disk has none.
+        shelved_tracks: usize,
     },
 }
 
@@ -57,6 +61,21 @@ impl FileHistory {
             identity,
             meta,
             db_ref,
+            shelved_tracks: 0,
+        }
+    }
+
+    pub fn recording_with_shelved_tracks(
+        identity: String,
+        meta: RecordingMeta,
+        db_ref: Option<DatabaseRef>,
+        shelved_tracks: usize,
+    ) -> Self {
+        Self::Recording {
+            identity,
+            meta,
+            db_ref,
+            shelved_tracks,
         }
     }
 
@@ -84,6 +103,13 @@ impl FileHistory {
         match self {
             Self::Recording { meta, .. } => Some(*meta),
             Self::None => None,
+        }
+    }
+
+    pub fn shelved_track_count(&self) -> usize {
+        match self {
+            Self::Recording { shelved_tracks, .. } => *shelved_tracks,
+            Self::None => 0,
         }
     }
 
@@ -197,6 +223,10 @@ impl<'a> LoadedFileEntry<'a> {
 
     pub fn is_stored_in_history(&self) -> bool {
         self.history.is_stored()
+    }
+
+    pub fn shelved_track_count(&self) -> usize {
+        self.history.shelved_track_count()
     }
 
     /// [`LoadedFileEntry::nav_points`] with the position each fix is drawn at

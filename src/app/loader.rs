@@ -15,7 +15,7 @@ use gt_store::{AttachedLog, StoredFixPlacementRule, StoredLogFilter, StoredTrack
 use gt_track_builder::{
     FixPlacementRule, GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig, TrackSplitRule,
 };
-use gt_types::LoadedFile;
+use gt_types::{LoadedFile, TrackAggregates};
 
 use crate::app::background_thread;
 
@@ -410,6 +410,7 @@ impl LoadJobs {
                         .store();
                         let open_db_ref = open.as_ref().map(HistoryOpen::db_ref).cloned();
                         let history_db_ref = db_ref.or(open_db_ref);
+                        let mut shelved_tracks = 0;
                         match &open {
                             Some(HistoryOpen::Recalculate { db_ref, .. }) => {
                                 if let Some(path) = db_path.as_deref() {
@@ -424,7 +425,7 @@ impl LoadJobs {
                                 }
                             }
                             Some(HistoryOpen::ApplyShelved { stored_tracks, .. }) => {
-                                apply_stored_track_table(&mut file, stored_tracks);
+                                shelved_tracks = apply_stored_track_table(&mut file, stored_tracks);
                             }
                             None => {}
                         }
@@ -440,7 +441,12 @@ impl LoadJobs {
                         ctx.request_repaint();
                         let series = gt_plot::prepare_file_series(&file, analysis);
                         let history = meta.map_or(FileHistory::None, |meta| {
-                            FileHistory::recording(loaded.identity, meta, history_db_ref)
+                            FileHistory::recording_with_shelved_tracks(
+                                loaded.identity,
+                                meta,
+                                history_db_ref,
+                                shelved_tracks,
+                            )
                         });
                         LoadOutcome::GtdFile {
                             file,
@@ -840,13 +846,17 @@ fn track_ranges_from_file(file: &LoadedFile) -> Vec<gt_store::TrackRange> {
 }
 
 /// Apply a recording's stored track table to the file just segmented from its
-/// nav points, when it is opened from history.
+/// nav points, when it is opened from history. Recomputes the recording's
+/// figures over the tracks that stay, and returns how many are shelved.
 ///
 /// Segmentation reproduces one track per listed row of `stored_tracks`, in
 /// order. Each track takes the number of its stored row, and the shelved tracks
 /// are left out of the view. A track after a permanently deleted one keeps its
 /// number.
-fn apply_stored_track_table(file: &mut LoadedFile, stored_tracks: &[gt_store::TrackRange]) {
+fn apply_stored_track_table(
+    file: &mut LoadedFile,
+    stored_tracks: &[gt_store::TrackRange],
+) -> usize {
     let rows = gt_store::listed_track_rows(stored_tracks);
     if rows.len() != file.tracks.len() {
         log::warn!(
@@ -872,6 +882,9 @@ fn apply_stored_track_table(file: &mut LoadedFile, stored_tracks: &[gt_store::Tr
         })
         .collect();
     log::debug!("Left {shelved} shelved track(s) out on open");
+    file.metadata
+        .set_track_aggregates(TrackAggregates::over_tracks(&file.tracks));
+    shelved
 }
 
 /// Overwrite a recording's stored track table and segmentation settings with a
@@ -1472,25 +1485,39 @@ mod tests {
     }
 
     /// A file of `track_count` tracks numbered the way `build_loaded_file`
-    /// numbers a fresh segmentation.
+    /// numbers a fresh segmentation. Each track runs ten minutes, starting
+    /// twenty minutes after the one before it. The file's figures are
+    /// `TrackAggregates::over_tracks` over all of them.
     fn segmented_file(track_count: usize) -> LoadedFile {
-        LoadedFile {
-            metadata: gt_test_utils::empty_file_metadata(),
-            tracks: (0..track_count)
-                .map(|position| gt_types::LoadedTrack {
+        let tracks: Vec<gt_types::LoadedTrack> = (0..track_count)
+            .map(|position| {
+                let start = DateTime::UNIX_EPOCH
+                    + chrono::Duration::minutes(20 * i64::try_from(position).unwrap_or(0));
+                gt_types::LoadedTrack {
                     metadata: gt_types::TrackMetadata {
                         index: position + 1,
+                        duration: TEST_TRACK_DURATION,
+                        time_range: gt_types::TimeRange::new(start, start + TEST_TRACK_DURATION),
                         ..gt_test_utils::empty_track_metadata()
                     },
                     ..gt_test_utils::loaded_track_with_points(Vec::new())
-                })
-                .collect(),
+                }
+            })
+            .collect();
+        let mut metadata = gt_test_utils::empty_file_metadata();
+        metadata.set_track_aggregates(TrackAggregates::over_tracks(&tracks));
+        LoadedFile {
+            metadata,
+            tracks,
             event_marker_styles: rustc_hash::FxHashMap::default(),
             orphaned_event_markers: Vec::new(),
             source: gt_types::FileSource::GtdPath(std::path::PathBuf::new()),
             load_warnings: Vec::new(),
         }
     }
+
+    /// How long each track of [`segmented_file`] runs.
+    const TEST_TRACK_DURATION: chrono::Duration = chrono::Duration::minutes(10);
 
     /// A stored track table whose rows hold `states`, with ten nav points in
     /// each live or shelved row and none in a tombstone.
@@ -1549,6 +1576,33 @@ mod tests {
 
         let numbers: Vec<usize> = file.tracks.iter().map(|t| t.metadata.index).collect();
         assert_eq!(numbers, expected_numbers);
+    }
+
+    /// The recorded time and the time range of a recording opened from history
+    /// cover the tracks it shows.
+    #[test]
+    fn applying_a_stored_track_table_recomputes_the_figures_over_the_tracks_that_stay() {
+        let mut file = segmented_file(3);
+        let first_track_start = DateTime::UNIX_EPOCH;
+
+        let shelved = apply_stored_track_table(
+            &mut file,
+            &synthetic_stored_track_table(&[
+                gt_store::TrackState::Live,
+                gt_store::TrackState::Live,
+                gt_store::TrackState::Shelved,
+            ]),
+        );
+
+        assert_eq!(shelved, 1);
+        assert_eq!(file.metadata.total_duration, chrono::Duration::minutes(20));
+        assert_eq!(
+            file.metadata.time_range,
+            Some(gt_types::TimeRange::new(
+                first_track_start,
+                first_track_start + chrono::Duration::minutes(30)
+            ))
+        );
     }
 
     /// A loaded recording is stored with a per-track table, and those tracks can

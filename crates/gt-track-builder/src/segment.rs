@@ -15,7 +15,7 @@ use gt_types::satellites::SlipEvent;
 use gt_types::time_types::GpsTime;
 use gt_types::track::{
     FileMetadata, FileSource, FixStats, LoadedFile, LoadedTrack, MeasuredTrackGeometry, MercBounds,
-    SegmentLengthRange, TimeRange, TotalDistance, TrackGeometry, TrackMetadata, TravelMode,
+    SegmentLengthRange, TimeRange, TrackAggregates, TrackGeometry, TrackMetadata, TravelMode,
 };
 use rustc_hash::FxHashMap;
 use std::fmt;
@@ -936,56 +936,20 @@ pub fn build_loaded_file(
         });
     }
 
-    let total_distance = loaded_tracks
-        .iter()
-        .filter_map(|t| Some(t.geometry.measured()?.distance_km))
-        .reduce(|total, distance| total + distance)
-        .map_or(TotalDistance::NoMeasuredTrack, TotalDistance::Measured);
-    let total_duration = loaded_tracks
-        .iter()
-        .fold(Duration::zero(), |acc, t| acc + t.metadata.duration);
-
-    let file_fix_stats = {
-        let mut time_with_fix = Duration::zero();
-        let mut time_without_fix = Duration::zero();
-        let mut fix_loss_count: u32 = 0;
-        let mut max_continuous_no_fix = Duration::zero();
-        let mut has_any = false;
-        for track in &loaded_tracks {
-            if let Some(s) = track.metadata.fix_stats {
-                has_any = true;
-                time_with_fix += s.time_with_fix;
-                time_without_fix += s.time_without_fix;
-                fix_loss_count = fix_loss_count.saturating_add(s.fix_loss_count);
-                if s.max_continuous_no_fix > max_continuous_no_fix {
-                    max_continuous_no_fix = s.max_continuous_no_fix;
-                }
-            }
-        }
-        if has_any {
-            Some(FixStats {
-                time_with_fix,
-                time_without_fix,
-                fix_loss_count,
-                max_continuous_no_fix,
-            })
-        } else {
-            None
-        }
-    };
-
-    let file_time_range = loaded_tracks
-        .iter()
-        .map(|track| track.metadata.time_range)
-        .reduce(TimeRange::union);
+    let TrackAggregates {
+        total_distance,
+        total_duration,
+        time_range,
+        fix_stats,
+    } = TrackAggregates::over_tracks(&loaded_tracks);
 
     LoadedFile {
         metadata: FileMetadata {
             filename,
             total_distance,
             total_duration,
-            time_range: file_time_range,
-            fix_stats: file_fix_stats,
+            time_range,
+            fix_stats,
             title: file_meta.title,
             device: file_meta.device,
             notes: file_meta.notes,
