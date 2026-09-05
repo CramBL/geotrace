@@ -55,15 +55,6 @@ impl StoredTrackAction {
             Self::Shelve
         }
     }
-
-    /// The title the shelve confirmation shows for `count` items.
-    fn confirmation_title(self, count: usize) -> String {
-        let item_label = gt_fmt::pluralize(count, "item", "items");
-        match self {
-            Self::Shelve => format!("Shelve {count} {item_label}?"),
-            Self::DeletePermanently => format!("Delete {count} {item_label} permanently?"),
-        }
-    }
 }
 
 /// Actions the app applies in the frame after the user confirms the shelve
@@ -325,11 +316,10 @@ pub fn show_shelve_confirmation(
     let mut do_confirm = enter_pressed;
     let mut do_cancel = escape_pressed;
 
-    // The title follows the tickbox from the frame after the user ticks it:
-    // egui takes the title before the body draws the tickbox.
-    let dialog = AnchoredDialog::identified_by_its_kind(
+    let item_label = gt_fmt::pluralize(count, "item", "items");
+    let dialog = AnchoredDialog::new(
         AnchoredDialogKind::ShelveItems,
-        StoredTrackAction::from_permanent_delete_tickbox(permanent.get()).confirmation_title(count),
+        format!("Shelve {count} {item_label}?"),
     );
     let regions = dialog.regions();
     dialog.show(
@@ -1610,17 +1600,17 @@ mod tests {
     use rustc_hash::FxHashMap;
 
     use super::{
-        AnchoredDialogKind, CoveredDayCounts, DELETE_ARCHIVED_DAYS_TITLE,
-        DELETE_PERMANENTLY_BUTTON_LABEL, Duration, EnvironmentArchive, EnvironmentPruneChoice,
-        EnvironmentPrunePrompt, FORCE_QUIT_LABEL, ForceQuitChoice, ForceQuitPromptContents,
-        LoadedLogs, MapLayer, MapboxTokenField, NavMap, NodeKey, PruneRequest, PruneScope,
-        PrunedDays, RecordingDetails, SHELVE_BUTTON_LABEL, SHELVED_ITEMS_MOST_LINES, ShelveOutcome,
-        SnapScopeChoice, SnapScopeCount, SnapScopeCounts, StoredTrackAction, TimeUntilTheClose,
-        TrackRef, files_fully_removed, prune_scope_line, remove_items_from_view, show_about_dialog,
-        show_environment_prune_confirmation, show_force_quit_confirmation,
-        show_load_warnings_dialog, show_mapbox_token_dialog, show_orphaned_event_markers_popup,
-        show_recording_details_dialog, show_shelve_confirmation, show_snap_auto_prompt,
-        show_snap_consent_dialog, show_snap_replace_dialog, show_snap_scope_dialog, track_removals,
+        CoveredDayCounts, DELETE_ARCHIVED_DAYS_TITLE, DELETE_PERMANENTLY_BUTTON_LABEL, Duration,
+        EnvironmentArchive, EnvironmentPruneChoice, EnvironmentPrunePrompt, FORCE_QUIT_LABEL,
+        ForceQuitChoice, ForceQuitPromptContents, LoadedLogs, MapLayer, MapboxTokenField, NavMap,
+        NodeKey, PruneRequest, PruneScope, PrunedDays, RecordingDetails, SHELVE_BUTTON_LABEL,
+        SHELVED_ITEMS_MOST_LINES, ShelveOutcome, SnapScopeChoice, SnapScopeCount, SnapScopeCounts,
+        StoredTrackAction, TimeUntilTheClose, TrackRef, files_fully_removed, prune_scope_line,
+        remove_items_from_view, show_about_dialog, show_environment_prune_confirmation,
+        show_force_quit_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
+        show_orphaned_event_markers_popup, show_recording_details_dialog, show_shelve_confirmation,
+        show_snap_auto_prompt, show_snap_consent_dialog, show_snap_replace_dialog,
+        show_snap_scope_dialog, track_removals,
     };
     use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
     use gt_side_panel::{ShelveConfirmState, TreeState};
@@ -2212,19 +2202,20 @@ mod tests {
         shelve_confirmation_at(DIALOG_VIEWPORT, count, PermanentDeleteTicked(true))
     }
 
-    /// The rectangle of the confirmation's window, read under its
-    /// [`AnchoredDialogKind::window_id`]: the title it draws changes with the
-    /// permanent-delete tickbox.
+    /// The rectangle of the confirmation's window over `count` items, which
+    /// egui identifies by the title stating that count.
     pub(super) fn shelve_confirmation_rect(
         harness: &TestHarness<'static, ShelveConfirmationState>,
-    ) -> Option<egui::Rect> {
+        count: usize,
+    ) -> egui::Rect {
         harness
             .inner
-            .ctx
-            .memory(|memory| memory.area_rect(AnchoredDialogKind::ShelveItems.window_id()))
+            .window_rect(&format!("Shelve {count} items?"))
+            .expect("the shelve confirmation is shown")
     }
 
-    /// The confirmation's title and its button both state the level that its
+    /// The confirmation shows the shelve title with its permanent-delete
+    /// tickbox ticked and with it clear. The button states the level that the
     /// tickbox chose, and the outcome reports that level.
     #[rstest::rstest]
     #[case(
@@ -2247,7 +2238,7 @@ mod tests {
 
         harness
             .inner
-            .get_by_label_contains(&expected.confirmation_title(ITEMS));
+            .get_by_label_contains(&format!("Shelve {ITEMS} items?"));
         harness.inner.get_by_label(button_label).click();
         harness.inner.run_steps(2);
 
@@ -2282,12 +2273,8 @@ mod tests {
         let far_past = shelve_confirmation(ITEMS_FAR_PAST_THE_CAPPED_ROOM);
 
         assert_eq!(
-            shelve_confirmation_rect(&far_past)
-                .expect("the shelve confirmation is shown")
-                .size(),
-            shelve_confirmation_rect(&past)
-                .expect("the shelve confirmation is shown")
-                .size(),
+            shelve_confirmation_rect(&far_past, ITEMS_FAR_PAST_THE_CAPPED_ROOM).size(),
+            shelve_confirmation_rect(&past, ITEMS_PAST_THE_CAPPED_ROOM).size(),
             "{ITEMS_FAR_PAST_THE_CAPPED_ROOM} removed items made the confirmation taller than \
              {ITEMS_PAST_THE_CAPPED_ROOM} did: a list past the room it caps at \
              {SHELVED_ITEMS_MOST_LINES} lines has to scroll inside that room"
@@ -2581,8 +2568,7 @@ mod tests {
     impl OversizedDialog {
         fn title(self) -> String {
             match self {
-                // The confirmation opens with its permanent-delete tickbox clear.
-                Self::Shelve => StoredTrackAction::Shelve.confirmation_title(OVERSIZED_ROW_COUNT),
+                Self::Shelve => format!("Shelve {OVERSIZED_ROW_COUNT} items?"),
                 Self::OrphanedEventMarkers => {
                     format!("{OVERSIZED_ROW_COUNT} event markers outside track range")
                 }
@@ -2598,28 +2584,6 @@ mod tests {
                 Self::MapboxToken => "Mapbox API Token Required".to_owned(),
                 Self::EnvironmentPrune => DELETE_ARCHIVED_DAYS_TITLE.to_owned(),
                 Self::ForceQuit => "Force quit?".to_owned(),
-            }
-        }
-
-        /// The window that the audit measures. The shelve confirmation draws
-        /// itself under its [`AnchoredDialogKind`], since its title follows the
-        /// permanent-delete tickbox.
-        fn audited_window(self, title: &str) -> AuditedWindow<'_> {
-            match self {
-                Self::Shelve => {
-                    AuditedWindow::identified(title, AnchoredDialogKind::ShelveItems.window_id())
-                }
-                Self::OrphanedEventMarkers
-                | Self::LoadWarnings
-                | Self::RecordingDetails
-                | Self::About
-                | Self::SnapConsent
-                | Self::SnapReplace
-                | Self::SnapScope
-                | Self::SnapAutoPrompt
-                | Self::MapboxToken
-                | Self::EnvironmentPrune
-                | Self::ForceQuit => AuditedWindow::titled(title),
             }
         }
 
@@ -2794,11 +2758,11 @@ mod tests {
         let title = dialog.title();
         harness
             .inner
-            .assert_window_fits_the_viewport(dialog.audited_window(&title));
+            .assert_window_fits_the_viewport(AuditedWindow::titled(&title));
         if let Some(button) = dialog.reachable_button() {
             harness
                 .inner
-                .assert_control_is_reachable(dialog.audited_window(&title), ControlLabel(button));
+                .assert_control_is_reachable(AuditedWindow::titled(&title), ControlLabel(button));
         }
     }
 }
@@ -2826,8 +2790,7 @@ mod anchored_dialog_layout_tests {
 
     use super::{
         DELETE_ARCHIVED_DAYS_TITLE, EnvironmentPruneChoice, ForceQuitChoice,
-        LOADED_RECORDINGS_MOST_LINES, PERMANENT_DELETE_LABEL, PruneScope, SnapScopeChoice,
-        StoredTrackAction, tests,
+        LOADED_RECORDINGS_MOST_LINES, PERMANENT_DELETE_LABEL, PruneScope, SnapScopeChoice, tests,
     };
 
     const CANCEL_LABEL: &str = "Cancel";
@@ -3066,16 +3029,15 @@ mod anchored_dialog_layout_tests {
     }
 
     /// The shelve confirmation states in one sentence what it does in history,
-    /// and the permanent-delete tickbox chooses the wording and the title. The
-    /// dialog is 324 points wide at [`NARROW_VIEWPORT`]. "Shelves 2 tracks in
-    /// 1 recording in history and takes them out of the view." takes one line
-    /// at that width, and "Permanently deletes 2 tracks from 1 recording in
-    /// history and takes them out of the view." takes two.
+    /// and the permanent-delete tickbox chooses the wording. The dialog is 324
+    /// points wide at [`NARROW_VIEWPORT`]. "Shelves 2 tracks in 1 recording in
+    /// history and takes them out of the view." takes one line at that width,
+    /// and "Permanently deletes 2 tracks from 1 recording in history and takes
+    /// them out of the view." takes two.
     ///
     /// The second line goes into the room the body already had. The window
     /// keeps the height and the position it opened at, which it holds under
-    /// its [`AnchoredDialogKind`], and its title states the permanent delete
-    /// the tickbox chose.
+    /// its [`AnchoredDialogKind`].
     #[test]
     fn the_shelve_confirmation_keeps_its_window_and_tickbox_in_place_while_the_delete_is_ticked() {
         let mut harness = tests::shelve_confirmation_at(
@@ -3083,7 +3045,7 @@ mod anchored_dialog_layout_tests {
             SHELVED_ITEMS,
             tests::PermanentDeleteTicked(false),
         );
-        let window = tests::shelve_confirmation_rect(&harness);
+        let window = tests::shelve_confirmation_rect(&harness, SHELVED_ITEMS);
         let tickbox = harness
             .inner
             .get(By::new().label_contains(PERMANENT_DELETE_LABEL))
@@ -3109,11 +3071,11 @@ mod anchored_dialog_layout_tests {
              lines"
         );
         assert_eq!(
-            tests::shelve_confirmation_rect(&harness),
+            tests::shelve_confirmation_rect(&harness, SHELVED_ITEMS),
             window,
-            "the shelve confirmation moved or resized around its ticked title and the longer \
-             sentence under it: its edge moves past a control the user aimed at, and the press \
-             reaches the app behind it"
+            "the shelve confirmation moved or resized around the longer sentence under its \
+             tickbox: its edge moves past a control the user aimed at, and the press reaches \
+             the app behind it"
         );
         assert_eq!(
             harness
@@ -3123,9 +3085,6 @@ mod anchored_dialog_layout_tests {
             tickbox,
             "the permanent-delete tickbox moved under the pointer that just ticked it: the press \
              that unticks it misses"
-        );
-        harness.inner.get_by_label_contains(
-            &StoredTrackAction::DeletePermanently.confirmation_title(SHELVED_ITEMS),
         );
     }
 
