@@ -1,9 +1,9 @@
 //! The plot's x range while it follows the map, held between the frames its
 //! inputs stay the same.
 
-use gt_loaded_files::{LoadedFiles, LoadedFilesGeneration};
+use gt_loaded_files::LoadedFiles;
 use gt_map::ViewportBounds;
-use gt_types::LoadedFile;
+use gt_types::{Generation, LoadedFile};
 use gt_ui_types::TrackDataVisibility;
 
 /// What the range held in [`MapSyncedPlotRangeCache`] was scanned from.
@@ -13,7 +13,7 @@ struct ScanInputs {
     /// positive one, so the key compares bit patterns.
     bounds_bits: [u64; 4],
     visibility: TrackDataVisibility,
-    files: LoadedFilesGeneration,
+    files: Generation,
 }
 
 /// The time range of the fixes inside the map viewport, scanned again only

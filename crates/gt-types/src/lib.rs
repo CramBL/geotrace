@@ -19,6 +19,7 @@ pub mod time_types;
 pub mod tpv;
 pub mod track;
 pub mod utc_days;
+pub mod versioned;
 
 pub use channel::{BackwardTimeStep, Channel};
 pub use coordinates::{
@@ -49,3 +50,4 @@ pub use track::{
     SKY_REPORT_MAX_AGE_SECS, SegmentLengthRange, SpatialPoint, TimeRange, TotalDistance,
     TrackGeometry, TrackLod, TrackMetadata, TravelMode,
 };
+pub use versioned::{Generation, Versioned};
