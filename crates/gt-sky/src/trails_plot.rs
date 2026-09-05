@@ -454,16 +454,22 @@ fn fade_step_alpha(step: i32) -> f32 {
 /// The ease is quadratic, so the fade is gentle just behind the head and
 /// steepens toward the end of the tail. Without a scrub the whole trail draws at
 /// full strength.
+///
+/// Both divisions are algebraic: [`fade_step`] rounds the result to one of
+/// [`style::TRAIL_FADE_STEPS`] levels, and the value is never compared with
+/// `==` across call sites, hashed, or stored.
 fn trail_fade(time: GpsTime, scrub: Option<GpsTime>) -> f32 {
     let Some(scrub) = scrub else {
         return 1.0;
     };
-    let secs_behind = scrub.signed_duration_since(time).num_milliseconds() as f32 / 1000.0;
+    let secs_behind =
+        (scrub.signed_duration_since(time).num_milliseconds() as f32).algebraic_div(1000.0);
     if secs_behind < 0.0 {
         // Ahead of the satellite: not travelled yet, so it stays a ghost.
         return 0.0;
     }
-    1.0 - (secs_behind / style::TRAIL_TAIL_SECS).min(1.0).powi(2)
+    let tail_share = secs_behind.algebraic_div(style::TRAIL_TAIL_SECS).min(1.0);
+    1.0 - tail_share * tail_share
 }
 
 /// Minimum distance a sample must project from the last kept one to become its
@@ -1605,6 +1611,31 @@ mod tests {
             super::fade_step_alpha(TRAIL_FADE_STEPS as i32),
             TRAIL_MAX_ALPHA
         ));
+    }
+
+    #[test]
+    fn fade_step_over_the_whole_tail_stays_in_range_and_within_one_level_of_the_exact_formula() {
+        use crate::style::{TRAIL_FADE_STEPS, TRAIL_TAIL_SECS};
+
+        let scrub = Some(at(0));
+        let steps = 0..=TRAIL_FADE_STEPS as i32;
+        for millis_behind in 0..=(TRAIL_TAIL_SECS as i64) * 1000 {
+            let time = GpsTime::from_utc(start() - Duration::milliseconds(millis_behind));
+            let step = super::fade_step(time, scrub);
+
+            let secs_behind = millis_behind as f32 / 1000.0;
+            let exact_fade = 1.0 - (secs_behind / TRAIL_TAIL_SECS).min(1.0).powi(2);
+            let exact_step = (exact_fade * TRAIL_FADE_STEPS as f32).round() as i32;
+
+            assert!(
+                (step - exact_step).abs() <= 1,
+                "{millis_behind}ms behind: step {step} against the exact {exact_step}"
+            );
+            assert!(
+                steps.contains(&step),
+                "{millis_behind}ms behind: step {step} outside {steps:?}"
+            );
+        }
     }
 
     /// The opacity multiplier scales the whole trail, but the stroke alpha
