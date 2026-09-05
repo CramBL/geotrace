@@ -89,7 +89,7 @@ fn build_file(
 /// pending and every snap view empty.
 fn make_state_from_files(files: LoadedFiles) -> State {
     let mut tree = TreeState::new();
-    tree.sync_from_loaded_files(files.files());
+    tree.sync_from_loaded_files(files.view());
     State {
         files,
         tree,
@@ -1456,14 +1456,14 @@ fn snapshot_track_channels() {
         vec![],
     );
 
+    let mut files = LoadedFiles::new();
+    files.push(file, FileHistory::None);
     let mut tree = TreeState::new();
-    tree.sync_from_loaded_files(std::slice::from_ref(&file));
+    tree.sync_from_loaded_files(files.view());
     let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
     tree.toggle_expand_file(FileIdx::new(0));
     tree.toggle_expand_track(track);
     tree.toggle_channels_expanded(track);
-    let mut files = LoadedFiles::new();
-    files.push(file, FileHistory::None);
 
     let state = State {
         files,

@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::mem;
 
+use gt_loaded_files::{LoadedFileId, LoadedFilesView};
 use gt_types::{
-    DataCategory, DataCategorySet, FileIdx, GeneratedMarkerKindTag, LoadedFile, TrackIdx, TrackRef,
+    DataCategory, DataCategorySet, FileIdx, GeneratedMarkerKindTag, LoadedTrack, TrackIdx, TrackRef,
 };
 use gt_ui_types::{
     EventMarkerVisibility, FileVisibility, GeneratedMarkerVisibility, TrackDataVisibility,
@@ -40,6 +42,23 @@ impl NodeKey {
             Self::Track(track_ref) => track_ref.fi,
         }
     }
+}
+
+/// What a track's tree state is kept under while the tree is rebuilt: the
+/// session id of the recording the track belongs to, and
+/// [`gt_types::track::TrackMetadata::index`]. Removing a file or a track
+/// shifts the positions [`NodeKey`] addresses a row by, and leaves these two
+/// alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct TrackStateKey {
+    file: LoadedFileId,
+    track_number: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum NodeStateKey {
+    File(LoadedFileId),
+    Track(TrackStateKey),
 }
 
 /// The items of an open shelve confirmation, and the state of its
@@ -150,11 +169,15 @@ pub struct TrackNode {
     /// Whether the read-only Channels section is expanded. Channels have no map
     /// visibility yet, so they get a dedicated flag.
     pub channels_expanded: bool,
+    /// [`gt_types::track::TrackMetadata::index`] of the track this node is
+    /// built from, one half of the [`TrackStateKey`] its state moves by.
+    track_number: usize,
 }
 
 impl TrackNode {
-    fn new() -> Self {
+    fn new(track_number: usize) -> Self {
         Self {
+            track_number,
             expanded: false,
             check: CheckState::On,
             categories_expanded: DataCategorySet::default(),
@@ -170,17 +193,30 @@ impl TrackNode {
             channels_expanded: false,
         }
     }
+
+    fn sync_event_paths_from(&mut self, loaded_track: &LoadedTrack) {
+        self.event_paths.sync_from_paths(
+            loaded_track
+                .event_markers
+                .iter()
+                .map(|marker| marker.variant_path.as_str()),
+        );
+    }
 }
 
 pub struct FileNode {
     pub expanded: bool,
     pub check: CheckState,
     pub tracks: Vec<TrackNode>,
+    /// Session id of the recording this node is built from. A rebuild moves
+    /// the node's state, and the state of every track under it, by this id.
+    id: LoadedFileId,
 }
 
 impl FileNode {
-    fn new() -> Self {
+    fn new(id: LoadedFileId) -> Self {
         Self {
+            id,
             expanded: false,
             check: CheckState::On,
             tracks: Vec::new(),
@@ -258,56 +294,84 @@ impl TreeState {
         }
     }
 
-    /// Integrate newly loaded files while preserving state for existing nodes.
+    /// Rebuild the nodes for `files`, keeping the state of every track that is
+    /// still loaded.
     ///
-    /// Appends [`FileNode`]/[`TrackNode`] entries for any new data and rebuilds
-    /// the event path trees.  Does not reset any check or expand state.
-    pub fn sync_from_loaded_files(&mut self, files: &[LoadedFile]) {
-        while self.files.len() < files.len() {
-            self.files.push(FileNode::new());
-        }
-        self.files.truncate(files.len());
+    /// A node's check, expansion, event paths and marker toggles are kept
+    /// under the session id of its recording and its track number. Loading a
+    /// file and removing one both change the positions that [`FileNode`]s and
+    /// [`TrackNode`]s sit at, and leave those two keys alone. A track loaded
+    /// since the last call starts at its defaults: checked on and collapsed.
+    /// Each [`NodeKey`] the state holds - the selection, its anchor, the
+    /// reveal request, the items of an open shelve confirmation and those of a
+    /// pending unload - moves to the position of the row it refers to, and is
+    /// dropped once that row is gone.
+    pub fn sync_from_loaded_files(&mut self, files: LoadedFilesView<'_>) {
+        let key_at_previous_position: BTreeMap<NodeKey, NodeStateKey> =
+            self.node_state_keys_by_position().into_iter().collect();
 
-        for (file_node, loaded_file) in self.files.iter_mut().zip(files.iter()) {
-            while file_node.tracks.len() < loaded_file.tracks.len() {
-                file_node.tracks.push(TrackNode::new());
+        let mut previous_expanded: BTreeMap<LoadedFileId, bool> = BTreeMap::new();
+        let mut previous_tracks: BTreeMap<TrackStateKey, TrackNode> = BTreeMap::new();
+        for FileNode {
+            id,
+            expanded,
+            check: _,
+            tracks,
+        } in mem::take(&mut self.files)
+        {
+            previous_expanded.insert(id, expanded);
+            for track_node in tracks {
+                let key = TrackStateKey {
+                    file: id,
+                    track_number: track_node.track_number,
+                };
+                previous_tracks.insert(key, track_node);
             }
-            file_node.tracks.truncate(loaded_file.tracks.len());
-
-            for (track_node, loaded_track) in
-                file_node.tracks.iter_mut().zip(loaded_file.tracks.iter())
-            {
-                track_node.event_paths.sync_from_paths(
-                    loaded_track
-                        .event_markers
-                        .iter()
-                        .map(|m| m.variant_path.as_str()),
-                );
-            }
-
-            file_node.recompute_check();
         }
 
+        self.files = files
+            .entries()
+            .map(|entry| {
+                let mut file_node = FileNode::new(entry.id());
+                file_node.expanded = previous_expanded.remove(&entry.id()).unwrap_or(false);
+                for loaded_track in &entry.file().tracks {
+                    let track_number = loaded_track.metadata.index;
+                    let key = TrackStateKey {
+                        file: entry.id(),
+                        track_number,
+                    };
+                    let mut track_node = previous_tracks
+                        .remove(&key)
+                        .unwrap_or_else(|| TrackNode::new(track_number));
+                    track_node.sync_event_paths_from(loaded_track);
+                    file_node.tracks.push(track_node);
+                }
+                file_node.recompute_check();
+                file_node
+            })
+            .collect();
+
+        self.move_held_positions(&key_at_previous_position);
         self.rebuild_visibility();
         self.rebuild_event_marker_visibility();
         self.rebuild_generated_marker_visibility();
     }
 
-    /// Full reset: rebuild from scratch with all nodes On and collapsed.
-    /// Used after deletion when indices shift.
-    pub fn reset_for_files(&mut self, files: &[LoadedFile]) {
+    /// Rebuild every node at its defaults: checked on, collapsed, and nothing
+    /// selected.
+    ///
+    /// The caller re-segmented the recordings, which cuts their fixes into
+    /// different tracks and numbers them over the new boundaries: a track
+    /// number from the previous segmentation addresses another stretch of the
+    /// recording.
+    pub fn reset_for_resegmented_files(&mut self, files: LoadedFilesView<'_>) {
         self.files = files
-            .iter()
-            .map(|loaded_file| {
-                let mut file_node = FileNode::new();
-                for loaded_track in &loaded_file.tracks {
-                    let mut track_node = TrackNode::new();
-                    track_node.event_paths.sync_from_paths(
-                        loaded_track
-                            .event_markers
-                            .iter()
-                            .map(|m| m.variant_path.as_str()),
-                    );
+            .entries()
+            .map(|entry| {
+                let mut file_node = FileNode::new(entry.id());
+                for loaded_track in &entry.file().tracks {
+                    let mut track_node = TrackNode::new(loaded_track.metadata.index);
+                    track_node.sync_event_paths_from(loaded_track);
                     file_node.tracks.push(track_node);
                 }
                 file_node
@@ -319,6 +383,62 @@ impl TreeState {
         self.rebuild_visibility();
         self.rebuild_event_marker_visibility();
         self.rebuild_generated_marker_visibility();
+    }
+
+    /// Every row of the tree, the position it sits at paired with the key its
+    /// state is kept under.
+    fn node_state_keys_by_position(&self) -> Vec<(NodeKey, NodeStateKey)> {
+        let mut keys = Vec::new();
+        for (fi, file_node) in self.files.iter().enumerate() {
+            let fi = FileIdx::new(fi);
+            keys.push((NodeKey::File(fi), NodeStateKey::File(file_node.id)));
+            for (ti, track_node) in file_node.tracks.iter().enumerate() {
+                let key = TrackStateKey {
+                    file: file_node.id,
+                    track_number: track_node.track_number,
+                };
+                keys.push((
+                    NodeKey::Track(TrackRef::new(fi, TrackIdx::new(ti))),
+                    NodeStateKey::Track(key),
+                ));
+            }
+        }
+        keys
+    }
+
+    /// Move every [`NodeKey`] the state holds to the position its row sits at
+    /// now, given the key each position stood for before the rebuild.
+    fn move_held_positions(&mut self, key_at_previous_position: &BTreeMap<NodeKey, NodeStateKey>) {
+        let position_of_key: BTreeMap<NodeStateKey, NodeKey> = self
+            .node_state_keys_by_position()
+            .into_iter()
+            .map(|(position, key)| (key, position))
+            .collect();
+        let moved = |position: NodeKey| -> Option<NodeKey> {
+            position_of_key
+                .get(key_at_previous_position.get(&position)?)
+                .copied()
+        };
+
+        self.selection = mem::take(&mut self.selection)
+            .into_iter()
+            .filter_map(moved)
+            .collect();
+        self.selection_anchor = self.selection_anchor.and_then(moved);
+        self.reveal_request = self.reveal_request.and_then(moved);
+        if let Some(confirm) = &mut self.shelve_confirm {
+            keep_moved_positions(&mut confirm.items, moved);
+        }
+        if self
+            .shelve_confirm
+            .as_ref()
+            .is_some_and(|confirm| confirm.items.is_empty())
+        {
+            self.shelve_confirm = None;
+        }
+        if let Some(pending) = &mut self.pending_unload {
+            keep_moved_positions(pending, moved);
+        }
     }
 
     /// Set a file's check state with cascade to all child tracks.
@@ -811,6 +931,18 @@ impl TreeState {
         self.generated_marker_visibility
             .set_hidden(track, hidden.into_iter());
     }
+}
+
+/// Put every key of `positions` at the position it sits at now, dropping the
+/// ones whose row is gone.
+fn keep_moved_positions(positions: &mut Vec<NodeKey>, moved: impl Fn(NodeKey) -> Option<NodeKey>) {
+    positions.retain_mut(|position| match moved(*position) {
+        Some(moved_to) => {
+            *position = moved_to;
+            true
+        }
+        None => false,
+    });
 }
 
 fn set_subtree(nodes: &mut BTreeMap<String, CheckState>, prefix: &str, state: CheckState) {

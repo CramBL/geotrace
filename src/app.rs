@@ -140,7 +140,7 @@ struct SharedAppState {
 
 impl SharedAppState {
     fn sync_tree_from_loaded_files(&mut self) {
-        self.tree.sync_from_loaded_files(self.loaded_files.files());
+        self.tree.sync_from_loaded_files(self.loaded_files.view());
     }
 }
 
@@ -906,7 +906,7 @@ impl App {
                 );
             }
             s.plot_state.rebuild_all(&s.loaded_files);
-            s.tree.reset_for_files(&s.loaded_files);
+            s.tree.reset_for_resegmented_files(s.loaded_files.view());
         }
         self.on_track_indices_changed();
     }

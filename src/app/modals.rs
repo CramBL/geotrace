@@ -588,7 +588,7 @@ pub fn remove_items_from_view(
         }
     }
 
-    tree.reset_for_files(loaded_files.files());
+    tree.sync_from_loaded_files(loaded_files.view());
     removals
 }
 
@@ -1584,7 +1584,8 @@ mod tests {
     use std::path::PathBuf;
 
     use gt_types::{
-        FileIdx, FileSource, LoadedFile, LoadedTrack, TimeRange, TrackIdx, TrackMetadata,
+        FileIdx, FileSource, GeneratedMarkerKindTag, LoadedFile, LoadedTrack, TimeRange, TrackIdx,
+        TrackMetadata,
     };
 
     use egui_kittest::kittest::{NodeT as _, Queryable as _};
@@ -1613,6 +1614,7 @@ mod tests {
         show_snap_scope_dialog, track_removals,
     };
     use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
+    use gt_side_panel::tree::CheckState;
     use gt_side_panel::{ShelveConfirmState, TreeState};
 
     use crate::app::history_db::{DbOp, HistoryWorker, Response};
@@ -2545,6 +2547,176 @@ mod tests {
             removals.is_empty(),
             "the remove acts on no stored track, and the shelved ones stay stored"
         );
+    }
+
+    /// Two recordings of three tracks each, with the tree synced to them and
+    /// three of their tracks hidden by the user.
+    fn two_recordings_with_hidden_tracks() -> (LoadedFiles, TreeState) {
+        let loaded = make_loaded_files(&[(3, true), (3, true)]);
+        let mut tree = TreeState::new();
+        tree.sync_from_loaded_files(loaded.view());
+        for track in [track_ref(0, 0), track_ref(0, 2), track_ref(1, 1)] {
+            tree.hide_track(track);
+        }
+        (loaded, tree)
+    }
+
+    fn track_ref(fi: usize, ti: usize) -> TrackRef {
+        TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti))
+    }
+
+    /// The check of every track of every recording, in tree order.
+    fn track_checks(tree: &TreeState) -> Vec<Vec<CheckState>> {
+        tree.files
+            .iter()
+            .map(|file_node| file_node.tracks.iter().map(|track| track.check).collect())
+            .collect()
+    }
+
+    /// The user hides the first and third track of one recording and the second
+    /// track of another, then removes an item. Each track they hid is still
+    /// hidden at the position the removal leaves it at.
+    #[rstest::rstest]
+    #[case::a_whole_recording(
+        vec![file_key(0)],
+        vec![vec![CheckState::On, CheckState::Off, CheckState::On]],
+    )]
+    #[case::a_track_between_two_hidden_ones(
+        vec![track_key(0, 1)],
+        vec![
+            vec![CheckState::Off, CheckState::Off],
+            vec![CheckState::On, CheckState::Off, CheckState::On],
+        ],
+    )]
+    #[case::a_hidden_track(
+        vec![track_key(0, 0)],
+        vec![
+            vec![CheckState::On, CheckState::Off],
+            vec![CheckState::On, CheckState::Off, CheckState::On],
+        ],
+    )]
+    fn a_hidden_track_stays_hidden_when_another_item_is_removed(
+        #[case] removed: Vec<NodeKey>,
+        #[case] expected: Vec<Vec<CheckState>>,
+    ) {
+        let (mut loaded, mut tree) = two_recordings_with_hidden_tracks();
+
+        remove_items_from_view(&removed, &mut loaded, &mut tree);
+
+        assert_eq!(track_checks(&tree), expected);
+    }
+
+    /// The user expands the second recording and the last of its tracks, hides
+    /// one generated-marker type on that track and expands its group, then
+    /// removes the first recording.
+    #[test]
+    fn a_track_keeps_its_expansion_and_its_marker_toggles_when_another_recording_is_removed() {
+        let mut loaded = make_loaded_files(&[(2, true), (2, true)]);
+        let mut tree = TreeState::new();
+        tree.sync_from_loaded_files(loaded.view());
+        let track = track_ref(1, 1);
+        tree.expand_file(FileIdx::new(1));
+        tree.toggle_expand_track(track);
+        tree.toggle_generated_kind_hidden(track, GeneratedMarkerKindTag::Slip);
+        tree.toggle_generated_kind_expanded(track, GeneratedMarkerKindTag::Slip);
+
+        remove_items_from_view(&[file_key(0)], &mut loaded, &mut tree);
+
+        let moved = track_ref(0, 1);
+        assert!(
+            tree.file_node(FileIdx::new(0))
+                .is_some_and(|file_node| file_node.expanded),
+            "the recording is still expanded"
+        );
+        assert!(
+            tree.track_node(moved)
+                .is_some_and(|track_node| track_node.expanded),
+            "the track is still expanded"
+        );
+        assert!(
+            !tree.generated_kind_visible(moved, GeneratedMarkerKindTag::Slip),
+            "the generated-marker type is still hidden"
+        );
+        assert!(
+            tree.generated_kind_expanded(moved, GeneratedMarkerKindTag::Slip),
+            "the generated-marker type's group is still expanded"
+        );
+    }
+
+    /// The user selects the first and the third track of a recording and
+    /// removes the first of them.
+    #[test]
+    fn the_selection_keeps_the_track_that_stays_loaded_across_a_removal() {
+        let mut loaded = make_loaded_files(&[(3, true)]);
+        let mut tree = TreeState::new();
+        tree.sync_from_loaded_files(loaded.view());
+        tree.apply_click(track_key(0, 0), false, false);
+        tree.apply_click(track_key(0, 2), true, false);
+
+        remove_items_from_view(&[track_key(0, 0)], &mut loaded, &mut tree);
+
+        assert_eq!(
+            tree.selection.iter().copied().collect::<Vec<NodeKey>>(),
+            vec![track_key(0, 1)]
+        );
+    }
+
+    /// The user reveals the last track of the second recording from the
+    /// Visible section, then removes the first recording.
+    #[test]
+    fn the_reveal_request_and_the_selection_anchor_move_with_the_track_across_a_removal() {
+        let mut loaded = make_loaded_files(&[(2, true), (2, true)]);
+        let mut tree = TreeState::new();
+        tree.sync_from_loaded_files(loaded.view());
+        tree.reveal(track_key(1, 1));
+
+        remove_items_from_view(&[file_key(0)], &mut loaded, &mut tree);
+
+        assert_eq!(tree.reveal_request, Some(track_key(0, 1)));
+        assert_eq!(tree.selection_anchor, Some(track_key(0, 1)));
+    }
+
+    /// The shelve confirmation is open over tracks of one recording while the
+    /// user removes the first of them from the view.
+    #[rstest::rstest]
+    #[case::one_of_two_tracks(
+        vec![track_key(0, 0), track_key(0, 2)],
+        Some(vec![track_key(0, 1)]),
+    )]
+    #[case::the_only_track(vec![track_key(0, 0)], None)]
+    fn an_open_shelve_confirmation_lists_the_tracks_that_stay_loaded(
+        #[case] items: Vec<NodeKey>,
+        #[case] expected: Option<Vec<NodeKey>>,
+    ) {
+        let mut loaded = make_loaded_files(&[(3, true)]);
+        let mut tree = TreeState::new();
+        tree.sync_from_loaded_files(loaded.view());
+        tree.shelve_confirm = Some(ShelveConfirmState {
+            items,
+            delete_permanently: false,
+        });
+
+        remove_items_from_view(&[track_key(0, 0)], &mut loaded, &mut tree);
+
+        assert_eq!(
+            tree.shelve_confirm.map(|confirm| confirm.items),
+            expected,
+            "the confirmation closes once every track it lists is gone"
+        );
+    }
+
+    /// The user asks to unload the last track of a recording, then removes the
+    /// first one from the view.
+    #[test]
+    fn a_pending_unload_lists_the_track_at_the_position_the_removal_leaves_it_at() {
+        let mut loaded = make_loaded_files(&[(3, true)]);
+        let mut tree = TreeState::new();
+        tree.sync_from_loaded_files(loaded.view());
+        tree.pending_unload = Some(vec![track_key(0, 2)]);
+
+        remove_items_from_view(&[track_key(0, 0)], &mut loaded, &mut tree);
+
+        assert_eq!(tree.pending_unload, Some(vec![track_key(0, 1)]));
     }
 
     /// One dialog this module renders, driven with content far larger than any
