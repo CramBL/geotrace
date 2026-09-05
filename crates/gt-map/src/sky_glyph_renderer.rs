@@ -17,7 +17,7 @@ use egui::{Pos2, Shape, Stroke, Vec2};
 
 use gt_types::satellites::Satellites;
 use gt_types::{LoadedTrack, MercBounds, PlacedPoints, TrackRef};
-use gt_ui_types::SkyGlyphVariant;
+use gt_ui_types::{SkyGlyphVariant, TrackMatchView};
 use smallvec::SmallVec;
 
 use crate::collision_grid;
@@ -120,19 +120,19 @@ pub(crate) struct Candidate {
 
 /// Resolve which report-bearing points get a sky ring this frame, decimated
 /// across all tracks at once. `tracks` yields each glyph-enabled track with
-/// its geometry index and ref. `point_passes` applies the caller's per-point
-/// conditions (time filter, query hiding). Points outside `viewport` or
-/// without a satellite report are skipped.
+/// its geometry index, its ref, and its query ranges. `point_passes` applies
+/// the caller's per-point conditions (time filter, query hiding). Points
+/// outside `viewport` or without a satellite report are skipped.
 pub(crate) fn select_glyphs<'s, 'a>(
     scratch: &'s mut GlyphSelection,
-    tracks: impl Iterator<Item = (usize, TrackRef, &'a LoadedTrack)>,
+    tracks: impl Iterator<Item = (usize, TrackRef, &'a LoadedTrack, TrackMatchView<'a>)>,
     geometry_count: usize,
     viewport: MercBounds,
     cell_merc: f64,
-    mut point_passes: impl FnMut(TrackRef, usize, &gt_types::NavPoint) -> bool,
+    mut point_passes: impl FnMut(&TrackMatchView<'a>, usize, &gt_types::NavPoint) -> bool,
 ) -> &'s [Vec<usize>] {
     let candidates = scratch.candidates();
-    for (geometry_index, track_ref, track) in tracks {
+    for (geometry_index, track_ref, track, query_view) in tracks {
         // A track with no geometry is drawn nowhere, so it carries no glyph.
         let Some(placed) = track.placed_points() else {
             continue;
@@ -146,7 +146,7 @@ pub(crate) fn select_glyphs<'s, 'a>(
             {
                 continue;
             }
-            if !point_passes(track_ref, point_index, point.fix) {
+            if !point_passes(&query_view, point_index, point.fix) {
                 continue;
             }
             candidates.push((
@@ -461,7 +461,7 @@ mod tests {
     use egui::{pos2, vec2};
     use gt_types::satellites::{Constellation, Satellite, Satellites};
     use gt_types::{FileIdx, TrackIdx, TrackRef};
-    use gt_ui_types::SkyGlyphVariant;
+    use gt_ui_types::{SkyGlyphVariant, TrackMatchView};
 
     use super::{
         DISC_OFFSET_PX, DISC_RADIUS_PX, GlyphSelection, RING_RADIUS_PX, disc_offset_for_samples,
@@ -506,7 +506,13 @@ mod tests {
         let mut scratch = GlyphSelection::default();
         select_glyphs(
             &mut scratch,
-            [(0, TrackRef::new(FileIdx::new(0), TrackIdx::new(0)), track)].into_iter(),
+            [(
+                0,
+                TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+                track,
+                TrackMatchView::default(),
+            )]
+            .into_iter(),
             1,
             WORLD,
             cell_merc,
@@ -612,7 +618,13 @@ mod tests {
         let mut scratch = GlyphSelection::default();
         let selected = select_glyphs(
             &mut scratch,
-            [(0, TrackRef::new(FileIdx::new(0), TrackIdx::new(0)), &track)].into_iter(),
+            [(
+                0,
+                TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+                &track,
+                TrackMatchView::default(),
+            )]
+            .into_iter(),
             1,
             nothing,
             1e-9,

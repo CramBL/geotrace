@@ -9,7 +9,7 @@
 use egui::{Color32, Response, Stroke, Ui};
 use gt_filter::GlobalFilter;
 use gt_types::{FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef};
-use gt_ui_types::{DrawLayerMask, MapHighlight, QueryMatches, SkyGlyphVariant};
+use gt_ui_types::{DrawLayerMask, MapHighlight, QueryMatches, SkyGlyphVariant, TrackMatchView};
 use rustc_hash::FxHashMap;
 use walkers::{MapMemory, Plugin, Projector};
 
@@ -315,6 +315,7 @@ impl<'a> TrackLayers<'a> {
                     .highlight
                     .hover_match
                     .filter(|hm| hm.track == track_ref);
+                let query_view = TrackMatchView::for_track(self.query_matches, track_ref);
                 let Some(placed) = track.placed_points() else {
                     continue;
                 };
@@ -340,17 +341,12 @@ impl<'a> TrackLayers<'a> {
                                 ),
                             ),
                         };
-                        let (matched, hidden) = self
-                            .query_matches
-                            .map_or((DrawLayerMask::default(), false), |m| {
-                                (m.draw_mask(track_ref, pi), m.is_hidden(track_ref, pi))
-                            });
                         let key = LinePointKey {
                             ghost: p.fix.tpv.heading().is_none(),
                             quality: quality_line_color(p.fix),
                             bucket,
-                            matched,
-                            hidden,
+                            matched: query_view.draw_mask(pi),
+                            hidden: query_view.is_hidden(pi),
                             hover_matched: hover_match.is_some_and(|hm| hm.contains(pi)),
                         };
                         (key, screen_pos)
@@ -506,13 +502,17 @@ impl<'a> TrackLayers<'a> {
                 .iter()
                 .enumerate()
                 .filter(|(_, geo)| geo.entry.sat_labels)
-                .map(|(i, geo)| (i, TrackRef::new(geo.fi, geo.ti), geo.track)),
+                .map(|(i, geo)| {
+                    let track_ref = TrackRef::new(geo.fi, geo.ti);
+                    let query_view = TrackMatchView::for_track(query_matches, track_ref);
+                    (i, track_ref, geo.track, query_view)
+                }),
             geometries.len(),
             viewport,
             cell_merc,
-            move |track_ref, pi, point| {
+            move |query_view, pi, point| {
                 gt_filter::point_passes_time_filter(point.tpv.time().utc(), filter)
-                    && !query_matches.is_some_and(|m| m.is_hidden(track_ref, pi))
+                    && !query_view.is_hidden(pi)
             },
         );
     }
@@ -539,7 +539,7 @@ impl<'a> TrackLayers<'a> {
             // length, without walking any points.
             sky_glyph_renderer::select_glyphs(
                 &mut *self.sky_glyph_scratch,
-                std::iter::empty::<(usize, TrackRef, &LoadedTrack)>(),
+                std::iter::empty::<(usize, TrackRef, &LoadedTrack, TrackMatchView<'_>)>(),
                 geometries.len(),
                 viewport,
                 // No candidates are pushed, so the cell size is never read.
@@ -556,13 +556,17 @@ impl<'a> TrackLayers<'a> {
                 .iter()
                 .enumerate()
                 .filter(|(_, geo)| geo.entry.sky_glyphs)
-                .map(|(i, geo)| (i, TrackRef::new(geo.fi, geo.ti), geo.track)),
+                .map(|(i, geo)| {
+                    let track_ref = TrackRef::new(geo.fi, geo.ti);
+                    let query_view = TrackMatchView::for_track(query_matches, track_ref);
+                    (i, track_ref, geo.track, query_view)
+                }),
             geometries.len(),
             viewport,
             cell_merc,
-            move |track_ref, pi, point| {
+            move |query_view, pi, point| {
                 gt_filter::point_passes_time_filter(point.tpv.time().utc(), filter)
-                    && !query_matches.is_some_and(|m| m.is_hidden(track_ref, pi))
+                    && !query_view.is_hidden(pi)
             },
         );
     }
@@ -614,20 +618,20 @@ impl<'a> TrackLayers<'a> {
                     .and_then(|by_track| by_track.get(&track_ref));
                 // In keep/hide, drop the icons of hidden points too, so the
                 // arrows match the (broken) line.
+                let query_view = TrackMatchView::for_track(self.query_matches, track_ref);
                 let (filtered_tpv, filtered_chevrons);
-                let (tpv, chevrons) = match self.query_matches {
-                    Some(matches) if !matches.hidden_ranges(track_ref).is_empty() => {
-                        let shown = |pi: &usize| !matches.is_hidden(track_ref, *pi);
-                        filtered_tpv = tpv.map(|v| v.iter().copied().filter(shown).collect());
-                        filtered_chevrons = geo
-                            .chevron_points
-                            .iter()
-                            .copied()
-                            .filter(|(pi, _)| shown(pi))
-                            .collect::<Vec<_>>();
-                        (filtered_tpv.as_ref(), filtered_chevrons.as_slice())
-                    }
-                    _ => (tpv, geo.chevron_points.as_slice()),
+                let (tpv, chevrons) = if query_view.hides_any_point() {
+                    let shown = |pi: &usize| !query_view.is_hidden(*pi);
+                    filtered_tpv = tpv.map(|v| v.iter().copied().filter(shown).collect());
+                    filtered_chevrons = geo
+                        .chevron_points
+                        .iter()
+                        .copied()
+                        .filter(|(pi, _)| shown(pi))
+                        .collect::<Vec<_>>();
+                    (filtered_tpv.as_ref(), filtered_chevrons.as_slice())
+                } else {
+                    (tpv, geo.chevron_points.as_slice())
                 };
                 tpv_renderer::draw_track_icons(
                     ui,
