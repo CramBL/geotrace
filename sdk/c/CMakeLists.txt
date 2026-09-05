@@ -131,6 +131,9 @@ install(FILES
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/GeoTraceC"
 )
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../cmake")
+include(Sanitize)
+
 option(GEOTRACE_C_BUILD_EXAMPLES "Build C SDK examples" OFF)
 option(GEOTRACE_C_BUILD_TESTS "Build C SDK tests" OFF)
 

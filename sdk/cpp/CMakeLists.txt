@@ -48,6 +48,9 @@ install(FILES
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/GeoTraceCpp"
 )
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../cmake")
+include(Sanitize)
+
 option(GEOTRACE_CPP_BUILD_EXAMPLES "Build C++ SDK examples" OFF)
 option(BUILD_TESTING "Build C++ SDK tests" OFF)
 

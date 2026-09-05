@@ -49,10 +49,6 @@ test-c: (_sdk "bash" "scripts/test-c.sh")
 [group("container-sdk")]
 test-c-asan: (_sdk "bash" "scripts/test-c-asan.sh")
 
-# C SDK tests with ThreadSanitizer (mutually exclusive with ASAN).
-[group("container-sdk")]
-test-c-tsan: (_sdk "bash" "scripts/test-c-tsan.sh")
-
 # Build and run the C++ SDK unit/integration tests.
 [group("container-sdk")]
 test-cpp: (_sdk "bash" "scripts/test-cpp.sh")

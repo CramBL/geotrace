@@ -60,7 +60,10 @@ jobs:
           # Pin the gnu target: cargo-fuzz ships as a musl-static binary, so it
           # otherwise defaults to the musl target, whose static libc the address
           # sanitizer cannot link against.
-          cargo +nightly fuzz run decode --target x86_64-unknown-linux-gnu -- \
+          # --sanitizer address is cargo-fuzz's default. Passing it explicitly
+          # keeps the address sanitizer on if that default ever changes.
+          cargo +nightly fuzz run decode --target x86_64-unknown-linux-gnu \
+            --sanitizer address -- \
             -max_total_time="$duration" -rss_limit_mb=4096
 
       - name: Upload crash artifacts
@@ -104,9 +107,11 @@ jobs:
           # A short run gates PRs/pushes, the weekly schedule fuzzes longer.
           duration=60
           [ "${{ github.event_name }}" = "schedule" ] && duration=600
-          # Pin the gnu target, for the reason the decode job above states.
+          # Pin the gnu target and the sanitizer, for the reasons the decode
+          # job above states.
           for target in parse_log recognise_message; do
-            cargo +nightly fuzz run "$target" --target x86_64-unknown-linux-gnu -- \
+            cargo +nightly fuzz run "$target" --target x86_64-unknown-linux-gnu \
+              --sanitizer address -- \
               -max_total_time="$duration" -rss_limit_mb=4096
           done
 

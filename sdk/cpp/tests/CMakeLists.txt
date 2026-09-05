@@ -19,7 +19,7 @@ set(GEOTRACE_CPP_OUT_OF_RANGE_FIXTURE
 
 function(add_cpp_test name)
     add_executable(${name} ${name}.cpp)
-    target_link_libraries(${name} PRIVATE GeoTrace::Cpp doctest::doctest)
+    target_link_libraries(${name} PRIVATE GeoTrace::Cpp doctest::doctest geotrace_sanitizers)
 
     if(MSVC)
         # /wd5285: doctest forward-declares std::tuple, which newer MSVC
@@ -52,16 +52,6 @@ function(add_cpp_test name)
         )
     endif()
 
-    if(DEFINED GEOTRACE_SANITIZE)
-        if(GEOTRACE_SANITIZE STREQUAL "asan")
-            target_compile_options(${name} PRIVATE -fsanitize=address,undefined)
-            target_link_options(${name} PRIVATE -fsanitize=address,undefined)
-        elseif(GEOTRACE_SANITIZE STREQUAL "tsan")
-            target_compile_options(${name} PRIVATE -fsanitize=thread)
-            target_link_options(${name} PRIVATE -fsanitize=thread)
-        endif()
-    endif()
-
     # On Unix, embed an RPATH so `ctest` can find the shared library without
     # LD_LIBRARY_PATH / DYLD_LIBRARY_PATH.  On Windows, GeoTrace::C is a
     # static library so there is no DLL to locate at runtime.
@@ -72,6 +62,9 @@ function(add_cpp_test name)
     endif()
 
     add_test(NAME ${name} COMMAND ${name})
+    set_tests_properties(${name} PROPERTIES
+        ENVIRONMENT "${GEOTRACE_SANITIZE_TEST_ENVIRONMENT}"
+    )
 endfunction()
 
 add_cpp_test(test_file_builder)
