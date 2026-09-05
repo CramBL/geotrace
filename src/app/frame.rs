@@ -87,8 +87,22 @@ impl eframe::App for App {
         self.unload_selection_on_delete_key(ui);
         self.show_top_menu_bar(ui);
         self.forward_legend_hover_to_map_highlight();
-        self.show_track_data_panel(ui);
-        self.show_central_area(ui);
+        // `App::ui` copies the names out of the cache. The panels and panes
+        // below borrow the whole shared state, which holds the cache itself.
+        let recording_names = {
+            let mut shared = self.shared.borrow_mut();
+            let SharedAppState {
+                loaded_files,
+                recording_name_template,
+                recording_names,
+                ..
+            } = &mut *shared;
+            recording_names
+                .names(loaded_files, recording_name_template)
+                .clone()
+        };
+        self.show_track_data_panel(ui, &recording_names);
+        self.show_central_area(ui, &recording_names);
         self.apply_log_viewer_requests();
         self.store_attached_log_filter_edits();
 
@@ -373,7 +387,7 @@ impl App {
         }
     }
 
-    fn show_track_data_panel(&mut self, ui: &mut egui::Ui) {
+    fn show_track_data_panel(&mut self, ui: &mut egui::Ui, recording_names: &RecordingNames) {
         // Snap view for the side panel, resolved once per frame and shared by
         // the docked and detached call sites. The trigger's request is drained
         // after the panel, mirroring the other panel requests.
@@ -417,8 +431,6 @@ impl App {
                     let mut refmut = self.shared.borrow_mut();
                     let s = &mut *refmut;
                     let loaded_files = s.loaded_files.view();
-                    let recording_names =
-                        RecordingNames::resolve(loaded_files, &s.recording_name_template);
                     show_side_panel(
                         ui,
                         &mut PanelContext {
@@ -436,7 +448,7 @@ impl App {
                             read_only_recording_history_hover,
                             clear_query_request: &mut s.clear_query_request,
                             display_mask: s.display_mask,
-                            recording_names: &recording_names,
+                            recording_names,
                             metadata_request: &mut s.metadata_popup,
                             snap: snap_view,
                             snap_request: &mut snap_request,
@@ -466,8 +478,6 @@ impl App {
                     let mut refmut = self.shared.borrow_mut();
                     let s = &mut *refmut;
                     let loaded_files = s.loaded_files.view();
-                    let recording_names =
-                        RecordingNames::resolve(loaded_files, &s.recording_name_template);
                     show_side_panel(
                         ui,
                         &mut PanelContext {
@@ -485,7 +495,7 @@ impl App {
                             read_only_recording_history_hover,
                             clear_query_request: &mut s.clear_query_request,
                             display_mask: s.display_mask,
-                            recording_names: &recording_names,
+                            recording_names,
                             metadata_request: &mut s.metadata_popup,
                             snap: snap_view,
                             snap_request: &mut snap_request,
@@ -609,11 +619,11 @@ impl App {
         tec: &TecSeries,
         tec_deviations: &FxHashMap<TrackRef, TecDeviationEvidence>,
         positions: &Arc<FixPositionTimeline>,
+        recording_names: &RecordingNames,
     ) {
         let toasts = {
             let shared = self.shared.borrow();
             let loaded_files = shared.loaded_files.view();
-            let names = RecordingNames::resolve(loaded_files, &shared.recording_name_template);
             let files = loaded_files.files();
             let recordings: Vec<RecordingUnderAssessment<'_>> = loaded_files
                 .entries()
@@ -631,7 +641,7 @@ impl App {
                         .map(|(ti, track)| {
                             let track_ref = TrackRef::new(fi, TrackIdx::new(ti));
                             TrackUnderAssessment {
-                                label: names
+                                label: recording_names
                                     .track_label(files, track_ref)
                                     .unwrap_or_else(|| file.metadata.filename.clone()),
                                 recorded: track.metadata.time_range,
@@ -647,7 +657,7 @@ impl App {
                         .collect();
                     Some(RecordingUnderAssessment {
                         id: entry.id(),
-                        label: names
+                        label: recording_names
                             .get(fi)
                             .unwrap_or(file.metadata.filename.as_str())
                             .to_owned(),
@@ -667,7 +677,7 @@ impl App {
         }
     }
 
-    fn show_central_area(&mut self, ui: &mut egui::Ui) {
+    fn show_central_area(&mut self, ui: &mut egui::Ui, recording_names: &RecordingNames) {
         // Assembled after the panel so a visibility toggle takes effect in
         // the same frame's map render.
         let snapped_tracks = self.snapped_tracks_view();
@@ -705,6 +715,7 @@ impl App {
             &tec_series,
             &tec_deviations,
             &fix_positions,
+            recording_names,
         );
 
         CentralPanel::default().show(ui, |ui| {
@@ -743,11 +754,9 @@ impl App {
                     instant: tec_instant,
                     empty_reason: tec_empty,
                 } = self.tec_maps.overlay_layer();
-                let map_recording_names =
-                    RecordingNames::resolve(s.loaded_files.view(), &s.recording_name_template);
                 let log_matches = self
                     .logs
-                    .map_matches(s.loaded_files.view(), &map_recording_names);
+                    .map_matches(s.loaded_files.view(), recording_names);
                 let space_weather = gt_map::SpaceWeatherIndicator {
                     track_warnings: self.space_weather_warning.track_warnings(),
                     levels: &space_weather_warning::WARNING_LEVELS,
@@ -756,6 +765,7 @@ impl App {
                 let mut behavior = MainBehavior {
                     map,
                     state: &mut s,
+                    recording_names,
                     plot_hover_scope,
                     map_hover_time,
                     match_hover_time_range,
@@ -868,7 +878,6 @@ impl App {
                 log_hover,
                 clicked_log_glyph,
                 display_mask,
-                recording_name_template,
                 ..
             } = &mut *s;
             // The map and plot consumed last frame's hovered match above.
@@ -903,14 +912,12 @@ impl App {
                 plot_state.analysis.elevation_mask_deg,
                 highlight,
             );
-            let recording_names =
-                RecordingNames::resolve(loaded_files.view(), recording_name_template);
             self.log_viewer.show(
                 ui.ctx(),
                 &mut self.logs,
                 LogViewerContext {
                     recordings: loaded_files.view(),
-                    recording_names: &recording_names,
+                    recording_names,
                     attachments: &self.log_attachments,
                     map_center_request,
                     log_hover,
@@ -1164,16 +1171,17 @@ impl App {
             let logs = &self.logs;
             let mut refmut = self.shared.borrow_mut();
             let s = &mut *refmut;
-            // Resolved only while the dialog is up. The map and the plot
-            // resolve recording names of their own every frame.
+            // The cache resolves again here. The unload above moved the
+            // files' generation.
             let outcome = s.tree.shelve_confirm.is_some().then(|| {
-                let recording_names =
-                    RecordingNames::resolve(s.loaded_files.view(), &s.recording_name_template);
+                let recording_names = s
+                    .recording_names
+                    .names(&s.loaded_files, &s.recording_name_template);
                 show_shelve_confirmation(
                     ui,
                     &mut s.tree,
                     &mut s.loaded_files,
-                    &recording_names,
+                    recording_names,
                     logs,
                 )
             });

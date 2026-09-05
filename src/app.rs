@@ -36,6 +36,7 @@ mod panes;
 mod query;
 mod read_only_session;
 mod recording_name_template;
+mod recording_names_cache;
 mod reference_window;
 mod settings_autosave;
 mod settings_ui;
@@ -136,6 +137,9 @@ struct SharedAppState {
     /// User template for the recording name shown in the side panel. See
     /// [`gt_fmt::render_name_template`].
     recording_name_template: String,
+    /// The display names of the loaded recordings, resolved again only when
+    /// the loaded files or the template change.
+    recording_names: recording_names_cache::RecordingNamesCache,
 }
 
 impl SharedAppState {
@@ -621,6 +625,7 @@ impl App {
                 clear_query_request: false,
                 recording_name_template: crate::settings::DEFAULT_RECORDING_NAME_TEMPLATE
                     .to_owned(),
+                recording_names: recording_names_cache::RecordingNamesCache::default(),
             })),
             load_error: None,
             logs: LoadedLogs::default(),

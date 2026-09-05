@@ -18,6 +18,8 @@ pub(super) enum MainPane {
 pub(super) struct MainBehavior<'a> {
     pub(super) map: &'a mut NavMap,
     pub(super) state: &'a mut SharedAppState,
+    /// The display names of the loaded recordings, resolved once for the frame.
+    pub(super) recording_names: &'a RecordingNames,
     pub(super) plot_hover_scope: Option<HighlightScope>,
     pub(super) map_hover_time: Option<chrono::DateTime<chrono::Utc>>,
     /// Time span of the match hovered in the query results table, shaded on
@@ -72,13 +74,11 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                 let popup_pos = s.popup_pos_request.take();
                 let zoom_to_visible = std::mem::replace(&mut s.zoom_to_visible_request, false);
                 let reveal_query_matches = s.reveal_query_matches_request.take();
-                let recording_names =
-                    RecordingNames::resolve(s.loaded_files.view(), &s.recording_name_template);
                 if let Some(action) = self.map.draw(
                     ui,
                     MapDrawContext {
                         files: &s.loaded_files,
-                        recording_names: &recording_names,
+                        recording_names: self.recording_names,
                         snapped_tracks: Some(self.snapped_tracks),
                         jamming_dataset: self.jamming_dataset,
                         tec: gt_map::TecLayer {
@@ -150,12 +150,10 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                 } else {
                     None
                 };
-                let names =
-                    RecordingNames::resolve(s.loaded_files.view(), &s.recording_name_template);
                 gt_plot::show_track_plot(
                     ui,
                     &s.loaded_files,
-                    &names,
+                    self.recording_names,
                     s.tree.visibility(),
                     &s.filter,
                     self.plot_hover_scope,
