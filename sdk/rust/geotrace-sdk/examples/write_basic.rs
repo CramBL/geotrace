@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     recorder.add(
         SatelliteReport::builder()
-            .gps_time(t("2024-06-01T08:00:00Z"))
+            .time(NavFixTime::Receiver(t("2024-06-01T08:00:00Z")))
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)

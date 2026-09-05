@@ -198,6 +198,21 @@ Test(builder, nav_fix_without_a_timestamp) {
     gtd_builder_destroy(b);
 }
 
+Test(builder, satellite_report_without_a_timestamp) {
+    GtdFileBuilder *b = gtd_builder_create();
+    cr_assert_not_null(b);
+
+    GtdSatellite sats[] = {
+        {GTD_CONSTELLATION_GPS, 7, 1, GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64},
+    };
+
+    cr_assert_eq(gtd_builder_add_satellite_report(b, gtd_ts_none(), gtd_ts_none(), sats, 1),
+                 GTD_ERR_INVALID_ARGUMENT);
+    cr_assert_not_null(gtd_last_error());
+
+    gtd_builder_destroy(b);
+}
+
 Test(builder, satellite_report) {
     GtdFileBuilder *b = gtd_builder_create();
     cr_assert_not_null(b);

@@ -145,13 +145,13 @@ fn load_satellites_and_fixes(
         let gps_time = parse_time(cols[1]);
         let sys_time = parse_time(cols[2]);
 
-        let recorded = RecordedFixTimestamps {
-            gps: gps_time,
-            sys: sys_time,
-        };
-        let Some(time) = NavFixTime::from_recorded(recorded) else {
-            return Err(format!("fixes.csv row {line:?} has no timestamp").into());
-        };
+        let time = required_nav_fix_time(
+            RecordedFixTimestamps {
+                gps: gps_time,
+                sys: sys_time,
+            },
+            &format!("fixes.csv row {line:?}"),
+        )?;
 
         recorder.add(
             NavFix::builder()
@@ -169,8 +169,7 @@ fn load_satellites_and_fixes(
         if let Some(tracked) = satellite_reports.remove(&key) {
             recorder.add(
                 SatelliteReport::builder()
-                    .maybe_gps_time(gps_time)
-                    .maybe_sys_time(sys_time)
+                    .time(time)
                     .tracked(tracked)
                     .build(),
             );
@@ -178,10 +177,16 @@ fn load_satellites_and_fixes(
     }
 
     for ((gt_str, st_str), tracked) in satellite_reports {
+        let time = required_nav_fix_time(
+            RecordedFixTimestamps {
+                gps: parse_time(&gt_str),
+                sys: parse_time(&st_str),
+            },
+            &format!("satellites.csv row ({gt_str:?}, {st_str:?})"),
+        )?;
         recorder.add(
             SatelliteReport::builder()
-                .maybe_gps_time(parse_time(&gt_str))
-                .maybe_sys_time(parse_time(&st_str))
+                .time(time)
                 .tracked(tracked)
                 .build(),
         );
@@ -400,6 +405,13 @@ fn load_channels(
         );
     }
     Ok(())
+}
+
+fn required_nav_fix_time(
+    recorded: RecordedFixTimestamps,
+    source: &str,
+) -> Result<NavFixTime, Box<dyn std::error::Error>> {
+    NavFixTime::from_recorded(recorded).ok_or_else(|| format!("{source} has no timestamp").into())
 }
 
 fn parse_time(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {

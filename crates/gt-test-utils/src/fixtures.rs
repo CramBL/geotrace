@@ -727,7 +727,7 @@ pub fn synthetic_gtd_bytes_with_channels(
 
         recorder.add_satellite_report(
             sdk::SatelliteReport::builder()
-                .gps_time(time)
+                .time(sdk::NavFixTime::Receiver(time))
                 .tracked(synthetic_satellites(spec.sats_seen, spec.sats_in_fix))
                 .build(),
         );

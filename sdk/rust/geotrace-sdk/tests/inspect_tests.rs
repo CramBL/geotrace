@@ -55,7 +55,7 @@ fn snapshot_inspect_populated_file() -> Result<(), Box<dyn std::error::Error>> {
 
     recorder.add_satellite_report(
         SatelliteReport::builder()
-            .gps_time(t0)
+            .time(NavFixTime::Receiver(t0))
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)

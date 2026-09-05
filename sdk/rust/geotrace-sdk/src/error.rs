@@ -224,6 +224,9 @@ pub enum Error {
     #[error("nav point {record} has neither a receiver nor a host timestamp")]
     FixWithoutTimestamp { record: usize },
 
+    #[error("satellite report {report} has neither a receiver nor a host timestamp")]
+    ReportWithoutTimestamp { report: usize },
+
     #[error(
         "dataset {path:?} declares {declared_bytes} bytes of data, past what a {file_bytes}-byte file can hold"
     )]

@@ -94,30 +94,41 @@ impl InternalFix {
     }
 }
 
-// Internal processing distinguishes the receiver's clock from the host's at the
-// type level: the builder wraps a user-supplied `SatelliteReport`'s plain
-// `DateTime<Utc>` values in `GpsTime` and `SysTime` on intake, and unwraps them
-// again for the output `NavFile`.
 struct InternalSatReport {
-    gps_time: Option<GpsTime>,
-    sys_time: Option<SysTime>,
+    time: NavFixTime,
     tracked: Vec<Satellite>,
+}
+
+/// A satellite report's timestamp in microseconds, with the clock that stamped
+/// it. The placement functions apply a clock delta to a `HostClockUs` value and
+/// take a `GpsDomainUs` value as it is.
+#[derive(Clone, Copy)]
+enum ReportPlacementTime {
+    GpsDomainUs(i64),
+    HostClockUs(i64),
 }
 
 impl InternalSatReport {
     fn from_sat_report(r: SatelliteReport) -> Self {
         Self {
-            gps_time: r.gps_time().map(GpsTime::from_utc),
-            sys_time: r.sys_time().map(SysTime::from_utc),
+            time: r.time,
             tracked: r.tracked,
         }
     }
 
     fn into_sat_report(self) -> SatelliteReport {
         SatelliteReport {
-            gps_time: self.gps_time.map(GpsTime::utc),
-            sys_time: self.sys_time.map(SysTime::utc),
+            time: self.time,
             tracked: self.tracked,
+        }
+    }
+
+    fn placement_time(&self) -> ReportPlacementTime {
+        match self.time {
+            NavFixTime::Receiver(gps) | NavFixTime::Both { gps, .. } => {
+                ReportPlacementTime::GpsDomainUs(datetime_to_micros(gps))
+            }
+            NavFixTime::Host(sys) => ReportPlacementTime::HostClockUs(datetime_to_micros(sys)),
         }
     }
 }
@@ -453,10 +464,8 @@ impl NavRecorder {
     /// Validate and process all added data.
     ///
     /// Steps performed in order:
-    /// 1. Discard satellite reports that carry no timestamp (both `gps_time` and
-    ///    `sys_time` absent).
-    /// 2. Sort fixes, satellite reports, and annotations by time.
-    /// 3. Associate each satellite report to its nearest nav fix within the
+    /// 1. Sort fixes, satellite reports, and annotations by time.
+    /// 2. Associate each satellite report to its nearest nav fix within the
     ///    configured window.  Reports with `gps_time` are matched directly.
     ///    Reports with only `sys_time` are first corrected into the GPS time domain
     ///    using the GPS/sys-clock delta derived from fixes that have both timestamps
@@ -468,7 +477,7 @@ impl NavRecorder {
     ///    When no delta can be computed (no fix has both timestamps), raw `sys_time`
     ///    is used as a fallback - same behaviour as before.
     ///    Each fix receives at most one report. On equal distance the earlier report wins.
-    /// 4. Orphan satellite reports get ghost nav fixes:
+    /// 3. Orphan satellite reports get ghost nav fixes:
     ///    - Between two real fixes: position is interpolated proportionally using
     ///      the corrected GPS timestamp.  The correction applies the GPS/system-clock
     ///      delta derived from the `sys_time` fields of the surrounding NavFixes.
@@ -478,29 +487,15 @@ impl NavRecorder {
     ///      subsequent ghost. Every ghost takes the last fix's position when it
     ///      has no heading. `heading = None` so the app renders circles.
     ///    - Before the first real fix: the first fix's position, `heading = None`.
-    /// 5. Interpolate each annotation's position from the surrounding fixes.
-    /// 6. In strict mode (default), return an error if any annotation falls
+    /// 4. Interpolate each annotation's position from the surrounding fixes.
+    /// 5. In strict mode (default), return an error if any annotation falls
     ///    outside the nav fix time range.  In lenient mode it is clamped with a
     ///    warning.
     pub fn finish(mut self) -> Result<NavFile, BuildError> {
-        // Drop reports with no usable timestamp before any sorting or association.
-        self.satellite_reports.retain(|r| {
-            if r.gps_time.is_none() && r.sys_time.is_none() {
-                log::warn!("satellite report with no timestamp dropped");
-                false
-            } else {
-                true
-            }
-        });
-
         validate_satellite_data(&self.satellite_reports);
 
         self.fixes.sort_by_key(InternalFix::effective_time);
-        self.satellite_reports.sort_by_key(|r| {
-            r.gps_time
-                .map(GpsTime::utc)
-                .or_else(|| r.sys_time.map(SysTime::utc))
-        });
+        self.satellite_reports.sort_by_key(|r| r.time.effective());
         self.annotations.sort_by_key(|a| a.time);
 
         if self.fixes.is_empty() && !self.annotations.is_empty() {
@@ -643,9 +638,7 @@ fn ghost_nav_points_for(
     let mut after_last: Vec<InternalSatReport> = Vec::new();
 
     for report in orphan_reports {
-        let Some(guess_us) = best_guess_gps_us(&report, &delta_anchors) else {
-            continue;
-        };
+        let guess_us = best_guess_gps_us(&report, &delta_anchors);
         let pos = real_fixes.partition_point(|f| f.effective_time().timestamp_micros() < guess_us);
 
         if pos == 0 {
@@ -684,8 +677,9 @@ fn ghost_nav_points_for(
         let delta_b = b.gps_sys_clock_delta_us();
         let delta_a = a.gps_sys_clock_delta_us();
 
-        let can_correct =
-            delta_b.is_some() || delta_a.is_some() || reports.iter().any(|r| r.gps_time.is_some());
+        let can_correct = delta_b.is_some()
+            || delta_a.is_some()
+            || reports.iter().any(|r| r.time.gps_time().is_some());
 
         if can_correct {
             let mut timed: Vec<(i64, InternalSatReport)> = reports
@@ -799,20 +793,17 @@ fn ghosts_after_last_fix(
 ///
 /// Used for segment partitioning only.  Reports with `gps_time` are exact.
 /// Reports with only `sys_time` are corrected using the nearest delta anchor.
-fn best_guess_gps_us(report: &InternalSatReport, anchors: &[(i64, i64)]) -> Option<i64> {
-    if let Some(gt) = report.gps_time {
-        return Some(gt.timestamp_micros());
-    }
-    let st_us = report.sys_time?.timestamp_micros();
-    if anchors.is_empty() {
-        return Some(st_us);
-    }
+fn best_guess_gps_us(report: &InternalSatReport, anchors: &[(i64, i64)]) -> i64 {
+    let st_us = match report.placement_time() {
+        ReportPlacementTime::GpsDomainUs(gps_us) => return gps_us,
+        ReportPlacementTime::HostClockUs(st_us) => st_us,
+    };
     // Find the anchor whose `sys_time` (`gps_us - delta_us`) is closest to `st_us`.
     let delta = anchors
         .iter()
         .min_by_key(|&&(gps_us, delta_us)| (gps_us - delta_us - st_us).unsigned_abs())
         .map_or(0, |&(_, d)| d);
-    Some(st_us + delta)
+    st_us + delta
 }
 
 /// Corrected GPS timestamp for an orphan report within a specific segment.
@@ -828,14 +819,10 @@ fn segment_corrected_gps_us(
     delta_b: Option<i64>,
     delta_a: Option<i64>,
 ) -> i64 {
-    if let Some(gt) = report.gps_time {
-        return gt.timestamp_micros();
-    }
-    let Some(st) = report.sys_time else {
-        // Both timestamps absent. Shouldn't reach here after finish() pre-filter.
-        return (b.effective_time().timestamp_micros() + a.effective_time().timestamp_micros()) / 2;
+    let st_us = match report.placement_time() {
+        ReportPlacementTime::GpsDomainUs(gps_us) => return gps_us,
+        ReportPlacementTime::HostClockUs(st_us) => st_us,
     };
-    let st_us = st.timestamp_micros();
 
     match (delta_b, delta_a) {
         (Some(db), Some(da)) => {
@@ -869,20 +856,14 @@ fn segment_corrected_gps_us(
 ///
 /// A report with a `gps_time` is exact. A report with only a `sys_time` is
 /// corrected with the anchor fix's clock delta, and taken as it is where the
-/// anchor fix has no delta. `finish` drops a report with neither timestamp
-/// before any ghost is placed.
+/// anchor fix has no delta.
 fn ghost_gps_us_anchored_to(report: &InternalSatReport, anchor_fix: &InternalFix) -> i64 {
-    debug_assert!(
-        report.gps_time.is_some() || report.sys_time.is_some(),
-        "a satellite report with no timestamp reached ghost placement"
-    );
-    if let Some(gt) = report.gps_time {
-        return gt.timestamp_micros();
+    match report.placement_time() {
+        ReportPlacementTime::GpsDomainUs(gps_us) => gps_us,
+        ReportPlacementTime::HostClockUs(st_us) => {
+            st_us + anchor_fix.gps_sys_clock_delta_us().unwrap_or(0)
+        }
     }
-    if let Some(st) = report.sys_time {
-        return st.timestamp_micros() + anchor_fix.gps_sys_clock_delta_us().unwrap_or(0);
-    }
-    anchor_fix.effective_time().timestamp_micros()
 }
 
 /// Assign each satellite report to its nearest nav fix within `window`.
@@ -922,16 +903,13 @@ fn associate_satellites(
     let mut fix_claims: Vec<Option<(i64, usize)>> = vec![None; fixes.len()];
 
     for (rep_idx, report) in reports.iter().enumerate() {
-        let Some(rep_us) = best_guess_gps_us(report, &delta_anchors) else {
-            continue;
-        };
+        let rep_us = best_guess_gps_us(report, &delta_anchors);
 
         // When the report has no GPS time, record its `sys_time` for same-domain
         // distance comparison against fixes that also have a `sys_time`.
-        let rep_sys_us: Option<i64> = if report.gps_time.is_none() {
-            report.sys_time.map(|st| st.timestamp_micros())
-        } else {
-            None
+        let rep_sys_us: Option<i64> = match report.placement_time() {
+            ReportPlacementTime::GpsDomainUs(_) => None,
+            ReportPlacementTime::HostClockUs(st_us) => Some(st_us),
         };
 
         let dist_to = |fix: &InternalFix| -> i64 {
@@ -1524,7 +1502,6 @@ pub(crate) fn u64_to_opt_datetime(v: u64) -> Option<DateTime<Utc>> {
 #[cfg(test)]
 mod validation_tests {
     use super::*;
-    use crate::time_types::GpsTime;
     use crate::types::{Constellation, Satellite};
     use chrono::DateTime;
 
@@ -1558,14 +1535,13 @@ mod validation_tests {
         assert!(records.iter().all(|r| r.count == 1));
     }
 
-    fn gps_time() -> GpsTime {
-        GpsTime::from_utc(DateTime::from_timestamp(1_748_000_000, 0).expect("valid"))
+    fn gps_time() -> DateTime<Utc> {
+        DateTime::from_timestamp(1_748_000_000, 0).expect("valid")
     }
 
     fn report(sats: Vec<Satellite>) -> InternalSatReport {
         InternalSatReport {
-            gps_time: Some(gps_time()),
-            sys_time: None,
+            time: NavFixTime::Receiver(gps_time()),
             tracked: sats,
         }
     }

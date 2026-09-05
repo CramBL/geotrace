@@ -255,16 +255,22 @@ fn attach_satellite_data(
         }
     }
 
-    for (i, (&np_idx, (gps_us, sys_us))) in nav_point_idx
+    for (report, (&np_idx, (gps_us, sys_us))) in nav_point_idx
         .iter()
         .zip(report_gps_times.iter().zip(report_sys_times.iter()))
         .enumerate()
     {
+        let recorded = RecordedFixTimestamps {
+            gps: u64_to_opt_datetime(*gps_us),
+            sys: u64_to_opt_datetime(*sys_us),
+        };
+        let Some(time) = NavFixTime::from_recorded(recorded) else {
+            return Err(Error::ReportWithoutTimestamp { report });
+        };
         if let Some(np) = nav_points.get_mut(np_idx as usize) {
             np.satellites = Some(SatelliteReport {
-                gps_time: u64_to_opt_datetime(*gps_us),
-                sys_time: u64_to_opt_datetime(*sys_us),
-                tracked: tracked_by_report.get(i).cloned().unwrap_or_default(),
+                time,
+                tracked: tracked_by_report.get(report).cloned().unwrap_or_default(),
             });
         }
     }

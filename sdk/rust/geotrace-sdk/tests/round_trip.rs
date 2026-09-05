@@ -56,7 +56,7 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
 
     recorder.add_satellite_report(
         SatelliteReport::builder()
-            .gps_time(t0)
+            .time(NavFixTime::Receiver(t0))
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -184,7 +184,7 @@ fn no_markers() -> Result<(), Box<dyn std::error::Error>> {
     );
     recorder.add_satellite_report(
         SatelliteReport::builder()
-            .gps_time(t0)
+            .time(NavFixTime::Receiver(t0))
             .tracked(vec![])
             .build(),
     );
@@ -231,7 +231,7 @@ fn large_file() -> Result<(), Box<dyn std::error::Error>> {
         );
         recorder.add_satellite_report(
             SatelliteReport::builder()
-                .gps_time(t)
+                .time(NavFixTime::Receiver(t))
                 .tracked(tracked.clone())
                 .build(),
         );

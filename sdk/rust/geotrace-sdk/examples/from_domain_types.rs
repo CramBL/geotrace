@@ -104,7 +104,9 @@ impl From<SatReport> for SatelliteReport {
             })
             .collect();
         SatelliteReport::builder()
-            .gps_time(Timestamp::from_unix_millis(r.unix_ms))
+            .time(NavFixTime::Receiver(
+                Timestamp::from_unix_millis(r.unix_ms).into(),
+            ))
             .tracked(tracked)
             .build()
     }

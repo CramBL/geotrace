@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let snr = 36.0 + i as f32;
         recorder.add(
             SatelliteReport::builder()
-                .gps_time(time)
+                .time(NavFixTime::Receiver(time))
                 .tracked(vec![
                     Satellite::builder()
                         .constellation(Constellation::Gps)

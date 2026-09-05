@@ -51,7 +51,7 @@ fn report_gps(offset_ms: i64) -> SatelliteReport {
 /// of `constellation` with PRN `prn`.
 fn report_with(offset_ms: i64, constellation: Constellation, prn: u32) -> SatelliteReport {
     SatelliteReport::builder()
-        .gps_time(t(offset_ms))
+        .time(NavFixTime::Receiver(t(offset_ms)))
         .tracked(vec![
             Satellite::builder()
                 .constellation(constellation)
@@ -104,7 +104,7 @@ fn window_boundary_one_microsecond_past_is_excluded() -> Result<(), BuildError> 
     // 100 ms + 1 μs → just outside the window.
     recorder.add_satellite_report(
         SatelliteReport::builder()
-            .gps_time(t_us(100_001))
+            .time(NavFixTime::Receiver(t_us(100_001)))
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -226,7 +226,7 @@ fn sys_time_only_report_within_window_is_assigned() -> Result<(), BuildError> {
     // Distance to fix: 200 ms - inside the 500 ms window.
     recorder.add_satellite_report(
         SatelliteReport::builder()
-            .sys_time(t(200)) // no `gps_time`
+            .time(NavFixTime::Host(t(200)))
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -266,8 +266,10 @@ fn gps_time_is_preferred_over_sys_time_for_comparison() -> Result<(), BuildError
 
     recorder.add_satellite_report(
         SatelliteReport::builder()
-            .gps_time(t(200)) // 200 ms from fix A → inside window
-            .sys_time(t(1800)) // 200 ms from fix B → would go to B if `sys_time` were used
+            .time(NavFixTime::Both {
+                gps: t(200),  // 200 ms from fix A → inside window
+                sys: t(1800), // 200 ms from fix B → would go to B if `sys_time` were used
+            })
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -288,39 +290,6 @@ fn gps_time_is_preferred_over_sys_time_for_comparison() -> Result<(), BuildError
     assert!(
         points[1].satellites.is_none(),
         "fix B must have no satellite data"
-    );
-    Ok(())
-}
-
-/// A report with neither `gps_time` nor `sys_time` must be discarded in
-/// `finish()` before Phase 1 or Phase 2 runs.
-/// No ghost fix must be created for it.
-#[test]
-fn report_with_no_timestamp_is_discarded() -> Result<(), BuildError> {
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(fix_at(0, 55.0, 12.0));
-    recorder.add_satellite_report(
-        SatelliteReport::builder()
-            // neither `gps_time` nor `sys_time` - dropped in finish()
-            .tracked(vec![
-                Satellite::builder()
-                    .constellation(Constellation::Gps)
-                    .prn(1u32)
-                    .build(),
-            ])
-            .build(),
-    );
-
-    let nav_file = recorder.finish()?;
-
-    assert_eq!(
-        nav_file.nav_points().len(),
-        1,
-        "discarded report must not create a ghost fix"
-    );
-    assert!(
-        nav_file.nav_points()[0].satellites.is_none(),
-        "fix must have no satellite data (report was discarded)"
     );
     Ok(())
 }
@@ -555,7 +524,7 @@ fn between_fix_ghost_interpolated_at_correct_fraction() -> Result<(), BuildError
     // Report: `sys_time` only.  Corrected GPS time = t(4 000) → `frac` = 0.40.
     recorder.add_satellite_report(
         SatelliteReport::builder()
-            .sys_time(t(5000)) // no `gps_time`, and 5 000 ms from both fixes' `gps_time` → orphan
+            .time(NavFixTime::Host(t(5000))) // 5 000 ms from both fixes' `gps_time` → orphan
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -631,7 +600,7 @@ fn between_fix_ghosts_evenly_distributed_when_no_delta_available() -> Result<(),
     for sys_offset_ms in [8000_i64, 9000] {
         recorder.add_satellite_report(
             SatelliteReport::builder()
-                .sys_time(t(sys_offset_ms))
+                .time(NavFixTime::Host(t(sys_offset_ms)))
                 .tracked(vec![
                     Satellite::builder()
                         .constellation(Constellation::Gps)
@@ -690,10 +659,10 @@ fn a_report_before_the_first_fix_and_one_after_the_last_both_become_ghosts()
     Ok(())
 }
 
-/// `SatelliteReport` with `sys_time = t(offset_ms)` and no `gps_time`.
+/// `SatelliteReport` with only a host timestamp, at `t(offset_ms)`.
 fn report_with_sys_time_only(offset_ms: i64) -> SatelliteReport {
     SatelliteReport::builder()
-        .sys_time(t(offset_ms))
+        .time(NavFixTime::Host(t(offset_ms)))
         .tracked(vec![
             Satellite::builder()
                 .constellation(Constellation::Gps)
@@ -804,7 +773,7 @@ fn no_filter_sys_time_only_with_large_gps_offset_are_associated() -> Result<(), 
         // SAT record: only `sys_time`, at the same moment as the fix's `sys_time`.
         recorder.add_satellite_report(
             SatelliteReport::builder()
-                .sys_time(t(i * 1_000 + GPS_SYS_OFFSET_MS))
+                .time(NavFixTime::Host(t(i * 1_000 + GPS_SYS_OFFSET_MS)))
                 .tracked(vec![
                     Satellite::builder()
                         .constellation(Constellation::Gps)
@@ -858,7 +827,7 @@ fn no_filter_1hz_all_sat_associated_with_large_gps_offset() -> Result<(), BuildE
         );
         recorder.add_satellite_report(
             SatelliteReport::builder()
-                .sys_time(t(i * 1_000 + GPS_SYS_OFFSET_MS))
+                .time(NavFixTime::Host(t(i * 1_000 + GPS_SYS_OFFSET_MS)))
                 .tracked(vec![
                     Satellite::builder()
                         .constellation(Constellation::Gps)
@@ -951,7 +920,7 @@ fn gps_ahead_600ms_sat_associates_to_own_fix_not_neighbor() -> Result<(), BuildE
         // SAT logged at the same host-clock moment as the TPV (ε = 0).
         recorder.add_satellite_report(
             SatelliteReport::builder()
-                .sys_time(t(i * 1_000 - GPS_SYS_OFFSET_MS))
+                .time(NavFixTime::Host(t(i * 1_000 - GPS_SYS_OFFSET_MS)))
                 .tracked(vec![
                     Satellite::builder()
                         .constellation(constellation)
@@ -1018,7 +987,9 @@ fn gps_ahead_600ms_with_sat_logging_delay_no_off_by_one() -> Result<(), BuildErr
         );
         recorder.add_satellite_report(
             SatelliteReport::builder()
-                .sys_time(t(i * 1_000 - GPS_SYS_OFFSET_MS + SAT_DELAY_MS))
+                .time(NavFixTime::Host(t(
+                    i * 1_000 - GPS_SYS_OFFSET_MS + SAT_DELAY_MS
+                )))
                 .tracked(vec![
                     Satellite::builder()
                         .constellation(constellation)
@@ -1084,7 +1055,7 @@ fn gps_ahead_600ms_sat_at_499ms_delay_still_correct() -> Result<(), BuildError> 
     // SAT for fix 0 arrives 499 ms late in sys-time.
     recorder.add_satellite_report(
         SatelliteReport::builder()
-            .sys_time(t(-GPS_SYS_OFFSET_MS + SAT_DELAY_MS))
+            .time(NavFixTime::Host(t(-GPS_SYS_OFFSET_MS + SAT_DELAY_MS)))
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -1151,7 +1122,7 @@ fn gps_ahead_600ms_sat_at_exactly_500ms_delay_boundary() -> Result<(), BuildErro
     );
     recorder.add_satellite_report(
         SatelliteReport::builder()
-            .sys_time(t(-GPS_SYS_OFFSET_MS + SAT_DELAY_MS))
+            .time(NavFixTime::Host(t(-GPS_SYS_OFFSET_MS + SAT_DELAY_MS)))
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -1226,7 +1197,7 @@ fn sys_time_direct_comparison_with_drifting_gps_offset() -> Result<(), BuildErro
         // SAT recorded at the same host-clock moment as the TPV.
         recorder.add_satellite_report(
             SatelliteReport::builder()
-                .sys_time(t(i * 1_000 + off))
+                .time(NavFixTime::Host(t(i * 1_000 + off)))
                 .tracked(vec![
                     Satellite::builder()
                         .constellation(constellation)
@@ -1293,7 +1264,7 @@ fn sys_time_direct_comparison_drifting_offset_with_sat_delay() -> Result<(), Bui
         // SAT arrives `SAT_DELAY_MS` after the TPV's `sys_time` - still well inside the window.
         recorder.add_satellite_report(
             SatelliteReport::builder()
-                .sys_time(t(i * 1_000 + off + SAT_DELAY_MS))
+                .time(NavFixTime::Host(t(i * 1_000 + off + SAT_DELAY_MS)))
                 .tracked(vec![
                     Satellite::builder()
                         .constellation(constellation)

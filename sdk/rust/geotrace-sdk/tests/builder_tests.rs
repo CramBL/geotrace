@@ -28,7 +28,7 @@ fn simple_fix(offset_ms: i64) -> NavFix {
 
 fn simple_report(offset_ms: i64) -> SatelliteReport {
     SatelliteReport::builder()
-        .gps_time(t(offset_ms))
+        .time(NavFixTime::Receiver(t(offset_ms)))
         .tracked(vec![
             Satellite::builder()
                 .constellation(Constellation::Gps)
@@ -82,7 +82,7 @@ fn satellite_association_tie_breaking() -> Result<(), BuildError> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(simple_fix(500));
     let later = SatelliteReport::builder()
-        .gps_time(t(750))
+        .time(NavFixTime::Receiver(t(750)))
         .tracked(vec![
             Satellite::builder()
                 .constellation(Constellation::Glonass)
@@ -91,7 +91,7 @@ fn satellite_association_tie_breaking() -> Result<(), BuildError> {
         ])
         .build();
     let earlier = SatelliteReport::builder()
-        .gps_time(t(250))
+        .time(NavFixTime::Receiver(t(250)))
         .tracked(vec![
             Satellite::builder()
                 .constellation(Constellation::Gps)
@@ -174,7 +174,7 @@ fn contested_loser_becomes_ghost_fix() -> Result<(), BuildError> {
 
     // R1 wins the race for fix A.
     let r1 = SatelliteReport::builder()
-        .gps_time(t(400))
+        .time(NavFixTime::Receiver(t(400)))
         .tracked(vec![
             Satellite::builder()
                 .constellation(Constellation::Gps)
@@ -185,7 +185,7 @@ fn contested_loser_becomes_ghost_fix() -> Result<(), BuildError> {
         .build();
     // R2 loses to R1 and is too far from fix B - must not be silently dropped.
     let r2 = SatelliteReport::builder()
-        .gps_time(t(450))
+        .time(NavFixTime::Receiver(t(450)))
         .tracked(vec![
             Satellite::builder()
                 .constellation(Constellation::Glonass)
@@ -271,7 +271,7 @@ fn multiple_contested_losers_all_become_ghosts() -> Result<(), BuildError> {
     // R1 wins fix A.
     recorder.add_satellite_report(
         SatelliteReport::builder()
-            .gps_time(t(100))
+            .time(NavFixTime::Receiver(t(100)))
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -284,7 +284,7 @@ fn multiple_contested_losers_all_become_ghosts() -> Result<(), BuildError> {
     // R2 loses fix A, too far from B → must become ghost between A and B.
     recorder.add_satellite_report(
         SatelliteReport::builder()
-            .gps_time(t(200))
+            .time(NavFixTime::Receiver(t(200)))
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Galileo)
@@ -297,7 +297,7 @@ fn multiple_contested_losers_all_become_ghosts() -> Result<(), BuildError> {
     // R3 wins fix B.
     recorder.add_satellite_report(
         SatelliteReport::builder()
-            .gps_time(t(2900))
+            .time(NavFixTime::Receiver(t(2900)))
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Beidou)
@@ -378,7 +378,7 @@ fn ghost_points_between_fixes_are_evenly_distributed() -> Result<(), BuildError>
     for offset_ms in [110_000_i64, 115_000, 117_000] {
         recorder.add_satellite_report(
             SatelliteReport::builder()
-                .sys_time(t(offset_ms))
+                .time(NavFixTime::Host(t(offset_ms)))
                 .tracked(vec![
                     Satellite::builder()
                         .constellation(Constellation::Gps)

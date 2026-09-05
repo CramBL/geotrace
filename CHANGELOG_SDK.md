@@ -20,6 +20,10 @@ the app).
 - C `gtd_builder_add_nav_fix` returns the new `GTD_ERR_INVALID_ARGUMENT` (12) when `gps_time` and `sys_time` are both `gtd_ts_none()`.
 - Python `NavFix` raises `ValueError` when `gps_time` and `sys_time` are both `None`.
 - Reading a file whose nav point has neither a receiver nor a host timestamp fails with an error stating the record.
+- Rust `SatelliteReport` cannot be built without a timestamp: its new required `time` field takes a `NavFixTime`. `gps_time()` and `sys_time()` read that field. The builder no longer drops a report without a timestamp.
+- C `gtd_builder_add_satellite_report` returns `GTD_ERR_INVALID_ARGUMENT` when `gps_time` and `sys_time` are both `gtd_ts_none()`.
+- Python `SatelliteReport` raises `ValueError` when `gps_time` and `sys_time` are both `None`.
+- Reading a file whose satellite report has neither a receiver nor a host timestamp fails with an error stating the report.
 - A satellite report before the first nav fix produces a ghost fix on the first fix.
 - A ghost fix after the last nav fix takes that fix's position when the fix has no heading.
 

@@ -12,6 +12,29 @@ use crate::error::{self, GtdStatus};
 use crate::timestamp;
 use crate::{GtdChannel, GtdChannelUnitMode, GtdMarkerIcon, GtdOptF64, GtdSatellite, GtdTimestamp};
 
+/// The two timestamp arguments of one `gtd_builder_add_*` call. Each clock has
+/// its own field, so a call site cannot transpose the two.
+struct TimestampArguments {
+    gps_time: GtdTimestamp,
+    sys_time: GtdTimestamp,
+}
+
+fn nav_fix_time_or_invalid_argument(
+    TimestampArguments { gps_time, sys_time }: TimestampArguments,
+    what_needs_a_timestamp: &str,
+) -> Result<NavFixTime, GtdStatus> {
+    let recorded = RecordedFixTimestamps {
+        gps: timestamp::ts_to_datetime(gps_time),
+        sys: timestamp::ts_to_datetime(sys_time),
+    };
+    NavFixTime::from_recorded(recorded).ok_or_else(|| {
+        error::set_last_error(format!(
+            "gps_time and sys_time are both gtd_ts_none(): {what_needs_a_timestamp} needs one"
+        ));
+        GtdStatus::GTD_ERR_INVALID_ARGUMENT
+    })
+}
+
 /// Add a GPS navigation fix.
 ///
 /// At least one nav fix is required before `gtd_builder_finish()`.
@@ -48,13 +71,12 @@ pub unsafe extern "C" fn gtd_builder_add_nav_fix(
 ) -> GtdStatus {
     error::run_catching_panics(|| {
         let b = nonnull_mut!(b);
-        let recorded = RecordedFixTimestamps {
-            gps: timestamp::ts_to_datetime(gps_time),
-            sys: timestamp::ts_to_datetime(sys_time),
-        };
-        let Some(time) = NavFixTime::from_recorded(recorded) else {
-            error::set_last_error("gps_time and sys_time are both gtd_ts_none(): a fix needs one");
-            return GtdStatus::GTD_ERR_INVALID_ARGUMENT;
+        let time = match nav_fix_time_or_invalid_argument(
+            TimestampArguments { gps_time, sys_time },
+            "a fix",
+        ) {
+            Ok(time) => time,
+            Err(status) => return status,
         };
         b.recorder_mut().add_nav_fix(geotrace_sdk::NavFix {
             time,
@@ -78,6 +100,9 @@ pub unsafe extern "C" fn gtd_builder_add_nav_fix(
 /// @param sys_time System (wall-clock) time of the report.
 /// @param sats     Array of @p n_sats satellite entries.
 /// @param n_sats   Number of elements in @p sats.
+///
+/// @return `GTD_ERR_INVALID_ARGUMENT` if @p gps_time and @p sys_time are both
+///         `gtd_ts_none()`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_satellite_report(
     b: *mut GtdFileBuilder,
@@ -92,6 +117,13 @@ pub unsafe extern "C" fn gtd_builder_add_satellite_report(
             error::set_last_error("sats is null but n_sats > 0");
             return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         }
+        let time = match nav_fix_time_or_invalid_argument(
+            TimestampArguments { gps_time, sys_time },
+            "a satellite report",
+        ) {
+            Ok(time) => time,
+            Err(status) => return status,
+        };
         let tracked: Vec<geotrace_sdk::Satellite> = if n_sats == 0 {
             Vec::new()
         } else {
@@ -99,11 +131,8 @@ pub unsafe extern "C" fn gtd_builder_add_satellite_report(
             let slice = unsafe { std::slice::from_raw_parts(sats, n_sats) };
             slice.iter().map(|s| s.to_sdk_satellite()).collect()
         };
-        b.recorder_mut().add_satellite_report(SatelliteReport {
-            gps_time: timestamp::ts_to_datetime(gps_time),
-            sys_time: timestamp::ts_to_datetime(sys_time),
-            tracked,
-        });
+        b.recorder_mut()
+            .add_satellite_report(SatelliteReport { time, tracked });
         GtdStatus::GTD_OK
     })
 }

@@ -56,12 +56,31 @@ fn file_err(e: geotrace_sdk::Error) -> PyErr {
         | Error::UnwritableField { .. }
         | Error::UnreadableField { .. }
         | Error::FixWithoutTimestamp { .. }
+        | Error::ReportWithoutTimestamp { .. }
         | Error::DatasetSizePastFileLength { .. } => PyValueError::new_err(msg),
     }
 }
 
 fn consumed_err() -> PyErr {
     PyRuntimeError::new_err("builder already consumed by finish()")
+}
+
+/// The `gps_time` and `sys_time` keyword arguments of one Python constructor.
+/// Each clock has its own field, so a call site cannot transpose the two.
+struct TimestampArguments {
+    gps_time: Option<DateTime<FixedOffset>>,
+    sys_time: Option<DateTime<FixedOffset>>,
+}
+
+fn nav_fix_time_or_value_error(
+    TimestampArguments { gps_time, sys_time }: TimestampArguments,
+) -> PyResult<NavFixTime> {
+    let recorded = RecordedFixTimestamps {
+        gps: gps_time.map(|t| t.to_utc()),
+        sys: sys_time.map(|t| t.to_utc()),
+    };
+    NavFixTime::from_recorded(recorded)
+        .ok_or_else(|| PyValueError::new_err("provide gps_time or sys_time"))
 }
 
 /// GNSS constellation identifier.
@@ -368,8 +387,7 @@ impl PySatellite {
 
 /// A set of satellites tracked at a point in time.
 ///
-/// Supply at least one of `gps_time` or `sys_time`: a report with neither is
-/// dropped by `NavFileBuilder.finish`.
+/// Raises `ValueError` when `gps_time` and `sys_time` are both `None`.
 /// Both must be timezone-aware `datetime.datetime` objects.
 #[pyclass(skip_from_py_object, name = "SatelliteReport")]
 #[derive(Debug, Clone)]
@@ -385,13 +403,13 @@ impl PySatelliteReport {
         tracked: Vec<PySatellite>,
         gps_time: Option<DateTime<FixedOffset>>,
         sys_time: Option<DateTime<FixedOffset>>,
-    ) -> Self {
+    ) -> PyResult<Self> {
+        let time = nav_fix_time_or_value_error(TimestampArguments { gps_time, sys_time })?;
         let inner = SatelliteReport::builder()
+            .time(time)
             .tracked(tracked.into_iter().map(|s| s.inner).collect())
-            .maybe_gps_time(gps_time.map(|t| t.to_utc()))
-            .maybe_sys_time(sys_time.map(|t| t.to_utc()))
             .build();
-        Self { inner }
+        Ok(Self { inner })
     }
 
     /// All satellites currently tracked (may include satellites not in the fix).
@@ -687,13 +705,7 @@ impl PyNavFix {
         speed_mps: Option<f64>,
         eph_m: Option<f64>,
     ) -> PyResult<Self> {
-        let recorded = RecordedFixTimestamps {
-            gps: gps_time.map(|t| t.to_utc()),
-            sys: sys_time.map(|t| t.to_utc()),
-        };
-        let Some(time) = NavFixTime::from_recorded(recorded) else {
-            return Err(PyValueError::new_err("provide gps_time or sys_time"));
-        };
+        let time = nav_fix_time_or_value_error(TimestampArguments { gps_time, sys_time })?;
         let inner = NavFix::builder()
             .time(time)
             .lat(Angle::degrees(lat))

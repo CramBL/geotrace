@@ -590,6 +590,9 @@ GtdStatus gtd_builder_add_nav_fix(GtdFileBuilder *b,
  * @param sys_time System (wall-clock) time of the report.
  * @param sats     Array of @p n_sats satellite entries.
  * @param n_sats   Number of elements in @p sats.
+ *
+ * @return `GTD_ERR_INVALID_ARGUMENT` if @p gps_time and @p sys_time are both
+ *         `gtd_ts_none()`.
  */
 GtdStatus gtd_builder_add_satellite_report(GtdFileBuilder *b,
                                            GtdTimestamp gps_time,
