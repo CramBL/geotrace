@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::ops::{Deref, Index, IndexMut};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use gt_history_types::{DatabaseRef, RecordingMeta};
 use gt_types::{
@@ -257,22 +258,61 @@ fn tracks_are_time_ordered(tracks: &[LoadedTrack]) -> bool {
     })
 }
 
+/// A revision of the loaded files, taken from a process-wide counter on every
+/// mutation. A clone starts on the generation of the source it copied. No
+/// other two [`LoadedFiles`] share a generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoadedFilesGeneration(u64);
+
+impl LoadedFilesGeneration {
+    fn next() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
 /// Loaded files plus app/session metadata that must remain index-aligned.
 ///
 /// The backing vectors are private so callers cannot construct mismatched file
 /// and history sidecar slices. Use [`LoadedFiles::view`] when read-only
 /// consumers need both the files and their sidecar metadata.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct LoadedFiles {
     files: Vec<LoadedFile>,
     history: Vec<FileHistory>,
     ids: Vec<LoadedFileId>,
     next_id: u64,
+    /// The revision of the files, changed by [`LoadedFiles::push`],
+    /// [`LoadedFiles::remove_file`], [`LoadedFiles::rename_identity`], and by
+    /// every accessor returning a `&mut LoadedFile`
+    /// ([`LoadedFiles::files_mut`], [`LoadedFiles::iter_mut`],
+    /// [`LoadedFiles::get_mut`], `IndexMut` and `IntoIterator for &mut
+    /// LoadedFiles`). Every one of those accessors changes it on the call
+    /// itself, before any write through the reference it returns.
+    generation: LoadedFilesGeneration,
+}
+
+impl Default for LoadedFiles {
+    fn default() -> Self {
+        Self {
+            files: Vec::new(),
+            history: Vec::new(),
+            ids: Vec::new(),
+            next_id: 0,
+            generation: LoadedFilesGeneration::next(),
+        }
+    }
 }
 
 impl LoadedFiles {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The revision every cache over the files keys on. See
+    /// [`LoadedFilesGeneration`].
+    pub fn generation(&self) -> LoadedFilesGeneration {
+        self.generation
     }
 
     pub fn len(&self) -> usize {
@@ -294,6 +334,7 @@ impl LoadedFiles {
     }
 
     pub fn files_mut(&mut self) -> &mut [LoadedFile] {
+        self.generation = LoadedFilesGeneration::next();
         &mut self.files
     }
 
@@ -302,6 +343,7 @@ impl LoadedFiles {
     }
 
     pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, LoadedFile> {
+        self.generation = LoadedFilesGeneration::next();
         self.files.iter_mut()
     }
 
@@ -310,10 +352,12 @@ impl LoadedFiles {
     }
 
     pub fn get_mut(&mut self, index: usize) -> Option<&mut LoadedFile> {
+        self.generation = LoadedFilesGeneration::next();
         self.files.get_mut(index)
     }
 
     pub fn push(&mut self, file: LoadedFile, history: FileHistory) {
+        self.generation = LoadedFilesGeneration::next();
         self.files.push(file);
         self.history.push(history);
         self.ids.push(LoadedFileId(self.next_id));
@@ -326,6 +370,7 @@ impl LoadedFiles {
     /// `old` to `new`. Only the identity changes. The recording `group_name`
     /// is stable across a rename, so the [`DatabaseRef`] stays valid.
     pub fn rename_identity(&mut self, old: &str, new: &str) {
+        self.generation = LoadedFilesGeneration::next();
         for history in &mut self.history {
             if let FileHistory::Recording {
                 identity, db_ref, ..
@@ -345,6 +390,7 @@ impl LoadedFiles {
         if index >= self.files.len() {
             return None;
         }
+        self.generation = LoadedFilesGeneration::next();
         let file = self.files.remove(index);
         let history = self.history.remove(index);
         self.ids.remove(index);
@@ -380,6 +426,7 @@ impl IndexMut<usize> for LoadedFiles {
         reason = "IndexMut follows Vec indexing semantics"
     )]
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        self.generation = LoadedFilesGeneration::next();
         &mut self.files[index]
     }
 }
@@ -507,6 +554,49 @@ mod tests {
                 .collect::<Vec<_>>(),
             expected_seconds
         );
+    }
+
+    /// Every path that can change a fix, a track or the file list must leave
+    /// a new generation behind. A cache over the files compares generations to
+    /// skip recomputing while nothing changed.
+    #[rstest]
+    #[case::push(|files: &mut LoadedFiles| files.push(empty_file(), FileHistory::None))]
+    #[case::remove_file(|files: &mut LoadedFiles| {
+        assert!(files.remove_file(0).is_some());
+    })]
+    #[case::rename_identity(|files: &mut LoadedFiles| files.rename_identity("auto:old", "Trip"))]
+    #[case::files_mut(|files: &mut LoadedFiles| {
+        for file in files.files_mut() {
+            file.tracks.clear();
+        }
+    })]
+    #[case::iter_mut(|files: &mut LoadedFiles| {
+        for file in files.iter_mut() {
+            file.tracks.clear();
+        }
+    })]
+    #[case::get_mut(|files: &mut LoadedFiles| {
+        if let Some(file) = files.get_mut(0) {
+            file.tracks.clear();
+        }
+    })]
+    #[case::index_mut(|files: &mut LoadedFiles| files[0].tracks.clear())]
+    fn every_mutation_leaves_a_new_generation(#[case] mutate: fn(&mut LoadedFiles)) {
+        let mut files = LoadedFiles::new();
+        files.push(empty_file(), FileHistory::None);
+        let before = files.generation();
+
+        mutate(&mut files);
+
+        assert_ne!(files.generation(), before);
+    }
+
+    #[test]
+    fn a_clone_keeps_the_generation_of_the_files_it_copied() {
+        let mut files = LoadedFiles::new();
+        files.push(empty_file(), FileHistory::None);
+
+        assert_eq!(files.clone().generation(), files.generation());
     }
 
     #[test]

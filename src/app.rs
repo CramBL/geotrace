@@ -28,6 +28,7 @@ mod jamming;
 mod loader;
 mod log_association;
 mod log_viewer;
+mod map_synced_plot_range;
 mod mapbox_token;
 mod mapbox_token_test;
 mod modals;
@@ -101,6 +102,9 @@ struct SharedAppState {
     point_window_folds: gt_ui_types::PointWindowFolds,
     filter_state: FilterPanelState,
     plot_state: PlotState,
+    /// The plot's x range while it follows the map, scanned again only when
+    /// the viewport, the visibility or the loaded files change.
+    map_synced_plot_range: map_synced_plot_range::MapSyncedPlotRangeCache,
     /// The log match under the cursor: the map writes the hexagon it is on,
     /// the log viewer the row it is on, and each reads what the other wrote.
     log_hover: gt_ui_types::LogMatchHover,
@@ -603,6 +607,7 @@ impl App {
                 point_window_folds: gt_ui_types::PointWindowFolds::default(),
                 filter_state: FilterPanelState::default(),
                 plot_state: PlotState::default(),
+                map_synced_plot_range: map_synced_plot_range::MapSyncedPlotRangeCache::default(),
                 log_hover: gt_ui_types::LogMatchHover::default(),
                 clicked_log_glyph: None,
                 map_center_request: None,
