@@ -742,95 +742,72 @@ fn convert_satellite_report(
     record: usize,
     alterations: &mut SatelliteAlterations,
 ) -> Satellites {
-    // An SNR sentinel value is cleared to `None` here, before the merge, so it
-    // never outranks a real reading for the same satellite.
-    let measured: Vec<SdkSatellite> = report
-        .tracked
-        .iter()
-        .map(|row| {
-            if row.snr_is_no_data_sentinel() {
-                alterations
-                    .discarded_snr_sentinels
-                    .push(SatelliteInRecord::from_row(row, record));
-                SdkSatellite { snr: None, ..*row }
-            } else {
-                *row
-            }
-        })
-        .collect();
-
-    let merged = merge_rows_repeating_a_satellite(&measured);
-    for MergedSatellite { satellite, rows } in &merged {
-        if *rows > 1 {
+    let mut satellites: Vec<Satellite> = Vec::with_capacity(report.tracked.len());
+    let mut repeated: Vec<IndexedMergedSatelliteRows> = Vec::new();
+    for row in &report.tracked {
+        // The SNR sentinel value is cleared to `None` before the merge, which
+        // takes the highest SNR of the rows for one satellite.
+        let snr = if row.snr_is_no_data_sentinel() {
             alterations
-                .satellites_merged_from_several_rows
-                .push(MergedSatelliteRows {
-                    satellite: SatelliteInRecord::from_row(satellite, record),
-                    rows: *rows,
-                });
+                .discarded_snr_sentinels
+                .push(SatelliteInRecord::from_row(row, record));
+            None
+        } else {
+            row.snr
+        };
+        let constellation = convert_constellation(row.constellation);
+        let converted = Satellite::new(
+            constellation,
+            row.prn,
+            row.elevation,
+            row.azimuth,
+            snr,
+            row.in_fix,
+        );
+
+        let same_satellite = satellites
+            .iter_mut()
+            .enumerate()
+            .find(|(_, output_satellite)| {
+                output_satellite.constellation() == constellation
+                    && output_satellite.prn() == row.prn
+            });
+        if let Some((index, satellite)) = same_satellite {
+            satellite.absorb_repeated_row(converted);
+            match repeated
+                .iter_mut()
+                .find(|counted| counted.satellite_index == index)
+            {
+                Some(counted) => counted.merged.rows += 1,
+                None => repeated.push(IndexedMergedSatelliteRows {
+                    satellite_index: index,
+                    merged: MergedSatelliteRows {
+                        satellite: SatelliteInRecord::from_row(row, record),
+                        rows: 2,
+                    },
+                }),
+            }
+        } else {
+            satellites.push(converted);
         }
     }
 
-    let satellites: Vec<Satellite> = merged
-        .iter()
-        .map(|MergedSatellite { satellite, .. }| {
-            Satellite::new(
-                convert_constellation(satellite.constellation),
-                satellite.prn,
-                satellite.elevation,
-                satellite.azimuth,
-                satellite.snr,
-                satellite.in_fix,
-            )
-        })
-        .collect();
+    repeated.sort_unstable_by_key(|counted| counted.satellite_index);
+    alterations
+        .satellites_merged_from_several_rows
+        .extend(repeated.into_iter().map(|counted| counted.merged));
 
     let gps_time = report.gps_time().map(GpsTime::from_utc);
     let sys_time = report.sys_time().map(SysTime::from_utc);
     Satellites::new(gps_time, sys_time, satellites)
 }
 
-/// One satellite of a report, and how many of the report's rows it was merged
-/// from.
-struct MergedSatellite {
-    satellite: SdkSatellite,
-    rows: usize,
-}
-
-/// Merges the rows of a report that repeat a `(constellation, prn)` into one
-/// row per satellite, which is what every count taken from a report measures.
-///
-/// The merged row is in the fix when any of its rows was, and takes the highest
-/// SNR reported: the strongest signal measured for the satellite. Taking the
-/// highest keeps the result independent of row order, which
-/// `gt_analysis::loss_of_lock` reads when it compares a satellite's SNR between
-/// epochs. Elevation and azimuth are properties of the satellite's geometry,
-/// not of the signal: the merged row keeps the first value any of its rows
-/// holds for each of them. Each result carries how many rows of the report it
-/// holds.
-fn merge_rows_repeating_a_satellite(tracked: &[SdkSatellite]) -> Vec<MergedSatellite> {
-    let mut merged: Vec<MergedSatellite> = Vec::with_capacity(tracked.len());
-    for row in tracked {
-        let same_satellite = merged
-            .iter_mut()
-            .find(|m| m.satellite.constellation == row.constellation && m.satellite.prn == row.prn);
-        if let Some(MergedSatellite { satellite, rows }) = same_satellite {
-            satellite.in_fix |= row.in_fix;
-            satellite.elevation = satellite.elevation.or(row.elevation);
-            satellite.azimuth = satellite.azimuth.or(row.azimuth);
-            satellite.snr = match (satellite.snr, row.snr) {
-                (Some(merged_snr), Some(row_snr)) => Some(merged_snr.max(row_snr)),
-                (reported, None) | (None, reported) => reported,
-            };
-            *rows += 1;
-        } else {
-            merged.push(MergedSatellite {
-                satellite: *row,
-                rows: 1,
-            });
-        }
-    }
-    merged
+/// A [`MergedSatelliteRows`] under construction, and the index of its satellite
+/// in the report's converted satellites. The index orders the warning's
+/// satellites by where each first appears in the report.
+struct IndexedMergedSatelliteRows {
+    satellite_index: usize,
+    merged: MergedSatelliteRows,
 }
 
 fn convert_marker(m: &SdkMarker) -> Result<CustomMarker, DroppedMarker> {
@@ -1787,6 +1764,32 @@ mod tests {
                     "each satellite should appear at most once per report"
                 ),
             ]
+        );
+    }
+
+    #[test]
+    fn two_merged_satellites_of_one_report_are_named_in_the_order_they_first_appear() {
+        let bytes = recording_with_satellite_reports(vec![
+            vec![
+                gps_row(7, 45.0, true),
+                gps_row(1, 40.0, true),
+                gps_row(1, 30.0, true),
+                gps_row(7, 30.0, true),
+            ],
+            vec![gps_row(1, 40.0, true)],
+        ]);
+
+        let file = load_bytes(&bytes, "repeated_rows.gtd".to_owned()).unwrap();
+
+        assert_eq!(
+            listed_warnings(&file)
+                .into_iter()
+                .find(|(_, issue, _)| *issue == MERGED_SATELLITE_ROWS.issue)
+                .map(|(count, _, description)| (
+                    count,
+                    description.split_once(". ").map(|(listed, _)| listed)
+                )),
+            Some((2, Some("record 0: G07 on 2 rows, record 0: G01 on 2 rows")))
         );
     }
 
