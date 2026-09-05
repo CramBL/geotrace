@@ -537,13 +537,13 @@ extern "C" {
  * On success, `*out` is set to the new handle.
  * On failure, `*out` is set to NULL and `gtd_last_error()` describes the error.
  *
- * @param b   Builder to finalise.
- * @param out Output parameter for the resulting file handle.
+ * @param builder Builder to finalise.
+ * @param out     Output parameter for the resulting file handle.
  *
  * @return `GTD_ERR_NO_NAV_FIXES` if no nav fixes were added.
  * @return `GTD_ERR_ANNOTATIONS_OOB` if annotations fall outside the time range (unless lenient).
  */
-GtdStatus gtd_builder_finish(GtdFileBuilder *b, GtdNavFile **out);
+GtdStatus gtd_builder_finish(GtdFileBuilder *builder, GtdNavFile **out);
 
 /**
  * Add a GPS navigation fix.
@@ -557,7 +557,7 @@ GtdStatus gtd_builder_finish(GtdFileBuilder *b, GtdNavFile **out);
  * A NaN @p heading_deg, @p speed_mps or @p eph_m reads back as absent: the SDK
  * stores `GTD_NONE_F64` as NaN.
  *
- * @param b           Builder handle.
+ * @param builder     Builder handle.
  * @param gps_time    GPS time of the fix. Use `gtd_ts_none()` when unavailable.
  * @param sys_time    System (wall-clock) time. Use `gtd_ts_none()` when unavailable.
  * @param lat_deg     WGS-84 latitude in degrees, expected in [-90, 90].
@@ -570,7 +570,7 @@ GtdStatus gtd_builder_finish(GtdFileBuilder *b, GtdNavFile **out);
  * @return `GTD_ERR_INVALID_ARGUMENT` if @p gps_time and @p sys_time are both
  *         `gtd_ts_none()`.
  */
-GtdStatus gtd_builder_add_nav_fix(GtdFileBuilder *b,
+GtdStatus gtd_builder_add_nav_fix(GtdFileBuilder *builder,
                                   GtdTimestamp gps_time,
                                   GtdTimestamp sys_time,
                                   double lat_deg,
@@ -585,7 +585,7 @@ GtdStatus gtd_builder_add_nav_fix(GtdFileBuilder *b,
  * The report is associated with the nearest preceding nav fix.
  * Passing @p n_sats as zero with a NULL @p sats pointer records an empty report.
  *
- * @param b        Builder handle.
+ * @param builder  Builder handle.
  * @param gps_time GPS time of the report. Use `gtd_ts_none()` when unavailable.
  * @param sys_time System (wall-clock) time of the report.
  * @param sats     Array of @p n_sats satellite entries.
@@ -594,7 +594,7 @@ GtdStatus gtd_builder_add_nav_fix(GtdFileBuilder *b,
  * @return `GTD_ERR_INVALID_ARGUMENT` if @p gps_time and @p sys_time are both
  *         `gtd_ts_none()`.
  */
-GtdStatus gtd_builder_add_satellite_report(GtdFileBuilder *b,
+GtdStatus gtd_builder_add_satellite_report(GtdFileBuilder *builder,
                                            GtdTimestamp gps_time,
                                            GtdTimestamp sys_time,
                                            const GtdSatellite *sats,
@@ -605,14 +605,14 @@ GtdStatus gtd_builder_add_satellite_report(GtdFileBuilder *b,
  *
  * @p time must lie within the nav fix time range unless lenient mode is enabled.
  *
- * @param b     Builder handle.
- * @param time  Timestamp of the annotation. Must not be `gtd_ts_none()`.
- * @param label Human-readable label, or NULL for no label.
- * @param icon  Icon to display. `GTD_ICON_AUTO` uses the application default (Pin).
+ * @param builder Builder handle.
+ * @param time    Timestamp of the annotation. Must not be `gtd_ts_none()`.
+ * @param label   Human-readable label, or NULL for no label.
+ * @param icon    Icon to display. `GTD_ICON_AUTO` uses the application default (Pin).
  *
  * @return `GTD_ERR_FIELD_TOO_LONG` if @p label is longer than 255 bytes.
  */
-GtdStatus gtd_builder_add_annotation(GtdFileBuilder *b,
+GtdStatus gtd_builder_add_annotation(GtdFileBuilder *builder,
                                      GtdTimestamp time,
                                      const char *label,
                                      GtdMarkerIcon icon);
@@ -624,7 +624,7 @@ GtdStatus gtd_builder_add_annotation(GtdFileBuilder *b,
  * identify the event type. Paths must be non-empty, consist of alphanumeric
  * segments separated by `/`, and not exceed 255 bytes.
  *
- * @param b            Builder handle.
+ * @param builder      Builder handle.
  * @param variant_path Hierarchical event type path.
  * @param sys_time     Time of the event. Must not be `gtd_ts_none()`.
  * @param annotation   Optional human-readable text. Pass NULL for none.
@@ -633,7 +633,7 @@ GtdStatus gtd_builder_add_annotation(GtdFileBuilder *b,
  * @return `GTD_ERR_FIELD_TOO_LONG` if @p variant_path is longer than 255 bytes,
  *         or @p annotation longer than 511 bytes.
  */
-GtdStatus gtd_builder_add_event_marker(GtdFileBuilder *b,
+GtdStatus gtd_builder_add_event_marker(GtdFileBuilder *builder,
                                        const char *variant_path,
                                        GtdTimestamp sys_time,
                                        const char *annotation);
@@ -644,7 +644,7 @@ GtdStatus gtd_builder_add_event_marker(GtdFileBuilder *b,
  * Styles are per-variant, not per-event. Calling this multiple times for the
  * same path overwrites the previous style.
  *
- * @param b            Builder handle.
+ * @param builder      Builder handle.
  * @param variant_path Hierarchical event type path (same format as in
  *                     `gtd_builder_add_event_marker()`).
  * @param icon         Icon to display. `GTD_ICON_AUTO` uses the application default.
@@ -654,7 +654,7 @@ GtdStatus gtd_builder_add_event_marker(GtdFileBuilder *b,
  *       255 bytes or a @p color_hex past 7 bytes fails there with
  *       `GTD_ERR_FIELD_TOO_LONG`.
  */
-GtdStatus gtd_builder_add_event_marker_style(GtdFileBuilder *b,
+GtdStatus gtd_builder_add_event_marker_style(GtdFileBuilder *builder,
                                              const char *variant_path,
                                              GtdMarkerIcon icon,
                                              const char *color_hex);
@@ -666,14 +666,14 @@ GtdStatus gtd_builder_add_event_marker_style(GtdFileBuilder *b,
  * track by time at query time, not resampled here. See @ref GtdChannel for the
  * field layout, including the row-major `values` convention.
  *
- * @param b       Builder handle.
+ * @param builder Builder handle.
  * @param channel Channel description. Not retained after the call returns.
  *
  * @return `GTD_ERR_INVALID_CHANNEL` if the unit is unrecognized, the name or a
  *         component label is malformed, or `values` is not
  *         `n_times * max(n_components, 1)` long.
  */
-GtdStatus gtd_builder_add_channel(GtdFileBuilder *b, const GtdChannel *channel);
+GtdStatus gtd_builder_add_channel(GtdFileBuilder *builder, const GtdChannel *channel);
 
 /**
  * Add a channel with an explicit recognized/custom interpretation for its unit.
@@ -686,14 +686,14 @@ GtdStatus gtd_builder_add_channel(GtdFileBuilder *b, const GtdChannel *channel);
  * NULL @ref GtdChannel::unit adds a channel without a unit, whatever
  * @p unit_mode says.
  *
- * @param b         Builder handle.
+ * @param builder   Builder handle.
  * @param channel   Channel description. Not retained after the call returns.
  * @param unit_mode A @ref GtdChannelUnitMode value.
  *
  * @return `GTD_ERR_INVALID_CHANNEL` for an invalid unit/mode combination or
  *         malformed channel metadata.
  */
-GtdStatus gtd_builder_add_channel_with_unit_mode(GtdFileBuilder *b,
+GtdStatus gtd_builder_add_channel_with_unit_mode(GtdFileBuilder *builder,
                                                  const GtdChannel *channel,
                                                  uint32_t unit_mode);
 
@@ -711,9 +711,9 @@ GtdFileBuilder *gtd_builder_create(void);
  * Do **not** call this after a successful `gtd_builder_finish()`: that call
  * already consumes the builder.
  *
- * @param b Builder to destroy. No-op if NULL.
+ * @param builder Builder to destroy. No-op if NULL.
  */
-void gtd_builder_destroy(GtdFileBuilder *b);
+void gtd_builder_destroy(GtdFileBuilder *builder);
 
 /**
  * Set the file title (optional).
@@ -722,7 +722,7 @@ void gtd_builder_destroy(GtdFileBuilder *b);
  *
  * @return `GTD_ERR_INTERNAL` if data has already been added.
  */
-GtdStatus gtd_builder_set_title(GtdFileBuilder *b, const char *title);
+GtdStatus gtd_builder_set_title(GtdFileBuilder *builder, const char *title);
 
 /**
  * Set the recording device name (optional).
@@ -731,7 +731,7 @@ GtdStatus gtd_builder_set_title(GtdFileBuilder *b, const char *title);
  *
  * @return `GTD_ERR_INTERNAL` if data has already been added.
  */
-GtdStatus gtd_builder_set_device(GtdFileBuilder *b, const char *device);
+GtdStatus gtd_builder_set_device(GtdFileBuilder *builder, const char *device);
 
 /**
  * Set free-form notes (optional).
@@ -740,7 +740,7 @@ GtdStatus gtd_builder_set_device(GtdFileBuilder *b, const char *device);
  *
  * @return `GTD_ERR_INTERNAL` if data has already been added.
  */
-GtdStatus gtd_builder_set_notes(GtdFileBuilder *b, const char *notes);
+GtdStatus gtd_builder_set_notes(GtdFileBuilder *builder, const char *notes);
 
 /**
  * Set a device/session identity string (optional).
@@ -749,7 +749,7 @@ GtdStatus gtd_builder_set_notes(GtdFileBuilder *b, const char *notes);
  *
  * @return `GTD_ERR_INTERNAL` if data has already been added.
  */
-GtdStatus gtd_builder_set_identity(GtdFileBuilder *b, const char *identity);
+GtdStatus gtd_builder_set_identity(GtdFileBuilder *builder, const char *identity);
 
 /**
  * Declare the platform the recording was made on (optional).
@@ -758,7 +758,7 @@ GtdStatus gtd_builder_set_identity(GtdFileBuilder *b, const char *identity);
  *
  * @return `GTD_ERR_INTERNAL` if data has already been added.
  */
-GtdStatus gtd_builder_set_travel_mode(GtdFileBuilder *b, GtdTravelMode mode);
+GtdStatus gtd_builder_set_travel_mode(GtdFileBuilder *builder, GtdTravelMode mode);
 
 /**
  * Enable lenient mode.
@@ -769,9 +769,9 @@ GtdStatus gtd_builder_set_travel_mode(GtdFileBuilder *b, GtdTravelMode mode);
  *
  * Must be called before the first `gtd_builder_add_*` call.
  *
- * @param b Builder handle. No-op if NULL.
+ * @param builder Builder handle. No-op if NULL.
  */
-void gtd_builder_set_lenient(GtdFileBuilder *b);
+void gtd_builder_set_lenient(GtdFileBuilder *builder);
 
 /**
  * Validate and canonicalize a channel unit label.
@@ -786,11 +786,11 @@ void gtd_builder_set_lenient(GtdFileBuilder *b);
  * trimmed, and a label matching a recognized unit is rejected: it belongs in
  * `GTD_CHANNEL_UNIT_RECOGNIZED`, which keeps its conversion factor.
  *
- * @param label        Unit label to validate, NUL-terminated UTF-8.
- * @param unit_mode    A @ref GtdChannelUnitMode value.
- * @param out          Buffer for the canonical label, or NULL to size it.
- * @param out_capacity Bytes writable at @p out.
- * @param required_len Receives the canonical byte length including the NUL.
+ * @param label           Unit label to validate, NUL-terminated UTF-8.
+ * @param unit_mode       A @ref GtdChannelUnitMode value.
+ * @param out             Buffer for the canonical label, or NULL to size it.
+ * @param out_capacity    Bytes writable at @p out.
+ * @param required_length Receives the canonical byte length including the NUL.
  *
  * @return `GTD_ERR_INVALID_CHANNEL` if the label is invalid for @p unit_mode or
  *         @p unit_mode is not a @ref GtdChannelUnitMode, `GTD_ERR_UTF8` if
@@ -801,7 +801,7 @@ GtdStatus gtd_channel_unit_parse(const char *label,
                                  uint32_t unit_mode,
                                  char *out,
                                  size_t out_capacity,
-                                 size_t *required_len);
+                                 size_t *required_length);
 
 /**
  * Returns the last error message for the current thread, or NULL if none.
@@ -813,27 +813,27 @@ const char *gtd_last_error(void);
 /**
  * Return the number of channels in the file.
  *
- * @param f File handle. Returns 0 if NULL.
+ * @param file File handle. Returns 0 if NULL.
  */
-size_t gtd_nav_file_channel_count(const GtdNavFile *f);
+size_t gtd_nav_file_channel_count(const GtdNavFile *file);
 
 /**
- * Fill @p out with metadata for the channel at @p idx.
+ * Fill @p out with metadata for the channel at @p index.
  *
- * @param f   File handle.
- * @param idx Zero-based index. Must be less than `gtd_nav_file_channel_count(f)`.
- * @param out Caller-allocated struct to fill.
+ * @param file  File handle.
+ * @param index Zero-based index. Must be less than `gtd_nav_file_channel_count(file)`.
+ * @param out   Caller-allocated struct to fill.
  *
- * @return `GTD_ERR_NULL_ARGUMENT` if @p idx is out of range.
+ * @return `GTD_ERR_NULL_ARGUMENT` if @p index is out of range.
  */
-GtdStatus gtd_nav_file_get_channel(const GtdNavFile *f, size_t idx, GtdChannelInfo *out);
+GtdStatus gtd_nav_file_get_channel(const GtdNavFile *file, size_t index, GtdChannelInfo *out);
 
 /**
  * Read a channel unit without the fixed-size @ref GtdChannelInfo buffer limit.
  *
- * Pass NULL @p out and zero @p cap to query the required byte length, including
- * the trailing null byte. A channel without a unit reports zero. @p is_custom
- * may be NULL when the recognized/custom distinction is not needed.
+ * Pass NULL @p out and zero @p out_capacity to query the required byte length,
+ * including the trailing null byte. A channel without a unit reports zero.
+ * @p is_custom may be NULL when the recognized/custom distinction is not needed.
  *
  * @p is_custom is non-zero for any label that is not a recognized unit. That
  * covers both a custom label and a legacy label an older writer stored, which
@@ -841,96 +841,101 @@ GtdStatus gtd_nav_file_get_channel(const GtdNavFile *f, size_t idx, GtdChannelIn
  * to @ref gtd_builder_add_channel_with_unit_mode returns
  * `GTD_ERR_INVALID_CHANNEL`.
  */
-GtdStatus gtd_nav_file_get_channel_unit(const GtdNavFile *f,
-                                        size_t idx,
+GtdStatus gtd_nav_file_get_channel_unit(const GtdNavFile *file,
+                                        size_t index,
                                         char *out,
-                                        size_t cap,
-                                        size_t *required_len,
+                                        size_t out_capacity,
+                                        size_t *required_length,
                                         uint8_t *is_custom);
 
 /**
  * Copy the label of a vector channel's component into @p out (null-terminated,
- * truncated to @p cap bytes).
+ * truncated to @p out_capacity bytes).
  *
- * @param f        File handle.
- * @param ch_idx   Channel index.
- * @param comp_idx Component index. Must be less than `GtdChannelInfo::component_count`.
- * @param out      Caller-allocated buffer of @p cap bytes.
- * @param cap      Capacity of @p out in bytes.
+ * @param file            File handle.
+ * @param channel_index   Channel index.
+ * @param component_index Component index. Must be less than `GtdChannelInfo::component_count`.
+ * @param out             Caller-allocated buffer of @p out_capacity bytes.
+ * @param out_capacity    Capacity of @p out in bytes.
  *
  * @return `GTD_ERR_NULL_ARGUMENT` if an index is out of range or @p out is NULL.
  */
-GtdStatus gtd_nav_file_get_channel_component(const GtdNavFile *f,
-                                             size_t ch_idx,
-                                             size_t comp_idx,
+GtdStatus gtd_nav_file_get_channel_component(const GtdNavFile *file,
+                                             size_t channel_index,
+                                             size_t component_index,
                                              char *out,
-                                             size_t cap);
+                                             size_t out_capacity);
 
 /**
- * Copy up to @p cap sample timestamps of the channel at @p ch_idx into @p out.
+ * Copy up to @p out_capacity sample timestamps of the channel at @p channel_index into @p out.
  *
- * @return The channel's total sample count (independent of @p cap). Pass a NULL
- *         @p out or zero @p cap to query the count without copying.
+ * @return The channel's total sample count (independent of @p out_capacity). Pass a NULL
+ *         @p out or zero @p out_capacity to query the count without copying.
  */
-size_t gtd_nav_file_channel_times(const GtdNavFile *f,
-                                  size_t ch_idx,
+size_t gtd_nav_file_channel_times(const GtdNavFile *file,
+                                  size_t channel_index,
                                   GtdTimestamp *out,
-                                  size_t cap);
+                                  size_t out_capacity);
 
 /**
- * Copy up to @p cap values of the channel at @p ch_idx into @p out (row-major).
+ * Copy up to @p out_capacity values of the channel at @p channel_index into @p out (row-major).
  *
  * @return The channel's total value count, `sample_count * max(component_count, 1)`
- *         (independent of @p cap). Pass a NULL @p out or zero @p cap to query
- *         the count without copying.
+ *         (independent of @p out_capacity). Pass a NULL @p out or zero
+ *         @p out_capacity to query the count without copying.
  */
-size_t gtd_nav_file_channel_values(const GtdNavFile *f, size_t ch_idx, double *out, size_t cap);
+size_t gtd_nav_file_channel_values(const GtdNavFile *file,
+                                   size_t channel_index,
+                                   double *out,
+                                   size_t out_capacity);
 
 /**
  * Return the number of event markers in the file.
  *
- * @param f File handle. Returns 0 if NULL.
+ * @param file File handle. Returns 0 if NULL.
  */
-size_t gtd_nav_file_event_marker_count(const GtdNavFile *f);
+size_t gtd_nav_file_event_marker_count(const GtdNavFile *file);
 
 /**
- * Fill @p out with data for the event marker at @p idx.
+ * Fill @p out with data for the event marker at @p index.
  *
- * @param f   File handle.
- * @param idx Zero-based index. Must be less than `gtd_nav_file_event_marker_count(f)`.
- * @param out Caller-allocated struct to fill.
+ * @param file  File handle.
+ * @param index Zero-based index. Must be less than `gtd_nav_file_event_marker_count(file)`.
+ * @param out   Caller-allocated struct to fill.
  *
- * @return `GTD_ERR_NULL_ARGUMENT` if @p idx is out of range.
+ * @return `GTD_ERR_NULL_ARGUMENT` if @p index is out of range.
  */
-GtdStatus gtd_nav_file_get_event_marker(const GtdNavFile *f, size_t idx, GtdEventMarkerInfo *out);
+GtdStatus gtd_nav_file_get_event_marker(const GtdNavFile *file,
+                                        size_t index,
+                                        GtdEventMarkerInfo *out);
 
 /**
  * Return the file title, or NULL if not set.
  *
- * The returned pointer is valid for the lifetime of @p f.
+ * The returned pointer is valid for the lifetime of @p file.
  */
-const char *gtd_nav_file_title(const GtdNavFile *f);
+const char *gtd_nav_file_title(const GtdNavFile *file);
 
 /**
  * Return the recording device name, or NULL if not set.
  *
- * The returned pointer is valid for the lifetime of @p f.
+ * The returned pointer is valid for the lifetime of @p file.
  */
-const char *gtd_nav_file_device(const GtdNavFile *f);
+const char *gtd_nav_file_device(const GtdNavFile *file);
 
 /**
  * Return the notes string, or NULL if not set.
  *
- * The returned pointer is valid for the lifetime of @p f.
+ * The returned pointer is valid for the lifetime of @p file.
  */
-const char *gtd_nav_file_notes(const GtdNavFile *f);
+const char *gtd_nav_file_notes(const GtdNavFile *file);
 
 /**
  * Return the identity string, or NULL if not set.
  *
- * The returned pointer is valid for the lifetime of @p f.
+ * The returned pointer is valid for the lifetime of @p file.
  */
-const char *gtd_nav_file_identity(const GtdNavFile *f);
+const char *gtd_nav_file_identity(const GtdNavFile *file);
 
 /**
  * Return the travel mode wire name, or NULL if not set.
@@ -940,65 +945,65 @@ const char *gtd_nav_file_identity(const GtdNavFile *f);
  * by a newer SDK may carry a wire name that fails to parse - such values are
  * still returned here verbatim, never dropped.
  *
- * The returned pointer is valid for the lifetime of @p f.
+ * The returned pointer is valid for the lifetime of @p file.
  */
-const char *gtd_nav_file_travel_mode(const GtdNavFile *f);
+const char *gtd_nav_file_travel_mode(const GtdNavFile *file);
 
 /**
  * Return the version of the SDK build that wrote the file, or NULL if not set.
  *
- * The returned pointer is valid for the lifetime of @p f.
+ * The returned pointer is valid for the lifetime of @p file.
  */
-const char *gtd_nav_file_sdk_version(const GtdNavFile *f);
+const char *gtd_nav_file_sdk_version(const GtdNavFile *file);
 
 /**
  * Return the commit of the `geotrace` repository the writing SDK was built from,
  * or NULL if not set.
  *
- * The returned pointer is valid for the lifetime of @p f.
+ * The returned pointer is valid for the lifetime of @p file.
  */
-const char *gtd_nav_file_sdk_git_commit(const GtdNavFile *f);
+const char *gtd_nav_file_sdk_git_commit(const GtdNavFile *file);
 
 /**
  * Return the committer timestamp of `gtd_nav_file_sdk_git_commit()`.
  *
  * `gtd_ts_none()` if not set. Use `gtd_ts_is_none()` to check.
  */
-GtdTimestamp gtd_nav_file_sdk_commit_time(const GtdNavFile *f);
+GtdTimestamp gtd_nav_file_sdk_commit_time(const GtdNavFile *file);
 
 /**
  * Return the number of navigation fixes in the file.
  *
- * @param f File handle. Returns 0 if NULL.
+ * @param file File handle. Returns 0 if NULL.
  */
-size_t gtd_nav_file_nav_point_count(const GtdNavFile *f);
+size_t gtd_nav_file_nav_point_count(const GtdNavFile *file);
 
 /**
- * Fill @p out with data for the navigation fix at @p idx.
+ * Fill @p out with data for the navigation fix at @p index.
  *
- * @param f   File handle.
- * @param idx Zero-based index. Must be less than `gtd_nav_file_nav_point_count(f)`.
- * @param out Caller-allocated struct to fill.
+ * @param file  File handle.
+ * @param index Zero-based index. Must be less than `gtd_nav_file_nav_point_count(file)`.
+ * @param out   Caller-allocated struct to fill.
  *
- * @return `GTD_ERR_NULL_ARGUMENT` if @p idx is out of range.
+ * @return `GTD_ERR_NULL_ARGUMENT` if @p index is out of range.
  */
-GtdStatus gtd_nav_file_get_nav_point(const GtdNavFile *f, size_t idx, GtdNavPointInfo *out);
+GtdStatus gtd_nav_file_get_nav_point(const GtdNavFile *file, size_t index, GtdNavPointInfo *out);
 
 /**
  * Fill @p out with satellite data for a specific satellite within a nav fix.
  *
- * @param f       File handle.
- * @param nav_idx Nav fix index.
- * @param sat_idx Satellite index within that fix. Must be less than
- *                `GtdNavPointInfo::sat_count`.
- * @param out     Caller-allocated struct to fill.
+ * @param file            File handle.
+ * @param nav_point_index Nav fix index.
+ * @param satellite_index Satellite index within that fix. Must be less than
+ *                        `GtdNavPointInfo::sat_count`.
+ * @param out             Caller-allocated struct to fill.
  *
  * @return `GTD_ERR_NULL_ARGUMENT` if either index is out of range, or the nav
  *         fix has no satellite report.
  */
-GtdStatus gtd_nav_file_get_satellite(const GtdNavFile *f,
-                                     size_t nav_idx,
-                                     size_t sat_idx,
+GtdStatus gtd_nav_file_get_satellite(const GtdNavFile *file,
+                                     size_t nav_point_index,
+                                     size_t satellite_index,
                                      GtdSatInfo *out);
 
 /**
@@ -1019,77 +1024,77 @@ GtdStatus gtd_nav_file_open(const char *path, GtdNavFile **out);
  *
  * The caller retains ownership of @p data. It may be freed after this call returns.
  *
- * @param data Pointer to the serialised file data.
- * @param len  Length of the data in bytes.
- * @param out  Output parameter for the file handle.
+ * @param data   Pointer to the serialised file data.
+ * @param length Length of the data in bytes.
+ * @param out    Output parameter for the file handle.
  */
-GtdStatus gtd_nav_file_from_bytes(const uint8_t *data, size_t len, GtdNavFile **out);
+GtdStatus gtd_nav_file_from_bytes(const uint8_t *data, size_t length, GtdNavFile **out);
 
 /**
  * Write the navigation file to disk.
  *
  * The `.gtd` extension is appended automatically if @p path has no extension.
  *
- * @param f    File handle (not consumed, the caller must still call `gtd_nav_file_destroy()`).
+ * @param file File handle (not consumed, the caller must still call `gtd_nav_file_destroy()`).
  * @param path Destination file path.
  *
  * @return `GTD_ERR_FIELD_TOO_LONG` if an event marker style holds a variant path
  *         or color longer than its field.
  */
-GtdStatus gtd_nav_file_write_to_path(const GtdNavFile *f, const char *path);
+GtdStatus gtd_nav_file_write_to_path(const GtdNavFile *file, const char *path);
 
 /**
  * Serialise the navigation file into a heap-allocated byte buffer.
  *
- * On success, `*buf` points to a buffer of `*len` bytes that the caller must
- * free with `gtd_free_bytes(*buf, *len)`.
+ * On success, `*buffer` points to a buffer of `*length` bytes that the caller must
+ * free with `gtd_free_bytes(*buffer, *length)`.
  *
- * @param f   File handle (not consumed).
- * @param buf Output: pointer to the allocated buffer.
- * @param len Output: number of bytes in the buffer.
+ * @param file   File handle (not consumed).
+ * @param buffer Output: pointer to the allocated buffer.
+ * @param length Output: number of bytes in the buffer.
  *
  * @return `GTD_ERR_FIELD_TOO_LONG` if an event marker style holds a variant path
  *         or color longer than its field.
  */
-GtdStatus gtd_nav_file_to_bytes(const GtdNavFile *f, uint8_t **buf, size_t *len);
+GtdStatus gtd_nav_file_to_bytes(const GtdNavFile *file, uint8_t **buffer, size_t *length);
 
 /**
  * Free a byte buffer returned by `gtd_nav_file_to_bytes()`.
  *
- * @p buf and @p len must match the values written by `gtd_nav_file_to_bytes()`.
- * No-op if @p buf is NULL.
+ * @p buffer and @p length must match the values written by `gtd_nav_file_to_bytes()`.
+ * No-op if @p buffer is NULL.
  *
- * @param buf Pointer to the buffer.
- * @param len Number of bytes in the buffer.
+ * @param buffer Pointer to the buffer.
+ * @param length Number of bytes in the buffer.
  */
-void gtd_free_bytes(uint8_t *buf, size_t len);
+void gtd_free_bytes(uint8_t *buffer, size_t length);
 
 /**
  * Destroy a navigation file handle and free all associated memory.
  *
- * @param f Handle to destroy. No-op if NULL.
+ * @param file Handle to destroy. No-op if NULL.
  */
-void gtd_nav_file_destroy(GtdNavFile *f);
+void gtd_nav_file_destroy(GtdNavFile *file);
 
 /**
  * Construct a timestamp from whole seconds since the Unix epoch.
  */
-GtdTimestamp gtd_ts_from_seconds(uint64_t secs);
+GtdTimestamp gtd_ts_from_seconds(uint64_t seconds);
 
 /**
  * Construct a timestamp from milliseconds since the Unix epoch.
  */
-GtdTimestamp gtd_ts_from_millis(uint64_t ms);
+GtdTimestamp gtd_ts_from_millis(uint64_t millis);
 
 /**
  * Construct a timestamp from microseconds since the Unix epoch.
  */
-GtdTimestamp gtd_ts_from_micros(uint64_t us);
+GtdTimestamp gtd_ts_from_micros(uint64_t micros);
 
 /**
  * Construct a timestamp from nanoseconds since the Unix epoch (truncated to µs).
  */
-GtdTimestamp gtd_ts_from_nanos(uint64_t ns);
+GtdTimestamp gtd_ts_from_nanos(uint64_t nanos);
 
 /**
  * The timestamp value that represents an absent timestamp.
@@ -1097,9 +1102,9 @@ GtdTimestamp gtd_ts_from_nanos(uint64_t ns);
 GtdTimestamp gtd_ts_none(void);
 
 /**
- * Returns non-zero if @p ts is the absent timestamp.
+ * Returns non-zero if @p timestamp is the absent timestamp.
  */
-uint8_t gtd_ts_is_none(GtdTimestamp ts);
+uint8_t gtd_ts_is_none(GtdTimestamp timestamp);
 
 /**
  * Wire name of a travel mode, e.g. `GTD_TRAVEL_MODE_CAR` -> `"car"`.

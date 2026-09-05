@@ -20,6 +20,7 @@ Test(gold_timestamp, rejects_malformed_input) {
         "2026-02",             /* truncated */
         "2026-02-01 15:00:00", /* space date-time separator */
         "2026/02/01T15:00:00", /* wrong separator */
+        "2026-99-01T15:00:00", /* month out of range */
         "x",
     };
     for (size_t i = 0; i < sizeof(malformed) / sizeof(malformed[0]); i++) {

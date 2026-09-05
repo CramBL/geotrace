@@ -14,32 +14,32 @@ use crate::error::{self, GtdStatus};
 /// On success, `*out` is set to the new handle.
 /// On failure, `*out` is set to NULL and `gtd_last_error()` describes the error.
 ///
-/// @param b   Builder to finalise.
-/// @param out Output parameter for the resulting file handle.
+/// @param builder Builder to finalise.
+/// @param out     Output parameter for the resulting file handle.
 ///
 /// @return `GTD_ERR_NO_NAV_FIXES` if no nav fixes were added.
 /// @return `GTD_ERR_ANNOTATIONS_OOB` if annotations fall outside the time range (unless lenient).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_finish(
-    b: *mut GtdFileBuilder,
+    builder: *mut GtdFileBuilder,
     out: *mut *mut GtdNavFile,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
-        if b.is_null() {
-            error::set_last_error("null pointer argument (b)");
+        if builder.is_null() {
+            error::set_last_error("null pointer argument (builder)");
             return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         }
         if out.is_null() {
             error::set_last_error("null pointer argument (out)");
             return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         }
-        // SAFETY: b is non-null, was created by `gtd_builder_create` via Box::into_raw
-        let b_box = unsafe { Box::from_raw(b) };
+        // SAFETY: builder is non-null, was created by `gtd_builder_create` via Box::into_raw
+        let builder_box = unsafe { Box::from_raw(builder) };
         // SAFETY: out is non-null (checked above)
         let out_ref = unsafe { &mut *out };
         *out_ref = std::ptr::null_mut();
 
-        let recorder = b_box.into_recorder();
+        let recorder = builder_box.into_recorder();
 
         match recorder.finish() {
             Ok(nav_file) => {

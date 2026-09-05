@@ -16,12 +16,12 @@ pub extern "C" fn gtd_builder_create() -> *mut GtdFileBuilder {
 /// Do **not** call this after a successful `gtd_builder_finish()`: that call
 /// already consumes the builder.
 ///
-/// @param b Builder to destroy. No-op if NULL.
+/// @param builder Builder to destroy. No-op if NULL.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gtd_builder_destroy(b: *mut GtdFileBuilder) {
-    if b.is_null() {
+pub unsafe extern "C" fn gtd_builder_destroy(builder: *mut GtdFileBuilder) {
+    if builder.is_null() {
         return;
     }
-    // SAFETY: b was allocated by `gtd_builder_create` via Box::into_raw
-    unsafe { drop(Box::from_raw(b)) };
+    // SAFETY: builder was allocated by `gtd_builder_create` via Box::into_raw
+    unsafe { drop(Box::from_raw(builder)) };
 }

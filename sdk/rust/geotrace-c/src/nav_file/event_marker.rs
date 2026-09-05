@@ -28,35 +28,35 @@ pub struct GtdEventMarkerInfo {
 
 /// Return the number of event markers in the file.
 ///
-/// @param f File handle. Returns 0 if NULL.
+/// @param file File handle. Returns 0 if NULL.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gtd_nav_file_event_marker_count(f: *const GtdNavFile) -> usize {
-    if f.is_null() {
+pub unsafe extern "C" fn gtd_nav_file_event_marker_count(file: *const GtdNavFile) -> usize {
+    if file.is_null() {
         return 0;
     }
-    // SAFETY: f is non-null
-    unsafe { (*f).file.event_markers().len() }
+    // SAFETY: file is non-null
+    unsafe { (*file).file.event_markers().len() }
 }
 
-/// Fill @p out with data for the event marker at @p idx.
+/// Fill @p out with data for the event marker at @p index.
 ///
-/// @param f   File handle.
-/// @param idx Zero-based index. Must be less than `gtd_nav_file_event_marker_count(f)`.
-/// @param out Caller-allocated struct to fill.
+/// @param file  File handle.
+/// @param index Zero-based index. Must be less than `gtd_nav_file_event_marker_count(file)`.
+/// @param out   Caller-allocated struct to fill.
 ///
-/// @return `GTD_ERR_NULL_ARGUMENT` if @p idx is out of range.
+/// @return `GTD_ERR_NULL_ARGUMENT` if @p index is out of range.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_get_event_marker(
-    f: *const GtdNavFile,
-    idx: usize,
+    file: *const GtdNavFile,
+    index: usize,
     out: *mut GtdEventMarkerInfo,
 ) -> GtdStatus {
     error::run_catching_panics(|| {
-        let f = nonnull_ref!(f);
+        let handle = nonnull_ref!(file);
         let out = nonnull_mut!(out);
 
-        let Some(marker) = f.file.event_markers().get(idx) else {
-            error::set_last_error(format!("event marker index {idx} is out of range"));
+        let Some(marker) = handle.file.event_markers().get(index) else {
+            error::set_last_error(format!("event marker index {index} is out of range"));
             return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         };
 
