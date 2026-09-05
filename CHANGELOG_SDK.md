@@ -11,6 +11,7 @@ the app).
 
 - Rust `NavFileBuilder::with_scrubbed_provenance()`. A file written through it holds the new `geotrace_sdk::SCRUBBED_SDK_VERSION` (`<scrubbed>`) as its `sdk_version`, no `sdk_git_commit` and no `sdk_commit_time`, whatever the build that wrote it.
 - Rust `NavFile::equals_ignoring_build_provenance()`, which compares two files over everything but their `sdk_version`, `sdk_git_commit` and `sdk_commit_time`.
+- C++ `FixTime::from_recorded()`, which takes a `RecordedFixTimestamps` and returns `std::nullopt` when the recorder holds neither timestamp.
 
 ### Changed
 
@@ -24,6 +25,8 @@ the app).
 - C `gtd_builder_add_satellite_report` returns `GTD_ERR_INVALID_ARGUMENT` when `gps_time` and `sys_time` are both `gtd_ts_none()`.
 - Python `SatelliteReport` raises `ValueError` when `gps_time` and `sys_time` are both `None`.
 - Reading a file whose satellite report has neither a receiver nor a host timestamp fails with an error stating the report.
+- C++ `NavFix` and `SatelliteReport` have a required `FixTime` member, built with `FixTime::receiver`, `FixTime::host` or `FixTime::both`, in place of their two timestamps.
+- C++ `Timestamp` is always an instant: it has no default constructor, `Timestamp::none()` and `Timestamp::is_none()` are gone, and `NavPointView::gps_time`, `NavPointView::sys_time` and `NavFile::sdk_commit_time()` are `std::optional<Timestamp>`.
 - A satellite report before the first nav fix produces a ghost fix on the first fix.
 - A ghost fix after the last nav fix takes that fix's position when the fix has no heading.
 

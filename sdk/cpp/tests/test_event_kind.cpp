@@ -8,6 +8,7 @@
 using geotrace::Angle;
 using geotrace::event_path;
 using geotrace::FileBuilder;
+using geotrace::FixTime;
 using geotrace::NavFile;
 using geotrace::NavFix;
 using geotrace::Timestamp;
@@ -86,15 +87,10 @@ TEST_CASE("event_path composes base/seg and suppresses nested bases") {
 }
 
 TEST_CASE("add_event: typed values round-trip as event markers") {
-    NavFix f0;
-    f0.gps_time = Timestamp::from_seconds(1700000000ULL);
-    f0.lat = Angle::degrees(51.5074);
-    f0.lon = Angle::degrees(-0.1278);
-
-    NavFix f1;
-    f1.gps_time = Timestamp::from_seconds(1700000030ULL);
-    f1.lat = Angle::degrees(51.5080);
-    f1.lon = Angle::degrees(-0.1265);
+    const NavFix f0{FixTime::receiver(Timestamp::from_seconds(1700000000ULL)),
+                    Angle::degrees(51.5074), Angle::degrees(-0.1278)};
+    const NavFix f1{FixTime::receiver(Timestamp::from_seconds(1700000030ULL)),
+                    Angle::degrees(51.5080), Angle::degrees(-0.1265)};
 
     FileBuilder builder;
     builder.add_nav_fix(f0).add_nav_fix(f1);

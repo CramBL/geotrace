@@ -42,10 +42,9 @@ int main() {
         };
         std::size_t idx = 0;
         for (const auto &point : gps) {
-            geotrace::NavFix fix{};
-            fix.gps_time = at(idx * 10);
-            fix.lat = geotrace::Angle::degrees(point.lat);
-            fix.lon = geotrace::Angle::degrees(point.lon);
+            geotrace::NavFix fix{geotrace::FixTime::receiver(at(idx * 10)),
+                                 geotrace::Angle::degrees(point.lat),
+                                 geotrace::Angle::degrees(point.lon)};
             fix.heading = geotrace::Angle::degrees(point.heading);
             builder.add(fix);
             ++idx;
@@ -65,11 +64,7 @@ int main() {
         };
         std::size_t marker_count = 0;
         for (const auto &m : markers) {
-            geotrace::Annotation ann{};
-            ann.time = at(m.offset);
-            ann.label = std::string(m.label);
-            ann.icon = m.icon;
-            builder.add(ann);
+            builder.add(geotrace::Annotation{at(m.offset), std::string(m.label), m.icon});
             ++marker_count;
         }
 

@@ -20,11 +20,9 @@ int main() {
         geotrace::FileBuilder builder{};
         builder.title("Channel tour");
 
-        geotrace::NavFix fix{};
-        fix.gps_time = t0;
-        fix.lat = geotrace::Angle::degrees(51.5074);
-        fix.lon = geotrace::Angle::degrees(-0.1278);
-        builder.add(fix);
+        builder.add(geotrace::NavFix{geotrace::FixTime::receiver(t0),
+                                     geotrace::Angle::degrees(51.5074),
+                                     geotrace::Angle::degrees(-0.1278)});
 
         geotrace::Channel incline{};
         incline.name = "incline";

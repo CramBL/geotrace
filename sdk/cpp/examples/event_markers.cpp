@@ -42,10 +42,9 @@ int main() {
         };
         std::size_t idx = 0;
         for (const auto &point : track) {
-            geotrace::NavFix fix{};
-            fix.gps_time = at(idx * 30);
-            fix.lat = geotrace::Angle::degrees(point.lat);
-            fix.lon = geotrace::Angle::degrees(point.lon);
+            geotrace::NavFix fix{geotrace::FixTime::receiver(at(idx * 30)),
+                                 geotrace::Angle::degrees(point.lat),
+                                 geotrace::Angle::degrees(point.lon)};
             fix.heading = geotrace::Angle::degrees(90.0);
             builder.add(fix);
             ++idx;
