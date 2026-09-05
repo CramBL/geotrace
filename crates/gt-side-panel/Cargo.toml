@@ -15,6 +15,7 @@ egui.workspace = true
 egui-phosphor.workspace = true
 gt-filter = { path = "../gt-filter" }
 gt-fmt = { path = "../gt-fmt" }
+gt-history-types = { path = "../gt-history-types" }
 gt-loaded-files = { path = "../gt-loaded-files" }
 gt-types = { path = "../gt-types" }
 gt-ui-theme = { path = "../gt-ui-theme" }
@@ -26,7 +27,6 @@ uom.workspace = true
 egui_kittest.workspace = true
 geotrace-sdk-units = { path = "../../sdk/rust/geotrace-sdk-units" }
 gt-filter = { path = "../gt-filter" }
-gt-history-types = { path = "../gt-history-types" }
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
 gt-track-builder = { path = "../gt-track-builder" }
 gt-ui-types = { path = "../gt-ui-types" }

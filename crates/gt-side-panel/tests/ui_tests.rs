@@ -11,6 +11,7 @@ use egui_phosphor::regular::LINE_SEGMENTS as ICON_LINE_SEGMENTS;
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use egui_phosphor::regular::PATH as ICON_PATH;
 use egui_phosphor::regular::SQUARE as ICON_SQUARE;
+use egui_phosphor::regular::TRAY as ICON_TRAY;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use std::path::PathBuf;
 
@@ -60,6 +61,7 @@ struct State {
     snap_costing_choices: Vec<(SnapCosting, String)>,
     snap_costing_request: Option<(SnapCostingTarget, SnapCosting)>,
     sky_trails_request: Option<gt_ui_types::SkyTrailsRequest>,
+    shelf_request: Option<gt_history_types::DatabaseRef>,
 }
 
 /// A recording built from `points`, loaded from a path of its own name.
@@ -112,6 +114,7 @@ fn make_state_from_files(files: LoadedFiles) -> State {
         snap_costing_choices: Vec::new(),
         snap_costing_request: None,
         sky_trails_request: None,
+        shelf_request: None,
     }
 }
 
@@ -167,6 +170,7 @@ fn make_harness_sized(state: State, size: egui::Vec2) -> TestHarness<'static, St
                 query_matches: None,
                 zoom_to_visible_request: &mut s.zoom_to_visible,
                 warnings_request: &mut s.warnings_request,
+                shelf_request: &mut s.shelf_request,
                 read_only_recording_history_hover: s.read_only_recording_history_hover,
                 clear_query_request: &mut s.clear_query_request,
                 display_mask: s.display_mask,
@@ -1485,6 +1489,7 @@ fn snapshot_track_channels() {
         snap_costing_choices: Vec::new(),
         snap_costing_request: None,
         sky_trails_request: None,
+        shelf_request: None,
     };
     let mut harness = make_harness(state);
     harness.run();
@@ -1783,6 +1788,7 @@ fn settled_docked_panel_width(state: State) -> f32 {
                                     query_matches: None,
                                     zoom_to_visible_request: &mut s.zoom_to_visible,
                                     warnings_request: &mut s.warnings_request,
+                                    shelf_request: &mut s.shelf_request,
                                     read_only_recording_history_hover: s
                                         .read_only_recording_history_hover,
                                     clear_query_request: &mut s.clear_query_request,
@@ -2644,4 +2650,122 @@ fn snapshot_the_visible_section_context_menu() {
     section_row(&harness, "#1").click_secondary();
     harness.run();
     harness.snapshot("side_panel_visible_section_context_menu");
+}
+
+/// A stored recording of three tracks a day apart, opened from history with
+/// `shelved_tracks` of them shelved: the view holds the tracks that stay, and
+/// the recording's figures cover those.
+fn state_with_shelved_tracks(shelved_tracks: usize) -> State {
+    let start = DateTime::<Utc>::UNIX_EPOCH;
+    let mut points = Vec::new();
+    for day in 0..3 {
+        points.extend(gt_test_utils::nav_points_from(
+            start + Duration::days(day),
+            60,
+            1,
+        ));
+    }
+    let mut file = build_file(
+        "ride_0.gtd",
+        &points,
+        gt_track_builder::FileMeta::default(),
+        vec![],
+    );
+    file.tracks
+        .truncate(file.tracks.len().saturating_sub(shelved_tracks));
+    file.metadata
+        .set_track_aggregates(gt_types::TrackAggregates::over_tracks(&file.tracks));
+    let meta = gt_history_types::RecordingMeta {
+        time_range: None,
+        nav_point_count: 0,
+        sat_report_count: 0,
+        marker_count: 0,
+        event_marker_count: 0,
+        gtd_size_bytes: 0,
+    };
+    let mut files = LoadedFiles::new();
+    files.push(
+        file,
+        FileHistory::recording_with_shelved_tracks(
+            "auto:ride".to_owned(),
+            meta,
+            Some(stored_recording_ref()),
+            shelved_tracks,
+        ),
+    );
+    make_state_from_files(files)
+}
+
+/// Snapshot: the recording row of a recording opened from history with two of
+/// its tracks shelved. The mark counts them, and the recorded time and the
+/// distance cover the track the view holds.
+#[test]
+fn snapshot_the_recording_row_counting_its_shelved_tracks() {
+    let mut harness = make_harness(state_with_shelved_tracks(2));
+    harness.run();
+
+    harness.snapshot("side_panel_shelved_track_mark");
+}
+
+/// Snapshot: the mark's hover text, which counts the shelved tracks and offers
+/// to list them.
+#[test]
+fn snapshot_hovering_the_shelved_track_mark_counts_the_shelved_tracks() {
+    // The harness is sized for the whole hover text, which is wider than the
+    // panel.
+    let mut harness = make_harness_sized(state_with_shelved_tracks(2), egui::vec2(620.0, 400.0));
+    harness.inner.run_steps(3);
+
+    let mark = harness.inner.get_by_label(&format!("{ICON_TRAY} 2")).rect();
+    harness
+        .inner
+        .hover_at_and_settle(mark.center(), TOOLTIP_SETTLE_FRAMES);
+
+    harness.inner.get_by_label(
+        "2 shelved tracks left out of this recording - click to list them in History",
+    );
+    harness.snapshot("side_panel_shelved_track_mark_tooltip");
+}
+
+#[test]
+fn the_shelved_track_marks_hover_says_track_for_a_single_shelved_track() {
+    let mut harness = make_harness_in_bounded_steps(state_with_shelved_tracks(1));
+
+    let mark = harness.inner.get_by_label(&format!("{ICON_TRAY} 1")).rect();
+    harness
+        .inner
+        .hover_at_and_settle(mark.center(), TOOLTIP_SETTLE_FRAMES);
+
+    harness
+        .inner
+        .get_by_label("1 shelved track left out of this recording - click to list them in History");
+}
+
+#[test]
+fn a_recording_with_every_track_in_the_view_has_no_shelved_track_mark() {
+    let mut harness = make_harness(state_with_shelved_tracks(0));
+    harness.run();
+
+    assert!(
+        harness
+            .inner
+            .query_all_by_label_contains(ICON_TRAY)
+            .next()
+            .is_none()
+    );
+}
+
+#[test]
+fn clicking_the_shelved_track_mark_requests_the_recordings_shelf() {
+    let mut harness = make_harness(state_with_shelved_tracks(2));
+    harness.run();
+    assert!(harness.state().shelf_request.is_none());
+
+    harness
+        .inner
+        .get_by_label(&format!("{ICON_TRAY} 2"))
+        .click();
+    harness.run();
+
+    assert_eq!(harness.state().shelf_request, Some(stored_recording_ref()));
 }

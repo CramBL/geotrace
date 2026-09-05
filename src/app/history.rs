@@ -588,6 +588,26 @@ impl HistoryWindow {
         }
     }
 
+    /// Open the window with `recording`'s shelf open, listing its shelved
+    /// tracks.
+    ///
+    /// The recording has a row for its shelf to open under: this clears the
+    /// listing's filters. The shelf lists the current stored track states:
+    /// this drops the cached recording list.
+    pub fn open_shelf(&mut self, recording: DatabaseRef) {
+        self.filter_text.clear();
+        self.filter_min_points.clear();
+        self.filter_max_points.clear();
+        self.filter_date_from.clear();
+        self.filter_date_to.clear();
+        self.invalidate();
+        self.open = true;
+        self.shelf = Some(OpenShelf {
+            recording,
+            tracks: ShelfTracks::Unrequested,
+        });
+    }
+
     /// Apply a recording list that arrived from the worker.
     ///
     /// An open shelf closes when its recording no longer has a shelved track to

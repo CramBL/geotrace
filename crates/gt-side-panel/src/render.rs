@@ -8,9 +8,11 @@ use egui_phosphor::regular::LINE_SEGMENTS as ICON_LINE_SEGMENTS;
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use egui_phosphor::regular::PATH as ICON_PATH;
 use egui_phosphor::regular::ROAD_HORIZON as ICON_ROAD_HORIZON;
+use egui_phosphor::regular::TRAY as ICON_TRAY;
 use egui_phosphor::regular::TRAY_ARROW_DOWN as ICON_TRAY_ARROW_DOWN;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use gt_filter::GlobalFilter;
+use gt_history_types::DatabaseRef;
 use gt_loaded_files::{LoadedFilesView, RecordingNames};
 use gt_types::{
     DataCategory, FileIdx, GeneratedMarkerKind, GeoBounds, LoadWarning, LoadedFile, LoadedTrack,
@@ -156,6 +158,10 @@ pub struct PanelContext<'a> {
     pub zoom_to_visible_request: &'a mut bool,
     /// Set by clicking the ⚠ icon on a file row. Consumed by the app to show a centered dialog.
     pub warnings_request: &'a mut Option<(String, Vec<LoadWarning>)>,
+    /// Set by clicking the shelved-track mark on a recording row. Consumed by
+    /// the app, which opens the History window with that recording's shelf
+    /// open.
+    pub shelf_request: &'a mut Option<DatabaseRef>,
     /// What the shelve button shows while a read-only session grays it out,
     /// and `None` while the session writes to the recording history. The app
     /// owns this wording, which every grayed control of a read-only session
@@ -832,6 +838,14 @@ fn render_file_row(
             .map_or_else(|| gt_ui_theme::EM_DASH.to_owned(), gt_fmt::format_distance);
         let dur = gt_fmt::format_human_terse_duration(file.metadata.total_duration);
         let is_selected = ctx.tree.selection.contains(&file_key);
+        // Only an open from history shelves a track, and that open reads the
+        // recording through its database reference.
+        let shelved_tracks: Option<(usize, DatabaseRef)> =
+            ctx.loaded_files.entry_for(fi).and_then(|entry| {
+                let count = entry.shelved_track_count();
+                let db_ref = entry.history().db_ref()?;
+                (count > 0).then(|| (count, db_ref.clone()))
+            });
         // Truncate only the identity: the distance and duration stay pinned on the
         // right, and a long recording name clips itself. `Sides::shrink_left`
         // lays the right group out first, then truncates the identity into
@@ -844,6 +858,20 @@ fn render_file_row(
             },
             |ui| {
                 // Right widgets are laid out right-to-left, so add trailing items first.
+                if let Some((count, db_ref)) = &shelved_tracks {
+                    let mark = RichText::new(format!("{ICON_TRAY} {count}")).weak();
+                    let hover = format!(
+                        "{count} shelved {} left out of this recording - click to list them in \
+                         History",
+                        gt_fmt::pluralize(*count, "track", "tracks")
+                    );
+                    if FramelessIconButton::new(mark)
+                        .hover_text_ui(ui, &hover)
+                        .clicked()
+                    {
+                        *ctx.shelf_request = Some(db_ref.clone());
+                    }
+                }
                 if !file.load_warnings.is_empty() {
                     let icon = RichText::new(ICON_WARNING)
                         .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode));

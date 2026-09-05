@@ -287,6 +287,28 @@ pub struct FixStats {
     pub max_continuous_no_fix: Duration,
 }
 
+impl FixStats {
+    /// `None` when no track of `tracks` has satellite reports.
+    fn summed_over_tracks(tracks: &[LoadedTrack]) -> Option<Self> {
+        let mut summed: Option<Self> = None;
+        for stats in tracks.iter().filter_map(|track| track.metadata.fix_stats) {
+            let summed = summed.get_or_insert(Self {
+                time_with_fix: Duration::zero(),
+                time_without_fix: Duration::zero(),
+                fix_loss_count: 0,
+                max_continuous_no_fix: Duration::zero(),
+            });
+            summed.time_with_fix += stats.time_with_fix;
+            summed.time_without_fix += stats.time_without_fix;
+            summed.fix_loss_count = summed.fix_loss_count.saturating_add(stats.fix_loss_count);
+            summed.max_continuous_no_fix = summed
+                .max_continuous_no_fix
+                .max(stats.max_continuous_no_fix);
+        }
+        summed
+    }
+}
+
 /// Great-circle length range of a track's consecutive-fix segments, in the
 /// order the fixes were recorded. Lets renderers reason O(1) about the whole
 /// track's on-screen fix spacing: at a given map scale, every spacing lies
@@ -687,6 +709,57 @@ pub struct FileMetadata {
     pub notes: Option<String>,
     /// Optional declared travel mode from the recording's SDK metadata.
     pub travel_mode: Option<TravelMode>,
+}
+
+impl FileMetadata {
+    pub fn set_track_aggregates(
+        &mut self,
+        TrackAggregates {
+            total_distance,
+            total_duration,
+            time_range,
+            fix_stats,
+        }: TrackAggregates,
+    ) {
+        self.total_distance = total_distance;
+        self.total_duration = total_duration;
+        self.time_range = time_range;
+        self.fix_stats = fix_stats;
+    }
+}
+
+/// The [`FileMetadata`] figures aggregated over a recording's tracks. They
+/// cover the tracks the view holds: the loader recomputes them whenever it
+/// takes a track out of a recording.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TrackAggregates {
+    pub total_distance: TotalDistance,
+    pub total_duration: Duration,
+    pub time_range: Option<TimeRange>,
+    pub fix_stats: Option<FixStats>,
+}
+
+impl TrackAggregates {
+    pub fn over_tracks(tracks: &[LoadedTrack]) -> Self {
+        let total_distance = tracks
+            .iter()
+            .filter_map(|track| Some(track.geometry.measured()?.distance_km))
+            .reduce(|total, distance| total + distance)
+            .map_or(TotalDistance::NoMeasuredTrack, TotalDistance::Measured);
+        let total_duration = tracks.iter().fold(Duration::zero(), |total, track| {
+            total + track.metadata.duration
+        });
+        let time_range = tracks
+            .iter()
+            .map(|track| track.metadata.time_range)
+            .reduce(TimeRange::union);
+        Self {
+            total_distance,
+            total_duration,
+            time_range,
+            fix_stats: FixStats::summed_over_tracks(tracks),
+        }
+    }
 }
 
 /// Configuration for associating log entries with recorded positions.

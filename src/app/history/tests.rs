@@ -535,6 +535,43 @@ fn open_the_shelf(h: &mut TestHarness<HistoryHarness>) {
     );
 }
 
+/// What the side panel's shelved-track mark requests: the window opens on that
+/// recording's shelf. The recording has a row for the shelf to open under: the
+/// listing's filters are cleared.
+#[test]
+fn open_shelf_opens_the_window_on_the_recordings_shelved_tracks() {
+    let harness =
+        history_harness_with_stored_tracks(&one_live_a_tombstone_and_two_shelved_tracks());
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(pump_history, harness);
+    assert!(
+        h.inner
+            .step_until(|h| h.query_by_label_contains("ride.gtd").is_some()),
+        "the recording should appear in the History list"
+    );
+    let db_ref = h
+        .state()
+        .window
+        .entries
+        .iter()
+        .flatten()
+        .map(|entry| entry.db_ref.clone())
+        .next()
+        .expect("the listed recording");
+    h.state_mut().window.open = false;
+    h.state_mut().window.filter_text = "another recording".to_owned();
+
+    h.state_mut().window.open_shelf(db_ref);
+
+    assert!(h.state().window.open, "the window should open on the shelf");
+    assert!(
+        h.inner.step_until(|h| h.query_by_label("#3").is_some()),
+        "the shelf should list the recording's shelved tracks"
+    );
+    assert!(h.state().window.filter_text.is_empty());
+}
+
 /// A shelved track keeps the number it had before an earlier track was deleted
 /// permanently: a track's number is its stored row plus one.
 #[test]
