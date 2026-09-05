@@ -16,14 +16,14 @@
 #define BASE_EPOCH 1717228800U
 
 int main(void) {
-    GtdFileBuilder *b = gtd_builder_create();
-    gtd_builder_set_title(b, "Channel tour");
+    GtdFileBuilder *builder = gtd_builder_create();
+    gtd_builder_set_title(builder, "Channel tour");
 
-    GtdTimestamp t0 = gtd_ts_from_seconds(BASE_EPOCH);
-    if (gtd_builder_add_nav_fix(b, t0, gtd_ts_none(), 51.5074, -0.1278, GTD_NONE_F64, GTD_NONE_F64,
-                                GTD_NONE_F64) != GTD_OK) {
+    GtdTimestamp first_fix_time = gtd_ts_from_seconds(BASE_EPOCH);
+    if (gtd_builder_add_nav_fix(builder, first_fix_time, gtd_ts_none(), 51.5074, -0.1278,
+                                GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64) != GTD_OK) {
         fprintf(stderr, "add_nav_fix: %s\n", gtd_last_error());
-        gtd_builder_destroy(b);
+        gtd_builder_destroy(builder);
         return 1;
     }
 
@@ -49,9 +49,9 @@ int main(void) {
     incline.n_times = 3;
     incline.values = incline_vals;
     incline.n_values = 3;
-    if (gtd_builder_add_channel(b, &incline) != GTD_OK) {
+    if (gtd_builder_add_channel(builder, &incline) != GTD_OK) {
         fprintf(stderr, "add_channel(incline): %s\n", gtd_last_error());
-        gtd_builder_destroy(b);
+        gtd_builder_destroy(builder);
         return 1;
     }
 
@@ -66,9 +66,9 @@ int main(void) {
     accel.n_times = 3;
     accel.values = accel_vals;
     accel.n_values = 9;
-    if (gtd_builder_add_channel(b, &accel) != GTD_OK) {
+    if (gtd_builder_add_channel(builder, &accel) != GTD_OK) {
         fprintf(stderr, "add_channel(accel): %s\n", gtd_last_error());
-        gtd_builder_destroy(b);
+        gtd_builder_destroy(builder);
         return 1;
     }
 
@@ -80,34 +80,36 @@ int main(void) {
     quality.n_times = 3;
     quality.values = quality_vals;
     quality.n_values = 3;
-    if (gtd_builder_add_channel_with_unit_mode(b, &quality, GTD_CHANNEL_UNIT_CUSTOM) != GTD_OK) {
+    if (gtd_builder_add_channel_with_unit_mode(builder, &quality, GTD_CHANNEL_UNIT_CUSTOM) !=
+        GTD_OK) {
         fprintf(stderr, "add_channel(quality): %s\n", gtd_last_error());
-        gtd_builder_destroy(b);
+        gtd_builder_destroy(builder);
         return 1;
     }
 
-    GtdNavFile *f = NULL;
-    if (gtd_builder_finish(b, &f) != GTD_OK) {
+    GtdNavFile *file = NULL;
+    if (gtd_builder_finish(builder, &file) != GTD_OK) {
         fprintf(stderr, "finish: %s\n", gtd_last_error());
         return 1;
     }
 
-    size_t n = gtd_nav_file_channel_count(f);
-    printf("%zu channels:\n", n);
-    for (size_t i = 0; i < n; i++) {
-        GtdChannelInfo ci;
-        if (gtd_nav_file_get_channel(f, i, &ci) != GTD_OK) {
+    size_t channel_count = gtd_nav_file_channel_count(file);
+    printf("%zu channels:\n", channel_count);
+    for (size_t i = 0; i < channel_count; i++) {
+        GtdChannelInfo info;
+        if (gtd_nav_file_get_channel(file, i, &info) != GTD_OK) {
             continue;
         }
-        printf("  %-10s %zu samples", ci.name, ci.sample_count);
-        if (ci.has_unit) {
-            printf(" [%s]", ci.unit);
+        printf("  %-10s %zu samples", info.name, info.sample_count);
+        if (info.has_unit) {
+            printf(" [%s]", info.unit);
         }
-        if (ci.component_count > 0) {
+        if (info.component_count > 0) {
             printf(" components:");
-            for (size_t c = 0; c < ci.component_count; c++) {
+            for (size_t c = 0; c < info.component_count; c++) {
                 char label[32];
-                if (gtd_nav_file_get_channel_component(f, i, c, label, sizeof(label)) == GTD_OK) {
+                if (gtd_nav_file_get_channel_component(file, i, c, label, sizeof(label)) ==
+                    GTD_OK) {
                     printf(" %s", label);
                 }
             }
@@ -115,6 +117,6 @@ int main(void) {
         printf("\n");
     }
 
-    gtd_nav_file_destroy(f);
+    gtd_nav_file_destroy(file);
     return 0;
 }

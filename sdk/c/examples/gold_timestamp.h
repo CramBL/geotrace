@@ -13,13 +13,13 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-static inline int gold_is_leap(int y) {
-    return (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+static inline int gold_is_leap(int year) {
+    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
 }
 
-static inline int gold_month_days(int m, int y) {
+static inline int gold_month_days(int month, int year) {
     static const int dom[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-    return (m == 2 && gold_is_leap(y)) ? 29 : dom[m - 1];
+    return (month == 2 && gold_is_leap(year)) ? 29 : dom[month - 1];
 }
 
 /* Reads a decimal integer at *cursor and advances it past the digits, rejecting
@@ -31,16 +31,18 @@ static inline int gold_read_int(const char **cursor, int *out) {
 
     errno = 0;
     value = strtoll(*cursor, &end, 10);
-    if (end == *cursor || errno == ERANGE || value < INT_MIN || value > INT_MAX)
+    if (end == *cursor || errno == ERANGE || value < INT_MIN || value > INT_MAX) {
         return 0;
+    }
     *cursor = end;
     *out = (int)value;
     return 1;
 }
 
 static inline int gold_read_separator(const char **cursor, char expected) {
-    if (**cursor != expected)
+    if (**cursor != expected) {
         return 0;
+    }
     (*cursor)++;
     return 1;
 }
@@ -48,51 +50,67 @@ static inline int gold_read_separator(const char **cursor, char expected) {
 /* Parse "YYYY-MM-DDTHH:MM:SS[.ffffff][+HH:MM]" -> GtdTimestamp.
    Returns gtd_ts_none() on failure. An offset that fails to parse is left
    unapplied, as are fractional digits past the sixth. */
-static inline GtdTimestamp gold_parse_timestamp(const char *s) {
-    int Y = 0, Mo = 0, D = 0, H = 0, Mi = 0, S = 0;
-    const char *p = s;
+static inline GtdTimestamp gold_parse_timestamp(const char *text) {
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    int hour = 0;
+    int minute = 0;
+    int second = 0;
+    const char *cursor = text;
 
-    if (!s || *s == '\0')
+    if (!text || *text == '\0') {
         return gtd_ts_none();
-    if (!gold_read_int(&p, &Y) || !gold_read_separator(&p, '-') || !gold_read_int(&p, &Mo) ||
-        !gold_read_separator(&p, '-') || !gold_read_int(&p, &D) || !gold_read_separator(&p, 'T') ||
-        !gold_read_int(&p, &H) || !gold_read_separator(&p, ':') || !gold_read_int(&p, &Mi) ||
-        !gold_read_separator(&p, ':') || !gold_read_int(&p, &S))
+    }
+    if (!gold_read_int(&cursor, &year) || !gold_read_separator(&cursor, '-') ||
+        !gold_read_int(&cursor, &month) || !gold_read_separator(&cursor, '-') ||
+        !gold_read_int(&cursor, &day) || !gold_read_separator(&cursor, 'T') ||
+        !gold_read_int(&cursor, &hour) || !gold_read_separator(&cursor, ':') ||
+        !gold_read_int(&cursor, &minute) || !gold_read_separator(&cursor, ':') ||
+        !gold_read_int(&cursor, &second)) {
         return gtd_ts_none();
+    }
 
     /* Optional fractional seconds (".ffffff"), kept as microseconds. */
     long frac_us = 0;
-    if (*p == '.') {
-        p++;
+    if (*cursor == '.') {
+        cursor++;
         char digits[7] = "000000";
-        int n = 0;
-        while (n < 6 && *p >= '0' && *p <= '9')
-            digits[n++] = *p++;
-        while (*p >= '0' && *p <= '9') /* skip sub-microsecond digits */
-            p++;
+        int digit_count = 0;
+        while (digit_count < 6 && *cursor >= '0' && *cursor <= '9') {
+            digits[digit_count++] = *cursor++;
+        }
+        while (*cursor >= '0' && *cursor <= '9') { /* skip sub-microsecond digits */
+            cursor++;
+        }
         frac_us = strtol(digits, NULL, 10);
     }
 
     /* Optional timezone offset ("+HH:MM" / "-HH:MM"). */
     char sign = '+';
-    long tz = 0;
-    if (*p == '+' || *p == '-') {
-        int tz_h = 0, tz_m = 0;
-        sign = *p;
-        p++;
-        if (gold_read_int(&p, &tz_h) && gold_read_separator(&p, ':') && gold_read_int(&p, &tz_m))
-            tz = (((long)tz_h * 60L) + tz_m) * 60L;
+    long offset_secs = 0;
+    if (*cursor == '+' || *cursor == '-') {
+        int offset_hours = 0;
+        int offset_minutes = 0;
+        sign = *cursor;
+        cursor++;
+        if (gold_read_int(&cursor, &offset_hours) && gold_read_separator(&cursor, ':') &&
+            gold_read_int(&cursor, &offset_minutes)) {
+            offset_secs = (((long)offset_hours * 60L) + offset_minutes) * 60L;
+        }
     }
 
     long days = 0;
-    for (int y = 1970; y < Y; y++)
+    for (int y = 1970; y < year; y++) {
         days += gold_is_leap(y) ? 366 : 365;
-    for (int m = 1; m < Mo; m++)
-        days += gold_month_days(m, Y);
-    days += D - 1;
+    }
+    for (int m = 1; m < month; m++) {
+        days += gold_month_days(m, year);
+    }
+    days += day - 1;
 
-    long secs = (days * 86400L) + (H * 3600L) + (Mi * 60L) + S;
-    secs += (sign == '-') ? tz : -tz;
+    long secs = (days * 86400L) + (hour * 3600L) + (minute * 60L) + second;
+    secs += (sign == '-') ? offset_secs : -offset_secs;
 
     return gtd_ts_from_micros(((uint64_t)secs * 1000000ULL) + (uint64_t)frac_us);
 }

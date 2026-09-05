@@ -22,8 +22,9 @@ Test(gold_timestamp, rejects_malformed_input) {
         "2026/02/01T15:00:00", /* wrong separator */
         "x",
     };
-    for (size_t i = 0; i < sizeof(malformed) / sizeof(malformed[0]); i++)
+    for (size_t i = 0; i < sizeof(malformed) / sizeof(malformed[0]); i++) {
         cr_assert(gtd_ts_is_none(gold_parse_timestamp(malformed[i])), "accepted %s", malformed[i]);
+    }
 }
 
 /* One past each end of int, which `strtoll` itself still converts. The negative
