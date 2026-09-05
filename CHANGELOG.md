@@ -28,6 +28,7 @@
 - **Interface:** Fixed a permanent track delete removing the whole recording when another stored recording held the points the delete left.
 - **Interface:** Fixed shelving a track or deleting one permanently failing on a recording that a permanent track delete or "Delete shelved data" had already re-encoded.
 - **Interface:** Fixed removing a track or a recording from the view resetting the visibility, the expansion and the marker toggles of every track that stayed loaded.
+- **Interface:** Fixed the History window cutting off a recording row's Open and Delete buttons at the width the window opens at.
 
 ## 0.15.0 - 2026-09-04
 

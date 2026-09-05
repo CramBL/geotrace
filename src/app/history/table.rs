@@ -439,8 +439,13 @@ pub(super) struct HistoryTable<'a> {
     pub write_access: WriteAccess,
 }
 
-/// Identity never collapses below a readable width, even in a narrow window.
-const IDENTITY_MIN_WIDTH: f32 = 160.0;
+/// Identity's floor: room for the shelf caret and the first characters of the
+/// name. A floor high enough to keep the name readable leaves the action column
+/// past the window's right edge, where the horizontal scroll area cuts Open and
+/// Delete off. The metadata columns, the action column among them, take their
+/// content width first. Identity reaches this floor in a window too narrow for
+/// them, and the listing then scrolls sideways.
+const IDENTITY_MIN_WIDTH: f32 = 64.0;
 
 /// Identity's width on the very first frame, before the metadata columns have
 /// been measured (see [`history_table`]). From then on it fills the leftover
