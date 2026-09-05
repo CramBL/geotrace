@@ -113,6 +113,10 @@ const MIN_ACCURACY_CIRCLE_RADIUS_PX: f32 = 2.0;
 /// size is entirely covered by the icon, so drawing it is wasted geometry.
 const ACCURACY_CIRCLE_MIN_VISIBLE_FACTOR: f32 = 0.5;
 
+const ACCURACY_CIRCLE_FILL: Color32 = Color32::from_rgba_unmultiplied_const(30, 120, 255, 20);
+const ACCURACY_CIRCLE_STROKE: Color32 = Color32::from_rgba_unmultiplied_const(30, 120, 255, 60);
+const ACCURACY_CIRCLE_STROKE_WIDTH_PX: f32 = 1.0;
+
 /// Fix-quality palette shared by the per-fix icons and the continuous
 /// quality line.
 const FIX_STRONG_BLUE: Color32 = Color32::from_rgb(66, 133, 244);
@@ -188,9 +192,9 @@ pub(crate) fn draw_track_icons(
     filter: &GlobalFilter,
     icon_meshes: Option<&IconMeshLibrary>,
 ) {
-    // One batch for the whole track's icons. Painter primitives inside the
-    // pass (accuracy circles, highlighted arrows) barrier the batch so
-    // stacking matches immediate painting exactly. See [IconMeshBatch].
+    // One batch for the whole track's icons. `draw_navigation_arrow` barriers
+    // the batch before it paints a highlighted arrow, so stacking matches
+    // immediate painting exactly. See [IconMeshBatch].
     let mut batch = IconMeshBatch::gpu_when_available(ui, icon_meshes);
     // A track with no geometry is drawn nowhere, so it has no icons.
     let Some(placed) = track.placed_points() else {
@@ -198,58 +202,24 @@ pub(crate) fn draw_track_icons(
     };
     // Real fixes: indices come from the global R-tree viewport query.
     if let Some(indices) = real_fix_indices {
-        for &pi in indices {
-            let Some(point) = placed.get(pi) else {
-                continue;
-            };
-            if !filter::point_passes_time_filter(point.fix.tpv.time().utc(), filter) {
-                continue;
-            }
-            // Dead-reckoned fixes and fixes with a coordinate out of range are
-            // drawn by the chevron loop below.
-            if ChevronFix::for_fix(point.fix).is_some() {
-                continue;
-            }
-            let Some(h) = point.fix.tpv.heading() else {
-                continue;
-            };
-            let screen_pos = transform.to_screen(point.merc());
-            let icon_alpha = fix_icon_alpha(
-                fade,
-                placed,
-                pi,
-                screen_pos,
-                style.base_arrow_size,
-                transform,
-            );
-            if icon_alpha <= 0.0 {
-                continue;
-            }
+        draw_accuracy_circles(ui, placed, indices, style, fade, transform, filter);
+        for fix in visible_real_fixes(placed, indices, style, fade, transform, filter) {
             let point_style = TpvDrawStyle {
-                icon_alpha,
+                icon_alpha: fix.icon_alpha,
                 ..*style
             };
             let point_ref = DataPointRef {
                 track: TrackRef::new(fi, ti),
                 category: DataCategory::Tpv,
-                point_index: PointIdx::new(pi),
-            };
-            let eph_m = point.fix.tpv.eph_m();
-            let (latitude, _) = point.resolved_position();
-            let pixels_per_meter = if eph_m.is_some() {
-                transform.pixels_per_meter(latitude)
-            } else {
-                0.0
+                point_index: PointIdx::new(fix.point_index),
             };
             draw_tpv_point(
                 ui,
-                screen_pos,
+                fix.screen_pos,
                 &PointKind::Real {
-                    color: tpv_point_color(point.fix),
-                    heading: h,
+                    color: tpv_point_color(fix.point.fix),
+                    heading: fix.heading,
                 },
-                eph_m,
-                pixels_per_meter,
                 is_arrow_highlighted(highlight, point_ref),
                 &point_style,
                 &mut batch,
@@ -316,14 +286,97 @@ pub(crate) fn draw_track_icons(
                 direction,
                 fix: chevron,
             },
-            None,
-            0.0,
             is_arrow_highlighted(highlight, point_ref),
             &point_style,
             &mut batch,
         );
     }
     batch.paint(ui.painter());
+}
+
+/// A real fix that the icon pass draws: inside the viewport, inside the time
+/// filter, with a heading, and with an icon alpha above zero.
+struct VisibleRealFix<'a> {
+    point_index: usize,
+    point: PlacedPoint<'a>,
+    heading: Angle,
+    screen_pos: Pos2,
+    icon_alpha: f32,
+}
+
+fn visible_real_fixes<'a>(
+    placed: PlacedPoints<'a>,
+    real_fix_indices: &'a [usize],
+    style: &'a TpvDrawStyle,
+    fade: TrackIconFade,
+    transform: &'a crate::transform::MercTransform,
+    filter: &'a GlobalFilter,
+) -> impl Iterator<Item = VisibleRealFix<'a>> + 'a {
+    real_fix_indices.iter().filter_map(move |&point_index| {
+        let point = placed.get(point_index)?;
+        if !filter::point_passes_time_filter(point.fix.tpv.time().utc(), filter) {
+            return None;
+        }
+        // Dead-reckoned fixes and fixes with a coordinate out of range are
+        // drawn by the chevron loop.
+        if ChevronFix::for_fix(point.fix).is_some() {
+            return None;
+        }
+        let heading = point.fix.tpv.heading()?;
+        let screen_pos = transform.to_screen(point.merc());
+        let icon_alpha = fix_icon_alpha(
+            fade,
+            placed,
+            point_index,
+            screen_pos,
+            style.base_arrow_size,
+            transform,
+        );
+        (icon_alpha > 0.0).then_some(VisibleRealFix {
+            point_index,
+            point,
+            heading,
+            screen_pos,
+            icon_alpha,
+        })
+    })
+}
+
+/// Paint the horizontal-accuracy circle of every visible real fix that has
+/// one, below the whole track's icons.
+///
+/// A painter primitive between the icons flushes the icon batch, which emits
+/// one mesh per flush.
+fn draw_accuracy_circles(
+    ui: &Ui,
+    placed: PlacedPoints<'_>,
+    real_fix_indices: &[usize],
+    style: &TpvDrawStyle,
+    fade: TrackIconFade,
+    transform: &crate::transform::MercTransform,
+    filter: &GlobalFilter,
+) {
+    let min_visible_radius = (style.base_arrow_size * ACCURACY_CIRCLE_MIN_VISIBLE_FACTOR)
+        .max(MIN_ACCURACY_CIRCLE_RADIUS_PX);
+    for fix in visible_real_fixes(placed, real_fix_indices, style, fade, transform, filter) {
+        let Some(eph_m) = fix.point.fix.tpv.eph_m() else {
+            continue;
+        };
+        let (latitude, _) = fix.point.resolved_position();
+        let radius = (f64::from(eph_m) * transform.pixels_per_meter(latitude)) as f32;
+        if radius < min_visible_radius {
+            continue;
+        }
+        ui.painter().circle(
+            fix.screen_pos,
+            radius,
+            ACCURACY_CIRCLE_FILL.gamma_multiply(fix.icon_alpha),
+            Stroke::new(
+                ACCURACY_CIRCLE_STROKE_WIDTH_PX,
+                ACCURACY_CIRCLE_STROKE.gamma_multiply(fix.icon_alpha),
+            ),
+        );
+    }
 }
 
 /// The sky column of the hover badge.
@@ -1387,52 +1440,18 @@ pub(crate) fn sub_span_ranges<K: Copy, P: PartialEq>(
     })
 }
 
-/// Renders the two visual layers for a single on-screen GPS point: the
-/// horizontal-accuracy circle and the directional icon (arrow or ghost).
-/// The satellite-count labels are a separate anchor-based pass, see
+/// Renders the directional icon (arrow or chevron) of a single on-screen GPS
+/// point. The accuracy circles are a separate pass, see
+/// [`draw_accuracy_circles`], and the satellite-count labels another, see
 /// [`draw_sat_labels`].
-#[expect(
-    clippy::too_many_arguments,
-    reason = "render context requires all parameters; a context struct would not add clarity"
-)]
 fn draw_tpv_point(
     ui: &Ui,
     screen_pos: Pos2,
     point_kind: &PointKind,
-    eph_m: Option<f32>,
-    pixels_per_meter: f64,
     highlighted: bool,
     style: &TpvDrawStyle,
     batch: &mut IconMeshBatch<'_>,
 ) {
-    // Accuracy circle - rendered beneath the icon. Skipped when too small to
-    // see at all, and when small enough to be entirely covered by the icon.
-    if let Some(eph_m) = eph_m {
-        let radius = (f64::from(eph_m) * pixels_per_meter) as f32;
-        let min_visible_radius = (style.base_arrow_size * ACCURACY_CIRCLE_MIN_VISIBLE_FACTOR)
-            .max(MIN_ACCURACY_CIRCLE_RADIUS_PX);
-        if radius >= min_visible_radius {
-            // The circle must sit above earlier icons and below this point's.
-            batch.barrier(ui.painter());
-            ui.painter().circle_filled(
-                screen_pos,
-                radius,
-                egui::Color32::from_rgba_unmultiplied(30, 120, 255, 20)
-                    .gamma_multiply(style.icon_alpha),
-            );
-            ui.painter().circle_stroke(
-                screen_pos,
-                radius,
-                egui::Stroke::new(
-                    1.0_f32,
-                    egui::Color32::from_rgba_unmultiplied(30, 120, 255, 60)
-                        .gamma_multiply(style.icon_alpha),
-                ),
-            );
-        }
-    }
-
-    // Directional icon.
     match point_kind {
         PointKind::Real { color, heading } => {
             draw_navigation_arrow(
@@ -1550,8 +1569,6 @@ fn chevron_direction(prev: gt_types::MercPoint, next: gt_types::MercPoint) -> Ve
 /// track's icon batch.
 ///
 /// The chevron tip points in `direction` (the inferred travel direction).
-/// Stacking against interleaved painter primitives is the caller's job via
-/// [IconMeshBatch::barrier]. See [`draw_tpv_point`].
 fn draw_chevron(
     batch: &mut IconMeshBatch<'_>,
     center: Pos2,
@@ -1580,8 +1597,7 @@ fn draw_chevron(
 ///
 /// The hot path pushes one two-tint-slot mesh instance into the track's
 /// icon batch (fill tinted with the fix-quality color, rim white with the
-/// fade alpha). Stacking against interleaved painter primitives is handled
-/// by the caller's [IconMeshBatch::barrier] calls, see [`draw_tpv_point`].
+/// fade alpha).
 /// Highlighted arrows (at most the hovered and the sticky point per frame)
 /// keep the painter implementation: their thicker blue outline has a
 /// different stroke width than the baked 1.5 px rim, and at that count the

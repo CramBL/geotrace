@@ -1744,6 +1744,180 @@ fn snap_display_mask_hides_markers() {
     harness.snapshot_loose("display_mask_hides_markers");
 }
 
+/// Fix stride along the close-up snapshot's road. Eleven fixes at this stride
+/// draw the line across two thirds of the 800 px canvas at the map's maximum
+/// zoom, where a metre is 2.97 px.
+const CLOSE_UP_STRIDE_M: f64 = 18.0;
+
+/// How far the road bends north at its middle.
+const CLOSE_UP_BEND_M: f64 = 12.0;
+
+/// The horizontal accuracy each fix of the close-up snapshot reports, in
+/// metres: the receiver loses accuracy through the middle of the road and
+/// recovers by its end. The map draws them as circles 42 px to 95 px across,
+/// and the widest reach over their neighbours' arrows.
+const CLOSE_UP_ACCURACIES_M: [f32; 11] =
+    [7.0, 8.0, 10.0, 13.0, 15.0, 16.0, 14.0, 11.0, 9.0, 8.0, 7.0];
+
+/// Metres east and north of the first fix that the close-up snapshot's fix
+/// `index` sits at.
+fn close_up_offset_m(index: usize) -> (f64, f64) {
+    let last = CLOSE_UP_ACCURACIES_M.len().saturating_sub(1) as f64;
+    let bend_phase = std::f64::consts::PI * index as f64 / last;
+    (
+        index as f64 * CLOSE_UP_STRIDE_M,
+        CLOSE_UP_BEND_M * bend_phase.sin(),
+    )
+}
+
+/// A file whose single track walks [`CLOSE_UP_ACCURACIES_M`] along the bend of
+/// [`close_up_offset_m`]. Every fix heads at the next one and reports eight
+/// satellites: the map draws an arrow, an accuracy circle and a sky disc for
+/// each of them.
+fn make_accuracy_circle_walk_file() -> gt_types::LoadedFile {
+    use gt_types::satellites::{Constellation, Satellite, Satellites};
+    use gt_types::time_types::GpsTime;
+    use gt_types::{
+        FileMetadata, GeoBounds, Latitude, LoadedFile, LoadedTrack, Longitude, MercBounds,
+        TimeRange, TrackMetadata,
+    };
+    use uom::si::angle::degree;
+    use uom::si::f64::Angle;
+
+    const FIRST_LAT_DEGREES: f64 = 55.6867;
+    const FIRST_LON_DEGREES: f64 = 12.5638;
+    const METERS_PER_LATITUDE_DEGREE: f64 = 111_320.0;
+
+    let meters_per_longitude_degree =
+        METERS_PER_LATITUDE_DEGREE * FIRST_LAT_DEGREES.to_radians().cos();
+    let offsets: Vec<(f64, f64)> = (0..CLOSE_UP_ACCURACIES_M.len())
+        .map(close_up_offset_m)
+        .collect();
+    let bearings: Vec<Angle> = offsets
+        .iter()
+        .zip(offsets.iter().skip(1))
+        .map(|(&(east_a, north_a), &(east_b, north_b))| {
+            Angle::new::<degree>((east_b - east_a).atan2(north_b - north_a).to_degrees())
+        })
+        .collect();
+
+    let t0 = chrono::DateTime::from_timestamp(1_767_268_800, 0).unwrap_or_default();
+    let satellites = Satellites::new(
+        Some(GpsTime::from_utc(t0)),
+        None,
+        (1..=8)
+            .map(|prn| {
+                Satellite::new(
+                    Constellation::Gps,
+                    prn,
+                    Some(15.0 + prn as f32 * 8.0),
+                    Some(prn as f32 * 43.0),
+                    Some(28.0 + prn as f32),
+                    prn % 3 != 0,
+                )
+            })
+            .collect(),
+    );
+    let points: Vec<gt_types::NavPoint> = CLOSE_UP_ACCURACIES_M
+        .iter()
+        .zip(&offsets)
+        .enumerate()
+        .map(|(i, (&eph_m, &(east_m, north_m)))| {
+            // The last fix keeps the bearing it arrived on.
+            let heading = bearings
+                .get(i)
+                .or_else(|| bearings.last())
+                .copied()
+                .unwrap_or_else(|| Angle::new::<degree>(0.0));
+            let tpv = gt_types::TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(t0 + chrono::Duration::seconds(i as i64)))
+                .lat(Latitude::new(
+                    FIRST_LAT_DEGREES + north_m / METERS_PER_LATITUDE_DEGREE,
+                ))
+                .lon(Longitude::new(
+                    FIRST_LON_DEGREES + east_m / meters_per_longitude_degree,
+                ))
+                .heading(heading)
+                .eph_m(eph_m)
+                .build();
+            gt_types::NavPoint::new(tpv, Some(satellites.clone()))
+        })
+        .collect();
+    let n = points.len();
+    let positions = recorded_positions(&points);
+    let bb = GeoBounds::from_positions(points.iter().filter_map(|point| point.tpv.position()))
+        .expect("every fixture fix records its position");
+    let geometry = gt_types::TrackGeometry::Measured(gt_types::MeasuredTrackGeometry {
+        resolved_positions: positions,
+        bounding_box: bb,
+        merc_bounds: MercBounds::from(bb),
+        distance_km: uom::si::f64::Length::new::<uom::si::length::kilometer>(0.18),
+        point_set_diameter_m: uom::si::f64::Length::new::<uom::si::length::meter>(180.0),
+        segment_length_range: None,
+    });
+    let sat_label_anchors = geometry
+        .measured()
+        .and_then(|measured| gt_types::PlacedPoints::new(&points, &measured.resolved_positions))
+        .map_or_else(Vec::new, gt_track_builder::build_sat_label_anchors);
+    let track = LoadedTrack {
+        metadata: TrackMetadata {
+            time_range: TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64)),
+            tpv_count: n,
+            invalid_position_count: 0,
+            satellite_report_count: n,
+            ..gt_test_utils::empty_track_metadata()
+        },
+        geometry,
+        sat_label_anchors,
+        ..gt_test_utils::loaded_track_with_points(points)
+    };
+    LoadedFile {
+        metadata: FileMetadata {
+            filename: "accuracy_circles.gtd".to_string(),
+            time_range: Some(TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64))),
+            ..gt_test_utils::empty_file_metadata()
+        },
+        tracks: vec![track],
+        event_marker_styles: FxHashMap::default(),
+        orphaned_event_markers: vec![],
+        source: gt_types::FileSource::GtdPath(PathBuf::from("accuracy_circles.gtd")),
+        load_warnings: vec![],
+    }
+}
+
+/// Snapshot: a road of eleven fixes at the map's maximum zoom, each arrow
+/// pointing along the road and sitting on its own accuracy circle. The widest
+/// circles reach over their neighbours' arrows, which draw on top of them.
+/// Every circle draws above the sky discs, with its fill and stroke alphas
+/// letting the tiles through.
+#[test]
+fn snap_accuracy_circles_close_up() {
+    use gt_ui_types::TrackDataVisibility;
+
+    let files = vec![make_accuracy_circle_walk_file()];
+    let visibility = TrackDataVisibility::from_loaded(&files);
+
+    let mut harness = crate::test_harness::builder()
+        .size(egui::vec2(800.0, 600.0))
+        .ui_state(
+            move |ui, map: &mut Option<NavMap>| {
+                let map =
+                    map.get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Synthetic));
+                let mut state = DrawState {
+                    sky_glyph_variant: gt_ui_types::SkyGlyphVariant::Disc,
+                    ..DrawState::default()
+                };
+                map.draw(ui, state.context(&files, &visibility));
+            },
+            None,
+        );
+
+    for _ in 0..5 {
+        harness.run();
+    }
+    harness.snapshot_loose("accuracy_circles_close_up");
+}
+
 /// Snapshot: with every category except sky glyphs hidden, the glyphs are
 /// the only ink left - so their own category keeps drawing them even when
 /// the trackline, points, and labels are all off. Run for each variant so

@@ -1003,10 +1003,17 @@ fn unit_transform() -> crate::transform::MercTransform {
     crate::transform::MercTransform::for_test(EARTH_CIRCUMFERENCE_M)
 }
 
-/// A real fix on the equator, `x_m` metres east of the origin.
-fn nav_point_at_meters(x_m: f64) -> NavPoint {
-    let lon_deg = x_m * 360.0 / EARTH_CIRCUMFERENCE_M;
-    NavPoint::new(make_tpv(0.0, lon_deg, Some(90.0)), None)
+/// A real fix on the equator, `x_m` metres east of the origin, reporting a
+/// horizontal accuracy of `eph_m` metres where it has one.
+fn nav_point_at_meters(x_m: f64, eph_m: Option<f32>) -> NavPoint {
+    let tpv = TimePositionVelocity::builder()
+        .time(GpsTime::from_utc(chrono::Utc::now()))
+        .lat(Latitude::new(0.0))
+        .lon(Longitude::new(x_m * 360.0 / EARTH_CIRCUMFERENCE_M))
+        .heading(Angle::new::<degree>(90.0))
+        .maybe_eph_m(eph_m)
+        .build();
+    NavPoint::new(tpv, None)
 }
 
 fn track_with_segment_range(min_m: f64, max_m: f64) -> LoadedTrack {
@@ -1091,13 +1098,16 @@ fn spacing_at(track: &LoadedTrack, pi: usize) -> Option<f32> {
 
 #[test]
 fn local_spacing_is_none_for_a_lone_fix() {
-    let track = track_with_points(vec![nav_point_at_meters(0.0)]);
+    let track = track_with_points(vec![nav_point_at_meters(0.0, None)]);
     assert_eq!(spacing_at(&track, 0), None);
 }
 
 #[test]
 fn local_spacing_of_endpoints_uses_their_single_neighbour() {
-    let track = track_with_points(vec![nav_point_at_meters(0.0), nav_point_at_meters(100.0)]);
+    let track = track_with_points(vec![
+        nav_point_at_meters(0.0, None),
+        nav_point_at_meters(100.0, None),
+    ]);
     let first = spacing_at(&track, 0).expect("has a neighbour");
     let last = spacing_at(&track, 1).expect("has a neighbour");
     assert!((first - 100.0).abs() < 1.0, "got {first} px");
@@ -1110,10 +1120,10 @@ fn local_spacing_keeps_cluster_boundary_visible() {
     // parked fixes have zero spacing, but the departure fix sees its
     // far next-neighbour and must stay visible.
     let track = track_with_points(vec![
-        nav_point_at_meters(0.0),
-        nav_point_at_meters(0.0),
-        nav_point_at_meters(0.0),
-        nav_point_at_meters(100.0),
+        nav_point_at_meters(0.0, None),
+        nav_point_at_meters(0.0, None),
+        nav_point_at_meters(0.0, None),
+        nav_point_at_meters(100.0, None),
     ]);
     let interior = spacing_at(&track, 1).expect("has neighbours");
     let departure = spacing_at(&track, 2).expect("has neighbours");
@@ -1123,7 +1133,10 @@ fn local_spacing_keeps_cluster_boundary_visible() {
 
 #[test]
 fn fix_icon_alpha_short_circuits_uniform_tracks() {
-    let track = track_with_points(vec![nav_point_at_meters(0.0), nav_point_at_meters(0.0)]);
+    let track = track_with_points(vec![
+        nav_point_at_meters(0.0, None),
+        nav_point_at_meters(0.0, None),
+    ]);
     let placed = track.placed_points().expect("the fixture track is placed");
     let transform = unit_transform();
     let pos = transform.to_screen(placed.get(0).expect("the first fix").merc());
@@ -1154,14 +1167,14 @@ fn per_fix_alpha_handles_parked_highway_parked() {
     // highway (100 m hops), then parked again. Parked interiors fade,
     // every highway fix and both cluster boundary fixes stay opaque.
     let track = track_with_points(vec![
-        nav_point_at_meters(0.0),
-        nav_point_at_meters(0.0),
-        nav_point_at_meters(0.0), // departure: next neighbour is far
-        nav_point_at_meters(100.0),
-        nav_point_at_meters(200.0),
-        nav_point_at_meters(300.0), // arrival: prev neighbour is far
-        nav_point_at_meters(300.0),
-        nav_point_at_meters(300.0),
+        nav_point_at_meters(0.0, None),
+        nav_point_at_meters(0.0, None),
+        nav_point_at_meters(0.0, None), // departure: next neighbour is far
+        nav_point_at_meters(100.0, None),
+        nav_point_at_meters(200.0, None),
+        nav_point_at_meters(300.0, None), // arrival: prev neighbour is far
+        nav_point_at_meters(300.0, None),
+        nav_point_at_meters(300.0, None),
     ]);
     let placed = track.placed_points().expect("the fixture track is placed");
     let transform = unit_transform();
@@ -1282,4 +1295,63 @@ fn sub_span_ranges_of_a_span_without_an_edge_is_empty() {
         sub_span_ranges(&[(Color32::BLUE, egui::pos2(0.0, 0.0))], |k| k).count(),
         0
     );
+}
+
+/// The batch flushes at every painter primitive between its icons. The flush
+/// takes the form of a mesh because the harness installs no GPU icon pipeline.
+#[test]
+fn a_tracks_arrows_are_one_mesh_whatever_the_accuracy_circle_count() {
+    const FIX_COUNT: usize = 8;
+    const SPACING_M: f64 = 20.0;
+    const ACCURACY_M: f32 = 10.0;
+
+    let points = (0..FIX_COUNT)
+        .map(|i| nav_point_at_meters(i as f64 * SPACING_M, Some(ACCURACY_M)))
+        .collect();
+    let track = track_with_points(points);
+    let indices: Vec<usize> = (0..FIX_COUNT).collect();
+    let library = crate::icon_mesh::IconMeshLibrary::embedded().ok();
+    let style = TpvDrawStyle {
+        outline_alpha: 1.0,
+        base_arrow_size: 8.0,
+        icon_alpha: 1.0,
+    };
+    let transform = crate::transform::MercTransform::for_test_view(
+        EARTH_CIRCUMFERENCE_M,
+        Latitude::new(0.0),
+        Longitude::new(0.0),
+        egui::pos2(100.0, 100.0),
+    );
+
+    let mut harness = crate::test_harness::TestHarness::builder()
+        .size(egui::vec2(400.0, 200.0))
+        .ui(move |ui| {
+            draw_track_icons(
+                ui,
+                ui.max_rect(),
+                FileIdx::new(0),
+                TrackIdx::new(0),
+                &track,
+                Some(&indices),
+                &[],
+                &style,
+                TrackIconFade::AllVisible,
+                &transform,
+                &MapHighlight::default(),
+                &GlobalFilter::default(),
+                library.as_ref(),
+            );
+        });
+    harness.run();
+
+    let shapes = &harness.inner.output().shapes;
+    let circles = shapes
+        .iter()
+        .filter(|s| matches!(s.shape, egui::Shape::Circle(_)))
+        .count();
+    let meshes = shapes
+        .iter()
+        .filter(|s| matches!(s.shape, egui::Shape::Mesh(_)))
+        .count();
+    assert_eq!((circles, meshes), (FIX_COUNT, 1));
 }
