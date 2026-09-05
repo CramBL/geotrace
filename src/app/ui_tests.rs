@@ -817,6 +817,31 @@ fn the_plot_cursor_over_a_hidden_stretch_reaches_for_no_drawn_fix() {
     assert_eq!(highlighted_fix_visibility(&harness), None);
 }
 
+/// With Sync to map off, no frame scans the loaded fixes for a range: the plot
+/// takes a range from the map viewport only while the toggle is on.
+#[rstest]
+#[case::synced_to_the_map(true)]
+#[case::not_synced_to_the_map(false)]
+fn the_plot_takes_a_range_from_the_map_only_while_sync_to_map_is_on(#[case] sync_to_map: bool) {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.state().shared.borrow_mut().plot_state.sync_to_map = sync_to_map;
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(minimal_gtd_bytes(), "test.gtd"),
+    );
+    harness.run_steps(3);
+
+    let scanned = harness
+        .state()
+        .shared
+        .borrow()
+        .map_synced_plot_range
+        .scanned_range();
+    assert_eq!(scanned.is_some(), sync_to_map, "scanned range {scanned:?}");
+}
+
 /// The matches table lists a track, times and counts, and the points table
 /// stretches its striping across the window: neither may widen the window,
 /// which would cover the map beside it.
