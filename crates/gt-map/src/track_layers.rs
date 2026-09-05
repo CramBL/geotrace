@@ -319,7 +319,7 @@ impl<'a> TrackLayers<'a> {
                 let Some(placed) = track.placed_points() else {
                     continue;
                 };
-                let pts = lod_points(track, placed, transform)
+                let pts = lod_points(track, placed, transform, cull_rect)
                     .filter(|(_, p)| {
                         gt_filter::point_passes_time_filter(p.fix.tpv.time().utc(), self.filter)
                     })

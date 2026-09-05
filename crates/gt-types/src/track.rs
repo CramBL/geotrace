@@ -345,14 +345,20 @@ pub struct TrackLod {
     /// `LOD_BASE_TOLERANCE_MERC × 2^(first_level_exp + i)`. Lets sparse
     /// recordings skip storing fine levels that would not drop any points.
     first_level_exp: u32,
-    levels: Vec<Vec<u32>>,
+    levels: Vec<LodLevel>,
+    full_point_chunk_bounds: Vec<MercBounds>,
 }
 
 impl TrackLod {
-    pub fn new(first_level_exp: u32, levels: Vec<Vec<u32>>) -> Self {
+    pub fn new(
+        first_level_exp: u32,
+        levels: Vec<LodLevel>,
+        full_point_chunk_bounds: Vec<MercBounds>,
+    ) -> Self {
         Self {
             first_level_exp,
             levels,
+            full_point_chunk_bounds,
         }
     }
 
@@ -377,7 +383,7 @@ impl TrackLod {
     /// A level built from its predecessor accumulates at most twice its own
     /// tolerance of error (a geometric series of halving tolerances), so the
     /// bound uses `2 × tolerance`.
-    pub fn select(&self, px_per_merc: f64, max_error_px: f32) -> Option<&[u32]> {
+    pub fn select(&self, px_per_merc: f64, max_error_px: f32) -> Option<&LodLevel> {
         self.select_level(px_per_merc, max_error_px)
             .and_then(|i| self.level(i))
     }
@@ -389,9 +395,48 @@ impl TrackLod {
             .find(|&i| 2.0 * self.level_tolerance_merc(i) * px_per_merc <= f64::from(max_error_px))
     }
 
-    /// The point indices of stored level `i`.
-    pub fn level(&self, i: usize) -> Option<&[u32]> {
-        self.levels.get(i).map(Vec::as_slice)
+    pub fn level(&self, i: usize) -> Option<&LodLevel> {
+        self.levels.get(i)
+    }
+
+    /// One [`MercBounds`] per [`LOD_CHUNK_POINTS`] consecutive fixes of the
+    /// track, for the renderer that walks the full point list because
+    /// [`TrackLod::select`] found no level fine enough. Empty for a
+    /// [`TrackLod::default`], which no builder filled in.
+    pub fn full_point_chunk_bounds(&self) -> &[MercBounds] {
+        &self.full_point_chunk_bounds
+    }
+}
+
+/// How many consecutive points of a [`LodLevel`], or of a track's full point
+/// list, one entry of its chunk bounds covers.
+pub const LOD_CHUNK_POINTS: usize = 64;
+
+/// One stored decimation level of a [`TrackLod`]: the point indices it keeps,
+/// and where each run of [`LOD_CHUNK_POINTS`] of them is drawn.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LodLevel {
+    indices: Vec<u32>,
+    chunk_bounds: Vec<MercBounds>,
+}
+
+impl LodLevel {
+    pub fn new(indices: Vec<u32>, chunk_bounds: Vec<MercBounds>) -> Self {
+        Self {
+            indices,
+            chunk_bounds,
+        }
+    }
+
+    /// Indices into `LoadedTrack::points`, in fix order.
+    pub fn indices(&self) -> &[u32] {
+        &self.indices
+    }
+
+    /// One [`MercBounds`] per [`LOD_CHUNK_POINTS`] consecutive entries of
+    /// [`LodLevel::indices`].
+    pub fn chunk_bounds(&self) -> &[MercBounds] {
+        &self.chunk_bounds
     }
 }
 
