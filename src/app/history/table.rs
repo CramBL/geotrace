@@ -5,6 +5,7 @@ use egui::{Button, Grid, Label, RichText, TextEdit};
 use egui_extras::{Column, TableBuilder, TableRow};
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
+use egui_phosphor::regular::TRASH as ICON_TRASH;
 use gt_fmt::UTC_MINUTE_FORMAT;
 use gt_log_view::LogAttachmentRef;
 use gt_pending_writes::WriteAccess;
@@ -12,6 +13,7 @@ use gt_side_panel::widgets::{self, MetadataView, has_metadata_details, metadata_
 use gt_store::{ChannelSummary, DatabaseRef, NavPointTimeRange, RecordingEntry, TrackState};
 use gt_ui_theme::EM_DASH;
 use gt_ui_theme::buttons::{FramelessIconButton, SortHeaderButton};
+use gt_ui_theme::warning_amber;
 use strum::{EnumCount as _, IntoEnumIterator as _};
 
 use super::{HistorySort, OpenShelf, RenameEdit, ShelfTracks, SortColumn};
@@ -38,6 +40,7 @@ pub(super) fn history_table(
         worker,
         rename,
         shelf,
+        shelf_raised_the_delete,
         sort,
         write_access,
     }: HistoryTable<'_>,
@@ -132,7 +135,16 @@ pub(super) fn history_table(
                     }
                     ListingRow::Shelf(shelf_row) => {
                         let recording = shelf.as_ref().map(|open| &open.recording);
-                        render_shelf_row(&mut row, shelf_row, recording, worker, write_access);
+                        render_shelf_row(
+                            &mut row,
+                            ShelfRowRender {
+                                shelf_row,
+                                recording,
+                                worker,
+                                raised_the_delete: shelf_raised_the_delete,
+                                write_access,
+                            },
+                        );
                     }
                 }
             });
@@ -244,9 +256,22 @@ fn shelf_caret(ui: &mut egui::Ui, entry: &RecordingEntry, shelf: &mut Option<Ope
     }
 }
 
+/// What one line of the open shelf draws, and where it reports a press.
+struct ShelfRowRender<'a> {
+    shelf_row: &'a ShelfRow,
+    /// The recording the shelf is open on, and [`None`] on the frame the shelf
+    /// closes under the row being drawn.
+    recording: Option<&'a DatabaseRef>,
+    worker: &'a HistoryWorker,
+    /// Set to the shelf's recording when the closing line's delete is pressed.
+    /// The History window raises the confirmation over it.
+    raised_the_delete: &'a mut Option<DatabaseRef>,
+    write_access: WriteAccess,
+}
+
 /// One line of an open shelf: the track's number and nav-point count with the
-/// button that unshelves it, or the closing line that unshelves every track the
-/// shelf lists.
+/// button that unshelves it, or the closing line, whose two buttons unshelve
+/// every track the shelf lists and delete every one of them permanently.
 ///
 /// A track's number is its stored row plus one. That holds for the life of the
 /// recording: a permanent delete leaves a tombstone in its row, and the rows
@@ -254,10 +279,13 @@ fn shelf_caret(ui: &mut egui::Ui, entry: &RecordingEntry, shelf: &mut Option<Ope
 /// live and a deleted track.
 fn render_shelf_row(
     row: &mut TableRow<'_, '_>,
-    shelf_row: &ShelfRow,
-    recording: Option<&DatabaseRef>,
-    worker: &HistoryWorker,
-    write_access: WriteAccess,
+    ShelfRowRender {
+        shelf_row,
+        recording,
+        worker,
+        raised_the_delete,
+        write_access,
+    }: ShelfRowRender<'_>,
 ) {
     row.col(|ui| {
         ui.add_space(ui.spacing().indent);
@@ -292,6 +320,7 @@ fn render_shelf_row(
     row.col(|_| {});
     row.col(|_| {});
     row.col(|ui| {
+        let writes_recordings = write_access.allows_writing();
         let (label, hover, rows) = match shelf_row {
             ShelfRow::Reading => return,
             ShelfRow::ShelvedTrack { stored_row, .. } => {
@@ -302,12 +331,36 @@ fn render_shelf_row(
             }
         };
         let clicked = ui
-            .add_enabled(write_access.allows_writing(), Button::new(label).small())
+            .add_enabled(writes_recordings, Button::new(label).small())
             .on_hover_text(hover)
             .on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER)
             .clicked();
         if clicked && let Some(recording) = recording {
             worker.set_tracks_shelved(recording.clone(), rows, false);
+        }
+
+        let ShelfRow::EveryShelvedTrack { .. } = shelf_row else {
+            return;
+        };
+        // This button has no frame: the closing line's two controls have to
+        // fit inside the width the recording row's own Open and Delete already
+        // claim.
+        let delete = FramelessIconButton::new(
+            RichText::new(ICON_TRASH).color(warning_amber(ui.visuals().dark_mode)),
+        )
+        .enabled(writes_recordings)
+        .hover_text_ui(
+            ui,
+            if writes_recordings {
+                DELETE_SHELVED_HOVER
+            } else {
+                READ_ONLY_RECORDING_HISTORY_HOVER
+            },
+        );
+        if delete.clicked()
+            && let Some(recording) = recording
+        {
+            *raised_the_delete = Some(recording.clone());
         }
     });
 }
@@ -321,6 +374,8 @@ const UNSHELVE_HOVER: &str =
 
 const UNSHELVE_ALL_HOVER: &str =
     "Put every shelved track back in the recording. Open the recording again to see them.";
+
+const DELETE_SHELVED_HOVER: &str = "Permanently delete every shelved track of this recording";
 
 const SHOW_SHELVED_TRACKS_HOVER: &str = "List the shelved tracks of this recording";
 
@@ -378,6 +433,8 @@ pub(super) struct HistoryTable<'a> {
     /// The recording whose shelved tracks the listing shows under its row. The
     /// caret in a row's identity cell opens and closes it.
     pub shelf: &'a mut Option<OpenShelf>,
+    /// Set to the shelf's recording when the closing line's delete is pressed.
+    pub shelf_raised_the_delete: &'a mut Option<DatabaseRef>,
     pub sort: &'a mut HistorySort,
     pub write_access: WriteAccess,
 }

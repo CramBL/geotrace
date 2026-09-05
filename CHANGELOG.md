@@ -5,6 +5,7 @@
 ### Added
 
 - **Interface:** The History window lists a recording's shelved tracks under its row, each with its track number and nav-point count, and unshelves one track or all of them.
+- **Interface:** The list of a recording's shelved tracks offers a delete beside "Unshelve all" that permanently removes that recording's shelved tracks.
 
 ### Changed
 
@@ -12,6 +13,7 @@
 - **Interface:** A track row's context menu, in the tree and in the Visible section, offers "Shelve…" for that track and "Shelve selected…" from two selected tracks on. Both are grayed out while the tracks sit outside the recording history or the session is read-only.
 - **Interface:** History now says "shelved" for a track removed from a recording without deleting its data: the count on a recording row, the "Delete shelved data…" button and its confirmation.
 - **Interface:** A track now keeps its number when an earlier track of the same recording is deleted permanently.
+- **Interface:** The "Delete shelved data?" confirmation now lists the recordings the delete removes from history whole, and counts them past the first five.
 
 ### Fixed
 

@@ -1,7 +1,8 @@
-//! The confirmation for permanently deleting every shelved track, which the
-//! History window's "Delete shelved data…" button raises.
+//! The confirmation for permanently deleting shelved tracks, which the History
+//! window's "Delete shelved data…" button raises over every recording and the
+//! shelf's closing line over the one recording it is open on.
 //!
-//! The count comes from the recording list, which the window reads again after
+//! The figures come from the recording list, which the window reads again after
 //! every change to the database: a recording finishing its load, an auto-prune,
 //! or a track unshelved elsewhere. The confirmation stays up through all of
 //! them, and reports that every track is live again once the count reaches
@@ -10,9 +11,11 @@
 use std::time::Instant;
 
 use egui::{Button, Label, RichText};
+use gt_store::RecordingEntry;
 use gt_ui_theme::warning_amber;
 
 use crate::app::anchored_dialog::AnchoredDialogKind;
+use crate::app::history_db::DeleteShelvedTracksScope;
 use crate::app::modals::{self, CountdownToTheClose, PointerOverTheDialog, TimeUntilTheClose};
 
 use super::DESTRUCTIVE_DELETE_HOVER;
@@ -22,7 +25,7 @@ mod tests;
 
 pub(super) const DELETE_SHELVED_WINDOW_TITLE: &str = "Delete shelved data?";
 
-const DELETE_SHELVED_TRACKS_LABEL: &str = "Delete shelved tracks";
+pub(super) const DELETE_SHELVED_TRACKS_LABEL: &str = "Delete shelved tracks";
 
 const NOTHING_LEFT_TO_DELETE_HOVER: &str = "Every track is live again";
 
@@ -30,9 +33,9 @@ const CLOSE_BUTTON_HOVER: &str = "Closes this confirmation now. It closes on its
                                   count reaches zero. The count holds while the pointer is over \
                                   this window.";
 
-/// The user confirmed the delete.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct DeleteShelvedTracks;
+/// Holds the list to a readable height whatever the database holds: how many
+/// recordings the confirmation writes out before it counts the rest.
+const RECORDINGS_WRITTEN_OUT: usize = 5;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DeleteShelvedTracksChoice {
@@ -40,52 +43,96 @@ enum DeleteShelvedTracksChoice {
     Dismiss,
 }
 
+/// What a delete of shelved tracks removes, as the recording list last counted
+/// it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct ShelvedTracksToDelete {
+    tracks: usize,
+    /// The recordings the delete removes from history entirely, in the
+    /// listing's order, written as `identity/group_name`. A recording is in
+    /// this list when it holds only shelved tracks.
+    recordings_deleted_whole: Vec<String>,
+}
+
+impl ShelvedTracksToDelete {
+    /// What a delete over `scope` removes, read from the recording list.
+    ///
+    /// `total_tracks` and `shelved_tracks` both count a recording's live and
+    /// shelved tracks and skip the tombstones of the tracks already deleted
+    /// permanently. The two are therefore equal exactly for a recording that
+    /// the purge would leave without a track, and the purge takes such a
+    /// recording out of history whole.
+    fn of(scope: &DeleteShelvedTracksScope, listing: &[RecordingEntry]) -> Self {
+        let mut shelved = Self::default();
+        for entry in listing {
+            if entry.shelved_tracks == 0 || !scope.covers(&entry.db_ref) {
+                continue;
+            }
+            shelved.tracks += entry.shelved_tracks;
+            if entry.shelved_tracks == entry.total_tracks {
+                shelved
+                    .recordings_deleted_whole
+                    .push(entry.db_ref.to_string());
+            }
+        }
+        shelved
+    }
+}
+
 /// What the open confirmation shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum DeleteShelvedTracksPromptContents {
-    /// How many tracks the delete removes, as the recording list last counted
-    /// them.
-    ShelvedTracks(usize),
+    /// What the delete removes, as the recording list last counted it.
+    ShelvedTracks {
+        scope: DeleteShelvedTracksScope,
+        shelved: ShelvedTracksToDelete,
+    },
     /// Nothing is left for the delete to remove.
     EveryTrackIsLive(TimeUntilTheClose),
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(super) enum DeleteShelvedTracksPrompt {
     #[default]
     Closed,
-    /// Asking the user, at the count the recording list last reported.
-    ConfirmingTheDelete { shelved_tracks: usize },
+    /// Asking the user, at the figures the recording list last reported.
+    ConfirmingTheDelete {
+        scope: DeleteShelvedTracksScope,
+        shelved: ShelvedTracksToDelete,
+    },
     /// Reporting that every track is live again, counting down to its own
     /// close. The confirmation never counts tracks again from here.
     ReportingThatEveryTrackIsLive(CountdownToTheClose),
 }
 
 impl DeleteShelvedTracksPrompt {
-    pub(super) fn open(&mut self, shelved_tracks: usize) {
-        *self = Self::ConfirmingTheDelete { shelved_tracks };
+    /// Raise the confirmation over the recordings `scope` covers, at what
+    /// `listing` reports the delete would take.
+    pub(super) fn open(&mut self, scope: DeleteShelvedTracksScope, listing: &[RecordingEntry]) {
+        let shelved = ShelvedTracksToDelete::of(&scope, listing);
+        *self = Self::ConfirmingTheDelete { scope, shelved };
     }
 
-    pub(super) fn is_up(self) -> bool {
+    pub(super) fn is_up(&self) -> bool {
         !matches!(self, Self::Closed)
     }
 
-    /// Draws the open confirmation, and reports the delete on the frame the
-    /// user confirms it.
+    /// Draws the open confirmation, and returns the scope to delete over on the
+    /// frame the user confirms it.
     ///
-    /// `shelved_track_count` is what the recording list counts across the
-    /// stored recordings, and [`None`] while a list request is in flight.
+    /// `listing` is the recording list the History window holds, and [`None`]
+    /// while a list request is in flight.
     pub(super) fn show(
         &mut self,
         ctx: &egui::Context,
         now: Instant,
-        shelved_track_count: Option<usize>,
-    ) -> Option<DeleteShelvedTracks> {
-        let contents = self.contents_to_show(now, shelved_track_count)?;
+        listing: Option<&[RecordingEntry]>,
+    ) -> Option<DeleteShelvedTracksScope> {
+        let contents = self.contents_to_show(now, listing)?;
         if let Self::ReportingThatEveryTrackIsLive(countdown) = *self {
             countdown.request_the_repaint_the_count_needs(ctx);
         }
-        let response = show_delete_shelved_tracks_confirmation(ctx, contents);
+        let response = show_delete_shelved_tracks_confirmation(ctx, &contents);
         match response.choice {
             Some(choice) => self.record_choice(choice),
             None => {
@@ -97,30 +144,32 @@ impl DeleteShelvedTracksPrompt {
 
     /// What the open confirmation shows, or [`None`] while it is closed.
     ///
-    /// The count is read from the recording list every frame: a track
+    /// The figures are read from the recording list every frame: a track
     /// unshelved since the confirmation opened is one the delete leaves alone.
-    /// The count the confirmation last showed stands while a list request is in
-    /// flight.
+    /// The figures the confirmation last showed stand while a list request is
+    /// in flight.
     fn contents_to_show(
         &mut self,
         now: Instant,
-        shelved_track_count: Option<usize>,
+        listing: Option<&[RecordingEntry]>,
     ) -> Option<DeleteShelvedTracksPromptContents> {
-        match *self {
+        match self {
             Self::Closed => None,
-            Self::ConfirmingTheDelete { shelved_tracks } => {
-                let shelved_tracks = shelved_track_count.unwrap_or(shelved_tracks);
-                if shelved_tracks == 0 {
+            Self::ConfirmingTheDelete { scope, shelved } => {
+                if let Some(listing) = listing {
+                    *shelved = ShelvedTracksToDelete::of(scope, listing);
+                }
+                if shelved.tracks == 0 {
                     let countdown = CountdownToTheClose::started_at(now);
                     *self = Self::ReportingThatEveryTrackIsLive(countdown);
                     return Some(DeleteShelvedTracksPromptContents::EveryTrackIsLive(
                         countdown.time_until_the_close(),
                     ));
                 }
-                *self = Self::ConfirmingTheDelete { shelved_tracks };
-                Some(DeleteShelvedTracksPromptContents::ShelvedTracks(
-                    shelved_tracks,
-                ))
+                Some(DeleteShelvedTracksPromptContents::ShelvedTracks {
+                    scope: scope.clone(),
+                    shelved: shelved.clone(),
+                })
             }
             Self::ReportingThatEveryTrackIsLive(countdown) => {
                 Some(DeleteShelvedTracksPromptContents::EveryTrackIsLive(
@@ -130,13 +179,17 @@ impl DeleteShelvedTracksPrompt {
         }
     }
 
-    /// Closes the confirmation on the user's choice, reporting a confirmed
-    /// delete.
-    fn record_choice(&mut self, choice: DeleteShelvedTracksChoice) -> Option<DeleteShelvedTracks> {
-        *self = Self::Closed;
-        match choice {
-            DeleteShelvedTracksChoice::Delete => Some(DeleteShelvedTracks),
-            DeleteShelvedTracksChoice::Dismiss => None,
+    /// Closes the confirmation on the user's choice, returning the scope of a
+    /// confirmed delete.
+    fn record_choice(
+        &mut self,
+        choice: DeleteShelvedTracksChoice,
+    ) -> Option<DeleteShelvedTracksScope> {
+        match (std::mem::take(self), choice) {
+            (Self::ConfirmingTheDelete { scope, .. }, DeleteShelvedTracksChoice::Delete) => {
+                Some(scope)
+            }
+            _ => None,
         }
     }
 
@@ -168,11 +221,12 @@ struct DeleteShelvedTracksPromptResponse {
     pointer: PointerOverTheDialog,
 }
 
-/// Confirm permanently removing every shelved track from its recording,
-/// stating how many there are, or report that every track is live again.
+/// Confirm permanently removing shelved tracks from the recordings in scope,
+/// stating how many there are and which recordings the delete removes
+/// entirely, or report that every track is live again.
 fn show_delete_shelved_tracks_confirmation(
     ctx: &egui::Context,
-    contents: DeleteShelvedTracksPromptContents,
+    contents: &DeleteShelvedTracksPromptContents,
 ) -> DeleteShelvedTracksPromptResponse {
     let mut pointer = PointerOverTheDialog::Away;
     let choice = modals::anchored_confirmation_dialog(
@@ -183,13 +237,21 @@ fn show_delete_shelved_tracks_confirmation(
         |ui, _regions| {
             pointer = PointerOverTheDialog::of(ui);
             match contents {
-                DeleteShelvedTracksPromptContents::ShelvedTracks(shelved_tracks) => {
-                    let track_label = gt_fmt::pluralize(shelved_tracks, "track", "tracks");
-                    let removal = format!(
-                        "{shelved_tracks} shelved {track_label} will be permanently removed \
-                         from their recordings."
-                    );
+                DeleteShelvedTracksPromptContents::ShelvedTracks { scope, shelved } => {
+                    let tracks = shelved.tracks;
+                    let track_label = gt_fmt::pluralize(tracks, "track", "tracks");
+                    let removal = match scope {
+                        DeleteShelvedTracksScope::EveryRecording => format!(
+                            "{tracks} shelved {track_label} will be permanently removed from \
+                             their recordings."
+                        ),
+                        DeleteShelvedTracksScope::OneRecording(db_ref) => format!(
+                            "{tracks} shelved {track_label} will be permanently removed from \
+                             {db_ref}."
+                        ),
+                    };
                     ui.add(Label::new(removal).wrap());
+                    recordings_deleted_whole_ui(ui, &shelved.recordings_deleted_whole);
                 }
                 DeleteShelvedTracksPromptContents::EveryTrackIsLive(_) => {
                     ui.add(
@@ -202,7 +264,7 @@ fn show_delete_shelved_tracks_confirmation(
         |ui| {
             let mut choice = None;
             let dismiss = match contents {
-                DeleteShelvedTracksPromptContents::ShelvedTracks(_) => {
+                DeleteShelvedTracksPromptContents::ShelvedTracks { .. } => {
                     if ui
                         .button(
                             RichText::new(DELETE_SHELVED_TRACKS_LABEL)
@@ -229,4 +291,41 @@ fn show_delete_shelved_tracks_confirmation(
         },
     );
     DeleteShelvedTracksPromptResponse { choice, pointer }
+}
+
+/// The recordings the delete removes from history entirely, which the line
+/// above this one counts only as tracks.
+///
+/// One such recording is written out in the line itself. Several are counted in
+/// the line and written out under it, up to [`RECORDINGS_WRITTEN_OUT`] of them.
+fn recordings_deleted_whole_ui(ui: &mut egui::Ui, names: &[String]) {
+    if names.is_empty() {
+        return;
+    }
+    ui.add_space(4.0);
+    match names {
+        [name] => {
+            let line =
+                format!("{name} holds only shelved tracks, so this delete removes it entirely.");
+            ui.add(
+                Label::new(RichText::new(line).color(warning_amber(ui.visuals().dark_mode))).wrap(),
+            );
+        }
+        _ => {
+            let line = format!(
+                "{} recordings hold only shelved tracks, so this delete removes them entirely:",
+                names.len()
+            );
+            ui.add(
+                Label::new(RichText::new(line).color(warning_amber(ui.visuals().dark_mode))).wrap(),
+            );
+            for name in names.iter().take(RECORDINGS_WRITTEN_OUT) {
+                ui.add(Label::new(name.as_str()).truncate());
+            }
+            let rest = names.len().saturating_sub(RECORDINGS_WRITTEN_OUT);
+            if rest > 0 {
+                ui.weak(format!("and {rest} more"));
+            }
+        }
+    }
 }

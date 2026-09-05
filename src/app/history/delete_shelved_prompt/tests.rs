@@ -1,19 +1,20 @@
 use std::time::{Duration, Instant};
 
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
+use gt_store::{DatabaseRef, RecordingEntry};
 use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
 use rstest::rstest;
 
+use crate::app::history::test_support::{ShelvedTracks, TotalTracks, entry_with_shelved_tracks};
+use crate::app::history_db::DeleteShelvedTracksScope;
 use crate::app::modals::{
     COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES, PointerOverTheDialog, TimeUntilTheClose,
 };
 
 use super::{
-    DELETE_SHELVED_TRACKS_LABEL, DeleteShelvedTracks, DeleteShelvedTracksChoice,
-    DeleteShelvedTracksPrompt, DeleteShelvedTracksPromptContents,
+    DELETE_SHELVED_TRACKS_LABEL, DeleteShelvedTracksChoice, DeleteShelvedTracksPrompt,
+    DeleteShelvedTracksPromptContents, ShelvedTracksToDelete,
 };
-
-const SHELVED_TRACKS: usize = 3;
 
 const CANCEL_LABEL: &str = "Cancel";
 
@@ -21,20 +22,49 @@ const CANCEL_LABEL: &str = "Cancel";
 /// taller than the confirmation.
 const VIEWPORT: egui::Vec2 = egui::vec2(640.0, 480.0);
 
+/// Two recordings, one of them with a live track left: three shelved tracks in
+/// all, and one recording that a sweep would delete whole.
+fn listing() -> Vec<RecordingEntry> {
+    vec![
+        entry_with_shelved_tracks("ride.gtd", TotalTracks(4), ShelvedTracks(1)),
+        entry_with_shelved_tracks("walk.gtd", TotalTracks(2), ShelvedTracks(2)),
+    ]
+}
+
+/// The shelved tracks of the listing's first recording.
+fn first_recording() -> DeleteShelvedTracksScope {
+    DeleteShelvedTracksScope::OneRecording(DatabaseRef {
+        identity: "ride.gtd".to_owned(),
+        group_name: "rec0".to_owned(),
+    })
+}
+
 fn confirming_prompt() -> DeleteShelvedTracksPrompt {
     let mut prompt = DeleteShelvedTracksPrompt::default();
-    prompt.open(SHELVED_TRACKS);
+    prompt.open(DeleteShelvedTracksScope::EveryRecording, &listing());
     prompt
 }
 
 fn prompt_reporting_every_track_live_at(now: Instant) -> DeleteShelvedTracksPrompt {
     let mut prompt = confirming_prompt();
-    prompt.contents_to_show(now, Some(0));
+    prompt.contents_to_show(now, Some(&[]));
     prompt
 }
 
-fn shelved_tracks(count: usize) -> Option<DeleteShelvedTracksPromptContents> {
-    Some(DeleteShelvedTracksPromptContents::ShelvedTracks(count))
+fn shelved_tracks(
+    tracks: usize,
+    recordings_deleted_whole: &[&str],
+) -> Option<DeleteShelvedTracksPromptContents> {
+    Some(DeleteShelvedTracksPromptContents::ShelvedTracks {
+        scope: DeleteShelvedTracksScope::EveryRecording,
+        shelved: ShelvedTracksToDelete {
+            tracks,
+            recordings_deleted_whole: recordings_deleted_whole
+                .iter()
+                .map(|name| (*name).to_owned())
+                .collect(),
+        },
+    })
 }
 
 fn every_track_is_live(
@@ -50,7 +80,7 @@ fn a_closed_confirmation_shows_nothing() {
     let mut prompt = DeleteShelvedTracksPrompt::default();
 
     assert_eq!(
-        prompt.contents_to_show(Instant::now(), Some(SHELVED_TRACKS)),
+        prompt.contents_to_show(Instant::now(), Some(&listing())),
         None
     );
 }
@@ -60,9 +90,51 @@ fn the_confirmation_counts_the_shelved_tracks_the_recording_list_last_reported()
     let mut prompt = confirming_prompt();
 
     assert_eq!(
-        prompt.contents_to_show(Instant::now(), Some(5)),
-        shelved_tracks(5)
+        prompt.contents_to_show(Instant::now(), Some(&listing())),
+        shelved_tracks(3, &["walk.gtd/rec0"])
     );
+}
+
+/// A delete raised from one recording's shelf leaves the shelved tracks of
+/// every other recording alone, and the confirmation states only what it takes.
+#[test]
+fn a_confirmation_over_one_recording_counts_only_that_recordings_shelved_tracks() {
+    let mut prompt = DeleteShelvedTracksPrompt::default();
+    prompt.open(first_recording(), &listing());
+
+    assert_eq!(
+        prompt.contents_to_show(Instant::now(), Some(&listing())),
+        Some(DeleteShelvedTracksPromptContents::ShelvedTracks {
+            scope: first_recording(),
+            shelved: ShelvedTracksToDelete {
+                tracks: 1,
+                recordings_deleted_whole: Vec::new(),
+            },
+        })
+    );
+}
+
+/// A recording that holds only shelved tracks is one the delete removes
+/// entirely. The listing reports such a recording as an equal total and shelved
+/// count.
+#[rstest]
+#[case::a_live_track_stays(TotalTracks(4), ShelvedTracks(1), &[])]
+#[case::every_track_is_shelved(TotalTracks(2), ShelvedTracks(2), &["ride.gtd/rec0"])]
+fn the_confirmation_lists_the_recordings_the_delete_removes_entirely(
+    #[case] total_tracks: TotalTracks,
+    #[case] ShelvedTracks(shelved_tracks): ShelvedTracks,
+    #[case] expected: &[&str],
+) {
+    let listing = [entry_with_shelved_tracks(
+        "ride.gtd",
+        total_tracks,
+        ShelvedTracks(shelved_tracks),
+    )];
+
+    let shelved = ShelvedTracksToDelete::of(&DeleteShelvedTracksScope::EveryRecording, &listing);
+
+    assert_eq!(shelved.tracks, shelved_tracks);
+    assert_eq!(shelved.recordings_deleted_whole, expected);
 }
 
 /// The count is `None` between a mutation and the list that follows it: a
@@ -74,7 +146,7 @@ fn the_confirmation_keeps_its_count_while_a_recording_list_request_is_in_flight(
 
     assert_eq!(
         prompt.contents_to_show(Instant::now(), None),
-        shelved_tracks(SHELVED_TRACKS)
+        shelved_tracks(3, &["walk.gtd/rec0"])
     );
 }
 
@@ -83,7 +155,7 @@ fn every_track_being_live_again_leaves_the_confirmation_up_reporting_it() {
     let mut prompt = confirming_prompt();
 
     assert_eq!(
-        prompt.contents_to_show(Instant::now(), Some(0)),
+        prompt.contents_to_show(Instant::now(), Some(&[])),
         every_track_is_live(COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES)
     );
     assert!(prompt.is_up());
@@ -95,7 +167,7 @@ fn a_confirmation_reporting_that_every_track_is_live_never_counts_tracks_again()
     let mut prompt = prompt_reporting_every_track_live_at(now);
 
     assert_eq!(
-        prompt.contents_to_show(now, Some(2)),
+        prompt.contents_to_show(now, Some(&listing())),
         every_track_is_live(COUNT_A_REPORTING_DIALOG_RUNS_BEFORE_IT_CLOSES)
     );
 }
@@ -133,11 +205,14 @@ fn the_confirmation_reporting_that_every_track_is_live_closes_itself(
 }
 
 #[rstest]
-#[case::delete(DeleteShelvedTracksChoice::Delete, Some(DeleteShelvedTracks))]
+#[case::delete(
+    DeleteShelvedTracksChoice::Delete,
+    Some(DeleteShelvedTracksScope::EveryRecording)
+)]
 #[case::dismiss(DeleteShelvedTracksChoice::Dismiss, None)]
 fn the_users_choice_closes_the_confirmation(
     #[case] choice: DeleteShelvedTracksChoice,
-    #[case] expected: Option<DeleteShelvedTracks>,
+    #[case] expected: Option<DeleteShelvedTracksScope>,
 ) {
     let mut prompt = confirming_prompt();
 
@@ -148,7 +223,7 @@ fn the_users_choice_closes_the_confirmation(
 struct PromptUnderTest {
     prompt: DeleteShelvedTracksPrompt,
     now: Instant,
-    shelved_track_count: Option<usize>,
+    listing: Option<Vec<RecordingEntry>>,
     background_pressed: bool,
     delete_requested: bool,
 }
@@ -164,7 +239,7 @@ fn prompt_ui(ui: &mut egui::Ui, state: &mut PromptUnderTest) {
     }
     if state
         .prompt
-        .show(ui.ctx(), state.now, state.shelved_track_count)
+        .show(ui.ctx(), state.now, state.listing.as_deref())
         .is_some()
     {
         state.delete_requested = true;
@@ -181,7 +256,7 @@ fn confirmation_once_every_track_is_live() -> (TestHarness<'static, PromptUnderT
             // Held still: the count is what the confirmation opened at
             // however long the frames take.
             now: Instant::now(),
-            shelved_track_count: Some(SHELVED_TRACKS),
+            listing: Some(listing()),
             background_pressed: false,
             delete_requested: false,
         },
@@ -195,7 +270,7 @@ fn confirmation_once_every_track_is_live() -> (TestHarness<'static, PromptUnderT
     harness.inner.hover_at(aimed_at);
     harness.inner.run_steps(2);
 
-    harness.state_mut().shelved_track_count = Some(0);
+    harness.state_mut().listing = Some(Vec::new());
     harness.inner.run_steps(2);
     (harness, aimed_at)
 }
