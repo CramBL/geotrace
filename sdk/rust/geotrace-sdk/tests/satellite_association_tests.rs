@@ -14,6 +14,7 @@
 
 use geotrace_sdk::{Angle, DateTime, Duration, Utc};
 use geotrace_sdk::{BuildError, Constellation, NavFileBuilder, NavFix, Satellite, SatelliteReport};
+use rstest::rstest;
 
 /// A fixed base epoch for all tests (2025-05-23 UTC, arbitrary but stable).
 #[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
@@ -656,60 +657,103 @@ fn between_fix_ghosts_evenly_distributed_when_no_delta_available() -> Result<(),
     Ok(())
 }
 
-/// Reports before the first real fix are dropped (no reference position).
-/// Reports after the last fix become dead-reckoned ghosts.
-/// Both must be handled correctly when they appear together.
 #[test]
-fn pre_fix_dropped_post_fix_ghosted_in_same_batch() -> Result<(), BuildError> {
+fn a_report_before_the_first_fix_and_one_after_the_last_both_become_ghosts()
+-> Result<(), BuildError> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(fix_at(5000, 0.0, 0.0));
-
-    // Pre-first-fix report - must be dropped.
     recorder.add_satellite_report(report_with(0, Constellation::Gps, 1));
-    // Post-last-fix report - must become a ghost.
     recorder.add_satellite_report(report_with(10_000, Constellation::Glonass, 2));
 
     let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
-    // 1 real fix + 1 post-fix ghost = 2 total (pre-fix report is dropped).
-    assert_eq!(
-        points.len(),
-        2,
-        "pre-fix report must be dropped; post-fix must become ghost"
-    );
-    assert!(points[0].fix.heading.is_some(), "real fix");
-    assert!(points[0].satellites.is_none(), "real fix has no report");
+    assert_eq!(points.len(), 3, "expected 2 ghost fixes and 1 real fix");
     assert!(
-        points[1].fix.heading.is_none(),
+        points[0].fix.heading.is_none(),
         "ghost has no heading (circle)"
     );
-    assert_eq!(first_constellation(&points[1]), Constellation::Glonass);
+    assert_eq!(first_constellation(&points[0]), Constellation::Gps);
+    assert!(points[1].fix.heading.is_some(), "real fix");
+    assert!(points[1].satellites.is_none(), "real fix has no report");
+    assert!(
+        points[2].fix.heading.is_none(),
+        "ghost has no heading (circle)"
+    );
+    assert_eq!(first_constellation(&points[2]), Constellation::Glonass);
     Ok(())
 }
 
-/// A single fix with no heading cannot supply a travel direction for
-/// dead-reckoned ghosts.  The builder must not panic. It must still produce
-/// ghost fixes at some valid position.
-#[test]
-fn ghost_after_fix_with_no_heading_does_not_panic() -> Result<(), BuildError> {
+/// `SatelliteReport` with `sys_time = t(offset_ms)` and no `gps_time`.
+fn report_with_sys_time_only(offset_ms: i64) -> SatelliteReport {
+    SatelliteReport::builder()
+        .sys_time(t(offset_ms))
+        .tracked(vec![
+            Satellite::builder()
+                .constellation(Constellation::Gps)
+                .prn(1)
+                .in_fix(true)
+                .build(),
+        ])
+        .build()
+}
+
+#[rstest]
+#[case::before_the_first_fix(-3000, t(-5000))]
+#[case::after_the_last_fix(12_000, t(10_000))]
+fn a_ghost_from_a_sys_time_only_report_takes_the_anchor_fixs_clock_delta(
+    #[case] report_sys_time_offset_ms: i64,
+    #[case] expected_gps_time: DateTime<Utc>,
+) -> Result<(), BuildError> {
+    // The fix's clock delta is `gps_time - sys_time` = -2 s.
     let mut recorder = NavFileBuilder::new().open();
-    // Fix with no heading (e.g. a ghost fix used as a real fix by a caller).
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .gps_time(t(0))
+            .sys_time(t(2000))
+            .lat(Angle::degrees(55.0))
+            .lon(Angle::degrees(12.0))
+            .build(),
+    );
+    recorder.add_satellite_report(report_with_sys_time_only(report_sys_time_offset_ms));
+
+    let nav_file = recorder.finish()?;
+    let points = nav_file.nav_points();
+    assert_eq!(points.len(), 2, "expected 1 real fix and 1 ghost fix");
+
+    let ghost = points
+        .iter()
+        .find(|point| point.satellites.is_some())
+        .expect("the ghost carries the report");
+    assert_eq!(ghost.fix.gps_time, Some(expected_gps_time));
+    assert_eq!(ghost.fix.lat, Angle::degrees(55.0));
+    assert_eq!(ghost.fix.lon, Angle::degrees(12.0));
+    Ok(())
+}
+
+#[test]
+fn ghosts_after_a_last_fix_without_a_heading_take_that_fixs_position() -> Result<(), BuildError> {
+    let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t(0))
             .lat(Angle::degrees(55.0))
             .lon(Angle::degrees(12.0))
-            // no heading
             .build(),
     );
     recorder.add_satellite_report(report_gps(2000));
+    recorder.add_satellite_report(report_gps(4000));
 
     let nav_file = recorder.finish()?;
+    let points = nav_file.nav_points();
+    assert_eq!(points.len(), 3, "expected 1 real fix and 2 ghost fixes");
 
-    // Must not panic and must produce the ghost.
-    assert_eq!(nav_file.nav_points().len(), 2);
-    assert!(nav_file.nav_points()[1].satellites.is_some());
+    for ghost in &points[1..=2] {
+        assert!(ghost.satellites.is_some());
+        assert_eq!(ghost.fix.lat, Angle::degrees(55.0));
+        assert_eq!(ghost.fix.lon, Angle::degrees(12.0));
+        assert_eq!(ghost.fix.heading, None);
+    }
     Ok(())
 }
 

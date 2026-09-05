@@ -55,6 +55,11 @@ impl InternalFix {
         }
     }
 
+    /// `gps_time - sys_time` in microseconds, for a fix that has both.
+    fn gps_sys_clock_delta_us(&self) -> Option<i64> {
+        Some(self.gps_time?.timestamp_micros() - self.sys_time?.timestamp_micros())
+    }
+
     /// Convert back to the public `NavFix` for the final output `NavPoint`.
     fn into_nav_fix(self) -> NavFix {
         NavFix {
@@ -445,10 +450,11 @@ impl NavRecorder {
     ///      the corrected GPS timestamp.  The correction applies the GPS/system-clock
     ///      delta derived from the `sys_time` fields of the surrounding NavFixes.
     ///      Falls back to even distribution when no delta information is available.
-    ///    - After the last real fix: dead-reckoned 1 m for the first ghost (a
-    ///      fix-lost indicator), then 2 m per subsequent ghost. `heading = None`
-    ///      so the app renders circles.
-    ///    - Before the first real fix: silently dropped (no reference position).
+    ///    - After the last real fix: dead-reckoned along the last fix's heading,
+    ///      1 m for the first ghost (a fix-lost indicator), then 2 m per
+    ///      subsequent ghost. Every ghost takes the last fix's position when it
+    ///      has no heading. `heading = None` so the app renders circles.
+    ///    - Before the first real fix: the first fix's position, `heading = None`.
     /// 5. Interpolate each annotation's position from the surrounding fixes.
     /// 6. In strict mode (default), return an error if any annotation falls
     ///    outside the nav fix time range.  In lenient mode it is clamped with a
@@ -582,11 +588,12 @@ impl NavRecorder {
 /// carries `gps_time`, the builder falls back to even spatial distribution so
 /// the output is still usable.  Heading = spherical bearing, fix A to fix B.
 ///
-/// **After the last real fix** - dead-reckoned in the last known heading.  The
+/// **After the last real fix** - dead-reckoned in the last fix's heading.  The
 /// first ghost is placed 1 m ahead (a fix-lost indicator). Subsequent ghosts
-/// step 2 m each.  `heading = None` so the app renders circles.
+/// step 2 m each.  Every ghost takes the last fix's position when it has no
+/// heading.  `heading = None` so the app renders circles.
 ///
-/// **Before the first real fix** - silently dropped (no reference position).
+/// **Before the first real fix** - the first fix's position, `heading = None`.
 fn ghost_nav_points_for(
     real_fixes: &[InternalFix],
     orphan_reports: Vec<InternalSatReport>,
@@ -595,22 +602,16 @@ fn ghost_nav_points_for(
         return Vec::new();
     }
 
-    //
     // `delta_us = gps_us - sys_us` at each fix that has both a genuine GPS lock
     // and a `sys_time`.  Stored as `(gps_us, delta_us)` sorted by `gps_us`.
     let delta_anchors: Vec<(i64, i64)> = real_fixes
         .iter()
-        .filter_map(|f| match (f.gps_time, f.sys_time) {
-            (Some(gt), Some(st)) => Some((
-                gt.timestamp_micros(),
-                gt.timestamp_micros() - st.timestamp_micros(),
-            )),
-            _ => None,
-        })
+        .filter_map(|f| Some((f.gps_time?.timestamp_micros(), f.gps_sys_clock_delta_us()?)))
         .collect();
 
     let n_segs = real_fixes.len().saturating_sub(1);
     let mut segments: Vec<Vec<InternalSatReport>> = (0..n_segs).map(|_| Vec::new()).collect();
+    let mut before_first: Vec<InternalSatReport> = Vec::new();
     let mut after_last: Vec<InternalSatReport> = Vec::new();
 
     for report in orphan_reports {
@@ -620,7 +621,7 @@ fn ghost_nav_points_for(
         let pos = real_fixes.partition_point(|f| effective_time(f).timestamp_micros() < guess_us);
 
         if pos == 0 {
-            // Before first fix: drop.
+            before_first.push(report);
         } else if pos >= real_fixes.len() {
             after_last.push(report);
         } else if let Some(seg) = segments.get_mut(pos - 1) {
@@ -629,6 +630,10 @@ fn ghost_nav_points_for(
     }
 
     let mut ghost_points = Vec::new();
+
+    if let Some(first) = real_fixes.first() {
+        ghost_points.extend(ghosts_on_first_fix(first, before_first));
+    }
 
     for (seg_idx, reports) in segments.into_iter().enumerate() {
         if reports.is_empty() {
@@ -648,15 +653,8 @@ fn ghost_nav_points_for(
         let a_gps_us = effective_time(a).timestamp_micros();
         let span_us = (a_gps_us - b_gps_us) as f64;
 
-        // Per-segment delta anchors - only defined when the fix has a genuine GPS lock.
-        let delta_b = b.gps_time.and_then(|gt| {
-            b.sys_time
-                .map(|st| gt.timestamp_micros() - st.timestamp_micros())
-        });
-        let delta_a = a.gps_time.and_then(|gt| {
-            a.sys_time
-                .map(|st| gt.timestamp_micros() - st.timestamp_micros())
-        });
+        let delta_b = b.gps_sys_clock_delta_us();
+        let delta_a = a.gps_sys_clock_delta_us();
 
         let can_correct =
             delta_b.is_some() || delta_a.is_some() || reports.iter().any(|r| r.gps_time.is_some());
@@ -708,39 +706,65 @@ fn ghost_nav_points_for(
         }
     }
 
-    if !after_last.is_empty() {
-        #[expect(
-            clippy::expect_used,
-            reason = "real_fixes is non-empty (checked at top of fn)"
-        )]
-        let last = real_fixes.last().expect("real_fixes is non-empty");
-        let last_heading = last.heading.unwrap_or(Angle::degrees(0.0));
-        let last_delta = last.gps_time.and_then(|gt| {
-            last.sys_time
-                .map(|st| gt.timestamp_micros() - st.timestamp_micros())
-        });
-        let mut dead_reckoned: Option<TimelinePosition> = None;
-
-        for (i, report) in after_last.into_iter().enumerate() {
-            let from = dead_reckoned.unwrap_or_else(|| TimelinePosition::from_internal_fix(last));
-            let distance_m = if i == 0 { 1.0 } else { 2.0 };
-            let position = from.advanced_along_great_circle(last_heading, distance_m);
-            dead_reckoned = Some(position);
-
-            let ghost_time_us = dead_reckoned_gps_us(&report, last, last_delta, i);
-            ghost_points.push(InternalPoint {
-                fix: InternalFix::ghost(
-                    GpsTime::from_utc(micros_to_datetime(ghost_time_us)),
-                    position.lat,
-                    position.lon,
-                    None, // None renders as a circle
-                ),
-                satellites: Some(report),
-            });
-        }
+    if let Some(last) = real_fixes.last() {
+        ghost_points.extend(ghosts_after_last_fix(last, after_last));
     }
 
     ghost_points
+}
+
+/// Ghosts for the reports before the first real fix, all on that fix's position
+/// with `heading = None`.
+fn ghosts_on_first_fix(first: &InternalFix, reports: Vec<InternalSatReport>) -> Vec<InternalPoint> {
+    let position = TimelinePosition::from_internal_fix(first);
+    let mut ghosts = Vec::with_capacity(reports.len());
+
+    for report in reports {
+        let ghost_time_us = ghost_gps_us_anchored_to(&report, first);
+        ghosts.push(InternalPoint {
+            fix: InternalFix::ghost(
+                GpsTime::from_utc(micros_to_datetime(ghost_time_us)),
+                position.lat,
+                position.lon,
+                None, // None renders as a circle
+            ),
+            satellites: Some(report),
+        });
+    }
+
+    ghosts
+}
+
+/// Ghosts for the reports after the last real fix, dead-reckoned along that
+/// fix's heading, 1 m for the first and 2 m for each further one. Every ghost
+/// takes the last fix's position when it has no heading. `heading = None`
+/// throughout.
+fn ghosts_after_last_fix(
+    last: &InternalFix,
+    reports: Vec<InternalSatReport>,
+) -> Vec<InternalPoint> {
+    let mut position = TimelinePosition::from_internal_fix(last);
+    let mut ghosts = Vec::with_capacity(reports.len());
+
+    for (i, report) in reports.into_iter().enumerate() {
+        if let Some(heading) = last.heading {
+            let distance_m = if i == 0 { 1.0 } else { 2.0 };
+            position = position.advanced_along_great_circle(heading, distance_m);
+        }
+
+        let ghost_time_us = ghost_gps_us_anchored_to(&report, last);
+        ghosts.push(InternalPoint {
+            fix: InternalFix::ghost(
+                GpsTime::from_utc(micros_to_datetime(ghost_time_us)),
+                position.lat,
+                position.lon,
+                None, // None renders as a circle
+            ),
+            satellites: Some(report),
+        });
+    }
+
+    ghosts
 }
 
 /// Best-guess GPS timestamp (microseconds) for an orphan report.
@@ -813,24 +837,24 @@ fn segment_corrected_gps_us(
     }
 }
 
-/// Corrected GPS timestamp for a dead-reckoned report after the last real fix.
+/// GPS timestamp for a ghost placed on `anchor_fix`, the first or the last real fix.
 ///
-/// Uses the last fix's delta when available. Falls back to `sys_time` or an
-/// index-based estimate if no timestamp is usable.
-fn dead_reckoned_gps_us(
-    report: &InternalSatReport,
-    last: &InternalFix,
-    last_delta: Option<i64>,
-    idx: usize,
-) -> i64 {
+/// A report with a `gps_time` is exact. A report with only a `sys_time` is
+/// corrected with the anchor fix's clock delta, and taken as it is where the
+/// anchor fix has no delta. `finish` drops a report with neither timestamp
+/// before any ghost is placed.
+fn ghost_gps_us_anchored_to(report: &InternalSatReport, anchor_fix: &InternalFix) -> i64 {
+    debug_assert!(
+        report.gps_time.is_some() || report.sys_time.is_some(),
+        "a satellite report with no timestamp reached ghost placement"
+    );
     if let Some(gt) = report.gps_time {
         return gt.timestamp_micros();
     }
     if let Some(st) = report.sys_time {
-        return st.timestamp_micros() + last_delta.unwrap_or(0);
+        return st.timestamp_micros() + anchor_fix.gps_sys_clock_delta_us().unwrap_or(0);
     }
-    // No timestamp at all: space out by 1 s from the last fix.
-    effective_time(last).timestamp_micros() + (idx as i64 + 1) * 1_000_000
+    effective_time(anchor_fix).timestamp_micros()
 }
 
 /// Assign each satellite report to its nearest nav fix within `window`.
@@ -859,13 +883,7 @@ fn associate_satellites(
     // Compute GPS/sys-clock delta anchors from fixes that carry both timestamps.
     let delta_anchors: Vec<(i64, i64)> = fixes
         .iter()
-        .filter_map(|f| match (f.gps_time, f.sys_time) {
-            (Some(gt), Some(st)) => Some((
-                gt.timestamp_micros(),
-                gt.timestamp_micros() - st.timestamp_micros(),
-            )),
-            _ => None,
-        })
+        .filter_map(|f| Some((f.gps_time?.timestamp_micros(), f.gps_sys_clock_delta_us()?)))
         .collect();
 
     let mut fix_claims: Vec<Option<(i64, usize)>> = vec![None; fixes.len()];
