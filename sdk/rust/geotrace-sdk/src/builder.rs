@@ -1335,19 +1335,21 @@ pub fn collect_satellite_warnings<'a>(
 fn collect_satellite_issues_inner<'a>(
     reports: impl Iterator<Item = &'a [Satellite]>,
 ) -> SatelliteIssues {
-    use std::collections::HashSet;
-
     let mut issues = SatelliteIssues::default();
 
     for tracked in reports {
-        // `(constellation, prn)` - used for per-report duplicate detection.
-        let mut seen: HashSet<(Constellation, u32)> = HashSet::new();
         let mut has_duplicate = false;
 
-        for sat in tracked {
+        for (i, sat) in tracked.iter().enumerate() {
             let prn = sat.prn;
 
-            if !seen.insert((sat.constellation, prn)) {
+            // Scanning the rows before this one allocates nothing, and costs about as
+            // much as hashing them: a report has at most a few dozen rows.
+            if tracked
+                .iter()
+                .take(i)
+                .any(|earlier| earlier.constellation == sat.constellation && earlier.prn == prn)
+            {
                 has_duplicate = true;
             }
 
@@ -1690,6 +1692,17 @@ mod validation_tests {
     fn duplicate_prn_in_same_report_detected() {
         let reports = vec![report(vec![
             sat(Constellation::Gps, 5),
+            sat(Constellation::Gps, 5),
+        ])];
+        let issues = collect_satellite_issues(&reports);
+        assert_eq!(issues.reports_with_duplicate_prn, 1);
+    }
+
+    #[test]
+    fn duplicate_prn_detected_when_the_two_rows_are_not_adjacent() {
+        let reports = vec![report(vec![
+            sat(Constellation::Gps, 5),
+            sat(Constellation::Gps, 12),
             sat(Constellation::Gps, 5),
         ])];
         let issues = collect_satellite_issues(&reports);
