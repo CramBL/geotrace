@@ -9,6 +9,7 @@ use geotrace_sdk::{
     SatelliteReport,
 };
 use proptest::prelude::*;
+use rstest::rstest;
 
 fn t(offset_ms: i64) -> DateTime<Utc> {
     #[expect(clippy::expect_used, reason = "fixed base timestamp is always valid")]
@@ -491,8 +492,15 @@ fn orphan_reports_before_first_fix_are_dropped() -> Result<(), BuildError> {
     Ok(())
 }
 
-#[test]
-fn annotation_interpolation_mid_interval() -> Result<(), Box<dyn std::error::Error>> {
+#[rstest]
+#[case::at_the_first_fix_time(t(0), 10.0, 20.0)]
+#[case::halfway_between_two_fixes(t(500), 11.0, 22.0)]
+#[case::at_the_last_fix_time(t(1000), 12.0, 24.0)]
+fn an_annotation_within_the_fix_time_span_resolves_to_a_position_in_strict_mode(
+    #[case] time: DateTime<Utc>,
+    #[case] expected_lat_deg: f64,
+    #[case] expected_lon_deg: f64,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
@@ -510,12 +518,53 @@ fn annotation_interpolation_mid_interval() -> Result<(), Box<dyn std::error::Err
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    recorder.add_annotation(Annotation::builder().time(t(500)).label("mid").build()?);
+    recorder.add_annotation(Annotation::builder().time(time).label("note").build()?);
+
     let nav_file = recorder.finish()?;
-    let m = &nav_file.markers()[0];
-    assert!((m.lat.as_degrees() - 11.0).abs() < 1e-10);
-    assert!((m.lon.as_degrees() - 22.0).abs() < 1e-10);
+    let marker = &nav_file.markers()[0];
+    assert!(
+        (marker.lat.as_degrees() - expected_lat_deg).abs() < 1e-10,
+        "lat is {}, expected {expected_lat_deg}",
+        marker.lat.as_degrees()
+    );
+    assert!(
+        (marker.lon.as_degrees() - expected_lon_deg).abs() < 1e-10,
+        "lon is {}, expected {expected_lon_deg}",
+        marker.lon.as_degrees()
+    );
     Ok(())
+}
+
+#[test]
+fn an_annotation_at_the_time_of_the_only_fix_resolves_to_that_fix_in_strict_mode()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(simple_fix(0));
+    recorder.add_annotation(Annotation::builder().time(t(0)).build()?);
+
+    let nav_file = recorder.finish()?;
+    let marker = &nav_file.markers()[0];
+    assert!((marker.lat.as_degrees() - 55.0).abs() < 1e-10);
+    assert!((marker.lon.as_degrees() - 12.0).abs() < 1e-10);
+    Ok(())
+}
+
+#[test]
+fn an_annotation_one_microsecond_after_the_last_fix_is_outside_the_range_in_strict_mode() {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(simple_fix(0));
+    recorder.add_nav_fix(simple_fix(1000));
+    recorder.add_annotation(
+        Annotation::builder()
+            .time(t(1000) + Duration::microseconds(1))
+            .build()
+            .expect("an annotation without a label is accepted"),
+    );
+
+    assert!(matches!(
+        recorder.finish(),
+        Err(BuildError::AnnotationsOutsideRange { count: 1 })
+    ));
 }
 
 #[test]

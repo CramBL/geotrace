@@ -17,6 +17,10 @@ the app).
 - The writer takes `sdk_version`, `sdk_git_commit` and `sdk_commit_time` from the `NavFile` it writes: a file read from disk and written back keeps the stamp it was read with, and one read without a stamp is written without one. `NavRecorder::finish` stamps the build it runs in.
 - C `gtd_builder_add_channel_with_unit_mode` takes `uint32_t unit_mode`, the parameter type `gtd_channel_unit_parse` already uses. A `GtdChannelUnitMode` value passes unchanged.
 
+### Fixed
+
+- Fixed an annotation or event marker timestamped exactly at the last nav fix being placed outside the nav fix time range: it is placed on that fix.
+
 ## [0.6.0] - 2026-09-03
 
 ### Added

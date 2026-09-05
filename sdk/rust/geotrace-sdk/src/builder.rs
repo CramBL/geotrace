@@ -985,6 +985,72 @@ fn timeline_time(fix: &InternalFix) -> DateTime<Utc> {
         .unwrap_or_default()
 }
 
+/// A fix reduced to what placing an external event on the nav timeline needs.
+#[derive(Clone, Copy)]
+struct TimelineFix {
+    time: DateTime<Utc>,
+    position: TimelinePosition,
+}
+
+impl TimelineFix {
+    fn from_internal_fix(fix: &InternalFix) -> Self {
+        Self {
+            time: timeline_time(fix),
+            position: TimelinePosition {
+                lat_deg: fix.lat.as_degrees(),
+                lon_deg: fix.lon.as_degrees(),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TimelinePosition {
+    lat_deg: f64,
+    lon_deg: f64,
+}
+
+/// Where an external event's time sits on the nav timeline, with the position
+/// to give the event: the interpolated position inside the fix time span, and
+/// the position of the first or the last fix outside it.
+enum TimelinePlacement {
+    WithinFixTimeSpan(TimelinePosition),
+    BeforeFirstFix(TimelinePosition),
+    AfterLastFix(TimelinePosition),
+    NoFixes,
+}
+
+/// Place an external event's time on the nav timeline.
+///
+/// A time equal to a fix's time is placed at that fix. The timeline must be
+/// sorted by time.
+fn place_on_fix_timeline(timeline: &[TimelineFix], time: DateTime<Utc>) -> TimelinePlacement {
+    let pos = timeline.partition_point(|fix| fix.time < time);
+    let before = pos.checked_sub(1).and_then(|index| timeline.get(index));
+
+    match (before, timeline.get(pos)) {
+        (_, Some(at)) if at.time == time => TimelinePlacement::WithinFixTimeSpan(at.position),
+        (Some(before), Some(after)) => {
+            let before_us = before.time.timestamp_micros();
+            let span_us = after.time.timestamp_micros() - before_us;
+            let fraction = if span_us == 0 {
+                0.0_f64
+            } else {
+                (time.timestamp_micros() - before_us) as f64 / span_us as f64
+            };
+            TimelinePlacement::WithinFixTimeSpan(TimelinePosition {
+                lat_deg: before.position.lat_deg
+                    + fraction * (after.position.lat_deg - before.position.lat_deg),
+                lon_deg: before.position.lon_deg
+                    + fraction * (after.position.lon_deg - before.position.lon_deg),
+            })
+        }
+        (Some(last), None) => TimelinePlacement::AfterLastFix(last.position),
+        (None, Some(first)) => TimelinePlacement::BeforeFirstFix(first.position),
+        (None, None) => TimelinePlacement::NoFixes,
+    }
+}
+
 /// Interpolate positions for each annotation.
 ///
 /// Returns `(resolved, out_of_range)`. In lenient mode `out_of_range`
@@ -1002,60 +1068,34 @@ fn interpolate_annotations(
     annotations: Vec<Annotation>,
     lenient: bool,
 ) -> (Vec<(Annotation, f64, f64)>, Vec<Annotation>) {
+    let timeline: Vec<TimelineFix> = fixes.iter().map(TimelineFix::from_internal_fix).collect();
     let mut resolved = Vec::new();
     let mut out_of_range = Vec::new();
 
     for annotation in annotations {
         let ann_time = annotation.time;
 
-        let pos = fixes.partition_point(|f| timeline_time(f) <= ann_time);
-
-        let before = if pos > 0 { fixes.get(pos - 1) } else { None };
-        let after = fixes.get(pos);
-
-        let position = match (before, after) {
-            (Some(b), Some(a)) => {
-                let b_us = timeline_time(b).timestamp_micros();
-                let a_us = timeline_time(a).timestamp_micros();
-                let ann_us = ann_time.timestamp_micros();
-                let t = if a_us == b_us {
-                    0.0_f64
-                } else {
-                    (ann_us - b_us) as f64 / (a_us - b_us) as f64
-                };
-                let b_lat = b.lat.as_degrees();
-                let b_lon = b.lon.as_degrees();
-                let a_lat = a.lat.as_degrees();
-                let a_lon = a.lon.as_degrees();
-                Some((b_lat + t * (a_lat - b_lat), b_lon + t * (a_lon - b_lon)))
+        let position = match place_on_fix_timeline(&timeline, ann_time) {
+            TimelinePlacement::WithinFixTimeSpan(position) => Some(position),
+            TimelinePlacement::BeforeFirstFix(position) if lenient => {
+                log::warn!(
+                    "Annotation at {ann_time} is before the first nav fix; clamping to first position"
+                );
+                Some(position)
             }
-            (Some(b), None) => {
-                if lenient {
-                    log::warn!(
-                        "Annotation at {} is after the last nav fix; clamping to last position",
-                        ann_time
-                    );
-                    Some((b.lat.as_degrees(), b.lon.as_degrees()))
-                } else {
-                    None
-                }
+            TimelinePlacement::AfterLastFix(position) if lenient => {
+                log::warn!(
+                    "Annotation at {ann_time} is after the last nav fix; clamping to last position"
+                );
+                Some(position)
             }
-            (None, Some(a)) => {
-                if lenient {
-                    log::warn!(
-                        "Annotation at {} is before the first nav fix; clamping to first position",
-                        ann_time
-                    );
-                    Some((a.lat.as_degrees(), a.lon.as_degrees()))
-                } else {
-                    None
-                }
-            }
-            (None, None) => None,
+            TimelinePlacement::BeforeFirstFix(_)
+            | TimelinePlacement::AfterLastFix(_)
+            | TimelinePlacement::NoFixes => None,
         };
 
         match position {
-            Some((lat, lon)) => resolved.push((annotation, lat, lon)),
+            Some(position) => resolved.push((annotation, position.lat_deg, position.lon_deg)),
             None => out_of_range.push(annotation),
         }
     }
@@ -1065,64 +1105,33 @@ fn interpolate_annotations(
 
 /// Interpolate geographic positions for event markers from the built nav track.
 ///
-/// Uses the same algorithm as [`interpolate_annotations`]: the `sys_time` is
-/// matched against each fix's `timeline_time` (`sys_time`-first), then the
-/// surrounding fixes bracket the position via linear interpolation.  Markers
-/// before the first fix or after the last fix are clamped to the endpoint.
-/// Markers with no fixes at all are silently dropped.
+/// The `sys_time` is placed on the nav timeline by [`place_on_fix_timeline`].
+/// Markers before the first fix or after the last fix are clamped to the
+/// endpoint. Markers with no fixes at all are silently dropped.
 fn interpolate_event_markers(
     points: &[InternalPoint],
-    pending: Vec<(String, chrono::DateTime<chrono::Utc>, Option<String>)>,
+    pending: Vec<(String, DateTime<Utc>, Option<String>)>,
 ) -> Vec<EventMarkerPoint> {
-    if points.is_empty() {
-        return Vec::new();
-    }
-
-    // Build a lightweight slice of `(timeline_time, lat, lon)` from the already-sorted
-    // internal points so we can binary-search without dealing with InternalFix directly.
-    let fixes_view: Vec<(chrono::DateTime<chrono::Utc>, f64, f64)> = points
+    let timeline: Vec<TimelineFix> = points
         .iter()
-        .map(|p| {
-            (
-                timeline_time(&p.fix),
-                p.fix.lat.as_degrees(),
-                p.fix.lon.as_degrees(),
-            )
-        })
+        .map(|p| TimelineFix::from_internal_fix(&p.fix))
         .collect();
 
     pending
         .into_iter()
         .filter_map(|(variant_path, sys_time, annotation)| {
-            let pos = fixes_view.partition_point(|(t, _, _)| *t <= sys_time);
-            let before = if pos > 0 {
-                fixes_view.get(pos - 1)
-            } else {
-                None
-            };
-            let after = fixes_view.get(pos);
-
-            let (lat_deg, lon_deg) = match (before, after) {
-                (Some(&(bt, blat, blon)), Some(&(at, alat, alon))) => {
-                    let b_us = bt.timestamp_micros();
-                    let a_us = at.timestamp_micros();
-                    let t_us = sys_time.timestamp_micros();
-                    let t = if a_us == b_us {
-                        0.0_f64
-                    } else {
-                        (t_us - b_us) as f64 / (a_us - b_us) as f64
-                    };
-                    (blat + t * (alat - blat), blon + t * (alon - blon))
-                }
-                (Some(&(_, lat, lon)), None) | (None, Some(&(_, lat, lon))) => (lat, lon),
-                (None, None) => return None,
+            let position = match place_on_fix_timeline(&timeline, sys_time) {
+                TimelinePlacement::WithinFixTimeSpan(position)
+                | TimelinePlacement::BeforeFirstFix(position)
+                | TimelinePlacement::AfterLastFix(position) => position,
+                TimelinePlacement::NoFixes => return None,
             };
 
             Some(EventMarkerPoint {
                 variant_path,
                 sys_time,
-                lat: Angle::degrees(lat_deg),
-                lon: Angle::degrees(lon_deg),
+                lat: Angle::degrees(position.lat_deg),
+                lon: Angle::degrees(position.lon_deg),
                 annotation,
             })
         })

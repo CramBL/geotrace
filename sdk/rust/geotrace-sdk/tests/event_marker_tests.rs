@@ -244,24 +244,31 @@ fn annotation_is_preserved() {
 }
 
 // Position interpolation
-#[test]
-fn position_interpolated_at_midpoint() {
+#[rstest]
+#[case::at_the_first_fix_time(0, 10.0, 20.0)]
+#[case::halfway_between_two_fixes(50, 11.0, 22.0)]
+#[case::at_the_last_fix_time(100, 12.0, 24.0)]
+fn an_event_marker_within_the_fix_time_span_takes_the_position_at_its_time(
+    #[case] marker_offset_secs: i64,
+    #[case] expected_lat_deg: f64,
+    #[case] expected_lon_deg: f64,
+) {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(fix(0, 10.0, 20.0));
     recorder.add_nav_fix(fix(100, 12.0, 24.0));
-    recorder.add_event_marker(marker("sensor/mid", 50));
+    recorder.add_event_marker(marker("sensor/sample", marker_offset_secs));
 
     let nav_file = recorder.finish().unwrap();
-    let em = &nav_file.event_markers()[0];
+    let event_marker = &nav_file.event_markers()[0];
     assert!(
-        (em.lat.as_degrees() - 11.0).abs() < 1e-9,
-        "lat should be 11.0, got {}",
-        em.lat.as_degrees()
+        (event_marker.lat.as_degrees() - expected_lat_deg).abs() < 1e-9,
+        "lat is {}, expected {expected_lat_deg}",
+        event_marker.lat.as_degrees()
     );
     assert!(
-        (em.lon.as_degrees() - 22.0).abs() < 1e-9,
-        "lon should be 22.0, got {}",
-        em.lon.as_degrees()
+        (event_marker.lon.as_degrees() - expected_lon_deg).abs() < 1e-9,
+        "lon is {}, expected {expected_lon_deg}",
+        event_marker.lon.as_degrees()
     );
 }
 
