@@ -40,7 +40,7 @@ Test(channels, published_v040_layout_is_preserved) {
 }
 
 Test(channels, frozen_v040_input_layout_calls_current_library) {
-    GtdFileBuilder *b = gtd_builder_create();
+    GtdFileBuilder *builder = gtd_builder_create();
     GtdTimestamp time = gtd_ts_from_seconds(1700000000ULL);
     double value = 1.0;
     FrozenGtdChannelV040 channel = {0};
@@ -51,21 +51,21 @@ Test(channels, frozen_v040_input_layout_calls_current_library) {
     channel.n_times = 1;
     channel.values = &value;
     channel.n_values = 1;
-    cr_assert_eq(gtd_builder_add_channel(b, (const GtdChannel *)&channel), GTD_OK);
-    gtd_builder_destroy(b);
+    cr_assert_eq(gtd_builder_add_channel(builder, (const GtdChannel *)&channel), GTD_OK);
+    gtd_builder_destroy(builder);
 }
 
 /* Write a scalar and a vector channel, then read them back from a byte buffer. */
 Test(channels, round_trip) {
-    GtdFileBuilder *b = gtd_builder_create();
-    cr_assert_not_null(b);
+    GtdFileBuilder *builder = gtd_builder_create();
+    cr_assert_not_null(builder);
 
-    GtdTimestamp t0 = gtd_ts_from_seconds(1700000000ULL);
-    cr_assert_eq(gtd_builder_add_nav_fix(b, t0, gtd_ts_none(), 51.5, -0.1, GTD_NONE_F64,
-                                         GTD_NONE_F64, GTD_NONE_F64),
+    GtdTimestamp first_time = gtd_ts_from_seconds(1700000000ULL);
+    cr_assert_eq(gtd_builder_add_nav_fix(builder, first_time, gtd_ts_none(), 51.5, -0.1,
+                                         GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
                  GTD_OK);
 
-    GtdTimestamp times[2] = {t0, gtd_ts_from_seconds(1700000001ULL)};
+    GtdTimestamp times[2] = {first_time, gtd_ts_from_seconds(1700000001ULL)};
 
     /* A scalar channel carrying a wrap period. */
     double incline_vals[2] = {1.5, 2.0};
@@ -77,7 +77,7 @@ Test(channels, round_trip) {
     incline.n_times = 2;
     incline.values = incline_vals;
     incline.n_values = 2;
-    cr_assert_eq(gtd_builder_add_channel(b, &incline), GTD_OK);
+    cr_assert_eq(gtd_builder_add_channel(builder, &incline), GTD_OK);
 
     /* A vector channel, values row-major: [x0, y0, z0, x1, y1, z1]. */
     const char *comps[3] = {"x", "y", "z"};
@@ -92,115 +92,117 @@ Test(channels, round_trip) {
     accel.n_times = 2;
     accel.values = accel_vals;
     accel.n_values = 6;
-    cr_assert_eq(gtd_builder_add_channel(b, &accel), GTD_OK);
+    cr_assert_eq(gtd_builder_add_channel(builder, &accel), GTD_OK);
 
-    GtdNavFile *f = NULL;
-    cr_assert_eq(gtd_builder_finish(b, &f), GTD_OK);
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_OK);
     uint8_t *buf = NULL;
     size_t len = 0;
-    cr_assert_eq(gtd_nav_file_to_bytes(f, &buf, &len), GTD_OK);
-    gtd_nav_file_destroy(f);
+    cr_assert_eq(gtd_nav_file_to_bytes(file, &buf, &len), GTD_OK);
+    gtd_nav_file_destroy(file);
 
-    GtdNavFile *f2 = NULL;
-    cr_assert_eq(gtd_nav_file_from_bytes(buf, len, &f2), GTD_OK);
-    cr_assert_eq(gtd_nav_file_channel_count(f2), 2);
+    GtdNavFile *reloaded = NULL;
+    cr_assert_eq(gtd_nav_file_from_bytes(buf, len, &reloaded), GTD_OK);
+    cr_assert_eq(gtd_nav_file_channel_count(reloaded), 2);
 
     /* Channels sort by name: accel (vector) at 0, incline (scalar) at 1. */
-    GtdChannelInfo ci;
-    cr_assert_eq(gtd_nav_file_get_channel(f2, 0, &ci), GTD_OK);
-    cr_assert_str_eq(ci.name, "accel");
-    cr_assert_eq(ci.has_unit, 1);
-    cr_assert_str_eq(ci.unit, "g");
-    cr_assert_eq(ci.component_count, 3);
-    cr_assert_eq(ci.sample_count, 2);
-    cr_assert_eq(ci.period_deg.present, 0);
+    GtdChannelInfo info;
+    cr_assert_eq(gtd_nav_file_get_channel(reloaded, 0, &info), GTD_OK);
+    cr_assert_str_eq(info.name, "accel");
+    cr_assert_eq(info.has_unit, 1);
+    cr_assert_str_eq(info.unit, "g");
+    cr_assert_eq(info.component_count, 3);
+    cr_assert_eq(info.sample_count, 2);
+    cr_assert_eq(info.period_deg.present, 0);
 
     char label[16];
-    cr_assert_eq(gtd_nav_file_get_channel_component(f2, 0, 2, label, sizeof(label)), GTD_OK);
+    cr_assert_eq(gtd_nav_file_get_channel_component(reloaded, 0, 2, label, sizeof(label)), GTD_OK);
     cr_assert_str_eq(label, "z");
 
     GtdTimestamp got_times[2];
-    cr_assert_eq(gtd_nav_file_channel_times(f2, 0, got_times, 2), 2);
+    cr_assert_eq(gtd_nav_file_channel_times(reloaded, 0, got_times, 2), 2);
     cr_assert_eq(got_times[0].unix_micros, times[0].unix_micros);
     cr_assert_eq(got_times[1].unix_micros, times[1].unix_micros);
 
     double got_vals[6];
-    cr_assert_eq(gtd_nav_file_channel_values(f2, 0, got_vals, 6), 6);
+    cr_assert_eq(gtd_nav_file_channel_values(reloaded, 0, got_vals, 6), 6);
     assert_near(got_vals[0], 0.1, 1e-12);
     assert_near(got_vals[5], 1.02, 1e-12);
 
     /* A smaller cap copies only `cap` values but still reports the true total. */
     double partial[6] = {-1, -1, -1, -1, -1, -1};
-    cr_assert_eq(gtd_nav_file_channel_values(f2, 0, partial, 3), 6);
+    cr_assert_eq(gtd_nav_file_channel_values(reloaded, 0, partial, 3), 6);
     assert_near(partial[0], 0.1, 1e-12);
     cr_assert(partial[3] == -1.0); /* untouched beyond cap */
 
     /* A NULL out / zero cap queries the count without copying. */
-    cr_assert_eq(gtd_nav_file_channel_times(f2, 0, NULL, 0), 2);
-    cr_assert_eq(gtd_nav_file_channel_values(f2, 0, NULL, 0), 6);
+    cr_assert_eq(gtd_nav_file_channel_times(reloaded, 0, NULL, 0), 2);
+    cr_assert_eq(gtd_nav_file_channel_values(reloaded, 0, NULL, 0), 6);
 
-    cr_assert_eq(gtd_nav_file_get_channel(f2, 1, &ci), GTD_OK);
-    cr_assert_str_eq(ci.name, "incline");
-    cr_assert_eq(ci.component_count, 0);
-    cr_assert_eq(ci.period_deg.present, 1);
-    assert_near(ci.period_deg.value, 360.0, 1e-9);
+    cr_assert_eq(gtd_nav_file_get_channel(reloaded, 1, &info), GTD_OK);
+    cr_assert_str_eq(info.name, "incline");
+    cr_assert_eq(info.component_count, 0);
+    cr_assert_eq(info.period_deg.present, 1);
+    assert_near(info.period_deg.value, 360.0, 1e-9);
 
-    gtd_nav_file_destroy(f2);
+    gtd_nav_file_destroy(reloaded);
     gtd_free_bytes(buf, len);
 }
 
 Test(channels, invalid_name_is_rejected) {
-    GtdFileBuilder *b = gtd_builder_create();
-    GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
-    double v = 1.0;
-    GtdChannel ch = {0};
-    ch.name = "Bad Name";
-    ch.period_deg = GTD_NONE_F64;
-    ch.times = &t;
-    ch.n_times = 1;
-    ch.values = &v;
-    ch.n_values = 1;
-    cr_assert_eq(gtd_builder_add_channel(b, &ch), GTD_ERR_INVALID_CHANNEL);
-    gtd_builder_destroy(b);
+    GtdFileBuilder *builder = gtd_builder_create();
+    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    double value = 1.0;
+    GtdChannel channel = {0};
+    channel.name = "Bad Name";
+    channel.period_deg = GTD_NONE_F64;
+    channel.times = &timestamp;
+    channel.n_times = 1;
+    channel.values = &value;
+    channel.n_values = 1;
+    cr_assert_eq(gtd_builder_add_channel(builder, &channel), GTD_ERR_INVALID_CHANNEL);
+    gtd_builder_destroy(builder);
 }
 
 Test(channels, unrecognized_unit_requires_custom_mode) {
-    GtdFileBuilder *b = gtd_builder_create();
-    GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
-    double v = 1200.0;
-    GtdChannel ch = {0};
-    ch.name = "shaft_speed";
-    ch.unit = "rpm";
-    ch.period_deg = GTD_NONE_F64;
-    ch.times = &t;
-    ch.n_times = 1;
-    ch.values = &v;
-    ch.n_values = 1;
-    cr_assert_eq(gtd_builder_add_channel(b, &ch), GTD_ERR_INVALID_CHANNEL);
+    GtdFileBuilder *builder = gtd_builder_create();
+    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    double value = 1200.0;
+    GtdChannel channel = {0};
+    channel.name = "shaft_speed";
+    channel.unit = "rpm";
+    channel.period_deg = GTD_NONE_F64;
+    channel.times = &timestamp;
+    channel.n_times = 1;
+    channel.values = &value;
+    channel.n_values = 1;
+    cr_assert_eq(gtd_builder_add_channel(builder, &channel), GTD_ERR_INVALID_CHANNEL);
 
-    cr_assert_eq(gtd_builder_add_channel_with_unit_mode(b, &ch, GTD_CHANNEL_UNIT_CUSTOM), GTD_OK);
-    gtd_builder_destroy(b);
+    cr_assert_eq(gtd_builder_add_channel_with_unit_mode(builder, &channel, GTD_CHANNEL_UNIT_CUSTOM),
+                 GTD_OK);
+    gtd_builder_destroy(builder);
 }
 
 Test(channels, long_custom_unit_uses_lossless_accessor) {
-    GtdFileBuilder *b = gtd_builder_create();
+    GtdFileBuilder *builder = gtd_builder_create();
     char label[160];
     memset(label, 'x', sizeof(label) - 1);
     label[sizeof(label) - 1] = '\0';
-    GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
     double value = 1.0;
-    GtdChannel ch = {0};
-    ch.name = "quality";
-    ch.unit = label;
-    ch.period_deg = GTD_NONE_F64;
-    ch.times = &t;
-    ch.n_times = 1;
-    ch.values = &value;
-    ch.n_values = 1;
-    cr_assert_eq(gtd_builder_add_channel_with_unit_mode(b, &ch, GTD_CHANNEL_UNIT_CUSTOM), GTD_OK);
+    GtdChannel channel = {0};
+    channel.name = "quality";
+    channel.unit = label;
+    channel.period_deg = GTD_NONE_F64;
+    channel.times = &timestamp;
+    channel.n_times = 1;
+    channel.values = &value;
+    channel.n_values = 1;
+    cr_assert_eq(gtd_builder_add_channel_with_unit_mode(builder, &channel, GTD_CHANNEL_UNIT_CUSTOM),
+                 GTD_OK);
 
     GtdNavFile *file = NULL;
-    cr_assert_eq(gtd_builder_finish(b, &file), GTD_OK);
+    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_OK);
     size_t required_len = 0;
     uint8_t is_custom = 0;
     cr_assert_eq(gtd_nav_file_get_channel_unit(file, 0, NULL, 0, &required_len, &is_custom),
@@ -218,54 +220,54 @@ Test(channels, long_custom_unit_uses_lossless_accessor) {
 }
 
 Test(channels, length_mismatch_is_rejected) {
-    GtdFileBuilder *b = gtd_builder_create();
-    GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
-    double v[2] = {1.0, 2.0};
-    GtdChannel ch = {0};
-    ch.name = "accel";
-    ch.period_deg = GTD_NONE_F64;
-    ch.times = &t;
-    ch.n_times = 1; /* one sample */
-    ch.values = v;
-    ch.n_values = 2; /* but two scalar values */
-    cr_assert_eq(gtd_builder_add_channel(b, &ch), GTD_ERR_INVALID_CHANNEL);
-    gtd_builder_destroy(b);
+    GtdFileBuilder *builder = gtd_builder_create();
+    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    double values[2] = {1.0, 2.0};
+    GtdChannel channel = {0};
+    channel.name = "accel";
+    channel.period_deg = GTD_NONE_F64;
+    channel.times = &timestamp;
+    channel.n_times = 1; /* one sample */
+    channel.values = values;
+    channel.n_values = 2; /* but two scalar values */
+    cr_assert_eq(gtd_builder_add_channel(builder, &channel), GTD_ERR_INVALID_CHANNEL);
+    gtd_builder_destroy(builder);
 }
 
 Test(channels, invalid_component_is_rejected) {
-    GtdFileBuilder *b = gtd_builder_create();
-    GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
-    double v[2] = {1.0, 2.0};
+    GtdFileBuilder *builder = gtd_builder_create();
+    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    double values[2] = {1.0, 2.0};
     const char *dup[2] = {"x", "x"}; /* duplicate component label */
-    GtdChannel ch = {0};
-    ch.name = "accel";
-    ch.period_deg = GTD_NONE_F64;
-    ch.components = dup;
-    ch.n_components = 2;
-    ch.times = &t;
-    ch.n_times = 1;
-    ch.values = v;
-    ch.n_values = 2;
-    cr_assert_eq(gtd_builder_add_channel(b, &ch), GTD_ERR_INVALID_CHANNEL);
-    gtd_builder_destroy(b);
+    GtdChannel channel = {0};
+    channel.name = "accel";
+    channel.period_deg = GTD_NONE_F64;
+    channel.components = dup;
+    channel.n_components = 2;
+    channel.times = &timestamp;
+    channel.n_times = 1;
+    channel.values = values;
+    channel.n_values = 2;
+    cr_assert_eq(gtd_builder_add_channel(builder, &channel), GTD_ERR_INVALID_CHANNEL);
+    gtd_builder_destroy(builder);
 }
 
 Test(channels, duplicate_name_fails_at_finish) {
-    GtdFileBuilder *b = gtd_builder_create();
-    GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
-    double v = 1.0;
-    GtdChannel ch = {0};
-    ch.name = "accel";
-    ch.period_deg = GTD_NONE_F64;
-    ch.times = &t;
-    ch.n_times = 1;
-    ch.values = &v;
-    ch.n_values = 1;
-    cr_assert_eq(gtd_builder_add_channel(b, &ch), GTD_OK);
-    cr_assert_eq(gtd_builder_add_channel(b, &ch), GTD_OK);
-    GtdNavFile *f = NULL;
-    cr_assert_eq(gtd_builder_finish(b, &f), GTD_ERR_INVALID_CHANNEL);
-    cr_assert_null(f);
+    GtdFileBuilder *builder = gtd_builder_create();
+    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    double value = 1.0;
+    GtdChannel channel = {0};
+    channel.name = "accel";
+    channel.period_deg = GTD_NONE_F64;
+    channel.times = &timestamp;
+    channel.n_times = 1;
+    channel.values = &value;
+    channel.n_values = 1;
+    cr_assert_eq(gtd_builder_add_channel(builder, &channel), GTD_OK);
+    cr_assert_eq(gtd_builder_add_channel(builder, &channel), GTD_OK);
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_ERR_INVALID_CHANNEL);
+    cr_assert_null(file);
 }
 
 Test(channels, unit_validation_uses_shared_unicode_rules) {

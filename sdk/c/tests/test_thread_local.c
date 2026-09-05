@@ -5,27 +5,27 @@
 Test(thread_local, last_error_initially_null) {
     /* On a fresh call sequence the error slot may or may not be set, but the
        function must not crash. Just verify it returns NULL or a valid string. */
-    const char *e = gtd_last_error();
-    (void)e;
+    const char *error = gtd_last_error();
+    (void)error;
 }
 
 Test(thread_local, last_error_set_after_failure) {
-    GtdNavFile *f = NULL;
-    gtd_nav_file_open(NULL, &f);
-    const char *e = gtd_last_error();
-    cr_assert_not_null(e);
-    cr_assert(strlen(e) > 0);
+    GtdNavFile *file = NULL;
+    gtd_nav_file_open(NULL, &file);
+    const char *error = gtd_last_error();
+    cr_assert_not_null(error);
+    cr_assert(strlen(error) > 0);
 }
 
 Test(thread_local, last_error_set_after_finish_no_fixes) {
-    GtdFileBuilder *b = gtd_builder_create();
+    GtdFileBuilder *builder = gtd_builder_create();
 
     /* Trigger GTD_ERR_NO_NAV_FIXES by adding an annotation but no fixes */
-    gtd_builder_add_annotation(b, gtd_ts_from_seconds(1700000000ULL), "note", GTD_ICON_AUTO);
+    gtd_builder_add_annotation(builder, gtd_ts_from_seconds(1700000000ULL), "note", GTD_ICON_AUTO);
 
-    GtdNavFile *f = NULL;
-    gtd_builder_finish(b, &f);
-    const char *e = gtd_last_error();
-    cr_assert_not_null(e);
-    cr_assert(strlen(e) > 0);
+    GtdNavFile *file = NULL;
+    gtd_builder_finish(builder, &file);
+    const char *error = gtd_last_error();
+    cr_assert_not_null(error);
+    cr_assert(strlen(error) > 0);
 }

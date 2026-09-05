@@ -1,2 +1,5 @@
 InheritParentConfig: true
-Checks: "-misc-include-cleaner"
+# Criterion's assertion macros expand to a branch each, which puts a test case
+# past the cognitive complexity threshold.
+Checks: "-misc-include-cleaner,\
+  -readability-function-cognitive-complexity"

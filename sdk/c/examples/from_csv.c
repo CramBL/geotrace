@@ -11,6 +11,7 @@
 
 #include "../geotrace.h"
 
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,21 +32,24 @@ static const char *const CSV_DATA = "timestamp_s,lat,lon,heading_deg,speed_mps\n
    integer (seconds), the rest are doubles. Returns 1 on success, 0 on a
    malformed row. A row is malformed when `strtod` or `strtoull` leaves the
    end pointer at the start of a field. */
-static int parse_row(const char *line, unsigned long long *ts, double out[CSV_COLS - 1]) {
+static int parse_row(const char *line, unsigned long long *unix_seconds, double out[CSV_COLS - 1]) {
     char *end;
-    *ts = strtoull(line, &end, 10);
-    if (end == line || *end != ',')
+    *unix_seconds = strtoull(line, &end, 10);
+    if (end == line || *end != ',') {
         return 0;
+    }
 
     const char *cur = end + 1;
     for (int i = 0; i < CSV_COLS - 1; i++) {
         out[i] = strtod(cur, &end);
-        if (end == cur)
+        if (end == cur) {
             return 0;
+        }
         /* Every field but the last must be followed by a comma. */
         if (i < CSV_COLS - 2) {
-            if (*end != ',')
+            if (*end != ',') {
                 return 0;
+            }
             cur = end + 1;
         }
     }
@@ -53,65 +57,68 @@ static int parse_row(const char *line, unsigned long long *ts, double out[CSV_CO
 }
 
 int main(void) {
-    GtdFileBuilder *b = gtd_builder_create();
+    GtdFileBuilder *builder = gtd_builder_create();
 
-    gtd_builder_set_title(b, "Imported from CSV");
-    gtd_builder_set_device(b, "CSV importer v1.0");
+    gtd_builder_set_title(builder, "Imported from CSV");
+    gtd_builder_set_device(builder, "CSV importer v1.0");
 
-    const char *p = CSV_DATA;
+    const char *cursor = CSV_DATA;
     /* Skip the header row. */
-    p = strchr(p, '\n');
-    if (p)
-        p++;
+    cursor = strchr(cursor, '\n');
+    if (cursor) {
+        cursor++;
+    }
 
     size_t rows = 0;
-    while (p && *p != '\0') {
-        const char *nl = strchr(p, '\n');
-        size_t len = nl ? (size_t)(nl - p) : strlen(p);
+    while (cursor && *cursor != '\0') {
+        const char *line_end = strchr(cursor, '\n');
+        size_t len = line_end ? (size_t)(line_end - cursor) : strlen(cursor);
 
         if (len > 0 && len < LINE_BUFSIZE) {
             char line[LINE_BUFSIZE];
-            memcpy(line, p, len);
+            memcpy(line, cursor, len);
             line[len] = '\0';
 
-            unsigned long long ts = 0;
-            double v[CSV_COLS - 1];
-            if (parse_row(line, &ts, v)) {
-                GtdStatus s = gtd_builder_add_nav_fix(b, gtd_ts_from_seconds((uint64_t)ts),
-                                                      gtd_ts_none(), v[0], v[1], GTD_SOME_F64(v[2]),
-                                                      GTD_SOME_F64(v[3]), GTD_NONE_F64);
-                if (s != GTD_OK) {
+            unsigned long long unix_seconds = 0;
+            double fields[CSV_COLS - 1];
+            if (parse_row(line, &unix_seconds, fields)) {
+                GtdStatus status = gtd_builder_add_nav_fix(
+                    builder, gtd_ts_from_seconds((uint64_t)unix_seconds), gtd_ts_none(), fields[0],
+                    fields[1], GTD_SOME_F64(fields[2]), GTD_SOME_F64(fields[3]), GTD_NONE_F64);
+                if (status != GTD_OK) {
                     fprintf(stderr, "add_nav_fix: %s\n", gtd_last_error());
-                    gtd_builder_destroy(b);
+                    gtd_builder_destroy(builder);
                     return 1;
                 }
                 rows++;
             }
         }
 
-        p = nl ? nl + 1 : NULL;
+        cursor = line_end ? line_end + 1 : NULL;
     }
 
-    GtdNavFile *f = NULL;
-    GtdStatus s = gtd_builder_finish(b, &f);
-    b = NULL;
-    if (s != GTD_OK) {
+    GtdNavFile *file = NULL;
+    GtdStatus status = gtd_builder_finish(builder, &file);
+    builder = NULL;
+    if (status != GTD_OK) {
         fprintf(stderr, "finish: %s\n", gtd_last_error());
         return 1;
     }
 
     const char *path = "geotrace_from_csv.gtd";
-    s = gtd_nav_file_write_to_path(f, path);
-    if (s != GTD_OK) {
+    status = gtd_nav_file_write_to_path(file, path);
+    if (status != GTD_OK) {
         fprintf(stderr, "write: %s\n", gtd_last_error());
-        gtd_nav_file_destroy(f);
+        gtd_nav_file_destroy(file);
         return 1;
     }
 
-    printf("Parsed %zu CSV rows into %zu nav points -> %s\n", rows, gtd_nav_file_nav_point_count(f),
-           path);
+    printf("Parsed %zu CSV rows into %zu nav points -> %s\n", rows,
+           gtd_nav_file_nav_point_count(file), path);
 
-    gtd_nav_file_destroy(f);
-    remove(path);
+    gtd_nav_file_destroy(file);
+    if (remove(path) != 0) {
+        fprintf(stderr, "remove %s: %s\n", path, strerror(errno));
+    }
     return 0;
 }

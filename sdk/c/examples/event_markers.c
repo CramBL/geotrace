@@ -10,19 +10,21 @@
 
 #include "../geotrace.h"
 
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 /* A fixed epoch keeps the output deterministic: 2024-06-01T08:00:00Z. */
 #define BASE_EPOCH 1717228800U
 
 int main(void) {
-    GtdFileBuilder *b = gtd_builder_create();
+    GtdFileBuilder *builder = gtd_builder_create();
 
-    gtd_builder_set_title(b, "Event marker tour");
-    gtd_builder_set_device(b, "Example GPS v1.0");
+    gtd_builder_set_title(builder, "Event marker tour");
+    gtd_builder_set_device(builder, "Example GPS v1.0");
 
-    GtdStatus s;
+    GtdStatus status;
 
     /* A short London track, one fix every 30 s. */
     const double track[][2] = {
@@ -30,10 +32,10 @@ int main(void) {
         {51.5095, -0.1233}, {51.5103, -0.1217}, {51.5110, -0.1200},
     };
     for (size_t i = 0; i < sizeof track / sizeof track[0]; i++) {
-        GtdTimestamp t = gtd_ts_from_seconds(BASE_EPOCH + (i * 30U));
-        s = gtd_builder_add_nav_fix(b, t, gtd_ts_none(), track[i][0], track[i][1],
-                                    GTD_SOME_F64(90.0), GTD_NONE_F64, GTD_NONE_F64);
-        if (s != GTD_OK) {
+        GtdTimestamp fix_time = gtd_ts_from_seconds(BASE_EPOCH + (i * 30U));
+        status = gtd_builder_add_nav_fix(builder, fix_time, gtd_ts_none(), track[i][0], track[i][1],
+                                         GTD_SOME_F64(90.0), GTD_NONE_F64, GTD_NONE_F64);
+        if (status != GTD_OK) {
             fprintf(stderr, "add_nav_fix: %s\n", gtd_last_error());
             goto fail;
         }
@@ -52,67 +54,72 @@ int main(void) {
         {"power/sleep", 145, NULL},
     };
     for (size_t i = 0; i < sizeof events / sizeof events[0]; i++) {
-        GtdTimestamp t = gtd_ts_from_seconds(BASE_EPOCH + events[i].offset);
-        s = gtd_builder_add_event_marker(b, events[i].path, t, events[i].note);
-        if (s != GTD_OK) {
+        GtdTimestamp event_time = gtd_ts_from_seconds(BASE_EPOCH + events[i].offset);
+        status = gtd_builder_add_event_marker(builder, events[i].path, event_time, events[i].note);
+        if (status != GTD_OK) {
             fprintf(stderr, "add_event_marker(%s): %s\n", events[i].path, gtd_last_error());
             goto fail;
         }
     }
 
-    s = gtd_builder_add_event_marker_style(b, "power/boot", GTD_ICON_LIGHTNING, "#44BB44");
-    if (s != GTD_OK) {
+    status =
+        gtd_builder_add_event_marker_style(builder, "power/boot", GTD_ICON_LIGHTNING, "#44BB44");
+    if (status != GTD_OK) {
         fprintf(stderr, "add_event_marker_style: %s\n", gtd_last_error());
         goto fail;
     }
-    s = gtd_builder_add_event_marker_style(b, "power/sleep", GTD_ICON_PIN, "#4488FF");
-    if (s != GTD_OK) {
+    status = gtd_builder_add_event_marker_style(builder, "power/sleep", GTD_ICON_PIN, "#4488FF");
+    if (status != GTD_OK) {
         fprintf(stderr, "add_event_marker_style: %s\n", gtd_last_error());
         goto fail;
     }
 
-    GtdNavFile *f = NULL;
-    s = gtd_builder_finish(b, &f);
-    b = NULL;
-    if (s != GTD_OK) {
+    GtdNavFile *file = NULL;
+    status = gtd_builder_finish(builder, &file);
+    builder = NULL;
+    if (status != GTD_OK) {
         fprintf(stderr, "finish: %s\n", gtd_last_error());
         return 1;
     }
 
     const char *path = "geotrace_event_markers.gtd";
-    s = gtd_nav_file_write_to_path(f, path);
-    if (s != GTD_OK) {
+    status = gtd_nav_file_write_to_path(file, path);
+    if (status != GTD_OK) {
         fprintf(stderr, "write: %s\n", gtd_last_error());
-        gtd_nav_file_destroy(f);
+        gtd_nav_file_destroy(file);
         return 1;
     }
-    gtd_nav_file_destroy(f);
+    gtd_nav_file_destroy(file);
 
     /* Read it back and print the markers, as GeoTrace would list them. */
     GtdNavFile *loaded = NULL;
-    s = gtd_nav_file_open(path, &loaded);
-    if (s != GTD_OK) {
+    status = gtd_nav_file_open(path, &loaded);
+    if (status != GTD_OK) {
         fprintf(stderr, "open: %s\n", gtd_last_error());
         return 1;
     }
 
-    size_t n = gtd_nav_file_event_marker_count(loaded);
-    printf("Event markers: %zu\n", n);
-    for (size_t i = 0; i < n; i++) {
-        GtdEventMarkerInfo m;
-        if (gtd_nav_file_get_event_marker(loaded, i, &m) != GTD_OK)
+    size_t marker_count = gtd_nav_file_event_marker_count(loaded);
+    printf("Event markers: %zu\n", marker_count);
+    for (size_t i = 0; i < marker_count; i++) {
+        GtdEventMarkerInfo marker;
+        if (gtd_nav_file_get_event_marker(loaded, i, &marker) != GTD_OK) {
             continue;
-        printf("  %-28s %.5f, %.5f", m.variant_path, m.lat_deg, m.lon_deg);
-        if (m.has_annotation)
-            printf("  - %s", m.annotation);
+        }
+        printf("  %-28s %.5f, %.5f", marker.variant_path, marker.lat_deg, marker.lon_deg);
+        if (marker.has_annotation) {
+            printf("  - %s", marker.annotation);
+        }
         printf("\n");
     }
 
     gtd_nav_file_destroy(loaded);
-    remove(path);
+    if (remove(path) != 0) {
+        fprintf(stderr, "remove %s: %s\n", path, strerror(errno));
+    }
     return 0;
 
 fail:
-    gtd_builder_destroy(b);
+    gtd_builder_destroy(builder);
     return 1;
 }
