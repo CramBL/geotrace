@@ -47,6 +47,25 @@ pub enum DeleteReason {
     AutoPrune,
 }
 
+/// Which recordings a delete of shelved data covers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeleteShelvedTracksScope {
+    /// Every recording the database holds, which the History window's toolbar
+    /// button raises.
+    EveryRecording,
+    /// The one recording whose shelf the delete was raised from.
+    OneRecording(DatabaseRef),
+}
+
+impl DeleteShelvedTracksScope {
+    pub fn covers(&self, db_ref: &DatabaseRef) -> bool {
+        match self {
+            Self::EveryRecording => true,
+            Self::OneRecording(one) => one == db_ref,
+        }
+    }
+}
+
 /// A completed mutation, carried back so the UI can show the right toast.
 pub enum DbOp {
     TracksShelved {
@@ -116,8 +135,11 @@ enum WriteRequest {
         db_ref: DatabaseRef,
         rows: Vec<usize>,
     },
-    /// Permanently remove every shelved track across all recordings (re-encode).
-    DeleteShelvedTracks,
+    /// Permanently remove the shelved tracks of every recording the scope
+    /// covers (re-encode).
+    DeleteShelvedTracks {
+        scope: DeleteShelvedTracksScope,
+    },
     DeleteRecordings {
         refs: Vec<DatabaseRef>,
         reason: DeleteReason,
@@ -165,7 +187,7 @@ impl WriteRequest {
                 "Unshelving tracks in recording history"
             }
             Self::DeleteTracks { .. } => "Deleting tracks from recording history",
-            Self::DeleteShelvedTracks => "Deleting shelved tracks from recording history",
+            Self::DeleteShelvedTracks { .. } => "Deleting shelved tracks from recording history",
             Self::DeleteRecordings { .. } => "Deleting recordings from recording history",
             Self::RenameIdentity { .. } => "Renaming an identity in recording history",
             Self::AutoPrune { .. } => "Auto-pruning recording history",
@@ -390,8 +412,10 @@ impl HistoryWorker {
         self.send_write(WriteRequest::DeleteTracks { db_ref, rows });
     }
 
-    pub fn delete_shelved_tracks(&self) {
-        self.send_write(WriteRequest::DeleteShelvedTracks);
+    /// Permanently delete the shelved tracks of every recording `scope`
+    /// covers.
+    pub fn delete_shelved_tracks(&self, scope: DeleteShelvedTracksScope) {
+        self.send_write(WriteRequest::DeleteShelvedTracks { scope });
     }
 
     pub fn delete_recordings(&self, refs: Vec<DatabaseRef>, reason: DeleteReason) {
@@ -653,7 +677,7 @@ fn handle_write_request(db: &mut Recordings, req: WriteRequest) -> Response {
                 result,
             }
         }
-        WriteRequest::DeleteShelvedTracks => match purge_all_shelved(db) {
+        WriteRequest::DeleteShelvedTracks { scope } => match purge_shelved_tracks(db, &scope) {
             Ok(count) => Response::Mutated {
                 op: DbOp::TracksDeleted { count },
                 result: Ok(()),
@@ -730,27 +754,48 @@ fn handle_write_request(db: &mut Recordings, req: WriteRequest) -> Response {
     }
 }
 
-/// Permanently remove every shelved track across all recordings, re-encoding
-/// each affected recording. Returns the number of tracks removed.
-fn purge_all_shelved(db: &mut Recordings) -> Result<usize, DbError> {
+/// Permanently remove the shelved tracks of every recording `scope` covers,
+/// re-encoding each affected recording. Returns the number of tracks removed.
+fn purge_shelved_tracks(
+    db: &mut Recordings,
+    scope: &DeleteShelvedTracksScope,
+) -> Result<usize, DbError> {
+    if let DeleteShelvedTracksScope::OneRecording(db_ref) = scope {
+        return purge_the_shelved_tracks_of(db, db_ref);
+    }
     let entries = db.list_recordings()?;
     let mut deleted = 0;
     for entry in entries {
+        // The listing's shelved track count lets the sweep skip a recording
+        // whose tracks are all live: a load reads its whole nav point
+        // sequence.
         if entry.shelved_tracks == 0 {
             continue;
         }
-        let stored = db.load(&entry.db_ref)?;
-        let shelved_rows: Vec<usize> = stored
-            .tracks
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| t.state == TrackState::Shelved)
-            .map(|(row, _)| row)
-            .collect();
-        deleted += shelved_rows.len();
-        purge_tracks_with_stored(db, &entry.db_ref, &stored, &shelved_rows)?;
+        deleted += purge_the_shelved_tracks_of(db, &entry.db_ref)?;
     }
     Ok(deleted)
+}
+
+/// Permanently remove one recording's shelved tracks, as the stored track
+/// table holds them now. Returns the number of tracks removed.
+fn purge_the_shelved_tracks_of(
+    db: &mut Recordings,
+    db_ref: &DatabaseRef,
+) -> Result<usize, DbError> {
+    let stored = db.load(db_ref)?;
+    let shelved_rows: Vec<usize> = stored
+        .tracks
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.state == TrackState::Shelved)
+        .map(|(row, _)| row)
+        .collect();
+    if shelved_rows.is_empty() {
+        return Ok(0);
+    }
+    purge_tracks_with_stored(db, db_ref, &stored, &shelved_rows)?;
+    Ok(shelved_rows.len())
 }
 
 /// Permanently remove the tracks in the stored table rows `drop_rows` from one
@@ -875,8 +920,8 @@ mod tests {
     use rstest::rstest;
 
     use crate::app::history_test_support::{
-        bytes_starting_at, listed_recordings, next_response, only_recording, sample_bytes,
-        seed_two_track_recording, store_recording, worker_on,
+        SAMPLE_POINT_COUNT, bytes_starting_at, listed_recordings, next_response, only_recording,
+        sample_bytes, seed_two_track_recording, store_recording, worker_on,
     };
 
     use super::*;
@@ -968,7 +1013,7 @@ mod tests {
         worker.set_tracks_shelved(db_ref, vec![0], true);
         next_response(&worker);
 
-        worker.delete_shelved_tracks();
+        worker.delete_shelved_tracks(DeleteShelvedTracksScope::EveryRecording);
         let Response::Mutated {
             op: DbOp::TracksDeleted { count },
             result,
@@ -1011,6 +1056,107 @@ mod tests {
             ],
             "the deleted track leaves a tombstone, and the track that stays keeps its row"
         );
+    }
+
+    /// Store two recordings of two ten-point tracks each and shelve the first
+    /// track of each. Returns their references in listing order.
+    fn seed_two_recordings_with_a_shelved_track(
+        worker: &HistoryWorker,
+        path: &Path,
+    ) -> (DatabaseRef, DatabaseRef) {
+        for start_secs in [1_748_000_000, 1_749_000_000] {
+            store_recording(
+                path,
+                &bytes_starting_at(start_secs, SAMPLE_POINT_COUNT as usize),
+                &[
+                    TrackRange {
+                        start: 0,
+                        end: 10,
+                        state: TrackState::Live,
+                    },
+                    TrackRange {
+                        start: 10,
+                        end: 20,
+                        state: TrackState::Live,
+                    },
+                ],
+            );
+        }
+        for entry in listed_recordings(worker) {
+            worker.set_tracks_shelved(entry.db_ref, vec![0], true);
+            let Response::Mutated { result, .. } = next_response(worker) else {
+                panic!("expected a mutation response");
+            };
+            result.expect("the shelve runs");
+        }
+        let shelved = shelved_tracks_per_recording(worker);
+        let [(first, _), (second, _)] = shelved.as_slice() else {
+            panic!("expected two recordings, each with a shelved track");
+        };
+        (first.clone(), second.clone())
+    }
+
+    /// The recordings the worker's database holds, keyed by reference, with
+    /// how many of each one's tracks are shelved.
+    fn shelved_tracks_per_recording(worker: &HistoryWorker) -> Vec<(DatabaseRef, usize)> {
+        listed_recordings(worker)
+            .into_iter()
+            .map(|entry| (entry.db_ref, entry.shelved_tracks))
+            .collect()
+    }
+
+    #[test]
+    fn deleting_one_recordings_shelved_tracks_leaves_the_other_recordings_alone() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        let worker = worker_on(&path);
+        let (first, second) = seed_two_recordings_with_a_shelved_track(&worker, &path);
+
+        worker.delete_shelved_tracks(DeleteShelvedTracksScope::OneRecording(first.clone()));
+        let Response::Mutated {
+            op: DbOp::TracksDeleted { count },
+            result,
+        } = next_response(&worker)
+        else {
+            panic!("expected a TracksDeleted mutation");
+        };
+        result.expect("the delete runs");
+        assert_eq!(count, 1);
+
+        assert_eq!(
+            shelved_tracks_per_recording(&worker),
+            vec![(first, 0), (second, 1)]
+        );
+        worker.shutdown();
+    }
+
+    /// A recording whose every track is shelved is deleted from history with
+    /// them, because an empty re-encode would fail.
+    #[test]
+    fn deleting_the_shelved_tracks_of_a_recording_with_no_live_track_deletes_the_recording() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        let worker = worker_on(&path);
+        let (first, second) = seed_two_recordings_with_a_shelved_track(&worker, &path);
+        worker.set_tracks_shelved(first.clone(), vec![1], true);
+        let Response::Mutated { result, .. } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        result.expect("the second shelve runs");
+
+        worker.delete_shelved_tracks(DeleteShelvedTracksScope::OneRecording(first.clone()));
+        let Response::Mutated {
+            op: DbOp::TracksDeleted { count },
+            result,
+        } = next_response(&worker)
+        else {
+            panic!("expected a TracksDeleted mutation");
+        };
+        result.expect("the delete runs");
+        assert_eq!(count, 2);
+
+        assert_eq!(shelved_tracks_per_recording(&worker), vec![(second, 1)]);
+        worker.shutdown();
     }
 
     #[test]
@@ -1116,7 +1262,7 @@ mod tests {
         };
         result.expect("the first shelve runs");
 
-        worker.delete_shelved_tracks();
+        worker.delete_shelved_tracks(DeleteShelvedTracksScope::EveryRecording);
         let Response::Mutated { result, .. } = next_response(&worker) else {
             panic!("expected a mutation response");
         };
@@ -1209,7 +1355,7 @@ mod tests {
         };
         result.expect("the shelve runs");
 
-        worker.delete_shelved_tracks();
+        worker.delete_shelved_tracks(DeleteShelvedTracksScope::EveryRecording);
         let Response::Mutated {
             op: DbOp::TracksDeleted { count },
             result,
@@ -1485,7 +1631,9 @@ mod tests {
         "Deleting tracks from recording history"
     )]
     #[case(
-        WriteRequest::DeleteShelvedTracks,
+        WriteRequest::DeleteShelvedTracks {
+            scope: DeleteShelvedTracksScope::EveryRecording,
+        },
         "Deleting shelved tracks from recording history"
     )]
     #[case(

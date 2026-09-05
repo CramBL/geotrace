@@ -16,7 +16,7 @@ use gt_ui_theme::warning_amber;
 use strum::{EnumCount, EnumIter};
 
 use crate::app::history::delete_shelved_prompt::DeleteShelvedTracksPrompt;
-use crate::app::history_db::{DeleteReason, HistoryWorker};
+use crate::app::history_db::{DeleteReason, DeleteShelvedTracksScope, HistoryWorker};
 use crate::app::modals::{self, DialogActionRow, DialogBody};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use crate::app::storage_controls;
@@ -28,6 +28,8 @@ pub(in crate::app) const OPENING_RECORDINGS_DATABASE: &str = "Opening the record
 
 mod delete_shelved_prompt;
 mod table;
+#[cfg(test)]
+mod test_support;
 
 /// Which pruning mode is selected in the Prune dialog.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -690,6 +692,10 @@ impl HistoryWindow {
         let mut rename = std::mem::take(&mut self.rename);
         let mut shelf = std::mem::take(&mut self.shelf);
         let mut footer_height = self.footer_height_last_frame;
+        // The table reports the press of the shelf's delete here, and the
+        // window raises the confirmation once the table has released its borrow
+        // of the listing the confirmation reads its figures from.
+        let mut shelf_raised_the_delete: Option<DatabaseRef> = None;
 
         Window::new("History")
             .open(&mut open)
@@ -818,11 +824,16 @@ impl HistoryWindow {
                                 worker,
                                 rename: &mut rename,
                                 shelf: &mut shelf,
+                                shelf_raised_the_delete: &mut shelf_raised_the_delete,
                                 sort: &mut self.sort,
                                 write_access,
                             },
                         );
                     });
+                if let Some(recording) = shelf_raised_the_delete.take() {
+                    self.delete_shelved_prompt
+                        .open(DeleteShelvedTracksScope::OneRecording(recording), entries);
+                }
                 let listing_bottom = ui.min_rect().bottom();
 
                 ui.separator();
@@ -861,12 +872,11 @@ impl HistoryWindow {
         self.shelf = shelf;
         self.footer_height_last_frame = footer_height;
 
-        if self
+        if let Some(scope) = self
             .delete_shelved_prompt
-            .show(ctx, now, shelved_track_count)
-            .is_some()
+            .show(ctx, now, self.entries.as_deref())
         {
-            worker.delete_shelved_tracks();
+            worker.delete_shelved_tracks(scope);
         }
 
         self.open = open;
@@ -918,7 +928,10 @@ impl HistoryWindow {
                             READ_ONLY_RECORDING_HISTORY_HOVER
                         });
                         if delete_shelved.clicked() {
-                            self.delete_shelved_prompt.open(shelved_track_count);
+                            self.delete_shelved_prompt.open(
+                                DeleteShelvedTracksScope::EveryRecording,
+                                self.entries.as_deref().unwrap_or_default(),
+                            );
                         }
                         if ui
                             .add_enabled(writes_recordings, Button::new("Prune…"))

@@ -10,29 +10,33 @@ use gt_test_utils::{
     AuditedWindow, By, ControlLabel, HarnessInteraction as _, TestHarness, WindowFitAssertions as _,
 };
 
-use crate::app::history_db::Response;
+use crate::app::history_db::{DeleteShelvedTracksScope, Response};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use crate::app::storage_controls::AUTO_STORE_LABEL;
 
 use egui_phosphor::regular::CARET_RIGHT as ICON_CARET_RIGHT;
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
+use egui_phosphor::regular::TRASH as ICON_TRASH;
 use gt_store::{
     ChannelSummary, StoredFixPlacementRule, StoredSegmentation, StoredTrackSplitRule, TrackRange,
     TrackState,
 };
 use gt_ui_theme::EM_DASH;
 
-use super::delete_shelved_prompt::DELETE_SHELVED_WINDOW_TITLE;
+use super::delete_shelved_prompt::{DELETE_SHELVED_TRACKS_LABEL, DELETE_SHELVED_WINDOW_TITLE};
 use super::table::{
     MAX_HOVER_CHANNELS, OPEN_LOG_LABEL, UNSHELVE_ALL_LABEL, UNSHELVE_LABEL, breakdown_cell_id,
     channel_title, data_breakdown_ui, duration_text, started_at_text, time_range_text,
     track_count_text,
 };
+use super::test_support::{
+    ShelvedTracks, TotalTracks, entry_with_identity, entry_with_shelved_tracks,
+};
 use super::{
     DEFAULT_WINDOW_HEIGHT_PX, DatabaseRef, HistorySort, HistoryWindow, HistoryWorker,
     ICON_CARET_DOWN, ICON_CARET_UP, NavPointTimeRange, PRUNE_WINDOW_TITLE, RecordingEntry,
-    RecordingMeta, SortColumn, SortDirection, identity_display_parts, travel_mode_display,
+    SortColumn, SortDirection, identity_display_parts, travel_mode_display,
 };
 use strum::{EnumCount as _, IntoEnumIterator as _};
 
@@ -501,14 +505,23 @@ fn one_live_a_tombstone_and_two_shelved_tracks() -> Vec<TrackRange> {
     ]
 }
 
+/// How far the shelf tests drag the History window's bottom-right corner out.
+/// At the size the window opens at, a recording row with a date and a
+/// shelved-track count needs more width than the listing has, and the listing
+/// scrolls sideways to reach the action column.
+const SHELF_WINDOW_GROWN_BY: egui::Vec2 = egui::vec2(160.0, 140.0);
+
 /// Open the shelf of the only listed recording and wait for its stored track
-/// table to arrive.
+/// table to arrive, on a window wide enough for the whole action column.
 fn open_the_shelf(h: &mut TestHarness<HistoryHarness>) {
     assert!(
         h.inner
             .step_until(|h| h.query_by_label_contains("ride.gtd").is_some()),
         "the recording should appear in the History list"
     );
+    let window = h.inner.window_rect("History").expect("the window is shown");
+    h.inner
+        .press_drag_release(window.max, SHELF_WINDOW_GROWN_BY, 8);
     // The caret's column position moves for a few frames after the list
     // arrives, until the table settles.
     for _ in 0..4 {
@@ -590,9 +603,9 @@ fn unshelving_from_the_shelf_leaves_the_tracks_live(
 }
 
 /// Never hidden, per DESIGN.md: a read-only session still opens the shelf and
-/// reads its tracks. Its two write controls stay grayed.
+/// reads its tracks. Its three write controls stay grayed out.
 #[test]
-fn the_shelf_unshelve_controls_are_grayed_in_a_read_only_session() {
+fn the_write_controls_of_the_shelf_are_grayed_in_a_read_only_session() {
     let mut harness =
         history_harness_with_stored_tracks(&one_live_a_tombstone_and_two_shelved_tracks());
     harness.write_access = WriteAccess::ReadOnly;
@@ -610,11 +623,59 @@ fn the_shelf_unshelve_controls_are_grayed_in_a_read_only_session() {
             .accesskit_node()
             .is_disabled()
     );
+    let delete_shelved = h.inner.get_by_label(ICON_TRASH);
+    assert!(delete_shelved.accesskit_node().is_disabled());
+    let delete_shelved_center = delete_shelved.rect().center();
 
     h.inner.hover_at_and_settle(unshelve_center, 3);
-
     h.inner
         .get_by_label_contains(READ_ONLY_RECORDING_HISTORY_HOVER);
+
+    h.inner.hover_at_and_settle(delete_shelved_center, 3);
+    h.inner
+        .get_by_label_contains(READ_ONLY_RECORDING_HISTORY_HOVER);
+}
+
+/// The recording stays in history with the live track it keeps: the shelf's
+/// delete takes the shelved tracks of its own recording only.
+#[test]
+fn deleting_the_shelved_tracks_from_the_shelf_leaves_the_recording_its_live_track() {
+    let harness =
+        history_harness_with_stored_tracks(&one_live_a_tombstone_and_two_shelved_tracks());
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(pump_history, harness);
+    open_the_shelf(&mut h);
+
+    h.inner.get_by_label(ICON_TRASH).click();
+    // The confirmation is laid out over two passes, and egui reports a click
+    // on its buttons from the second pass on.
+    for _ in 0..4 {
+        h.run();
+    }
+    h.inner.get_by_label(DELETE_SHELVED_TRACKS_LABEL).click();
+
+    // The delete re-encodes the recording, which takes longer than one wait:
+    // the listing the window drops on the way is the milestone between the two.
+    assert!(
+        h.inner.step_until(|h| h.state().window.entries.is_none()),
+        "the delete should send the window back to the database for a fresh listing"
+    );
+    assert!(
+        h.inner.step_until(|h| {
+            h.state()
+                .window
+                .entries
+                .as_ref()
+                .and_then(|entries| entries.first())
+                .is_some_and(|entry| track_count_text(entry) == "1")
+        }),
+        "the refreshed listing should report the one live track the recording keeps"
+    );
+    assert!(
+        h.state().window.shelf.is_none(),
+        "the shelf should close once the recording has no shelved track to list"
+    );
 }
 
 /// The shelf open on a recording: one line per shelved track with its number
@@ -651,33 +712,6 @@ fn snapshot_history_window_shelf_open_read_only() {
     }
 
     h.snapshot("history_window_shelf_open_read_only");
-}
-
-/// A listing entry for `identity` with no tracks and no SDK metadata, for the
-/// identity-cell layout tests.
-fn entry_with_identity(identity: &str) -> RecordingEntry {
-    RecordingEntry {
-        db_ref: DatabaseRef {
-            identity: identity.to_owned(),
-            group_name: "rec0".to_owned(),
-        },
-        meta: RecordingMeta {
-            time_range: None,
-            nav_point_count: 0,
-            sat_report_count: 0,
-            marker_count: 0,
-            event_marker_count: 0,
-            gtd_size_bytes: 0,
-        },
-        total_tracks: 0,
-        shelved_tracks: 0,
-        title: None,
-        device: None,
-        notes: None,
-        travel_mode: None,
-        channels: Vec::new(),
-        log_attachments: Vec::new(),
-    }
 }
 
 /// A listing entry with the four sortable value columns set, for the
@@ -1747,16 +1781,27 @@ fn prune_dialog_fits_every_viewport(
     );
 }
 
+/// Raise the confirmation over `scope`, at what the harness's own listing
+/// reports the delete would take.
+fn open_the_delete_shelved_confirmation(
+    harness: &mut HistoryHarness,
+    scope: DeleteShelvedTracksScope,
+) {
+    let window = &mut harness.window;
+    let listing = window.entries.as_deref().unwrap_or_default();
+    window.delete_shelved_prompt.open(scope, listing);
+}
+
 #[test]
 fn snapshot_delete_shelved_confirmation() {
-    let mut entry = entry_with_identity("auto:ride.gtd");
-    entry.total_tracks = 12;
-    entry.shelved_tracks = 3;
-    let shelved_tracks = entry.shelved_tracks;
-    let mut harness = history_harness(vec![entry]);
+    let mut harness = history_harness(vec![entry_with_shelved_tracks(
+        "auto:ride.gtd",
+        TotalTracks(12),
+        ShelvedTracks(3),
+    )]);
     // The temporary database path differs every run.
     harness.worker.hide_path();
-    harness.window.delete_shelved_prompt.open(shelved_tracks);
+    open_the_delete_shelved_confirmation(&mut harness, DeleteShelvedTracksScope::EveryRecording);
     let mut h = TestHarness::builder()
         .size(egui::vec2(900.0, 500.0))
         .ui_state(show_history, harness);
@@ -1766,17 +1811,74 @@ fn snapshot_delete_shelved_confirmation() {
     h.snapshot("delete_shelved_confirmation");
 }
 
+/// The confirmation states which recordings the delete removes from history
+/// entirely, and writes them out under that line. A recording is one of them
+/// when it holds only shelved tracks.
+#[test]
+fn snapshot_delete_shelved_confirmation_deleting_recordings_whole() {
+    let entries = vec![
+        entry_with_shelved_tracks("auto:ride.gtd", TotalTracks(4), ShelvedTracks(1)),
+        entry_with_shelved_tracks("auto:walk.gtd", TotalTracks(2), ShelvedTracks(2)),
+        entry_with_shelved_tracks("auto:sail.gtd", TotalTracks(3), ShelvedTracks(3)),
+    ];
+    let mut harness = history_harness(entries);
+    harness.worker.hide_path();
+    open_the_delete_shelved_confirmation(&mut harness, DeleteShelvedTracksScope::EveryRecording);
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(show_history, harness);
+    for _ in 0..4 {
+        h.run();
+    }
+    h.snapshot("delete_shelved_confirmation_deleting_recordings_whole");
+}
+
+/// The confirmation the shelf raises: it states the one recording it takes the
+/// tracks from, and that the delete removes this recording entirely.
+#[test]
+fn snapshot_delete_shelved_confirmation_for_one_recording() {
+    let entries = vec![
+        entry_with_shelved_tracks("auto:ride.gtd", TotalTracks(4), ShelvedTracks(1)),
+        entry_with_shelved_tracks("auto:walk.gtd", TotalTracks(2), ShelvedTracks(2)),
+    ];
+    let walk = DatabaseRef {
+        identity: "auto:walk.gtd".to_owned(),
+        group_name: "rec0".to_owned(),
+    };
+    let mut harness = history_harness(entries);
+    harness.worker.hide_path();
+    open_the_delete_shelved_confirmation(
+        &mut harness,
+        DeleteShelvedTracksScope::OneRecording(walk),
+    );
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(show_history, harness);
+    for _ in 0..4 {
+        h.run();
+    }
+    h.snapshot("delete_shelved_confirmation_for_one_recording");
+}
+
 /// The confirmation once the last shelved track has gone from the recording
 /// list: it stays up, states that there is nothing left to delete, grays the
 /// delete out, and counts down on its Close button.
 #[test]
 fn snapshot_delete_shelved_confirmation_with_every_track_live() {
-    let mut entry = entry_with_identity("auto:ride.gtd");
-    entry.total_tracks = 12;
-    let mut harness = history_harness(vec![entry]);
+    let mut harness = history_harness(vec![entry_with_shelved_tracks(
+        "auto:ride.gtd",
+        TotalTracks(12),
+        ShelvedTracks(3),
+    )]);
     // The temporary database path differs every run.
     harness.worker.hide_path();
-    harness.window.delete_shelved_prompt.open(3);
+    open_the_delete_shelved_confirmation(&mut harness, DeleteShelvedTracksScope::EveryRecording);
+    // The last shelved track goes while the confirmation is up.
+    harness.window.set_entries(vec![entry_with_shelved_tracks(
+        "auto:ride.gtd",
+        TotalTracks(12),
+        ShelvedTracks(0),
+    )]);
     let mut h = TestHarness::builder()
         .size(egui::vec2(900.0, 500.0))
         .ui_state(show_history, harness);
@@ -1789,17 +1891,24 @@ fn snapshot_delete_shelved_confirmation_with_every_track_live() {
 }
 
 /// The delete-shelved confirmation stays inside the screen and keeps its
-/// buttons reachable however many tracks it lists.
+/// buttons reachable however many tracks it lists and however many recordings
+/// it removes entirely.
 #[rstest::rstest]
 fn delete_shelved_confirmation_fits_every_viewport(
     #[values(CRAMPED_VIEWPORT, NARROW_VIEWPORT, SHORT_VIEWPORT)] viewport: egui::Vec2,
 ) {
-    let mut entry = entry_with_identity(&gt_test_utils::oversized_text('r'));
-    entry.total_tracks = OVERSIZED_ROW_COUNT;
-    entry.shelved_tracks = OVERSIZED_ROW_COUNT;
-    let shelved_tracks = entry.shelved_tracks;
-    let mut harness = history_harness(vec![entry]);
-    harness.window.delete_shelved_prompt.open(shelved_tracks);
+    let identity = gt_test_utils::oversized_text('r');
+    let entries: Vec<RecordingEntry> = (0..OVERSIZED_ROW_COUNT)
+        .map(|index| {
+            entry_with_shelved_tracks(
+                &format!("{identity}/{index}"),
+                TotalTracks(OVERSIZED_ROW_COUNT),
+                ShelvedTracks(OVERSIZED_ROW_COUNT),
+            )
+        })
+        .collect();
+    let mut harness = history_harness(entries);
+    open_the_delete_shelved_confirmation(&mut harness, DeleteShelvedTracksScope::EveryRecording);
     let mut h = TestHarness::builder()
         .size(viewport)
         .ui_state(show_history, harness);

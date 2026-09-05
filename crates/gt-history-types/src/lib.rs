@@ -1,3 +1,4 @@
+use std::fmt;
 use std::ops::RangeInclusive;
 use std::path::Path;
 
@@ -267,6 +268,12 @@ impl<'a> TrackStateColumn<'a> {
 pub struct DatabaseRef {
     pub identity: String,
     pub group_name: String,
+}
+
+impl fmt::Display for DatabaseRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}", self.identity, self.group_name)
+    }
 }
 
 /// The rule that turned a recording's fixes into its stored track ranges.
