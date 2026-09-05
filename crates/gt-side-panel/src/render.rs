@@ -8,7 +8,7 @@ use egui_phosphor::regular::LINE_SEGMENTS as ICON_LINE_SEGMENTS;
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use egui_phosphor::regular::PATH as ICON_PATH;
 use egui_phosphor::regular::ROAD_HORIZON as ICON_ROAD_HORIZON;
-use egui_phosphor::regular::TRASH as ICON_TRASH;
+use egui_phosphor::regular::TRAY_ARROW_DOWN as ICON_TRAY_ARROW_DOWN;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use gt_filter::GlobalFilter;
 use gt_loaded_files::{LoadedFilesView, RecordingNames};
@@ -28,7 +28,7 @@ use crate::filter::{FilterPanelState, render_filter_panel};
 use crate::track_columns::{
     self, TrackColumnCells, TrackColumnWidths, TrackRowCellColor, TrackRowControls,
 };
-use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TreeState};
+use crate::tree::{CheckState, NodeKey, ShelveConfirmState, TreeState};
 use crate::widgets::{
     CHECKBOX_PADDING, MetadataView, PointClickRequests, checkbox_width, expand_arrow,
     expand_arrow_width, has_metadata_details, paint_map_hover_bg, point_item_row,
@@ -156,6 +156,11 @@ pub struct PanelContext<'a> {
     pub zoom_to_visible_request: &'a mut bool,
     /// Set by clicking the ⚠ icon on a file row. Consumed by the app to show a centered dialog.
     pub warnings_request: &'a mut Option<(String, Vec<LoadWarning>)>,
+    /// What the shelve button shows while a read-only session grays it out,
+    /// and `None` while the session writes to the recording history. The app
+    /// owns this wording, which every grayed control of a read-only session
+    /// shares.
+    pub read_only_recording_history_hover: Option<&'a str>,
     /// Set when "Reset filters" is clicked, so the app can also drop the query
     /// filter (which the side panel cannot reach directly).
     pub clear_query_request: &'a mut bool,
@@ -231,6 +236,21 @@ impl<'a> PanelContext<'a> {
     }
 }
 
+/// Label of the button that shelves every track that the filter excludes,
+/// without the icon before it or the `…` suffix after it.
+pub const SHELVE_FILTERED_DATA_LABEL: &str = "Shelve filtered data";
+
+const SHELVE_FILTERED_DATA_HOVER: &str = "Takes every track that the filter excludes out of the \
+                                          view and shelves it in the recording history";
+
+/// Hover text of the shelve button while the filter excludes nothing.
+pub const EVERY_TRACK_PASSES_THE_FILTER_HOVER: &str = "Every loaded track passes the filter";
+
+/// Hover text of the shelve button while every track that the filter excludes
+/// sits outside the recording history.
+pub const ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER: &str =
+    "Only a track stored in the recording history can be shelved";
+
 pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
     let header = ui.horizontal(|ui| {
         let (_, grip) = ui.allocate_exact_size(egui::vec2(10.0, 18.0), egui::Sense::drag());
@@ -264,53 +284,44 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
     }
 
     let filter_snapshot = *ctx.filter;
-    let vis = ctx.tree.visibility();
-    let filtered_out: Vec<NodeKey> = ctx
+    let filtered_out_tracks: Vec<TrackRef> = ctx
         .files()
         .iter()
         .enumerate()
         .flat_map(|(fi, file)| {
             let fi = FileIdx::new(fi);
-            let file_enabled = fi.get(&vis.files).is_some_and(|fv| fv.enabled);
             file.tracks
                 .iter()
                 .enumerate()
-                .filter_map(move |(ti, track)| {
-                    let ti = TrackIdx::new(ti);
-                    let track_enabled = file_enabled
-                        && fi
-                            .get(&vis.files)
-                            .and_then(|fv| ti.get(&fv.tracks))
-                            .is_some_and(|tv| tv.enabled);
-                    let passes = gt_filter::track_passes_filter(track, &filter_snapshot);
-                    if !track_enabled || !passes {
-                        Some(NodeKey::Track(TrackRef::new(fi, ti)))
-                    } else {
-                        None
-                    }
-                })
+                .filter(move |(_, track)| !gt_filter::track_passes_filter(track, &filter_snapshot))
+                .map(move |(ti, _)| TrackRef::new(fi, TrackIdx::new(ti)))
         })
         .collect();
-    let has_filtered = !filtered_out.is_empty();
-    let clicked = ui
-        .scope(|ui| {
-            if has_filtered {
-                let v = ui.visuals_mut();
-                v.widgets.hovered.bg_fill = gt_ui_theme::DANGER_HOVER;
-                v.widgets.hovered.fg_stroke.color = gt_ui_theme::DANGER_FG;
-                v.widgets.active.bg_fill = gt_ui_theme::DANGER_ACTIVE;
-                v.widgets.active.fg_stroke.color = gt_ui_theme::DANGER_FG;
-            }
-            ui.add_enabled(
-                has_filtered,
-                Button::new(format!("{ICON_TRASH} Remove filtered data")),
-            )
-            .clicked()
-        })
-        .inner;
-    if clicked {
-        ctx.tree.delete_confirm = Some(DeleteConfirmState {
-            items: filtered_out,
+    let any_track_is_stored = filtered_out_tracks
+        .iter()
+        .any(|track| ctx.file_stored_in_history(track.fi));
+    let unavailable = if filtered_out_tracks.is_empty() {
+        Some(EVERY_TRACK_PASSES_THE_FILTER_HOVER)
+    } else if let Some(read_only) = ctx.read_only_recording_history_hover {
+        Some(read_only)
+    } else if any_track_is_stored {
+        None
+    } else {
+        Some(ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER)
+    };
+    let button = Button::new(format!(
+        "{ICON_TRAY_ARROW_DOWN} {SHELVE_FILTERED_DATA_LABEL}{ELLIPSIS}"
+    ));
+    let shelve = match unavailable {
+        Some(hover) => ui.add_enabled(false, button).on_disabled_hover_text(hover),
+        None => ui.add(button).on_hover_text(SHELVE_FILTERED_DATA_HOVER),
+    };
+    if shelve.clicked() {
+        ctx.tree.shelve_confirm = Some(ShelveConfirmState {
+            items: filtered_out_tracks
+                .into_iter()
+                .map(NodeKey::Track)
+                .collect(),
             delete_permanently: false,
         });
     }

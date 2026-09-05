@@ -87,15 +87,6 @@ pub const QUERY_MATCH_HOVER_HALO: Color32 = Color32::from_rgba_premultiplied(59,
 /// Premultiplied equivalent of `(100, 200, 255, 40)`.
 pub const HIGHLIGHT_BLUE_BAND: Color32 = Color32::from_rgba_premultiplied(16, 31, 40, 40);
 
-/// Background fill for a danger button in its hovered state.
-pub const DANGER_HOVER: Color32 = Color32::from_rgb(160, 35, 35);
-
-/// Background fill for a danger button in its active (pressed) state.
-pub const DANGER_ACTIVE: Color32 = Color32::from_rgb(130, 25, 25);
-
-/// Foreground colour used on text/icons drawn over danger button backgrounds.
-pub const DANGER_FG: Color32 = Color32::WHITE;
-
 /// Colour used for inline load-error labels.
 pub const ERROR_INDICATOR: Color32 = Color32::from_rgb(220, 70, 50);
 

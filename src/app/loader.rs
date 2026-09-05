@@ -1552,7 +1552,7 @@ mod tests {
     }
 
     /// A loaded recording is stored with a per-track table, and those tracks can
-    /// be shelved (what "Remove filtered data" does), surfacing in the listing
+    /// be shelved (what "Shelve filtered data" does), surfacing in the listing
     /// so "Delete shelved data" enables.
     #[test]
     fn loaded_recording_stores_tracks_and_supports_shelving() {

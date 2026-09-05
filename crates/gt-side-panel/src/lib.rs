@@ -6,9 +6,11 @@ pub mod widgets;
 
 pub use filter::{FilterPanelState, render_filter_panel};
 pub use render::{
-    PanelContext, RecordingDetails, SnapCostingTarget, SnapInFlightView, SnapPanelView,
-    SnapProgressView, SnapRowView, VISIBLE_SECTION_DEFAULT_FRACTION, show_side_panel,
+    EVERY_TRACK_PASSES_THE_FILTER_HOVER, ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER, PanelContext,
+    RecordingDetails, SHELVE_FILTERED_DATA_LABEL, SnapCostingTarget, SnapInFlightView,
+    SnapPanelView, SnapProgressView, SnapRowView, VISIBLE_SECTION_DEFAULT_FRACTION,
+    show_side_panel,
 };
 pub use tree::{
-    CheckState, DeleteConfirmState, FileNode, NodeKey, TrackNode, TreeState, VisibleTracksInFile,
+    CheckState, FileNode, NodeKey, ShelveConfirmState, TrackNode, TreeState, VisibleTracksInFile,
 };

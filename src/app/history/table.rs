@@ -400,7 +400,7 @@ pub(super) fn data_breakdown_ui(ui: &mut egui::Ui, entry: &RecordingEntry) {
     if entry.shelved_tracks > 0 {
         ui.label(
             RichText::new(
-                "Shelved tracks came from 'remove filtered data'. \
+                "Shelved tracks came from 'shelve filtered data'. \
                  Use 'Delete shelved data' to drop them permanently.",
             )
             .small()

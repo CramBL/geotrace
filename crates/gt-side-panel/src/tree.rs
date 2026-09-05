@@ -33,10 +33,10 @@ pub enum NodeKey {
     Track(TrackRef),
 }
 
-pub struct DeleteConfirmState {
+/// The items of an open shelve confirmation, and the state of its
+/// permanent-delete tickbox.
+pub struct ShelveConfirmState {
     pub items: Vec<NodeKey>,
-    /// When set, removal also permanently deletes the affected recordings from
-    /// the history database.
     pub delete_permanently: bool,
 }
 
@@ -196,7 +196,7 @@ pub struct TreeState {
     pub files: Vec<FileNode>,
     pub selection: BTreeSet<NodeKey>,
     pub selection_anchor: Option<NodeKey>,
-    pub delete_confirm: Option<DeleteConfirmState>,
+    pub shelve_confirm: Option<ShelveConfirmState>,
     /// Items the user asked to unload from the view (non-destructive, the
     /// recordings stay in history). Consumed by the app each frame.
     pub pending_unload: Option<Vec<NodeKey>>,
@@ -225,7 +225,7 @@ impl TreeState {
             files: Vec::new(),
             selection: BTreeSet::new(),
             selection_anchor: None,
-            delete_confirm: None,
+            shelve_confirm: None,
             pending_unload: None,
             detached: false,
             reveal_request: None,
@@ -306,7 +306,7 @@ impl TreeState {
             .collect();
         self.selection.clear();
         self.selection_anchor = None;
-        self.delete_confirm = None;
+        self.shelve_confirm = None;
         self.rebuild_visibility();
         self.rebuild_event_marker_visibility();
         self.rebuild_generated_marker_visibility();

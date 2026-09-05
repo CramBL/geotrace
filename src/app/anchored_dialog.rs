@@ -27,7 +27,7 @@ const FROZEN_REGIONS: &str = "frozen_regions";
 
 /// Every dialog [`AnchoredDialog`] draws. A new dialog names itself here and
 /// the suite in `tests` then holds it to the layout guarantees.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, EnumIter)]
 pub(super) enum AnchoredDialogKind {
     AboutGeoTrace,
     ArchiveHeldByTheOtherInstance,
@@ -41,7 +41,7 @@ pub(super) enum AnchoredDialogKind {
     HistoryDatabaseLocked,
     MapboxToken,
     RecoverArchive,
-    RemoveItems,
+    ShelveItems,
     SnapToRoadAgain,
     SnapToRoadAutomatically,
     SnapToRoadConsent,
@@ -54,6 +54,16 @@ pub(super) enum AnchoredDialogKind {
 }
 
 impl AnchoredDialogKind {
+    /// The id every anchored dialog holds its size, its position and its
+    /// frozen regions under.
+    ///
+    /// [`AnchoredDialog::identified_by_its_kind`] draws the window itself
+    /// under this id too, which a test reaches through
+    /// `AuditedWindow::identified`.
+    pub(super) fn window_id(self) -> egui::Id {
+        egui::Id::new(self)
+    }
+
     fn width(self) -> f32 {
         match self {
             // Room for the attribution lines that pair a sentence with a link.
@@ -88,9 +98,9 @@ impl AnchoredDialogKind {
             // the one stating when write access was taken, on two lines each.
             Self::RecoverArchive => 460.0,
             // Room for a track's name beside its number, distance and
-            // duration, and for the line stating what the remove does in
+            // duration, and for the line stating what the confirmation does in
             // history.
-            Self::RemoveItems => 420.0,
+            Self::ShelveItems => 420.0,
             // Room for the statement about replacing the stored result on two
             // lines.
             Self::SnapToRoadAgain => 380.0,
@@ -275,15 +285,32 @@ pub(super) struct AnchoredDialog<'a> {
 
 impl<'a> AnchoredDialog<'a> {
     /// Two dialogs on screen at once need titles that differ: egui derives the
-    /// window's id from `title`, and the layout this holds is under that id.
+    /// window's id from `title`. The size and the position the dialog holds
+    /// sit under [`AnchoredDialogKind::window_id`].
     pub(super) fn new(kind: AnchoredDialogKind, title: impl Into<String>) -> Self {
         let title = title.into();
-        let area_id = egui::Id::new(Some(title.as_str()));
         Self {
+            area_id: egui::Id::new(Some(title.as_str())),
             kind,
             title,
-            area_id,
             open: None,
+        }
+    }
+
+    /// A dialog whose title follows one of its own controls, drawn under
+    /// [`AnchoredDialogKind::window_id`]: egui keeps the size and the position
+    /// of a window across a change of its title only while the id stays put.
+    ///
+    /// Every other dialog keeps the title-derived id of [`Self::new`], which
+    /// is what `AuditedWindow::titled` and `HarnessInteraction::window_rect`
+    /// look a window up by.
+    pub(super) fn identified_by_its_kind(
+        kind: AnchoredDialogKind,
+        title: impl Into<String>,
+    ) -> Self {
+        Self {
+            area_id: kind.window_id(),
+            ..Self::new(kind, title)
         }
     }
 
@@ -297,7 +324,7 @@ impl<'a> AnchoredDialog<'a> {
     /// [`show`](Self::show) so the body can draw into them.
     pub(super) fn regions(&self) -> DialogRegions {
         DialogRegions {
-            id: self.area_id.with(FROZEN_REGIONS),
+            id: self.kind.window_id().with(FROZEN_REGIONS),
         }
     }
 
@@ -317,7 +344,7 @@ impl<'a> AnchoredDialog<'a> {
             area_id,
             open,
         } = self;
-        let held_id = area_id.with("held_layout");
+        let held_id = kind.window_id().with("held_layout");
         let pass = ctx.cumulative_pass_nr();
         let mut held = ctx
             .data(|data| data.get_temp::<HeldLayout>(held_id))
@@ -325,7 +352,7 @@ impl<'a> AnchoredDialog<'a> {
         if held.last_drawn_pass + 1 < pass {
             held = HeldLayout::default();
             ctx.data_mut(|data| {
-                data.remove::<FrozenRegionHeights>(area_id.with(FROZEN_REGIONS));
+                data.remove::<FrozenRegionHeights>(kind.window_id().with(FROZEN_REGIONS));
             });
         }
         held.last_drawn_pass = pass;

@@ -1,5 +1,6 @@
-use egui::{Button, Checkbox, Grid, Label, RichText, ScrollArea, Window};
+use egui::{Button, Grid, Label, RichText, ScrollArea, Window};
 use egui_phosphor::regular::WARNING as ICON_WARNING;
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
@@ -8,7 +9,6 @@ use gt_fmt::UTC_SECOND_FORMAT;
 use gt_jam::text::{ATTRIBUTION, PUBLISHER_URL, UPSTREAM_URL};
 use gt_log_view::{LoadedLogs, RecordingKey};
 use gt_map::{MapLayer, NavMap};
-use gt_pending_writes::WriteAccess;
 use gt_side_panel::{NodeKey, RecordingDetails, TreeState};
 use gt_store::{DatabaseRef, EnvironmentArchive};
 use gt_types::{LoadWarning, TrackRef};
@@ -23,11 +23,15 @@ use crate::app::anchored_dialog::{
 use crate::app::environment_storage::{CoveredDayCounts, PruneRequest, PruneScope, PrunedDays};
 use crate::app::mapbox_token;
 use crate::app::mapbox_token::{MapboxTokenCommit, MapboxTokenField};
-use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 
-const PERMANENT_DELETE_LABEL: &str = "Also delete permanently from history";
+/// Label of the tickbox that escalates the shelve to a permanent delete.
+const PERMANENT_DELETE_LABEL: &str = "Delete permanently from history";
 
-/// The tracks of one stored recording that a remove acts on.
+pub(in crate::app) const SHELVE_BUTTON_LABEL: &str = "Shelve";
+
+pub(in crate::app) const DELETE_PERMANENTLY_BUTTON_LABEL: &str = "Delete permanently";
+
+/// The tracks of one stored recording that the confirmed action applies to.
 pub struct RecordingTrackRemoval {
     pub db_ref: DatabaseRef,
     /// The rows of the recording's stored track table - not the live view
@@ -35,17 +39,41 @@ pub struct RecordingTrackRemoval {
     pub track_rows: Vec<usize>,
 }
 
-/// Actions the app applies in the frame after the user confirms the remove
+/// What the confirmation does in the recording history to the tracks that it
+/// takes out of the view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredTrackAction {
+    Shelve,
+    DeletePermanently,
+}
+
+impl StoredTrackAction {
+    fn from_permanent_delete_tickbox(ticked: bool) -> Self {
+        if ticked {
+            Self::DeletePermanently
+        } else {
+            Self::Shelve
+        }
+    }
+
+    /// The title the shelve confirmation shows for `count` items.
+    fn confirmation_title(self, count: usize) -> String {
+        let item_label = gt_fmt::pluralize(count, "item", "items");
+        match self {
+            Self::Shelve => format!("Shelve {count} {item_label}?"),
+            Self::DeletePermanently => format!("Delete {count} {item_label} permanently?"),
+        }
+    }
+}
+
+/// Actions the app applies in the frame after the user confirms the shelve
 /// dialog.
-pub struct RemoveOutcome {
-    /// Per stored recording, the tracks being removed. Empty when nothing
-    /// removed was backed by history.
+pub struct ShelveOutcome {
+    /// Per stored recording, the tracks that the action applies to.
     pub affected: Vec<RecordingTrackRemoval>,
-    /// `true` to permanently delete the affected tracks from the originals,
-    /// `false` to hide them.
-    pub permanent: bool,
-    /// The [`RecordingKey`] of every recording the remove took out of the
-    /// session.
+    pub action: StoredTrackAction,
+    /// The [`RecordingKey`] of every recording that the confirmation took out
+    /// of the session.
     pub removed_recordings: Vec<RecordingKey>,
 }
 
@@ -241,43 +269,43 @@ pub(super) fn destructive_button(ui: &mut egui::Ui, label: &str) -> egui::Respon
         .on_hover_text("This cannot be undone")
 }
 
-/// The region listing the items the remove takes out of the view.
-const REMOVED_ITEMS_REGION: &str = "removed_items";
+/// The region listing the items that the confirmation takes out of the view.
+const SHELVED_ITEMS_REGION: &str = "shelved_items";
 
-/// Lines the [`REMOVED_ITEMS_REGION`] holds at most, however many items the
-/// remove takes: the rest of the rows scroll inside it. Twelve is the room ten
-/// item rows take, each a line of body text with the spacing under it.
-const REMOVED_ITEMS_MOST_LINES: u8 = 12;
+/// Lines the [`SHELVED_ITEMS_REGION`] holds at most, however many items the
+/// confirmation takes: the rest of the rows scroll inside it. Twelve is the
+/// room ten item rows take, each a line of body text with the spacing under it.
+const SHELVED_ITEMS_MOST_LINES: u8 = 12;
 
-/// The region counting the logs attached to the recordings the remove takes
-/// out. A restored attachment that arrives while the dialog is open joins that
-/// count.
-const ATTACHED_LOGS_REGION: &str = "remove_attached_logs";
+/// The region counting the logs attached to the recordings the confirmation
+/// takes out. A restored attachment that arrives while the dialog is open joins
+/// that count.
+const ATTACHED_LOGS_REGION: &str = "shelve_attached_logs";
 
 /// Lines the [`ATTACHED_LOGS_REGION`] holds from the frame the dialog opens.
 /// The longer of its two wordings takes one line at this width.
 const ATTACHED_LOGS_LINES: u8 = 1;
 
-/// Show the delete-confirmation dialog.
+/// Show the shelve confirmation, which the side panel's "Shelve filtered data"
+/// button raises over the tracks that the filter excludes.
 ///
-/// Returns `Some` in the one frame when items were actually removed, so the
-/// caller can rebuild caches that depend on file indices and apply the chosen
-/// history operation (hide or permanent delete) to `affected`.
-pub fn show_delete_confirmation(
+/// Returns `Some` in the one frame the user confirms it, so the caller can
+/// rebuild the caches that depend on file indices and apply the chosen action
+/// to `affected`.
+pub fn show_shelve_confirmation(
     ui: &egui::Ui,
     tree: &mut TreeState,
     loaded_files: &mut LoadedFiles,
     recording_names: &RecordingNames,
     logs: &LoadedLogs,
-    write_access: WriteAccess,
-) -> Option<RemoveOutcome> {
-    let Some(confirm) = &tree.delete_confirm else {
+) -> Option<ShelveOutcome> {
+    let Some(confirm) = &tree.shelve_confirm else {
         return None;
     };
     let count = confirm.items.len();
-    let mut permanent = confirm.delete_permanently;
-    // Tracks backed by history that this remove touches. Drives the wording and
-    // whether the "delete permanently" option is even relevant.
+    // The body's tickbox writes it and the action row's button reads it, from
+    // two closures that the dialog holds at once.
+    let permanent = Cell::new(confirm.delete_permanently);
     let removals = track_removals(&confirm.items, loaded_files.view());
     let affected_recordings = removals.len();
     let affected_tracks: usize = removals.iter().map(|r| r.track_rows.len()).sum();
@@ -294,13 +322,14 @@ pub fn show_delete_confirmation(
         .ctx()
         .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
 
-    let mut do_delete = enter_pressed;
+    let mut do_confirm = enter_pressed;
     let mut do_cancel = escape_pressed;
 
-    let item_label = if count == 1 { "item" } else { "items" };
-    let dialog = AnchoredDialog::new(
-        AnchoredDialogKind::RemoveItems,
-        format!("Remove {count} {item_label}?"),
+    // The title follows the tickbox from the frame after the user ticks it:
+    // egui takes the title before the body draws the tickbox.
+    let dialog = AnchoredDialog::identified_by_its_kind(
+        AnchoredDialogKind::ShelveItems,
+        StoredTrackAction::from_permanent_delete_tickbox(permanent.get()).confirmation_title(count),
     );
     let regions = dialog.regions();
     dialog.show(
@@ -308,11 +337,11 @@ pub fn show_delete_confirmation(
         DialogBody::new(|ui| {
             regions.frozen_at_open(
                 ui,
-                REMOVED_ITEMS_REGION,
-                HeldBodyLines::what_the_content_took().and_at_most(REMOVED_ITEMS_MOST_LINES),
+                SHELVED_ITEMS_REGION,
+                HeldBodyLines::what_the_content_took().and_at_most(SHELVED_ITEMS_MOST_LINES),
                 |ui| {
                     let items: Vec<_> = tree
-                        .delete_confirm
+                        .shelve_confirm
                         .as_ref()
                         .map(|c| c.items.clone())
                         .unwrap_or_default();
@@ -352,41 +381,23 @@ pub fn show_delete_confirmation(
                 },
             );
             ui.separator();
-            if affected_tracks == 0 {
-                ui.label(
-                    RichText::new("This only removes them from the current view.")
-                        .weak()
-                        .small(),
-                );
-            } else if !write_access.allows_writing() {
-                permanent = false;
-                ui.add_enabled(false, Checkbox::new(&mut permanent, PERMANENT_DELETE_LABEL))
-                    .on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER);
-                ui.label(
-                    RichText::new(
-                        "This only removes them from the current view: the session is read-only \
-                         and leaves every recording in history as it is.",
-                    )
-                    .weak()
-                    .small(),
-                );
+            let mut ticked = permanent.get();
+            ui.checkbox(&mut ticked, PERMANENT_DELETE_LABEL);
+            permanent.set(ticked);
+            let track_label = gt_fmt::pluralize(affected_tracks, "track", "tracks");
+            let rec_label = gt_fmt::pluralize(affected_recordings, "recording", "recordings");
+            let detail = if ticked {
+                format!(
+                    "Permanently deletes {affected_tracks} {track_label} from \
+                     {affected_recordings} {rec_label} in history and takes them out of the view."
+                )
             } else {
-                ui.checkbox(&mut permanent, PERMANENT_DELETE_LABEL);
-                let track_label = gt_fmt::pluralize(affected_tracks, "track", "tracks");
-                let rec_label = gt_fmt::pluralize(affected_recordings, "recording", "recordings");
-                let detail = if permanent {
-                    format!(
-                        "Removes them from the view and permanently deletes {affected_tracks} \
-                         {track_label} from {affected_recordings} {rec_label} in history."
-                    )
-                } else {
-                    format!(
-                        "Removes them from the view and hides {affected_tracks} {track_label} in \
-                         {affected_recordings} {rec_label} in history."
-                    )
-                };
-                ui.label(RichText::new(detail).weak().small());
-            }
+                format!(
+                    "Shelves {affected_tracks} {track_label} in {affected_recordings} {rec_label} \
+                     in history and takes them out of the view."
+                )
+            };
+            ui.label(RichText::new(detail).weak().small());
             regions.frozen_at_open(
                 ui,
                 ATTACHED_LOGS_REGION,
@@ -396,7 +407,7 @@ pub fn show_delete_confirmation(
                         return;
                     }
                     let log_label = gt_fmt::pluralize(attached_logs, "log", "logs");
-                    let line = if permanent {
+                    let line = if permanent.get() {
                         format!("Deletes {attached_logs} attached {log_label} with them.")
                     } else {
                         format!(
@@ -409,8 +420,13 @@ pub fn show_delete_confirmation(
             );
         }),
         DialogActionRow::buttons(|ui| {
-            if ui.button("Remove").clicked() {
-                do_delete = true;
+            let confirm = if permanent.get() {
+                destructive_button(ui, DELETE_PERMANENTLY_BUTTON_LABEL)
+            } else {
+                ui.button(SHELVE_BUTTON_LABEL)
+            };
+            if confirm.clicked() {
+                do_confirm = true;
             }
             if ui.button("Cancel").clicked() {
                 do_cancel = true;
@@ -419,31 +435,33 @@ pub fn show_delete_confirmation(
     );
 
     if do_cancel {
-        tree.delete_confirm = None;
+        tree.shelve_confirm = None;
         return None;
     }
-    if do_delete {
+    let permanent = permanent.get();
+    if do_confirm {
         let items = tree
-            .delete_confirm
+            .shelve_confirm
             .take()
             .map(|c| c.items)
             .unwrap_or_default();
-        let affected = execute_delete(&items, loaded_files, tree);
-        return Some(RemoveOutcome {
+        let affected = remove_items_from_view(&items, loaded_files, tree);
+        let action = StoredTrackAction::from_permanent_delete_tickbox(permanent);
+        return Some(ShelveOutcome {
             affected,
-            permanent,
+            action,
             removed_recordings,
         });
     }
     // Keep the checkbox state across frames while the dialog stays open.
-    if let Some(c) = tree.delete_confirm.as_mut() {
+    if let Some(c) = tree.shelve_confirm.as_mut() {
         c.delete_permanently = permanent;
     }
     None
 }
 
-/// The [`RecordingKey`] of every recording removing `keys` takes out of the
-/// session.
+/// The [`RecordingKey`] of every recording that taking `keys` out of the view
+/// removes from the session.
 pub fn removed_recording_keys(
     keys: &[NodeKey],
     loaded_files: LoadedFilesView<'_>,
@@ -540,10 +558,10 @@ fn track_removals(
     removals
 }
 
-/// Remove `keys` from the view and return, per stored recording, the tracks that
-/// were removed (so the caller can hide or permanently delete them). Computed
-/// before the view is mutated, while the track indices are still intact.
-pub fn execute_delete(
+/// Remove `keys` from the view and return, per stored recording, the tracks
+/// that were removed. The rows are read before the view is mutated, while the
+/// track indices still address the loaded tracks.
+pub fn remove_items_from_view(
     keys: &[NodeKey],
     loaded_files: &mut LoadedFiles,
     tree: &mut TreeState,
@@ -1581,7 +1599,7 @@ mod tests {
 
     use egui_kittest::kittest::{NodeT as _, Queryable as _};
     use gt_map::TileAccess;
-    use gt_pending_writes::{WriteAccess, WriteKind};
+    use gt_pending_writes::WriteKind;
     use gt_store::{DatabaseRef, TrackState};
     use gt_test_utils::window_fit::{
         CRAMPED_VIEWPORT, NARROW_VIEWPORT, OVERSIZED_ROW_COUNT, SHORT_VIEWPORT,
@@ -1592,19 +1610,20 @@ mod tests {
     use rustc_hash::FxHashMap;
 
     use super::{
-        CoveredDayCounts, DELETE_ARCHIVED_DAYS_TITLE, Duration, EnvironmentArchive,
-        EnvironmentPruneChoice, EnvironmentPrunePrompt, FORCE_QUIT_LABEL, ForceQuitChoice,
-        ForceQuitPromptContents, LoadedLogs, MapLayer, MapboxTokenField, NavMap, NodeKey,
-        PERMANENT_DELETE_LABEL, PruneRequest, PruneScope, PrunedDays, REMOVED_ITEMS_MOST_LINES,
-        RecordingDetails, SnapScopeChoice, SnapScopeCount, SnapScopeCounts, TimeUntilTheClose,
-        TrackRef, execute_delete, files_fully_removed, prune_scope_line, show_about_dialog,
-        show_delete_confirmation, show_environment_prune_confirmation,
-        show_force_quit_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
-        show_orphaned_event_markers_popup, show_recording_details_dialog, show_snap_auto_prompt,
+        AnchoredDialogKind, CoveredDayCounts, DELETE_ARCHIVED_DAYS_TITLE,
+        DELETE_PERMANENTLY_BUTTON_LABEL, Duration, EnvironmentArchive, EnvironmentPruneChoice,
+        EnvironmentPrunePrompt, FORCE_QUIT_LABEL, ForceQuitChoice, ForceQuitPromptContents,
+        LoadedLogs, MapLayer, MapboxTokenField, NavMap, NodeKey, PruneRequest, PruneScope,
+        PrunedDays, RecordingDetails, SHELVE_BUTTON_LABEL, SHELVED_ITEMS_MOST_LINES, ShelveOutcome,
+        SnapScopeChoice, SnapScopeCount, SnapScopeCounts, StoredTrackAction, TimeUntilTheClose,
+        TrackRef, files_fully_removed, prune_scope_line, remove_items_from_view, show_about_dialog,
+        show_environment_prune_confirmation, show_force_quit_confirmation,
+        show_load_warnings_dialog, show_mapbox_token_dialog, show_orphaned_event_markers_popup,
+        show_recording_details_dialog, show_shelve_confirmation, show_snap_auto_prompt,
         show_snap_consent_dialog, show_snap_replace_dialog, show_snap_scope_dialog, track_removals,
     };
     use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
-    use gt_side_panel::{DeleteConfirmState, TreeState};
+    use gt_side_panel::{ShelveConfirmState, TreeState};
 
     use crate::app::history_db::{DbOp, HistoryWorker, Response};
     use crate::app::history_test_support::{
@@ -2139,56 +2158,26 @@ mod tests {
         loaded
     }
 
-    /// The remove confirmation over one stored recording, with its first
-    /// track selected for removal.
-    pub(super) struct DeleteConfirmationState {
+    /// The shelve confirmation over the tracks of one stored recording, and
+    /// what it reported on the frame the user confirmed it.
+    pub(super) struct ShelveConfirmationState {
         tree: TreeState,
         loaded_files: LoadedFiles,
-        write_access: WriteAccess,
+        outcome: Option<ShelveOutcome>,
     }
 
-    fn delete_confirmation_ui(ui: &mut egui::Ui, state: &mut DeleteConfirmationState) {
+    fn shelve_confirmation_ui(ui: &mut egui::Ui, state: &mut ShelveConfirmationState) {
         let names = RecordingNames::resolve(state.loaded_files.view(), "{filename}");
-        show_delete_confirmation(
+        let outcome = show_shelve_confirmation(
             ui,
             &mut state.tree,
             &mut state.loaded_files,
             &names,
             &LoadedLogs::default(),
-            state.write_access,
         );
-    }
-
-    /// Removing tracks of a stored recording writes to the recording history,
-    /// which a read-only session does not: the permanent-delete tickbox is
-    /// grayed, and the dialog states that the remove only changes the view.
-    #[test]
-    fn the_remove_confirmation_touches_no_recording_in_a_read_only_session() {
-        let mut tree = TreeState::default();
-        tree.delete_confirm = Some(DeleteConfirmState {
-            items: vec![track_key(0, 0)],
-            delete_permanently: true,
-        });
-        let mut harness = TestHarness::builder().ui_state(
-            delete_confirmation_ui,
-            DeleteConfirmationState {
-                tree,
-                loaded_files: make_loaded_files(&[(2, true)]),
-                write_access: WriteAccess::ReadOnly,
-            },
-        );
-        harness.inner.run_steps(3);
-
-        assert!(
-            harness
-                .inner
-                .get_by_label_contains(PERMANENT_DELETE_LABEL)
-                .accesskit_node()
-                .is_disabled()
-        );
-        harness
-            .inner
-            .get_by_label_contains("the session is read-only");
+        if outcome.is_some() {
+            state.outcome = outcome;
+        }
     }
 
     /// Whether the confirmation opens with [`PERMANENT_DELETE_LABEL`] ticked.
@@ -2197,73 +2186,111 @@ mod tests {
 
     /// The confirmation over `count` tracks of one stored recording, at
     /// `viewport`.
-    pub(super) fn remove_confirmation_at(
+    pub(super) fn shelve_confirmation_at(
         viewport: egui::Vec2,
         count: usize,
         PermanentDeleteTicked(delete_permanently): PermanentDeleteTicked,
-    ) -> TestHarness<'static, DeleteConfirmationState> {
+    ) -> TestHarness<'static, ShelveConfirmationState> {
         let mut tree = TreeState::default();
-        tree.delete_confirm = Some(DeleteConfirmState {
+        tree.shelve_confirm = Some(ShelveConfirmState {
             items: (0..count).map(|ti| track_key(0, ti)).collect(),
             delete_permanently,
         });
         let mut harness = TestHarness::builder().size(viewport).ui_state(
-            delete_confirmation_ui,
-            DeleteConfirmationState {
+            shelve_confirmation_ui,
+            ShelveConfirmationState {
                 tree,
                 loaded_files: make_loaded_files(&[(count + 1, true)]),
-                write_access: WriteAccess::Owner,
+                outcome: None,
             },
         );
         harness.inner.run_steps(4);
         harness
     }
 
-    fn remove_confirmation(count: usize) -> TestHarness<'static, DeleteConfirmationState> {
-        remove_confirmation_at(DIALOG_VIEWPORT, count, PermanentDeleteTicked(true))
+    fn shelve_confirmation(count: usize) -> TestHarness<'static, ShelveConfirmationState> {
+        shelve_confirmation_at(DIALOG_VIEWPORT, count, PermanentDeleteTicked(true))
     }
 
-    pub(super) fn remove_confirmation_title(count: usize) -> String {
-        format!("Remove {count} items?")
+    /// The rectangle of the confirmation's window, read under its
+    /// [`AnchoredDialogKind::window_id`]: the title it draws changes with the
+    /// permanent-delete tickbox.
+    pub(super) fn shelve_confirmation_rect(
+        harness: &TestHarness<'static, ShelveConfirmationState>,
+    ) -> Option<egui::Rect> {
+        harness
+            .inner
+            .ctx
+            .memory(|memory| memory.area_rect(AnchoredDialogKind::ShelveItems.window_id()))
+    }
+
+    /// The confirmation's title and its button both state the level that its
+    /// tickbox chose, and the outcome reports that level.
+    #[rstest::rstest]
+    #[case(
+        PermanentDeleteTicked(false),
+        SHELVE_BUTTON_LABEL,
+        StoredTrackAction::Shelve
+    )]
+    #[case(
+        PermanentDeleteTicked(true),
+        DELETE_PERMANENTLY_BUTTON_LABEL,
+        StoredTrackAction::DeletePermanently
+    )]
+    fn the_shelve_confirmation_applies_the_action_that_its_tickbox_chose(
+        #[case] ticked: PermanentDeleteTicked,
+        #[case] button_label: &str,
+        #[case] expected: StoredTrackAction,
+    ) {
+        const ITEMS: usize = 2;
+        let mut harness = shelve_confirmation_at(DIALOG_VIEWPORT, ITEMS, ticked);
+
+        harness
+            .inner
+            .get_by_label_contains(&expected.confirmation_title(ITEMS));
+        harness.inner.get_by_label(button_label).click();
+        harness.inner.run_steps(2);
+
+        assert_eq!(
+            harness.inner.state().outcome.as_ref().map(|o| o.action),
+            Some(expected)
+        );
     }
 
     #[test]
-    fn snapshot_the_remove_confirmation() {
-        let mut harness = remove_confirmation(2);
-        harness.snapshot("remove_confirmation");
+    fn snapshot_the_shelve_confirmation() {
+        let mut harness = shelve_confirmation(2);
+        harness.snapshot("shelve_confirmation");
     }
 
     /// Items enough to fill the room the list caps at
-    /// [`REMOVED_ITEMS_MOST_LINES`].
+    /// [`SHELVED_ITEMS_MOST_LINES`].
     const ITEMS_PAST_THE_CAPPED_ROOM: usize = 12;
 
     const ITEMS_FAR_PAST_THE_CAPPED_ROOM: usize = 40;
 
     /// The list past the room it caps at, scrolling inside that room.
     #[test]
-    fn snapshot_the_remove_confirmation_past_the_capped_room() {
-        let mut harness = remove_confirmation(ITEMS_FAR_PAST_THE_CAPPED_ROOM);
-        harness.snapshot("remove_confirmation_past_the_capped_room");
+    fn snapshot_the_shelve_confirmation_past_the_capped_room() {
+        let mut harness = shelve_confirmation(ITEMS_FAR_PAST_THE_CAPPED_ROOM);
+        harness.snapshot("shelve_confirmation_past_the_capped_room");
     }
 
     #[test]
-    fn the_remove_confirmation_opens_at_one_height_for_every_list_past_the_capped_room() {
-        let past = remove_confirmation(ITEMS_PAST_THE_CAPPED_ROOM);
-        let far_past = remove_confirmation(ITEMS_FAR_PAST_THE_CAPPED_ROOM);
+    fn the_shelve_confirmation_opens_at_one_height_for_every_list_past_the_capped_room() {
+        let past = shelve_confirmation(ITEMS_PAST_THE_CAPPED_ROOM);
+        let far_past = shelve_confirmation(ITEMS_FAR_PAST_THE_CAPPED_ROOM);
 
         assert_eq!(
-            far_past
-                .inner
-                .window_rect(&remove_confirmation_title(ITEMS_FAR_PAST_THE_CAPPED_ROOM))
-                .expect("the remove confirmation is shown")
+            shelve_confirmation_rect(&far_past)
+                .expect("the shelve confirmation is shown")
                 .size(),
-            past.inner
-                .window_rect(&remove_confirmation_title(ITEMS_PAST_THE_CAPPED_ROOM))
-                .expect("the remove confirmation is shown")
+            shelve_confirmation_rect(&past)
+                .expect("the shelve confirmation is shown")
                 .size(),
             "{ITEMS_FAR_PAST_THE_CAPPED_ROOM} removed items made the confirmation taller than \
              {ITEMS_PAST_THE_CAPPED_ROOM} did: a list past the room it caps at \
-             {REMOVED_ITEMS_MOST_LINES} lines has to scroll inside that room"
+             {SHELVED_ITEMS_MOST_LINES} lines has to scroll inside that room"
         );
     }
 
@@ -2411,8 +2438,8 @@ mod tests {
     }
 
     /// Remove the track at view position `ti` from the view, and send the
-    /// permanent delete for the stored rows that [`execute_delete`] returns,
-    /// the way the app applies a [`RemoveOutcome`].
+    /// permanent delete for the stored rows that [`remove_items_from_view`]
+    /// returns, the way `App::apply_shelve_outcome` sends it.
     fn remove_the_track_permanently(
         worker: &HistoryWorker,
         loaded: &mut LoadedFiles,
@@ -2420,7 +2447,7 @@ mod tests {
         db_ref: &DatabaseRef,
         ti: usize,
     ) {
-        let removals = execute_delete(&[track_key(0, ti)], loaded, tree);
+        let removals = remove_items_from_view(&[track_key(0, ti)], loaded, tree);
         let [removal] = removals.as_slice() else {
             panic!("expected one affected recording, got {}", removals.len());
         };
@@ -2492,7 +2519,7 @@ mod tests {
         // keep the numbers of the rows they came from.
         let mut loaded = loaded_recording_in_stored_rows(&[0, 2], &db_ref);
         let mut tree = TreeState::default();
-        let removals = execute_delete(&[track_key(0, 1)], &mut loaded, &mut tree);
+        let removals = remove_items_from_view(&[track_key(0, 1)], &mut loaded, &mut tree);
         let [removal] = removals.as_slice() else {
             panic!("expected one affected recording, got {}", removals.len());
         };
@@ -2525,7 +2552,7 @@ mod tests {
         let mut loaded = make_loaded_files(&[(0, true)]);
         let mut tree = TreeState::default();
 
-        let removals = execute_delete(&[file_key(0)], &mut loaded, &mut tree);
+        let removals = remove_items_from_view(&[file_key(0)], &mut loaded, &mut tree);
 
         assert!(
             removals.is_empty(),
@@ -2537,7 +2564,7 @@ mod tests {
     /// of the audit viewports.
     #[derive(Debug, Clone, Copy)]
     enum OversizedDialog {
-        Remove,
+        Shelve,
         OrphanedEventMarkers,
         LoadWarnings,
         RecordingDetails,
@@ -2554,7 +2581,8 @@ mod tests {
     impl OversizedDialog {
         fn title(self) -> String {
             match self {
-                Self::Remove => format!("Remove {OVERSIZED_ROW_COUNT} items?"),
+                // The confirmation opens with its permanent-delete tickbox clear.
+                Self::Shelve => StoredTrackAction::Shelve.confirmation_title(OVERSIZED_ROW_COUNT),
                 Self::OrphanedEventMarkers => {
                     format!("{OVERSIZED_ROW_COUNT} event markers outside track range")
                 }
@@ -2573,6 +2601,28 @@ mod tests {
             }
         }
 
+        /// The window that the audit measures. The shelve confirmation draws
+        /// itself under its [`AnchoredDialogKind`], since its title follows the
+        /// permanent-delete tickbox.
+        fn audited_window(self, title: &str) -> AuditedWindow<'_> {
+            match self {
+                Self::Shelve => {
+                    AuditedWindow::identified(title, AnchoredDialogKind::ShelveItems.window_id())
+                }
+                Self::OrphanedEventMarkers
+                | Self::LoadWarnings
+                | Self::RecordingDetails
+                | Self::About
+                | Self::SnapConsent
+                | Self::SnapReplace
+                | Self::SnapScope
+                | Self::SnapAutoPrompt
+                | Self::MapboxToken
+                | Self::EnvironmentPrune
+                | Self::ForceQuit => AuditedWindow::titled(title),
+            }
+        }
+
         /// The action the user must still be able to reach. The two dialogs a
         /// read-only viewer closes from its title bar have none of their own.
         fn reachable_button(self) -> Option<&'static str> {
@@ -2581,7 +2631,7 @@ mod tests {
                 Self::RecordingDetails | Self::About => None,
                 Self::SnapAutoPrompt => Some("Manual only"),
                 Self::MapboxToken => Some("Cancel - use OpenStreetMap"),
-                Self::Remove
+                Self::Shelve
                 | Self::SnapConsent
                 | Self::SnapReplace
                 | Self::SnapScope
@@ -2611,7 +2661,7 @@ mod tests {
             let long = gt_test_utils::oversized_text('m');
             let mut tree = TreeState::default();
             let loaded_files = make_loaded_files(&[(OVERSIZED_ROW_COUNT, true)]);
-            tree.delete_confirm = Some(DeleteConfirmState {
+            tree.shelve_confirm = Some(ShelveConfirmState {
                 items: (0..OVERSIZED_ROW_COUNT)
                     .map(|ti| track_key(0, ti))
                     .collect(),
@@ -2661,15 +2711,14 @@ mod tests {
     fn oversized_dialog_ui(ui: &mut egui::Ui, state: &mut OversizedDialogState) {
         let long = gt_test_utils::oversized_text('m');
         match state.dialog {
-            OversizedDialog::Remove => {
+            OversizedDialog::Shelve => {
                 let names = RecordingNames::resolve(state.loaded_files.view(), "{filename}");
-                show_delete_confirmation(
+                show_shelve_confirmation(
                     ui,
                     &mut state.tree,
                     &mut state.loaded_files,
                     &names,
                     &LoadedLogs::default(),
-                    WriteAccess::Owner,
                 );
             }
             OversizedDialog::OrphanedEventMarkers => {
@@ -2721,7 +2770,7 @@ mod tests {
     #[rstest::rstest]
     fn every_dialog_fits_the_audit_viewports(
         #[values(
-            OversizedDialog::Remove,
+            OversizedDialog::Shelve,
             OversizedDialog::OrphanedEventMarkers,
             OversizedDialog::LoadWarnings,
             OversizedDialog::RecordingDetails,
@@ -2745,11 +2794,11 @@ mod tests {
         let title = dialog.title();
         harness
             .inner
-            .assert_window_fits_the_viewport(AuditedWindow::titled(&title));
+            .assert_window_fits_the_viewport(dialog.audited_window(&title));
         if let Some(button) = dialog.reachable_button() {
             harness
                 .inner
-                .assert_control_is_reachable(AuditedWindow::titled(&title), ControlLabel(button));
+                .assert_control_is_reachable(dialog.audited_window(&title), ControlLabel(button));
         }
     }
 }
@@ -2777,20 +2826,19 @@ mod anchored_dialog_layout_tests {
 
     use super::{
         DELETE_ARCHIVED_DAYS_TITLE, EnvironmentPruneChoice, ForceQuitChoice,
-        LOADED_RECORDINGS_MOST_LINES, PERMANENT_DELETE_LABEL, PruneScope, SnapScopeChoice, tests,
+        LOADED_RECORDINGS_MOST_LINES, PERMANENT_DELETE_LABEL, PruneScope, SnapScopeChoice,
+        StoredTrackAction, tests,
     };
 
     const CANCEL_LABEL: &str = "Cancel";
 
-    const REMOVE_LABEL: &str = "Remove";
-
-    /// Items the tickbox measurement removes, all of them tracks of one
+    /// Items the tickbox measurement shelves, all of them tracks of one
     /// stored recording.
-    const REMOVED_ITEMS: usize = 2;
+    const SHELVED_ITEMS: usize = 2;
 
-    /// The opening the two wordings of the remove confirmation's history
+    /// The ending the two wordings of the shelve confirmation's history
     /// sentence share.
-    const DETAIL_SENTENCE_OPENING: &str = "Removes them from the view and";
+    const DETAIL_SENTENCE_ENDING: &str = "takes them out of the view.";
 
     /// Fixes of each recording the association dialog lists.
     const FIX_COUNT: usize = 10;
@@ -3017,32 +3065,32 @@ mod anchored_dialog_layout_tests {
         );
     }
 
-    /// The remove confirmation states in one sentence what the remove does in
-    /// history, and the permanent-delete tickbox chooses the wording. The
-    /// dialog is 324 points wide at [`NARROW_VIEWPORT`]. "Removes them from
-    /// the view and hides 2 tracks in 1 recording in history." takes one line
-    /// at that width, and "Removes them from the view and permanently deletes
-    /// 2 tracks from 1 recording in history." takes two.
+    /// The shelve confirmation states in one sentence what it does in history,
+    /// and the permanent-delete tickbox chooses the wording and the title. The
+    /// dialog is 324 points wide at [`NARROW_VIEWPORT`]. "Shelves 2 tracks in
+    /// 1 recording in history and takes them out of the view." takes one line
+    /// at that width, and "Permanently deletes 2 tracks from 1 recording in
+    /// history and takes them out of the view." takes two.
     ///
     /// The second line goes into the room the body already had. The window
-    /// keeps the height it opened at.
+    /// keeps the height and the position it opened at, which it holds under
+    /// its [`AnchoredDialogKind`], and its title states the permanent delete
+    /// the tickbox chose.
     #[test]
-    fn the_remove_confirmation_keeps_its_controls_in_place_while_the_permanent_delete_is_ticked() {
-        let mut harness = tests::remove_confirmation_at(
+    fn the_shelve_confirmation_keeps_its_window_and_tickbox_in_place_while_the_delete_is_ticked() {
+        let mut harness = tests::shelve_confirmation_at(
             NARROW_VIEWPORT,
-            REMOVED_ITEMS,
+            SHELVED_ITEMS,
             tests::PermanentDeleteTicked(false),
         );
-        let title = tests::remove_confirmation_title(REMOVED_ITEMS);
-        let window = harness.inner.window_rect(&title);
+        let window = tests::shelve_confirmation_rect(&harness);
         let tickbox = harness
             .inner
             .get(By::new().label_contains(PERMANENT_DELETE_LABEL))
             .rect();
-        let remove = harness.inner.get(By::new().label(REMOVE_LABEL)).rect();
         let one_line = harness
             .inner
-            .get(By::new().label_contains(DETAIL_SENTENCE_OPENING))
+            .get(By::new().label_contains(DETAIL_SENTENCE_ENDING))
             .rect()
             .height();
 
@@ -3051,7 +3099,7 @@ mod anchored_dialog_layout_tests {
 
         let two_lines = harness
             .inner
-            .get(By::new().label_contains(DETAIL_SENTENCE_OPENING))
+            .get(By::new().label_contains(DETAIL_SENTENCE_ENDING))
             .rect()
             .height();
         assert!(
@@ -3061,10 +3109,11 @@ mod anchored_dialog_layout_tests {
              lines"
         );
         assert_eq!(
-            harness.inner.window_rect(&title),
+            tests::shelve_confirmation_rect(&harness),
             window,
-            "the remove confirmation resized around the longer sentence: its edge moves past a \
-             control the user aimed at, and the press reaches the app behind it"
+            "the shelve confirmation moved or resized around its ticked title and the longer \
+             sentence under it: its edge moves past a control the user aimed at, and the press \
+             reaches the app behind it"
         );
         assert_eq!(
             harness
@@ -3075,11 +3124,8 @@ mod anchored_dialog_layout_tests {
             "the permanent-delete tickbox moved under the pointer that just ticked it: the press \
              that unticks it misses"
         );
-        assert_eq!(
-            harness.inner.get(By::new().label(REMOVE_LABEL)).rect(),
-            remove,
-            "the Remove button of the remove confirmation moved: a press where the user aimed \
-             misses it"
+        harness.inner.get_by_label_contains(
+            &StoredTrackAction::DeletePermanently.confirmation_title(SHELVED_ITEMS),
         );
     }
 
