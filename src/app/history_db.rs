@@ -52,6 +52,9 @@ pub enum DbOp {
     TracksShelved {
         count: usize,
     },
+    TracksUnshelved {
+        count: usize,
+    },
     TracksDeleted {
         count: usize,
     },
@@ -81,6 +84,8 @@ enum ReadRequest {
     PrunePreview(PruneMode),
     /// Fetch a recording's stored snap runs, if any.
     LoadSnapRuns(DatabaseRef),
+    /// Read a recording's stored track table for the History window's shelf.
+    LoadStoredTrackTable(DatabaseRef),
     /// Read back every log attached to a recording that just opened.
     LoadAttachedLogs(DatabaseRef),
     /// Read back the one log `attachment` names, which the log viewer requests
@@ -213,6 +218,11 @@ pub enum Response {
     SnapRunsLoaded {
         db_ref: DatabaseRef,
         blob: Result<Option<Vec<u8>>, DbError>,
+    },
+    /// Every row of a recording's stored track table, tombstones and all.
+    StoredTrackTableLoaded {
+        db_ref: DatabaseRef,
+        tracks: Result<Vec<TrackRange>, DbError>,
     },
     /// Outcome of storing a log with a recording.
     LogAttached {
@@ -404,6 +414,12 @@ impl HistoryWorker {
         self.send_read(ReadRequest::LoadSnapRuns(db_ref));
     }
 
+    /// Read a recording's stored track table, which arrives as
+    /// [`Response::StoredTrackTableLoaded`].
+    pub fn load_stored_track_table(&self, db_ref: DatabaseRef) {
+        self.send_read(ReadRequest::LoadStoredTrackTable(db_ref));
+    }
+
     pub fn attach_log(
         &self,
         db_ref: DatabaseRef,
@@ -568,6 +584,10 @@ fn handle_read_request(db: &ReadOnlyRecordings, req: ReadRequest) -> Response {
             let blob = db.snap_blob(&db_ref);
             Response::SnapRunsLoaded { db_ref, blob }
         }
+        ReadRequest::LoadStoredTrackTable(db_ref) => {
+            let tracks = db.stored_track_table(&db_ref);
+            Response::StoredTrackTableLoaded { db_ref, tracks }
+        }
         ReadRequest::LoadAttachedLogs(db_ref) => {
             let attachments = db.log_attachments(&db_ref).map(|entries| {
                 entries
@@ -618,10 +638,12 @@ fn handle_write_request(db: &mut Recordings, req: WriteRequest) -> Response {
         } => {
             let count = rows.len();
             let result = db.set_tracks_shelved(&db_ref, &rows, shelved);
-            Response::Mutated {
-                op: DbOp::TracksShelved { count },
-                result,
-            }
+            let op = if shelved {
+                DbOp::TracksShelved { count }
+            } else {
+                DbOp::TracksUnshelved { count }
+            };
+            Response::Mutated { op, result }
         }
         WriteRequest::DeleteTracks { db_ref, rows } => {
             let count = rows.len();

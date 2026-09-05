@@ -817,6 +817,22 @@ pub(crate) fn snap_blob(
     Ok(dataset.read_u8().ok())
 }
 
+/// Every row of a recording's stored track table, tombstones and all. Empty
+/// for a recording stored before per-track storage existed, and for one whose
+/// columns are inconsistent.
+pub(crate) fn stored_track_table_of_recording(
+    db_path: &std::path::Path,
+    identity: &str,
+    group_name: &str,
+) -> Result<Vec<TrackRange>, InternalError> {
+    let file = hdf5_pure::File::open(db_path)?;
+    let root = file.root();
+    let by_id = root.group("by_identity")?;
+    let id_grp = find_identity_group(&by_id, identity)?;
+    let rec_grp = id_grp.group(group_name)?;
+    Ok(stored_track_table(&rec_grp).unwrap_or_default())
+}
+
 /// Every log attached to a recording, in the order
 /// [`LogAttachmentEntry::sort_by_name_then_id`] puts them.
 pub(crate) fn log_attachments(

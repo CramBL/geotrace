@@ -1723,6 +1723,49 @@ fn stored_state_column(db_path: &std::path::Path, db_ref: &DatabaseRef) -> Vec<u
         .to_vec()
 }
 
+/// The shelf reads the stored track table on its own, and gets the same rows
+/// `load` returns without reconstructing the recording's GTD bytes.
+#[test_log::test]
+fn stored_track_table_returns_every_row_with_the_tombstones_in_place() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("tombstone.h5");
+    write_pure_db_with_a_track_table(
+        &db_path,
+        CURRENT_SCHEMA_VERSION,
+        TRACK_STATE_DATASET,
+        &[0, 2, 1],
+    );
+
+    let db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = db.list_recordings().expect("list")[0].db_ref.clone();
+
+    let table = db
+        .stored_track_table(&db_ref)
+        .expect("read the track table");
+
+    assert_eq!(
+        table,
+        vec![
+            TrackRange {
+                start: 0,
+                end: 1,
+                state: TrackState::Live,
+            },
+            TrackRange {
+                start: 1,
+                end: 2,
+                state: TrackState::Deleted,
+            },
+            TrackRange {
+                start: 2,
+                end: 3,
+                state: TrackState::Shelved,
+            },
+        ]
+    );
+    assert_eq!(table, db.load(&db_ref).expect("load").tracks);
+}
+
 /// A permanently deleted track leaves a tombstone row in the stored table. The
 /// History window counts the rows around it, and `load` returns every row for
 /// the caller to address.

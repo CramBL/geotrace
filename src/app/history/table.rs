@@ -8,13 +8,13 @@ use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
 use gt_fmt::UTC_MINUTE_FORMAT;
 use gt_log_view::LogAttachmentRef;
 use gt_pending_writes::WriteAccess;
-use gt_side_panel::widgets::{MetadataView, has_metadata_details, metadata_detail_rows};
-use gt_store::{ChannelSummary, NavPointTimeRange, RecordingEntry};
+use gt_side_panel::widgets::{self, MetadataView, has_metadata_details, metadata_detail_rows};
+use gt_store::{ChannelSummary, DatabaseRef, NavPointTimeRange, RecordingEntry, TrackState};
 use gt_ui_theme::EM_DASH;
-use gt_ui_theme::buttons::SortHeaderButton;
+use gt_ui_theme::buttons::{FramelessIconButton, SortHeaderButton};
 use strum::{EnumCount as _, IntoEnumIterator as _};
 
-use super::{HistorySort, RenameEdit, SortColumn};
+use super::{HistorySort, OpenShelf, RenameEdit, ShelfTracks, SortColumn};
 use crate::app::history_db::{DeleteReason, HistoryWorker};
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 
@@ -37,10 +37,13 @@ pub(super) fn history_table(
         loaded_metas,
         worker,
         rename,
+        shelf,
         sort,
         write_access,
     }: HistoryTable<'_>,
 ) {
+    request_the_track_table_of_the_open_shelf(worker, shelf);
+    let listing = listing_rows(visible, shelf.as_ref());
     let row_height = ui.text_style_height(&egui::TextStyle::Body) + 6.0;
     // The header row and the gap under it come out of the listing's budget
     // before the scrolling body gets what is left.
@@ -108,20 +111,30 @@ pub(super) fn history_table(
             });
         })
         .body(|body| {
-            body.rows(row_height, visible.len(), |mut row| {
+            body.rows(row_height, listing.len(), |mut row| {
                 // In-range by construction. `get` guards anyway.
-                let Some(entry) = visible.get(row.index()) else {
+                let Some(listing_row) = listing.get(row.index()) else {
                     return;
                 };
-                let already_loaded = loaded_metas.iter().any(|m| m.same_recording(&entry.meta));
-                render_row(
-                    &mut row,
-                    entry,
-                    already_loaded,
-                    worker,
-                    rename,
-                    write_access,
-                );
+                match listing_row {
+                    ListingRow::Recording(entry) => {
+                        let already_loaded =
+                            loaded_metas.iter().any(|m| m.same_recording(&entry.meta));
+                        render_row(
+                            &mut row,
+                            entry,
+                            already_loaded,
+                            worker,
+                            rename,
+                            shelf,
+                            write_access,
+                        );
+                    }
+                    ListingRow::Shelf(shelf_row) => {
+                        let recording = shelf.as_ref().map(|open| &open.recording);
+                        render_shelf_row(&mut row, shelf_row, recording, worker, write_access);
+                    }
+                }
             });
         });
 
@@ -133,6 +146,187 @@ pub(super) fn history_table(
         ui.data_mut(|d| d.insert_temp(metadata_width_id, metadata_width));
     }
 }
+
+/// One line of the History listing: a stored recording, or a line of the shelf
+/// open under it.
+enum ListingRow<'a> {
+    Recording(&'a RecordingEntry),
+    Shelf(ShelfRow),
+}
+
+/// A line of the shelf open under a recording's row.
+enum ShelfRow {
+    /// The worker's read of the recording's stored track table is in flight.
+    Reading,
+    /// One shelved track, addressed by its row in that table.
+    ShelvedTrack {
+        stored_row: usize,
+        nav_point_count: u64,
+    },
+    /// The shelf's closing line, which unshelves every track above it.
+    EveryShelvedTrack { stored_rows: Vec<usize> },
+}
+
+/// The listing's lines: every visible recording, each followed by the lines of
+/// its shelf while the shelf is open on it.
+fn listing_rows<'a>(
+    visible: &'a [&'a RecordingEntry],
+    shelf: Option<&OpenShelf>,
+) -> Vec<ListingRow<'a>> {
+    let mut listing = Vec::with_capacity(visible.len());
+    for entry in visible {
+        listing.push(ListingRow::Recording(entry));
+        let Some(open) = shelf.filter(|open| open.recording == entry.db_ref) else {
+            continue;
+        };
+        let ShelfTracks::Read(tracks) = &open.tracks else {
+            listing.push(ListingRow::Shelf(ShelfRow::Reading));
+            continue;
+        };
+        let mut stored_rows = Vec::new();
+        for (stored_row, track) in tracks.iter().enumerate() {
+            if track.state != TrackState::Shelved {
+                continue;
+            }
+            stored_rows.push(stored_row);
+            listing.push(ListingRow::Shelf(ShelfRow::ShelvedTrack {
+                stored_row,
+                nav_point_count: track.end.saturating_sub(track.start),
+            }));
+        }
+        if !stored_rows.is_empty() {
+            listing.push(ListingRow::Shelf(ShelfRow::EveryShelvedTrack {
+                stored_rows,
+            }));
+        }
+    }
+    listing
+}
+
+/// Opening the History window on a large database still costs one listing
+/// query: the listing reads a track table only for the recording whose shelf is
+/// open.
+fn request_the_track_table_of_the_open_shelf(
+    worker: &HistoryWorker,
+    shelf: &mut Option<OpenShelf>,
+) {
+    let Some(open) = shelf.as_mut() else {
+        return;
+    };
+    if !matches!(open.tracks, ShelfTracks::Unrequested) {
+        return;
+    }
+    worker.load_stored_track_table(open.recording.clone());
+    open.tracks = ShelfTracks::Requested;
+}
+
+/// The caret that opens a recording's shelf, grayed out for a recording whose
+/// tracks are all live.
+fn shelf_caret(ui: &mut egui::Ui, entry: &RecordingEntry, shelf: &mut Option<OpenShelf>) {
+    let open = shelf
+        .as_ref()
+        .is_some_and(|open| open.recording == entry.db_ref);
+    let has_shelved_tracks = entry.shelved_tracks > 0;
+    let hover = match (has_shelved_tracks, open) {
+        (false, _) => NO_SHELVED_TRACKS_HOVER,
+        (true, false) => SHOW_SHELVED_TRACKS_HOVER,
+        (true, true) => HIDE_SHELVED_TRACKS_HOVER,
+    };
+    let clicked = FramelessIconButton::new(widgets::expand_arrow(open))
+        .enabled(has_shelved_tracks)
+        .hover_text_ui(ui, hover)
+        .clicked();
+    if clicked {
+        *shelf = (!open).then(|| OpenShelf {
+            recording: entry.db_ref.clone(),
+            tracks: ShelfTracks::Unrequested,
+        });
+    }
+}
+
+/// One line of an open shelf: the track's number and nav-point count with the
+/// button that unshelves it, or the closing line that unshelves every track the
+/// shelf lists.
+///
+/// A track's number is its stored row plus one. That holds for the life of the
+/// recording: a permanent delete leaves a tombstone in its row, and the rows
+/// after it keep their position. The shelf lists "#3" when rows 1 and 2 are a
+/// live and a deleted track.
+fn render_shelf_row(
+    row: &mut TableRow<'_, '_>,
+    shelf_row: &ShelfRow,
+    recording: Option<&DatabaseRef>,
+    worker: &HistoryWorker,
+    write_access: WriteAccess,
+) {
+    row.col(|ui| {
+        ui.add_space(ui.spacing().indent);
+        match shelf_row {
+            ShelfRow::Reading => {
+                ui.spinner();
+            }
+            ShelfRow::ShelvedTrack { stored_row, .. } => {
+                ui.label(format!("#{}", stored_row.saturating_add(1)));
+            }
+            ShelfRow::EveryShelvedTrack { stored_rows } => {
+                let count = stored_rows.len();
+                ui.weak(format!(
+                    "{count} shelved {}",
+                    gt_fmt::pluralize(count, "track", "tracks")
+                ));
+            }
+        }
+    });
+    // Date and Duration: a stored track table states neither.
+    row.col(|_| {});
+    row.col(|_| {});
+    row.col(|ui| {
+        if let ShelfRow::ShelvedTrack {
+            nav_point_count, ..
+        } = shelf_row
+        {
+            ui.label(gt_store::format_count_suffix(*nav_point_count));
+        }
+    });
+    // Size and Logs: both are per recording.
+    row.col(|_| {});
+    row.col(|_| {});
+    row.col(|ui| {
+        let (label, hover, rows) = match shelf_row {
+            ShelfRow::Reading => return,
+            ShelfRow::ShelvedTrack { stored_row, .. } => {
+                (UNSHELVE_LABEL, UNSHELVE_HOVER, vec![*stored_row])
+            }
+            ShelfRow::EveryShelvedTrack { stored_rows } => {
+                (UNSHELVE_ALL_LABEL, UNSHELVE_ALL_HOVER, stored_rows.clone())
+            }
+        };
+        let clicked = ui
+            .add_enabled(write_access.allows_writing(), Button::new(label).small())
+            .on_hover_text(hover)
+            .on_disabled_hover_text(READ_ONLY_RECORDING_HISTORY_HOVER)
+            .clicked();
+        if clicked && let Some(recording) = recording {
+            worker.set_tracks_shelved(recording.clone(), rows, false);
+        }
+    });
+}
+
+pub(super) const UNSHELVE_LABEL: &str = "Unshelve";
+
+pub(super) const UNSHELVE_ALL_LABEL: &str = "Unshelve all";
+
+const UNSHELVE_HOVER: &str =
+    "Put this track back in the recording. Open the recording again to see it.";
+
+const UNSHELVE_ALL_HOVER: &str =
+    "Put every shelved track back in the recording. Open the recording again to see them.";
+
+const SHOW_SHELVED_TRACKS_HOVER: &str = "List the shelved tracks of this recording";
+
+const HIDE_SHELVED_TRACKS_HOVER: &str = "Close the list of shelved tracks";
+
+const NO_SHELVED_TRACKS_HOVER: &str = "This recording has no shelved tracks";
 
 /// A clickable table header that orders the list by `column`.
 ///
@@ -181,6 +375,9 @@ pub(super) struct HistoryTable<'a> {
     pub loaded_metas: &'a [gt_store::RecordingMeta],
     pub worker: &'a HistoryWorker,
     pub rename: &'a mut Option<RenameEdit>,
+    /// The recording whose shelved tracks the listing shows under its row. The
+    /// caret in a row's identity cell opens and closes it.
+    pub shelf: &'a mut Option<OpenShelf>,
     pub sort: &'a mut HistorySort,
     pub write_access: WriteAccess,
 }
@@ -200,11 +397,13 @@ fn render_row(
     already_loaded: bool,
     worker: &HistoryWorker,
     rename: &mut Option<RenameEdit>,
+    shelf: &mut Option<OpenShelf>,
     write_access: WriteAccess,
 ) {
-    // Identity column: the inline editor when this row is being renamed,
-    // otherwise the normal cell.
+    // Identity column: the shelf caret, then the inline editor when this row is
+    // being renamed and the normal cell otherwise.
     row.col(|ui| {
+        shelf_caret(ui, entry, shelf);
         if rename
             .as_ref()
             .is_some_and(|r| r.identity == entry.db_ref.identity)

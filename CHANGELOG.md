@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **Interface:** The History window lists a recording's shelved tracks under its row, each with its track number and nav-point count, and unshelves one track or all of them.
+
 ### Changed
 
 - **Interface:** The side panel's "Shelve filtered data…" button acts on the tracks that the filter excludes, and is grayed out while every track passes the filter, while every excluded track sits outside the recording history, or while the session is read-only.
