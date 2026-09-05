@@ -485,7 +485,7 @@ fn reports_before_the_first_fix_become_ghosts_on_the_first_fix_in_time_order()
 
     for (i, expected_time) in [t(0), t(2000)].into_iter().enumerate() {
         let ghost = &points[i];
-        assert_eq!(ghost.fix.gps_time, Some(expected_time));
+        assert_eq!(ghost.fix.gps_time(), Some(expected_time));
         assert_eq!(ghost.fix.lat, Angle::degrees(55.0));
         assert_eq!(ghost.fix.lon, Angle::degrees(12.0));
         assert_eq!(ghost.fix.heading, None);
@@ -494,7 +494,7 @@ fn reports_before_the_first_fix_become_ghosts_on_the_first_fix_in_time_order()
             "ghost {i} is missing its satellite report"
         );
     }
-    assert_eq!(points[2].fix.gps_time, Some(t(10_000)), "the real fix");
+    assert_eq!(points[2].fix.gps_time(), Some(t(10_000)), "the real fix");
     Ok(())
 }
 
@@ -761,7 +761,7 @@ fn unsorted_insertion() -> Result<(), BuildError> {
     let times: Vec<_> = nav_file
         .nav_points()
         .iter()
-        .map(|p| p.fix.gps_time)
+        .map(|p| p.fix.gps_time())
         .collect();
     let mut sorted = times.clone();
     sorted.sort();
@@ -829,7 +829,7 @@ proptest! {
             let times: Vec<_> = nav_file
                 .nav_points()
                 .iter()
-                .map(|p| p.fix.gps_time)
+                .map(|p| p.fix.gps_time())
                 .collect();
             for w in times.windows(2) {
                 prop_assert!(

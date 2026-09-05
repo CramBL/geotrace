@@ -725,7 +725,7 @@ fn a_ghost_from_a_sys_time_only_report_takes_the_anchor_fixs_clock_delta(
         .iter()
         .find(|point| point.satellites.is_some())
         .expect("the ghost carries the report");
-    assert_eq!(ghost.fix.gps_time, Some(expected_gps_time));
+    assert_eq!(ghost.fix.gps_time(), Some(expected_gps_time));
     assert_eq!(ghost.fix.lat, Angle::degrees(55.0));
     assert_eq!(ghost.fix.lon, Angle::degrees(12.0));
     Ok(())

@@ -317,7 +317,7 @@ fn timestamp_precision() -> Result<(), Box<dyn std::error::Error>> {
     let mut bytes = Vec::new();
     nav_file.write(&mut bytes)?;
     let rt = NavFile::read(bytes.as_slice())?;
-    assert_eq!(rt.nav_points()[0].fix.gps_time, Some(t));
+    assert_eq!(rt.nav_points()[0].fix.gps_time(), Some(t));
     Ok(())
 }
 
@@ -539,8 +539,8 @@ fn a_file_without_gps_time_us_reads_its_time_axis_as_the_receiver_timestamp()
     let nav_file = NavFile::read(bytes.as_slice())?;
     let fix = &nav_file.nav_points().first().ok_or("no nav point")?.fix;
 
-    assert_eq!(fix.gps_time, Some(fix_time));
-    assert_eq!(fix.sys_time, Some(host_time));
+    assert_eq!(fix.gps_time(), Some(fix_time));
+    assert_eq!(fix.sys_time(), Some(host_time));
     Ok(())
 }
 

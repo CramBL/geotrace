@@ -75,11 +75,11 @@ pub unsafe extern "C" fn gtd_nav_file_get_nav_point(
 
         out.gps_time = point
             .fix
-            .gps_time
+            .gps_time()
             .map_or(timestamp::gtd_ts_none(), timestamp::ts_from_datetime);
         out.sys_time = point
             .fix
-            .sys_time
+            .sys_time()
             .map_or(timestamp::gtd_ts_none(), timestamp::ts_from_datetime);
         out.lat_deg = point.fix.lat.as_degrees();
         out.lon_deg = point.fix.lon.as_degrees();

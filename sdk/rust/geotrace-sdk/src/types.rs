@@ -669,12 +669,30 @@ impl Meta {
 }
 
 impl NavFix {
+    pub fn gps_time(&self) -> Option<DateTime<Utc>> {
+        self.gps_time
+    }
+
+    pub fn sys_time(&self) -> Option<DateTime<Utc>> {
+        self.sys_time
+    }
+
     /// The best available timestamp for this fix.
     ///
     /// Returns `gps_time` when the receiver had an active lock, otherwise falls
     /// back to `sys_time`, then to the Unix epoch as a last resort.
     pub fn effective_gps_time(&self) -> DateTime<Utc> {
-        self.gps_time.or(self.sys_time).unwrap_or_default()
+        self.gps_time().or(self.sys_time()).unwrap_or_default()
+    }
+}
+
+impl SatelliteReport {
+    pub fn gps_time(&self) -> Option<DateTime<Utc>> {
+        self.gps_time
+    }
+
+    pub fn sys_time(&self) -> Option<DateTime<Utc>> {
+        self.sys_time
     }
 }
 
