@@ -1219,77 +1219,67 @@ fn quality_line_color_follows_fix_quality_for_real_fixes() {
 }
 
 #[test]
-fn split_spans_by_single_key_is_one_sub_span() {
-    use egui::pos2;
+fn sub_span_ranges_of_one_projected_key_is_one_range() {
+    // The points form one run: the alpha bucket changes along the span, but
+    // the projection depends on the color alone.
     let span = [
-        (Color32::BLUE, pos2(0.0, 0.0)),
-        (Color32::BLUE, pos2(10.0, 0.0)),
-        (Color32::BLUE, pos2(20.0, 0.0)),
+        ((Color32::BLUE, 3_u8), egui::pos2(0.0, 0.0)),
+        ((Color32::BLUE, 0_u8), egui::pos2(10.0, 0.0)),
+        ((Color32::BLUE, 3_u8), egui::pos2(20.0, 0.0)),
     ];
-    let subs = split_spans_by(&span, |k| k);
-    assert_eq!(
-        subs,
-        vec![(
-            Color32::BLUE,
-            vec![pos2(0.0, 0.0), pos2(10.0, 0.0), pos2(20.0, 0.0)]
-        )]
-    );
+    let ranges: Vec<_> = sub_span_ranges(&span, |(color, _)| color).collect();
+    assert_eq!(ranges, vec![(Color32::BLUE, 0..=2)]);
 }
 
 #[test]
-fn split_spans_by_edge_takes_key_of_its_starting_point() {
-    use egui::pos2;
+fn sub_span_ranges_split_at_a_key_change_share_their_boundary_index() {
+    // Same quality color, different crossfade buckets: an opaque stretch (a
+    // parked cluster, bucket 3) and an invisible one (well-spaced fixes,
+    // bucket 0) get separate strokes, which localizes the quality line to
+    // the cluster. The bucket-3 range ends at index 2: the edge into the
+    // first bucket-0 point takes bucket 3, the key of its starting point.
     let span = [
-        (Color32::BLUE, pos2(0.0, 0.0)),
-        (Color32::YELLOW, pos2(10.0, 0.0)),
-        (Color32::YELLOW, pos2(20.0, 0.0)),
+        ((Color32::BLUE, 3_u8), egui::pos2(0.0, 0.0)),
+        ((Color32::BLUE, 3_u8), egui::pos2(10.0, 0.0)),
+        ((Color32::BLUE, 0_u8), egui::pos2(20.0, 0.0)),
+        ((Color32::BLUE, 0_u8), egui::pos2(30.0, 0.0)),
     ];
-    let subs = split_spans_by(&span, |k| k);
-    // The blue->yellow edge is blue (starting point's quality). The
-    // boundary point is shared so the line stays continuous.
+    let ranges: Vec<_> = sub_span_ranges(&span, |k| k).collect();
     assert_eq!(
-        subs,
+        ranges,
         vec![
-            (Color32::BLUE, vec![pos2(0.0, 0.0), pos2(10.0, 0.0)]),
-            (Color32::YELLOW, vec![pos2(10.0, 0.0), pos2(20.0, 0.0)]),
+            ((Color32::BLUE, 3_u8), 0..=2),
+            ((Color32::BLUE, 0_u8), 2..=3),
         ]
     );
 }
 
 #[test]
-fn split_spans_by_splits_on_alpha_bucket_within_one_color() {
-    use egui::pos2;
-    // Same quality color but different crossfade buckets: the line must
-    // split so an opaque stretch (a parked cluster, bucket 3) and an
-    // invisible stretch (well-spaced fixes, bucket 0) get separate
-    // strokes - this is what localizes the quality line to the cluster.
-    // Each edge takes its starting point's bucket, so the transition
-    // edge still belongs to the cluster.
+fn sub_span_ranges_of_a_new_key_at_every_point_is_one_range_per_edge() {
+    // The three ranges over these four points are keyed blue, yellow and
+    // red: each edge takes the key of its starting point.
     let span = [
-        ((Color32::BLUE, 3_u8), pos2(0.0, 0.0)),
-        ((Color32::BLUE, 3_u8), pos2(10.0, 0.0)),
-        ((Color32::BLUE, 0_u8), pos2(20.0, 0.0)),
-        ((Color32::BLUE, 0_u8), pos2(30.0, 0.0)),
+        (Color32::BLUE, egui::pos2(0.0, 0.0)),
+        (Color32::YELLOW, egui::pos2(10.0, 0.0)),
+        (Color32::RED, egui::pos2(20.0, 0.0)),
+        (Color32::GREEN, egui::pos2(30.0, 0.0)),
     ];
-    let subs = split_spans_by(&span, |k| k);
+    let ranges: Vec<_> = sub_span_ranges(&span, |k| k).collect();
     assert_eq!(
-        subs,
+        ranges,
         vec![
-            (
-                (Color32::BLUE, 3_u8),
-                vec![pos2(0.0, 0.0), pos2(10.0, 0.0), pos2(20.0, 0.0)]
-            ),
-            (
-                (Color32::BLUE, 0_u8),
-                vec![pos2(20.0, 0.0), pos2(30.0, 0.0)]
-            ),
+            (Color32::BLUE, 0..=1),
+            (Color32::YELLOW, 1..=2),
+            (Color32::RED, 2..=3),
         ]
     );
 }
 
 #[test]
-fn split_spans_by_too_short_span_is_empty() {
-    use egui::pos2;
-    assert!(split_spans_by::<Color32, Color32>(&[], |k| k).is_empty());
-    assert!(split_spans_by(&[(Color32::BLUE, pos2(0.0, 0.0))], |k| k).is_empty());
+fn sub_span_ranges_of_a_span_without_an_edge_is_empty() {
+    assert_eq!(sub_span_ranges::<Color32, Color32>(&[], |k| k).count(), 0);
+    assert_eq!(
+        sub_span_ranges(&[(Color32::BLUE, egui::pos2(0.0, 0.0))], |k| k).count(),
+        0
+    );
 }
