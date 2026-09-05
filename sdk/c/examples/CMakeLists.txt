@@ -13,7 +13,7 @@ set(GEOTRACE_C_EXAMPLES
 
 foreach(example ${GEOTRACE_C_EXAMPLES})
     add_executable(${example} ${example}.c)
-    target_link_libraries(${example} PRIVATE GeoTrace::C)
+    target_link_libraries(${example} PRIVATE GeoTrace::C geotrace_sanitizers)
 
     if(MSVC)
         target_compile_options(${example} PRIVATE /W4 /WX
@@ -35,10 +35,16 @@ endforeach()
 # exercised separately by the `test-gold-c` recipe and excluded here.
 foreach(example write_basic with_satellites event_markers channels from_csv from_multiple_sources)
     add_test(NAME example_${example} COMMAND ${example})
+    set_tests_properties(example_${example} PROPERTIES
+        ENVIRONMENT "${GEOTRACE_SANITIZE_TEST_ENVIRONMENT}"
+    )
 endforeach()
 
 # `read_file` takes a .gtd path. Feed it the minimal fixture the unit tests use.
 set(GTD_MINIMAL_FIXTURE "${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/minimal.gtd")
 if(EXISTS "${GTD_MINIMAL_FIXTURE}")
     add_test(NAME example_read_file COMMAND read_file "${GTD_MINIMAL_FIXTURE}")
+    set_tests_properties(example_read_file PROPERTIES
+        ENVIRONMENT "${GEOTRACE_SANITIZE_TEST_ENVIRONMENT}"
+    )
 endif()

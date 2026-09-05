@@ -14,7 +14,7 @@ set(GEOTRACE_CPP_EXAMPLES
 
 foreach(example ${GEOTRACE_CPP_EXAMPLES})
     add_executable(${example} ${example}.cpp)
-    target_link_libraries(${example} PRIVATE GeoTrace::Cpp)
+    target_link_libraries(${example} PRIVATE GeoTrace::Cpp geotrace_sanitizers)
 
     if(MSVC)
         target_compile_options(${example} PRIVATE /W4 /WX /wd4100)
@@ -44,4 +44,7 @@ endforeach()
 foreach(example write_basic with_satellites event_markers channels typed_events from_csv
                 from_multiple_sources)
     add_test(NAME example_${example} COMMAND ${example})
+    set_tests_properties(example_${example} PROPERTIES
+        ENVIRONMENT "${GEOTRACE_SANITIZE_TEST_ENVIRONMENT}"
+    )
 endforeach()

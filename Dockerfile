@@ -101,16 +101,19 @@ RUN curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
     "clang-${LLVM_VERSION}" \
     "clang-format-${LLVM_VERSION}" \
     "clang-tidy-${LLVM_VERSION}" \
+    "libclang-rt-${LLVM_VERSION}-dev" \
     libcriterion-dev \
+    "llvm-${LLVM_VERSION}" \
     ninja-build \
     tar \
     unzip \
     zip \
     && rm -rf /var/lib/apt/lists/*
 
-# apt.llvm.org installs only versioned binary names, which the lint and format
-# scripts do not use.
-RUN set -e; for tool in clang clang++ clang-format clang-tidy; do \
+# apt.llvm.org installs only versioned binary names. The lint and format
+# scripts call the unversioned ones, and the sanitizer runtime looks up
+# `llvm-symbolizer` unversioned on PATH.
+RUN set -e; for tool in clang clang++ clang-format clang-tidy llvm-symbolizer; do \
         update-alternatives --install "/usr/bin/${tool}" "${tool}" \
             "/usr/bin/${tool}-${LLVM_VERSION}" 100; \
     done

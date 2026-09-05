@@ -49,6 +49,7 @@ jobs:
           filters: |
             sdk:
               - 'sdk/c/**'
+              - 'sdk/cmake/**'
               - 'sdk/integration-tests/prebuilt/**'
               - 'sdk/rust/geotrace-c/**'
               - 'sdk/rust/geotrace-sdk/**'

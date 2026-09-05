@@ -349,6 +349,11 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, cc: llvm-20, label: llvm-20, lib: ubuntu }
+          # No thread-sanitizer row: the thread sanitizer reports races the
+          # program does not have, because cargo builds the Rust library without
+          # instrumentation and the sanitizer needs that library instrumented
+          # too.
+          - { os: ubuntu-latest, cc: llvm-20, label: llvm-20-asan, lib: ubuntu, sanitize: asan, build_type: RelWithDebInfo }
           - { os: macos-latest, cc: appleclang, label: appleclang, lib: macos }
           - { os: macos-latest, cc: llvm-20, label: llvm-20, lib: macos }
           - { os: windows-latest, cc: mingw, label: mingw, lib: windows-gnu }
@@ -374,15 +379,19 @@ jobs:
 
       - name: Configure C SDK tests (Linux, macOS)
         if: runner.os != 'Windows'
+        env:
+          BUILD_TYPE: ${{ matrix.build_type || 'Release' }}
+          SANITIZE: ${{ matrix.sanitize }}
         run: |
-          EXTRA=""
-          [ "$RUNNER_OS" = "macOS" ] && EXTRA="-DCMAKE_PREFIX_PATH=$(brew --prefix)"
+          extra=()
+          [ "$RUNNER_OS" = "macOS" ] && extra+=("-DCMAKE_PREFIX_PATH=$(brew --prefix)")
+          [ -n "$SANITIZE" ] && extra+=("-DGEOTRACE_SANITIZE=$SANITIZE")
           cmake -S sdk/c -B build/c \
-            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
             -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release \
             -DGEOTRACE_C_BUILD_TESTS=ON \
             -DGEOTRACE_C_BUILD_EXAMPLES=ON \
-            $EXTRA
+            "${extra[@]}"
 
       - name: Configure C SDK tests (Windows)
         if: runner.os == 'Windows'
@@ -424,6 +433,7 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, cxx_std: "17", cc: llvm-20, label: llvm-20, lib: ubuntu }
+          - { os: ubuntu-latest, cxx_std: "17", cc: llvm-20, label: llvm-20-asan, lib: ubuntu, sanitize: asan, build_type: RelWithDebInfo }
           - { os: ubuntu-latest, cxx_std: "20", cc: llvm-20, label: llvm-20, lib: ubuntu }
           - { os: macos-latest, cxx_std: "17", cc: appleclang, label: appleclang, lib: macos }
           - { os: macos-latest, cxx_std: "20", cc: appleclang, label: appleclang, lib: macos }
@@ -471,13 +481,19 @@ jobs:
 
       - name: Configure C++ SDK tests (Unix)
         if: runner.os != 'Windows'
+        env:
+          BUILD_TYPE: ${{ matrix.build_type || 'Release' }}
+          SANITIZE: ${{ matrix.sanitize }}
         run: |
+          extra=()
+          [ -n "$SANITIZE" ] && extra+=("-DGEOTRACE_SANITIZE=$SANITIZE")
           cmake -S sdk/cpp -B build/cpp \
             -DCMAKE_PREFIX_PATH=${{ github.workspace }}/install \
             -DBUILD_TESTING=ON \
             -DGEOTRACE_CPP_BUILD_EXAMPLES=ON \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_STANDARD=${{ matrix.cxx_std }}
+            -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+            -DCMAKE_CXX_STANDARD=${{ matrix.cxx_std }} \
+            "${extra[@]}"
 
       - name: Configure C++ SDK tests (Windows)
         if: runner.os == 'Windows'
