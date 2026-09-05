@@ -2,7 +2,9 @@
 //! pixels, and the LOD-aware point iteration built on top of it.
 
 use gt_types::coordinates::{Latitude, Longitude};
-use gt_types::{LoadedTrack, MercPoint, PlacedPoint, PlacedPoints, mercator};
+use gt_types::{
+    LOD_CHUNK_POINTS, LoadedTrack, MercBounds, MercPoint, PlacedPoint, PlacedPoints, mercator,
+};
 use walkers::MapMemory;
 
 use crate::polyline::MAX_LOD_ERROR_PX;
@@ -241,30 +243,152 @@ impl MercTransform {
     }
 }
 
+/// How far the cull bounds reach past the cull rect the caller compares
+/// screen positions against. The slack keeps a point outside those bounds
+/// outside the rect once `to_screen` has rounded its f64 result to f32, a
+/// rounding that moves a point by a fraction of a pixel.
+const CULL_BOUNDS_SLACK_PX: f32 = 1.0;
+
 /// Iterate `(index, point)` over the track's LOD level appropriate for the
 /// current map scale, or over the full point list when no stored level is
 /// fine enough (zoomed in, or no LOD built). Bounds polyline-pass iteration
-/// by on-screen detail.
+/// by on-screen detail, and skips the stretches of the track that lie outside
+/// `cull_rect` - the rect the caller then culls the segments against.
 ///
 /// `placed` are `track`'s own points, which the caller has already gated on
 /// the track having a geometry.
+///
+/// [`crate::polyline::segment_outside`] drops every segment between the
+/// points of a chunk of [`LOD_CHUNK_POINTS`] points whose bounds miss
+/// `cull_rect`, since such a chunk lies beyond one of the rect's edges. The
+/// walk yields the chunk's first and last point, which keep the segments
+/// entering and leaving it, and skips the rest. The walk keeps every point of
+/// a chunk whose bounds cross the antimeridian, which covers two pieces of
+/// the world that no single edge separates.
 pub(crate) fn lod_points<'a>(
     track: &'a LoadedTrack,
     placed: PlacedPoints<'a>,
     transform: &MercTransform,
-) -> Box<dyn Iterator<Item = (usize, PlacedPoint<'a>)> + 'a> {
+    cull_rect: egui::Rect,
+) -> LodPoints<'a> {
+    let cull_bounds = transform.viewport_merc_bounds(cull_rect.expand(CULL_BOUNDS_SLACK_PX));
     match track.lod.select(transform.px_per_merc(), MAX_LOD_ERROR_PX) {
-        Some(indices) => Box::new(indices.iter().filter_map(move |&i| {
-            let pi = usize::try_from(i).ok()?;
-            Some((pi, placed.get(pi)?))
-        })),
-        None => Box::new(placed.iter().enumerate()),
+        Some(level) => LodPoints::Level {
+            indices: level.indices(),
+            placed,
+            walk: ChunkedWalk::new(level.chunk_bounds(), level.indices().len(), cull_bounds),
+        },
+        None => LodPoints::Full {
+            placed,
+            walk: ChunkedWalk::new(
+                track.lod.full_point_chunk_bounds(),
+                placed.len(),
+                cull_bounds,
+            ),
+        },
+    }
+}
+
+/// What [`lod_points`] walks: the entries of one stored [`LodLevel`], or the
+/// track's full point list.
+pub(crate) enum LodPoints<'a> {
+    Level {
+        indices: &'a [u32],
+        placed: PlacedPoints<'a>,
+        walk: ChunkedWalk<'a>,
+    },
+    Full {
+        placed: PlacedPoints<'a>,
+        walk: ChunkedWalk<'a>,
+    },
+}
+
+impl<'a> Iterator for LodPoints<'a> {
+    type Item = (usize, PlacedPoint<'a>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            match self {
+                Self::Level {
+                    indices,
+                    placed,
+                    walk,
+                } => {
+                    let slot = walk.next_slot()?;
+                    if let Some(&i) = indices.get(slot)
+                        && let Ok(pi) = usize::try_from(i)
+                        && let Some(point) = placed.get(pi)
+                    {
+                        return Some((pi, point));
+                    }
+                }
+                Self::Full { placed, walk } => {
+                    let slot = walk.next_slot()?;
+                    if let Some(point) = placed.get(slot) {
+                        return Some((slot, point));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The slots of one chunked sequence of points a frame visits: every slot of
+/// a chunk the cull bounds reach, and the first and the last slot of a chunk
+/// they miss.
+pub(crate) struct ChunkedWalk<'a> {
+    chunk_bounds: &'a [MercBounds],
+    slot_count: usize,
+    cull_bounds: MercBounds,
+    next_slot: usize,
+}
+
+impl<'a> ChunkedWalk<'a> {
+    fn new(chunk_bounds: &'a [MercBounds], slot_count: usize, cull_bounds: MercBounds) -> Self {
+        Self {
+            chunk_bounds,
+            slot_count,
+            cull_bounds,
+            next_slot: 0,
+        }
+    }
+
+    /// The next slot to visit, `None` past the end of the sequence.
+    fn next_slot(&mut self) -> Option<usize> {
+        let slot = self.next_slot;
+        if slot >= self.slot_count {
+            return None;
+        }
+        let chunk = slot / LOD_CHUNK_POINTS;
+        let opens_a_skipped_chunk =
+            slot.is_multiple_of(LOD_CHUNK_POINTS) && self.chunk_lies_outside_the_cull_bounds(chunk);
+        self.next_slot = if opens_a_skipped_chunk {
+            let chunk_end = ((chunk + 1) * LOD_CHUNK_POINTS).min(self.slot_count);
+            chunk_end.saturating_sub(1).max(slot + 1)
+        } else {
+            slot + 1
+        };
+        Some(slot)
+    }
+
+    /// Whether every point of `chunk` lies beyond one edge of the cull
+    /// bounds. A chunk across the antimeridian never does, and a chunk with
+    /// no stored bounds is walked whole.
+    fn chunk_lies_outside_the_cull_bounds(&self, chunk: usize) -> bool {
+        self.chunk_bounds.get(chunk).is_some_and(|bounds| {
+            !bounds.crosses_the_antimeridian() && !bounds.intersects(self.cull_bounds)
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Latitude, MercTransform, wrap_longitude_degrees};
+    use gt_types::coordinates::Longitude;
+    use gt_types::{LoadedTrack, PlacedPoint, PlacedPoints};
+    use rstest::rstest;
+
+    use super::{LOD_CHUNK_POINTS, Latitude, MercTransform, lod_points, wrap_longitude_degrees};
+    use crate::polyline::{CULL_MARGIN_PX, MAX_LOD_ERROR_PX, VisiblePath, visible_path};
 
     /// Asserts `a` and `b` are within `1e-9` of each other - tight enough to
     /// catch a wrong wrap while tolerating ordinary `f64` rounding noise.
@@ -320,6 +444,231 @@ mod tests {
         assert!(
             ((derived - direct) / direct).abs() < 1e-12,
             "lat {lat_deg}: derived {derived} vs direct {direct}"
+        );
+    }
+
+    /// The map widget rect the walk tests frame their tracks in.
+    const MAP_RECT: egui::Rect = egui::Rect {
+        min: egui::pos2(0.0, 0.0),
+        max: egui::pos2(800.0, 600.0),
+    };
+
+    /// A track through `positions`, with the LOD levels and chunk bounds the
+    /// track builder computes for them.
+    fn track_through(positions: &[(Latitude, Longitude)]) -> LoadedTrack {
+        let points = gt_test_utils::nav_points_at_positions(
+            chrono::DateTime::<chrono::Utc>::UNIX_EPOCH,
+            positions,
+        );
+        let mut track = gt_test_utils::loaded_track_with_points(points);
+        let lod = track.placed_points().map(gt_track_builder::build_track_lod);
+        if let Some(lod) = lod {
+            track.lod = lod;
+        }
+        track
+    }
+
+    /// 10 000 fixes running east along one parallel, about 22 m apart.
+    fn straight_line() -> Vec<(Latitude, Longitude)> {
+        (0..10_000)
+            .map(|i| {
+                (
+                    Latitude::new(55.0),
+                    Longitude::new(12.0 + f64::from(i) * 0.000_2),
+                )
+            })
+            .collect()
+    }
+
+    /// 1200 fixes on twelve rows 0.002° apart, each run in the opposite
+    /// direction to the one below it: a viewport over the middle of the rows
+    /// sees the track leave and re-enter it once per row.
+    fn rows_across_the_viewport() -> Vec<(Latitude, Longitude)> {
+        (0..12)
+            .flat_map(|row| {
+                (0..100).map(move |i| {
+                    let along = if row % 2 == 0 { i } else { 99 - i };
+                    (
+                        Latitude::new(55.0 + f64::from(row) * 0.002),
+                        Longitude::new(12.0 + f64::from(along) * 0.000_2),
+                    )
+                })
+            })
+            .collect()
+    }
+
+    /// 300 fixes running east from 179°E over the antimeridian, 0.01° apart.
+    fn across_the_antimeridian() -> Vec<(Latitude, Longitude)> {
+        (0..300)
+            .map(|i| {
+                let degrees = 179.0 + f64::from(i) * 0.01;
+                (
+                    Latitude::new(0.0),
+                    Longitude::new(wrap_longitude_degrees(degrees)),
+                )
+            })
+            .collect()
+    }
+
+    /// `count` fixes of the straight line, for the tracks below one chunk.
+    fn first_fixes(count: usize) -> Vec<(Latitude, Longitude)> {
+        straight_line().into_iter().take(count).collect()
+    }
+
+    /// The viewports every shape is walked in: four zooms, from the whole
+    /// world to a few metres across, over the track's first fix, over its
+    /// middle fix, and over a position half a world away.
+    fn viewports(positions: &[(Latitude, Longitude)]) -> Vec<MercTransform> {
+        let anchors = [
+            positions.first().copied(),
+            positions.get(positions.len() / 2).copied(),
+            Some((Latitude::new(-33.87), Longitude::new(151.21))),
+        ];
+        [1e4, 2_f64.powi(19), 3e7, 2_f64.powi(30)]
+            .into_iter()
+            .flat_map(|world_px| {
+                anchors.into_iter().flatten().map(move |(lat, lon)| {
+                    MercTransform::for_test_view(world_px, lat, lon, MAP_RECT.center())
+                })
+            })
+            .collect()
+    }
+
+    /// The walk as it ran before the chunk bounds: every point of the
+    /// selected level, or every point of the track.
+    fn unbounded_lod_points<'a>(
+        track: &'a LoadedTrack,
+        placed: PlacedPoints<'a>,
+        transform: &MercTransform,
+    ) -> Vec<(usize, PlacedPoint<'a>)> {
+        match track.lod.select(transform.px_per_merc(), MAX_LOD_ERROR_PX) {
+            Some(level) => level
+                .indices()
+                .iter()
+                .filter_map(|&i| {
+                    let pi = usize::try_from(i).ok()?;
+                    Some((pi, placed.get(pi)?))
+                })
+                .collect(),
+            None => placed.iter().enumerate().collect(),
+        }
+    }
+
+    /// The polyline the track renderer draws from `points`, keyed on the
+    /// ghost flag as the renderer keys it.
+    fn path_of<'a>(
+        points: impl Iterator<Item = (usize, PlacedPoint<'a>)>,
+        transform: &MercTransform,
+        cull_rect: egui::Rect,
+    ) -> VisiblePath<bool> {
+        visible_path(
+            points.map(|(_, point)| {
+                (
+                    point.fix.tpv.heading().is_none(),
+                    transform.to_screen(point.merc()),
+                )
+            }),
+            cull_rect,
+        )
+    }
+
+    #[rstest]
+    #[case::straight_line(straight_line())]
+    #[case::rows_across_the_viewport(rows_across_the_viewport())]
+    #[case::across_the_antimeridian(across_the_antimeridian())]
+    #[case::shorter_than_one_chunk(first_fixes(40))]
+    #[case::two_fixes(first_fixes(2))]
+    #[case::one_fix(first_fixes(1))]
+    fn the_bounded_walk_draws_the_path_the_unbounded_walk_draws(
+        #[case] positions: Vec<(Latitude, Longitude)>,
+    ) {
+        let track = track_through(&positions);
+        let placed = track
+            .placed_points()
+            .expect("every fixture fix has a position");
+        let cull_rect = MAP_RECT.expand(CULL_MARGIN_PX);
+        for transform in viewports(&positions) {
+            let bounded = path_of(
+                lod_points(&track, placed, &transform, cull_rect),
+                &transform,
+                cull_rect,
+            );
+            let unbounded = path_of(
+                unbounded_lod_points(&track, placed, &transform).into_iter(),
+                &transform,
+                cull_rect,
+            );
+            assert_eq!(
+                bounded,
+                unbounded,
+                "at {} px per world",
+                transform.px_per_merc()
+            );
+        }
+    }
+
+    /// The path is the unbounded walk's wherever a chunk boundary falls
+    /// relative to the viewport edge, since the walk keeps the segment
+    /// entering a skipped chunk and the one leaving it.
+    #[test]
+    fn the_path_matches_at_every_chunk_phase_against_the_viewport_edge() {
+        let positions = straight_line();
+        let track = track_through(&positions);
+        let placed = track
+            .placed_points()
+            .expect("every fixture fix has a position");
+        let cull_rect = MAP_RECT.expand(CULL_MARGIN_PX);
+        // Anchoring the viewport one fix further along moves the chunk
+        // boundaries one fix across it: at this scale the fixes are about
+        // 9 px apart.
+        let world_px = 2_f64.powi(24);
+        for anchor in 0..LOD_CHUNK_POINTS {
+            let (lat, lon) = positions[positions.len() / 2 + anchor];
+            let transform = MercTransform::for_test_view(world_px, lat, lon, MAP_RECT.center());
+            let bounded = path_of(
+                lod_points(&track, placed, &transform, cull_rect),
+                &transform,
+                cull_rect,
+            );
+            let unbounded = path_of(
+                unbounded_lod_points(&track, placed, &transform).into_iter(),
+                &transform,
+                cull_rect,
+            );
+            assert_eq!(bounded, unbounded, "anchored on fix {anchor} of the chunk");
+        }
+    }
+
+    /// A viewport over the middle of a long track holds a few of its fixes,
+    /// and the walk stops short of the rest.
+    #[rstest]
+    #[case::from_a_stored_level(2_f64.powi(19), true)]
+    #[case::from_the_full_point_list(2_f64.powi(30), false)]
+    fn the_walk_skips_the_chunks_outside_the_cull_rect(
+        #[case] world_px: f64,
+        #[case] walks_a_stored_level: bool,
+    ) {
+        let positions = straight_line();
+        let track = track_through(&positions);
+        let placed = track
+            .placed_points()
+            .expect("every fixture fix has a position");
+        let (lat, lon) = positions[positions.len() / 2];
+        let transform = MercTransform::for_test_view(world_px, lat, lon, MAP_RECT.center());
+        assert_eq!(
+            track
+                .lod
+                .select(transform.px_per_merc(), MAX_LOD_ERROR_PX)
+                .is_some(),
+            walks_a_stored_level
+        );
+
+        let cull_rect = MAP_RECT.expand(CULL_MARGIN_PX);
+        let walked = lod_points(&track, placed, &transform, cull_rect).count();
+        let unbounded = unbounded_lod_points(&track, placed, &transform).len();
+        assert!(
+            walked < unbounded / 2,
+            "walked {walked} of {unbounded} points"
         );
     }
 }

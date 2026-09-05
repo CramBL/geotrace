@@ -1,5 +1,7 @@
+use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::placed_point::PlacedPoints;
-use gt_types::track::{LOD_BASE_TOLERANCE_MERC, TrackLod};
+use gt_types::track::{LOD_BASE_TOLERANCE_MERC, LOD_CHUNK_POINTS, LodLevel, TrackLod};
+use gt_types::{GeoBounds, MercBounds};
 
 /// Stop building coarser levels once one has this few points - drawing them
 /// costs nothing, and coarser levels would only erase the track's shape.
@@ -29,12 +31,13 @@ const MAX_KEPT_DENOMINATOR: usize = 4;
 /// The first level's tolerance starts near the track's mean segment length, so
 /// every level a sparse recording stores drops points from the full list.
 pub fn build_track_lod(points: PlacedPoints<'_>) -> TrackLod {
+    let full_point_chunk_bounds = chunk_bounds(&points.positions().collect::<Vec<_>>());
     if points.len() < MIN_LEVEL_POINTS || u32::try_from(points.len()).is_err() {
-        return TrackLod::default();
+        return TrackLod::new(0, Vec::new(), full_point_chunk_bounds);
     }
 
     let first_level_exp = first_useful_exponent(points);
-    let mut levels: Vec<Vec<u32>> = Vec::new();
+    let mut levels: Vec<LodLevel> = Vec::new();
     let mut tolerance = LOD_BASE_TOLERANCE_MERC * 2_f64.powi(exponent_to_i32(first_level_exp));
 
     while levels.len() < MAX_LEVELS {
@@ -42,11 +45,15 @@ pub fn build_track_lod(points: PlacedPoints<'_>) -> TrackLod {
             None => decimate(points, 0..points.len(), tolerance),
             Some(prev) => decimate(
                 points,
-                prev.iter().filter_map(|&i| usize::try_from(i).ok()),
+                prev.indices()
+                    .iter()
+                    .filter_map(|&i| usize::try_from(i).ok()),
                 tolerance,
             ),
         };
-        let prev_len = levels.last().map_or(points.len(), Vec::len);
+        let prev_len = levels
+            .last()
+            .map_or(points.len(), |level| level.indices().len());
         if !levels.is_empty() && level.len() * MAX_KEPT_DENOMINATOR > prev_len * MAX_KEPT_NUMERATOR
         {
             // Tolerance doubled but barely anything merged (e.g. dense
@@ -54,14 +61,44 @@ pub fn build_track_lod(points: PlacedPoints<'_>) -> TrackLod {
             break;
         }
         let done = level.len() < MIN_LEVEL_POINTS;
-        levels.push(level);
+        let chunk_bounds = level_chunk_bounds(points, &level);
+        levels.push(LodLevel::new(level, chunk_bounds));
         if done {
             break;
         }
         tolerance *= 2.0;
     }
 
-    TrackLod::new(first_level_exp, levels)
+    TrackLod::new(first_level_exp, levels, full_point_chunk_bounds)
+}
+
+/// The bounds of each run of [`LOD_CHUNK_POINTS`] consecutive entries of
+/// `level`, over the positions those points are drawn at. Empty when an entry
+/// of `level` addresses no point of `points`, which [`decimate`] never emits:
+/// a renderer reading no bounds walks the level whole.
+fn level_chunk_bounds(points: PlacedPoints<'_>, level: &[u32]) -> Vec<MercBounds> {
+    let positions: Option<Vec<(Latitude, Longitude)>> = level
+        .iter()
+        .map(|&i| Some(points.get(usize::try_from(i).ok()?)?.resolved_position()))
+        .collect();
+    positions.as_deref().map(chunk_bounds).unwrap_or_default()
+}
+
+/// One [`MercBounds`] per run of [`LOD_CHUNK_POINTS`] consecutive
+/// `positions`, in the order they are drawn. A run either side of the
+/// antimeridian gets a box across it, since [`GeoBounds`] grows a longitude
+/// range over the shorter of the two arcs.
+fn chunk_bounds(positions: &[(Latitude, Longitude)]) -> Vec<MercBounds> {
+    positions
+        .chunks(LOD_CHUNK_POINTS)
+        .filter_map(|chunk| {
+            let (first, rest) = chunk.split_first()?;
+            Some(MercBounds::from(GeoBounds::from_first_position_and_rest(
+                *first,
+                rest.iter().copied(),
+            )))
+        })
+        .collect()
 }
 
 /// The tolerance exponent at which decimation starts paying off: the level
@@ -175,13 +212,17 @@ mod tests {
     }
 
     fn point_at_meters(x_m: f64, fix_count: u32) -> NavPoint {
+        point_at_longitude(Longitude::new(x_m * DEG_PER_METER), fix_count)
+    }
+
+    fn point_at_longitude(longitude: Longitude, fix_count: u32) -> NavPoint {
         let sats: Vec<_> = (1..=fix_count.max(1))
             .map(|prn| Satellite::new(Constellation::Gps, prn, None, None, None, prn <= fix_count))
             .collect();
         let tpv = TimePositionVelocity::builder()
             .time(GpsTime::from_utc(Utc::now()))
             .lat(Latitude::new(0.0))
-            .lon(Longitude::new(x_m * DEG_PER_METER))
+            .lon(longitude)
             .heading(Angle::new::<degree>(90.0))
             .build();
         NavPoint::new(tpv, Some(Satellites::new(None, None, sats)))
@@ -191,6 +232,44 @@ mod tests {
     fn uniform_track() -> Vec<NavPoint> {
         (0..1024)
             .map(|i| point_at_meters(f64::from(i) * 10.0, 12))
+            .collect()
+    }
+
+    /// 512 strong-fix points running east from 179°E over the antimeridian,
+    /// 0.01° apart.
+    fn track_across_the_antimeridian() -> Vec<NavPoint> {
+        (0..512)
+            .map(|i| {
+                let degrees = 179.0 + f64::from(i) * 0.01;
+                let wrapped = (degrees + 180.0).rem_euclid(360.0) - 180.0;
+                point_at_longitude(Longitude::new(wrapped), 12)
+            })
+            .collect()
+    }
+
+    /// Whether `bounds` holds `merc`, reading a box across the antimeridian
+    /// as its two pieces the way [`gt_types::MercBounds::intersects`] does.
+    fn holds(bounds: gt_types::MercBounds, merc: gt_types::MercPoint) -> bool {
+        bounds.intersects(gt_types::MercBounds {
+            x_min: merc.x,
+            x_max: merc.x,
+            y_min: merc.y,
+            y_max: merc.y,
+        })
+    }
+
+    /// The positions of the points `chunk` covers, out of `indices` in the
+    /// order they are drawn.
+    fn chunk_positions(
+        points: &[NavPoint],
+        indices: &[u32],
+        chunk: usize,
+    ) -> Vec<gt_types::MercPoint> {
+        indices
+            .iter()
+            .skip(chunk * LOD_CHUNK_POINTS)
+            .take(LOD_CHUNK_POINTS)
+            .filter_map(|&i| points.get(usize::try_from(i).ok()?).map(merc_at))
             .collect()
     }
 
@@ -214,9 +293,9 @@ mod tests {
             .select(f64::MIN_POSITIVE, 0.75)
             .expect("expected a usable level for a dense sub-meter track");
         assert!(
-            level.len() < points.len() / 4,
+            level.indices().len() < points.len() / 4,
             "expected strong reduction, got {} of {} points",
-            level.len(),
+            level.indices().len(),
             points.len()
         );
     }
@@ -233,9 +312,9 @@ mod tests {
             .select(px_per_merc, 0.75)
             .expect("expected a usable level");
         assert!(
-            level.len() < points.len() / 4,
+            level.indices().len() < points.len() / 4,
             "expected strong reduction, got {} of {} points",
-            level.len(),
+            level.indices().len(),
             points.len()
         );
     }
@@ -262,7 +341,7 @@ mod tests {
             let Some(level) = lod.select(px_per_merc, 0.75) else {
                 continue;
             };
-            for w in level.windows(2) {
+            for w in level.indices().windows(2) {
                 let [a, b] = w else { continue };
                 // All original points between two kept points must lie
                 // within the error bound of the kept anchor `a`.
@@ -295,6 +374,7 @@ mod tests {
             .select(f64::MIN_POSITIVE, 0.75)
             .expect("coarsest level exists");
         let marginal_kept = level
+            .indices()
             .iter()
             .any(|&i| points[i as usize].fix_quality() == FixQuality::Marginal);
         assert!(marginal_kept, "marginal stretch was decimated away");
@@ -322,8 +402,8 @@ mod tests {
         let level = lod
             .select(f64::MIN_POSITIVE, 0.75)
             .expect("coarsest level exists");
-        assert_eq!(level.first(), Some(&0));
-        assert_eq!(level.last(), Some(&1023));
+        assert_eq!(level.indices().first(), Some(&0));
+        assert_eq!(level.indices().last(), Some(&1023));
     }
 
     #[test]
@@ -335,6 +415,31 @@ mod tests {
         let level = lod
             .select(f64::MIN_POSITIVE, 0.75)
             .expect("coarsest level exists");
-        assert_eq!(level, &[0, 511]);
+        assert_eq!(level.indices(), &[0, 511]);
+    }
+
+    #[rstest::rstest]
+    #[case::uniform(uniform_track())]
+    #[case::across_the_antimeridian(track_across_the_antimeridian())]
+    fn every_chunk_holds_the_positions_of_the_points_it_covers(#[case] points: Vec<NavPoint>) {
+        let lod = lod_of(&points);
+        let full_indices: Vec<u32> = (0..points.len())
+            .filter_map(|i| u32::try_from(i).ok())
+            .collect();
+        let mut levels: Vec<(&[u32], &[MercBounds])> =
+            vec![(&full_indices, lod.full_point_chunk_bounds())];
+        for i in 0.. {
+            let Some(level) = lod.level(i) else { break };
+            levels.push((level.indices(), level.chunk_bounds()));
+        }
+
+        for (indices, chunk_bounds) in levels {
+            assert_eq!(chunk_bounds.len(), indices.len().div_ceil(LOD_CHUNK_POINTS));
+            for (chunk, &bounds) in chunk_bounds.iter().enumerate() {
+                for merc in chunk_positions(&points, indices, chunk) {
+                    assert!(holds(bounds, merc), "{bounds:?} misses {merc:?}");
+                }
+            }
+        }
     }
 }

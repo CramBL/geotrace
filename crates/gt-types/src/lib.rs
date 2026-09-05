@@ -45,9 +45,9 @@ pub use time_types::{FixTimestamp, GpsTime, GpsTimeRange, SysTime};
 pub use tpv::TimePositionVelocity;
 pub use tpv::TimePositionVelocityBuilder;
 pub use track::{
-    AssociationConfig, FileMetadata, FileSource, FixStats, LOD_BASE_TOLERANCE_MERC, LoadedFile,
-    LoadedTrack, MarkerRequirement, MeasuredTrackGeometry, MercBounds, NearestSatelliteReport,
-    SKY_REPORT_MAX_AGE_SECS, SegmentLengthRange, SpatialPoint, TimeRange, TotalDistance,
-    TrackAggregates, TrackGeometry, TrackLod, TrackMetadata, TravelMode,
+    AssociationConfig, FileMetadata, FileSource, FixStats, LOD_BASE_TOLERANCE_MERC,
+    LOD_CHUNK_POINTS, LoadedFile, LoadedTrack, LodLevel, MarkerRequirement, MeasuredTrackGeometry,
+    MercBounds, NearestSatelliteReport, SKY_REPORT_MAX_AGE_SECS, SegmentLengthRange, SpatialPoint,
+    TimeRange, TotalDistance, TrackAggregates, TrackGeometry, TrackLod, TrackMetadata, TravelMode,
 };
 pub use versioned::{Generation, Versionable, Versioned};
