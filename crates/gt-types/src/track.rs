@@ -56,7 +56,97 @@ impl MercBounds {
             (false, false) => self.x_max >= other.x_min && self.x_min <= other.x_max,
         }
     }
+
+    /// The narrower of the two boxes holding both `self` and `other`. In x it
+    /// closes whichever of the two gaps between the boxes is shorter, the way
+    /// [`crate::geo_bounds::LonRange::union`] grows a longitude range: the
+    /// union of two boxes on either side of the antimeridian crosses it. In y
+    /// it takes the plain minimum and maximum: the projection has no wrap
+    /// north to south.
+    pub fn union(self, other: MercBounds) -> Self {
+        let eastward = self.x_grown_east_over(other);
+        let westward = other.x_grown_east_over(self);
+        let narrower = if eastward.x_span() <= westward.x_span() {
+            eastward
+        } else {
+            westward
+        };
+        Self {
+            x_min: narrower.x_min,
+            x_max: narrower.x_max,
+            y_min: self.y_min.min(other.y_min),
+            y_max: self.y_max.max(other.y_max),
+        }
+    }
+
+    /// The part of `self` inside `viewport`, `None` when the two do not
+    /// overlap. A crossing box on either side gives back the whole `viewport`:
+    /// a box across the antimeridian meets it in two pieces, which one box
+    /// cannot hold.
+    pub fn clamped_within(self, viewport: MercBounds) -> Option<Self> {
+        if !self.intersects(viewport) {
+            return None;
+        }
+        if self.crosses_the_antimeridian() || viewport.crosses_the_antimeridian() {
+            return Some(viewport);
+        }
+        Some(Self {
+            x_min: self.x_min.max(viewport.x_min),
+            x_max: self.x_max.min(viewport.x_max),
+            y_min: self.y_min.max(viewport.y_min),
+            y_max: self.y_max.min(viewport.y_max),
+        })
+    }
+
+    /// This box as an envelope over the [`SpatialPoint`]s inside it.
+    ///
+    /// A box across the antimeridian covers two pieces of the world, which one
+    /// envelope cannot express: the caller must widen or split such a box
+    /// before querying with it.
+    pub fn envelope(self) -> rstar::AABB<[f64; 2]> {
+        debug_assert!(
+            !self.crosses_the_antimeridian(),
+            "an envelope across the antimeridian reads its x bounds the other way round"
+        );
+        rstar::AABB::from_corners([self.x_min, self.y_min], [self.x_max, self.y_max])
+    }
+
+    /// How wide the box is in x, from nothing to the world's whole width.
+    fn x_span(self) -> f64 {
+        match self.x_max - self.x_min >= WORLD_WIDTH_MERC {
+            true => WORLD_WIDTH_MERC,
+            false => (self.x_max - self.x_min).rem_euclid(WORLD_WIDTH_MERC),
+        }
+    }
+
+    /// `self` grown eastward in x until it reaches the eastern edge of
+    /// `other`, keeping its own y bounds. A box grown over the whole world
+    /// comes back as the full width from 0 to 1.
+    fn x_grown_east_over(self, other: MercBounds) -> Self {
+        let span = ((other.x_min - self.x_min).rem_euclid(WORLD_WIDTH_MERC) + other.x_span())
+            .max(self.x_span());
+        if span >= WORLD_WIDTH_MERC {
+            return Self {
+                x_min: 0.0,
+                x_max: WORLD_WIDTH_MERC,
+                ..self
+            };
+        }
+        let east = self.x_min + span;
+        Self {
+            x_max: if east >= WORLD_WIDTH_MERC {
+                east - WORLD_WIDTH_MERC
+            } else {
+                east
+            },
+            ..self
+        }
+    }
 }
+
+/// What the normalised Mercator world spans in x, from the antimeridian back
+/// to itself.
+const WORLD_WIDTH_MERC: f64 = 1.0;
 
 /// A longitude range crossing the antimeridian projects to `x_min > x_max`,
 /// and a full circle to the world's whole width.
@@ -1042,6 +1132,119 @@ mod merc_bounds_tests {
             viewport.intersects(bounds),
             expected,
             "overlap does not depend on argument order"
+        );
+    }
+
+    /// A box over `x`, given as `[west, east]` in normalised Mercator x, at a
+    /// fixed band north to south. It crosses the antimeridian when east is the
+    /// smaller of the two.
+    fn box_over_x([west, east]: [f64; 2]) -> MercBounds {
+        MercBounds {
+            x_min: west,
+            x_max: east,
+            y_min: 0.4,
+            y_max: 0.6,
+        }
+    }
+
+    fn assert_bounds_close(actual: MercBounds, expected: MercBounds) {
+        let apart = (actual.x_min - expected.x_min)
+            .abs()
+            .max((actual.x_max - expected.x_max).abs())
+            .max((actual.y_min - expected.y_min).abs())
+            .max((actual.y_max - expected.y_max).abs());
+        assert!(apart < MERC_TOLERANCE, "{actual:?} against {expected:?}");
+    }
+
+    /// The rule in x mirrors [`LonRange::union`] over longitudes.
+    #[rstest]
+    #[case::overlapping([0.2, 0.4], [0.3, 0.5], [0.2, 0.5])]
+    #[case::one_inside_the_other([0.2, 0.8], [0.3, 0.4], [0.2, 0.8])]
+    #[case::the_gap_east_of_the_first_box_is_shorter([0.2, 0.3], [0.6, 0.7], [0.2, 0.7])]
+    #[case::the_gap_east_of_the_second_box_is_shorter([0.6, 0.7], [0.2, 0.3], [0.2, 0.7])]
+    #[case::across_the_antimeridian([0.95, 0.99], [0.01, 0.05], [0.95, 0.05])]
+    #[case::over_a_box_spanning_the_world([0.0, 1.0], [0.3, 0.4], [0.0, 1.0])]
+    #[case::over_a_crossing_box([0.9, 0.1], [0.95, 0.99], [0.9, 0.1])]
+    fn a_union_closes_the_shorter_gap_in_x(
+        #[case] left: [f64; 2],
+        #[case] right: [f64; 2],
+        #[case] expected: [f64; 2],
+    ) {
+        assert_bounds_close(
+            box_over_x(left).union(box_over_x(right)),
+            box_over_x(expected),
+        );
+    }
+
+    #[test]
+    fn a_union_reaches_from_the_northern_edge_of_one_box_to_the_southern_edge_of_the_other() {
+        let north = MercBounds {
+            x_min: 0.2,
+            x_max: 0.3,
+            y_min: 0.1,
+            y_max: 0.2,
+        };
+        let south = MercBounds {
+            y_min: 0.7,
+            y_max: 0.8,
+            ..north
+        };
+
+        assert_bounds_close(
+            north.union(south),
+            MercBounds {
+                x_min: 0.2,
+                x_max: 0.3,
+                y_min: 0.1,
+                y_max: 0.8,
+            },
+        );
+    }
+
+    /// The clamp keeps the part of the box the viewport holds. A box across
+    /// the antimeridian meets the viewport in two pieces, and the clamp
+    /// returns the whole viewport.
+    #[rstest]
+    #[case::inside_the_viewport([0.3, 0.4], [0.2, 0.5], Some([0.3, 0.4]))]
+    #[case::wider_than_the_viewport([0.1, 0.9], [0.2, 0.5], Some([0.2, 0.5]))]
+    #[case::over_one_edge_of_the_viewport([0.1, 0.3], [0.2, 0.5], Some([0.2, 0.3]))]
+    #[case::clear_of_the_viewport([0.6, 0.7], [0.2, 0.5], None)]
+    #[case::across_the_antimeridian([0.95, 0.05], [0.9, 1.0], Some([0.9, 1.0]))]
+    #[case::across_the_antimeridian_clear_of_the_viewport([0.95, 0.05], [0.2, 0.5], None)]
+    fn a_box_is_clamped_to_the_viewport(
+        #[case] bounds: [f64; 2],
+        #[case] viewport: [f64; 2],
+        #[case] expected: Option<[f64; 2]>,
+    ) {
+        assert_eq!(
+            box_over_x(bounds).clamped_within(box_over_x(viewport)),
+            expected.map(box_over_x)
+        );
+    }
+
+    #[test]
+    fn a_clamped_box_takes_the_nearer_edge_north_and_south() {
+        let bounds = MercBounds {
+            x_min: 0.2,
+            x_max: 0.4,
+            y_min: 0.3,
+            y_max: 0.9,
+        };
+        let viewport = MercBounds {
+            x_min: 0.0,
+            x_max: 1.0,
+            y_min: 0.5,
+            y_max: 0.6,
+        };
+
+        assert_eq!(
+            bounds.clamped_within(viewport),
+            Some(MercBounds {
+                x_min: 0.2,
+                x_max: 0.4,
+                y_min: 0.5,
+                y_max: 0.6,
+            })
         );
     }
 

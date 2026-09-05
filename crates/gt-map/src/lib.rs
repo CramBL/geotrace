@@ -48,6 +48,7 @@ use gt_fmt::UTC_SECOND_FORMAT;
 use gt_jam::dataset::JamDataset;
 use gt_jam::day_selection::{DaySelection, EmptyReason};
 use gt_loaded_files::RecordingNames;
+use gt_track_builder::SpatialIndex;
 use gt_types::{DataCategory, FileIdx, GeoBounds, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::reference::ReferenceDocument;
 use gt_ui_types::{
@@ -153,6 +154,9 @@ impl BlinkState {
         self.start.is_some()
     }
 }
+
+/// How far from the cursor the hit test takes an element as hovered.
+const HOVER_RADIUS_PX: f64 = 20.0;
 
 /// Minimum time (seconds) the cursor must hold the same focused track before
 /// the fade-in begins.
@@ -414,7 +418,7 @@ pub struct NavMap {
     mapbox_token: String,
     layer: MapLayer,
     map_memory: MapMemory,
-    global_tree: rstar::RTree<SpatialPoint>,
+    spatial_index: SpatialIndex,
     /// Screen position where the last sticky click happened, used as the
     /// default position for the sticky info window.
     sticky_pos: egui::Pos2,
@@ -501,7 +505,7 @@ impl NavMap {
             layer: MapLayer::default(),
             map_memory: MapMemory::default(),
             egui_ctx,
-            global_tree: rstar::RTree::new(),
+            spatial_index: SpatialIndex::default(),
             sticky_pos: egui::pos2(100.0, 100.0),
             last_file_count: 0,
             blink: BlinkState { start: None },
@@ -626,13 +630,13 @@ impl NavMap {
         }
     }
 
-    /// Rebuild the global spatial index from the current file list.
+    /// Rebuild the spatial index from the current file list.
     ///
     /// Must be called after any structural change to `loaded_files` (file or
     /// track deletion) to prevent stale R-tree entries from causing out-of-bounds
     /// panics in the renderers.
     pub fn rebuild_spatial_index(&mut self, files: &[LoadedFile]) {
-        self.global_tree = gt_track_builder::build_global_tree(files);
+        self.spatial_index = SpatialIndex::build(files);
         self.last_file_count = files.len();
     }
 
@@ -641,7 +645,7 @@ impl NavMap {
     #[cfg(test)]
     pub(crate) fn all_tree_indices_valid(&self, files: &[LoadedFile]) -> bool {
         use gt_types::DataCategory;
-        self.global_tree.iter().all(|sp| {
+        self.spatial_index.points().all(|sp| {
             let Some(file) = sp.file_index.get(files) else {
                 return false;
             };
@@ -772,7 +776,7 @@ impl NavMap {
         if let Some(bbox) = ctx.visible_bounding_box() {
             self.fit_to_bounds(ui.max_rect(), bbox);
         }
-        self.global_tree = gt_track_builder::build_global_tree(ctx.files);
+        self.spatial_index = SpatialIndex::build(ctx.files);
     }
 
     /// Advance the blink pulse, the hover-focus fade, and the query-match
@@ -846,7 +850,7 @@ impl NavMap {
         );
         viewport::collect_visible_points(
             &mut self.visible_points,
-            &self.global_tree,
+            &self.spatial_index,
             &plan,
             *ctx.display_mask,
             &transform,
@@ -1018,28 +1022,52 @@ impl NavMap {
         map_center: walkers::Position,
         scope: MapScope<'_>,
     ) -> HoverCandidates {
-        let mut hover = HoverCandidates::default();
         if !map_response.hovered() {
-            return hover;
+            return HoverCandidates::default();
         }
         let Some(screen_pos) = ui.input(|i| i.pointer.hover_pos()) else {
-            return hover;
+            return HoverCandidates::default();
         };
         // Recomputed from the rect the map actually took, so hit-testing lands
         // on what was drawn.
         let map_rect = map_response.rect;
         let projector = walkers::Projector::new(map_rect, &self.map_memory, map_center);
         let transform = MercTransform::new(&projector, &self.map_memory, map_rect.center());
-        let merc_x = transform.merc_x_from_screen(screen_pos.x);
-        let merc_y = transform.merc_y_from_screen(screen_pos.y);
+        let cursor_merc = [
+            transform.merc_x_from_screen(screen_pos.x),
+            transform.merc_y_from_screen(screen_pos.y),
+        ];
         let px_per_merc = MapScale::from_zoom(self.map_memory.zoom()).px_per_merc();
-        let threshold_merc_sq = (20.0_f64 / px_per_merc).powi(2);
-        // One candidate per slot, in nearest-first order.
-        for sp in self
-            .global_tree
-            .nearest_neighbor_iter([merc_x, merc_y])
-            .take_while(|sp| sp.distance_2(&[merc_x, merc_y]) <= threshold_merc_sq)
-        {
+        let threshold_merc_sq = (HOVER_RADIUS_PX / px_per_merc).powi(2);
+        self.nearest_hover_candidates(cursor_merc, threshold_merc_sq, scope)
+    }
+
+    /// The nearest visible element per category slot within `threshold_merc_sq`
+    /// of `cursor_merc`.
+    ///
+    /// Each slot takes its candidates from one tree alone: the fix tree fills
+    /// the fix slot, the marker tree the three marker slots. The walk over one
+    /// tree follows the walk over the other, each nearest-first.
+    fn nearest_hover_candidates(
+        &self,
+        cursor_merc: [f64; 2],
+        threshold_merc_sq: f64,
+        scope: MapScope<'_>,
+    ) -> HoverCandidates {
+        let mut hover = HoverCandidates::default();
+        let within_threshold =
+            |sp: &&SpatialPoint| sp.distance_2(&cursor_merc) <= threshold_merc_sq;
+        let fixes = self
+            .spatial_index
+            .fixes
+            .nearest_neighbor_iter(cursor_merc)
+            .take_while(within_threshold);
+        let markers = self
+            .spatial_index
+            .markers
+            .nearest_neighbor_iter(cursor_merc)
+            .take_while(within_threshold);
+        for sp in fixes.chain(markers) {
             if !is_spatial_point_visible(sp, scope) {
                 continue;
             }

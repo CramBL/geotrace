@@ -11,4 +11,4 @@ pub use segment::{
     build_loaded_file, clock_discontinuity_floor_seconds, compute_track_metadata,
     reassemble_channels, segment_tracks,
 };
-pub use spatial::build_global_tree;
+pub use spatial::SpatialIndex;

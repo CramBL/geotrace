@@ -159,8 +159,9 @@ fn a_ghost_fix_is_indexed_at_the_position_it_is_drawn_at() {
         .and_then(drawn_ghost_merc)
         .expect("the ghost fix is in the file's only track");
 
-    let tree = gt_track_builder::build_global_tree(&files);
-    let nearest = tree
+    let index = gt_track_builder::SpatialIndex::build(&files);
+    let nearest = index
+        .fixes
         .nearest_neighbor([ghost_merc.x, ghost_merc.y])
         .expect("the index holds the track's fixes");
 

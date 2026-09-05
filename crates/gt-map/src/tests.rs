@@ -5,8 +5,8 @@ use crate::hover_labels::candidate_label;
 use crate::viewport::match_bounding_box;
 use gt_test_utils::nav_test_data;
 use gt_types::{
-    DataCategory, FileIdx, FileMetadata, GeoBounds, Latitude, LoadedFile, LoadedTrack, Longitude,
-    MercBounds, MercPoint, PointIdx, SpatialPoint, TimeRange, TotalDistance, TrackIdx,
+    DataCategory, EventMarker, FileIdx, FileMetadata, GeoBounds, Latitude, LoadedFile, LoadedTrack,
+    Longitude, MercBounds, MercPoint, PointIdx, SpatialPoint, TimeRange, TotalDistance, TrackIdx,
     TrackMetadata,
 };
 use gt_ui_types::{DrawLayer, FileVisibility, TrackRanges, TrackVisibility};
@@ -446,9 +446,9 @@ fn spatial_index_valid_after_file_deletion() {
     // Confirm the bug scenario: the stale tree (built before deletion) has
     // entries with `point_index` ≥ 340, which would be OOB for `file_b` alone.
     let files_initial = vec![file_a, make_file_from_points(points_b)];
-    let stale_tree = gt_track_builder::build_global_tree(&files_initial);
+    let stale_index = gt_track_builder::SpatialIndex::build(&files_initial);
     let files_after = vec![file_b];
-    let stale_has_oob = stale_tree.iter().any(|sp| {
+    let stale_has_oob = stale_index.points().any(|sp| {
         let Some(file) = sp.file_index.get(&files_after) else {
             return true; // file index out of bounds → OOB
         };
@@ -477,6 +477,52 @@ fn spatial_index_valid_after_file_deletion() {
     assert!(
         map.all_tree_indices_valid(&files_after),
         "spatial index has stale entries after file deletion"
+    );
+}
+
+/// A marker sitting closer to the cursor than any fix still leaves the nearest
+/// fix in the fix slot: the hit test reads the fix tree for the fix slot and
+/// the marker tree for the marker slots.
+#[test]
+fn hover_finds_the_nearest_fix_and_the_nearest_event_marker() {
+    let start = chrono::DateTime::from_timestamp(0, 0).expect("valid timestamp");
+    let marker_at = |seconds: i64, lon: f64| {
+        EventMarker::new(
+            start + chrono::Duration::seconds(seconds),
+            "power/boot".to_owned(),
+            None,
+            Latitude::new(55.0),
+            Longitude::new(lon),
+        )
+    };
+    let mut track = track_over(vec![
+        nav_at(start, 55.0, 12.0001),
+        nav_at(start + chrono::Duration::seconds(1), 55.0, 12.001),
+    ]);
+    track.event_markers = vec![marker_at(0, 12.0), marker_at(1, 12.002)];
+    let files = vec![file_with_tracks(vec![track])];
+    let mut map = NavMap::new(egui::Context::default(), TileAccess::Offline);
+    map.rebuild_spatial_index(&files);
+    let vis = vis_all_visible();
+    let filter = GlobalFilter::default();
+    // The cursor sits on the first marker, 11 m from the first fix. The radius
+    // holds every fixture point: 1e-4 of the world is 4 km at this latitude.
+    let cursor = gt_types::mercator::normalize(Latitude::new(55.0), Longitude::new(12.0));
+    let radius_merc_sq = 1e-8;
+
+    let hover = map.nearest_hover_candidates(
+        [cursor.x, cursor.y],
+        radius_merc_sq,
+        scope(&files, &vis, &filter),
+    );
+
+    assert_eq!(
+        hover.tpv_or_satellite_report.map(|point| point.point_index),
+        Some(PointIdx::new(0))
+    );
+    assert_eq!(
+        hover.event_marker.map(|point| point.point_index),
+        Some(PointIdx::new(0))
     );
 }
 
