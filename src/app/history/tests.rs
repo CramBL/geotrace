@@ -34,9 +34,9 @@ use super::test_support::{
     ShelvedTracks, TotalTracks, entry_with_identity, entry_with_shelved_tracks,
 };
 use super::{
-    DEFAULT_WINDOW_HEIGHT_PX, DatabaseRef, HistorySort, HistoryWindow, HistoryWorker,
-    ICON_CARET_DOWN, ICON_CARET_UP, NavPointTimeRange, PRUNE_WINDOW_TITLE, RecordingEntry,
-    SortColumn, SortDirection, identity_display_parts, travel_mode_display,
+    DEFAULT_WINDOW_HEIGHT_PX, DEFAULT_WINDOW_WIDTH_PX, DatabaseRef, HistorySort, HistoryWindow,
+    HistoryWorker, ICON_CARET_DOWN, ICON_CARET_UP, NavPointTimeRange, PRUNE_WINDOW_TITLE,
+    RecordingEntry, SortColumn, SortDirection, identity_display_parts, travel_mode_display,
 };
 use strum::{EnumCount as _, IntoEnumIterator as _};
 
@@ -505,14 +505,13 @@ fn one_live_a_tombstone_and_two_shelved_tracks() -> Vec<TrackRange> {
     ]
 }
 
-/// How far the shelf tests drag the History window's bottom-right corner out.
-/// At the size the window opens at, a recording row with a date and a
-/// shelved-track count needs more width than the listing has, and the listing
-/// scrolls sideways to reach the action column.
-const SHELF_WINDOW_GROWN_BY: egui::Vec2 = egui::vec2(160.0, 140.0);
+/// How far the shelf tests drag the History window's bottom-right corner down:
+/// enough to show the shelf's lines under the recording's row along with the
+/// footer.
+const SHELF_WINDOW_GROWN_BY: egui::Vec2 = egui::vec2(0.0, 140.0);
 
 /// Open the shelf of the only listed recording and wait for its stored track
-/// table to arrive, on a window wide enough for the whole action column.
+/// table to arrive.
 fn open_the_shelf(h: &mut TestHarness<HistoryHarness>) {
     assert!(
         h.inner
@@ -1058,14 +1057,15 @@ fn resize_harness() -> TestHarness<'static, HistoryHarness> {
 /// edge. Identity fills the leftover width, so this "gap" is only the
 /// window's frame padding - at every window size.
 fn content_gap_to_window_edge(h: &TestHarness<HistoryHarness>) -> f32 {
-    let win = window_rect(h);
-    let delete = h
-        .inner
+    window_rect(h).right() - last_row_delete_button_rect(h).right()
+}
+
+fn last_row_delete_button_rect(h: &TestHarness<HistoryHarness>) -> egui::Rect {
+    h.inner
         .get_all_by_label("Delete")
         .last()
-        .expect("delete button")
-        .rect();
-    win.right() - delete.right()
+        .expect("the Delete button of the listing's last row")
+        .rect()
 }
 
 /// Identity fills the window at every size: the metadata columns keep their
@@ -1119,6 +1119,108 @@ fn identity_fills_the_window_at_every_size() {
     assert!(
         (content_gap_to_window_edge(&h) - settled_gap).abs() < 4.0,
         "shrinking the window left a gap on the right - identity did not fill it",
+    );
+}
+
+/// The figures a listing row states in its metadata columns.
+struct RowFigures {
+    nav_points: u64,
+    total_tracks: usize,
+    shelved_tracks: usize,
+    gtd_size_bytes: u64,
+}
+
+/// A listing entry filling every metadata column at once: a date and a
+/// duration from its time range, a nav-point count with the shelved-track
+/// suffix beside it, and a size.
+fn row_filling_every_metadata_column(
+    RowFigures {
+        nav_points,
+        total_tracks,
+        shelved_tracks,
+        gtd_size_bytes,
+    }: RowFigures,
+) -> RecordingEntry {
+    let mut entry = entry_with_shelved_tracks(
+        "auto:ride.gtd",
+        TotalTracks(total_tracks),
+        ShelvedTracks(shelved_tracks),
+    );
+    entry.meta.time_range =
+        NavPointTimeRange::covering(&[1_700_000_000_000_000, 1_700_003_660_000_000]);
+    entry.meta.nav_point_count = nav_points;
+    entry.meta.gtd_size_bytes = gtd_size_bytes;
+    entry
+}
+
+#[rstest::rstest]
+#[case::hundreds_of_points(RowFigures {
+    nav_points: 199,
+    total_tracks: 3,
+    shelved_tracks: 2,
+    gtd_size_bytes: 17_306,
+})]
+#[case::millions_of_points(RowFigures {
+    nav_points: 12_300_000,
+    total_tracks: 333,
+    shelved_tracks: 222,
+    gtd_size_bytes: 132_746_444,
+})]
+fn the_action_column_stays_inside_the_window_at_the_width_it_opens_at(#[case] figures: RowFigures) {
+    let harness = history_harness(vec![row_filling_every_metadata_column(figures)]);
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(show_history, harness);
+    // The metadata columns measure their content over the first frames, and
+    // identity takes what they leave on the frame after.
+    for _ in 0..6 {
+        h.run();
+    }
+
+    let window = window_rect(&h);
+    assert!(
+        (window.width() - DEFAULT_WINDOW_WIDTH_PX).abs() < 4.0,
+        "the window is {:.1}px wide, and this test measures the \
+         {DEFAULT_WINDOW_WIDTH_PX:.0}px width it opens at",
+        window.width(),
+    );
+    let delete = last_row_delete_button_rect(&h);
+    // The window lays its content out inside the frame margin.
+    let ctx = &h.inner.ctx;
+    let margin = ctx.style_of(ctx.theme()).spacing.window_margin.right;
+    let content_right = window.right() - f32::from(margin);
+    assert!(
+        delete.right() <= content_right + 1.0,
+        "Delete ends at {:.1}px, past the window's content edge at {content_right:.1}px: \
+         the listing scrolls sideways and cuts the button off",
+        delete.right(),
+    );
+}
+
+#[test]
+fn a_window_narrower_than_the_metadata_columns_keeps_the_shelf_caret() {
+    let harness = history_harness(vec![row_filling_every_metadata_column(RowFigures {
+        nav_points: 199,
+        total_tracks: 3,
+        shelved_tracks: 2,
+        gtd_size_bytes: 17_306,
+    })]);
+    let mut h = TestHarness::builder()
+        .size(NARROW_VIEWPORT)
+        .ui_state(show_history, harness);
+    for _ in 0..6 {
+        h.run();
+    }
+
+    let caret = h.inner.get_by_label(ICON_CARET_RIGHT).rect();
+    // The identity column ends where the Date column starts.
+    let identity_right = header_node(&h, "Date").rect().left();
+    assert!(
+        caret.right() <= identity_right,
+        "the shelf caret ends at {:.1}px, past the identity column's right edge at \
+         {identity_right:.1}px in a {:.0}px viewport: the column clips the caret",
+        caret.right(),
+        NARROW_VIEWPORT.x,
     );
 }
 

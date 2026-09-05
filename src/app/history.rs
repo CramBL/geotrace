@@ -47,6 +47,10 @@ const PRUNE_WINDOW_TITLE: &str = "Prune History…";
 pub(super) const DESTRUCTIVE_DELETE_HOVER: &str =
     "This cannot be undone. The original source files are unaffected.";
 
+/// The width the window opens at, which is the width the listing's columns
+/// have to fit in.
+const DEFAULT_WINDOW_WIDTH_PX: f32 = 640.0;
+
 /// The height the window opens at, whatever the length of the listing it
 /// opens on.
 const DEFAULT_WINDOW_HEIGHT_PX: f32 = 480.0;
@@ -720,7 +724,7 @@ impl HistoryWindow {
         Window::new("History")
             .open(&mut open)
             .resizable(true)
-            .default_width(640.0)
+            .default_width(DEFAULT_WINDOW_WIDTH_PX)
             // The height the window opens at, and the height the empty listing
             // centres its notice in.
             .default_height(DEFAULT_WINDOW_HEIGHT_PX)
