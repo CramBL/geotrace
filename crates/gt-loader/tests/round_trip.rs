@@ -1,6 +1,6 @@
 use geotrace_sdk::{
     Angle, Annotation, Constellation as SdkConst, MarkerIcon as SdkIcon, NavFileBuilder, NavFix,
-    Satellite as SdkSat, SatelliteReport, Velocity,
+    NavFixTime, Satellite as SdkSat, SatelliteReport, Velocity,
 };
 use gt_test_utils::{marker_test_data, nav_test_data};
 use gt_types::satellites::Constellation;
@@ -46,7 +46,7 @@ fn round_trip_from_gt_types_test_data() {
     for np in &nav_data {
         let tpv = np.tpv;
         let fix_b = NavFix::builder()
-            .gps_time(tpv.time().utc())
+            .time(NavFixTime::Receiver(tpv.time().utc()))
             .lat(Angle::degrees(tpv.lat().as_written()))
             .lon(Angle::degrees(tpv.lon().as_written()))
             .maybe_heading(tpv.heading().map(Angle::from));

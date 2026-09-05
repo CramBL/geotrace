@@ -16,6 +16,10 @@ the app).
 
 - The writer takes `sdk_version`, `sdk_git_commit` and `sdk_commit_time` from the `NavFile` it writes: a file read from disk and written back keeps the stamp it was read with, and one read without a stamp is written without one. `NavRecorder::finish` stamps the build it runs in.
 - C `gtd_builder_add_channel_with_unit_mode` takes `uint32_t unit_mode`, the parameter type `gtd_channel_unit_parse` already uses. A `GtdChannelUnitMode` value passes unchanged.
+- Rust `NavFix` cannot be built without a timestamp: its new required `time` field takes a `NavFixTime` (`Receiver`, `Host`, or `Both`). `gps_time()` and `sys_time()` read that field.
+- C `gtd_builder_add_nav_fix` returns the new `GTD_ERR_INVALID_ARGUMENT` (12) when `gps_time` and `sys_time` are both `gtd_ts_none()`.
+- Python `NavFix` raises `ValueError` when `gps_time` and `sys_time` are both `None`.
+- Reading a file whose nav point has neither a receiver nor a host timestamp fails with an error stating the record.
 - A satellite report before the first nav fix produces a ghost fix on the first fix.
 - A ghost fix after the last nav fix takes that fix's position when the fix has no heading.
 

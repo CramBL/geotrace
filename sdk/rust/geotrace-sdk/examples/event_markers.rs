@@ -19,7 +19,7 @@ use std::{env, error::Error, fs};
 
 use geotrace_sdk::{
     Angle, DateTime, EventMarker, EventMarkerIconChoice, EventMarkerStyle, MarkerIcon,
-    NavFileBuilder, NavFix, Utc,
+    NavFileBuilder, NavFix, NavFixTime, Utc,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -34,7 +34,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     ] {
         recorder.add(
             NavFix::builder()
-                .gps_time(t(ts))
+                .time(NavFixTime::Receiver(t(ts)))
                 .lat(Angle::degrees(lat))
                 .lon(Angle::degrees(lon))
                 .heading(Angle::degrees(90.0))

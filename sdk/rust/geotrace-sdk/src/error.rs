@@ -221,6 +221,9 @@ pub enum Error {
         source: FixedWidthStringError,
     },
 
+    #[error("nav point {record} has neither a receiver nor a host timestamp")]
+    FixWithoutTimestamp { record: usize },
+
     #[error(
         "dataset {path:?} declares {declared_bytes} bytes of data, past what a {file_bytes}-byte file can hold"
     )]

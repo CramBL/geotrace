@@ -8,21 +8,74 @@ use crate::fixed_width_string::{AnnotationField, MarkerLabelField};
 use crate::provenance;
 use crate::{Angle, Velocity};
 
+/// The clock or clocks that stamped a nav fix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavFixTime {
+    /// The receiver's timestamp, with no host clock recorded.
+    Receiver(DateTime<Utc>),
+    /// The host clock's timestamp, taken while the receiver had no lock.
+    Host(DateTime<Utc>),
+    /// Both timestamps, from a fix taken under lock on a host that also stamped it.
+    Both {
+        gps: DateTime<Utc>,
+        sys: DateTime<Utc>,
+    },
+}
+
+/// The two timestamps a recorder holds for one fix, either of which may be
+/// absent. A caller cannot transpose the two clocks: each has its own field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecordedFixTimestamps {
+    pub gps: Option<DateTime<Utc>>,
+    pub sys: Option<DateTime<Utc>>,
+}
+
+impl NavFixTime {
+    /// `None` when the recorder holds neither timestamp.
+    pub fn from_recorded(
+        RecordedFixTimestamps { gps, sys }: RecordedFixTimestamps,
+    ) -> Option<Self> {
+        match (gps, sys) {
+            (Some(gps), Some(sys)) => Some(Self::Both { gps, sys }),
+            (Some(gps), None) => Some(Self::Receiver(gps)),
+            (None, Some(sys)) => Some(Self::Host(sys)),
+            (None, None) => None,
+        }
+    }
+
+    pub fn gps_time(self) -> Option<DateTime<Utc>> {
+        match self {
+            Self::Receiver(gps) | Self::Both { gps, .. } => Some(gps),
+            Self::Host(_) => None,
+        }
+    }
+
+    pub fn sys_time(self) -> Option<DateTime<Utc>> {
+        match self {
+            Self::Host(sys) | Self::Both { sys, .. } => Some(sys),
+            Self::Receiver(_) => None,
+        }
+    }
+
+    /// The receiver's timestamp where the fix has one, else the host clock's.
+    pub fn effective(self) -> DateTime<Utc> {
+        match self {
+            Self::Receiver(gps) | Self::Both { gps, .. } => gps,
+            Self::Host(sys) => sys,
+        }
+    }
+}
+
 /// A single GPS/GNSS fix: position, heading, and optional speed at a point in time.
 ///
 /// `heading` is `None` for synthetic/ghost fixes where the actual direction is
 /// unknown (e.g., dead-reckoned positions emitted only to carry satellite reports).
 /// The app renders those as circles.
 ///
-/// `gps_time` is the GPS-receiver timestamp. It is `None` when the receiver had no
-/// lock at the time of this record.
-/// Do not substitute `sys_time` for `gps_time` on the client side - pass `None`
-/// and let the SDK resolve the effective time from `sys_time` internally.
-///
-/// `sys_time` is the system-clock timestamp recorded alongside the GPS fix.
-/// Providing it allows the builder to compute the GPS/system-clock delta, which
-/// is used to convert satellite report system-clock timestamps into the GPS time
-/// domain for accurate ghost-fix interpolation during no-fix periods.
+/// The builder measures the GPS/system-clock delta from a [`NavFixTime::Both`]
+/// fix. With that delta it converts a satellite report's system-clock timestamp
+/// into the GPS time domain, and interpolates ghost fixes through a no-fix
+/// period.
 ///
 /// The ranges stated on the fields below are data quality expectations, not
 /// parse rules.
@@ -33,14 +86,20 @@ use crate::{Angle, Velocity};
 /// The builder writes every value it is given: a recorder that captured bad
 /// data must be able to write it.
 /// Checking a value against its range is the consumer's job.
+///
+/// A fix without a timestamp does not compile:
+///
+/// ```compile_fail
+/// use geotrace_sdk::{Angle, NavFix};
+///
+/// let fix = NavFix::builder()
+///     .lat(Angle::degrees(51.5))
+///     .lon(Angle::degrees(-0.1))
+///     .build();
+/// ```
 #[derive(bon::Builder, Debug, Clone, Copy, PartialEq)]
 pub struct NavFix {
-    /// GPS-receiver timestamp. `None` when the receiver had no active lock.
-    #[builder(into)]
-    pub gps_time: Option<DateTime<Utc>>,
-    /// System-clock time at the moment of this fix, if recorded.
-    #[builder(into)]
-    pub sys_time: Option<DateTime<Utc>>,
+    pub time: NavFixTime,
     /// WGS-84 latitude, expected in \[-90°, 90°].
     pub lat: Angle,
     /// WGS-84 longitude, expected in \[-180°, 180°].
@@ -670,19 +729,16 @@ impl Meta {
 
 impl NavFix {
     pub fn gps_time(&self) -> Option<DateTime<Utc>> {
-        self.gps_time
+        self.time.gps_time()
     }
 
     pub fn sys_time(&self) -> Option<DateTime<Utc>> {
-        self.sys_time
+        self.time.sys_time()
     }
 
-    /// The best available timestamp for this fix.
-    ///
-    /// Returns `gps_time` when the receiver had an active lock, otherwise falls
-    /// back to `sys_time`, then to the Unix epoch as a last resort.
+    /// The receiver's timestamp where the fix has one, else the host clock's.
     pub fn effective_gps_time(&self) -> DateTime<Utc> {
-        self.gps_time().or(self.sys_time()).unwrap_or_default()
+        self.time.effective()
     }
 }
 
@@ -1258,7 +1314,11 @@ mod nav_file_comparison_tests {
         NavFile {
             meta: Meta::builder().title("A recording").build(),
             nav_points: vec![NavPoint {
-                fix: NavFix::builder().gps_time(time).lat(lat).lon(lon).build(),
+                fix: NavFix::builder()
+                    .time(NavFixTime::Receiver(time))
+                    .lat(lat)
+                    .lon(lon)
+                    .build(),
                 satellites: None,
             }],
             markers: vec![Marker {

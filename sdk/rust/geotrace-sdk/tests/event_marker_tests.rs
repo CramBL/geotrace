@@ -1,7 +1,7 @@
 use geotrace_sdk::{
     Angle, AnnotationField, DateTime, Duration, EventKind, EventMarker, EventMarkerColor,
     EventMarkerError, EventMarkerIconChoice, EventMarkerStyle, MarkerIcon, NavFileBuilder, NavFix,
-    Utc, VariantPathField,
+    NavFixTime, Utc, VariantPathField,
 };
 use rstest::rstest;
 
@@ -16,7 +16,7 @@ fn t(offset_secs: i64) -> DateTime<Utc> {
 
 fn fix(offset_secs: i64, lat: f64, lon: f64) -> NavFix {
     NavFix::builder()
-        .gps_time(t(offset_secs))
+        .time(NavFixTime::Receiver(t(offset_secs)))
         .lat(Angle::degrees(lat))
         .lon(Angle::degrees(lon))
         .heading(Angle::degrees(0.0))

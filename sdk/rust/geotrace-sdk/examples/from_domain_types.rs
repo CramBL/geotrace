@@ -21,7 +21,7 @@
 use std::{env, error::Error, fs};
 
 use geotrace_sdk::{
-    Angle, Annotation, Constellation, MarkerIcon, NavFileBuilder, NavFix, Satellite,
+    Angle, Annotation, Constellation, MarkerIcon, NavFileBuilder, NavFix, NavFixTime, Satellite,
     SatelliteReport, Timestamp, Velocity,
 };
 
@@ -65,7 +65,9 @@ struct LogEntry {
 impl From<GpsFix> for NavFix {
     fn from(f: GpsFix) -> Self {
         NavFix::builder()
-            .gps_time(Timestamp::from_unix_millis(f.unix_ms))
+            .time(NavFixTime::Receiver(
+                Timestamp::from_unix_millis(f.unix_ms).into(),
+            ))
             .lat(Angle::degrees(f.lat_deg))
             .lon(Angle::degrees(f.lon_deg))
             .heading(Angle::degrees(f.heading_deg))

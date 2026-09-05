@@ -9,8 +9,8 @@
 
 use geotrace_sdk::{Angle, DateTime, Duration, Unit, Utc, Velocity};
 use geotrace_sdk::{
-    Annotation, Channel, Constellation, MarkerIcon, NavFile, NavFileBuilder, NavFix, Satellite,
-    SatelliteReport,
+    Annotation, Channel, Constellation, MarkerIcon, NavFile, NavFileBuilder, NavFix, NavFixTime,
+    Satellite, SatelliteReport,
 };
 
 #[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
@@ -36,7 +36,7 @@ fn snapshot_inspect_populated_file() -> Result<(), Box<dyn std::error::Error>> {
 
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t0)
+            .time(NavFixTime::Receiver(t0))
             .lat(Angle::degrees(51.5))
             .lon(Angle::degrees(-0.1))
             .heading(Angle::degrees(270.0))
@@ -45,7 +45,7 @@ fn snapshot_inspect_populated_file() -> Result<(), Box<dyn std::error::Error>> {
     );
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t1)
+            .time(NavFixTime::Receiver(t1))
             .lat(Angle::degrees(51.6))
             .lon(Angle::degrees(-0.2))
             .heading(Angle::degrees(180.0))
@@ -127,7 +127,7 @@ fn file_with_no_satellite_data() -> Result<(), Box<dyn std::error::Error>> {
     for i in 0..3i64 {
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(t0 + Duration::seconds(i))
+                .time(NavFixTime::Receiver(t0 + Duration::seconds(i)))
                 .lat(Angle::degrees(55.0))
                 .lon(Angle::degrees(12.0))
                 .heading(Angle::degrees(0.0))
@@ -154,7 +154,7 @@ fn file_with_no_markers() -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t0)
+            .time(NavFixTime::Receiver(t0))
             .lat(Angle::degrees(55.0))
             .lon(Angle::degrees(12.0))
             .heading(Angle::degrees(0.0))
@@ -179,7 +179,7 @@ fn inspect_reports_no_channels_when_absent() -> Result<(), Box<dyn std::error::E
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(base())
+            .time(NavFixTime::Receiver(base()))
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .build(),

@@ -11,8 +11,8 @@ use crate::provenance;
 use crate::size_checked_file::SizeCheckedFile;
 use crate::types::{
     Annotation, Channel, Constellation, EventMarkerColor, EventMarkerIconChoice, EventMarkerPoint,
-    EventMarkerStyle, Marker, MarkerIcon, Meta, NavFile, NavFix, NavPoint, Satellite,
-    SatelliteReport, TravelMode,
+    EventMarkerStyle, Marker, MarkerIcon, Meta, NavFile, NavFix, NavFixTime, NavPoint,
+    RecordedFixTimestamps, Satellite, SatelliteReport, TravelMode,
 };
 use crate::write;
 use crate::{Angle, Velocity};
@@ -139,15 +139,25 @@ fn read_nav_points(file: &SizeCheckedFile) -> Result<Vec<NavPoint>, Error> {
         .zip(speeds.iter())
         .zip(sys_times.iter())
         .zip(ephs.iter())
+        .enumerate()
         .map(
             |(
-                (((((gps_time_us, lat_deg), lon_deg), heading_deg), speed_mps), sys_time_us),
-                eph_val,
+                record,
+                (
+                    (((((gps_time_us, lat_deg), lon_deg), heading_deg), speed_mps), sys_time_us),
+                    eph_val,
+                ),
             )| {
-                NavPoint {
+                let recorded = RecordedFixTimestamps {
+                    gps: u64_to_opt_datetime(*gps_time_us),
+                    sys: u64_to_opt_datetime(*sys_time_us),
+                };
+                let Some(time) = NavFixTime::from_recorded(recorded) else {
+                    return Err(Error::FixWithoutTimestamp { record });
+                };
+                Ok(NavPoint {
                     fix: NavFix {
-                        gps_time: u64_to_opt_datetime(*gps_time_us),
-                        sys_time: u64_to_opt_datetime(*sys_time_us),
+                        time,
                         lat: Angle::degrees(*lat_deg),
                         lon: Angle::degrees(*lon_deg),
                         heading: if heading_deg.is_nan() {
@@ -167,10 +177,10 @@ fn read_nav_points(file: &SizeCheckedFile) -> Result<Vec<NavPoint>, Error> {
                         },
                     },
                     satellites: None,
-                }
+                })
             },
         )
-        .collect();
+        .collect::<Result<Vec<NavPoint>, Error>>()?;
 
     Ok(nav_points)
 }

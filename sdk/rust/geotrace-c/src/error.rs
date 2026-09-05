@@ -62,6 +62,8 @@ pub enum GtdStatus {
     GTD_ERR_INVALID_CHANNEL = 10,
     /// A string is longer than the `.gtd` field that holds it.
     GTD_ERR_FIELD_TOO_LONG = 11,
+    /// An argument's value is not allowed.
+    GTD_ERR_INVALID_ARGUMENT = 12,
     /// Internal error (bug in the SDK).
     GTD_ERR_INTERNAL = 99,
 }
@@ -81,6 +83,7 @@ const _: () = {
     assert!(GtdStatus::GTD_ERR_PARSE as u32 == 9);
     assert!(GtdStatus::GTD_ERR_INVALID_CHANNEL as u32 == 10);
     assert!(GtdStatus::GTD_ERR_FIELD_TOO_LONG as u32 == 11);
+    assert!(GtdStatus::GTD_ERR_INVALID_ARGUMENT as u32 == 12);
     assert!(GtdStatus::GTD_ERR_INTERNAL as u32 == 99);
 };
 
@@ -99,6 +102,7 @@ pub(crate) fn status_for_error(e: &geotrace_sdk::Error) -> GtdStatus {
         | Error::UnknownMarkerIcon { .. }
         | Error::ParseError { .. }
         | Error::UnreadableField { .. }
+        | Error::FixWithoutTimestamp { .. }
         | Error::DatasetSizePastFileLength { .. } => GtdStatus::GTD_ERR_PARSE,
         Error::UnwritableField { .. } => GtdStatus::GTD_ERR_FIELD_TOO_LONG,
     }

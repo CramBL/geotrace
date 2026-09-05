@@ -46,7 +46,7 @@ use geotrace_sdk::{
     Constellation as SdkConstellation, EventMarker as SdkEventMarker,
     EventMarkerColor as SdkEventMarkerColor, EventMarkerIconChoice as SdkEventMarkerIconChoice,
     EventMarkerPoint, EventMarkerStyle as SdkEventMarkerStyle, Marker as SdkMarker,
-    MarkerIcon as SdkMarkerIcon, NavFile, NavFileBuilder, Satellite as SdkSatellite,
+    MarkerIcon as SdkMarkerIcon, NavFile, NavFileBuilder, NavFixTime, Satellite as SdkSatellite,
     SatelliteReport, TravelMode as SdkTravelMode, collect_satellite_warnings,
 };
 use gt_types::coordinates::{CoordinateAxis, OutOfRange, RawDegrees};
@@ -552,10 +552,11 @@ fn from_nav_file(nav_file: &NavFile) -> NavFileContents {
             longitudes_out_of_range.push(CoordinateOutOfRange { record, degrees });
         }
 
-        let time = match (sdk_point.fix.gps_time(), sdk_point.fix.sys_time()) {
-            (Some(gps), _) => FixTimestamp::FromGpsReceiver(GpsTime::from_utc(gps)),
-            (None, Some(host)) => FixTimestamp::FromHostClock(SysTime::from_utc(host)),
-            (None, None) => FixTimestamp::Missing,
+        let time = match sdk_point.fix.time {
+            NavFixTime::Receiver(gps) | NavFixTime::Both { gps, .. } => {
+                FixTimestamp::FromGpsReceiver(GpsTime::from_utc(gps))
+            }
+            NavFixTime::Host(host) => FixTimestamp::FromHostClock(SysTime::from_utc(host)),
         };
 
         let tpv = TimePositionVelocity::builder()
@@ -932,7 +933,8 @@ mod tests {
     use super::*;
     use geotrace_sdk::{
         Angle, Annotation, Constellation as SdkConst, DateTime, Duration, MarkerIcon as SdkIcon,
-        NavFile, NavFileBuilder, NavFix, Satellite as SdkSat, SatelliteReport, Unit, Utc, Velocity,
+        NavFile, NavFileBuilder, NavFix, NavFixTime, Satellite as SdkSat, SatelliteReport, Unit,
+        Utc, Velocity,
     };
     use gt_types::TrackGeometry;
     use proptest::prelude::*;
@@ -946,7 +948,7 @@ mod tests {
 
     fn minimal_fix(time: DateTime<Utc>) -> NavFix {
         NavFix::builder()
-            .gps_time(time)
+            .time(NavFixTime::Receiver(time))
             .lat(Angle::degrees(55.0))
             .lon(Angle::degrees(12.0))
             .heading(Angle::degrees(0.0))
@@ -958,9 +960,6 @@ mod tests {
         (contents.nav_points, contents.markers)
     }
 
-    /// The loader records which clock stamped a fix: the receiver's timestamp
-    /// when it had a lock, the host timestamp when it did not, and the Unix
-    /// epoch when neither clock stamped it.
     #[test]
     fn a_loaded_fix_keeps_which_clock_stamped_it() {
         let receiver_stamp = base() + Duration::seconds(2);
@@ -968,20 +967,14 @@ mod tests {
         let mut recorder = NavFileBuilder::new().open();
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(receiver_stamp)
+                .time(NavFixTime::Receiver(receiver_stamp))
                 .lat(Angle::degrees(55.0))
                 .lon(Angle::degrees(12.0))
                 .build(),
         );
         recorder.add_nav_fix(
             NavFix::builder()
-                .sys_time(host_stamp)
-                .lat(Angle::degrees(55.0))
-                .lon(Angle::degrees(12.0))
-                .build(),
-        );
-        recorder.add_nav_fix(
-            NavFix::builder()
+                .time(NavFixTime::Host(host_stamp))
                 .lat(Angle::degrees(55.0))
                 .lon(Angle::degrees(12.0))
                 .build(),
@@ -995,11 +988,7 @@ mod tests {
             .collect();
         assert_eq!(
             stamped,
-            vec![
-                (DateTime::UNIX_EPOCH, None),
-                (host_stamp, None),
-                (receiver_stamp, Some(receiver_stamp)),
-            ]
+            vec![(host_stamp, None), (receiver_stamp, Some(receiver_stamp))]
         );
     }
 
@@ -1124,7 +1113,7 @@ mod tests {
         for i in 0..5i64 {
             recorder.add_nav_fix(
                 NavFix::builder()
-                    .gps_time(t0 + Duration::seconds(i))
+                    .time(NavFixTime::Receiver(t0 + Duration::seconds(i)))
                     .lat(Angle::degrees(55.0))
                     .lon(Angle::degrees(i as f64))
                     .heading(Angle::degrees(0.0))
@@ -1210,7 +1199,7 @@ mod tests {
             for i in 0..N {
                 recorder.add_nav_fix(
                     NavFix::builder()
-                        .gps_time(base() + Duration::seconds(i as i64))
+                        .time(NavFixTime::Receiver(base() + Duration::seconds(i as i64)))
                         .lat(Angle::degrees(55.0))
                         .lon(Angle::degrees(i as f64))
                         .heading(Angle::degrees(0.0))
@@ -1264,7 +1253,7 @@ mod tests {
         let mut recorder = NavFileBuilder::new().open();
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(t0)
+                .time(NavFixTime::Receiver(t0))
                 .lat(Angle::degrees(51.5))
                 .lon(Angle::degrees(-0.1))
                 .heading(Angle::degrees(270.0))
@@ -1297,7 +1286,7 @@ mod tests {
         let mut recorder = NavFileBuilder::new().open();
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(base())
+                .time(NavFixTime::Receiver(base()))
                 .lat(Angle::degrees(0.0))
                 .lon(Angle::degrees(0.0))
                 .heading(Angle::degrees(0.0))
@@ -1598,7 +1587,7 @@ mod tests {
             };
             recorder.add_nav_fix(
                 NavFix::builder()
-                    .gps_time(base() + Duration::seconds(record))
+                    .time(NavFixTime::Receiver(base() + Duration::seconds(record)))
                     .lat(Angle::degrees(lat_degrees))
                     .lon(Angle::degrees(lon_degrees))
                     .heading(Angle::degrees(90.0))
@@ -1698,7 +1687,7 @@ mod tests {
         for record in 0..3i64 {
             recorder.add_nav_fix(
                 NavFix::builder()
-                    .gps_time(base() + Duration::seconds(record))
+                    .time(NavFixTime::Receiver(base() + Duration::seconds(record)))
                     .lat(Angle::degrees(f64::NAN))
                     .lon(Angle::degrees(12.0))
                     .heading(Angle::degrees(90.0))

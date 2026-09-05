@@ -10,7 +10,7 @@
 
 use geotrace_sdk::{
     Angle, Constellation as SdkConstellation, DateTime, Duration, NavFileBuilder, NavFix,
-    Satellite as SdkSatellite, SatelliteReport, Utc,
+    NavFixTime, Satellite as SdkSatellite, SatelliteReport, Utc,
 };
 use gt_analysis::{loss_of_lock, satellite_utilization};
 use gt_test_utils::GOLD_BYTES;
@@ -71,7 +71,7 @@ fn load_track_reporting(reports: Vec<Vec<SdkSatellite>>) -> LoadedTrack {
         let time = t0 + Duration::seconds(second);
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(time)
+                .time(NavFixTime::Receiver(time))
                 .lat(Angle::degrees(55.0))
                 .lon(Angle::degrees(12.0))
                 .heading(Angle::degrees(0.0))

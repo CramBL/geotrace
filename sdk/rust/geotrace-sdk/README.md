@@ -3,13 +3,13 @@
 The official Rust SDK for generating and reading `.gtd` data files compatible with GeoTrace.
 
 ```rust
-use geotrace_sdk::{Angle, NavFileBuilder, NavFix, Utc};
+use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime, Utc};
 
 let mut recorder = NavFileBuilder::new().open();
 // add() dispatches by type: pass a NavFix, SatelliteReport, Annotation, or EventMarker.
 recorder.add(
     NavFix::builder()
-        .gps_time(Utc::now())
+        .time(NavFixTime::Receiver(Utc::now()))
         .lat(Angle::degrees(51.5074))
         .lon(Angle::degrees(-0.1278))
         .heading(Angle::degrees(90.0))

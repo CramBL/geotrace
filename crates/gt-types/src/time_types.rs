@@ -179,8 +179,6 @@ pub enum FixTimestamp {
     FromGpsReceiver(GpsTime),
     /// The receiver had no lock: the host clock stamped the fix.
     FromHostClock(SysTime),
-    /// Neither clock stamped the fix.
-    Missing,
 }
 
 impl From<GpsTime> for FixTimestamp {

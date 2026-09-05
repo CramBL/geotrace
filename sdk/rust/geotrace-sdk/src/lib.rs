@@ -3,14 +3,14 @@
 //! # Quick start
 //!
 //! ```no_run
-//! use geotrace_sdk::{Angle, NavFileBuilder, NavFix};
+//! use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime};
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut recorder = NavFileBuilder::new().open();
 //!
 //! recorder.add(
 //!     NavFix::builder()
-//!         .gps_time(chrono::Utc::now())
+//!         .time(NavFixTime::Receiver(chrono::Utc::now()))
 //!         .lat(Angle::degrees(51.5))
 //!         .lon(Angle::degrees(-0.1))
 //!         .heading(Angle::degrees(270.0))
@@ -56,8 +56,8 @@ pub use provenance::{
 };
 pub use types::{
     Annotation, Channel, Constellation, EventMarker, EventMarkerColor, EventMarkerIconChoice,
-    EventMarkerPoint, EventMarkerStyle, Marker, MarkerIcon, Meta, NavFile, NavFix, NavPoint,
-    Satellite, SatelliteReport, TravelMode,
+    EventMarkerPoint, EventMarkerStyle, Marker, MarkerIcon, Meta, NavFile, NavFix, NavFixTime,
+    NavPoint, RecordedFixTimestamps, Satellite, SatelliteReport, TravelMode,
 };
 pub use units::{Angle, Timestamp, Velocity};
 #[doc(hidden)]

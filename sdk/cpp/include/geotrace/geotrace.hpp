@@ -215,6 +215,8 @@ namespace detail {
         throw ParseError(msg);
     case GTD_ERR_INVALID_CHANNEL:
         throw InvalidChannelError(msg);
+    case GTD_ERR_INVALID_ARGUMENT:
+        throw std::invalid_argument(msg);
     default:
         throw Error(msg);
     }

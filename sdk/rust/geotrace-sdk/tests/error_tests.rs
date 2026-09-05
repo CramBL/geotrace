@@ -1,4 +1,4 @@
-use geotrace_sdk::{Angle, DateTime, Duration, NavFile, NavFileBuilder, NavFix, Utc};
+use geotrace_sdk::{Angle, DateTime, Duration, NavFile, NavFileBuilder, NavFix, NavFixTime, Utc};
 use hdf5_pure::{AttrValue, FileBuilder};
 
 fn base() -> DateTime<Utc> {
@@ -11,7 +11,7 @@ fn minimal_gtd_bytes() -> Vec<u8> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t)
+            .time(NavFixTime::Receiver(t))
             .lat(Angle::degrees(51.5))
             .lon(Angle::degrees(-0.1))
             .heading(Angle::degrees(90.0))
@@ -19,7 +19,7 @@ fn minimal_gtd_bytes() -> Vec<u8> {
     );
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t + Duration::seconds(60))
+            .time(NavFixTime::Receiver(t + Duration::seconds(60)))
             .lat(Angle::degrees(51.6))
             .lon(Angle::degrees(-0.2))
             .heading(Angle::degrees(270.0))
@@ -119,5 +119,46 @@ fn unrecognised_version_string_returns_unsupported_version() {
     assert!(
         matches!(result, Err(Error::UnsupportedVersion { ref version }) if version == "99"),
         "expected UnsupportedVersion(\"99\"), got: {result:?}"
+    );
+}
+
+#[test]
+fn nav_point_without_either_timestamp_fails_the_read() {
+    use geotrace_sdk::Error;
+
+    let mut fb = FileBuilder::new();
+    fb.set_attr("geotrace_version", AttrValue::String("1".into()));
+    let mut np = fb.create_group("nav_points");
+    np.create_dataset("time")
+        .with_i64_data(&[0])
+        .with_shape(&[1]);
+    np.create_dataset("gps_time_us")
+        .with_u64_data(&[u64::MAX])
+        .with_shape(&[1]);
+    np.create_dataset("sys_time_us")
+        .with_u64_data(&[u64::MAX])
+        .with_shape(&[1]);
+    np.create_dataset("lat")
+        .with_f64_data(&[51.5])
+        .with_shape(&[1]);
+    np.create_dataset("lon")
+        .with_f64_data(&[-0.1])
+        .with_shape(&[1]);
+    np.create_dataset("heading")
+        .with_f64_data(&[f64::NAN])
+        .with_shape(&[1]);
+    np.create_dataset("speed_mps")
+        .with_f64_data(&[f64::NAN])
+        .with_shape(&[1]);
+    fb.add_group(np.finish());
+    let bytes = fb.finish().expect("build");
+
+    let result = NavFile::read(bytes.as_slice());
+    let Err(error @ Error::FixWithoutTimestamp { record: 0 }) = result else {
+        panic!("expected FixWithoutTimestamp at record 0, got: {result:?}");
+    };
+    assert_eq!(
+        error.to_string(),
+        "nav point 0 has neither a receiver nor a host timestamp"
     );
 }

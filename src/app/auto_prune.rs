@@ -36,7 +36,9 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geotrace_sdk::{Angle, DateTime, Duration as SdkDuration, NavFileBuilder, NavFix};
+    use geotrace_sdk::{
+        Angle, DateTime, Duration as SdkDuration, NavFileBuilder, NavFix, NavFixTime,
+    };
 
     fn make_gtd(start_secs: i64, n: u32) -> Vec<u8> {
         let t0 = DateTime::from_timestamp(start_secs, 0).expect("valid timestamp");
@@ -44,7 +46,7 @@ mod tests {
         for i in 0..n {
             recorder.add_nav_fix(
                 NavFix::builder()
-                    .gps_time(t0 + SdkDuration::seconds(i as i64))
+                    .time(NavFixTime::Receiver(t0 + SdkDuration::seconds(i as i64)))
                     .lat(Angle::degrees(51.5))
                     .lon(Angle::degrees(-0.1))
                     .heading(Angle::degrees(0.0))

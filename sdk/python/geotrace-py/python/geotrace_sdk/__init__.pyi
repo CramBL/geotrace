@@ -270,7 +270,7 @@ class Channel:
 class NavFix:
     """A single GPS/GNSS fix: position, optional heading, and optional speed.
 
-    Provide at least one of ``gps_time`` or ``sys_time``.
+    Raises ``ValueError`` when ``gps_time`` and ``sys_time`` are both ``None``.
     All :class:`datetime.datetime` arguments must be timezone-aware.
 
     The ranges below are data quality expectations, not parse rules.

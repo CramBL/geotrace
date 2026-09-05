@@ -21,7 +21,8 @@
 use std::{env, error::Error, fs};
 
 use geotrace_sdk::{
-    Angle, Channel, ChannelUnit, DateTime, Duration, NavFile, NavFileBuilder, NavFix, Unit, Utc,
+    Angle, Channel, ChannelUnit, DateTime, Duration, NavFile, NavFileBuilder, NavFix, NavFixTime,
+    Unit, Utc,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -30,7 +31,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut recorder = NavFileBuilder::new().with_title("Channel tour").open();
     recorder.add(
         NavFix::builder()
-            .gps_time(t0)
+            .time(NavFixTime::Receiver(t0))
             .lat(Angle::degrees(51.5074))
             .lon(Angle::degrees(-0.1278))
             .build(),

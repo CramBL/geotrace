@@ -10,7 +10,7 @@
 
 use std::path::Path;
 
-use geotrace_sdk::{Angle, DateTime, NavFile, NavFileBuilder, NavFix, Utc};
+use geotrace_sdk::{Angle, DateTime, NavFile, NavFileBuilder, NavFix, NavFixTime, Utc};
 
 #[test]
 #[expect(
@@ -39,7 +39,7 @@ fn out_of_range_latitude_writes_and_reads_back() -> Result<(), Box<dyn std::erro
     let mut recorder = NavFileBuilder::new().open();
     recorder.add(
         NavFix::builder()
-            .gps_time(time)
+            .time(NavFixTime::Receiver(time))
             .lat(Angle::degrees(91.0))
             .lon(Angle::degrees(-0.1278))
             .build(),

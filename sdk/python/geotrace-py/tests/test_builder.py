@@ -51,6 +51,17 @@ def test_nav_fix_all_fields() -> None:
     assert abs(fix.eph_m - 1.5) < 1e-9
 
 
+def test_nav_fix_without_a_timestamp_is_rejected() -> None:
+    with pytest.raises(ValueError, match="provide gps_time or sys_time"):
+        NavFix(lat=51.5074, lon=-0.1278)
+
+
+def test_nav_fix_with_only_a_host_timestamp() -> None:
+    fix = NavFix(lat=51.5074, lon=-0.1278, sys_time=T0)
+    assert fix.gps_time is None
+    assert fix.sys_time == T0
+
+
 def test_nav_fix_repr() -> None:
     fix = NavFix(lat=51.5, lon=-0.1, gps_time=T0)
     r = repr(fix)

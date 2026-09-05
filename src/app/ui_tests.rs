@@ -9064,7 +9064,9 @@ fn recording_scope_parks_the_whole_batch_on_one_consent_dialog() {
 /// through the response handler seeds a fresh scheduler's stores.
 #[test]
 fn snap_runs_persist_and_restore_through_the_app() {
-    use geotrace_sdk::{Angle, DateTime, Duration as SdkDuration, NavFileBuilder, NavFix};
+    use geotrace_sdk::{
+        Angle, DateTime, Duration as SdkDuration, NavFileBuilder, NavFix, NavFixTime,
+    };
     use gt_store::{HistoryDatabase, Recordings, StoredSegmentation, TrackRange, TrackState};
 
     // One real recording so the blob has a valid group to live in.
@@ -9073,7 +9075,7 @@ fn snap_runs_persist_and_restore_through_the_app() {
     for i in 0..10i64 {
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(t0 + SdkDuration::seconds(i))
+                .time(NavFixTime::Receiver(t0 + SdkDuration::seconds(i)))
                 .lat(Angle::degrees(55.68))
                 .lon(Angle::degrees(12.56))
                 .heading(Angle::degrees(0.0))
@@ -9289,7 +9291,7 @@ fn snapped_tracks_view_respects_toggle_and_tree_visibility() {
 /// a 1 h 09 m recording gap - the `gnss.h5.gtd` case, where the receiver
 /// reported its pre-gap GPS epoch for the first fix after resuming.
 fn clock_excursion_gtd_bytes() -> Vec<u8> {
-    use geotrace_sdk::{Angle, Duration as SdkDuration, NavFileBuilder, NavFix};
+    use geotrace_sdk::{Angle, Duration as SdkDuration, NavFileBuilder, NavFix, NavFixTime};
 
     let start = base_time();
     let mut recorder = NavFileBuilder::new().open();
@@ -9298,8 +9300,10 @@ fn clock_excursion_gtd_bytes() -> Vec<u8> {
         let ahead_ms = if i == 10 { 4_127_054 } else { 234 };
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(gps)
-                .sys_time(gps + SdkDuration::milliseconds(ahead_ms))
+                .time(NavFixTime::Both {
+                    gps,
+                    sys: gps + SdkDuration::milliseconds(ahead_ms),
+                })
                 .lat(Angle::degrees(51.5 + i as f64 * 0.0002))
                 .lon(Angle::degrees(-0.1 - i as f64 * 0.00015))
                 .heading(Angle::degrees(270.0))
