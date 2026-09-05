@@ -1307,7 +1307,7 @@ mod tests {
         recorder.add_nav_fix(minimal_fix(t0));
         recorder.add_satellite_report(
             SatelliteReport::builder()
-                .gps_time(t0)
+                .time(NavFixTime::Receiver(t0))
                 .tracked(vec![
                     SdkSat::builder()
                         .constellation(SdkConst::Gps)
@@ -1375,7 +1375,7 @@ mod tests {
     ])]
     fn rows_repeating_a_satellite_merge_into_one(#[case] tracked: Vec<SdkSat>) {
         let report = SatelliteReport::builder()
-            .gps_time(base())
+            .time(NavFixTime::Receiver(base()))
             .tracked(tracked)
             .build();
 
@@ -1402,7 +1402,7 @@ mod tests {
                 .build()
         };
         let report = SatelliteReport::builder()
-            .gps_time(base())
+            .time(NavFixTime::Receiver(base()))
             .tracked(vec![
                 row_at(AZIMUTH_JUST_WEST_OF_NORTH_DEG),
                 row_at(AZIMUTH_JUST_EAST_OF_NORTH_DEG),
@@ -1427,7 +1427,7 @@ mod tests {
             .in_fix(true)
             .build();
         let report = SatelliteReport::builder()
-            .gps_time(base())
+            .time(NavFixTime::Receiver(base()))
             .tracked(vec![
                 row_for_prn_7(Some(REPEATED_ELEVATION_DEG), HIGHEST_ROW_SNR_DB, true),
                 galileo_row,
@@ -1739,7 +1739,7 @@ mod tests {
             recorder.add_nav_fix(minimal_fix(time));
             recorder.add_satellite_report(
                 SatelliteReport::builder()
-                    .gps_time(time)
+                    .time(NavFixTime::Receiver(time))
                     .tracked(tracked)
                     .build(),
             );

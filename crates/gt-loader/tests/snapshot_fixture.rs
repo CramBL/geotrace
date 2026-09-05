@@ -90,7 +90,7 @@ fn satellite_report(
         })
         .collect();
     SatelliteReport::builder()
-        .gps_time(time)
+        .time(NavFixTime::Receiver(time))
         .tracked(tracked)
         .build()
 }

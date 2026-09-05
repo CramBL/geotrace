@@ -60,8 +60,10 @@ for point in nav_file.points:
 
 ## Logging
 
-The SDK does not raise when it drops or substitutes data.
-It drops a satellite report that has no timestamp, and it keeps an unknown `travel_mode` as it read it.
+The SDK does not raise on unexpected data.
+It accepts the value and logs what it saw.
+It keeps an unknown `travel_mode` as it read it.
+It also accepts a satellite SNR of 99 dB-Hz: a receiver writes that value when it has no reading.
 In both cases the call succeeds and the SDK writes a `logging` record saying what it did.
 
 Each record goes to a logger named after the module that wrote it, such as `geotrace_sdk.builder`.

@@ -70,7 +70,7 @@ fn nan_for_absent_satellite_fields() -> Result<(), Box<dyn std::error::Error>> {
     );
     recorder.add_satellite_report(
         SatelliteReport::builder()
-            .gps_time(base())
+            .time(NavFixTime::Receiver(base()))
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -123,7 +123,7 @@ fn constellation_encoding() -> Result<(), Box<dyn std::error::Error>> {
         );
         recorder.add_satellite_report(
             SatelliteReport::builder()
-                .gps_time(base())
+                .time(NavFixTime::Receiver(base()))
                 .tracked(vec![
                     Satellite::builder()
                         .constellation(constellation)

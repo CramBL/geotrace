@@ -1,6 +1,6 @@
 use geotrace_sdk::{
     Angle, Annotation, Constellation as SdkConst, MarkerIcon as SdkIcon, NavFileBuilder, NavFix,
-    NavFixTime, Satellite as SdkSat, SatelliteReport, Velocity,
+    NavFixTime, RecordedFixTimestamps, Satellite as SdkSat, SatelliteReport, Velocity,
 };
 use gt_test_utils::{marker_test_data, nav_test_data};
 use gt_types::satellites::Constellation;
@@ -72,9 +72,15 @@ fn round_trip_from_gt_types_test_data() {
                 })
                 .collect();
 
+            let recorded = RecordedFixTimestamps {
+                gps: sats.gps_time().map(|t| t.utc()),
+                sys: sats.sys_time().map(|t| t.utc()),
+            };
+            let time = NavFixTime::from_recorded(recorded)
+                .expect("the test data stamps every report with a receiver time");
             recorder.add_satellite_report(
                 SatelliteReport::builder()
-                    .maybe_gps_time(sats.gps_time().map(|t| t.utc()))
+                    .time(time)
                     .tracked(tracked)
                     .build(),
             );

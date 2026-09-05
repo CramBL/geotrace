@@ -3,10 +3,6 @@ use chrono::{DateTime, Utc};
 /// GPS-receiver clock timestamp - wraps [`DateTime<Utc>`] to prevent accidental
 /// confusion with system-clock time inside SDK processing code.
 ///
-/// Constructed from user-supplied `DateTime<Utc>` values at the earliest possible
-/// intake point (i.e., in [`crate::NavFileBuilder::add_nav_fix`] and
-/// [`crate::NavFileBuilder::add_satellite_report`]).
-///
 /// The public SDK API still accepts and returns plain `DateTime<Utc>` so external
 /// callers are not exposed to this type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -36,10 +32,6 @@ pub(crate) struct SysTime(DateTime<Utc>);
 impl SysTime {
     pub(crate) fn from_utc(dt: DateTime<Utc>) -> Self {
         Self(dt)
-    }
-
-    pub(crate) fn utc(self) -> DateTime<Utc> {
-        self.0
     }
 
     pub(crate) fn timestamp_micros(self) -> i64 {

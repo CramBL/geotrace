@@ -122,21 +122,26 @@ fn unrecognised_version_string_returns_unsupported_version() {
     );
 }
 
-#[test]
-fn nav_point_without_either_timestamp_fails_the_read() {
-    use geotrace_sdk::Error;
+/// The `gps_time_us` and `sys_time_us` a `.gtd` file stores for one nav point,
+/// `u64::MAX` standing for an absent one.
+struct StoredNavPointTimestampsUs {
+    gps: u64,
+    sys: u64,
+}
 
-    let mut fb = FileBuilder::new();
-    fb.set_attr("geotrace_version", AttrValue::String("1".into()));
+fn add_one_nav_point_group(
+    fb: &mut FileBuilder,
+    StoredNavPointTimestampsUs { gps, sys }: StoredNavPointTimestampsUs,
+) {
     let mut np = fb.create_group("nav_points");
     np.create_dataset("time")
         .with_i64_data(&[0])
         .with_shape(&[1]);
     np.create_dataset("gps_time_us")
-        .with_u64_data(&[u64::MAX])
+        .with_u64_data(&[gps])
         .with_shape(&[1]);
     np.create_dataset("sys_time_us")
-        .with_u64_data(&[u64::MAX])
+        .with_u64_data(&[sys])
         .with_shape(&[1]);
     np.create_dataset("lat")
         .with_f64_data(&[51.5])
@@ -151,6 +156,21 @@ fn nav_point_without_either_timestamp_fails_the_read() {
         .with_f64_data(&[f64::NAN])
         .with_shape(&[1]);
     fb.add_group(np.finish());
+}
+
+#[test]
+fn nav_point_without_either_timestamp_fails_the_read() {
+    use geotrace_sdk::Error;
+
+    let mut fb = FileBuilder::new();
+    fb.set_attr("geotrace_version", AttrValue::String("1".into()));
+    add_one_nav_point_group(
+        &mut fb,
+        StoredNavPointTimestampsUs {
+            gps: u64::MAX,
+            sys: u64::MAX,
+        },
+    );
     let bytes = fb.finish().expect("build");
 
     let result = NavFile::read(bytes.as_slice());
@@ -160,5 +180,67 @@ fn nav_point_without_either_timestamp_fails_the_read() {
     assert_eq!(
         error.to_string(),
         "nav point 0 has neither a receiver nor a host timestamp"
+    );
+}
+
+#[test]
+fn satellite_report_without_either_timestamp_fails_the_read() {
+    use geotrace_sdk::Error;
+
+    let mut fb = FileBuilder::new();
+    fb.set_attr("geotrace_version", AttrValue::String("1".into()));
+    add_one_nav_point_group(
+        &mut fb,
+        StoredNavPointTimestampsUs {
+            gps: 0,
+            sys: u64::MAX,
+        },
+    );
+
+    let mut sr = fb.create_group("sat_reports");
+    sr.create_dataset("nav_point_idx")
+        .with_u64_data(&[0])
+        .with_shape(&[1]);
+    sr.create_dataset("gps_time_us")
+        .with_u64_data(&[u64::MAX])
+        .with_shape(&[1]);
+    sr.create_dataset("sys_time_us")
+        .with_u64_data(&[u64::MAX])
+        .with_shape(&[1]);
+    fb.add_group(sr.finish());
+
+    let mut ts = fb.create_group("tracked_sats");
+    ts.create_dataset("sat_report_idx")
+        .with_u64_data(&[0])
+        .with_shape(&[1]);
+    ts.create_dataset("constellation")
+        .with_u8_data(&[0])
+        .with_shape(&[1]);
+    ts.create_dataset("prn")
+        .with_u32_data(&[1])
+        .with_shape(&[1]);
+    ts.create_dataset("in_fix")
+        .with_u8_data(&[1])
+        .with_shape(&[1]);
+    ts.create_dataset("elevation")
+        .with_f32_data(&[45.0])
+        .with_shape(&[1]);
+    ts.create_dataset("azimuth")
+        .with_f32_data(&[90.0])
+        .with_shape(&[1]);
+    ts.create_dataset("snr")
+        .with_f32_data(&[38.0])
+        .with_shape(&[1]);
+    fb.add_group(ts.finish());
+
+    let bytes = fb.finish().expect("build");
+
+    let result = NavFile::read(bytes.as_slice());
+    let Err(error @ Error::ReportWithoutTimestamp { report: 0 }) = result else {
+        panic!("expected ReportWithoutTimestamp at report 0, got: {result:?}");
+    };
+    assert_eq!(
+        error.to_string(),
+        "satellite report 0 has neither a receiver nor a host timestamp"
     );
 }

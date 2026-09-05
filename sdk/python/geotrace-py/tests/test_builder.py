@@ -292,22 +292,29 @@ def test_builder_with_satellite_reports() -> None:
     assert f.points[0].satellites is not None
 
 
-def test_builder_drops_a_satellite_report_without_a_timestamp() -> None:
-    b = NavFileBuilder()
-    b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
-    b.add(SatelliteReport([Satellite(Constellation.GPS, 3, in_fix=True)]))
-    f = b.finish()
-
-    assert len(f.points) == 1
-    assert f.points[0].satellites is None
+def test_satellite_report_without_a_timestamp_is_rejected() -> None:
+    with pytest.raises(ValueError, match="provide gps_time or sys_time"):
+        SatelliteReport([Satellite(Constellation.GPS, 3, in_fix=True)])
 
 
-def test_builder_warns_on_the_geotrace_sdk_logger_when_it_drops_a_report(
+def test_satellite_report_with_only_a_host_timestamp() -> None:
+    report = SatelliteReport(
+        [Satellite(Constellation.GPS, 3, in_fix=True)], sys_time=T0
+    )
+    assert report.gps_time is None
+    assert report.sys_time == T0
+
+
+def test_builder_warns_on_the_geotrace_sdk_logger_about_an_snr_sentinel(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     b = NavFileBuilder()
     b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
-    b.add(SatelliteReport([Satellite(Constellation.GPS, 3, in_fix=True)]))
+    b.add(
+        SatelliteReport(
+            [Satellite(Constellation.GPS, 3, in_fix=True, snr=99.0)], gps_time=T0
+        )
+    )
 
     with caplog.at_level(logging.WARNING, logger="geotrace_sdk"):
         b.finish()
@@ -316,7 +323,9 @@ def test_builder_warns_on_the_geotrace_sdk_logger_when_it_drops_a_report(
         (
             "geotrace_sdk.builder",
             "WARNING",
-            "satellite report with no timestamp dropped",
+            "1 satellite(s) with SNR ≈ 99 dB-Hz - common firmware sentinel for "
+            "unavailable signal strength; omit the SNR field when no measurement "
+            "is available",
         )
     ]
 
@@ -324,12 +333,14 @@ def test_builder_warns_on_the_geotrace_sdk_logger_when_it_drops_a_report(
 def test_a_log_level_lowered_after_the_first_record_applies(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    builder_dropping_a_report = NavFileBuilder()
-    builder_dropping_a_report.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
-    builder_dropping_a_report.add(
-        SatelliteReport([Satellite(Constellation.GPS, 3, in_fix=True)])
+    builder_warning_about_an_snr_sentinel = NavFileBuilder()
+    builder_warning_about_an_snr_sentinel.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
+    builder_warning_about_an_snr_sentinel.add(
+        SatelliteReport(
+            [Satellite(Constellation.GPS, 3, in_fix=True, snr=99.0)], gps_time=T0
+        )
     )
-    builder_dropping_a_report.finish()
+    builder_warning_about_an_snr_sentinel.finish()
     caplog.clear()
 
     builder_creating_a_ghost_fix = NavFileBuilder()

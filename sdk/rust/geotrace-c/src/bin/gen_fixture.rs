@@ -58,8 +58,7 @@ fn minimal() -> NavFile {
     });
 
     recorder.add_satellite_report(SatelliteReport {
-        gps_time: Some(t0),
-        sys_time: None,
+        time: NavFixTime::Receiver(t0),
         tracked: vec![
             Satellite::builder()
                 .constellation(Constellation::Gps)

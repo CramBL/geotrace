@@ -79,7 +79,7 @@ fn load_track_reporting(reports: Vec<Vec<SdkSatellite>>) -> LoadedTrack {
         );
         recorder.add_satellite_report(
             SatelliteReport::builder()
-                .gps_time(time)
+                .time(NavFixTime::Receiver(time))
                 .tracked(tracked)
                 .build(),
         );

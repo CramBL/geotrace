@@ -103,6 +103,7 @@ pub(crate) fn status_for_error(e: &geotrace_sdk::Error) -> GtdStatus {
         | Error::ParseError { .. }
         | Error::UnreadableField { .. }
         | Error::FixWithoutTimestamp { .. }
+        | Error::ReportWithoutTimestamp { .. }
         | Error::DatasetSizePastFileLength { .. } => GtdStatus::GTD_ERR_PARSE,
         Error::UnwritableField { .. } => GtdStatus::GTD_ERR_FIELD_TOO_LONG,
     }

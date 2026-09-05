@@ -8,22 +8,23 @@ use crate::fixed_width_string::{AnnotationField, MarkerLabelField};
 use crate::provenance;
 use crate::{Angle, Velocity};
 
-/// The clock or clocks that stamped a nav fix.
+/// The clock or clocks that stamped a nav fix or a satellite report.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NavFixTime {
     /// The receiver's timestamp, with no host clock recorded.
     Receiver(DateTime<Utc>),
     /// The host clock's timestamp, taken while the receiver had no lock.
     Host(DateTime<Utc>),
-    /// Both timestamps, from a fix taken under lock on a host that also stamped it.
+    /// Both timestamps, recorded under lock on a host that also stamped it.
     Both {
         gps: DateTime<Utc>,
         sys: DateTime<Utc>,
     },
 }
 
-/// The two timestamps a recorder holds for one fix, either of which may be
-/// absent. A caller cannot transpose the two clocks: each has its own field.
+/// The two timestamps a recorder holds for one fix or satellite report, either
+/// of which may be absent. A caller cannot transpose the two clocks: each has
+/// its own field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecordedFixTimestamps {
     pub gps: Option<DateTime<Utc>>,
@@ -119,22 +120,19 @@ pub struct NavFix {
 
 /// A satellite visibility report captured at a point in time.
 ///
-/// Supply at least one of `gps_time` or `sys_time`. When neither is present the
-/// builder logs a warning and drops the report.
+/// The builder places a [`NavFixTime::Host`] report in the GPS time domain with
+/// the GPS/system-clock delta it measures from the surrounding nav fixes.
 ///
-/// - `gps_time`: the GPS-receiver timestamp, available when the receiver had an
-///   active fix at the time of capture.
-/// - `sys_time`: the system-clock timestamp, available whenever the host OS can
-///   read the clock. This is used together with the GPS/system-clock delta derived
-///   from surrounding NavFixes to place orphan reports in the GPS time domain.
+/// A report without a timestamp does not compile:
+///
+/// ```compile_fail
+/// use geotrace_sdk::SatelliteReport;
+///
+/// let report = SatelliteReport::builder().tracked(Vec::new()).build();
+/// ```
 #[derive(bon::Builder, Debug, Clone, PartialEq)]
 pub struct SatelliteReport {
-    /// GPS-domain timestamp. Present when the receiver had an active fix.
-    #[builder(into)]
-    pub gps_time: Option<DateTime<Utc>>,
-    /// System-clock timestamp at capture time. Optional but strongly recommended.
-    #[builder(into)]
-    pub sys_time: Option<DateTime<Utc>>,
+    pub time: NavFixTime,
     /// All satellites currently tracked (may include satellites not in the fix).
     pub tracked: Vec<Satellite>,
 }
@@ -744,11 +742,11 @@ impl NavFix {
 
 impl SatelliteReport {
     pub fn gps_time(&self) -> Option<DateTime<Utc>> {
-        self.gps_time
+        self.time.gps_time()
     }
 
     pub fn sys_time(&self) -> Option<DateTime<Utc>> {
-        self.sys_time
+        self.time.sys_time()
     }
 }
 
