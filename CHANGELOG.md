@@ -6,7 +6,6 @@
 
 - **Interface:** The side panel's "Shelve filtered data…" button acts on the tracks that the filter excludes, and is grayed out while every track passes the filter, while every excluded track sits outside the recording history, or while the session is read-only.
 - **Interface:** A track row's context menu, in the tree and in the Visible section, offers "Shelve…" for that track and "Shelve selected…" from two selected tracks on. Both are grayed out while the tracks sit outside the recording history or the session is read-only.
-- **Interface:** The confirmation that button raises is titled "Shelve N items?". Ticking its "Delete permanently from history" tickbox changes the title to "Delete N items permanently?" and the button to "Delete permanently".
 - **Interface:** History now says "shelved" for a track removed from a recording without deleting its data: the count on a recording row, the "Delete shelved data…" button and its confirmation.
 - **Interface:** A track now keeps its number when an earlier track of the same recording is deleted permanently.
 

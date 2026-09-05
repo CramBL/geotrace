@@ -56,10 +56,6 @@ pub(super) enum AnchoredDialogKind {
 impl AnchoredDialogKind {
     /// The id every anchored dialog holds its size, its position and its
     /// frozen regions under.
-    ///
-    /// [`AnchoredDialog::identified_by_its_kind`] draws the window itself
-    /// under this id too, which a test reaches through
-    /// `AuditedWindow::identified`.
     pub(super) fn window_id(self) -> egui::Id {
         egui::Id::new(self)
     }
@@ -285,8 +281,10 @@ pub(super) struct AnchoredDialog<'a> {
 
 impl<'a> AnchoredDialog<'a> {
     /// Two dialogs on screen at once need titles that differ: egui derives the
-    /// window's id from `title`. The size and the position the dialog holds
-    /// sit under [`AnchoredDialogKind::window_id`].
+    /// window's id from `title`, which is what `AuditedWindow::titled` and
+    /// `HarnessInteraction::window_rect` look a window up by. The size, the
+    /// position and the frozen regions the dialog holds sit under
+    /// [`AnchoredDialogKind::window_id`].
     pub(super) fn new(kind: AnchoredDialogKind, title: impl Into<String>) -> Self {
         let title = title.into();
         Self {
@@ -294,23 +292,6 @@ impl<'a> AnchoredDialog<'a> {
             kind,
             title,
             open: None,
-        }
-    }
-
-    /// A dialog whose title follows one of its own controls, drawn under
-    /// [`AnchoredDialogKind::window_id`]: egui keeps the size and the position
-    /// of a window across a change of its title only while the id stays put.
-    ///
-    /// Every other dialog keeps the title-derived id of [`Self::new`], which
-    /// is what `AuditedWindow::titled` and `HarnessInteraction::window_rect`
-    /// look a window up by.
-    pub(super) fn identified_by_its_kind(
-        kind: AnchoredDialogKind,
-        title: impl Into<String>,
-    ) -> Self {
-        Self {
-            area_id: kind.window_id(),
-            ..Self::new(kind, title)
         }
     }
 
