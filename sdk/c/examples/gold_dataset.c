@@ -135,6 +135,7 @@ typedef struct {
     char gps_time[TS_BUFSIZE];
     char sys_time[TS_BUFSIZE];
     GtdSatellite sat;
+    int taken_by_a_fix;
 } SatRow;
 
 static SatRow g_sats[MAX_SATS];
@@ -284,6 +285,7 @@ static void load_fixes(GtdFileBuilder *b, const char *base) {
         for (int i = 0; i < g_sat_n; i++) {
             if (strcmp(g_sats[i].gps_time, cols[1]) == 0 &&
                 strcmp(g_sats[i].sys_time, cols[2]) == 0) {
+                g_sats[i].taken_by_a_fix = 1;
                 if (sat_n < SAT_PER_FIX)
                     sat_buf[sat_n++] = g_sats[i].sat;
             }
@@ -294,6 +296,29 @@ static void load_fixes(GtdFileBuilder *b, const char *base) {
         }
     }
     fclose(f);
+
+    /* Reports at a time no fix row holds. The builder gives each one a ghost
+       fix. */
+    for (int i = 0; i < g_sat_n; i++) {
+        if (g_sats[i].taken_by_a_fix)
+            continue;
+        GtdSatellite sat_buf[SAT_PER_FIX];
+        int sat_n = 0;
+        for (int j = i; j < g_sat_n; j++) {
+            if (g_sats[j].taken_by_a_fix)
+                continue;
+            if (strcmp(g_sats[j].gps_time, g_sats[i].gps_time) != 0 ||
+                strcmp(g_sats[j].sys_time, g_sats[i].sys_time) != 0)
+                continue;
+            g_sats[j].taken_by_a_fix = 1;
+            if (sat_n < SAT_PER_FIX)
+                sat_buf[sat_n++] = g_sats[j].sat;
+        }
+        CHECK_SDK(gtd_builder_add_satellite_report(b, gold_parse_timestamp(g_sats[i].gps_time),
+                                                   gold_parse_timestamp(g_sats[i].sys_time),
+                                                   sat_buf, (size_t)sat_n),
+                  "add_satellite_report");
+    }
 }
 
 static void load_markers(GtdFileBuilder *b, const char *base) {
@@ -470,8 +495,8 @@ static void verify_counts(const GtdNavFile *f) {
     CHECK(travel_mode && strcmp(travel_mode, "bicycle") == 0, "travel mode wrong");
 
     size_t np = gtd_nav_file_nav_point_count(f);
-    if (np != 199)
-        FAILF("expected 199 nav points, got %zu", np);
+    if (np != 200)
+        FAILF("expected 200 nav points, got %zu", np);
 
     size_t anti = 0;
     for (size_t i = 0; i < np; i++) {
@@ -480,12 +505,12 @@ static void verify_counts(const GtdNavFile *f) {
         if (p.lon_deg > 179.9 || p.lon_deg < -179.9)
             anti++;
     }
-    if (anti != 10)
-        FAILF("expected 10 antimeridian points, got %zu", anti);
+    if (anti != 11)
+        FAILF("expected 11 antimeridian points, got %zu", anti);
 
     size_t em = gtd_nav_file_event_marker_count(f);
-    if (em != 6)
-        FAILF("expected 6 event markers, got %zu", em);
+    if (em != 7)
+        FAILF("expected 7 event markers, got %zu", em);
 
     size_t nch = gtd_nav_file_channel_count(f);
     if (nch != 2)
@@ -532,6 +557,6 @@ int main(int argc, char **argv) {
     gtd_nav_file_destroy(nav);
 
     printf("Written: %s\n", out_path);
-    printf("Gold dataset verified. Nav points: 189, Event markers: 6, Channels: 2\n");
+    printf("Gold dataset verified. Nav points: 200, Event markers: 7, Channels: 2\n");
     return 0;
 }

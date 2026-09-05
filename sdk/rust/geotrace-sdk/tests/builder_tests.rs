@@ -492,6 +492,90 @@ fn orphan_reports_before_first_fix_are_dropped() -> Result<(), BuildError> {
     Ok(())
 }
 
+fn fix_at_lon(offset_ms: i64, lon_deg: f64) -> NavFix {
+    NavFix::builder()
+        .gps_time(t(offset_ms))
+        .lat(Angle::degrees(0.0))
+        .lon(Angle::degrees(lon_deg))
+        .heading(Angle::degrees(90.0))
+        .build()
+}
+
+#[rstest]
+#[case::eastward_a_quarter_of_the_way(179.95, -179.95, t(2500), 179.975)]
+#[case::eastward_halfway(179.95, -179.95, t(5000), -180.0)]
+#[case::eastward_three_quarters_of_the_way(179.95, -179.95, t(7500), -179.975)]
+#[case::westward_a_quarter_of_the_way(-179.95, 179.95, t(2500), -179.975)]
+#[case::westward_halfway(-179.95, 179.95, t(5000), -180.0)]
+#[case::westward_three_quarters_of_the_way(-179.95, 179.95, t(7500), 179.975)]
+#[case::exactly_180_apart_halfway(0.0, 180.0, t(5000), -90.0)]
+fn an_annotation_between_two_fixes_takes_the_shortest_arc_in_longitude(
+    #[case] first_fix_lon_deg: f64,
+    #[case] second_fix_lon_deg: f64,
+    #[case] time: DateTime<Utc>,
+    #[case] expected_lon_deg: f64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix_at_lon(0, first_fix_lon_deg));
+    recorder.add_nav_fix(fix_at_lon(10_000, second_fix_lon_deg));
+    recorder.add_annotation(Annotation::builder().time(time).label("note").build()?);
+
+    let nav_file = recorder.finish()?;
+    let marker = &nav_file.markers()[0];
+    assert!(
+        (marker.lon.as_degrees() - expected_lon_deg).abs() < 1e-9,
+        "lon is {}, expected {expected_lon_deg}",
+        marker.lon.as_degrees()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_ghost_fix_between_two_fixes_across_the_antimeridian_is_placed_on_the_short_arc_heading_east()
+-> Result<(), BuildError> {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix_at_lon(0, 179.95));
+    recorder.add_nav_fix(fix_at_lon(10_000, -179.95));
+    recorder.add_satellite_report(simple_report(5000));
+
+    let nav_file = recorder.finish()?;
+    let points = nav_file.nav_points();
+    assert_eq!(points.len(), 3, "expected 2 real fixes and 1 ghost fix");
+
+    let ghost = &points[1];
+    assert!(ghost.satellites.is_some());
+    assert!(
+        (ghost.fix.lon.as_degrees() - (-180.0)).abs() < 1e-9,
+        "lon is {}, expected -180",
+        ghost.fix.lon.as_degrees()
+    );
+    let heading_deg = ghost.fix.heading.map_or(f64::NAN, Angle::as_degrees);
+    assert!(
+        (heading_deg - 90.0).abs() < 1e-9,
+        "heading is {heading_deg}, expected 90"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_dead_reckoned_ghost_stepping_east_over_the_antimeridian_wraps_its_longitude()
+-> Result<(), BuildError> {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix_at_lon(0, 179.999999));
+    recorder.add_satellite_report(simple_report(10_000));
+
+    let nav_file = recorder.finish()?;
+    let points = nav_file.nav_points();
+    assert_eq!(points.len(), 2, "expected 1 real fix and 1 ghost fix");
+
+    let lon_deg = points[1].fix.lon.as_degrees();
+    assert!(
+        (-180.0..0.0).contains(&lon_deg),
+        "lon is {lon_deg}, expected a wrapped value west of the antimeridian"
+    );
+    Ok(())
+}
+
 #[rstest]
 #[case::at_the_first_fix_time(t(0), 10.0, 20.0)]
 #[case::halfway_between_two_fixes(t(500), 11.0, 22.0)]

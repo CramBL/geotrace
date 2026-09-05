@@ -531,10 +531,10 @@ impl NavRecorder {
 
         let markers = resolved_markers
             .into_iter()
-            .map(|(annotation, lat_deg, lon_deg)| Marker {
+            .map(|(annotation, position)| Marker {
                 annotation,
-                lat: Angle::degrees(lat_deg),
-                lon: Angle::degrees(lon_deg),
+                lat: position.lat,
+                lon: position.lon,
             })
             .collect();
 
@@ -641,11 +641,9 @@ fn ghost_nav_points_for(
             continue;
         };
 
-        let b_lat = b.lat.as_degrees();
-        let b_lon = b.lon.as_degrees();
-        let a_lat = a.lat.as_degrees();
-        let a_lon = a.lon.as_degrees();
-        let hdg = ghost_bearing(b_lat, b_lon, a_lat, a_lon);
+        let b_position = TimelinePosition::from_internal_fix(b);
+        let a_position = TimelinePosition::from_internal_fix(a);
+        let heading = b_position.bearing_to(a_position);
         let b_gps_us = effective_time(b).timestamp_micros();
         let a_gps_us = effective_time(a).timestamp_micros();
         let span_us = (a_gps_us - b_gps_us) as f64;
@@ -679,12 +677,13 @@ fn ghost_nav_points_for(
                 } else {
                     ((corrected_us - b_gps_us) as f64 / span_us).clamp(0.0, 1.0)
                 };
+                let position = b_position.interpolated_to(a_position, frac);
                 ghost_points.push(InternalPoint {
                     fix: InternalFix::ghost(
                         GpsTime::from_utc(micros_to_datetime(corrected_us)),
-                        Angle::degrees(b_lat + frac * (a_lat - b_lat)),
-                        Angle::degrees(b_lon + frac * (a_lon - b_lon)),
-                        Some(Angle::degrees(hdg)),
+                        position.lat,
+                        position.lon,
+                        Some(heading),
                     ),
                     satellites: Some(report),
                 });
@@ -695,12 +694,13 @@ fn ghost_nav_points_for(
             for (i, report) in reports.into_iter().enumerate() {
                 let frac = (i + 1) as f64 / (n + 1) as f64;
                 let approx_us = b_gps_us + (span_us * frac) as i64;
+                let position = b_position.interpolated_to(a_position, frac);
                 ghost_points.push(InternalPoint {
                     fix: InternalFix::ghost(
                         GpsTime::from_utc(micros_to_datetime(approx_us)),
-                        Angle::degrees(b_lat + frac * (a_lat - b_lat)),
-                        Angle::degrees(b_lon + frac * (a_lon - b_lon)),
-                        Some(Angle::degrees(hdg)),
+                        position.lat,
+                        position.lon,
+                        Some(heading),
                     ),
                     satellites: Some(report),
                 });
@@ -714,25 +714,25 @@ fn ghost_nav_points_for(
             reason = "real_fixes is non-empty (checked at top of fn)"
         )]
         let last = real_fixes.last().expect("real_fixes is non-empty");
-        let last_hdg = last.heading.map_or(0.0, |h| h.as_degrees());
+        let last_heading = last.heading.unwrap_or(Angle::degrees(0.0));
         let last_delta = last.gps_time.and_then(|gt| {
             last.sys_time
                 .map(|st| gt.timestamp_micros() - st.timestamp_micros())
         });
-        let mut extrap_pos: Option<(f64, f64)> = None;
+        let mut dead_reckoned: Option<TimelinePosition> = None;
 
         for (i, report) in after_last.into_iter().enumerate() {
-            let cur = extrap_pos.unwrap_or((last.lat.as_degrees(), last.lon.as_degrees()));
-            let dist = if i == 0 { 1.0 } else { 2.0 };
-            let next = ghost_step(cur.0, cur.1, last_hdg, dist);
-            extrap_pos = Some(next);
+            let from = dead_reckoned.unwrap_or_else(|| TimelinePosition::from_internal_fix(last));
+            let distance_m = if i == 0 { 1.0 } else { 2.0 };
+            let position = from.advanced_along_great_circle(last_heading, distance_m);
+            dead_reckoned = Some(position);
 
             let ghost_time_us = dead_reckoned_gps_us(&report, last, last_delta, i);
             ghost_points.push(InternalPoint {
                 fix: InternalFix::ghost(
                     GpsTime::from_utc(micros_to_datetime(ghost_time_us)),
-                    Angle::degrees(next.0),
-                    Angle::degrees(next.1),
+                    position.lat,
+                    position.lon,
                     None, // None renders as a circle
                 ),
                 satellites: Some(report),
@@ -831,28 +831,6 @@ fn dead_reckoned_gps_us(
     }
     // No timestamp at all: space out by 1 s from the last fix.
     effective_time(last).timestamp_micros() + (idx as i64 + 1) * 1_000_000
-}
-
-/// Spherical forward bearing from A to B in degrees \[0, 360).
-fn ghost_bearing(lat0_deg: f64, lon0_deg: f64, lat1_deg: f64, lon1_deg: f64) -> f64 {
-    let lat0 = lat0_deg.to_radians();
-    let lat1 = lat1_deg.to_radians();
-    let dlon = (lon1_deg - lon0_deg).to_radians();
-    let y = dlon.sin() * lat1.cos();
-    let x = lat0.cos() * lat1.sin() - lat0.sin() * lat1.cos() * dlon.cos();
-    (y.atan2(x).to_degrees() + 360.0) % 360.0
-}
-
-/// Move `dist_m` metres from (lat, lon) along `heading_deg`, return new (lat, lon).
-fn ghost_step(lat_deg: f64, lon_deg: f64, heading_deg: f64, dist_m: f64) -> (f64, f64) {
-    const R: f64 = 6_371_000.0;
-    let ang = dist_m / R;
-    let hdg = heading_deg.to_radians();
-    let lat = lat_deg.to_radians();
-    let new_lat = (lat.sin() * ang.cos() + lat.cos() * ang.sin() * hdg.cos()).asin();
-    let new_lon = lon_deg.to_radians()
-        + (hdg.sin() * ang.sin() * lat.cos()).atan2(ang.cos() - lat.sin() * new_lat.sin());
-    (new_lat.to_degrees(), new_lon.to_degrees())
 }
 
 /// Assign each satellite report to its nearest nav fix within `window`.
@@ -996,18 +974,69 @@ impl TimelineFix {
     fn from_internal_fix(fix: &InternalFix) -> Self {
         Self {
             time: timeline_time(fix),
-            position: TimelinePosition {
-                lat_deg: fix.lat.as_degrees(),
-                lon_deg: fix.lon.as_degrees(),
-            },
+            position: TimelinePosition::from_internal_fix(fix),
         }
     }
 }
 
 #[derive(Clone, Copy)]
 struct TimelinePosition {
-    lat_deg: f64,
-    lon_deg: f64,
+    lat: Angle,
+    lon: Angle,
+}
+
+impl TimelinePosition {
+    fn from_internal_fix(fix: &InternalFix) -> Self {
+        Self {
+            lat: fix.lat,
+            lon: fix.lon,
+        }
+    }
+
+    /// The position `fraction` of the way from `self` to `other`, with the
+    /// longitude taken along the shortest arc and wrapped into [-180, 180).
+    /// Two longitudes exactly 180° apart have two arcs of equal length. This
+    /// takes the westward one.
+    fn interpolated_to(self, other: Self, fraction: f64) -> Self {
+        let lat_deg = self.lat.as_degrees();
+        let lon_deg = self.lon.as_degrees();
+        Self {
+            lat: Angle::degrees(lat_deg + fraction * (other.lat.as_degrees() - lat_deg)),
+            lon: Angle::degrees(
+                lon_deg + fraction * self.lon.signed_arc_to(other.lon).as_degrees(),
+            )
+            .wrapped_to_plus_minus_180_degrees(),
+        }
+    }
+
+    /// Spherical forward bearing from `self` to `other`, in [0, 360) degrees.
+    fn bearing_to(self, other: Self) -> Angle {
+        let lat0 = self.lat.as_radians();
+        let lat1 = other.lat.as_radians();
+        let dlon = self.lon.signed_arc_to(other.lon).as_radians();
+        let y = dlon.sin() * lat1.cos();
+        let x = lat0.cos() * lat1.sin() - lat0.sin() * lat1.cos() * dlon.cos();
+        Angle::degrees((y.atan2(x).to_degrees() + 360.0) % 360.0)
+    }
+
+    /// This position moved `distance_m` metres along `heading` over a sphere,
+    /// with the longitude wrapped into [-180, 180).
+    fn advanced_along_great_circle(self, heading: Angle, distance_m: f64) -> Self {
+        const EARTH_RADIUS_M: f64 = 6_371_000.0;
+        let angular_distance = distance_m / EARTH_RADIUS_M;
+        let heading = heading.as_radians();
+        let lat = self.lat.as_radians();
+        let new_lat = (lat.sin() * angular_distance.cos()
+            + lat.cos() * angular_distance.sin() * heading.cos())
+        .asin();
+        let new_lon = self.lon.as_radians()
+            + (heading.sin() * angular_distance.sin() * lat.cos())
+                .atan2(angular_distance.cos() - lat.sin() * new_lat.sin());
+        Self {
+            lat: Angle::radians(new_lat),
+            lon: Angle::radians(new_lon).wrapped_to_plus_minus_180_degrees(),
+        }
+    }
 }
 
 /// Where an external event's time sits on the nav timeline, with the position
@@ -1038,12 +1067,9 @@ fn place_on_fix_timeline(timeline: &[TimelineFix], time: DateTime<Utc>) -> Timel
             } else {
                 (time.timestamp_micros() - before_us) as f64 / span_us as f64
             };
-            TimelinePlacement::WithinFixTimeSpan(TimelinePosition {
-                lat_deg: before.position.lat_deg
-                    + fraction * (after.position.lat_deg - before.position.lat_deg),
-                lon_deg: before.position.lon_deg
-                    + fraction * (after.position.lon_deg - before.position.lon_deg),
-            })
+            TimelinePlacement::WithinFixTimeSpan(
+                before.position.interpolated_to(after.position, fraction),
+            )
         }
         (Some(last), None) => TimelinePlacement::AfterLastFix(last.position),
         (None, Some(first)) => TimelinePlacement::BeforeFirstFix(first.position),
@@ -1067,7 +1093,7 @@ fn interpolate_annotations(
     fixes: &[InternalFix],
     annotations: Vec<Annotation>,
     lenient: bool,
-) -> (Vec<(Annotation, f64, f64)>, Vec<Annotation>) {
+) -> (Vec<(Annotation, TimelinePosition)>, Vec<Annotation>) {
     let timeline: Vec<TimelineFix> = fixes.iter().map(TimelineFix::from_internal_fix).collect();
     let mut resolved = Vec::new();
     let mut out_of_range = Vec::new();
@@ -1095,7 +1121,7 @@ fn interpolate_annotations(
         };
 
         match position {
-            Some(position) => resolved.push((annotation, position.lat_deg, position.lon_deg)),
+            Some(position) => resolved.push((annotation, position)),
             None => out_of_range.push(annotation),
         }
     }
@@ -1130,8 +1156,8 @@ fn interpolate_event_markers(
             Some(EventMarkerPoint {
                 variant_path,
                 sys_time,
-                lat: Angle::degrees(position.lat_deg),
-                lon: Angle::degrees(position.lon_deg),
+                lat: position.lat,
+                lon: position.lon,
                 annotation,
             })
         })

@@ -10,8 +10,8 @@ The `gold_conformance` test (`sdk/rust/geotrace-sdk/tests/gold_conformance.rs`) 
 
 - `fixes.csv`: Primary navigation data (TPV).
 - `satellites.csv`: Satellite visibility reports associated with the fixes.
-- `markers.csv`: User-defined map annotations (Markers). Now includes 15 markers covering peaks, starts, and sub-second interpolation.
-- `events.csv`: System event markers. Now includes 5 events for status changes, turns, and signal loss.
+- `markers.csv`: User-defined map annotations (Markers). 16 markers covering peaks, starts, sub-second interpolation and the antimeridian crossing.
+- `events.csv`: System event markers. 7 events for status changes, turns, signal loss and the antimeridian crossing.
 - `channels.csv`: Ad-hoc sensor channels correlated with the track by timestamp. One row per sample. The metadata columns (`unit`, `period_deg`, `description`, `components`) repeat per channel, and `components`/`values` are `;`-separated. Covers a vector channel (`accel`, x/y/z, unit g) and a scalar channel with a wrap period (`heading_raw`, deg, period 360).
 
 ## Track Definitions
@@ -55,6 +55,8 @@ The first track starts on **1 February 2026 at 15:00:00 UTC**.
 ### Track 8: Antimeridian Crossing
 - **Purpose**: Verify coordinate wrapping and interpolation.
 - **Description**: Moves from Longitude 179.95° to -179.95° across the 180° meridian.
+- **Verification**: A marker, an event marker and an orphan satellite report share the time 15:00:05.5, half way between the fixes at 180.0° and -179.99°.
+  The SDK places all three at -179.995°, on the short arc between those two fixes.
 
 ### Track 9: Stationary (Zero Speed)
 - **Purpose**: Stress test for zero-delta movement.

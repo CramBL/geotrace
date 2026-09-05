@@ -273,6 +273,21 @@ fn an_event_marker_within_the_fix_time_span_takes_the_position_at_its_time(
 }
 
 #[test]
+fn an_event_marker_between_two_fixes_across_the_antimeridian_is_placed_on_the_short_arc() {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix(0, 0.0, 179.95));
+    recorder.add_nav_fix(fix(10, 0.0, -179.95));
+    recorder.add_event_marker(marker("navigation/antimeridian", 5));
+
+    let nav_file = recorder.finish().unwrap();
+    let lon_deg = nav_file.event_markers()[0].lon.as_degrees();
+    assert!(
+        (lon_deg - (-180.0)).abs() < 1e-9,
+        "lon is {lon_deg}, expected -180"
+    );
+}
+
+#[test]
 fn position_clamped_to_first_fix_when_before_track() {
     let mut recorder = NavFileBuilder::new().with_lenient_errors().open();
     recorder.add_nav_fix(fix(10, 55.0, 12.0));

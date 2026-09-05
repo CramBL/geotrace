@@ -18,7 +18,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -259,6 +261,7 @@ std::vector<SatRow> load_satellites(const fs::path &base) {
 
 void load_fixes(geotrace::FileBuilder &b, const fs::path &base, const std::vector<SatRow> &sats) {
     auto f = open_csv(base, "fixes.csv");
+    std::set<std::pair<std::string, std::string>> fix_times;
     std::string line;
     std::getline(f, line); // skip header
     while (std::getline(f, line)) {
@@ -295,6 +298,22 @@ void load_fixes(geotrace::FileBuilder &b, const fs::path &base, const std::vecto
         }
         if (!report.tracked.empty())
             b.add(report);
+
+        fix_times.emplace(gps_time, sys_time);
+    }
+
+    // Reports at a time no fix row holds. The builder gives each one a ghost fix.
+    std::map<std::pair<std::string, std::string>, std::vector<geotrace::Satellite>> orphans;
+    for (const auto &row : sats) {
+        if (fix_times.find({row.gps_time, row.sys_time}) == fix_times.end())
+            orphans[{row.gps_time, row.sys_time}].push_back(row.sat);
+    }
+    for (const auto &[times, tracked] : orphans) {
+        geotrace::SatelliteReport report{};
+        report.gps_time = parse_ts(times.first).value_or(geotrace::Timestamp::none());
+        report.sys_time = parse_ts(times.second).value_or(geotrace::Timestamp::none());
+        report.tracked = tracked;
+        b.add(report);
     }
 }
 
@@ -398,8 +417,8 @@ void verify_counts(const geotrace::NavFile &file) {
     check(file.travel_mode() == "bicycle", "travel mode wrong");
 
     auto np = file.nav_point_count();
-    if (np != 199)
-        throw std::runtime_error("expected 199 nav points, got " + std::to_string(np));
+    if (np != 200)
+        throw std::runtime_error("expected 200 nav points, got " + std::to_string(np));
 
     std::size_t anti = 0;
     for (std::size_t i = 0; i < np; i++) {
@@ -407,12 +426,12 @@ void verify_counts(const geotrace::NavFile &file) {
         if (p.lon.as_degrees() > 179.9 || p.lon.as_degrees() < -179.9)
             anti++;
     }
-    if (anti != 10)
-        throw std::runtime_error("expected 10 antimeridian pts, got " + std::to_string(anti));
+    if (anti != 11)
+        throw std::runtime_error("expected 11 antimeridian pts, got " + std::to_string(anti));
 
     auto em = file.event_marker_count();
-    if (em != 6)
-        throw std::runtime_error("expected 6 event markers, got " + std::to_string(em));
+    if (em != 7)
+        throw std::runtime_error("expected 7 event markers, got " + std::to_string(em));
 
     auto nch = file.channel_count();
     if (nch != 2)
@@ -451,7 +470,7 @@ int main(int argc, char **argv) {
         verify_counts(nav);
 
         std::cout << "Written: " << out << "\n";
-        std::cout << "Gold dataset verified. Nav points: 189, Event markers: 6, Channels: 2\n";
+        std::cout << "Gold dataset verified. Nav points: 200, Event markers: 7, Channels: 2\n";
     } catch (const std::exception &e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;

@@ -154,6 +154,14 @@ def _load_fixes(
         if tracked:
             builder.add(SatelliteReport(tracked, gps_time=gps_time, sys_time=sys_time))
 
+    # Reports at a time no fix row holds. The builder gives each one a ghost fix.
+    for (gps_col, sys_col), tracked in satellites.items():
+        builder.add(
+            SatelliteReport(
+                tracked, gps_time=_parse_ts(gps_col), sys_time=_parse_ts(sys_col)
+            )
+        )
+
 
 def _load_markers(builder: NavFileBuilder, base: Path) -> None:
     for cols in _rows(base / "markers.csv"):
@@ -235,22 +243,22 @@ def _verify(path: Path) -> None:
     assert meta.travel_mode == TravelMode.BICYCLE
 
     points = file.points
-    assert len(points) == 199, f"expected 199 nav points, got {len(points)}"
+    assert len(points) == 200, f"expected 200 nav points, got {len(points)}"
 
     antimeridian = [p for p in points if p.lon > 179.9 or p.lon < -179.9]
-    assert len(antimeridian) == 10, f"antimeridian points: {len(antimeridian)}"
+    assert len(antimeridian) == 11, f"antimeridian points: {len(antimeridian)}"
 
     stationary = [p for p in points if abs(p.lat - (-10.0)) < 1e-6]
     assert len(stationary) == 20, f"stationary points: {len(stationary)}"
     assert all(p.speed_mps == 0.0 for p in stationary)
 
     markers: list[Marker] = file.markers
-    assert len(markers) == 15, f"expected 15 markers, got {len(markers)}"
+    assert len(markers) == 16, f"expected 16 markers, got {len(markers)}"
     assert markers[0].label == "File Boundary Start"
     assert markers[0].icon == MarkerIcon.CHECK
 
     events = file.event_markers
-    assert len(events) == 6, f"expected 6 event markers, got {len(events)}"
+    assert len(events) == 7, f"expected 7 event markers, got {len(events)}"
 
     styles = {s.variant_path: s for s in file.event_marker_styles}
     assert styles["style/custom-icon"].icon == MarkerIcon.LIGHTNING
