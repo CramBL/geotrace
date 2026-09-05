@@ -3,7 +3,8 @@ use std::ops::{Deref, Index, IndexMut};
 
 use gt_history_types::{DatabaseRef, RecordingMeta};
 use gt_types::{
-    AddressedFix, FileIdx, FixRef, LoadedFile, LoadedTrack, NavPoint, PointIdx, TrackIdx, TrackRef,
+    AddressedFix, FileIdx, FixRef, Generation, LoadedFile, LoadedTrack, NavPoint, PointIdx,
+    TrackIdx, TrackRef, Versioned,
 };
 
 mod recording_names;
@@ -130,9 +131,10 @@ impl<'a> LoadedFilesView<'a> {
     }
 
     pub fn get(&self, index: usize) -> Option<LoadedFileEntry<'a>> {
-        let id = *self.loaded_files.ids.get(index)?;
-        let file = self.loaded_files.files.get(index)?;
-        let history = self.loaded_files.history.get(index)?;
+        let storage = self.loaded_files.storage.get();
+        let id = *storage.ids.get(index)?;
+        let file = storage.files.get(index)?;
+        let history = storage.history.get(index)?;
         Some(LoadedFileEntry {
             id,
             fi: FileIdx::new(index),
@@ -151,11 +153,12 @@ impl<'a> LoadedFilesView<'a> {
     }
 
     pub fn entries(&self) -> impl ExactSizeIterator<Item = LoadedFileEntry<'a>> + 'a {
-        self.loaded_files
+        let storage = self.loaded_files.storage.get();
+        storage
             .ids
             .iter()
-            .zip(&self.loaded_files.files)
-            .zip(&self.loaded_files.history)
+            .zip(&storage.files)
+            .zip(&storage.history)
             .enumerate()
             .map(|(index, ((&id, file), history))| LoadedFileEntry {
                 id,
@@ -257,6 +260,16 @@ fn tracks_are_time_ordered(tracks: &[LoadedTrack]) -> bool {
     })
 }
 
+/// The three vectors of [`LoadedFiles`] that stay index-aligned: index `n` is
+/// one loaded file in `files`, its app/session history in `history` and its
+/// session id in `ids`.
+#[derive(Debug, Clone, Default)]
+struct IndexAlignedFiles {
+    files: Vec<LoadedFile>,
+    history: Vec<FileHistory>,
+    ids: Vec<LoadedFileId>,
+}
+
 /// Loaded files plus app/session metadata that must remain index-aligned.
 ///
 /// The backing vectors are private so callers cannot construct mismatched file
@@ -264,9 +277,7 @@ fn tracks_are_time_ordered(tracks: &[LoadedTrack]) -> bool {
 /// consumers need both the files and their sidecar metadata.
 #[derive(Debug, Clone, Default)]
 pub struct LoadedFiles {
-    files: Vec<LoadedFile>,
-    history: Vec<FileHistory>,
-    ids: Vec<LoadedFileId>,
+    storage: Versioned<IndexAlignedFiles>,
     next_id: u64,
 }
 
@@ -275,58 +286,70 @@ impl LoadedFiles {
         Self::default()
     }
 
+    /// The revision a cache over the loaded files keys on. Every method that
+    /// writes to the files, to their history entries or to their ids leaves a
+    /// new one behind, through [`Versioned::get_mut`]. A call that writes
+    /// nothing, such as [`LoadedFiles::remove_file`] with an out-of-range
+    /// index, keeps the generation it had.
+    pub fn generation(&self) -> Generation {
+        self.storage.generation()
+    }
+
     pub fn len(&self) -> usize {
-        self.files.len()
+        self.storage.get().files.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.files.is_empty()
+        self.storage.get().files.is_empty()
     }
 
     pub fn files(&self) -> &[LoadedFile] {
-        &self.files
+        &self.storage.get().files
     }
 
     pub fn view(&self) -> LoadedFilesView<'_> {
-        debug_assert_eq!(self.files.len(), self.history.len());
-        debug_assert_eq!(self.files.len(), self.ids.len());
+        let storage = self.storage.get();
+        debug_assert_eq!(storage.files.len(), storage.history.len());
+        debug_assert_eq!(storage.files.len(), storage.ids.len());
         LoadedFilesView { loaded_files: self }
     }
 
     pub fn files_mut(&mut self) -> &mut [LoadedFile] {
-        &mut self.files
+        &mut self.storage.get_mut().files
     }
 
     pub fn iter(&self) -> std::slice::Iter<'_, LoadedFile> {
-        self.files.iter()
+        self.storage.get().files.iter()
     }
 
     pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, LoadedFile> {
-        self.files.iter_mut()
+        self.storage.get_mut().files.iter_mut()
     }
 
     pub fn get(&self, index: usize) -> Option<&LoadedFile> {
-        self.files.get(index)
+        self.storage.get().files.get(index)
     }
 
     pub fn get_mut(&mut self, index: usize) -> Option<&mut LoadedFile> {
-        self.files.get_mut(index)
+        self.storage.get_mut().files.get_mut(index)
     }
 
     pub fn push(&mut self, file: LoadedFile, history: FileHistory) {
-        self.files.push(file);
-        self.history.push(history);
-        self.ids.push(LoadedFileId(self.next_id));
+        let id = LoadedFileId(self.next_id);
         self.next_id = self.next_id.saturating_add(1);
-        debug_assert_eq!(self.files.len(), self.history.len());
-        debug_assert_eq!(self.files.len(), self.ids.len());
+        let storage = self.storage.get_mut();
+        storage.files.push(file);
+        storage.history.push(history);
+        storage.ids.push(id);
+        debug_assert_eq!(storage.files.len(), storage.history.len());
+        debug_assert_eq!(storage.files.len(), storage.ids.len());
     }
 
     /// Re-point loaded recordings after their history identity was renamed from
     /// `old` to `new`. Only the identity changes. The recording `group_name`
     /// is stable across a rename, so the [`DatabaseRef`] stays valid.
     pub fn rename_identity(&mut self, old: &str, new: &str) {
-        for history in &mut self.history {
+        for history in &mut self.storage.get_mut().history {
             if let FileHistory::Recording {
                 identity, db_ref, ..
             } = history
@@ -342,14 +365,15 @@ impl LoadedFiles {
     }
 
     pub fn remove_file(&mut self, index: usize) -> Option<(LoadedFile, FileHistory)> {
-        if index >= self.files.len() {
+        if index >= self.storage.get().files.len() {
             return None;
         }
-        let file = self.files.remove(index);
-        let history = self.history.remove(index);
-        self.ids.remove(index);
-        debug_assert_eq!(self.files.len(), self.history.len());
-        debug_assert_eq!(self.files.len(), self.ids.len());
+        let storage = self.storage.get_mut();
+        let file = storage.files.remove(index);
+        let history = storage.history.remove(index);
+        storage.ids.remove(index);
+        debug_assert_eq!(storage.files.len(), storage.history.len());
+        debug_assert_eq!(storage.files.len(), storage.ids.len());
         Some((file, history))
     }
 }
@@ -370,7 +394,7 @@ impl Index<usize> for LoadedFiles {
         reason = "Index follows Vec indexing semantics"
     )]
     fn index(&self, index: usize) -> &Self::Output {
-        &self.files[index]
+        &self.storage.get().files[index]
     }
 }
 
@@ -380,7 +404,7 @@ impl IndexMut<usize> for LoadedFiles {
         reason = "IndexMut follows Vec indexing semantics"
     )]
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        &mut self.files[index]
+        &mut self.storage.get_mut().files[index]
     }
 }
 
@@ -507,6 +531,53 @@ mod tests {
                 .collect::<Vec<_>>(),
             expected_seconds
         );
+    }
+
+    /// Every path that can change a fix, a track or the file list takes its
+    /// mutable borrow through [`Versioned::get_mut`], which leaves a new
+    /// generation behind. A cache over the files compares generations to skip
+    /// recomputing while nothing changed.
+    #[rstest]
+    #[case::push(|files: &mut LoadedFiles| files.push(empty_file(), FileHistory::None))]
+    #[case::remove_file(|files: &mut LoadedFiles| {
+        assert!(files.remove_file(0).is_some());
+    })]
+    #[case::rename_identity(|files: &mut LoadedFiles| files.rename_identity("auto:old", "Trip"))]
+    #[case::files_mut(|files: &mut LoadedFiles| {
+        for file in files.files_mut() {
+            file.tracks.clear();
+        }
+    })]
+    #[case::iter_mut(|files: &mut LoadedFiles| {
+        for file in files.iter_mut() {
+            file.tracks.clear();
+        }
+    })]
+    #[case::get_mut(|files: &mut LoadedFiles| {
+        if let Some(file) = files.get_mut(0) {
+            file.tracks.clear();
+        }
+    })]
+    #[case::index_mut(|files: &mut LoadedFiles| files[0].tracks.clear())]
+    fn every_mutation_leaves_a_new_generation(#[case] mutate: fn(&mut LoadedFiles)) {
+        let mut files = LoadedFiles::new();
+        files.push(empty_file(), FileHistory::None);
+        let before = files.generation();
+
+        mutate(&mut files);
+
+        assert_ne!(files.generation(), before);
+    }
+
+    #[test]
+    fn removing_a_file_that_is_not_loaded_keeps_the_generation() {
+        let mut files = LoadedFiles::new();
+        files.push(empty_file(), FileHistory::None);
+        let before = files.generation();
+
+        assert!(files.remove_file(1).is_none());
+
+        assert_eq!(files.generation(), before);
     }
 
     #[test]

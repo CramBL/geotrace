@@ -139,8 +139,13 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                 });
                 let s = &mut *self.state;
                 let map_sync_x_range = if s.plot_state.sync_to_map {
-                    self.map.viewport_geo_bounds().and_then(|b| {
-                        tpv_time_range_in_bounds(&s.loaded_files, s.tree.visibility(), b)
+                    self.map.viewport_geo_bounds().and_then(|bounds| {
+                        s.map_synced_plot_range.range(
+                            bounds,
+                            s.tree.visibility(),
+                            &s.loaded_files,
+                            tpv_time_range_in_bounds,
+                        )
                     })
                 } else {
                     None
