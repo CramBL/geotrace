@@ -20,7 +20,6 @@ Checks: "clang-analyzer-*,bugprone-*,cert-*,cppcoreguidelines-*,hicpp-*,misc-*,m
   -misc-non-private-member-variables-in-classes,\
   -modernize-avoid-c-arrays,\
   -performance-unnecessary-value-param,\
-  -modernize-use-nodiscard,\
   -modernize-use-trailing-return-type,\
   -readability-braces-around-statements,\
   -readability-implicit-bool-conversion,\

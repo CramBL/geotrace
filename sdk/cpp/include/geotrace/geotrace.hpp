@@ -100,12 +100,12 @@ template <typename T> class span {
             std::is_convertible_v<decltype(std::declval<const Container &>().data()), const T *>>>
     constexpr span(const Container &c) noexcept : data_(c.data()), size_(c.size()) {}
 
-    constexpr pointer data() const noexcept { return data_; }
-    constexpr size_type size() const noexcept { return size_; }
-    constexpr bool empty() const noexcept { return size_ == 0; }
-    constexpr iterator begin() const noexcept { return data_; }
-    constexpr iterator end() const noexcept { return data_ + size_; }
-    constexpr T &operator[](size_type i) const noexcept { return data_[i]; }
+    [[nodiscard]] constexpr pointer data() const noexcept { return data_; }
+    [[nodiscard]] constexpr size_type size() const noexcept { return size_; }
+    [[nodiscard]] constexpr bool empty() const noexcept { return size_ == 0; }
+    [[nodiscard]] constexpr iterator begin() const noexcept { return data_; }
+    [[nodiscard]] constexpr iterator end() const noexcept { return data_ + size_; }
+    [[nodiscard]] constexpr T &operator[](size_type i) const noexcept { return data_[i]; }
 
   private:
     pointer data_ = nullptr;
