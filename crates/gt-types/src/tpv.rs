@@ -1,6 +1,6 @@
 use crate::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
 use crate::time_types::{FixTimestamp, GpsTime, SysTime};
-use chrono::{DateTime, Duration};
+use chrono::Duration;
 use geo_types::{Coord, Point};
 use uom::si::f64::{Angle, Velocity};
 use uom::si::velocity::kilometer_per_hour;
@@ -42,14 +42,13 @@ pub struct TimePositionVelocity {
 impl TimePositionVelocity {
     /// Where the fix sits on the recording's time axis: the receiver's own
     /// timestamp when it had a lock, the host timestamp the fix was stamped
-    /// with when it did not, and the Unix epoch when neither clock stamped it.
+    /// with when it did not.
     ///
     /// Read [`Self::gps_time`] to tell those apart.
     pub fn time(&self) -> GpsTime {
         match self.time {
             FixTimestamp::FromGpsReceiver(gps) => gps,
             FixTimestamp::FromHostClock(host) => GpsTime::from_utc(host.utc()),
-            FixTimestamp::Missing => GpsTime::from_utc(DateTime::UNIX_EPOCH),
         }
     }
 
@@ -57,7 +56,7 @@ impl TimePositionVelocity {
     pub fn gps_time(&self) -> Option<GpsTime> {
         match self.time {
             FixTimestamp::FromGpsReceiver(gps) => Some(gps),
-            FixTimestamp::FromHostClock(_) | FixTimestamp::Missing => None,
+            FixTimestamp::FromHostClock(_) => None,
         }
     }
 
@@ -131,7 +130,7 @@ impl From<&TimePositionVelocity> for Point<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+    use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime};
     use rstest::rstest;
     use uom::si::velocity::meter_per_second;
 

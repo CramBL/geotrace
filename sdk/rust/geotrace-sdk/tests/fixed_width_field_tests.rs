@@ -7,7 +7,8 @@
 use geotrace_sdk::{
     Angle, Annotation, AnnotationField, ColorHexField, DateTime, Duration, EventKind, EventMarker,
     EventMarkerColor, EventMarkerIconChoice, EventMarkerStyle, IconNameField, MarkerIcon,
-    MarkerLabelField, NavFile, NavFileBuilder, NavFix, NavRecorder, Utc, VariantPathField,
+    MarkerLabelField, NavFile, NavFileBuilder, NavFix, NavFixTime, NavRecorder, Utc,
+    VariantPathField,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 use rstest::rstest;
@@ -25,7 +26,7 @@ fn recorder_with_one_fix() -> NavRecorder {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(0))
+            .time(NavFixTime::Receiver(t(0)))
             .lat(Angle::degrees(55.0))
             .lon(Angle::degrees(12.0))
             .heading(Angle::degrees(0.0))
@@ -38,7 +39,7 @@ fn recorder_with_fixes_bracketing_an_annotation() -> NavRecorder {
     let mut recorder = recorder_with_one_fix();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(10))
+            .time(NavFixTime::Receiver(t(10)))
             .lat(Angle::degrees(55.1))
             .lon(Angle::degrees(12.1))
             .heading(Angle::degrees(0.0))

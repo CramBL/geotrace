@@ -7,7 +7,7 @@
 use geotrace_sdk::{Angle, ChannelUnit, DateTime, Duration, Unit, Utc, Velocity};
 use geotrace_sdk::{
     Annotation, Channel, Constellation, MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix,
-    Satellite, SatelliteReport, TravelMode,
+    NavFixTime, Satellite, SatelliteReport, TravelMode,
 };
 use rstest::rstest;
 
@@ -37,7 +37,7 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
 
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t0)
+            .time(NavFixTime::Receiver(t0))
             .lat(Angle::degrees(51.5))
             .lon(Angle::degrees(-0.1))
             .heading(Angle::degrees(270.0))
@@ -46,7 +46,7 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
     );
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t1)
+            .time(NavFixTime::Receiver(t1))
             .lat(Angle::degrees(51.6))
             .lon(Angle::degrees(-0.2))
             .heading(Angle::degrees(180.0))
@@ -132,7 +132,7 @@ fn minimal() -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(base())
+            .time(NavFixTime::Receiver(base()))
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .heading(Angle::degrees(0.0))
@@ -153,7 +153,7 @@ fn no_satellite_data() -> Result<(), Box<dyn std::error::Error>> {
     for i in 0..3 {
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(t0 + Duration::seconds(i64::from(i)))
+                .time(NavFixTime::Receiver(t0 + Duration::seconds(i64::from(i))))
                 .lat(Angle::degrees(0.0))
                 .lon(Angle::degrees(0.0))
                 .heading(Angle::degrees(0.0))
@@ -176,7 +176,7 @@ fn no_markers() -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t0)
+            .time(NavFixTime::Receiver(t0))
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .heading(Angle::degrees(0.0))
@@ -223,7 +223,7 @@ fn large_file() -> Result<(), Box<dyn std::error::Error>> {
         let t = t0 + Duration::seconds(i64::from(i));
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(t)
+                .time(NavFixTime::Receiver(t))
                 .lat(Angle::degrees(55.0))
                 .lon(Angle::degrees(12.0))
                 .heading(Angle::degrees(0.0))
@@ -264,7 +264,7 @@ fn identity_round_trips() -> Result<(), Box<dyn std::error::Error>> {
         .open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t0)
+            .time(NavFixTime::Receiver(t0))
             .lat(Angle::degrees(51.5))
             .lon(Angle::degrees(-0.1))
             .build(),
@@ -286,7 +286,7 @@ fn no_identity_deserialises_as_none() -> Result<(), Box<dyn std::error::Error>> 
     let mut recorder = NavFileBuilder::new().with_title("No identity").open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t0)
+            .time(NavFixTime::Receiver(t0))
             .lat(Angle::degrees(51.5))
             .lon(Angle::degrees(-0.1))
             .build(),
@@ -305,7 +305,7 @@ fn identity_via_meta_builder() -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().with_meta(meta).open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t0)
+            .time(NavFixTime::Receiver(t0))
             .lat(Angle::degrees(48.8))
             .lon(Angle::degrees(2.3))
             .build(),
@@ -324,7 +324,7 @@ fn travel_mode_round_trips() -> Result<(), Box<dyn std::error::Error>> {
         .open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t0)
+            .time(NavFixTime::Receiver(t0))
             .lat(Angle::degrees(51.5))
             .lon(Angle::degrees(-0.1))
             .build(),
@@ -348,7 +348,7 @@ fn unknown_travel_mode_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().with_meta(meta).open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t0)
+            .time(NavFixTime::Receiver(t0))
             .lat(Angle::degrees(51.5))
             .lon(Angle::degrees(-0.1))
             .build(),
@@ -375,7 +375,7 @@ fn no_travel_mode_deserialises_as_none() -> Result<(), Box<dyn std::error::Error
     let mut recorder = NavFileBuilder::new().with_title("No travel mode").open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t0)
+            .time(NavFixTime::Receiver(t0))
             .lat(Angle::degrees(51.5))
             .lon(Angle::degrees(-0.1))
             .build(),
@@ -399,7 +399,7 @@ fn large_file_round_trip() -> Result<(), Box<dyn std::error::Error>> {
         let lon = -179.0 + (i as f64 % 358.0);
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(t)
+                .time(NavFixTime::Receiver(t))
                 .lat(Angle::degrees(lat))
                 .lon(Angle::degrees(lon))
                 .build(),
@@ -436,7 +436,7 @@ fn channels_round_trip() -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t0)
+            .time(NavFixTime::Receiver(t0))
             .lat(Angle::degrees(51.5))
             .lon(Angle::degrees(-0.1))
             .build(),
@@ -498,7 +498,7 @@ fn a_file_without_channels_still_reads() -> Result<(), Box<dyn std::error::Error
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(base())
+            .time(NavFixTime::Receiver(base()))
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .build(),
@@ -866,19 +866,19 @@ fn a_vector_channel_preserves_nan_holes() -> Result<(), Box<dyn std::error::Erro
 }
 
 #[rstest]
-#[case::receiver_and_host_clock(Some(base()), Some(base() + Duration::milliseconds(250)))]
-#[case::host_clock_only(None, Some(base()))]
-#[case::receiver_only(Some(base()), None)]
-#[case::neither_clock(None, None)]
+#[case::receiver_and_host_clock(NavFixTime::Both {
+    gps: base(),
+    sys: base() + Duration::milliseconds(250),
+})]
+#[case::host_clock_only(NavFixTime::Host(base()))]
+#[case::receiver_only(NavFixTime::Receiver(base()))]
 fn a_fix_keeps_the_clock_that_stamped_it(
-    #[case] gps_time: Option<DateTime<Utc>>,
-    #[case] sys_time: Option<DateTime<Utc>>,
+    #[case] time: NavFixTime,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .maybe_gps_time(gps_time)
-            .maybe_sys_time(sys_time)
+            .time(time)
             .lat(Angle::degrees(51.5))
             .lon(Angle::degrees(-0.1))
             .build(),
@@ -887,7 +887,6 @@ fn a_fix_keeps_the_clock_that_stamped_it(
     let rt = round_trip(&recorder.finish()?)?;
     let fix = &rt.nav_points().first().ok_or("no nav point")?.fix;
 
-    assert_eq!(fix.gps_time(), gps_time);
-    assert_eq!(fix.sys_time(), sys_time);
+    assert_eq!(fix.time, time);
     Ok(())
 }

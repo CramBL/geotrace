@@ -5,23 +5,13 @@ use crate::error::BuildError;
 use crate::time_types::{GpsTime, SysTime};
 use crate::types::{
     Annotation, Channel, Constellation, EventMarker, EventMarkerColor, EventMarkerIconChoice,
-    EventMarkerPoint, EventMarkerStyle, Marker, Meta, NavFile, NavFix, NavPoint, Satellite,
-    SatelliteReport, TravelMode,
+    EventMarkerPoint, EventMarkerStyle, Marker, Meta, NavFile, NavFix, NavFixTime, NavPoint,
+    Satellite, SatelliteReport, TravelMode,
 };
 use crate::variant_path::EventKind;
 
-// User-supplied `NavFix` and `SatelliteReport` structs carry `DateTime<Utc>` for
-// public-API simplicity.  Immediately on intake the builder converts them into
-// these internal types so that all internal processing distinguishes GPS-receiver
-// time from host system-clock time at the type level.
-//
-// The final output (`NavPoint` / `NavFile`) converts back to the public types with
-// plain `DateTime<Utc>` fields so downstream callers (`gt-io`, external readers)
-// see no change.
-/// Builder-internal representation of a nav fix with typed clock domains.
 struct InternalFix {
-    gps_time: Option<GpsTime>,
-    sys_time: Option<SysTime>,
+    time: NavFixTime,
     lat: Angle,
     lon: Angle,
     heading: Option<Angle>,
@@ -32,8 +22,7 @@ struct InternalFix {
 impl InternalFix {
     fn from_nav_fix(f: NavFix) -> Self {
         Self {
-            gps_time: f.gps_time().map(GpsTime::from_utc),
-            sys_time: f.sys_time().map(SysTime::from_utc),
+            time: f.time,
             lat: f.lat,
             lon: f.lon,
             heading: f.heading,
@@ -45,8 +34,7 @@ impl InternalFix {
     /// Build a ghost fix whose position and time are fully computed.
     fn ghost(gps_time: GpsTime, lat: Angle, lon: Angle, heading: Option<Angle>) -> Self {
         Self {
-            gps_time: Some(gps_time),
-            sys_time: None,
+            time: NavFixTime::Receiver(gps_time.utc()),
             lat,
             lon,
             heading,
@@ -55,16 +43,48 @@ impl InternalFix {
         }
     }
 
-    /// `gps_time - sys_time` in microseconds, for a fix that has both.
+    fn gps_time(&self) -> Option<GpsTime> {
+        self.time.gps_time().map(GpsTime::from_utc)
+    }
+
+    fn sys_time(&self) -> Option<SysTime> {
+        self.time.sys_time().map(SysTime::from_utc)
+    }
+
+    /// `gps_time - sys_time` in microseconds, for a fix both clocks stamped.
     fn gps_sys_clock_delta_us(&self) -> Option<i64> {
-        Some(self.gps_time?.timestamp_micros() - self.sys_time?.timestamp_micros())
+        match self.time {
+            NavFixTime::Both { gps, sys } => Some(gps.timestamp_micros() - sys.timestamp_micros()),
+            NavFixTime::Receiver(_) | NavFixTime::Host(_) => None,
+        }
+    }
+
+    /// The fix's timestamp in the GPS time domain. This is the receiver's
+    /// timestamp where the fix has one, else the host clock's.
+    ///
+    /// Fix ordering and satellite report association resolve a fix's timestamp
+    /// through this. Contrast with [`InternalFix::timeline_time`], which is
+    /// system-clock-first.
+    fn effective_time(&self) -> GpsTime {
+        GpsTime::from_utc(self.time.effective())
+    }
+
+    /// The host clock's timestamp where the fix has one, else the receiver's.
+    /// This anchors external events (annotations, markers) on the nav timeline.
+    ///
+    /// Comparing an external event against a fix's system-clock time places it
+    /// most accurately, since an external event holds a host system-clock
+    /// timestamp.
+    fn timeline_time(&self) -> DateTime<Utc> {
+        self.time
+            .sys_time()
+            .unwrap_or_else(|| self.time.effective())
     }
 
     /// Convert back to the public `NavFix` for the final output `NavPoint`.
     fn into_nav_fix(self) -> NavFix {
         NavFix {
-            gps_time: self.gps_time.map(GpsTime::utc),
-            sys_time: self.sys_time.map(SysTime::utc),
+            time: self.time,
             lat: self.lat,
             lon: self.lon,
             heading: self.heading,
@@ -74,7 +94,10 @@ impl InternalFix {
     }
 }
 
-/// Builder-internal representation of a satellite report with typed clock domains.
+// Internal processing distinguishes the receiver's clock from the host's at the
+// type level: the builder wraps a user-supplied `SatelliteReport`'s plain
+// `DateTime<Utc>` values in `GpsTime` and `SysTime` on intake, and unwraps them
+// again for the output `NavFile`.
 struct InternalSatReport {
     gps_time: Option<GpsTime>,
     sys_time: Option<SysTime>,
@@ -472,7 +495,7 @@ impl NavRecorder {
 
         validate_satellite_data(&self.satellite_reports);
 
-        self.fixes.sort_by_key(effective_time);
+        self.fixes.sort_by_key(InternalFix::effective_time);
         self.satellite_reports.sort_by_key(|r| {
             r.gps_time
                 .map(GpsTime::utc)
@@ -525,7 +548,7 @@ impl NavRecorder {
             .map(|(fix, satellites)| InternalPoint { fix, satellites })
             .collect();
         internal_points.extend(ghost_points);
-        internal_points.sort_by_key(|p| effective_time(&p.fix));
+        internal_points.sort_by_key(|p| p.fix.effective_time());
 
         let event_markers = interpolate_event_markers(&internal_points, self.pending_event_markers);
 
@@ -606,7 +629,12 @@ fn ghost_nav_points_for(
     // and a `sys_time`.  Stored as `(gps_us, delta_us)` sorted by `gps_us`.
     let delta_anchors: Vec<(i64, i64)> = real_fixes
         .iter()
-        .filter_map(|f| Some((f.gps_time?.timestamp_micros(), f.gps_sys_clock_delta_us()?)))
+        .filter_map(|f| {
+            Some((
+                f.gps_time()?.timestamp_micros(),
+                f.gps_sys_clock_delta_us()?,
+            ))
+        })
         .collect();
 
     let n_segs = real_fixes.len().saturating_sub(1);
@@ -618,7 +646,7 @@ fn ghost_nav_points_for(
         let Some(guess_us) = best_guess_gps_us(&report, &delta_anchors) else {
             continue;
         };
-        let pos = real_fixes.partition_point(|f| effective_time(f).timestamp_micros() < guess_us);
+        let pos = real_fixes.partition_point(|f| f.effective_time().timestamp_micros() < guess_us);
 
         if pos == 0 {
             before_first.push(report);
@@ -649,8 +677,8 @@ fn ghost_nav_points_for(
         let b_position = TimelinePosition::from_internal_fix(b);
         let a_position = TimelinePosition::from_internal_fix(a);
         let heading = b_position.bearing_to(a_position);
-        let b_gps_us = effective_time(b).timestamp_micros();
-        let a_gps_us = effective_time(a).timestamp_micros();
+        let b_gps_us = b.effective_time().timestamp_micros();
+        let a_gps_us = a.effective_time().timestamp_micros();
         let span_us = (a_gps_us - b_gps_us) as f64;
 
         let delta_b = b.gps_sys_clock_delta_us();
@@ -805,7 +833,7 @@ fn segment_corrected_gps_us(
     }
     let Some(st) = report.sys_time else {
         // Both timestamps absent. Shouldn't reach here after finish() pre-filter.
-        return (effective_time(b).timestamp_micros() + effective_time(a).timestamp_micros()) / 2;
+        return (b.effective_time().timestamp_micros() + a.effective_time().timestamp_micros()) / 2;
     };
     let st_us = st.timestamp_micros();
 
@@ -813,13 +841,13 @@ fn segment_corrected_gps_us(
         (Some(db), Some(da)) => {
             // Interpolate delta by the report's `sys_time` position in the segment.
             let sys_b = b
-                .sys_time
-                .map_or(effective_time(b).timestamp_micros() - db, |s| {
+                .sys_time()
+                .map_or(b.effective_time().timestamp_micros() - db, |s| {
                     s.timestamp_micros()
                 });
             let sys_a = a
-                .sys_time
-                .map_or(effective_time(a).timestamp_micros() - da, |s| {
+                .sys_time()
+                .map_or(a.effective_time().timestamp_micros() - da, |s| {
                     s.timestamp_micros()
                 });
             let span = (sys_a - sys_b) as f64;
@@ -854,7 +882,7 @@ fn ghost_gps_us_anchored_to(report: &InternalSatReport, anchor_fix: &InternalFix
     if let Some(st) = report.sys_time {
         return st.timestamp_micros() + anchor_fix.gps_sys_clock_delta_us().unwrap_or(0);
     }
-    effective_time(anchor_fix).timestamp_micros()
+    anchor_fix.effective_time().timestamp_micros()
 }
 
 /// Assign each satellite report to its nearest nav fix within `window`.
@@ -864,7 +892,7 @@ fn ghost_gps_us_anchored_to(report: &InternalSatReport, anchor_fix: &InternalFix
 /// The *distance* to each candidate is then computed in the most accurate
 /// clock domain available:
 ///
-/// - Report has `gps_time` → GPS-domain comparison against `effective_time(fix)`.
+/// - Report has `gps_time` → GPS-domain comparison against the fix's effective time.
 /// - Report has only `sys_time` **and** the fix has `sys_time` → same-domain
 ///   comparison `|rep.sys − fix.sys|` (single clock, no delta approximation).
 /// - Report has only `sys_time`, fix has no `sys_time` → GPS-domain comparison
@@ -883,7 +911,12 @@ fn associate_satellites(
     // Compute GPS/sys-clock delta anchors from fixes that carry both timestamps.
     let delta_anchors: Vec<(i64, i64)> = fixes
         .iter()
-        .filter_map(|f| Some((f.gps_time?.timestamp_micros(), f.gps_sys_clock_delta_us()?)))
+        .filter_map(|f| {
+            Some((
+                f.gps_time()?.timestamp_micros(),
+                f.gps_sys_clock_delta_us()?,
+            ))
+        })
         .collect();
 
     let mut fix_claims: Vec<Option<(i64, usize)>> = vec![None; fixes.len()];
@@ -902,14 +935,14 @@ fn associate_satellites(
         };
 
         let dist_to = |fix: &InternalFix| -> i64 {
-            if let (Some(rsu), Some(fst)) = (rep_sys_us, fix.sys_time) {
+            if let (Some(rsu), Some(fst)) = (rep_sys_us, fix.sys_time()) {
                 (rsu - fst.timestamp_micros()).abs()
             } else {
-                (rep_us - effective_time(fix).timestamp_micros()).abs()
+                (rep_us - fix.effective_time().timestamp_micros()).abs()
             }
         };
 
-        let pos = fixes.partition_point(|f| effective_time(f).timestamp_micros() < rep_us);
+        let pos = fixes.partition_point(|f| f.effective_time().timestamp_micros() < rep_us);
 
         let mut best: Option<(i64, usize)> = None;
 
@@ -964,23 +997,6 @@ fn associate_satellites(
     (assignments, unassociated)
 }
 
-/// Best available anchor time for placing external events (annotations, markers)
-/// on the nav timeline.
-///
-/// External events carry host system-clock timestamps. Comparing them against
-/// the fix's `sys_time` - the same clock domain - gives the most accurate
-/// placement. Falls back to `gps_time` when no `sys_time` is available, and to
-/// the Unix epoch as a last resort.
-///
-/// Contrast with [`effective_time`], which is GPS-time-first and governs fix
-/// ordering and satellite report association.
-fn timeline_time(fix: &InternalFix) -> DateTime<Utc> {
-    fix.sys_time
-        .map(SysTime::utc)
-        .or_else(|| fix.gps_time.map(GpsTime::utc))
-        .unwrap_or_default()
-}
-
 /// A fix reduced to what placing an external event on the nav timeline needs.
 #[derive(Clone, Copy)]
 struct TimelineFix {
@@ -991,7 +1007,7 @@ struct TimelineFix {
 impl TimelineFix {
     fn from_internal_fix(fix: &InternalFix) -> Self {
         Self {
-            time: timeline_time(fix),
+            time: fix.timeline_time(),
             position: TimelinePosition::from_internal_fix(fix),
         }
     }
@@ -1477,17 +1493,6 @@ fn validate_satellite_data(reports: &[InternalSatReport]) {
     for msg in collect_satellite_issues(reports).to_warning_strings() {
         log::warn!("{msg}");
     }
-}
-
-/// Resolve the best available timestamp for a fix as a [`GpsTime`].
-///
-/// Uses `gps_time` when the receiver had an active lock, otherwise falls back
-/// to `sys_time` (treated as a GPS-domain estimate), then to the Unix epoch.
-/// All internal builder logic resolves a fix's timestamp through this.
-#[inline]
-fn effective_time(fix: &InternalFix) -> GpsTime {
-    fix.gps_time
-        .unwrap_or_else(|| GpsTime::from_utc(fix.sys_time.map(SysTime::utc).unwrap_or_default()))
 }
 
 pub(crate) fn datetime_to_micros(dt: DateTime<Utc>) -> i64 {

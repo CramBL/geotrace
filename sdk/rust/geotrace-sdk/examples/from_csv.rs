@@ -20,7 +20,7 @@
 
 use std::{env, error::Error, fs};
 
-use geotrace_sdk::{Angle, DateTime, NavFileBuilder, NavFix, Utc, Velocity};
+use geotrace_sdk::{Angle, DateTime, NavFileBuilder, NavFix, NavFixTime, Utc, Velocity};
 
 const CSV_DATA: &str = "\
 timestamp,lat,lon,heading,speed_mps
@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let time = timestamp.parse::<DateTime<Utc>>()?;
         recorder.add(
             NavFix::builder()
-                .gps_time(time)
+                .time(NavFixTime::Receiver(time))
                 .lat(Angle::degrees(lat.parse::<f64>()?))
                 .lon(Angle::degrees(lon.parse::<f64>()?))
                 .heading(Angle::degrees(heading.parse::<f64>()?))

@@ -712,7 +712,7 @@ pub fn synthetic_gtd_bytes_with_channels(
 
         recorder.add_nav_fix(
             sdk::NavFix::builder()
-                .gps_time(time)
+                .time(sdk::NavFixTime::Receiver(time))
                 .lat(sdk::Angle::degrees(
                     spec.start_lat_deg + i as f64 * spec.lat_step_deg,
                 ))

@@ -13,8 +13,8 @@ use chrono::{DateTime, FixedOffset, Utc};
 use geotrace_sdk::{
     Angle, Annotation, BuildError, Channel, ChannelUnit, Constellation, EventMarker,
     EventMarkerColor, EventMarkerIconChoice, EventMarkerPoint, EventMarkerStyle, Marker,
-    MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix, NavPoint, NavRecorder, Satellite,
-    SatelliteReport, TravelMode, Unit, Velocity,
+    MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix, NavFixTime, NavPoint, NavRecorder,
+    RecordedFixTimestamps, Satellite, SatelliteReport, TravelMode, Unit, Velocity,
 };
 use pyo3::exceptions::{PyIOError, PyRuntimeError, PyUserWarning, PyValueError};
 use pyo3::prelude::*;
@@ -55,6 +55,7 @@ fn file_err(e: geotrace_sdk::Error) -> PyErr {
         | Error::ParseError { .. }
         | Error::UnwritableField { .. }
         | Error::UnreadableField { .. }
+        | Error::FixWithoutTimestamp { .. }
         | Error::DatasetSizePastFileLength { .. } => PyValueError::new_err(msg),
     }
 }
@@ -658,7 +659,7 @@ fn parse_python_channel_unit(value: &Bound<'_, PyAny>) -> PyResult<ChannelUnit> 
 
 /// A single GPS/GNSS fix: position, optional heading, and optional speed.
 ///
-/// Provide at least one of `gps_time` or `sys_time`.
+/// Raises `ValueError` when `gps_time` and `sys_time` are both `None`.
 /// All `datetime` arguments must be timezone-aware.
 /// `lat` is expected in [-90, 90] degrees, `lon` in [-180, 180], `heading` in
 /// [0, 360), `speed_mps` in m/s and `eph_m` in metres, both non-negative.
@@ -685,17 +686,23 @@ impl PyNavFix {
         heading: Option<f64>,
         speed_mps: Option<f64>,
         eph_m: Option<f64>,
-    ) -> Self {
+    ) -> PyResult<Self> {
+        let recorded = RecordedFixTimestamps {
+            gps: gps_time.map(|t| t.to_utc()),
+            sys: sys_time.map(|t| t.to_utc()),
+        };
+        let Some(time) = NavFixTime::from_recorded(recorded) else {
+            return Err(PyValueError::new_err("provide gps_time or sys_time"));
+        };
         let inner = NavFix::builder()
+            .time(time)
             .lat(Angle::degrees(lat))
             .lon(Angle::degrees(lon))
-            .maybe_gps_time(gps_time.map(|t| t.to_utc()))
-            .maybe_sys_time(sys_time.map(|t| t.to_utc()))
             .maybe_heading(heading.map(Angle::degrees))
             .maybe_speed(speed_mps.map(Velocity::meter_per_second))
             .maybe_eph_m(eph_m)
             .build();
-        Self { inner }
+        Ok(Self { inner })
     }
 
     /// Latitude in degrees, expected in [-90, 90].

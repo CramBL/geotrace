@@ -182,7 +182,9 @@ mod tests {
     /// encode, store through the history API, fetch, decode, restore.
     #[test]
     fn roundtrips_through_a_history_database() {
-        use geotrace_sdk::{Angle, DateTime, Duration as SdkDuration, NavFileBuilder, NavFix};
+        use geotrace_sdk::{
+            Angle, DateTime, Duration as SdkDuration, NavFileBuilder, NavFix, NavFixTime,
+        };
         use gt_store::{
             HistoryDatabase, ReadOnlyHistoryDatabase, Recordings, StoredSegmentation, TrackRange,
             TrackState,
@@ -193,7 +195,7 @@ mod tests {
         for i in 0..10i64 {
             recorder.add_nav_fix(
                 NavFix::builder()
-                    .gps_time(t0 + SdkDuration::seconds(i))
+                    .time(NavFixTime::Receiver(t0 + SdkDuration::seconds(i)))
                     .lat(Angle::degrees(55.68))
                     .lon(Angle::degrees(12.56))
                     .heading(Angle::degrees(0.0))

@@ -24,7 +24,8 @@
 
 use geotrace_sdk::{
     Angle, Annotation, Channel, Constellation, EventMarker, EventMarkerStyle, MarkerIcon, Meta,
-    NavFileBuilder, NavFix, NavRecorder, Satellite, SatelliteReport, Unit, Velocity,
+    NavFileBuilder, NavFix, NavFixTime, NavRecorder, RecordedFixTimestamps, Satellite,
+    SatelliteReport, Unit, Velocity,
 };
 use std::collections::HashMap;
 use std::fs::File;
@@ -176,10 +177,17 @@ fn load_satellites_and_fixes(
             });
         }
 
+        let recorded = RecordedFixTimestamps {
+            gps: gps_time,
+            sys: sys_time,
+        };
+        let Some(time) = NavFixTime::from_recorded(recorded) else {
+            return Err(format!("fixes.csv row {line:?} has no timestamp").into());
+        };
+
         recorder.add(
             NavFix::builder()
-                .maybe_gps_time(gps_time)
-                .maybe_sys_time(sys_time)
+                .time(time)
                 .lat(Angle::try_from_degrees_str(cols[3])?)
                 .lon(Angle::try_from_degrees_str(cols[4])?)
                 .maybe_heading(Angle::try_from_degrees_str(cols[5]).ok())

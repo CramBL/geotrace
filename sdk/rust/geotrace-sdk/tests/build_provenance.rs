@@ -3,7 +3,7 @@
     reason = "test functions mix ? propagation with assert! - both are correct in test code"
 )]
 
-use geotrace_sdk::{Angle, DateTime, NavFile, NavFileBuilder, NavFix, Utc};
+use geotrace_sdk::{Angle, DateTime, NavFile, NavFileBuilder, NavFix, NavFixTime, Utc};
 use hdf5_pure::{AttrValue, FileBuilder};
 
 #[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
@@ -39,7 +39,7 @@ fn a_written_file_carries_the_sdk_version() -> Result<(), Box<dyn std::error::Er
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(base())
+            .time(NavFixTime::Receiver(base()))
             .lat(Angle::degrees(51.5))
             .lon(Angle::degrees(-0.1))
             .build(),
@@ -59,7 +59,7 @@ fn a_scrubbed_file_has_the_placeholder_version_and_no_commit()
     let mut recorder = NavFileBuilder::new().with_scrubbed_provenance().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(base())
+            .time(NavFixTime::Receiver(base()))
             .lat(Angle::degrees(51.5))
             .lon(Angle::degrees(-0.1))
             .build(),

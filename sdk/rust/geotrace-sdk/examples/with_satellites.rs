@@ -22,8 +22,8 @@
 use std::{env, error::Error, fs};
 
 use geotrace_sdk::{
-    Angle, Constellation, DateTime, NavFile, NavFileBuilder, NavFix, Satellite, SatelliteReport,
-    Utc, Velocity,
+    Angle, Constellation, DateTime, NavFile, NavFileBuilder, NavFix, NavFixTime, Satellite,
+    SatelliteReport, Utc, Velocity,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let time = t(ts);
         recorder.add(
             NavFix::builder()
-                .gps_time(time)
+                .time(NavFixTime::Receiver(time))
                 .lat(Angle::degrees(*lat))
                 .lon(Angle::degrees(*lon))
                 .heading(Angle::degrees(90.0))

@@ -13,7 +13,8 @@ use std::path::{Path, PathBuf};
 
 use geotrace_sdk::{
     Angle, Constellation, DateTime, Duration, EventMarkerColor, EventMarkerIconChoice,
-    EventMarkerStyle, NavFile, NavFileBuilder, NavFix, Satellite, SatelliteReport, Velocity,
+    EventMarkerStyle, NavFile, NavFileBuilder, NavFix, NavFixTime, Satellite, SatelliteReport,
+    Velocity,
 };
 
 fn main() {
@@ -48,8 +49,7 @@ fn minimal() -> NavFile {
         .open();
 
     recorder.add_nav_fix(NavFix {
-        gps_time: Some(t0),
-        sys_time: None,
+        time: NavFixTime::Receiver(t0),
         lat: Angle::degrees(51.5074),
         lon: Angle::degrees(-0.1278),
         heading: Some(Angle::degrees(90.0)),
@@ -81,8 +81,7 @@ fn minimal() -> NavFile {
     });
 
     recorder.add_nav_fix(NavFix {
-        gps_time: Some(t1),
-        sys_time: None,
+        time: NavFixTime::Receiver(t1),
         lat: Angle::degrees(51.5080),
         lon: Angle::degrees(-0.1265),
         heading: Some(Angle::degrees(85.0)),
@@ -102,8 +101,7 @@ fn out_of_range_values() -> NavFile {
         .open();
 
     recorder.add_nav_fix(NavFix {
-        gps_time: Some(t0),
-        sys_time: None,
+        time: NavFixTime::Receiver(t0),
         lat: Angle::degrees(f64::NAN),
         lon: Angle::degrees(-0.1278),
         heading: None,
@@ -112,8 +110,7 @@ fn out_of_range_values() -> NavFile {
     });
 
     recorder.add_nav_fix(NavFix {
-        gps_time: Some(t0 + Duration::seconds(1)),
-        sys_time: None,
+        time: NavFixTime::Receiver(t0 + Duration::seconds(1)),
         lat: Angle::degrees(91.0),
         lon: Angle::degrees(-0.1278),
         heading: None,
@@ -122,8 +119,7 @@ fn out_of_range_values() -> NavFile {
     });
 
     recorder.add_nav_fix(NavFix {
-        gps_time: Some(t0 + Duration::seconds(2)),
-        sys_time: None,
+        time: NavFixTime::Receiver(t0 + Duration::seconds(2)),
         lat: Angle::degrees(51.5074),
         lon: Angle::degrees(-181.0),
         heading: None,
@@ -132,8 +128,7 @@ fn out_of_range_values() -> NavFile {
     });
 
     recorder.add_nav_fix(NavFix {
-        gps_time: Some(t0 + Duration::seconds(3)),
-        sys_time: None,
+        time: NavFixTime::Receiver(t0 + Duration::seconds(3)),
         lat: Angle::degrees(51.5074),
         lon: Angle::degrees(-0.1278),
         heading: Some(Angle::degrees(675.0)),
@@ -156,8 +151,7 @@ fn unrecognized_style_values() -> NavFile {
         .open();
 
     recorder.add_nav_fix(NavFix {
-        gps_time: Some(t0),
-        sys_time: None,
+        time: NavFixTime::Receiver(t0),
         lat: Angle::degrees(51.5074),
         lon: Angle::degrees(-0.1278),
         heading: Some(Angle::degrees(90.0)),

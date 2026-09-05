@@ -6,7 +6,7 @@
 use std::io::Cursor;
 use std::path::Path;
 
-use geotrace_sdk::{Angle, DateTime, Error, NavFile, NavFileBuilder, NavFix, Utc};
+use geotrace_sdk::{Angle, DateTime, Error, NavFile, NavFileBuilder, NavFix, NavFixTime, Utc};
 
 fn fixture_bytes(relative_path: &str) -> std::io::Result<Vec<u8>> {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").map_err(std::io::Error::other)?;
@@ -26,7 +26,7 @@ fn valid_gtd_bytes() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add(
         NavFix::builder()
-            .gps_time(t)
+            .time(NavFixTime::Receiver(t))
             .lat(Angle::degrees(51.5074))
             .lon(Angle::degrees(-0.1278))
             .build(),

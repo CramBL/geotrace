@@ -131,14 +131,14 @@ cargo add geotrace-sdk
 ```
 
 ```rust
-use geotrace_sdk::{Angle, DateTime, NavFileBuilder, NavFix, Utc};
+use geotrace_sdk::{Angle, DateTime, NavFileBuilder, NavFix, NavFixTime, Utc};
 
 let t = "2024-01-15T09:00:00Z".parse::<DateTime<Utc>>()?;
 let mut recorder = NavFileBuilder::new().open();
 // add() dispatches by type: NavFix, SatelliteReport, Annotation, or EventMarker.
 recorder.add(
     NavFix::builder()
-        .gps_time(t)
+        .time(NavFixTime::Receiver(t))
         .lat(Angle::degrees(51.5074))
         .lon(Angle::degrees(-0.1278))
         .build(),

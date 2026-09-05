@@ -23,7 +23,7 @@
 use std::path::PathBuf;
 use std::{env, error::Error, fs};
 
-use geotrace_sdk::{Angle, DateTime, NavFile, NavFileBuilder, NavFix, Utc};
+use geotrace_sdk::{Angle, DateTime, NavFile, NavFileBuilder, NavFix, NavFixTime, Utc};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Use the path argument if given, otherwise generate a throwaway file.
@@ -84,7 +84,7 @@ fn generate_sample() -> Result<PathBuf, Box<dyn Error>> {
     ] {
         recorder.add(
             NavFix::builder()
-                .gps_time(t(ts))
+                .time(NavFixTime::Receiver(t(ts)))
                 .lat(Angle::degrees(lat))
                 .lon(Angle::degrees(lon))
                 .build(),

@@ -36,7 +36,7 @@ use std::{fs, path::PathBuf};
 
 use geotrace_sdk::{
     Angle, Annotation, Constellation as SdkConst, DateTime, Duration, MarkerIcon as SdkIcon,
-    NavFileBuilder, NavFix, Satellite as SdkSat, SatelliteReport, Utc, Velocity,
+    NavFileBuilder, NavFix, NavFixTime, Satellite as SdkSat, SatelliteReport, Utc, Velocity,
 };
 use gt_test_utils::assert_matches_sequence;
 use gt_types::GeneratedMarkerKind;
@@ -149,7 +149,7 @@ fn build_snapshot_bytes() -> Vec<u8> {
         let pt_time = offset(base, i as i64 * 30);
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(pt_time)
+                .time(NavFixTime::Receiver(pt_time))
                 .lat(a(trip0_lats[i]))
                 .lon(a(trip0_lons[i]))
                 .heading(a(45.0))
@@ -204,7 +204,7 @@ fn build_snapshot_bytes() -> Vec<u8> {
         let pt_time = offset(base, 750 + i as i64 * 30);
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(pt_time)
+                .time(NavFixTime::Receiver(pt_time))
                 .lat(a(trip1_lats[i]))
                 .lon(a(trip1_lons[i]))
                 .heading(a(45.0))

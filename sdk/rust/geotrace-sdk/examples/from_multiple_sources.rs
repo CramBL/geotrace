@@ -21,7 +21,9 @@
 
 use std::{error::Error, fs};
 
-use geotrace_sdk::{Angle, Annotation, DateTime, MarkerIcon, NavFileBuilder, NavFix, Utc};
+use geotrace_sdk::{
+    Angle, Annotation, DateTime, MarkerIcon, NavFileBuilder, NavFix, NavFixTime, Utc,
+};
 
 // Source 1 - GPS track (lat/lon/heading in degrees, one fix per second).
 const GPS_FIXES: &[(&str, f64, f64, f64)] = &[
@@ -51,7 +53,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let time = timestamp.parse::<DateTime<Utc>>()?;
         recorder.add(
             NavFix::builder()
-                .gps_time(time)
+                .time(NavFixTime::Receiver(time))
                 .lat(Angle::degrees(lat))
                 .lon(Angle::degrees(lon))
                 .heading(Angle::degrees(heading))

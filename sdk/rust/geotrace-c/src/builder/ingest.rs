@@ -4,7 +4,7 @@ use std::ffi::c_char;
 
 use geotrace_sdk::{
     Angle, Annotation, Channel, ChannelUnit, EventMarker, EventMarkerColor, EventMarkerStyle,
-    SatelliteReport, Velocity,
+    NavFixTime, RecordedFixTimestamps, SatelliteReport, Velocity,
 };
 
 use super::GtdFileBuilder;
@@ -32,6 +32,9 @@ use crate::{GtdChannel, GtdChannelUnitMode, GtdMarkerIcon, GtdOptF64, GtdSatelli
 /// @param speed_mps   Ground speed in m/s, expected to be non-negative, or `GTD_NONE_F64`.
 /// @param eph_m       Estimated horizontal position error in metres, expected to be
 ///                    non-negative, or `GTD_NONE_F64`.
+///
+/// @return `GTD_ERR_INVALID_ARGUMENT` if @p gps_time and @p sys_time are both
+///         `gtd_ts_none()`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_nav_fix(
     b: *mut GtdFileBuilder,
@@ -45,9 +48,16 @@ pub unsafe extern "C" fn gtd_builder_add_nav_fix(
 ) -> GtdStatus {
     error::run_catching_panics(|| {
         let b = nonnull_mut!(b);
+        let recorded = RecordedFixTimestamps {
+            gps: timestamp::ts_to_datetime(gps_time),
+            sys: timestamp::ts_to_datetime(sys_time),
+        };
+        let Some(time) = NavFixTime::from_recorded(recorded) else {
+            error::set_last_error("gps_time and sys_time are both gtd_ts_none(): a fix needs one");
+            return GtdStatus::GTD_ERR_INVALID_ARGUMENT;
+        };
         b.recorder_mut().add_nav_fix(geotrace_sdk::NavFix {
-            gps_time: timestamp::ts_to_datetime(gps_time),
-            sys_time: timestamp::ts_to_datetime(sys_time),
+            time,
             lat: Angle::degrees(lat_deg),
             lon: Angle::degrees(lon_deg),
             heading: heading_deg.to_opt().map(Angle::degrees),

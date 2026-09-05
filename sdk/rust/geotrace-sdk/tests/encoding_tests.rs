@@ -10,7 +10,7 @@
 use geotrace_sdk::{Angle, DateTime, Duration, Utc};
 use geotrace_sdk::{
     Annotation, ChannelUnit, Constellation, Error, MarkerIcon, NavFile, NavFileBuilder, NavFix,
-    Satellite, SatelliteReport,
+    NavFixTime, Satellite, SatelliteReport,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 
@@ -36,7 +36,7 @@ fn nan_for_absent_speed() -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(base())
+            .time(NavFixTime::Receiver(base()))
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .heading(Angle::degrees(0.0))
@@ -62,7 +62,7 @@ fn nan_for_absent_satellite_fields() -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(base())
+            .time(NavFixTime::Receiver(base()))
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .heading(Angle::degrees(0.0))
@@ -115,7 +115,7 @@ fn constellation_encoding() -> Result<(), Box<dyn std::error::Error>> {
         let mut recorder = NavFileBuilder::new().open();
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(base())
+                .time(NavFixTime::Receiver(base()))
                 .lat(Angle::degrees(0.0))
                 .lon(Angle::degrees(0.0))
                 .heading(Angle::degrees(0.0))
@@ -243,7 +243,7 @@ fn marker_icon_encoding() -> Result<(), Box<dyn std::error::Error>> {
         let mut recorder = NavFileBuilder::new().open();
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(t(0))
+                .time(NavFixTime::Receiver(t(0)))
                 .lat(Angle::degrees(0.0))
                 .lon(Angle::degrees(0.0))
                 .heading(Angle::degrees(0.0))
@@ -251,7 +251,7 @@ fn marker_icon_encoding() -> Result<(), Box<dyn std::error::Error>> {
         );
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(t(1000))
+                .time(NavFixTime::Receiver(t(1000)))
                 .lat(Angle::degrees(0.0))
                 .lon(Angle::degrees(0.0))
                 .heading(Angle::degrees(0.0))
@@ -307,7 +307,7 @@ fn timestamp_precision() -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t)
+            .time(NavFixTime::Receiver(t))
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .heading(Angle::degrees(0.0))
@@ -464,7 +464,7 @@ fn nav_file_with_label(label: Option<String>) -> Result<NavFile, Box<dyn std::er
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(0))
+            .time(NavFixTime::Receiver(t(0)))
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .heading(Angle::degrees(0.0))
@@ -472,7 +472,7 @@ fn nav_file_with_label(label: Option<String>) -> Result<NavFile, Box<dyn std::er
     );
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(1000))
+            .time(NavFixTime::Receiver(t(1000)))
             .lat(Angle::degrees(1.0))
             .lon(Angle::degrees(1.0))
             .heading(Angle::degrees(0.0))
@@ -498,15 +498,17 @@ fn a_fix_without_a_lock_writes_the_gps_time_sentinel_and_a_host_clock_time_axis(
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(locked)
-            .sys_time(locked)
+            .time(NavFixTime::Both {
+                gps: locked,
+                sys: locked,
+            })
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .build(),
     );
     recorder.add_nav_fix(
         NavFix::builder()
-            .sys_time(host_only)
+            .time(NavFixTime::Host(host_only))
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .build(),

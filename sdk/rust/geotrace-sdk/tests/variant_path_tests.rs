@@ -1,4 +1,4 @@
-use geotrace_sdk::{Angle, DateTime, Duration, EventKind, NavFileBuilder, NavFix, Utc};
+use geotrace_sdk::{Angle, DateTime, Duration, EventKind, NavFileBuilder, NavFix, NavFixTime, Utc};
 
 fn base() -> DateTime<Utc> {
     #[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
@@ -11,7 +11,7 @@ fn t(offset_secs: i64) -> DateTime<Utc> {
 
 fn fix() -> NavFix {
     NavFix::builder()
-        .gps_time(t(0))
+        .time(NavFixTime::Receiver(t(0)))
         .lat(Angle::degrees(55.0))
         .lon(Angle::degrees(12.0))
         .heading(Angle::degrees(0.0))

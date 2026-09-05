@@ -5,8 +5,8 @@
 
 use geotrace_sdk::{Angle, DateTime, Duration, Unit, Utc, Velocity};
 use geotrace_sdk::{
-    Annotation, BuildError, Channel, Constellation, EventMarker, NavFileBuilder, NavFix, Satellite,
-    SatelliteReport,
+    Annotation, BuildError, Channel, Constellation, EventMarker, NavFileBuilder, NavFix,
+    NavFixTime, Satellite, SatelliteReport,
 };
 use proptest::prelude::*;
 use rstest::rstest;
@@ -19,7 +19,7 @@ fn t(offset_ms: i64) -> DateTime<Utc> {
 
 fn simple_fix(offset_ms: i64) -> NavFix {
     NavFix::builder()
-        .gps_time(t(offset_ms))
+        .time(NavFixTime::Receiver(t(offset_ms)))
         .lat(Angle::degrees(55.0))
         .lon(Angle::degrees(12.0))
         .heading(Angle::degrees(0.0))
@@ -157,7 +157,7 @@ fn contested_loser_becomes_ghost_fix() -> Result<(), BuildError> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(0))
+            .time(NavFixTime::Receiver(t(0)))
             .lat(Angle::degrees(55.0))
             .lon(Angle::degrees(12.0))
             .heading(Angle::degrees(0.0))
@@ -165,7 +165,7 @@ fn contested_loser_becomes_ghost_fix() -> Result<(), BuildError> {
     );
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(3000))
+            .time(NavFixTime::Receiver(t(3000)))
             .lat(Angle::degrees(55.1))
             .lon(Angle::degrees(12.1))
             .heading(Angle::degrees(0.0))
@@ -253,7 +253,7 @@ fn multiple_contested_losers_all_become_ghosts() -> Result<(), BuildError> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(0))
+            .time(NavFixTime::Receiver(t(0)))
             .lat(Angle::degrees(55.0))
             .lon(Angle::degrees(12.0))
             .heading(Angle::degrees(0.0))
@@ -261,7 +261,7 @@ fn multiple_contested_losers_all_become_ghosts() -> Result<(), BuildError> {
     );
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(3000))
+            .time(NavFixTime::Receiver(t(3000)))
             .lat(Angle::degrees(55.1))
             .lon(Angle::degrees(12.1))
             .heading(Angle::degrees(0.0))
@@ -359,7 +359,7 @@ fn ghost_points_between_fixes_are_evenly_distributed() -> Result<(), BuildError>
 
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(0))
+            .time(NavFixTime::Receiver(t(0)))
             .lat(Angle::degrees(10.0))
             .lon(Angle::degrees(20.0))
             .heading(Angle::degrees(90.0))
@@ -367,7 +367,7 @@ fn ghost_points_between_fixes_are_evenly_distributed() -> Result<(), BuildError>
     );
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(120_000))
+            .time(NavFixTime::Receiver(t(120_000)))
             .lat(Angle::degrees(10.0))
             .lon(Angle::degrees(22.0))
             .heading(Angle::degrees(90.0))
@@ -432,7 +432,7 @@ fn first_ghost_after_last_fix_is_1m_ahead() -> Result<(), BuildError> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(0))
+            .time(NavFixTime::Receiver(t(0)))
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .heading(Angle::degrees(0.0))
@@ -500,7 +500,7 @@ fn reports_before_the_first_fix_become_ghosts_on_the_first_fix_in_time_order()
 
 fn fix_at_lon(offset_ms: i64, lon_deg: f64) -> NavFix {
     NavFix::builder()
-        .gps_time(t(offset_ms))
+        .time(NavFixTime::Receiver(t(offset_ms)))
         .lat(Angle::degrees(0.0))
         .lon(Angle::degrees(lon_deg))
         .heading(Angle::degrees(90.0))
@@ -594,7 +594,7 @@ fn an_annotation_within_the_fix_time_span_resolves_to_a_position_in_strict_mode(
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(0))
+            .time(NavFixTime::Receiver(t(0)))
             .lat(Angle::degrees(10.0))
             .lon(Angle::degrees(20.0))
             .heading(Angle::degrees(0.0))
@@ -602,7 +602,7 @@ fn an_annotation_within_the_fix_time_span_resolves_to_a_position_in_strict_mode(
     );
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(1000))
+            .time(NavFixTime::Receiver(t(1000)))
             .lat(Angle::degrees(12.0))
             .lon(Angle::degrees(24.0))
             .heading(Angle::degrees(0.0))
@@ -679,7 +679,7 @@ fn annotation_before_first_fix_lenient() -> Result<(), Box<dyn std::error::Error
     let mut recorder = NavFileBuilder::new().with_lenient_errors().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(1000))
+            .time(NavFixTime::Receiver(t(1000)))
             .lat(Angle::degrees(55.0))
             .lon(Angle::degrees(12.0))
             .heading(Angle::degrees(0.0))
@@ -699,7 +699,7 @@ fn annotation_after_last_fix_lenient() -> Result<(), Box<dyn std::error::Error>>
     let mut recorder = NavFileBuilder::new().with_lenient_errors().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(0))
+            .time(NavFixTime::Receiver(t(0)))
             .lat(Angle::degrees(55.0))
             .lon(Angle::degrees(12.0))
             .heading(Angle::degrees(0.0))
@@ -775,7 +775,7 @@ fn speed_none_propagates() -> Result<(), BuildError> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(0))
+            .time(NavFixTime::Receiver(t(0)))
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .heading(Angle::degrees(0.0))

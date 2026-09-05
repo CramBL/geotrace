@@ -98,7 +98,10 @@ pub fn recording_whose_clock_restarts_at_every_boot() -> Vec<u8> {
 
     let mut fix_index = 0_i64;
     for i in 0..COLD_BOOT_FIX_COUNT {
-        recorder.add_nav_fix(fix(rtc_default + Duration::seconds(i), None, fix_index));
+        recorder.add_nav_fix(fix(
+            sdk::NavFixTime::Receiver(rtc_default + Duration::seconds(i)),
+            fix_index,
+        ));
         fix_index += 1;
     }
     for boot in 0..BOOT_COUNT {
@@ -110,7 +113,13 @@ pub fn recording_whose_clock_restarts_at_every_boot() -> Vec<u8> {
             } else {
                 receiver_time + Duration::milliseconds(HOST_AHEAD_MS)
             };
-            recorder.add_nav_fix(fix(receiver_time, Some(host_time), fix_index));
+            recorder.add_nav_fix(fix(
+                sdk::NavFixTime::Both {
+                    gps: receiver_time,
+                    sys: host_time,
+                },
+                fix_index,
+            ));
             fix_index += 1;
         }
     }
@@ -147,10 +156,9 @@ pub fn recording_whose_clock_restarts_at_every_boot() -> Vec<u8> {
 }
 
 /// One fix of the invented route, `index` fixes along it.
-fn fix(receiver_time: DateTime<Utc>, host_time: Option<DateTime<Utc>>, index: i64) -> sdk::NavFix {
+fn fix(time: sdk::NavFixTime, index: i64) -> sdk::NavFix {
     sdk::NavFix::builder()
-        .gps_time(receiver_time)
-        .maybe_sys_time(host_time)
+        .time(time)
         .lat(sdk::Angle::degrees(
             ORIGIN_LAT_DEG + index as f64 * LAT_STEP_DEG,
         ))

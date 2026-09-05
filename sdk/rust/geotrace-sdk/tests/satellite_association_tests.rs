@@ -13,7 +13,9 @@
 )]
 
 use geotrace_sdk::{Angle, DateTime, Duration, Utc};
-use geotrace_sdk::{BuildError, Constellation, NavFileBuilder, NavFix, Satellite, SatelliteReport};
+use geotrace_sdk::{
+    BuildError, Constellation, NavFileBuilder, NavFix, NavFixTime, Satellite, SatelliteReport,
+};
 use rstest::rstest;
 
 /// A fixed base epoch for all tests (2025-05-23 UTC, arbitrary but stable).
@@ -33,7 +35,7 @@ fn t_us(offset_us: i64) -> DateTime<Utc> {
 /// NavFix at `(lat, lon)` with `gps_time = t(offset_ms)` and heading north.
 fn fix_at(offset_ms: i64, lat: f64, lon: f64) -> NavFix {
     NavFix::builder()
-        .gps_time(t(offset_ms))
+        .time(NavFixTime::Receiver(t(offset_ms)))
         .lat(Angle::degrees(lat))
         .lon(Angle::degrees(lon))
         .heading(Angle::degrees(0.0))
@@ -464,7 +466,7 @@ fn second_ghost_after_last_fix_is_further_than_first() -> Result<(), BuildError>
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(0))
+            .time(NavFixTime::Receiver(t(0)))
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .heading(Angle::degrees(0.0)) // heading north
@@ -528,8 +530,10 @@ fn between_fix_ghost_interpolated_at_correct_fraction() -> Result<(), BuildError
     // Fix B: `gps_time` ahead of `sys_time` by 1 000 ms.
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(0))
-            .sys_time(t(1000))
+            .time(NavFixTime::Both {
+                gps: t(0),
+                sys: t(1000),
+            })
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .heading(Angle::degrees(90.0))
@@ -538,8 +542,10 @@ fn between_fix_ghost_interpolated_at_correct_fraction() -> Result<(), BuildError
     // Fix A: same constant delta.
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(10_000))
-            .sys_time(t(11_000))
+            .time(NavFixTime::Both {
+                gps: t(10_000),
+                sys: t(11_000),
+            })
             .lat(Angle::degrees(10.0))
             .lon(Angle::degrees(0.0))
             .heading(Angle::degrees(90.0))
@@ -604,7 +610,7 @@ fn between_fix_ghosts_evenly_distributed_when_no_delta_available() -> Result<(),
     // Fixes with `gps_time` only - no `sys_time`, so no delta anchors.
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(0))
+            .time(NavFixTime::Receiver(t(0)))
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(0.0))
             .heading(Angle::degrees(90.0))
@@ -612,7 +618,7 @@ fn between_fix_ghosts_evenly_distributed_when_no_delta_available() -> Result<(),
     );
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(10_000))
+            .time(NavFixTime::Receiver(t(10_000)))
             .lat(Angle::degrees(0.0))
             .lon(Angle::degrees(10.0))
             .heading(Angle::degrees(90.0))
@@ -709,8 +715,10 @@ fn a_ghost_from_a_sys_time_only_report_takes_the_anchor_fixs_clock_delta(
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(0))
-            .sys_time(t(2000))
+            .time(NavFixTime::Both {
+                gps: t(0),
+                sys: t(2000),
+            })
             .lat(Angle::degrees(55.0))
             .lon(Angle::degrees(12.0))
             .build(),
@@ -736,7 +744,7 @@ fn ghosts_after_a_last_fix_without_a_heading_take_that_fixs_position() -> Result
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(0))
+            .time(NavFixTime::Receiver(t(0)))
             .lat(Angle::degrees(55.0))
             .lon(Angle::degrees(12.0))
             .build(),
@@ -784,8 +792,10 @@ fn no_filter_sys_time_only_with_large_gps_offset_are_associated() -> Result<(), 
     for i in 0..3_i64 {
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(t(i * 1_000))
-                .sys_time(t(i * 1_000 + GPS_SYS_OFFSET_MS))
+                .time(NavFixTime::Both {
+                    gps: t(i * 1_000),
+                    sys: t(i * 1_000 + GPS_SYS_OFFSET_MS),
+                })
                 .lat(Angle::degrees(55.0 + i as f64 * 0.1))
                 .lon(Angle::degrees(12.0))
                 .heading(Angle::degrees(0.0))
@@ -837,8 +847,10 @@ fn no_filter_1hz_all_sat_associated_with_large_gps_offset() -> Result<(), BuildE
     for i in 0..6_i64 {
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(t(i * 1_000))
-                .sys_time(t(i * 1_000 + GPS_SYS_OFFSET_MS))
+                .time(NavFixTime::Both {
+                    gps: t(i * 1_000),
+                    sys: t(i * 1_000 + GPS_SYS_OFFSET_MS),
+                })
                 .lat(Angle::degrees(55.0 + i as f64 * 0.01))
                 .lon(Angle::degrees(12.0))
                 .heading(Angle::degrees(0.0))
@@ -927,8 +939,10 @@ fn gps_ahead_600ms_sat_associates_to_own_fix_not_neighbor() -> Result<(), BuildE
         let i = i as i64;
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(t(i * 1_000))
-                .sys_time(t(i * 1_000 - GPS_SYS_OFFSET_MS))
+                .time(NavFixTime::Both {
+                    gps: t(i * 1_000),
+                    sys: t(i * 1_000 - GPS_SYS_OFFSET_MS),
+                })
                 .lat(Angle::degrees(55.0 + i as f64 * 0.01))
                 .lon(Angle::degrees(12.0))
                 .heading(Angle::degrees(0.0))
@@ -993,8 +1007,10 @@ fn gps_ahead_600ms_with_sat_logging_delay_no_off_by_one() -> Result<(), BuildErr
         let i = i as i64;
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(t(i * 1_000))
-                .sys_time(t(i * 1_000 - GPS_SYS_OFFSET_MS))
+                .time(NavFixTime::Both {
+                    gps: t(i * 1_000),
+                    sys: t(i * 1_000 - GPS_SYS_OFFSET_MS),
+                })
                 .lat(Angle::degrees(55.0 + i as f64 * 0.01))
                 .lon(Angle::degrees(12.0))
                 .heading(Angle::degrees(0.0))
@@ -1045,8 +1061,10 @@ fn gps_ahead_600ms_sat_at_499ms_delay_still_correct() -> Result<(), BuildError> 
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(0))
-            .sys_time(t(-GPS_SYS_OFFSET_MS))
+            .time(NavFixTime::Both {
+                gps: t(0),
+                sys: t(-GPS_SYS_OFFSET_MS),
+            })
             .lat(Angle::degrees(55.0))
             .lon(Angle::degrees(12.0))
             .heading(Angle::degrees(0.0))
@@ -1054,8 +1072,10 @@ fn gps_ahead_600ms_sat_at_499ms_delay_still_correct() -> Result<(), BuildError> 
     );
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(1_000))
-            .sys_time(t(1_000 - GPS_SYS_OFFSET_MS))
+            .time(NavFixTime::Both {
+                gps: t(1_000),
+                sys: t(1_000 - GPS_SYS_OFFSET_MS),
+            })
             .lat(Angle::degrees(55.01))
             .lon(Angle::degrees(12.0))
             .heading(Angle::degrees(0.0))
@@ -1109,8 +1129,10 @@ fn gps_ahead_600ms_sat_at_exactly_500ms_delay_boundary() -> Result<(), BuildErro
         .open();
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(0))
-            .sys_time(t(-GPS_SYS_OFFSET_MS))
+            .time(NavFixTime::Both {
+                gps: t(0),
+                sys: t(-GPS_SYS_OFFSET_MS),
+            })
             .lat(Angle::degrees(55.0))
             .lon(Angle::degrees(12.0))
             .heading(Angle::degrees(0.0))
@@ -1118,8 +1140,10 @@ fn gps_ahead_600ms_sat_at_exactly_500ms_delay_boundary() -> Result<(), BuildErro
     );
     recorder.add_nav_fix(
         NavFix::builder()
-            .gps_time(t(1_000))
-            .sys_time(t(1_000 - GPS_SYS_OFFSET_MS))
+            .time(NavFixTime::Both {
+                gps: t(1_000),
+                sys: t(1_000 - GPS_SYS_OFFSET_MS),
+            })
             .lat(Angle::degrees(55.01))
             .lon(Angle::degrees(12.0))
             .heading(Angle::degrees(0.0))
@@ -1189,8 +1213,11 @@ fn sys_time_direct_comparison_with_drifting_gps_offset() -> Result<(), BuildErro
         let i = i as i64;
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(t(i * 1_000))
-                .sys_time(t(i * 1_000 + off)) // `sys_time` ahead of GPS by `off`
+                // `sys_time` ahead of GPS by `off`
+                .time(NavFixTime::Both {
+                    gps: t(i * 1_000),
+                    sys: t(i * 1_000 + off),
+                })
                 .lat(Angle::degrees(55.0 + i as f64 * 0.01))
                 .lon(Angle::degrees(12.0))
                 .heading(Angle::degrees(0.0))
@@ -1254,8 +1281,10 @@ fn sys_time_direct_comparison_drifting_offset_with_sat_delay() -> Result<(), Bui
         let i = i as i64;
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(t(i * 1_000))
-                .sys_time(t(i * 1_000 + off))
+                .time(NavFixTime::Both {
+                    gps: t(i * 1_000),
+                    sys: t(i * 1_000 + off),
+                })
                 .lat(Angle::degrees(55.0 + i as f64 * 0.01))
                 .lon(Angle::degrees(12.0))
                 .heading(Angle::degrees(0.0))

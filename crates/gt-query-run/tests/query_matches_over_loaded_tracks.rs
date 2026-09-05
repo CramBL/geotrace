@@ -12,7 +12,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use geotrace_sdk::{Angle, NavFileBuilder, NavFix};
+use geotrace_sdk::{Angle, NavFileBuilder, NavFix, NavFixTime};
 use geotrace_sdk_units::ChannelUnit;
 use gt_filter::GlobalFilter;
 use gt_loaded_files::{FileHistory, LoadedFiles};
@@ -86,8 +86,10 @@ fn gtd_file_with_the_host_clock_ahead(micros_ahead: i64) -> LoadedFile {
         let receiver_micros = second * 1_000_000;
         recorder.add_nav_fix(
             NavFix::builder()
-                .gps_time(utc_micros(receiver_micros))
-                .sys_time(utc_micros(receiver_micros + micros_ahead))
+                .time(NavFixTime::Both {
+                    gps: utc_micros(receiver_micros),
+                    sys: utc_micros(receiver_micros + micros_ahead),
+                })
                 .lat(Angle::degrees(55.0 + second as f64 / 1_000.0))
                 .lon(Angle::degrees(12.0))
                 .build(),

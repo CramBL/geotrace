@@ -88,6 +88,10 @@ typedef enum {
      */
     GTD_ERR_FIELD_TOO_LONG = 11,
     /**
+     * An argument's value is not allowed.
+     */
+    GTD_ERR_INVALID_ARGUMENT = 12,
+    /**
      * Internal error (bug in the SDK).
      */
     GTD_ERR_INTERNAL = 99,
@@ -562,6 +566,9 @@ GtdStatus gtd_builder_finish(GtdFileBuilder *b, GtdNavFile **out);
  * @param speed_mps   Ground speed in m/s, expected to be non-negative, or `GTD_NONE_F64`.
  * @param eph_m       Estimated horizontal position error in metres, expected to be
  *                    non-negative, or `GTD_NONE_F64`.
+ *
+ * @return `GTD_ERR_INVALID_ARGUMENT` if @p gps_time and @p sys_time are both
+ *         `gtd_ts_none()`.
  */
 GtdStatus gtd_builder_add_nav_fix(GtdFileBuilder *b,
                                   GtdTimestamp gps_time,
