@@ -103,7 +103,10 @@ pub struct TrackLayers<'a> {
     /// Indices of the real fixes inside the viewport, grouped per track by
     /// the collection pass. Borrowed from the reused [`crate::viewport::VisiblePoints`]
     /// scratch, so lookups may return an empty list for a no-longer-visible track.
-    tpv_by_track: &'a FxHashMap<TrackRef, Vec<usize>>,
+    /// `None` in a frame that collected no fix, where no track's icons draw
+    /// and no lookup happens.
+    #[builder(required)]
+    tpv_by_track: Option<&'a FxHashMap<TrackRef, Vec<usize>>>,
     /// First file index that is considered "newly loaded".
     /// `files[new_file_boundary..]` receive a blinking overlay while
     /// `blink_alpha > 0`.
@@ -606,7 +609,9 @@ impl<'a> TrackLayers<'a> {
             }
             if let Some(fade) = geo.icon_fade() {
                 let track_ref = TrackRef::new(geo.fi, geo.ti);
-                let tpv = self.tpv_by_track.get(&track_ref);
+                let tpv = self
+                    .tpv_by_track
+                    .and_then(|by_track| by_track.get(&track_ref));
                 // In keep/hide, drop the icons of hidden points too, so the
                 // arrows match the (broken) line.
                 let (filtered_tpv, filtered_chevrons);
