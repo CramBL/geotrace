@@ -21,36 +21,36 @@ using geotrace::recognized_unit_label;
 using geotrace::RecognizedUnit;
 using geotrace::Timestamp;
 
-static const Timestamp T0 = Timestamp::from_seconds(1700000000ULL);
-static const Timestamp T1 = Timestamp::from_seconds(1700000001ULL);
+static const Timestamp FIRST_TIME = Timestamp::from_seconds(1700000000ULL);
+static const Timestamp SECOND_TIME = Timestamp::from_seconds(1700000001ULL);
 
 static_assert(!std::is_default_constructible_v<ChannelUnit>);
 
 TEST_CASE("channels: scalar and vector survive write → from_bytes → read") {
     std::vector<std::uint8_t> bytes;
     {
-        const NavFix fix{FixTime::receiver(T0), Angle::degrees(51.5), Angle::degrees(-0.1)};
+        const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(51.5), Angle::degrees(-0.1)};
 
         Channel incline{};
         incline.name = "incline";
         incline.unit = geotrace::ChannelUnit::recognized(geotrace::RecognizedUnit::Deg);
         incline.period = Angle::degrees(360.0);
         incline.description = "boom inclinometer";
-        incline.times = {T0, T1};
+        incline.times = {FIRST_TIME, SECOND_TIME};
         incline.values = {1.5, 2.0};
 
         Channel accel{};
         accel.name = "accel";
         accel.unit = geotrace::ChannelUnit::recognized(geotrace::RecognizedUnit::G);
         accel.components = {"x", "y", "z"};
-        accel.times = {T0, T1};
+        accel.times = {FIRST_TIME, SECOND_TIME};
         accel.values = {0.1, 0.2, 0.98, -0.1, 0.3, 1.02};
 
         // A bare channel with no unit, period, or description exercises the
         // empty-means-none marshalling on both write and read.
         Channel temp{};
         temp.name = "temp";
-        temp.times = {T0};
+        temp.times = {FIRST_TIME};
         temp.values = {20.0};
 
         auto file =
@@ -70,7 +70,7 @@ TEST_CASE("channels: scalar and vector survive write → from_bytes → read") {
     CHECK(accel.components == std::vector<std::string>{"x", "y", "z"});
     CHECK_FALSE(accel.period.has_value());
     REQUIRE(accel.times.size() == 2);
-    CHECK(accel.times.at(1).unix_micros == T1.unix_micros);
+    CHECK(accel.times.at(1).unix_micros == SECOND_TIME.unix_micros);
     REQUIRE(accel.values.size() == 6);
     CHECK(accel.values.at(0) == doctest::Approx(0.1));
     CHECK(accel.values.at(5) == doctest::Approx(1.02));
@@ -93,49 +93,50 @@ TEST_CASE("channels: scalar and vector survive write → from_bytes → read") {
 
 TEST_CASE("channels: a malformed channel throws InvalidChannelError") {
     SUBCASE("invalid name") {
-        Channel ch{};
-        ch.name = "Bad Name";
-        ch.times = {T0};
-        ch.values = {1.0};
-        CHECK_THROWS_AS(FileBuilder{}.add_channel(ch), InvalidChannelError);
+        Channel channel{};
+        channel.name = "Bad Name";
+        channel.times = {FIRST_TIME};
+        channel.values = {1.0};
+        CHECK_THROWS_AS(FileBuilder{}.add_channel(channel), InvalidChannelError);
     }
     SUBCASE("length mismatch") {
-        Channel ch{};
-        ch.name = "accel";
-        ch.times = {T0};
-        ch.values = {1.0, 2.0};
-        CHECK_THROWS_AS(FileBuilder{}.add_channel(ch), InvalidChannelError);
+        Channel channel{};
+        channel.name = "accel";
+        channel.times = {FIRST_TIME};
+        channel.values = {1.0, 2.0};
+        CHECK_THROWS_AS(FileBuilder{}.add_channel(channel), InvalidChannelError);
     }
     SUBCASE("duplicate component label") {
-        Channel ch{};
-        ch.name = "accel";
-        ch.components = {"x", "x"};
-        ch.times = {T0};
-        ch.values = {1.0, 2.0};
-        CHECK_THROWS_AS(FileBuilder{}.add_channel(ch), InvalidChannelError);
+        Channel channel{};
+        channel.name = "accel";
+        channel.components = {"x", "x"};
+        channel.times = {FIRST_TIME};
+        channel.values = {1.0, 2.0};
+        CHECK_THROWS_AS(FileBuilder{}.add_channel(channel), InvalidChannelError);
     }
     SUBCASE("unrecognized unit") {
         CHECK_THROWS_AS(static_cast<void>(geotrace::ChannelUnit::parse_recognized("rpm")),
                         InvalidChannelError);
     }
     SUBCASE("duplicate channel name at finish") {
-        Channel ch{};
-        ch.name = "accel";
-        ch.times = {T0};
-        ch.values = {1.0};
-        CHECK_THROWS_AS(static_cast<void>(FileBuilder{}.add_channel(ch).add_channel(ch).finish()),
-                        InvalidChannelError);
+        Channel channel{};
+        channel.name = "accel";
+        channel.times = {FIRST_TIME};
+        channel.values = {1.0};
+        CHECK_THROWS_AS(
+            static_cast<void>(FileBuilder{}.add_channel(channel).add_channel(channel).finish()),
+            InvalidChannelError);
     }
 }
 
 TEST_CASE("channels: a custom unit is an explicit display-only escape hatch") {
-    Channel ch{};
-    ch.name = "shaft_speed";
-    ch.unit = geotrace::ChannelUnit::custom("rpm");
-    ch.times = {T0};
-    ch.values = {1200.0};
+    Channel channel{};
+    channel.name = "shaft_speed";
+    channel.unit = geotrace::ChannelUnit::custom("rpm");
+    channel.times = {FIRST_TIME};
+    channel.values = {1200.0};
 
-    auto file = NavFile::from_bytes(FileBuilder{}.add_channel(ch).finish().to_bytes());
+    auto file = NavFile::from_bytes(FileBuilder{}.add_channel(channel).finish().to_bytes());
     auto read = file.channel(0);
     REQUIRE(read.unit.has_value());
     CHECK(read.unit->label() == "rpm");
@@ -144,13 +145,13 @@ TEST_CASE("channels: a custom unit is an explicit display-only escape hatch") {
 
 TEST_CASE("channels: long custom units round-trip losslessly") {
     const std::string label(159, 'x');
-    Channel ch{};
-    ch.name = "quality";
-    ch.unit = geotrace::ChannelUnit::custom(label);
-    ch.times = {T0};
-    ch.values = {1.0};
+    Channel channel{};
+    channel.name = "quality";
+    channel.unit = geotrace::ChannelUnit::custom(label);
+    channel.times = {FIRST_TIME};
+    channel.values = {1.0};
 
-    auto file = NavFile::from_bytes(FileBuilder{}.add_channel(ch).finish().to_bytes());
+    auto file = NavFile::from_bytes(FileBuilder{}.add_channel(channel).finish().to_bytes());
     auto read = file.channel(0);
     REQUIRE(read.unit.has_value());
     CHECK(read.unit->label() == label);

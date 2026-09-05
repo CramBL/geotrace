@@ -48,10 +48,13 @@
 #include <geotrace.h> // C SDK (already has extern "C" guards)
 #include <geotrace/unit_catalog.hpp>
 
+// A user tests the version with `#if`, where an `enum` is not visible.
+// NOLINTBEGIN(cppcoreguidelines-macro-to-enum,modernize-macro-to-enum)
 #define GEOTRACE_CPP_VERSION       "0.6.0"
 #define GEOTRACE_CPP_VERSION_MAJOR 0
 #define GEOTRACE_CPP_VERSION_MINOR 6
 #define GEOTRACE_CPP_VERSION_PATCH 0
+// NOLINTEND(cppcoreguidelines-macro-to-enum,modernize-macro-to-enum)
 
 // Exception support is detected the idiomatic way, via the standard
 // `__cpp_exceptions` feature-test macro (MSVC predates it, so `_CPPUNWIND` is
@@ -85,27 +88,37 @@ template <typename T> class span {
     constexpr span() noexcept = default;
     constexpr span(pointer ptr, size_type count) noexcept : data_(ptr), size_(count) {}
 
+    // The three converting constructors are implicit and take a C array, as
+    // std::span's do.
+    // NOLINTNEXTLINE(hicpp-explicit-conversions,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
     template <std::size_t N> constexpr span(T (&arr)[N]) noexcept : data_(arr), size_(N) {}
 
     template <typename Container,
               typename = std::enable_if_t<
                   !std::is_same_v<std::decay_t<Container>, span> &&
                   std::is_convertible_v<decltype(std::declval<Container &>().data()), pointer>>>
-    constexpr span(Container &c) noexcept : data_(c.data()), size_(c.size()) {}
+    // NOLINTNEXTLINE(hicpp-explicit-conversions)
+    constexpr span(Container &container) noexcept
+        : data_(container.data()), size_(container.size()) {}
 
     template <
         typename Container,
         typename = std::enable_if_t<
             !std::is_same_v<std::decay_t<Container>, span> &&
             std::is_convertible_v<decltype(std::declval<const Container &>().data()), const T *>>>
-    constexpr span(const Container &c) noexcept : data_(c.data()), size_(c.size()) {}
+    // NOLINTNEXTLINE(hicpp-explicit-conversions)
+    constexpr span(const Container &container) noexcept
+        : data_(container.data()), size_(container.size()) {}
 
     [[nodiscard]] constexpr pointer data() const noexcept { return data_; }
     [[nodiscard]] constexpr size_type size() const noexcept { return size_; }
     [[nodiscard]] constexpr bool empty() const noexcept { return size_ == 0; }
     [[nodiscard]] constexpr iterator begin() const noexcept { return data_; }
     [[nodiscard]] constexpr iterator end() const noexcept { return data_ + size_; }
-    [[nodiscard]] constexpr T &operator[](size_type i) const noexcept { return data_[i]; }
+    [[nodiscard]] constexpr T &operator[](size_type index) const noexcept {
+        // The subscript is the polyfill's own bounds contract, as std::span's is.
+        return data_[index]; // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    }
 
   private:
     pointer data_ = nullptr;
@@ -138,7 +151,8 @@ struct NoNavFixesError : BuildError {
 /** One or more annotations fall outside the nav fix time range. */
 struct AnnotationsOutOfRangeError : BuildError {
     std::size_t count;
-    AnnotationsOutOfRangeError(std::size_t n, const std::string &msg) : BuildError(msg), count(n) {}
+    AnnotationsOutOfRangeError(std::size_t annotation_count, const std::string &msg)
+        : BuildError(msg), count(annotation_count) {}
 };
 
 /** I/O error (file not found, permission denied, etc.). */
@@ -191,9 +205,9 @@ namespace detail {
 // Throw the typed exception for a status. Without exception support this is only
 // reached by the throwing API (the `try_*` / Result API never calls it), so it
 // prints and aborts as a last resort.
-[[noreturn]] inline void throw_typed(GtdStatus s, const std::string &msg) {
+[[noreturn]] inline void throw_typed(GtdStatus status, const std::string &msg) {
 #if GEOTRACE_CPP_EXCEPTIONS
-    switch (s) {
+    switch (status) {
     case GTD_ERR_NULL_ARGUMENT:
         // The C++ wrapper never passes null pointers, so this only arises from
         // an out-of-range accessor index.
@@ -222,39 +236,39 @@ namespace detail {
         throw Error(msg);
     }
 #else
-    (void)s;
+    (void)status;
     abort_with(msg);
 #endif
 }
 
 // Encode a filesystem path as UTF-8 for the C API.
-[[nodiscard]] inline std::string path_string(const std::filesystem::path &p) {
+[[nodiscard]] inline std::string path_string(const std::filesystem::path &path) {
 #ifdef __cpp_lib_char8_t
-    const auto u8 = p.u8string();
-    return std::string(u8.begin(), u8.end());
+    const auto utf8 = path.u8string();
+    return std::string(utf8.begin(), utf8.end());
 #else
-    return p.u8string();
+    return path.u8string();
 #endif
 }
 
-[[nodiscard]] constexpr GtdOptF64 to_c(std::optional<double> v) noexcept {
+[[nodiscard]] constexpr GtdOptF64 to_c(std::optional<double> value) noexcept {
     // GTD_SOME_F64 and GTD_NONE_F64 expand to C99 compound-literal +
     // designated-initializer syntax, which MSVC rejects in C++ mode (errors
     // C4576/C7555).
     GtdOptF64 result{};
-    if (v) {
-        result.value = *v;
+    if (value) {
+        result.value = *value;
         result.present = 1;
     }
     return result;
 }
 
 struct BuilderDeleter {
-    void operator()(GtdFileBuilder *p) const noexcept { ::gtd_builder_destroy(p); }
+    void operator()(GtdFileBuilder *builder) const noexcept { ::gtd_builder_destroy(builder); }
 };
 
 struct NavFileDeleter {
-    void operator()(GtdNavFile *p) const noexcept { ::gtd_nav_file_destroy(p); }
+    void operator()(GtdNavFile *file) const noexcept { ::gtd_nav_file_destroy(file); }
 };
 
 } // namespace detail
@@ -271,14 +285,16 @@ struct [[nodiscard]] Status {
     std::string description;
 
     Status() = default;
-    Status(GtdStatus c, std::string d) : code(c), description(std::move(d)) {}
+    Status(GtdStatus status_code, std::string status_description)
+        : code(status_code), description(std::move(status_description)) {}
 
     /// Build a `Status` from a `GtdStatus`, capturing the thread-local message.
-    static Status from(GtdStatus s) {
-        if (s == GTD_OK)
+    static Status from(GtdStatus status) {
+        if (status == GTD_OK) {
             return Status{};
+        }
         const char *raw = ::gtd_last_error();
-        return Status{s, (raw != nullptr) ? raw : "unknown error"};
+        return Status{status, (raw != nullptr) ? raw : "unknown error"};
     }
 
     [[nodiscard]] constexpr bool is_ok() const noexcept { return code == GTD_OK; }
@@ -288,8 +304,9 @@ struct [[nodiscard]] Status {
     /// Throw the matching exception on failure (no-op on success). With
     /// exceptions disabled this prints and aborts, so prefer `is_ok()` there.
     void throw_on_failure() const {
-        if (is_err())
+        if (is_err()) {
             detail::throw_typed(code, description);
+        }
     }
 };
 
@@ -302,10 +319,11 @@ struct [[nodiscard]] Status {
 template <typename T> struct [[nodiscard]] Result {
     // Both constructors are implicit: a `try_*` method returns its value or
     // `Status::from(status)` directly.
-    Result(T v) : value_(std::move(v)) {}
+    Result(T value) : value_(std::move(value)) {} // NOLINT(hicpp-explicit-conversions)
     // An error result must carry a real error: an ok status here would falsely
     // report success with a default-constructed value.
-    Result(Status s) : status_(std::move(s)) { assert(status_.is_err()); }
+    // NOLINTNEXTLINE(hicpp-explicit-conversions)
+    Result(Status status) : status_(std::move(status)) { assert(status_.is_err()); }
     Result() = delete;
 
     [[nodiscard]] constexpr bool is_ok() const noexcept { return status_.is_ok(); }
@@ -349,17 +367,17 @@ struct [[nodiscard]] Timestamp {
 
     explicit constexpr Timestamp(std::int64_t micros) noexcept : unix_micros(micros) {}
 
-    static Timestamp from_seconds(std::uint64_t s) noexcept {
-        return Timestamp{::gtd_ts_from_seconds(s).unix_micros};
+    static Timestamp from_seconds(std::uint64_t seconds) noexcept {
+        return Timestamp{::gtd_ts_from_seconds(seconds).unix_micros};
     }
-    static Timestamp from_millis(std::uint64_t ms) noexcept {
-        return Timestamp{::gtd_ts_from_millis(ms).unix_micros};
+    static Timestamp from_millis(std::uint64_t millis) noexcept {
+        return Timestamp{::gtd_ts_from_millis(millis).unix_micros};
     }
-    static Timestamp from_micros(std::uint64_t us) noexcept {
-        return Timestamp{::gtd_ts_from_micros(us).unix_micros};
+    static Timestamp from_micros(std::uint64_t micros) noexcept {
+        return Timestamp{::gtd_ts_from_micros(micros).unix_micros};
     }
-    static Timestamp from_nanos(std::uint64_t ns) noexcept {
-        return Timestamp{::gtd_ts_from_nanos(ns).unix_micros};
+    static Timestamp from_nanos(std::uint64_t nanos) noexcept {
+        return Timestamp{::gtd_ts_from_nanos(nanos).unix_micros};
     }
 
 #if defined(__cpp_impl_three_way_comparison) && __cpp_impl_three_way_comparison >= 201907L
@@ -411,28 +429,35 @@ class [[nodiscard]] FixTime {
     /** `std::nullopt` when the recorder holds neither timestamp. */
     [[nodiscard]] static constexpr std::optional<FixTime>
     from_recorded(const RecordedFixTimestamps &recorded) noexcept {
-        if (recorded.gps_time && recorded.sys_time)
+        if (recorded.gps_time && recorded.sys_time) {
             return both(*recorded.gps_time, *recorded.sys_time);
-        if (recorded.gps_time)
+        }
+        if (recorded.gps_time) {
             return receiver(*recorded.gps_time);
-        if (recorded.sys_time)
+        }
+        if (recorded.sys_time) {
             return host(*recorded.sys_time);
+        }
         return std::nullopt;
     }
 
     [[nodiscard]] constexpr std::optional<Timestamp> gps_time() const noexcept {
-        if (const auto *receiver_only = std::get_if<ReceiverOnly>(&clocks_))
+        if (const auto *receiver_only = std::get_if<ReceiverOnly>(&clocks_)) {
             return receiver_only->gps;
-        if (const auto *both_clocks = std::get_if<BothClocks>(&clocks_))
+        }
+        if (const auto *both_clocks = std::get_if<BothClocks>(&clocks_)) {
             return both_clocks->gps;
+        }
         return std::nullopt;
     }
 
     [[nodiscard]] constexpr std::optional<Timestamp> sys_time() const noexcept {
-        if (const auto *host_only = std::get_if<HostOnly>(&clocks_))
+        if (const auto *host_only = std::get_if<HostOnly>(&clocks_)) {
             return host_only->sys;
-        if (const auto *both_clocks = std::get_if<BothClocks>(&clocks_))
+        }
+        if (const auto *both_clocks = std::get_if<BothClocks>(&clocks_)) {
             return both_clocks->sys;
+        }
         return std::nullopt;
     }
 
@@ -459,10 +484,10 @@ class [[nodiscard]] FixTime {
 class [[nodiscard]] Angle {
   public:
     static constexpr Angle degrees(double deg) noexcept { return Angle{deg}; }
-    static constexpr Angle radians(double rad) noexcept { return Angle{rad * (180.0 / kPi)}; }
+    static constexpr Angle radians(double rad) noexcept { return Angle{rad * kDegreesPerRadian}; }
 
     [[nodiscard]] constexpr double as_degrees() const noexcept { return deg_; }
-    [[nodiscard]] constexpr double as_radians() const noexcept { return deg_ * (kPi / 180.0); }
+    [[nodiscard]] constexpr double as_radians() const noexcept { return deg_ * kRadiansPerDegree; }
 
 #if defined(__cpp_impl_three_way_comparison) && __cpp_impl_three_way_comparison >= 201907L
     auto operator<=>(const Angle &) const = default;
@@ -479,6 +504,10 @@ class [[nodiscard]] Angle {
     // M_PI is a POSIX extension not guaranteed by the C++ standard (absent on MSVC
     // without _USE_MATH_DEFINES), so we use our own constant instead.
     static constexpr double kPi = 3.141592653589793238462643383279502884;
+    // Each conversion multiplies by its own factor. Dividing by the other one
+    // differs by 1 ULP for some values.
+    static constexpr double kDegreesPerRadian = 180.0 / kPi;
+    static constexpr double kRadiansPerDegree = kPi / 180.0;
     explicit constexpr Angle(double deg) noexcept : deg_(deg) {}
     double deg_ = 0.0;
 };
@@ -493,9 +522,9 @@ class [[nodiscard]] Velocity {
     static constexpr double kMpsPerKmh = 1.0 / 3.6;
     static constexpr double kMpsPerKnot = 1852.0 / 3600.0;
 
-    static constexpr Velocity mps(double v) noexcept { return Velocity{v}; }
-    static constexpr Velocity kmh(double v) noexcept { return Velocity{v * kMpsPerKmh}; }
-    static constexpr Velocity knots(double v) noexcept { return Velocity{v * kMpsPerKnot}; }
+    static constexpr Velocity mps(double value) noexcept { return Velocity{value}; }
+    static constexpr Velocity kmh(double value) noexcept { return Velocity{value * kMpsPerKmh}; }
+    static constexpr Velocity knots(double value) noexcept { return Velocity{value * kMpsPerKnot}; }
 
     [[nodiscard]] constexpr double as_mps() const noexcept { return mps_; }
     [[nodiscard]] constexpr double as_kmh() const noexcept { return mps_ / kMpsPerKmh; }
@@ -550,8 +579,8 @@ enum class TravelMode : std::uint8_t {
 
 namespace detail {
 
-[[nodiscard]] constexpr GtdConstellation to_c(Constellation c) noexcept {
-    switch (c) {
+[[nodiscard]] constexpr GtdConstellation to_c(Constellation constellation) noexcept {
+    switch (constellation) {
     case Constellation::Gps:
         return GTD_CONSTELLATION_GPS;
     case Constellation::Glonass:
@@ -568,8 +597,8 @@ namespace detail {
     return GTD_CONSTELLATION_GPS;
 }
 
-[[nodiscard]] constexpr Constellation from_c(GtdConstellation c) noexcept {
-    switch (c) {
+[[nodiscard]] constexpr Constellation from_c(GtdConstellation constellation) noexcept {
+    switch (constellation) {
     case GTD_CONSTELLATION_GPS:
         return Constellation::Gps;
     case GTD_CONSTELLATION_GLONASS:
@@ -662,24 +691,25 @@ namespace detail {
     return TravelMode::Car;
 }
 
-[[nodiscard]] constexpr GtdTimestamp to_c(Timestamp ts) noexcept {
-    return GtdTimestamp{ts.unix_micros};
+[[nodiscard]] constexpr GtdTimestamp to_c(Timestamp timestamp) noexcept {
+    return GtdTimestamp{timestamp.unix_micros};
 }
 
-[[nodiscard]] inline GtdTimestamp to_c(std::optional<Timestamp> ts) noexcept {
-    return ts ? to_c(*ts) : ::gtd_ts_none();
+[[nodiscard]] inline GtdTimestamp to_c(std::optional<Timestamp> timestamp) noexcept {
+    return timestamp ? to_c(*timestamp) : ::gtd_ts_none();
 }
 
-[[nodiscard]] inline std::optional<Timestamp> from_c(GtdTimestamp ts) noexcept {
-    if (::gtd_ts_is_none(ts) != 0)
+[[nodiscard]] inline std::optional<Timestamp> from_c(GtdTimestamp timestamp) noexcept {
+    if (::gtd_ts_is_none(timestamp) != 0) {
         return std::nullopt;
-    return Timestamp{ts.unix_micros};
+    }
+    return Timestamp{timestamp.unix_micros};
 }
 
 // `gtd_ts_none()` never appears in an event marker or channel sample timestamp:
 // the `.gtd` format stores an instant for both.
-[[nodiscard]] constexpr Timestamp instant_from_c(GtdTimestamp ts) noexcept {
-    return Timestamp{ts.unix_micros};
+[[nodiscard]] constexpr Timestamp instant_from_c(GtdTimestamp timestamp) noexcept {
+    return Timestamp{timestamp.unix_micros};
 }
 
 } // namespace detail
@@ -698,8 +728,9 @@ namespace detail {
 [[nodiscard]] inline std::optional<TravelMode>
 travel_mode_from_name(const std::string &name) noexcept {
     GtdTravelMode mode{};
-    if (::gtd_travel_mode_from_name(name.c_str(), &mode) != GTD_OK)
+    if (::gtd_travel_mode_from_name(name.c_str(), &mode) != GTD_OK) {
         return std::nullopt;
+    }
     return detail::from_c(mode);
 }
 
@@ -794,13 +825,13 @@ class [[nodiscard]] ChannelUnit {
      * character, or a label that spells a recognized unit: declare that one
      * with `recognized()` or `parse_recognized()`.
      */
-    static ChannelUnit custom(std::string label) {
-        return try_custom(std::move(label)).value_or_throw();
+    static ChannelUnit custom(const std::string &label) {
+        return try_custom(label).value_or_throw();
     }
 
     /** The non-throwing form of `custom()`, returning a `Result`. */
-    static Result<ChannelUnit> try_custom(std::string label) {
-        return try_parse(std::move(label), GTD_CHANNEL_UNIT_CUSTOM, true);
+    static Result<ChannelUnit> try_custom(const std::string &label) {
+        return try_parse(label, GTD_CHANNEL_UNIT_CUSTOM, true);
     }
 
     /**
@@ -838,17 +869,20 @@ class [[nodiscard]] ChannelUnit {
         return custom ? ChannelUnit{std::move(label), true} : parse_recognized(label);
     }
 
-    static Result<ChannelUnit> try_parse(std::string label, GtdChannelUnitMode mode, bool custom) {
+    static Result<ChannelUnit> try_parse(const std::string &label, GtdChannelUnitMode mode,
+                                         bool custom) {
         std::size_t required = 0;
         GtdStatus status = ::gtd_channel_unit_parse(label.c_str(), static_cast<std::uint32_t>(mode),
                                                     nullptr, 0, &required);
-        if (status != GTD_OK)
+        if (status != GTD_OK) {
             return Status::from(status);
+        }
         std::vector<char> canonical(required);
         status = ::gtd_channel_unit_parse(label.c_str(), static_cast<std::uint32_t>(mode),
                                           canonical.data(), canonical.size(), &required);
-        if (status != GTD_OK)
+        if (status != GTD_OK) {
             return Status::from(status);
+        }
         return ChannelUnit{std::string{canonical.data()}, custom};
     }
 
@@ -1022,11 +1056,12 @@ class [[nodiscard]] EventPath {
 };
 
 namespace detail {
-template <class E> void append_event_seg(std::string &out, E v, bool with_base) {
-    if (with_base)
+template <class E> void append_event_seg(std::string &out, E value, bool with_base) {
+    if (with_base) {
         out += EventEnum<E>::base;
+    }
     out += '/';
-    out += EventEnum<E>::seg(v);
+    out += EventEnum<E>::seg(value);
 }
 } // namespace detail
 
@@ -1038,17 +1073,17 @@ template <class E> void append_event_seg(std::string &out, E v, bool with_base) 
  * `"connectivity/agps/request"`.
  */
 #if defined(__cpp_concepts) && __cpp_concepts >= 201907L
-template <EventEnumValue E, EventEnumValue... Es> EventPath event_path(E v0, Es... vs) {
+template <EventEnumValue E, EventEnumValue... Es> EventPath event_path(E first, Es... rest) {
 #else
-template <class E, class... Es> EventPath event_path(E v0, Es... vs) {
+template <class E, class... Es> EventPath event_path(E first, Es... rest) {
     static_assert(detail::is_event_enum<E>::value,
                   "event_path: no EventEnum<> specialisation for this type");
     static_assert((detail::is_event_enum<Es>::value && ...),
                   "event_path: no EventEnum<> specialisation for a nested type");
 #endif
     std::string out;
-    detail::append_event_seg(out, v0, true);
-    (detail::append_event_seg(out, vs, false), ...);
+    detail::append_event_seg(out, first, true);
+    (detail::append_event_seg(out, rest, false), ...);
     return EventPath{std::move(out)};
 }
 
@@ -1071,8 +1106,9 @@ class FileBuilder {
      * `status()` and by `finish()` / `try_finish()`.
      */
     FileBuilder() : impl_(::gtd_builder_create()) {
-        if (!impl_)
+        if (!impl_) {
             status_ = Status{GTD_ERR_INTERNAL, "failed to allocate the .gtd builder"};
+        }
     }
 
     FileBuilder(const FileBuilder &) = delete;
@@ -1086,29 +1122,29 @@ class FileBuilder {
     /** @name Metadata setters (must be called before the first `add_*` call). */
     ///@{
 
-    FileBuilder &title(const std::string &v) {
-        record(::gtd_builder_set_title(impl_.get(), v.c_str()));
+    FileBuilder &title(const std::string &title) {
+        record(::gtd_builder_set_title(impl_.get(), title.c_str()));
         return *this;
     }
 
-    FileBuilder &device(const std::string &v) {
-        record(::gtd_builder_set_device(impl_.get(), v.c_str()));
+    FileBuilder &device(const std::string &device) {
+        record(::gtd_builder_set_device(impl_.get(), device.c_str()));
         return *this;
     }
 
-    FileBuilder &notes(const std::string &v) {
-        record(::gtd_builder_set_notes(impl_.get(), v.c_str()));
+    FileBuilder &notes(const std::string &notes) {
+        record(::gtd_builder_set_notes(impl_.get(), notes.c_str()));
         return *this;
     }
 
-    FileBuilder &identity(const std::string &v) {
-        record(::gtd_builder_set_identity(impl_.get(), v.c_str()));
+    FileBuilder &identity(const std::string &identity) {
+        record(::gtd_builder_set_identity(impl_.get(), identity.c_str()));
         return *this;
     }
 
     /** Declare the platform the recording was made on. */
-    FileBuilder &travel_mode(TravelMode v) {
-        record(::gtd_builder_set_travel_mode(impl_.get(), detail::to_c(v)));
+    FileBuilder &travel_mode(TravelMode mode) {
+        record(::gtd_builder_set_travel_mode(impl_.get(), detail::to_c(mode)));
         return *this;
     }
 
@@ -1138,14 +1174,14 @@ class FileBuilder {
     FileBuilder &add_satellite_report(const SatelliteReport &report) {
         std::vector<GtdSatellite> sats;
         sats.reserve(report.tracked.size());
-        for (const auto &s : report.tracked) {
+        for (const auto &satellite : report.tracked) {
             sats.push_back(GtdSatellite{
-                detail::to_c(s.constellation),
-                s.prn,
-                static_cast<std::uint8_t>(s.in_fix ? 1 : 0),
-                detail::to_c(s.elevation_deg),
-                detail::to_c(s.azimuth_deg),
-                detail::to_c(s.snr_dbhz),
+                detail::to_c(satellite.constellation),
+                satellite.prn,
+                static_cast<std::uint8_t>(satellite.in_fix ? 1 : 0),
+                detail::to_c(satellite.elevation_deg),
+                detail::to_c(satellite.azimuth_deg),
+                detail::to_c(satellite.snr_dbhz),
             });
         }
         record(::gtd_builder_add_satellite_report(impl_.get(), detail::to_c(report.time.gps_time()),
@@ -1201,34 +1237,37 @@ class FileBuilder {
      *         unit is not valid writer input, or `values` is not
      *         `times.size() * max(components.size(), 1)` long.
      */
-    FileBuilder &add_channel(const Channel &ch) {
+    FileBuilder &add_channel(const Channel &channel) {
         std::vector<const char *> components;
-        components.reserve(ch.components.size());
-        for (const auto &label : ch.components)
+        components.reserve(channel.components.size());
+        for (const auto &label : channel.components) {
             components.push_back(label.c_str());
+        }
 
         std::vector<GtdTimestamp> times;
-        times.reserve(ch.times.size());
-        for (const auto &t : ch.times)
-            times.push_back(detail::to_c(t));
+        times.reserve(channel.times.size());
+        for (const auto &time : channel.times) {
+            times.push_back(detail::to_c(time));
+        }
 
         const std::optional<double> period_deg =
-            ch.period ? std::optional<double>{ch.period->as_degrees()} : std::nullopt;
+            channel.period ? std::optional<double>{channel.period->as_degrees()} : std::nullopt;
 
-        GtdChannel c{};
-        c.name = ch.name.c_str();
-        c.unit = ch.unit ? ch.unit->label().c_str() : nullptr;
-        c.period_deg = detail::to_c(period_deg);
-        c.description = ch.description.empty() ? nullptr : ch.description.c_str();
-        c.components = components.empty() ? nullptr : components.data();
-        c.n_components = components.size();
-        c.times = times.data();
-        c.n_times = times.size();
-        c.values = ch.values.data();
-        c.n_values = ch.values.size();
-        const auto mode =
-            ch.unit && ch.unit->is_custom() ? GTD_CHANNEL_UNIT_CUSTOM : GTD_CHANNEL_UNIT_RECOGNIZED;
-        record(::gtd_builder_add_channel_with_unit_mode(impl_.get(), &c, mode));
+        GtdChannel c_api_channel{};
+        c_api_channel.name = channel.name.c_str();
+        c_api_channel.unit = channel.unit ? channel.unit->label().c_str() : nullptr;
+        c_api_channel.period_deg = detail::to_c(period_deg);
+        c_api_channel.description =
+            channel.description.empty() ? nullptr : channel.description.c_str();
+        c_api_channel.components = components.empty() ? nullptr : components.data();
+        c_api_channel.n_components = components.size();
+        c_api_channel.times = times.data();
+        c_api_channel.n_times = times.size();
+        c_api_channel.values = channel.values.data();
+        c_api_channel.n_values = channel.values.size();
+        const auto mode = channel.unit && channel.unit->is_custom() ? GTD_CHANNEL_UNIT_CUSTOM
+                                                                    : GTD_CHANNEL_UNIT_RECOGNIZED;
+        record(::gtd_builder_add_channel_with_unit_mode(impl_.get(), &c_api_channel, mode));
         return *this;
     }
 
@@ -1241,12 +1280,12 @@ class FileBuilder {
      */
 #if defined(__cpp_concepts) && __cpp_concepts >= 201907L
     template <EventEnumValue E>
-    FileBuilder &add_event(E v, Timestamp sys_time, std::string note = {}) {
+    FileBuilder &add_event(E value, Timestamp sys_time, std::string note = {}) {
 #else
     template <class E, std::enable_if_t<detail::is_event_enum<E>::value, int> = 0>
-    FileBuilder &add_event(E v, Timestamp sys_time, std::string note = {}) {
+    FileBuilder &add_event(E value, Timestamp sys_time, std::string note = {}) {
 #endif
-        return add_event(event_path(v), sys_time, std::move(note));
+        return add_event(event_path(value), sys_time, std::move(note));
     }
 
     /**
@@ -1275,7 +1314,7 @@ class FileBuilder {
     FileBuilder &add(const SatelliteReport &report) { return add_satellite_report(report); }
     FileBuilder &add(const Annotation &ann) { return add_annotation(ann); }
     FileBuilder &add(const EventMarker &marker) { return add_event_marker(marker); }
-    FileBuilder &add(const Channel &ch) { return add_channel(ch); }
+    FileBuilder &add(const Channel &channel) { return add_channel(channel); }
     ///@}
 
     ///@}
@@ -1304,9 +1343,9 @@ class FileBuilder {
     // Record the first error. With exceptions enabled, throw it immediately so
     // the throwing API still reports at the call site. Without exceptions it
     // stays sticky and is surfaced by status() / try_finish().
-    void record(GtdStatus s) {
-        if (status_.is_ok() && s != GTD_OK) {
-            status_ = Status::from(s);
+    void record(GtdStatus status) {
+        if (status_.is_ok() && status != GTD_OK) {
+            status_ = Status::from(status);
 #if GEOTRACE_CPP_EXCEPTIONS
             status_.throw_on_failure();
 #endif
@@ -1335,11 +1374,12 @@ class [[nodiscard]] NavFile {
     ~NavFile() = default;
 
     /** Open and parse a `.gtd` file, or return the error. */
-    static Result<NavFile> try_open(const std::filesystem::path &p) {
+    static Result<NavFile> try_open(const std::filesystem::path &path) {
         GtdNavFile *out = nullptr;
-        const GtdStatus s = ::gtd_nav_file_open(detail::path_string(p).c_str(), &out);
-        if (s != GTD_OK)
-            return Status::from(s);
+        const GtdStatus status = ::gtd_nav_file_open(detail::path_string(path).c_str(), &out);
+        if (status != GTD_OK) {
+            return Status::from(status);
+        }
         return NavFile(out);
     }
 
@@ -1347,14 +1387,17 @@ class [[nodiscard]] NavFile {
      * Open and parse a `.gtd` file.
      * @throws IoError, UnsupportedVersionError, Hdf5Error, ParseError on failure.
      */
-    static NavFile open(const std::filesystem::path &p) { return try_open(p).value_or_throw(); }
+    static NavFile open(const std::filesystem::path &path) {
+        return try_open(path).value_or_throw();
+    }
 
     /** Parse a `.gtd` file from a memory buffer, or return the error. */
     static Result<NavFile> try_from_bytes(span<const std::uint8_t> data) {
         GtdNavFile *out = nullptr;
-        const GtdStatus s = ::gtd_nav_file_from_bytes(data.data(), data.size(), &out);
-        if (s != GTD_OK)
-            return Status::from(s);
+        const GtdStatus status = ::gtd_nav_file_from_bytes(data.data(), data.size(), &out);
+        if (status != GTD_OK) {
+            return Status::from(status);
+        }
         return NavFile(out);
     }
 
@@ -1377,9 +1420,9 @@ class [[nodiscard]] NavFile {
     }
 
     /** Write the file to disk, or return the error. */
-    Status try_write_to_file(const std::filesystem::path &p) const {
+    Status try_write_to_file(const std::filesystem::path &path) const {
         return Status::from(
-            ::gtd_nav_file_write_to_path(impl_.get(), detail::path_string(p).c_str()));
+            ::gtd_nav_file_write_to_path(impl_.get(), detail::path_string(path).c_str()));
     }
 
     /**
@@ -1388,19 +1431,23 @@ class [[nodiscard]] NavFile {
      * @throws FieldTooLongError if an event marker style holds a variant path or
      *         color longer than its field.
      */
-    void write_to_file(const std::filesystem::path &p) const {
-        try_write_to_file(p).throw_on_failure();
+    void write_to_file(const std::filesystem::path &path) const {
+        try_write_to_file(path).throw_on_failure();
     }
 
     /** Serialise to a byte vector, or return the error. */
     Result<std::vector<std::uint8_t>> try_to_bytes() const {
         std::uint8_t *buf = nullptr;
         std::size_t len = 0;
-        const GtdStatus s = ::gtd_nav_file_to_bytes(impl_.get(), &buf, &len);
-        if (s != GTD_OK)
-            return Status::from(s);
-        auto deleter = [len](std::uint8_t *p) noexcept { ::gtd_free_bytes(p, len); };
+        const GtdStatus status = ::gtd_nav_file_to_bytes(impl_.get(), &buf, &len);
+        if (status != GTD_OK) {
+            return Status::from(status);
+        }
+        auto deleter = [len](std::uint8_t *bytes) noexcept { ::gtd_free_bytes(bytes, len); };
         const std::unique_ptr<std::uint8_t, decltype(deleter)> guard(buf, deleter);
+        // The C SDK reports the buffer's length, and the vector below reads that
+        // many bytes.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
         return std::vector<std::uint8_t>{buf, buf + len};
     }
 
@@ -1418,20 +1465,20 @@ class [[nodiscard]] NavFile {
     ///@{
 
     [[nodiscard]] std::string_view title() const noexcept {
-        const char *s = ::gtd_nav_file_title(impl_.get());
-        return s ? std::string_view{s} : std::string_view{};
+        const char *title = ::gtd_nav_file_title(impl_.get());
+        return title != nullptr ? std::string_view{title} : std::string_view{};
     }
     [[nodiscard]] std::string_view device() const noexcept {
-        const char *s = ::gtd_nav_file_device(impl_.get());
-        return s ? std::string_view{s} : std::string_view{};
+        const char *device = ::gtd_nav_file_device(impl_.get());
+        return device != nullptr ? std::string_view{device} : std::string_view{};
     }
     [[nodiscard]] std::string_view notes() const noexcept {
-        const char *s = ::gtd_nav_file_notes(impl_.get());
-        return s ? std::string_view{s} : std::string_view{};
+        const char *notes = ::gtd_nav_file_notes(impl_.get());
+        return notes != nullptr ? std::string_view{notes} : std::string_view{};
     }
     [[nodiscard]] std::string_view identity() const noexcept {
-        const char *s = ::gtd_nav_file_identity(impl_.get());
-        return s ? std::string_view{s} : std::string_view{};
+        const char *identity = ::gtd_nav_file_identity(impl_.get());
+        return identity != nullptr ? std::string_view{identity} : std::string_view{};
     }
 
     /**
@@ -1443,8 +1490,8 @@ class [[nodiscard]] NavFile {
      * returned here verbatim, never dropped.
      */
     [[nodiscard]] std::string_view travel_mode() const noexcept {
-        const char *s = ::gtd_nav_file_travel_mode(impl_.get());
-        return s ? std::string_view{s} : std::string_view{};
+        const char *mode = ::gtd_nav_file_travel_mode(impl_.get());
+        return mode != nullptr ? std::string_view{mode} : std::string_view{};
     }
 
     ///@}
@@ -1455,14 +1502,14 @@ class [[nodiscard]] NavFile {
 
     /** Version of the SDK build that wrote the file. */
     [[nodiscard]] std::string_view sdk_version() const noexcept {
-        const char *s = ::gtd_nav_file_sdk_version(impl_.get());
-        return s ? std::string_view{s} : std::string_view{};
+        const char *version = ::gtd_nav_file_sdk_version(impl_.get());
+        return version != nullptr ? std::string_view{version} : std::string_view{};
     }
 
     /** Commit of the geotrace repository the writing SDK was built from. */
     [[nodiscard]] std::string_view sdk_git_commit() const noexcept {
-        const char *s = ::gtd_nav_file_sdk_git_commit(impl_.get());
-        return s ? std::string_view{s} : std::string_view{};
+        const char *commit = ::gtd_nav_file_sdk_git_commit(impl_.get());
+        return commit != nullptr ? std::string_view{commit} : std::string_view{};
     }
 
     /** Committer timestamp of sdk_git_commit(). */
@@ -1480,24 +1527,26 @@ class [[nodiscard]] NavFile {
     /** Return the navigation fix at @p idx, or an out-of-range error. */
     Result<NavPointView> try_nav_point(std::size_t idx) const {
         GtdNavPointInfo info{};
-        const GtdStatus s = ::gtd_nav_file_get_nav_point(impl_.get(), idx, &info);
-        if (s != GTD_OK)
-            return Status::from(s);
+        const GtdStatus status = ::gtd_nav_file_get_nav_point(impl_.get(), idx, &info);
+        if (status != GTD_OK) {
+            return Status::from(status);
+        }
 
-        NavPointView v{};
-        v.gps_time = detail::from_c(info.gps_time);
-        v.sys_time = detail::from_c(info.sys_time);
-        v.lat = Angle::degrees(info.lat_deg);
-        v.lon = Angle::degrees(info.lon_deg);
-        v.heading = info.heading_deg.present
-                        ? std::optional<Angle>{Angle::degrees(info.heading_deg.value)}
-                        : std::nullopt;
-        v.speed = info.speed_mps.present
-                      ? std::optional<Velocity>{Velocity::mps(info.speed_mps.value)}
-                      : std::nullopt;
-        v.eph_m = info.eph_m.present ? std::optional<double>{info.eph_m.value} : std::nullopt;
-        v.satellite_count = info.sat_count;
-        return v;
+        NavPointView point{};
+        point.gps_time = detail::from_c(info.gps_time);
+        point.sys_time = detail::from_c(info.sys_time);
+        point.lat = Angle::degrees(info.lat_deg);
+        point.lon = Angle::degrees(info.lon_deg);
+        point.heading = info.heading_deg.present != 0
+                            ? std::optional<Angle>{Angle::degrees(info.heading_deg.value)}
+                            : std::nullopt;
+        point.speed = info.speed_mps.present != 0
+                          ? std::optional<Velocity>{Velocity::mps(info.speed_mps.value)}
+                          : std::nullopt;
+        point.eph_m =
+            info.eph_m.present != 0 ? std::optional<double>{info.eph_m.value} : std::nullopt;
+        point.satellite_count = info.sat_count;
+        return point;
     }
 
     /**
@@ -1511,22 +1560,24 @@ class [[nodiscard]] NavFile {
     /** Return satellite data for a tracked satellite, or an out-of-range error. */
     Result<SatelliteView> try_satellite(std::size_t nav_idx, std::size_t sat_idx) const {
         GtdSatInfo info{};
-        const GtdStatus s = ::gtd_nav_file_get_satellite(impl_.get(), nav_idx, sat_idx, &info);
-        if (s != GTD_OK)
-            return Status::from(s);
+        const GtdStatus status = ::gtd_nav_file_get_satellite(impl_.get(), nav_idx, sat_idx, &info);
+        if (status != GTD_OK) {
+            return Status::from(status);
+        }
 
-        SatelliteView v{};
-        v.constellation = detail::from_c(info.constellation);
-        v.prn = info.prn;
-        v.in_fix = info.in_fix != 0;
-        v.elevation_deg = info.elevation_deg.present
-                              ? std::optional<double>{info.elevation_deg.value}
-                              : std::nullopt;
-        v.azimuth_deg =
-            info.azimuth_deg.present ? std::optional<double>{info.azimuth_deg.value} : std::nullopt;
-        v.snr_dbhz =
-            info.snr_dbhz.present ? std::optional<double>{info.snr_dbhz.value} : std::nullopt;
-        return v;
+        SatelliteView satellite{};
+        satellite.constellation = detail::from_c(info.constellation);
+        satellite.prn = info.prn;
+        satellite.in_fix = info.in_fix != 0;
+        satellite.elevation_deg = info.elevation_deg.present != 0
+                                      ? std::optional<double>{info.elevation_deg.value}
+                                      : std::nullopt;
+        satellite.azimuth_deg = info.azimuth_deg.present != 0
+                                    ? std::optional<double>{info.azimuth_deg.value}
+                                    : std::nullopt;
+        satellite.snr_dbhz =
+            info.snr_dbhz.present != 0 ? std::optional<double>{info.snr_dbhz.value} : std::nullopt;
+        return satellite;
     }
 
     /**
@@ -1545,17 +1596,22 @@ class [[nodiscard]] NavFile {
     /** Return the event marker at @p idx, or an out-of-range error. */
     Result<EventMarkerView> try_event_marker(std::size_t idx) const {
         GtdEventMarkerInfo info{};
-        const GtdStatus s = ::gtd_nav_file_get_event_marker(impl_.get(), idx, &info);
-        if (s != GTD_OK)
-            return Status::from(s);
+        const GtdStatus status = ::gtd_nav_file_get_event_marker(impl_.get(), idx, &info);
+        if (status != GTD_OK) {
+            return Status::from(status);
+        }
 
+        // GtdEventMarkerInfo holds its strings in fixed C buffers, and the C SDK
+        // terminates each string.
+        // NOLINTBEGIN(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
         return EventMarkerView{
             info.variant_path,
             detail::instant_from_c(info.sys_time),
             Angle::degrees(info.lat_deg),
             Angle::degrees(info.lon_deg),
-            info.has_annotation ? std::string{info.annotation} : std::string{},
+            info.has_annotation != 0 ? std::string{info.annotation} : std::string{},
         };
+        // NOLINTEND(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
     }
 
     /**
@@ -1574,59 +1630,71 @@ class [[nodiscard]] NavFile {
     /** Return the channel at @p idx, or an out-of-range error. */
     Result<ChannelView> try_channel(std::size_t idx) const {
         GtdChannelInfo info{};
-        const GtdStatus s = ::gtd_nav_file_get_channel(impl_.get(), idx, &info);
-        if (s != GTD_OK)
-            return Status::from(s);
+        const GtdStatus status = ::gtd_nav_file_get_channel(impl_.get(), idx, &info);
+        if (status != GTD_OK) {
+            return Status::from(status);
+        }
 
-        ChannelView v{};
-        v.name = info.name;
+        // GtdChannelInfo holds its strings in fixed C buffers, and the component
+        // accessor fills a buffer that the caller declares.
+        // NOLINTBEGIN(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+        ChannelView view{};
+        view.name = info.name;
         size_t unit_len = 0;
         std::uint8_t unit_is_custom = 0;
         const GtdStatus unit_size_status = ::gtd_nav_file_get_channel_unit(
             impl_.get(), idx, nullptr, 0, &unit_len, &unit_is_custom);
-        if (unit_size_status != GTD_OK)
+        if (unit_size_status != GTD_OK) {
             return Status::from(unit_size_status);
+        }
         if (unit_len > 0) {
             std::vector<char> unit_buffer(unit_len);
             const GtdStatus unit_status =
                 ::gtd_nav_file_get_channel_unit(impl_.get(), idx, unit_buffer.data(),
                                                 unit_buffer.size(), &unit_len, &unit_is_custom);
-            if (unit_status != GTD_OK)
+            if (unit_status != GTD_OK) {
                 return Status::from(unit_status);
+            }
             const std::string label{unit_buffer.data()};
-            v.unit = ChannelUnit::from_file_label(label, unit_is_custom != 0);
+            view.unit = ChannelUnit::from_file_label(label, unit_is_custom != 0);
         }
-        v.period = info.period_deg.present
-                       ? std::optional<Angle>{Angle::degrees(info.period_deg.value)}
-                       : std::nullopt;
-        v.description = info.has_description ? std::string{info.description} : std::string{};
+        view.period = info.period_deg.present != 0
+                          ? std::optional<Angle>{Angle::degrees(info.period_deg.value)}
+                          : std::nullopt;
+        view.description =
+            info.has_description != 0 ? std::string{info.description} : std::string{};
 
-        v.components.reserve(info.component_count);
+        view.components.reserve(info.component_count);
         for (std::size_t c = 0; c < info.component_count; ++c) {
             // Matches GtdChannelInfo::name[256]. The C API truncates a longer
             // label and cannot report the untruncated length.
             static constexpr std::size_t kChannelLabelCap = 256;
             char buf[kChannelLabelCap] = {};
             if (::gtd_nav_file_get_channel_component(impl_.get(), idx, c, buf, sizeof(buf)) ==
-                GTD_OK)
-                v.components.emplace_back(buf);
+                GTD_OK) {
+                view.components.emplace_back(buf);
+            }
         }
 
         // The buffer sizes come from `info`, which holds the authoritative
         // counts.
         const std::size_t columns = info.component_count > 0 ? info.component_count : 1;
         std::vector<GtdTimestamp> raw_times(info.sample_count);
-        if (info.sample_count > 0)
+        if (info.sample_count > 0) {
             ::gtd_nav_file_channel_times(impl_.get(), idx, raw_times.data(), raw_times.size());
-        v.times.reserve(info.sample_count);
-        for (const auto &t : raw_times)
-            v.times.push_back(detail::instant_from_c(t));
+        }
+        view.times.reserve(info.sample_count);
+        for (const auto &time : raw_times) {
+            view.times.push_back(detail::instant_from_c(time));
+        }
 
-        v.values.resize(info.sample_count * columns);
-        if (!v.values.empty())
-            ::gtd_nav_file_channel_values(impl_.get(), idx, v.values.data(), v.values.size());
+        view.values.resize(info.sample_count * columns);
+        if (!view.values.empty()) {
+            ::gtd_nav_file_channel_values(impl_.get(), idx, view.values.data(), view.values.size());
+        }
 
-        return v;
+        return view;
+        // NOLINTEND(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
     }
 
     /**
@@ -1644,12 +1712,14 @@ class [[nodiscard]] NavFile {
 };
 
 inline Result<NavFile> FileBuilder::try_finish() {
-    if (status_.is_err())
+    if (status_.is_err()) {
         return status_;
+    }
     GtdNavFile *out = nullptr;
-    const GtdStatus s = ::gtd_builder_finish(impl_.release(), &out);
-    if (s != GTD_OK)
-        return Status::from(s);
+    const GtdStatus status = ::gtd_builder_finish(impl_.release(), &out);
+    if (status != GTD_OK) {
+        return Status::from(status);
+    }
     return NavFile(out);
 }
 

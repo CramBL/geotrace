@@ -24,20 +24,21 @@ static constexpr double LAT = 51.5074;
 static constexpr double LON = -0.1278;
 static constexpr double LAT2 = 51.5080;
 static constexpr double LON2 = -0.1265;
-static const Timestamp T0 = Timestamp::from_seconds(1700000000ULL);
-static const Timestamp T1 = Timestamp::from_seconds(1700000010ULL);
+static const Timestamp FIRST_TIME = Timestamp::from_seconds(1700000000ULL);
+static const Timestamp SECOND_TIME = Timestamp::from_seconds(1700000010ULL);
 
 TEST_CASE("round-trip: nav fix fields survive write → from_bytes → read") {
     std::vector<std::uint8_t> bytes;
     {
-        NavFix f1{FixTime::receiver(T0), Angle::degrees(LAT), Angle::degrees(LON)};
-        f1.heading = Angle::degrees(270.0);
-        f1.speed = Velocity::mps(5.5);
-        f1.eph_m = 3.2;
+        NavFix first_fix{FixTime::receiver(FIRST_TIME), Angle::degrees(LAT), Angle::degrees(LON)};
+        first_fix.heading = Angle::degrees(270.0);
+        first_fix.speed = Velocity::mps(5.5);
+        first_fix.eph_m = 3.2;
 
-        const NavFix f2{FixTime::receiver(T1), Angle::degrees(LAT2), Angle::degrees(LON2)};
+        const NavFix second_fix{FixTime::receiver(SECOND_TIME), Angle::degrees(LAT2),
+                                Angle::degrees(LON2)};
 
-        auto file = FileBuilder{}.add_nav_fix(f1).add_nav_fix(f2).finish();
+        auto file = FileBuilder{}.add_nav_fix(first_fix).add_nav_fix(second_fix).finish();
         bytes = file.to_bytes();
     }
 
@@ -46,50 +47,50 @@ TEST_CASE("round-trip: nav fix fields survive write → from_bytes → read") {
     auto file2 = NavFile::from_bytes(bytes);
     REQUIRE(file2.nav_point_count() == 2);
 
-    auto p0 = file2.nav_point(0);
-    CHECK(p0.lat.as_degrees() == doctest::Approx(LAT).epsilon(1e-6));
-    CHECK(p0.lon.as_degrees() == doctest::Approx(LON).epsilon(1e-6));
-    REQUIRE(p0.heading.has_value());
-    CHECK(p0.heading.value().as_degrees() == doctest::Approx(270.0).epsilon(1e-4));
-    REQUIRE(p0.speed.has_value());
-    CHECK(p0.speed.value().as_mps() == doctest::Approx(5.5).epsilon(1e-4));
-    REQUIRE(p0.eph_m.has_value());
-    CHECK(p0.eph_m.value() == doctest::Approx(3.2).epsilon(1e-4));
-    REQUIRE(p0.gps_time.has_value());
-    CHECK(p0.gps_time->unix_micros == T0.unix_micros);
-    CHECK_FALSE(p0.sys_time.has_value());
+    auto first_point = file2.nav_point(0);
+    CHECK(first_point.lat.as_degrees() == doctest::Approx(LAT).epsilon(1e-6));
+    CHECK(first_point.lon.as_degrees() == doctest::Approx(LON).epsilon(1e-6));
+    REQUIRE(first_point.heading.has_value());
+    CHECK(first_point.heading.value().as_degrees() == doctest::Approx(270.0).epsilon(1e-4));
+    REQUIRE(first_point.speed.has_value());
+    CHECK(first_point.speed.value().as_mps() == doctest::Approx(5.5).epsilon(1e-4));
+    REQUIRE(first_point.eph_m.has_value());
+    CHECK(first_point.eph_m.value() == doctest::Approx(3.2).epsilon(1e-4));
+    REQUIRE(first_point.gps_time.has_value());
+    CHECK(first_point.gps_time->unix_micros == FIRST_TIME.unix_micros);
+    CHECK_FALSE(first_point.sys_time.has_value());
 
-    auto p1 = file2.nav_point(1);
-    CHECK(p1.lat.as_degrees() == doctest::Approx(LAT2).epsilon(1e-6));
-    CHECK_FALSE(p1.heading.has_value());
+    auto second_point = file2.nav_point(1);
+    CHECK(second_point.lat.as_degrees() == doctest::Approx(LAT2).epsilon(1e-6));
+    CHECK_FALSE(second_point.heading.has_value());
 }
 
 TEST_CASE("round-trip: satellite report survives write → from_bytes → read") {
-    const NavFix fix{FixTime::receiver(T0), Angle::degrees(LAT), Angle::degrees(LON)};
+    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(LAT), Angle::degrees(LON)};
 
-    Satellite s1{};
-    s1.constellation = Constellation::Gps;
-    s1.prn = 12;
-    s1.in_fix = true;
-    s1.elevation_deg = 60.0;
-    s1.azimuth_deg = 200.0;
-    s1.snr_dbhz = 42.0;
+    Satellite gps_satellite{};
+    gps_satellite.constellation = Constellation::Gps;
+    gps_satellite.prn = 12;
+    gps_satellite.in_fix = true;
+    gps_satellite.elevation_deg = 60.0;
+    gps_satellite.azimuth_deg = 200.0;
+    gps_satellite.snr_dbhz = 42.0;
 
-    Satellite s2{};
-    s2.constellation = Constellation::Galileo;
-    s2.prn = 5;
-    s2.in_fix = false;
-    s2.snr_dbhz = 25.0;
+    Satellite galileo_satellite{};
+    galileo_satellite.constellation = Constellation::Galileo;
+    galileo_satellite.prn = 5;
+    galileo_satellite.in_fix = false;
+    galileo_satellite.snr_dbhz = 25.0;
 
-    const SatelliteReport report{FixTime::receiver(T0), {s1, s2}};
+    const SatelliteReport report{FixTime::receiver(FIRST_TIME), {gps_satellite, galileo_satellite}};
 
     auto file = FileBuilder{}.add_nav_fix(fix).add_satellite_report(report).finish();
 
     auto bytes = file.to_bytes();
     auto file2 = NavFile::from_bytes(bytes);
 
-    auto p = file2.nav_point(0);
-    CHECK(p.satellite_count == 2);
+    auto point = file2.nav_point(0);
+    CHECK(point.satellite_count == 2);
 
     auto s0_out = file2.satellite(0, 0);
     CHECK(s0_out.constellation == Constellation::Gps);
@@ -106,9 +107,9 @@ TEST_CASE("round-trip: satellite report survives write → from_bytes → read")
 }
 
 TEST_CASE("round-trip: event marker survives write → from_bytes → read") {
-    const NavFix fix{FixTime::receiver(T0), Angle::degrees(LAT), Angle::degrees(LON)};
+    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(LAT), Angle::degrees(LON)};
 
-    const EventMarker m_in{"engine/start", T0, "Engine started"};
+    const EventMarker m_in{"engine/start", FIRST_TIME, "Engine started"};
 
     auto file = FileBuilder{}.add_nav_fix(fix).add_event_marker(m_in).finish();
 
@@ -119,11 +120,11 @@ TEST_CASE("round-trip: event marker survives write → from_bytes → read") {
     auto m_out = file2.event_marker(0);
     CHECK(m_out.variant_path == "engine/start");
     CHECK(m_out.annotation == "Engine started");
-    CHECK(m_out.sys_time.unix_micros == T0.unix_micros);
+    CHECK(m_out.sys_time.unix_micros == FIRST_TIME.unix_micros);
 }
 
 TEST_CASE("round-trip: metadata survives write → to_bytes → from_bytes") {
-    const NavFix fix{FixTime::receiver(T0), Angle::degrees(0.0), Angle::degrees(0.0)};
+    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(0.0), Angle::degrees(0.0)};
 
     auto file = FileBuilder{}.title("test title").device("test device").add_nav_fix(fix).finish();
 
@@ -135,7 +136,7 @@ TEST_CASE("round-trip: metadata survives write → to_bytes → from_bytes") {
 }
 
 TEST_CASE("round-trip: travel mode survives write → to_bytes → from_bytes") {
-    const NavFix fix{FixTime::receiver(T0), Angle::degrees(0.0), Angle::degrees(0.0)};
+    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(0.0), Angle::degrees(0.0)};
 
     auto file = FileBuilder{}.travel_mode(TravelMode::Rail).add_nav_fix(fix).finish();
 
@@ -147,7 +148,7 @@ TEST_CASE("round-trip: travel mode survives write → to_bytes → from_bytes") 
 }
 
 TEST_CASE("a build without provenance writes only the sdk version") {
-    const NavFix fix{FixTime::receiver(T0), Angle::degrees(LAT), Angle::degrees(LON)};
+    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(LAT), Angle::degrees(LON)};
 
     auto file = NavFile::from_bytes(FileBuilder{}.add_nav_fix(fix).finish().to_bytes());
 
@@ -168,7 +169,7 @@ TEST_CASE("travel mode names round-trip through travel_mode_from_name") {
 }
 
 TEST_CASE("round-trip: velocity unit conversions are consistent") {
-    NavFix fix{FixTime::receiver(T0), Angle::degrees(LAT), Angle::degrees(LON)};
+    NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(LAT), Angle::degrees(LON)};
     fix.speed = Velocity::kmh(72.0); // 20 m/s
 
     auto file = FileBuilder{}.add_nav_fix(fix).finish();
@@ -176,9 +177,9 @@ TEST_CASE("round-trip: velocity unit conversions are consistent") {
     auto bytes = file.to_bytes();
     auto file2 = NavFile::from_bytes(bytes);
 
-    auto p = file2.nav_point(0);
-    REQUIRE(p.speed.has_value());
-    const auto speed = p.speed.value();
+    auto point = file2.nav_point(0);
+    REQUIRE(point.speed.has_value());
+    const auto speed = point.speed.value();
     CHECK(speed.as_mps() == doctest::Approx(20.0).epsilon(0.01));
     CHECK(speed.as_kmh() == doctest::Approx(72.0).epsilon(0.05));
     CHECK(speed.as_knots() == doctest::Approx(38.88).epsilon(0.1));

@@ -24,17 +24,17 @@ NavFix one_fix() {
 } // namespace
 
 TEST_CASE("try_open on a missing file returns an IO error without throwing") {
-    const Result<NavFile> r = NavFile::try_open("/no/such/file.gtd");
-    CHECK(r.is_err());
-    CHECK(r.error().code == GTD_ERR_IO);
-    CHECK_FALSE(r.error().description.empty());
+    const Result<NavFile> result = NavFile::try_open("/no/such/file.gtd");
+    CHECK(result.is_err());
+    CHECK(result.error().code == GTD_ERR_IO);
+    CHECK_FALSE(result.error().description.empty());
 }
 
 TEST_CASE("try_from_bytes on garbage returns a data error without throwing") {
     const std::vector<std::uint8_t> junk = {'n', 'o', 'p', 'e'};
-    const Result<NavFile> r = NavFile::try_from_bytes(junk);
-    CHECK(r.is_err());
-    CHECK((r.error().code == GTD_ERR_HDF5 || r.error().code == GTD_ERR_PARSE));
+    const Result<NavFile> result = NavFile::try_from_bytes(junk);
+    CHECK(result.is_err());
+    CHECK((result.error().code == GTD_ERR_HDF5 || result.error().code == GTD_ERR_PARSE));
 }
 
 TEST_CASE("try_finish builds a valid file and round-trips via Result") {

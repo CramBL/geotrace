@@ -3,5 +3,12 @@ InheritParentConfig: true
 # do-while loops (cppcoreguidelines-avoid-do-while) that can't be fixed in user
 # code.  bugprone-unchecked-optional-access fires after REQUIRE(.has_value())
 # because clang-tidy's flow analysis doesn't see through the REQUIRE macro and
-# cannot determine that the guarded dereferences below it are safe.
-Checks: "-cppcoreguidelines-avoid-do-while,-misc-use-anonymous-namespace,-bugprone-unchecked-optional-access"
+# cannot determine that the guarded dereferences below it are safe.  Those same
+# macros expand to a branch per assertion. That puts a test case past the
+# cognitive complexity threshold.  A test states its expected values as literals.
+Checks: "-cppcoreguidelines-avoid-do-while,\
+  -misc-use-anonymous-namespace,\
+  -bugprone-unchecked-optional-access,\
+  -readability-function-cognitive-complexity,\
+  -cppcoreguidelines-avoid-magic-numbers,\
+  -readability-magic-numbers"

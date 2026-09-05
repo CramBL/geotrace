@@ -12,8 +12,10 @@
 
 #include <geotrace/geotrace.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -26,7 +28,9 @@ constexpr std::uint64_t kBase = 1717228800;
 } // namespace
 
 int main() {
-    auto at = [](std::uint64_t secs) { return geotrace::Timestamp::from_seconds(kBase + secs); };
+    auto timestamp_at = [](std::uint64_t secs) {
+        return geotrace::Timestamp::from_seconds(kBase + secs);
+    };
 
     try {
         geotrace::FileBuilder builder{};
@@ -36,13 +40,17 @@ int main() {
             double lat;
             double lon;
         };
-        const TrackPoint track[] = {
-            {51.5074, -0.1278}, {51.5080, -0.1265}, {51.5088, -0.1248},
-            {51.5095, -0.1233}, {51.5103, -0.1217}, {51.5110, -0.1200},
-        };
+        const std::array<TrackPoint, 6> track = {{
+            {51.5074, -0.1278},
+            {51.5080, -0.1265},
+            {51.5088, -0.1248},
+            {51.5095, -0.1233},
+            {51.5103, -0.1217},
+            {51.5110, -0.1200},
+        }};
         std::size_t idx = 0;
         for (const auto &point : track) {
-            geotrace::NavFix fix{geotrace::FixTime::receiver(at(idx * 30)),
+            geotrace::NavFix fix{geotrace::FixTime::receiver(timestamp_at(idx * 30)),
                                  geotrace::Angle::degrees(point.lat),
                                  geotrace::Angle::degrees(point.lon)};
             fix.heading = geotrace::Angle::degrees(90.0);
@@ -55,16 +63,17 @@ int main() {
             std::uint64_t offset;
             std::string_view note; // empty = none
         };
-        const Event events[] = {
+        const std::array<Event, 5> events = {{
             {"power/boot", 2, "cold start"},
             {"connectivity/agps/request", 5, "EPO fetch started"},
             {"connectivity/agps/success", 18, "EPO applied, TTFF reduced"},
             {"sensor/gps/lock_acquired", 20, ""},
             {"power/sleep", 145, ""},
-        };
-        for (const auto &e : events)
-            builder.add(
-                geotrace::EventMarker{std::string(e.path), at(e.offset), std::string(e.note)});
+        }};
+        for (const auto &event : events) {
+            builder.add(geotrace::EventMarker{std::string(event.path), timestamp_at(event.offset),
+                                              std::string(event.note)});
+        }
 
         builder.add_event_marker_style(
             geotrace::EventMarkerStyle{"power/boot", geotrace::MarkerIcon::Lightning, "#44BB44"});
@@ -80,15 +89,16 @@ int main() {
         const geotrace::NavFile loaded = geotrace::NavFile::open(out);
         std::cout << loaded.event_marker_count() << " event marker(s)\n";
         for (std::size_t i = 0; i < loaded.event_marker_count(); ++i) {
-            const auto m = loaded.event_marker(i);
-            std::cout << "  " << m.variant_path;
-            if (!m.annotation.empty())
-                std::cout << " - " << m.annotation;
+            const auto marker = loaded.event_marker(i);
+            std::cout << "  " << marker.variant_path;
+            if (!marker.annotation.empty()) {
+                std::cout << " - " << marker.annotation;
+            }
             std::cout << "\n";
         }
 
         std::filesystem::remove(out);
-    } catch (const geotrace::Error &e) {
+    } catch (const std::exception &e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
     }

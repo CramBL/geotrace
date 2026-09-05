@@ -33,22 +33,23 @@ using geotrace::SatelliteReport;
 using geotrace::Timestamp;
 using geotrace::Velocity;
 
-static Timestamp t0 = Timestamp::from_seconds(1700000000ULL);
-static Timestamp t1 = Timestamp::from_seconds(1700000010ULL);
+static const Timestamp FIRST_TIME = Timestamp::from_seconds(1700000000ULL);
+static const Timestamp SECOND_TIME = Timestamp::from_seconds(1700000010ULL);
 
 TEST_CASE("FileBuilder: single nav fix produces a valid NavFile") {
-    const NavFix fix{FixTime::receiver(t0), Angle::degrees(51.5074), Angle::degrees(-0.1278)};
+    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(51.5074),
+                     Angle::degrees(-0.1278)};
 
     const NavFile file = FileBuilder{}.add_nav_fix(fix).finish();
 
     CHECK(file.nav_point_count() == 1);
-    auto p = file.nav_point(0);
-    CHECK(p.lat.as_degrees() == doctest::Approx(51.5074));
-    CHECK(p.lon.as_degrees() == doctest::Approx(-0.1278));
+    auto point = file.nav_point(0);
+    CHECK(point.lat.as_degrees() == doctest::Approx(51.5074));
+    CHECK(point.lon.as_degrees() == doctest::Approx(-0.1278));
 }
 
 TEST_CASE("FileBuilder: metadata is preserved") {
-    const NavFix fix{FixTime::receiver(t0), Angle::degrees(0.0), Angle::degrees(0.0)};
+    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(0.0), Angle::degrees(0.0)};
 
     const NavFile file = FileBuilder{}
                              .title("my track")
@@ -65,63 +66,64 @@ TEST_CASE("FileBuilder: metadata is preserved") {
 }
 
 TEST_CASE("FileBuilder: optional fields round-trip") {
-    NavFix fix{FixTime::receiver(t0), Angle::degrees(48.8566), Angle::degrees(2.3522)};
+    NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(48.8566), Angle::degrees(2.3522)};
     fix.heading = Angle::degrees(180.0);
     fix.speed = Velocity::mps(10.0);
     fix.eph_m = 5.0;
 
     const NavFile file = FileBuilder{}.add_nav_fix(fix).finish();
 
-    auto p = file.nav_point(0);
-    REQUIRE(p.heading.has_value());
-    CHECK(p.heading.value().as_degrees() == doctest::Approx(180.0));
-    REQUIRE(p.speed.has_value());
-    CHECK(p.speed.value().as_mps() == doctest::Approx(10.0));
-    REQUIRE(p.eph_m.has_value());
-    CHECK(p.eph_m.value() == doctest::Approx(5.0));
+    auto point = file.nav_point(0);
+    REQUIRE(point.heading.has_value());
+    CHECK(point.heading.value().as_degrees() == doctest::Approx(180.0));
+    REQUIRE(point.speed.has_value());
+    CHECK(point.speed.value().as_mps() == doctest::Approx(10.0));
+    REQUIRE(point.eph_m.has_value());
+    CHECK(point.eph_m.value() == doctest::Approx(5.0));
 }
 
 TEST_CASE("FileBuilder: no-optional nav fix has nullopt fields") {
-    const NavFix fix{FixTime::receiver(t0), Angle::degrees(0.0), Angle::degrees(0.0)};
+    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(0.0), Angle::degrees(0.0)};
 
     const NavFile file = FileBuilder{}.add_nav_fix(fix).finish();
 
-    auto p = file.nav_point(0);
-    CHECK_FALSE(p.heading.has_value());
-    CHECK_FALSE(p.speed.has_value());
-    CHECK_FALSE(p.eph_m.has_value());
+    auto point = file.nav_point(0);
+    CHECK_FALSE(point.heading.has_value());
+    CHECK_FALSE(point.speed.has_value());
+    CHECK_FALSE(point.eph_m.has_value());
 }
 
 TEST_CASE("FileBuilder: satellite report round-trips") {
-    const NavFix fix{FixTime::receiver(t0), Angle::degrees(40.7128), Angle::degrees(-74.0060)};
+    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(40.7128),
+                     Angle::degrees(-74.0060)};
 
-    Satellite s1{};
-    s1.constellation = Constellation::Gps;
-    s1.prn = 7;
-    s1.in_fix = true;
-    s1.elevation_deg = 55.0;
-    s1.azimuth_deg = 120.0;
-    s1.snr_dbhz = 40.0;
+    Satellite gps_satellite{};
+    gps_satellite.constellation = Constellation::Gps;
+    gps_satellite.prn = 7;
+    gps_satellite.in_fix = true;
+    gps_satellite.elevation_deg = 55.0;
+    gps_satellite.azimuth_deg = 120.0;
+    gps_satellite.snr_dbhz = 40.0;
 
-    Satellite s2{};
-    s2.constellation = Constellation::Glonass;
-    s2.prn = 2;
-    s2.in_fix = false;
-    s2.snr_dbhz = 28.0;
+    Satellite glonass_satellite{};
+    glonass_satellite.constellation = Constellation::Glonass;
+    glonass_satellite.prn = 2;
+    glonass_satellite.in_fix = false;
+    glonass_satellite.snr_dbhz = 28.0;
 
-    const SatelliteReport report{FixTime::receiver(t0), {s1, s2}};
+    const SatelliteReport report{FixTime::receiver(FIRST_TIME), {gps_satellite, glonass_satellite}};
 
     const NavFile file = FileBuilder{}.add_nav_fix(fix).add_satellite_report(report).finish();
 
-    auto p = file.nav_point(0);
-    CHECK(p.satellite_count == 2);
+    auto point = file.nav_point(0);
+    CHECK(point.satellite_count == 2);
 
-    auto s0 = file.satellite(0, 0);
-    CHECK(s0.constellation == Constellation::Gps);
-    CHECK(s0.prn == 7);
-    CHECK(s0.in_fix);
-    REQUIRE(s0.snr_dbhz.has_value());
-    CHECK(s0.snr_dbhz.value() == doctest::Approx(40.0));
+    auto first_satellite = file.satellite(0, 0);
+    CHECK(first_satellite.constellation == Constellation::Gps);
+    CHECK(first_satellite.prn == 7);
+    CHECK(first_satellite.in_fix);
+    REQUIRE(first_satellite.snr_dbhz.has_value());
+    CHECK(first_satellite.snr_dbhz.value() == doctest::Approx(40.0));
 
     auto s1_out = file.satellite(0, 1);
     CHECK(s1_out.constellation == Constellation::Glonass);
@@ -129,79 +131,89 @@ TEST_CASE("FileBuilder: satellite report round-trips") {
 }
 
 TEST_CASE("FileBuilder: event marker round-trips") {
-    const NavFix fix{FixTime::receiver(t0), Angle::degrees(35.6762), Angle::degrees(139.6503)};
+    const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(35.6762),
+                     Angle::degrees(139.6503)};
 
-    const EventMarker m1{"system/startup", t0, "Device started"};
+    const EventMarker marker{"system/startup", FIRST_TIME, "Device started"};
 
     EventMarkerStyle style{};
     style.variant_path = "system/startup";
     style.icon = MarkerIcon::Gear;
     style.color_hex = "#00FF00";
 
-    const NavFile file =
-        FileBuilder{}.add_nav_fix(fix).add_event_marker(m1).add_event_marker_style(style).finish();
+    const NavFile file = FileBuilder{}
+                             .add_nav_fix(fix)
+                             .add_event_marker(marker)
+                             .add_event_marker_style(style)
+                             .finish();
 
     REQUIRE(file.event_marker_count() == 1);
-    auto m = file.event_marker(0);
-    CHECK(m.variant_path == "system/startup");
-    CHECK(m.annotation == "Device started");
+    auto read_marker = file.event_marker(0);
+    CHECK(read_marker.variant_path == "system/startup");
+    CHECK(read_marker.annotation == "Device started");
 }
 
 TEST_CASE("FileBuilder: fluent chain works end-to-end") {
-    const NavFix f1{FixTime::receiver(t0), Angle::degrees(1.0), Angle::degrees(2.0)};
-    const NavFix f2{FixTime::receiver(t1), Angle::degrees(1.1), Angle::degrees(2.1)};
+    const NavFix first_fix{FixTime::receiver(FIRST_TIME), Angle::degrees(1.0), Angle::degrees(2.0)};
+    const NavFix second_fix{FixTime::receiver(SECOND_TIME), Angle::degrees(1.1),
+                            Angle::degrees(2.1)};
 
-    auto file = FileBuilder{}.device("chain test").add_nav_fix(f1).add_nav_fix(f2).finish();
+    auto file =
+        FileBuilder{}.device("chain test").add_nav_fix(first_fix).add_nav_fix(second_fix).finish();
 
     CHECK(file.nav_point_count() == 2);
     CHECK(file.device() == "chain test");
 }
 
 TEST_CASE("FileBuilder: NoNavFixesError thrown when annotations exist but no fixes") {
-    FileBuilder b;
-    Annotation ann{t0};
+    FileBuilder builder;
+    Annotation ann{FIRST_TIME};
     ann.label = "unreachable";
-    b.add_annotation(ann);
-    CHECK_THROWS_AS(static_cast<void>(b.finish()), NoNavFixesError);
+    builder.add_annotation(ann);
+    CHECK_THROWS_AS(static_cast<void>(builder.finish()), NoNavFixesError);
 }
 
 TEST_CASE("FileBuilder: FieldTooLongError thrown for a label past the field capacity") {
-    FileBuilder b;
-    Annotation ann{t0};
+    FileBuilder builder;
+    Annotation ann{FIRST_TIME};
     ann.label = std::string(256, 'l');
 
-    CHECK_THROWS_AS(b.add_annotation(ann), FieldTooLongError);
+    CHECK_THROWS_AS(builder.add_annotation(ann), FieldTooLongError);
 }
 
 TEST_CASE("FileBuilder: InvalidPathError thrown for malformed variant path") {
-    FileBuilder b;
-    b.add_nav_fix(NavFix{FixTime::receiver(t0), Angle::degrees(0.0), Angle::degrees(0.0)});
+    FileBuilder builder;
+    builder.add_nav_fix(
+        NavFix{FixTime::receiver(FIRST_TIME), Angle::degrees(0.0), Angle::degrees(0.0)});
 
-    const EventMarker marker{"bad path with spaces!", t0};
+    const EventMarker marker{"bad path with spaces!", FIRST_TIME};
 
-    CHECK_THROWS_AS(b.add_event_marker(marker), InvalidPathError);
+    CHECK_THROWS_AS(builder.add_event_marker(marker), InvalidPathError);
 }
 
 TEST_CASE("FileBuilder: move semantics work") {
-    FileBuilder b1;
-    b1.add_nav_fix(NavFix{FixTime::receiver(t0), Angle::degrees(0.0), Angle::degrees(0.0)});
+    FileBuilder builder;
+    builder.add_nav_fix(
+        NavFix{FixTime::receiver(FIRST_TIME), Angle::degrees(0.0), Angle::degrees(0.0)});
 
-    FileBuilder b2 = std::move(b1);
-    auto file = b2.finish();
+    FileBuilder moved_builder = std::move(builder);
+    auto file = moved_builder.finish();
     CHECK(file.nav_point_count() == 1);
 }
 
 TEST_CASE("FileBuilder: add() dispatches by argument type") {
     // Two fixes bracket the annotation and event marker so both fall in range.
-    const NavFix f0{FixTime::receiver(t0), Angle::degrees(51.5074), Angle::degrees(-0.1278)};
-    const NavFix f1{FixTime::receiver(t1), Angle::degrees(51.5080), Angle::degrees(-0.1265)};
+    const NavFix first_fix{FixTime::receiver(FIRST_TIME), Angle::degrees(51.5074),
+                           Angle::degrees(-0.1278)};
+    const NavFix second_fix{FixTime::receiver(SECOND_TIME), Angle::degrees(51.5080),
+                            Angle::degrees(-0.1265)};
 
     Satellite sat{};
     sat.constellation = Constellation::Gps;
     sat.prn = 1;
     sat.in_fix = true;
 
-    const SatelliteReport report{FixTime::receiver(t0), {sat}};
+    const SatelliteReport report{FixTime::receiver(FIRST_TIME), {sat}};
 
     const Timestamp mid = Timestamp::from_seconds(1700000005ULL);
     Annotation ann{mid};
@@ -211,14 +223,16 @@ TEST_CASE("FileBuilder: add() dispatches by argument type") {
     const EventMarker marker{"power/boot", mid, "cold start"};
 
     // Each add() resolves, at compile time, to the matching add_* overload.
-    const NavFile file = FileBuilder{}.add(f0).add(f1).add(report).add(ann).add(marker).finish();
+    const NavFile file =
+        FileBuilder{}.add(first_fix).add(second_fix).add(report).add(ann).add(marker).finish();
 
     CHECK(file.nav_point_count() == 2);
 
     // The satellite report associated with a fix (add(SatelliteReport) dispatched).
     std::size_t total_sats = 0;
-    for (std::size_t i = 0; i < file.nav_point_count(); ++i)
+    for (std::size_t i = 0; i < file.nav_point_count(); ++i) {
         total_sats += file.nav_point(i).satellite_count;
+    }
     CHECK(total_sats >= 1);
 
     // The event marker landed with its path (add(EventMarker) dispatched).

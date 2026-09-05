@@ -10,8 +10,10 @@
 
 #include <geotrace/geotrace.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -24,7 +26,9 @@ constexpr std::uint64_t kBase = 1717228800;
 } // namespace
 
 int main() {
-    auto at = [](std::uint64_t secs) { return geotrace::Timestamp::from_seconds(kBase + secs); };
+    auto timestamp_at = [](std::uint64_t secs) {
+        return geotrace::Timestamp::from_seconds(kBase + secs);
+    };
 
     try {
         geotrace::FileBuilder builder{};
@@ -36,13 +40,17 @@ int main() {
             double lon;
             double heading;
         };
-        const TrackPoint gps[] = {
-            {51.5074, -0.1278, 90.0}, {51.5075, -0.1276, 91.0}, {51.5076, -0.1274, 89.5},
-            {51.5077, -0.1272, 88.0}, {51.5078, -0.1270, 90.0}, {51.5079, -0.1268, 90.5},
-        };
+        const std::array<TrackPoint, 6> gps = {{
+            {51.5074, -0.1278, 90.0},
+            {51.5075, -0.1276, 91.0},
+            {51.5076, -0.1274, 89.5},
+            {51.5077, -0.1272, 88.0},
+            {51.5078, -0.1270, 90.0},
+            {51.5079, -0.1268, 90.5},
+        }};
         std::size_t idx = 0;
         for (const auto &point : gps) {
-            geotrace::NavFix fix{geotrace::FixTime::receiver(at(idx * 10)),
+            geotrace::NavFix fix{geotrace::FixTime::receiver(timestamp_at(idx * 10)),
                                  geotrace::Angle::degrees(point.lat),
                                  geotrace::Angle::degrees(point.lon)};
             fix.heading = geotrace::Angle::degrees(point.heading);
@@ -57,14 +65,15 @@ int main() {
             std::string_view label;
             geotrace::MarkerIcon icon;
         };
-        const Marker markers[] = {
+        const std::array<Marker, 3> markers = {{
             {5, "Pothole", geotrace::MarkerIcon::Warning},
             {15, "Speed camera", geotrace::MarkerIcon::Circle},
             {25, "Junction", geotrace::MarkerIcon::Pin},
-        };
+        }};
         std::size_t marker_count = 0;
-        for (const auto &m : markers) {
-            builder.add(geotrace::Annotation{at(m.offset), std::string(m.label), m.icon});
+        for (const auto &marker : markers) {
+            builder.add(geotrace::Annotation{timestamp_at(marker.offset), std::string(marker.label),
+                                             marker.icon});
             ++marker_count;
         }
 
@@ -79,7 +88,7 @@ int main() {
         std::cout << "Annotations were interpolated onto the track by timestamp.\n";
 
         std::filesystem::remove(out);
-    } catch (const geotrace::Error &e) {
+    } catch (const std::exception &e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
     }

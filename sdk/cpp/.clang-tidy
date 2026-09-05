@@ -1,31 +1,17 @@
 Checks: "clang-analyzer-*,bugprone-*,cert-*,cppcoreguidelines-*,hicpp-*,misc-*,modernize-*,\
   performance-*,portability-*,readability-*,\
-  -bugprone-easily-swappable-parameters,\
-  -bugprone-exception-escape,\
   -clang-analyzer-cplusplus.NewDeleteLeaks,\
   -clang-diagnostic-c++20-designator,\
-  -cppcoreguidelines-avoid-c-arrays,\
-  -cppcoreguidelines-avoid-magic-numbers,\
-  -cppcoreguidelines-avoid-non-const-global-variables,\
-  -cppcoreguidelines-macro-to-enum,\
-  -cppcoreguidelines-macro-usage,\
-  -modernize-macro-to-enum,\
-  -cppcoreguidelines-pro-bounds-array-to-pointer-decay,\
-  -cppcoreguidelines-pro-bounds-pointer-arithmetic,\
-  -hicpp-avoid-c-arrays,\
-  -hicpp-avoid-magic-numbers,\
-  -hicpp-braces-around-statements,\
-  -hicpp-explicit-conversions,\
-  -hicpp-no-array-decay,\
-  -misc-non-private-member-variables-in-classes,\
-  -modernize-avoid-c-arrays,\
-  -performance-unnecessary-value-param,\
-  -modernize-use-trailing-return-type,\
-  -readability-braces-around-statements,\
-  -readability-implicit-bool-conversion,\
-  -readability-identifier-length,\
-  -readability-isolate-declaration,\
-  -readability-magic-numbers,\
-  -readability-function-cognitive-complexity"
+  -modernize-use-trailing-return-type"
 WarningsAsErrors: "*"
 HeaderFilterRegex: "sdk/cpp/.*\\.hpp"
+CheckOptions:
+  # The plain aggregates the SDK returns hold public members only. The check
+  # reports a class that mixes public data with private members.
+  misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic: true
+  readability-identifier-length.MinimumLoopCounterNameLength: 1
+  # A caught exception and the two sides of a comparison operator.
+  readability-identifier-length.IgnoredVariableNames: "^e$"
+  readability-identifier-length.IgnoredParameterNames: "^[ab]$"
+  # The preprocessor reads the version and exception-support macros.
+  cppcoreguidelines-macro-usage.AllowedRegexp: "^GEOTRACE_CPP_"

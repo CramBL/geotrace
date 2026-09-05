@@ -44,11 +44,11 @@ TEST_CASE("exception hierarchy: all types derive from std::exception") {
 
 TEST_CASE("exception: NoNavFixesError is catchable as BuildError and Error") {
     auto throw_it = [] {
-        FileBuilder b;
+        FileBuilder builder;
         Annotation ann{Timestamp::from_seconds(1700000000ULL)};
         ann.label = "no fixes";
-        b.add_annotation(ann);
-        static_cast<void>(b.finish());
+        builder.add_annotation(ann);
+        static_cast<void>(builder.finish());
     };
     CHECK_THROWS_AS(throw_it(), NoNavFixesError);
     CHECK_THROWS_AS(throw_it(), BuildError);
@@ -58,11 +58,12 @@ TEST_CASE("exception: NoNavFixesError is catchable as BuildError and Error") {
 
 TEST_CASE("exception: InvalidPathError is catchable as Error") {
     auto throw_it = [] {
-        FileBuilder b;
-        const Timestamp t = Timestamp::from_seconds(1700000000ULL);
-        b.add_nav_fix(NavFix{FixTime::receiver(t), Angle::degrees(0.0), Angle::degrees(0.0)});
+        FileBuilder builder;
+        const Timestamp time = Timestamp::from_seconds(1700000000ULL);
+        builder.add_nav_fix(
+            NavFix{FixTime::receiver(time), Angle::degrees(0.0), Angle::degrees(0.0)});
 
-        b.add_event_marker(EventMarker{"invalid path with spaces!", t});
+        builder.add_event_marker(EventMarker{"invalid path with spaces!", time});
     };
     CHECK_THROWS_AS(throw_it(), InvalidPathError);
     CHECK_THROWS_AS(throw_it(), Error);
@@ -70,11 +71,12 @@ TEST_CASE("exception: InvalidPathError is catchable as Error") {
 
 TEST_CASE("exception: FieldTooLongError is catchable as Error") {
     auto throw_it = [] {
-        FileBuilder b;
-        const Timestamp t = Timestamp::from_seconds(1700000000ULL);
-        b.add_nav_fix(NavFix{FixTime::receiver(t), Angle::degrees(0.0), Angle::degrees(0.0)});
+        FileBuilder builder;
+        const Timestamp time = Timestamp::from_seconds(1700000000ULL);
+        builder.add_nav_fix(
+            NavFix{FixTime::receiver(time), Angle::degrees(0.0), Angle::degrees(0.0)});
 
-        b.add_event_marker(EventMarker{"system/startup", t, std::string(512, 'a')});
+        builder.add_event_marker(EventMarker{"system/startup", time, std::string(512, 'a')});
     };
     CHECK_THROWS_AS(throw_it(), FieldTooLongError);
     CHECK_THROWS_AS(throw_it(), Error);
@@ -82,11 +84,11 @@ TEST_CASE("exception: FieldTooLongError is catchable as Error") {
 
 TEST_CASE("exception: InvalidChannelError is catchable as Error") {
     auto throw_it = [] {
-        Channel ch{};
-        ch.name = "Bad Name";
-        ch.times = {Timestamp::from_seconds(1700000000ULL)};
-        ch.values = {1.0};
-        FileBuilder{}.add_channel(ch);
+        Channel channel{};
+        channel.name = "Bad Name";
+        channel.times = {Timestamp::from_seconds(1700000000ULL)};
+        channel.values = {1.0};
+        FileBuilder{}.add_channel(channel);
     };
     CHECK_THROWS_AS(throw_it(), InvalidChannelError);
     CHECK_THROWS_AS(throw_it(), Error);
@@ -112,20 +114,26 @@ TEST_CASE("exception: out_of_range from nav_point is std::out_of_range, not geot
 }
 
 TEST_CASE("exception: AnnotationsOutOfRangeError carries a count field") {
-    // Create a file where an annotation falls outside the nav fix time range.
-    // Two nav fixes from T1 to T2. Annotation at T0 (before T1) - out of range.
-    const Timestamp t1 = Timestamp::from_seconds(1700000100ULL);
-    const Timestamp t2 = Timestamp::from_seconds(1700000200ULL);
-    const Timestamp t0 = Timestamp::from_seconds(1700000000ULL); // before t1
+    // The annotation falls outside the file's time range: its timestamp
+    // precedes both nav fixes.
+    const Timestamp first_fix_time = Timestamp::from_seconds(1700000100ULL);
+    const Timestamp second_fix_time = Timestamp::from_seconds(1700000200ULL);
+    const Timestamp before_first_fix = Timestamp::from_seconds(1700000000ULL);
 
     try {
-        const NavFix f1{FixTime::receiver(t1), Angle::degrees(0.0), Angle::degrees(0.0)};
-        const NavFix f2{FixTime::receiver(t2), Angle::degrees(0.1), Angle::degrees(0.1)};
+        const NavFix first_fix{FixTime::receiver(first_fix_time), Angle::degrees(0.0),
+                               Angle::degrees(0.0)};
+        const NavFix second_fix{FixTime::receiver(second_fix_time), Angle::degrees(0.1),
+                                Angle::degrees(0.1)};
 
-        Annotation ann{t0};
+        Annotation ann{before_first_fix};
         ann.label = "outside range";
 
-        auto file = FileBuilder{}.add_nav_fix(f1).add_nav_fix(f2).add_annotation(ann).finish();
+        auto file = FileBuilder{}
+                        .add_nav_fix(first_fix)
+                        .add_nav_fix(second_fix)
+                        .add_annotation(ann)
+                        .finish();
         FAIL("expected AnnotationsOutOfRangeError");
     } catch (const AnnotationsOutOfRangeError &e) {
         CHECK(std::string{e.what()}.size() > 0);
@@ -136,11 +144,11 @@ TEST_CASE("exception: AnnotationsOutOfRangeError carries a count field") {
 
 TEST_CASE("exception: what() returns a non-empty string") {
     try {
-        FileBuilder b;
+        FileBuilder builder;
         Annotation ann{Timestamp::from_seconds(1700000000ULL)};
         ann.label = "no fixes";
-        b.add_annotation(ann);
-        static_cast<void>(b.finish());
+        builder.add_annotation(ann);
+        static_cast<void>(builder.finish());
     } catch (const Error &e) {
         CHECK(std::string{e.what()}.size() > 0);
     }

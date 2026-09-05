@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 #include <geotrace/geotrace.hpp>
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -23,8 +24,8 @@ enum class Agps : std::uint8_t { Request, Success };
 
 template <> struct geotrace::EventEnum<Power> {
     static constexpr std::string_view base = "power";
-    static constexpr std::string_view seg(Power p) {
-        switch (p) {
+    static constexpr std::string_view seg(Power power) {
+        switch (power) {
         case Power::Boot:
             return "boot";
         case Power::Sleep:
@@ -38,8 +39,8 @@ template <> struct geotrace::EventEnum<Power> {
 
 template <> struct geotrace::EventEnum<Connectivity> {
     static constexpr std::string_view base = "connectivity";
-    static constexpr std::string_view seg(Connectivity c) {
-        switch (c) {
+    static constexpr std::string_view seg(Connectivity connectivity) {
+        switch (connectivity) {
         case Connectivity::Agps:
             return "agps";
         }
@@ -49,8 +50,8 @@ template <> struct geotrace::EventEnum<Connectivity> {
 
 template <> struct geotrace::EventEnum<Agps> {
     static constexpr std::string_view base = "agps";
-    static constexpr std::string_view seg(Agps a) {
-        switch (a) {
+    static constexpr std::string_view seg(Agps agps) {
+        switch (agps) {
         case Agps::Request:
             return "request";
         case Agps::Success:
@@ -70,7 +71,7 @@ TEST_CASE("event_path composes base/seg and suppresses nested bases") {
         std::string_view expected;
     };
 
-    const Case cases[] = {
+    const std::array<Case, 5> cases = {{
         // A single level emits that enum's own base, then its leaf segment.
         {event_path(Power::Boot).str(), "power/boot"},
         {event_path(Power::BatteryLow).str(), "power/battery_low"},
@@ -79,21 +80,21 @@ TEST_CASE("event_path composes base/seg and suppresses nested bases") {
         // the inner enum's own base (`"agps"`) is suppressed, never repeated.
         {event_path(Connectivity::Agps, Agps::Request).str(), "connectivity/agps/request"},
         {event_path(Connectivity::Agps, Agps::Success).str(), "connectivity/agps/success"},
-    };
+    }};
 
-    for (const auto &c : cases) {
-        CHECK(c.actual == std::string(c.expected));
+    for (const auto &path_case : cases) {
+        CHECK(path_case.actual == std::string(path_case.expected));
     }
 }
 
 TEST_CASE("add_event: typed values round-trip as event markers") {
-    const NavFix f0{FixTime::receiver(Timestamp::from_seconds(1700000000ULL)),
-                    Angle::degrees(51.5074), Angle::degrees(-0.1278)};
-    const NavFix f1{FixTime::receiver(Timestamp::from_seconds(1700000030ULL)),
-                    Angle::degrees(51.5080), Angle::degrees(-0.1265)};
+    const NavFix first_fix{FixTime::receiver(Timestamp::from_seconds(1700000000ULL)),
+                           Angle::degrees(51.5074), Angle::degrees(-0.1278)};
+    const NavFix second_fix{FixTime::receiver(Timestamp::from_seconds(1700000030ULL)),
+                            Angle::degrees(51.5080), Angle::degrees(-0.1265)};
 
     FileBuilder builder;
-    builder.add_nav_fix(f0).add_nav_fix(f1);
+    builder.add_nav_fix(first_fix).add_nav_fix(second_fix);
     builder.add_event(Power::Boot, Timestamp::from_seconds(1700000005ULL), "cold start");
     builder.add_event(event_path(Connectivity::Agps, Agps::Request),
                       Timestamp::from_seconds(1700000010ULL));

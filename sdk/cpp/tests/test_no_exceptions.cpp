@@ -31,35 +31,35 @@ EventMarker bad_marker() {
 } // namespace
 
 TEST_CASE("builder accumulates the first error and surfaces it at try_finish") {
-    FileBuilder b;
-    b.add(one_fix());
-    b.add_event_marker(bad_marker()); // records the error, does not throw or abort
-    CHECK(b.status().is_err());
-    CHECK(b.status().code == GTD_ERR_INVALID_PATH);
+    FileBuilder builder;
+    builder.add(one_fix());
+    builder.add_event_marker(bad_marker()); // records the error, does not throw or abort
+    CHECK(builder.status().is_err());
+    CHECK(builder.status().code == GTD_ERR_INVALID_PATH);
 
-    const auto r = b.try_finish();
-    CHECK(r.is_err());
-    CHECK(r.error().code == GTD_ERR_INVALID_PATH);
+    const auto result = builder.try_finish();
+    CHECK(result.is_err());
+    CHECK(result.error().code == GTD_ERR_INVALID_PATH);
 }
 
 TEST_CASE("first error wins: a later valid call does not overwrite it") {
-    FileBuilder b;
-    b.add_event_marker(bad_marker()); // first error
-    b.add(one_fix());                 // no-op while in the error state
-    CHECK(b.status().code == GTD_ERR_INVALID_PATH);
+    FileBuilder builder;
+    builder.add_event_marker(bad_marker()); // first error
+    builder.add(one_fix());                 // no-op while in the error state
+    CHECK(builder.status().code == GTD_ERR_INVALID_PATH);
 }
 
 TEST_CASE("a valid build succeeds without exceptions") {
-    const auto r = FileBuilder{}.add(one_fix()).try_finish();
-    CHECK(r.is_ok());
-    CHECK(r.value().nav_point_count() == std::size_t{1});
+    const auto result = FileBuilder{}.add(one_fix()).try_finish();
+    CHECK(result.is_ok());
+    CHECK(result.value().nav_point_count() == std::size_t{1});
 }
 
 TEST_CASE("try_open reports an error by value, never aborting") {
-    const auto r = NavFile::try_open("/no/such/file.gtd");
-    CHECK(r.is_err());
-    CHECK(r.error().code == GTD_ERR_IO);
-    CHECK(r.get_if() == nullptr);
+    const auto result = NavFile::try_open("/no/such/file.gtd");
+    CHECK(result.is_err());
+    CHECK(result.error().code == GTD_ERR_IO);
+    CHECK(result.get_if() == nullptr);
 }
 using geotrace::ChannelUnit;
 
