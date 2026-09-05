@@ -35,6 +35,7 @@ use gt_ui_types::LoadedLogId;
 use crate::app::auto_prune::{self, AutoPruneOutcome};
 use crate::app::background_thread;
 use crate::app::loader::stored_segmentation_from_config;
+use crate::app::recording_from_disk::{self, RecordingFromDisk, ScreenedRecordings};
 
 /// Why recordings are being deleted - selects the completion toast.
 #[derive(Clone, Copy)]
@@ -113,6 +114,8 @@ enum ReadRequest {
         attachment: LogAttachmentRef,
         name: String,
     },
+    /// Look each of the recordings that arrived from disk up in the database.
+    ScreenRecordingsFromDisk(Vec<RecordingFromDisk>),
     /// Whether a recording already holds this exact log.
     FindDuplicateAttachment {
         db_ref: DatabaseRef,
@@ -273,6 +276,9 @@ pub enum Response {
         name: String,
         result: Result<(), LogAttachmentError>,
     },
+    /// Which of the recordings that arrived from disk the database already
+    /// holds.
+    RecordingsFromDiskScreened(ScreenedRecordings),
     /// What `recording` already holds the dialog's log as, if anything.
     DuplicateAttachmentFound {
         log: LoadedLogId,
@@ -488,6 +494,12 @@ impl HistoryWorker {
         });
     }
 
+    /// Look each of `recordings` up in the database, which comes back as a
+    /// [`Response::RecordingsFromDiskScreened`].
+    pub fn screen_recordings_from_disk(&self, recordings: Vec<RecordingFromDisk>) {
+        self.send_read(ReadRequest::ScreenRecordingsFromDisk(recordings));
+    }
+
     pub fn find_duplicate_attachment(&self, db_ref: DatabaseRef, log: LoadedLogId, text: Arc<str>) {
         self.send_read(ReadRequest::FindDuplicateAttachment { db_ref, log, text });
     }
@@ -635,6 +647,9 @@ fn handle_read_request(db: &ReadOnlyRecordings, req: ReadRequest) -> Response {
                 log,
             }
         }
+        ReadRequest::ScreenRecordingsFromDisk(recordings) => Response::RecordingsFromDiskScreened(
+            recording_from_disk::screen_against_history(db, recordings),
+        ),
         ReadRequest::FindDuplicateAttachment { db_ref, log, text } => {
             let existing = db
                 .log_attachment_with_content(&db_ref, LogContentHash::of_log_bytes(text.as_bytes()))

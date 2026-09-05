@@ -15,7 +15,6 @@ use gt_map::MapLayer;
 use gt_query_run::RunInputs;
 use gt_side_panel::{PanelContext, SnapCostingTarget, SnapPanelView, show_side_panel};
 use gt_store::DatabaseRef;
-use gt_track_builder::SegmentationConfig;
 use gt_types::{DataCategory, FileIdx, LoadedFile, TrackIdx, TrackRef};
 use gt_ui_types::{
     ArcIdentity, ContextLines, DataPointRef, GeomagneticSeries, HighlightScope, JammingSeries,
@@ -25,9 +24,7 @@ use rustc_hash::FxHashMap;
 
 use super::context_line::ContextSpan;
 use super::fix_positions::FixPositionTimeline;
-use super::loader::{
-    CompletedLoad, FINISHED_JOB_EXPIRE_SECS, FINISHED_JOB_FADE_START_SECS, LoadJobs,
-};
+use super::loader::{CompletedLoad, FINISHED_JOB_EXPIRE_SECS, FINISHED_JOB_FADE_START_SECS};
 use super::log_viewer::{self, LogViewerContext};
 use super::modals::{
     SnapAutoChoice, SnapConsentChoice, SnapReplaceChoice, SnapScopeChoice, show_about_dialog,
@@ -117,6 +114,7 @@ impl eframe::App for App {
         self.show_history_window(ui);
         self.show_history_failure_prompt(ui);
         self.show_resegment_prompt(ui);
+        self.show_recordings_already_in_history_prompt(ui);
         self.show_auto_prune_prompt(ui);
         self.show_environment_prune_prompt(ui);
         self.show_log_association_dialog(ui);
@@ -186,23 +184,32 @@ impl App {
     fn load_files_from_dialog_drops_and_paste(&mut self, ui: &egui::Ui) {
         // Consume a pending file-picker result and dispatch the chosen path.
         if let Some(path) = self.loader.drain_file_dialog() {
-            self.spawn_load_path(path);
+            self.load_arriving_files(vec![QueuedLoad::Path(path)]);
         }
 
+        // The recordings history already holds raise one prompt between them:
+        // the whole drop goes in as one batch.
         let dropped = ui.ctx().input(|i| i.raw.dropped_files.clone());
+        let mut arriving = Vec::new();
         for file in dropped {
             let path = file.path();
             // Native drops carry an absolute path, web drops only a relative
             // file name plus bytes read through the handle.
             if path.is_absolute() {
-                self.spawn_load_path(path.to_path_buf());
+                arriving.push(QueuedLoad::Path(path.to_path_buf()));
             } else if let Ok(bytes) = file.bytes() {
                 let name = path.file_name().map_or_else(
                     || "dropped file".to_owned(),
                     |n| n.to_string_lossy().into_owned(),
                 );
-                self.handle_dropped_bytes(bytes.into(), &name);
+                arriving.push(QueuedLoad::Bytes {
+                    bytes: bytes.into(),
+                    name,
+                });
             }
+        }
+        if !arriving.is_empty() {
+            self.load_arriving_files(arriving);
         }
 
         self.load_pasted_log_text(ui.ctx());
@@ -230,15 +237,13 @@ impl App {
             });
             pasted
         });
-        for text in pasted {
-            if text.is_empty() {
-                continue;
-            }
-            if let Some(queued_loads) = self.storage_open.queued_loads_mut() {
-                queued_loads.push(QueuedLoad::PastedText(text));
-                continue;
-            }
-            self.loader.spawn_pasted_log_text(text);
+        let arriving: Vec<QueuedLoad> = pasted
+            .into_iter()
+            .filter(|text| !text.is_empty())
+            .map(QueuedLoad::PastedText)
+            .collect();
+        if !arriving.is_empty() {
+            self.load_arriving_files(arriving);
         }
     }
 
@@ -1188,44 +1193,6 @@ impl App {
             self.on_track_indices_changed();
             self.apply_shelve_outcome(&outcome);
         }
-    }
-
-    /// Load a drop or a paste, once the databases it is stored in and
-    /// resolved against are open.
-    pub(in crate::app) fn handle_dropped_bytes(&mut self, bytes: Arc<[u8]>, name: &str) {
-        if let Some(queued_loads) = self.storage_open.queued_loads_mut() {
-            queued_loads.push(QueuedLoad::Bytes {
-                bytes,
-                name: name.to_owned(),
-            });
-            return;
-        }
-        handle_dropped_bytes_dispatch(&mut self.loader, bytes, name, self.processing_config);
-    }
-}
-
-/// Sends dropped bytes to the recording loader or the log parser, deciding by
-/// content: bytes starting with the HDF5 magic go to the loader, everything
-/// else to the log parser, lossily decoded where it is not UTF-8.
-fn handle_dropped_bytes_dispatch(
-    loader: &mut LoadJobs,
-    bytes: Arc<[u8]>,
-    name: &str,
-    config: SegmentationConfig,
-) {
-    const HDF5_MAGIC: &[u8] = b"\x89HDF\r\n\x1a\n";
-    if bytes.starts_with(HDF5_MAGIC) {
-        let filename = if name.is_empty() {
-            "dropped.gtd".to_owned()
-        } else {
-            name.to_owned()
-        };
-        loader.spawn_gtd_bytes(bytes, filename, config);
-    } else {
-        // The log takes its name from its first entry when the drop carries
-        // no file name, as pasted text does.
-        let filename = (!name.is_empty()).then(|| name.to_owned());
-        loader.spawn_log_bytes(bytes, filename);
     }
 }
 

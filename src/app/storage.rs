@@ -628,13 +628,7 @@ impl App {
         );
         self.adopt_open_storage(storage);
         self.auto_prune_environment_days();
-        for load in queued_loads {
-            match load {
-                QueuedLoad::Path(path) => self.spawn_load_path(path),
-                QueuedLoad::Bytes { bytes, name } => self.handle_dropped_bytes(bytes, &name),
-                QueuedLoad::PastedText(text) => self.loader.spawn_pasted_log_text(text),
-            }
-        }
+        self.load_arriving_files(queued_loads);
     }
 }
 

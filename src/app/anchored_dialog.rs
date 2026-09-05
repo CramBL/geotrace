@@ -40,6 +40,7 @@ pub(super) enum AnchoredDialogKind {
     HistoryDatabaseInUse,
     HistoryDatabaseLocked,
     MapboxToken,
+    RecordingsAlreadyInHistory,
     RecoverArchive,
     ShelveItems,
     SnapToRoadAgain,
@@ -90,6 +91,9 @@ impl AnchoredDialogKind {
             Self::HistoryDatabaseLocked => 460.0,
             // Room for the token field between its label and the Apply button.
             Self::MapboxToken => 420.0,
+            // Room for a recording's file name on one line, and for each
+            // sentence about the two versions of it on two lines.
+            Self::RecordingsAlreadyInHistory => 460.0,
             // Room for the sentence about the interrupted delete, and for
             // the one stating when write access was taken, on two lines each.
             Self::RecoverArchive => 460.0,

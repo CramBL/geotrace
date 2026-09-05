@@ -31,6 +31,9 @@ pub(super) const STAGE_READING: &str = "Reading…";
 pub(super) const STAGE_PARSING: &str = "Parsing…";
 pub(super) const STAGE_PLOTTING: &str = "Building plot data…";
 
+/// Where [`STAGE_PLOTTING`] starts on a load job's progress bar.
+const PLOTTING_FRACTION: f32 = 0.95;
+
 /// State for a single in-flight background load job, shown in the progress UI.
 pub struct LoadingJob {
     pub id: u64,
@@ -132,7 +135,8 @@ pub(super) struct CompletedLoad {
     pub outcome: Result<LoadOutcome, String>,
 }
 
-/// What to do, beyond a plain load, with a recording opened from history.
+/// What a load thread does with the recording the history database holds for
+/// the file it loads, beyond storing that file.
 pub(super) enum HistoryOpen {
     /// Apply the recording's stored track table to the loaded view: number each
     /// track by the stored row from which it was reproduced, and leave the
@@ -223,7 +227,14 @@ impl LoadJobs {
         self.ctx.input(|input| input.time)
     }
 
-    pub fn spawn_gtd_path(&mut self, path: PathBuf, config: SegmentationConfig) {
+    /// Load a `.gtd` from a path, applying `open` to what the history database
+    /// holds for it once it is parsed.
+    pub fn spawn_gtd_path(
+        &mut self,
+        path: PathBuf,
+        config: SegmentationConfig,
+        open: Option<HistoryOpen>,
+    ) {
         let id = self.alloc_id();
         let started_at = self.frame_time();
         let filename = path
@@ -261,15 +272,6 @@ impl LoadJobs {
             };
             let outcome = gt_loader::load_gtd_file_with_progress(&path, report, &config)
                 .map(|loaded| {
-                    let file = loaded.file;
-                    tx.send(LoadMessage::Progress {
-                        id,
-                        fraction: 0.95,
-                        stage: STAGE_PLOTTING,
-                    })
-                    .ok();
-                    ctx.request_repaint();
-                    let series = gt_plot::prepare_file_series(&file, analysis);
                     // Read the bytes once for both the content fingerprint
                     // and the optional history insert.
                     let bytes = match std::fs::read(&path) {
@@ -282,35 +284,25 @@ impl LoadJobs {
                             None
                         }
                     };
-                    let meta = match bytes.as_deref().map(gt_store::extract_meta) {
-                        Some(Ok(meta)) => Some(meta),
-                        Some(Err(e)) => {
-                            log::warn!("Could not extract history metadata from '{log_name}': {e}");
-                            None
-                        }
-                        None => None,
-                    };
-                    log::debug!("Parsed '{log_name}': {} track(s)", file.tracks.len());
-                    let db_ref = HistoryInsert {
+                    ParsedRecording {
+                        loaded,
                         db_path: db_path.as_deref(),
-                        file: &file,
-                        identity: &loaded.identity,
-                        meta: meta.as_ref(),
-                        config: &config,
                         bytes: bytes.as_deref(),
+                        config: &config,
                         filename: &log_name,
                         pending_writes: &pending_writes,
+                        open,
+                        analysis,
                     }
-                    .store();
-                    let history = meta.map_or(FileHistory::None, |meta| {
-                        FileHistory::recording(loaded.identity, meta, db_ref)
-                    });
-                    LoadOutcome::GtdFile {
-                        file,
-                        series,
-                        history,
-                        applied_current_marker_settings: false,
-                    }
+                    .into_outcome(|| {
+                        tx.send(LoadMessage::Progress {
+                            id,
+                            fraction: PLOTTING_FRACTION,
+                            stage: STAGE_PLOTTING,
+                        })
+                        .ok();
+                        ctx.request_repaint();
+                    })
                 })
                 .map_err(|e| e.to_string());
             tx.send(LoadMessage::Completed { id, outcome }).ok();
@@ -318,29 +310,10 @@ impl LoadJobs {
         });
     }
 
+    /// Load a `.gtd` from the bytes a drop carried or the history database
+    /// reconstructed, applying `open` to what the database holds for it once it
+    /// is parsed.
     pub fn spawn_gtd_bytes(
-        &mut self,
-        bytes: Arc<[u8]>,
-        filename: String,
-        config: SegmentationConfig,
-    ) {
-        self.spawn_bytes_job(bytes, filename, config, None);
-    }
-
-    /// Load a recording opened from the history database, applying the chosen
-    /// open behaviour (leave the recording's shelved tracks out, or recalculate
-    /// and overwrite its stored track table) once it is parsed.
-    pub fn spawn_gtd_from_history(
-        &mut self,
-        bytes: Arc<[u8]>,
-        filename: String,
-        config: SegmentationConfig,
-        open: HistoryOpen,
-    ) {
-        self.spawn_bytes_job(bytes, filename, config, Some(open));
-    }
-
-    fn spawn_bytes_job(
         &mut self,
         bytes: Arc<[u8]>,
         filename: String,
@@ -380,80 +353,25 @@ impl LoadJobs {
             let outcome =
                 gt_loader::load_gtd_bytes_with_progress(&bytes, filename, report, &config)
                     .map(|loaded| {
-                        let mut file = loaded.file;
-                        let applied_current_marker_settings = open
-                            .as_ref()
-                            .is_some_and(HistoryOpen::applied_current_marker_settings);
-                        let meta = match gt_store::extract_meta(&bytes) {
-                            Ok(meta) => Some(meta),
-                            Err(e) => {
-                                log::warn!(
-                                    "Could not extract history metadata from '{log_name}': {e}"
-                                );
-                                None
-                            }
-                        };
-                        log::debug!("Parsed '{log_name}': {} track(s)", file.tracks.len());
-                        // Store first (de-duplicates against the existing
-                        // recording, keeping its stored track table) while the
-                        // freshly segmented tracks are still in stored order.
-                        let db_ref = HistoryInsert {
+                        ParsedRecording {
+                            loaded,
                             db_path: db_path.as_deref(),
-                            file: &file,
-                            identity: &loaded.identity,
-                            meta: meta.as_ref(),
-                            config: &config,
                             bytes: Some(&bytes),
+                            config: &config,
                             filename: &log_name,
                             pending_writes: &pending_writes,
+                            open,
+                            analysis,
                         }
-                        .store();
-                        let open_db_ref = open.as_ref().map(HistoryOpen::db_ref).cloned();
-                        let history_db_ref = db_ref.or(open_db_ref);
-                        let mut shelved_tracks = 0;
-                        match &open {
-                            Some(HistoryOpen::Recalculate { db_ref, .. }) => {
-                                if let Some(path) = db_path.as_deref() {
-                                    recalculate_stored_tracks(
-                                        path,
-                                        db_ref,
-                                        &file,
-                                        &config,
-                                        &log_name,
-                                        &pending_writes,
-                                    );
-                                }
-                            }
-                            Some(HistoryOpen::ApplyShelved { stored_tracks, .. }) => {
-                                shelved_tracks = apply_stored_track_table(&mut file, stored_tracks);
-                            }
-                            None => {}
-                        }
-                        // Build the plot series after any shelved track is
-                        // dropped, so the series matches the tracks the view
-                        // holds.
-                        tx.send(LoadMessage::Progress {
-                            id,
-                            fraction: 0.95,
-                            stage: STAGE_PLOTTING,
+                        .into_outcome(|| {
+                            tx.send(LoadMessage::Progress {
+                                id,
+                                fraction: PLOTTING_FRACTION,
+                                stage: STAGE_PLOTTING,
+                            })
+                            .ok();
+                            ctx.request_repaint();
                         })
-                        .ok();
-                        ctx.request_repaint();
-                        let series = gt_plot::prepare_file_series(&file, analysis);
-                        let history = meta.map_or(FileHistory::None, |meta| {
-                            FileHistory::recording_with_shelved_tracks(
-                                loaded.identity,
-                                meta,
-                                history_db_ref,
-                                shelved_tracks,
-                            )
-                        });
-                        LoadOutcome::GtdFile {
-                            file,
-                            series,
-                            history,
-                            applied_current_marker_settings,
-                        }
                     })
                     .map_err(|e| e.to_string());
             tx.send(LoadMessage::Completed { id, outcome }).ok();
@@ -929,6 +847,106 @@ fn recalculate_stored_tracks(
     }
 }
 
+/// One parsed recording on its load thread, with everything the thread needs
+/// to file it in the recording history.
+struct ParsedRecording<'a> {
+    loaded: gt_loader::LoadedGtd,
+    /// `None` when storage is unavailable: nothing is stored then.
+    db_path: Option<&'a std::path::Path>,
+    /// The `.gtd` bytes as they were read, `None` where the load thread could
+    /// not read them.
+    bytes: Option<&'a [u8]>,
+    config: &'a SegmentationConfig,
+    filename: &'a str,
+    pending_writes: &'a PendingWrites,
+    open: Option<HistoryOpen>,
+    analysis: AnalysisConfig,
+}
+
+impl ParsedRecording<'_> {
+    /// Store the recording in history, apply [`HistoryOpen`] to the stored
+    /// track table, and build the plot series over the tracks that stay.
+    ///
+    /// `report_plotting` runs once those tracks are settled, before the series
+    /// is built.
+    fn into_outcome(self, report_plotting: impl FnOnce()) -> LoadOutcome {
+        let Self {
+            loaded,
+            db_path,
+            bytes,
+            config,
+            filename,
+            pending_writes,
+            open,
+            analysis,
+        } = self;
+        let mut file = loaded.file;
+        let meta = match bytes.map(gt_store::extract_meta) {
+            Some(Ok(meta)) => Some(meta),
+            Some(Err(e)) => {
+                log::warn!("Could not extract history metadata from '{filename}': {e}");
+                None
+            }
+            None => None,
+        };
+        log::debug!("Parsed '{filename}': {} track(s)", file.tracks.len());
+        // Store first (de-duplicates against the existing recording, keeping
+        // its stored track table) while the freshly segmented tracks are still
+        // in stored order.
+        let stored_db_ref = HistoryInsert {
+            db_path,
+            file: &file,
+            identity: &loaded.identity,
+            meta: meta.as_ref(),
+            config,
+            bytes,
+            filename,
+            pending_writes,
+        }
+        .store();
+        let db_ref = stored_db_ref.or_else(|| open.as_ref().map(HistoryOpen::db_ref).cloned());
+        let mut shelved_tracks = 0;
+        match &open {
+            Some(HistoryOpen::Recalculate { db_ref, .. }) => {
+                if let Some(path) = db_path {
+                    recalculate_stored_tracks(
+                        path,
+                        db_ref,
+                        &file,
+                        config,
+                        filename,
+                        pending_writes,
+                    );
+                }
+            }
+            Some(HistoryOpen::ApplyShelved { stored_tracks, .. }) => {
+                shelved_tracks = apply_stored_track_table(&mut file, stored_tracks);
+            }
+            None => {}
+        }
+        // Build the plot series after any shelved track is dropped, so the
+        // series matches the tracks the view holds.
+        report_plotting();
+        let series = gt_plot::prepare_file_series(&file, analysis);
+        let history = meta.map_or(FileHistory::None, |meta| {
+            FileHistory::recording_with_shelved_tracks(
+                loaded.identity,
+                meta,
+                db_ref,
+                shelved_tracks,
+            )
+        });
+        LoadOutcome::GtdFile {
+            file,
+            series,
+            history,
+            applied_current_marker_settings: open
+                .as_ref()
+                .is_some_and(HistoryOpen::applied_current_marker_settings),
+        }
+    }
+}
+
 /// One freshly loaded recording, and where it is to be stored.
 struct HistoryInsert<'a> {
     /// `None` when storage is unavailable: nothing is stored then.
@@ -1329,7 +1347,7 @@ mod tests {
 
         let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
         jobs.db_path = Some(db_path.clone());
-        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default());
+        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default(), None);
 
         let completed = drain_until_complete(&mut jobs);
         let outcome = completed.outcome.expect("load should succeed");
@@ -1359,7 +1377,7 @@ mod tests {
 
         let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
         jobs.db_path = None;
-        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default());
+        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default(), None);
 
         let completed = drain_until_complete(&mut jobs);
         let outcome = completed.outcome.expect("load should succeed");
@@ -1384,7 +1402,7 @@ mod tests {
 
         let mut jobs = LoadJobs::new(egui::Context::default(), pending_writes);
         jobs.db_path = Some(db_path.clone());
-        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default());
+        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default(), None);
 
         let completed = drain_until_complete(&mut jobs);
         let outcome = completed.outcome.expect("load should succeed");
@@ -1404,7 +1422,7 @@ mod tests {
         let db_path = dir.join("history.h5");
         let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
         jobs.db_path = Some(db_path.clone());
-        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default());
+        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default(), None);
 
         let completed = drain_until_complete(&mut jobs);
         let LoadOutcome::GtdFile { file, history, .. } =
@@ -1616,7 +1634,7 @@ mod tests {
 
         let mut jobs = LoadJobs::new(egui::Context::default(), PendingWrites::default());
         jobs.db_path = Some(db_path.clone());
-        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default());
+        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default(), None);
         let completed = drain_until_complete(&mut jobs);
         let LoadOutcome::GtdFile { history, .. } = completed.outcome.expect("load should succeed")
         else {
