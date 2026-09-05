@@ -22,7 +22,7 @@ use crate::sat_labels::{self, LabelSelection};
 use crate::sky_glyph_renderer::{self, GlyphSelection};
 use crate::tpv_renderer::{
     self, ChevronFix, QUALITY_LINE_WIDTH, TpvDrawStyle, TrackIconFade, bucket_alpha,
-    fix_icon_alpha, line_alpha_bucket, quality_line_color, split_spans_by,
+    fix_icon_alpha, line_alpha_bucket, quality_line_color,
 };
 use crate::track_renderer::{
     self, blink_stroke, draw_track_with_ghost, skip_trackline, track_stroke,
@@ -758,13 +758,16 @@ fn paint_quality_path(ui: &Ui, path: &VisiblePath<LinePointKey>) {
                 // run by fix quality as before.
                 for run in shown_runs(span) {
                     for ((quality, bucket), sub_span) in
-                        split_spans_by(run, |key| (key.quality, key.bucket))
+                        tpv_renderer::sub_span_ranges(run, |key| (key.quality, key.bucket))
                     {
                         if bucket == 0 {
                             continue;
                         }
+                        let Some(sub_span_points) = run.get(sub_span) else {
+                            continue;
+                        };
                         painter.add(egui::Shape::line(
-                            sub_span,
+                            sub_span_points.iter().map(|&(_, pos)| pos).collect(),
                             Stroke::new(
                                 QUALITY_LINE_WIDTH,
                                 quality.gamma_multiply(bucket_alpha(bucket)),

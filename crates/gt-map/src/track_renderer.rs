@@ -1,3 +1,5 @@
+use std::ops::RangeInclusive;
+
 use egui::{Color32, Stroke};
 use gt_types::{DataCategory, FileIdx, TrackIdx, TrackRef};
 use gt_ui_theme::{HIGHLIGHT_BLUE, track_color};
@@ -163,10 +165,19 @@ pub(crate) fn draw_track_with_ghost<K: Copy>(
         return;
     }
 
-    let mut solid_span: Vec<egui::Pos2> = Vec::new();
+    let paint_solid_run = |run: RangeInclusive<usize>| {
+        if let Some(run_points) = pts.get(run) {
+            painter.add(egui::Shape::line(
+                run_points.iter().map(|&(_, pos)| pos).collect(),
+                stroke,
+            ));
+        }
+    };
+
+    let mut solid_run: Option<RangeInclusive<usize>> = None;
     let mut ghost_span: Vec<egui::Pos2> = Vec::new();
 
-    for w in pts.windows(2) {
+    for (edge, w) in pts.windows(2).enumerate() {
         let [(key_a, pos_a), (key_b, pos_b)] = w else {
             continue;
         };
@@ -174,10 +185,8 @@ pub(crate) fn draw_track_with_ghost<K: Copy>(
         let edge_is_ghost = is_ghost(*key_a) || is_ghost(*key_b);
 
         if edge_is_ghost {
-            if solid_span.len() >= 2 {
-                painter.add(egui::Shape::line(std::mem::take(&mut solid_span), stroke));
-            } else {
-                solid_span.clear();
+            if let Some(run) = solid_run.take() {
+                paint_solid_run(run);
             }
             if ghost_span.is_empty() {
                 ghost_span.push(pos_a);
@@ -188,15 +197,13 @@ pub(crate) fn draw_track_with_ghost<K: Copy>(
                 draw_dashed_line(painter, &ghost_span, stroke, GHOST_FIX_DASH);
             }
             ghost_span.clear();
-            if solid_span.is_empty() {
-                solid_span.push(pos_a);
-            }
-            solid_span.push(pos_b);
+            let run_start = solid_run.as_ref().map_or(edge, |run| *run.start());
+            solid_run = Some(run_start..=edge + 1);
         }
     }
 
-    if solid_span.len() >= 2 {
-        painter.add(egui::Shape::line(solid_span, stroke));
+    if let Some(run) = solid_run {
+        paint_solid_run(run);
     }
     if ghost_span.len() >= 2 {
         draw_dashed_line(painter, &ghost_span, stroke, GHOST_FIX_DASH);

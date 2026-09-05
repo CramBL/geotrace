@@ -1,3 +1,6 @@
+use std::iter;
+use std::ops::RangeInclusive;
+
 use egui::epaint::{PathShape, PathStroke};
 use egui::{Color32, Pos2, Stroke, Ui, Vec2};
 use egui::{Grid, RichText, ScrollArea};
@@ -1355,29 +1358,33 @@ pub(crate) fn quality_line_color(point: &NavPoint) -> Color32 {
     }
 }
 
-/// Split a key-styled polyline span into maximal sub-spans whose points
-/// share the same projected key.
+/// The index range of every sub-span of a key-styled polyline span: one
+/// range per maximal run of points with the same projected key. The caller
+/// builds each shape from `span[range]` in one exact-size allocation.
 ///
-/// Each edge takes the key of its starting point, so e.g. a stretch of
-/// marginal fixes shows as one yellow segment up to the first good fix.
-/// Boundary points are shared between adjacent sub-spans to keep the line
-/// continuous.
-pub(crate) fn split_spans_by<K: Copy, P: Copy + PartialEq>(
+/// A stretch of marginal fixes shows as one yellow segment up to the first
+/// good fix: each edge takes the key of its starting point. Two adjacent
+/// shapes share their boundary point and the line stays continuous: a run's
+/// last index is the next run's first index.
+pub(crate) fn sub_span_ranges<K: Copy, P: PartialEq>(
     span: &[(K, Pos2)],
     project: impl Fn(K) -> P,
-) -> Vec<(P, Vec<Pos2>)> {
-    let mut out: Vec<(P, Vec<Pos2>)> = Vec::new();
-    for w in span.windows(2) {
-        let [(key, pos_a), (_, pos_b)] = w else {
-            continue;
-        };
-        let key = project(*key);
-        match out.last_mut() {
-            Some((k, pts)) if *k == key => pts.push(*pos_b),
-            _ => out.push((key, vec![*pos_a, *pos_b])),
+) -> impl Iterator<Item = (P, RangeInclusive<usize>)> {
+    let mut start = 0_usize;
+    iter::from_fn(move || {
+        let (key, _) = *span.get(start)?;
+        let key = project(key);
+        let mut end = start + 1;
+        while end + 1 < span.len() && span.get(end).is_some_and(|&(next, _)| project(next) == key) {
+            end += 1;
         }
-    }
-    out
+        if end >= span.len() {
+            return None;
+        }
+        let range = start..=end;
+        start = end;
+        Some((key, range))
+    })
 }
 
 /// Renders the two visual layers for a single on-screen GPS point: the
