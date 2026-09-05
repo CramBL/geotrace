@@ -7,7 +7,9 @@ use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_phosphor::regular::CARET_UP as ICON_CARET_UP;
 use egui_phosphor::regular::X as ICON_X;
 use gt_pending_writes::WriteAccess;
-use gt_store::{DatabaseRef, NavPointTimeRange, PruneMode, RecordingEntry, RecordingMeta};
+use gt_store::{
+    DatabaseRef, DbError, NavPointTimeRange, PruneMode, RecordingEntry, RecordingMeta, TrackRange,
+};
 use gt_types::TravelMode;
 use gt_ui_theme::labels::LabelWithHover;
 use gt_ui_theme::warning_amber;
@@ -459,6 +461,8 @@ pub struct HistoryWindow {
     list_pending: bool,
     /// In-progress inline identity rename, if any.
     rename: Option<RenameEdit>,
+    /// The recording whose shelf is open in the listing, if any.
+    shelf: Option<OpenShelf>,
     /// Which column the list is ordered by, and which way.
     sort: HistorySort,
     /// Height the separator and the stats footer took below the listing on the
@@ -487,6 +491,27 @@ pub struct HistoryWindowFrame<'a> {
     pub write_access: WriteAccess,
 }
 
+/// The recording whose shelved tracks the listing shows under its row, and the
+/// stored track table the worker read for it.
+pub(super) struct OpenShelf {
+    pub(super) recording: DatabaseRef,
+    pub(super) tracks: ShelfTracks,
+}
+
+/// How far the open shelf has got in reading its recording's stored track
+/// table.
+pub(super) enum ShelfTracks {
+    /// Where a freshly opened shelf starts, and where a mutation puts one that
+    /// had already read its table.
+    Unrequested,
+    /// Set once the listing sends the read request, until the worker's reply
+    /// arrives.
+    Requested,
+    /// [`gt_store::ReadOnlyHistoryDatabase::stored_track_table`]'s result
+    /// verbatim.
+    Read(Vec<TrackRange>),
+}
+
 /// State for the inline identity-rename editor on one History row.
 struct RenameEdit {
     /// The current (old) identity of the row being edited - identifies the row.
@@ -510,6 +535,7 @@ impl HistoryWindow {
             delete_shelved_prompt: DeleteShelvedTracksPrompt::default(),
             list_pending: false,
             rename: None,
+            shelf: None,
             sort: HistorySort::default(),
             footer_height_last_frame: None,
         }
@@ -549,16 +575,59 @@ impl HistoryWindow {
     }
 
     /// Call after a mutation to force a list refresh next time the window shows.
+    ///
+    /// An open shelf drops the track table it was showing and the listing reads
+    /// it again, with the states the mutation wrote.
     pub fn invalidate(&mut self) {
         self.entries = None;
         self.list_pending = false;
+        if let Some(shelf) = &mut self.shelf {
+            shelf.tracks = ShelfTracks::Unrequested;
+        }
     }
 
     /// Apply a recording list that arrived from the worker.
+    ///
+    /// An open shelf closes when its recording no longer has a shelved track to
+    /// list: the recording was deleted, its identity renamed, or its last
+    /// shelved track unshelved.
     pub fn set_entries(&mut self, entries: Vec<RecordingEntry>) {
+        if let Some(shelf) = &self.shelf
+            && !entries
+                .iter()
+                .any(|e| e.db_ref == shelf.recording && e.shelved_tracks > 0)
+        {
+            self.shelf = None;
+        }
         self.entries = Some(entries);
         self.list_pending = false;
         self.error = None;
+    }
+
+    /// Apply a stored track table that arrived from the worker.
+    ///
+    /// The shelf takes the table only for the recording it is open on: a reply
+    /// for another recording arrives after the user moved the shelf, and the
+    /// open shelf keeps the table it has. A failed read closes the shelf and
+    /// reports the failure above the listing.
+    pub fn set_shelf_track_table(
+        &mut self,
+        db_ref: &DatabaseRef,
+        tracks: Result<Vec<TrackRange>, DbError>,
+    ) {
+        let Some(shelf) = &mut self.shelf else {
+            return;
+        };
+        if shelf.recording != *db_ref {
+            return;
+        }
+        match tracks {
+            Ok(tracks) => shelf.tracks = ShelfTracks::Read(tracks),
+            Err(e) => {
+                self.shelf = None;
+                self.error = Some(format!("Failed to read the recording's tracks: {e}"));
+            }
+        }
     }
 
     /// Record an error from a failed list request.
@@ -615,9 +684,11 @@ impl HistoryWindow {
             open = false;
         }
 
-        // Take the inline-rename state out so `render_row` can mutate it while
-        // `self.entries` is borrowed immutably for the list. Restored after.
+        // Take the inline-rename state and the open shelf out so `render_row`
+        // can mutate them while `self.entries` is borrowed immutably for the
+        // list. Restored after.
         let mut rename = std::mem::take(&mut self.rename);
+        let mut shelf = std::mem::take(&mut self.shelf);
         let mut footer_height = self.footer_height_last_frame;
 
         Window::new("History")
@@ -746,6 +817,7 @@ impl HistoryWindow {
                                 loaded_metas,
                                 worker,
                                 rename: &mut rename,
+                                shelf: &mut shelf,
                                 sort: &mut self.sort,
                                 write_access,
                             },
@@ -786,6 +858,7 @@ impl HistoryWindow {
             });
 
         self.rename = rename;
+        self.shelf = shelf;
         self.footer_height_last_frame = footer_height;
 
         if self

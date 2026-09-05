@@ -80,6 +80,12 @@ impl ReadOnlyHistoryDatabase for ReadOnlyPureDb {
         copy::load_recording(&self.path, &db_ref.identity, &db_ref.group_name).map_err(Into::into)
     }
 
+    fn stored_track_table(&self, db_ref: &DatabaseRef) -> Result<Vec<TrackRange>, DbError> {
+        let _guard = DB_LOCK.lock();
+        copy::stored_track_table_of_recording(&self.path, &db_ref.identity, &db_ref.group_name)
+            .map_err(Into::into)
+    }
+
     fn snap_blob(&self, db_ref: &DatabaseRef) -> Result<Option<Vec<u8>>, DbError> {
         let _guard = DB_LOCK.lock();
         copy::snap_blob(&self.path, &db_ref.identity, &db_ref.group_name).map_err(Into::into)
@@ -189,6 +195,10 @@ impl ReadOnlyHistoryDatabase for PureDb {
 
     fn load(&self, db_ref: &DatabaseRef) -> Result<StoredRecording, DbError> {
         self.read_only.load(db_ref)
+    }
+
+    fn stored_track_table(&self, db_ref: &DatabaseRef) -> Result<Vec<TrackRange>, DbError> {
+        self.read_only.stored_track_table(db_ref)
     }
 
     fn snap_blob(&self, db_ref: &DatabaseRef) -> Result<Option<Vec<u8>>, DbError> {

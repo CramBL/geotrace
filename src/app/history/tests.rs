@@ -14,15 +14,20 @@ use crate::app::history_db::Response;
 use crate::app::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use crate::app::storage_controls::AUTO_STORE_LABEL;
 
+use egui_phosphor::regular::CARET_RIGHT as ICON_CARET_RIGHT;
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use egui_phosphor::regular::PAPERCLIP as ICON_PAPERCLIP;
-use gt_store::ChannelSummary;
+use gt_store::{
+    ChannelSummary, StoredFixPlacementRule, StoredSegmentation, StoredTrackSplitRule, TrackRange,
+    TrackState,
+};
 use gt_ui_theme::EM_DASH;
 
 use super::delete_shelved_prompt::DELETE_SHELVED_WINDOW_TITLE;
 use super::table::{
-    MAX_HOVER_CHANNELS, OPEN_LOG_LABEL, breakdown_cell_id, channel_title, data_breakdown_ui,
-    duration_text, started_at_text, time_range_text, track_count_text,
+    MAX_HOVER_CHANNELS, OPEN_LOG_LABEL, UNSHELVE_ALL_LABEL, UNSHELVE_LABEL, breakdown_cell_id,
+    channel_title, data_breakdown_ui, duration_text, started_at_text, time_range_text,
+    track_count_text,
 };
 use super::{
     DEFAULT_WINDOW_HEIGHT_PX, DatabaseRef, HistorySort, HistoryWindow, HistoryWorker,
@@ -94,7 +99,7 @@ fn show_history(ui: &mut egui::Ui, s: &mut HistoryHarness) {
 /// attached to it, and no pre-seeded entries - the list arrives from the worker
 /// (see [`pump_history`]).
 fn history_harness_with_recording(identity: &str, stored_logs: &[&str]) -> HistoryHarness {
-    use gt_store::{LogAttachments as _, LogToAttach, StoredSegmentation, TrackRange, TrackState};
+    use gt_store::{LogAttachments as _, LogToAttach};
 
     let dir = tempfile::tempdir().expect("temp dir");
     let mut db =
@@ -106,15 +111,8 @@ fn history_harness_with_recording(identity: &str, stored_logs: &[&str]) -> Histo
         end: meta.nav_point_count,
         state: TrackState::Live,
     }];
-    let settings = StoredSegmentation {
-        track_split_gap_us: 300_000_000,
-        track_split_rule: gt_store::StoredTrackSplitRule::StepInEitherDirection,
-        fix_placement_rule: gt_store::StoredFixPlacementRule::MissingHeadingAndNothingInFix,
-        detect_clock_discontinuities: true,
-        clock_discontinuity_sigmas: 5.0,
-    };
     let db_ref = db
-        .insert(identity, &meta, &tracks, settings, bytes)
+        .insert(identity, &meta, &tracks, stored_segmentation(), bytes)
         .expect("insert recording");
     for name in stored_logs {
         db.attach_log(
@@ -164,6 +162,9 @@ fn pump_history(ui: &mut egui::Ui, s: &mut HistoryHarness) {
             Response::Listed(Ok(entries)) => s.window.set_entries(entries),
             Response::Mutated { result: Ok(()), .. } => s.window.invalidate(),
             Response::AttachedLogLoaded { log: Ok(log), .. } => s.opened_log = Some(log),
+            Response::StoredTrackTableLoaded { db_ref, tracks } => {
+                s.window.set_shelf_track_table(&db_ref, tracks);
+            }
             _ => {}
         }
     }
@@ -413,6 +414,243 @@ fn double_clicking_identity_opens_inline_editor() {
         h.inner.query_all_by_value("ride.gtd v2").next().is_some(),
         "typed text should reach the freshly opened editor"
     );
+}
+
+/// Segmentation settings for a recording a test stores, matching
+/// `SegmentationConfig::default`.
+fn stored_segmentation() -> StoredSegmentation {
+    StoredSegmentation {
+        track_split_gap_us: 300_000_000,
+        track_split_rule: StoredTrackSplitRule::StepInEitherDirection,
+        fix_placement_rule: StoredFixPlacementRule::MissingHeadingAndNothingInFix,
+        detect_clock_discontinuities: true,
+        clock_discontinuity_sigmas: 5.0,
+    }
+}
+
+/// A harness backed by a real database holding one recording whose stored track
+/// table is `tracks`, which is what the shelf reads back through the worker.
+///
+/// The recording is stored with every track live, and the states are written
+/// after through the API that takes them.
+fn history_harness_with_stored_tracks(tracks: &[TrackRange]) -> HistoryHarness {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut db =
+        gt_store::Recordings::open_or_create(&dir.path().join("history.h5")).expect("open db");
+    let bytes = gt_test_utils::GOLD_BYTES;
+    let meta = gt_store::extract_meta(bytes).expect("meta");
+    let live: Vec<TrackRange> = tracks
+        .iter()
+        .map(|track| TrackRange {
+            state: TrackState::Live,
+            ..*track
+        })
+        .collect();
+    let db_ref = db
+        .insert("auto:ride.gtd", &meta, &live, stored_segmentation(), bytes)
+        .expect("insert recording");
+    db.set_tracks(&db_ref, tracks, stored_segmentation())
+        .expect("write the stored track states");
+
+    let worker = HistoryWorker::spawn(
+        RecordingsHandle::Owner(db),
+        egui::Context::default(),
+        PendingWrites::default(),
+    );
+    let mut window = HistoryWindow::new();
+    window.open = true;
+    HistoryHarness {
+        window,
+        now: Instant::now(),
+        worker,
+        storage: crate::settings::StorageSettings {
+            auto_prune_max_bytes: 0,
+            ..crate::settings::StorageSettings::default()
+        },
+        databases_opening: false,
+        write_access: WriteAccess::Owner,
+        opened_log: None,
+        _dir: dir,
+    }
+}
+
+/// A four-row stored track table: a live track, the tombstone of a track
+/// deleted permanently, and two shelved tracks.
+fn one_live_a_tombstone_and_two_shelved_tracks() -> Vec<TrackRange> {
+    vec![
+        TrackRange {
+            start: 0,
+            end: 10,
+            state: TrackState::Live,
+        },
+        TrackRange {
+            start: 10,
+            end: 10,
+            state: TrackState::Deleted,
+        },
+        TrackRange {
+            start: 10,
+            end: 25,
+            state: TrackState::Shelved,
+        },
+        TrackRange {
+            start: 25,
+            end: 40,
+            state: TrackState::Shelved,
+        },
+    ]
+}
+
+/// Open the shelf of the only listed recording and wait for its stored track
+/// table to arrive.
+fn open_the_shelf(h: &mut TestHarness<HistoryHarness>) {
+    assert!(
+        h.inner
+            .step_until(|h| h.query_by_label_contains("ride.gtd").is_some()),
+        "the recording should appear in the History list"
+    );
+    // The caret's column position moves for a few frames after the list
+    // arrives, until the table settles.
+    for _ in 0..4 {
+        h.run();
+    }
+    h.inner.get_by_label(ICON_CARET_RIGHT).click();
+    assert!(
+        h.inner
+            .step_until(|h| h.query_all_by_label(UNSHELVE_LABEL).next().is_some()),
+        "the shelf should list the recording's shelved tracks"
+    );
+}
+
+/// A shelved track keeps the number it had before an earlier track was deleted
+/// permanently: a track's number is its stored row plus one.
+#[test]
+fn the_shelf_numbers_a_shelved_track_by_its_stored_row() {
+    let harness =
+        history_harness_with_stored_tracks(&one_live_a_tombstone_and_two_shelved_tracks());
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(pump_history, harness);
+    open_the_shelf(&mut h);
+
+    h.inner.get_by_label("#3");
+    h.inner.get_by_label("#4");
+    assert!(
+        h.inner.query_all_by_label("#2").next().is_none(),
+        "the tombstone row is a track the shelf leaves out"
+    );
+}
+
+/// What the listing does with the open shelf once the unshelve lands.
+enum ShelfAfterTheUnshelve {
+    StaysOpen,
+    Closes,
+}
+
+/// Unshelving through the shelf writes the stored track states, which the
+/// refreshed listing reports.
+#[rstest::rstest]
+#[case::one_track(UNSHELVE_LABEL, "3 (1 shelved)", ShelfAfterTheUnshelve::StaysOpen)]
+#[case::every_track(UNSHELVE_ALL_LABEL, "3", ShelfAfterTheUnshelve::Closes)]
+fn unshelving_from_the_shelf_leaves_the_tracks_live(
+    #[case] button: &str,
+    #[case] expected_track_count: &str,
+    #[case] expected_shelf: ShelfAfterTheUnshelve,
+) {
+    let harness =
+        history_harness_with_stored_tracks(&one_live_a_tombstone_and_two_shelved_tracks());
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(pump_history, harness);
+    open_the_shelf(&mut h);
+
+    h.inner.nth_matching(By::new().label(button), 0).click();
+
+    assert!(
+        h.inner.step_until(|h| {
+            h.state()
+                .window
+                .entries
+                .as_ref()
+                .and_then(|entries| entries.first())
+                .is_some_and(|entry| track_count_text(entry) == expected_track_count)
+        }),
+        "the refreshed listing should report the unshelved tracks as live"
+    );
+    match expected_shelf {
+        ShelfAfterTheUnshelve::StaysOpen => assert!(
+            h.state().window.shelf.is_some(),
+            "the shelf should stay open on a recording with a shelved track left"
+        ),
+        ShelfAfterTheUnshelve::Closes => assert!(
+            h.state().window.shelf.is_none(),
+            "the shelf should close once the recording has no shelved track to list"
+        ),
+    }
+}
+
+/// Never hidden, per DESIGN.md: a read-only session still opens the shelf and
+/// reads its tracks. Its two write controls stay grayed.
+#[test]
+fn the_shelf_unshelve_controls_are_grayed_in_a_read_only_session() {
+    let mut harness =
+        history_harness_with_stored_tracks(&one_live_a_tombstone_and_two_shelved_tracks());
+    harness.write_access = WriteAccess::ReadOnly;
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(pump_history, harness);
+    open_the_shelf(&mut h);
+
+    let unshelve = h.inner.nth_matching(By::new().label(UNSHELVE_LABEL), 0);
+    assert!(unshelve.accesskit_node().is_disabled());
+    let unshelve_center = unshelve.rect().center();
+    assert!(
+        h.inner
+            .get_by_label(UNSHELVE_ALL_LABEL)
+            .accesskit_node()
+            .is_disabled()
+    );
+
+    h.inner.hover_at_and_settle(unshelve_center, 3);
+
+    h.inner
+        .get_by_label_contains(READ_ONLY_RECORDING_HISTORY_HOVER);
+}
+
+/// The shelf open on a recording: one line per shelved track with its number
+/// and nav-point count, and the closing line that unshelves all of them.
+#[test]
+fn snapshot_history_window_shelf_open() {
+    let mut harness =
+        history_harness_with_stored_tracks(&one_live_a_tombstone_and_two_shelved_tracks());
+    harness.worker.hide_path();
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(pump_history, harness);
+    open_the_shelf(&mut h);
+    for _ in 0..4 {
+        h.run();
+    }
+
+    h.snapshot("history_window_shelf_open");
+}
+
+/// The same shelf in a read-only session, both unshelve controls grayed.
+#[test]
+fn snapshot_history_window_shelf_open_read_only() {
+    let mut harness =
+        history_harness_with_stored_tracks(&one_live_a_tombstone_and_two_shelved_tracks());
+    harness.worker.hide_path();
+    harness.write_access = WriteAccess::ReadOnly;
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(900.0, 500.0))
+        .ui_state(pump_history, harness);
+    open_the_shelf(&mut h);
+    for _ in 0..4 {
+        h.run();
+    }
+
+    h.snapshot("history_window_shelf_open_read_only");
 }
 
 /// A listing entry for `identity` with no tracks and no SDK metadata, for the

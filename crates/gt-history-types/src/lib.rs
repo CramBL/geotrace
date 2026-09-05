@@ -752,6 +752,12 @@ pub trait ReadOnlyHistoryDatabase {
     /// table, tombstones and all, and its segmentation settings.
     fn load(&self, db_ref: &DatabaseRef) -> Result<StoredRecording, DbError>;
 
+    /// A recording's stored track table alone, the [`TrackState::Deleted`]
+    /// tombstones included, which is what [`Self::load`] returns as its
+    /// `tracks`. A row's index in this table is the row
+    /// [`HistoryDatabase::set_tracks_shelved`] takes.
+    fn stored_track_table(&self, db_ref: &DatabaseRef) -> Result<Vec<TrackRange>, DbError>;
+
     /// The stored snap run bytes for a recording, or `None` when it carries
     /// none (never snapped, or stored before snap persistence existed).
     fn snap_blob(&self, db_ref: &DatabaseRef) -> Result<Option<Vec<u8>>, DbError>;

@@ -380,6 +380,9 @@ impl App {
                     log::warn!("Storing snap runs failed: {e}");
                 }
             }
+            Response::StoredTrackTableLoaded { db_ref, tracks } => {
+                self.history_window.set_shelf_track_table(&db_ref, tracks);
+            }
             Response::SnapRunsLoaded { db_ref, blob } => match blob {
                 Ok(Some(bytes)) => self.restore_snap_runs(&db_ref, &bytes),
                 Ok(None) => {}
@@ -795,6 +798,13 @@ fn mutation_toast(op: &history_db::DbOp) -> String {
         DbOp::TracksShelved { count } => {
             let tracks = gt_fmt::pluralize(*count, "track", "tracks");
             format!("Shelved {count} {tracks} in history")
+        }
+        DbOp::TracksUnshelved { count } => {
+            let tracks = gt_fmt::pluralize(*count, "track", "tracks");
+            let pronoun = gt_fmt::pluralize(*count, "it", "them");
+            format!(
+                "Unshelved {count} {tracks} in history. Open the recording again to see {pronoun}."
+            )
         }
         DbOp::TracksDeleted { count } => {
             let tracks = gt_fmt::pluralize(*count, "track", "tracks");
