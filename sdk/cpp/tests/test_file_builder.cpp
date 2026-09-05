@@ -162,7 +162,7 @@ TEST_CASE("FileBuilder: NoNavFixesError thrown when annotations exist but no fix
     Annotation ann{t0};
     ann.label = "unreachable";
     b.add_annotation(ann);
-    CHECK_THROWS_AS(b.finish(), NoNavFixesError);
+    CHECK_THROWS_AS(static_cast<void>(b.finish()), NoNavFixesError);
 }
 
 TEST_CASE("FileBuilder: FieldTooLongError thrown for a label past the field capacity") {

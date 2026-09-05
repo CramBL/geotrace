@@ -48,7 +48,7 @@ TEST_CASE("exception: NoNavFixesError is catchable as BuildError and Error") {
         Annotation ann{Timestamp::from_seconds(1700000000ULL)};
         ann.label = "no fixes";
         b.add_annotation(ann);
-        b.finish();
+        static_cast<void>(b.finish());
     };
     CHECK_THROWS_AS(throw_it(), NoNavFixesError);
     CHECK_THROWS_AS(throw_it(), BuildError);
@@ -93,7 +93,7 @@ TEST_CASE("exception: InvalidChannelError is catchable as Error") {
 }
 
 TEST_CASE("exception: IoError is catchable as Error") {
-    auto throw_it = [] { NavFile::open("/no/such/file.gtd"); };
+    auto throw_it = [] { static_cast<void>(NavFile::open("/no/such/file.gtd")); };
     CHECK_THROWS_AS(throw_it(), IoError);
     CHECK_THROWS_AS(throw_it(), Error);
     CHECK_THROWS_AS(throw_it(), std::exception);
@@ -105,10 +105,10 @@ TEST_CASE("exception: out_of_range from nav_point is std::out_of_range, not geot
 
     auto file = FileBuilder{}.add_nav_fix(fix).finish();
 
-    CHECK_THROWS_AS(file.nav_point(9999), std::out_of_range);
+    CHECK_THROWS_AS(static_cast<void>(file.nav_point(9999)), std::out_of_range);
     // std::out_of_range is NOT a geotrace::Error
-    CHECK_THROWS_AS(file.nav_point(9999), std::exception);
-    CHECK_NOTHROW(file.nav_point(0));
+    CHECK_THROWS_AS(static_cast<void>(file.nav_point(9999)), std::exception);
+    CHECK_NOTHROW(static_cast<void>(file.nav_point(0)));
 }
 
 TEST_CASE("exception: AnnotationsOutOfRangeError carries a count field") {
@@ -140,7 +140,7 @@ TEST_CASE("exception: what() returns a non-empty string") {
         Annotation ann{Timestamp::from_seconds(1700000000ULL)};
         ann.label = "no fixes";
         b.add_annotation(ann);
-        b.finish();
+        static_cast<void>(b.finish());
     } catch (const Error &e) {
         CHECK(std::string{e.what()}.size() > 0);
     }

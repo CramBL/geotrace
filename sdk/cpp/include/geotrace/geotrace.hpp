@@ -228,7 +228,7 @@ namespace detail {
 }
 
 // Encode a filesystem path as UTF-8 for the C API.
-inline std::string path_string(const std::filesystem::path &p) {
+[[nodiscard]] inline std::string path_string(const std::filesystem::path &p) {
 #ifdef __cpp_lib_char8_t
     const auto u8 = p.u8string();
     return std::string(u8.begin(), u8.end());
@@ -237,7 +237,7 @@ inline std::string path_string(const std::filesystem::path &p) {
 #endif
 }
 
-inline GtdOptF64 to_c(std::optional<double> v) noexcept {
+[[nodiscard]] constexpr GtdOptF64 to_c(std::optional<double> v) noexcept {
     // GTD_SOME_F64 and GTD_NONE_F64 expand to C99 compound-literal +
     // designated-initializer syntax, which MSVC rejects in C++ mode (errors
     // C4576/C7555).
@@ -266,7 +266,7 @@ struct NavFileDeleter {
  * message. This is the non-throwing error channel: check `is_ok()` or call
  * `value_or_throw()` on the enclosing `Result`.
  */
-struct Status {
+struct [[nodiscard]] Status {
     GtdStatus code = GTD_OK;
     std::string description;
 
@@ -281,9 +281,9 @@ struct Status {
         return Status{s, (raw != nullptr) ? raw : "unknown error"};
     }
 
-    bool is_ok() const noexcept { return code == GTD_OK; }
-    bool is_err() const noexcept { return code != GTD_OK; }
-    explicit operator bool() const noexcept { return is_ok(); }
+    [[nodiscard]] constexpr bool is_ok() const noexcept { return code == GTD_OK; }
+    [[nodiscard]] constexpr bool is_err() const noexcept { return code != GTD_OK; }
+    [[nodiscard]] constexpr explicit operator bool() const noexcept { return is_ok(); }
 
     /// Throw the matching exception on failure (no-op on success). With
     /// exceptions disabled this prints and aborts, so prefer `is_ok()` there.
@@ -299,34 +299,36 @@ struct Status {
  * Modelled on Rust's `Result`. Inspect `is_ok()` / `error()` and call `value()`,
  * or call `value_or_throw()` to throw the error (or abort without exceptions).
  */
-template <typename T> struct Result {
+template <typename T> struct [[nodiscard]] Result {
+    // Both constructors are implicit: a `try_*` method returns its value or
+    // `Status::from(status)` directly.
     Result(T v) : value_(std::move(v)) {}
     // An error result must carry a real error: an ok status here would falsely
     // report success with a default-constructed value.
     Result(Status s) : status_(std::move(s)) { assert(status_.is_err()); }
     Result() = delete;
 
-    bool is_ok() const noexcept { return status_.is_ok(); }
-    bool is_err() const noexcept { return status_.is_err(); }
-    explicit operator bool() const noexcept { return is_ok(); }
-    const Status &error() const noexcept { return status_; }
+    [[nodiscard]] constexpr bool is_ok() const noexcept { return status_.is_ok(); }
+    [[nodiscard]] constexpr bool is_err() const noexcept { return status_.is_err(); }
+    [[nodiscard]] constexpr explicit operator bool() const noexcept { return is_ok(); }
+    [[nodiscard]] constexpr const Status &error() const noexcept { return status_; }
 
-    const T *get_if() const noexcept { return value_ ? &*value_ : nullptr; }
-    T *get_if() noexcept { return value_ ? &*value_ : nullptr; }
+    [[nodiscard]] constexpr const T *get_if() const noexcept { return value_ ? &*value_ : nullptr; }
+    [[nodiscard]] constexpr T *get_if() noexcept { return value_ ? &*value_ : nullptr; }
 
-    const T &value() const & {
+    [[nodiscard]] const T &value() const & {
         status_.throw_on_failure();
         assert(value_.has_value());
         return *value_;
     }
-    T &value() & {
+    [[nodiscard]] T &value() & {
         status_.throw_on_failure();
         assert(value_.has_value());
         return *value_;
     }
 
-    const T &value_or_throw() const & { return value(); }
-    T value_or_throw() && {
+    [[nodiscard]] const T &value_or_throw() const & { return value(); }
+    [[nodiscard]] T value_or_throw() && {
         status_.throw_on_failure();
         assert(value_.has_value());
         return std::move(*value_);
@@ -342,7 +344,7 @@ template <typename T> struct Result {
  *
  * Always an instant. An absent timestamp is `std::optional<Timestamp>`.
  */
-struct Timestamp {
+struct [[nodiscard]] Timestamp {
     std::int64_t unix_micros;
 
     explicit constexpr Timestamp(std::int64_t micros) noexcept : unix_micros(micros) {}
@@ -363,12 +365,22 @@ struct Timestamp {
 #if defined(__cpp_impl_three_way_comparison) && __cpp_impl_three_way_comparison >= 201907L
     auto operator<=>(const Timestamp &) const = default;
 #else
-    bool operator==(Timestamp other) const noexcept { return unix_micros == other.unix_micros; }
-    bool operator!=(Timestamp other) const noexcept { return !(*this == other); }
-    bool operator<(Timestamp other) const noexcept { return unix_micros < other.unix_micros; }
-    bool operator<=(Timestamp other) const noexcept { return unix_micros <= other.unix_micros; }
-    bool operator>(Timestamp other) const noexcept { return unix_micros > other.unix_micros; }
-    bool operator>=(Timestamp other) const noexcept { return unix_micros >= other.unix_micros; }
+    constexpr bool operator==(Timestamp other) const noexcept {
+        return unix_micros == other.unix_micros;
+    }
+    constexpr bool operator!=(Timestamp other) const noexcept { return !(*this == other); }
+    constexpr bool operator<(Timestamp other) const noexcept {
+        return unix_micros < other.unix_micros;
+    }
+    constexpr bool operator<=(Timestamp other) const noexcept {
+        return unix_micros <= other.unix_micros;
+    }
+    constexpr bool operator>(Timestamp other) const noexcept {
+        return unix_micros > other.unix_micros;
+    }
+    constexpr bool operator>=(Timestamp other) const noexcept {
+        return unix_micros >= other.unix_micros;
+    }
 #endif
 };
 
@@ -383,21 +395,22 @@ struct RecordedFixTimestamps {
 };
 
 /** The clock or clocks that stamped a nav fix or a satellite report. */
-class FixTime {
+class [[nodiscard]] FixTime {
   public:
     /** The receiver's timestamp, with no host clock recorded. */
-    static FixTime receiver(Timestamp gps) noexcept { return FixTime{ReceiverOnly{gps}}; }
+    static constexpr FixTime receiver(Timestamp gps) noexcept { return FixTime{ReceiverOnly{gps}}; }
 
     /** The host clock's timestamp, taken while the receiver had no lock. */
-    static FixTime host(Timestamp sys) noexcept { return FixTime{HostOnly{sys}}; }
+    static constexpr FixTime host(Timestamp sys) noexcept { return FixTime{HostOnly{sys}}; }
 
     /** Both timestamps, recorded under lock on a host that also stamped it. */
-    static FixTime both(Timestamp gps, Timestamp sys) noexcept {
+    static constexpr FixTime both(Timestamp gps, Timestamp sys) noexcept {
         return FixTime{BothClocks{gps, sys}};
     }
 
     /** `std::nullopt` when the recorder holds neither timestamp. */
-    static std::optional<FixTime> from_recorded(const RecordedFixTimestamps &recorded) noexcept {
+    [[nodiscard]] static constexpr std::optional<FixTime>
+    from_recorded(const RecordedFixTimestamps &recorded) noexcept {
         if (recorded.gps_time && recorded.sys_time)
             return both(*recorded.gps_time, *recorded.sys_time);
         if (recorded.gps_time)
@@ -407,7 +420,7 @@ class FixTime {
         return std::nullopt;
     }
 
-    std::optional<Timestamp> gps_time() const noexcept {
+    [[nodiscard]] constexpr std::optional<Timestamp> gps_time() const noexcept {
         if (const auto *receiver_only = std::get_if<ReceiverOnly>(&clocks_))
             return receiver_only->gps;
         if (const auto *both_clocks = std::get_if<BothClocks>(&clocks_))
@@ -415,7 +428,7 @@ class FixTime {
         return std::nullopt;
     }
 
-    std::optional<Timestamp> sys_time() const noexcept {
+    [[nodiscard]] constexpr std::optional<Timestamp> sys_time() const noexcept {
         if (const auto *host_only = std::get_if<HostOnly>(&clocks_))
             return host_only->sys;
         if (const auto *both_clocks = std::get_if<BothClocks>(&clocks_))
@@ -437,41 +450,41 @@ class FixTime {
 
     using Clocks = std::variant<ReceiverOnly, HostOnly, BothClocks>;
 
-    explicit FixTime(Clocks clocks) noexcept : clocks_(clocks) {}
+    explicit constexpr FixTime(Clocks clocks) noexcept : clocks_(clocks) {}
 
     Clocks clocks_;
 };
 
 /** Angular measurement stored in degrees. */
-class Angle {
+class [[nodiscard]] Angle {
   public:
-    static Angle degrees(double deg) noexcept { return Angle{deg}; }
-    static Angle radians(double rad) noexcept { return Angle{rad * (180.0 / kPi)}; }
+    static constexpr Angle degrees(double deg) noexcept { return Angle{deg}; }
+    static constexpr Angle radians(double rad) noexcept { return Angle{rad * (180.0 / kPi)}; }
 
-    double as_degrees() const noexcept { return deg_; }
-    double as_radians() const noexcept { return deg_ * (kPi / 180.0); }
+    [[nodiscard]] constexpr double as_degrees() const noexcept { return deg_; }
+    [[nodiscard]] constexpr double as_radians() const noexcept { return deg_ * (kPi / 180.0); }
 
 #if defined(__cpp_impl_three_way_comparison) && __cpp_impl_three_way_comparison >= 201907L
     auto operator<=>(const Angle &) const = default;
 #else
-    bool operator==(Angle other) const noexcept { return deg_ == other.deg_; }
-    bool operator!=(Angle other) const noexcept { return !(*this == other); }
-    bool operator<(Angle other) const noexcept { return deg_ < other.deg_; }
-    bool operator<=(Angle other) const noexcept { return deg_ <= other.deg_; }
-    bool operator>(Angle other) const noexcept { return deg_ > other.deg_; }
-    bool operator>=(Angle other) const noexcept { return deg_ >= other.deg_; }
+    constexpr bool operator==(Angle other) const noexcept { return deg_ == other.deg_; }
+    constexpr bool operator!=(Angle other) const noexcept { return !(*this == other); }
+    constexpr bool operator<(Angle other) const noexcept { return deg_ < other.deg_; }
+    constexpr bool operator<=(Angle other) const noexcept { return deg_ <= other.deg_; }
+    constexpr bool operator>(Angle other) const noexcept { return deg_ > other.deg_; }
+    constexpr bool operator>=(Angle other) const noexcept { return deg_ >= other.deg_; }
 #endif
 
   private:
     // M_PI is a POSIX extension not guaranteed by the C++ standard (absent on MSVC
     // without _USE_MATH_DEFINES), so we use our own constant instead.
     static constexpr double kPi = 3.141592653589793238462643383279502884;
-    explicit Angle(double deg) noexcept : deg_(deg) {}
+    explicit constexpr Angle(double deg) noexcept : deg_(deg) {}
     double deg_ = 0.0;
 };
 
 /** Velocity stored in metres per second. */
-class Velocity {
+class [[nodiscard]] Velocity {
   public:
     // Conversion factors kept bit-identical to the Rust SDK (units.rs
     // MPS_PER_KMH / MPS_PER_KNOT) so the same input yields the same stored m/s
@@ -480,27 +493,27 @@ class Velocity {
     static constexpr double kMpsPerKmh = 1.0 / 3.6;
     static constexpr double kMpsPerKnot = 1852.0 / 3600.0;
 
-    static Velocity mps(double v) noexcept { return Velocity{v}; }
-    static Velocity kmh(double v) noexcept { return Velocity{v * kMpsPerKmh}; }
-    static Velocity knots(double v) noexcept { return Velocity{v * kMpsPerKnot}; }
+    static constexpr Velocity mps(double v) noexcept { return Velocity{v}; }
+    static constexpr Velocity kmh(double v) noexcept { return Velocity{v * kMpsPerKmh}; }
+    static constexpr Velocity knots(double v) noexcept { return Velocity{v * kMpsPerKnot}; }
 
-    double as_mps() const noexcept { return mps_; }
-    double as_kmh() const noexcept { return mps_ / kMpsPerKmh; }
-    double as_knots() const noexcept { return mps_ / kMpsPerKnot; }
+    [[nodiscard]] constexpr double as_mps() const noexcept { return mps_; }
+    [[nodiscard]] constexpr double as_kmh() const noexcept { return mps_ / kMpsPerKmh; }
+    [[nodiscard]] constexpr double as_knots() const noexcept { return mps_ / kMpsPerKnot; }
 
 #if defined(__cpp_impl_three_way_comparison) && __cpp_impl_three_way_comparison >= 201907L
     auto operator<=>(const Velocity &) const = default;
 #else
-    bool operator==(Velocity other) const noexcept { return mps_ == other.mps_; }
-    bool operator!=(Velocity other) const noexcept { return !(*this == other); }
-    bool operator<(Velocity other) const noexcept { return mps_ < other.mps_; }
-    bool operator<=(Velocity other) const noexcept { return mps_ <= other.mps_; }
-    bool operator>(Velocity other) const noexcept { return mps_ > other.mps_; }
-    bool operator>=(Velocity other) const noexcept { return mps_ >= other.mps_; }
+    constexpr bool operator==(Velocity other) const noexcept { return mps_ == other.mps_; }
+    constexpr bool operator!=(Velocity other) const noexcept { return !(*this == other); }
+    constexpr bool operator<(Velocity other) const noexcept { return mps_ < other.mps_; }
+    constexpr bool operator<=(Velocity other) const noexcept { return mps_ <= other.mps_; }
+    constexpr bool operator>(Velocity other) const noexcept { return mps_ > other.mps_; }
+    constexpr bool operator>=(Velocity other) const noexcept { return mps_ >= other.mps_; }
 #endif
 
   private:
-    explicit Velocity(double mps) noexcept : mps_(mps) {}
+    explicit constexpr Velocity(double mps) noexcept : mps_(mps) {}
     double mps_ = 0.0;
 };
 
@@ -537,7 +550,7 @@ enum class TravelMode : std::uint8_t {
 
 namespace detail {
 
-inline GtdConstellation to_c(Constellation c) noexcept {
+[[nodiscard]] constexpr GtdConstellation to_c(Constellation c) noexcept {
     switch (c) {
     case Constellation::Gps:
         return GTD_CONSTELLATION_GPS;
@@ -555,7 +568,7 @@ inline GtdConstellation to_c(Constellation c) noexcept {
     return GTD_CONSTELLATION_GPS;
 }
 
-inline Constellation from_c(GtdConstellation c) noexcept {
+[[nodiscard]] constexpr Constellation from_c(GtdConstellation c) noexcept {
     switch (c) {
     case GTD_CONSTELLATION_GPS:
         return Constellation::Gps;
@@ -573,7 +586,7 @@ inline Constellation from_c(GtdConstellation c) noexcept {
     return Constellation::Gps;
 }
 
-inline GtdMarkerIcon to_c(MarkerIcon icon) noexcept {
+[[nodiscard]] constexpr GtdMarkerIcon to_c(MarkerIcon icon) noexcept {
     switch (icon) {
     case MarkerIcon::Pin:
         return GTD_ICON_PIN;
@@ -609,7 +622,7 @@ inline GtdMarkerIcon to_c(MarkerIcon icon) noexcept {
     return GTD_ICON_AUTO;
 }
 
-inline GtdTravelMode to_c(TravelMode mode) noexcept {
+[[nodiscard]] constexpr GtdTravelMode to_c(TravelMode mode) noexcept {
     switch (mode) {
     case TravelMode::Car:
         return GTD_TRAVEL_MODE_CAR;
@@ -629,7 +642,7 @@ inline GtdTravelMode to_c(TravelMode mode) noexcept {
     return GTD_TRAVEL_MODE_CAR;
 }
 
-inline TravelMode from_c(GtdTravelMode mode) noexcept {
+[[nodiscard]] constexpr TravelMode from_c(GtdTravelMode mode) noexcept {
     switch (mode) {
     case GTD_TRAVEL_MODE_CAR:
         return TravelMode::Car;
@@ -649,15 +662,15 @@ inline TravelMode from_c(GtdTravelMode mode) noexcept {
     return TravelMode::Car;
 }
 
-inline GtdTimestamp to_c(Timestamp ts) noexcept {
+[[nodiscard]] constexpr GtdTimestamp to_c(Timestamp ts) noexcept {
     return GtdTimestamp{ts.unix_micros};
 }
 
-inline GtdTimestamp to_c(std::optional<Timestamp> ts) noexcept {
+[[nodiscard]] inline GtdTimestamp to_c(std::optional<Timestamp> ts) noexcept {
     return ts ? to_c(*ts) : ::gtd_ts_none();
 }
 
-inline std::optional<Timestamp> from_c(GtdTimestamp ts) noexcept {
+[[nodiscard]] inline std::optional<Timestamp> from_c(GtdTimestamp ts) noexcept {
     if (::gtd_ts_is_none(ts) != 0)
         return std::nullopt;
     return Timestamp{ts.unix_micros};
@@ -665,14 +678,14 @@ inline std::optional<Timestamp> from_c(GtdTimestamp ts) noexcept {
 
 // `gtd_ts_none()` never appears in an event marker or channel sample timestamp:
 // the `.gtd` format stores an instant for both.
-inline Timestamp instant_from_c(GtdTimestamp ts) noexcept {
+[[nodiscard]] constexpr Timestamp instant_from_c(GtdTimestamp ts) noexcept {
     return Timestamp{ts.unix_micros};
 }
 
 } // namespace detail
 
 /** Wire name of @p mode, e.g. `"car"` for `TravelMode::Car`. */
-inline std::string_view travel_mode_name(TravelMode mode) noexcept {
+[[nodiscard]] inline std::string_view travel_mode_name(TravelMode mode) noexcept {
     return std::string_view{::gtd_travel_mode_name(detail::to_c(mode))};
 }
 
@@ -682,7 +695,8 @@ inline std::string_view travel_mode_name(TravelMode mode) noexcept {
  *
  * Returns `std::nullopt` for names outside the known set.
  */
-inline std::optional<TravelMode> travel_mode_from_name(const std::string &name) noexcept {
+[[nodiscard]] inline std::optional<TravelMode>
+travel_mode_from_name(const std::string &name) noexcept {
     GtdTravelMode mode{};
     if (::gtd_travel_mode_from_name(name.c_str(), &mode) != GTD_OK)
         return std::nullopt;
@@ -766,7 +780,7 @@ struct EventMarkerStyle {
  * auto score = geotrace::ChannelUnit::custom("vendor score");
  * ```
  */
-class ChannelUnit {
+class [[nodiscard]] ChannelUnit {
   public:
     /** A catalog unit, spelled canonically. */
     static ChannelUnit recognized(RecognizedUnit unit) {
@@ -806,10 +820,10 @@ class ChannelUnit {
     }
 
     /** The canonical label as stored in the file. */
-    const std::string &label() const noexcept { return label_; }
+    [[nodiscard]] constexpr const std::string &label() const noexcept { return label_; }
 
     /** True for a custom label, false for a catalog unit. */
-    bool is_custom() const noexcept { return custom_; }
+    [[nodiscard]] constexpr bool is_custom() const noexcept { return custom_; }
 
     friend bool operator==(const ChannelUnit &a, const ChannelUnit &b) noexcept {
         return a.custom_ == b.custom_ && a.label_ == b.label_;
@@ -873,7 +887,7 @@ struct ChannelView {
     std::vector<double> values; // row-major, times.size() * max(components.size(), 1)
 
     /** Whether this is a vector channel (has named components). */
-    bool is_vector() const noexcept { return !components.empty(); }
+    [[nodiscard]] bool is_vector() const noexcept { return !components.empty(); }
 };
 
 /**
@@ -996,12 +1010,12 @@ concept EventEnumValue = requires(E val) {
  * `EventMarkerStyle::variant_path`). The `std::string_view` conversion is
  * `explicit` so the owning temporary can't silently dangle behind a view.
  */
-class EventPath {
+class [[nodiscard]] EventPath {
   public:
     explicit EventPath(std::string path) noexcept : path_(std::move(path)) {}
 
-    const std::string &str() const noexcept { return path_; }
-    explicit operator std::string_view() const noexcept { return path_; }
+    [[nodiscard]] constexpr const std::string &str() const noexcept { return path_; }
+    [[nodiscard]] explicit operator std::string_view() const noexcept { return path_; }
 
   private:
     std::string path_;
@@ -1284,7 +1298,7 @@ class FileBuilder {
     Result<NavFile> try_finish();
 
     /** The first error recorded so far, or an ok status. */
-    const Status &status() const noexcept { return status_; }
+    [[nodiscard]] constexpr const Status &status() const noexcept { return status_; }
 
   private:
     // Record the first error. With exceptions enabled, throw it immediately so
@@ -1308,10 +1322,9 @@ class FileBuilder {
  *
  * **Non-copyable, movable.**
  */
-class NavFile {
+class [[nodiscard]] NavFile {
   public:
-    /** An empty, invalid file. Only meaningful as the unset value of a `Result`. */
-    NavFile() noexcept = default;
+    NavFile() = delete;
 
     NavFile(const NavFile &) = delete;
     NavFile &operator=(const NavFile &) = delete;
@@ -1397,24 +1410,26 @@ class NavFile {
      * @throws FieldTooLongError if an event marker style holds a variant path or
      *         color longer than its field.
      */
-    std::vector<std::uint8_t> to_bytes() const { return try_to_bytes().value_or_throw(); }
+    [[nodiscard]] std::vector<std::uint8_t> to_bytes() const {
+        return try_to_bytes().value_or_throw();
+    }
 
     /** @name Metadata (returns empty `std::string_view` when field is absent). */
     ///@{
 
-    std::string_view title() const noexcept {
+    [[nodiscard]] std::string_view title() const noexcept {
         const char *s = ::gtd_nav_file_title(impl_.get());
         return s ? std::string_view{s} : std::string_view{};
     }
-    std::string_view device() const noexcept {
+    [[nodiscard]] std::string_view device() const noexcept {
         const char *s = ::gtd_nav_file_device(impl_.get());
         return s ? std::string_view{s} : std::string_view{};
     }
-    std::string_view notes() const noexcept {
+    [[nodiscard]] std::string_view notes() const noexcept {
         const char *s = ::gtd_nav_file_notes(impl_.get());
         return s ? std::string_view{s} : std::string_view{};
     }
-    std::string_view identity() const noexcept {
+    [[nodiscard]] std::string_view identity() const noexcept {
         const char *s = ::gtd_nav_file_identity(impl_.get());
         return s ? std::string_view{s} : std::string_view{};
     }
@@ -1427,7 +1442,7 @@ class NavFile {
      * SDK may carry a wire name outside the known set - such values are still
      * returned here verbatim, never dropped.
      */
-    std::string_view travel_mode() const noexcept {
+    [[nodiscard]] std::string_view travel_mode() const noexcept {
         const char *s = ::gtd_nav_file_travel_mode(impl_.get());
         return s ? std::string_view{s} : std::string_view{};
     }
@@ -1439,26 +1454,26 @@ class NavFile {
     ///@{
 
     /** Version of the SDK build that wrote the file. */
-    std::string_view sdk_version() const noexcept {
+    [[nodiscard]] std::string_view sdk_version() const noexcept {
         const char *s = ::gtd_nav_file_sdk_version(impl_.get());
         return s ? std::string_view{s} : std::string_view{};
     }
 
     /** Commit of the geotrace repository the writing SDK was built from. */
-    std::string_view sdk_git_commit() const noexcept {
+    [[nodiscard]] std::string_view sdk_git_commit() const noexcept {
         const char *s = ::gtd_nav_file_sdk_git_commit(impl_.get());
         return s ? std::string_view{s} : std::string_view{};
     }
 
     /** Committer timestamp of sdk_git_commit(). */
-    std::optional<Timestamp> sdk_commit_time() const noexcept {
+    [[nodiscard]] std::optional<Timestamp> sdk_commit_time() const noexcept {
         return detail::from_c(::gtd_nav_file_sdk_commit_time(impl_.get()));
     }
 
     ///@}
 
     /** Number of navigation fixes in the file. */
-    std::size_t nav_point_count() const noexcept {
+    [[nodiscard]] std::size_t nav_point_count() const noexcept {
         return ::gtd_nav_file_nav_point_count(impl_.get());
     }
 
@@ -1489,7 +1504,9 @@ class NavFile {
      * Return the navigation fix at @p idx.
      * @throws std::out_of_range if `idx >= nav_point_count()`.
      */
-    NavPointView nav_point(std::size_t idx) const { return try_nav_point(idx).value_or_throw(); }
+    [[nodiscard]] NavPointView nav_point(std::size_t idx) const {
+        return try_nav_point(idx).value_or_throw();
+    }
 
     /** Return satellite data for a tracked satellite, or an out-of-range error. */
     Result<SatelliteView> try_satellite(std::size_t nav_idx, std::size_t sat_idx) const {
@@ -1516,12 +1533,12 @@ class NavFile {
      * Return satellite data for a specific tracked satellite.
      * @throws std::out_of_range if either index is out of range or the fix has no satellite report.
      */
-    SatelliteView satellite(std::size_t nav_idx, std::size_t sat_idx) const {
+    [[nodiscard]] SatelliteView satellite(std::size_t nav_idx, std::size_t sat_idx) const {
         return try_satellite(nav_idx, sat_idx).value_or_throw();
     }
 
     /** Number of event markers in the file. */
-    std::size_t event_marker_count() const noexcept {
+    [[nodiscard]] std::size_t event_marker_count() const noexcept {
         return ::gtd_nav_file_event_marker_count(impl_.get());
     }
 
@@ -1545,12 +1562,14 @@ class NavFile {
      * Return the event marker at @p idx.
      * @throws std::out_of_range if `idx >= event_marker_count()`.
      */
-    EventMarkerView event_marker(std::size_t idx) const {
+    [[nodiscard]] EventMarkerView event_marker(std::size_t idx) const {
         return try_event_marker(idx).value_or_throw();
     }
 
     /** Number of channels in the file. */
-    std::size_t channel_count() const noexcept { return ::gtd_nav_file_channel_count(impl_.get()); }
+    [[nodiscard]] std::size_t channel_count() const noexcept {
+        return ::gtd_nav_file_channel_count(impl_.get());
+    }
 
     /** Return the channel at @p idx, or an out-of-range error. */
     Result<ChannelView> try_channel(std::size_t idx) const {
@@ -1614,7 +1633,9 @@ class NavFile {
      * Return the channel at @p idx.
      * @throws std::out_of_range if `idx >= channel_count()`.
      */
-    ChannelView channel(std::size_t idx) const { return try_channel(idx).value_or_throw(); }
+    [[nodiscard]] ChannelView channel(std::size_t idx) const {
+        return try_channel(idx).value_or_throw();
+    }
 
   private:
     friend class FileBuilder;
