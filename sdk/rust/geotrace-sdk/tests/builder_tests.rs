@@ -471,24 +471,30 @@ fn first_ghost_after_last_fix_is_1m_ahead() -> Result<(), BuildError> {
     Ok(())
 }
 
-/// Orphan satellite reports that arrive before the first real fix cannot be
-/// placed on the map (no reference position) and must be silently dropped.
 #[test]
-fn orphan_reports_before_first_fix_are_dropped() -> Result<(), BuildError> {
+fn reports_before_the_first_fix_become_ghosts_on_the_first_fix_in_time_order()
+-> Result<(), BuildError> {
     let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(simple_fix(10_000)); // fix at t=10 s
-    recorder.add_satellite_report(simple_report(0)); // report at t=0, before the fix
+    recorder.add_nav_fix(simple_fix(10_000));
+    recorder.add_satellite_report(simple_report(2000));
+    recorder.add_satellite_report(simple_report(0));
 
     let nav_file = recorder.finish()?;
+    let points = nav_file.nav_points();
+    assert_eq!(points.len(), 3, "expected 2 ghost fixes and 1 real fix");
 
-    // Only the real fix. The pre-fix report is dropped.
-    assert_eq!(
-        nav_file.nav_points().len(),
-        1,
-        "pre-fix orphan report must be dropped"
-    );
-    assert!(nav_file.nav_points()[0].satellites.is_none());
-
+    for (i, expected_time) in [t(0), t(2000)].into_iter().enumerate() {
+        let ghost = &points[i];
+        assert_eq!(ghost.fix.gps_time, Some(expected_time));
+        assert_eq!(ghost.fix.lat, Angle::degrees(55.0));
+        assert_eq!(ghost.fix.lon, Angle::degrees(12.0));
+        assert_eq!(ghost.fix.heading, None);
+        assert!(
+            ghost.satellites.is_some(),
+            "ghost {i} is missing its satellite report"
+        );
+    }
+    assert_eq!(points[2].fix.gps_time, Some(t(10_000)), "the real fix");
     Ok(())
 }
 
