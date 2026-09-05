@@ -14,6 +14,7 @@ use gt_loaded_files::RecordingNames;
 use gt_map::MapLayer;
 use gt_query_run::RunInputs;
 use gt_side_panel::{PanelContext, SnapCostingTarget, SnapPanelView, show_side_panel};
+use gt_store::DatabaseRef;
 use gt_track_builder::SegmentationConfig;
 use gt_types::{DataCategory, FileIdx, LoadedFile, TrackIdx, TrackRef};
 use gt_ui_types::{
@@ -402,6 +403,7 @@ impl App {
         let mut snap_visibility_request: Option<TrackRef> = None;
         let mut snap_costing_request: Option<(SnapCostingTarget, gt_ui_types::SnapCosting)> = None;
         let mut sky_trails_request: Option<gt_ui_types::SkyTrailsRequest> = None;
+        let mut shelf_request: Option<DatabaseRef> = None;
 
         let read_only_recording_history_hover =
             (!self.pending_writes.write_access().allows_writing())
@@ -430,6 +432,7 @@ impl App {
                             query_matches: self.query_window.matches(),
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
                             warnings_request: &mut s.warnings_popup,
+                            shelf_request: &mut shelf_request,
                             read_only_recording_history_hover,
                             clear_query_request: &mut s.clear_query_request,
                             display_mask: s.display_mask,
@@ -478,6 +481,7 @@ impl App {
                             query_matches: self.query_window.matches(),
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
                             warnings_request: &mut s.warnings_popup,
+                            shelf_request: &mut shelf_request,
                             read_only_recording_history_hover,
                             clear_query_request: &mut s.clear_query_request,
                             display_mask: s.display_mask,
@@ -494,6 +498,12 @@ impl App {
             if !is_open {
                 self.shared.borrow_mut().tree.detached = false;
             }
+        }
+
+        // The mark counting a recording's shelved tracks opens the History
+        // window on its shelf.
+        if let Some(recording) = shelf_request {
+            self.history_window.open_shelf(recording);
         }
 
         if let Some(track_ref) = snap_request {
