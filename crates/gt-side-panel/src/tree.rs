@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem;
 
+use gt_history_types::DatabaseRef;
 use gt_loaded_files::{LoadedFileId, LoadedFilesView};
 use gt_types::{
     DataCategory, DataCategorySet, FileIdx, GeneratedMarkerKindTag, LoadedTrack, TrackIdx, TrackRef,
@@ -9,6 +10,8 @@ use gt_ui_types::{
     EventMarkerVisibility, FileVisibility, GeneratedMarkerVisibility, TrackDataVisibility,
     TrackVisibility,
 };
+
+use crate::hidden_tracks::HiddenTracksByRecording;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckState {
@@ -211,12 +214,17 @@ pub struct FileNode {
     /// Session id of the recording this node is built from. A rebuild moves
     /// the node's state, and the state of every track under it, by this id.
     id: LoadedFileId,
+    /// The recording's entry in the history database, `Some` for a recording
+    /// the database has one for. The hidden tracks of that recording are kept
+    /// under this reference across a restart.
+    db_ref: Option<DatabaseRef>,
 }
 
 impl FileNode {
-    fn new(id: LoadedFileId) -> Self {
+    fn new(id: LoadedFileId, db_ref: Option<DatabaseRef>) -> Self {
         Self {
             id,
+            db_ref,
             expanded: false,
             check: CheckState::On,
             tracks: Vec::new(),
@@ -256,6 +264,9 @@ pub struct TreeState {
     event_marker_visibility: EventMarkerVisibility,
     /// Derived from tree state, kept in sync.  Passed to gt-map renderers.
     generated_marker_visibility: GeneratedMarkerVisibility,
+    /// Read from the settings file at startup and written back to it.
+    hidden_tracks: HiddenTracksByRecording,
+    hidden_tracks_revision: u64,
 }
 
 impl Default for TreeState {
@@ -278,7 +289,25 @@ impl TreeState {
             visibility: TrackDataVisibility { files: Vec::new() },
             event_marker_visibility: EventMarkerVisibility::new(),
             generated_marker_visibility: GeneratedMarkerVisibility::new(),
+            hidden_tracks: HiddenTracksByRecording::default(),
+            hidden_tracks_revision: 0,
         }
+    }
+
+    pub fn hidden_tracks(&self) -> &HiddenTracksByRecording {
+        &self.hidden_tracks
+    }
+
+    /// A counter that takes a new value whenever [`TreeState::hidden_tracks`]
+    /// changes, for the settings dirty check to compare.
+    pub fn hidden_tracks_revision(&self) -> u64 {
+        self.hidden_tracks_revision
+    }
+
+    /// Take the hidden tracks the settings file holds. A recording loaded
+    /// afterwards opens with the tracks listed for it hidden.
+    pub fn set_hidden_tracks(&mut self, hidden_tracks: HiddenTracksByRecording) {
+        self.hidden_tracks = hidden_tracks;
     }
 
     /// The Visible section's share of the region it divides with the tree.
@@ -314,6 +343,7 @@ impl TreeState {
         let mut previous_tracks: BTreeMap<TrackStateKey, TrackNode> = BTreeMap::new();
         for FileNode {
             id,
+            db_ref: _,
             expanded,
             check: _,
             tracks,
@@ -329,10 +359,12 @@ impl TreeState {
             }
         }
 
+        let hidden_tracks = &self.hidden_tracks;
         self.files = files
             .entries()
             .map(|entry| {
-                let mut file_node = FileNode::new(entry.id());
+                let db_ref = entry.history().db_ref();
+                let mut file_node = FileNode::new(entry.id(), db_ref.cloned());
                 file_node.expanded = previous_expanded.remove(&entry.id()).unwrap_or(false);
                 for loaded_track in &entry.file().tracks {
                     let track_number = loaded_track.metadata.index;
@@ -340,9 +372,15 @@ impl TreeState {
                         file: entry.id(),
                         track_number,
                     };
-                    let mut track_node = previous_tracks
-                        .remove(&key)
-                        .unwrap_or_else(|| TrackNode::new(track_number));
+                    let mut track_node = previous_tracks.remove(&key).unwrap_or_else(|| {
+                        let mut track_node = TrackNode::new(track_number);
+                        if db_ref.is_some_and(|db_ref| {
+                            hidden_tracks.track_numbers(db_ref).contains(&track_number)
+                        }) {
+                            track_node.check = CheckState::Off;
+                        }
+                        track_node
+                    });
                     track_node.sync_event_paths_from(loaded_track);
                     file_node.tracks.push(track_node);
                 }
@@ -368,7 +406,7 @@ impl TreeState {
         self.files = files
             .entries()
             .map(|entry| {
-                let mut file_node = FileNode::new(entry.id());
+                let mut file_node = FileNode::new(entry.id(), entry.history().db_ref().cloned());
                 for loaded_track in &entry.file().tracks {
                     let mut track_node = TrackNode::new(loaded_track.metadata.index);
                     track_node.sync_event_paths_from(loaded_track);
@@ -380,9 +418,64 @@ impl TreeState {
         self.selection.clear();
         self.selection_anchor = None;
         self.shelve_confirm = None;
+        self.forget_hidden_tracks_of_the_loaded_recordings();
         self.rebuild_visibility();
         self.rebuild_event_marker_visibility();
         self.rebuild_generated_marker_visibility();
+    }
+
+    /// Write the hidden tracks of every loaded recording that the history
+    /// database holds an entry for into [`TreeState::hidden_tracks`], and take
+    /// a new revision where an entry changes.
+    ///
+    /// A remembered track number the recording no longer holds - a shelved
+    /// track, one deleted permanently - stays in its entry. Two loaded files
+    /// of one recording write one entry, from the later of the two in tree
+    /// order.
+    fn record_hidden_tracks_of_the_loaded_recordings(&mut self) {
+        let mut changed = false;
+        for file_node in &self.files {
+            let Some(db_ref) = &file_node.db_ref else {
+                continue;
+            };
+            let numbers_in_view: BTreeSet<usize> = file_node
+                .tracks
+                .iter()
+                .map(|track_node| track_node.track_number)
+                .collect();
+            let mut hidden_track_numbers: BTreeSet<usize> = self
+                .hidden_tracks
+                .track_numbers(db_ref)
+                .iter()
+                .copied()
+                .filter(|number| !numbers_in_view.contains(number))
+                .collect();
+            hidden_track_numbers.extend(
+                file_node
+                    .tracks
+                    .iter()
+                    .filter(|track_node| track_node.check == CheckState::Off)
+                    .map(|track_node| track_node.track_number),
+            );
+            changed |= self.hidden_tracks.record(db_ref, hidden_track_numbers);
+        }
+        if changed {
+            self.hidden_tracks_revision += 1;
+        }
+    }
+
+    /// Drop the entry of every loaded recording that the history database
+    /// holds one for, and take a new revision where there was one.
+    fn forget_hidden_tracks_of_the_loaded_recordings(&mut self) {
+        let mut changed = false;
+        for file_node in &self.files {
+            if let Some(db_ref) = &file_node.db_ref {
+                changed |= self.hidden_tracks.forget(db_ref);
+            }
+        }
+        if changed {
+            self.hidden_tracks_revision += 1;
+        }
     }
 
     /// Every row of the tree, the position it sits at paired with the key its
@@ -807,7 +900,11 @@ impl TreeState {
             .any(|f| f.enabled && f.tracks.iter().any(|t| t.enabled))
     }
 
+    /// Rebuild what the map renderers read from the tree's checks and
+    /// category toggles, and record the hidden tracks of the loaded
+    /// recordings. Every method that writes a check calls this.
     fn rebuild_visibility(&mut self) {
+        self.record_hidden_tracks_of_the_loaded_recordings();
         let files = &self.files;
         let vis = &mut self.visibility;
 

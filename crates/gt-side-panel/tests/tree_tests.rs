@@ -1,6 +1,9 @@
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use gt_history_types::{DatabaseRef, RecordingMeta};
 use gt_loaded_files::{FileHistory, LoadedFiles};
+use gt_side_panel::HiddenTracksByRecording;
 use gt_side_panel::tree::{CheckState, NodeKey, TreeState};
 use gt_types::{
     DataCategory, FileIdx, FileMetadata, FileSource, LoadedFile, LoadedTrack, TrackIdx,
@@ -9,32 +12,73 @@ use gt_types::{
 use rstest::rstest;
 use rustc_hash::FxHashMap;
 
+/// One empty recording whose tracks are numbered as `track_numbers` lists
+/// them.
+fn make_loaded_file(filename: String, track_numbers: &[usize]) -> LoadedFile {
+    LoadedFile {
+        metadata: FileMetadata {
+            filename,
+            ..gt_test_utils::empty_file_metadata()
+        },
+        tracks: track_numbers
+            .iter()
+            .map(|&index| LoadedTrack {
+                metadata: TrackMetadata {
+                    index,
+                    ..gt_test_utils::empty_track_metadata()
+                },
+                ..gt_test_utils::loaded_track_with_points(Vec::new())
+            })
+            .collect(),
+        event_marker_styles: FxHashMap::default(),
+        orphaned_event_markers: Vec::new(),
+        source: FileSource::GtdPath(PathBuf::new()),
+        load_warnings: Vec::new(),
+    }
+}
+
 /// `file_count` recordings of `tracks_per_file` tracks each, every track empty
-/// and numbered the way the track builder numbers one.
+/// and numbered the way the track builder numbers one. None of them is in the
+/// history database.
 fn make_loaded_files(file_count: usize, tracks_per_file: usize) -> LoadedFiles {
     let mut loaded = LoadedFiles::new();
     for fi in 0..file_count {
-        let file = LoadedFile {
-            metadata: FileMetadata {
-                filename: format!("ride-{fi}.gtd"),
-                ..gt_test_utils::empty_file_metadata()
-            },
-            tracks: (0..tracks_per_file)
-                .map(|ti| LoadedTrack {
-                    metadata: TrackMetadata {
-                        index: ti + 1,
-                        ..gt_test_utils::empty_track_metadata()
-                    },
-                    ..gt_test_utils::loaded_track_with_points(Vec::new())
-                })
-                .collect(),
-            event_marker_styles: FxHashMap::default(),
-            orphaned_event_markers: Vec::new(),
-            source: FileSource::GtdPath(PathBuf::new()),
-            load_warnings: Vec::new(),
-        };
-        loaded.push(file, FileHistory::None);
+        let track_numbers: Vec<usize> = (1..=tracks_per_file).collect();
+        loaded.push(
+            make_loaded_file(format!("ride-{fi}.gtd"), &track_numbers),
+            FileHistory::None,
+        );
     }
+    loaded
+}
+
+fn db_ref() -> DatabaseRef {
+    DatabaseRef {
+        identity: "dev".to_owned(),
+        group_name: "2026-01-01T00:00:00Z_ride".to_owned(),
+    }
+}
+
+fn stored_history() -> FileHistory {
+    let meta = RecordingMeta {
+        time_range: None,
+        nav_point_count: 0,
+        sat_report_count: 0,
+        marker_count: 0,
+        event_marker_count: 0,
+        gtd_size_bytes: 0,
+    };
+    FileHistory::recording("dev".to_owned(), meta, Some(db_ref()))
+}
+
+/// One recording in the history database, its tracks numbered as
+/// `track_numbers` lists them.
+fn stored_recording(track_numbers: &[usize]) -> LoadedFiles {
+    let mut loaded = LoadedFiles::new();
+    loaded.push(
+        make_loaded_file("ride.gtd".to_owned(), track_numbers),
+        stored_history(),
+    );
     loaded
 }
 
@@ -400,4 +444,94 @@ fn a_share_outside_the_region_leaves_the_visible_section_where_it_is(#[case] sha
 
     let kept = tree.visible_section_fraction();
     assert!((kept - 0.5).abs() < f32::EPSILON, "the share became {kept}");
+}
+
+/// A track hidden in a recording that history holds is remembered by its
+/// stored number, not by its position. A permanently deleted earlier track
+/// leaves a gap in that numbering, and the recording opens with the same track
+/// hidden.
+#[test]
+fn a_hidden_track_is_remembered_by_its_stored_number() {
+    let mut tree = TreeState::new();
+    tree.sync_from_loaded_files(stored_recording(&[1, 2, 4]).view());
+
+    tree.hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(2)));
+    assert_eq!(tree.hidden_tracks().track_numbers(&db_ref()), [4]);
+
+    let mut reopened = TreeState::new();
+    reopened.set_hidden_tracks(tree.hidden_tracks().clone());
+    reopened.sync_from_loaded_files(stored_recording(&[1, 2, 4]).view());
+
+    assert_eq!(track_check(&reopened, 0, 0), CheckState::On);
+    assert_eq!(track_check(&reopened, 0, 1), CheckState::On);
+    assert_eq!(track_check(&reopened, 0, 2), CheckState::Off);
+}
+
+#[test]
+fn a_recording_outside_the_history_database_remembers_no_hidden_track() {
+    let mut tree = make_tree(1, 2);
+
+    tree.hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(0)));
+
+    assert!(tree.hidden_tracks().is_empty());
+}
+
+#[test]
+fn removing_a_recording_from_the_view_keeps_its_hidden_tracks() {
+    let mut tree = TreeState::new();
+    tree.sync_from_loaded_files(stored_recording(&[1, 2]).view());
+    tree.hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(1)));
+
+    tree.sync_from_loaded_files(LoadedFiles::new().view());
+
+    assert_eq!(tree.hidden_tracks().track_numbers(&db_ref()), [2]);
+}
+
+/// A remembered number the recording no longer holds - from a shelve or a
+/// permanent delete - stays remembered. Every track of the recording shows
+/// until that number comes back.
+#[test]
+fn a_remembered_track_the_recording_no_longer_has_stays_remembered() {
+    let mut hidden = HiddenTracksByRecording::default();
+    hidden.record(&db_ref(), BTreeSet::from([2, 7]));
+    let mut tree = TreeState::new();
+    tree.set_hidden_tracks(hidden);
+
+    tree.sync_from_loaded_files(stored_recording(&[1, 2, 3]).view());
+
+    assert_eq!(track_check(&tree, 0, 0), CheckState::On);
+    assert_eq!(track_check(&tree, 0, 1), CheckState::Off);
+    assert_eq!(track_check(&tree, 0, 2), CheckState::On);
+    assert_eq!(tree.hidden_tracks().track_numbers(&db_ref()), [2, 7]);
+}
+
+/// The remembered numbers address other stretches of a re-segmented
+/// recording. Re-segmentation numbers its tracks over new boundaries.
+#[test]
+fn resegmenting_a_recording_forgets_its_hidden_tracks() {
+    let mut tree = TreeState::new();
+    tree.sync_from_loaded_files(stored_recording(&[1, 2]).view());
+    tree.hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(1)));
+
+    tree.reset_for_resegmented_files(stored_recording(&[1, 2, 3]).view());
+
+    assert!(tree.hidden_tracks().is_empty());
+}
+
+/// Two loaded files of one recording write one entry, from the later of the
+/// two in tree order.
+#[test]
+fn one_recording_loaded_twice_remembers_the_later_files_hidden_tracks() {
+    let mut loaded = stored_recording(&[1, 2]);
+    loaded.push(
+        make_loaded_file("ride.gtd".to_owned(), &[1, 2]),
+        stored_history(),
+    );
+    let mut tree = TreeState::new();
+    tree.sync_from_loaded_files(loaded.view());
+
+    tree.hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(0)));
+    tree.hide_track(TrackRef::new(FileIdx::new(1), TrackIdx::new(1)));
+
+    assert_eq!(tree.hidden_tracks().track_numbers(&db_ref()), [2]);
 }

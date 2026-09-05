@@ -264,7 +264,7 @@ impl<'a> TrackStateColumn<'a> {
 /// A reference to a specific recording stored in the history database.
 ///
 /// Identifies the HDF5 group at `by_identity/{identity}/{group_name}`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DatabaseRef {
     pub identity: String,
     pub group_name: String,

@@ -64,6 +64,10 @@ pub(super) struct AppSnapshot {
     pub theme: crate::settings::ThemeSetting,
     pub recording_name_template: String,
     pub visible_section_fraction: StableF32,
+    /// [`gt_side_panel::TreeState::hidden_tracks_revision`], which takes a new
+    /// value whenever the hidden tracks of a recording change. The tree owns
+    /// the list itself. This compares one integer per frame.
+    pub hidden_tracks_revision: u64,
     pub track_split_gap_seconds: u64,
     pub log_association_window_s: u64,
     pub ask_log_association_target: bool,
@@ -136,6 +140,7 @@ impl Default for AppSnapshot {
             visible_section_fraction: StableF32::from(
                 gt_side_panel::VISIBLE_SECTION_DEFAULT_FRACTION,
             ),
+            hidden_tracks_revision: 0,
             track_split_gap_seconds: 300,
             log_association_window_s: 60,
             ask_log_association_target: processing.ask_log_association_target,

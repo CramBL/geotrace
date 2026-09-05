@@ -78,6 +78,7 @@ impl App {
             shared
                 .tree
                 .set_visible_section_fraction(s.ui.visible_section_fraction);
+            shared.tree.set_hidden_tracks(s.ui.hidden_tracks.clone());
             shared.plot_state.show_grid = s.plot.show_grid;
             shared.plot_state.line_width = s.plot.line_width.clamp(
                 *gt_plot::PLOT_LINE_WIDTH_RANGE.start(),
@@ -184,6 +185,7 @@ impl App {
                 theme,
                 recording_name_template: s.recording_name_template.clone(),
                 visible_section_fraction: s.tree.visible_section_fraction(),
+                hidden_tracks: s.tree.hidden_tracks().clone(),
             },
             processing: crate::settings::ProcessingSettings {
                 track_split_gap_seconds: self
