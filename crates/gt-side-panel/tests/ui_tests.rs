@@ -14,6 +14,7 @@ use egui_phosphor::regular::SQUARE as ICON_SQUARE;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use std::path::PathBuf;
 
+use chrono::{DateTime, Duration, Utc};
 use egui_kittest::Node;
 use egui_kittest::kittest::NodeT as _;
 use egui_kittest::kittest::Queryable as _;
@@ -21,8 +22,9 @@ use geotrace_sdk_units::Unit;
 use gt_filter::GlobalFilter;
 use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
 use gt_side_panel::{
-    FilterPanelState, NodeKey, PanelContext, SnapCostingTarget, SnapPanelView, SnapRowView,
-    TreeState, show_side_panel,
+    EVERY_TRACK_PASSES_THE_FILTER_HOVER, FilterPanelState, NodeKey,
+    ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER, PanelContext, SHELVE_FILTERED_DATA_LABEL,
+    SnapCostingTarget, SnapPanelView, SnapRowView, TreeState, show_side_panel,
 };
 use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
 use gt_types::{
@@ -41,6 +43,9 @@ struct State {
     popup_pos: Option<egui::Pos2>,
     zoom_to_visible: bool,
     warnings_request: Option<(String, Vec<LoadWarning>)>,
+    /// What the app hands the panel for a read-only session, and `None` for a
+    /// session that writes.
+    read_only_recording_history_hover: Option<&'static str>,
     clear_query_request: bool,
     display_mask: DisplayMask,
     recording_name_template: String,
@@ -92,6 +97,7 @@ fn make_state_from_files(files: LoadedFiles) -> State {
         popup_pos: None,
         zoom_to_visible: false,
         warnings_request: None,
+        read_only_recording_history_hover: None,
         clear_query_request: false,
         display_mask: DisplayMask::default(),
         recording_name_template: "{filename}".to_owned(),
@@ -160,6 +166,7 @@ fn make_harness_sized(state: State, size: egui::Vec2) -> TestHarness<'static, St
                 query_matches: None,
                 zoom_to_visible_request: &mut s.zoom_to_visible,
                 warnings_request: &mut s.warnings_request,
+                read_only_recording_history_hover: s.read_only_recording_history_hover,
                 clear_query_request: &mut s.clear_query_request,
                 display_mask: s.display_mask,
                 recording_names: &RecordingNames::resolve(
@@ -1463,6 +1470,7 @@ fn snapshot_track_channels() {
         popup_pos: None,
         zoom_to_visible: false,
         warnings_request: None,
+        read_only_recording_history_hover: None,
         clear_query_request: false,
         display_mask: DisplayMask::default(),
         recording_name_template: "{filename}".to_owned(),
@@ -1774,6 +1782,8 @@ fn settled_docked_panel_width(state: State) -> f32 {
                                     query_matches: None,
                                     zoom_to_visible_request: &mut s.zoom_to_visible,
                                     warnings_request: &mut s.warnings_request,
+                                    read_only_recording_history_hover: s
+                                        .read_only_recording_history_hover,
                                     clear_query_request: &mut s.clear_query_request,
                                     display_mask: s.display_mask,
                                     recording_names: &RecordingNames::resolve(
@@ -2338,4 +2348,152 @@ fn snapshot_hovering_the_row_beside_a_control_opens_the_track_stats_tooltip(
         "hovering 3 points left of {control_label:?} must state the track stats"
     );
     harness.snapshot(snapshot_name);
+}
+
+/// A stand-in for the read-only wording, which the app owns.
+const READ_ONLY_HOVER: &str = "This session is read-only";
+
+/// The recording the shelve tests load, as the recording history addresses it.
+fn stored_recording_ref() -> gt_history_types::DatabaseRef {
+    gt_history_types::DatabaseRef {
+        identity: "auto:ride".to_owned(),
+        group_name: "ride".to_owned(),
+    }
+}
+
+/// A recording of two tracks a day apart, the first of 59 seconds and the
+/// second of four. A minimum duration of half a minute excludes the second.
+///
+/// The recording history holds the recording when `db_ref` is `Some`.
+fn state_with_two_tracks(db_ref: Option<gt_history_types::DatabaseRef>) -> State {
+    let start = DateTime::<Utc>::UNIX_EPOCH;
+    let mut points = gt_test_utils::nav_points_from(start, 60, 1);
+    points.extend(gt_test_utils::nav_points_from(
+        start + Duration::days(1),
+        5,
+        1,
+    ));
+    let file = build_file(
+        "ride_0.gtd",
+        &points,
+        gt_track_builder::FileMeta::default(),
+        vec![],
+    );
+    let meta = gt_history_types::RecordingMeta {
+        time_range: None,
+        nav_point_count: 0,
+        sat_report_count: 0,
+        marker_count: 0,
+        event_marker_count: 0,
+        gtd_size_bytes: 0,
+    };
+    let mut files = LoadedFiles::new();
+    files.push(
+        file,
+        FileHistory::recording("auto:ride".to_owned(), meta, db_ref),
+    );
+    make_state_from_files(files)
+}
+
+/// The panel over a stored recording of two tracks, with no filter set.
+fn harness_over_two_tracks_that_pass_the_filter() -> TestHarness<'static, State> {
+    let mut harness = make_harness(state_with_two_tracks(Some(stored_recording_ref())));
+    harness.run();
+    harness
+}
+
+fn hover_the_shelve_button(harness: &mut TestHarness<'static, State>) {
+    harness
+        .inner
+        .hover_and_settle(By::new().label_contains(SHELVE_FILTERED_DATA_LABEL), 3);
+}
+
+fn shelve_button_is_disabled(harness: &TestHarness<'static, State>) -> bool {
+    harness
+        .inner
+        .get_by_label_contains(SHELVE_FILTERED_DATA_LABEL)
+        .accesskit_node()
+        .is_disabled()
+}
+
+/// A tree checkbox hides its track on the map, which the session holds on its
+/// own. The shelve button acts on the filter's results, and stays grayed while
+/// every track passes the filter.
+#[test]
+fn the_shelve_button_stays_grayed_while_the_tree_hides_a_track_that_the_filter_keeps() {
+    let mut harness = harness_over_two_tracks_that_pass_the_filter();
+    harness
+        .state_mut()
+        .tree
+        .hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(0)));
+    harness.run();
+
+    assert!(shelve_button_is_disabled(&harness));
+    hover_the_shelve_button(&mut harness);
+    harness
+        .inner
+        .get_by_label_contains(EVERY_TRACK_PASSES_THE_FILTER_HOVER);
+}
+
+/// The filter excludes the second track and the tree hides the first: the
+/// confirmation opens over the second track alone.
+#[test]
+fn the_shelve_button_confirms_over_the_track_that_the_filter_excludes() {
+    let mut harness = harness_over_two_tracks_that_pass_the_filter();
+    harness.state_mut().filter.min_duration = Some(Duration::seconds(30));
+    harness
+        .state_mut()
+        .tree
+        .hide_track(TrackRef::new(FileIdx::new(0), TrackIdx::new(0)));
+    harness.run();
+
+    harness
+        .inner
+        .get_by_label_contains(SHELVE_FILTERED_DATA_LABEL)
+        .click();
+    harness.run();
+
+    assert_eq!(
+        harness
+            .state()
+            .tree
+            .shelve_confirm
+            .as_ref()
+            .map(|confirm| confirm.items.clone()),
+        Some(vec![NodeKey::Track(TrackRef::new(
+            FileIdx::new(0),
+            TrackIdx::new(1)
+        ))])
+    );
+}
+
+/// Shelving writes to the recording history, which a read-only session leaves
+/// as it is.
+#[test]
+fn the_shelve_button_is_grayed_in_a_read_only_session() {
+    let mut state = state_with_two_tracks(Some(stored_recording_ref()));
+    state.filter.min_duration = Some(Duration::seconds(30));
+    state.read_only_recording_history_hover = Some(READ_ONLY_HOVER);
+    let mut harness = make_harness(state);
+    harness.run();
+
+    assert!(shelve_button_is_disabled(&harness));
+    hover_the_shelve_button(&mut harness);
+    harness.inner.get_by_label_contains(READ_ONLY_HOVER);
+}
+
+/// A recording loaded from a file alone has no stored track table for
+/// shelving to write into.
+#[test]
+fn the_shelve_button_is_grayed_for_a_recording_outside_the_recording_history() {
+    let mut state = state_with_two_tracks(None);
+    state.filter.min_duration = Some(Duration::seconds(30));
+    let mut harness = make_harness(state);
+    harness.run();
+
+    assert!(shelve_button_is_disabled(&harness));
+    hover_the_shelve_button(&mut harness);
+    harness
+        .inner
+        .get_by_label_contains(ONLY_A_STORED_TRACK_CAN_BE_SHELVED_HOVER);
 }

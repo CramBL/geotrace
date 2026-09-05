@@ -30,11 +30,12 @@ use super::loader::{
 use super::log_viewer::{self, LogViewerContext};
 use super::modals::{
     SnapAutoChoice, SnapConsentChoice, SnapReplaceChoice, SnapScopeChoice, show_about_dialog,
-    show_delete_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
-    show_orphaned_event_markers_popup, show_recording_details_dialog, show_snap_auto_prompt,
+    show_load_warnings_dialog, show_mapbox_token_dialog, show_orphaned_event_markers_popup,
+    show_recording_details_dialog, show_shelve_confirmation, show_snap_auto_prompt,
     show_snap_consent_dialog, show_snap_replace_dialog, show_snap_scope_dialog,
 };
 use super::panes::MainBehavior;
+use super::read_only_session::READ_ONLY_RECORDING_HISTORY_HOVER;
 use super::shutdown::FrameContents;
 use super::snap_state::PendingSnapRequest;
 use super::space_weather_warning::{
@@ -402,6 +403,10 @@ impl App {
         let mut snap_costing_request: Option<(SnapCostingTarget, gt_ui_types::SnapCosting)> = None;
         let mut sky_trails_request: Option<gt_ui_types::SkyTrailsRequest> = None;
 
+        let read_only_recording_history_hover =
+            (!self.pending_writes.write_access().allows_writing())
+                .then_some(READ_ONLY_RECORDING_HISTORY_HOVER);
+
         let detached = self.shared.borrow().tree.detached;
         if !detached {
             egui::Panel::left("track_data_panel")
@@ -425,6 +430,7 @@ impl App {
                             query_matches: self.query_window.matches(),
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
                             warnings_request: &mut s.warnings_popup,
+                            read_only_recording_history_hover,
                             clear_query_request: &mut s.clear_query_request,
                             display_mask: s.display_mask,
                             recording_names: &recording_names,
@@ -472,6 +478,7 @@ impl App {
                             query_matches: self.query_window.matches(),
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
                             warnings_request: &mut s.warnings_popup,
+                            read_only_recording_history_hover,
                             clear_query_request: &mut s.clear_query_request,
                             display_mask: s.display_mask,
                             recording_names: &recording_names,
@@ -1130,7 +1137,7 @@ impl App {
             if let Some(items) = s.tree.pending_unload.take() {
                 let removed_recordings =
                     modals::removed_recording_keys(&items, s.loaded_files.view());
-                modals::execute_delete(&items, &mut s.loaded_files, &mut s.tree);
+                modals::remove_items_from_view(&items, &mut s.loaded_files, &mut s.tree);
                 s.plot_state.rebuild_all(&s.loaded_files);
                 Some((items.len(), removed_recordings))
             } else {
@@ -1143,23 +1150,21 @@ impl App {
             log::info!("Unloaded {count} item(s) from view");
         }
 
-        let remove_outcome = {
-            let write_access = self.pending_writes.write_access();
+        let shelve_outcome = {
             let logs = &self.logs;
             let mut refmut = self.shared.borrow_mut();
             let s = &mut *refmut;
             // Resolved only while the dialog is up. The map and the plot
             // resolve recording names of their own every frame.
-            let outcome = s.tree.delete_confirm.is_some().then(|| {
+            let outcome = s.tree.shelve_confirm.is_some().then(|| {
                 let recording_names =
                     RecordingNames::resolve(s.loaded_files.view(), &s.recording_name_template);
-                show_delete_confirmation(
+                show_shelve_confirmation(
                     ui,
                     &mut s.tree,
                     &mut s.loaded_files,
                     &recording_names,
                     logs,
-                    write_access,
                 )
             });
             let outcome = outcome.flatten();
@@ -1168,10 +1173,10 @@ impl App {
             }
             outcome
         };
-        if let Some(outcome) = remove_outcome {
+        if let Some(outcome) = shelve_outcome {
             self.unload_logs_and_forget_attachments_of(&outcome.removed_recordings);
             self.on_track_indices_changed();
-            self.apply_remove_outcome(&outcome);
+            self.apply_shelve_outcome(&outcome);
         }
     }
 

@@ -77,6 +77,7 @@ use super::instance_wait::{
     TAKE_OVER_WARNING, TakenOverInstance,
 };
 use super::log_viewer;
+use super::modals::{DELETE_PERMANENTLY_BUTTON_LABEL, SHELVE_BUTTON_LABEL};
 use super::query;
 use super::read_only_session::{READ_ONLY_MARKER_LABEL, READ_ONLY_RECORDING_HISTORY_HOVER};
 use super::settings_ui::{self, SettingsPage};
@@ -2195,15 +2196,15 @@ fn plot_legend_follows_the_recording_name_template() {
     );
 }
 
-/// The remove-confirmation dialog labels what it is about to remove the same
+/// The shelve confirmation labels the tracks it is about to shelve the same
 /// way every other surface does.
 #[test]
-fn remove_confirmation_follows_the_recording_name_template() {
+fn shelve_confirmation_follows_the_recording_name_template() {
     let mut harness = harness_with_three_files_loaded();
     {
         let mut shared = harness.state_mut().shared.borrow_mut();
         shared.recording_name_template = "Rec: {filename}".to_owned();
-        shared.tree.delete_confirm = Some(gt_side_panel::DeleteConfirmState {
+        shared.tree.shelve_confirm = Some(gt_side_panel::ShelveConfirmState {
             items: vec![gt_side_panel::NodeKey::Track(TrackRef::new(
                 FileIdx::new(0),
                 TrackIdx::new(0),
@@ -11285,8 +11286,8 @@ mod log_association {
                 .is_some()
         );
 
-        open_the_remove_confirmation(&mut harness, false);
-        harness.get_by_label("Remove").click();
+        open_the_shelve_confirmation(&mut harness, false);
+        harness.get_by_label(SHELVE_BUTTON_LABEL).click();
         harness.run_steps(3);
 
         assert!(
@@ -11304,11 +11305,11 @@ mod log_association {
         );
     }
 
-    /// Opens the remove confirmation on the recording the session loaded
+    /// Opens the shelve confirmation on the recording the session loaded
     /// first, with the permanent-delete box ticked when `permanently`.
-    fn open_the_remove_confirmation(harness: &mut Harness<App>, permanently: bool) {
-        harness.state_mut().shared.borrow_mut().tree.delete_confirm =
-            Some(gt_side_panel::DeleteConfirmState {
+    fn open_the_shelve_confirmation(harness: &mut Harness<App>, permanently: bool) {
+        harness.state_mut().shared.borrow_mut().tree.shelve_confirm =
+            Some(gt_side_panel::ShelveConfirmState {
                 items: vec![gt_side_panel::NodeKey::File(FileIdx::new(0))],
                 delete_permanently: permanently,
             });
@@ -11316,18 +11317,18 @@ mod log_association {
     }
 
     /// A recording leaving the session takes its attached logs with it, and the
-    /// dialog says so before the user confirms.
+    /// dialog states that before the user confirms.
     #[test]
-    fn removing_a_recording_unloads_the_logs_it_holds() {
+    fn shelving_every_track_of_a_recording_unloads_the_logs_it_holds() {
         let dir = tempfile::tempdir().expect("temp dir");
         let db_path = dir.path().join("geotrace.h5");
         let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
         attach_the_log(&mut harness, &db_path, &db_ref);
 
-        open_the_remove_confirmation(&mut harness, false);
+        open_the_shelve_confirmation(&mut harness, false);
         harness.get_by_label_contains("Unloads 1 attached log");
 
-        harness.get_by_label("Remove").click();
+        harness.get_by_label(SHELVE_BUTTON_LABEL).click();
         harness.run_steps(3);
 
         assert_eq!(harness.state().logs.len(), 0);
@@ -11343,10 +11344,12 @@ mod log_association {
         let (mut harness, db_ref) = harness_over_a_recording_and_its_log(&db_path);
         attach_the_log(&mut harness, &db_path, &db_ref);
 
-        open_the_remove_confirmation(&mut harness, true);
+        open_the_shelve_confirmation(&mut harness, true);
         harness.get_by_label_contains("Deletes 1 attached log with them");
 
-        harness.get_by_label("Remove").click();
+        harness
+            .get_by_label(DELETE_PERMANENTLY_BUTTON_LABEL)
+            .click();
         harness.run_steps(3);
 
         assert_eq!(harness.state().logs.len(), 0);

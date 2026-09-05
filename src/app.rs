@@ -1113,20 +1113,19 @@ impl App {
         self.logs.reassociate_all(&s.loaded_files.view());
     }
 
-    /// Shelves the affected tracks, or deletes them permanently when
-    /// `outcome.permanent`. The toast is shown when the worker confirms via
-    /// [`Self::handle_history_response`].
-    fn apply_remove_outcome(&self, outcome: &modals::RemoveOutcome) {
+    /// Sends the confirmed action to the history worker, which reports it
+    /// through [`Self::handle_history_response`] and its toast.
+    fn apply_shelve_outcome(&self, outcome: &modals::ShelveOutcome) {
         for removal in &outcome.affected {
-            if outcome.permanent {
-                self.history
-                    .delete_tracks(removal.db_ref.clone(), removal.track_rows.clone());
-            } else {
-                self.history.set_tracks_shelved(
+            match outcome.action {
+                modals::StoredTrackAction::Shelve => self.history.set_tracks_shelved(
                     removal.db_ref.clone(),
                     removal.track_rows.clone(),
                     true,
-                );
+                ),
+                modals::StoredTrackAction::DeletePermanently => self
+                    .history
+                    .delete_tracks(removal.db_ref.clone(), removal.track_rows.clone()),
             }
         }
     }
