@@ -6,6 +6,7 @@ use std::ops::Range;
 use gt_fmt::EM_DASH;
 use gt_types::TrackRef;
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 /// Point-index ranges per track, each track's ranges sorted and disjoint.
 pub type TrackRanges = FxHashMap<TrackRef, Vec<Range<usize>>>;
@@ -130,32 +131,34 @@ impl QueryMatches {
 
     /// The hidden ranges for one track, empty when none.
     ///
-    /// Checks the sorted-and-disjoint invariant in debug builds. The check runs
-    /// once per track per frame.
+    /// Checks the sorted-and-disjoint invariant in debug builds.
     pub fn hidden_ranges(&self, track: TrackRef) -> &[Range<usize>] {
         track_ranges(&self.hidden, track)
     }
 
+    /// One track's hidden and per-layer ranges, with the hash lookups done
+    /// once for a whole walk over that track's points.
+    pub fn track_view(&self, track: TrackRef) -> TrackMatchView<'_> {
+        TrackMatchView {
+            hidden: self.hidden_ranges(track),
+            layers: self
+                .draws
+                .iter()
+                .take(DrawLayerMask::MAX_LAYERS)
+                .map(|layer| layer.ranges_for(track))
+                .collect(),
+        }
+    }
+
     /// Whether the point is hidden (removed from the map).
     pub fn is_hidden(&self, track: TrackRef, point_index: usize) -> bool {
-        Self::range_at(self.hidden_ranges(track), point_index).is_some()
+        self.track_view(track).is_hidden(point_index)
     }
 
     /// Which `draw` layers cover the point. Few layers, so the caller stores
     /// the mask in the point key.
     pub fn draw_mask(&self, track: TrackRef, point_index: usize) -> DrawLayerMask {
-        let mut mask = DrawLayerMask::default();
-        for (i, layer) in self
-            .draws
-            .iter()
-            .take(DrawLayerMask::MAX_LAYERS)
-            .enumerate()
-        {
-            if Self::range_at(track_ranges(&layer.ranges, track), point_index).is_some() {
-                mask.insert(i);
-            }
-        }
-        mask
+        self.track_view(track).draw_mask(point_index)
     }
 
     /// The draw range containing the point, for the hover header: the first
@@ -174,6 +177,45 @@ impl QueryMatches {
     pub fn range_at(ranges: &[Range<usize>], point_index: usize) -> Option<&Range<usize>> {
         let candidate = ranges.partition_point(|r| r.end <= point_index);
         ranges.get(candidate).filter(|r| r.contains(&point_index))
+    }
+}
+
+/// One track's query ranges, looked up out of [`QueryMatches`] once so that
+/// each per-point test over that track is the binary search alone, with no
+/// hash lookup. The default value has no hidden range and no layer, which the
+/// map uses for a track when no query has run.
+#[derive(Debug, Default)]
+pub struct TrackMatchView<'a> {
+    hidden: &'a [Range<usize>],
+    layers: SmallVec<[&'a [Range<usize>]; 4]>,
+}
+
+impl<'a> TrackMatchView<'a> {
+    /// One track's view of a run's matches, or the default view when no run's
+    /// matches are shown.
+    pub fn for_track(query_matches: Option<&'a QueryMatches>, track: TrackRef) -> Self {
+        query_matches.map_or_else(Self::default, |matches| matches.track_view(track))
+    }
+
+    /// Whether the point is hidden (removed from the map).
+    pub fn is_hidden(&self, point_index: usize) -> bool {
+        QueryMatches::range_at(self.hidden, point_index).is_some()
+    }
+
+    /// Whether the query hides any point of this track.
+    pub fn hides_any_point(&self) -> bool {
+        !self.hidden.is_empty()
+    }
+
+    /// Which `draw` layers cover the point.
+    pub fn draw_mask(&self, point_index: usize) -> DrawLayerMask {
+        let mut mask = DrawLayerMask::default();
+        for (index, ranges) in self.layers.iter().copied().enumerate() {
+            if QueryMatches::range_at(ranges, point_index).is_some() {
+                mask.insert(index);
+            }
+        }
+        mask
     }
 }
 
@@ -256,6 +298,38 @@ mod tests {
         assert_eq!(matches.header_range(track(), 1), Some(&(0..3)));
         assert_eq!(matches.header_range(track(), 15), Some(&(14..20)));
         assert_eq!(matches.header_range(track(), 8), None);
+    }
+
+    #[test]
+    fn a_track_view_reports_the_hidden_and_covering_ranges_of_its_own_track() {
+        let matches = QueryMatches {
+            hidden: TrackRanges::from_iter([(track(), vec![rng(2, 5)])]),
+            draws: vec![layer(0, vec![rng(0, 3)]), layer(1, vec![rng(2, 6)])],
+            ..QueryMatches::default()
+        };
+        let view = matches.track_view(track());
+        assert!(view.hides_any_point());
+        assert!(!view.is_hidden(1));
+        assert!(view.is_hidden(4));
+        assert!(!view.is_hidden(5));
+        assert_eq!(view.draw_mask(1), DrawLayerMask(0b01));
+        assert_eq!(view.draw_mask(2), DrawLayerMask(0b11));
+        assert_eq!(view.draw_mask(5), DrawLayerMask(0b10));
+        assert_eq!(view.draw_mask(9), DrawLayerMask::default());
+    }
+
+    #[test]
+    fn a_track_with_no_matches_has_no_hidden_point_and_no_covering_layer() {
+        let matches = QueryMatches {
+            hidden: TrackRanges::from_iter([(track(), vec![rng(2, 5)])]),
+            draws: vec![layer(0, vec![rng(0, 3)])],
+            ..QueryMatches::default()
+        };
+        let other = TrackRef::new(FileIdx::new(0), TrackIdx::new(1));
+        let view = matches.track_view(other);
+        assert!(!view.hides_any_point());
+        assert!(!view.is_hidden(3));
+        assert!(view.draw_mask(1).is_empty());
     }
 
     #[test]
