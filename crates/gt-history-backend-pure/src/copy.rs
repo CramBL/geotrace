@@ -797,6 +797,24 @@ pub(crate) fn set_snap_blob(
     Ok(())
 }
 
+/// Whether the identity group of `identity` holds a group named `group_name`.
+/// False where the database has no group for that identity.
+pub(crate) fn contains_recording(
+    db_path: &std::path::Path,
+    identity: &str,
+    group_name: &str,
+) -> Result<bool, InternalError> {
+    let file = hdf5_pure::File::open(db_path)?;
+    let root = file.root();
+    let Ok(by_id) = root.group("by_identity") else {
+        return Ok(false);
+    };
+    let Ok(id_grp) = find_identity_group(&by_id, identity) else {
+        return Ok(false);
+    };
+    Ok(id_grp.group(group_name).is_ok())
+}
+
 /// The stored snap run bytes of a recording, `None` when it carries none.
 pub(crate) fn snap_blob(
     db_path: &std::path::Path,

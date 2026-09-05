@@ -1493,6 +1493,23 @@ pub(crate) fn set_tracks_shelved(
     write_track_table(&rec_grp, &tracks)
 }
 
+/// Whether the identity group of `identity` holds a link named `group_name`.
+/// False where the database has no group for that identity.
+pub(crate) fn contains_recording(
+    db_path: &std::path::Path,
+    identity: &str,
+    group_name: &str,
+) -> Result<bool, InternalError> {
+    let file = hdf5::File::open(db_path)?;
+    let Ok(by_id) = file.group("by_identity") else {
+        return Ok(false);
+    };
+    let Ok(id_grp) = open_identity_group(&by_id, identity) else {
+        return Ok(false);
+    };
+    Ok(id_grp.link_exists(group_name))
+}
+
 pub(crate) fn list_recordings(
     db_path: &std::path::Path,
 ) -> Result<Vec<RecordingEntry>, InternalError> {

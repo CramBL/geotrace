@@ -147,6 +147,12 @@ impl ReadOnlyHistoryDatabase for ReadOnlyPureDb {
         Ok(entries)
     }
 
+    fn contains(&self, db_ref: &DatabaseRef) -> Result<bool, DbError> {
+        let _guard = DB_LOCK.lock();
+        copy::contains_recording(&self.path, &db_ref.identity, &db_ref.group_name)
+            .map_err(Into::into)
+    }
+
     fn is_duplicate(&self, meta: &RecordingMeta) -> Result<bool, DbError> {
         let _guard = DB_LOCK.lock();
         let file = hdf5_pure::File::open(&self.path).map_err(classify_hdf5_error)?;
@@ -211,6 +217,10 @@ impl ReadOnlyHistoryDatabase for PureDb {
 
     fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError> {
         self.read_only.list_recordings()
+    }
+
+    fn contains(&self, db_ref: &DatabaseRef) -> Result<bool, DbError> {
+        self.read_only.contains(db_ref)
     }
 
     fn is_duplicate(&self, meta: &RecordingMeta) -> Result<bool, DbError> {
