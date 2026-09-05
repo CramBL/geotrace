@@ -947,6 +947,41 @@ fn list_recordings_empty_database() {
 }
 
 #[test]
+fn contains_finds_an_inserted_recording() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let bytes = make_gtd_bytes(1_000, 3);
+    let meta = extract_meta(&bytes).expect("meta");
+    let db_ref = db.insert_simple("dev", &meta, &bytes).expect("insert");
+
+    assert!(db.contains(&db_ref).expect("contains"));
+}
+
+#[rstest]
+#[case::an_unknown_group_under_a_stored_identity("dev", Some("2000-01-01T00:00:00Z"))]
+#[case::the_stored_group_under_an_unknown_identity("nobody", None)]
+fn contains_is_false_outside_the_stored_recordings(
+    #[case] identity: &str,
+    #[case] group_name: Option<&str>,
+) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let bytes = make_gtd_bytes(1_000, 3);
+    let meta = extract_meta(&bytes).expect("meta");
+    let stored = db.insert_simple("dev", &meta, &bytes).expect("insert");
+
+    let db_ref = DatabaseRef {
+        identity: identity.to_owned(),
+        group_name: group_name.unwrap_or(&stored.group_name).to_owned(),
+    };
+    assert!(!db.contains(&db_ref).expect("contains"));
+}
+
+#[test]
 fn delete_removes_recording() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");

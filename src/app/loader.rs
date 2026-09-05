@@ -1007,26 +1007,25 @@ impl HistoryInsert<'_> {
         );
         match db.insert(identity, meta, &tracks, settings, bytes) {
             Ok(db_ref) => {
-                match db.list_recordings() {
-                    Ok(entries) => {
-                        if entries.iter().any(|entry| entry.db_ref == db_ref) {
-                            log::info!(
-                                "Stored '{filename}' in history as identity={:?}, group={:?} ({} track(s))",
-                                db_ref.identity,
-                                db_ref.group_name,
-                                tracks.len()
-                            );
-                        } else {
-                            log::error!(
-                                "Stored '{filename}' in history as identity={:?}, group={:?}, but it is not visible in the history listing",
-                                db_ref.identity,
-                                db_ref.group_name
-                            );
-                        }
+                match db.contains(&db_ref) {
+                    Ok(true) => {
+                        log::info!(
+                            "Stored '{filename}' in history as identity={:?}, group={:?} ({} track(s))",
+                            db_ref.identity,
+                            db_ref.group_name,
+                            tracks.len()
+                        );
+                    }
+                    Ok(false) => {
+                        log::error!(
+                            "Stored '{filename}' in history as identity={:?}, group={:?}, but the database has no such group",
+                            db_ref.identity,
+                            db_ref.group_name
+                        );
                     }
                     Err(e) => {
                         log::error!(
-                            "Stored '{filename}' in history as identity={:?}, group={:?}, but listing the history failed: {e}",
+                            "Stored '{filename}' in history as identity={:?}, group={:?}, but reading the database back for it failed: {e}",
                             db_ref.identity,
                             db_ref.group_name
                         );

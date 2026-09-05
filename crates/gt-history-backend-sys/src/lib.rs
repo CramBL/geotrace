@@ -155,6 +155,12 @@ impl ReadOnlyHistoryDatabase for ReadOnlySysDb {
         list_recordings(&self.path).map_err(Into::into)
     }
 
+    fn contains(&self, db_ref: &DatabaseRef) -> Result<bool, DbError> {
+        let _guard = DB_LOCK.lock();
+        crate::copy::contains_recording(&self.path, &db_ref.identity, &db_ref.group_name)
+            .map_err(Into::into)
+    }
+
     fn is_duplicate(&self, meta: &RecordingMeta) -> Result<bool, DbError> {
         let _guard = DB_LOCK.lock();
         crate::copy::is_duplicate(&self.path, meta).map_err(Into::into)
@@ -229,6 +235,10 @@ impl ReadOnlyHistoryDatabase for SysDb {
 
     fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError> {
         self.read_only.list_recordings()
+    }
+
+    fn contains(&self, db_ref: &DatabaseRef) -> Result<bool, DbError> {
+        self.read_only.contains(db_ref)
     }
 
     fn is_duplicate(&self, meta: &RecordingMeta) -> Result<bool, DbError> {

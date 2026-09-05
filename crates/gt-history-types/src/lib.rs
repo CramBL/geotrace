@@ -791,6 +791,11 @@ pub trait ReadOnlyHistoryDatabase {
 
     fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError>;
 
+    /// Whether the database holds a recording group named
+    /// `db_ref.group_name` under the identity `db_ref.identity`. Tests that
+    /// group's link alone: one lookup, whatever the database holds.
+    fn contains(&self, db_ref: &DatabaseRef) -> Result<bool, DbError>;
+
     /// Whether a recording with the same content already exists (content-addressed
     /// across all identities).
     fn is_duplicate(&self, meta: &RecordingMeta) -> Result<bool, DbError>;
