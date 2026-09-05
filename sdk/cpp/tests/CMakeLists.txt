@@ -18,7 +18,7 @@ set(GEOTRACE_CPP_OUT_OF_RANGE_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../c/tests/fixtures/out_of_range_values.gtd")
 
 function(add_cpp_test name)
-    add_executable(${name} ${name}.cpp)
+    add_executable(${name} ${name}.cpp ${ARGN})
     target_link_libraries(${name} PRIVATE GeoTrace::Cpp doctest::doctest geotrace_sanitizers)
 
     if(MSVC)
@@ -85,3 +85,5 @@ add_cpp_test(test_no_exceptions)
 target_compile_definitions(test_no_exceptions PRIVATE GEOTRACE_CPP_NO_EXCEPTIONS)
 
 add_cpp_test(test_unit_catalog_header)
+
+add_cpp_test(test_odr_two_translation_units test_odr_second_translation_unit.cpp)
