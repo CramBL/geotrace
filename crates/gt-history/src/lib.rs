@@ -4,7 +4,8 @@ pub use gt_history_types::{
     ReadOnlyHistoryDatabase, RecordingEntry, RecordingMeta, StoredFixPlacementRule,
     StoredLogFilter, StoredLogFilterMode, StoredRecording, StoredSegmentation,
     StoredTrackSplitRule, TrackRange, TrackState, format_count_suffix, identity_from_group_name,
-    identity_group_name, log_attachment, logs_directory_for_database, make_group_name,
+    identity_group_name, listed_track_rows, log_attachment, logs_directory_for_database,
+    make_group_name,
 };
 
 // Pure-Rust backend

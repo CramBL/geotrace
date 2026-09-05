@@ -7083,7 +7083,7 @@ fn resegment_prompt_named(filename: &str) -> super::ResegmentPrompt {
             detect_clock_discontinuities: false,
             clock_discontinuity_sigmas: 4.0,
         },
-        shelved_positions: Vec::new(),
+        stored_tracks: Vec::new(),
         marker_settings_changed: false,
     }
 }
@@ -7243,7 +7243,18 @@ fn resegment_prompt_for(
         filename: "ride.gtd".to_owned(),
         bytes: std::sync::Arc::from(minimal_gtd_bytes()),
         stored: stored_segmentation_from_app_with_rules(app, track_split_rule, fix_placement_rule),
-        shelved_positions: vec![1],
+        stored_tracks: vec![
+            gt_store::TrackRange {
+                start: 0,
+                end: 30,
+                state: gt_store::TrackState::Live,
+            },
+            gt_store::TrackRange {
+                start: 30,
+                end: 61,
+                state: gt_store::TrackState::Shelved,
+            },
+        ],
         marker_settings_changed: false,
     }
 }
@@ -11968,7 +11979,7 @@ impl OversizedAppWindow {
                         detect_clock_discontinuities: false,
                         clock_discontinuity_sigmas: 4.0,
                     },
-                    shelved_positions: Vec::new(),
+                    stored_tracks: Vec::new(),
                     marker_settings_changed: false,
                 });
             }

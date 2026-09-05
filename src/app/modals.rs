@@ -30,10 +30,9 @@ const PERMANENT_DELETE_LABEL: &str = "Also delete permanently from history";
 /// The tracks of one stored recording that a remove acts on.
 pub struct RecordingTrackRemoval {
     pub db_ref: DatabaseRef,
-    /// Original (segmentation) track indices, matching the recording's stored
-    /// track table - not the live view positions, which shift as tracks are
-    /// removed.
-    pub track_indices: Vec<usize>,
+    /// The rows of the recording's stored track table - not the live view
+    /// positions, which shift as tracks are removed.
+    pub track_rows: Vec<usize>,
 }
 
 /// Actions the app applies in the frame after the user confirms the remove
@@ -281,7 +280,7 @@ pub fn show_delete_confirmation(
     // whether the "delete permanently" option is even relevant.
     let removals = track_removals(&confirm.items, loaded_files.view());
     let affected_recordings = removals.len();
-    let affected_tracks: usize = removals.iter().map(|r| r.track_indices.len()).sum();
+    let affected_tracks: usize = removals.iter().map(|r| r.track_rows.len()).sum();
     let removed_recordings = removed_recording_keys(&confirm.items, loaded_files.view());
     let attached_logs = logs
         .anchored_to(&removed_recordings)
@@ -488,12 +487,12 @@ fn files_fully_removed(keys: &[NodeKey], loaded_files: LoadedFilesView<'_>) -> B
     files
 }
 
-/// For every removed track that belongs to a stored recording, the original
-/// (segmentation) track indices to act on in history, grouped by recording.
+/// For every removed track that belongs to a stored recording, the stored track
+/// table rows to act on in history, grouped by recording.
 ///
-/// A removed file contributes all of its tracks. Track indices are taken from
-/// each track's stored `metadata.index`, so they line up with the recording's
-/// persisted track table.
+/// A removed file contributes all of its tracks. Each row comes from the
+/// track's `metadata.index`, which numbers a track by the stored row that it
+/// sits in.
 fn track_removals(
     keys: &[NodeKey],
     loaded_files: LoadedFilesView<'_>,
@@ -528,18 +527,14 @@ fn track_removals(
         let Some(db_ref) = entry.history().db_ref().cloned() else {
             continue;
         };
-        let track_indices: Vec<usize> = positions
+        let track_rows: Vec<usize> = positions
             .iter()
             .filter_map(|ti| file.tracks.get(*ti))
-            // `metadata.index` is the 1-based display index. The stored track
-            // table is 0-based, so shift down by one.
+            // `metadata.index` is 1-based and the stored table is 0-based.
             .map(|t| t.metadata.index.saturating_sub(1))
             .collect();
-        if !track_indices.is_empty() {
-            removals.push(RecordingTrackRemoval {
-                db_ref,
-                track_indices,
-            });
+        if !track_rows.is_empty() {
+            removals.push(RecordingTrackRemoval { db_ref, track_rows });
         }
     }
     removals
@@ -1587,6 +1582,7 @@ mod tests {
     use egui_kittest::kittest::{NodeT as _, Queryable as _};
     use gt_map::TileAccess;
     use gt_pending_writes::{WriteAccess, WriteKind};
+    use gt_store::{DatabaseRef, TrackState};
     use gt_test_utils::window_fit::{
         CRAMPED_VIEWPORT, NARROW_VIEWPORT, OVERSIZED_ROW_COUNT, SHORT_VIEWPORT,
     };
@@ -1601,7 +1597,7 @@ mod tests {
         ForceQuitPromptContents, LoadedLogs, MapLayer, MapboxTokenField, NavMap, NodeKey,
         PERMANENT_DELETE_LABEL, PruneRequest, PruneScope, PrunedDays, REMOVED_ITEMS_MOST_LINES,
         RecordingDetails, SnapScopeChoice, SnapScopeCount, SnapScopeCounts, TimeUntilTheClose,
-        TrackRef, files_fully_removed, prune_scope_line, show_about_dialog,
+        TrackRef, execute_delete, files_fully_removed, prune_scope_line, show_about_dialog,
         show_delete_confirmation, show_environment_prune_confirmation,
         show_force_quit_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
         show_orphaned_event_markers_popup, show_recording_details_dialog, show_snap_auto_prompt,
@@ -1609,6 +1605,11 @@ mod tests {
     };
     use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
     use gt_side_panel::{DeleteConfirmState, TreeState};
+
+    use crate::app::history_db::{DbOp, HistoryWorker, Response};
+    use crate::app::history_test_support::{
+        next_response, only_recording, seed_recording_cut_at, worker_on,
+    };
 
     fn day(offset: i64) -> chrono::NaiveDate {
         chrono::NaiveDate::from_ymd_opt(2026, 7, 5).unwrap_or_default()
@@ -2285,8 +2286,8 @@ mod tests {
             expect_removed: Vec<usize>,
             /// Number of recordings the remove touches in history.
             expect_recordings: usize,
-            /// Track indices removed per affected recording (ascending).
-            expect_track_indices: Vec<Vec<usize>>,
+            /// Stored track rows removed per affected recording (ascending).
+            expect_track_rows: Vec<Vec<usize>>,
         }
 
         let cases = [
@@ -2296,7 +2297,7 @@ mod tests {
                 keys: vec![],
                 expect_removed: vec![],
                 expect_recordings: 0,
-                expect_track_indices: vec![],
+                expect_track_rows: vec![],
             },
             Case {
                 name: "file key removes every track of the file",
@@ -2304,7 +2305,7 @@ mod tests {
                 keys: vec![file_key(0)],
                 expect_removed: vec![0],
                 expect_recordings: 1,
-                expect_track_indices: vec![vec![0, 1]],
+                expect_track_rows: vec![vec![0, 1]],
             },
             Case {
                 name: "all tracks selected promotes to full removal",
@@ -2312,7 +2313,7 @@ mod tests {
                 keys: vec![track_key(0, 0), track_key(0, 1)],
                 expect_removed: vec![0],
                 expect_recordings: 1,
-                expect_track_indices: vec![vec![0, 1]],
+                expect_track_rows: vec![vec![0, 1]],
             },
             Case {
                 name: "partial track selection hides just those tracks",
@@ -2320,7 +2321,7 @@ mod tests {
                 keys: vec![track_key(0, 0), track_key(0, 1)],
                 expect_removed: vec![],
                 expect_recordings: 1,
-                expect_track_indices: vec![vec![0, 1]],
+                expect_track_rows: vec![vec![0, 1]],
             },
             Case {
                 name: "removed file without db_ref touches no recording",
@@ -2328,7 +2329,7 @@ mod tests {
                 keys: vec![file_key(0)],
                 expect_removed: vec![0],
                 expect_recordings: 0,
-                expect_track_indices: vec![],
+                expect_track_rows: vec![],
             },
             Case {
                 name: "removes one file and leaves the other",
@@ -2336,7 +2337,7 @@ mod tests {
                 keys: vec![file_key(1)],
                 expect_removed: vec![1],
                 expect_recordings: 1,
-                expect_track_indices: vec![vec![0, 1]],
+                expect_track_rows: vec![vec![0, 1]],
             },
         ];
 
@@ -2359,14 +2360,177 @@ mod tests {
                 "affected recording count for '{}'",
                 case.name
             );
-            let indices: Vec<Vec<usize>> =
-                removals.iter().map(|r| r.track_indices.clone()).collect();
+            let rows: Vec<Vec<usize>> = removals.iter().map(|r| r.track_rows.clone()).collect();
             assert_eq!(
-                indices, case.expect_track_indices,
-                "removed track indices for '{}'",
+                rows, case.expect_track_rows,
+                "removed stored track rows for '{}'",
                 case.name
             );
         }
+    }
+
+    /// The loaded view of a recording whose tracks sit in the stored table rows
+    /// `rows`, numbered the way the loader numbers a recording opened from
+    /// history.
+    fn loaded_recording_in_stored_rows(rows: &[usize], db_ref: &DatabaseRef) -> LoadedFiles {
+        let file = LoadedFile {
+            metadata: gt_types::FileMetadata {
+                filename: "coast-road.gtd".to_owned(),
+                ..gt_test_utils::empty_file_metadata()
+            },
+            tracks: rows
+                .iter()
+                .map(|row| LoadedTrack {
+                    metadata: TrackMetadata {
+                        index: row + 1,
+                        ..gt_test_utils::empty_track_metadata()
+                    },
+                    ..gt_test_utils::loaded_track_with_points(Vec::new())
+                })
+                .collect(),
+            event_marker_styles: FxHashMap::default(),
+            orphaned_event_markers: Vec::new(),
+            source: FileSource::GtdPath(PathBuf::new()),
+            load_warnings: Vec::new(),
+        };
+        let history = FileHistory::recording(
+            db_ref.identity.clone(),
+            gt_store::RecordingMeta {
+                time_range: gt_store::NavPointTimeRange::covering(&[0]),
+                nav_point_count: 0,
+                sat_report_count: 0,
+                marker_count: 0,
+                event_marker_count: 0,
+                gtd_size_bytes: 0,
+            },
+            Some(db_ref.clone()),
+        );
+        let mut loaded = LoadedFiles::new();
+        loaded.push(file, history);
+        loaded
+    }
+
+    /// Remove the track at view position `ti` from the view, and send the
+    /// permanent delete for the stored rows that [`execute_delete`] returns,
+    /// the way the app applies a [`RemoveOutcome`].
+    fn remove_the_track_permanently(
+        worker: &HistoryWorker,
+        loaded: &mut LoadedFiles,
+        tree: &mut TreeState,
+        db_ref: &DatabaseRef,
+        ti: usize,
+    ) {
+        let removals = execute_delete(&[track_key(0, ti)], loaded, tree);
+        let [removal] = removals.as_slice() else {
+            panic!("expected one affected recording, got {}", removals.len());
+        };
+        worker.delete_tracks(db_ref.clone(), removal.track_rows.clone());
+        let Response::Mutated {
+            op: DbOp::TracksDeleted { .. },
+            result,
+        } = next_response(worker)
+        else {
+            panic!("expected a TracksDeleted mutation");
+        };
+        result.expect("the delete runs");
+    }
+
+    /// The recording holds three tracks of 7, 7 and 6 points. The session
+    /// deletes the first one permanently, then the first of the two that are
+    /// left, which leaves the last one and its six points.
+    ///
+    /// The second delete is sent under the reference that the database lists
+    /// after the first delete. Only the stored row identifies the track that
+    /// the delete removes.
+    #[test]
+    fn removing_a_track_after_a_permanent_delete_deletes_the_track_the_user_chose() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        seed_recording_cut_at(&path, &[7, 14]);
+        let worker = worker_on(&path);
+
+        let db_ref = only_recording(&worker).db_ref;
+        let mut loaded = loaded_recording_in_stored_rows(&[0, 1, 2], &db_ref);
+        let mut tree = TreeState::default();
+        remove_the_track_permanently(&worker, &mut loaded, &mut tree, &db_ref, 0);
+
+        let after_the_first_delete = only_recording(&worker);
+        assert_eq!(
+            after_the_first_delete.meta.nav_point_count, 13,
+            "the first delete removed seven points"
+        );
+        let db_ref = after_the_first_delete.db_ref;
+        remove_the_track_permanently(&worker, &mut loaded, &mut tree, &db_ref, 0);
+
+        assert_eq!(
+            only_recording(&worker).meta.nav_point_count,
+            6,
+            "the recording keeps the six points of its last track"
+        );
+        worker.shutdown();
+    }
+
+    /// Shelving a track leaves the stored track table in place. The session
+    /// still addresses that table by the row number that each of its tracks
+    /// holds.
+    #[test]
+    fn shelving_a_track_of_a_recording_opened_with_a_shelved_track_shelves_the_track_the_user_chose()
+     {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("history.h5");
+        seed_recording_cut_at(&path, &[7, 14]);
+        let worker = worker_on(&path);
+
+        let db_ref = only_recording(&worker).db_ref;
+        worker.set_tracks_shelved(db_ref.clone(), vec![1], true);
+        let Response::Mutated { result, .. } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        result.expect("the first shelve runs");
+
+        // The open leaves the shelved track out of the view. The two that stay
+        // keep the numbers of the rows they came from.
+        let mut loaded = loaded_recording_in_stored_rows(&[0, 2], &db_ref);
+        let mut tree = TreeState::default();
+        let removals = execute_delete(&[track_key(0, 1)], &mut loaded, &mut tree);
+        let [removal] = removals.as_slice() else {
+            panic!("expected one affected recording, got {}", removals.len());
+        };
+        worker.set_tracks_shelved(db_ref.clone(), removal.track_rows.clone(), true);
+        let Response::Mutated { result, .. } = next_response(&worker) else {
+            panic!("expected a mutation response");
+        };
+        result.expect("the second shelve runs");
+
+        worker.open(db_ref);
+        let Response::Opened { result, .. } = next_response(&worker) else {
+            panic!("expected an Opened response");
+        };
+        let states: Vec<TrackState> = result
+            .expect("the recording opens")
+            .tracks
+            .iter()
+            .map(|track| track.state)
+            .collect();
+        assert_eq!(
+            states,
+            vec![TrackState::Live, TrackState::Shelved, TrackState::Shelved],
+            "the track the user shelved is the recording's third"
+        );
+        worker.shutdown();
+    }
+
+    #[test]
+    fn removing_a_recording_whose_tracks_are_all_shelved_removes_no_stored_track() {
+        let mut loaded = make_loaded_files(&[(0, true)]);
+        let mut tree = TreeState::default();
+
+        let removals = execute_delete(&[file_key(0)], &mut loaded, &mut tree);
+
+        assert!(
+            removals.is_empty(),
+            "the remove acts on no stored track, and the shelved ones stay stored"
+        );
     }
 
     /// One dialog this module renders, driven with content far larger than any

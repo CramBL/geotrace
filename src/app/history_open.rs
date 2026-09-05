@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use egui::{Button, Grid, Label, RichText};
 use gt_pending_writes::{PendingWriteGuard, WriteKind};
-use gt_store::{DbError, StoredFixPlacementRule, StoredTrackSplitRule, TrackState};
+use gt_store::{DbError, StoredFixPlacementRule, StoredTrackSplitRule};
 
 use super::anchored_dialog::{AnchoredDialogKind, HeldBodyLines};
 use super::{App, ResegmentPrompt, auto_prune, history, history_db, loader, modals, storage};
@@ -241,13 +241,7 @@ impl App {
             .unwrap_or(&db_ref.identity)
             .to_owned();
 
-        let shelved_positions: Vec<usize> = stored
-            .tracks
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| t.state == TrackState::Shelved)
-            .map(|(i, _)| i)
-            .collect();
+        let stored_tracks = stored.tracks;
 
         match stored.segmentation {
             // A stored track setting differs from the current one: let the user
@@ -257,7 +251,7 @@ impl App {
                 if !loader::stored_tracks_match_config(
                     &stored_settings,
                     &self.processing_config,
-                ) && !stored.tracks.is_empty() =>
+                ) && !stored_tracks.is_empty() =>
             {
                 let marker_settings_changed = !loader::marker_settings_match_config(
                     &stored_settings,
@@ -280,7 +274,7 @@ impl App {
                     filename,
                     bytes: stored.bytes.into(),
                     stored: stored_settings,
-                    shelved_positions,
+                    stored_tracks,
                     marker_settings_changed,
                 });
             }
@@ -302,7 +296,7 @@ impl App {
                     config,
                     loader::HistoryOpen::ApplyShelved {
                         db_ref,
-                        positions: shelved_positions,
+                        stored_tracks,
                         applied_current_marker_settings: marker_settings_changed,
                     },
                 );
@@ -315,7 +309,7 @@ impl App {
                     self.processing_config,
                     loader::HistoryOpen::ApplyShelved {
                         db_ref,
-                        positions: shelved_positions,
+                        stored_tracks,
                         applied_current_marker_settings: false,
                     },
                 );
@@ -708,7 +702,7 @@ impl App {
                     config,
                     loader::HistoryOpen::ApplyShelved {
                         db_ref: prompt.db_ref,
-                        positions: prompt.shelved_positions,
+                        stored_tracks: prompt.stored_tracks,
                         applied_current_marker_settings: prompt.marker_settings_changed,
                     },
                 );

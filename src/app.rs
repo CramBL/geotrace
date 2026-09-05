@@ -21,6 +21,8 @@ mod frame;
 mod history;
 mod history_db;
 mod history_open;
+#[cfg(test)]
+mod history_test_support;
 mod instance_wait;
 mod jamming;
 mod loader;
@@ -149,9 +151,9 @@ struct ResegmentPrompt {
     bytes: std::sync::Arc<[u8]>,
     /// Settings the stored tracks were built with.
     stored: gt_store::StoredSegmentation,
-    /// 0-based positions of the recording's shelved tracks, left out of the
-    /// view when the user keeps the stored tracks.
-    shelved_positions: Vec<usize>,
+    /// The recording's stored track table, applied to the view when the user
+    /// keeps the stored tracks.
+    stored_tracks: Vec<gt_store::TrackRange>,
     /// Whether marker-generation settings differ from the stored/default marker
     /// settings and will be rebuilt from the current app settings when opened.
     marker_settings_changed: bool,
@@ -1118,11 +1120,11 @@ impl App {
         for removal in &outcome.affected {
             if outcome.permanent {
                 self.history
-                    .delete_tracks(removal.db_ref.clone(), removal.track_indices.clone());
+                    .delete_tracks(removal.db_ref.clone(), removal.track_rows.clone());
             } else {
                 self.history.set_tracks_shelved(
                     removal.db_ref.clone(),
-                    removal.track_indices.clone(),
+                    removal.track_rows.clone(),
                     true,
                 );
             }

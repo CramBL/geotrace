@@ -1678,8 +1678,14 @@ fn a_schema_version_0_database_reads_its_legacy_hidden_column() {
     );
 }
 
-#[test_log::test]
-fn shelving_a_track_past_a_tombstone_shelves_the_one_the_recording_lists() {
+/// A shelve addresses the stored table's rows, tombstones and all.
+#[rstest]
+#[case::a_row_past_the_tombstone(2, vec![0, 2, 1])]
+#[case::the_tombstone_row(1, vec![0, 2, 0])]
+fn shelving_a_stored_row_of_a_recording_with_a_tombstone_writes_the_state_column(
+    #[case] row: usize,
+    #[case] expected_state_column: Vec<u64>,
+) {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("tombstone.h5");
     write_pure_db_with_a_track_table(
@@ -1691,15 +1697,12 @@ fn shelving_a_track_past_a_tombstone_shelves_the_one_the_recording_lists() {
     let mut db = Database::open_or_create(&db_path).expect("open");
     let db_ref = db.list_recordings().expect("list")[0].db_ref.clone();
 
-    db.set_tracks_shelved(&db_ref, &[1], true).expect("shelve");
+    db.set_tracks_shelved(&db_ref, &[row], true)
+        .expect("shelve");
 
-    let stored = db.load(&db_ref).expect("load");
-    let states: Vec<TrackState> = stored.tracks.iter().map(|track| track.state).collect();
-    assert_eq!(states, vec![TrackState::Live, TrackState::Shelved]);
     assert_eq!(
         stored_state_column(&db_path, &db_ref),
-        vec![0, 2, 1],
-        "the tombstone keeps its row and the shelve lands past it"
+        expected_state_column
     );
 }
 
@@ -1720,10 +1723,11 @@ fn stored_state_column(db_path: &std::path::Path, db_ref: &DatabaseRef) -> Vec<u
         .to_vec()
 }
 
-/// A tombstone row stands for a track the user deleted permanently.
-/// `list_recordings` and `load` count only the rows around it.
+/// A permanently deleted track leaves a tombstone row in the stored table. The
+/// History window counts the rows around it, and `load` returns every row for
+/// the caller to address.
 #[test_log::test]
-fn a_deleted_row_of_the_track_table_is_no_track_of_the_recording() {
+fn a_deleted_row_of_the_track_table_is_no_track_the_history_window_counts() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("tombstone.h5");
     write_pure_db_with_a_track_table(
@@ -1743,7 +1747,10 @@ fn a_deleted_row_of_the_track_table_is_no_track_of_the_recording() {
     assert_eq!(entry.shelved_tracks, 1);
     let stored = db.load(&entry.db_ref).expect("load");
     let states: Vec<TrackState> = stored.tracks.iter().map(|track| track.state).collect();
-    assert_eq!(states, vec![TrackState::Live, TrackState::Shelved]);
+    assert_eq!(
+        states,
+        vec![TrackState::Live, TrackState::Deleted, TrackState::Shelved]
+    );
 }
 
 #[test]

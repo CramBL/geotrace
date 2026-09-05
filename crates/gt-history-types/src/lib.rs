@@ -191,10 +191,9 @@ pub enum TrackState {
     Live,
     /// A track the user took out of the working set, restored by unshelving it.
     Shelved,
-    /// A tombstone for a track the user deleted permanently. The permanent
-    /// delete compacts the track table today, and the tombstone is what takes
-    /// the deleted row's place once the table keeps its row count across a
-    /// delete.
+    /// A tombstone for a track that the user deleted permanently. It keeps the
+    /// rows after it in place. Its range is empty, at the offset where the
+    /// deleted track's nav points began.
     Deleted,
 }
 
@@ -405,12 +404,13 @@ pub fn track_ranges_from_columns(
     Some(out)
 }
 
-/// The stored table rows the recording's tracks sit in, in listing order.
+/// The stored table rows the recording lists, in listing order.
 ///
-/// A track index from [`ReadOnlyHistoryDatabase::load`] or
-/// [`ReadOnlyHistoryDatabase::list_recordings`] counts the rows around a
-/// [`TrackState::Deleted`] tombstone: `listed_track_rows(&tracks)[index]` is
-/// the stored table row it belongs to.
+/// A recording lists every row of its stored track table except its
+/// [`TrackState::Deleted`] tombstones. A listing position `i` belongs to the
+/// stored row `listed_track_rows(&tracks)[i]`. Segmentation reproduces one
+/// track per listed row from the nav points of a recording read back through
+/// [`ReadOnlyHistoryDatabase::load`].
 pub fn listed_track_rows(tracks: &[TrackRange]) -> Vec<usize> {
     tracks
         .iter()
@@ -420,25 +420,25 @@ pub fn listed_track_rows(tracks: &[TrackRange]) -> Vec<usize> {
         .collect()
 }
 
-/// Set `state` on the tracks at `track_indices`, which count the tracks the
-/// recording lists (see [`listed_track_rows`]). Returns the indices past the
-/// last listed track, for the caller to report with the recording it read them
-/// for.
+/// Set `state` on the tracks in the stored table rows `rows`. Returns the rows
+/// that it left alone, for the caller to report against the recording that the
+/// rows came from: a row past the end of the table, and a row holding a
+/// [`TrackState::Deleted`] tombstone, whose nav points the recording no longer
+/// holds.
 #[must_use]
-pub fn set_state_of_listed_tracks(
+pub fn set_state_of_stored_rows(
     tracks: &mut [TrackRange],
-    track_indices: &[usize],
+    rows: &[usize],
     state: TrackState,
 ) -> Vec<usize> {
-    let rows = listed_track_rows(tracks);
-    let mut past_the_last_listed_track = Vec::new();
-    for &index in track_indices {
-        match rows.get(index).and_then(|&row| tracks.get_mut(row)) {
-            Some(track) => track.state = state,
-            None => past_the_last_listed_track.push(index),
+    let mut rows_left_alone = Vec::new();
+    for &row in rows {
+        match tracks.get_mut(row) {
+            Some(track) if track.state != TrackState::Deleted => track.state = state,
+            Some(_) | None => rows_left_alone.push(row),
         }
     }
-    past_the_last_listed_track
+    rows_left_alone
 }
 
 /// Decode a recording's stored track table, tombstones and all, from the
@@ -640,6 +640,11 @@ pub struct RecordingEntry {
 /// A recording read back from history: the reconstructed GTD bytes plus the
 /// stored per-track ranges and the segmentation settings they were built with.
 ///
+/// `tracks` holds every row of the stored track table, including the
+/// [`TrackState::Deleted`] tombstones of the tracks that the user deleted
+/// permanently. `bytes` holds the nav points of the listed rows alone (see
+/// [`listed_track_rows`]).
+///
 /// `tracks`/`segmentation` are empty/`None` for recordings stored before
 /// per-track storage existed. The caller recomputes tracks from `bytes` then.
 pub struct StoredRecording {
@@ -675,6 +680,8 @@ pub enum DbError {
         index: usize,
         stored_track_count: usize,
     },
+    #[error("track {index} of the recording was already deleted permanently")]
+    TrackAlreadyDeleted { index: usize },
     /// The database is marked as open for write - typically a stale flag left by
     /// an unclean shutdown. Recoverable via [`HistoryDatabase::clear_write_lock`]
     /// once the user confirms no other process is using it.
@@ -741,8 +748,8 @@ impl PruneMode {
 pub trait ReadOnlyHistoryDatabase {
     fn path(&self) -> &Path;
 
-    /// Read a recording back: reconstructed GTD bytes plus its stored tracks and
-    /// segmentation settings.
+    /// Read a recording back: reconstructed GTD bytes plus its stored track
+    /// table, tombstones and all, and its segmentation settings.
     fn load(&self, db_ref: &DatabaseRef) -> Result<StoredRecording, DbError>;
 
     /// The stored snap run bytes for a recording, or `None` when it carries
@@ -837,17 +844,17 @@ pub trait HistoryDatabase: ReadOnlyHistoryDatabase {
         settings: StoredSegmentation,
     ) -> Result<(), DbError>;
 
-    /// Shelve the tracks at `track_indices` of a recording, or unshelve them
-    /// when `shelved` is false.
+    /// Shelve the tracks in the stored table rows `rows` of a recording, or
+    /// unshelve them when `shelved` is false.
     ///
-    /// `track_indices` count the tracks the recording lists, as
-    /// [`ReadOnlyHistoryDatabase::load`] numbers them: the tombstone rows of
-    /// its stored table are not among them (see [`listed_track_rows`]). An
-    /// index past the last listed track is skipped with a warning.
+    /// A row keeps its place for the life of the recording: a permanent delete
+    /// leaves a [`TrackState::Deleted`] tombstone in the row, and the rows
+    /// after it stay where they are. A row past the end of the table, and a row
+    /// holding a tombstone, are skipped with a warning.
     fn set_tracks_shelved(
         &mut self,
         db_ref: &DatabaseRef,
-        track_indices: &[usize],
+        rows: &[usize],
         shelved: bool,
     ) -> Result<(), DbError>;
 
