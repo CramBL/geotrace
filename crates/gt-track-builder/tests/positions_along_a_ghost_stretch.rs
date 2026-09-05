@@ -199,8 +199,9 @@ fn drawn_longitude_degrees_under(
 /// Where the map draws the file's only event marker, read off the spatial
 /// index the map hit-tests and culls against.
 fn event_marker_drawn_at(file: &LoadedFile) -> Option<(Latitude, Longitude)> {
-    let indexed = gt_track_builder::build_global_tree(std::slice::from_ref(file));
-    let merc = indexed
+    let index = gt_track_builder::SpatialIndex::build(std::slice::from_ref(file));
+    let merc = index
+        .markers
         .iter()
         .find(|point| point.category == DataCategory::EventMarker)?
         .merc;
