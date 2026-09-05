@@ -3,7 +3,8 @@ use std::time::Instant;
 
 use egui::{Button, Grid, Label, RichText};
 use gt_pending_writes::{PendingWriteGuard, WriteKind};
-use gt_store::{DbError, StoredFixPlacementRule, StoredTrackSplitRule};
+use gt_side_panel::HiddenTracksByRecording;
+use gt_store::{DbError, StoredFixPlacementRule, StoredTrackSplitRule, TrackState};
 
 use super::anchored_dialog::{AnchoredDialogKind, HeldBodyLines};
 use super::{App, ResegmentPrompt, auto_prune, history, history_db, loader, modals, storage};
@@ -62,6 +63,61 @@ enum ResegmentChoice {
     RecalculateWithCurrentSettings,
     UseStoredTracks,
     Cancel,
+}
+
+/// The marks the user set by hand on the recording the "Track settings differ"
+/// prompt is about: the shelved tracks of its stored track table, and the
+/// tracks the settings file remembers as hidden.
+///
+/// A recalculation writes a track table with every track live and drops the
+/// recording's hidden track numbers, which addressed the previous track
+/// boundaries.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct MarksDroppedByRecalculating {
+    shelved_tracks: usize,
+    hidden_tracks: usize,
+}
+
+impl MarksDroppedByRecalculating {
+    fn of_the_prompted_recording(
+        prompt: &ResegmentPrompt,
+        hidden_tracks: &HiddenTracksByRecording,
+    ) -> Self {
+        Self {
+            shelved_tracks: prompt
+                .stored_tracks
+                .iter()
+                .filter(|track| track.state == TrackState::Shelved)
+                .count(),
+            hidden_tracks: hidden_tracks.track_numbers(&prompt.db_ref).len(),
+        }
+    }
+
+    /// The line the prompt shows with the recalculate choice, and `None` for a
+    /// recording with neither kind of mark.
+    fn warning_line(self) -> Option<String> {
+        let Self {
+            shelved_tracks,
+            hidden_tracks,
+        } = self;
+        let shelved_label = gt_fmt::pluralize(shelved_tracks, "track", "tracks");
+        let hidden_label = gt_fmt::pluralize(hidden_tracks, "track", "tracks");
+        match (shelved_tracks, hidden_tracks) {
+            (0, 0) => None,
+            (0, _) => Some(format!(
+                "Recalculating shows the {hidden_tracks} hidden {hidden_label} of this recording."
+            )),
+            (_, 0) => Some(format!(
+                "Recalculating puts the {shelved_tracks} shelved {shelved_label} of this \
+                 recording back in the working set."
+            )),
+            _ => Some(format!(
+                "Recalculating puts the {shelved_tracks} shelved {shelved_label} of this \
+                 recording back in the working set and shows its {hidden_tracks} hidden \
+                 {hidden_label}."
+            )),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -595,6 +651,11 @@ impl App {
         };
         let current = loader::stored_segmentation_from_config(&self.processing_config);
         let stored = prompt.stored;
+        let recalculation_warning = MarksDroppedByRecalculating::of_the_prompted_recording(
+            &prompt,
+            self.shared.borrow().tree.hidden_tracks(),
+        )
+        .warning_line();
         let fmt_gap = |us: i64| format!("{}s", us / 1_000_000);
         let fmt_split_rule = |rule: StoredTrackSplitRule| match rule {
             StoredTrackSplitRule::ForwardGapOnly => "forward only".to_owned(),
@@ -653,6 +714,16 @@ impl App {
                         ui.label(fmt_placement_rule(current.fix_placement_rule));
                         ui.end_row();
                     });
+                if let Some(warning) = &recalculation_warning {
+                    ui.add_space(4.0);
+                    ui.add(
+                        Label::new(
+                            RichText::new(warning)
+                                .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                        )
+                        .wrap(),
+                    );
+                }
             },
             |ui| {
                 let mut choice = None;
