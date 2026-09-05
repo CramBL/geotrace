@@ -68,6 +68,7 @@ function(add_cpp_test name)
 endfunction()
 
 add_cpp_test(test_file_builder)
+add_cpp_test(test_fix_time)
 add_cpp_test(test_nav_file)
 add_cpp_test(test_round_trip)
 add_cpp_test(test_value_ranges)

@@ -189,6 +189,14 @@ struct SatRow {
     geotrace::Satellite sat;
 };
 
+geotrace::FixTime required_fix_time(const geotrace::RecordedFixTimestamps &recorded,
+                                    const std::string &source) {
+    const auto time = geotrace::FixTime::from_recorded(recorded);
+    if (!time)
+        throw geotrace::IoError(source + " has no timestamp");
+    return *time;
+}
+
 std::ifstream open_csv(const fs::path &base, const std::string &name) {
     auto path = base / name;
     std::ifstream f(path);
@@ -274,14 +282,16 @@ void load_fixes(geotrace::FileBuilder &b, const fs::path &base, const std::vecto
         [[maybe_unused]] const auto &[track_id, gps_time, sys_time, lat, lon, heading_deg,
                                       speed_kmh, eph_m] = *fields;
 
-        auto gps_ts = parse_ts(gps_time);
-        auto sys_ts = parse_ts(sys_time);
+        geotrace::RecordedFixTimestamps recorded{};
+        recorded.gps_time = parse_ts(gps_time);
+        recorded.sys_time = parse_ts(sys_time);
+        const auto time = required_fix_time(recorded, "fixes.csv row " + line);
+
         auto hdg = parse_opt_double(heading_deg);
         auto kmh = parse_opt_double(speed_kmh);
 
         b.add(geotrace::NavFix{
-            gps_ts.value_or(geotrace::Timestamp::none()),
-            sys_ts.value_or(geotrace::Timestamp::none()),
+            time,
             geotrace::Angle::degrees(std::stod(lat)),
             geotrace::Angle::degrees(std::stod(lon)),
             hdg ? std::optional{geotrace::Angle::degrees(*hdg)} : std::nullopt,
@@ -289,15 +299,13 @@ void load_fixes(geotrace::FileBuilder &b, const fs::path &base, const std::vecto
             parse_opt_double(eph_m),
         });
 
-        geotrace::SatelliteReport report{};
-        report.gps_time = gps_ts.value_or(geotrace::Timestamp::none());
-        report.sys_time = sys_ts.value_or(geotrace::Timestamp::none());
+        std::vector<geotrace::Satellite> tracked;
         for (const auto &row : sats) {
             if (row.gps_time == gps_time && row.sys_time == sys_time)
-                report.tracked.push_back(row.sat);
+                tracked.push_back(row.sat);
         }
-        if (!report.tracked.empty())
-            b.add(report);
+        if (!tracked.empty())
+            b.add(geotrace::SatelliteReport{time, std::move(tracked)});
 
         fix_times.emplace(gps_time, sys_time);
     }
@@ -309,11 +317,13 @@ void load_fixes(geotrace::FileBuilder &b, const fs::path &base, const std::vecto
             orphans[{row.gps_time, row.sys_time}].push_back(row.sat);
     }
     for (const auto &[times, tracked] : orphans) {
-        geotrace::SatelliteReport report{};
-        report.gps_time = parse_ts(times.first).value_or(geotrace::Timestamp::none());
-        report.sys_time = parse_ts(times.second).value_or(geotrace::Timestamp::none());
-        report.tracked = tracked;
-        b.add(report);
+        geotrace::RecordedFixTimestamps recorded{};
+        recorded.gps_time = parse_ts(times.first);
+        recorded.sys_time = parse_ts(times.second);
+
+        const auto time = required_fix_time(recorded, "satellites.csv row (" + times.first + ", " +
+                                                          times.second + ")");
+        b.add(geotrace::SatelliteReport{time, tracked});
     }
 }
 

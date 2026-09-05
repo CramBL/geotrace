@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -28,8 +29,8 @@ constexpr std::string_view kCsvData = "timestamp_s,lat,lon,heading_deg,speed_mps
                                       "1705309204,51.5078,-0.1270,90.0,12.5\n"
                                       "1705309205,51.5079,-0.1268,90.5,12.6\n";
 
-// Parse one "ts,lat,lon,heading,speed" row. Returns false on a malformed line.
-bool parse_row(const std::string &line, geotrace::NavFix &fix) {
+// Parse one "ts,lat,lon,heading,speed" row. Returns std::nullopt for a malformed line.
+std::optional<geotrace::NavFix> parse_row(const std::string &line) {
     std::istringstream ls(line);
     std::uint64_t ts = 0;
     double lat = 0.0;
@@ -38,14 +39,13 @@ bool parse_row(const std::string &line, geotrace::NavFix &fix) {
     double speed = 0.0;
     char comma = 0;
     if (!(ls >> ts >> comma >> lat >> comma >> lon >> comma >> heading >> comma >> speed))
-        return false;
+        return std::nullopt;
 
-    fix.gps_time = geotrace::Timestamp::from_seconds(ts);
-    fix.lat = geotrace::Angle::degrees(lat);
-    fix.lon = geotrace::Angle::degrees(lon);
+    geotrace::NavFix fix{geotrace::FixTime::receiver(geotrace::Timestamp::from_seconds(ts)),
+                         geotrace::Angle::degrees(lat), geotrace::Angle::degrees(lon)};
     fix.heading = geotrace::Angle::degrees(heading);
     fix.speed = geotrace::Velocity::mps(speed);
-    return true;
+    return fix;
 }
 
 } // namespace
@@ -63,9 +63,8 @@ int main() {
         while (std::getline(csv, line)) {
             if (line.empty())
                 continue;
-            geotrace::NavFix fix{};
-            if (parse_row(line, fix)) {
-                builder.add(fix);
+            if (const auto fix = parse_row(line)) {
+                builder.add(*fix);
                 ++rows;
             }
         }
