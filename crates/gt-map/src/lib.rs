@@ -848,6 +848,7 @@ impl NavMap {
             &mut self.visible_points,
             &self.global_tree,
             &plan,
+            *ctx.display_mask,
             &transform,
             map_rect,
         );
@@ -876,7 +877,10 @@ impl NavMap {
     ///
     /// A masked display category skips its whole plugin - the mask is the
     /// render-side AND on top of the per-track tree visibility the renderers
-    /// already consume.
+    /// already consume. For the markers the mask acts through the
+    /// collection pass: [`viewport::collect_visible_points`] fills a marker
+    /// buffer only for a displayed category, and a renderer with no buffer is
+    /// never attached.
     fn show_map(
         &mut self,
         ui: &mut egui::Ui,
@@ -923,7 +927,7 @@ impl NavMap {
                 .plan(plan)
                 .highlight(ctx.highlight)
                 .filter(ctx.filter)
-                .tpv_by_track(&self.visible_points.tpv_by_track)
+                .tpv_by_track(self.visible_points.tpv_by_track())
                 .new_file_boundary(self.new_file_boundary)
                 .blink_alpha(animation.blink_alpha)
                 .hover_fade_alpha(animation.hover_fade)
@@ -968,20 +972,17 @@ impl NavMap {
                     .build(),
             );
         }
-        if ctx.display_mask.is_visible(DisplayCategory::CustomMarkers) {
+        if let Some(custom) = self.visible_points.custom() {
             map = map.with_plugin(MarkerRenderer::new(
                 ctx.files,
                 ctx.visibility,
                 ctx.highlight,
                 ctx.filter,
-                &self.visible_points.custom,
+                custom,
                 self.icon_meshes.as_ref(),
             ));
         }
-        if ctx
-            .display_mask
-            .is_visible(DisplayCategory::GeneratedMarkers)
-        {
+        if let Some(generated) = self.visible_points.generated() {
             map = map.with_plugin(
                 GeneratedMarkerRenderer::builder()
                     .files(ctx.files)
@@ -989,19 +990,19 @@ impl NavMap {
                     .highlight(ctx.highlight)
                     .filter(ctx.filter)
                     .generated_vis(ctx.generated_marker_visibility)
-                    .visible_generated(&self.visible_points.generated)
+                    .visible_generated(generated)
                     .maybe_icon_meshes(self.icon_meshes.as_ref())
                     .build(),
             );
         }
-        if ctx.display_mask.is_visible(DisplayCategory::EventMarkers) {
+        if let Some(event) = self.visible_points.event() {
             map = map.with_plugin(EventMarkerRenderer::new(
                 ctx.files,
                 ctx.visibility,
                 ctx.highlight,
                 ctx.filter,
                 ctx.event_marker_visibility,
-                &self.visible_points.event,
+                event,
                 self.icon_meshes.as_ref(),
             ));
         }

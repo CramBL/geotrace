@@ -28,19 +28,40 @@ pub struct ViewportBounds {
     pub lon_max: f64,
 }
 
+/// Which categories [`collect_visible_points`] filled in the frame's
+/// [`VisiblePoints`].
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct CollectedCategories {
+    tpv: bool,
+    custom: bool,
+    generated: bool,
+    event: bool,
+}
+
+impl CollectedCategories {
+    fn any(self) -> bool {
+        self.tpv || self.custom || self.generated || self.event
+    }
+}
+
 /// The spatial points inside the viewport, split by category, ready for
 /// the render plugins. TPV fixes arrive pre-grouped per track (point
 /// indices), which is the shape `TrackLayers` consumes.
+///
+/// A renderer cannot mistake the empty buffer of a skipped collection for a
+/// viewport that holds nothing. The buffers are private, and each accessor
+/// returns `Some` only for a category this frame collected.
 ///
 /// Held across frames as reusable scratch (see [`crate::NavMap`]): [`Self::clear`]
 /// empties every buffer while keeping its allocation, so a steady stream of
 /// frames at similar zoom reuses the same memory.
 #[derive(Default)]
 pub(crate) struct VisiblePoints {
-    pub(crate) tpv_by_track: FxHashMap<TrackRef, Vec<usize>>,
-    pub(crate) custom: Vec<SpatialPoint>,
-    pub(crate) generated: Vec<SpatialPoint>,
-    pub(crate) event: Vec<SpatialPoint>,
+    tpv_by_track: FxHashMap<TrackRef, Vec<usize>>,
+    custom: Vec<SpatialPoint>,
+    generated: Vec<SpatialPoint>,
+    event: Vec<SpatialPoint>,
+    collected: CollectedCategories,
 }
 
 impl VisiblePoints {
@@ -54,6 +75,23 @@ impl VisiblePoints {
         self.custom.clear();
         self.generated.clear();
         self.event.clear();
+        self.collected = CollectedCategories::default();
+    }
+
+    pub(crate) fn tpv_by_track(&self) -> Option<&FxHashMap<TrackRef, Vec<usize>>> {
+        self.collected.tpv.then_some(&self.tpv_by_track)
+    }
+
+    pub(crate) fn custom(&self) -> Option<&[SpatialPoint]> {
+        self.collected.custom.then_some(&self.custom)
+    }
+
+    pub(crate) fn generated(&self) -> Option<&[SpatialPoint]> {
+        self.collected.generated.then_some(&self.generated)
+    }
+
+    pub(crate) fn event(&self) -> Option<&[SpatialPoint]> {
+        self.collected.event.then_some(&self.event)
     }
 }
 
@@ -61,19 +99,32 @@ impl VisiblePoints {
 /// R-tree into `visible`, one list per category. The buffers are cleared
 /// first, so a reused [`VisiblePoints`] keeps its allocations across frames.
 ///
-/// TPV points are gated by the frame's [`TrackPlan`]: fix icons of tracks
-/// that are disabled, filtered out, TPV-layer-hidden, or classified
-/// [`TrackIconFade::AllHidden`] (the quality line stands in) are never
-/// drawn, so collecting their viewport points - potentially the entire
-/// recording when zoomed out - would be pure allocation waste.
+/// A category is collected only while something draws it, and the query runs
+/// only while some category is collected: at a zoom that hides every track's
+/// icons with the marker categories hidden, the whole walk would be
+/// discarded. TPV points are gated by the frame's [`TrackPlan`]: fix icons of
+/// tracks that are disabled, filtered out, TPV-layer-hidden, or classified
+/// [`TrackIconFade::AllHidden`] (the quality line stands in) are never drawn.
+/// Each marker category is gated by `display_mask`.
 pub(crate) fn collect_visible_points(
     visible: &mut VisiblePoints,
     tree: &rstar::RTree<SpatialPoint>,
     plan: &TrackPlan,
+    display_mask: DisplayMask,
     transform: &MercTransform,
     map_rect: egui::Rect,
 ) {
     visible.clear();
+    let collected = CollectedCategories {
+        tpv: plan.entries().any(TrackEntry::tpv_collectable),
+        custom: display_mask.is_visible(DisplayCategory::CustomMarkers),
+        generated: display_mask.is_visible(DisplayCategory::GeneratedMarkers),
+        event: display_mask.is_visible(DisplayCategory::EventMarkers),
+    };
+    visible.collected = collected;
+    if !collected.any() {
+        return;
+    }
     let lt = map_rect.left_top();
     let rb = map_rect.right_bottom();
     let aabb = rstar::AABB::from_corners(
@@ -88,7 +139,7 @@ pub(crate) fn collect_visible_points(
     );
     for sp in tree.locate_in_envelope(aabb) {
         match sp.category {
-            DataCategory::Tpv => {
+            DataCategory::Tpv if collected.tpv => {
                 // Unknown tracks default to collectable, so a stale index
                 // can only cost wasted collection, never hidden data.
                 if plan
@@ -102,12 +153,22 @@ pub(crate) fn collect_visible_points(
                         .push(sp.point_index.as_usize());
                 }
             }
-            DataCategory::CustomMarker => visible.custom.push(*sp),
-            DataCategory::GeneratedMarker => visible.generated.push(*sp),
-            DataCategory::EventMarker => visible.event.push(*sp),
+            DataCategory::CustomMarker if collected.custom => visible.custom.push(*sp),
+            DataCategory::GeneratedMarker if collected.generated => visible.generated.push(*sp),
+            DataCategory::EventMarker if collected.event => visible.event.push(*sp),
             _ => {}
         }
     }
+    debug_assert!(
+        collected.tpv || visible.tpv_by_track.values().all(Vec::is_empty),
+        "a fix was collected while no track draws its icons"
+    );
+    debug_assert!(
+        (collected.custom || visible.custom.is_empty())
+            && (collected.generated || visible.generated.is_empty())
+            && (collected.event || visible.event.is_empty()),
+        "a marker was collected while its display category is hidden"
+    );
 }
 
 /// What the renderers will do for one track this frame, derived once per
@@ -195,6 +256,11 @@ impl TrackPlan {
         }
         offsets.push(entries.len());
         Self { entries, offsets }
+    }
+
+    /// Every track's decisions, in file and track order.
+    pub(crate) fn entries(&self) -> impl Iterator<Item = TrackEntry> {
+        self.entries.iter().copied()
     }
 
     /// The decisions for `track`. `None` for indices outside the plan.
@@ -494,6 +560,174 @@ pub(crate) fn zoom_to_fit(
         (true, false) => FitOutcome::FixesPastTheNorthernLimit,
         (false, true) => FitOutcome::FixesPastTheSouthernLimit,
         (true, true) => FitOutcome::FixesPastBothLimits,
+    }
+}
+
+#[cfg(test)]
+mod collection {
+    use gt_types::{MercPoint, PointIdx};
+    use rstest::rstest;
+
+    use super::*;
+    use crate::tests::{file_with_tracks, nav_at, track_over, vis_all_visible};
+
+    /// The viewport every case here collects from, in logical pixels.
+    const VIEWPORT: egui::Rect =
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 600.0));
+
+    /// The zoom every case collects at.
+    const ZOOM: f64 = 12.0;
+
+    fn the_only_track() -> TrackRef {
+        TrackRef::new(FileIdx::new(0), TrackIdx::new(0))
+    }
+
+    /// One point of each collected category, at the centre of the world,
+    /// all of them on [`the_only_track`].
+    fn one_point_per_category() -> rstar::RTree<SpatialPoint> {
+        rstar::RTree::bulk_load(
+            [
+                DataCategory::Tpv,
+                DataCategory::CustomMarker,
+                DataCategory::GeneratedMarker,
+                DataCategory::EventMarker,
+            ]
+            .into_iter()
+            .map(|category| SpatialPoint {
+                merc: MercPoint { x: 0.5, y: 0.5 },
+                file_index: FileIdx::new(0),
+                track_index: TrackIdx::new(0),
+                point_index: PointIdx::new(0),
+                category,
+            })
+            .collect(),
+        )
+    }
+
+    fn one_file_over(positions: &[(f64, f64)]) -> Vec<LoadedFile> {
+        let start = chrono::DateTime::from_timestamp(0, 0).expect("valid timestamp");
+        let fixes = positions
+            .iter()
+            .zip(0_i64..)
+            .map(|(&(lat, lon), second)| {
+                nav_at(start + chrono::Duration::seconds(second), lat, lon)
+            })
+            .collect();
+        vec![file_with_tracks(vec![track_over(fixes)])]
+    }
+
+    /// Two fixes 13 m apart, which [`ZOOM`] draws a fifth of a pixel apart:
+    /// every icon of the track fades out and the quality line stands in.
+    fn a_track_whose_icons_are_all_hidden() -> Vec<LoadedFile> {
+        one_file_over(&[(55.0, 12.0), (55.0001, 12.0001)])
+    }
+
+    /// Two fixes 1.1 km apart, whose icons draw at [`ZOOM`].
+    fn a_track_whose_icons_draw() -> Vec<LoadedFile> {
+        one_file_over(&[(55.0, 12.0), (55.01, 12.0)])
+    }
+
+    fn mask_showing(categories: &[DisplayCategory]) -> DisplayMask {
+        let mut mask = DisplayMask::default();
+        mask.hide_all();
+        for &category in categories {
+            mask.set_visible(category, true);
+        }
+        mask
+    }
+
+    fn collect(files: &[LoadedFile], display_mask: DisplayMask) -> VisiblePoints {
+        let visibility = vis_all_visible();
+        let filter = GlobalFilter::default();
+        let plan = TrackPlan::compute(files, &visibility, &filter, display_mask, ZOOM);
+        let center = walkers::lat_lon(0.0, 0.0);
+        let mut map_memory = MapMemory::default();
+        map_memory.center_at(center);
+        map_memory.set_zoom(ZOOM).expect("a zoom walkers accepts");
+        let projector = walkers::Projector::new(VIEWPORT, &map_memory, center);
+        let transform = MercTransform::new(&projector, &map_memory, VIEWPORT.center());
+        let mut visible = VisiblePoints::default();
+        collect_visible_points(
+            &mut visible,
+            &one_point_per_category(),
+            &plan,
+            display_mask,
+            &transform,
+            VIEWPORT,
+        );
+        visible
+    }
+
+    #[rstest]
+    #[case::no_marker_category(&[])]
+    #[case::custom(&[DisplayCategory::CustomMarkers])]
+    #[case::generated(&[DisplayCategory::GeneratedMarkers])]
+    #[case::event(&[DisplayCategory::EventMarkers])]
+    #[case::custom_and_generated(&[DisplayCategory::CustomMarkers, DisplayCategory::GeneratedMarkers])]
+    #[case::custom_and_event(&[DisplayCategory::CustomMarkers, DisplayCategory::EventMarkers])]
+    #[case::generated_and_event(&[DisplayCategory::GeneratedMarkers, DisplayCategory::EventMarkers])]
+    #[case::every_marker_category(&[
+        DisplayCategory::CustomMarkers,
+        DisplayCategory::GeneratedMarkers,
+        DisplayCategory::EventMarkers,
+    ])]
+    fn a_marker_is_collected_only_while_its_category_is_displayed(
+        #[case] displayed: &[DisplayCategory],
+    ) {
+        let visible = collect(
+            &a_track_whose_icons_are_all_hidden(),
+            mask_showing(displayed),
+        );
+
+        assert_eq!(
+            visible.custom().map(|points| points.len()),
+            displayed
+                .contains(&DisplayCategory::CustomMarkers)
+                .then_some(1)
+        );
+        assert_eq!(
+            visible.generated().map(|points| points.len()),
+            displayed
+                .contains(&DisplayCategory::GeneratedMarkers)
+                .then_some(1)
+        );
+        assert_eq!(
+            visible.event().map(|points| points.len()),
+            displayed
+                .contains(&DisplayCategory::EventMarkers)
+                .then_some(1)
+        );
+        assert!(
+            visible.tpv_by_track().is_none(),
+            "the track points category is hidden"
+        );
+    }
+
+    /// The query still runs for a marker category that is displayed.
+    #[test]
+    fn no_fix_is_collected_while_the_zoom_hides_every_icon_of_the_track() {
+        let visible = collect(
+            &a_track_whose_icons_are_all_hidden(),
+            mask_showing(&[DisplayCategory::TrackPoints, DisplayCategory::CustomMarkers]),
+        );
+
+        assert!(visible.tpv_by_track().is_none());
+        assert_eq!(visible.custom().map(|points| points.len()), Some(1));
+    }
+
+    #[test]
+    fn fixes_are_collected_while_a_tracks_icons_draw() {
+        let visible = collect(
+            &a_track_whose_icons_draw(),
+            mask_showing(&[DisplayCategory::TrackPoints]),
+        );
+
+        let by_track = visible.tpv_by_track().expect("the icons draw");
+        assert_eq!(
+            by_track.get(&the_only_track()).map(Vec::as_slice),
+            Some([0_usize].as_slice())
+        );
+        assert!(visible.custom().is_none());
     }
 }
 
