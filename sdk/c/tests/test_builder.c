@@ -176,7 +176,7 @@ Test(builder, no_fixes_error) {
     /* NoNavFixes is only returned when there are annotations but no fixes.
        An empty builder (no fixes, no annotations) is valid and returns OK. */
     cr_assert_eq(gtd_builder_add_annotation(builder, gtd_ts_from_seconds(1700000000ULL), "note",
-                                            GTD_ICON_AUTO),
+                                            GTD_ICON_PIN),
                  GTD_OK);
 
     GtdNavFile *file = NULL;
@@ -322,8 +322,20 @@ Test(builder, annotation_label_past_its_field_is_too_long) {
     memset(label, 'l', sizeof(label) - 1);
     label[sizeof(label) - 1] = '\0';
 
-    cr_assert_eq(gtd_builder_add_annotation(builder, timestamp, label, GTD_ICON_AUTO),
+    cr_assert_eq(gtd_builder_add_annotation(builder, timestamp, label, GTD_ICON_PIN),
                  GTD_ERR_FIELD_TOO_LONG);
+
+    gtd_builder_destroy(builder);
+}
+
+Test(builder, annotation_rejects_the_auto_icon) {
+    GtdFileBuilder *builder = gtd_builder_create();
+    cr_assert_not_null(builder);
+
+    cr_assert_eq(gtd_builder_add_annotation(builder, gtd_ts_from_seconds(1700000000ULL), "note",
+                                            GTD_ICON_AUTO),
+                 GTD_ERR_INVALID_ARGUMENT);
+    cr_assert_not_null(gtd_last_error());
 
     gtd_builder_destroy(builder);
 }

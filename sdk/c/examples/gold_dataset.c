@@ -402,7 +402,11 @@ static void load_markers(GtdFileBuilder *builder, const char *base) {
             FAIL("markers.csv: missing timestamp");
         }
         const char *label = (*cols[1] != '\0') ? cols[1] : NULL;
-        check_sdk_status(gtd_builder_add_annotation(builder, timestamp, label, parse_icon(cols[2])),
+        GtdMarkerIcon icon = parse_icon(cols[2]);
+        if (icon == GTD_ICON_AUTO) {
+            icon = GTD_ICON_PIN;
+        }
+        check_sdk_status(gtd_builder_add_annotation(builder, timestamp, label, icon),
                          "add_annotation");
     }
     (void)fclose(file);

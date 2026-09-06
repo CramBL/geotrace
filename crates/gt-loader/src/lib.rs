@@ -819,7 +819,7 @@ fn convert_marker(m: &SdkMarker) -> Result<CustomMarker, DroppedMarker> {
         (Ok(lat), Ok(lon)) => Ok(CustomMarker::new(
             m.annotation.time(),
             label,
-            m.annotation.icon().map_or(MarkerIcon::Pin, convert_icon),
+            convert_icon(m.annotation.icon()),
             lat,
             lon,
         )),
@@ -1470,24 +1470,7 @@ mod tests {
     }
 
     #[test]
-    fn marker_icon_none() {
-        let t0 = base();
-        let t1 = t0 + Duration::seconds(1);
-        let mut recorder = NavFileBuilder::new().open();
-        recorder.add_nav_fix(minimal_fix(t0));
-        recorder.add_nav_fix(minimal_fix(t1));
-        recorder.add_annotation(
-            Annotation::builder()
-                .time(t0 + Duration::milliseconds(500))
-                .build()
-                .unwrap(),
-        );
-        let (_, markers) = build(&recorder.finish().unwrap());
-        assert_eq!(markers[0].icon, MarkerIcon::Pin);
-    }
-
-    #[test]
-    fn marker_icon_some() {
+    fn every_sdk_marker_icon_converts_to_the_app_icon_of_the_same_name() {
         // The full mapping table, checked against `SdkIcon::COUNT`.
         let pairs = [
             (SdkIcon::Pin, MarkerIcon::Pin),

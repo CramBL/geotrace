@@ -290,7 +290,7 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
         markers[0].annotation.label().unwrap(),
         "File Boundary Start"
     );
-    assert_eq!(markers[0].annotation.icon(), Some(MarkerIcon::Check));
+    assert_eq!(markers[0].annotation.icon(), MarkerIcon::Check);
 
     // The short arc between the track 8 fixes at 180.0° and -179.99° puts the
     // antimeridian marker, timestamped half way between them, at -179.995°.

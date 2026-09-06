@@ -145,7 +145,7 @@ def test_annotation_minimal() -> None:
     ann = Annotation(T0)
     assert ann.time.tzinfo is not None
     assert ann.label is None
-    assert ann.icon is None
+    assert ann.icon == MarkerIcon.PIN
 
 
 def test_annotation_all_fields() -> None:

@@ -188,6 +188,17 @@ def test_roundtrip_annotation() -> None:
     assert -0.12 < m.lon < -0.1
 
 
+def test_roundtrip_annotation_without_an_icon_reads_back_as_pin() -> None:
+    b = NavFileBuilder()
+    b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
+    written = Annotation(T0, label="Pit stop")
+    b.add(written)
+    nav_file = _write_and_read(b)
+
+    assert nav_file.markers[0].icon == MarkerIcon.PIN
+    assert nav_file.markers[0].annotation == written
+
+
 def test_roundtrip_to_bytes() -> None:
     b = NavFileBuilder()
     b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))

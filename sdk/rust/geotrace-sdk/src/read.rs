@@ -314,7 +314,7 @@ fn read_markers(file: &SizeCheckedFile) -> Result<Vec<Marker>, Error> {
             annotation: Annotation {
                 time: micros_to_datetime(*time_us),
                 label: label.into_string_unless_empty(),
-                icon: Some(MarkerIcon::from_u8(*icon_code)),
+                icon: MarkerIcon::from_u8(*icon_code),
             },
             lat: Angle::degrees(*lat_deg),
             lon: Angle::degrees(*lon_deg),

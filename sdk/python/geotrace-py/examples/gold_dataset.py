@@ -168,7 +168,8 @@ def _load_markers(builder: NavFileBuilder, base: Path) -> None:
         time = _parse_ts(cols[0])
         if time is None:
             continue
-        builder.add(Annotation(time=time, label=cols[1] or None, icon=_icon(cols[2])))
+        icon = _icon(cols[2]) or MarkerIcon.PIN
+        builder.add(Annotation(time=time, label=cols[1] or None, icon=icon))
 
 
 def _load_events(builder: NavFileBuilder, base: Path) -> None:

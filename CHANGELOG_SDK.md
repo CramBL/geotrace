@@ -28,6 +28,7 @@ the app).
 - C++ `NavFix` and `SatelliteReport` have a required `FixTime` member, built with `FixTime::receiver`, `FixTime::host` or `FixTime::both`, in place of their two timestamps.
 - C++ `Timestamp` is always an instant: it has no default constructor, `Timestamp::none()` and `Timestamp::is_none()` are gone, and `NavPointView::gps_time`, `NavPointView::sys_time` and `NavFile::sdk_commit_time()` are `std::optional<Timestamp>`.
 - C++ header values are `[[nodiscard]]`, the value types are `constexpr` apart from the `Timestamp` factories, and `NavFile` has no default constructor.
+- An annotation's icon is Pin unless set: Rust `Annotation::icon()` returns a `MarkerIcon`, C `gtd_builder_add_annotation` returns `GTD_ERR_INVALID_ARGUMENT` for `GTD_ICON_AUTO`, C++ `Annotation::icon` defaults to `MarkerIcon::Pin` and `MarkerIcon::Auto` is gone (`EventMarkerStyle::icon` is a `std::optional<MarkerIcon>`), and Python `Annotation.icon` and `Marker.icon` are a `MarkerIcon`.
 - A satellite report before the first nav fix produces a ghost fix on the first fix.
 - A ghost fix after the last nav fix takes that fix's position when the fix has no heading.
 

@@ -120,7 +120,7 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
     let m = &rt.markers()[0];
     assert_eq!(m.annotation.time(), tmid);
     assert_eq!(m.annotation.label(), Some("halfway"));
-    assert_eq!(m.annotation.icon(), Some(MarkerIcon::Warning));
+    assert_eq!(m.annotation.icon(), MarkerIcon::Warning);
     assert!((m.lat.as_degrees() - (51.5 + 51.6) / 2.0).abs() < 1e-10);
     assert!((m.lon.as_degrees() - (-0.1 + -0.2) / 2.0).abs() < 1e-10);
 
@@ -143,6 +143,33 @@ fn minimal() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(rt.nav_points()[0].fix.speed, None);
     assert!(rt.nav_points()[0].satellites.is_none());
     assert!(rt.markers().is_empty());
+    Ok(())
+}
+
+#[test]
+fn an_annotation_built_without_an_icon_reads_back_as_pin() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .time(NavFixTime::Receiver(base()))
+            .lat(Angle::degrees(0.0))
+            .lon(Angle::degrees(0.0))
+            .heading(Angle::degrees(0.0))
+            .build(),
+    );
+    let annotation = Annotation::builder()
+        .time(base())
+        .label("no icon")
+        .build()?;
+    assert_eq!(annotation.icon(), MarkerIcon::Pin);
+    recorder.add_annotation(annotation);
+
+    let nav_file = recorder.finish()?;
+    let rt = round_trip(&nav_file)?;
+
+    assert_eq!(rt.markers()[0].annotation.icon(), MarkerIcon::Pin);
+    assert_eq!(nav_file, rt);
     Ok(())
 }
 

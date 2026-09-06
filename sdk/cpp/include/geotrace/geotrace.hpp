@@ -563,7 +563,6 @@ enum class MarkerIcon : std::uint8_t {
     Download,
     Upload,
     Wrench,
-    Auto,
 };
 
 /** Platform a recording was made on, declared by the recorder. */
@@ -645,10 +644,12 @@ namespace detail {
         return GTD_ICON_UPLOAD;
     case MarkerIcon::Wrench:
         return GTD_ICON_WRENCH;
-    case MarkerIcon::Auto:
-        return GTD_ICON_AUTO;
     }
-    return GTD_ICON_AUTO;
+    return GTD_ICON_PIN;
+}
+
+[[nodiscard]] constexpr GtdMarkerIcon to_c(std::optional<MarkerIcon> icon) noexcept {
+    return icon ? to_c(*icon) : GTD_ICON_AUTO;
 }
 
 [[nodiscard]] constexpr GtdTravelMode to_c(TravelMode mode) noexcept {
@@ -776,7 +777,7 @@ struct SatelliteReport {
 struct Annotation {
     Timestamp time;
     std::string label;
-    MarkerIcon icon = MarkerIcon::Auto;
+    MarkerIcon icon = MarkerIcon::Pin;
 };
 
 /** A structured event marker placed on the map. */
@@ -789,7 +790,8 @@ struct EventMarker {
 /** Display style for all events of a given variant. */
 struct EventMarkerStyle {
     std::string variant_path;
-    MarkerIcon icon = MarkerIcon::Auto;
+    // `std::nullopt` means the application picks the icon.
+    std::optional<MarkerIcon> icon = std::nullopt;
     std::string color_hex; // empty = auto (hash-derived). format: "#RRGGBB"
 };
 
