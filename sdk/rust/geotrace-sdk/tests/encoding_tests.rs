@@ -9,8 +9,8 @@
 
 use geotrace_sdk::{Angle, DateTime, Duration, Utc};
 use geotrace_sdk::{
-    Annotation, ChannelUnit, Constellation, Error, EventMarker, MarkerIcon, NavFile,
-    NavFileBuilder, NavFix, NavFixTime, Satellite, SatelliteReport,
+    Annotation, AnnotationIcon, ChannelUnit, Constellation, Error, EventMarker, MarkerIcon,
+    NavFile, NavFileBuilder, NavFix, NavFixTime, Satellite, SatelliteReport,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 use rstest::rstest;
@@ -272,7 +272,10 @@ fn marker_icon_encoding() -> Result<(), Box<dyn std::error::Error>> {
         let mut bytes2 = Vec::new();
         nav_file.write(&mut bytes2)?;
         let rt = NavFile::read(bytes2.as_slice())?;
-        assert_eq!(rt.markers()[0].annotation.icon(), icon);
+        assert_eq!(
+            rt.markers()[0].annotation.icon(),
+            AnnotationIcon::Icon(icon)
+        );
     }
     Ok(())
 }

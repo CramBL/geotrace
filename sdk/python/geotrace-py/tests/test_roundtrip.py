@@ -183,6 +183,7 @@ def test_roundtrip_annotation() -> None:
     m = nav_file.markers[0]
     assert m.annotation.label == "Pit stop"
     assert m.annotation.icon == MarkerIcon.PIN
+    assert m.annotation.icon_code == 0
     # Interpolated position should be between the two fixes.
     assert 51.5 < m.lat < 51.52
     assert -0.12 < m.lon < -0.1
@@ -321,6 +322,35 @@ NAV_POINT_IDX_PAST_THE_NAV_POINTS_FIXTURE = (
     / "fixtures"
     / "nav_point_idx_past_the_nav_points.gtd"
 )
+
+
+UNRECOGNIZED_MARKER_ICON_FIXTURE = (
+    Path(__file__).resolve().parents[3]
+    / "c"
+    / "tests"
+    / "fixtures"
+    / "unrecognized_marker_icon.gtd"
+)
+
+UNRECOGNIZED_ICON_CODE = 200
+
+
+def test_marker_icon_outside_the_known_set_reads_as_none_with_a_warning() -> None:
+    loaded = NavFile.open(UNRECOGNIZED_MARKER_ICON_FIXTURE)
+    with pytest.warns(UserWarning, match="icon code 200"):
+        marker = loaded.markers[0]
+    assert marker.icon is None
+    assert marker.icon_code == UNRECOGNIZED_ICON_CODE
+    assert marker.annotation.icon is None
+    assert marker.annotation.icon_code == UNRECOGNIZED_ICON_CODE
+
+
+def test_marker_icon_outside_the_known_set_is_written_back_unchanged() -> None:
+    loaded = NavFile.from_bytes(UNRECOGNIZED_MARKER_ICON_FIXTURE.read_bytes())
+    written_back = NavFile.from_bytes(loaded.to_bytes())
+    with pytest.warns(UserWarning):
+        marker = written_back.markers[0]
+    assert marker.icon_code == UNRECOGNIZED_ICON_CODE
 
 
 def test_a_satellite_report_pointing_past_the_nav_points_raises() -> None:

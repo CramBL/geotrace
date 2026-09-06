@@ -10,9 +10,9 @@
 )]
 
 use geotrace_sdk::{
-    Angle, Annotation, Channel, ChannelUnit, Constellation, EventMarker, EventMarkerStyle,
-    MarkerIcon, Meta, NavFileBuilder, NavFix, NavFixTime, NavRecorder, RecordedFixTimestamps,
-    Satellite, SatelliteReport, TravelMode, Velocity,
+    Angle, Annotation, AnnotationIcon, Channel, ChannelUnit, Constellation, EventMarker,
+    EventMarkerStyle, MarkerIcon, Meta, NavFileBuilder, NavFix, NavFixTime, NavRecorder,
+    RecordedFixTimestamps, Satellite, SatelliteReport, TravelMode, Velocity,
 };
 use std::collections::HashMap;
 use std::fs::File;
@@ -290,7 +290,10 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
         markers[0].annotation.label().unwrap(),
         "File Boundary Start"
     );
-    assert_eq!(markers[0].annotation.icon(), MarkerIcon::Check);
+    assert_eq!(
+        markers[0].annotation.icon(),
+        AnnotationIcon::Icon(MarkerIcon::Check)
+    );
 
     // The short arc between the track 8 fixes at 180.0° and -179.99° puts the
     // antimeridian marker, timestamped half way between them, at -179.995°.

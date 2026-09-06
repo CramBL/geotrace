@@ -373,7 +373,23 @@ class Annotation:
     @property
     def label(self) -> str | None: ...
     @property
-    def icon(self) -> MarkerIcon: ...
+    def icon(self) -> MarkerIcon | None:
+        """Visual icon.
+
+        ``None`` for an icon code this build does not have. :attr:`icon_code`
+        holds such a code.
+        """
+        ...
+
+    @property
+    def icon_code(self) -> int:
+        """The stored code of :attr:`icon`.
+
+        An icon code this build does not have is returned unchanged.
+        :attr:`icon` reads as ``None`` for it.
+        """
+        ...
+
     def __eq__(self, other: object) -> bool: ...
 
 @final
@@ -506,8 +522,21 @@ class Marker:
         ...
 
     @property
-    def icon(self) -> MarkerIcon:
-        """Visual icon from the annotation."""
+    def icon(self) -> MarkerIcon | None:
+        """Visual icon from the annotation.
+
+        ``None`` for an icon code this build does not have. :attr:`icon_code`
+        holds such a code.
+        """
+        ...
+
+    @property
+    def icon_code(self) -> int:
+        """The stored code of :attr:`icon`.
+
+        An icon code this build does not have is returned unchanged.
+        :attr:`icon` reads as ``None`` for it.
+        """
         ...
 
     @property
@@ -649,7 +678,12 @@ class NavFile:
 
     @property
     def markers(self) -> list[Marker]:
-        """All map markers with their interpolated positions."""
+        """All map markers with their interpolated positions.
+
+        Raises a ``UserWarning`` for a marker holding an icon code this build
+        does not have. Its ``icon`` reads as ``None``. Its ``icon_code`` holds
+        the code.
+        """
         ...
 
     @property

@@ -12,11 +12,15 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use geotrace_sdk::{
-    Angle, Constellation, DateTime, Duration, EventMarkerColor, EventMarkerIconChoice,
-    EventMarkerStyle, NavFile, NavFileBuilder, NavFix, NavFixTime, Satellite, SatelliteReport,
-    Velocity,
+    Angle, Annotation, AnnotationIcon, Constellation, DateTime, Duration, EventMarkerColor,
+    EventMarkerIconChoice, EventMarkerStyle, NavFile, NavFileBuilder, NavFix, NavFixTime,
+    Satellite, SatelliteReport, Velocity,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
+
+/// The `markers/icon` code of the unrecognized marker icon fixture, outside
+/// the 0 to 13 the `MarkerIcon` set covers.
+const UNRECOGNIZED_MARKER_ICON_CODE: u8 = 200;
 
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR");
@@ -29,6 +33,10 @@ fn main() {
     write_fixture(
         &unrecognized_style_values(),
         &fixtures.join("unrecognized_style_values.gtd"),
+    );
+    write_fixture(
+        &unrecognized_marker_icon(),
+        &fixtures.join("unrecognized_marker_icon.gtd"),
     );
     write_bytes(
         &nav_point_idx_past_the_nav_points(),
@@ -176,6 +184,46 @@ fn unrecognized_style_values() -> NavFile {
         icon: EventMarkerIconChoice::Unrecognized("hovercraft".to_owned()),
         color: EventMarkerColor::Unrecognized("FFAA00".to_owned()),
     });
+
+    recorder.finish().expect("gen_fixture: build failed")
+}
+
+/// A file as a newer build would write it: a map marker with a `markers/icon`
+/// code outside the [`MarkerIcon`](geotrace_sdk::MarkerIcon) set.
+fn unrecognized_marker_icon() -> NavFile {
+    let t0 = DateTime::from_timestamp_micros(1_700_000_000_000_000).expect("valid timestamp");
+
+    let mut recorder = NavFileBuilder::new()
+        .with_title("unrecognized marker icon fixture")
+        .with_device("gen_fixture")
+        .open();
+
+    recorder.add_nav_fix(NavFix {
+        time: NavFixTime::Receiver(t0),
+        lat: Angle::degrees(51.5074),
+        lon: Angle::degrees(-0.1278),
+        heading: Some(Angle::degrees(90.0)),
+        speed: Some(Velocity::meter_per_second(5.0)),
+        eph_m: None,
+    });
+
+    recorder.add_nav_fix(NavFix {
+        time: NavFixTime::Receiver(t0 + Duration::seconds(10)),
+        lat: Angle::degrees(51.5080),
+        lon: Angle::degrees(-0.1265),
+        heading: Some(Angle::degrees(85.0)),
+        speed: Some(Velocity::meter_per_second(5.5)),
+        eph_m: None,
+    });
+
+    recorder.add_annotation(
+        Annotation::builder()
+            .time(t0 + Duration::seconds(5))
+            .label("hovercraft")
+            .icon(AnnotationIcon::Unrecognized(UNRECOGNIZED_MARKER_ICON_CODE))
+            .build()
+            .expect("gen_fixture: annotation label fits the field"),
+    );
 
     recorder.finish().expect("gen_fixture: build failed")
 }

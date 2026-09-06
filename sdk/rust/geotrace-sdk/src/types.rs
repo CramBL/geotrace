@@ -262,7 +262,7 @@ impl Constellation {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Annotation {
     pub(crate) label: Option<String>,
-    pub(crate) icon: MarkerIcon,
+    pub(crate) icon: AnnotationIcon,
     pub(crate) time: DateTime<Utc>,
 }
 
@@ -276,7 +276,7 @@ impl Annotation {
     pub fn new(
         #[builder(into)] time: DateTime<Utc>,
         #[builder(into)] label: Option<String>,
-        #[builder(default = MarkerIcon::Pin)] icon: MarkerIcon,
+        #[builder(into, default = AnnotationIcon::Icon(MarkerIcon::Pin))] icon: AnnotationIcon,
     ) -> Result<Self, Error> {
         let label = label.filter(|s| !s.trim().is_empty());
         if let Some(label) = label.as_deref() {
@@ -293,12 +293,45 @@ impl Annotation {
         self.label.as_deref()
     }
 
-    pub fn icon(&self) -> MarkerIcon {
+    pub fn icon(&self) -> AnnotationIcon {
         self.icon
     }
 
     pub fn time(&self) -> DateTime<Utc> {
         self.time
+    }
+}
+
+/// What the `markers/icon` dataset holds for one annotation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnnotationIcon {
+    Icon(MarkerIcon),
+    /// A code outside the [`MarkerIcon`] set, read from a file and written back
+    /// unchanged.
+    Unrecognized(u8),
+}
+
+impl AnnotationIcon {
+    /// The `markers/icon` code this icon writes. Inverse of
+    /// [`AnnotationIcon::from_wire_code`].
+    pub fn wire_code(self) -> u8 {
+        match self {
+            Self::Icon(icon) => icon.to_u8(),
+            Self::Unrecognized(code) => code,
+        }
+    }
+
+    /// Reads a `markers/icon` code: a code in the [`MarkerIcon`] set gives
+    /// [`AnnotationIcon::Icon`], any other code
+    /// [`AnnotationIcon::Unrecognized`].
+    pub fn from_wire_code(code: u8) -> Self {
+        MarkerIcon::from_u8(code).map_or(Self::Unrecognized(code), Self::Icon)
+    }
+}
+
+impl From<MarkerIcon> for AnnotationIcon {
+    fn from(icon: MarkerIcon) -> Self {
+        Self::Icon(icon)
     }
 }
 
@@ -359,22 +392,25 @@ impl MarkerIcon {
         }
     }
 
-    pub(crate) fn from_u8(code: u8) -> Self {
+    /// `None` for a code outside the set, which
+    /// [`AnnotationIcon::from_wire_code`] preserves.
+    pub(crate) fn from_u8(code: u8) -> Option<Self> {
         match code {
-            1 => MarkerIcon::Cross,
-            2 => MarkerIcon::Circle,
-            3 => MarkerIcon::Lightning,
-            4 => MarkerIcon::Warning,
-            5 => MarkerIcon::Error,
-            6 => MarkerIcon::Check,
-            7 => MarkerIcon::Satellite,
-            8 => MarkerIcon::SatelliteLost,
-            9 => MarkerIcon::Gear,
-            10 => MarkerIcon::Refresh,
-            11 => MarkerIcon::Download,
-            12 => MarkerIcon::Upload,
-            13 => MarkerIcon::Wrench,
-            _ => MarkerIcon::Pin,
+            0 => Some(MarkerIcon::Pin),
+            1 => Some(MarkerIcon::Cross),
+            2 => Some(MarkerIcon::Circle),
+            3 => Some(MarkerIcon::Lightning),
+            4 => Some(MarkerIcon::Warning),
+            5 => Some(MarkerIcon::Error),
+            6 => Some(MarkerIcon::Check),
+            7 => Some(MarkerIcon::Satellite),
+            8 => Some(MarkerIcon::SatelliteLost),
+            9 => Some(MarkerIcon::Gear),
+            10 => Some(MarkerIcon::Refresh),
+            11 => Some(MarkerIcon::Download),
+            12 => Some(MarkerIcon::Upload),
+            13 => Some(MarkerIcon::Wrench),
+            _ => None,
         }
     }
 
@@ -429,6 +465,38 @@ mod marker_icon_tests {
     fn try_from_lower_case_rejects_unknown_strings() {
         let err = MarkerIcon::try_from_lower_case("not_an_icon").unwrap_err();
         assert!(matches!(err, Error::UnknownMarkerIcon { name } if name == "not_an_icon"));
+    }
+}
+
+#[cfg(test)]
+mod annotation_icon_tests {
+    use rstest::rstest;
+    use strum::IntoEnumIterator;
+
+    use super::*;
+
+    #[test]
+    fn a_code_in_the_marker_icon_set_reads_as_that_icon_and_writes_back_unchanged() {
+        for icon in MarkerIcon::iter() {
+            let code = icon.to_u8();
+            assert_eq!(
+                AnnotationIcon::from_wire_code(code),
+                AnnotationIcon::Icon(icon)
+            );
+            assert_eq!(AnnotationIcon::Icon(icon).wire_code(), code);
+        }
+    }
+
+    #[rstest]
+    #[case(14)]
+    #[case(200)]
+    #[case(255)]
+    fn a_code_outside_the_marker_icon_set_reads_as_unrecognized_and_writes_back_unchanged(
+        #[case] code: u8,
+    ) {
+        let icon = AnnotationIcon::from_wire_code(code);
+        assert_eq!(icon, AnnotationIcon::Unrecognized(code));
+        assert_eq!(icon.wire_code(), code);
     }
 }
 

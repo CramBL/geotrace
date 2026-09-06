@@ -11,9 +11,9 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, FixedOffset, Utc};
 use geotrace_sdk::{
-    Angle, Annotation, BuildError, Channel, ChannelUnit, Constellation, EventMarker,
-    EventMarkerColor, EventMarkerIconChoice, EventMarkerPoint, EventMarkerStyle, Marker,
-    MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix, NavFixTime, NavPoint, NavRecorder,
+    Angle, Annotation, AnnotationIcon, BuildError, Channel, ChannelUnit, Constellation,
+    EventMarker, EventMarkerColor, EventMarkerIconChoice, EventMarkerPoint, EventMarkerStyle,
+    Marker, MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix, NavFixTime, NavPoint, NavRecorder,
     RecordedFixTimestamps, Satellite, SatelliteReport, TravelMode, Unit, Velocity,
 };
 use pyo3::exceptions::{PyIOError, PyRuntimeError, PyUserWarning, PyValueError};
@@ -829,10 +829,23 @@ impl PyAnnotation {
         self.inner.label()
     }
 
-    /// Visual icon.
+    /// Visual icon, or ``None`` for an icon code this build does not have.
+    /// :attr:`icon_code` holds such a code.
     #[getter]
-    fn icon(&self) -> PyMarkerIcon {
-        PyMarkerIcon::from(self.inner.icon())
+    fn icon(&self) -> Option<PyMarkerIcon> {
+        match self.inner.icon() {
+            AnnotationIcon::Icon(icon) => Some(PyMarkerIcon::from(icon)),
+            AnnotationIcon::Unrecognized(_) => None,
+        }
+    }
+
+    /// The stored code of :attr:`icon`.
+    ///
+    /// An icon code this build does not have is returned unchanged, and
+    /// :attr:`icon` is ``None`` for it.
+    #[getter]
+    fn icon_code(&self) -> u8 {
+        self.inner.icon().wire_code()
     }
 
     fn __eq__(&self, other: &Self) -> bool {
@@ -1051,10 +1064,23 @@ impl PyMarker {
         self.inner.annotation.label()
     }
 
-    /// Visual icon from the annotation.
+    /// Visual icon from the annotation, or ``None`` for an icon code this
+    /// build does not have. :attr:`icon_code` holds such a code.
     #[getter]
-    fn icon(&self) -> PyMarkerIcon {
-        PyMarkerIcon::from(self.inner.annotation.icon())
+    fn icon(&self) -> Option<PyMarkerIcon> {
+        match self.inner.annotation.icon() {
+            AnnotationIcon::Icon(icon) => Some(PyMarkerIcon::from(icon)),
+            AnnotationIcon::Unrecognized(_) => None,
+        }
+    }
+
+    /// The stored code of :attr:`icon`.
+    ///
+    /// An icon code this build does not have is returned unchanged, and
+    /// :attr:`icon` is ``None`` for it.
+    #[getter]
+    fn icon_code(&self) -> u8 {
+        self.inner.annotation.icon().wire_code()
     }
 
     /// Annotation timestamp (timezone-aware UTC).
@@ -1326,13 +1352,27 @@ impl PyNavFile {
     }
 
     /// All map markers with their interpolated positions.
+    ///
+    /// A marker with an icon code this build does not have raises a
+    /// ``UserWarning``. Its ``icon`` reads as ``None``. Its ``icon_code``
+    /// holds the code.
     #[getter]
-    fn markers(&self) -> Vec<PyMarker> {
-        self.inner
-            .markers()
-            .iter()
-            .map(|m| PyMarker { inner: m.clone() })
-            .collect()
+    fn markers(&self, py: Python<'_>) -> PyResult<Vec<PyMarker>> {
+        let markers = self.inner.markers();
+        let mut converted = Vec::with_capacity(markers.len());
+        for m in markers {
+            if let AnnotationIcon::Unrecognized(code) = m.annotation.icon() {
+                let message = CString::new(format!(
+                    "map marker {:?} holds the icon code {code}, which this build does not have: \
+                     icon reads as None, icon_code holds the code",
+                    m.annotation.label().unwrap_or("")
+                ))
+                .map_err(|err| PyValueError::new_err(err.to_string()))?;
+                PyErr::warn(py, &py.get_type::<PyUserWarning>(), &message, 1)?;
+            }
+            converted.push(PyMarker { inner: m.clone() });
+        }
+        Ok(converted)
     }
 
     /// All event markers with their interpolated positions.
