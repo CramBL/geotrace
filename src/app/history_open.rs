@@ -1,9 +1,9 @@
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::Instant;
 
 use egui::{Button, Grid, Label, RichText};
 use gt_pending_writes::{PendingWriteGuard, WriteKind};
-use gt_side_panel::HiddenTracksByRecording;
 use gt_store::{DbError, StoredFixPlacementRule, StoredTrackSplitRule, TrackState};
 
 use super::anchored_dialog::{AnchoredDialogKind, HeldBodyLines};
@@ -67,7 +67,7 @@ enum ResegmentChoice {
 
 /// The marks the user set by hand on the recording the "Track settings differ"
 /// prompt is about: the shelved tracks of its stored track table, and the
-/// tracks the settings file remembers as hidden.
+/// hidden tracks of its stored UI state.
 ///
 /// A recalculation writes a track table with every track live and drops the
 /// recording's hidden track numbers, which addressed the previous track
@@ -81,7 +81,7 @@ struct MarksDroppedByRecalculating {
 impl MarksDroppedByRecalculating {
     fn of_the_prompted_recording(
         prompt: &ResegmentPrompt,
-        hidden_tracks: &HiddenTracksByRecording,
+        tree: &gt_side_panel::TreeState,
     ) -> Self {
         Self {
             shelved_tracks: prompt
@@ -89,7 +89,9 @@ impl MarksDroppedByRecalculating {
                 .iter()
                 .filter(|track| track.state == TrackState::Shelved)
                 .count(),
-            hidden_tracks: hidden_tracks.track_numbers(&prompt.db_ref).len(),
+            hidden_tracks: tree
+                .hidden_track_numbers(&prompt.db_ref)
+                .map_or(0, BTreeSet::len),
         }
     }
 
@@ -155,6 +157,7 @@ impl App {
         previous.shutdown();
         self.sync_db_path();
         self.history_window.invalidate();
+        self.store_the_hidden_tracks_the_settings_file_lists();
     }
 
     /// Put a freshly opened database behind the history worker.
@@ -406,7 +409,10 @@ impl App {
                     .set_error(format!("Failed to load history: {e}"));
             }
             Response::Opened { db_ref, result } => match result {
-                Ok(stored) => self.begin_history_open(db_ref, stored),
+                Ok(opened) => {
+                    self.apply_the_ui_state_stored_with_a_recording(&db_ref, opened.ui_state);
+                    self.begin_history_open(db_ref, opened.stored);
+                }
                 Err(e) => {
                     log::error!("Failed to load recording from history: {e}");
                     self.toasts.error(format!("Could not open recording: {e}"));
@@ -435,6 +441,16 @@ impl App {
                 if let Err(e) = result {
                     log::warn!("Storing snap runs failed: {e}");
                 }
+            }
+            // A failed write costs only the stored copy: the session shows the
+            // tracks the user hid whatever the database took.
+            Response::RecordingUiStateStored(result) => {
+                if let Err(e) = result {
+                    log::warn!("Storing the display settings of a recording failed: {e}");
+                }
+            }
+            Response::RecordingUiStateLoaded { db_ref, ui_state } => {
+                self.apply_the_ui_state_stored_with_a_recording(&db_ref, ui_state);
             }
             Response::StoredTrackTableLoaded { db_ref, tracks } => {
                 self.history_window.set_shelf_track_table(&db_ref, tracks);
@@ -653,7 +669,7 @@ impl App {
         let stored = prompt.stored;
         let recalculation_warning = MarksDroppedByRecalculating::of_the_prompted_recording(
             &prompt,
-            self.shared.borrow().tree.hidden_tracks(),
+            &self.shared.borrow().tree,
         )
         .warning_line();
         let fmt_gap = |us: i64| format!("{}s", us / 1_000_000);

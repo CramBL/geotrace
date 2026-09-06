@@ -531,8 +531,6 @@ pub struct UiSettings {
     /// divide that the section takes (0.0–1.0). Clamped to the divider's own
     /// range when the panel renders.
     pub visible_section_fraction: f32,
-    /// See [`gt_side_panel::HiddenTracksByRecording`].
-    pub hidden_tracks: gt_side_panel::HiddenTracksByRecording,
 }
 
 impl Default for UiSettings {
@@ -541,7 +539,6 @@ impl Default for UiSettings {
             theme: ThemeSetting::System,
             recording_name_template: DEFAULT_RECORDING_NAME_TEMPLATE.to_owned(),
             visible_section_fraction: gt_side_panel::VISIBLE_SECTION_DEFAULT_FRACTION,
-            hidden_tracks: gt_side_panel::HiddenTracksByRecording::default(),
         }
     }
 }

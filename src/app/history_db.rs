@@ -27,7 +27,8 @@ use gt_store::{
     AttachedLog, DatabaseRef, DbError, HistoryDatabase, LogAttachmentEntry, LogAttachmentError,
     LogAttachmentId, LogAttachments as _, LogContentHash, LogToAttach, PruneMode,
     ReadOnlyHistoryDatabase, ReadOnlyLogAttachments as _, ReadOnlyRecordings, RecordingEntry,
-    Recordings, RecordingsHandle, StoredLogFilter, StoredRecording, TrackRange, TrackState,
+    RecordingUiState, Recordings, RecordingsHandle, StoredLogFilter, StoredRecording, TrackRange,
+    TrackState, UiStateVersionReporter,
 };
 use gt_track_builder::SegmentationConfig;
 use gt_ui_types::LoadedLogId;
@@ -106,6 +107,10 @@ enum ReadRequest {
     LoadSnapRuns(DatabaseRef),
     /// Read a recording's stored track table for the History window's shelf.
     LoadStoredTrackTable(DatabaseRef),
+    /// Read the UI state stored with a recording the user loaded from disk.
+    /// Opening a recording from history reads its UI state in that same
+    /// request instead.
+    LoadRecordingUiState(DatabaseRef),
     /// Read back every log attached to a recording that just opened.
     LoadAttachedLogs(DatabaseRef),
     /// Read back the one log `attachment` names, which the log viewer requests
@@ -160,6 +165,11 @@ enum WriteRequest {
         db_ref: DatabaseRef,
         blob: Vec<u8>,
     },
+    /// Store the UI state of a recording, which holds its hidden tracks.
+    StoreRecordingUiState {
+        db_ref: DatabaseRef,
+        ui_state: RecordingUiState,
+    },
     /// Store a log with a recording, log bytes and all.
     AttachLog {
         db_ref: DatabaseRef,
@@ -195,6 +205,9 @@ impl WriteRequest {
             Self::RenameIdentity { .. } => "Renaming an identity in recording history",
             Self::AutoPrune { .. } => "Auto-pruning recording history",
             Self::StoreSnapRuns { .. } => "Storing snap runs in recording history",
+            Self::StoreRecordingUiState { .. } => {
+                "Storing the display settings of a recording in recording history"
+            }
             Self::AttachLog { .. } => "Storing a log with a recording",
             Self::SetAttachedLogFilters { .. } => "Storing an attached log's filters",
             Self::DetachLog { .. } => "Removing an attached log from a recording",
@@ -223,12 +236,19 @@ pub struct ExistingLogAttachment {
     pub name: String,
 }
 
+/// A recording as the worker read it back: its stored form, and the UI state
+/// stored with it, which the same request reads.
+pub struct OpenedRecording {
+    pub stored: StoredRecording,
+    pub ui_state: Result<RecordingUiState, DbError>,
+}
+
 /// A result delivered back to the UI thread, drained via [`HistoryWorker::poll`].
 pub enum Response {
     Listed(Result<Vec<RecordingEntry>, DbError>),
     Opened {
         db_ref: DatabaseRef,
-        result: Result<StoredRecording, DbError>,
+        result: Result<OpenedRecording, DbError>,
     },
     Mutated {
         op: DbOp,
@@ -243,6 +263,14 @@ pub enum Response {
     SnapRunsLoaded {
         db_ref: DatabaseRef,
         blob: Result<Option<Vec<u8>>, DbError>,
+    },
+    /// Outcome of a UI state store. The app logs a failure: the hidden tracks
+    /// the session shows stay as they are.
+    RecordingUiStateStored(Result<(), DbError>),
+    /// The UI state stored with a recording the user loaded from disk.
+    RecordingUiStateLoaded {
+        db_ref: DatabaseRef,
+        ui_state: Result<RecordingUiState, DbError>,
     },
     /// Every row of a recording's stored track table, tombstones and all.
     StoredTrackTableLoaded {
@@ -313,6 +341,7 @@ pub struct HistoryWorker {
     resp_rx: Receiver<Response>,
     handle: Option<JoinHandle<()>>,
     path: Option<PathBuf>,
+    ui_state_versions: Arc<UiStateVersionReporter>,
 }
 
 impl HistoryWorker {
@@ -326,6 +355,7 @@ impl HistoryWorker {
             resp_rx,
             handle: None,
             path: None,
+            ui_state_versions: Arc::default(),
         }
     }
 
@@ -334,14 +364,17 @@ impl HistoryWorker {
         let path = Some(db.read().path().to_owned());
         let (req_tx, req_rx) = mpsc::channel::<Request>();
         let (resp_tx, resp_rx) = mpsc::channel::<Response>();
+        let ui_state_versions = Arc::new(UiStateVersionReporter::default());
+        let reporter = Arc::clone(&ui_state_versions);
         let handle = background_thread::spawn_or_panic("history-db", move || {
-            worker_loop(db, &req_rx, &resp_tx, &ctx, &pending_writes);
+            worker_loop(db, &req_rx, &resp_tx, &ctx, &pending_writes, &reporter);
         });
         Self {
             req_tx: Some(req_tx),
             resp_rx,
             handle: Some(handle),
             path,
+            ui_state_versions,
         }
     }
 
@@ -365,6 +398,12 @@ impl HistoryWorker {
     /// Whether a backing database is available (the worker is running).
     pub fn available(&self) -> bool {
         self.req_tx.is_some()
+    }
+
+    /// The recordings whose UI state a newer version of GeoTrace wrote, which
+    /// this worker collects over the whole session.
+    pub fn ui_state_versions(&self) -> &UiStateVersionReporter {
+        &self.ui_state_versions
     }
 
     /// Path of the database file, for display.
@@ -448,6 +487,16 @@ impl HistoryWorker {
     /// [`Response::StoredTrackTableLoaded`].
     pub fn load_stored_track_table(&self, db_ref: DatabaseRef) {
         self.send_read(ReadRequest::LoadStoredTrackTable(db_ref));
+    }
+
+    /// Read the UI state stored with a recording, which arrives as
+    /// [`Response::RecordingUiStateLoaded`].
+    pub fn load_recording_ui_state(&self, db_ref: DatabaseRef) {
+        self.send_read(ReadRequest::LoadRecordingUiState(db_ref));
+    }
+
+    pub fn store_recording_ui_state(&self, db_ref: DatabaseRef, ui_state: RecordingUiState) {
+        self.send_write(WriteRequest::StoreRecordingUiState { db_ref, ui_state });
     }
 
     pub fn attach_log(
@@ -570,11 +619,14 @@ fn worker_loop(
     resp_tx: &Sender<Response>,
     ctx: &Context,
     pending_writes: &PendingWrites,
+    ui_state_versions: &UiStateVersionReporter,
 ) {
     while let Ok(req) = req_rx.recv() {
         let resp = match req {
-            Request::Read(req) => handle_read_request(db.read(), req),
-            Request::Write(req) => run_write_request(&mut db, req, pending_writes),
+            Request::Read(req) => handle_read_request(db.read(), req, ui_state_versions),
+            Request::Write(req) => {
+                run_write_request(&mut db, req, pending_writes, ui_state_versions)
+            }
         };
         // If the UI is gone the send fails, there is nothing left to repaint.
         if resp_tx.send(resp).is_err() {
@@ -594,6 +646,7 @@ fn run_write_request(
     db: &mut RecordingsHandle,
     req: WriteRequest,
     pending_writes: &PendingWrites,
+    ui_state_versions: &UiStateVersionReporter,
 ) -> Response {
     let label = req.database_write_label();
     let Some(db) = db.writer() else {
@@ -603,16 +656,23 @@ fn run_write_request(
         };
     };
     match pending_writes.try_begin(label, WriteKind::RecordingDatabase) {
-        Ok(_write) => handle_write_request(db, req),
+        Ok(_write) => handle_write_request(db, req, ui_state_versions),
         Err(rejection) => Response::WriteRejected { label, rejection },
     }
 }
 
-fn handle_read_request(db: &ReadOnlyRecordings, req: ReadRequest) -> Response {
+fn handle_read_request(
+    db: &ReadOnlyRecordings,
+    req: ReadRequest,
+    ui_state_versions: &UiStateVersionReporter,
+) -> Response {
     match req {
         ReadRequest::List => Response::Listed(db.list_recordings()),
         ReadRequest::Open(db_ref) => {
-            let result = db.load(&db_ref);
+            let result = db.load(&db_ref).map(|stored| OpenedRecording {
+                stored,
+                ui_state: db.recording_ui_state(&db_ref, ui_state_versions),
+            });
             Response::Opened { db_ref, result }
         }
         ReadRequest::PrunePreview(mode) => Response::PrunePreview(db.prune_candidates(&mode)),
@@ -623,6 +683,10 @@ fn handle_read_request(db: &ReadOnlyRecordings, req: ReadRequest) -> Response {
         ReadRequest::LoadStoredTrackTable(db_ref) => {
             let tracks = db.stored_track_table(&db_ref);
             Response::StoredTrackTableLoaded { db_ref, tracks }
+        }
+        ReadRequest::LoadRecordingUiState(db_ref) => {
+            let ui_state = db.recording_ui_state(&db_ref, ui_state_versions);
+            Response::RecordingUiStateLoaded { db_ref, ui_state }
         }
         ReadRequest::LoadAttachedLogs(db_ref) => {
             let attachments = db.log_attachments(&db_ref).map(|entries| {
@@ -668,7 +732,11 @@ fn handle_read_request(db: &ReadOnlyRecordings, req: ReadRequest) -> Response {
     }
 }
 
-fn handle_write_request(db: &mut Recordings, req: WriteRequest) -> Response {
+fn handle_write_request(
+    db: &mut Recordings,
+    req: WriteRequest,
+    ui_state_versions: &UiStateVersionReporter,
+) -> Response {
     match req {
         WriteRequest::SetTracksShelved {
             db_ref,
@@ -722,6 +790,13 @@ fn handle_write_request(db: &mut Recordings, req: WriteRequest) -> Response {
         }
         WriteRequest::StoreSnapRuns { db_ref, blob } => {
             Response::SnapRunsStored(db.set_snap_blob(&db_ref, &blob))
+        }
+        WriteRequest::StoreRecordingUiState { db_ref, ui_state } => {
+            Response::RecordingUiStateStored(db.set_recording_ui_state(
+                &db_ref,
+                &ui_state,
+                ui_state_versions,
+            ))
         }
         WriteRequest::AttachLog {
             db_ref,
@@ -966,7 +1041,7 @@ mod tests {
         let Response::Opened { result, .. } = next_response(&worker) else {
             panic!("expected an Opened response");
         };
-        let stored = result.expect("open ok");
+        let stored = result.expect("open ok").stored;
         assert!(!stored.bytes.is_empty());
         assert_eq!(stored.tracks.len(), 2);
 
@@ -1054,7 +1129,7 @@ mod tests {
         let Response::Opened { result, .. } = next_response(&worker) else {
             panic!("expected Opened");
         };
-        let stored = result.expect("open ok");
+        let stored = result.expect("open ok").stored;
         assert_eq!(
             stored.tracks,
             vec![
@@ -1391,7 +1466,7 @@ mod tests {
             panic!("expected an Opened response");
         };
         assert_eq!(
-            result.expect("the recording opens").tracks,
+            result.expect("the recording opens").stored.tracks,
             vec![
                 TrackRange {
                     start: 0,

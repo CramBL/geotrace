@@ -37,7 +37,6 @@ constellations = []
 theme = "system"
 recording_name_template = "{filename}"
 visible_section_fraction = 0.25
-hidden_tracks = []
 
 [processing]
 track_split_gap_seconds = 300
