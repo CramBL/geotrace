@@ -2,7 +2,6 @@ pub mod cargo_env;
 pub mod clock_reset_fixtures;
 #[cfg(feature = "archive")]
 pub mod day_archive;
-pub mod fixtures;
 #[cfg(feature = "snapshot")]
 pub mod interaction;
 #[cfg(feature = "ionex")]
@@ -10,8 +9,11 @@ pub mod ionex_fixtures;
 pub mod log_fixtures;
 pub mod map_tile_fixtures;
 pub mod pending_writes;
+pub mod recording_fixtures;
 #[cfg(feature = "snapshot")]
 pub mod snapshot_harness;
+#[cfg(feature = "tracks")]
+pub mod track_fixtures;
 pub mod transport;
 #[cfg(feature = "snapshot")]
 pub mod window_fit;
@@ -20,22 +22,27 @@ pub use cargo_env::cargo_manifest_dir;
 pub use clock_reset_fixtures::recording_whose_clock_restarts_at_every_boot;
 #[cfg(feature = "archive")]
 pub use day_archive::{ColumnName, GroupPath};
-pub use fixtures::{
-    SEGMENTED_TRACK_DURATION, SyntheticGtdSpec, empty_file_metadata, empty_track_metadata,
-    latlon_at_meters, loaded_track_with_points, marker_test_data, nav_data_with_gap,
-    nav_point_at_meters, nav_points_at_positions, nav_points_from, nav_points_stamped,
-    nav_points_walking_from, nav_points_with_a_latitude_out_of_range,
-    nav_points_without_a_valid_position, nav_test_data, segmented_recording, single_nav_point,
-    stationary_nav_data, synthetic_gtd_bytes, synthetic_gtd_bytes_with_channels, track_geometry,
-};
+/// The fixture builders that need gt-types alone, for the crates that reach
+/// them through their dev-dependency on this one.
+pub use gt_types::fixtures;
 #[cfg(feature = "snapshot")]
 pub use interaction::HarnessInteraction;
 pub use log_fixtures::{
-    SyntheticLogSpec, SyntheticLogTimestamps, synthetic_journald_log, synthetic_log_start,
+    SyntheticLogSpec, SyntheticLogTimestamps, after_the_synthetic_log, synthetic_journald_log,
+    synthetic_log_start, syslog_journald_log,
 };
 pub use map_tile_fixtures::{assert_map_tile_fixture_is_complete, map_tile_fixture_dir};
+pub use recording_fixtures::{
+    SyntheticGtdSpec, marker_test_data, nav_test_data, synthetic_gtd_bytes,
+    synthetic_gtd_bytes_with_channels,
+};
 #[cfg(feature = "snapshot")]
-pub use snapshot_harness::{By, NodeT, Queryable, TestHarness, TestHarnessBuilder};
+pub use snapshot_harness::{By, Node, NodeT, Queryable, TestHarness, TestHarnessBuilder};
+#[cfg(feature = "tracks")]
+pub use track_fixtures::{
+    FileParts, build_file, empty_file_metadata, empty_track_metadata, loaded_file_with_tracks,
+    loaded_track_with_points, segmented_recording, track_geometry,
+};
 pub use transport::{ScriptedTransport, TransportResponse, UrlPrefixResponses};
 #[cfg(feature = "snapshot")]
 pub use window_fit::{AuditedWindow, ControlLabel, WindowFitAssertions, oversized_text};

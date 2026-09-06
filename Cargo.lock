@@ -2961,7 +2961,6 @@ dependencies = [
  "chrono",
  "egui",
  "egui-phosphor",
- "egui_kittest",
  "geotrace-sdk-units",
  "gt-filter",
  "gt-fmt",
@@ -3097,6 +3096,7 @@ dependencies = [
  "parking_lot",
  "tempfile",
  "uom",
+ "vec1",
 ]
 
 [[package]]

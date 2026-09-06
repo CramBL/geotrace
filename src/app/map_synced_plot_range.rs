@@ -94,7 +94,7 @@ mod tests {
         let file = LoadedFile {
             metadata: gt_test_utils::empty_file_metadata(),
             tracks: vec![gt_test_utils::loaded_track_with_points(
-                gt_test_utils::nav_points_from(chrono::DateTime::UNIX_EPOCH, 4, 1),
+                gt_test_utils::fixtures::nav_points_from(chrono::DateTime::UNIX_EPOCH, 4, 1),
             )],
             event_marker_styles: FxHashMap::default(),
             orphaned_event_markers: Vec::new(),

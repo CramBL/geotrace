@@ -104,6 +104,7 @@ impl ReadOnlyDayArchive for ReadOnlyJamStore {
 
     const SCHEMA_VERSION_ATTR: &'static str = schema::SCHEMA_VERSION_ATTR;
     const CURRENT_SCHEMA_VERSION: i64 = schema::CURRENT_SCHEMA_VERSION;
+    const FILE_NAME: &'static str = crate::FILE_NAME;
 
     fn from_archive_file(archive: ArchiveFileBeingOpened) -> Self {
         let archive = archive.into_archive_file();

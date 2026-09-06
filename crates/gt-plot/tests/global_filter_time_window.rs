@@ -22,24 +22,25 @@ mod support;
 /// A recording of one track, `count` fixes at 1 Hz from `start_offset`
 /// seconds, each carrying a satellite report of `constellation`.
 fn recording(start_offset: i64, count: usize, constellation: Constellation) -> LoadedFile {
-    let points: Vec<NavPoint> = gt_test_utils::nav_points_from(at_second(start_offset), count, 1)
-        .into_iter()
-        .map(|point| {
-            let report = Satellites::new(
-                Some(point.tpv.time()),
-                None,
-                vec![Satellite::new(
-                    constellation,
-                    1,
-                    Some(45.0),
-                    Some(120.0),
-                    Some(38.0),
-                    true,
-                )],
-            );
-            NavPoint::new(point.tpv, Some(report))
-        })
-        .collect();
+    let points: Vec<NavPoint> =
+        gt_test_utils::fixtures::nav_points_from(at_second(start_offset), count, 1)
+            .into_iter()
+            .map(|point| {
+                let report = Satellites::new(
+                    Some(point.tpv.time()),
+                    None,
+                    vec![Satellite::new(
+                        constellation,
+                        1,
+                        Some(45.0),
+                        Some(120.0),
+                        Some(38.0),
+                        true,
+                    )],
+                );
+                NavPoint::new(point.tpv, Some(report))
+            })
+            .collect();
     let mut track = gt_test_utils::loaded_track_with_points(points);
     let first = at_second(start_offset);
     let last = at_second(start_offset + count as i64 - 1);

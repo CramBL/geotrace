@@ -175,7 +175,10 @@ fn ghost_runs_split_the_plan_into_stretches(
 fn a_fix_without_satellites_in_fix_also_breaks_the_stretch() {
     let points = support::points_with_spec(6, 1000, |i| {
         if i == 3 {
-            NavPointSpec::ghost(FixKind::GhostWithoutSatellitesInFix)
+            NavPointSpec {
+                fix: FixKind::GhostWithoutSatellitesInFix,
+                ..Default::default()
+            }
         } else {
             NavPointSpec::default()
         }
@@ -194,7 +197,10 @@ fn a_fix_without_satellites_in_fix_also_breaks_the_stretch() {
 fn the_fix_after_a_gap_is_sent_within_the_downsample_interval() {
     let points = support::points_with_spec(30, 100, |i| {
         if i == 15 {
-            NavPointSpec::ghost(FixKind::GhostWithoutHeading)
+            NavPointSpec {
+                fix: FixKind::GhostWithoutHeading,
+                ..Default::default()
+            }
         } else {
             NavPointSpec::default()
         }
@@ -252,7 +258,7 @@ fn gps_accuracy_ignores_ghost_fixes() {
             }
         } else {
             NavPointSpec {
-                fix: FixKind::Real,
+                fix: FixKind::Measured,
                 eph_m: Some(10.0),
             }
         }

@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn a_track_without_geometry_passes_the_distance_and_spread_filters() {
         let track = gt_test_utils::loaded_track_with_points(
-            gt_test_utils::nav_points_without_a_valid_position(3),
+            gt_test_utils::fixtures::nav_points_without_a_valid_position(3),
         );
         assert_eq!(track.geometry, gt_types::TrackGeometry::NoValidPosition);
 

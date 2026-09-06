@@ -1057,7 +1057,7 @@ mod tests {
     /// position the caller places the receiver at.
     fn timeline_at(latitude: Latitude, longitude: Longitude) -> Arc<FixPositionTimeline> {
         let start = at(2024, 5, 9, 8);
-        let mut track = gt_test_utils::fixtures::loaded_track_with_points(
+        let mut track = gt_test_utils::loaded_track_with_points(
             gt_test_utils::fixtures::nav_points_walking_from(start, 4, 3600, latitude, longitude),
         );
         track.metadata.time_range = TimeRange::new(start, start + TimeDelta::hours(3));

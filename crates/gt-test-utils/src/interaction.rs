@@ -2,7 +2,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use egui::accesskit::Role;
-use egui_kittest::kittest::{By, Queryable as _};
+use egui_kittest::kittest::{By, NodeT as _, Queryable as _};
 use egui_kittest::{Harness, Node};
 
 /// Frames [`HarnessInteraction::step_until`] runs before giving up, and the
@@ -88,6 +88,10 @@ pub trait HarnessInteraction {
     /// there (negative scrolls towards the end of the content), and runs the
     /// frames the smooth scroll takes to come to rest.
     fn scroll_wheel_at(&mut self, target: egui::Pos2, delta_points: f32, settle_frames: usize);
+
+    /// The values of the accesskit nodes matching `by`, top to bottom on
+    /// screen.
+    fn label_texts_top_to_bottom(&self, by: By<'_>) -> Vec<String>;
 
     /// The matching node with the smallest `rect().top()`, for labels that
     /// several widgets on screen share.
@@ -192,6 +196,20 @@ impl<State> HarnessInteraction for Harness<'_, State> {
             modifiers: egui::Modifiers::NONE,
         });
         self.run_steps(settle_frames);
+    }
+
+    fn label_texts_top_to_bottom(&self, by: By<'_>) -> Vec<String> {
+        let mut labels: Vec<(f32, String)> = self
+            .query_all(by)
+            .map(|node| {
+                (
+                    node.rect().top(),
+                    node.accesskit_node().value().unwrap_or_default(),
+                )
+            })
+            .collect();
+        labels.sort_by(|(top, _), (other_top, _)| top.total_cmp(other_top));
+        labels.into_iter().map(|(_, text)| text).collect()
     }
 
     #[expect(

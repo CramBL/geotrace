@@ -1588,7 +1588,7 @@ mod tests {
     /// The fixes of one recording, `step_secs` apart, with the time range a
     /// real load derives from its points.
     fn track_over(start: DateTime<Utc>, count: usize, step_secs: i64) -> gt_types::LoadedTrack {
-        let mut track = gt_test_utils::fixtures::loaded_track_with_points(
+        let mut track = gt_test_utils::loaded_track_with_points(
             gt_test_utils::fixtures::nav_points_from(start, count, step_secs),
         );
         track.metadata.time_range = TimeRange::new(

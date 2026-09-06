@@ -120,11 +120,11 @@ mod tests {
     use super::*;
 
     fn track(points: usize, start_secs: i64) -> LoadedTrack {
-        fixtures::loaded_track_from(
+        gt_test_utils::loaded_track_with_points(fixtures::nav_points_from(
             chrono::DateTime::from_timestamp(start_secs, 0).unwrap_or_default(),
             points,
             1,
-        )
+        ))
     }
 
     fn run(costing: Costing) -> SnapRun {
