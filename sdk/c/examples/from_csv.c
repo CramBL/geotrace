@@ -12,6 +12,7 @@
 #include "../geotrace.h"
 
 #include <errno.h>
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,11 +31,11 @@ static const char *const CSV_DATA = "timestamp_s,lat,lon,heading_deg,speed_mps\n
 
 /* Parse "ts,lat,lon,heading,speed" into out[CSV_COLS]. The first column is an
    integer (seconds), the rest are doubles. Returns 1 on success, 0 on a
-   malformed row. A row is malformed when `strtod` or `strtoll` leaves the
+   malformed row. A row is malformed when `strtod` or `strtoimax` leaves the
    end pointer at the start of a field. */
-static int parse_row(const char *line, long long *unix_seconds, double out[CSV_COLS - 1]) {
+static int parse_row(const char *line, int64_t *unix_seconds, double out[CSV_COLS - 1]) {
     char *end;
-    *unix_seconds = strtoll(line, &end, 10);
+    *unix_seconds = (int64_t)strtoimax(line, &end, 10);
     if (end == line || *end != ',') {
         return 0;
     }
@@ -79,11 +80,11 @@ int main(void) {
             memcpy(line, cursor, len);
             line[len] = '\0';
 
-            long long unix_seconds = 0;
+            int64_t unix_seconds = 0;
             double fields[CSV_COLS - 1];
             if (parse_row(line, &unix_seconds, fields)) {
                 GtdTimestamp fix_time;
-                GtdStatus status = gtd_ts_from_seconds((int64_t)unix_seconds, &fix_time);
+                GtdStatus status = gtd_ts_from_seconds(unix_seconds, &fix_time);
                 if (status == GTD_OK) {
                     status = gtd_builder_add_nav_fix(builder, fix_time, gtd_ts_none(), fields[0],
                                                      fields[1], GTD_SOME_F64(fields[2]),

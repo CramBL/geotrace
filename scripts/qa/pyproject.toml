@@ -5,6 +5,7 @@ requires-python = ">=3.11"
 
 [project.scripts]
 check-all = "qa.run_all:main"
+check-fixed-width-integers = "qa.check_fixed_width_integers:main"
 check-floating-comments = "qa.check_floating_comments:main"
 check-narrative-comments = "qa.check_narrative_comments:main"
 check-no-network = "qa.check_no_network:main"

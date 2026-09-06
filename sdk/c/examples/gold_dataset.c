@@ -10,6 +10,8 @@
 #include "../geotrace.h"
 #include "gold_timestamp.h"
 
+#include <errno.h>
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -274,8 +276,9 @@ static void load_satellites(const char *base) {
         copy_field(row->sys_time, sizeof row->sys_time, cols[1]);
 
         char *prn_end;
-        unsigned long prn = strtoul(cols[3], &prn_end, 10);
-        if (prn_end == cols[3]) {
+        errno = 0;
+        const uintmax_t prn = strtoumax(cols[3], &prn_end, 10);
+        if (prn_end == cols[3] || errno == ERANGE || prn > UINT32_MAX) {
             FAIL("invalid PRN");
         }
 
