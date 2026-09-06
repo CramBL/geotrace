@@ -138,6 +138,12 @@ jobs:
       - name: Generate fixture
         run: cargo run -p geotrace-c --bin gen_fixture --release
 
+      # No matrix condition: a fixture whose bytes differ by platform fails on that leg.
+      - name: Committed fixtures unchanged
+        run: |
+          git diff --exit-code --stat -- sdk/c/tests/fixtures \
+              || { echo "error: the generator rewrote a committed fixture, commit the new bytes" >&2; exit 1; }
+
       # if-no-files-found is satisfied by the fixture alone, so check the library.
       - name: Check the library was produced
         env:

@@ -5,6 +5,8 @@
 [group("fixtures")]
 gen-fixture:
     cargo run -p geotrace-c --bin gen_fixture
+    git diff --exit-code --stat -- sdk/c/tests/fixtures \
+        || { echo "error: the generator rewrote a committed fixture, commit the new bytes" >&2; exit 1; }
 
 # Refresh the gt-flare event fixtures from the NASA DONKI catalog (network!).
 # Needs GEOTRACE_FLARE_API_KEY, an api.nasa.gov key.

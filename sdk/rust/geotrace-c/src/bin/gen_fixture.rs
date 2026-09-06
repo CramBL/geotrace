@@ -2,6 +2,9 @@
 //! Python and Rust SDK tests open.
 //!
 //! Run via: `cargo run -p geotrace-c --bin gen_fixture`
+//!
+//! The committed bytes are the same from any build: every builder here writes
+//! `<scrubbed>` as the SDK version and no build commit.
 
 #![expect(
     clippy::expect_used,
@@ -65,6 +68,7 @@ fn minimal() -> NavFile {
     let t1 = t0 + Duration::seconds(10);
 
     let mut recorder = NavFileBuilder::new()
+        .with_scrubbed_provenance()
         .with_title("minimal fixture")
         .with_device("gen_fixture")
         .open();
@@ -116,6 +120,7 @@ fn out_of_range_values() -> NavFile {
     let t0 = DateTime::from_timestamp_micros(1_700_000_000_000_000).expect("valid timestamp");
 
     let mut recorder = NavFileBuilder::new()
+        .with_scrubbed_provenance()
         .with_title("out of range values fixture")
         .with_device("gen_fixture")
         .open();
@@ -166,6 +171,7 @@ fn unrecognized_style_values() -> NavFile {
     let t0 = DateTime::from_timestamp_micros(1_700_000_000_000_000).expect("valid timestamp");
 
     let mut recorder = NavFileBuilder::new()
+        .with_scrubbed_provenance()
         .with_title("unrecognized style values fixture")
         .with_device("gen_fixture")
         .open();
@@ -194,6 +200,7 @@ fn unrecognized_marker_icon() -> NavFile {
     let t0 = DateTime::from_timestamp_micros(1_700_000_000_000_000).expect("valid timestamp");
 
     let mut recorder = NavFileBuilder::new()
+        .with_scrubbed_provenance()
         .with_title("unrecognized marker icon fixture")
         .with_device("gen_fixture")
         .open();
