@@ -312,3 +312,19 @@ def test_roundtrip_all_marker_icons() -> None:
     by_label = {m.label: m.icon for m in nav_file.markers}
     for i, icon in enumerate(ALL_MARKER_ICONS):
         assert by_label[str(i)] == icon, f"icon {icon} did not round-trip"
+
+
+NAV_POINT_IDX_PAST_THE_NAV_POINTS_FIXTURE = (
+    Path(__file__).resolve().parents[3]
+    / "c"
+    / "tests"
+    / "fixtures"
+    / "nav_point_idx_past_the_nav_points.gtd"
+)
+
+
+def test_a_satellite_report_pointing_past_the_nav_points_raises() -> None:
+    data = NAV_POINT_IDX_PAST_THE_NAV_POINTS_FIXTURE.read_bytes()
+
+    with pytest.raises(ValueError, match="sat_reports/nav_point_idx: record 0"):
+        NavFile.from_bytes(data)

@@ -104,6 +104,10 @@ pub(crate) fn status_for_error(e: &geotrace_sdk::Error) -> GtdStatus {
         | Error::UnreadableField { .. }
         | Error::FixWithoutTimestamp { .. }
         | Error::ReportWithoutTimestamp { .. }
+        | Error::EventMarkerWithoutTimestamp { .. }
+        | Error::EmptyField { .. }
+        | Error::IndexPastTable { .. }
+        | Error::TimestampOutOfRange { .. }
         | Error::DatasetSizePastFileLength { .. } => GtdStatus::GTD_ERR_PARSE,
         Error::UnwritableField { .. } => GtdStatus::GTD_ERR_FIELD_TOO_LONG,
         Error::TimestampIsTheAbsentValue { .. } => GtdStatus::GTD_ERR_INVALID_ARGUMENT,

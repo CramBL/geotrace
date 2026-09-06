@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::builder::{micros_to_datetime, u64_to_opt_datetime};
+use chrono::{DateTime, Utc};
+
+use crate::builder::ABSENT_TIMESTAMP_MICROS;
 use crate::error::{Error, FieldLocation};
 use crate::fixed_width_string::{
     AnnotationField, ColorHexField, FixedWidthString, IconNameField, MarkerLabelField,
@@ -106,23 +108,19 @@ fn read_nav_points(file: &SizeCheckedFile) -> Result<Vec<NavPoint>, Error> {
     // holding the receiver's timestamp for a fix taken under lock and the host
     // clock's for one taken without. Such a file is read with `time` treated as
     // the receiver's timestamp.
-    let gps_times: Vec<u64> = grp
-        .dataset("gps_time_us")
-        .ok()
-        .and_then(|ds| ds.read_u64().ok())
-        .unwrap_or_else(|| times.iter().map(|&us| us.cast_unsigned()).collect());
-    // `sys_time_us` and `eph_m` are absent in older files. Default to the
-    // `u64::MAX` sentinel value and to NaN.
-    let sys_times: Vec<u64> = grp
-        .dataset("sys_time_us")
-        .ok()
-        .and_then(|ds| ds.read_u64().ok())
-        .unwrap_or_else(|| vec![u64::MAX; times.len()]);
-    let ephs: Vec<f64> = grp
-        .dataset("eph_m")
-        .ok()
-        .and_then(|ds| ds.read_f64().ok())
-        .unwrap_or_else(|| vec![f64::NAN; times.len()]);
+    let gps_times: Vec<u64> = match grp.optional_dataset("gps_time_us")? {
+        Some(ds) => ds.read_u64()?,
+        None => times.iter().map(|&us| us.cast_unsigned()).collect(),
+    };
+    // `sys_time_us` and `eph_m` are absent in older files.
+    let sys_times: Vec<u64> = match grp.optional_dataset("sys_time_us")? {
+        Some(ds) => ds.read_u64()?,
+        None => vec![ABSENT_TIMESTAMP_MICROS; times.len()],
+    };
+    let ephs: Vec<f64> = match grp.optional_dataset("eph_m")? {
+        Some(ds) => ds.read_f64()?,
+        None => vec![f64::NAN; times.len()],
+    };
 
     let n = times.len();
     check_len("nav_points", "gps_time_us", n, gps_times.len())?;
@@ -149,8 +147,22 @@ fn read_nav_points(file: &SizeCheckedFile) -> Result<Vec<NavPoint>, Error> {
                 ),
             )| {
                 let recorded = RecordedFixTimestamps {
-                    gps: u64_to_opt_datetime(*gps_time_us),
-                    sys: u64_to_opt_datetime(*sys_time_us),
+                    gps: decode_optional_timestamp(
+                        FieldLocation {
+                            group: "nav_points",
+                            dataset: "gps_time_us",
+                        },
+                        record,
+                        *gps_time_us,
+                    )?,
+                    sys: decode_optional_timestamp(
+                        FieldLocation {
+                            group: "nav_points",
+                            dataset: "sys_time_us",
+                        },
+                        record,
+                        *sys_time_us,
+                    )?,
                 };
                 let Some(time) = NavFixTime::from_recorded(recorded) else {
                     return Err(Error::FixWithoutTimestamp { record });
@@ -200,21 +212,20 @@ fn attach_satellite_data(
     // v1: a single `time` dataset, which the reader treats as the receiver's
     // timestamp, with no host timestamp.
     let (report_gps_times, report_sys_times): (Vec<u64>, Vec<u64>) =
-        if let Ok(ds) = sat_grp.dataset("gps_time_us") {
-            let gps = ds.read_u64()?;
-            let sys = sat_grp
-                .dataset("sys_time_us")
-                .ok()
-                .and_then(|d| d.read_u64().ok())
-                .unwrap_or_else(|| vec![u64::MAX; r]);
-            (gps, sys)
-        } else {
-            // v1 file: the reader treats the i64 `time` dataset as the
-            // receiver's timestamp, with no host timestamp.
-            let times = sat_grp.dataset("time")?.read_i64()?;
-            let gps = times.iter().map(|&us| us.cast_unsigned()).collect();
-            let sys = vec![u64::MAX; r];
-            (gps, sys)
+        match sat_grp.optional_dataset("gps_time_us")? {
+            Some(ds) => {
+                let gps = ds.read_u64()?;
+                let sys = match sat_grp.optional_dataset("sys_time_us")? {
+                    Some(ds) => ds.read_u64()?,
+                    None => vec![ABSENT_TIMESTAMP_MICROS; r],
+                };
+                (gps, sys)
+            }
+            None => {
+                let times = sat_grp.dataset("time")?.read_i64()?;
+                let gps = times.iter().map(|&us| us.cast_unsigned()).collect();
+                (gps, vec![ABSENT_TIMESTAMP_MICROS; r])
+            }
         };
 
     let ts_grp = file.group("tracked_sats")?;
@@ -227,20 +238,18 @@ fn attach_satellite_data(
     let ts_snr = ts_grp.dataset("snr")?.read_f32()?;
 
     let mut tracked_by_report: Vec<Vec<Satellite>> = vec![Vec::new(); r];
-    for (&rep_idx, constellation_code, &prn, &in_fix, &elevation, &azimuth, &snr) in ts_rep_idx
-        .iter()
-        .zip(ts_constellation.iter())
-        .zip(ts_prn.iter())
-        .zip(ts_in_fix.iter())
-        .zip(ts_elevation.iter())
-        .zip(ts_azimuth.iter())
-        .zip(ts_snr.iter())
-        .map(|((((((a, b), c), d), e), f), g)| (a, b, c, d, e, f, g))
+    for (record, (&rep_idx, constellation_code, &prn, &in_fix, &elevation, &azimuth, &snr)) in
+        ts_rep_idx
+            .iter()
+            .zip(ts_constellation.iter())
+            .zip(ts_prn.iter())
+            .zip(ts_in_fix.iter())
+            .zip(ts_elevation.iter())
+            .zip(ts_azimuth.iter())
+            .zip(ts_snr.iter())
+            .map(|((((((a, b), c), d), e), f), g)| (a, b, c, d, e, f, g))
+            .enumerate()
     {
-        let idx = rep_idx as usize;
-        if idx >= r {
-            continue;
-        }
         let constellation = write::decode_tracked_constellation(*constellation_code)?;
         let sat = Satellite {
             constellation,
@@ -250,9 +259,17 @@ fn attach_satellite_data(
             azimuth: opt_f32(azimuth),
             snr: opt_f32(snr),
         };
-        if let Some(bucket) = tracked_by_report.get_mut(idx) {
-            bucket.push(sat);
-        }
+        row_addressed_by_index(
+            &mut tracked_by_report,
+            "sat_reports",
+            FieldLocation {
+                group: "tracked_sats",
+                dataset: "sat_report_idx",
+            },
+            record,
+            rep_idx,
+        )?
+        .push(sat);
     }
 
     for (report, (&np_idx, (gps_us, sys_us))) in nav_point_idx
@@ -261,18 +278,40 @@ fn attach_satellite_data(
         .enumerate()
     {
         let recorded = RecordedFixTimestamps {
-            gps: u64_to_opt_datetime(*gps_us),
-            sys: u64_to_opt_datetime(*sys_us),
+            gps: decode_optional_timestamp(
+                FieldLocation {
+                    group: "sat_reports",
+                    dataset: "gps_time_us",
+                },
+                report,
+                *gps_us,
+            )?,
+            sys: decode_optional_timestamp(
+                FieldLocation {
+                    group: "sat_reports",
+                    dataset: "sys_time_us",
+                },
+                report,
+                *sys_us,
+            )?,
         };
         let Some(time) = NavFixTime::from_recorded(recorded) else {
             return Err(Error::ReportWithoutTimestamp { report });
         };
-        if let Some(np) = nav_points.get_mut(np_idx as usize) {
-            np.satellites = Some(SatelliteReport {
-                time,
-                tracked: tracked_by_report.get(report).cloned().unwrap_or_default(),
-            });
-        }
+        let np = row_addressed_by_index(
+            &mut nav_points,
+            "nav_points",
+            FieldLocation {
+                group: "sat_reports",
+                dataset: "nav_point_idx",
+            },
+            report,
+            np_idx,
+        )?;
+        np.satellites = Some(SatelliteReport {
+            time,
+            tracked: tracked_by_report.get(report).cloned().unwrap_or_default(),
+        });
     }
 
     Ok(nav_points)
@@ -296,12 +335,13 @@ fn read_markers(file: &SizeCheckedFile) -> Result<Vec<Marker>, Error> {
     check_len("markers", "label", k * 256, label_flat.len())?;
 
     let mut markers = Vec::with_capacity(k);
-    for ((((time_us, lat_deg), lon_deg), icon_code), label_row) in times
+    for (record, ((((time_us, lat_deg), lon_deg), icon_code), label_row)) in times
         .iter()
         .zip(lats.iter())
         .zip(lons.iter())
         .zip(icons.iter())
         .zip(label_flat.chunks(256))
+        .enumerate()
     {
         let label: MarkerLabelField = decode_field_row(
             FieldLocation {
@@ -312,7 +352,14 @@ fn read_markers(file: &SizeCheckedFile) -> Result<Vec<Marker>, Error> {
         )?;
         markers.push(Marker {
             annotation: Annotation {
-                time: micros_to_datetime(*time_us),
+                time: decode_timestamp(
+                    FieldLocation {
+                        group: "markers",
+                        dataset: "time",
+                    },
+                    record,
+                    *time_us,
+                )?,
                 label: label.into_string_unless_empty(),
                 icon: MarkerIcon::from_u8(*icon_code),
             },
@@ -322,6 +369,61 @@ fn read_markers(file: &SizeCheckedFile) -> Result<Vec<Marker>, Error> {
     }
 
     Ok(markers)
+}
+
+struct EventMarkerRow<'a> {
+    record: usize,
+    sys_time_us: u64,
+    lat_deg: f64,
+    lon_deg: f64,
+    variant_path_row: &'a [u8],
+    annotation_row: &'a [u8],
+}
+
+impl EventMarkerRow<'_> {
+    fn decode(self) -> Result<EventMarkerPoint, Error> {
+        let variant_path: VariantPathField = decode_field_row(
+            FieldLocation {
+                group: "event_markers",
+                dataset: "variant_path",
+            },
+            self.variant_path_row,
+        )?;
+        let annotation: AnnotationField = decode_field_row(
+            FieldLocation {
+                group: "event_markers",
+                dataset: "annotation",
+            },
+            self.annotation_row,
+        )?;
+        let Some(sys_time) = decode_optional_timestamp(
+            FieldLocation {
+                group: "event_markers",
+                dataset: "sys_time_us",
+            },
+            self.record,
+            self.sys_time_us,
+        )?
+        else {
+            return Err(Error::EventMarkerWithoutTimestamp {
+                record: self.record,
+            });
+        };
+        let Some(variant_path) = variant_path.into_string_unless_empty() else {
+            return Err(Error::EmptyField {
+                group: "event_markers",
+                dataset: "variant_path",
+                record: self.record,
+            });
+        };
+        Ok(EventMarkerPoint {
+            variant_path,
+            sys_time,
+            lat: Angle::degrees(self.lat_deg),
+            lon: Angle::degrees(self.lon_deg),
+            annotation: annotation.into_string_unless_empty(),
+        })
+    }
 }
 
 fn read_event_markers(file: &SizeCheckedFile) -> Result<Vec<EventMarkerPoint>, Error> {
@@ -342,40 +444,25 @@ fn read_event_markers(file: &SizeCheckedFile) -> Result<Vec<EventMarkerPoint>, E
     check_len("event_markers", "annotation", n * 512, ann_flat.len())?;
 
     let mut markers = Vec::with_capacity(n);
-    for ((((sys_time_us, lat_deg), lon_deg), vp_row), ann_row) in sys_times
+    for (record, ((((sys_time_us, lat_deg), lon_deg), vp_row), ann_row)) in sys_times
         .iter()
         .zip(lats.iter())
         .zip(lons.iter())
         .zip(vp_flat.chunks(256))
         .zip(ann_flat.chunks(512))
+        .enumerate()
     {
-        let variant_path: VariantPathField = decode_field_row(
-            FieldLocation {
-                group: "event_markers",
-                dataset: "variant_path",
-            },
-            vp_row,
-        )?;
-        let annotation: AnnotationField = decode_field_row(
-            FieldLocation {
-                group: "event_markers",
-                dataset: "annotation",
-            },
-            ann_row,
-        )?;
-        let Some(sys_time) = u64_to_opt_datetime(*sys_time_us) else {
-            continue;
-        };
-        let Some(variant_path) = variant_path.into_string_unless_empty() else {
-            continue;
-        };
-        markers.push(EventMarkerPoint {
-            variant_path,
-            sys_time,
-            lat: Angle::degrees(*lat_deg),
-            lon: Angle::degrees(*lon_deg),
-            annotation: annotation.into_string_unless_empty(),
-        });
+        markers.push(
+            EventMarkerRow {
+                record,
+                sys_time_us: *sys_time_us,
+                lat_deg: *lat_deg,
+                lon_deg: *lon_deg,
+                variant_path_row: vp_row,
+                annotation_row: ann_row,
+            }
+            .decode()?,
+        );
     }
 
     Ok(markers)
@@ -395,10 +482,11 @@ fn read_event_marker_styles(file: &SizeCheckedFile) -> Result<Vec<EventMarkerSty
     check_len("event_marker_styles", "color_hex", m * 8, color_flat.len())?;
 
     let mut styles = Vec::with_capacity(m);
-    for ((vp_row, icon_row), color_row) in vp_flat
+    for (record, ((vp_row, icon_row), color_row)) in vp_flat
         .chunks(256)
         .zip(icon_flat.chunks(32))
         .zip(color_flat.chunks(8))
+        .enumerate()
     {
         let variant_path: VariantPathField = decode_field_row(
             FieldLocation {
@@ -422,7 +510,11 @@ fn read_event_marker_styles(file: &SizeCheckedFile) -> Result<Vec<EventMarkerSty
             color_row,
         )?;
         let Some(variant_path) = variant_path.into_string_unless_empty() else {
-            continue;
+            return Err(Error::EmptyField {
+                group: "event_marker_styles",
+                dataset: "variant_path",
+                record,
+            });
         };
         let icon = EventMarkerIconChoice::from_wire_name(icon_name);
         if let EventMarkerIconChoice::Unrecognized(name) = &icon {
@@ -478,18 +570,82 @@ fn read_channels(file: &SizeCheckedFile) -> Result<Vec<Channel>, Error> {
             })?;
         check_len("channels", "value", expected, values.len())?;
 
+        let times = times_us
+            .into_iter()
+            .enumerate()
+            .map(|(record, us)| {
+                decode_timestamp(
+                    FieldLocation {
+                        group: "channels",
+                        dataset: "time",
+                    },
+                    record,
+                    us,
+                )
+            })
+            .collect::<Result<Vec<DateTime<Utc>>, Error>>()?;
+
         channels.push(Channel {
             name,
             unit: string_attr(&attrs, "unit").map(ChannelUnit::from_file_label),
             period: f64_attr(&attrs, "period_deg").map(Angle::degrees),
             description: string_attr(&attrs, "description"),
             components,
-            times: times_us.into_iter().map(micros_to_datetime).collect(),
+            times,
             values,
         });
     }
     channels.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(channels)
+}
+
+/// The row of `table` that `index` addresses, or [`Error::IndexPastTable`]
+/// where `index` is past its end. `index_location` is the group and dataset
+/// `index` was read from.
+fn row_addressed_by_index<'a, T>(
+    table: &'a mut [T],
+    table_name: &'static str,
+    index_location: FieldLocation,
+    record: usize,
+    index: u64,
+) -> Result<&'a mut T, Error> {
+    let table_len = table.len();
+    usize::try_from(index)
+        .ok()
+        .and_then(|row| table.get_mut(row))
+        .ok_or(Error::IndexPastTable {
+            group: index_location.group,
+            dataset: index_location.dataset,
+            record,
+            index,
+            table: table_name,
+            table_len,
+        })
+}
+
+fn decode_timestamp(
+    location: FieldLocation,
+    record: usize,
+    micros: i64,
+) -> Result<DateTime<Utc>, Error> {
+    DateTime::from_timestamp_micros(micros).ok_or(Error::TimestampOutOfRange {
+        group: location.group,
+        dataset: location.dataset,
+        record,
+        micros,
+    })
+}
+
+/// [`ABSENT_TIMESTAMP_MICROS`] decodes to `None`.
+fn decode_optional_timestamp(
+    location: FieldLocation,
+    record: usize,
+    stored: u64,
+) -> Result<Option<DateTime<Utc>>, Error> {
+    if stored == ABSENT_TIMESTAMP_MICROS {
+        return Ok(None);
+    }
+    decode_timestamp(location, record, stored.cast_signed()).map(Some)
 }
 
 fn decode_field_row<const ROW_BYTES: usize>(
@@ -600,9 +756,11 @@ fn inspect_nav_points(file: &SizeCheckedFile, out: &mut String) -> u64 {
 
     if let Some(times) = grp.dataset("time").ok().and_then(|ds| ds.read_i64().ok())
         && let (Some(&first), Some(&last)) = (times.first(), times.last())
+        && let (Some(t0), Some(t1)) = (
+            DateTime::from_timestamp_micros(first),
+            DateTime::from_timestamp_micros(last),
+        )
     {
-        let t0 = micros_to_datetime(first);
-        let t1 = micros_to_datetime(last);
         writeln!(
             out,
             "  {:<22}{} → {}",

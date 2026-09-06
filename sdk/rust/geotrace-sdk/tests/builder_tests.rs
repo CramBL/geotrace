@@ -936,3 +936,46 @@ fn channel_components_accept_any_stringlike_iterable() -> Result<(), Box<dyn std
     assert_eq!(from_array.components(), &["x", "y", "z"]);
     Ok(())
 }
+
+/// The one fix has a receiver time of `DateTime::<Utc>::MAX_UTC` and a host
+/// time three hours earlier, a clock offset of three hours. The orphan report
+/// has a host time one hour before `MAX_UTC`, which that offset places two
+/// hours past it.
+#[test]
+fn a_ghost_fix_past_the_utc_range_fails_the_build() {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .time(NavFixTime::Both {
+                gps: DateTime::<Utc>::MAX_UTC,
+                sys: DateTime::<Utc>::MAX_UTC - Duration::hours(3),
+            })
+            .lat(Angle::degrees(55.0))
+            .lon(Angle::degrees(12.0))
+            .heading(Angle::degrees(0.0))
+            .build(),
+    );
+    recorder.add_satellite_report(
+        SatelliteReport::builder()
+            .time(NavFixTime::Host(
+                DateTime::<Utc>::MAX_UTC - Duration::hours(1),
+            ))
+            .tracked(vec![
+                Satellite::builder()
+                    .constellation(Constellation::Gps)
+                    .prn(1u32)
+                    .in_fix(true)
+                    .build(),
+            ])
+            .build(),
+    );
+
+    let result = recorder.finish();
+    let Err(error @ BuildError::GhostFixTimeOutOfRange { .. }) = result else {
+        panic!("expected GhostFixTimeOutOfRange, got: {result:?}");
+    };
+    assert_eq!(
+        error.to_string(),
+        "a ghost nav fix at 8210266883999999999 microseconds is past the range a UTC timestamp covers"
+    );
+}
