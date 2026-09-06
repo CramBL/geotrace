@@ -1109,23 +1109,48 @@ void gtd_nav_file_destroy(GtdNavFile *file);
 
 /**
  * Construct a timestamp from whole seconds since the Unix epoch.
+ *
+ * @param seconds Seconds since the Unix epoch, negative before it.
+ * @param out     Caller-allocated result, written on success.
+ *
+ * @return `GTD_ERR_OUT_OF_RANGE` if @p seconds is past the range a timestamp
+ *         covers.
  */
-GtdTimestamp gtd_ts_from_seconds(uint64_t seconds);
+GtdStatus gtd_ts_from_seconds(int64_t seconds, GtdTimestamp *out);
 
 /**
  * Construct a timestamp from milliseconds since the Unix epoch.
+ *
+ * @param millis Milliseconds since the Unix epoch, negative before it.
+ * @param out    Caller-allocated result, written on success.
+ *
+ * @return `GTD_ERR_OUT_OF_RANGE` if @p millis is past the range a timestamp
+ *         covers.
  */
-GtdTimestamp gtd_ts_from_millis(uint64_t millis);
+GtdStatus gtd_ts_from_millis(int64_t millis, GtdTimestamp *out);
 
 /**
  * Construct a timestamp from microseconds since the Unix epoch.
+ *
+ * @param micros Microseconds since the Unix epoch, negative before it.
+ * @param out    Caller-allocated result, written on success.
+ *
+ * @return `GTD_ERR_OUT_OF_RANGE` if @p micros is past the range a timestamp
+ *         covers.
  */
-GtdTimestamp gtd_ts_from_micros(uint64_t micros);
+GtdStatus gtd_ts_from_micros(int64_t micros, GtdTimestamp *out);
 
 /**
- * Construct a timestamp from nanoseconds since the Unix epoch (truncated to µs).
+ * Construct a timestamp from nanoseconds since the Unix epoch, truncated
+ * towards zero to whole microseconds.
+ *
+ * @param nanos Nanoseconds since the Unix epoch, negative before it.
+ * @param out   Caller-allocated result, written on success.
+ *
+ * @return `GTD_ERR_OUT_OF_RANGE` if @p nanos is past the range a timestamp
+ *         covers.
  */
-GtdTimestamp gtd_ts_from_nanos(uint64_t nanos);
+GtdStatus gtd_ts_from_nanos(int64_t nanos, GtdTimestamp *out);
 
 /**
  * The timestamp value that represents an absent timestamp.

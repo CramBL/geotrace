@@ -1,5 +1,7 @@
 //! The timestamp type and its constructors.
 
+use crate::error::{self, GtdStatus};
+
 /// UTC Unix epoch timestamp in microseconds.
 ///
 /// Use `gtd_ts_none()` to represent an absent timestamp.
@@ -26,36 +28,82 @@ pub(crate) fn ts_to_datetime(ts: GtdTimestamp) -> Option<chrono::DateTime<chrono
     }
 }
 
-/// Construct a timestamp from whole seconds since the Unix epoch.
-#[unsafe(no_mangle)]
-pub extern "C" fn gtd_ts_from_seconds(seconds: u64) -> GtdTimestamp {
-    GtdTimestamp {
-        unix_micros: (seconds as i64).saturating_mul(1_000_000),
+fn write_converted_timestamp(
+    converted: Result<geotrace_sdk::Timestamp, geotrace_sdk::Error>,
+    out: &mut GtdTimestamp,
+) -> GtdStatus {
+    match converted {
+        Ok(timestamp) => {
+            *out = ts_from_datetime(timestamp.into());
+            GtdStatus::GTD_OK
+        }
+        Err(e) => {
+            let status = error::status_for_error(&e);
+            error::set_last_error(e);
+            status
+        }
     }
+}
+
+/// Construct a timestamp from whole seconds since the Unix epoch.
+///
+/// @param seconds Seconds since the Unix epoch, negative before it.
+/// @param out     Caller-allocated result, written on success.
+///
+/// @return `GTD_ERR_OUT_OF_RANGE` if @p seconds is past the range a timestamp
+///         covers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_ts_from_seconds(seconds: i64, out: *mut GtdTimestamp) -> GtdStatus {
+    error::run_catching_panics(|| {
+        let out = nonnull_mut!(out);
+        write_converted_timestamp(geotrace_sdk::Timestamp::try_from_unix_seconds(seconds), out)
+    })
 }
 
 /// Construct a timestamp from milliseconds since the Unix epoch.
+///
+/// @param millis Milliseconds since the Unix epoch, negative before it.
+/// @param out    Caller-allocated result, written on success.
+///
+/// @return `GTD_ERR_OUT_OF_RANGE` if @p millis is past the range a timestamp
+///         covers.
 #[unsafe(no_mangle)]
-pub extern "C" fn gtd_ts_from_millis(millis: u64) -> GtdTimestamp {
-    GtdTimestamp {
-        unix_micros: (millis as i64).saturating_mul(1_000),
-    }
+pub unsafe extern "C" fn gtd_ts_from_millis(millis: i64, out: *mut GtdTimestamp) -> GtdStatus {
+    error::run_catching_panics(|| {
+        let out = nonnull_mut!(out);
+        write_converted_timestamp(geotrace_sdk::Timestamp::try_from_unix_millis(millis), out)
+    })
 }
 
 /// Construct a timestamp from microseconds since the Unix epoch.
+///
+/// @param micros Microseconds since the Unix epoch, negative before it.
+/// @param out    Caller-allocated result, written on success.
+///
+/// @return `GTD_ERR_OUT_OF_RANGE` if @p micros is past the range a timestamp
+///         covers.
 #[unsafe(no_mangle)]
-pub extern "C" fn gtd_ts_from_micros(micros: u64) -> GtdTimestamp {
-    GtdTimestamp {
-        unix_micros: micros as i64,
-    }
+pub unsafe extern "C" fn gtd_ts_from_micros(micros: i64, out: *mut GtdTimestamp) -> GtdStatus {
+    error::run_catching_panics(|| {
+        let out = nonnull_mut!(out);
+        write_converted_timestamp(geotrace_sdk::Timestamp::try_from_unix_micros(micros), out)
+    })
 }
 
-/// Construct a timestamp from nanoseconds since the Unix epoch (truncated to µs).
+/// Construct a timestamp from nanoseconds since the Unix epoch, truncated
+/// towards zero to whole microseconds.
+///
+/// @param nanos Nanoseconds since the Unix epoch, negative before it.
+/// @param out   Caller-allocated result, written on success.
+///
+/// @return `GTD_ERR_OUT_OF_RANGE` if @p nanos is past the range a timestamp
+///         covers.
 #[unsafe(no_mangle)]
-pub extern "C" fn gtd_ts_from_nanos(nanos: u64) -> GtdTimestamp {
-    GtdTimestamp {
-        unix_micros: (nanos / 1_000) as i64,
-    }
+pub unsafe extern "C" fn gtd_ts_from_nanos(nanos: i64, out: *mut GtdTimestamp) -> GtdStatus {
+    error::run_catching_panics(|| {
+        let out = nonnull_mut!(out);
+        write_converted_timestamp(geotrace_sdk::Timestamp::try_from_unix_nanos(nanos), out)
+    })
 }
 
 /// The timestamp value that represents an absent timestamp.

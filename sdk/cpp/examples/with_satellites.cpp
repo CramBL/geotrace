@@ -22,11 +22,11 @@
 namespace {
 // 2024-06-01T08:00:00Z. File-scope so the `at` lambda can read it without a
 // capture (MSVC C++17 requires capturing a local).
-constexpr std::uint64_t kBase = 1717228800;
+constexpr std::int64_t kBase = 1717228800;
 } // namespace
 
 int main() {
-    auto timestamp_at = [](std::uint64_t secs) {
+    auto timestamp_at = [](std::int64_t secs) {
         return geotrace::Timestamp::from_seconds(kBase + secs);
     };
 
@@ -44,7 +44,7 @@ int main() {
             {51.5088, -0.1248},
             {51.5095, -0.1233},
         }};
-        std::size_t idx = 0;
+        std::int64_t idx = 0;
         for (const auto &point : track) {
             const geotrace::Timestamp time = timestamp_at(idx);
 

@@ -9,7 +9,8 @@ Test(null_guards, builder_null) {
     cr_assert_eq(gtd_builder_set_travel_mode(NULL, GTD_TRAVEL_MODE_CAR), GTD_ERR_NULL_ARGUMENT);
     cr_assert_eq(gtd_builder_set_lenient(NULL), GTD_ERR_NULL_ARGUMENT);
 
-    GtdTimestamp timestamp = gtd_ts_from_seconds(0);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(0, &timestamp), GTD_OK);
     cr_assert_eq(gtd_builder_add_nav_fix(NULL, timestamp, timestamp, 0.0, 0.0, GTD_NONE_F64,
                                          GTD_NONE_F64, GTD_NONE_F64),
                  GTD_ERR_NULL_ARGUMENT);

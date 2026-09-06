@@ -13,7 +13,8 @@ Test(builder, basic_write) {
     cr_assert_eq(gtd_builder_set_title(builder, "Test file"), GTD_OK);
     cr_assert_eq(gtd_builder_set_device(builder, "criterion test"), GTD_OK);
 
-    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
 
     cr_assert_eq(gtd_builder_add_nav_fix(builder, timestamp, gtd_ts_none(), 51.5074, -0.1278,
                                          GTD_SOME_F64(180.0), GTD_SOME_F64(3.0), GTD_SOME_F64(5.0)),
@@ -39,7 +40,9 @@ Test(builder, to_bytes_round_trip) {
     GtdFileBuilder *builder = gtd_builder_create();
     cr_assert_not_null(builder);
 
-    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
+
     cr_assert_eq(gtd_builder_add_nav_fix(builder, timestamp, gtd_ts_none(), 48.8566, 2.3522,
                                          GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
                  GTD_OK);
@@ -73,7 +76,9 @@ Test(builder, travel_mode_round_trip) {
 
     cr_assert_eq(gtd_builder_set_travel_mode(builder, GTD_TRAVEL_MODE_BICYCLE), GTD_OK);
 
-    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
+
     cr_assert_eq(gtd_builder_add_nav_fix(builder, timestamp, gtd_ts_none(), 51.5074, -0.1278,
                                          GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
                  GTD_OK);
@@ -105,7 +110,9 @@ Test(builder, travel_mode_absent_is_null) {
     GtdFileBuilder *builder = gtd_builder_create();
     cr_assert_not_null(builder);
 
-    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
+
     cr_assert_eq(gtd_builder_add_nav_fix(builder, timestamp, gtd_ts_none(), 51.5074, -0.1278,
                                          GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
                  GTD_OK);
@@ -122,7 +129,9 @@ Test(builder, a_build_without_provenance_writes_only_the_sdk_version) {
     GtdFileBuilder *builder = gtd_builder_create();
     cr_assert_not_null(builder);
 
-    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
+
     cr_assert_eq(gtd_builder_add_nav_fix(builder, timestamp, gtd_ts_none(), 51.5074, -0.1278,
                                          GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
                  GTD_OK);
@@ -173,11 +182,12 @@ Test(builder, no_fixes_error) {
     GtdFileBuilder *builder = gtd_builder_create();
     cr_assert_not_null(builder);
 
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
+
     /* NoNavFixes is only returned when there are annotations but no fixes.
        An empty builder (no fixes, no annotations) is valid and returns OK. */
-    cr_assert_eq(gtd_builder_add_annotation(builder, gtd_ts_from_seconds(1700000000ULL), "note",
-                                            GTD_ICON_PIN),
-                 GTD_OK);
+    cr_assert_eq(gtd_builder_add_annotation(builder, timestamp, "note", GTD_ICON_PIN), GTD_OK);
 
     GtdNavFile *file = NULL;
     GtdStatus status = gtd_builder_finish(builder, &file);
@@ -217,7 +227,8 @@ Test(builder, satellite_report) {
     GtdFileBuilder *builder = gtd_builder_create();
     cr_assert_not_null(builder);
 
-    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
 
     GtdSatellite sats[] = {
         {GTD_CONSTELLATION_GPS, 7, 1, GTD_SOME_F32(55.0F), GTD_SOME_F32(120.0F),
@@ -253,7 +264,8 @@ Test(builder, satellite_metrics_round_trip_bit_exact) {
     GtdFileBuilder *builder = gtd_builder_create();
     cr_assert_not_null(builder);
 
-    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
 
     GtdSatellite sats[] = {
         {GTD_CONSTELLATION_GPS, 7, 1, GTD_SOME_F32(38.5F), GTD_SOME_F32(359.9999F),
@@ -282,7 +294,8 @@ Test(builder, event_marker) {
     GtdFileBuilder *builder = gtd_builder_create();
     cr_assert_not_null(builder);
 
-    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
 
     cr_assert_eq(gtd_builder_add_nav_fix(builder, timestamp, gtd_ts_none(), 35.6762, 139.6503,
                                          GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
@@ -314,7 +327,8 @@ Test(builder, event_marker_variant_path_past_its_field_is_too_long) {
     GtdFileBuilder *builder = gtd_builder_create();
     cr_assert_not_null(builder);
 
-    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
 
     char variant_path[257];
     memset(variant_path, 'a', sizeof(variant_path) - 1);
@@ -330,7 +344,8 @@ Test(builder, event_marker_annotation_past_its_field_is_too_long) {
     GtdFileBuilder *builder = gtd_builder_create();
     cr_assert_not_null(builder);
 
-    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
 
     char annotation[513];
     memset(annotation, 'a', sizeof(annotation) - 1);
@@ -346,7 +361,8 @@ Test(builder, annotation_label_past_its_field_is_too_long) {
     GtdFileBuilder *builder = gtd_builder_create();
     cr_assert_not_null(builder);
 
-    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
 
     char label[257];
     memset(label, 'l', sizeof(label) - 1);
@@ -362,8 +378,10 @@ Test(builder, annotation_rejects_the_auto_icon) {
     GtdFileBuilder *builder = gtd_builder_create();
     cr_assert_not_null(builder);
 
-    cr_assert_eq(gtd_builder_add_annotation(builder, gtd_ts_from_seconds(1700000000ULL), "note",
-                                            GTD_ICON_AUTO),
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
+
+    cr_assert_eq(gtd_builder_add_annotation(builder, timestamp, "note", GTD_ICON_AUTO),
                  GTD_ERR_INVALID_ARGUMENT);
     cr_assert_not_null(gtd_last_error());
 
@@ -374,7 +392,8 @@ Test(builder, event_marker_style_color_past_its_field_is_too_long_when_written) 
     GtdFileBuilder *builder = gtd_builder_create();
     cr_assert_not_null(builder);
 
-    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
 
     cr_assert_eq(gtd_builder_add_nav_fix(builder, timestamp, gtd_ts_none(), 35.6762, 139.6503,
                                          GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),

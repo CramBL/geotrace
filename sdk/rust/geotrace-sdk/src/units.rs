@@ -2,58 +2,51 @@ use crate::error::Error;
 
 /// A point in time, wrapping [`chrono::DateTime<chrono::Utc>`].
 ///
-/// Construct from a raw integer timestamp with one of the explicit unit
-/// constructors. Each constructor panics if the value is out of the representable
-/// range (which is impossible for any realistic GPS or system timestamp).
-/// A [`chrono::DateTime<chrono::Utc>`] converts into `Timestamp` via [`From`],
-/// so existing code that already has a `DateTime<Utc>` requires no change.
+/// Construct from a raw integer count with one of the explicit unit
+/// constructors, each of which rejects a count outside the range a UTC
+/// timestamp covers. A [`chrono::DateTime<chrono::Utc>`] converts into
+/// `Timestamp` via [`From`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Timestamp(chrono::DateTime<chrono::Utc>);
 
 impl Timestamp {
-    #[expect(
-        clippy::expect_used,
-        reason = "caller contract: panics on out-of-range timestamp"
-    )]
-    pub fn from_unix_seconds(secs: u64) -> Self {
-        let s = i64::try_from(secs).expect("unix seconds timestamp out of valid range");
-        Self(
-            chrono::DateTime::from_timestamp(s, 0)
-                .expect("unix seconds timestamp out of valid range"),
-        )
+    pub fn try_from_unix_seconds(seconds: i64) -> Result<Self, Error> {
+        chrono::DateTime::from_timestamp(seconds, 0)
+            .map(Self)
+            .ok_or(Error::TimestampCountOutOfRange {
+                count: seconds,
+                unit: "seconds",
+            })
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "caller contract: panics on out-of-range timestamp"
-    )]
-    pub fn from_unix_millis(millis: u64) -> Self {
-        let ms = i64::try_from(millis).expect("unix milliseconds timestamp out of valid range");
-        Self(
-            chrono::DateTime::from_timestamp_millis(ms)
-                .expect("unix milliseconds timestamp out of valid range"),
-        )
+    pub fn try_from_unix_millis(millis: i64) -> Result<Self, Error> {
+        chrono::DateTime::from_timestamp_millis(millis)
+            .map(Self)
+            .ok_or(Error::TimestampCountOutOfRange {
+                count: millis,
+                unit: "milliseconds",
+            })
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "caller contract: panics on out-of-range timestamp"
-    )]
-    pub fn from_unix_micros(micros: u64) -> Self {
-        let us = i64::try_from(micros).expect("unix microseconds timestamp out of valid range");
-        Self(
-            chrono::DateTime::from_timestamp_micros(us)
-                .expect("unix microseconds timestamp out of valid range"),
-        )
+    pub fn try_from_unix_micros(micros: i64) -> Result<Self, Error> {
+        chrono::DateTime::from_timestamp_micros(micros)
+            .map(Self)
+            .ok_or(Error::TimestampCountOutOfRange {
+                count: micros,
+                unit: "microseconds",
+            })
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "caller contract: panics on out-of-range timestamp"
-    )]
-    pub fn from_unix_nanos(nanos: u64) -> Self {
-        let ns = i64::try_from(nanos).expect("unix nanoseconds timestamp out of valid range");
-        Self(chrono::DateTime::from_timestamp_nanos(ns))
+    /// The count is truncated towards zero to whole microseconds, the
+    /// resolution a `.gtd` file stores: 1999 nanoseconds is 1 microsecond and
+    /// -1999 nanoseconds is -1 microsecond.
+    pub fn try_from_unix_nanos(nanos: i64) -> Result<Self, Error> {
+        chrono::DateTime::from_timestamp_micros(nanos / 1_000)
+            .map(Self)
+            .ok_or(Error::TimestampCountOutOfRange {
+                count: nanos,
+                unit: "nanoseconds",
+            })
     }
 
     /// Parse an ISO 8601 / RFC 3339 timestamp from a string.

@@ -47,7 +47,7 @@ TEST_CASE("exception hierarchy: all types derive from std::exception") {
 TEST_CASE("exception: NoNavFixesError is catchable as BuildError and Error") {
     auto throw_it = [] {
         FileBuilder builder;
-        Annotation ann{Timestamp::from_seconds(1700000000ULL)};
+        Annotation ann{Timestamp::from_seconds(1700000000)};
         ann.label = "no fixes";
         builder.add_annotation(ann);
         static_cast<void>(builder.finish());
@@ -61,7 +61,7 @@ TEST_CASE("exception: NoNavFixesError is catchable as BuildError and Error") {
 TEST_CASE("exception: InvalidPathError is catchable as Error") {
     auto throw_it = [] {
         FileBuilder builder;
-        const Timestamp time = Timestamp::from_seconds(1700000000ULL);
+        const Timestamp time = Timestamp::from_seconds(1700000000);
         builder.add_nav_fix(
             NavFix{FixTime::receiver(time), Angle::degrees(0.0), Angle::degrees(0.0)});
 
@@ -74,7 +74,7 @@ TEST_CASE("exception: InvalidPathError is catchable as Error") {
 TEST_CASE("exception: FieldTooLongError is catchable as Error") {
     auto throw_it = [] {
         FileBuilder builder;
-        const Timestamp time = Timestamp::from_seconds(1700000000ULL);
+        const Timestamp time = Timestamp::from_seconds(1700000000);
         builder.add_nav_fix(
             NavFix{FixTime::receiver(time), Angle::degrees(0.0), Angle::degrees(0.0)});
 
@@ -88,7 +88,7 @@ TEST_CASE("exception: InvalidChannelError is catchable as Error") {
     auto throw_it = [] {
         Channel channel{};
         channel.name = "Bad Name";
-        channel.times = {Timestamp::from_seconds(1700000000ULL)};
+        channel.times = {Timestamp::from_seconds(1700000000)};
         channel.values = {1.0};
         FileBuilder{}.add_channel(channel);
     };
@@ -99,7 +99,7 @@ TEST_CASE("exception: InvalidChannelError is catchable as Error") {
 TEST_CASE("exception: lenient() after a nav fix throws CallOrderError") {
     auto throw_it = [] {
         FileBuilder builder;
-        builder.add_nav_fix(NavFix{FixTime::receiver(Timestamp::from_seconds(1700000000ULL)),
+        builder.add_nav_fix(NavFix{FixTime::receiver(Timestamp::from_seconds(1700000000)),
                                    Angle::degrees(0.0), Angle::degrees(0.0)});
         builder.lenient();
     };
@@ -116,7 +116,7 @@ TEST_CASE("exception: IoError is catchable as Error") {
 }
 
 TEST_CASE("exception: out_of_range from nav_point is std::out_of_range, not geotrace::Error") {
-    const NavFix fix{FixTime::receiver(Timestamp::from_seconds(1700000000ULL)), Angle::degrees(0.0),
+    const NavFix fix{FixTime::receiver(Timestamp::from_seconds(1700000000)), Angle::degrees(0.0),
                      Angle::degrees(0.0)};
 
     auto file = FileBuilder{}.add_nav_fix(fix).finish();
@@ -130,9 +130,9 @@ TEST_CASE("exception: out_of_range from nav_point is std::out_of_range, not geot
 TEST_CASE("exception: AnnotationsOutOfRangeError carries a count field") {
     // The annotation falls outside the file's time range: its timestamp
     // precedes both nav fixes.
-    const Timestamp first_fix_time = Timestamp::from_seconds(1700000100ULL);
-    const Timestamp second_fix_time = Timestamp::from_seconds(1700000200ULL);
-    const Timestamp before_first_fix = Timestamp::from_seconds(1700000000ULL);
+    const Timestamp first_fix_time = Timestamp::from_seconds(1700000100);
+    const Timestamp second_fix_time = Timestamp::from_seconds(1700000200);
+    const Timestamp before_first_fix = Timestamp::from_seconds(1700000000);
 
     try {
         const NavFix first_fix{FixTime::receiver(first_fix_time), Angle::degrees(0.0),
@@ -159,7 +159,7 @@ TEST_CASE("exception: AnnotationsOutOfRangeError carries a count field") {
 TEST_CASE("exception: what() returns a non-empty string") {
     try {
         FileBuilder builder;
-        Annotation ann{Timestamp::from_seconds(1700000000ULL)};
+        Annotation ann{Timestamp::from_seconds(1700000000)};
         ann.label = "no fixes";
         builder.add_annotation(ann);
         static_cast<void>(builder.finish());

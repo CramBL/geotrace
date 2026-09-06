@@ -126,8 +126,8 @@ std::optional<geotrace::Timestamp> parse_ts(const std::string &text) {
         long secs = (days * 86400L) + (hour * 3600L) + (minute * 60L) + second;
         const long tz_seconds = ((static_cast<long>(tz_hours) * 60L) + tz_minutes) * 60L;
         secs += (sign == '-') ? tz_seconds : -tz_seconds;
-        const std::uint64_t micros =
-            (static_cast<std::uint64_t>(secs) * 1000000ULL) + static_cast<std::uint64_t>(frac_us);
+        const std::int64_t micros =
+            (static_cast<std::int64_t>(secs) * 1000000LL) + static_cast<std::int64_t>(frac_us);
         return geotrace::Timestamp::from_micros(micros);
     } catch (const std::exception &) {
         return std::nullopt;

@@ -33,8 +33,8 @@ static constexpr double LAT = 51.5074;
 static constexpr double LON = -0.1278;
 static constexpr double LAT2 = 51.5080;
 static constexpr double LON2 = -0.1265;
-static const Timestamp FIRST_TIME = Timestamp::from_seconds(1700000000ULL);
-static const Timestamp SECOND_TIME = Timestamp::from_seconds(1700000010ULL);
+constexpr Timestamp FIRST_TIME{1'700'000'000'000'000};
+constexpr Timestamp SECOND_TIME{1'700'000'010'000'000};
 
 TEST_CASE("round-trip: nav fix fields survive write → from_bytes → read") {
     std::vector<std::uint8_t> bytes;

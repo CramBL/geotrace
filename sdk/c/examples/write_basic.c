@@ -10,7 +10,14 @@ int main(void) {
     gtd_builder_set_title(builder, "Quick tour");
     gtd_builder_set_device(builder, "Example GPS v1.0");
 
-    GtdTimestamp first_fix_time = gtd_ts_from_seconds((uint64_t)time(NULL));
+    GtdStatus status;
+
+    GtdTimestamp first_fix_time;
+    status = gtd_ts_from_seconds((int64_t)time(NULL), &first_fix_time);
+    if (status != GTD_OK) {
+        fprintf(stderr, "ts_from_seconds: %s\n", gtd_last_error());
+        goto fail;
+    }
 
     GtdSatellite sats[] = {
         {GTD_CONSTELLATION_GPS, 1, 1, GTD_SOME_F32(45.0F), GTD_SOME_F32(90.0F),
@@ -19,8 +26,6 @@ int main(void) {
          GTD_SOME_F32(35.5F)},
         {GTD_CONSTELLATION_GALILEO, 3, 0, GTD_NONE_F32, GTD_NONE_F32, GTD_SOME_F32(22.0F)},
     };
-
-    GtdStatus status;
 
     status = gtd_builder_add_nav_fix(builder, first_fix_time, gtd_ts_none(), 51.5074, -0.1278,
                                      GTD_SOME_F64(90.0), GTD_SOME_F64(5.5), GTD_SOME_F64(3.2));
@@ -36,9 +41,15 @@ int main(void) {
         goto fail;
     }
 
-    status = gtd_builder_add_nav_fix(builder, gtd_ts_from_seconds((uint64_t)time(NULL) + 10),
-                                     gtd_ts_none(), 51.5080, -0.1265, GTD_SOME_F64(85.0),
-                                     GTD_SOME_F64(5.8), GTD_SOME_F64(2.9));
+    GtdTimestamp second_fix_time;
+    status = gtd_ts_from_seconds((int64_t)time(NULL) + 10, &second_fix_time);
+    if (status != GTD_OK) {
+        fprintf(stderr, "ts_from_seconds: %s\n", gtd_last_error());
+        goto fail;
+    }
+
+    status = gtd_builder_add_nav_fix(builder, second_fix_time, gtd_ts_none(), 51.5080, -0.1265,
+                                     GTD_SOME_F64(85.0), GTD_SOME_F64(5.8), GTD_SOME_F64(2.9));
     if (status != GTD_OK) {
         fprintf(stderr, "add_nav_fix: %s\n", gtd_last_error());
         goto fail;

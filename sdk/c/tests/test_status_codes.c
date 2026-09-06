@@ -7,7 +7,9 @@ static GtdNavFile *build_file(void) {
     GtdFileBuilder *builder = gtd_builder_create();
     cr_assert_not_null(builder);
 
-    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
+
     cr_assert_eq(gtd_builder_add_nav_fix(builder, timestamp, gtd_ts_none(), 51.5, -0.1,
                                          GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
                  GTD_OK);
@@ -35,8 +37,10 @@ static GtdNavFile *build_file(void) {
 static GtdFileBuilder *builder_with_a_nav_fix(void) {
     GtdFileBuilder *builder = gtd_builder_create();
     cr_assert_not_null(builder);
-    cr_assert_eq(gtd_builder_add_nav_fix(builder, gtd_ts_from_seconds(1700000000ULL), gtd_ts_none(),
-                                         51.5, -0.1, GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
+    cr_assert_eq(gtd_builder_add_nav_fix(builder, timestamp, gtd_ts_none(), 51.5, -0.1,
+                                         GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
                  GTD_OK);
     return builder;
 }

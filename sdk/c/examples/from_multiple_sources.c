@@ -32,8 +32,14 @@ int main(void) {
         {51.5077, -0.1272, 88.0}, {51.5078, -0.1270, 90.0}, {51.5079, -0.1268, 90.5},
     };
     for (size_t i = 0; i < sizeof gps / sizeof gps[0]; i++) {
-        status = gtd_builder_add_nav_fix(builder, gtd_ts_from_seconds(BASE_EPOCH + (i * 10U)),
-                                         gtd_ts_none(), gps[i][0], gps[i][1],
+        GtdTimestamp fix_time;
+        status = gtd_ts_from_seconds(BASE_EPOCH + ((int64_t)i * 10), &fix_time);
+        if (status != GTD_OK) {
+            fprintf(stderr, "ts_from_seconds: %s\n", gtd_last_error());
+            goto fail;
+        }
+
+        status = gtd_builder_add_nav_fix(builder, fix_time, gtd_ts_none(), gps[i][0], gps[i][1],
                                          GTD_SOME_F64(gps[i][2]), GTD_NONE_F64, GTD_NONE_F64);
         if (status != GTD_OK) {
             fprintf(stderr, "add_nav_fix: %s\n", gtd_last_error());
@@ -53,9 +59,15 @@ int main(void) {
         {25, "Junction", GTD_ICON_PIN},
     };
     for (size_t i = 0; i < sizeof annotations / sizeof annotations[0]; i++) {
-        status = gtd_builder_add_annotation(builder,
-                                            gtd_ts_from_seconds(BASE_EPOCH + annotations[i].offset),
-                                            annotations[i].label, annotations[i].icon);
+        GtdTimestamp annotation_time;
+        status = gtd_ts_from_seconds(BASE_EPOCH + annotations[i].offset, &annotation_time);
+        if (status != GTD_OK) {
+            fprintf(stderr, "ts_from_seconds: %s\n", gtd_last_error());
+            goto fail;
+        }
+
+        status = gtd_builder_add_annotation(builder, annotation_time, annotations[i].label,
+                                            annotations[i].icon);
         if (status != GTD_OK) {
             fprintf(stderr, "add_annotation(%s): %s\n", annotations[i].label, gtd_last_error());
             goto fail;

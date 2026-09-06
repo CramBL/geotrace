@@ -1,11 +1,13 @@
-//! Feed custom domain types into the SDK using `From` trait implementations.
+//! Feed custom domain types into the SDK using `From` and `TryFrom` trait
+//! implementations.
 //!
 //! **Scenario**: your application already owns its GPS data structs - produced by
 //! a hardware driver, a third-party library, or your own domain model.
-//! Implement `From` for each SDK type once.
-//! After that, [`NavRecorder::add_nav_fix`] and [`NavRecorder::add_satellite_report`]
-//! accept your types directly. [`Annotation`] takes `TryFrom` instead: a label
-//! past the capacity of `markers/label` is rejected.
+//! Implement the conversion for each SDK type once, then hand your own types to
+//! [`NavRecorder::add_nav_fix`] and [`NavRecorder::add_satellite_report`].
+//! A conversion that reads a raw timestamp count or an [`Annotation`] label is a
+//! `TryFrom`: a count past the range a UTC timestamp covers and a label past the
+//! capacity of `markers/label` are both rejected.
 
 // Examples favour brevity: the core's robustness restriction lints (no
 // unwrap/expect/panic/indexing, no std::env::temp_dir) are not enforced on
@@ -27,7 +29,7 @@ use geotrace_sdk::{
 
 // Your existing domain types - not SDK types.
 struct GpsFix {
-    unix_ms: u64,
+    unix_ms: i64,
     lat_deg: f64,
     lon_deg: f64,
     heading_deg: f64,
@@ -35,7 +37,7 @@ struct GpsFix {
 }
 
 struct SatReport {
-    unix_ms: u64,
+    unix_ms: i64,
     satellites: Vec<SatView>,
 }
 
@@ -57,22 +59,24 @@ enum GnssConst {
 }
 
 struct LogEntry {
-    unix_ms: u64,
+    unix_ms: i64,
     text: String,
 }
 
-// One-time From implementations - written once, called nowhere explicitly.
-impl From<GpsFix> for NavFix {
-    fn from(f: GpsFix) -> Self {
-        NavFix::builder()
+// One-time conversions - written once, called nowhere explicitly.
+impl TryFrom<GpsFix> for NavFix {
+    type Error = geotrace_sdk::Error;
+
+    fn try_from(f: GpsFix) -> Result<Self, Self::Error> {
+        Ok(NavFix::builder()
             .time(NavFixTime::Receiver(
-                Timestamp::from_unix_millis(f.unix_ms).into(),
+                Timestamp::try_from_unix_millis(f.unix_ms)?.into(),
             ))
             .lat(Angle::degrees(f.lat_deg))
             .lon(Angle::degrees(f.lon_deg))
             .heading(Angle::degrees(f.heading_deg))
             .speed(Velocity::meter_per_second(f.speed_mps))
-            .build()
+            .build())
     }
 }
 
@@ -87,8 +91,10 @@ impl From<GnssConst> for Constellation {
     }
 }
 
-impl From<SatReport> for SatelliteReport {
-    fn from(r: SatReport) -> Self {
+impl TryFrom<SatReport> for SatelliteReport {
+    type Error = geotrace_sdk::Error;
+
+    fn try_from(r: SatReport) -> Result<Self, Self::Error> {
         let tracked = r
             .satellites
             .into_iter()
@@ -103,12 +109,12 @@ impl From<SatReport> for SatelliteReport {
                     .build()
             })
             .collect();
-        SatelliteReport::builder()
+        Ok(SatelliteReport::builder()
             .time(NavFixTime::Receiver(
-                Timestamp::from_unix_millis(r.unix_ms).into(),
+                Timestamp::try_from_unix_millis(r.unix_ms)?.into(),
             ))
             .tracked(tracked)
-            .build()
+            .build())
     }
 }
 
@@ -117,7 +123,7 @@ impl TryFrom<LogEntry> for Annotation {
 
     fn try_from(e: LogEntry) -> Result<Self, Self::Error> {
         Annotation::builder()
-            .time(Timestamp::from_unix_millis(e.unix_ms))
+            .time(Timestamp::try_from_unix_millis(e.unix_ms)?)
             .label(e.text)
             .icon(MarkerIcon::Pin)
             .build()
@@ -126,7 +132,7 @@ impl TryFrom<LogEntry> for Annotation {
 
 fn main() -> Result<(), Box<dyn Error>> {
     // 2024-06-15 08:00:00 UTC - 6 fixes at 30 s intervals, Copenhagen area.
-    const BASE_MS: u64 = 1_718_438_400_000;
+    const BASE_MS: i64 = 1_718_438_400_000;
 
     let fixes = vec![
         GpsFix {
@@ -263,14 +269,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut recorder = NavFileBuilder::new().open();
 
-    // The typed add_* methods accept `impl Into<…>`, so the domain types feed in
-    // directly via their From impls. An annotation converts through TryFrom,
-    // which rejects a label past the capacity of `markers/label`.
+    // The typed add_* methods accept `impl Into<…>`, so a domain type with an
+    // infallible conversion feeds in directly. These three convert through
+    // TryFrom, which rejects a timestamp count or a label the SDK cannot store.
     for fix in fixes {
-        recorder.add_nav_fix(fix);
+        recorder.add_nav_fix(NavFix::try_from(fix)?);
     }
     for report in sat_reports {
-        recorder.add_satellite_report(report);
+        recorder.add_satellite_report(SatelliteReport::try_from(report)?);
     }
     for entry in log_entries {
         recorder.add_annotation(Annotation::try_from(entry)?);

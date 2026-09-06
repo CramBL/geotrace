@@ -273,6 +273,9 @@ pub enum Error {
         micros: i64,
     },
 
+    #[error("{count} {unit} since the Unix epoch is past the range a UTC timestamp covers")]
+    TimestampCountOutOfRange { count: i64, unit: &'static str },
+
     #[error(
         "dataset {path:?} declares {declared_bytes} bytes of data, past what a {file_bytes}-byte file can hold"
     )]

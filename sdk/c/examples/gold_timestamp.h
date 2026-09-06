@@ -120,7 +120,11 @@ static inline GtdTimestamp gold_parse_timestamp(const char *text) {
     long secs = (days * 86400L) + (hour * 3600L) + (minute * 60L) + second;
     secs += (sign == '-') ? offset_secs : -offset_secs;
 
-    return gtd_ts_from_micros(((uint64_t)secs * 1000000ULL) + (uint64_t)frac_us);
+    GtdTimestamp timestamp;
+    if (gtd_ts_from_micros(((int64_t)secs * 1000000) + frac_us, &timestamp) != GTD_OK) {
+        return gtd_ts_none();
+    }
+    return timestamp;
 }
 
 #endif /* GEOTRACE_GOLD_TIMESTAMP_H */

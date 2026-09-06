@@ -18,30 +18,32 @@
 /* A fixed epoch keeps the output deterministic: 2024-06-01T08:00:00Z. */
 #define BASE_EPOCH 1717228800U
 
-int main(void) {
-    GtdFileBuilder *builder = gtd_builder_create();
-
-    gtd_builder_set_title(builder, "Event marker tour");
-    gtd_builder_set_device(builder, "Example GPS v1.0");
-
-    GtdStatus status;
-
-    /* A short London track, one fix every 30 s. */
+/* A short London track, one fix every 30 s. */
+static GtdStatus add_track_fixes(GtdFileBuilder *builder) {
     const double track[][2] = {
         {51.5074, -0.1278}, {51.5080, -0.1265}, {51.5088, -0.1248},
         {51.5095, -0.1233}, {51.5103, -0.1217}, {51.5110, -0.1200},
     };
     for (size_t i = 0; i < sizeof track / sizeof track[0]; i++) {
-        GtdTimestamp fix_time = gtd_ts_from_seconds(BASE_EPOCH + (i * 30U));
+        GtdTimestamp fix_time;
+        GtdStatus status = gtd_ts_from_seconds(BASE_EPOCH + ((int64_t)i * 30), &fix_time);
+        if (status != GTD_OK) {
+            fprintf(stderr, "ts_from_seconds: %s\n", gtd_last_error());
+            return status;
+        }
+
         status = gtd_builder_add_nav_fix(builder, fix_time, gtd_ts_none(), track[i][0], track[i][1],
                                          GTD_SOME_F64(90.0), GTD_NONE_F64, GTD_NONE_F64);
         if (status != GTD_OK) {
             fprintf(stderr, "add_nav_fix: %s\n", gtd_last_error());
-            goto fail;
+            return status;
         }
     }
+    return GTD_OK;
+}
 
-    /* (`variant_path`, second-offset, annotation) - flat and nested paths. */
+/* (`variant_path`, second-offset, annotation) - flat and nested paths. */
+static GtdStatus add_event_markers(GtdFileBuilder *builder) {
     struct {
         const char *path;
         uint32_t offset;
@@ -54,12 +56,36 @@ int main(void) {
         {"power/sleep", 145, NULL},
     };
     for (size_t i = 0; i < sizeof events / sizeof events[0]; i++) {
-        GtdTimestamp event_time = gtd_ts_from_seconds(BASE_EPOCH + events[i].offset);
+        GtdTimestamp event_time;
+        GtdStatus status = gtd_ts_from_seconds(BASE_EPOCH + events[i].offset, &event_time);
+        if (status != GTD_OK) {
+            fprintf(stderr, "ts_from_seconds: %s\n", gtd_last_error());
+            return status;
+        }
+
         status = gtd_builder_add_event_marker(builder, events[i].path, event_time, events[i].note);
         if (status != GTD_OK) {
             fprintf(stderr, "add_event_marker(%s): %s\n", events[i].path, gtd_last_error());
-            goto fail;
+            return status;
         }
+    }
+    return GTD_OK;
+}
+
+int main(void) {
+    GtdFileBuilder *builder = gtd_builder_create();
+
+    gtd_builder_set_title(builder, "Event marker tour");
+    gtd_builder_set_device(builder, "Example GPS v1.0");
+
+    GtdStatus status = add_track_fixes(builder);
+    if (status != GTD_OK) {
+        goto fail;
+    }
+
+    status = add_event_markers(builder);
+    if (status != GTD_OK) {
+        goto fail;
     }
 
     status =

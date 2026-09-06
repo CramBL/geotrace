@@ -88,16 +88,16 @@ TEST_CASE("event_path composes base/seg and suppresses nested bases") {
 }
 
 TEST_CASE("add_event: typed values round-trip as event markers") {
-    const NavFix first_fix{FixTime::receiver(Timestamp::from_seconds(1700000000ULL)),
+    const NavFix first_fix{FixTime::receiver(Timestamp::from_seconds(1700000000)),
                            Angle::degrees(51.5074), Angle::degrees(-0.1278)};
-    const NavFix second_fix{FixTime::receiver(Timestamp::from_seconds(1700000030ULL)),
+    const NavFix second_fix{FixTime::receiver(Timestamp::from_seconds(1700000030)),
                             Angle::degrees(51.5080), Angle::degrees(-0.1265)};
 
     FileBuilder builder;
     builder.add_nav_fix(first_fix).add_nav_fix(second_fix);
-    builder.add_event(Power::Boot, Timestamp::from_seconds(1700000005ULL), "cold start");
+    builder.add_event(Power::Boot, Timestamp::from_seconds(1700000005), "cold start");
     builder.add_event(event_path(Connectivity::Agps, Agps::Request),
-                      Timestamp::from_seconds(1700000010ULL));
+                      Timestamp::from_seconds(1700000010));
 
     const NavFile file = builder.finish();
 

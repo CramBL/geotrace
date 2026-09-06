@@ -35,8 +35,8 @@ using geotrace::SatelliteReport;
 using geotrace::Timestamp;
 using geotrace::Velocity;
 
-static const Timestamp FIRST_TIME = Timestamp::from_seconds(1700000000ULL);
-static const Timestamp SECOND_TIME = Timestamp::from_seconds(1700000010ULL);
+constexpr Timestamp FIRST_TIME{1'700'000'000'000'000};
+constexpr Timestamp SECOND_TIME{1'700'000'010'000'000};
 
 TEST_CASE("FileBuilder: single nav fix produces a valid NavFile") {
     const NavFix fix{FixTime::receiver(FIRST_TIME), Angle::degrees(51.5074),
@@ -180,7 +180,7 @@ TEST_CASE("FileBuilder: an annotation with no icon set is written as Pin") {
     const NavFix second_fix{FixTime::receiver(SECOND_TIME), Angle::degrees(51.5080),
                             Angle::degrees(-0.1265)};
 
-    const Annotation ann{Timestamp::from_seconds(1700000005ULL)};
+    const Annotation ann{Timestamp::from_seconds(1700000005)};
     CHECK(ann.icon == MarkerIcon::Pin);
 
     const NavFile file = FileBuilder{}.add(first_fix).add(second_fix).add(ann).finish();
@@ -237,7 +237,7 @@ TEST_CASE("FileBuilder: add() dispatches by argument type") {
 
     const SatelliteReport report{FixTime::receiver(FIRST_TIME), {sat}};
 
-    const Timestamp mid = Timestamp::from_seconds(1700000005ULL);
+    const Timestamp mid = Timestamp::from_seconds(1700000005);
     Annotation ann{mid};
     ann.label = "midpoint";
     ann.icon = MarkerIcon::Pin;
