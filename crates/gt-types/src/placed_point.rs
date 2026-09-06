@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use crate::coordinates::{Latitude, Longitude};
+use crate::extent::DrawnFix;
 use crate::highlight::FixRef;
 use crate::mercator::MercPoint;
 use crate::nav_point::{NavPoint, ResolvedPosition};
@@ -25,6 +26,13 @@ impl PlacedPoint<'_> {
     /// [`crate::mercator`].
     pub fn merc(self) -> MercPoint {
         self.resolved.merc()
+    }
+
+    pub fn drawn_fix(self) -> DrawnFix {
+        DrawnFix {
+            position: self.resolved.projected(),
+            time: self.fix.tpv.time().utc(),
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 use crate::channel::Channel;
 use crate::coordinates::{Latitude, Longitude};
+use crate::extent::Extent;
 use crate::geo_bounds::GeoBounds;
 use crate::highlight::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
 use crate::load_warning::LoadWarning;
@@ -12,6 +13,7 @@ use crate::satellites::Satellites;
 use crate::time_types::GpsTime;
 use chrono::{DateTime, Days, Duration, NaiveDate, Utc};
 use rustc_hash::FxHashMap;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use uom::si::f64::Length;
@@ -346,19 +348,19 @@ pub struct TrackLod {
     /// recordings skip storing fine levels that would not drop any points.
     first_level_exp: u32,
     levels: Vec<LodLevel>,
-    full_point_chunk_bounds: Vec<MercBounds>,
+    full_point_chunks: Vec<LodChunk>,
 }
 
 impl TrackLod {
     pub fn new(
         first_level_exp: u32,
         levels: Vec<LodLevel>,
-        full_point_chunk_bounds: Vec<MercBounds>,
+        full_point_chunks: Vec<LodChunk>,
     ) -> Self {
         Self {
             first_level_exp,
             levels,
-            full_point_chunk_bounds,
+            full_point_chunks,
         }
     }
 
@@ -399,33 +401,52 @@ impl TrackLod {
         self.levels.get(i)
     }
 
-    /// One [`MercBounds`] per [`LOD_CHUNK_POINTS`] consecutive fixes of the
-    /// track, for the renderer that walks the full point list because
-    /// [`TrackLod::select`] found no level fine enough. Empty for a
-    /// [`TrackLod::default`], which no builder filled in.
-    pub fn full_point_chunk_bounds(&self) -> &[MercBounds] {
-        &self.full_point_chunk_bounds
+    /// The chunks of the track's fixes, for the renderer that walks the full
+    /// point list because [`TrackLod::select`] found no level fine enough.
+    /// Empty for a [`TrackLod::default`], which no builder filled in.
+    pub fn full_point_chunks(&self) -> &[LodChunk] {
+        &self.full_point_chunks
     }
 }
 
-/// How many consecutive points of a [`LodLevel`], or of a track's full point
-/// list, one entry of its chunk bounds covers.
-pub const LOD_CHUNK_POINTS: usize = 64;
+/// One run of consecutive points of a [`LodLevel`], or of a track's full point
+/// list, with the extent of that run.
+///
+/// `slots` are positions in the sequence the chunk belongs to: for a level
+/// they address [`LodLevel::indices`], and for the full point list they are
+/// the point indices themselves.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LodChunk {
+    slots: Range<u32>,
+    extent: Extent,
+}
+
+impl LodChunk {
+    pub fn new(slots: Range<u32>, extent: Extent) -> Self {
+        Self { slots, extent }
+    }
+
+    pub fn slots(&self) -> Range<usize> {
+        let Range { start, end } = self.slots;
+        usize::try_from(start).unwrap_or(usize::MAX)..usize::try_from(end).unwrap_or(usize::MAX)
+    }
+
+    pub fn extent(&self) -> Extent {
+        self.extent
+    }
+}
 
 /// One stored decimation level of a [`TrackLod`]: the point indices it keeps,
-/// and where each run of [`LOD_CHUNK_POINTS`] of them is drawn.
+/// and the chunks those indices are cut into.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LodLevel {
     indices: Vec<u32>,
-    chunk_bounds: Vec<MercBounds>,
+    chunks: Vec<LodChunk>,
 }
 
 impl LodLevel {
-    pub fn new(indices: Vec<u32>, chunk_bounds: Vec<MercBounds>) -> Self {
-        Self {
-            indices,
-            chunk_bounds,
-        }
+    pub fn new(indices: Vec<u32>, chunks: Vec<LodChunk>) -> Self {
+        Self { indices, chunks }
     }
 
     /// Indices into `LoadedTrack::points`, in fix order.
@@ -433,10 +454,11 @@ impl LodLevel {
         &self.indices
     }
 
-    /// One [`MercBounds`] per [`LOD_CHUNK_POINTS`] consecutive entries of
-    /// [`LodLevel::indices`].
-    pub fn chunk_bounds(&self) -> &[MercBounds] {
-        &self.chunk_bounds
+    /// The chunks of [`LodLevel::indices`], covering them in order. Empty when
+    /// the builder chunked nothing, which makes a renderer walk the level
+    /// whole.
+    pub fn chunks(&self) -> &[LodChunk] {
+        &self.chunks
     }
 }
 

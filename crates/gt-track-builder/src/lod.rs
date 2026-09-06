@@ -1,7 +1,10 @@
-use gt_types::coordinates::{Latitude, Longitude};
-use gt_types::placed_point::PlacedPoints;
-use gt_types::track::{LOD_BASE_TOLERANCE_MERC, LOD_CHUNK_POINTS, LodLevel, TrackLod};
-use gt_types::{GeoBounds, MercBounds};
+use gt_types::extent::{DrawnFix, Extent};
+use gt_types::placed_point::{PlacedPoint, PlacedPoints};
+use gt_types::track::{LOD_BASE_TOLERANCE_MERC, LodChunk, LodLevel, TrackLod};
+
+/// How many consecutive points of a [`LodLevel`], or of a track's full point
+/// list, one [`LodChunk`] covers.
+pub const LOD_CHUNK_POINTS: usize = 64;
 
 /// Stop building coarser levels once one has this few points - drawing them
 /// costs nothing, and coarser levels would only erase the track's shape.
@@ -31,9 +34,14 @@ const MAX_KEPT_DENOMINATOR: usize = 4;
 /// The first level's tolerance starts near the track's mean segment length, so
 /// every level a sparse recording stores drops points from the full list.
 pub fn build_track_lod(points: PlacedPoints<'_>) -> TrackLod {
-    let full_point_chunk_bounds = chunk_bounds(&points.positions().collect::<Vec<_>>());
+    let full_point_chunks = chunks(
+        &points
+            .iter()
+            .map(PlacedPoint::drawn_fix)
+            .collect::<Vec<_>>(),
+    );
     if points.len() < MIN_LEVEL_POINTS || u32::try_from(points.len()).is_err() {
-        return TrackLod::new(0, Vec::new(), full_point_chunk_bounds);
+        return TrackLod::new(0, Vec::new(), full_point_chunks);
     }
 
     let first_level_exp = first_useful_exponent(points);
@@ -61,44 +69,51 @@ pub fn build_track_lod(points: PlacedPoints<'_>) -> TrackLod {
             break;
         }
         let done = level.len() < MIN_LEVEL_POINTS;
-        let chunk_bounds = level_chunk_bounds(points, &level);
-        levels.push(LodLevel::new(level, chunk_bounds));
+        let chunks = level_chunks(points, &level);
+        levels.push(LodLevel::new(level, chunks));
         if done {
             break;
         }
         tolerance *= 2.0;
     }
 
-    TrackLod::new(first_level_exp, levels, full_point_chunk_bounds)
+    TrackLod::new(first_level_exp, levels, full_point_chunks)
 }
 
-/// The bounds of each run of [`LOD_CHUNK_POINTS`] consecutive entries of
-/// `level`, over the positions those points are drawn at. Empty when an entry
-/// of `level` addresses no point of `points`, which [`decimate`] never emits:
-/// a renderer reading no bounds walks the level whole.
-fn level_chunk_bounds(points: PlacedPoints<'_>, level: &[u32]) -> Vec<MercBounds> {
-    let positions: Option<Vec<(Latitude, Longitude)>> = level
+/// The chunks of `level`, over the positions its points are drawn at and the
+/// times the receiver stamped them. Empty when an entry of `level` addresses
+/// no point of `points`, which [`decimate`] never emits: a renderer reading no
+/// chunk walks the level whole.
+fn level_chunks(points: PlacedPoints<'_>, level: &[u32]) -> Vec<LodChunk> {
+    let drawn: Option<Vec<DrawnFix>> = level
         .iter()
-        .map(|&i| Some(points.get(usize::try_from(i).ok()?)?.resolved_position()))
+        .map(|&i| Some(points.get(usize::try_from(i).ok()?)?.drawn_fix()))
         .collect();
-    positions.as_deref().map(chunk_bounds).unwrap_or_default()
+    drawn.as_deref().map(chunks).unwrap_or_default()
 }
 
-/// One [`MercBounds`] per run of [`LOD_CHUNK_POINTS`] consecutive
-/// `positions`, in the order they are drawn. A run either side of the
-/// antimeridian gets a box across it, since [`GeoBounds`] grows a longitude
-/// range over the shorter of the two arcs.
-fn chunk_bounds(positions: &[(Latitude, Longitude)]) -> Vec<MercBounds> {
-    positions
+/// One [`LodChunk`] per run of [`LOD_CHUNK_POINTS`] consecutive `drawn`
+/// fixes, in the order they are drawn. A run either side of the antimeridian
+/// gets a box across it, since [`gt_types::GeoBounds`] grows a longitude range
+/// over the shorter of the two arcs.
+///
+/// Empty when a run's slots reach past [`u32::MAX`], which makes a renderer
+/// walk the sequence whole.
+fn chunks(drawn: &[DrawnFix]) -> Vec<LodChunk> {
+    let chunks: Option<Vec<LodChunk>> = drawn
         .chunks(LOD_CHUNK_POINTS)
-        .filter_map(|chunk| {
-            let (first, rest) = chunk.split_first()?;
-            Some(MercBounds::from(GeoBounds::from_first_position_and_rest(
-                *first,
-                rest.iter().copied(),
-            )))
+        .enumerate()
+        .map(|(i, run)| {
+            let (first, rest) = run.split_first()?;
+            let start = u32::try_from(i.checked_mul(LOD_CHUNK_POINTS)?).ok()?;
+            let end = start.checked_add(u32::try_from(run.len()).ok()?)?;
+            Some(LodChunk::new(
+                start..end,
+                Extent::spanning(*first, rest.iter().copied()),
+            ))
         })
-        .collect()
+        .collect();
+    chunks.unwrap_or_default()
 }
 
 /// The tolerance exponent at which decimation starts paying off: the level
@@ -178,18 +193,22 @@ fn decimate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
+    use chrono::{DateTime, TimeDelta, Utc};
     use gt_types::coordinates::{Latitude, Longitude};
     use gt_types::nav_point::NavPoint;
     use gt_types::satellites::{Constellation, Satellite, Satellites};
     use gt_types::time_types::GpsTime;
     use gt_types::tpv::TimePositionVelocity;
-    use gt_types::{FixQuality, TrackLod};
+    use gt_types::{FixQuality, MercBounds, TrackLod};
     use uom::si::angle::degree;
     use uom::si::f64::Angle;
+    use vec1::Vec1;
 
     /// ~1 m of longitude at the equator, in degrees.
     const DEG_PER_METER: f64 = 360.0 / 40_030_173.0;
+
+    /// The instant the first fix of every fixture track is stamped at.
+    const FIRST_FIX_TIME: DateTime<Utc> = DateTime::<Utc>::UNIX_EPOCH;
 
     /// Every fixture fix records a position, so it is drawn where it was
     /// recorded.
@@ -211,16 +230,16 @@ mod tests {
         build_track_lod(placed)
     }
 
-    fn point_at_meters(x_m: f64, fix_count: u32) -> NavPoint {
-        point_at_longitude(Longitude::new(x_m * DEG_PER_METER), fix_count)
+    fn point_at_meters(x_m: f64, fix_count: u32, time: DateTime<Utc>) -> NavPoint {
+        point_at_longitude(Longitude::new(x_m * DEG_PER_METER), fix_count, time)
     }
 
-    fn point_at_longitude(longitude: Longitude, fix_count: u32) -> NavPoint {
+    fn point_at_longitude(longitude: Longitude, fix_count: u32, time: DateTime<Utc>) -> NavPoint {
         let sats: Vec<_> = (1..=fix_count.max(1))
             .map(|prn| Satellite::new(Constellation::Gps, prn, None, None, None, prn <= fix_count))
             .collect();
         let tpv = TimePositionVelocity::builder()
-            .time(GpsTime::from_utc(Utc::now()))
+            .time(GpsTime::from_utc(time))
             .lat(Latitude::new(0.0))
             .lon(longitude)
             .heading(Angle::new::<degree>(90.0))
@@ -228,10 +247,15 @@ mod tests {
         NavPoint::new(tpv, Some(Satellites::new(None, None, sats)))
     }
 
+    /// One second per fix from [`FIRST_FIX_TIME`].
+    fn fix_time(i: i32) -> DateTime<Utc> {
+        FIRST_FIX_TIME + TimeDelta::seconds(i.into())
+    }
+
     /// 1024 strong-fix points spaced 10 m apart.
     fn uniform_track() -> Vec<NavPoint> {
         (0..1024)
-            .map(|i| point_at_meters(f64::from(i) * 10.0, 12))
+            .map(|i| point_at_meters(f64::from(i) * 10.0, 12, fix_time(i)))
             .collect()
     }
 
@@ -242,9 +266,18 @@ mod tests {
             .map(|i| {
                 let degrees = 179.0 + f64::from(i) * 0.01;
                 let wrapped = (degrees + 180.0).rem_euclid(360.0) - 180.0;
-                point_at_longitude(Longitude::new(wrapped), 12)
+                point_at_longitude(Longitude::new(wrapped), 12, fix_time(i))
             })
             .collect()
+    }
+
+    /// Neither end of the second chunk is the earliest or the latest fix of
+    /// that chunk. The 100th fix of the uniform track is stamped an hour
+    /// before the fix that opens the track.
+    fn track_with_a_backward_time_step() -> Vec<NavPoint> {
+        let mut points = uniform_track();
+        points[100] = point_at_meters(1000.0, 12, FIRST_FIX_TIME - TimeDelta::hours(1));
+        points
     }
 
     /// Whether `bounds` holds `merc`, reading a box across the antimeridian
@@ -258,24 +291,11 @@ mod tests {
         })
     }
 
-    /// The positions of the points `chunk` covers, out of `indices` in the
-    /// order they are drawn.
-    fn chunk_positions(
-        points: &[NavPoint],
-        indices: &[u32],
-        chunk: usize,
-    ) -> Vec<gt_types::MercPoint> {
-        indices
-            .iter()
-            .skip(chunk * LOD_CHUNK_POINTS)
-            .take(LOD_CHUNK_POINTS)
-            .filter_map(|&i| points.get(usize::try_from(i).ok()?).map(merc_at))
-            .collect()
-    }
-
     #[test]
     fn tiny_tracks_get_no_lod() {
-        let points: Vec<_> = (0..10).map(|i| point_at_meters(f64::from(i), 12)).collect();
+        let points: Vec<_> = (0..10)
+            .map(|i| point_at_meters(f64::from(i), 12, fix_time(i)))
+            .collect();
         let lod = lod_of(&points);
         assert!(lod.select(f64::MAX, f32::MAX).is_none());
     }
@@ -286,7 +306,7 @@ mod tests {
         // useful exponent clamps to zero and the finest level already
         // merges aggressively.
         let points: Vec<_> = (0..512)
-            .map(|i| point_at_meters(f64::from(i) * 0.1, 12))
+            .map(|i| point_at_meters(f64::from(i) * 0.1, 12, fix_time(i)))
             .collect();
         let lod = lod_of(&points);
         let level = lod
@@ -365,9 +385,11 @@ mod tests {
         // A marginal-fix stretch in the middle of stacked points: decimation
         // would merge the whole cluster, but the quality transitions must
         // survive so the yellow stretch stays visible at any zoom.
-        let mut points: Vec<_> = (0..512).map(|_| point_at_meters(0.0, 12)).collect();
-        for p in points.iter_mut().take(260).skip(200) {
-            *p = point_at_meters(0.0, 4);
+        let mut points: Vec<_> = (0..512)
+            .map(|i| point_at_meters(0.0, 12, fix_time(i)))
+            .collect();
+        for (i, p) in points.iter_mut().enumerate().take(260).skip(200) {
+            *p = point_at_meters(0.0, 4, fix_time(i.try_into().unwrap_or(0)));
         }
         let lod = lod_of(&points);
         let level = lod
@@ -410,7 +432,9 @@ mod tests {
     fn stacked_points_collapse_to_endpoints() {
         // A parked recording: hundreds of identical points reduce to the
         // two mandatory endpoints at every level.
-        let points: Vec<_> = (0..512).map(|_| point_at_meters(0.0, 12)).collect();
+        let points: Vec<_> = (0..512)
+            .map(|i| point_at_meters(0.0, 12, fix_time(i)))
+            .collect();
         let lod = lod_of(&points);
         let level = lod
             .select(f64::MIN_POSITIVE, 0.75)
@@ -418,28 +442,106 @@ mod tests {
         assert_eq!(level.indices(), &[0, 511]);
     }
 
+    /// Every chunked sequence the LOD stores: the track's full point list
+    /// first, then each stored level, each with the indices its chunks cover.
+    fn chunked_sequences<'a>(
+        lod: &'a TrackLod,
+        full_indices: &'a [u32],
+    ) -> Vec<(&'a [u32], &'a [LodChunk])> {
+        let mut sequences = vec![(full_indices, lod.full_point_chunks())];
+        for i in 0.. {
+            let Some(level) = lod.level(i) else { break };
+            sequences.push((level.indices(), level.chunks()));
+        }
+        sequences
+    }
+
     #[rstest::rstest]
     #[case::uniform(uniform_track())]
     #[case::across_the_antimeridian(track_across_the_antimeridian())]
-    fn every_chunk_holds_the_positions_of_the_points_it_covers(#[case] points: Vec<NavPoint>) {
+    #[case::with_a_backward_time_step(track_with_a_backward_time_step())]
+    fn every_chunk_holds_the_positions_and_the_times_of_the_points_it_covers(
+        #[case] points: Vec<NavPoint>,
+    ) {
         let lod = lod_of(&points);
         let full_indices: Vec<u32> = (0..points.len())
             .filter_map(|i| u32::try_from(i).ok())
             .collect();
-        let mut levels: Vec<(&[u32], &[MercBounds])> =
-            vec![(&full_indices, lod.full_point_chunk_bounds())];
-        for i in 0.. {
-            let Some(level) = lod.level(i) else { break };
-            levels.push((level.indices(), level.chunk_bounds()));
-        }
 
-        for (indices, chunk_bounds) in levels {
-            assert_eq!(chunk_bounds.len(), indices.len().div_ceil(LOD_CHUNK_POINTS));
-            for (chunk, &bounds) in chunk_bounds.iter().enumerate() {
-                for merc in chunk_positions(&points, indices, chunk) {
-                    assert!(holds(bounds, merc), "{bounds:?} misses {merc:?}");
+        for (indices, chunks) in chunked_sequences(&lod, &full_indices) {
+            assert_eq!(chunks.len(), indices.len().div_ceil(LOD_CHUNK_POINTS));
+            for chunk in chunks {
+                let covered = indices
+                    .get(chunk.slots())
+                    .expect("a chunk covers stored slots");
+                for point in covered.iter().filter_map(|&i| points.get(i as usize)) {
+                    let extent = chunk.extent();
+                    let merc = merc_at(point);
+                    assert!(
+                        holds(extent.merc(), merc),
+                        "{:?} misses {merc:?}",
+                        extent.merc()
+                    );
+                    let time = point.tpv.time().utc();
+                    assert!(
+                        extent.time().contains(time),
+                        "{:?} misses {time}",
+                        extent.time()
+                    );
                 }
             }
+        }
+    }
+
+    /// The union of the full point list's chunks is what the track measures.
+    /// The chunk extents and the track's own measures are two folds over the
+    /// same fixes, and the fixture tracks encircle no pole.
+    #[rstest::rstest]
+    #[case::uniform(uniform_track())]
+    #[case::across_the_antimeridian(track_across_the_antimeridian())]
+    #[case::with_a_backward_time_step(track_with_a_backward_time_step())]
+    fn the_full_point_chunks_union_to_the_track_bounds_and_time_range(
+        #[case] points: Vec<NavPoint>,
+    ) {
+        let lod = lod_of(&points);
+        let geometry = crate::segment::measure_track_geometry(
+            &points,
+            crate::segment::FixPlacementRule::default(),
+        );
+        let measured = geometry.measured().expect("every fixture fix is placed");
+        let metadata = crate::segment::compute_track_metadata(
+            1,
+            &Vec1::try_from_vec(points).expect("a non-empty fixture"),
+            &[],
+            &[],
+        );
+
+        let union = lod
+            .full_point_chunks()
+            .iter()
+            .map(LodChunk::extent)
+            .reduce(Extent::union)
+            .expect("a chunk per 64 fixes");
+
+        assert_eq!(union.time(), metadata.time_range);
+        assert_merc_bounds_close(union.merc(), measured.merc_bounds);
+    }
+
+    /// Asserts two boxes agree to within a millimetre at the equator. Two
+    /// orders of the same fold round differently in the last few bits.
+    fn assert_merc_bounds_close(left: MercBounds, right: MercBounds) {
+        const TOLERANCE_MERC: f64 = 1e-11;
+        let edges = [
+            (left.x_min, right.x_min),
+            (left.x_max, right.x_max),
+            (left.y_min, right.y_min),
+            (left.y_max, right.y_max),
+        ];
+        for (a, b) in edges {
+            assert!(
+                (a - b).abs() <= TOLERANCE_MERC,
+                "{left:?} against {right:?}"
+            );
         }
     }
 }

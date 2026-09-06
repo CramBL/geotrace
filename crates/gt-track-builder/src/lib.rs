@@ -3,7 +3,7 @@ pub mod sat_label;
 pub mod segment;
 pub mod spatial;
 
-pub use lod::build_track_lod;
+pub use lod::{LOD_CHUNK_POINTS, build_track_lod};
 pub use sat_label::build_sat_label_anchors;
 pub use segment::{
     DEFAULT_CLOCK_EXCURSION_THRESHOLD_S, DEFAULT_CLOCK_OUTLIER_SIGMAS, FileMeta, FixPlacementRule,

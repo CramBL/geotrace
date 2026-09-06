@@ -1,9 +1,14 @@
 //! Per-frame projection from normalised Mercator coordinates to screen
 //! pixels, and the LOD-aware point iteration built on top of it.
 
+use std::ops::Range;
+
+use chrono::{DateTime, Utc};
+use gt_filter::GlobalFilter;
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::{
-    LOD_CHUNK_POINTS, LoadedTrack, MercBounds, MercPoint, PlacedPoint, PlacedPoints, mercator,
+    Extent, LoadedTrack, LodChunk, MercBounds, MercPoint, PlacedPoint, PlacedPoints, TimeRange,
+    mercator,
 };
 use walkers::MapMemory;
 
@@ -249,42 +254,109 @@ impl MercTransform {
 /// rounding that moves a point by a fraction of a pixel.
 const CULL_BOUNDS_SLACK_PX: f32 = 1.0;
 
+/// What one frame's geometry walk cuts a track's chunks against: the Mercator
+/// bounds the map draws inside, and `filter`'s time window.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GeometryCull<'a> {
+    merc_bounds: MercBounds,
+    filter: &'a GlobalFilter,
+}
+
+impl<'a> GeometryCull<'a> {
+    pub(crate) fn new(
+        transform: &MercTransform,
+        cull_rect: egui::Rect,
+        filter: &'a GlobalFilter,
+    ) -> Self {
+        Self {
+            merc_bounds: transform.viewport_merc_bounds(cull_rect.expand(CULL_BOUNDS_SLACK_PX)),
+            filter,
+        }
+    }
+
+    fn visit(self, extent: Extent) -> ChunkVisit {
+        let span = extent.time();
+        if !span.overlaps_window(self.filter.time_start, self.filter.time_end) {
+            return ChunkVisit::Nothing;
+        }
+        if !self.window_reaches_past_both_ends_of(span) {
+            return ChunkVisit::EverySlotInTheWindow;
+        }
+        let merc = extent.merc();
+        if merc.crosses_the_antimeridian() || merc.intersects(self.merc_bounds) {
+            ChunkVisit::EverySlot
+        } else {
+            ChunkVisit::FirstAndLastSlot
+        }
+    }
+
+    /// Whether every instant of `span` falls in the window. An absent end of
+    /// the window is unbounded.
+    fn window_reaches_past_both_ends_of(self, span: TimeRange) -> bool {
+        self.filter
+            .time_start
+            .is_none_or(|start| start <= span.start)
+            && self.filter.time_end.is_none_or(|end| span.end <= end)
+    }
+
+    fn keeps_the_fix_at(self, time: DateTime<Utc>) -> bool {
+        gt_filter::point_passes_time_filter(time, self.filter)
+    }
+}
+
+/// What the walk visits of one chunk.
+#[derive(Debug, Clone, Copy)]
+enum ChunkVisit {
+    /// No fix of the chunk falls in the window.
+    Nothing,
+    /// The first and the last slot alone, which keep the segment entering the
+    /// chunk and the one leaving it. The chunk is drawn beyond one edge of
+    /// the cull bounds, and every fix of it falls in the window.
+    FirstAndLastSlot,
+    EverySlot,
+    /// Every slot whose fix falls in the window. The chunk's span reaches
+    /// past one end of the window.
+    EverySlotInTheWindow,
+}
+
 /// Iterate `(index, point)` over the track's LOD level appropriate for the
 /// current map scale, or over the full point list when no stored level is
 /// fine enough (zoomed in, or no LOD built). Bounds polyline-pass iteration
-/// by on-screen detail, and skips the stretches of the track that lie outside
-/// `cull_rect` - the rect the caller then culls the segments against.
+/// by on-screen detail. `cull` cuts the walk in space and in time.
 ///
 /// `placed` are `track`'s own points, which the caller has already gated on
 /// the track having a geometry.
 ///
-/// [`crate::polyline::segment_outside`] drops every segment between the
-/// points of a chunk of [`LOD_CHUNK_POINTS`] points whose bounds miss
-/// `cull_rect`, since such a chunk lies beyond one of the rect's edges. The
-/// walk yields the chunk's first and last point, which keep the segments
-/// entering and leaving it, and skips the rest. The walk keeps every point of
-/// a chunk whose bounds cross the antimeridian, which covers two pieces of
-/// the world that no single edge separates.
+/// Of a chunk whose extent misses the cull bounds, the walk yields the first
+/// and the last point alone: that chunk lies beyond one edge of the rect, and
+/// [`crate::polyline::segment_outside`] drops every segment between the rest
+/// of its points. Those two points keep the segment entering the chunk and
+/// the one leaving it. The walk yields every point of a chunk with bounds
+/// across the antimeridian, which cover two pieces of the world with no
+/// single edge between them.
+///
+/// Of a chunk with every fix outside the window, the walk yields nothing.
+/// Of a chunk whose span reaches past one end of the window, it yields every
+/// point whose fix falls in the window, and it applies no spatial rule there.
+/// Those points are not a contiguous run of the chunk: a track's timestamps
+/// can step backwards. The segment entering the chunk and the segment leaving
+/// it run to its first and its last point. Neither of those two is
+/// necessarily a point the walk yields there.
 pub(crate) fn lod_points<'a>(
     track: &'a LoadedTrack,
     placed: PlacedPoints<'a>,
     transform: &MercTransform,
-    cull_rect: egui::Rect,
+    cull: GeometryCull<'a>,
 ) -> LodPoints<'a> {
-    let cull_bounds = transform.viewport_merc_bounds(cull_rect.expand(CULL_BOUNDS_SLACK_PX));
     match track.lod.select(transform.px_per_merc(), MAX_LOD_ERROR_PX) {
         Some(level) => LodPoints::Level {
             indices: level.indices(),
             placed,
-            walk: ChunkedWalk::new(level.chunk_bounds(), level.indices().len(), cull_bounds),
+            walk: ChunkedWalk::new(level.chunks(), level.indices().len(), cull),
         },
         None => LodPoints::Full {
             placed,
-            walk: ChunkedWalk::new(
-                track.lod.full_point_chunk_bounds(),
-                placed.len(),
-                cull_bounds,
-            ),
+            walk: ChunkedWalk::new(track.lod.full_point_chunks(), placed.len(), cull),
         },
     }
 }
@@ -308,86 +380,158 @@ impl<'a> Iterator for LodPoints<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            match self {
+            let (indices, placed, walk) = match self {
                 Self::Level {
                     indices,
                     placed,
                     walk,
-                } => {
-                    let slot = walk.next_slot()?;
-                    if let Some(&i) = indices.get(slot)
-                        && let Ok(pi) = usize::try_from(i)
-                        && let Some(point) = placed.get(pi)
-                    {
-                        return Some((pi, point));
-                    }
-                }
-                Self::Full { placed, walk } => {
-                    let slot = walk.next_slot()?;
-                    if let Some(point) = placed.get(slot) {
-                        return Some((slot, point));
-                    }
-                }
+                } => (Some(*indices), *placed, walk),
+                Self::Full { placed, walk } => (None, *placed, walk),
+            };
+            let visited = walk.next_slot()?;
+            let point_index = match indices {
+                Some(indices) => indices
+                    .get(visited.slot)
+                    .and_then(|&i| usize::try_from(i).ok()),
+                None => Some(visited.slot),
+            };
+            let Some(point_index) = point_index else {
+                continue;
+            };
+            let Some(point) = placed.get(point_index) else {
+                continue;
+            };
+            if visited.time_tested_per_fix
+                && !walk.cull.keeps_the_fix_at(point.fix.tpv.time().utc())
+            {
+                continue;
             }
+            return Some((point_index, point));
         }
     }
 }
 
-/// The slots of one chunked sequence of points a frame visits: every slot of
-/// a chunk the cull bounds reach, and the first and the last slot of a chunk
-/// they miss.
+/// A slot the walk visits, and whether the walk tests the fix at it against
+/// the time window before yielding it.
+#[derive(Debug, Clone, Copy)]
+struct VisitedSlot {
+    slot: usize,
+    time_tested_per_fix: bool,
+}
+
+/// The chunk the walk is on, and the [`ChunkVisit`] computed for its extent
+/// when the walk opened it. Every slot of the chunk uses that one value.
+struct OpenChunk {
+    slots: Range<usize>,
+    visit: ChunkVisit,
+}
+
+/// The slots of one chunked sequence of points a frame visits: every slot of a
+/// chunk the cull keeps whole, the first and the last slot of a chunk drawn
+/// outside the cull bounds, and no slot of a chunk recorded outside the time
+/// window.
 pub(crate) struct ChunkedWalk<'a> {
-    chunk_bounds: &'a [MercBounds],
+    chunks: &'a [LodChunk],
     slot_count: usize,
-    cull_bounds: MercBounds,
+    cull: GeometryCull<'a>,
     next_slot: usize,
+    /// Where the search for the chunk holding `next_slot` resumes. The walk
+    /// never looks at a chunk it has left: it visits them in order.
+    next_chunk: usize,
+    open: Option<OpenChunk>,
 }
 
 impl<'a> ChunkedWalk<'a> {
-    fn new(chunk_bounds: &'a [MercBounds], slot_count: usize, cull_bounds: MercBounds) -> Self {
+    fn new(chunks: &'a [LodChunk], slot_count: usize, cull: GeometryCull<'a>) -> Self {
         Self {
-            chunk_bounds,
+            chunks,
             slot_count,
-            cull_bounds,
+            cull,
             next_slot: 0,
+            next_chunk: 0,
+            open: None,
         }
     }
 
     /// The next slot to visit, `None` past the end of the sequence.
-    fn next_slot(&mut self) -> Option<usize> {
-        let slot = self.next_slot;
-        if slot >= self.slot_count {
-            return None;
+    fn next_slot(&mut self) -> Option<VisitedSlot> {
+        loop {
+            let slot = self.next_slot;
+            if slot >= self.slot_count {
+                return None;
+            }
+            if !self
+                .open
+                .as_ref()
+                .is_some_and(|open| open.slots.contains(&slot))
+            {
+                self.open = self.chunk_holding(slot);
+            }
+            let Some((end, visit)) = self.open.as_ref().map(|open| (open.slots.end, open.visit))
+            else {
+                // No stored chunk covers this slot. The walk visits it and
+                // tests its fix against the window.
+                self.next_slot = slot + 1;
+                return Some(VisitedSlot {
+                    slot,
+                    time_tested_per_fix: true,
+                });
+            };
+            match visit {
+                ChunkVisit::Nothing => self.next_slot = end,
+                ChunkVisit::FirstAndLastSlot => {
+                    self.next_slot = end.saturating_sub(1).max(slot + 1);
+                    return Some(VisitedSlot {
+                        slot,
+                        time_tested_per_fix: false,
+                    });
+                }
+                ChunkVisit::EverySlot => {
+                    self.next_slot = slot + 1;
+                    return Some(VisitedSlot {
+                        slot,
+                        time_tested_per_fix: false,
+                    });
+                }
+                ChunkVisit::EverySlotInTheWindow => {
+                    self.next_slot = slot + 1;
+                    return Some(VisitedSlot {
+                        slot,
+                        time_tested_per_fix: true,
+                    });
+                }
+            }
         }
-        let chunk = slot / LOD_CHUNK_POINTS;
-        let opens_a_skipped_chunk =
-            slot.is_multiple_of(LOD_CHUNK_POINTS) && self.chunk_lies_outside_the_cull_bounds(chunk);
-        self.next_slot = if opens_a_skipped_chunk {
-            let chunk_end = ((chunk + 1) * LOD_CHUNK_POINTS).min(self.slot_count);
-            chunk_end.saturating_sub(1).max(slot + 1)
-        } else {
-            slot + 1
-        };
-        Some(slot)
     }
 
-    /// Whether every point of `chunk` lies beyond one edge of the cull
-    /// bounds. A chunk across the antimeridian never does, and a chunk with
-    /// no stored bounds is walked whole.
-    fn chunk_lies_outside_the_cull_bounds(&self, chunk: usize) -> bool {
-        self.chunk_bounds.get(chunk).is_some_and(|bounds| {
-            !bounds.crosses_the_antimeridian() && !bounds.intersects(self.cull_bounds)
+    /// The chunk covering `slot`, `None` when no stored chunk does.
+    fn chunk_holding(&mut self, slot: usize) -> Option<OpenChunk> {
+        while self
+            .chunks
+            .get(self.next_chunk)
+            .is_some_and(|chunk| chunk.slots().end <= slot)
+        {
+            self.next_chunk += 1;
+        }
+        let chunk = self.chunks.get(self.next_chunk)?;
+        let slots = chunk.slots();
+        slots.contains(&slot).then(|| OpenChunk {
+            slots,
+            visit: self.cull.visit(chunk.extent()),
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use chrono::{DateTime, TimeDelta, Utc};
+    use gt_filter::GlobalFilter;
+    use gt_track_builder::LOD_CHUNK_POINTS;
     use gt_types::coordinates::Longitude;
     use gt_types::{LoadedTrack, PlacedPoint, PlacedPoints};
     use rstest::rstest;
 
-    use super::{LOD_CHUNK_POINTS, Latitude, MercTransform, lod_points, wrap_longitude_degrees};
+    use super::{GeometryCull, Latitude, MercTransform, lod_points, wrap_longitude_degrees};
     use crate::polyline::{CULL_MARGIN_PX, MAX_LOD_ERROR_PX, VisiblePath, visible_path};
 
     /// Asserts `a` and `b` are within `1e-9` of each other - tight enough to
@@ -453,19 +597,52 @@ mod tests {
         max: egui::pos2(800.0, 600.0),
     };
 
-    /// A track through `positions`, with the LOD levels and chunk bounds the
-    /// track builder computes for them.
-    fn track_through(positions: &[(Latitude, Longitude)]) -> LoadedTrack {
-        let points = gt_test_utils::nav_points_at_positions(
-            chrono::DateTime::<chrono::Utc>::UNIX_EPOCH,
-            positions,
-        );
+    /// The instant the first fix of every fixture track is stamped at.
+    const FIRST_FIX_TIME: DateTime<Utc> = DateTime::<Utc>::UNIX_EPOCH;
+
+    fn at_second(offset_secs: i64) -> DateTime<Utc> {
+        FIRST_FIX_TIME + TimeDelta::seconds(offset_secs)
+    }
+
+    /// The window `[start, end]` in seconds from [`FIRST_FIX_TIME`].
+    fn window(start_secs: i64, end_secs: i64) -> GlobalFilter {
+        GlobalFilter {
+            time_start: Some(at_second(start_secs)),
+            time_end: Some(at_second(end_secs)),
+            ..GlobalFilter::default()
+        }
+    }
+
+    /// A track through `positions` with its `i`th fix stamped
+    /// `offset_secs(i)` from [`FIRST_FIX_TIME`], and the LOD levels and
+    /// chunks the track builder computes for it.
+    fn track_stamped(
+        positions: &[(Latitude, Longitude)],
+        offset_secs: impl Fn(usize) -> i64,
+    ) -> LoadedTrack {
+        let points = gt_test_utils::nav_points_stamped(FIRST_FIX_TIME, positions, offset_secs);
         let mut track = gt_test_utils::loaded_track_with_points(points);
         let lod = track.placed_points().map(gt_track_builder::build_track_lod);
         if let Some(lod) = lod {
             track.lod = lod;
         }
         track
+    }
+
+    /// A track through `positions`, one fix per second.
+    fn track_through(positions: &[(Latitude, Longitude)]) -> LoadedTrack {
+        track_stamped(positions, |i| i.try_into().unwrap_or(i64::MAX))
+    }
+
+    /// Neither end of a chunk is its earliest or its latest fix. The 30th fix
+    /// of every chunk is stamped a hundred seconds before the fixes around
+    /// it.
+    fn offset_secs_stepping_backwards_inside_every_chunk(i: usize) -> i64 {
+        let seconds = i64::try_from(i).unwrap_or(i64::MAX);
+        match i % LOD_CHUNK_POINTS == 30 {
+            true => seconds - 100,
+            false => seconds,
+        }
     }
 
     /// 10 000 fixes running east along one parallel, about 22 m apart.
@@ -534,24 +711,33 @@ mod tests {
             .collect()
     }
 
-    /// The walk as it ran before the chunk bounds: every point of the
-    /// selected level, or every point of the track.
+    /// The walk as it ran before the chunk extents: every point of the
+    /// selected level, or every point of the track, with the caller's own
+    /// per-point time filter over it.
     fn unbounded_lod_points<'a>(
         track: &'a LoadedTrack,
         placed: PlacedPoints<'a>,
         transform: &MercTransform,
+        filter: &GlobalFilter,
     ) -> Vec<(usize, PlacedPoint<'a>)> {
-        match track.lod.select(transform.px_per_merc(), MAX_LOD_ERROR_PX) {
-            Some(level) => level
-                .indices()
-                .iter()
-                .filter_map(|&i| {
-                    let pi = usize::try_from(i).ok()?;
-                    Some((pi, placed.get(pi)?))
-                })
-                .collect(),
-            None => placed.iter().enumerate().collect(),
-        }
+        let every_point: Vec<(usize, PlacedPoint<'a>)> =
+            match track.lod.select(transform.px_per_merc(), MAX_LOD_ERROR_PX) {
+                Some(level) => level
+                    .indices()
+                    .iter()
+                    .filter_map(|&i| {
+                        let pi = usize::try_from(i).ok()?;
+                        Some((pi, placed.get(pi)?))
+                    })
+                    .collect(),
+                None => placed.iter().enumerate().collect(),
+            };
+        every_point
+            .into_iter()
+            .filter(|(_, point)| {
+                gt_filter::point_passes_time_filter(point.fix.tpv.time().utc(), filter)
+            })
+            .collect()
     }
 
     /// The polyline the track renderer draws from `points`, keyed on the
@@ -572,6 +758,39 @@ mod tests {
         )
     }
 
+    /// Asserts the bounded walk draws what the unbounded walk drew and the
+    /// caller then filtered per point, in every viewport the fixtures are
+    /// framed in.
+    fn assert_the_walks_draw_the_same_path(
+        track: &LoadedTrack,
+        positions: &[(Latitude, Longitude)],
+        filter: &GlobalFilter,
+    ) {
+        let placed = track
+            .placed_points()
+            .expect("every fixture fix has a position");
+        let cull_rect = MAP_RECT.expand(CULL_MARGIN_PX);
+        for transform in viewports(positions) {
+            let cull = GeometryCull::new(&transform, cull_rect, filter);
+            let bounded = path_of(
+                lod_points(track, placed, &transform, cull),
+                &transform,
+                cull_rect,
+            );
+            let unbounded = path_of(
+                unbounded_lod_points(track, placed, &transform, filter).into_iter(),
+                &transform,
+                cull_rect,
+            );
+            assert_eq!(
+                bounded,
+                unbounded,
+                "at {} px per world",
+                transform.px_per_merc()
+            );
+        }
+    }
+
     #[rstest]
     #[case::straight_line(straight_line())]
     #[case::rows_across_the_viewport(rows_across_the_viewport())]
@@ -583,28 +802,50 @@ mod tests {
         #[case] positions: Vec<(Latitude, Longitude)>,
     ) {
         let track = track_through(&positions);
+        assert_the_walks_draw_the_same_path(&track, &positions, &GlobalFilter::default());
+    }
+
+    /// A window ending at 5 000 s cuts through the middle of one chunk, and
+    /// one from 5 010 s to 5 040 s opens and closes inside a single chunk.
+    /// The straight line runs one fix per second over 10 000 seconds.
+    #[rstest]
+    #[case::boundary_inside_a_chunk(window(3_000, 5_000))]
+    #[case::inside_one_chunk(window(5_010, 5_040))]
+    fn the_bounded_walk_draws_the_windowed_path_the_unbounded_walk_draws(
+        #[case] filter: GlobalFilter,
+    ) {
+        let positions = straight_line();
+        let track = track_through(&positions);
+        assert_the_walks_draw_the_same_path(&track, &positions, &filter);
+    }
+
+    /// The fixes with a timestamp inside the window are not one contiguous
+    /// run of the chunk. The first and the last fix of the chunk both have a
+    /// timestamp outside the window.
+    #[test]
+    fn the_bounded_walk_draws_the_windowed_path_across_a_backward_time_step() {
+        let positions = straight_line();
+        let track = track_stamped(
+            &positions,
+            offset_secs_stepping_backwards_inside_every_chunk,
+        );
+        assert_the_walks_draw_the_same_path(&track, &positions, &window(3_000, 5_000));
+    }
+
+    #[test]
+    fn the_walk_yields_nothing_of_a_track_the_window_excludes() {
+        let positions = straight_line();
+        let track = track_through(&positions);
         let placed = track
             .placed_points()
             .expect("every fixture fix has a position");
         let cull_rect = MAP_RECT.expand(CULL_MARGIN_PX);
-        for transform in viewports(&positions) {
-            let bounded = path_of(
-                lod_points(&track, placed, &transform, cull_rect),
-                &transform,
-                cull_rect,
-            );
-            let unbounded = path_of(
-                unbounded_lod_points(&track, placed, &transform).into_iter(),
-                &transform,
-                cull_rect,
-            );
-            assert_eq!(
-                bounded,
-                unbounded,
-                "at {} px per world",
-                transform.px_per_merc()
-            );
-        }
+        let (lat, lon) = positions[positions.len() / 2];
+        let transform = MercTransform::for_test_view(1e4, lat, lon, MAP_RECT.center());
+        let filter = window(30_000, 40_000);
+        let cull = GeometryCull::new(&transform, cull_rect, &filter);
+
+        assert_eq!(lod_points(&track, placed, &transform, cull).count(), 0);
     }
 
     /// The path is the unbounded walk's wherever a chunk boundary falls
@@ -618,6 +859,7 @@ mod tests {
             .placed_points()
             .expect("every fixture fix has a position");
         let cull_rect = MAP_RECT.expand(CULL_MARGIN_PX);
+        let filter = GlobalFilter::default();
         // Anchoring the viewport one fix further along moves the chunk
         // boundaries one fix across it: at this scale the fixes are about
         // 9 px apart.
@@ -625,13 +867,14 @@ mod tests {
         for anchor in 0..LOD_CHUNK_POINTS {
             let (lat, lon) = positions[positions.len() / 2 + anchor];
             let transform = MercTransform::for_test_view(world_px, lat, lon, MAP_RECT.center());
+            let cull = GeometryCull::new(&transform, cull_rect, &filter);
             let bounded = path_of(
-                lod_points(&track, placed, &transform, cull_rect),
+                lod_points(&track, placed, &transform, cull),
                 &transform,
                 cull_rect,
             );
             let unbounded = path_of(
-                unbounded_lod_points(&track, placed, &transform).into_iter(),
+                unbounded_lod_points(&track, placed, &transform, &filter).into_iter(),
                 &transform,
                 cull_rect,
             );
@@ -664,8 +907,10 @@ mod tests {
         );
 
         let cull_rect = MAP_RECT.expand(CULL_MARGIN_PX);
-        let walked = lod_points(&track, placed, &transform, cull_rect).count();
-        let unbounded = unbounded_lod_points(&track, placed, &transform).len();
+        let filter = GlobalFilter::default();
+        let cull = GeometryCull::new(&transform, cull_rect, &filter);
+        let walked = lod_points(&track, placed, &transform, cull).count();
+        let unbounded = unbounded_lod_points(&track, placed, &transform, &filter).len();
         assert!(
             walked < unbounded / 2,
             "walked {walked} of {unbounded} points"
