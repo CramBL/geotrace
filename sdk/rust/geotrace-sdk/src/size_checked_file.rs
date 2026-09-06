@@ -50,6 +50,19 @@ impl SizeCheckedFile {
             file_bytes: self.file_bytes,
         })
     }
+
+    /// Open a group the file need not hold, returning `Ok(None)` where the file
+    /// has no such path. Every other failure, including a path that is not a
+    /// group, is an [`Error`].
+    pub(crate) fn optional_group(&self, name: &str) -> Result<Option<SizeCheckedGroup>, Error> {
+        Ok(
+            none_for_a_missing_path(self.file.group(name))?.map(|group| SizeCheckedGroup {
+                group,
+                path: name.to_owned(),
+                file_bytes: self.file_bytes,
+            }),
+        )
+    }
 }
 
 pub(crate) struct SizeCheckedGroup {
@@ -85,11 +98,9 @@ impl SizeCheckedGroup {
     /// group has no such child. Every other failure, including a child that is
     /// not a dataset, is an [`Error`].
     pub(crate) fn optional_dataset(&self, name: &str) -> Result<Option<Dataset>, Error> {
-        match self.group.dataset(name) {
-            Ok(dataset) => self.size_checked(name, dataset).map(Some),
-            Err(hdf5_pure::Error::Format(FormatError::PathNotFound(_))) => Ok(None),
-            Err(error) => Err(error.into()),
-        }
+        none_for_a_missing_path(self.group.dataset(name))?
+            .map(|dataset| self.size_checked(name, dataset))
+            .transpose()
     }
 
     fn size_checked(&self, name: &str, dataset: Dataset) -> Result<Dataset, Error> {
@@ -115,6 +126,16 @@ impl SizeCheckedGroup {
         } else {
             format!("{}/{name}", self.path)
         }
+    }
+}
+
+/// `Ok(None)` where the lookup failed because the file holds no such path, and
+/// the error itself for every other failure.
+fn none_for_a_missing_path<T>(lookup: Result<T, hdf5_pure::Error>) -> Result<Option<T>, Error> {
+    match lookup {
+        Ok(found) => Ok(Some(found)),
+        Err(hdf5_pure::Error::Format(FormatError::PathNotFound(_))) => Ok(None),
+        Err(error) => Err(error.into()),
     }
 }
 

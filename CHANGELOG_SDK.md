@@ -41,6 +41,8 @@ the app).
 - Fixed the reader dropping a tracked satellite or a satellite report whose index points past the table it addresses: it now fails with an error stating the dataset and the record.
 - Fixed the reader reading a timestamp outside the range a UTC timestamp covers as 1970-01-01: it now fails with an error stating the dataset and the record.
 - Fixed the reader treating a timestamp dataset it cannot read as one the file does not hold: it now fails with an error stating the dataset and the record.
+- Fixed the reader dropping the rows past the end of a dataset shorter than its table: it now fails with an error stating the dataset and the row counts.
+- Fixed the reader treating a group it cannot open as one the file does not hold: it now fails with an error stating the group.
 - Fixed a timestamp of exactly 1969-12-31T23:59:59.999999Z being written as absent: writing it fails with an error stating the dataset and the record.
 - Fixed an annotation or event marker timestamped exactly at the last nav fix being placed outside the nav fix time range: it is placed on that fix.
 - Fixed a marker, event marker or ghost fix interpolated between two fixes on either side of the antimeridian being placed near longitude 0: it is placed on the short arc between the two fixes.

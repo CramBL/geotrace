@@ -124,10 +124,12 @@ fn read_nav_points(file: &SizeCheckedFile) -> Result<Vec<NavPoint>, Error> {
 
     let n = times.len();
     check_len("nav_points", "gps_time_us", n, gps_times.len())?;
+    check_len("nav_points", "sys_time_us", n, sys_times.len())?;
     check_len("nav_points", "lat", n, lats.len())?;
     check_len("nav_points", "lon", n, lons.len())?;
     check_len("nav_points", "heading", n, headings.len())?;
     check_len("nav_points", "speed_mps", n, speeds.len())?;
+    check_len("nav_points", "eph_m", n, ephs.len())?;
 
     let nav_points = gps_times
         .iter()
@@ -201,7 +203,7 @@ fn attach_satellite_data(
     mut nav_points: Vec<NavPoint>,
     file: &SizeCheckedFile,
 ) -> Result<Vec<NavPoint>, Error> {
-    let Ok(sat_grp) = file.group("sat_reports") else {
+    let Some(sat_grp) = file.optional_group("sat_reports")? else {
         return Ok(nav_points);
     };
 
@@ -215,14 +217,20 @@ fn attach_satellite_data(
         match sat_grp.optional_dataset("gps_time_us")? {
             Some(ds) => {
                 let gps = ds.read_u64()?;
+                check_len("sat_reports", "gps_time_us", r, gps.len())?;
                 let sys = match sat_grp.optional_dataset("sys_time_us")? {
-                    Some(ds) => ds.read_u64()?,
+                    Some(ds) => {
+                        let sys = ds.read_u64()?;
+                        check_len("sat_reports", "sys_time_us", r, sys.len())?;
+                        sys
+                    }
                     None => vec![ABSENT_TIMESTAMP_MICROS; r],
                 };
                 (gps, sys)
             }
             None => {
                 let times = sat_grp.dataset("time")?.read_i64()?;
+                check_len("sat_reports", "time", r, times.len())?;
                 let gps = times.iter().map(|&us| us.cast_unsigned()).collect();
                 (gps, vec![ABSENT_TIMESTAMP_MICROS; r])
             }
@@ -236,6 +244,24 @@ fn attach_satellite_data(
     let ts_elevation = ts_grp.dataset("elevation")?.read_f32()?;
     let ts_azimuth = ts_grp.dataset("azimuth")?.read_f32()?;
     let ts_snr = ts_grp.dataset("snr")?.read_f32()?;
+
+    let tracked_rows = ts_rep_idx.len();
+    check_len(
+        "tracked_sats",
+        "constellation",
+        tracked_rows,
+        ts_constellation.len(),
+    )?;
+    check_len("tracked_sats", "prn", tracked_rows, ts_prn.len())?;
+    check_len("tracked_sats", "in_fix", tracked_rows, ts_in_fix.len())?;
+    check_len(
+        "tracked_sats",
+        "elevation",
+        tracked_rows,
+        ts_elevation.len(),
+    )?;
+    check_len("tracked_sats", "azimuth", tracked_rows, ts_azimuth.len())?;
+    check_len("tracked_sats", "snr", tracked_rows, ts_snr.len())?;
 
     let mut tracked_by_report: Vec<Vec<Satellite>> = vec![Vec::new(); r];
     for (record, (&rep_idx, constellation_code, &prn, &in_fix, &elevation, &azimuth, &snr)) in
@@ -318,7 +344,7 @@ fn attach_satellite_data(
 }
 
 fn read_markers(file: &SizeCheckedFile) -> Result<Vec<Marker>, Error> {
-    let Ok(grp) = file.group("markers") else {
+    let Some(grp) = file.optional_group("markers")? else {
         return Ok(Vec::new());
     };
 
@@ -427,7 +453,7 @@ impl EventMarkerRow<'_> {
 }
 
 fn read_event_markers(file: &SizeCheckedFile) -> Result<Vec<EventMarkerPoint>, Error> {
-    let Ok(grp) = file.group("event_markers") else {
+    let Some(grp) = file.optional_group("event_markers")? else {
         return Ok(Vec::new());
     };
 
@@ -469,7 +495,7 @@ fn read_event_markers(file: &SizeCheckedFile) -> Result<Vec<EventMarkerPoint>, E
 }
 
 fn read_event_marker_styles(file: &SizeCheckedFile) -> Result<Vec<EventMarkerStyle>, Error> {
-    let Ok(grp) = file.group("event_marker_styles") else {
+    let Some(grp) = file.optional_group("event_marker_styles")? else {
         return Ok(Vec::new());
     };
 
@@ -543,7 +569,7 @@ fn read_event_marker_styles(file: &SizeCheckedFile) -> Result<Vec<EventMarkerSty
 /// sorted by name for a deterministic order independent of how the producer
 /// added them.
 fn read_channels(file: &SizeCheckedFile) -> Result<Vec<Channel>, Error> {
-    let Ok(root) = file.group("channels") else {
+    let Some(root) = file.optional_group("channels")? else {
         return Ok(Vec::new());
     };
 
