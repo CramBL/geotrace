@@ -16,6 +16,7 @@ use geotrace_sdk::{
     EventMarkerStyle, NavFile, NavFileBuilder, NavFix, NavFixTime, Satellite, SatelliteReport,
     Velocity,
 };
+use hdf5_pure::{AttrValue, FileBuilder};
 
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR");
@@ -29,6 +30,10 @@ fn main() {
         &unrecognized_style_values(),
         &fixtures.join("unrecognized_style_values.gtd"),
     );
+    write_bytes(
+        &nav_point_idx_past_the_nav_points(),
+        &fixtures.join("nav_point_idx_past_the_nav_points.gtd"),
+    );
 }
 
 fn write_fixture(nav_file: &NavFile, path: &Path) {
@@ -36,6 +41,14 @@ fn write_fixture(nav_file: &NavFile, path: &Path) {
         std::fs::create_dir_all(parent).expect("create fixture dir");
     }
     nav_file.write_to_file(path).expect("write fixture");
+    println!("wrote {}", path.display());
+}
+
+fn write_bytes(bytes: &[u8], path: &Path) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("create fixture dir");
+    }
+    std::fs::write(path, bytes).expect("write fixture");
     println!("wrote {}", path.display());
 }
 
@@ -165,4 +178,69 @@ fn unrecognized_style_values() -> NavFile {
     });
 
     recorder.finish().expect("gen_fixture: build failed")
+}
+
+/// One nav point and one satellite report whose `nav_point_idx` is 5, written
+/// through `hdf5_pure`.
+fn nav_point_idx_past_the_nav_points() -> Vec<u8> {
+    let t0 = 1_700_000_000_000_000u64;
+
+    let mut fb = FileBuilder::new();
+    fb.set_attr("geotrace_version", AttrValue::String("2".into()));
+
+    let mut np = fb.create_group("nav_points");
+    np.create_dataset("time")
+        .with_i64_data(&[0])
+        .with_shape(&[1]);
+    np.create_dataset("gps_time_us")
+        .with_u64_data(&[t0])
+        .with_shape(&[1]);
+    np.create_dataset("lat")
+        .with_f64_data(&[51.5074])
+        .with_shape(&[1]);
+    np.create_dataset("lon")
+        .with_f64_data(&[-0.1278])
+        .with_shape(&[1]);
+    np.create_dataset("heading")
+        .with_f64_data(&[f64::NAN])
+        .with_shape(&[1]);
+    np.create_dataset("speed_mps")
+        .with_f64_data(&[f64::NAN])
+        .with_shape(&[1]);
+    fb.add_group(np.finish());
+
+    let mut sr = fb.create_group("sat_reports");
+    sr.create_dataset("nav_point_idx")
+        .with_u64_data(&[5])
+        .with_shape(&[1]);
+    sr.create_dataset("gps_time_us")
+        .with_u64_data(&[t0])
+        .with_shape(&[1]);
+    fb.add_group(sr.finish());
+
+    let mut ts = fb.create_group("tracked_sats");
+    ts.create_dataset("sat_report_idx")
+        .with_u64_data(&[0])
+        .with_shape(&[1]);
+    ts.create_dataset("constellation")
+        .with_u8_data(&[0])
+        .with_shape(&[1]);
+    ts.create_dataset("prn")
+        .with_u32_data(&[1])
+        .with_shape(&[1]);
+    ts.create_dataset("in_fix")
+        .with_u8_data(&[1])
+        .with_shape(&[1]);
+    ts.create_dataset("elevation")
+        .with_f32_data(&[45.0])
+        .with_shape(&[1]);
+    ts.create_dataset("azimuth")
+        .with_f32_data(&[90.0])
+        .with_shape(&[1]);
+    ts.create_dataset("snr")
+        .with_f32_data(&[38.0])
+        .with_shape(&[1]);
+    fb.add_group(ts.finish());
+
+    fb.finish().expect("gen_fixture: build failed")
 }

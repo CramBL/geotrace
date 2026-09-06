@@ -506,7 +506,7 @@ impl NavRecorder {
             associate_satellites(&self.fixes, self.satellite_reports, &self.satellite_window);
 
         // Build ghost nav fixes for orphaned satellite reports.
-        let ghost_points = ghost_nav_points_for(&self.fixes, unassociated);
+        let ghost_points = ghost_nav_points_for(&self.fixes, unassociated)?;
         if !ghost_points.is_empty() {
             log::debug!(
                 "{} ghost nav fix(es) created for satellite reports outside the {}ms association window",
@@ -615,9 +615,9 @@ impl NavRecorder {
 fn ghost_nav_points_for(
     real_fixes: &[InternalFix],
     orphan_reports: Vec<InternalSatReport>,
-) -> Vec<InternalPoint> {
+) -> Result<Vec<InternalPoint>, BuildError> {
     if real_fixes.is_empty() || orphan_reports.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     // `delta_us = gps_us - sys_us` at each fix that has both a genuine GPS lock
@@ -653,7 +653,7 @@ fn ghost_nav_points_for(
     let mut ghost_points = Vec::new();
 
     if let Some(first) = real_fixes.first() {
-        ghost_points.extend(ghosts_on_first_fix(first, before_first));
+        ghost_points.extend(ghosts_on_first_fix(first, before_first)?);
     }
 
     for (seg_idx, reports) in segments.into_iter().enumerate() {
@@ -700,7 +700,7 @@ fn ghost_nav_points_for(
                 let position = b_position.interpolated_to(a_position, frac);
                 ghost_points.push(InternalPoint {
                     fix: InternalFix::ghost(
-                        GpsTime::from_utc(micros_to_datetime(corrected_us)),
+                        ghost_gps_time(corrected_us)?,
                         position.lat,
                         position.lon,
                         Some(heading),
@@ -717,7 +717,7 @@ fn ghost_nav_points_for(
                 let position = b_position.interpolated_to(a_position, frac);
                 ghost_points.push(InternalPoint {
                     fix: InternalFix::ghost(
-                        GpsTime::from_utc(micros_to_datetime(approx_us)),
+                        ghost_gps_time(approx_us)?,
                         position.lat,
                         position.lon,
                         Some(heading),
@@ -729,15 +729,24 @@ fn ghost_nav_points_for(
     }
 
     if let Some(last) = real_fixes.last() {
-        ghost_points.extend(ghosts_after_last_fix(last, after_last));
+        ghost_points.extend(ghosts_after_last_fix(last, after_last)?);
     }
 
-    ghost_points
+    Ok(ghost_points)
+}
+
+fn ghost_gps_time(micros: i64) -> Result<GpsTime, BuildError> {
+    DateTime::from_timestamp_micros(micros)
+        .map(GpsTime::from_utc)
+        .ok_or(BuildError::GhostFixTimeOutOfRange { micros })
 }
 
 /// Ghosts for the reports before the first real fix, all on that fix's position
 /// with `heading = None`.
-fn ghosts_on_first_fix(first: &InternalFix, reports: Vec<InternalSatReport>) -> Vec<InternalPoint> {
+fn ghosts_on_first_fix(
+    first: &InternalFix,
+    reports: Vec<InternalSatReport>,
+) -> Result<Vec<InternalPoint>, BuildError> {
     let position = TimelinePosition::from_internal_fix(first);
     let mut ghosts = Vec::with_capacity(reports.len());
 
@@ -745,7 +754,7 @@ fn ghosts_on_first_fix(first: &InternalFix, reports: Vec<InternalSatReport>) -> 
         let ghost_time_us = ghost_gps_us_anchored_to(&report, first);
         ghosts.push(InternalPoint {
             fix: InternalFix::ghost(
-                GpsTime::from_utc(micros_to_datetime(ghost_time_us)),
+                ghost_gps_time(ghost_time_us)?,
                 position.lat,
                 position.lon,
                 None, // None renders as a circle
@@ -754,7 +763,7 @@ fn ghosts_on_first_fix(first: &InternalFix, reports: Vec<InternalSatReport>) -> 
         });
     }
 
-    ghosts
+    Ok(ghosts)
 }
 
 /// Ghosts for the reports after the last real fix, dead-reckoned along that
@@ -764,7 +773,7 @@ fn ghosts_on_first_fix(first: &InternalFix, reports: Vec<InternalSatReport>) -> 
 fn ghosts_after_last_fix(
     last: &InternalFix,
     reports: Vec<InternalSatReport>,
-) -> Vec<InternalPoint> {
+) -> Result<Vec<InternalPoint>, BuildError> {
     let mut position = TimelinePosition::from_internal_fix(last);
     let mut ghosts = Vec::with_capacity(reports.len());
 
@@ -777,7 +786,7 @@ fn ghosts_after_last_fix(
         let ghost_time_us = ghost_gps_us_anchored_to(&report, last);
         ghosts.push(InternalPoint {
             fix: InternalFix::ghost(
-                GpsTime::from_utc(micros_to_datetime(ghost_time_us)),
+                ghost_gps_time(ghost_time_us)?,
                 position.lat,
                 position.lon,
                 None, // None renders as a circle
@@ -786,7 +795,7 @@ fn ghosts_after_last_fix(
         });
     }
 
-    ghosts
+    Ok(ghosts)
 }
 
 /// Best-guess GPS timestamp (microseconds) for an orphan report.
@@ -1477,10 +1486,6 @@ pub(crate) fn datetime_to_micros(dt: DateTime<Utc>) -> i64 {
     dt.timestamp_micros()
 }
 
-pub(crate) fn micros_to_datetime(us: i64) -> DateTime<Utc> {
-    DateTime::from_timestamp_micros(us).unwrap_or_default()
-}
-
 /// The value the optional timestamp datasets store for an absent timestamp.
 pub(crate) const ABSENT_TIMESTAMP_MICROS: u64 = u64::MAX;
 
@@ -1511,16 +1516,6 @@ pub(crate) fn opt_datetime_to_u64(
     dt.map_or(Ok(ABSENT_TIMESTAMP_MICROS), |dt| {
         datetime_to_u64(dt, location, record)
     })
-}
-
-/// Decode a u64 microsecond value back to `Option<DateTime<Utc>>`, treating
-/// [`ABSENT_TIMESTAMP_MICROS`] as absent.
-pub(crate) fn u64_to_opt_datetime(v: u64) -> Option<DateTime<Utc>> {
-    if v == ABSENT_TIMESTAMP_MICROS {
-        None
-    } else {
-        Some(micros_to_datetime(v as i64))
-    }
 }
 
 #[cfg(test)]

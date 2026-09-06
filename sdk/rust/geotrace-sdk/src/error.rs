@@ -169,6 +169,11 @@ pub enum BuildError {
     /// them as `@name`) and become HDF5 group names, so they must be unique.
     #[error("two channels share the name {name:?}; channel names must be unique")]
     DuplicateChannelName { name: String },
+
+    /// The builder computes a ghost nav fix's timestamp from a satellite
+    /// report's own timestamp and the clock offset of the nav fixes around it.
+    #[error("a ghost nav fix at {micros} microseconds is past the range a UTC timestamp covers")]
+    GhostFixTimeOutOfRange { micros: i64 },
 }
 
 /// Errors that can occur when reading or writing a `.gtd` file.
@@ -235,6 +240,38 @@ pub enum Error {
 
     #[error("satellite report {report} has neither a receiver nor a host timestamp")]
     ReportWithoutTimestamp { report: usize },
+
+    #[error("event marker {record} has no timestamp")]
+    EventMarkerWithoutTimestamp { record: usize },
+
+    #[error("{group}/{dataset}: record {record} is empty")]
+    EmptyField {
+        group: &'static str,
+        dataset: &'static str,
+        record: usize,
+    },
+
+    #[error(
+        "{group}/{dataset}: record {record} holds index {index}, past the row count of {table} ({table_len})"
+    )]
+    IndexPastTable {
+        group: &'static str,
+        dataset: &'static str,
+        record: usize,
+        index: u64,
+        table: &'static str,
+        table_len: usize,
+    },
+
+    #[error(
+        "{group}/{dataset}: record {record} holds {micros} microseconds, past the range a UTC timestamp covers"
+    )]
+    TimestampOutOfRange {
+        group: &'static str,
+        dataset: &'static str,
+        record: usize,
+        micros: i64,
+    },
 
     #[error(
         "dataset {path:?} declares {declared_bytes} bytes of data, past what a {file_bytes}-byte file can hold"

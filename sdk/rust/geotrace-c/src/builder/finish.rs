@@ -61,6 +61,10 @@ pub unsafe extern "C" fn gtd_builder_finish(
                 error::set_last_error(format!("two channels share the name {name:?}"));
                 GtdStatus::GTD_ERR_INVALID_CHANNEL
             }
+            Err(error @ BuildError::GhostFixTimeOutOfRange { .. }) => {
+                error::set_last_error(error);
+                GtdStatus::GTD_ERR_INVALID_ARGUMENT
+            }
         }
     })
 }

@@ -85,15 +85,14 @@ fn gold_corpus_truncations_and_mutations_never_panic() {
 }
 
 /// The crash input from the 2026-09-02 scheduled fuzz run, whose
-/// `tracked_sats/sat_report_idx` declares 5 497 558 139 455 elements of 8 bytes.
+/// `tracked_sats/sat_report_idx` declares 5 497 558 139 455 elements of 8 bytes
+/// and whose `nav_points/gps_time_us` does not decompress. The size check on
+/// that dataset has its own test in `size_checked_file`.
 #[test]
-fn dataset_declaring_more_bytes_than_the_file_holds_is_rejected() {
+fn the_2026_09_02_fuzz_crash_input_is_rejected() {
     let bytes = fixture_bytes("fuzz_regressions/dataset_size_past_file_length.gtd").unwrap();
 
     let error = NavFile::read(Cursor::new(bytes)).unwrap_err();
 
-    assert!(
-        matches!(error, Error::DatasetSizePastFileLength { .. }),
-        "{error:#}"
-    );
+    assert!(matches!(error, Error::Hdf5(_)), "{error:#}");
 }

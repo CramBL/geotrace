@@ -2227,6 +2227,7 @@ version = "0.6.0"
 dependencies = [
  "chrono",
  "geotrace-sdk",
+ "hdf5-pure",
 ]
 
 [[package]]
