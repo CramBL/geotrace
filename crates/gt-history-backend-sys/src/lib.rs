@@ -2,8 +2,8 @@ use crate::copy::list_recordings;
 use gt_history_types::{
     CURRENT_SCHEMA_VERSION, DatabaseRef, DbError, HistoryDatabase, LogAttachment,
     LogAttachmentEntry, LogAttachmentId, NavPointTimeRange, ReadOnlyHistoryDatabase,
-    RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation,
-    TrackRange, log_attachment,
+    RecordingEntry, RecordingMeta, RecordingUiState, SCHEMA_VERSION_ATTR, StoredRecording,
+    StoredSegmentation, TrackRange, UiStateVersionReporter, log_attachment,
 };
 
 use parking_lot::Mutex;
@@ -144,6 +144,15 @@ impl ReadOnlyHistoryDatabase for ReadOnlySysDb {
         crate::copy::snap_blob(&self.path, &db_ref.identity, &db_ref.group_name).map_err(Into::into)
     }
 
+    fn recording_ui_state(
+        &self,
+        db_ref: &DatabaseRef,
+        reporter: &UiStateVersionReporter,
+    ) -> Result<RecordingUiState, DbError> {
+        let _guard = DB_LOCK.lock();
+        crate::copy::recording_ui_state(&self.path, db_ref, reporter).map_err(Into::into)
+    }
+
     fn log_attachments(&self, db_ref: &DatabaseRef) -> Result<Vec<LogAttachmentEntry>, DbError> {
         let _guard = DB_LOCK.lock();
         crate::copy::log_attachments(&self.path, &db_ref.identity, &db_ref.group_name)
@@ -227,6 +236,14 @@ impl ReadOnlyHistoryDatabase for SysDb {
 
     fn snap_blob(&self, db_ref: &DatabaseRef) -> Result<Option<Vec<u8>>, DbError> {
         self.read_only.snap_blob(db_ref)
+    }
+
+    fn recording_ui_state(
+        &self,
+        db_ref: &DatabaseRef,
+        reporter: &UiStateVersionReporter,
+    ) -> Result<RecordingUiState, DbError> {
+        self.read_only.recording_ui_state(db_ref, reporter)
     }
 
     fn log_attachments(&self, db_ref: &DatabaseRef) -> Result<Vec<LogAttachmentEntry>, DbError> {
@@ -346,6 +363,17 @@ impl HistoryDatabase for SysDb {
     fn set_snap_blob(&mut self, db_ref: &DatabaseRef, blob: &[u8]) -> Result<(), DbError> {
         let _guard = DB_LOCK.lock();
         crate::copy::set_snap_blob(&self.path, &db_ref.identity, &db_ref.group_name, blob)
+            .map_err(Into::into)
+    }
+
+    fn set_recording_ui_state(
+        &mut self,
+        db_ref: &DatabaseRef,
+        ui_state: &RecordingUiState,
+        reporter: &UiStateVersionReporter,
+    ) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        crate::copy::set_recording_ui_state(&self.path, db_ref, ui_state, reporter)
             .map_err(Into::into)
     }
 

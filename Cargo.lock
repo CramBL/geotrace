@@ -2619,6 +2619,7 @@ version = "0.15.0"
 dependencies = [
  "chrono",
  "log",
+ "parking_lot",
  "proptest",
  "rstest",
  "serde",

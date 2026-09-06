@@ -1,14 +1,16 @@
 use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
-    ATTR_SEG_GAP_US, ATTR_SEG_PLACEMENT_RULE, ATTR_SEG_SPLIT_RULE, ATTR_START_US, ChannelSummary,
-    DatabaseRef, DbError, GTD_CHANNEL_COMPONENTS_ATTR, GTD_CHANNEL_DESCRIPTION_ATTR,
-    GTD_CHANNEL_TIME_DATASET, GTD_CHANNEL_UNIT_ATTR, GTD_CHANNELS_GROUP, GTD_META_DEVICE_ATTR,
-    GTD_META_NOTES_ATTR, GTD_META_TITLE_ATTR, GTD_META_TRAVEL_MODE_ATTR, GTD_VERSION_ATTR,
-    GTD_VERSION_FALLBACK, LogAttachment, LogAttachmentEntry, LogAttachmentId, NavPointTimeRange,
-    RecordingEntry, RecordingMeta, SNAP_BLOB_DATASET, SNAP_GROUP, StoredFixPlacementRule,
-    StoredRecording, StoredSegmentation, StoredTrackSplitRule, TRACK_END_DATASET,
-    TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, TrackRange, TrackState,
+    ATTR_SEG_GAP_US, ATTR_SEG_PLACEMENT_RULE, ATTR_SEG_SPLIT_RULE, ATTR_START_US,
+    CURRENT_UI_STATE_VERSION, ChannelSummary, DatabaseRef, DbError, GTD_CHANNEL_COMPONENTS_ATTR,
+    GTD_CHANNEL_DESCRIPTION_ATTR, GTD_CHANNEL_TIME_DATASET, GTD_CHANNEL_UNIT_ATTR,
+    GTD_CHANNELS_GROUP, GTD_META_DEVICE_ATTR, GTD_META_NOTES_ATTR, GTD_META_TITLE_ATTR,
+    GTD_META_TRAVEL_MODE_ATTR, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK, HIDDEN_TRACKS_DATASET,
+    LogAttachment, LogAttachmentEntry, LogAttachmentId, NavPointTimeRange, RecordingEntry,
+    RecordingMeta, RecordingUiState, SNAP_BLOB_DATASET, SNAP_GROUP, StoredFixPlacementRule,
+    StoredRecording, StoredSegmentation, StoredTrackSplitRule, StoredUiStateVersion,
+    TRACK_END_DATASET, TRACK_START_DATASET, TRACK_STATE_DATASET, TRACKS_GROUP, TrackRange,
+    TrackState, UI_STATE_GROUP, UI_STATE_VERSION_ATTR, UiStateVersionReporter,
     identity_from_group_name, identity_group_name, is_db_internal_group, is_db_recording_attr,
     make_group_name,
 };
@@ -1345,6 +1347,97 @@ pub(crate) fn snap_blob(
         return Ok(None);
     };
     Ok(dataset.read_raw::<u8>().ok())
+}
+
+/// The UI state stored with a recording, and the default for one whose
+/// [`UI_STATE_GROUP`] is absent or was written at a higher version.
+pub(crate) fn recording_ui_state(
+    db_path: &Path,
+    db_ref: &DatabaseRef,
+    reporter: &UiStateVersionReporter,
+) -> Result<RecordingUiState, InternalError> {
+    let file = hdf5::File::open(db_path)?;
+    let by_id = file.group("by_identity")?;
+    let id_grp = open_identity_group(&by_id, &db_ref.identity)?;
+    let rec_grp = id_grp.group(&db_ref.group_name)?;
+    let Ok(grp) = rec_grp.group(UI_STATE_GROUP) else {
+        return Ok(RecordingUiState::default());
+    };
+
+    if let StoredUiStateVersion::Newer(found) =
+        StoredUiStateVersion::from_attribute_value(stored_ui_state_version(&grp))
+    {
+        reporter.report_too_new(db_ref, found);
+        return Ok(RecordingUiState::default());
+    }
+
+    let hidden_track_numbers = grp
+        .dataset(HIDDEN_TRACKS_DATASET)
+        .and_then(|dataset| dataset.read_raw::<u64>())
+        .unwrap_or_default();
+    Ok(RecordingUiState::with_hidden_track_numbers(
+        hidden_track_numbers,
+    ))
+}
+
+/// Store `ui_state` as the recording's UI state at
+/// [`CURRENT_UI_STATE_VERSION`]. A no-op when the recording is absent.
+pub(crate) fn set_recording_ui_state(
+    db_path: &Path,
+    db_ref: &DatabaseRef,
+    ui_state: &RecordingUiState,
+    reporter: &UiStateVersionReporter,
+) -> Result<(), InternalError> {
+    let file = hdf5::File::open_rw(db_path)?;
+    let by_id = file.group("by_identity")?;
+    let Ok(id_grp) = open_identity_group(&by_id, &db_ref.identity) else {
+        return Ok(());
+    };
+    let Ok(rec_grp) = id_grp.group(&db_ref.group_name) else {
+        return Ok(());
+    };
+
+    let stored_version = rec_grp
+        .group(UI_STATE_GROUP)
+        .ok()
+        .and_then(|grp| stored_ui_state_version(&grp));
+    match StoredUiStateVersion::from_attribute_value(stored_version) {
+        StoredUiStateVersion::Newer(found) => reporter.report_too_new(db_ref, found),
+        StoredUiStateVersion::Current => {
+            write_hidden_tracks(&rec_grp.group(UI_STATE_GROUP)?, ui_state)?;
+        }
+        StoredUiStateVersion::Older(_) => {
+            if rec_grp.link_exists(UI_STATE_GROUP) {
+                rec_grp.unlink(UI_STATE_GROUP)?;
+            }
+            let grp = rec_grp.create_group(UI_STATE_GROUP)?;
+            grp.new_attr::<i64>()
+                .create(UI_STATE_VERSION_ATTR)?
+                .write_scalar(&CURRENT_UI_STATE_VERSION)?;
+            write_hidden_tracks(&grp, ui_state)?;
+        }
+    }
+    Ok(())
+}
+
+fn stored_ui_state_version(grp: &Group) -> Option<i64> {
+    grp.attr(UI_STATE_VERSION_ATTR)
+        .and_then(|attr| attr.read_scalar::<i64>())
+        .ok()
+}
+
+/// (Re)write the hidden track numbers of a [`UI_STATE_GROUP`], leaving the
+/// group's other datasets where they are.
+fn write_hidden_tracks(grp: &Group, ui_state: &RecordingUiState) -> Result<(), InternalError> {
+    if grp.link_exists(HIDDEN_TRACKS_DATASET) {
+        grp.unlink(HIDDEN_TRACKS_DATASET)?;
+    }
+    let hidden_track_numbers: Vec<u64> = ui_state.hidden_track_numbers().iter().copied().collect();
+    grp.new_dataset::<u64>()
+        .shape([hidden_track_numbers.len()])
+        .create(HIDDEN_TRACKS_DATASET)?
+        .write_raw(&hidden_track_numbers)?;
+    Ok(())
 }
 
 /// Every row of a recording's stored track table, tombstones and all. Empty

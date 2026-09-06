@@ -5,10 +5,15 @@ use std::path::Path;
 use thiserror::Error;
 
 pub mod log_attachment;
+pub mod ui_state;
 
 pub use log_attachment::{
     LOG_ATTACHMENT_ATTR_PREFIX, LOGS_DIRECTORY, LogAttachment, LogAttachmentEntry, LogAttachmentId,
     LogContentHash, StoredLogFilter, StoredLogFilterMode, logs_directory_for_database,
+};
+pub use ui_state::{
+    CURRENT_UI_STATE_VERSION, HIDDEN_TRACKS_DATASET, RecordingUiState, StoredUiStateVersion,
+    UI_STATE_GROUP, UI_STATE_VERSION_ATTR, UiStateVersionReporter, UiStateVersionTooNew,
 };
 
 /// The schema version this build writes.
@@ -168,7 +173,7 @@ pub fn is_db_recording_attr(key: &str) -> bool {
 /// bookkeeping (not part of the GTD file), so the group is skipped when
 /// reconstructing the original GTD file on load.
 pub fn is_db_internal_group(name: &str) -> bool {
-    name == TRACKS_GROUP || name == SNAP_GROUP
+    name == TRACKS_GROUP || name == SNAP_GROUP || name == UI_STATE_GROUP
 }
 
 /// One stored track: a half-open index range `[start, end)` into the recording's
@@ -264,7 +269,7 @@ impl<'a> TrackStateColumn<'a> {
 /// A reference to a specific recording stored in the history database.
 ///
 /// Identifies the HDF5 group at `by_identity/{identity}/{group_name}`.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct DatabaseRef {
     pub identity: String,
     pub group_name: String,
@@ -769,6 +774,18 @@ pub trait ReadOnlyHistoryDatabase {
     /// none (never snapped, or stored before snap persistence existed).
     fn snap_blob(&self, db_ref: &DatabaseRef) -> Result<Option<Vec<u8>>, DbError>;
 
+    /// The UI state stored with a recording, and
+    /// [`RecordingUiState::default`] for a recording that holds none.
+    ///
+    /// Where a [`UI_STATE_GROUP`] holds a version above
+    /// [`CURRENT_UI_STATE_VERSION`], this returns the default and reports that
+    /// version through `reporter`.
+    fn recording_ui_state(
+        &self,
+        db_ref: &DatabaseRef,
+        reporter: &UiStateVersionReporter,
+    ) -> Result<RecordingUiState, DbError>;
+
     /// Every log attached to a recording, in the order
     /// [`LogAttachmentEntry::sort_by_name_then_id`] puts them.
     ///
@@ -840,9 +857,9 @@ pub trait HistoryDatabase: ReadOnlyHistoryDatabase {
     /// segmentation settings under its existing group name, which keeps
     /// `db_ref` valid.
     ///
-    /// The recording keeps the logs attached to it. Its stored snap run is
-    /// dropped: the run names point indices that `bytes` renumber. Fails when
-    /// the recording is not in the database.
+    /// The recording keeps the logs attached to it. This drops its stored snap
+    /// run and its UI state, which address points and tracks that `bytes`
+    /// renumber. Fails when the recording is not in the database.
     fn replace_recording_in_place(
         &mut self,
         db_ref: &DatabaseRef,
@@ -881,6 +898,23 @@ pub trait HistoryDatabase: ReadOnlyHistoryDatabase {
     /// format (a versioned envelope), the database only keeps them with the
     /// recording so they prune with it.
     fn set_snap_blob(&mut self, db_ref: &DatabaseRef, blob: &[u8]) -> Result<(), DbError>;
+
+    /// Store `ui_state` as the recording's UI state at
+    /// [`CURRENT_UI_STATE_VERSION`], replacing the datasets this build
+    /// defines.
+    ///
+    /// Over a [`UI_STATE_GROUP`] already at that version, this leaves the
+    /// group's other datasets in place, which hold the kinds of UI state a
+    /// later build added. Over a group at a lower version, this replaces the
+    /// whole group, which removes the datasets of the older layout. Where the
+    /// stored version is higher, this writes nothing and reports the version
+    /// through `reporter`. A no-op when the recording is not in the database.
+    fn set_recording_ui_state(
+        &mut self,
+        db_ref: &DatabaseRef,
+        ui_state: &RecordingUiState,
+        reporter: &UiStateVersionReporter,
+    ) -> Result<(), DbError>;
 
     /// Write one attachment's attribute, replacing whatever was stored under
     /// its id.
