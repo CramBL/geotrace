@@ -245,6 +245,20 @@ typedef enum {
 } GtdTravelMode;
 
 /**
+ * Severity of a log record, with the values of the Rust `log` crate's levels.
+ *
+ * The SDK reports data it read or was given but could not use as written at
+ * `GTD_LOG_WARN`.
+ */
+typedef enum {
+    GTD_LOG_ERROR = 1,
+    GTD_LOG_WARN = 2,
+    GTD_LOG_INFO = 3,
+    GTD_LOG_DEBUG = 4,
+    GTD_LOG_TRACE = 5,
+} GtdLogLevel;
+
+/**
  * How a channel unit label should be interpreted on the write path.
  *
  * A recognized unit has a physical quantity and a conversion factor, so a
@@ -391,6 +405,19 @@ typedef struct {
      */
     size_t n_values;
 } GtdChannel;
+
+/**
+ * Called once per log record.
+ *
+ * @param level     Severity of the record.
+ * @param target    Module path of the code that wrote the record, NUL-terminated UTF-8.
+ * @param message   Text of the record, NUL-terminated UTF-8.
+ * @param user_data The pointer given to `gtd_set_log_callback()`.
+ */
+typedef void (*GtdLogCallback)(GtdLogLevel level,
+                               const char *target,
+                               const char *message,
+                               void *user_data);
 
 /**
  * Channel metadata returned by `gtd_nav_file_get_channel()`.
@@ -600,6 +627,27 @@ typedef struct {
      */
     GtdOptF32 snr_dbhz;
 } GtdSatInfo;
+
+/**
+ * One satellite data quality issue, returned by `gtd_nav_file_get_satellite_warning()`.
+ *
+ * All string fields are null-terminated.
+ */
+typedef struct {
+    /**
+     * How many satellites over all of the file's reports show the issue, or
+     * how many reports where the issue is a property of a whole report.
+     */
+    uint32_t count;
+    /**
+     * What the issue is, e.g. `"satellite(s) with PRN 0"`.
+     */
+    char issue[128];
+    /**
+     * Why the value is a problem, and what a recorder should write instead.
+     */
+    char description[512];
+} GtdSatelliteWarningInfo;
 
 /**
  * Event marker style data returned by `gtd_nav_file_get_event_marker_style()`.
@@ -887,6 +935,24 @@ GtdStatus gtd_builder_set_travel_mode(GtdFileBuilder *builder, GtdTravelMode mod
 GtdStatus gtd_builder_set_lenient(GtdFileBuilder *builder);
 
 /**
+ * Set how far a satellite report may be from a nav fix to be associated with
+ * it. The default is 500 ms.
+ *
+ * A report outside the window of every fix gets a nav fix of its own,
+ * dead-reckoned from the fix before it.
+ *
+ * Must be called before the first `gtd_builder_add_*` call.
+ *
+ * @param builder       Builder handle.
+ * @param window_micros Window in microseconds. A window above `INT64_MAX`
+ *                      microseconds is capped there: every report is
+ *                      associated with its nearest fix.
+ *
+ * @return `GTD_ERR_CALL_ORDER` if data has already been added.
+ */
+GtdStatus gtd_builder_set_satellite_window_us(GtdFileBuilder *builder, uint64_t window_micros);
+
+/**
  * Validate and canonicalize a channel unit label.
  *
  * Call with @p out NULL and @p out_capacity zero to query the required byte
@@ -922,6 +988,50 @@ GtdStatus gtd_channel_unit_parse(const char *label,
  * The pointer is valid until the next SDK call on this thread.
  */
 const char *gtd_last_error(void);
+
+/**
+ * Register @p callback as the destination for the SDK's log records.
+ *
+ * The SDK reports what it did with data it could not use as written: a
+ * satellite SNR of 99 dB-Hz, an unknown travel mode, an unrecognized icon.
+ * Without a callback none of those records reach the caller.
+ *
+ * Records of `GTD_LOG_WARN` and above reach the callback until
+ * `gtd_set_log_level()` says otherwise. A record below the level costs nothing:
+ * the SDK never formats it.
+ *
+ * The callback runs on the thread that wrote the record, and its @p target and
+ * @p message pointers are valid only for the duration of the call. Copy what
+ * the callback keeps.
+ *
+ * A second call replaces the callback and its user data. A NULL @p callback
+ * clears it, as `gtd_clear_log_callback()` does.
+ *
+ * @param callback  Function to call per record, or NULL to stop forwarding.
+ * @param user_data Passed to every call. The SDK stores it and never reads it.
+ *
+ * @return `GTD_ERR_INTERNAL` if the SDK could not install its log sink, in
+ *         which case the callback receives no records.
+ */
+GtdStatus gtd_set_log_callback(GtdLogCallback callback, void *user_data);
+
+/**
+ * Forward records of @p level and above, dropping the rest.
+ *
+ * The level holds until the next call, a clear of the callback included, and
+ * is `GTD_LOG_WARN` until this is called.
+ *
+ * @param level Lowest severity to forward.
+ */
+void gtd_set_log_level(GtdLogLevel level);
+
+/**
+ * Stop forwarding log records.
+ *
+ * Keep the user data alive as long as another thread may still write a record:
+ * a callback already running when this call clears it runs to completion.
+ */
+void gtd_clear_log_callback(void);
 
 /**
  * Return the number of channels in the file.
@@ -1163,6 +1273,31 @@ GtdStatus gtd_nav_file_open(const char *path, GtdNavFile **out);
  * @param out    Output parameter for the file handle.
  */
 GtdStatus gtd_nav_file_from_bytes(const uint8_t *data, size_t length, GtdNavFile **out);
+
+/**
+ * Return the number of satellite data warnings for the file.
+ *
+ * These are the checks `gtd_builder_finish()` runs over the satellite reports
+ * it is given, one warning per issue found, and they are computed when the
+ * file handle is created.
+ *
+ * @param file File handle. Returns 0 if NULL.
+ */
+size_t gtd_nav_file_satellite_warning_count(const GtdNavFile *file);
+
+/**
+ * Fill @p out with the satellite data warning at @p index.
+ *
+ * @param file  File handle.
+ * @param index Zero-based index. Must be less than
+ *              `gtd_nav_file_satellite_warning_count(file)`.
+ * @param out   Caller-allocated struct to fill.
+ *
+ * @return `GTD_ERR_OUT_OF_RANGE` if @p index is past the last warning.
+ */
+GtdStatus gtd_nav_file_get_satellite_warning(const GtdNavFile *file,
+                                             size_t index,
+                                             GtdSatelliteWarningInfo *out);
 
 /**
  * Return the number of event marker styles in the file.

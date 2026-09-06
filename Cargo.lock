@@ -2228,6 +2228,8 @@ dependencies = [
  "chrono",
  "geotrace-sdk",
  "hdf5-pure",
+ "log",
+ "parking_lot",
 ]
 
 [[package]]

@@ -14,9 +14,17 @@ the app).
 - C++ `FixTime::from_recorded()`, which takes a `RecordedFixTimestamps` and returns `std::nullopt` when the recorder holds neither timestamp.
 - C `gtd_nav_file_marker_count`, `gtd_nav_file_get_marker`, `gtd_nav_file_event_marker_style_count` and `gtd_nav_file_get_event_marker_style` read the map markers and the event marker styles a file contains.
 - C++ `NavFile::marker_count`, `marker`, `try_marker`, `event_marker_style_count`, `event_marker_style` and `try_event_marker_style` read them through `MarkerView` and `EventMarkerStyleView`.
+- C `gtd_set_log_callback` and `gtd_clear_log_callback` send the SDK's log records to a callback, which receives each record's `GtdLogLevel`, target and message.
+- C `gtd_set_log_level` sets the lowest severity the SDK forwards, `GTD_LOG_WARN` until it is called.
+- C++ `geotrace::set_log_callback`, `try_set_log_callback` and `clear_log_callback` take a `std::function` over the same records, with the level as the new `LogLevel`. `geotrace::set_log_level` sets the lowest severity forwarded.
+- C `gtd_nav_file_satellite_warning_count` and `gtd_nav_file_get_satellite_warning` read the satellite data warnings the builder's checks raise for a file, through the new `GtdSatelliteWarningInfo`.
+- C++ `NavFile::satellite_warning_count`, `satellite_warning` and `try_satellite_warning` read them through `SatelliteWarningView`.
+- Python `NavFileBuilder.with_lenient_errors()` clamps an annotation outside the nav fix time range to the nearest fix, where the build otherwise fails.
+- Python `NavFileBuilder.with_satellite_window(timedelta)`, C `gtd_builder_set_satellite_window_us(uint64_t)` and C++ `FileBuilder::satellite_window(std::chrono::microseconds)` set how far a satellite report may be from a nav fix to be associated with it. Python raises `ValueError` and C++ throws `std::invalid_argument` for a negative window.
 
 ### Changed
 
+- Rust `NavFileBuilder::with_satellite_window` takes a `std::time::Duration`, which cannot be negative. A window longer than `i64::MAX` microseconds associates every satellite report with its nearest nav fix.
 - C `GtdNavPointInfo` has two new `GtdTimestamp` fields, `sat_report_gps_time` and `sat_report_sys_time`, each `gtd_ts_none()` where the nav point has no satellite report and where the report has no such timestamp. C++ `NavPointView` has the two as `std::optional<Timestamp>`.
 - C `GtdSatellite` and `GtdSatInfo` take a satellite's elevation, azimuth and SNR as the new `GtdOptF32` (`GTD_SOME_F32`, `GTD_NONE_F32`), and C++ `Satellite` and `SatelliteView` as `std::optional<float>`, the 32-bit float the file stores.
 - The writer takes `sdk_version`, `sdk_git_commit` and `sdk_commit_time` from the `NavFile` it writes: a file read from disk and written back keeps the stamp it was read with, and one read without a stamp is written without one. `NavRecorder::finish` stamps the build it runs in.

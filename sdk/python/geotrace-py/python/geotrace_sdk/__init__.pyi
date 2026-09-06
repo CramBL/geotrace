@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from os import PathLike
 from typing import Any, final
@@ -747,6 +747,26 @@ class NavFileBuilder:
 
     def with_notes(self, notes: str) -> NavFileBuilder:
         """Set free-text notes. Must be called before ``add()``. Returns ``self``."""
+        ...
+
+    def with_lenient_errors(self) -> NavFileBuilder:
+        """Clamp an annotation outside the nav fix time range to the nearest fix.
+
+        The strict build raises :class:`ValueError` for such an annotation.
+        Must be called before ``add()``. Returns ``self``.
+        """
+        ...
+
+    def with_satellite_window(self, window: timedelta) -> NavFileBuilder:
+        """Set how far a satellite report may be from a nav fix to associate them.
+
+        The default is 500 ms. A report outside the window of every fix gets a
+        nav fix of its own. Must be called before ``add()``. Returns ``self``.
+
+        Raises:
+            ValueError: For a negative window.
+            RuntimeError: If data has already been added.
+        """
         ...
 
     def add(

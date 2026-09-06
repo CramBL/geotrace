@@ -1,5 +1,6 @@
-use crate::{Angle, Velocity};
-use chrono::{DateTime, Duration, Utc};
+use std::time::Duration;
+
+use chrono::{DateTime, Utc};
 
 use crate::error::{BuildError, Error, FieldLocation};
 use crate::time_types::{GpsTime, SysTime};
@@ -9,6 +10,7 @@ use crate::types::{
     Satellite, SatelliteReport, TravelMode,
 };
 use crate::variant_path::EventKind;
+use crate::{Angle, Velocity};
 
 struct InternalFix {
     time: NavFixTime,
@@ -179,7 +181,7 @@ impl NavFileBuilder {
     pub fn new() -> Self {
         Self {
             meta: None,
-            satellite_window: Duration::milliseconds(500),
+            satellite_window: Duration::from_millis(500),
             continue_on_error: false,
             scrubbed_provenance: false,
         }
@@ -231,6 +233,9 @@ impl NavFileBuilder {
     }
 
     /// Override the maximum time gap for associating a satellite report to a nav fix.
+    ///
+    /// A window longer than `i64::MAX` microseconds, about 292,000 years, is
+    /// capped there: every report is associated with its nearest fix.
     pub fn with_satellite_window(mut self, window: Duration) -> Self {
         self.satellite_window = window;
         self
@@ -503,7 +508,7 @@ impl NavRecorder {
         }
 
         let (sat_assignments, unassociated) =
-            associate_satellites(&self.fixes, self.satellite_reports, &self.satellite_window);
+            associate_satellites(&self.fixes, self.satellite_reports, self.satellite_window);
 
         // Build ghost nav fixes for orphaned satellite reports.
         let ghost_points = ghost_nav_points_for(&self.fixes, unassociated)?;
@@ -511,7 +516,7 @@ impl NavRecorder {
             log::debug!(
                 "{} ghost nav fix(es) created for satellite reports outside the {}ms association window",
                 ghost_points.len(),
-                self.satellite_window.num_milliseconds(),
+                self.satellite_window.as_millis(),
             );
         }
 
@@ -894,9 +899,9 @@ fn ghost_gps_us_anchored_to(report: &InternalSatReport, anchor_fix: &InternalFix
 fn associate_satellites(
     fixes: &[InternalFix],
     reports: Vec<InternalSatReport>,
-    window: &Duration,
+    window: Duration,
 ) -> (Vec<Option<InternalSatReport>>, Vec<InternalSatReport>) {
-    let window_us = window.num_microseconds().unwrap_or(500_000);
+    let window_us = i64::try_from(window.as_micros()).unwrap_or(i64::MAX);
 
     // Compute GPS/sys-clock delta anchors from fixes that carry both timestamps.
     let delta_anchors: Vec<(i64, i64)> = fixes

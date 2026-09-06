@@ -79,7 +79,7 @@ fn first_constellation(p: &geotrace_sdk::NavPoint) -> Constellation {
 #[test]
 fn window_boundary_inclusive() -> Result<(), BuildError> {
     let mut recorder = NavFileBuilder::new()
-        .with_satellite_window(Duration::milliseconds(100))
+        .with_satellite_window(std::time::Duration::from_millis(100))
         .open();
     recorder.add_nav_fix(fix_at(0, 55.0, 12.0));
     recorder.add_satellite_report(report_gps(100)); // exactly 100 ms away
@@ -93,12 +93,31 @@ fn window_boundary_inclusive() -> Result<(), BuildError> {
     Ok(())
 }
 
+/// `Duration::MAX` is more microseconds than the `i64` the association compares
+/// against holds, and the window is capped at `i64::MAX` microseconds.
+#[test]
+fn a_window_past_the_microsecond_count_associates_every_report() -> Result<(), BuildError> {
+    let mut recorder = NavFileBuilder::new()
+        .with_satellite_window(std::time::Duration::MAX)
+        .open();
+    recorder.add_nav_fix(fix_at(0, 55.0, 12.0));
+    recorder.add_satellite_report(report_gps(3_600_000));
+    let nav_file = recorder.finish()?;
+
+    assert_eq!(nav_file.nav_points().len(), 1, "no ghost fix expected");
+    assert!(
+        nav_file.nav_points()[0].satellites.is_some(),
+        "a report an hour from the only fix must be assigned to it"
+    );
+    Ok(())
+}
+
 /// One microsecond past the window boundary falls outside (`dist > window`).
 /// The report must become a ghost fix, not be silently dropped.
 #[test]
 fn window_boundary_one_microsecond_past_is_excluded() -> Result<(), BuildError> {
     let mut recorder = NavFileBuilder::new()
-        .with_satellite_window(Duration::milliseconds(100))
+        .with_satellite_window(std::time::Duration::from_millis(100))
         .open();
     recorder.add_nav_fix(fix_at(0, 0.0, 0.0));
     // 100 ms + 1 μs → just outside the window.
@@ -160,7 +179,7 @@ fn report_goes_to_nearer_of_two_candidate_fixes() -> Result<(), BuildError> {
 fn report_equidistant_goes_to_earlier_fix() -> Result<(), BuildError> {
     // Use a 2 000 ms window so both fixes are candidates.
     let mut recorder = NavFileBuilder::new()
-        .with_satellite_window(Duration::milliseconds(2000))
+        .with_satellite_window(std::time::Duration::from_millis(2000))
         .open();
     recorder.add_nav_fix(fix_at(0, 10.0, 10.0)); // fix A
     recorder.add_nav_fix(fix_at(2000, 20.0, 20.0)); // fix B
@@ -1096,7 +1115,7 @@ fn gps_ahead_600ms_sat_at_exactly_500ms_delay_boundary() -> Result<(), BuildErro
     const SAT_DELAY_MS: i64 = 500; // exactly at the window boundary
 
     let mut recorder = NavFileBuilder::new()
-        .with_satellite_window(Duration::milliseconds(500))
+        .with_satellite_window(std::time::Duration::from_millis(500))
         .open();
     recorder.add_nav_fix(
         NavFix::builder()

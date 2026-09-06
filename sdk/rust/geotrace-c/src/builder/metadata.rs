@@ -1,6 +1,7 @@
-//! The builder's metadata setters.
+//! The builder's metadata setters and build options.
 
 use std::ffi::c_char;
+use std::time::Duration;
 
 use super::GtdFileBuilder;
 use crate::GtdTravelMode;
@@ -104,5 +105,30 @@ pub unsafe extern "C" fn gtd_builder_set_lenient(builder: *mut GtdFileBuilder) -
     error::run_catching_panics(|| {
         let builder = nonnull_mut!(builder);
         builder.set_lenient()
+    })
+}
+
+/// Set how far a satellite report may be from a nav fix to be associated with
+/// it. The default is 500 ms.
+///
+/// A report outside the window of every fix gets a nav fix of its own,
+/// dead-reckoned from the fix before it.
+///
+/// Must be called before the first `gtd_builder_add_*` call.
+///
+/// @param builder       Builder handle.
+/// @param window_micros Window in microseconds. A window above `INT64_MAX`
+///                      microseconds is capped there: every report is
+///                      associated with its nearest fix.
+///
+/// @return `GTD_ERR_CALL_ORDER` if data has already been added.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_builder_set_satellite_window_us(
+    builder: *mut GtdFileBuilder,
+    window_micros: u64,
+) -> GtdStatus {
+    error::run_catching_panics(|| {
+        let builder = nonnull_mut!(builder);
+        builder.set_satellite_window(Duration::from_micros(window_micros))
     })
 }

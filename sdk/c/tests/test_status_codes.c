@@ -134,6 +134,7 @@ Test(status_codes, a_setter_after_a_nav_fix_is_a_call_order_error) {
     cr_assert_eq(gtd_builder_set_identity(builder, "late"), GTD_ERR_CALL_ORDER);
     cr_assert_eq(gtd_builder_set_travel_mode(builder, GTD_TRAVEL_MODE_CAR), GTD_ERR_CALL_ORDER);
     cr_assert_eq(gtd_builder_set_lenient(builder), GTD_ERR_CALL_ORDER);
+    cr_assert_eq(gtd_builder_set_satellite_window_us(builder, 2000000), GTD_ERR_CALL_ORDER);
     cr_assert_not_null(gtd_last_error());
 
     gtd_builder_destroy(builder);
@@ -149,6 +150,7 @@ Test(status_codes, a_setter_before_any_data_is_ok) {
     cr_assert_eq(gtd_builder_set_identity(builder, "early"), GTD_OK);
     cr_assert_eq(gtd_builder_set_travel_mode(builder, GTD_TRAVEL_MODE_CAR), GTD_OK);
     cr_assert_eq(gtd_builder_set_lenient(builder), GTD_OK);
+    cr_assert_eq(gtd_builder_set_satellite_window_us(builder, 2000000), GTD_OK);
 
     gtd_builder_destroy(builder);
 }

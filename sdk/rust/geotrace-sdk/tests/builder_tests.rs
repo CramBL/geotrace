@@ -115,7 +115,7 @@ fn satellite_association_tie_breaking() -> Result<(), BuildError> {
 fn satellite_outside_narrow_window_creates_ghost_fix() -> Result<(), BuildError> {
     // Report at 200 ms exceeds the 100 ms custom window → ghost fix, not an error.
     let mut recorder = NavFileBuilder::new()
-        .with_satellite_window(Duration::milliseconds(100))
+        .with_satellite_window(std::time::Duration::from_millis(100))
         .open();
     recorder.add_nav_fix(simple_fix(0));
     recorder.add_satellite_report(simple_report(200));
@@ -130,7 +130,7 @@ fn satellite_outside_narrow_window_creates_ghost_fix() -> Result<(), BuildError>
 fn satellite_association_narrowed_window_within() -> Result<(), BuildError> {
     // Report at 50 ms is within the 100 ms custom window.
     let mut recorder = NavFileBuilder::new()
-        .with_satellite_window(Duration::milliseconds(100))
+        .with_satellite_window(std::time::Duration::from_millis(100))
         .open();
     recorder.add_nav_fix(simple_fix(0));
     recorder.add_satellite_report(simple_report(50));
