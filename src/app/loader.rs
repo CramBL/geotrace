@@ -1501,41 +1501,6 @@ mod tests {
         assert_eq!(stored_track_split_gap_us(&db_path, &db_ref), stored_before);
     }
 
-    /// A file of `track_count` tracks numbered the way `build_loaded_file`
-    /// numbers a fresh segmentation. Each track runs ten minutes, starting
-    /// twenty minutes after the one before it. The file's figures are
-    /// `TrackAggregates::over_tracks` over all of them.
-    fn segmented_file(track_count: usize) -> LoadedFile {
-        let tracks: Vec<gt_types::LoadedTrack> = (0..track_count)
-            .map(|position| {
-                let start = DateTime::UNIX_EPOCH
-                    + chrono::Duration::minutes(20 * i64::try_from(position).unwrap_or(0));
-                gt_types::LoadedTrack {
-                    metadata: gt_types::TrackMetadata {
-                        index: position + 1,
-                        duration: TEST_TRACK_DURATION,
-                        time_range: gt_types::TimeRange::new(start, start + TEST_TRACK_DURATION),
-                        ..gt_test_utils::empty_track_metadata()
-                    },
-                    ..gt_test_utils::loaded_track_with_points(Vec::new())
-                }
-            })
-            .collect();
-        let mut metadata = gt_test_utils::empty_file_metadata();
-        metadata.set_track_aggregates(TrackAggregates::over_tracks(&tracks));
-        LoadedFile {
-            metadata,
-            tracks,
-            event_marker_styles: rustc_hash::FxHashMap::default(),
-            orphaned_event_markers: Vec::new(),
-            source: gt_types::FileSource::GtdPath(std::path::PathBuf::new()),
-            load_warnings: Vec::new(),
-        }
-    }
-
-    /// How long each track of [`segmented_file`] runs.
-    const TEST_TRACK_DURATION: chrono::Duration = chrono::Duration::minutes(10);
-
     /// A stored track table whose rows hold `states`, with ten nav points in
     /// each live or shelved row and none in a tombstone.
     fn synthetic_stored_track_table(states: &[gt_store::TrackState]) -> Vec<gt_store::TrackRange> {
@@ -1587,7 +1552,7 @@ mod tests {
         #[case] segmented_track_count: usize,
         #[case] expected_numbers: Vec<usize>,
     ) {
-        let mut file = segmented_file(segmented_track_count);
+        let mut file = gt_test_utils::segmented_recording(segmented_track_count);
 
         apply_stored_track_table(&mut file, &synthetic_stored_track_table(&states));
 
@@ -1599,7 +1564,7 @@ mod tests {
     /// cover the tracks it shows.
     #[test]
     fn applying_a_stored_track_table_recomputes_the_figures_over_the_tracks_that_stay() {
-        let mut file = segmented_file(3);
+        let mut file = gt_test_utils::segmented_recording(3);
         let first_track_start = DateTime::UNIX_EPOCH;
 
         let shelved = apply_stored_track_table(
