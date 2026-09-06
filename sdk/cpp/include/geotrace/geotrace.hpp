@@ -28,6 +28,7 @@
 #include <compare>
 #endif
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -35,7 +36,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -1124,6 +1127,19 @@ struct EventMarkerStyleView {
 };
 
 /**
+ * One satellite data quality issue, returned by `NavFile::satellite_warning()`.
+ *
+ * String fields are copies - they are valid regardless of the `NavFile`'s lifetime.
+ */
+struct SatelliteWarningView {
+    // How many satellites over all of the file's reports show the issue, or how
+    // many reports where the issue is a property of a whole report.
+    std::uint32_t count = 0;
+    std::string issue;
+    std::string description;
+};
+
+/**
  * @name Type-safe event kinds
  *
  * Model an event taxonomy as `enum class` levels and specialise `EventEnum<E>`
@@ -1246,6 +1262,113 @@ template <class E, class... Es> EventPath event_path(E first, Es... rest) {
 /** @} */
 
 /**
+ * @name Log records
+ *
+ * The SDK reports what it did with data it could not use as written: a
+ * satellite SNR of 99 dB-Hz, an unknown travel mode, an unrecognized icon.
+ * `set_log_callback()` is what makes those records reach the program.
+ * @{
+ */
+
+/** Severity of a log record. */
+enum class LogLevel : std::uint8_t {
+    Error = GTD_LOG_ERROR,
+    Warn = GTD_LOG_WARN,
+    Info = GTD_LOG_INFO,
+    Debug = GTD_LOG_DEBUG,
+    Trace = GTD_LOG_TRACE,
+};
+
+/** Receives one log record: its severity, the module that wrote it, its text. */
+using LogCallback = std::function<void(LogLevel, std::string_view, std::string_view)>;
+
+namespace detail {
+
+inline std::mutex &log_callback_mutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+// The `std::shared_ptr` is what lets one thread replace the callback while
+// another runs it: the running thread holds a copy, which keeps that callback
+// alive until its call returns.
+inline std::shared_ptr<LogCallback> &log_callback_storage() {
+    static std::shared_ptr<LogCallback> callback;
+    return callback;
+}
+
+// The C SDK calls this on the thread that wrote the record, with the address of
+// the storage above as its user data.
+extern "C" inline void geotrace_cpp_log_trampoline(GtdLogLevel level, const char *target,
+                                                   const char *message, void *user_data) {
+    std::shared_ptr<LogCallback> callback;
+    {
+        // The lock is free again before the callback runs. A callback that logs
+        // would otherwise wait on itself.
+        const std::scoped_lock<std::mutex> lock(log_callback_mutex());
+        callback = *static_cast<std::shared_ptr<LogCallback> *>(user_data);
+    }
+    if (!callback || !*callback) {
+        return;
+    }
+    (*callback)(static_cast<LogLevel>(level), target != nullptr ? target : "",
+                message != nullptr ? message : "");
+}
+
+} // namespace detail
+
+/**
+ * Send the log records of `LogLevel::Warn` and above to @p callback, replacing
+ * the callback set before it. `set_log_level()` sets the level.
+ *
+ * The callback runs on the thread that wrote the record, and its two
+ * `std::string_view` arguments point at memory that is valid only for the
+ * duration of the call.
+ */
+inline Status try_set_log_callback(LogCallback callback) {
+    {
+        const std::scoped_lock<std::mutex> lock(detail::log_callback_mutex());
+        detail::log_callback_storage() = std::make_shared<LogCallback>(std::move(callback));
+    }
+    return Status::from(::gtd_set_log_callback(&detail::geotrace_cpp_log_trampoline,
+                                               &detail::log_callback_storage()));
+}
+
+/**
+ * Send the log records of `LogLevel::Warn` and above to @p callback, replacing
+ * the callback set before it. `set_log_level()` sets the level.
+ *
+ * @throws geotrace::Error if the SDK could not install its log sink, in which
+ *         case the callback receives no records.
+ */
+inline void set_log_callback(LogCallback callback) {
+    try_set_log_callback(std::move(callback)).throw_on_failure();
+}
+
+/**
+ * Forward the log records of @p level and above, dropping the rest.
+ *
+ * The level holds until the next call, a clear of the callback included, and is
+ * `LogLevel::Warn` until this is called.
+ */
+inline void set_log_level(LogLevel level) {
+    ::gtd_set_log_level(static_cast<GtdLogLevel>(level));
+}
+
+/**
+ * Stop forwarding log records.
+ *
+ * A callback another thread is already running finishes its call.
+ */
+inline void clear_log_callback() {
+    ::gtd_clear_log_callback();
+    const std::scoped_lock<std::mutex> lock(detail::log_callback_mutex());
+    detail::log_callback_storage() = nullptr;
+}
+
+/** @} */
+
+/**
  * Constructs a GeoTrace navigation file.
  *
  * Call `add_nav_fix()` (at least once), then `builder.finish()` to produce a
@@ -1307,6 +1430,25 @@ class FileBuilder {
     /** Downgrade out-of-range annotation errors to warnings. */
     FileBuilder &lenient() {
         record(::gtd_builder_set_lenient(impl_.get()));
+        return *this;
+    }
+
+    /**
+     * Set how far a satellite report may be from a nav fix to be associated
+     * with it. The default is 500 ms.
+     *
+     * A report outside the window of every fix gets a nav fix of its own,
+     * dead-reckoned from the fix before it.
+     *
+     * @throws std::invalid_argument for a negative @p window.
+     */
+    FileBuilder &satellite_window(std::chrono::microseconds window) {
+        if (window.count() < 0) {
+            record(Status{GTD_ERR_INVALID_ARGUMENT, "the satellite window must be zero or longer"});
+            return *this;
+        }
+        record(::gtd_builder_set_satellite_window_us(impl_.get(),
+                                                     static_cast<std::uint64_t>(window.count())));
         return *this;
     }
 
@@ -1500,8 +1642,16 @@ class FileBuilder {
     // the throwing API still reports at the call site. Without exceptions it
     // stays sticky and is surfaced by status() / try_finish().
     void record(GtdStatus status) {
-        if (status_.is_ok() && status != GTD_OK) {
-            status_ = Status::from(status);
+        if (status != GTD_OK) {
+            record(Status::from(status));
+        }
+    }
+
+    // The builder's own argument checks report through the same channel as the
+    // C SDK's statuses, with a message of their own.
+    void record(Status status) {
+        if (status_.is_ok() && status.is_err()) {
+            status_ = std::move(status);
 #if GEOTRACE_CPP_EXCEPTIONS
             status_.throw_on_failure();
 #endif
@@ -1841,6 +1991,34 @@ class [[nodiscard]] NavFile {
      */
     [[nodiscard]] EventMarkerStyleView event_marker_style(std::size_t idx) const {
         return try_event_marker_style(idx).value_or_throw();
+    }
+
+    /** Number of satellite data warnings for the file. */
+    [[nodiscard]] std::size_t satellite_warning_count() const noexcept {
+        return ::gtd_nav_file_satellite_warning_count(impl_.get());
+    }
+
+    /** Return the satellite data warning at @p idx, or an out-of-range error. */
+    Result<SatelliteWarningView> try_satellite_warning(std::size_t idx) const {
+        GtdSatelliteWarningInfo info{};
+        const GtdStatus status = ::gtd_nav_file_get_satellite_warning(impl_.get(), idx, &info);
+        if (status != GTD_OK) {
+            return Status::from(status);
+        }
+
+        // GtdSatelliteWarningInfo's strings sit in fixed C buffers, and the C
+        // SDK terminates each string.
+        // NOLINTBEGIN(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
+        return SatelliteWarningView{info.count, info.issue, info.description};
+        // NOLINTEND(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
+    }
+
+    /**
+     * Return the satellite data warning at @p idx.
+     * @throws std::out_of_range if `idx >= satellite_warning_count()`.
+     */
+    [[nodiscard]] SatelliteWarningView satellite_warning(std::size_t idx) const {
+        return try_satellite_warning(idx).value_or_throw();
     }
 
     /** Number of channels in the file. */

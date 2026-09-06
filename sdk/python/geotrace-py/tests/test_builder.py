@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import struct
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from geotrace_sdk import (
@@ -368,6 +368,67 @@ def test_builder_with_annotation() -> None:
     f = b.finish()
     assert len(f.markers) == 1
     assert f.markers[0].annotation.label == "Middle point"
+
+
+def test_lenient_errors_clamps_an_annotation_outside_the_nav_fix_time_range() -> None:
+    b = NavFileBuilder().with_lenient_errors()
+    b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
+    b.add(NavFix(lat=51.51, lon=-0.11, gps_time=T1))
+    b.add(Annotation(T2, label="After the last fix"))
+
+    f = b.finish()
+
+    assert len(f.markers) == 1
+    assert f.markers[0].lat == pytest.approx(51.51)
+
+
+def test_an_annotation_outside_the_nav_fix_time_range_fails_the_build() -> None:
+    b = NavFileBuilder()
+    b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
+    b.add(NavFix(lat=51.51, lon=-0.11, gps_time=T1))
+    b.add(Annotation(T2, label="After the last fix"))
+
+    with pytest.raises(ValueError, match="outside the nav fix time range"):
+        b.finish()
+
+
+def test_a_satellite_window_wider_than_the_default_associates_a_late_report() -> None:
+    report_time = T0 + timedelta(milliseconds=1500)
+
+    with_the_default_window = NavFileBuilder()
+    with_the_default_window.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
+    with_the_default_window.add(
+        SatelliteReport(
+            [Satellite(Constellation.GPS, 7, in_fix=True)], gps_time=report_time
+        )
+    )
+    assert len(with_the_default_window.finish().points) == 2
+
+    with_a_two_second_window = NavFileBuilder().with_satellite_window(
+        timedelta(seconds=2)
+    )
+    with_a_two_second_window.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
+    with_a_two_second_window.add(
+        SatelliteReport(
+            [Satellite(Constellation.GPS, 7, in_fix=True)], gps_time=report_time
+        )
+    )
+    assert len(with_a_two_second_window.finish().points) == 1
+
+
+def test_a_negative_satellite_window_is_rejected() -> None:
+    with pytest.raises(ValueError, match="zero or longer"):
+        NavFileBuilder().with_satellite_window(timedelta(seconds=-1))
+
+
+def test_a_builder_option_after_a_fix_raises() -> None:
+    b = NavFileBuilder()
+    b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
+
+    with pytest.raises(RuntimeError, match="with_lenient_errors"):
+        b.with_lenient_errors()
+    with pytest.raises(RuntimeError, match="with_satellite_window"):
+        b.with_satellite_window(timedelta(seconds=2))
 
 
 def test_builder_consumed_after_finish() -> None:

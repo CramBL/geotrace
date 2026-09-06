@@ -6,12 +6,13 @@ mod marker;
 mod metadata;
 mod nav_point;
 mod read;
+mod satellite_warning;
 mod style;
 mod write;
 
 use std::ffi::{CString, c_char};
 
-use geotrace_sdk::NavFile;
+use geotrace_sdk::{NavFile, SatelliteWarning};
 
 use crate::GtdTimestamp;
 use crate::timestamp;
@@ -20,6 +21,7 @@ pub use channel::GtdChannelInfo;
 pub use event_marker::GtdEventMarkerInfo;
 pub use marker::GtdMarkerInfo;
 pub use nav_point::GtdNavPointInfo;
+pub use satellite_warning::GtdSatelliteWarningInfo;
 pub use style::GtdEventMarkerStyleInfo;
 
 /// Opaque handle for a parsed or freshly-built navigation file.
@@ -33,6 +35,7 @@ pub struct GtdNavFile {
     sdk_version: Option<CString>,
     sdk_git_commit: Option<CString>,
     sdk_commit_time: GtdTimestamp,
+    satellite_warnings: Vec<SatelliteWarning>,
 }
 
 impl GtdNavFile {
@@ -55,6 +58,11 @@ impl GtdNavFile {
                 .meta()
                 .sdk_commit_time()
                 .map_or_else(|| timestamp::gtd_ts_none(), timestamp::ts_from_datetime),
+            satellite_warnings: geotrace_sdk::collect_satellite_warnings(
+                file.nav_points()
+                    .iter()
+                    .filter_map(|point| point.satellites.as_ref()),
+            ),
             file,
         }
     }

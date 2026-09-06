@@ -5,6 +5,8 @@ mod ingest;
 mod lifecycle;
 mod metadata;
 
+use std::time::Duration;
+
 use geotrace_sdk::{NavFileBuilder, NavRecorder, TravelMode};
 
 use crate::error::{self, GtdStatus};
@@ -93,6 +95,12 @@ impl GtdFileBuilder {
     fn set_lenient(&mut self) -> GtdStatus {
         self.configure_before_data("lenient mode must be set before adding data", |b| {
             b.with_lenient_errors()
+        })
+    }
+
+    fn set_satellite_window(&mut self, window: Duration) -> GtdStatus {
+        self.configure_before_data("the satellite window must be set before adding data", |b| {
+            b.with_satellite_window(window)
         })
     }
 }

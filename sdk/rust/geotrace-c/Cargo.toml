@@ -27,6 +27,8 @@ name = "gen_fixture"
 [dependencies]
 chrono.workspace = true
 geotrace-sdk = { path = "../geotrace-sdk" }
+log.workspace = true
+parking_lot.workspace = true
 # Only the `gen_fixture` bin uses this, to craft the files no writer can produce.
 hdf5-pure.workspace = true
 

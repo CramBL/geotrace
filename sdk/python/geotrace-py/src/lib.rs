@@ -9,7 +9,7 @@ use std::ffi::CString;
 use std::hash::{Hash as _, Hasher as _};
 use std::path::PathBuf;
 
-use chrono::{DateTime, FixedOffset, Utc};
+use chrono::{DateTime, Duration, FixedOffset, Utc};
 use geotrace_sdk::{
     Angle, Annotation, AnnotationIcon, BuildError, Channel, ChannelUnit, Constellation,
     EventMarker, EventMarkerColor, EventMarkerIconChoice, EventMarkerPoint, EventMarkerStyle,
@@ -1471,6 +1471,23 @@ pub struct PyNavFileBuilder {
 }
 
 impl PyNavFileBuilder {
+    /// Apply `configure` to the pre-open config, raising `RuntimeError` under
+    /// the name of the method that called it once data has been added.
+    fn configure_before_data(
+        &mut self,
+        method_name: &str,
+        configure: impl FnOnce(NavFileBuilder) -> NavFileBuilder,
+    ) -> PyResult<()> {
+        if self.recorder.is_some() {
+            return Err(PyRuntimeError::new_err(format!(
+                "{method_name}() must be called before adding data"
+            )));
+        }
+        let config = self.config.take().ok_or_else(consumed_err)?;
+        self.config = Some(configure(config));
+        Ok(())
+    }
+
     /// Ensure the recorder is open, opening it from config if needed.
     fn ensure_recorder(&mut self) -> PyResult<&mut NavRecorder> {
         if self.recorder.is_none() {
@@ -1495,61 +1512,57 @@ impl PyNavFileBuilder {
     ///
     /// Must be called before any `add()` call. Returns `self` for chaining.
     fn with_meta(slf: Bound<'_, Self>, meta: &PyMeta) -> PyResult<Py<Self>> {
-        {
-            let mut b = slf.borrow_mut();
-            if b.recorder.is_some() {
-                return Err(PyRuntimeError::new_err(
-                    "with_meta() must be called before adding data",
-                ));
-            }
-            let config = b.config.take().ok_or_else(consumed_err)?;
-            b.config = Some(config.with_meta(meta.inner.clone()));
-        }
+        slf.borrow_mut()
+            .configure_before_data("with_meta", |config| config.with_meta(meta.inner.clone()))?;
         Ok(slf.unbind())
     }
 
     /// Set the file title. Must be called before any `add()` call.
     fn with_title(slf: Bound<'_, Self>, title: String) -> PyResult<Py<Self>> {
-        {
-            let mut b = slf.borrow_mut();
-            if b.recorder.is_some() {
-                return Err(PyRuntimeError::new_err(
-                    "with_title() must be called before adding data",
-                ));
-            }
-            let config = b.config.take().ok_or_else(consumed_err)?;
-            b.config = Some(config.with_title(title));
-        }
+        slf.borrow_mut()
+            .configure_before_data("with_title", |config| config.with_title(title))?;
         Ok(slf.unbind())
     }
 
     /// Set the device or sensor name. Must be called before any `add()` call.
     fn with_device(slf: Bound<'_, Self>, device: String) -> PyResult<Py<Self>> {
-        {
-            let mut b = slf.borrow_mut();
-            if b.recorder.is_some() {
-                return Err(PyRuntimeError::new_err(
-                    "with_device() must be called before adding data",
-                ));
-            }
-            let config = b.config.take().ok_or_else(consumed_err)?;
-            b.config = Some(config.with_device(device));
-        }
+        slf.borrow_mut()
+            .configure_before_data("with_device", |config| config.with_device(device))?;
         Ok(slf.unbind())
     }
 
     /// Set free-text notes. Must be called before any `add()` call.
     fn with_notes(slf: Bound<'_, Self>, notes: String) -> PyResult<Py<Self>> {
-        {
-            let mut b = slf.borrow_mut();
-            if b.recorder.is_some() {
-                return Err(PyRuntimeError::new_err(
-                    "with_notes() must be called before adding data",
-                ));
-            }
-            let config = b.config.take().ok_or_else(consumed_err)?;
-            b.config = Some(config.with_notes(notes));
-        }
+        slf.borrow_mut()
+            .configure_before_data("with_notes", |config| config.with_notes(notes))?;
+        Ok(slf.unbind())
+    }
+
+    /// Clamp an annotation outside the nav fix time range to the nearest fix.
+    ///
+    /// The strict build raises `ValueError` for such an annotation.
+    ///
+    /// Must be called before any `add()` call. Returns `self` for chaining.
+    fn with_lenient_errors(slf: Bound<'_, Self>) -> PyResult<Py<Self>> {
+        slf.borrow_mut()
+            .configure_before_data("with_lenient_errors", NavFileBuilder::with_lenient_errors)?;
+        Ok(slf.unbind())
+    }
+
+    /// Set how far a satellite report may be from a nav fix to be associated
+    /// with it. The default is 500 ms.
+    ///
+    /// Must be called before any `add()` call. Returns `self` for chaining.
+    ///
+    /// Raises `ValueError` for a negative window.
+    fn with_satellite_window(slf: Bound<'_, Self>, window: Duration) -> PyResult<Py<Self>> {
+        let window = window
+            .to_std()
+            .map_err(|_| PyValueError::new_err("the satellite window must be zero or longer"))?;
+        slf.borrow_mut()
+            .configure_before_data("with_satellite_window", |config| {
+                config.with_satellite_window(window)
+            })?;
         Ok(slf.unbind())
     }
 
