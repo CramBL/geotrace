@@ -17,26 +17,16 @@
 
 use std::{hint, sync::Arc};
 
-use chrono::{DateTime, Utc};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use gt_test_utils::log_fixtures::{self, SyntheticLogSpec, SyntheticLogTimestamps};
+use gt_test_utils::log_fixtures;
 
 const MIB: usize = 1024 * 1024;
 
 /// This much text indexes on one thread, under gt-logfile's chunk size.
 const SINGLE_CHUNK_BYTES: usize = 12 * MIB;
 
-/// A moment after every generated timestamp, so year inference is stable.
-fn now() -> DateTime<Utc> {
-    DateTime::from_timestamp(1_790_000_000, 0).expect("a valid moment")
-}
-
 fn fixture(approx_bytes: usize) -> Arc<str> {
-    Arc::from(log_fixtures::synthetic_journald_log(SyntheticLogSpec {
-        approx_bytes,
-        seed: 1,
-        timestamps: SyntheticLogTimestamps::SyslogShort,
-    }))
+    Arc::from(log_fixtures::syslog_journald_log(approx_bytes, 1))
 }
 
 fn bench_parse_log(c: &mut Criterion) {
@@ -50,7 +40,12 @@ fn bench_parse_log(c: &mut Criterion) {
             BenchmarkId::from_parameter(format!("{} MiB", approx_bytes / MIB)),
             &text,
             |b, text| {
-                b.iter(|| hint::black_box(gt_logfile::parse_log(Arc::clone(text).into(), now())));
+                b.iter(|| {
+                    hint::black_box(gt_logfile::parse_log(
+                        Arc::clone(text).into(),
+                        log_fixtures::after_the_synthetic_log(),
+                    ))
+                });
             },
         );
     }
@@ -69,7 +64,12 @@ fn bench_parse_log_single_chunk(c: &mut Criterion) {
         BenchmarkId::from_parameter(format!("{} MiB", SINGLE_CHUNK_BYTES / MIB)),
         &text,
         |b, text| {
-            b.iter(|| hint::black_box(gt_logfile::parse_log(Arc::clone(text).into(), now())));
+            b.iter(|| {
+                hint::black_box(gt_logfile::parse_log(
+                    Arc::clone(text).into(),
+                    log_fixtures::after_the_synthetic_log(),
+                ))
+            });
         },
     );
     group.finish();

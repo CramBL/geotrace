@@ -631,7 +631,8 @@ mod tests {
         positions: &[(Latitude, Longitude)],
         offset_secs: impl Fn(usize) -> i64,
     ) -> LoadedTrack {
-        let points = gt_test_utils::nav_points_stamped(FIRST_FIX_TIME, positions, offset_secs);
+        let points =
+            gt_test_utils::fixtures::nav_points_stamped(FIRST_FIX_TIME, positions, offset_secs);
         let mut track = gt_test_utils::loaded_track_with_points(points);
         let lod = track.placed_points().map(gt_track_builder::build_track_lod);
         if let Some(lod) = lod {

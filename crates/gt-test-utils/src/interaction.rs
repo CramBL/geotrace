@@ -1,15 +1,18 @@
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use egui::accesskit::Role;
-use egui_kittest::kittest::{By, Queryable as _};
+use egui_kittest::kittest::{By, NodeT as _, Queryable as _};
 use egui_kittest::{Harness, Node};
 
-/// Frames [`HarnessInteraction::step_until`] runs before giving up, and the
-/// pause it leaves between them for background threads to make progress. Two
-/// seconds in total, which covers a file load or a database write on a busy
-/// machine.
-const STEP_UNTIL_FRAME_BUDGET: usize = 200;
+/// How long [`HarnessInteraction::step_until`] runs before giving up. The
+/// deadline is wall clock: the work it waits for runs on a background thread,
+/// and a machine under load takes longer per frame, so a budget counted in
+/// frames ends the wait while that work is still running. Ten seconds covers a
+/// file load or a database write on such a machine, and a wait for work that
+/// never finishes ends inside a test's own time.
+const STEP_UNTIL_DEADLINE: Duration = Duration::from_secs(10);
+
 const PAUSE_BETWEEN_FRAMES: Duration = Duration::from_millis(10);
 
 /// Queues `clicks` press-and-release pairs of `button` at `target`, all read
@@ -37,7 +40,7 @@ fn queue_clicks<State>(
 pub trait HarnessInteraction {
     /// Runs one frame at a time, pausing between them so background threads
     /// make progress, until `predicate` holds. Returns whether it held within
-    /// the budget.
+    /// [`STEP_UNTIL_DEADLINE`].
     #[must_use]
     fn step_until(&mut self, predicate: impl FnMut(&Self) -> bool) -> bool;
 
@@ -89,6 +92,10 @@ pub trait HarnessInteraction {
     /// frames the smooth scroll takes to come to rest.
     fn scroll_wheel_at(&mut self, target: egui::Pos2, delta_points: f32, settle_frames: usize);
 
+    /// The values of the accesskit nodes matching `by`, top to bottom on
+    /// screen.
+    fn label_texts_top_to_bottom(&self, by: By<'_>) -> Vec<String>;
+
     /// The matching node with the smallest `rect().top()`, for labels that
     /// several widgets on screen share.
     fn topmost_matching<'t>(&'t self, by: By<'t>) -> Node<'t>;
@@ -116,14 +123,17 @@ impl<State> HarnessInteraction for Harness<'_, State> {
     }
 
     fn step_until_some<T>(&mut self, mut read: impl FnMut(&Self) -> Option<T>) -> Option<T> {
-        for _ in 0..STEP_UNTIL_FRAME_BUDGET {
+        let started = Instant::now();
+        loop {
             if let Some(value) = read(self) {
                 return Some(value);
+            }
+            if started.elapsed() >= STEP_UNTIL_DEADLINE {
+                return None;
             }
             sleep(PAUSE_BETWEEN_FRAMES);
             self.step();
         }
-        read(self)
     }
 
     fn type_into_text_input(&mut self, text: &str) {
@@ -192,6 +202,20 @@ impl<State> HarnessInteraction for Harness<'_, State> {
             modifiers: egui::Modifiers::NONE,
         });
         self.run_steps(settle_frames);
+    }
+
+    fn label_texts_top_to_bottom(&self, by: By<'_>) -> Vec<String> {
+        let mut labels: Vec<(f32, String)> = self
+            .query_all(by)
+            .map(|node| {
+                (
+                    node.rect().top(),
+                    node.accesskit_node().value().unwrap_or_default(),
+                )
+            })
+            .collect();
+        labels.sort_by(|(top, _), (other_top, _)| top.total_cmp(other_top));
+        labels.into_iter().map(|(_, text)| text).collect()
     }
 
     #[expect(

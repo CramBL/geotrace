@@ -459,6 +459,7 @@ fn draw_disc(
 #[cfg(test)]
 mod tests {
     use egui::{pos2, vec2};
+    use gt_types::fixtures::MetricOffset;
     use gt_types::satellites::{Constellation, Satellite, Satellites};
     use gt_types::{FileIdx, TrackIdx, TrackRef};
     use gt_ui_types::{SkyGlyphVariant, TrackMatchView};
@@ -495,8 +496,11 @@ mod tests {
     fn track(points: &[(f64, f64, Option<Satellites>)]) -> gt_types::LoadedTrack {
         let points = points
             .iter()
-            .map(|(x_m, y_m, report)| {
-                gt_test_utils::nav_point_at_meters(*x_m, *y_m, report.clone())
+            .map(|&(east_m, north_m, ref report)| {
+                gt_test_utils::fixtures::nav_point_at_meters(
+                    MetricOffset { east_m, north_m },
+                    report.clone(),
+                )
             })
             .collect();
         gt_test_utils::loaded_track_with_points(points)

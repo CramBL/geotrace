@@ -102,7 +102,7 @@ pub fn associate_entries(
 #[cfg(test)]
 mod tests {
     use chrono::TimeZone as _;
-    use gt_test_utils::nav_points_from;
+    use gt_test_utils::fixtures::nav_points_from;
     use gt_types::{FileIdx, LoadedTrack, PointIdx, TrackIdx, TrackRef};
     use proptest::{prelude::*, proptest};
     use rstest::rstest;
@@ -173,12 +173,13 @@ mod tests {
     /// Two fixes a second apart, 0.2 deg of longitude apart across the date
     /// line, on the equator.
     fn track_across_the_antimeridian() -> LoadedTrack {
-        gt_test_utils::loaded_track_with_points(gt_test_utils::nav_points_at_positions(
+        gt_test_utils::loaded_track_with_points(gt_test_utils::fixtures::nav_points_stamped(
             start(),
             &[
                 (Latitude::new(0.0), Longitude::new(179.9)),
                 (Latitude::new(0.0), Longitude::new(-179.9)),
             ],
+            |index| index as i64,
         ))
     }
 

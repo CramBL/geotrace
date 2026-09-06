@@ -8,7 +8,8 @@ use uom::si::f64::{Angle, Velocity};
 use uom::si::velocity::kilometer_per_hour;
 
 use crate::channel::Channel;
-use crate::coordinates::{Latitude, Longitude, RecordedLatitude};
+use crate::coordinates::{Latitude, Longitude, RecordedLatitude, RecordedLongitude};
+use crate::highlight::PointIdx;
 use crate::nav_point::NavPoint;
 use crate::satellites::{Constellation, Satellite, Satellites, Snr};
 use crate::time_types::{GpsTime, SysTime};
@@ -22,6 +23,10 @@ const SATELLITES_IN_FIX: u32 = 12;
 
 /// The satellites in view of a [`FixKind`] with nothing in its fix.
 const SATELLITES_IN_VIEW_ONLY: u32 = 4;
+
+/// The latitude that the fixtures over a recording without a position write.
+/// It lies past the 90° that the latitude axis ends at.
+const LATITUDE_OUT_OF_RANGE_DEGREES: f64 = 91.0;
 
 /// The signal quality every satellite of [`nav_points_with_drifting_satellites`]
 /// reports.
@@ -369,6 +374,83 @@ pub fn nav_data_with_gap(counts: FixCountsAroundAGap) -> Vec<NavPoint> {
     points
 }
 
+/// One fix per position of `positions`, on a heading of 90° at 15 km/h and
+/// without a satellite report, for a pair of positions either side of the
+/// antimeridian and other positions that the walking fixtures cannot reach.
+/// The fix at `index` has a timestamp of `offset_secs(index)` seconds from
+/// `start`, for a track whose timestamps step backwards.
+pub fn nav_points_stamped(
+    start: DateTime<Utc>,
+    positions: &[(Latitude, Longitude)],
+    offset_secs: impl Fn(usize) -> i64,
+) -> Vec<NavPoint> {
+    positions
+        .iter()
+        .enumerate()
+        .map(|(index, &(lat, lon))| {
+            let tpv = TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(
+                    start + Duration::seconds(offset_secs(index)),
+                ))
+                .lat(lat)
+                .lon(lon)
+                .heading(Angle::new::<degree>(EASTWARD_HEADING_DEGREES))
+                .velocity(Velocity::new::<kilometer_per_hour>(15.0))
+                .build();
+            NavPoint::new(tpv, None)
+        })
+        .collect()
+}
+
+/// `count` fixes one second apart from 2026-01-01 12:00:00 UTC, each at a
+/// latitude of 91° and a longitude of 12.5638°, for tests over a recording that
+/// the receiver wrote no position in.
+pub fn nav_points_without_a_valid_position(count: usize) -> Vec<NavPoint> {
+    (0..count)
+        .map(|index| {
+            let tpv = TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(
+                    fixture_start() + Duration::seconds(index as i64),
+                ))
+                .lat(RecordedLatitude::from_degrees(
+                    LATITUDE_OUT_OF_RANGE_DEGREES,
+                ))
+                .lon(RecordedLongitude::from_degrees(12.5638))
+                .heading(Angle::new::<degree>(0.0))
+                .build();
+            NavPoint::new(tpv, None)
+        })
+        .collect()
+}
+
+/// `count` fixes one second apart from 2026-01-01 12:00:00 UTC, walking
+/// north-east from 55°N 12°E in 0.001° steps on a heading of 45°, with the fix
+/// at `out_of_range` at a latitude of 91°.
+pub fn nav_points_with_a_latitude_out_of_range(
+    count: usize,
+    out_of_range: PointIdx,
+) -> Vec<NavPoint> {
+    (0..count)
+        .map(|index| {
+            let walked = index as f64 * 0.001;
+            let latitude = if index == out_of_range.as_usize() {
+                LATITUDE_OUT_OF_RANGE_DEGREES
+            } else {
+                55.0 + walked
+            };
+            let tpv = TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(
+                    fixture_start() + Duration::seconds(index as i64),
+                ))
+                .lat(RecordedLatitude::from_degrees(latitude))
+                .lon(Longitude::new(12.0 + walked))
+                .heading(Angle::new::<degree>(45.0))
+                .build();
+            NavPoint::new(tpv, None)
+        })
+        .collect()
+}
+
 /// `count` fixes `step_ms` apart from `start`, walking north from 55°N 12°E in
 /// 1e-5° steps, each built from the spec of `spec(index)`.
 ///
@@ -700,6 +782,45 @@ mod tests {
             Some(GpsTime::from_utc(at(7)))
         );
         assert_eq!(heading_degrees(&point), Some(90.0));
+    }
+
+    #[test]
+    fn nav_points_stamped_stamps_each_fix_with_the_offset_of_its_index() {
+        let positions = [
+            (Latitude::new(0.0), Longitude::new(179.9)),
+            (Latitude::new(0.0), Longitude::new(-179.9)),
+        ];
+
+        let points = nav_points_stamped(at(10), &positions, |index| 7 * index as i64);
+
+        let times: Vec<i64> = points
+            .iter()
+            .map(|point| point.tpv.time().utc().timestamp())
+            .collect();
+        assert_eq!(times, vec![10, 17]);
+        let longitudes: Vec<f64> = points
+            .iter()
+            .filter_map(|point| point.tpv.position())
+            .map(|(_, lon)| lon.as_degrees())
+            .collect();
+        assert_eq!(longitudes, vec![179.9, -179.9]);
+    }
+
+    #[rstest]
+    #[case::every_fix(nav_points_without_a_valid_position(3), 0)]
+    #[case::one_fix(nav_points_with_a_latitude_out_of_range(3, PointIdx::new(1)), 2)]
+    fn a_latitude_past_the_pole_leaves_a_fix_without_a_position(
+        #[case] points: Vec<NavPoint>,
+        #[case] expected_positions: usize,
+    ) {
+        assert_eq!(points.len(), 3);
+        assert_eq!(
+            points
+                .iter()
+                .filter(|point| point.tpv.position().is_some())
+                .count(),
+            expected_positions
+        );
     }
 
     #[test]

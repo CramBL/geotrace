@@ -16,11 +16,10 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, TimeZone as _, Utc};
 use egui::accesskit::Role;
-use egui_kittest::kittest::NodeT as _;
 use gt_filter::GlobalFilter;
 use gt_side_panel::filter::TRACK_INSET_PX;
 use gt_side_panel::{FilterPanelState, render_filter_panel};
-use gt_test_utils::{By, Queryable as _, TestHarness};
+use gt_test_utils::{By, HarnessInteraction as _, NodeT as _, Queryable as _, TestHarness};
 use gt_types::{LoadedFile, NavPoint};
 
 /// The state the filter panel reads and writes.
@@ -48,7 +47,7 @@ pub fn utc(hour: u32, minute: u32, second: u32) -> DateTime<Utc> {
 pub fn recording(name: &str, tracks: &[(DateTime<Utc>, usize)]) -> LoadedFile {
     let points: Vec<NavPoint> = tracks
         .iter()
-        .flat_map(|(start, count)| gt_test_utils::nav_points_from(*start, *count, 1))
+        .flat_map(|(start, count)| gt_test_utils::fixtures::nav_points_from(*start, *count, 1))
         .collect();
     gt_track_builder::build_loaded_file(
         name.to_owned(),
@@ -109,18 +108,9 @@ pub fn label_text(harness: &TestHarness<'static, PanelState>, needle: &str) -> S
 
 /// The texts of every label of the panel containing `needle`, topmost first.
 pub fn label_texts(harness: &TestHarness<'static, PanelState>, needle: &str) -> Vec<String> {
-    let mut labels: Vec<(f32, String)> = harness
+    harness
         .inner
-        .query_all(By::new().label_contains(needle).include_labels())
-        .map(|node| {
-            (
-                node.rect().top(),
-                node.accesskit_node().value().unwrap_or_default(),
-            )
-        })
-        .collect();
-    labels.sort_by(|a, b| a.0.total_cmp(&b.0));
-    labels.into_iter().map(|(_, text)| text).collect()
+        .label_texts_top_to_bottom(By::new().label_contains(needle).include_labels())
 }
 
 /// A point on the bar `fraction` of the way along its track, which spans the

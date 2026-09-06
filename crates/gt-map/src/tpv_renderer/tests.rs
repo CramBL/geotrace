@@ -638,10 +638,9 @@ fn fix_with_a_latitude_out_of_range(heading_degrees: Option<f64>) -> NavPoint {
 /// value stands as written and marked, above the position the map draws it at.
 #[test]
 fn hover_badge_coordinate_out_of_range() {
-    let track = track_with_points(gt_test_utils::nav_points_with_a_latitude_out_of_range(
-        3,
-        PointIdx::new(1),
-    ));
+    let track = track_with_points(
+        gt_test_utils::fixtures::nav_points_with_a_latitude_out_of_range(3, PointIdx::new(1)),
+    );
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(430.0, 260.0))
         .theme(true)
@@ -667,19 +666,19 @@ enum PlacementRow {
 /// outside its range, and names where the map draws the fix.
 #[rstest]
 #[case::measured(
-    gt_test_utils::nav_points_with_a_latitude_out_of_range(3, PointIdx::new(1)),
+    gt_test_utils::fixtures::nav_points_with_a_latitude_out_of_range(3, PointIdx::new(1)),
     PointIdx::new(0),
     "55.000000° N",
     PlacementRow::Absent
 )]
 #[case::latitude_out_of_range(
-    gt_test_utils::nav_points_with_a_latitude_out_of_range(3, PointIdx::new(1)),
+    gt_test_utils::fixtures::nav_points_with_a_latitude_out_of_range(3, PointIdx::new(1)),
     PointIdx::new(1),
     "91° (invalid)",
     PlacementRow::DrawnAt
 )]
 #[case::track_without_a_position(
-    gt_test_utils::nav_points_without_a_valid_position(3),
+    gt_test_utils::fixtures::nav_points_without_a_valid_position(3),
     PointIdx::new(1),
     "91° (invalid)",
     PlacementRow::NotDrawn

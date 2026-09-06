@@ -27,7 +27,8 @@ const UNLOADED_CHANNEL_NAME: &str = "Brake pressure";
 /// A recording of one track at 1 Hz carrying a scalar channel sampled at the
 /// same rate.
 fn recording_with_a_channel() -> LoadedFile {
-    let points: Vec<NavPoint> = gt_test_utils::nav_points_from(at_second(0), FIX_COUNT, 1);
+    let points: Vec<NavPoint> =
+        gt_test_utils::fixtures::nav_points_from(at_second(0), FIX_COUNT, 1);
     let times: Vec<DateTime<Utc>> = (0..FIX_COUNT as i64).map(at_second).collect();
     let mut track = gt_test_utils::loaded_track_with_points(points);
     track.metadata.time_range = TimeRange::new(at_second(0), at_second(FIX_COUNT as i64 - 1));

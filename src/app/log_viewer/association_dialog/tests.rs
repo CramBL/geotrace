@@ -64,7 +64,7 @@ pub(in crate::app) fn recording(
     offset: Duration,
     seconds: usize,
 ) -> gt_types::LoadedFile {
-    let points = gt_test_utils::nav_points_walking_from(
+    let points = gt_test_utils::fixtures::nav_points_walking_from(
         log_start() + offset,
         seconds,
         1,

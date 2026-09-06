@@ -16,7 +16,8 @@ const FIX_COUNT: usize = 60;
 /// A recording of one track at 1 Hz carrying a scalar channel sampled at the
 /// same rate, whose timestamps step back by ten seconds halfway through.
 fn recording_with_a_backward_time_step() -> LoadedFile {
-    let points: Vec<NavPoint> = gt_test_utils::nav_points_from(at_second(0), FIX_COUNT, 1);
+    let points: Vec<NavPoint> =
+        gt_test_utils::fixtures::nav_points_from(at_second(0), FIX_COUNT, 1);
     let times: Vec<DateTime<Utc>> = (0..FIX_COUNT as i64)
         .map(|i| {
             if i < 30 {
