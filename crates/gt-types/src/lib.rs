@@ -2,6 +2,8 @@ mod bitset;
 pub mod channel;
 pub mod coordinates;
 pub mod extent;
+#[cfg(any(test, feature = "fixtures"))]
+pub mod fixtures;
 pub mod geo_bounds;
 pub mod highlight;
 pub mod load_warning;
@@ -16,6 +18,7 @@ pub mod sat_label;
 pub mod satellites;
 pub use satellites::{Prn, SignalQuality, Snr};
 pub mod solar_position;
+mod test_util;
 pub mod time_types;
 pub mod tpv;
 pub mod track;

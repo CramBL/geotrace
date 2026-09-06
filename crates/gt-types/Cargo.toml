@@ -14,6 +14,11 @@ ignored-paths = ["tests/compile_fail/*.rs"]
 [lib]
 doctest = false
 
+[features]
+# The test-fixture builders of `gt_types::fixtures`, for the dev-dependencies
+# of the crates whose tests build nav points by hand.
+fixtures = []
+
 [dependencies]
 bon.workspace = true
 chrono.workspace = true
