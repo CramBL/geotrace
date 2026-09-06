@@ -1,6 +1,7 @@
 //! The icon a map marker is drawn with.
 
-/// Icon for map markers. Use `GTD_ICON_AUTO` to let the application choose.
+/// Icon for map markers. `GTD_ICON_AUTO` is accepted only by
+/// `gtd_builder_add_event_marker_style()`, where the application picks the icon.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub enum GtdMarkerIcon {
@@ -32,7 +33,7 @@ pub enum GtdMarkerIcon {
     GTD_ICON_UPLOAD = 12,
     /// Wrench / tool.
     GTD_ICON_WRENCH = 13,
-    /// Use the application default for this variant.
+    /// Let the application pick the icon for an event marker variant.
     GTD_ICON_AUTO = 255,
 }
 

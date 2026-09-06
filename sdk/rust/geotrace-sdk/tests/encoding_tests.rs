@@ -272,7 +272,7 @@ fn marker_icon_encoding() -> Result<(), Box<dyn std::error::Error>> {
         let mut bytes2 = Vec::new();
         nav_file.write(&mut bytes2)?;
         let rt = NavFile::read(bytes2.as_slice())?;
-        assert_eq!(rt.markers()[0].annotation.icon(), Some(icon));
+        assert_eq!(rt.markers()[0].annotation.icon(), icon);
     }
     Ok(())
 }

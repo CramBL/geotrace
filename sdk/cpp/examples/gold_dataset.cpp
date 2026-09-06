@@ -150,9 +150,9 @@ geotrace::Constellation parse_constellation(const std::string &name) {
     throw std::invalid_argument("unknown constellation: " + name);
 }
 
-geotrace::MarkerIcon parse_icon(const std::string &name) {
+std::optional<geotrace::MarkerIcon> parse_icon(const std::string &name) {
     if (name.empty() || name == "auto") {
-        return geotrace::MarkerIcon::Auto;
+        return std::nullopt;
     }
     if (name == "pin") {
         return geotrace::MarkerIcon::Pin;
@@ -196,7 +196,7 @@ geotrace::MarkerIcon parse_icon(const std::string &name) {
     if (name == "wrench") {
         return geotrace::MarkerIcon::Wrench;
     }
-    return geotrace::MarkerIcon::Auto;
+    return std::nullopt;
 }
 
 std::optional<double> parse_opt_double(const std::string &text) {
@@ -390,7 +390,8 @@ void load_markers(geotrace::FileBuilder &builder, const fs::path &base) {
         if (!timestamp) {
             throw geotrace::IoError("markers.csv: missing timestamp");
         }
-        builder.add(geotrace::Annotation{*timestamp, label, parse_icon(icon)});
+        builder.add(geotrace::Annotation{*timestamp, label,
+                                         parse_icon(icon).value_or(geotrace::MarkerIcon::Pin)});
     }
 }
 

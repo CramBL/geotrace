@@ -255,14 +255,14 @@ impl Constellation {
     }
 }
 
-/// A user-defined map annotation with an optional label and icon.
+/// A user-defined map annotation with an optional label and an icon.
 ///
 /// `Annotation::builder().build()` is the only way in, and it rejects a label
 /// past the capacity of `markers/label`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Annotation {
     pub(crate) label: Option<String>,
-    pub(crate) icon: Option<MarkerIcon>,
+    pub(crate) icon: MarkerIcon,
     pub(crate) time: DateTime<Utc>,
 }
 
@@ -276,7 +276,7 @@ impl Annotation {
     pub fn new(
         #[builder(into)] time: DateTime<Utc>,
         #[builder(into)] label: Option<String>,
-        icon: Option<MarkerIcon>,
+        #[builder(default = MarkerIcon::Pin)] icon: MarkerIcon,
     ) -> Result<Self, Error> {
         let label = label.filter(|s| !s.trim().is_empty());
         if let Some(label) = label.as_deref() {
@@ -293,9 +293,7 @@ impl Annotation {
         self.label.as_deref()
     }
 
-    /// `None` where the application picks the icon, which defaults to
-    /// [`MarkerIcon::Pin`].
-    pub fn icon(&self) -> Option<MarkerIcon> {
+    pub fn icon(&self) -> MarkerIcon {
         self.icon
     }
 

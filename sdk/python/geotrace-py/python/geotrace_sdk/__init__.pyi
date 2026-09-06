@@ -346,12 +346,12 @@ class NavFix:
 
 @final
 class Annotation:
-    """A user-defined map annotation with an optional label and icon.
+    """A user-defined map annotation with an optional label and an icon.
 
     Args:
         time: Timezone-aware timestamp.
         label: Display label, or ``None`` to render as unlabelled.
-        icon: Visual icon, or ``None`` to default to :attr:`MarkerIcon.PIN`.
+        icon: Visual icon.
 
     Raises:
         ValueError: If ``label`` is longer than the 255 bytes the
@@ -363,7 +363,7 @@ class Annotation:
         time: datetime,
         *,
         label: str | None = None,
-        icon: MarkerIcon | None = None,
+        icon: MarkerIcon = MarkerIcon.PIN,
     ) -> None: ...
     @property
     def time(self) -> datetime:
@@ -373,7 +373,7 @@ class Annotation:
     @property
     def label(self) -> str | None: ...
     @property
-    def icon(self) -> MarkerIcon | None: ...
+    def icon(self) -> MarkerIcon: ...
     def __eq__(self, other: object) -> bool: ...
 
 @final
@@ -506,8 +506,8 @@ class Marker:
         ...
 
     @property
-    def icon(self) -> MarkerIcon | None:
-        """Visual icon from the annotation, or ``None``."""
+    def icon(self) -> MarkerIcon:
+        """Visual icon from the annotation."""
         ...
 
     @property

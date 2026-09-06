@@ -128,7 +128,8 @@ typedef enum {
 } GtdConstellation;
 
 /**
- * Icon for map markers. Use `GTD_ICON_AUTO` to let the application choose.
+ * Icon for map markers. `GTD_ICON_AUTO` is accepted only by
+ * `gtd_builder_add_event_marker_style()`, where the application picks the icon.
  */
 typedef enum {
     /**
@@ -188,7 +189,7 @@ typedef enum {
      */
     GTD_ICON_WRENCH = 13,
     /**
-     * Use the application default for this variant.
+     * Let the application pick the icon for an event marker variant.
      */
     GTD_ICON_AUTO = 255,
 } GtdMarkerIcon;
@@ -608,9 +609,11 @@ GtdStatus gtd_builder_add_satellite_report(GtdFileBuilder *builder,
  * @param builder Builder handle.
  * @param time    Timestamp of the annotation. Must not be `gtd_ts_none()`.
  * @param label   Human-readable label, or NULL for no label.
- * @param icon    Icon to display. `GTD_ICON_AUTO` uses the application default (Pin).
+ * @param icon    Icon to display.
  *
  * @return `GTD_ERR_FIELD_TOO_LONG` if @p label is longer than 255 bytes.
+ * @return `GTD_ERR_INVALID_ARGUMENT` if @p icon is `GTD_ICON_AUTO`, which only
+ *         `gtd_builder_add_event_marker_style()` accepts.
  */
 GtdStatus gtd_builder_add_annotation(GtdFileBuilder *builder,
                                      GtdTimestamp time,

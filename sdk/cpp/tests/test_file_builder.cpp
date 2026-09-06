@@ -1,7 +1,9 @@
 #include <doctest/doctest.h>
+#include <geotrace.h>
 #include <geotrace/geotrace.hpp>
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -163,6 +165,26 @@ TEST_CASE("FileBuilder: fluent chain works end-to-end") {
 
     CHECK(file.nav_point_count() == 2);
     CHECK(file.device() == "chain test");
+}
+
+// An annotation with no icon set must reach the C boundary as `GTD_ICON_PIN`,
+// which `gtd_builder_add_annotation` accepts.
+static_assert(geotrace::detail::to_c(MarkerIcon::Pin) == GTD_ICON_PIN);
+
+static_assert(geotrace::detail::to_c(std::optional<MarkerIcon>{}) == GTD_ICON_AUTO);
+static_assert(geotrace::detail::to_c(std::optional<MarkerIcon>{MarkerIcon::Gear}) == GTD_ICON_GEAR);
+
+TEST_CASE("FileBuilder: an annotation with no icon set is written as Pin") {
+    const NavFix first_fix{FixTime::receiver(FIRST_TIME), Angle::degrees(51.5074),
+                           Angle::degrees(-0.1278)};
+    const NavFix second_fix{FixTime::receiver(SECOND_TIME), Angle::degrees(51.5080),
+                            Angle::degrees(-0.1265)};
+
+    const Annotation ann{Timestamp::from_seconds(1700000005ULL)};
+    CHECK(ann.icon == MarkerIcon::Pin);
+
+    const NavFile file = FileBuilder{}.add(first_fix).add(second_fix).add(ann).finish();
+    CHECK(file.nav_point_count() == 2);
 }
 
 TEST_CASE("FileBuilder: NoNavFixesError thrown when annotations exist but no fixes") {

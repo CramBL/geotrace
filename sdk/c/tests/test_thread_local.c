@@ -21,7 +21,7 @@ Test(thread_local, last_error_set_after_finish_no_fixes) {
     GtdFileBuilder *builder = gtd_builder_create();
 
     /* Trigger GTD_ERR_NO_NAV_FIXES by adding an annotation but no fixes */
-    gtd_builder_add_annotation(builder, gtd_ts_from_seconds(1700000000ULL), "note", GTD_ICON_AUTO);
+    gtd_builder_add_annotation(builder, gtd_ts_from_seconds(1700000000ULL), "note", GTD_ICON_PIN);
 
     GtdNavFile *file = NULL;
     gtd_builder_finish(builder, &file);

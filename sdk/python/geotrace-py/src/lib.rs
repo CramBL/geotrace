@@ -785,7 +785,7 @@ impl PyNavFix {
     }
 }
 
-/// A user-defined map annotation with an optional label and icon.
+/// A user-defined map annotation with an optional label and an icon.
 ///
 /// `time` must be a timezone-aware `datetime.datetime`. A `label` longer than
 /// the 255 bytes the `markers/label` field holds raises `ValueError`.
@@ -798,16 +798,16 @@ pub struct PyAnnotation {
 #[pymethods]
 impl PyAnnotation {
     #[new]
-    #[pyo3(signature = (time, *, label=None, icon=None))]
+    #[pyo3(signature = (time, *, label=None, icon=PyMarkerIcon::Pin))]
     fn new(
         time: DateTime<FixedOffset>,
         label: Option<String>,
-        icon: Option<PyMarkerIcon>,
+        icon: PyMarkerIcon,
     ) -> PyResult<Self> {
         let inner = Annotation::builder()
             .time(time.to_utc())
             .maybe_label(label)
-            .maybe_icon(icon.map(MarkerIcon::from))
+            .icon(MarkerIcon::from(icon))
             .build()
             .map_err(file_err)?;
         Ok(Self { inner })
@@ -825,10 +825,10 @@ impl PyAnnotation {
         self.inner.label()
     }
 
-    /// Visual icon, or `None` (defaults to `MarkerIcon.PIN` when rendered).
+    /// Visual icon.
     #[getter]
-    fn icon(&self) -> Option<PyMarkerIcon> {
-        self.inner.icon().map(PyMarkerIcon::from)
+    fn icon(&self) -> PyMarkerIcon {
+        PyMarkerIcon::from(self.inner.icon())
     }
 
     fn __eq__(&self, other: &Self) -> bool {
@@ -1047,10 +1047,10 @@ impl PyMarker {
         self.inner.annotation.label()
     }
 
-    /// Visual icon from the annotation, or `None`.
+    /// Visual icon from the annotation.
     #[getter]
-    fn icon(&self) -> Option<PyMarkerIcon> {
-        self.inner.annotation.icon().map(PyMarkerIcon::from)
+    fn icon(&self) -> PyMarkerIcon {
+        PyMarkerIcon::from(self.inner.annotation.icon())
     }
 
     /// Annotation timestamp (timezone-aware UTC).

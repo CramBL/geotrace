@@ -145,9 +145,11 @@ pub unsafe extern "C" fn gtd_builder_add_satellite_report(
 /// @param builder Builder handle.
 /// @param time    Timestamp of the annotation. Must not be `gtd_ts_none()`.
 /// @param label   Human-readable label, or NULL for no label.
-/// @param icon    Icon to display. `GTD_ICON_AUTO` uses the application default (Pin).
+/// @param icon    Icon to display.
 ///
 /// @return `GTD_ERR_FIELD_TOO_LONG` if @p label is longer than 255 bytes.
+/// @return `GTD_ERR_INVALID_ARGUMENT` if @p icon is `GTD_ICON_AUTO`, which only
+///         `gtd_builder_add_event_marker_style()` accepts.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_annotation(
     builder: *mut GtdFileBuilder,
@@ -161,10 +163,17 @@ pub unsafe extern "C" fn gtd_builder_add_annotation(
             error::set_last_error("annotation time must not be gtd_ts_none()");
             return GtdStatus::GTD_ERR_NULL_ARGUMENT;
         };
+        let Some(icon) = icon.to_marker_icon() else {
+            error::set_last_error(
+                "an annotation's icon is a marker icon: GTD_ICON_AUTO is only accepted by \
+                 gtd_builder_add_event_marker_style()",
+            );
+            return GtdStatus::GTD_ERR_INVALID_ARGUMENT;
+        };
         let annotation = match Annotation::builder()
             .time(ann_time)
             .maybe_label(cstr_opt!(label).map(str::to_owned))
-            .maybe_icon(icon.to_marker_icon())
+            .icon(icon)
             .build()
         {
             Ok(annotation) => annotation,
