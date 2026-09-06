@@ -59,6 +59,9 @@ class TravelMode(Enum):
 class Satellite:
     """One tracked satellite with optional signal metrics.
 
+    ``elevation``, ``azimuth`` and ``snr`` are stored as 32-bit floats: a value
+    read back can differ from the value written in its eighth significant digit.
+
     Args:
         constellation: GNSS constellation.
         prn: Satellite PRN number.

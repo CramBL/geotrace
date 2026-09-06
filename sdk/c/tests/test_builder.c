@@ -203,7 +203,7 @@ Test(builder, satellite_report_without_a_timestamp) {
     cr_assert_not_null(builder);
 
     GtdSatellite sats[] = {
-        {GTD_CONSTELLATION_GPS, 7, 1, GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64},
+        {GTD_CONSTELLATION_GPS, 7, 1, GTD_NONE_F32, GTD_NONE_F32, GTD_NONE_F32},
     };
 
     cr_assert_eq(gtd_builder_add_satellite_report(builder, gtd_ts_none(), gtd_ts_none(), sats, 1),
@@ -220,8 +220,9 @@ Test(builder, satellite_report) {
     GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
 
     GtdSatellite sats[] = {
-        {GTD_CONSTELLATION_GPS, 7, 1, GTD_SOME_F64(55.0), GTD_SOME_F64(120.0), GTD_SOME_F64(40.0)},
-        {GTD_CONSTELLATION_GLONASS, 2, 0, GTD_NONE_F64, GTD_NONE_F64, GTD_SOME_F64(28.0)},
+        {GTD_CONSTELLATION_GPS, 7, 1, GTD_SOME_F32(55.0F), GTD_SOME_F32(120.0F),
+         GTD_SOME_F32(40.0F)},
+        {GTD_CONSTELLATION_GLONASS, 2, 0, GTD_NONE_F32, GTD_NONE_F32, GTD_SOME_F32(28.0F)},
     };
 
     cr_assert_eq(gtd_builder_add_nav_fix(builder, timestamp, gtd_ts_none(), 40.7128, -74.0060,
@@ -243,7 +244,36 @@ Test(builder, satellite_report) {
     cr_assert_eq(satellite.prn, 7);
     cr_assert_eq(satellite.in_fix, 1);
     cr_assert_eq(satellite.snr_dbhz.present, 1);
-    assert_near(satellite.snr_dbhz.value, 40.0, 1e-6);
+    cr_assert_eq(satellite.snr_dbhz.value, 40.0F);
+
+    gtd_nav_file_destroy(file);
+}
+
+Test(builder, satellite_metrics_round_trip_bit_exact) {
+    GtdFileBuilder *builder = gtd_builder_create();
+    cr_assert_not_null(builder);
+
+    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+
+    GtdSatellite sats[] = {
+        {GTD_CONSTELLATION_GPS, 7, 1, GTD_SOME_F32(38.5F), GTD_SOME_F32(359.9999F),
+         GTD_SOME_F32(38.123456789F)},
+    };
+
+    cr_assert_eq(gtd_builder_add_nav_fix(builder, timestamp, gtd_ts_none(), 40.7128, -74.0060,
+                                         GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
+                 GTD_OK);
+    cr_assert_eq(gtd_builder_add_satellite_report(builder, timestamp, gtd_ts_none(), sats, 1),
+                 GTD_OK);
+
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_builder_finish(builder, &file), GTD_OK);
+
+    GtdSatInfo satellite;
+    cr_assert_eq(gtd_nav_file_get_satellite(file, 0, 0, &satellite), GTD_OK);
+    cr_assert_eq(satellite.elevation_deg.value, 38.5F);
+    cr_assert_eq(satellite.azimuth_deg.value, 359.9999F);
+    cr_assert_eq(satellite.snr_dbhz.value, 38.123456789F);
 
     gtd_nav_file_destroy(file);
 }

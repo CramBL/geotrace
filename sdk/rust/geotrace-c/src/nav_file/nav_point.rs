@@ -2,6 +2,7 @@
 
 use super::GtdNavFile;
 use crate::error::{self, GtdStatus};
+use crate::optf32;
 use crate::optf64;
 use crate::timestamp;
 use crate::{GtdConstellation, GtdOptF64, GtdSatInfo, GtdTimestamp};
@@ -140,15 +141,13 @@ pub unsafe extern "C" fn gtd_nav_file_get_satellite(
         out.constellation = GtdConstellation::from(sat.constellation);
         out.prn = sat.prn;
         out.in_fix = u8::from(sat.in_fix);
-        out.elevation_deg = sat.elevation.map_or(optf64::opt_f64_none(), |v| {
-            optf64::opt_f64_some(f64::from(v))
-        });
-        out.azimuth_deg = sat.azimuth.map_or(optf64::opt_f64_none(), |v| {
-            optf64::opt_f64_some(f64::from(v))
-        });
-        out.snr_dbhz = sat.snr.map_or(optf64::opt_f64_none(), |v| {
-            optf64::opt_f64_some(f64::from(v))
-        });
+        out.elevation_deg = sat
+            .elevation
+            .map_or(optf32::opt_f32_none(), optf32::opt_f32_some);
+        out.azimuth_deg = sat
+            .azimuth
+            .map_or(optf32::opt_f32_none(), optf32::opt_f32_some);
+        out.snr_dbhz = sat.snr.map_or(optf32::opt_f32_none(), optf32::opt_f32_some);
 
         GtdStatus::GTD_OK
     })

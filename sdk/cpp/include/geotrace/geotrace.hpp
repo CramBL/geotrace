@@ -260,16 +260,32 @@ namespace detail {
 #endif
 }
 
+// The GTD_SOME_* and GTD_NONE_* macros expand to C99 compound-literal +
+// designated-initializer syntax, which MSVC rejects in C++ mode (errors
+// C4576/C7555), so these fill the fields instead.
 [[nodiscard]] constexpr GtdOptF64 to_c(std::optional<double> value) noexcept {
-    // GTD_SOME_F64 and GTD_NONE_F64 expand to C99 compound-literal +
-    // designated-initializer syntax, which MSVC rejects in C++ mode (errors
-    // C4576/C7555).
     GtdOptF64 result{};
     if (value) {
         result.value = *value;
         result.present = 1;
     }
     return result;
+}
+
+[[nodiscard]] constexpr GtdOptF32 to_c(std::optional<float> value) noexcept {
+    GtdOptF32 result{};
+    if (value) {
+        result.value = *value;
+        result.present = 1;
+    }
+    return result;
+}
+
+[[nodiscard]] constexpr std::optional<float> from_c(GtdOptF32 value) noexcept {
+    if (value.present == 0) {
+        return std::nullopt;
+    }
+    return value.value;
 }
 
 struct BuilderDeleter {
@@ -771,9 +787,9 @@ struct Satellite {
     Constellation constellation = Constellation::Gps;
     std::uint32_t prn = 0;
     bool in_fix = false;
-    std::optional<double> elevation_deg;
-    std::optional<double> azimuth_deg;
-    std::optional<double> snr_dbhz;
+    std::optional<float> elevation_deg;
+    std::optional<float> azimuth_deg;
+    std::optional<float> snr_dbhz;
 };
 
 /** A snapshot of satellite visibility at a point in time. */
@@ -960,9 +976,9 @@ struct SatelliteView {
     Constellation constellation = Constellation::Gps;
     std::uint32_t prn = 0;
     bool in_fix = false;
-    std::optional<double> elevation_deg;
-    std::optional<double> azimuth_deg;
-    std::optional<double> snr_dbhz;
+    std::optional<float> elevation_deg;
+    std::optional<float> azimuth_deg;
+    std::optional<float> snr_dbhz;
 };
 
 /**
@@ -1580,14 +1596,9 @@ class [[nodiscard]] NavFile {
         satellite.constellation = detail::from_c(info.constellation);
         satellite.prn = info.prn;
         satellite.in_fix = info.in_fix != 0;
-        satellite.elevation_deg = info.elevation_deg.present != 0
-                                      ? std::optional<double>{info.elevation_deg.value}
-                                      : std::nullopt;
-        satellite.azimuth_deg = info.azimuth_deg.present != 0
-                                    ? std::optional<double>{info.azimuth_deg.value}
-                                    : std::nullopt;
-        satellite.snr_dbhz =
-            info.snr_dbhz.present != 0 ? std::optional<double>{info.snr_dbhz.value} : std::nullopt;
+        satellite.elevation_deg = detail::from_c(info.elevation_deg);
+        satellite.azimuth_deg = detail::from_c(info.azimuth_deg);
+        satellite.snr_dbhz = detail::from_c(info.snr_dbhz);
         return satellite;
     }
 

@@ -303,6 +303,9 @@ impl From<TravelModeArg> for TravelMode {
 }
 
 /// One tracked satellite with optional signal metrics.
+///
+/// `elevation`, `azimuth` and `snr` are stored as 32-bit floats: a value read
+/// back can differ from the value written in its eighth significant digit.
 #[pyclass(from_py_object, name = "Satellite")]
 #[derive(Debug, Clone, Copy)]
 pub struct PySatellite {

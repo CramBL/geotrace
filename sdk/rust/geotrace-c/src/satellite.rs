@@ -1,6 +1,6 @@
 //! The write-path satellite entry.
 
-use crate::{GtdConstellation, GtdOptF64};
+use crate::{GtdConstellation, GtdOptF32};
 
 /// A satellite entry within a report (write path, input from C).
 ///
@@ -15,11 +15,11 @@ pub struct GtdSatellite {
     /// Non-zero if this satellite contributed to the position fix.
     pub in_fix: u8,
     /// Elevation above the horizon in degrees [0, 90].
-    pub elevation_deg: GtdOptF64,
+    pub elevation_deg: GtdOptF32,
     /// Azimuth from true north in degrees [0, 360).
-    pub azimuth_deg: GtdOptF64,
+    pub azimuth_deg: GtdOptF32,
     /// Signal-to-noise ratio in dB·Hz.
-    pub snr_dbhz: GtdOptF64,
+    pub snr_dbhz: GtdOptF32,
 }
 
 impl GtdSatellite {
@@ -28,9 +28,9 @@ impl GtdSatellite {
             .constellation(geotrace_sdk::Constellation::from(self.constellation))
             .prn(self.prn)
             .in_fix(self.in_fix != 0)
-            .maybe_elevation(self.elevation_deg.to_opt().map(|v| v as f32))
-            .maybe_azimuth(self.azimuth_deg.to_opt().map(|v| v as f32))
-            .maybe_snr(self.snr_dbhz.to_opt().map(|v| v as f32))
+            .maybe_elevation(self.elevation_deg.to_opt())
+            .maybe_azimuth(self.azimuth_deg.to_opt())
+            .maybe_snr(self.snr_dbhz.to_opt())
             .build()
     }
 }

@@ -33,6 +33,12 @@
 /** An optional double with value @p v. */
 #define GTD_SOME_F64(v) ((GtdOptF64){.value = (v), .present = 1})
 
+/** An absent optional float. */
+#define GTD_NONE_F32 ((GtdOptF32){.value = 0.0f, .present = 0})
+
+/** An optional float with value @p v. */
+#define GTD_SOME_F32(v) ((GtdOptF32){.value = (v), .present = 1})
+
 /**
  * Return code for all fallible SDK functions.
  *
@@ -281,12 +287,22 @@ typedef struct {
 } GtdTimestamp;
 
 /**
- * An optional `double` value. Use the macros below to construct values.
+ * An optional `double` value. Use the `GTD_SOME_F64` and `GTD_NONE_F64`
+ * macros to construct values.
  */
 typedef struct {
     double value;
     uint8_t present;
 } GtdOptF64;
+
+/**
+ * An optional `float` value. Use the `GTD_SOME_F32` and `GTD_NONE_F32` macros
+ * to construct values.
+ */
+typedef struct {
+    float value;
+    uint8_t present;
+} GtdOptF32;
 
 /**
  * A satellite entry within a report (write path, input from C).
@@ -309,15 +325,15 @@ typedef struct {
     /**
      * Elevation above the horizon in degrees [0, 90].
      */
-    GtdOptF64 elevation_deg;
+    GtdOptF32 elevation_deg;
     /**
      * Azimuth from true north in degrees [0, 360).
      */
-    GtdOptF64 azimuth_deg;
+    GtdOptF32 azimuth_deg;
     /**
      * Signal-to-noise ratio in dB·Hz.
      */
-    GtdOptF64 snr_dbhz;
+    GtdOptF32 snr_dbhz;
 } GtdSatellite;
 
 /**
@@ -523,15 +539,15 @@ typedef struct {
     /**
      * Elevation in degrees, if available.
      */
-    GtdOptF64 elevation_deg;
+    GtdOptF32 elevation_deg;
     /**
      * Azimuth in degrees, if available.
      */
-    GtdOptF64 azimuth_deg;
+    GtdOptF32 azimuth_deg;
     /**
      * SNR in dB·Hz, if available.
      */
-    GtdOptF64 snr_dbhz;
+    GtdOptF32 snr_dbhz;
 } GtdSatInfo;
 
 #ifdef __cplusplus

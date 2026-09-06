@@ -212,6 +212,11 @@ std::optional<double> parse_opt_double(const std::string &text) {
     }
 }
 
+std::optional<float> parse_opt_float(const std::string &text) {
+    const auto value = parse_opt_double(text);
+    return value ? std::optional<float>{static_cast<float>(*value)} : std::nullopt;
+}
+
 struct SatRow {
     std::string gps_time;
     std::string sys_time;
@@ -297,9 +302,9 @@ std::vector<SatRow> load_satellites(const fs::path &base) {
                 parse_constellation(constellation),
                 static_cast<std::uint32_t>(std::stoul(prn)),
                 in_fix == "true",
-                parse_opt_double(elevation),
-                parse_opt_double(azimuth),
-                parse_opt_double(snr),
+                parse_opt_float(elevation),
+                parse_opt_float(azimuth),
+                parse_opt_float(snr),
             },
         });
     }

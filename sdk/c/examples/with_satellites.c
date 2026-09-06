@@ -45,13 +45,13 @@ int main(void) {
         }
 
         /* SNR climbs slightly each second as the receiver settles. */
-        double snr = 36.0 + (double)i;
+        float snr = 36.0F + (float)i;
         GtdSatellite sats[] = {
-            {GTD_CONSTELLATION_GPS, 1, 1, GTD_SOME_F64(45.0), GTD_SOME_F64(90.0),
-             GTD_SOME_F64(snr)},
-            {GTD_CONSTELLATION_GPS, 5, 1, GTD_SOME_F64(30.0), GTD_SOME_F64(180.0),
-             GTD_SOME_F64(snr - 2.0)},
-            {GTD_CONSTELLATION_GALILEO, 3, 0, GTD_NONE_F64, GTD_NONE_F64, GTD_SOME_F64(21.0)},
+            {GTD_CONSTELLATION_GPS, 1, 1, GTD_SOME_F32(45.0F), GTD_SOME_F32(90.0F),
+             GTD_SOME_F32(snr)},
+            {GTD_CONSTELLATION_GPS, 5, 1, GTD_SOME_F32(30.0F), GTD_SOME_F32(180.0F),
+             GTD_SOME_F32(snr - 2.0F)},
+            {GTD_CONSTELLATION_GALILEO, 3, 0, GTD_NONE_F32, GTD_NONE_F32, GTD_SOME_F32(21.0F)},
         };
         status = gtd_builder_add_satellite_report(builder, fix_time, gtd_ts_none(), sats,
                                                   sizeof sats / sizeof sats[0]);

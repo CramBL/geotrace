@@ -103,15 +103,15 @@ TEST_CASE("FileBuilder: satellite report round-trips") {
     gps_satellite.constellation = Constellation::Gps;
     gps_satellite.prn = 7;
     gps_satellite.in_fix = true;
-    gps_satellite.elevation_deg = 55.0;
-    gps_satellite.azimuth_deg = 120.0;
-    gps_satellite.snr_dbhz = 40.0;
+    gps_satellite.elevation_deg = 55.0F;
+    gps_satellite.azimuth_deg = 120.0F;
+    gps_satellite.snr_dbhz = 40.0F;
 
     Satellite glonass_satellite{};
     glonass_satellite.constellation = Constellation::Glonass;
     glonass_satellite.prn = 2;
     glonass_satellite.in_fix = false;
-    glonass_satellite.snr_dbhz = 28.0;
+    glonass_satellite.snr_dbhz = 28.0F;
 
     const SatelliteReport report{FixTime::receiver(FIRST_TIME), {gps_satellite, glonass_satellite}};
 

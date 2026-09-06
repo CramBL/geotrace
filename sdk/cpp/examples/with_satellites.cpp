@@ -56,27 +56,27 @@ int main() {
             builder.add(fix);
 
             // SNR climbs slightly each second as the receiver settles.
-            const double snr = 36.0 + static_cast<double>(idx);
+            const float snr = 36.0F + static_cast<float>(idx);
 
             geotrace::Satellite gps_prn1{};
             gps_prn1.constellation = geotrace::Constellation::Gps;
             gps_prn1.prn = 1;
             gps_prn1.in_fix = true;
-            gps_prn1.elevation_deg = 45.0;
-            gps_prn1.azimuth_deg = 90.0;
+            gps_prn1.elevation_deg = 45.0F;
+            gps_prn1.azimuth_deg = 90.0F;
             gps_prn1.snr_dbhz = snr;
 
             geotrace::Satellite gps_prn5{};
             gps_prn5.constellation = geotrace::Constellation::Gps;
             gps_prn5.prn = 5;
             gps_prn5.in_fix = true;
-            gps_prn5.snr_dbhz = snr - 2.0;
+            gps_prn5.snr_dbhz = snr - 2.0F;
 
             geotrace::Satellite galileo_prn3{};
             galileo_prn3.constellation = geotrace::Constellation::Galileo;
             galileo_prn3.prn = 3;
             galileo_prn3.in_fix = false;
-            galileo_prn3.snr_dbhz = 21.0;
+            galileo_prn3.snr_dbhz = 21.0F;
 
             builder.add(geotrace::SatelliteReport{geotrace::FixTime::receiver(time),
                                                   {gps_prn1, gps_prn5, galileo_prn3}});
