@@ -1,6 +1,7 @@
 mod bitset;
 pub mod channel;
 pub mod coordinates;
+pub mod extent;
 pub mod geo_bounds;
 pub mod highlight;
 pub mod load_warning;
@@ -26,6 +27,7 @@ pub use coordinates::{
     Coordinate, CoordinateAxis, Latitude, Longitude, OutOfRange, RawDegrees, RecordedCoordinate,
     RecordedLatitude, RecordedLongitude,
 };
+pub use extent::{DrawnFix, Extent};
 pub use geo_bounds::{GeoBounds, LatRange, LonRange, PoleWinding};
 pub use geo_types::{Coord, Rect};
 pub use highlight::{DataCategory, DataCategorySet, FileIdx, FixRef, PointIdx, TrackIdx, TrackRef};
@@ -45,9 +47,9 @@ pub use time_types::{FixTimestamp, GpsTime, GpsTimeRange, SysTime};
 pub use tpv::TimePositionVelocity;
 pub use tpv::TimePositionVelocityBuilder;
 pub use track::{
-    AssociationConfig, FileMetadata, FileSource, FixStats, LOD_BASE_TOLERANCE_MERC,
-    LOD_CHUNK_POINTS, LoadedFile, LoadedTrack, LodLevel, MarkerRequirement, MeasuredTrackGeometry,
-    MercBounds, NearestSatelliteReport, SKY_REPORT_MAX_AGE_SECS, SegmentLengthRange, SpatialPoint,
-    TimeRange, TotalDistance, TrackAggregates, TrackGeometry, TrackLod, TrackMetadata, TravelMode,
+    AssociationConfig, FileMetadata, FileSource, FixStats, LOD_BASE_TOLERANCE_MERC, LoadedFile,
+    LoadedTrack, LodChunk, LodLevel, MarkerRequirement, MeasuredTrackGeometry, MercBounds,
+    NearestSatelliteReport, SKY_REPORT_MAX_AGE_SECS, SegmentLengthRange, SpatialPoint, TimeRange,
+    TotalDistance, TrackAggregates, TrackGeometry, TrackLod, TrackMetadata, TravelMode,
 };
 pub use versioned::{Generation, Versionable, Versioned};

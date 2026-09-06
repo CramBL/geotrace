@@ -521,12 +521,22 @@ pub fn nav_points_at_positions(
     start: chrono::DateTime<chrono::Utc>,
     positions: &[(Latitude, Longitude)],
 ) -> Vec<NavPoint> {
+    nav_points_stamped(start, positions, |i| i as i64)
+}
+
+/// [`nav_points_at_positions`] with the `i`th fix stamped `offset_secs(i)`
+/// from `start`. For tests over a track whose timestamps step backwards.
+pub fn nav_points_stamped(
+    start: chrono::DateTime<chrono::Utc>,
+    positions: &[(Latitude, Longitude)],
+    offset_secs: impl Fn(usize) -> i64,
+) -> Vec<NavPoint> {
     positions
         .iter()
         .enumerate()
         .map(|(i, (lat, lon))| {
             let tpv = TimePositionVelocity::builder()
-                .time(GpsTime::from_utc(start + Duration::seconds(i as i64)))
+                .time(GpsTime::from_utc(start + Duration::seconds(offset_secs(i))))
                 .lat(*lat)
                 .lon(*lon)
                 .heading(Angle::new::<degree>(90.0))

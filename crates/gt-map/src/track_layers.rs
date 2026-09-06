@@ -27,7 +27,7 @@ use crate::tpv_renderer::{
 use crate::track_renderer::{
     self, blink_stroke, draw_track_with_ghost, skip_trackline, track_stroke,
 };
-use crate::transform::{MercTransform, lod_points};
+use crate::transform::{GeometryCull, MercTransform, lod_points};
 use crate::viewport::{TrackEntry, TrackPlan};
 
 /// Minimum animated progress at which the overlay and three-phase rendering
@@ -260,6 +260,7 @@ impl<'a> TrackLayers<'a> {
         transform: &MercTransform,
     ) -> Vec<TrackGeometry<'a>> {
         let cull_rect = max_rect.expand(CULL_MARGIN_PX);
+        let cull = GeometryCull::new(transform, cull_rect, self.filter);
         // Viewport bounds in Mercator space - used to skip tracks that are
         // entirely outside the visible area without iterating any points.
         let vp_bounds = transform.viewport_merc_bounds(max_rect);
@@ -319,38 +320,34 @@ impl<'a> TrackLayers<'a> {
                 let Some(placed) = track.placed_points() else {
                     continue;
                 };
-                let pts = lod_points(track, placed, transform, cull_rect)
-                    .filter(|(_, p)| {
-                        gt_filter::point_passes_time_filter(p.fix.tpv.time().utc(), self.filter)
-                    })
-                    .map(|(pi, p)| {
-                        let screen_pos = transform.to_screen(p.merc());
-                        if paint_icons && let Some(chevron) = ChevronFix::for_fix(p.fix) {
-                            chevron_points.push((pi, chevron));
-                        }
-                        let bucket = match fade {
-                            None | Some(TrackIconFade::AllVisible) => 0,
-                            Some(fade) => line_alpha_bucket(
-                                1.0 - fix_icon_alpha(
-                                    fade,
-                                    placed,
-                                    pi,
-                                    screen_pos,
-                                    style.base_arrow_size,
-                                    transform,
-                                ),
+                let pts = lod_points(track, placed, transform, cull).map(|(pi, p)| {
+                    let screen_pos = transform.to_screen(p.merc());
+                    if paint_icons && let Some(chevron) = ChevronFix::for_fix(p.fix) {
+                        chevron_points.push((pi, chevron));
+                    }
+                    let bucket = match fade {
+                        None | Some(TrackIconFade::AllVisible) => 0,
+                        Some(fade) => line_alpha_bucket(
+                            1.0 - fix_icon_alpha(
+                                fade,
+                                placed,
+                                pi,
+                                screen_pos,
+                                style.base_arrow_size,
+                                transform,
                             ),
-                        };
-                        let key = LinePointKey {
-                            ghost: p.fix.tpv.heading().is_none(),
-                            quality: quality_line_color(p.fix),
-                            bucket,
-                            matched: query_view.draw_mask(pi),
-                            hidden: query_view.is_hidden(pi),
-                            hover_matched: hover_match.is_some_and(|hm| hm.contains(pi)),
-                        };
-                        (key, screen_pos)
-                    });
+                        ),
+                    };
+                    let key = LinePointKey {
+                        ghost: p.fix.tpv.heading().is_none(),
+                        quality: quality_line_color(p.fix),
+                        bucket,
+                        matched: query_view.draw_mask(pi),
+                        hidden: query_view.is_hidden(pi),
+                        hover_matched: hover_match.is_some_and(|hm| hm.contains(pi)),
+                    };
+                    (key, screen_pos)
+                });
                 let path = visible_path(pts, cull_rect);
                 geometries.push(TrackGeometry {
                     fi,
