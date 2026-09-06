@@ -21,8 +21,8 @@ using geotrace::recognized_unit_label;
 using geotrace::RecognizedUnit;
 using geotrace::Timestamp;
 
-static const Timestamp FIRST_TIME = Timestamp::from_seconds(1700000000ULL);
-static const Timestamp SECOND_TIME = Timestamp::from_seconds(1700000001ULL);
+constexpr Timestamp FIRST_TIME{1'700'000'000'000'000};
+constexpr Timestamp SECOND_TIME{1'700'000'001'000'000};
 
 static_assert(!std::is_default_constructible_v<ChannelUnit>);
 

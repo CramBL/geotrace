@@ -16,7 +16,7 @@ using geotrace::NavFix;
 using geotrace::Timestamp;
 
 static NavFile make_minimal() {
-    const NavFix fix{FixTime::receiver(Timestamp::from_seconds(1700000000ULL)),
+    const NavFix fix{FixTime::receiver(Timestamp::from_seconds(1700000000)),
                      Angle::degrees(51.5074), Angle::degrees(-0.1278)};
     return FileBuilder{}.add_nav_fix(fix).finish();
 }
@@ -55,11 +55,11 @@ TEST_CASE("NavFile: absent metadata returns empty string_view") {
 }
 
 TEST_CASE("NavFile: nav_point_count returns correct value") {
-    const NavFix first_fix{FixTime::receiver(Timestamp::from_seconds(1700000000ULL)),
+    const NavFix first_fix{FixTime::receiver(Timestamp::from_seconds(1700000000)),
                            Angle::degrees(0.0), Angle::degrees(0.0)};
-    const NavFix second_fix{FixTime::receiver(Timestamp::from_seconds(1700000010ULL)),
+    const NavFix second_fix{FixTime::receiver(Timestamp::from_seconds(1700000010)),
                             Angle::degrees(0.1), Angle::degrees(0.1)};
-    const NavFix third_fix{FixTime::receiver(Timestamp::from_seconds(1700000020ULL)),
+    const NavFix third_fix{FixTime::receiver(Timestamp::from_seconds(1700000020)),
                            Angle::degrees(0.2), Angle::degrees(0.2)};
 
     auto file = FileBuilder{}

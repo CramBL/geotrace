@@ -41,7 +41,8 @@ Test(channels, published_v040_layout_is_preserved) {
 
 Test(channels, frozen_v040_input_layout_calls_current_library) {
     GtdFileBuilder *builder = gtd_builder_create();
-    GtdTimestamp time = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp time;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &time), GTD_OK);
     double value = 1.0;
     FrozenGtdChannelV040 channel = {0};
     channel.name = "incline";
@@ -60,12 +61,16 @@ Test(channels, round_trip) {
     GtdFileBuilder *builder = gtd_builder_create();
     cr_assert_not_null(builder);
 
-    GtdTimestamp first_time = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp first_time;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &first_time), GTD_OK);
+
     cr_assert_eq(gtd_builder_add_nav_fix(builder, first_time, gtd_ts_none(), 51.5, -0.1,
                                          GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
                  GTD_OK);
 
-    GtdTimestamp times[2] = {first_time, gtd_ts_from_seconds(1700000001ULL)};
+    GtdTimestamp second_time;
+    cr_assert_eq(gtd_ts_from_seconds(1700000001, &second_time), GTD_OK);
+    GtdTimestamp times[2] = {first_time, second_time};
 
     /* A scalar channel carrying a wrap period. */
     double incline_vals[2] = {1.5, 2.0};
@@ -151,7 +156,8 @@ Test(channels, round_trip) {
 
 Test(channels, invalid_name_is_rejected) {
     GtdFileBuilder *builder = gtd_builder_create();
-    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
     double value = 1.0;
     GtdChannel channel = {0};
     channel.name = "Bad Name";
@@ -166,7 +172,8 @@ Test(channels, invalid_name_is_rejected) {
 
 Test(channels, unrecognized_unit_requires_custom_mode) {
     GtdFileBuilder *builder = gtd_builder_create();
-    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
     double value = 1200.0;
     GtdChannel channel = {0};
     channel.name = "shaft_speed";
@@ -188,7 +195,8 @@ Test(channels, long_custom_unit_uses_lossless_accessor) {
     char label[160];
     memset(label, 'x', sizeof(label) - 1);
     label[sizeof(label) - 1] = '\0';
-    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
     double value = 1.0;
     GtdChannel channel = {0};
     channel.name = "quality";
@@ -221,7 +229,8 @@ Test(channels, long_custom_unit_uses_lossless_accessor) {
 
 Test(channels, length_mismatch_is_rejected) {
     GtdFileBuilder *builder = gtd_builder_create();
-    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
     double values[2] = {1.0, 2.0};
     GtdChannel channel = {0};
     channel.name = "accel";
@@ -236,7 +245,8 @@ Test(channels, length_mismatch_is_rejected) {
 
 Test(channels, invalid_component_is_rejected) {
     GtdFileBuilder *builder = gtd_builder_create();
-    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
     double values[2] = {1.0, 2.0};
     const char *dup[2] = {"x", "x"}; /* duplicate component label */
     GtdChannel channel = {0};
@@ -254,7 +264,8 @@ Test(channels, invalid_component_is_rejected) {
 
 Test(channels, duplicate_name_fails_at_finish) {
     GtdFileBuilder *builder = gtd_builder_create();
-    GtdTimestamp timestamp = gtd_ts_from_seconds(1700000000ULL);
+    GtdTimestamp timestamp;
+    cr_assert_eq(gtd_ts_from_seconds(1700000000, &timestamp), GTD_OK);
     double value = 1.0;
     GtdChannel channel = {0};
     channel.name = "accel";

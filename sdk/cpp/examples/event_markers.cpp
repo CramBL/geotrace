@@ -24,11 +24,11 @@
 namespace {
 // 2024-06-01T08:00:00Z keeps the output deterministic. File-scope so the `at`
 // lambda can read it without a capture (MSVC C++17 requires capturing a local).
-constexpr std::uint64_t kBase = 1717228800;
+constexpr std::int64_t kBase = 1717228800;
 } // namespace
 
 int main() {
-    auto timestamp_at = [](std::uint64_t secs) {
+    auto timestamp_at = [](std::int64_t secs) {
         return geotrace::Timestamp::from_seconds(kBase + secs);
     };
 
@@ -48,7 +48,7 @@ int main() {
             {51.5103, -0.1217},
             {51.5110, -0.1200},
         }};
-        std::size_t idx = 0;
+        std::int64_t idx = 0;
         for (const auto &point : track) {
             geotrace::NavFix fix{geotrace::FixTime::receiver(timestamp_at(idx * 30)),
                                  geotrace::Angle::degrees(point.lat),
@@ -60,7 +60,7 @@ int main() {
 
         struct Event {
             std::string_view path;
-            std::uint64_t offset;
+            std::int64_t offset;
             std::string_view note; // empty = none
         };
         const std::array<Event, 5> events = {{

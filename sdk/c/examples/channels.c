@@ -19,7 +19,13 @@ int main(void) {
     GtdFileBuilder *builder = gtd_builder_create();
     gtd_builder_set_title(builder, "Channel tour");
 
-    GtdTimestamp first_fix_time = gtd_ts_from_seconds(BASE_EPOCH);
+    GtdTimestamp first_fix_time;
+    if (gtd_ts_from_seconds(BASE_EPOCH, &first_fix_time) != GTD_OK) {
+        fprintf(stderr, "ts_from_seconds: %s\n", gtd_last_error());
+        gtd_builder_destroy(builder);
+        return 1;
+    }
+
     if (gtd_builder_add_nav_fix(builder, first_fix_time, gtd_ts_none(), 51.5074, -0.1278,
                                 GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64) != GTD_OK) {
         fprintf(stderr, "add_nav_fix: %s\n", gtd_last_error());
@@ -32,7 +38,11 @@ int main(void) {
     double accel_vals[9]; /* 3 samples x 3 components, row-major */
     double quality_vals[3];
     for (size_t i = 0; i < 3; i++) {
-        times[i] = gtd_ts_from_seconds(BASE_EPOCH + i);
+        if (gtd_ts_from_seconds(BASE_EPOCH + (int64_t)i, &times[i]) != GTD_OK) {
+            fprintf(stderr, "ts_from_seconds: %s\n", gtd_last_error());
+            gtd_builder_destroy(builder);
+            return 1;
+        }
         incline_vals[i] = 1.0 + ((double)i * 0.5);
         accel_vals[(i * 3) + 0] = 100.0 * (double)i;
         accel_vals[(i * 3) + 1] = 200.0;

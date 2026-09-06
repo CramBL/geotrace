@@ -35,7 +35,12 @@ int main(void) {
 
     GtdStatus status;
     for (size_t i = 0; i < sizeof track / sizeof track[0]; i++) {
-        GtdTimestamp fix_time = gtd_ts_from_seconds(BASE_EPOCH + i);
+        GtdTimestamp fix_time;
+        status = gtd_ts_from_seconds(BASE_EPOCH + (int64_t)i, &fix_time);
+        if (status != GTD_OK) {
+            fprintf(stderr, "ts_from_seconds: %s\n", gtd_last_error());
+            goto fail;
+        }
 
         status = gtd_builder_add_nav_fix(builder, fix_time, gtd_ts_none(), track[i][0], track[i][1],
                                          GTD_SOME_F64(90.0), GTD_SOME_F64(5.5), GTD_SOME_F64(3.0));

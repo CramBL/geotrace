@@ -392,17 +392,47 @@ struct [[nodiscard]] Timestamp {
 
     explicit constexpr Timestamp(std::int64_t micros) noexcept : unix_micros(micros) {}
 
-    static Timestamp from_seconds(std::uint64_t seconds) noexcept {
-        return Timestamp{::gtd_ts_from_seconds(seconds).unix_micros};
+    /** Whole seconds since the Unix epoch, negative before it. */
+    static Result<Timestamp> try_from_seconds(std::int64_t seconds) {
+        return try_convert(seconds, ::gtd_ts_from_seconds);
     }
-    static Timestamp from_millis(std::uint64_t millis) noexcept {
-        return Timestamp{::gtd_ts_from_millis(millis).unix_micros};
+
+    /** @throws std::out_of_range for a count past the range a timestamp covers. */
+    static Timestamp from_seconds(std::int64_t seconds) {
+        return try_from_seconds(seconds).value_or_throw();
     }
-    static Timestamp from_micros(std::uint64_t micros) noexcept {
-        return Timestamp{::gtd_ts_from_micros(micros).unix_micros};
+
+    /** Milliseconds since the Unix epoch, negative before it. */
+    static Result<Timestamp> try_from_millis(std::int64_t millis) {
+        return try_convert(millis, ::gtd_ts_from_millis);
     }
-    static Timestamp from_nanos(std::uint64_t nanos) noexcept {
-        return Timestamp{::gtd_ts_from_nanos(nanos).unix_micros};
+
+    /** @throws std::out_of_range for a count past the range a timestamp covers. */
+    static Timestamp from_millis(std::int64_t millis) {
+        return try_from_millis(millis).value_or_throw();
+    }
+
+    /** Microseconds since the Unix epoch, negative before it. */
+    static Result<Timestamp> try_from_micros(std::int64_t micros) {
+        return try_convert(micros, ::gtd_ts_from_micros);
+    }
+
+    /** @throws std::out_of_range for a count past the range a timestamp covers. */
+    static Timestamp from_micros(std::int64_t micros) {
+        return try_from_micros(micros).value_or_throw();
+    }
+
+    /**
+     * Nanoseconds since the Unix epoch, negative before it, truncated towards
+     * zero to whole microseconds.
+     */
+    static Result<Timestamp> try_from_nanos(std::int64_t nanos) {
+        return try_convert(nanos, ::gtd_ts_from_nanos);
+    }
+
+    /** @throws std::out_of_range for a count past the range a timestamp covers. */
+    static Timestamp from_nanos(std::int64_t nanos) {
+        return try_from_nanos(nanos).value_or_throw();
     }
 
 #if defined(__cpp_impl_three_way_comparison) && __cpp_impl_three_way_comparison >= 201907L
@@ -425,6 +455,17 @@ struct [[nodiscard]] Timestamp {
         return unix_micros >= other.unix_micros;
     }
 #endif
+
+  private:
+    template <typename Convert>
+    static Result<Timestamp> try_convert(std::int64_t count, Convert convert) {
+        GtdTimestamp out{0};
+        const GtdStatus status = convert(count, &out);
+        if (status != GTD_OK) {
+            return Status::from(status);
+        }
+        return Timestamp{out.unix_micros};
+    }
 };
 
 /**

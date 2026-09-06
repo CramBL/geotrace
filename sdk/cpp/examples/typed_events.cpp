@@ -25,7 +25,7 @@ namespace {
 
 // 2024-06-01T08:00:00Z. File-scope so the `at` lambda can read it without a
 // capture (MSVC C++17 requires capturing a local).
-constexpr std::uint64_t kBase = 1717228800;
+constexpr std::int64_t kBase = 1717228800;
 
 // The event taxonomy: one `enum class` per level of the hierarchy.
 enum class Power : std::uint8_t { Boot, Sleep, BatteryLow };
@@ -104,7 +104,7 @@ template <> struct geotrace::EventEnum<Gps> {
 
 int main() {
     // A lambda over the file-scope `kBase` keeps the event timeline readable.
-    auto timestamp_at = [](std::uint64_t secs) {
+    auto timestamp_at = [](std::int64_t secs) {
         return geotrace::Timestamp::from_seconds(kBase + secs);
     };
 
@@ -124,7 +124,7 @@ int main() {
             {51.5103, -0.1217},
             {51.5110, -0.1200},
         }};
-        std::size_t idx = 0;
+        std::int64_t idx = 0;
         for (const auto &point : track) {
             geotrace::NavFix fix{geotrace::FixTime::receiver(timestamp_at(idx * 30)),
                                  geotrace::Angle::degrees(point.lat),

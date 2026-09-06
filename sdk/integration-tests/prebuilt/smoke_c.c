@@ -9,9 +9,16 @@ int main(void) {
         return 1;
     }
 
-    GtdStatus s =
-        gtd_builder_add_nav_fix(b, gtd_ts_from_seconds(1700000000U), gtd_ts_none(), 51.5074,
-                                -0.1278, GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64);
+    GtdTimestamp fix_time;
+    GtdStatus s = gtd_ts_from_seconds(1700000000, &fix_time);
+    if (s != GTD_OK) {
+        fprintf(stderr, "gtd_ts_from_seconds: %d (%s)\n", s, gtd_last_error());
+        gtd_builder_destroy(b);
+        return 1;
+    }
+
+    s = gtd_builder_add_nav_fix(b, fix_time, gtd_ts_none(), 51.5074, -0.1278, GTD_NONE_F64,
+                                GTD_NONE_F64, GTD_NONE_F64);
     if (s != GTD_OK) {
         fprintf(stderr, "gtd_builder_add_nav_fix: %d (%s)\n", s, gtd_last_error());
         gtd_builder_destroy(b);

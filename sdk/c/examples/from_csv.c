@@ -30,11 +30,11 @@ static const char *const CSV_DATA = "timestamp_s,lat,lon,heading_deg,speed_mps\n
 
 /* Parse "ts,lat,lon,heading,speed" into out[CSV_COLS]. The first column is an
    integer (seconds), the rest are doubles. Returns 1 on success, 0 on a
-   malformed row. A row is malformed when `strtod` or `strtoull` leaves the
+   malformed row. A row is malformed when `strtod` or `strtoll` leaves the
    end pointer at the start of a field. */
-static int parse_row(const char *line, unsigned long long *unix_seconds, double out[CSV_COLS - 1]) {
+static int parse_row(const char *line, long long *unix_seconds, double out[CSV_COLS - 1]) {
     char *end;
-    *unix_seconds = strtoull(line, &end, 10);
+    *unix_seconds = strtoll(line, &end, 10);
     if (end == line || *end != ',') {
         return 0;
     }
@@ -79,12 +79,16 @@ int main(void) {
             memcpy(line, cursor, len);
             line[len] = '\0';
 
-            unsigned long long unix_seconds = 0;
+            long long unix_seconds = 0;
             double fields[CSV_COLS - 1];
             if (parse_row(line, &unix_seconds, fields)) {
-                GtdStatus status = gtd_builder_add_nav_fix(
-                    builder, gtd_ts_from_seconds((uint64_t)unix_seconds), gtd_ts_none(), fields[0],
-                    fields[1], GTD_SOME_F64(fields[2]), GTD_SOME_F64(fields[3]), GTD_NONE_F64);
+                GtdTimestamp fix_time;
+                GtdStatus status = gtd_ts_from_seconds((int64_t)unix_seconds, &fix_time);
+                if (status == GTD_OK) {
+                    status = gtd_builder_add_nav_fix(builder, fix_time, gtd_ts_none(), fields[0],
+                                                     fields[1], GTD_SOME_F64(fields[2]),
+                                                     GTD_SOME_F64(fields[3]), GTD_NONE_F64);
+                }
                 if (status != GTD_OK) {
                     fprintf(stderr, "add_nav_fix: %s\n", gtd_last_error());
                     gtd_builder_destroy(builder);

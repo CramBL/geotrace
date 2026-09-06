@@ -21,12 +21,12 @@ using geotrace::Timestamp;
 
 namespace {
 NavFix one_fix() {
-    return NavFix{FixTime::receiver(Timestamp::from_seconds(1700000000ULL)), Angle::degrees(51.5),
+    return NavFix{FixTime::receiver(Timestamp::from_seconds(1700000000)), Angle::degrees(51.5),
                   Angle::degrees(-0.1)};
 }
 
 EventMarker bad_marker() {
-    return EventMarker{"invalid path with spaces!", Timestamp::from_seconds(1700000001ULL)};
+    return EventMarker{"invalid path with spaces!", Timestamp::from_seconds(1700000001)};
 }
 } // namespace
 

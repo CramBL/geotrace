@@ -30,8 +30,8 @@ static_assert(std::is_trivially_copyable_v<Angle>);
 static_assert(std::is_trivially_copyable_v<Velocity>);
 
 TEST_CASE("a NavFile moves out of the Result that holds it") {
-    const NavFix fix{FixTime::receiver(Timestamp::from_seconds(1700000000ULL)),
-                     Angle::degrees(51.5), Angle::degrees(-0.1)};
+    const NavFix fix{FixTime::receiver(Timestamp::from_seconds(1700000000)), Angle::degrees(51.5),
+                     Angle::degrees(-0.1)};
     Result<NavFile> built = FileBuilder{}.add_nav_fix(fix).try_finish();
     REQUIRE(built.is_ok());
 

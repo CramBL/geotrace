@@ -6,11 +6,12 @@
 #include <iostream>
 
 int main() {
-    auto now = geotrace::Timestamp::from_seconds(static_cast<std::uint64_t>(std::time(nullptr)));
-    auto ten_seconds_later =
-        geotrace::Timestamp::from_seconds(static_cast<std::uint64_t>(std::time(nullptr)) + 10);
-
     try {
+        const auto now =
+            geotrace::Timestamp::from_seconds(static_cast<std::int64_t>(std::time(nullptr)));
+        const auto ten_seconds_later =
+            geotrace::Timestamp::from_seconds(static_cast<std::int64_t>(std::time(nullptr)) + 10);
+
         geotrace::FileBuilder builder{};
         builder.title("Quick tour").device("Example GPS v1.0");
 

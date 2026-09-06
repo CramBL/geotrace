@@ -33,7 +33,7 @@ constexpr std::string_view kCsvData = "timestamp_s,lat,lon,heading_deg,speed_mps
 // Parse one "ts,lat,lon,heading,speed" row. Returns std::nullopt for a malformed line.
 std::optional<geotrace::NavFix> parse_row(const std::string &line) {
     std::istringstream fields(line);
-    std::uint64_t unix_seconds = 0;
+    std::int64_t unix_seconds = 0;
     double lat = 0.0;
     double lon = 0.0;
     double heading = 0.0;

@@ -14,11 +14,11 @@
 #include <iostream>
 
 int main() {
-    const auto first_sample_time =
-        geotrace::Timestamp::from_seconds(1717228800ULL); // 2024-06-01T08:00:00Z
-    const auto second_sample_time = geotrace::Timestamp::from_seconds(1717228801ULL);
-
     try {
+        const auto first_sample_time =
+            geotrace::Timestamp::from_seconds(1717228800); // 2024-06-01T08:00:00Z
+        const auto second_sample_time = geotrace::Timestamp::from_seconds(1717228801);
+
         geotrace::FileBuilder builder{};
         builder.title("Channel tour");
 
