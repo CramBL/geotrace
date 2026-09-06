@@ -39,6 +39,7 @@ use gt_store::{
     RecordingsHandle, SolarStore,
 };
 use gt_test_utils::day_archive::{self, GroupPath};
+use gt_test_utils::fixtures::FixCountsAroundAGap;
 use gt_test_utils::snapshot_harness;
 use gt_test_utils::{
     By, ControlLabel, DEMO_BYTES, GOLD_BYTES, HarnessInteraction as _, SyntheticGtdSpec,
@@ -2524,7 +2525,7 @@ fn snapshot_app_point_window_coordinate_out_of_range() {
     harness.inner.step();
 
     let out_of_range = gt_types::PointIdx::new(2);
-    let points = gt_test_utils::nav_points_with_a_latitude_out_of_range(6, out_of_range);
+    let points = gt_test_utils::fixtures::nav_points_with_a_latitude_out_of_range(6, out_of_range);
     let fi = push_points_as(
         &mut harness.inner,
         "out_of_range.gtd",
@@ -9429,7 +9430,10 @@ fn push_file_with_travel_mode(
 /// Push a two-track recording (the tracks split at a 10 minute gap),
 /// returning its file index.
 fn push_two_track_file(harness: &mut Harness<'_, App>, name: &str) -> gt_types::FileIdx {
-    let points = gt_test_utils::fixtures::nav_data_with_gap(30, 30);
+    let points = gt_test_utils::fixtures::nav_data_with_gap(FixCountsAroundAGap {
+        before: 30,
+        after: 30,
+    });
     let fi = push_points_as(
         harness,
         name,

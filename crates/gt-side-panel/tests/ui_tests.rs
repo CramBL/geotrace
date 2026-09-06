@@ -16,9 +16,6 @@ use egui_phosphor::regular::WARNING as ICON_WARNING;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, Utc};
-use egui_kittest::Node;
-use egui_kittest::kittest::NodeT as _;
-use egui_kittest::kittest::Queryable as _;
 use geotrace_sdk_units::Unit;
 use gt_filter::GlobalFilter;
 use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
@@ -28,7 +25,10 @@ use gt_side_panel::{
     SHELVE_SELECTED_TRACKS_LABEL, SHELVE_TRACK_LABEL, SnapCostingTarget, SnapPanelView,
     SnapRowView, TreeState, show_side_panel,
 };
-use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
+use gt_test_utils::fixtures::FixCountsAroundAGap;
+use gt_test_utils::{
+    By, FileParts, HarnessInteraction as _, Node, NodeT as _, Queryable as _, TestHarness,
+};
 use gt_types::{
     FileIdx, FixStats, LoadWarning, LoadedFile, NavPoint, PointIdx, TrackIdx, TrackRef,
 };
@@ -71,17 +71,14 @@ fn build_file(
     meta: gt_track_builder::FileMeta,
     warnings: Vec<LoadWarning>,
 ) -> LoadedFile {
-    gt_track_builder::build_loaded_file(
-        name.to_owned(),
+    gt_test_utils::build_file(
+        name,
         points,
-        &[],
-        vec![],
-        vec![],
-        &[],
-        &gt_track_builder::SegmentationConfig::default(),
-        gt_types::FileSource::GtdPath(PathBuf::from(name)),
-        meta,
-        warnings,
+        FileParts {
+            meta,
+            load_warnings: warnings,
+            ..Default::default()
+        },
     )
 }
 
@@ -251,7 +248,10 @@ fn snapshot_tree_track_columns_across_magnitudes() {
     files.push(
         build_file(
             "commute.gtd",
-            &gt_test_utils::nav_data_with_gap(4_000, 30),
+            &gt_test_utils::fixtures::nav_data_with_gap(FixCountsAroundAGap {
+                before: 4_000,
+                after: 30,
+            }),
             gt_track_builder::FileMeta::default(),
             vec![],
         ),
@@ -272,7 +272,10 @@ fn snapshot_tree_track_columns_across_two_expanded_recordings() {
     files.push(
         build_file(
             "commute.gtd",
-            &gt_test_utils::nav_data_with_gap(4_000, 30),
+            &gt_test_utils::fixtures::nav_data_with_gap(FixCountsAroundAGap {
+                before: 4_000,
+                after: 30,
+            }),
             gt_track_builder::FileMeta::default(),
             vec![],
         ),
@@ -281,7 +284,10 @@ fn snapshot_tree_track_columns_across_two_expanded_recordings() {
     files.push(
         build_file(
             "paused.gtd",
-            &gt_test_utils::nav_data_with_gap(60, 60),
+            &gt_test_utils::fixtures::nav_data_with_gap(FixCountsAroundAGap {
+                before: 60,
+                after: 60,
+            }),
             gt_track_builder::FileMeta::default(),
             vec![],
         ),
@@ -832,7 +838,10 @@ fn make_state_with_a_two_track_recording() -> State {
     files.push(
         build_file(
             "paused.gtd",
-            &gt_test_utils::nav_data_with_gap(60, 60),
+            &gt_test_utils::fixtures::nav_data_with_gap(FixCountsAroundAGap {
+                before: 60,
+                after: 60,
+            }),
             gt_track_builder::FileMeta::default(),
             vec![],
         ),
@@ -858,7 +867,10 @@ fn snapshot_visible_section_groups_the_tracks_under_their_recording() {
     files.push(
         build_file(
             "paused.gtd",
-            &gt_test_utils::nav_data_with_gap(60, 60),
+            &gt_test_utils::fixtures::nav_data_with_gap(FixCountsAroundAGap {
+                before: 60,
+                after: 60,
+            }),
             gt_track_builder::FileMeta::default(),
             vec![],
         ),
@@ -885,7 +897,7 @@ fn snapshot_visible_section_columns_across_magnitudes() {
     files.push(
         build_file(
             "commute.gtd",
-            &gt_test_utils::nav_points_from(start, 400, 30),
+            &gt_test_utils::fixtures::nav_points_from(start, 400, 30),
             gt_track_builder::FileMeta::default(),
             vec![],
         ),
@@ -894,7 +906,10 @@ fn snapshot_visible_section_columns_across_magnitudes() {
     files.push(
         build_file(
             "paused.gtd",
-            &gt_test_utils::nav_data_with_gap(60, 60),
+            &gt_test_utils::fixtures::nav_data_with_gap(FixCountsAroundAGap {
+                before: 60,
+                after: 60,
+            }),
             gt_track_builder::FileMeta::default(),
             vec![],
         ),
@@ -1224,7 +1239,7 @@ fn clicking_a_tree_track_row_past_its_columns_expands_the_track() {
 
 #[test]
 fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
-    let points = gt_test_utils::stationary_nav_data(10);
+    let points = gt_test_utils::fixtures::stationary_nav_data(10);
     let file = build_file(
         "no_sats.gtd",
         &points,
@@ -1279,7 +1294,10 @@ fn the_recording_row_hover_states_the_time_range_and_the_recorded_time() {
     // The hover text states both times even for a recording with no fix stats:
     // the two 60-point tracks here lie ten minutes apart and carry no
     // satellite reports.
-    let points = gt_test_utils::nav_data_with_gap(60, 60);
+    let points = gt_test_utils::fixtures::nav_data_with_gap(FixCountsAroundAGap {
+        before: 60,
+        after: 60,
+    });
     let mut files = LoadedFiles::new();
     files.push(
         build_file(
@@ -1383,7 +1401,7 @@ fn snapshot_tracks_with_coordinates_out_of_range() {
     files.push(
         build_file(
             "out_of_range.gtd",
-            &gt_test_utils::nav_points_with_a_latitude_out_of_range(5, PointIdx::new(2)),
+            &gt_test_utils::fixtures::nav_points_with_a_latitude_out_of_range(5, PointIdx::new(2)),
             gt_track_builder::FileMeta::default(),
             vec![],
         ),
@@ -1392,7 +1410,7 @@ fn snapshot_tracks_with_coordinates_out_of_range() {
     files.push(
         build_file(
             "no_position.gtd",
-            &gt_test_utils::nav_points_without_a_valid_position(4),
+            &gt_test_utils::fixtures::nav_points_without_a_valid_position(4),
             gt_track_builder::FileMeta::default(),
             vec![],
         ),
@@ -1414,7 +1432,7 @@ fn snapshot_track_channels() {
         .and_then(|d| d.and_hms_opt(12, 0, 0))
         .expect("valid date")
         .and_utc();
-    let points = gt_test_utils::stationary_nav_data(10);
+    let points = gt_test_utils::fixtures::stationary_nav_data(10);
     let accel = gt_types::Channel {
         name: "accel".to_owned(),
         unit: Some(Unit::G.into()),
@@ -1985,7 +2003,9 @@ fn state_with_a_completed_snap_run() -> State {
 /// The track row's coordinate warning icon: no fix of the recording holds a
 /// position.
 fn state_with_a_track_without_a_valid_position() -> State {
-    state_with_an_expanded_recording(&gt_test_utils::nav_points_without_a_valid_position(3))
+    state_with_an_expanded_recording(
+        &gt_test_utils::fixtures::nav_points_without_a_valid_position(3),
+    )
 }
 
 /// The track row's eye-slash hint: a completed run whose snapped track is
@@ -2374,8 +2394,8 @@ fn stored_recording_ref() -> gt_history_types::DatabaseRef {
 /// The recording history holds the recording when `db_ref` is `Some`.
 fn state_with_two_tracks(db_ref: Option<gt_history_types::DatabaseRef>) -> State {
     let start = DateTime::<Utc>::UNIX_EPOCH;
-    let mut points = gt_test_utils::nav_points_from(start, 60, 1);
-    points.extend(gt_test_utils::nav_points_from(
+    let mut points = gt_test_utils::fixtures::nav_points_from(start, 60, 1);
+    points.extend(gt_test_utils::fixtures::nav_points_from(
         start + Duration::days(1),
         5,
         1,
@@ -2659,7 +2679,7 @@ fn state_with_shelved_tracks(shelved_tracks: usize) -> State {
     let start = DateTime::<Utc>::UNIX_EPOCH;
     let mut points = Vec::new();
     for day in 0..3 {
-        points.extend(gt_test_utils::nav_points_from(
+        points.extend(gt_test_utils::fixtures::nav_points_from(
             start + Duration::days(day),
             60,
             1,

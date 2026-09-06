@@ -1349,9 +1349,7 @@ mod tests {
     /// The fixture track, with the time range a real load derives from its
     /// points. `days_spanned` reads that range, not the points.
     fn track_with_time_range() -> gt_types::LoadedTrack {
-        use gt_test_utils::fixtures;
-
-        let mut track = fixtures::loaded_track_with_points(fixtures::nav_test_data());
+        let mut track = gt_test_utils::loaded_track_with_points(gt_test_utils::nav_test_data());
         let times: Vec<_> = track
             .points
             .iter()

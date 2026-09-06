@@ -389,14 +389,18 @@ mod tests {
     /// draws the same fixes.
     #[test]
     fn a_fix_outside_the_time_window_is_not_drawn() {
-        let points = gt_test_utils::nav_points_from(at_second(0), 10, 1);
+        let points = gt_test_utils::fixtures::nav_points_from(at_second(0), 10, 1);
         assert_eq!(drawn_seconds(points, 3..=5), [3, 4, 5]);
     }
 
     #[test]
     fn a_window_inside_a_recording_gap_draws_no_line() {
-        let mut points = gt_test_utils::nav_points_from(at_second(0), 4, 1);
-        points.extend(gt_test_utils::nav_points_from(at_second(600), 4, 1));
+        let mut points = gt_test_utils::fixtures::nav_points_from(at_second(0), 4, 1);
+        points.extend(gt_test_utils::fixtures::nav_points_from(
+            at_second(600),
+            4,
+            1,
+        ));
         assert_eq!(drawn_seconds(points, 300..=400), Vec::<i64>::new());
     }
 

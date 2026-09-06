@@ -7,6 +7,7 @@ license.workspace = true
 authors.workspace = true
 
 [features]
+default = ["tracks"]
 archive = ["dep:gt-hdf5-archive", "dep:hdf5"]
 ionex = ["dep:gt-ionex"]
 snapshot = [
@@ -18,6 +19,9 @@ snapshot = [
     "dep:tempfile",
     "dep:eframe",
 ]
+# The loaded-track and loaded-file builders, which measure a track through
+# gt-track-builder. Off for a crate gt-track-builder itself depends on.
+tracks = ["dep:gt-track-builder", "dep:vec1"]
 
 [dependencies]
 chrono.workspace = true
@@ -32,8 +36,8 @@ gt-fetch = { path = "../gt-fetch" }
 gt-hdf5-archive = { path = "../gt-hdf5-archive", optional = true }
 gt-ionex = { path = "../gt-ionex", optional = true }
 gt-pending-writes = { path = "../gt-pending-writes" }
-gt-track-builder = { path = "../gt-track-builder" }
-gt-types = { path = "../gt-types" }
+gt-track-builder = { path = "../gt-track-builder", optional = true }
+gt-types = { path = "../gt-types", features = ["fixtures"] }
 gt-ui-theme = { path = "../gt-ui-theme", optional = true }
 hdf5 = { workspace = true, optional = true }
 # Compares rendered frames in `snapshot_harness`. The same `image` version
@@ -43,6 +47,7 @@ image = { version = "0.25", default-features = false, optional = true }
 parking_lot.workspace = true
 tempfile = { workspace = true, optional = true }
 uom.workspace = true
+vec1 = { workspace = true, optional = true }
 
 [lints]
 workspace = true

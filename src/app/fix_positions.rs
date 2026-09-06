@@ -134,7 +134,7 @@ mod tests {
 
     /// Four fixes an hour apart from 08:00.
     fn hourly_track() -> gt_types::LoadedTrack {
-        let mut track = gt_test_utils::fixtures::loaded_track_with_points(
+        let mut track = gt_test_utils::loaded_track_with_points(
             gt_test_utils::fixtures::nav_points_from(at(8), 4, 3600),
         );
         track.metadata.time_range = TimeRange::new(at(8), at(11));

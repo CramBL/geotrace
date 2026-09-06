@@ -4,7 +4,8 @@ use chrono::{DateTime, Duration, TimeZone as _, Utc};
 use gt_history_types::{DatabaseRef, RecordingMeta};
 use gt_loaded_files::{FileHistory, LoadedFileId, LoadedFiles, RecordingNames};
 use gt_logfile::ParsedLog;
-use gt_test_utils::{empty_file_metadata, loaded_track_with_points, nav_points_walking_from};
+use gt_test_utils::fixtures;
+use gt_test_utils::{empty_file_metadata, loaded_track_with_points};
 use gt_types::{FileMetadata, FileSource, Latitude, LoadedFile, Longitude, NavPoint, TimeRange};
 use gt_ui_types::LogMatches;
 use rustc_hash::FxHashMap;
@@ -76,7 +77,7 @@ pub(crate) fn log_of_service(service: &str, count: usize) -> LoadedLog {
 /// `first_lat_deg` so tests can tell two recordings apart by where an entry
 /// landed.
 pub(crate) fn recording_at(first_lat_deg: f64, count: usize) -> LoadedFile {
-    recording_of(nav_points_walking_from(
+    recording_of(fixtures::nav_points_walking_from(
         start(),
         count,
         1,
@@ -96,7 +97,7 @@ pub(crate) fn recording_named(filename: &str, first_lat_deg: f64, count: usize) 
 /// A recording of `count` fixes, one per second, starting `offset` after the
 /// fixture log does.
 pub(crate) fn recording_from(offset: Duration, count: usize) -> LoadedFile {
-    recording_of(nav_points_walking_from(
+    recording_of(fixtures::nav_points_walking_from(
         start() + offset,
         count,
         1,
@@ -108,7 +109,7 @@ pub(crate) fn recording_from(offset: Duration, count: usize) -> LoadedFile {
 /// A recording of `first_track + second_track` fixes, one per second from
 /// [`start`], cut into two tracks at `first_track`.
 pub(crate) fn recording_in_two_tracks(first_track: usize, second_track: usize) -> LoadedFile {
-    let points = nav_points_walking_from(
+    let points = fixtures::nav_points_walking_from(
         start(),
         first_track + second_track,
         1,

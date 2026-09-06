@@ -24,7 +24,6 @@ rustc-hash.workspace = true
 uom.workspace = true
 
 [dev-dependencies]
-egui_kittest.workspace = true
 geotrace-sdk-units = { path = "../../sdk/rust/geotrace-sdk-units" }
 gt-filter = { path = "../gt-filter" }
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }

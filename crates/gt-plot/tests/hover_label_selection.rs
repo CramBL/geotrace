@@ -35,7 +35,7 @@ const DOWNSAMPLED_FIX_COUNT: usize = 12_000;
 /// 3 points apart on screen.
 const CHANNEL_LINE_GAP_VALUE: f64 = 0.15;
 
-/// The constant velocity of every fix [`gt_test_utils::nav_points_from`]
+/// The constant velocity of every fix [`gt_test_utils::fixtures::nav_points_from`]
 /// builds, in km/h, which is where the velocity line is drawn.
 const FIXTURE_VELOCITY_KMH: f64 = 15.0;
 
@@ -55,7 +55,8 @@ fn scalar_channel(name: &str, times: Vec<DateTime<Utc>>, values: Vec<f64>) -> Ch
 /// A recording of one track of `fix_count` fixes `step_secs` apart from the
 /// first fix, carrying `channels`.
 fn recording(fix_count: usize, step_secs: i64, channels: Vec<Channel>) -> LoadedFile {
-    let points: Vec<NavPoint> = gt_test_utils::nav_points_from(at_second(0), fix_count, step_secs);
+    let points: Vec<NavPoint> =
+        gt_test_utils::fixtures::nav_points_from(at_second(0), fix_count, step_secs);
     let last_offset = (fix_count as i64 - 1) * step_secs;
     let mut track = gt_test_utils::loaded_track_with_points(points);
     track.metadata.time_range = TimeRange::new(at_second(0), at_second(last_offset));

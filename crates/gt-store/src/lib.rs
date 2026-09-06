@@ -43,7 +43,7 @@ mod recordings_handle;
 mod writable_archive;
 
 pub use archive_handle::ArchiveHandle;
-pub use day_archive::{DayArchiveError, EnvironmentArchive, StoredDayArchive};
+pub use day_archive::{DayArchiveError, EnvironmentArchive, SchemaVersions, StoredDayArchive};
 pub use log_attachments::{
     AttachedLog, LogAttachmentError, LogAttachments, LogToAttach, ReadOnlyLogAttachments,
 };

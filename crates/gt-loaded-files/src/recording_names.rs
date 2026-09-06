@@ -172,7 +172,7 @@ mod tests {
     fn file_with_tracks(filename: &str, title: Option<&str>, track_count: usize) -> LoadedFile {
         LoadedFile {
             tracks: (0..track_count)
-                .map(|_| gt_test_utils::fixtures::loaded_track_with_points(Vec::new()))
+                .map(|_| gt_test_utils::loaded_track_with_points(Vec::new()))
                 .collect(),
             ..file(filename, title)
         }

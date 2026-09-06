@@ -35,6 +35,10 @@ pub trait ReadOnlyDayArchive: Sized {
     const SCHEMA_VERSION_ATTR: &'static str;
     const CURRENT_SCHEMA_VERSION: i64;
 
+    /// The name of this archive's file inside the directory that the caller
+    /// keeps its archives in.
+    const FILE_NAME: &'static str;
+
     fn from_archive_file(archive: ArchiveFileBeingOpened) -> Self;
 
     /// What an interrupted delete left in `archive`, or [`None`] when there is

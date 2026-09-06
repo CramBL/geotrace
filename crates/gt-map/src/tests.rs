@@ -858,7 +858,7 @@ fn map_framing_covers_where_the_points_are_drawn() {
 fn a_file_whose_only_track_has_no_geometry_has_nothing_to_frame() {
     let files = vec![file_with_tracks(vec![
         gt_test_utils::loaded_track_with_points(
-            gt_test_utils::nav_points_without_a_valid_position(3),
+            gt_test_utils::fixtures::nav_points_without_a_valid_position(3),
         ),
     ])];
 
@@ -881,7 +881,7 @@ fn a_track_without_geometry_is_left_out_of_every_drawing_pass() {
     let files = vec![file_with_tracks(vec![
         track_at(55.0, 12.0),
         gt_test_utils::loaded_track_with_points(
-            gt_test_utils::nav_points_without_a_valid_position(3),
+            gt_test_utils::fixtures::nav_points_without_a_valid_position(3),
         ),
     ])];
     let visibility = TrackDataVisibility::from_loaded(&files);

@@ -35,7 +35,7 @@ pub fn points_with(
     eph: impl Fn(usize) -> Option<f32>,
 ) -> Vec<NavPoint> {
     points_with_spec(count, step_ms, |i| NavPointSpec {
-        fix: FixKind::Real,
+        fix: FixKind::Measured,
         eph_m: eph(i),
     })
 }
@@ -50,7 +50,10 @@ pub fn points(count: usize) -> Vec<NavPoint> {
 pub fn points_with_ghosts_at(count: usize, ghosts: &[usize]) -> Vec<NavPoint> {
     points_with_spec(count, 1000, |i| {
         if ghosts.contains(&i) {
-            NavPointSpec::ghost(FixKind::GhostWithoutHeading)
+            NavPointSpec {
+                fix: FixKind::GhostWithoutHeading,
+                ..Default::default()
+            }
         } else {
             NavPointSpec::default()
         }
