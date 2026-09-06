@@ -116,8 +116,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut served = 0_usize;
     let mut mismatched = 0_usize;
 
-    for candidate in mirror.file_candidates(REQUESTED_PRODUCT, day) {
-        let FileCandidate { url, compression } = &candidate;
+    for FileCandidate { url, compression } in mirror.file_candidates(REQUESTED_PRODUCT, day) {
         let request = HttpRequest::get_with_bearer_token(url.clone(), token.clone());
         let response = Transport::<Vec<u8>>::send(&transport, &request)
             .map_err(|err| token.redact(&format!("{err:#}")))?;
@@ -131,7 +130,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         served = served.saturating_add(1);
 
-        let maps = match transport::read_served_file(&response.body, *compression) {
+        let maps = match transport::read_served_file(&response.body, compression) {
             Ok(maps) => maps,
             Err(err) => {
                 mismatched = mismatched.saturating_add(1);
@@ -160,7 +159,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         if capture {
-            let name = file_name(url)?;
+            let name = file_name(&url)?;
             let path = directory.join(name);
             fs::create_dir_all(&directory)?;
             fs::write(&path, &response.body)?;

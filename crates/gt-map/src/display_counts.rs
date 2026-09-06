@@ -251,28 +251,28 @@ struct DisplayCountsKey {
 fn files_signature(files: &[LoadedFile]) -> u64 {
     let mut hasher = FxHasher::default();
     files.len().hash(&mut hasher);
-    for file in files {
-        let LoadedFile {
-            tracks,
-            metadata: _,
-            event_marker_styles: _,
-            orphaned_event_markers: _,
-            source: _,
-            load_warnings: _,
-        } = file;
+    for LoadedFile {
+        tracks,
+        metadata: _,
+        event_marker_styles: _,
+        orphaned_event_markers: _,
+        source: _,
+        load_warnings: _,
+    } in files
+    {
         tracks.len().hash(&mut hasher);
-        for track in tracks {
-            let LoadedTrack {
-                points,
-                sat_label_anchors,
-                custom_markers,
-                generated_markers,
-                event_markers,
-                metadata: _,
-                geometry: _,
-                lod: _,
-                channels: _,
-            } = track;
+        for LoadedTrack {
+            points,
+            sat_label_anchors,
+            custom_markers,
+            generated_markers,
+            event_markers,
+            metadata: _,
+            geometry: _,
+            lod: _,
+            channels: _,
+        } in tracks
+        {
             points.len().hash(&mut hasher);
             custom_markers.len().hash(&mut hasher);
             generated_markers.len().hash(&mut hasher);
